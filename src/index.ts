@@ -3,7 +3,7 @@ require("dotenv").config();
 import Bottleneck from "bottleneck";
 import { debug as debugInit } from "debug";
 import { Client as OMDBClient, Movie as OMDBMovie } from "imdb-api";
-import { MovieDb } from "moviedb-promise";
+import { MovieDb as TMDBClient } from "moviedb-promise";
 import { MovieResponse as TMDBMovie } from "moviedb-promise/dist/request-types";
 import { join, parse } from "path";
 import {
@@ -26,12 +26,14 @@ if (typeof process.env.DATA_DIR === "undefined")
 const LIBRARY_PATH = join(process.env.DATA_DIR, "lib.json");
 type Movie = {
   id?: { imdb?: string; tmdb?: string };
+  /** Raw dump from NFO file */
   raw?: any;
   tmdb?: TMDBMovie | null;
   omdb?: OMDBMovie | null;
 };
 let library: {
   nfoFiles: string[];
+  /** NFO files which failed to parse */
   failedNfos: string[];
   movies: { [file: string]: Movie };
 } = {
@@ -41,7 +43,7 @@ let library: {
 };
 
 async function init() {
-  // Read library
+  // Load library
   if (await fileExists(LIBRARY_PATH)) {
     debug(`${LIBRARY_PATH} library file found!\nreading...`);
     library = Object.assign(library, await readJSONFile(LIBRARY_PATH, debug));
@@ -56,6 +58,7 @@ async function init() {
       process.env.SCAN_DIR,
       async (file) => {
         const filePath = parse(file);
+        // Filter only nfos, and remove paths which partially include SCAN_EXCLUDE values
         if (
           filePath.ext === ".nfo" &&
           !library.nfoFiles.includes(file) &&
@@ -84,6 +87,7 @@ async function init() {
   debug(`checking for new NFO files...`);
   await Promise.all(
     library.nfoFiles
+      // Filter movies which haven't been loaded
       .filter((file) => !library.movies[file])
       .map(async (file) => {
         debug(`found new NFO: ${file}`);
@@ -100,6 +104,7 @@ async function init() {
 
   library.failedNfos = Array.from(new Set(library.failedNfos));
 
+  // Filter out failed NFO files
   library.nfoFiles = library.nfoFiles.filter(
     (file) => !library.failedNfos.includes(file)
   );
@@ -111,7 +116,7 @@ async function init() {
 
   let found = 0;
 
-  // Get IDS for movies
+  // Get IDS for movies (from NFO raw JSON)
   Object.entries(library.movies).forEach(([file, value]) => {
     const movie = value;
 
@@ -121,6 +126,7 @@ async function init() {
       id = {};
     }
 
+    // Try to get IMDB id
     if (typeof id.imdb === "undefined") {
       const imdbId =
         movie.raw?.movie?.id?.[0] ||
@@ -132,6 +138,7 @@ async function init() {
       }
     }
 
+    // Try to get TMDB id
     if (typeof id.tmdb === "undefined") {
       const tmdbId =
         movie.raw?.movie?.tmdbId?.[0] ||
@@ -162,7 +169,7 @@ async function init() {
 
   // GET TMDB THINGS!
   if (process.env.TMDB_API_KEY) {
-    const tmdbClient = new MovieDb(process.env.TMDB_API_KEY);
+    const tmdbClient = new TMDBClient(process.env.TMDB_API_KEY);
     debug(`connected to TMDB!`);
 
     const tmdbLimiter = new Bottleneck({
@@ -172,6 +179,7 @@ async function init() {
 
     await Promise.all(
       Object.values(library.movies)
+        // Filter movies which have no TMDB metadata and have TMDB id
         .filter((movie) => movie.id?.tmdb && !movie.tmdb && movie.tmdb !== null)
         .map((movie) =>
           tmdbLimiter.schedule(async () => {
@@ -195,6 +203,7 @@ async function init() {
     debug(`WARNING, no TMDB_API_KEY has been set`);
   }
 
+  // Calculate how many movies have TMDB metadata
   const tmdbFound = Object.values(library.movies).filter((movie) => movie.tmdb)
     .length;
 
@@ -217,6 +226,7 @@ async function init() {
 
     await Promise.all(
       Object.values(library.movies)
+        // Filter movies which have no OMDB metadata and have IMDB id
         .filter((movie) => movie.id?.imdb && !movie.omdb && movie.omdb !== null)
         .map((movie) =>
           obdmLimiter.schedule(async () => {
@@ -239,6 +249,7 @@ async function init() {
     debug(`WARNING no OMDB_API_KEY has been set`);
   }
 
+  // Calculate how many movies have OMDB metadata
   const omdbFound = Object.values(library.movies).filter((movie) => movie.omdb)
     .length;
 
@@ -248,6 +259,7 @@ async function init() {
     } (${(omdbFound * 100) / Object.entries(library.movies).length}%) found`
   );
 
+  // Calculate how many movies have NO metadata
   const notFound = Object.values(library.movies).filter(
     (movie) => !(movie.omdb || movie.tmdb)
   );
