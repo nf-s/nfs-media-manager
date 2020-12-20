@@ -153,9 +153,9 @@ async function init() {
   });
 
   debug(
-    `library has ${found}/${Object.entries(library.movies).length} (${
-      (found * 100) / Object.entries(library.movies).length
-    }%) found`
+    `library has found IDs for ${found}/${
+      Object.entries(library.movies).length
+    } (${(found * 100) / Object.entries(library.movies).length}%) found`
   );
 
   await save();
@@ -191,11 +191,22 @@ async function init() {
         )
     );
     await save();
+  } else {
+    debug(`WARNING, no TMDB_API_KEY has been set`);
   }
 
-  // GET TMDB THINGS!
+  const tmdbFound = Object.values(library.movies).filter((movie) => movie.tmdb)
+    .length;
+
+  debug(
+    `library has TMDB metadata for ${tmdbFound}/${
+      Object.entries(library.movies).length
+    } (${(tmdbFound * 100) / Object.entries(library.movies).length}%) found`
+  );
+
+  // GET OMDB THINGS!
   if (process.env.OMDB_API_KEY) {
-    debug(`connected to TMDB!`);
+    debug(`connected to OMDB!`);
 
     const omdbClient = new OMDBClient({ apiKey: process.env.OMDB_API_KEY });
 
@@ -224,7 +235,32 @@ async function init() {
     );
 
     await save();
+  } else {
+    debug(`WARNING no OMDB_API_KEY has been set`);
   }
+
+  const omdbFound = Object.values(library.movies).filter((movie) => movie.omdb)
+    .length;
+
+  debug(
+    `library has OMDB metadata for ${omdbFound}/${
+      Object.entries(library.movies).length
+    } (${(omdbFound * 100) / Object.entries(library.movies).length}%) found`
+  );
+
+  const notFound = Object.values(library.movies).filter(
+    (movie) => !(movie.omdb || movie.tmdb)
+  );
+
+  debug(
+    `library is missing metadata for ${notFound.length}/${
+      Object.entries(library.movies).length
+    } (${
+      (notFound.length * 100) / Object.entries(library.movies).length
+    }%) found`
+  );
+
+  debug(notFound.map((movie) => movie.raw?.movie?.title?.[0]));
 }
 
 async function save() {
