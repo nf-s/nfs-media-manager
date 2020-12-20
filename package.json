@@ -5,7 +5,8 @@
   "main": "dist/index.ts",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "tsc && node dist/index.js"
+    "start": "tsc && node -i dist/index.js",
+    "interactive": "tsc && cat dist/index.js - | node -i"
   },
   "author": "",
   "license": "ISC",
@@ -20,9 +21,12 @@
   },
   "dependencies": {
     "archiver": "^5.1.0",
+    "bottleneck": "^2.19.5",
     "debug": "^4.3.1",
     "dotenv": "^8.2.0",
     "extract-zip": "^2.0.1",
+    "imdb-api": "^4.4.1",
+    "moviedb-promise": "^3.1.2",
     "ncp": "^2.0.0",
     "xml2js": "^0.4.23"
   }

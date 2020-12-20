@@ -417,7 +417,7 @@ export async function saveXMLFile(
   }
 }
 
-export async function loadXmlConfigFile(
+export async function loadXml(
   path: string,
   debug = console.log
 ): Promise<any> {
