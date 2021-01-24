@@ -31,10 +31,10 @@
     "passthepopcorn": "0.6.13-nfs",
     "tslint": "^6.1.3",
     "typescript": "^4.1.3",
-    "xml2js": "^0.4.23"
-  },
-  "dependencies": {
+    "xml2js": "^0.4.23",
+    "axios": "^0.19.2",
     "cheerio": "^1.0.0-rc.5",
     "spotify-web-api-node": "^5.0.0"
-  }
+  },
+  "dependencies": {}
 }

@@ -7,6 +7,7 @@ export interface CleanAlbum {
   dateReleased: string;
   dateAdded: string;
   genres: string[];
+  tracks: string[];
 }
 
 export type CleanLibrary = CleanAlbum[];
@@ -20,6 +21,7 @@ export async function clean(): Promise<CleanLibrary> {
       dateReleased: album.release_date,
       dateAdded: album.addedDate,
       genres: album.genres,
+      tracks: album.tracks.items.map((track) => track.id),
     };
 
     return clean;
