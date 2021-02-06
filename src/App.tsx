@@ -1,11 +1,19 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import "react-data-grid/dist/react-data-grid.css";
 import Movie from "./Movie";
 import Music from "./Music";
+import { SpotifyAuth } from "./Spotify";
 
 function App() {
+  const [spotifyAuthToken, setSpotifyAuthToken] = useState<string>();
+
+  useEffect(() => {
+    const spotifyAuth = new SpotifyAuth(setSpotifyAuthToken);
+    spotifyAuth.init();
+  }, []);
+
   const [mode, setMode] = useState<{ mode: "movie" | "music" }>({
-    mode: "movie",
+    mode: "music",
   });
 
   return (
@@ -17,7 +25,13 @@ function App() {
         Music
       </button>
 
-      {mode.mode === "movie" ? <Movie></Movie> : <Music></Music>}
+      {mode.mode === "movie" ? <Movie></Movie> : null}
+      {mode.mode === "music" && spotifyAuthToken ? (
+        <Music spotifyToken={spotifyAuthToken}></Music>
+      ) : null}
+      {mode.mode === "music" && !spotifyAuthToken ? (
+        <h2>Fetching Spotify token</h2>
+      ) : null}
     </>
   );
 }

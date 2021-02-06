@@ -5,13 +5,20 @@ import "react-data-grid/dist/react-data-grid.css";
 import { CleanAlbum } from "../../movie-scraper/src/music/clean";
 import SpotifyPlayer from "react-spotify-web-playback";
 import SpotifyWebApi from "spotify-web-api-js";
+import { getQueuePlaylistId } from "./Spotify";
 
-function Music() {
+function Music(props: { spotifyToken: string }) {
   const [rowData, setData] = useState<{ rows: CleanAlbum[] }>({ rows: [] });
   const [deviceId, setDeviceId] = useState<{ id?: string }>({});
-  const [spotifyPlayer, setSpotifyPlayer] = useState<{
+  const [playerState, setSpotifyPlayer] = useState<{
     uris?: string | string[];
-  }>({});
+    play?: boolean;
+    waitForPlay?: boolean;
+  }>({ play: true });
+  const [userState, setSpotifyUser] = useState<{
+    id: string;
+    queuePlaylist: string;
+  }>();
   const [[sortColumn, sortDirection], setSort] = useState<
     [string, SortDirection]
   >(["title", "DESC"]);
@@ -25,7 +32,8 @@ function Music() {
           <button
             onClick={() => {
               setSpotifyPlayer({
-                uris: `spotify:album:${props.row.id}`,
+                uris: [`spotify:album:${props.row.id}`],
+                play: true,
               });
             }}
           >
@@ -33,7 +41,12 @@ function Music() {
           </button>
           <button
             onClick={() =>
-              addToQueue(props.row.tracks.map((id) => `spotify:track:${id}`))
+              userState?.queuePlaylist
+                ? spotifyApi.addTracksToPlaylist(
+                    userState?.queuePlaylist,
+                    props.row.tracks.map((id) => `spotify:track:${id}`)
+                  )
+                : alert("Queue playlist ID not set!")
             }
           >
             Queue
@@ -52,18 +65,6 @@ function Music() {
   // });
   // const [enableFilterRow, setEnableFilterRow] = useState(true);
 
-  const addToQueue = async (ids: string[]) => {
-    const id = ids.splice(0, 1)[0];
-    if (id)
-      spotifyApi
-        .queue(id)
-        .then(() => addToQueue(ids))
-        .catch((error) => {
-          console.log(`FAILED to queue spotify ID ${id}`);
-          console.log(error);
-        });
-  };
-
   useEffect(() => {
     const fetchData = async () => {
       const result = await axios("/lib-music.json");
@@ -73,6 +74,32 @@ function Music() {
 
     fetchData();
   }, []);
+
+  useEffect(() => {
+    const fetchSpotifyUser = async () => {
+      const user = await spotifyApi.getMe();
+
+      let playlistId = await getQueuePlaylistId(spotifyApi, user.id);
+
+      setSpotifyUser({ id: user.id, queuePlaylist: playlistId });
+      if (playerState.uris?.length ?? 0 === 0) {
+        setSpotifyPlayer({ uris: [`spotify:playlist:${playlistId}`] });
+      }
+    };
+
+    fetchSpotifyUser();
+  }, []);
+
+  // useEffect(() => {
+  //   getQueuePlaylistId(spotifyApi).then(id => {
+  //     if (id) {
+  //       console.log(`found playists queue`);
+  //     } else {
+  //       console.log('CREATE ONE');
+  //       spotifyApi.createPlaylist()
+  //     }
+  //   })
+  // }, []);
 
   const sortedRows = useMemo(() => {
     if (sortDirection === "NONE") return rowData.rows;
@@ -123,12 +150,8 @@ function Music() {
     []
   );
 
-  const token = "xxx";
-
   var spotifyApi = new SpotifyWebApi();
-  spotifyApi.setAccessToken(token);
-
-  console.log(deviceId);
+  spotifyApi.setAccessToken(props.spotifyToken);
 
   return (
     <>
@@ -140,18 +163,56 @@ function Music() {
           Clear Filters
         </button>
       </div> */}
-      <a href="https://accounts.spotify.com/en/authorize?response_type=token&client_id=adaaf209fb064dfab873a71817029e0d&redirect_uri=https:%2F%2Fdeveloper.spotify.com%2Fdocumentation%2Fweb-playback-sdk%2Fquick-start%2F&scope=streaming%20user-read-email%20user-read-private%20user-library-read%20user-library-modify%20user-read-playback-state%20user-modify-playback-state&show_dialog=true">
-        Get token
-      </a>
       <SpotifyPlayer
         name="Nick's Web Player"
-        token={token}
+        token={props.spotifyToken}
         callback={(state) => {
-          if (state.deviceId) setDeviceId({ id: state.deviceId });
-          console.log(spotifyPlayer.uris);
+          console.log(playerState.uris);
           console.log(state);
+
+          if (state.deviceId) setDeviceId({ id: state.deviceId });
+          if (state.isPlaying) playerState.waitForPlay = false;
+          if (!state.isPlaying && playerState.waitForPlay) return;
+
+          if (!userState?.queuePlaylist || state.type !== "track_update")
+            return;
+
+          if (!state.isPlaying && state.nextTracks.length === 0) {
+            // Hacky way to get my playlist queue to start if there aren't any tracks to play
+            setSpotifyPlayer({
+              uris: [],
+              play: false,
+              waitForPlay: true,
+            });
+            setTimeout(() => {
+              setSpotifyPlayer({
+                uris: [`spotify:playlist:${userState.queuePlaylist}`],
+                play: true,
+                waitForPlay: true,
+              });
+            }, 500);
+          } else if (
+            state.isPlaying &&
+            playerState.uris?.[0] ===
+              `spotify:playlist:${userState.queuePlaylist}`
+          ) {
+            spotifyApi.getMyCurrentPlaybackState().then((playbackState) => {
+              if (
+                playbackState.context?.uri ===
+                `spotify:playlist:${userState.queuePlaylist}`
+              ) {
+                console.log(`removing ${state.track.uri} from quu`);
+                spotifyApi.removeTracksFromPlaylist(userState.queuePlaylist, [
+                  state.track.uri,
+                ]);
+              }
+            });
+          }
         }}
-        uris={spotifyPlayer.uris}
+        play={playerState.play}
+        autoPlay={true}
+        persistDeviceSelection={true}
+        uris={playerState.uris}
       />
       ;
       <DataGrid
