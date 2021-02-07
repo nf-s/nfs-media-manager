@@ -15,13 +15,13 @@ export type CleanLibrary = CleanAlbum[];
 export async function clean(): Promise<CleanLibrary> {
   return Object.values(library.albums).map((album) => {
     const clean: CleanAlbum = {
-      id: album.id,
-      title: album.name,
-      artist: album.artists.map((artist) => artist.name).join(", "),
-      dateReleased: album.release_date,
-      dateAdded: album.addedDate,
-      genres: album.genres,
-      tracks: album.tracks.items.map((track) => track.id),
+      id: album.spotify.id,
+      title: album.spotify.name,
+      artist: album.spotify.artists.map((artist) => artist.name).join(", "),
+      dateReleased: album.spotify.release_date,
+      dateAdded: album.spotify.addedDate,
+      genres: album.spotify.genres,
+      tracks: album.spotify.tracks.items.map((track) => track.id),
     };
 
     return clean;

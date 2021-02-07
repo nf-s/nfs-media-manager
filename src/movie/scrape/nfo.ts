@@ -1,7 +1,7 @@
 import { debug as debugInit } from "debug";
 import { parse } from "path";
-import { library, LIBRARY_PATH, save } from ".";
-import { forEachFileInDir, loadXml } from "../util/fs";
+import { library, LIBRARY_PATH, save } from "../";
+import { forEachFileInDir, loadXml } from "../../util/fs";
 
 const debug = debugInit("movie-scraper:nfo-scraper");
 

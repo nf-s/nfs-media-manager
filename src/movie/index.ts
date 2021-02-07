@@ -4,7 +4,7 @@ import { debug as debugInit } from "debug";
 import { join } from "path";
 import { clean } from "./clean";
 import { Library } from "./interfaces";
-import scanNfos from "./nfo";
+import scanNfos from "./scrape/nfo";
 import scrapeMovie from "./scrape";
 import myImdbRatings from "./scrape/imdb-ratings";
 import { fileExists, readJSONFile, writeFile } from "../util/fs";

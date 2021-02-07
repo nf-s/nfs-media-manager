@@ -1,12 +1,5 @@
 import { load } from "cheerio";
 
-export interface PtpMovieScrape {
-  tags: string[];
-  collections: { id: number; name: string; spoiler: boolean; length: number }[];
-  similar: number[];
-  rating: { value: number; votes: number };
-}
-
 export default async function rymChartScrape(url: string) {
   const html = await (
     await fetch("https://rateyourmusic.com/charts/top/album/all-time/g:house/")
