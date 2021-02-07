@@ -1,6 +1,8 @@
 import axios from "axios";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import DataGrid, { Column, SortDirection } from "react-data-grid";
+import DataGrid, { Column, Filters, SortDirection } from "react-data-grid";
+
+import Select from "react-select";
 import "react-data-grid/dist/react-data-grid.css";
 import { CleanAlbum } from "../../movie-scraper/src/music/clean";
 import SpotifyPlayer from "react-spotify-web-playback";
@@ -8,8 +10,10 @@ import SpotifyWebApi from "spotify-web-api-js";
 import { getQueuePlaylistId } from "./Spotify";
 
 function Music(props: { spotifyToken: string }) {
+  const [spotifyApi, setSpotifyApi] = useState<SpotifyWebApi.SpotifyWebApiJs>();
   const [rowData, setData] = useState<{ rows: CleanAlbum[] }>({ rows: [] });
   const [deviceId, setDeviceId] = useState<{ id?: string }>({});
+  console.log(deviceId);
   const [playerState, setSpotifyPlayer] = useState<{
     uris?: string | string[];
     play?: boolean;
@@ -41,7 +45,7 @@ function Music(props: { spotifyToken: string }) {
           </button>
           <button
             onClick={() =>
-              userState?.queuePlaylist
+              userState?.queuePlaylist && spotifyApi
                 ? spotifyApi.addTracksToPlaylist(
                     userState?.queuePlaylist,
                     props.row.tracks.map((id) => `spotify:track:${id}`)
@@ -55,15 +59,41 @@ function Music(props: { spotifyToken: string }) {
       ),
     },
     { key: "title", name: "Title", sortable: true },
-    { key: "artist", name: "Artist", sortable: true },
+    {
+      key: "artist",
+      name: "Artist",
+      sortable: true,
+      filterRenderer: (p) => (
+        <div className={"filter-container"}>
+          <Select
+            value={p.value}
+            onChange={p.onChange}
+            options={Array.from(new Set(rowData.rows.map((r) => r.artist))).map(
+              (d) => ({
+                label: d,
+                value: d,
+              })
+            )}
+            menuPortalTarget={document.body}
+          />
+        </div>
+      ),
+    },
     { key: "dateReleased", name: "Release" },
     { key: "dateAdded", name: "Added" },
   ];
 
-  // const [filters, setFilters] = useState<Filters>({
-  //   ratingImdbValue: "",
-  // });
-  // const [enableFilterRow, setEnableFilterRow] = useState(true);
+  const [filters, setFilters] = useState<Filters>({
+    artist: "",
+  });
+  const [enableFilterRow, setEnableFilterRow] = useState(true);
+
+  useEffect(() => {
+    const spotifyApi = new SpotifyWebApi();
+    spotifyApi.setAccessToken(props.spotifyToken);
+
+    setSpotifyApi(spotifyApi);
+  }, [props.spotifyToken]);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -77,18 +107,19 @@ function Music(props: { spotifyToken: string }) {
 
   useEffect(() => {
     const fetchSpotifyUser = async () => {
+      if (!spotifyApi) return;
       const user = await spotifyApi.getMe();
 
       let playlistId = await getQueuePlaylistId(spotifyApi, user.id);
 
       setSpotifyUser({ id: user.id, queuePlaylist: playlistId });
-      if (playerState.uris?.length ?? 0 === 0) {
+      if (playerState.uris && playerState.uris.length === 0) {
         setSpotifyPlayer({ uris: [`spotify:playlist:${playlistId}`] });
       }
     };
 
     fetchSpotifyUser();
-  }, []);
+  }, [playerState, spotifyApi]);
 
   // useEffect(() => {
   //   getQueuePlaylistId(spotifyApi).then(id => {
@@ -121,27 +152,21 @@ function Music(props: { spotifyToken: string }) {
     return sortDirection === "DESC" ? sortedRows.reverse() : sortedRows;
   }, [rowData.rows, sortDirection, sortColumn]);
 
-  // const filteredRows = useMemo(() => {
-  //   return sortedRows.filter((r) => {
-  //     return filters.ratingImdbValue
-  //       ? filters.ratingImdbValue.filterValues(
-  //           r,
-  //           filters.ratingImdbValue,
-  //           "ratingImdbValue"
-  //         )
-  //       : true;
-  //   });
-  // }, [sortedRows, filters]);
+  const filteredRows = useMemo(() => {
+    return sortedRows.filter((r) => {
+      return filters.artist ? filters.artist.value === r.artist : true;
+    });
+  }, [sortedRows, filters]);
 
-  // function clearFilters() {
-  //   setFilters({
-  //     ratingImdbValue: "",
-  //   });
-  // }
+  function clearFilters() {
+    setFilters({
+      artist: "",
+    });
+  }
 
-  // function toggleFilters() {
-  //   setEnableFilterRow(!enableFilterRow);
-  // }
+  function toggleFilters() {
+    setEnableFilterRow(!enableFilterRow);
+  }
 
   const handleSort = useCallback(
     (columnKey: string, direction: SortDirection) => {
@@ -150,11 +175,8 @@ function Music(props: { spotifyToken: string }) {
     []
   );
 
-  var spotifyApi = new SpotifyWebApi();
-  spotifyApi.setAccessToken(props.spotifyToken);
-
   return (
-    <>
+    <div className="root-music">
       {/* <div className="header-filters-toolbar">
         <button type="button" onClick={toggleFilters}>
           Toggle Filters
@@ -194,7 +216,8 @@ function Music(props: { spotifyToken: string }) {
           } else if (
             state.isPlaying &&
             playerState.uris?.[0] ===
-              `spotify:playlist:${userState.queuePlaylist}`
+              `spotify:playlist:${userState.queuePlaylist}` &&
+            spotifyApi
           ) {
             spotifyApi.getMyCurrentPlaybackState().then((playbackState) => {
               if (
@@ -217,7 +240,7 @@ function Music(props: { spotifyToken: string }) {
       ;
       <DataGrid
         columns={columns}
-        rows={sortedRows}
+        rows={filteredRows}
         // rowClass={(row) => (row.watched ? "watched" : "unwatched")}
         defaultColumnOptions={{
           sortable: true,
@@ -226,12 +249,12 @@ function Music(props: { spotifyToken: string }) {
         sortColumn={sortColumn}
         sortDirection={sortDirection}
         onSort={handleSort}
-        // enableFilterRow={enableFilterRow}
-        // filters={filters}
-        // onFiltersChange={setFilters}
+        enableFilterRow={enableFilterRow}
+        filters={filters}
+        onFiltersChange={setFilters}
         className="fill-grid"
       />
-    </>
+    </div>
   );
 }
 

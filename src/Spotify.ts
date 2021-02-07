@@ -15,7 +15,7 @@ export class SpotifyAuth {
     "user-read-playback-state",
     "user-modify-playback-state",
   ].join("%20");
-  static redirectUrl = `http://localhost:3001/callback`;
+  static redirectUrl = `http://${window.location.host}/callback`;
 
   private clientId: string;
   private clientSecret: string;
