@@ -18,12 +18,14 @@ function App() {
 
   return (
     <>
-      <button type="button" onClick={() => setMode({ mode: "movie" })}>
-        Movies
-      </button>
-      <button type="button" onClick={() => setMode({ mode: "music" })}>
-        Music
-      </button>
+      <div className={"toolbar"}>
+        <button type="button" onClick={() => setMode({ mode: "movie" })}>
+          Movies
+        </button>
+        <button type="button" onClick={() => setMode({ mode: "music" })}>
+          Music
+        </button>
+      </div>
 
       {mode.mode === "movie" ? <Movie></Movie> : null}
       {mode.mode === "music" && spotifyAuthToken ? (

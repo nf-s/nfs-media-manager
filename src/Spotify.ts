@@ -138,7 +138,7 @@ export async function getQueuePlaylistId(
         );
         if (queuePlaylist) {
           resolve(queuePlaylist.id);
-          console.log(`FOUND PLAYLIST!`);
+          console.log(`FOUND PLAYLIST! ${queuePlaylist.id}`);
           return;
         }
         const nextOffset = response.next

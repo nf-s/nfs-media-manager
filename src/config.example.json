@@ -3,5 +3,6 @@
   "spotifyCreds": {
     "clientId": "xxx",
     "clientSecret": "xxx"
-  }
+  },
+  "spotifyPlaylistId": "xxx"
 }
