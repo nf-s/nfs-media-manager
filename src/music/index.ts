@@ -25,16 +25,18 @@ interface SpotifySavedAlbum extends SpotifyApi.AlbumObjectFull {
   addedDate: string;
 }
 
+export type AlbumId = {
+  spotify: string;
+  upc?: string;
+  rymUrl?: string;
+  musicBrainz?: string;
+  discogs?: string;
+};
+
 interface Album {
   discogs?: { master: DiscogsMaster } | null;
   mb?: { releaseGroup: IReleaseGroup } | null;
-  id: {
-    spotify: string;
-    upc?: string;
-    rymUrl?: string;
-    musicBrainz?: string;
-    discogs?: string;
-  };
+  id: AlbumId;
   spotify: SpotifySavedAlbum;
 }
 
