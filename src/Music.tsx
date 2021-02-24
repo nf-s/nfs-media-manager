@@ -1,14 +1,17 @@
+import { GridLayout } from "@egjs/react-infinitegrid";
 import axios from "axios";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import DataGrid, { Column, Filters, SortDirection } from "react-data-grid";
-
-import Select, { OptionsType } from "react-select";
+import DataGrid, { Column, SortDirection } from "react-data-grid";
 import "react-data-grid/dist/react-data-grid.css";
-import { CleanAlbum } from "../../movie-scraper/src/music/clean";
+import { LazyLoadImage } from "react-lazy-load-image-component";
+import Select, { OptionsType } from "react-select";
 import SpotifyPlayer from "react-spotify-web-playback";
 import SpotifyWebApi from "spotify-web-api-js";
-import { getQueuePlaylistId } from "./Spotify";
+import { CleanAlbum } from "../../movie-scraper/src/music/clean";
 import config from "./config.json";
+import { getQueuePlaylistId } from "./Spotify";
+
+const grid = true;
 
 function Music(props: { spotifyToken: string }) {
   const [spotifyApi, setSpotifyApi] = useState<SpotifyWebApi.SpotifyWebApiJs>();
@@ -28,33 +31,35 @@ function Music(props: { spotifyToken: string }) {
     [string, SortDirection]
   >(["title", "DESC"]);
 
+  const play = (row: CleanAlbum) => {
+    setSpotifyPlayer({
+      uris: [`spotify:album:${row.id.spotify}`],
+      play: true,
+    });
+  };
+
+  const queue = (row: CleanAlbum) => {
+    userState?.queuePlaylist && spotifyApi
+      ? spotifyApi.addTracksToPlaylist(
+          userState?.queuePlaylist,
+          row.tracks.map((id) => `spotify:track:${id}`)
+        )
+      : alert("Queue playlist ID not set!");
+  };
+
   const columns: Column<CleanAlbum>[] = [
     {
       key: "play",
       name: "",
       formatter: (props) => (
         <>
+          <button onClick={() => queue(props.row)}>+</button>
           <button
             onClick={() => {
-              setSpotifyPlayer({
-                uris: [`spotify:album:${props.row.id.spotify}`],
-                play: true,
-              });
+              play(props.row);
             }}
           >
-            Play
-          </button>
-          <button
-            onClick={() =>
-              userState?.queuePlaylist && spotifyApi
-                ? spotifyApi.addTracksToPlaylist(
-                    userState?.queuePlaylist,
-                    props.row.tracks.map((id) => `spotify:track:${id}`)
-                  )
-                : alert("Queue playlist ID not set!")
-            }
-          >
-            Queue
+            &#9654;
           </button>
         </>
       ),
@@ -65,8 +70,8 @@ function Music(props: { spotifyToken: string }) {
       name: "Artist",
       sortable: true,
     },
-    { key: "dateReleased", name: "Release" },
-    { key: "dateAdded", name: "Added" },
+    { key: "dateReleased", name: "Release", sortable: true },
+    { key: "dateAdded", name: "Added", sortable: true },
     {
       key: "genres",
       name: "Genres",
@@ -209,6 +214,29 @@ function Music(props: { spotifyToken: string }) {
     return result;
   }
 
+  // function loadItems(start: number) {
+  //   const items: React.ReactFragment[] = [];
+
+  //   for (let i = start; i < filteredRows.length; ++i) {
+  //     items.push(<div>{filteredRows[i].title}</div>);
+  //   }
+  //   return items;
+  // }
+  // const onAppend: (param: OnAppend) => any = ({ startLoading }) => {
+  //   const list = imageGrid.list;
+  //   const start = list.length;
+  //   const items = loadItems(start);
+
+  //   if (startLoading) startLoading();
+  //   setImageGrid({ list: list.concat(items) });
+  // };
+  // const onLayoutComplete: (param: OnLayoutComplete) => any = ({
+  //   isLayout,
+  //   endLoading,
+  // }) => {
+  //   !isLayout && endLoading && endLoading();
+  // };
+
   return (
     <div className="root-music">
       {/* <div className="header-filters-toolbar">
@@ -221,6 +249,7 @@ function Music(props: { spotifyToken: string }) {
       </div> */}
       <div className="header">
         <Select
+          placeholder="Artist"
           className={"filter-select"}
           value={filters.artists}
           isMulti
@@ -237,6 +266,7 @@ function Music(props: { spotifyToken: string }) {
           isClearable={true}
         />
         <Select
+          placeholder="Genre"
           className={"filter-select"}
           value={filters.genres}
           isMulti
@@ -252,22 +282,92 @@ function Music(props: { spotifyToken: string }) {
           }))}
           isClearable={true}
         />
-      </div>
-      <div className={"data-grid"}>
-        <DataGrid
-          columns={columns}
-          rows={filteredRows}
-          // rowClass={(row) => (row.watched ? "watched" : "unwatched")}
-          defaultColumnOptions={{
-            sortable: true,
-            resizable: true,
+        <Select
+          isSearchable={false}
+          is
+          placeholder="Sort"
+          className={"filter-select"}
+          value={{
+            value: sortColumn,
+            label:
+              columns.find(
+                (c) => c.key === sortColumn && typeof c.name === "string"
+              )?.name ?? sortColumn,
           }}
-          sortColumn={sortColumn}
-          sortDirection={sortDirection}
-          onSort={handleSort}
-          className="fill-grid"
+          onChange={(sort) => {
+            sort?.value &&
+              setSort([
+                sort?.value,
+                sort?.value === sortColumn
+                  ? sortDirection === "ASC"
+                    ? "DESC"
+                    : "ASC"
+                  : sortDirection,
+              ]);
+          }}
+          options={columns
+            .filter((c) => c.sortable)
+            .map((d) => ({
+              value: d.key,
+              label: typeof d.name === "string" ? d.name : d.key,
+            }))}
         />
       </div>
+      {!grid ? (
+        <div className={"data-grid"}>
+          <DataGrid
+            columns={columns}
+            rows={filteredRows}
+            // rowClass={(row) => (row.watched ? "watched" : "unwatched")}
+            defaultColumnOptions={{
+              resizable: true,
+            }}
+            sortColumn={sortColumn}
+            sortDirection={sortDirection}
+            onSort={handleSort}
+            className="fill-grid"
+          />
+        </div>
+      ) : (
+        <div className={"image-grid"}>
+          <div className={"image-grid-container"}>
+            <GridLayout
+              tag="div"
+              options={{
+                useRecycle: true,
+                isConstantSize: true,
+                isEqualSize: true,
+              }}
+            >
+              {filteredRows.map((row, i) => (
+                <div key={i} className="image-album">
+                  <div className="image-wrapper">
+                    <div className="image-buttons-wrapper">
+                      <div className="image-buttons">
+                        <button onClick={() => queue(row)}>+</button>
+                        <button
+                          onClick={() => {
+                            play(row);
+                          }}
+                        >
+                          &#9654;
+                        </button>
+                      </div>
+                    </div>
+                    <LazyLoadImage
+                      src={row.art}
+                      style={{ width: "250px", height: "250px" }}
+                    />
+                  </div>
+
+                  <div className="image-album-title">{row.title}</div>
+                  <div className="image-album-artist">{row.artist}</div>
+                </div>
+              ))}
+            </GridLayout>
+          </div>
+        </div>
+      )}
       <div className={"player"}>
         <SpotifyPlayer
           name="Nick's Web Player"

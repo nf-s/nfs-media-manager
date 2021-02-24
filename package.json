@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "dependencies": {
+    "@egjs/react-infinitegrid": "^3.2.2",
     "@testing-library/jest-dom": "^5.11.8",
     "@testing-library/react": "^11.2.2",
     "@testing-library/user-event": "^12.6.0",
@@ -11,6 +12,7 @@
     "react-data-grid": "^7.0.0-canary.33",
     "react-data-grid-addons": "^7.0.0-alpha.24",
     "react-dom": "^16.8.0",
+    "react-lazy-load-image-component": "^1.5.1",
     "react-scripts": "4.0.1",
     "react-select": "^4.1.0",
     "react-spotify-web-playback": "^0.8.1",
@@ -44,6 +46,7 @@
   "devDependencies": {
     "@types/react": "^16.8.0",
     "@types/react-dom": "^16.8.0",
+    "@types/react-lazy-load-image-component": "^1.5.1",
     "@types/react-select": "^4.0.13"
   }
 }
