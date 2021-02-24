@@ -34,6 +34,18 @@ code {
   grid-template-rows: min-content auto min-content;
 }
 
+.image-grid {
+  overflow: hidden;
+  position: relative;
+}
+
+.image-grid-container {
+  height: 100%;
+  position: absolute;
+  overflow: auto;
+  width: 100vw;
+}
+
 .header {
   display: grid;
   grid-template-columns: repeat(
@@ -48,5 +60,61 @@ code {
   z-index: 99;
 }
 
-.player {
+.image-wrapper {
+  position: relative;
+}
+
+.image-buttons-wrapper {
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  transition: opacity 100ms;
+  position: absolute;
+  background: none;
+}
+
+.image-buttons-wrapper:hover {
+  opacity: 1;
+  background: rgba(0, 0, 0, 20%);
+}
+
+.image-buttons {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.image-buttons button {
+  background: none;
+  border-radius: 20px;
+  height: 40px;
+  width: 40px;
+  border: white solid 1px;
+  color: white;
+  margin: 10px;
+  font-size: 25px;
+  padding-bottom: 4px;
+  z-index: 99;
+}
+
+.image-buttons button:hover {
+  background: rgba(0, 0, 0, 20%);
+  cursor: pointer;
+}
+
+.image-album {
+  padding: 5px;
+}
+
+.image-album-title {
+  font-weight: 600;
+}
+
+.image-album-title,
+.image-album-artist {
+  width: 250px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
