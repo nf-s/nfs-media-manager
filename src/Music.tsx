@@ -11,22 +11,24 @@ import { CleanAlbum } from "../../movie-scraper/src/music/clean";
 import config from "./config.json";
 import { getQueuePlaylistId } from "./Spotify";
 
-const grid = true;
-
 function Music(props: { spotifyToken: string }) {
   const [spotifyApi, setSpotifyApi] = useState<SpotifyWebApi.SpotifyWebApiJs>();
+  const [viewMode, setViewMode] = useState<"grid" | "table">("grid");
   const [rowData, setData] = useState<{ rows: CleanAlbum[] }>({ rows: [] });
   const [deviceId, setDeviceId] = useState<{ id?: string }>({});
   console.log(deviceId);
+
   const [playerState, setSpotifyPlayer] = useState<{
     uris?: string | string[];
     play?: boolean;
     waitForPlay?: boolean;
   }>({ play: true });
+
   const [userState, setSpotifyUser] = useState<{
     id: string;
     queuePlaylist: string;
   }>();
+
   const [[sortColumn, sortDirection], setSort] = useState<
     [string, SortDirection]
   >(["title", "DESC"]);
@@ -63,19 +65,39 @@ function Music(props: { spotifyToken: string }) {
           </button>
         </>
       ),
+      width: 80,
+      resizable: false,
     },
-    { key: "title", name: "Title", sortable: true },
+    {
+      key: "title",
+      name: "Title",
+      sortable: true,
+      formatter: (props) => <Title album={props.row}></Title>,
+    },
     {
       key: "artist",
       name: "Artist",
       sortable: true,
+      formatter: (props) => <Artist album={props.row}></Artist>,
     },
-    { key: "dateReleased", name: "Release", sortable: true },
-    { key: "dateAdded", name: "Added", sortable: true },
+    {
+      key: "dateReleased",
+      name: "Release",
+      sortable: true,
+      width: 100,
+      resizable: false,
+    },
+    {
+      key: "dateAdded",
+      name: "Added",
+      sortable: true,
+      width: 100,
+      resizable: false,
+    },
     {
       key: "genres",
       name: "Genres",
-      formatter: (props) => <span>{props.row.genres.join(", ")}</span>,
+      formatter: (props) => <Genres album={props.row}></Genres>,
     },
   ];
 
@@ -98,7 +120,25 @@ function Music(props: { spotifyToken: string }) {
     const fetchData = async () => {
       const result = await axios("/lib-music.json");
 
-      setData({ rows: result.data });
+      const rows = result.data as CleanAlbum[];
+
+      const ye = new Intl.DateTimeFormat("en", { year: "numeric" });
+      const mo = new Intl.DateTimeFormat("en", { month: "2-digit" });
+      const da = new Intl.DateTimeFormat("en", { day: "2-digit" });
+
+      setData({
+        rows: rows.map((row) => {
+          const dateAdded = new Date(row.dateAdded);
+          row.dateAdded = `${ye.format(dateAdded)}/${mo.format(
+            dateAdded
+          )}/${da.format(dateAdded)}`;
+          const dateReleased = new Date(row.dateReleased);
+          row.dateReleased = `${ye.format(dateReleased)}/${mo.format(
+            dateReleased
+          )}/${da.format(dateReleased)}`;
+          return row;
+        }),
+      });
     };
 
     fetchData();
@@ -237,6 +277,55 @@ function Music(props: { spotifyToken: string }) {
   //   !isLayout && endLoading && endLoading();
   // };
 
+  const Genres = (props: { album: CleanAlbum }) => {
+    const setGenreFilter = (genre: string) => {
+      setFilters({
+        ...filters,
+        genres: !filters.genres.find((a) => a.value === genre)
+          ? [...filters.genres, { value: genre, label: genre }]
+          : filters.genres,
+      });
+    };
+
+    return (
+      <>
+        {props.album.genres.map((g, i) => (
+          <a onClick={() => setGenreFilter(g)}>
+            {g}
+            {i < props.album.genres.length - 1 ? ", " : ""}
+          </a>
+        ))}
+      </>
+    );
+  };
+
+  const Artist = (props: { album: CleanAlbum }) => (
+    <a
+      onClick={() =>
+        setFilters({
+          ...filters,
+          artists: !filters.artists.find((a) => a.value === props.album.artist)
+            ? [
+                ...filters.artists,
+                { value: props.album.artist, label: props.album.artist },
+              ]
+            : filters.artists,
+        })
+      }
+    >
+      {props.album.artist}
+    </a>
+  );
+
+  const Title = (props: { album: CleanAlbum }) => (
+    <a
+      href={`https://open.spotify.com/album/${props.album.id.spotify}`}
+      target="blank"
+    >
+      {props.album.title}
+    </a>
+  );
+
   return (
     <div className="root-music">
       {/* <div className="header-filters-toolbar">
@@ -248,6 +337,12 @@ function Music(props: { spotifyToken: string }) {
         </button>
       </div> */}
       <div className="header">
+        <button
+          type="button"
+          onClick={() => setViewMode(viewMode === "grid" ? "table" : "grid")}
+        >
+          {viewMode === "grid" ? "Table" : "Grid"}
+        </button>
         <Select
           placeholder="Artist"
           className={"filter-select"}
@@ -264,6 +359,16 @@ function Music(props: { spotifyToken: string }) {
             value: d[0],
           }))}
           isClearable={true}
+          theme={(theme) => ({
+            ...theme,
+            colors: {
+              ...theme.colors,
+              primary25: "#00ffab24",
+              primary50: "#00ffab50",
+              primary75: "#00ffab",
+              primary: "#00c583",
+            },
+          })}
         />
         <Select
           placeholder="Genre"
@@ -281,6 +386,16 @@ function Music(props: { spotifyToken: string }) {
             value: d[0],
           }))}
           isClearable={true}
+          theme={(theme) => ({
+            ...theme,
+            colors: {
+              ...theme.colors,
+              primary25: "#00ffab24",
+              primary50: "#00ffab50",
+              primary75: "#00ffab",
+              primary: "#00c583",
+            },
+          })}
         />
         <Select
           isSearchable={false}
@@ -311,9 +426,19 @@ function Music(props: { spotifyToken: string }) {
               value: d.key,
               label: typeof d.name === "string" ? d.name : d.key,
             }))}
+          theme={(theme) => ({
+            ...theme,
+            colors: {
+              ...theme.colors,
+              primary25: "#00ffab24",
+              primary50: "#00ffab50",
+              primary75: "#00ffab",
+              primary: "#00c583",
+            },
+          })}
         />
       </div>
-      {!grid ? (
+      {viewMode === "table" ? (
         <div className={"data-grid"}>
           <DataGrid
             columns={columns}
@@ -340,7 +465,7 @@ function Music(props: { spotifyToken: string }) {
               }}
             >
               {filteredRows.map((row, i) => (
-                <div key={i} className="image-album">
+                <div key={i} className="image-album" style={{ width: 250 }}>
                   <div className="image-wrapper">
                     <div className="image-buttons-wrapper">
                       <div className="image-buttons">
@@ -360,8 +485,15 @@ function Music(props: { spotifyToken: string }) {
                     />
                   </div>
 
-                  <div className="image-album-title">{row.title}</div>
-                  <div className="image-album-artist">{row.artist}</div>
+                  <div className="image-album-title">
+                    <Title album={row}></Title>
+                  </div>
+                  <div className="image-album-artist">
+                    <Artist album={row}></Artist>
+                  </div>
+                  <div className="image-album-extra">
+                    <Genres album={row}></Genres>
+                  </div>
                 </div>
               ))}
             </GridLayout>
