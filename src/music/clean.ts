@@ -8,6 +8,7 @@ export interface CleanAlbum {
   dateAdded: string;
   genres: string[];
   tracks: string[];
+  art: string | undefined;
 }
 
 export type CleanLibrary = CleanAlbum[];
@@ -31,6 +32,7 @@ export async function clean(): Promise<CleanLibrary> {
       dateAdded: album.spotify.addedDate,
       genres,
       tracks: album.spotify.tracks.items.map((track) => track.id),
+      art: album.spotify.images.find((i) => i.height === 300)?.url,
     };
 
     return clean;

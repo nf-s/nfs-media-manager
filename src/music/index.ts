@@ -5,7 +5,11 @@ import { IReleaseGroup } from "musicbrainz-api";
 import { join } from "path";
 import { fileExists, readJSONFile, writeFile } from "../util/fs";
 import { clean } from "./clean";
-import { discogs, DiscogsMaster } from "./scrape/discogs";
+import {
+  discogs,
+  DiscogsMaster,
+  DiscogsReleaseWithRating,
+} from "./scrape/discogs";
 import { musicBrainz } from "./scrape/mb";
 import { scrapeSpotify } from "./scrape/spotify";
 import { upcCsv } from "./scrape/upc-csv";
@@ -34,7 +38,10 @@ export type AlbumId = {
 };
 
 interface Album {
-  discogs?: { master: DiscogsMaster } | null;
+  discogs?: {
+    master: DiscogsMaster;
+    releases?: DiscogsReleaseWithRating[];
+  } | null;
   mb?: { releaseGroup: IReleaseGroup } | null;
   id: AlbumId;
   spotify: SpotifySavedAlbum;

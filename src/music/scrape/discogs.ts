@@ -1,6 +1,6 @@
 import Bottleneck from "bottleneck";
 import { debug as debugInit } from "debug";
-import { DataQualityEnum, Discojs } from "discojs";
+import { CommunityStatusesEnum, DataQualityEnum, Discojs } from "discojs";
 import { albumTitle, library, save } from "..";
 
 const debug = debugInit("music-scraper:discogs");
@@ -54,35 +54,80 @@ export type DiscogsMaster = {
   uri: string;
 };
 
+export type DiscogsRelease = {
+  resource_url: string;
+} & {
+  id: number;
+  title: string;
+  format: string;
+  major_formats: string[];
+  label: string;
+  catno: string;
+  released: string;
+  country: string;
+  status: CommunityStatusesEnum.ACCEPTED;
+  stats: {
+    user: {
+      in_collection: number;
+      in_wantlist: number;
+    };
+    community: {
+      in_collection: number;
+      in_wantlist: number;
+    };
+  };
+  thumb: string;
+};
+
+export type DiscogsReleaseRating = {
+  release_id: number;
+  rating: {
+    count: number;
+    average: number;
+  };
+};
+
+export type DiscogsReleaseWithRating = DiscogsRelease & {
+  ratings: DiscogsReleaseRating;
+};
+
 export async function discogs() {
   // GET MB THINGS!
   if (process.env.DISCOGS_TOKEN) {
     const client = new Discojs({
       userToken: process.env.DISCOGS_TOKEN,
     });
+
     debug(`connected to Discogs!`);
 
     const discogLimiter = new Bottleneck({
-      maxConcurrent: 1,
+      maxConcurrent: 2,
       minTime: 1050,
     });
+
+    debug(`fetching masters`);
+
+    let counter = 0;
 
     await Promise.all(
       Object.values(library.albums)
         // Filter albums which have no Discogs metadata
         .filter((album) => album.discogs === undefined)
-        .map((album) =>
-          discogLimiter.schedule(async () => {
-            try {
-              let id = album.id?.discogs
-                ? parseInt(album.id?.discogs)
-                : undefined;
+        .map(async (album) => {
+          try {
+            let id = album.id?.discogs
+              ? parseInt(album.id?.discogs)
+              : undefined;
 
+            // If master data doesn't exist -> find it
+            if (album.discogs?.master === undefined) {
               // Fetch with UPC
               if (!id && album.id?.upc) {
-                debug(`fetching Discogs with UPC:${album.id?.upc}`);
-                const releases = await client.searchRelease("", {
-                  barcode: album.id?.upc,
+                const releases = await discogLimiter.schedule(() => {
+                  debug(`fetching Discogs with UPC:${album.id?.upc}`);
+                  return client.searchRelease("", {
+                    barcode: album.id?.upc,
+                  });
                 });
 
                 id = releases.results[0]?.master_id ?? undefined;
@@ -90,10 +135,12 @@ export async function discogs() {
 
               // Fetch with artist name and release name
               if (!id) {
-                debug(`NO master ID found - searching with title/artist`);
-                const results = await client.searchMaster("", {
-                  artist: album.spotify.artists[0].name,
-                  releaseTitle: album.spotify.name,
+                const results = await discogLimiter.schedule(() => {
+                  debug(`NO master ID found - searching with title/artist`);
+                  return client.searchMaster("", {
+                    artist: album.spotify.artists[0].name,
+                    releaseTitle: album.spotify.name,
+                  });
                 });
 
                 id = results.results[0]?.master_id ?? undefined;
@@ -103,26 +150,53 @@ export async function discogs() {
                   );
                 }
               }
+            }
 
-              // If we found a master ID -> fetch it!
-              if (id) {
-                album.id.discogs = id.toString();
-                debug(`found master ID ${id} now fetching`);
-                const master = await client.getMaster(id);
+            // If we found a master ID -> fetch the data!
+            if (id) {
+              album.id.discogs = id.toString();
 
-                album.discogs = { master };
-                debug(`SUCCESSFULLY fetched Discogs ${id}`);
-              } else {
-                debug(`FAILED to fetched Discogs ${albumTitle(album)}`);
-                album.discogs = null;
-              }
-            } catch (error) {
+              const master =
+                album.discogs?.master ??
+                (await discogLimiter.schedule(() => {
+                  debug(`found master ID ${id} now fetching master`);
+                  return client.getMaster(id!);
+                }));
+
+              // const releases = (
+              //   await discogLimiter.schedule(() => {
+              //     debug(`fetching releases for ${id}`);
+              //     return client.getMasterVersions(id!);
+              //   })
+              // ).versions;
+
+              // const releasesWithRatings: DiscogsReleaseWithRating[] = await Promise.all(
+              //   releases.map(async (release) => {
+              //     const ratings = await discogLimiter.schedule(() => {
+              //       debug(`fetching ratings for release  ${release.id}`);
+              //       return client.getCommunityReleaseRating(release.id);
+              //     });
+              //     return { ...release, ratings };
+              //   })
+              // );
+
+              album.discogs = { master };
+              // album.discogs = { master, releases: releasesWithRatings };
+              debug(`SUCCESSFULLY fetched Discogs ${id}`);
+            } else {
               debug(`FAILED to fetched Discogs ${albumTitle(album)}`);
-              debug(error);
               album.discogs = null;
             }
-          })
-        )
+          } catch (error) {
+            debug(`FAILED to fetched Discogs ${albumTitle(album)}`);
+            debug(error);
+            album.discogs = null;
+          }
+          counter++;
+          debug(
+            `DONE ${(counter * 100) / Object.values(library.albums).length}%`
+          );
+        })
     );
     await save();
   } else {
