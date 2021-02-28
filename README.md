@@ -1,4 +1,4 @@
-# Media-browser
+# Spotify Album Player
 
 Rename `media-browser/src/config.example.json` to `media-browser/src/config.json` and set `clientId` + `clientSecret` to Spotify API client credentials
 
@@ -8,7 +8,7 @@ Early stages of dev
 
 ## Grid mode
 
-![image](https://user-images.githubusercontent.com/6187649/109418415-6198aa00-7a1c-11eb-91cd-a663b23230b8.png)
+![image](https://user-images.githubusercontent.com/6187649/109418482-b5a38e80-7a1c-11eb-8758-50882f3a6e3b.png)
 
 ## Table mode
 
