@@ -109,94 +109,108 @@ export async function discogs() {
 
     let counter = 0;
 
+    const albumsToFind = Object.values(library.albums)
+      // Filter albums which have no Discogs metadata
+      .filter(
+        (album) =>
+          album.discogs === undefined ||
+          (album.discogs !== null && album.discogs.releases === undefined) ||
+          (process.env.RETRY_FAILED === "true" && album.discogs === null)
+      );
+
     await Promise.all(
-      Object.values(library.albums)
-        // Filter albums which have no Discogs metadata
-        .filter((album) => album.discogs === undefined)
-        .map(async (album) => {
-          try {
-            let id = album.id?.discogs
-              ? parseInt(album.id?.discogs)
-              : undefined;
+      albumsToFind.map(async (album) => {
+        try {
+          let id = album.id?.discogs ? parseInt(album.id?.discogs) : undefined;
 
-            // If master data doesn't exist -> find it
-            if (album.discogs?.master === undefined) {
-              // Fetch with UPC
-              if (!id && album.id?.upc) {
-                const releases = await discogLimiter.schedule(() => {
-                  debug(`fetching Discogs with UPC:${album.id?.upc}`);
-                  return client.searchRelease("", {
-                    barcode: album.id?.upc,
-                  });
+          // If master data doesn't exist -> find it
+          if (album.discogs?.master === undefined) {
+            // Fetch with UPC
+            if (!id && album.id?.upc) {
+              const releases = await discogLimiter.schedule(() => {
+                debug(`fetching Discogs with UPC:${album.id?.upc}`);
+                return client.searchRelease("", {
+                  barcode: album.id?.upc,
                 });
+              });
 
-                id = releases.results[0]?.master_id ?? undefined;
-              }
-
-              // Fetch with artist name and release name
-              if (!id) {
-                const results = await discogLimiter.schedule(() => {
-                  debug(`NO master ID found - searching with title/artist`);
-                  return client.searchMaster("", {
-                    artist: album.spotify.artists[0].name,
-                    releaseTitle: album.spotify.name,
-                  });
-                });
-
-                id = results.results[0]?.master_id ?? undefined;
-                if (id) {
-                  debug(
-                    `Found master through search: "${results.results[0].title}"`
-                  );
-                }
-              }
+              id = releases.results[0]?.master_id ?? undefined;
             }
 
-            // If we found a master ID -> fetch the data!
-            if (id) {
-              album.id.discogs = id.toString();
+            // Fetch with artist name and release name
+            if (!id) {
+              const results = await discogLimiter.schedule(() => {
+                debug(`NO master ID found - searching with title/artist`);
+                return client.searchMaster("", {
+                  artist: album.spotify.artists[0].name,
+                  releaseTitle: album.spotify.name,
+                });
+              });
 
-              const master =
-                album.discogs?.master ??
-                (await discogLimiter.schedule(() => {
-                  debug(`found master ID ${id} now fetching master`);
-                  return client.getMaster(id!);
-                }));
-
-              // const releases = (
-              //   await discogLimiter.schedule(() => {
-              //     debug(`fetching releases for ${id}`);
-              //     return client.getMasterVersions(id!);
-              //   })
-              // ).versions;
-
-              // const releasesWithRatings: DiscogsReleaseWithRating[] = await Promise.all(
-              //   releases.map(async (release) => {
-              //     const ratings = await discogLimiter.schedule(() => {
-              //       debug(`fetching ratings for release  ${release.id}`);
-              //       return client.getCommunityReleaseRating(release.id);
-              //     });
-              //     return { ...release, ratings };
-              //   })
-              // );
-
-              album.discogs = { master };
-              // album.discogs = { master, releases: releasesWithRatings };
-              debug(`SUCCESSFULLY fetched Discogs ${id}`);
-            } else {
-              debug(`FAILED to fetched Discogs ${albumTitle(album)}`);
-              album.discogs = null;
+              id = results.results[0]?.master_id ?? undefined;
+              if (id) {
+                debug(
+                  `Found master through search: "${results.results[0].title}"`
+                );
+              }
             }
-          } catch (error) {
+          }
+
+          // If we found a master ID -> fetch the data!
+          if (id) {
+            album.id.discogs = id.toString();
+
+            const master =
+              album.discogs?.master ??
+              (await discogLimiter.schedule(() => {
+                debug(`found master ID ${id} now fetching master`);
+                return client.getMaster(id!);
+              }));
+
+            const releases = (
+              await discogLimiter.schedule(() => {
+                debug(`fetching releases for ${id}`);
+                return client.getMasterVersions(id!);
+              })
+            ).versions;
+
+            // Only fetch top 10 releases by in_collection
+            const top10releases = releases
+              .sort(
+                (a, b) =>
+                  b.stats.community.in_collection -
+                  a.stats.community.in_collection
+              )
+              .slice(0, 10);
+
+            const releasesWithRatings: DiscogsReleaseWithRating[] = await Promise.all(
+              top10releases.map(async (release) => {
+                const ratings = await discogLimiter.schedule(() => {
+                  debug(`fetching ratings for release  ${release.id}`);
+                  return client.getCommunityReleaseRating(release.id);
+                });
+                return { ...release, ratings };
+              })
+            );
+
+            album.discogs = { master, releases, releasesWithRatings };
+            // album.discogs = { master, releases: releasesWithRatings };
+            debug(`SUCCESSFULLY fetched Discogs ${id}`);
+          } else {
             debug(`FAILED to fetched Discogs ${albumTitle(album)}`);
-            debug(error);
             album.discogs = null;
           }
-          counter++;
-          debug(
-            `DONE ${(counter * 100) / Object.values(library.albums).length}%`
-          );
-        })
+        } catch (error) {
+          debug(`FAILED to fetched Discogs ${albumTitle(album)}`);
+          debug(error);
+          album.discogs = null;
+        }
+        counter++;
+        if (counter % 100 === 0) {
+          await save();
+        }
+        debug(`DONE ${(counter * 100) / albumsToFind.length}%`);
+      })
     );
     await save();
   } else {

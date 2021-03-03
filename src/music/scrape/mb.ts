@@ -27,7 +27,11 @@ export async function musicBrainz() {
     await Promise.all(
       Object.values(library.albums)
         // Filter albums which have no MusicBrainz metadata
-        .filter((album) => album.mb === undefined)
+        .filter(
+          (album) =>
+            album.mb === undefined ||
+            (process.env.RETRY_FAILED === "true" && album.mb === null)
+        )
         .map((album) =>
           mbLimiter.schedule(async () => {
             try {
