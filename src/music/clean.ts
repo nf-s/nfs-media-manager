@@ -1,7 +1,5 @@
 import { AlbumId, library } from ".";
 
-interface SpotifyFeatures {}
-
 export interface CleanAlbum {
   id: AlbumId;
   title: string;
