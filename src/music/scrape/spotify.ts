@@ -27,6 +27,7 @@ export async function scrapeSpotify() {
               limit,
               offset,
             });
+
             response.body.items.forEach((savedAlbum) => {
               if (!library.albums[savedAlbum.album.id]) {
                 newAlbums += 1;
@@ -38,6 +39,7 @@ export async function scrapeSpotify() {
                   spotify: {
                     addedDate: savedAlbum.added_at,
                     ...savedAlbum.album,
+                    audioFeatures: [],
                   },
                 };
               }
@@ -67,6 +69,46 @@ export async function scrapeSpotify() {
       `library has ${
         Object.keys(library.albums).length
       } total albums from spotify`
+    );
+
+    await save();
+
+    // Get audio features
+
+    // Flat array of track IDs
+    const trackIds = Object.values(library.albums)
+      .filter((album) => album.spotify.audioFeatures === undefined)
+      .reduce<string[][]>((tracks, album) => {
+        album.spotify.audioFeatures = [];
+        tracks.push(
+          ...album.spotify.tracks.items.map((t) => [album.spotify.id, t.id])
+        );
+        return tracks;
+      }, []);
+
+    const numBatches = Math.ceil(trackIds.length / 100);
+
+    const tracksBatch = new Array(numBatches)
+      .fill(0)
+      .map((v, index) => trackIds.slice(index * 100, (index + 1) * 100));
+
+    await Promise.all(
+      tracksBatch.map((batch, i) =>
+        spotifyLimiter.schedule(async () => {
+          debug(`fetching spotify track audo features offset=${i * 100}`);
+          const audioFeatures = await spotifyApi.getAudioFeaturesForTracks(
+            batch.map(([albumId, trackId]) => trackId)
+          );
+          audioFeatures.body.audio_features.forEach((track) => {
+            const albumId = batch.find(
+              ([albumId, trackId]) => track.id === trackId
+            )?.[0];
+            if (albumId) {
+              library.albums[albumId].spotify.audioFeatures.push(track);
+            }
+          });
+        })
+      )
     );
 
     await save();

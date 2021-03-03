@@ -8,6 +8,7 @@ import { clean } from "./clean";
 import {
   discogs,
   DiscogsMaster,
+  DiscogsRelease,
   DiscogsReleaseWithRating,
 } from "./scrape/discogs";
 import { musicBrainz } from "./scrape/mb";
@@ -27,6 +28,7 @@ export const LIBRARY_PATH = join(process.env.DATA_DIR, "lib-music.json");
 
 interface SpotifySavedAlbum extends SpotifyApi.AlbumObjectFull {
   addedDate: string;
+  audioFeatures: SpotifyApi.AudioFeaturesObject[];
 }
 
 export type AlbumId = {
@@ -40,7 +42,9 @@ export type AlbumId = {
 interface Album {
   discogs?: {
     master: DiscogsMaster;
-    releases?: DiscogsReleaseWithRating[];
+    releases?: DiscogsRelease[];
+    /** Only top 10 releases will have ratings */
+    releasesWithRatings?: DiscogsReleaseWithRating[];
   } | null;
   mb?: { releaseGroup: IReleaseGroup } | null;
   id: AlbumId;
