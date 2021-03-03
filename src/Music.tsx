@@ -11,6 +11,15 @@ import { CleanAlbum } from "../../movie-scraper/src/music/clean";
 import config from "./config.json";
 import { getQueuePlaylistId } from "./Spotify";
 
+function formatTime(seconds: number) {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = Math.round(seconds % 60);
+  return [h, m > 9 ? m : h ? "0" + m : m || "0", s > 9 ? s : "0" + s]
+    .filter(Boolean)
+    .join(":");
+}
+
 function Music(props: { spotifyToken: string }) {
   const [spotifyApi, setSpotifyApi] = useState<SpotifyWebApi.SpotifyWebApiJs>();
   const [viewMode, setViewMode] = useState<"grid" | "table">("grid");
@@ -49,9 +58,26 @@ function Music(props: { spotifyToken: string }) {
       : alert("Queue playlist ID not set!");
   };
 
+  const numericCols: [keyof CleanAlbum, string][] = [
+    ["acousticness", ""],
+    ["danceability", ""],
+    ["energy", ""],
+    ["instrumentalness", ""],
+    ["liveness", ""],
+    ["loudness", ""],
+    ["mode", ""],
+    ["speechiness", ""],
+    ["tempo", ""],
+    ["valence", ""],
+    ["ratingDiscogsVotes", ""],
+    ["ratingDiscogsValue", ""],
+    ["popularityDiscogs", ""],
+    ["popularitySpotify", ""],
+  ];
+
   const columns: Column<CleanAlbum>[] = [
     {
-      key: "play",
+      key: "Spotify Controls",
       name: "",
       formatter: (props) => (
         <>
@@ -81,6 +107,13 @@ function Music(props: { spotifyToken: string }) {
       formatter: (props) => <Artist album={props.row}></Artist>,
     },
     {
+      key: "durationSec",
+      name: "Duration",
+      sortable: true,
+      formatter: (props) => <>{formatTime(props.row.durationSec)}</>,
+      width: 80,
+    },
+    {
       key: "dateReleased",
       name: "Release",
       sortable: true,
@@ -99,13 +132,33 @@ function Music(props: { spotifyToken: string }) {
       name: "Genres",
       formatter: (props) => <Genres album={props.row}></Genres>,
     },
+    ...numericCols.map((col) => ({
+      key: col[0],
+      name: col[1] !== "" ? col[1] : col[0],
+      sortable: true,
+      resizable: false,
+    })),
   ];
 
-  type Filter = OptionsType<{ label: string; value: string }>;
+  const defaultVisible = [
+    "Spotify Controls",
+    "title",
+    "artist",
+    "durationSec",
+    "dateReleased",
+    "dateAdded",
+    "genres",
+  ];
+
+  const [visibleColumns, setVisibleColumns] = useState<Column<CleanAlbum>[]>(
+    columns.filter((c) => defaultVisible.includes(c.key))
+  );
+
+  type SelectValues = OptionsType<{ label: string; value: string }>;
 
   const [filters, setFilters] = useState<{
-    artists: Filter;
-    genres: Filter;
+    artists: SelectValues;
+    genres: SelectValues;
   }>({ artists: [], genres: [] });
   const [enableFilterRow, setEnableFilterRow] = useState(true);
 
@@ -193,6 +246,16 @@ function Music(props: { spotifyToken: string }) {
         );
         break;
       default:
+        const numericColKey = numericCols.find(
+          (col) => col[0] === sortColumn
+        )?.[0];
+        if (numericColKey) {
+          sortedRows = sortedRows
+            .filter((a) => (a as any)[numericColKey] !== undefined)
+            .sort(
+              (a, b) => (a as any)[numericColKey] - (b as any)[numericColKey]
+            );
+        }
     }
 
     return sortDirection === "DESC" ? sortedRows.reverse() : sortedRows;
@@ -277,7 +340,13 @@ function Music(props: { spotifyToken: string }) {
   //   !isLayout && endLoading && endLoading();
   // };
 
-  const Genres = (props: { album: CleanAlbum }) => {
+  type FieldRenderer = (props: { album: CleanAlbum }) => JSX.Element;
+
+  const Generic = (key: keyof CleanAlbum) => (props: { album: CleanAlbum }) => (
+    <>{props.album[key]}</>
+  );
+
+  const Genres: FieldRenderer = (props: { album: CleanAlbum }) => {
     const setGenreFilter = (genre: string) => {
       setFilters({
         ...filters,
@@ -299,7 +368,7 @@ function Music(props: { spotifyToken: string }) {
     );
   };
 
-  const Artist = (props: { album: CleanAlbum }) => (
+  const Artist: FieldRenderer = (props: { album: CleanAlbum }) => (
     <a
       onClick={() =>
         setFilters({
@@ -317,7 +386,7 @@ function Music(props: { spotifyToken: string }) {
     </a>
   );
 
-  const Title = (props: { album: CleanAlbum }) => (
+  const Title: FieldRenderer = (props: { album: CleanAlbum }) => (
     <a
       href={`https://open.spotify.com/album/${props.album.id.spotify}`}
       target="blank"
@@ -437,11 +506,55 @@ function Music(props: { spotifyToken: string }) {
             },
           })}
         />
+
+        {viewMode === "table" ? (
+          <Select
+            controlShouldRenderValue={false}
+            isSearchable={false}
+            closeMenuOnSelect={false}
+            isMulti
+            hideSelectedOptions={false}
+            isClearable={false}
+            placeholder="Columns"
+            className={"filter-select"}
+            value={visibleColumns.map((col) => ({
+              value: col.key,
+              label:
+                typeof col.name === "string" && col.name !== ""
+                  ? col.name
+                  : col.key,
+            }))}
+            onChange={(selectedCols) => {
+              setVisibleColumns(
+                columns.filter((col) =>
+                  selectedCols.find((c) => c.value === col.key)
+                )
+              );
+            }}
+            options={columns.map((col) => ({
+              value: col.key,
+              label:
+                typeof col.name === "string" && col.name !== ""
+                  ? col.name
+                  : col.key,
+            }))}
+            theme={(theme) => ({
+              ...theme,
+              colors: {
+                ...theme.colors,
+                primary25: "#00ffab24",
+                primary50: "#00ffab50",
+                primary75: "#00ffab",
+                primary: "#00c583",
+              },
+            })}
+          />
+        ) : null}
       </div>
       {viewMode === "table" ? (
         <div className={"data-grid"}>
           <DataGrid
-            columns={columns}
+            columns={visibleColumns}
             rows={filteredRows}
             // rowClass={(row) => (row.watched ? "watched" : "unwatched")}
             defaultColumnOptions={{
