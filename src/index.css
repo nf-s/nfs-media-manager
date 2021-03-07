@@ -163,6 +163,7 @@ code {
 .image-album-extra {
   font-weight: 200;
   font-size: 12px;
+  height: 16px;
 }
 
 a {
@@ -174,4 +175,18 @@ a:hover {
   cursor: pointer;
   color: #00c583;
   text-decoration: underline;
+}
+
+a.reverse-sort {
+  display: table-cell;
+  width: 10px;
+  height: 32px;
+  font-size: 16px;
+  vertical-align: middle;
+  padding-left: 6px;
+}
+
+.sort-select {
+  float: left;
+  width: calc(100% - 14px);
 }

@@ -7,6 +7,7 @@ import { LazyLoadImage } from "react-lazy-load-image-component";
 import Select, { OptionsType } from "react-select";
 import SpotifyPlayer from "react-spotify-web-playback";
 import SpotifyWebApi from "spotify-web-api-js";
+import { PickProperties } from "ts-essentials";
 import { CleanAlbum } from "../../movie-scraper/src/music/clean";
 import config from "./config.json";
 import { getQueuePlaylistId } from "./Spotify";
@@ -39,8 +40,8 @@ function Music(props: { spotifyToken: string }) {
   }>();
 
   const [[sortColumn, sortDirection], setSort] = useState<
-    [string, SortDirection]
-  >(["title", "DESC"]);
+    [keyof CleanAlbum, SortDirection]
+  >(["dateAdded", "DESC"]);
 
   const play = (row: CleanAlbum) => {
     setSpotifyPlayer({
@@ -58,28 +59,203 @@ function Music(props: { spotifyToken: string }) {
       : alert("Queue playlist ID not set!");
   };
 
-  const numericCols: [keyof CleanAlbum, string][] = [
-    ["acousticness", ""],
-    ["danceability", ""],
-    ["energy", ""],
-    ["instrumentalness", ""],
-    ["liveness", ""],
-    ["loudness", ""],
-    ["mode", ""],
-    ["speechiness", ""],
-    ["tempo", ""],
-    ["valence", ""],
-    ["ratingDiscogsVotes", ""],
-    ["ratingDiscogsValue", ""],
-    ["popularityDiscogs", ""],
-    ["popularitySpotify", ""],
+  type FieldRenderer = (props: { album: CleanAlbum }) => JSX.Element;
+
+  const Numeric = (col: NumericCol) => {
+    if (col.key === undefined) return () => <></>;
+    const max =
+      col.max === null
+        ? null
+        : col.max ?? Math.max(...rowData.rows.map((r) => r[col.key] ?? 0));
+
+    return (props: { album: CleanAlbum }) =>
+      max === null ? (
+        <>
+          {(props.album[col.key]! * (col.mult ?? 1)).toFixed(col.precision)}
+          {col.append}
+        </>
+      ) : (
+        <>
+          {(((props.album[col.key] ?? 0) * (col.mult ?? 1)) / max!).toFixed(
+            col.precision
+          )}
+          {col.append}
+        </>
+      );
+  };
+  const Generic = (key: keyof CleanAlbum) => (props: { album: CleanAlbum }) => (
+    <>{props.album[key]}</>
+  );
+
+  const Genres: FieldRenderer = (props: { album: CleanAlbum }) => {
+    const setGenreFilter = (genre: string) => {
+      setFilters({
+        ...filters,
+        genres: !filters.genres.find((a) => a.value === genre)
+          ? [...filters.genres, { value: genre, label: genre }]
+          : filters.genres,
+      });
+    };
+
+    return (
+      <>
+        {props.album.genres.map((g, i) => (
+          <a onClick={() => setGenreFilter(g)}>
+            {g}
+            {i < props.album.genres.length - 1 ? ", " : ""}
+          </a>
+        ))}
+      </>
+    );
+  };
+
+  const Artist: FieldRenderer = (props: { album: CleanAlbum }) => (
+    <a
+      onClick={() =>
+        setFilters({
+          ...filters,
+          artists: !filters.artists.find((a) => a.value === props.album.artist)
+            ? [
+                ...filters.artists,
+                { value: props.album.artist, label: props.album.artist },
+              ]
+            : filters.artists,
+        })
+      }
+    >
+      {props.album.artist}
+    </a>
+  );
+
+  const Title: FieldRenderer = (props: { album: CleanAlbum }) => (
+    <a
+      href={`https://open.spotify.com/album/${props.album.id.spotify}`}
+      title={props.album.title}
+      target="blank"
+    >
+      {props.album.title}
+    </a>
+  );
+
+  type NumericCol = {
+    key: keyof PickProperties<CleanAlbum, number | undefined> & string;
+    name: string;
+    max: number | null | undefined;
+    append: string;
+    precision: number;
+    mult: number | undefined;
+  };
+
+  const numericCols: NumericCol[] = [
+    {
+      key: "ratingDiscogsVotes",
+      name: "Discogs Votes",
+      max: null,
+      append: "",
+      mult: 1,
+      precision: 0,
+    },
+    {
+      key: "ratingDiscogsValue",
+      name: "Discogs Rating",
+      max: 5,
+      append: "%",
+      mult: 100,
+      precision: 1,
+    },
+    {
+      key: "popularityDiscogs",
+      name: "Discogs Popularity",
+      max: undefined,
+      append: "%",
+      mult: 100,
+      precision: 1,
+    },
+    {
+      key: "popularitySpotify",
+      name: "Spotify Popularity",
+      max: 100,
+      append: "%",
+      mult: 100,
+      precision: 1,
+    },
+    {
+      key: "acousticness",
+      name: "Acousticness",
+      max: 1,
+      append: "%",
+      mult: 100,
+      precision: 1,
+    },
+    {
+      key: "danceability",
+      name: "Danceability",
+      max: 1,
+      append: "%",
+      mult: 100,
+      precision: 1,
+    },
+    {
+      key: "energy",
+      name: "Energy",
+      max: 1,
+      append: "%",
+      mult: 100,
+      precision: 1,
+    },
+    {
+      key: "instrumentalness",
+      name: "Intrumentalness",
+      max: 1,
+      append: "%",
+      mult: 100,
+      precision: 1,
+    },
+    {
+      key: "liveness",
+      name: "Liveness",
+      max: 1,
+      append: "%",
+      mult: 100,
+      precision: 1,
+    },
+    {
+      key: "loudness",
+      name: "Loudness",
+      max: null,
+      append: "dB",
+      mult: 1,
+      precision: 1,
+    },
+    { key: "mode", name: "Mode", max: 1, append: "%", mult: 100, precision: 1 },
+    {
+      key: "speechiness",
+      name: "Speechiness",
+      max: 1,
+      append: "%",
+      mult: 100,
+      precision: 1,
+    },
+    { key: "tempo", name: "BPM", max: null, append: "", mult: 1, precision: 1 },
+    {
+      key: "valence",
+      name: "Valence",
+      max: 1,
+      append: "%",
+      mult: 100,
+      precision: 1,
+    },
   ];
 
-  const columns: Column<CleanAlbum>[] = [
+  type ColumnWithFieldRenderer = Column<CleanAlbum> & {
+    fieldRenderer?: FieldRenderer;
+  };
+
+  const columns: ColumnWithFieldRenderer[] = [
     {
       key: "Spotify Controls",
       name: "",
-      formatter: (props) => (
+      formatter: (props: { row: CleanAlbum }) => (
         <>
           <button onClick={() => queue(props.row)}>+</button>
           <button
@@ -98,19 +274,21 @@ function Music(props: { spotifyToken: string }) {
       key: "title",
       name: "Title",
       sortable: true,
-      formatter: (props) => <Title album={props.row}></Title>,
+      fieldRenderer: Title,
     },
     {
       key: "artist",
       name: "Artist",
       sortable: true,
-      formatter: (props) => <Artist album={props.row}></Artist>,
+      fieldRenderer: Artist,
     },
     {
       key: "durationSec",
       name: "Duration",
       sortable: true,
-      formatter: (props) => <>{formatTime(props.row.durationSec)}</>,
+      fieldRenderer: ((props) => (
+        <>{formatTime(props.album.durationSec)}</>
+      )) as FieldRenderer,
       width: 80,
     },
     {
@@ -130,15 +308,24 @@ function Music(props: { spotifyToken: string }) {
     {
       key: "genres",
       name: "Genres",
-      formatter: (props) => <Genres album={props.row}></Genres>,
+      fieldRenderer: Genres,
     },
     ...numericCols.map((col) => ({
-      key: col[0],
-      name: col[1] !== "" ? col[1] : col[0],
+      key: col.key,
+      name: col.name !== "" ? col.name : col.key,
       sortable: true,
       resizable: false,
+      width: 80,
+      fieldRenderer: Numeric(col),
     })),
-  ];
+  ]
+    // If column has `fieldRenderer` (which isn't part of data-grid), translate it into `formatter` so it can be used in table-cells
+    .map((col: ColumnWithFieldRenderer) => {
+      if (col.fieldRenderer && !col.formatter) {
+        col.formatter = (props) => col.fieldRenderer!({ album: props.row });
+      }
+      return col;
+    });
 
   const defaultVisible = [
     "Spotify Controls",
@@ -246,9 +433,8 @@ function Music(props: { spotifyToken: string }) {
         );
         break;
       default:
-        const numericColKey = numericCols.find(
-          (col) => col[0] === sortColumn
-        )?.[0];
+        const numericColKey = numericCols.find((col) => col.key === sortColumn)
+          ?.key;
         if (numericColKey) {
           sortedRows = sortedRows
             .filter((a) => (a as any)[numericColKey] !== undefined)
@@ -287,7 +473,7 @@ function Music(props: { spotifyToken: string }) {
 
   const handleSort = useCallback(
     (columnKey: string, direction: SortDirection) => {
-      setSort([columnKey, direction]);
+      setSort([columnKey as keyof CleanAlbum, direction]);
     },
     []
   );
@@ -339,61 +525,6 @@ function Music(props: { spotifyToken: string }) {
   // }) => {
   //   !isLayout && endLoading && endLoading();
   // };
-
-  type FieldRenderer = (props: { album: CleanAlbum }) => JSX.Element;
-
-  const Generic = (key: keyof CleanAlbum) => (props: { album: CleanAlbum }) => (
-    <>{props.album[key]}</>
-  );
-
-  const Genres: FieldRenderer = (props: { album: CleanAlbum }) => {
-    const setGenreFilter = (genre: string) => {
-      setFilters({
-        ...filters,
-        genres: !filters.genres.find((a) => a.value === genre)
-          ? [...filters.genres, { value: genre, label: genre }]
-          : filters.genres,
-      });
-    };
-
-    return (
-      <>
-        {props.album.genres.map((g, i) => (
-          <a onClick={() => setGenreFilter(g)}>
-            {g}
-            {i < props.album.genres.length - 1 ? ", " : ""}
-          </a>
-        ))}
-      </>
-    );
-  };
-
-  const Artist: FieldRenderer = (props: { album: CleanAlbum }) => (
-    <a
-      onClick={() =>
-        setFilters({
-          ...filters,
-          artists: !filters.artists.find((a) => a.value === props.album.artist)
-            ? [
-                ...filters.artists,
-                { value: props.album.artist, label: props.album.artist },
-              ]
-            : filters.artists,
-        })
-      }
-    >
-      {props.album.artist}
-    </a>
-  );
-
-  const Title: FieldRenderer = (props: { album: CleanAlbum }) => (
-    <a
-      href={`https://open.spotify.com/album/${props.album.id.spotify}`}
-      target="blank"
-    >
-      {props.album.title}
-    </a>
-  );
 
   return (
     <div className="root-music">
@@ -466,51 +597,58 @@ function Music(props: { spotifyToken: string }) {
             },
           })}
         />
-        <Select
-          isSearchable={false}
-          is
-          placeholder="Sort"
-          className={"filter-select"}
-          value={{
-            value: sortColumn,
-            label:
-              columns.find(
-                (c) => c.key === sortColumn && typeof c.name === "string"
-              )?.name ?? sortColumn,
-          }}
-          onChange={(sort) => {
-            sort?.value &&
-              setSort([
-                sort?.value,
-                sort?.value === sortColumn
-                  ? sortDirection === "ASC"
-                    ? "DESC"
-                    : "ASC"
-                  : sortDirection,
-              ]);
-          }}
-          options={columns
-            .filter((c) => c.sortable)
-            .map((d) => ({
-              value: d.key,
-              label: typeof d.name === "string" ? d.name : d.key,
-            }))}
-          theme={(theme) => ({
-            ...theme,
-            colors: {
-              ...theme.colors,
-              primary25: "#00ffab24",
-              primary50: "#00ffab50",
-              primary75: "#00ffab",
-              primary: "#00c583",
-            },
-          })}
-        />
+        <div>
+          <Select
+            placeholder="Sort"
+            className={"filter-select sort-select"}
+            value={{
+              value: sortColumn,
+              label:
+                columns.find(
+                  (c) => c.key === sortColumn && typeof c.name === "string"
+                )?.name ?? sortColumn,
+            }}
+            onChange={(sort) => {
+              sort?.value &&
+                setSort([
+                  sort?.value,
+                  sort?.value === sortColumn
+                    ? sortDirection === "ASC"
+                      ? "DESC"
+                      : "ASC"
+                    : sortDirection,
+                ]);
+            }}
+            options={columns
+              .filter((c) => c.sortable)
+              .map((d) => ({
+                value: d.key as keyof CleanAlbum,
+                label: typeof d.name === "string" ? d.name : d.key,
+              }))}
+            theme={(theme) => ({
+              ...theme,
+              colors: {
+                ...theme.colors,
+                primary25: "#00ffab24",
+                primary50: "#00ffab50",
+                primary75: "#00ffab",
+                primary: "#00c583",
+              },
+            })}
+          />
+          <a
+            className="reverse-sort"
+            onClick={() =>
+              setSort([sortColumn, sortDirection === "ASC" ? "DESC" : "ASC"])
+            }
+          >
+            &#8597;
+          </a>
+        </div>
 
         {viewMode === "table" ? (
           <Select
             controlShouldRenderValue={false}
-            isSearchable={false}
             closeMenuOnSelect={false}
             isMulti
             hideSelectedOptions={false}
@@ -606,6 +744,16 @@ function Music(props: { spotifyToken: string }) {
                   </div>
                   <div className="image-album-extra">
                     <Genres album={row}></Genres>
+                  </div>
+                  {/* Show extra line of information if sorting by a column which isn't displayed (title, artist or genre) */}
+                  <div className="image-album-extra">
+                    {!["genre", "artist", "title"].includes(sortColumn)
+                      ? // Use column `fieldRenderer` if it exists, otherwise use Generic
+                        (
+                          columns.find((col) => col.key === sortColumn)
+                            ?.fieldRenderer ?? Generic(sortColumn)
+                        )({ album: row })
+                      : null}
                   </div>
                 </div>
               ))}
