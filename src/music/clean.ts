@@ -24,19 +24,21 @@ export interface CleanAlbum {
   ratingDiscogsValue?: number;
   popularityDiscogs?: number;
   popularitySpotify?: number;
+  popularityLastFm?: number;
+  scrobbles?: number;
 }
 
 export type CleanLibrary = CleanAlbum[];
 
 export async function clean(): Promise<CleanLibrary> {
   return Object.values(library.albums).map((album) => {
-    const mbGenres = (album.mb?.releaseGroup as any)?.genres?.map(
-      (g: any) => g.name
-    );
     const genres = [
       ...(album.discogs?.master.genres ?? []),
       ...(album.discogs?.master.styles ?? []),
-      ...(!album.id.discogs ? mbGenres ?? [] : []),
+      ...(!album.id.discogs
+        ? (album.mb?.releaseGroup as any)?.genres?.map((g: any) => g.name) ?? []
+        : []),
+      ...(album.lastFm?.tags?.tag?.map((t) => t.name) ?? []),
     ].map((g) => (g as string).toLowerCase());
 
     const mean = (nums: number[]) =>
@@ -78,13 +80,16 @@ export async function clean(): Promise<CleanLibrary> {
       ),
       dateReleased: album.spotify.release_date,
       dateAdded: album.spotify.addedDate,
-      genres,
+      genres: Array.from(new Set(genres)),
       tracks: album.spotify.tracks.items.map((track) => track.id),
       art: album.spotify.images.find((i) => i.height === 300)?.url,
       ratingDiscogsValue: discogsRating?.value,
       ratingDiscogsVotes: discogsRating?.votes,
       popularityDiscogs: discogsPopularity,
       popularitySpotify: album.spotify.popularity,
+      popularityLastFm: album.lastFm?.listeners
+        ? parseInt(album.lastFm?.listeners)
+        : undefined,
       acousticness: mean(
         album.spotify.audioFeatures.map((a) => a.acousticness)
       ),
@@ -101,6 +106,9 @@ export async function clean(): Promise<CleanLibrary> {
       speechiness: mean(album.spotify.audioFeatures.map((a) => a.speechiness)),
       tempo: mean(album.spotify.audioFeatures.map((a) => a.tempo)),
       valence: mean(album.spotify.audioFeatures.map((a) => a.valence)),
+      scrobbles: album.lastFm?.userplaycount
+        ? parseInt(album.lastFm?.userplaycount)
+        : undefined,
     };
 
     return clean;
