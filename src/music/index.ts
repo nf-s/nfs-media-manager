@@ -11,6 +11,7 @@ import {
   DiscogsRelease,
   DiscogsReleaseWithRating,
 } from "./scrape/discogs";
+import { LastFmAlbum, scrapeLastFm as lastFm } from "./scrape/last-fm";
 import { musicBrainz } from "./scrape/mb";
 import { scrapeSpotify } from "./scrape/spotify";
 import { upcCsv } from "./scrape/upc-csv";
@@ -47,6 +48,7 @@ interface Album {
     releasesWithRatings?: DiscogsReleaseWithRating[];
   } | null;
   mb?: { releaseGroup: IReleaseGroup } | null;
+  lastFm?: LastFmAlbum | null;
   id: AlbumId;
   spotify: SpotifySavedAlbum;
 }
@@ -84,6 +86,8 @@ async function init() {
   await musicBrainz();
 
   await discogs();
+
+  await lastFm();
 
   const cleanLibrary = await clean();
 
