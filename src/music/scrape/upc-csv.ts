@@ -1,6 +1,7 @@
 import { debug as debugInit } from "debug";
-import { library, save } from "..";
+import { library, save, Source } from "..";
 import { fileExists, readCsv } from "../../util/fs";
+import { searchSpotify } from "./spotify";
 const debug = debugInit("music-scraper:upc-csv");
 
 export async function upcCsv() {
@@ -15,21 +16,27 @@ export async function upcCsv() {
     const header = csv.splice(0, 1)[0];
 
     const upcIndex = header.indexOf("upc");
-    const dateAddedIndex = header.indexOf("addedDate");
+    const addedDateIndex = header.indexOf("addedDate");
+    const titleIndex = header.indexOf("title");
+    const artistIndex = header.indexOf("artist");
 
     const upcNotFound: string[][] = [];
 
     csv.forEach((row) => {
       const album = Object.values(library.albums).find(
-        (album) =>
-          album.spotify.external_ids.upc &&
-          album.spotify.external_ids.upc === row[upcIndex]
+        (a) =>
+          a.spotify.external_ids.upc &&
+          a.spotify.external_ids.upc === row[upcIndex]
       );
       if (album) {
         debug(`Found album ${album.spotify.external_ids.upc}`);
-        if (dateAddedIndex !== -1) {
-          album.spotify.addedDate = row[dateAddedIndex];
-          debug(`Overwritting addedDate to ${row[dateAddedIndex]}`);
+        if (
+          addedDateIndex !== -1 &&
+          typeof row[addedDateIndex] !== "undefined" &&
+          new Date(row[addedDateIndex]) < new Date(album.spotify.addedDate)
+        ) {
+          album.spotify.addedDate = row[addedDateIndex];
+          debug(`Overwritting addedDate to ${row[addedDateIndex]}`);
         }
       } else {
         upcNotFound.push(row);
@@ -41,31 +48,52 @@ export async function upcCsv() {
 
       debug(`will search for arist, album title matches`);
 
-      const titleIndex = header.indexOf("title");
-      const artistIndex = header.indexOf("artist");
+      const rowsToSearch: Source[] = [];
 
-      const notFound: string[][] = [];
+      let updatedAlbums = 0;
 
       upcNotFound.forEach((row) => {
+        const title = row[titleIndex].trim().toLowerCase();
+        const artist = row[artistIndex].trim().toLowerCase();
+        const addedDate = row[addedDateIndex];
+        // Are there any matches with existing albums?
+        // By artist/title string matchiing
         const album = Object.values(library.albums).find(
-          (album) =>
-            album.spotify.name === row[titleIndex] &&
-            album.spotify.artists[0].name === row[artistIndex]
+          (a) =>
+            a.spotify.name.trim().toLowerCase() === title &&
+            a.spotify.artists.find(
+              (ar) => ar.name.trim().toLowerCase() === artist
+            )
         );
         if (album) {
-          debug(`Found album ${album.spotify.external_ids.upc}`);
-          if (dateAddedIndex !== -1) {
-            album.spotify.addedDate = row[dateAddedIndex];
-            debug(`Overwritting addedDate to ${row[dateAddedIndex]}`);
+          debug(`Matched album ${artist} - ${title}`);
+          if (
+            addedDateIndex !== -1 &&
+            typeof addedDate !== "undefined" &&
+            new Date(addedDate) < new Date(album.spotify.addedDate)
+          ) {
+            updatedAlbums += 1;
+            album.spotify.addedDate = addedDate;
+            debug(`Overwritting addedDate to ${addedDate}`);
           }
         } else {
-          notFound.push(row);
+          rowsToSearch.push({
+            title,
+            artist,
+            addedDate,
+            type: "upc_csv",
+            upc: row[upcIndex],
+            filename: process.env.UPC_CSV!,
+          });
         }
       });
 
-      if (notFound.length > 0) {
-        debug(`WARNING albums not found: ${notFound.length}`);
-        console.log(notFound);
+      debug(`updated ${updatedAlbums} existing albums from CSV`);
+
+      if (rowsToSearch.length > 0) {
+        debug(`rows to search for: ${rowsToSearch.length}`);
+
+        await searchSpotify(rowsToSearch);
       }
     }
 

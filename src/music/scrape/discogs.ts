@@ -121,7 +121,9 @@ export async function discogs() {
     await Promise.all(
       albumsToFind.map(async (album) => {
         try {
-          let id = album.id?.discogs ? parseInt(album.id?.discogs) : undefined;
+          let id = album.id?.discogs
+            ? parseInt(album.id?.discogs, 10)
+            : undefined;
 
           // If master data doesn't exist -> find it
           if (album.discogs?.master === undefined) {
@@ -183,15 +185,16 @@ export async function discogs() {
               )
               .slice(0, 10);
 
-            const releasesWithRatings: DiscogsReleaseWithRating[] = await Promise.all(
-              top10releases.map(async (release) => {
-                const ratings = await discogLimiter.schedule(() => {
-                  debug(`fetching ratings for release  ${release.id}`);
-                  return client.getCommunityReleaseRating(release.id);
-                });
-                return { ...release, ratings };
-              })
-            );
+            const releasesWithRatings: DiscogsReleaseWithRating[] =
+              await Promise.all(
+                top10releases.map(async (release) => {
+                  const ratings = await discogLimiter.schedule(() => {
+                    debug(`fetching ratings for release  ${release.id}`);
+                    return client.getCommunityReleaseRating(release.id);
+                  });
+                  return { ...release, ratings };
+                })
+              );
 
             album.discogs = { master, releases, releasesWithRatings };
             // album.discogs = { master, releases: releasesWithRatings };
@@ -218,8 +221,9 @@ export async function discogs() {
   }
 
   // Calculate how many albums have Discogs metadata
-  const discoFound = Object.values(library.albums).filter((a) => a.discogs)
-    .length;
+  const discoFound = Object.values(library.albums).filter(
+    (a) => a.discogs
+  ).length;
 
   debug(
     `library has Discogs metadata for ${discoFound}/${

@@ -57,7 +57,11 @@ export async function musicBrainz() {
                 id = results["release-groups"][0]?.id;
                 if (id) {
                   debug(
-                    `Found release group through search: "${results["release-groups"][0]["artist-credit"]}" - "${results["release-groups"][0].title}"`
+                    `Found release group through search: "${results[
+                      "release-groups"
+                    ][0]["artist-credit"].join(", ")}" - "${
+                      results["release-groups"][0].title
+                    }"`
                   );
                 }
               }
@@ -87,7 +91,7 @@ export async function musicBrainz() {
                       rel.url?.resource?.includes("rateyourmusic")
                   )?.url?.resource;
 
-                album.mb = { releaseGroup: releaseGroup };
+                album.mb = { releaseGroup };
                 debug(`SUCCESSFULLY fetched MusicBrainz ${album.id?.upc}`);
               } else {
                 debug(`FAILED to fetched MusicBrainz ${albumTitle(album)}`);

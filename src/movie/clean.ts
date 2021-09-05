@@ -22,7 +22,7 @@ export async function clean(): Promise<CleanLibrary> {
   return Object.values(library.movies)
     .filter((m) => m.title)
     .map((movie) => {
-      const clean: CleanMovie = {
+      const cleanMovie: CleanMovie = {
         title: movie.title!,
         watched: typeof movie.imdb?.myRating.value !== "undefined",
         releaseDate: movie.tmdb?.release_date,
@@ -34,10 +34,10 @@ export async function clean(): Promise<CleanLibrary> {
         ratingPtpVotes: movie.ptpScrape?.rating.votes,
         ratingImdbValue: movie.omdb?.rating,
         ratingImdbVotes: movie.omdb?.votes
-          ? parseInt(movie.omdb.votes.replace(/\D/g, ""))
+          ? parseInt(movie.omdb.votes.replace(/\D/g, ""), 10)
           : undefined,
         ratingMetascore: movie.omdb?.metascore
-          ? parseInt(movie.omdb?.metascore.replace(/\D/g, ""))
+          ? parseInt(movie.omdb?.metascore.replace(/\D/g, ""), 10)
           : undefined,
       };
 
@@ -45,8 +45,8 @@ export async function clean(): Promise<CleanLibrary> {
       const rt = movie.omdb?.ratings?.find(
         (rating) => rating.source === "Rotten Tomatoes"
       )?.value;
-      if (rt) clean.ratingRt = parseInt(rt.replace(/\D/g, ""));
+      if (rt) cleanMovie.ratingRt = parseInt(rt.replace(/\D/g, ""), 10);
 
-      return clean;
+      return cleanMovie;
     });
 }

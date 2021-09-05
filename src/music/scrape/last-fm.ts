@@ -88,6 +88,8 @@ export async function scrapeLastFm() {
         })
     );
     await save();
+  } else {
+    debug(`WARNING, LASTFM_API_KEY && LASTFM_USERNAME have not been set`);
   }
 
   // Calculate how many albums have lfm metadata
