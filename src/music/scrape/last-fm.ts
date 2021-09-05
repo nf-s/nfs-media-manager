@@ -31,18 +31,26 @@ export async function scrapeLastFm() {
     const getAlbum = async (
       params: { mbid: string } | { artist: string; album: string }
     ) => {
-      const response = (await lfmLimiteer.schedule(
-        async () =>
-          api.lastFm("album.getInfo", process.env.LASTFM_API_KEY!, {
-            ...params,
-            username: process.env.LASTFM_USERNAME,
-            autocorrect: 1,
-          } as any) as unknown
-      )) as GetAlbumReponse;
-
-      if (!response.album) return;
-
-      return response.album;
+      return await lfmLimiteer.schedule(async () => {
+        try {
+          if ("mbid" in params) {
+            debug(`fetching Last.fm with MBID ${params.mbid}`);
+          } else {
+            debug(
+              `NO album found with MBID - trying artist-album title: ${params.artist} - ${params.album}`
+            );
+          }
+          return (
+            (await api.lastFm("album.getInfo", process.env.LASTFM_API_KEY!, {
+              ...params,
+              username: process.env.LASTFM_USERNAME,
+              autocorrect: 1,
+            } as any)) as unknown as GetAlbumReponse
+          ).album;
+        } catch (e) {
+          debug(`FAILED to get album ${JSON.stringify(params)}`);
+        }
+      });
     };
 
     await Promise.all(
@@ -57,16 +65,10 @@ export async function scrapeLastFm() {
           let lfmAlbum: LastFmAlbum | undefined;
           try {
             if (album.id.musicBrainz) {
-              debug(`fetching Last.fm with MBID ${album.id.musicBrainz}`);
               lfmAlbum = await getAlbum({ mbid: album.id.musicBrainz! });
             }
 
             if (!lfmAlbum) {
-              debug(
-                `NO album found with MBID - trying artist-album title: ${albumTitle(
-                  album
-                )}`
-              );
               lfmAlbum = await getAlbum({
                 artist: album.spotify.artists[0].name,
                 album: album.spotify.name,

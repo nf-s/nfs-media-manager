@@ -38,7 +38,8 @@
     "xml2js": "^0.4.23",
     "@toplast/lastfm": "^0.1.2",
     "discojs": "^2.0.0",
-    "musicbrainz-api": "^0.5.2"
+    "musicbrainz-api": "^0.5.2",
+    "axios": "^0.21.3"
   },
   "dependencies": {}
 }
