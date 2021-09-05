@@ -70,7 +70,13 @@ export async function clean(): Promise<CleanLibrary> {
       0
     );
 
-    const clean: CleanAlbum = {
+    // Only use addedDate if it occurs after the release date
+    const dateAdded =
+      new Date(album.spotify.addedDate) > new Date(album.spotify.release_date)
+        ? album.spotify.addedDate
+        : album.spotify.release_date;
+
+    const cleanAlbum: CleanAlbum = {
       id: album.id,
       title: album.spotify.name,
       artist: album.spotify.artists.map((artist) => artist.name).join(", "),
@@ -79,7 +85,7 @@ export async function clean(): Promise<CleanLibrary> {
         0
       ),
       dateReleased: album.spotify.release_date,
-      dateAdded: album.spotify.addedDate,
+      dateAdded,
       genres: Array.from(new Set(genres)),
       tracks: album.spotify.tracks.items.map((track) => track.id),
       art: album.spotify.images.find((i) => i.height === 300)?.url,
@@ -88,7 +94,7 @@ export async function clean(): Promise<CleanLibrary> {
       popularityDiscogs: discogsPopularity,
       popularitySpotify: album.spotify.popularity,
       popularityLastFm: album.lastFm?.listeners
-        ? parseInt(album.lastFm?.listeners)
+        ? parseInt(album.lastFm?.listeners, 10)
         : undefined,
       acousticness: mean(
         album.spotify.audioFeatures.map((a) => a.acousticness)
@@ -107,10 +113,10 @@ export async function clean(): Promise<CleanLibrary> {
       tempo: mean(album.spotify.audioFeatures.map((a) => a.tempo)),
       valence: mean(album.spotify.audioFeatures.map((a) => a.valence)),
       scrobbles: album.lastFm?.userplaycount
-        ? parseInt(album.lastFm?.userplaycount)
+        ? parseInt(album.lastFm?.userplaycount, 10)
         : undefined,
     };
 
-    return clean;
+    return cleanAlbum;
   });
 }

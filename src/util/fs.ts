@@ -164,7 +164,7 @@ export async function rmDirectory(dir: string, debug = console.log) {
       await fsPromises.rmdir(dir);
     }
   } catch (err) {
-    if (err && err.code === "ENOENT") {
+    if (err && (err as any).code === "ENOENT") {
     } else {
       throw `error removing directory ${err}`;
     }
@@ -176,7 +176,7 @@ export async function makeDirectory(dir: string, debug = console.log) {
   try {
     await fsPromises.stat(dir);
   } catch (err) {
-    if (err && err.code === "ENOENT") {
+    if (err && (err as any).code === "ENOENT") {
       try {
         debug(`creating directory ${dir}`);
         await fsPromises.mkdir(dir, { recursive: true });
@@ -282,7 +282,7 @@ export function zipDir(
 
     // good practice to catch warnings (ie stat failures and other non-blocking errors)
     archive.on("warning", (err) => {
-      if (err.code === "ENOENT") {
+      if ((err as any).code === "ENOENT") {
         debug(`zipping ERROR ${outputPath}: ${err}`);
       } else {
         reject(`zipping ERROR ${outputPath}: ${err}`);
