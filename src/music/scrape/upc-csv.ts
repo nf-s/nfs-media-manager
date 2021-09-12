@@ -1,5 +1,5 @@
 import { debug as debugInit } from "debug";
-import { library, save, Source } from "..";
+import { library, Source } from "..";
 import { fileExists, readCsv } from "../../util/fs";
 import { searchSpotify } from "./spotify";
 const debug = debugInit("music-scraper:upc-csv");
@@ -96,7 +96,5 @@ export async function upcCsv() {
         await searchSpotify(rowsToSearch);
       }
     }
-
-    await save();
   }
 }

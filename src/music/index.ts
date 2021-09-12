@@ -10,12 +10,23 @@ import { albumCsv } from "./scrape/album-csv";
 import {
   discogs,
   DiscogsMaster,
+  DiscogsMasterRelease,
+  DiscogsMasterReleaseWithRating,
   DiscogsRelease,
-  DiscogsReleaseWithRating,
 } from "./scrape/discogs";
 import { LastFmAlbum, scrapeLastFm as lastFm } from "./scrape/last-fm";
 import { musicBrainz } from "./scrape/mb";
-import { scrapeSpotify } from "./scrape/spotify";
+import {
+  GoogleResult,
+  metacriticGoogleRelease,
+  RymGoogle,
+  rymGoogleRelease,
+} from "./scrape/google-custom-search";
+import {
+  scrapeSpotify,
+  spotifyAudioFeatures,
+  SpotifySavedAlbum,
+} from "./scrape/spotify";
 import { upcCsv } from "./scrape/upc-csv";
 
 const debug = debugInit("music-scraper:init");
@@ -29,15 +40,10 @@ if (typeof process.env.DATA_DIR === "undefined")
 // SETUP library JSON blob
 export const LIBRARY_PATH = join(process.env.DATA_DIR, "lib-music.json");
 
-interface SpotifySavedAlbum extends SpotifyApi.AlbumObjectFull {
-  addedDate: string;
-  audioFeatures: SpotifyApi.AudioFeaturesObject[];
-}
-
 export type AlbumId = {
   spotify: string;
   upc?: string;
-  rymUrl?: string;
+  // rymUrl?: string;
   musicBrainz?: string;
   discogs?: string;
 };
@@ -60,18 +66,25 @@ export type Source =
       addedDate?: string;
     };
 
-interface Album {
-  discogs?: {
-    master: DiscogsMaster;
-    releases?: DiscogsRelease[];
-    /** Only top 10 releases will have ratings */
-    releasesWithRatings?: DiscogsReleaseWithRating[];
-  } | null;
+export interface Album {
+  discogs?:
+    | {
+        master: DiscogsMaster;
+        releases?: DiscogsMasterRelease[];
+        /** Only top 10 releases will have ratings */
+        releasesWithRatings?: DiscogsMasterReleaseWithRating[];
+      }
+    | {
+        release: DiscogsRelease;
+      }
+    | null;
   mb?: { releaseGroup: IReleaseGroup } | null;
   lastFm?: LastFmAlbum | null;
   id: AlbumId;
   spotify: SpotifySavedAlbum;
-  source: Source;
+  rymGoogle?: RymGoogle | null;
+  metacriticGoogle?: GoogleResult | null;
+  source: Source | undefined;
 }
 
 interface Library {
@@ -92,7 +105,7 @@ export function skip(key: string) {
   return (process.env.SKIP?.split(",") ?? []).includes(key);
 }
 
-async function init() {
+async function run() {
   // Load library
   if (await fileExists(LIBRARY_PATH)) {
     debug(`${LIBRARY_PATH} library file found!\nreading...`);
@@ -103,19 +116,49 @@ async function init() {
     Object.assign(library, lib);
 
     debug(`library has ${Object.keys(library.albums).length} albums loaded`);
+
+    debug(`Backing up lib to ${LIBRARY_PATH}-backup`);
+    await writeFile(
+      `${LIBRARY_PATH}-backup`,
+      JSON.stringify(lib),
+      undefined,
+      debug
+    );
   }
 
-  if (!skip("album-csv")) await albumCsv();
+  debug("Start scraping!");
 
-  if (!skip("upc")) await upcCsv();
+  try {
+    if (!skip("album-csv")) await albumCsv();
 
-  if (!skip("spotify")) await scrapeSpotify();
+    if (!skip("upc")) await upcCsv();
 
-  if (!skip("mb")) await musicBrainz();
+    if (!skip("spotify-fav")) await scrapeSpotify();
+  } catch (e) {
+    debug(e);
+    debug("ERROR occured while scraping new albums");
+  }
 
-  if (!skip("discogs")) await discogs();
+  await save();
 
-  if (!skip("lastfm")) await lastFm();
+  // These can all be done in parallel
+  try {
+    await Promise.all([
+      !skip("spotify-audio-features")
+        ? spotifyAudioFeatures()
+        : Promise.resolve(),
+      !skip("mb") ? musicBrainz() : Promise.resolve(),
+      !skip("discogs") ? discogs() : Promise.resolve(),
+      !skip("lastfm") ? lastFm() : Promise.resolve(),
+      !skip("rym") ? rymGoogleRelease() : Promise.resolve(),
+      !skip("metacritic") ? metacriticGoogleRelease() : Promise.resolve(),
+    ]);
+  } catch (e) {
+    debug(e);
+    debug("ERROR occured while scraping metadata for albums");
+  }
+
+  await save();
 
   debug(
     `library has ${
@@ -131,7 +174,7 @@ async function init() {
     debug("saving cleaned library file");
 
     await writeFile(
-      process.env.MUSIC_CLEAN_JSON,
+      process.env.MUSIC_CLEAN_JSON!,
       JSON.stringify(cleanLibrary),
       undefined,
       debug
@@ -139,4 +182,4 @@ async function init() {
   }
 }
 
-init();
+run();

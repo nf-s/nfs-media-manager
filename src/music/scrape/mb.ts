@@ -1,7 +1,7 @@
 import Bottleneck from "bottleneck";
 import { debug as debugInit } from "debug";
 import { MusicBrainzApi } from "musicbrainz-api";
-import { albumTitle, library, save } from "..";
+import { albumTitle, library } from "..";
 
 const debug = debugInit("music-scraper:music-brainz");
 
@@ -75,21 +75,18 @@ export async function musicBrainz() {
                   "genres",
                   "url-rels",
                 ] as any);
-                // const genres = (releaseGroup as any).genres?.map((g: any) => ({
-                //   name: g.name,
-                //   votes: g.count,
-                // }));
+
                 if (!album.id.discogs)
                   album.id.discogs = (releaseGroup as any).relations
                     ?.find((rel: any) => rel.type === "discogs")
                     ?.url?.resource?.split("master/")?.[1];
 
-                if (!album.id.rymUrl)
-                  album.id.rymUrl = (releaseGroup as any).relations?.find(
-                    (rel: any) =>
-                      rel.type === "other databases" &&
-                      rel.url?.resource?.includes("rateyourmusic")
-                  )?.url?.resource;
+                // if (!album.id.rymUrl)
+                //   album.id.rymUrl = (releaseGroup as any).relations?.find(
+                //     (rel: any) =>
+                //       rel.type === "other databases" &&
+                //       rel.url?.resource?.includes("rateyourmusic")
+                //   )?.url?.resource;
 
                 album.mb = { releaseGroup };
                 debug(`SUCCESSFULLY fetched MusicBrainz ${album.id?.upc}`);
@@ -105,7 +102,6 @@ export async function musicBrainz() {
           })
         )
     );
-    await save();
   } else {
     debug(
       `WARNING, no MB_APP_NAME + MB_APP_VERSION + MB_CONTACT have been set`

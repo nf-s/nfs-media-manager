@@ -71,5 +71,7 @@ export async function albumCsv() {
 
       await searchSpotify(rowsToSearch);
     }
+  } else {
+    console.log(`${process.env.ALBUM_CSV} is not a valid ALBUM_CSV`);
   }
 }

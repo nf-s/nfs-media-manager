@@ -3,7 +3,7 @@ import { IAlbum } from "@toplast/lastfm/lib/common/common.interface";
 import { ApiRequest } from "@toplast/lastfm/lib/modules/request/request.service";
 import Bottleneck from "bottleneck";
 import { debug as debugInit } from "debug";
-import { albumTitle, library, save } from "..";
+import { albumTitle, library } from "..";
 
 interface GetAlbumReponse {
   album: LastFmAlbum;
@@ -19,7 +19,6 @@ const debug = debugInit("music-scraper:last-fm");
 
 export async function scrapeLastFm() {
   if (process.env.LASTFM_API_KEY && process.env.LASTFM_USERNAME) {
-    const lastFm = new LastFm(process.env.LASTFM_API_KEY);
     debug(`connected to Last.fm`);
     const api = new ApiRequest();
 
@@ -40,13 +39,15 @@ export async function scrapeLastFm() {
               `NO album found with MBID - trying artist-album title: ${params.artist} - ${params.album}`
             );
           }
-          return (
-            (await api.lastFm("album.getInfo", process.env.LASTFM_API_KEY!, {
+          return (((await api.lastFm(
+            "album.getInfo",
+            process.env.LASTFM_API_KEY!,
+            {
               ...params,
               username: process.env.LASTFM_USERNAME,
               autocorrect: 1,
-            } as any)) as unknown as GetAlbumReponse
-          ).album;
+            } as any
+          )) as unknown) as GetAlbumReponse).album;
         } catch (e) {
           debug(`FAILED to get album ${JSON.stringify(params)}`);
         }
@@ -89,7 +90,6 @@ export async function scrapeLastFm() {
           }
         })
     );
-    await save();
   } else {
     debug(`WARNING, LASTFM_API_KEY && LASTFM_USERNAME have not been set`);
   }
