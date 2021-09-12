@@ -286,3 +286,13 @@ a.reverse-sort {
 .dark a:hover {
   color: #00c583;
 }
+
+.row-external-links {
+  padding: 0 3px;
+  opacity: 0.2;
+  float: right;
+}
+
+.row-external-links:hover {
+  opacity: 0.5;
+}

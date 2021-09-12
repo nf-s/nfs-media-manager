@@ -29,6 +29,8 @@ import {
   Title,
 } from "./Table/Columns";
 
+const { Document } = require("flexsearch");
+
 export type FilterValue = {
   label: string;
   value: string;
@@ -41,12 +43,13 @@ type ColumnWithFieldRenderer = Column<CleanAlbum> & {
   fieldRenderer?: FieldRenderer;
 };
 
-function Music(props: { spotifyToken: string }) {
+function Music(props: { spotifyToken: string; darkMode: boolean }) {
   const [spotifyApi, setSpotifyApi] = useState<SpotifyWebApi.SpotifyWebApiJs>();
   const [rowData, setData] = useState<{
     rows: CleanAlbum[];
     filters: FilterValue[];
   }>({ rows: [], filters: [] });
+  const [searchIndex, setSearchIndex] = useState<any>();
   const [columns, setColumns] = useState<ColumnWithFieldRenderer[]>([]);
   const [deviceId, setDeviceId] = useState<{ id?: string }>({});
 
@@ -81,7 +84,7 @@ function Music(props: { spotifyToken: string }) {
   const [visibleColumns, setVisibleColumns] = useState<Column<CleanAlbum>[]>();
 
   // Default value is set in fetchData
-  function reducer(
+  function filterReducer(
     state: SelectValues | undefined,
     action:
       | { type: "add"; field: keyof CleanAlbum; value: string }
@@ -104,7 +107,10 @@ function Music(props: { spotifyToken: string }) {
     }
   }
 
-  const [activeFilters, setActiveFilters] = useReducer(reducer, undefined);
+  const [activeFilters, setActiveFilters] = useReducer(
+    filterReducer,
+    undefined
+  );
 
   const play = (row: CleanAlbum) => {
     setSpotifyPlayer({
@@ -209,6 +215,22 @@ function Music(props: { spotifyToken: string }) {
         }),
         filters,
       });
+
+      const searchIndex = new Document({
+        id: "spotifyId",
+        index: [
+          {
+            field: "title",
+            tokenize: "full",
+            resolution: 9,
+          },
+          {
+            field: "artist",
+            tokenize: "full",
+            resolution: 9,
+          },
+        ],
+      });
     };
 
     fetchData();
@@ -262,11 +284,14 @@ function Music(props: { spotifyToken: string }) {
       // If column has `fieldRenderer` (which isn't part of data-grid), translate it into `formatter` so it can be used in table-cells
       .map((col: ColumnWithFieldRenderer) => {
         if (col.fieldRenderer && !col.formatter) {
-          col.formatter = (props) =>
-            col.fieldRenderer!({
-              album: props.row,
-              addFilter,
-            });
+          return {
+            ...col,
+            formatter: (props) =>
+              col.fieldRenderer!({
+                album: props.row,
+                addFilter,
+              }),
+          };
         }
         return col;
       });
@@ -279,7 +304,9 @@ function Music(props: { spotifyToken: string }) {
         columns.filter((c) => savedVisibleColumns.includes(c.key))
       );
     } else {
-      setVisibleColumns(columns.filter((c) => defaultVisible.includes(c.key)));
+      setVisibleColumns(
+        columns.filter((c) => defaultVisible.includes(c.key as any))
+      );
     }
 
     setColumns(columns);
