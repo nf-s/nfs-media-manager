@@ -70,10 +70,7 @@ export async function metacriticGoogleRelease() {
     await googleRelease(
       "metacriticGoogle",
       process.env.METACRITIC_GOOGLE_SEARCH_ID,
-      (result) => {
-        console.log(result);
-        return result;
-      }
+      (result) => result
     );
 }
 
