@@ -1,7 +1,7 @@
 import Bottleneck from "bottleneck";
 import { debug as debugInit } from "debug";
 import SpotifyWebApi from "spotify-web-api-node";
-import { library, skip, Source } from "..";
+import { library, Source } from "..";
 const debug = debugInit("music-scraper:spotify");
 
 export interface SpotifySavedAlbum extends SpotifyApi.AlbumObjectFull {
