@@ -55,13 +55,67 @@ export const Artist: FieldRenderer = (props) => (
 );
 
 export const Title: FieldRenderer = (props) => (
-  <a
-    href={`https://open.spotify.com/album/${props.album.id.spotify}`}
-    title={props.album.title}
-    target="blank"
-  >
-    {props.album.title}
-  </a>
+  <>
+    <a
+      href={`https://open.spotify.com/album/${props.album.id.spotify}`}
+      title={props.album.title}
+      target="blank"
+    >
+      {props.album.title}
+    </a>
+    {props.album.links.rym ? (
+      <a
+        href={props.album.links.rym}
+        title={props.album.otherTitles.rym}
+        target="blank"
+        className="row-external-links"
+      >
+        <img src="/img/sonemic.png" width="16px" />
+      </a>
+    ) : null}
+    {props.album.links.discogs ? (
+      <a
+        href={props.album.links.discogs}
+        title={props.album.otherTitles.discogs}
+        target="blank"
+        className="row-external-links"
+      >
+        <img src="/img/discogs.png" width="16px" />
+      </a>
+    ) : null}
+    {props.album.links.mb ? (
+      <a
+        href={props.album.links.mb}
+        title={props.album.otherTitles.mb}
+        target="blank"
+        className="row-external-links"
+      >
+        <img src="/img/mb.png" width="16px" />
+      </a>
+    ) : null}
+
+    {props.album.links.lastfm ? (
+      <a
+        href={props.album.links.lastfm}
+        title={props.album.otherTitles.lastfm}
+        target="blank"
+        className="row-external-links"
+      >
+        <img src="/img/lastfm.png" width="16px" />
+      </a>
+    ) : null}
+
+    {props.album.links.mc ? (
+      <a
+        href={props.album.links.mc}
+        title={props.album.otherTitles.mc}
+        target="blank"
+        className="row-external-links"
+      >
+        <img src="/img/metacritic.svg" width="16px" />
+      </a>
+    ) : null}
+  </>
 );
 
 export const defaultSort: [keyof CleanAlbum, SortDirection] = [
@@ -69,7 +123,7 @@ export const defaultSort: [keyof CleanAlbum, SortDirection] = [
   "DESC",
 ];
 
-export const defaultVisible = [
+export const defaultVisible: (keyof CleanAlbum | "Spotify Controls")[] = [
   "Spotify Controls",
   "title",
   "artist",
@@ -77,6 +131,8 @@ export const defaultVisible = [
   "dateReleased",
   "dateAdded",
   "genres",
+  "ratingRymValue",
+  "ratingRymVotes",
 ];
 
 export type NumericCol = {
@@ -97,6 +153,20 @@ export const numericCols: NumericCol[] = [
     precision: 0,
   },
   {
+    key: "ratingRymVotes",
+    name: "RYM Votes",
+    append: "",
+    precision: 0,
+  },
+  {
+    key: "ratingRymValue",
+    name: "RYM Rating",
+    max: 5,
+    append: "%",
+    mult: 100,
+    precision: 1,
+  },
+  {
     key: "ratingDiscogsVotes",
     name: "Discogs Votes",
     append: "",
@@ -108,6 +178,18 @@ export const numericCols: NumericCol[] = [
     max: 5,
     append: "%",
     mult: 100,
+    precision: 1,
+  },
+  {
+    key: "ratingMetacriticVotes",
+    name: "MC Votes",
+    append: "",
+    precision: 0,
+  },
+  {
+    key: "ratingMetacriticValue",
+    name: "MC Value",
+    append: "%",
     precision: 1,
   },
   {

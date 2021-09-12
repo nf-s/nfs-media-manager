@@ -33,7 +33,7 @@ function App() {
 
       {/* {mode.mode === "movie" ? <Movie></Movie> : null} */}
       {mode.mode === "music" && spotifyAuthToken ? (
-        <Music spotifyToken={spotifyAuthToken}></Music>
+        <Music spotifyToken={spotifyAuthToken} darkMode={darkMode}></Music>
       ) : null}
       {mode.mode === "music" && !spotifyAuthToken ? (
         <h2>Fetching Spotify token</h2>
