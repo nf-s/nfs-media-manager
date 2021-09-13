@@ -80,6 +80,8 @@ export async function musicBrainz() {
                   album.id.discogs = (releaseGroup as any).relations
                     ?.find((rel: any) => rel.type === "discogs")
                     ?.url?.resource?.split("master/")?.[1];
+                
+                // Check for last.fm URL
 
                 // if (!album.id.rymUrl)
                 //   album.id.rymUrl = (releaseGroup as any).relations?.find(
