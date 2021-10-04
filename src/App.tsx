@@ -12,7 +12,7 @@ function App() {
     spotifyAuth.init();
   }, []);
 
-  const [mode, setMode] = useState<{ mode: "movie" | "music" }>({
+  const [mode, setMode] = useState<{ mode: "movie" | "music" | "playlist" }>({
     mode: "music",
   });
   const [darkMode, setDarkMode] = useState<boolean>(false);
@@ -26,6 +26,9 @@ function App() {
         <button type="button" onClick={() => setMode({ mode: "music" })}>
           Music
         </button>
+        <button type="button" onClick={() => setMode({ mode: "playlist" })}>
+          Music
+        </button>
         <button type="button" onClick={() => setDarkMode(!darkMode)}>
           {darkMode ? "Light" : "Dark"}
         </button>
@@ -35,9 +38,10 @@ function App() {
       {mode.mode === "music" && spotifyAuthToken ? (
         <Music spotifyToken={spotifyAuthToken} darkMode={darkMode}></Music>
       ) : null}
-      {mode.mode === "music" && !spotifyAuthToken ? (
-        <h2>Fetching Spotify token</h2>
+      {mode.mode === "playlist" && spotifyAuthToken ? (
+        <Music spotifyToken={spotifyAuthToken} darkMode={darkMode}></Music>
       ) : null}
+      {!spotifyAuthToken ? <h2>Fetching Spotify token</h2> : null}
     </div>
   );
 }
