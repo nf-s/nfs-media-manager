@@ -13,15 +13,15 @@ function formatTime(seconds: number) {
     .join(":");
 }
 
-export type FieldRenderer = (props: {
-  album: CleanAlbum;
-  addFilter: (field: keyof CleanAlbum, value: string) => void;
+export type FieldRenderer<T> = (props: {
+  album: T;
+  addFilter: (field: keyof T, value: string) => void;
 }) => JSX.Element;
 
-export const Numeric = (col: NumericCol) => {
+export const Numeric = <T,>(col: NumericCol<T>) => {
   if (col.key === undefined) return () => <></>;
 
-  return (props: { album: CleanAlbum }) => (
+  return (props: { album: T }) => (
     <>
       {(
         ((props.album[col.key] ?? 0) * (col.mult ?? 1)) /
@@ -31,15 +31,16 @@ export const Numeric = (col: NumericCol) => {
     </>
   );
 };
-export const Generic =
-  (key: keyof CleanAlbum) => (props: { album: CleanAlbum }) =>
-    <>{props.album[key]}</>;
 
-export const Genres: FieldRenderer = (props) => {
+export const Genres: FieldRenderer<CleanAlbum> = (props) => {
   return (
     <>
       {props.album.genres.map((g, i) => (
-        <a onClick={() => props.addFilter("genres", g)}>
+        // eslint-disable-next-line jsx-a11y/anchor-is-valid
+        <a
+          onClick={() => props.addFilter("genres", g)}
+          key={`${props.album.id.spotify}-${g}`}
+        >
           {g}
           {i < props.album.genres.length - 1 ? ", " : ""}
         </a>
@@ -48,13 +49,14 @@ export const Genres: FieldRenderer = (props) => {
   );
 };
 
-export const Artist: FieldRenderer = (props) => (
+export const Artist: FieldRenderer<CleanAlbum> = (props) => (
+  // eslint-disable-next-line jsx-a11y/anchor-is-valid
   <a onClick={() => props.addFilter("artist", props.album.artist)}>
     {props.album.artist}
   </a>
 );
 
-export const Title: FieldRenderer = (props) => (
+export const Release: FieldRenderer<CleanAlbum> = (props) => (
   <>
     <a
       href={`https://open.spotify.com/album/${props.album.id.spotify}`}
@@ -70,7 +72,7 @@ export const Title: FieldRenderer = (props) => (
         target="blank"
         className="row-external-links"
       >
-        <img src="/img/sonemic.png" width="16px" />
+        <img src="/img/sonemic.png" width="16px" alt="Sonemic link" />
       </a>
     ) : null}
     {props.album.links.discogs ? (
@@ -80,7 +82,7 @@ export const Title: FieldRenderer = (props) => (
         target="blank"
         className="row-external-links"
       >
-        <img src="/img/discogs.png" width="16px" />
+        <img src="/img/discogs.png" width="16px" alt="Discogs link" />
       </a>
     ) : null}
     {props.album.links.mb ? (
@@ -90,7 +92,7 @@ export const Title: FieldRenderer = (props) => (
         target="blank"
         className="row-external-links"
       >
-        <img src="/img/mb.png" width="16px" />
+        <img src="/img/mb.png" width="16px" alt="MusicBrainz link" />
       </a>
     ) : null}
 
@@ -101,7 +103,7 @@ export const Title: FieldRenderer = (props) => (
         target="blank"
         className="row-external-links"
       >
-        <img src="/img/lastfm.png" width="16px" />
+        <img src="/img/lastfm.png" width="16px" alt="Lastfm link" />
       </a>
     ) : null}
 
@@ -112,19 +114,20 @@ export const Title: FieldRenderer = (props) => (
         target="blank"
         className="row-external-links"
       >
-        <img src="/img/metacritic.svg" width="16px" />
+        <img src="/img/metacritic.svg" width="16px" alt="Metacritic link" />
       </a>
     ) : null}
   </>
 );
 
-export const defaultSort: [keyof CleanAlbum, SortDirection] = [
-  "dateAdded",
-  "DESC",
-];
+export type DefaultSort<T> = [keyof T, SortDirection];
 
-export const defaultVisible: (keyof CleanAlbum | "Spotify Controls")[] = [
-  "Spotify Controls",
+export const defaultSort: DefaultSort<CleanAlbum> = ["dateAdded", "DESC"];
+
+export type DefaultVisible<T> = (keyof T | "Controls")[];
+
+export const defaultVisible: DefaultVisible<CleanAlbum> = [
+  "Controls",
   "title",
   "artist",
   "durationSec",
@@ -135,8 +138,8 @@ export const defaultVisible: (keyof CleanAlbum | "Spotify Controls")[] = [
   "ratingRymVotes",
 ];
 
-export type NumericCol = {
-  key: keyof PickProperties<CleanAlbum, number | undefined> & string;
+export type NumericCol<T> = {
+  key: keyof PickProperties<T, number | undefined>;
   name: string;
   max?: number | undefined;
   generateMaximumFromData?: boolean;
@@ -145,7 +148,7 @@ export type NumericCol = {
   mult?: number | undefined;
 };
 
-export const numericCols: NumericCol[] = [
+export const numericCols: NumericCol<CleanAlbum>[] = [
   {
     key: "scrobbles",
     name: "Scrobbles",
@@ -273,12 +276,24 @@ export const numericCols: NumericCol[] = [
   },
 ];
 
-export const textColumns = [
+export type StringCol<T> = (
+  | // String columns
+  {
+      key: keyof PickProperties<T, string | undefined>;
+    }
+  // Not string columns (require fieldRenderer)
+  | {
+      key: keyof PickProperties<T, Exclude<any, string>>;
+      fieldRenderer: FieldRenderer<T>;
+    }
+) & { width?: number; name: string; sortable?: boolean; resizable?: boolean };
+
+export const textColumns: StringCol<CleanAlbum>[] = [
   {
     key: "title",
     name: "Title",
     sortable: true,
-    fieldRenderer: Title,
+    fieldRenderer: Release,
   },
   {
     key: "artist",
@@ -292,7 +307,7 @@ export const textColumns = [
     sortable: true,
     fieldRenderer: ((props) => (
       <>{formatTime(props.album.durationSec)}</>
-    )) as FieldRenderer,
+    )) as FieldRenderer<CleanAlbum>,
     width: 80,
   },
   {
@@ -316,11 +331,11 @@ export const textColumns = [
   },
 ];
 
-export function getColumnWithTotals<K extends keyof CleanAlbum>(
-  rows: CleanAlbum[],
-  colName: K,
+export function getColumnWithTotals<K>(
+  rows: K[],
+  colName: keyof K,
   sort: "key" | "value" = "key"
-): FilterValue[] {
+): FilterValue<K>[] {
   const total = new Map<string, number>();
   for (let i = 0; i < rows.length; i++) {
     const value = rows[i][colName];
