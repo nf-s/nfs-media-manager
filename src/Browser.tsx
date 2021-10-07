@@ -12,17 +12,14 @@ import Select, { OptionsType } from "react-select";
 import { PickProperties } from "ts-essentials";
 import {
   FieldRenderer,
+  FilterValue,
   getColumnWithTotals,
   Numeric,
   NumericCol,
   StringCol,
 } from "./Table/Columns";
 
-export type FilterValue<T> = {
-  label: string;
-  value: string;
-  field: keyof T;
-};
+import { Document, IndexOptions } from "flexsearch";
 
 type ColumnWithFieldRenderer<T> = Column<T> & {
   fieldRenderer?: FieldRenderer<T>;
@@ -37,11 +34,11 @@ function Browser<T>(props: {
   numericCols: NumericCol<T>[];
   textColumns: StringCol<T>[];
   gridColumns: {
-    art: keyof PickProperties<T, string | undefined>;
+    art?: keyof PickProperties<T, string | undefined>;
     /** maximum of 3 columns */ cols: (StringCol<T> | NumericCol<T>)[];
   };
-  play: (item: T) => void;
-  queue: (item: T) => void;
+  play?: (item: T) => void;
+  queue?: (item: T) => void;
 }) {
   const {
     rows,
@@ -54,6 +51,25 @@ function Browser<T>(props: {
     gridColumns,
     defaultVisible,
   } = props;
+
+  const searchIndex = useMemo(() => {
+    const index = new Document({
+      document: {
+        id: "spotifyId",
+        index: filterCols.map((col) => ({
+          field: col,
+          tokenize: "full",
+          resolution: 9,
+        })) as Array<IndexOptions<T> & { field: string }>,
+      },
+    });
+
+    for (let i = 0; i < rows.length; i++) {
+      index.add(rows[i]);
+    }
+
+    return index;
+  }, [filterCols, rows]);
 
   const [filterData, setFilterData] = useState<{
     filters: FilterValue<T>[];
@@ -118,6 +134,11 @@ function Browser<T>(props: {
 
   useEffect(() => {
     // storing input name
+    localStorage.setItem("viewMode", viewMode);
+  }, [viewMode]);
+
+  useEffect(() => {
+    // storing input name
     localStorage.setItem("sortColumn", sortColumn.toString());
   }, [sortColumn]);
 
@@ -174,24 +195,6 @@ function Browser<T>(props: {
     );
 
     const columns: ColumnWithFieldRenderer<T>[] = [
-      {
-        key: "Controls",
-        name: "",
-        formatter: (formatterProps: { row: T }) => (
-          <>
-            <button onClick={() => queue(formatterProps.row)}>+</button>
-            <button
-              onClick={() => {
-                play(formatterProps.row);
-              }}
-            >
-              &#9654;
-            </button>
-          </>
-        ),
-        width: 80,
-        resizable: false,
-      },
       ...textColumns,
       ...numericCols.map((col) => {
         if (col.generateMaximumFromData) {
@@ -207,10 +210,11 @@ function Browser<T>(props: {
         };
       }),
     ]
+      .filter((col) => col)
       // If column has `fieldRenderer` (which isn't part of data-grid), translate it into `formatter` so it can be used in table-cells
       .map((col) => {
         if (
-          "fieldRenderer" in col &&
+          "fieldRenderer" in col! &&
           col.fieldRenderer &&
           !("formatter" in col)
         ) {
@@ -219,14 +223,40 @@ function Browser<T>(props: {
             key: col.key.toString(),
             formatter: (props) =>
               col.fieldRenderer!({
-                album: props.row,
+                data: props.row,
                 addFilter,
               }),
           };
         } else {
-          return { ...col, key: col.key.toString() };
+          return { ...col, key: col!.key.toString() };
         }
       });
+
+    const controlCol =
+      queue || play
+        ? {
+            key: "Controls",
+            name: "",
+            formatter: (formatterProps: { row: T }) => (
+              <>
+                {queue ? (
+                  <button onClick={() => queue(formatterProps.row)}>+</button>
+                ) : null}
+                {play ? (
+                  <button onClick={() => play(formatterProps.row)}>
+                    &#9654;
+                  </button>
+                ) : null}
+              </>
+            ),
+            width: 80,
+            resizable: false,
+          }
+        : undefined;
+
+    if (controlCol) {
+      columns.push(controlCol);
+    }
 
     const savedVisibleColumns = JSON.parse(
       localStorage.getItem("visibleColumns") ?? ""
@@ -250,9 +280,11 @@ function Browser<T>(props: {
     const textSortKey = textColumns.find((col) => col.key === sortColumn)?.key;
 
     if (textSortKey) {
-      sortedRows = sortedRows.sort((a, b) =>
-        (a[textSortKey] ?? "").localeCompare(b[sortColumn] ?? "")
-      );
+      sortedRows = sortedRows.sort((a, b) => {
+        let text = a[textSortKey];
+        text = Array.isArray(text) ? text[0] : text;
+        return (text ?? "").localeCompare(b[sortColumn] ?? "");
+      });
     }
 
     const numSortKey = numericCols.find((col) => col.key === sortColumn)?.key;
@@ -486,7 +518,7 @@ function Browser<T>(props: {
               }}
             >
               {filteredRows.map((row, i) => {
-                const art = row[gridColumns.art];
+                const art = gridColumns.art ? row[gridColumns.art] : undefined;
 
                 const col1 = gridColumns.cols[0];
                 const col2 = gridColumns.cols[1];
@@ -503,18 +535,24 @@ function Browser<T>(props: {
                 return typeof art === "string" ? (
                   <div key={i} style={{ width: 250 }}>
                     <div className="image-wrapper">
-                      <div className="image-buttons-wrapper">
-                        <div className="image-buttons">
-                          <button onClick={() => queue(row)}>+</button>
-                          <button
-                            onClick={() => {
-                              play(row);
-                            }}
-                          >
-                            &#9654;
-                          </button>
+                      {queue || play ? (
+                        <div className="image-buttons-wrapper">
+                          <div className="image-buttons">
+                            {queue ? (
+                              <button onClick={() => queue(row)}>+</button>
+                            ) : null}
+                            {play ? (
+                              <button
+                                onClick={() => {
+                                  play(row);
+                                }}
+                              >
+                                &#9654;
+                              </button>
+                            ) : null}
+                          </div>
                         </div>
-                      </div>
+                      ) : null}
                       <LazyLoadImage
                         src={art}
                         style={{ width: "250px", height: "250px" }}
@@ -523,21 +561,21 @@ function Browser<T>(props: {
 
                     <div className="image-album-title">
                       {"fieldRenderer" in col1 ? (
-                        col1.fieldRenderer({ album: row, addFilter })
+                        col1.fieldRenderer({ data: row, addFilter })
                       ) : (
                         <>{row[col1.key]}</>
                       )}
                     </div>
                     <div className="image-album-artist">
                       {"fieldRenderer" in col2 ? (
-                        col2.fieldRenderer({ album: row, addFilter })
+                        col2.fieldRenderer({ data: row, addFilter })
                       ) : (
                         <>{row[col2.key]}</>
                       )}
                     </div>
                     <div className="image-album-extra">
                       {"fieldRenderer" in col3 ? (
-                        col3.fieldRenderer({ album: row, addFilter })
+                        col3.fieldRenderer({ data: row, addFilter })
                       ) : (
                         <>{row[col3.key]}</>
                       )}
@@ -546,7 +584,7 @@ function Browser<T>(props: {
                     <div className="image-album-extra">
                       {sortCol ? (
                         "fieldRenderer" in sortCol && sortCol.fieldRenderer ? (
-                          sortCol.fieldRenderer({ album: row, addFilter })
+                          sortCol.fieldRenderer({ data: row, addFilter })
                         ) : (
                           <>{row[sortColumn]}</>
                         )
