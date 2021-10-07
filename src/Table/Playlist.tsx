@@ -43,6 +43,32 @@ export const Artist: FieldRenderer<CleanTrack> = (props) => {
   );
 };
 
+const keyMap = [
+  "C",
+  "C#/Db",
+  "D",
+  "D#/Eb",
+  "E",
+  "F",
+  "F#/Gb",
+  "G",
+  "G#/Ab",
+  "A",
+  "A#/Bb",
+  "B",
+];
+
+export const Key: FieldRenderer<CleanTrack> = (props) => {
+  return (
+    // Major is represented by 1 and minor is 0
+    <>
+      {typeof props.data.key !== "undefined"
+        ? `${keyMap[props.data.key]} ${props.data.mode ? "M" : "m"}`
+        : ""}
+    </>
+  );
+};
+
 export const defaultSort: DefaultSort<CleanTrack> = ["dateAdded", "DESC"];
 export const defaultVisible: DefaultVisible<CleanTrack> = [
   "Controls",
@@ -152,5 +178,10 @@ export const textColumns: StringCol<CleanTrack>[] = [
     key: "genres",
     name: "Genres",
     fieldRenderer: Genres,
+  },
+  {
+    key: "key",
+    name: "Key",
+    fieldRenderer: Key,
   },
 ];

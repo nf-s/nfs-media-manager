@@ -41,20 +41,38 @@ function Music(props: { spotifyToken: string; darkMode: boolean }) {
     queuePlaylist: string;
   }>();
 
-  const play = (row: CleanAlbum) => {
+  const playAlbum = (row: CleanAlbum) => {
     setSpotifyPlayer({
       uris: [`spotify:album:${row.id.spotify}`],
       play: true,
     });
   };
 
-  const queue = useCallback(
+  const queueAlbum = useCallback(
     (row: CleanAlbum) => {
       spotifyState?.queuePlaylist && spotifyApi
         ? spotifyApi.addTracksToPlaylist(
             spotifyState?.queuePlaylist,
             row.tracks.map((id) => `spotify:track:${id}`)
           )
+        : alert("Queue playlist ID not set!");
+    },
+    [spotifyState, spotifyApi]
+  );
+
+  const playTrack = (row: CleanTrack) => {
+    setSpotifyPlayer({
+      uris: [`spotify:track:${row.spotifyId}`],
+      play: true,
+    });
+  };
+
+  const queueTrack = useCallback(
+    (row: CleanTrack) => {
+      spotifyState?.queuePlaylist && spotifyApi
+        ? spotifyApi.addTracksToPlaylist(spotifyState?.queuePlaylist, [
+            `spotify:track:${row.spotifyId}`,
+          ])
         : alert("Queue playlist ID not set!");
     },
     [spotifyState, spotifyApi]
@@ -91,7 +109,7 @@ function Music(props: { spotifyToken: string; darkMode: boolean }) {
         }),
       });
 
-      const playlist = await axios("/2MSLhlwifL3i8b8vDZJ3h2.json");
+      const playlist = await axios("/6H6tTq8Is6D2X8PZi5rJmK.json");
 
       const tracks = playlist.data as CleanTrack[];
 
@@ -134,8 +152,8 @@ function Music(props: { spotifyToken: string; darkMode: boolean }) {
           art: "art",
           cols: [textColumns[0], textColumns[1], textColumns[5]],
         }}
-        play={play}
-        queue={queue}
+        play={playAlbum}
+        queue={queueAlbum}
       /> */}
       <Browser
         rows={playlistData.rows}
@@ -151,6 +169,8 @@ function Music(props: { spotifyToken: string; darkMode: boolean }) {
             Playlist.textColumns[5],
           ],
         }}
+        play={playTrack}
+        queue={queueTrack}
       />
       <div className={"player"}>
         <SpotifyPlayer
