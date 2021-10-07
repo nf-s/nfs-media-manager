@@ -22,7 +22,6 @@ export async function clean(
             "album" in track.track ? track.track.album.release_date : "",
           dateAdded: track.added_at,
           genres: Array.from(genres),
-
           acousticness: track.audioFeatures?.acousticness,
           danceability: track.audioFeatures?.danceability,
           energy: track.audioFeatures?.energy,
@@ -33,6 +32,7 @@ export async function clean(
           speechiness: track.audioFeatures?.speechiness,
           tempo: track.audioFeatures?.tempo,
           valence: track.audioFeatures?.valence,
+          key: track.audioFeatures?.key,
         };
 
         return cleanTrack;

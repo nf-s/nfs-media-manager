@@ -1,3 +1,16 @@
+export interface AudioFeatures {
+  acousticness?: number;
+  danceability?: number;
+  energy?: number;
+  instrumentalness?: number;
+  liveness?: number;
+  loudness?: number;
+  mode?: number;
+  speechiness?: number;
+  tempo?: number;
+  valence?: number;
+}
+
 export type AlbumId = {
   spotify: string;
   upc?: string;
@@ -6,7 +19,7 @@ export type AlbumId = {
   discogs?: string;
 };
 
-export interface CleanAlbum {
+export interface CleanAlbum extends AudioFeatures {
   id: AlbumId;
   spotifyId: string;
   title: string;
@@ -17,16 +30,7 @@ export interface CleanAlbum {
   genres: string[];
   tracks: string[];
   art: string | undefined;
-  acousticness: number;
-  danceability: number;
-  energy: number;
-  instrumentalness: number;
-  liveness: number;
-  loudness: number;
-  mode: number;
-  speechiness: number;
-  tempo: number;
-  valence: number;
+
   ratingRymVotes?: number;
   ratingRymValue?: number;
   ratingDiscogsVotes?: number;
@@ -57,7 +61,7 @@ export interface CleanAlbum {
 
 export type CleanLibrary = CleanAlbum[];
 
-export interface CleanTrack {
+export interface CleanTrack extends AudioFeatures {
   spotifyId: string;
   title: string;
   artists: string[];
@@ -66,16 +70,7 @@ export interface CleanTrack {
   dateReleased: string;
   dateAdded: string;
   genres: string[];
-  acousticness?: number;
-  danceability?: number;
-  energy?: number;
-  instrumentalness?: number;
-  liveness?: number;
-  loudness?: number;
-  mode?: number;
-  speechiness?: number;
-  tempo?: number;
-  valence?: number;
+  key?: number;
 }
 
 export type CleanPlaylist = CleanTrack[];
