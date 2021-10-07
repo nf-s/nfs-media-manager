@@ -103,14 +103,21 @@ export function skip(key: string) {
 }
 
 async function run() {
-  const playlist = await getPlaylist("2MSLhlwifL3i8b8vDZJ3h2");
+  const playlist = await getPlaylist("6H6tTq8Is6D2X8PZi5rJmK");
 
   if (!playlist) return;
+
+  await writeFile(
+    join(process.env.DATA_DIR!, "6H6tTq8Is6D2X8PZi5rJmK-raw.json"),
+    JSON.stringify(playlist),
+    undefined,
+    debug
+  );
 
   const cleanedPlaylist = await cleanPlaylist(playlist);
 
   await writeFile(
-    join(process.env.DATA_DIR!, "2MSLhlwifL3i8b8vDZJ3h2.json"),
+    join(process.env.DATA_DIR!, "6H6tTq8Is6D2X8PZi5rJmK.json"),
     JSON.stringify(cleanedPlaylist),
     undefined,
     debug
