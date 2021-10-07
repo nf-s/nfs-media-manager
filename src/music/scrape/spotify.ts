@@ -9,6 +9,11 @@ export interface SpotifySavedAlbum extends SpotifyApi.AlbumObjectFull {
   audioFeatures: SpotifyApi.AudioFeaturesObject[];
 }
 
+export interface SpotifyPlaylistTrack extends SpotifyApi.PlaylistTrackObject {
+  audioFeatures?: SpotifyApi.AudioFeaturesObject;
+  artists?: SpotifyApi.ArtistObjectFull[];
+}
+
 const spotifyLimiter = new Bottleneck({
   maxConcurrent: 1,
   minTime: 1000,
@@ -229,5 +234,118 @@ export async function searchSpotify(albums: Source[]) {
     return { newAlbums, updatedAlbums, notFound };
   } else {
     debug(`warning, SPOTIFY_TOKEN is not set - so can't seach for matches`);
+  }
+}
+
+export async function getPlaylist(
+  id: string
+): Promise<SpotifyPlaylistTrack[] | undefined> {
+  if (process.env.SPOTIFY_TOKEN) {
+    const spotifyApi = new SpotifyWebApi();
+    spotifyApi.setAccessToken(process.env.SPOTIFY_TOKEN);
+
+    debug(`connected to spotify`);
+
+    const unprocessedTracks: SpotifyApi.PlaylistTrackObject[] = [];
+    const unprocessedArtists: SpotifyApi.ArtistObjectFull[] = [];
+    const unprocessedAudioFeatures: SpotifyApi.AudioFeaturesObject[] = [];
+    const artistsToFetch = new Set<string>();
+
+    await new Promise((resolve, reject) => {
+      const getTracks = async (offset = 0, limit = 100) => {
+        debug(`fetching spotify playlist tracks offset=${offset}`);
+        try {
+          const response = await spotifyLimiter.schedule(() =>
+            spotifyApi.getPlaylistTracks(id, {
+              limit,
+              offset,
+            })
+          );
+
+          response.body.items.forEach((track) => {
+            track.track.artists.forEach((artist) =>
+              artistsToFetch.add(artist.id)
+            );
+            unprocessedTracks.push(track);
+          });
+
+          const nextOffset = response.body.next
+            ?.match(/offset=([0-9]+)/g)?.[0]
+            ?.split("=")?.[1];
+          if (nextOffset) {
+            getTracks(parseInt(nextOffset));
+          } else {
+            debug(`FINISHED fetching spotify playlist tracks`);
+            resolve("done");
+          }
+        } catch (error) {
+          debug(`FAILED to fetched spotify playlist tracks offset=${offset}`);
+          debug(error);
+          reject();
+        }
+      };
+
+      getTracks();
+    });
+
+    const artistsIds = Array.from(artistsToFetch);
+
+    debug(`Fetching data for ${artistsIds.length} artists`);
+
+    const numArtistBatches = Math.ceil(artistsIds.length / 50);
+
+    const artistsBatch = new Array(numArtistBatches)
+      .fill(0)
+      .map((v, index) => artistsIds.slice(index * 50, (index + 1) * 50));
+
+    await Promise.all(
+      artistsBatch.map((batch, i) =>
+        spotifyLimiter.schedule(async () => {
+          debug(`fetching spotify artists offset=${i * 50}`);
+          const artists = await spotifyApi.getArtists(batch);
+
+          unprocessedArtists.push(...artists.body.artists);
+        })
+      )
+    );
+
+    debug(`Fetching audio features for ${unprocessedTracks.length} tracks`);
+
+    const numBatches = Math.ceil(unprocessedTracks.length / 100);
+
+    const tracksBatch = new Array(numBatches)
+      .fill(0)
+      .map((v, index) =>
+        unprocessedTracks.slice(index * 100, (index + 1) * 100)
+      );
+
+    await Promise.all(
+      tracksBatch.map((batch, i) =>
+        spotifyLimiter.schedule(async () => {
+          debug(`fetching spotify track audo features offset=${i * 100}`);
+          const audioFeatures = await spotifyApi.getAudioFeaturesForTracks(
+            batch.map((t) => t.track.id)
+          );
+
+          unprocessedAudioFeatures.push(...audioFeatures.body.audio_features);
+        })
+      )
+    );
+
+    return unprocessedTracks.map((track) => {
+      return {
+        ...track,
+        audioFeatures: unprocessedAudioFeatures.find(
+          (a) => a.id === track.track.id
+        ),
+        artists: track.track.artists
+          .map((artist) => unprocessedArtists.find((a) => a.id === artist.id))
+          .filter(
+            (a) => typeof a !== "undefined"
+          ) as SpotifyApi.ArtistObjectFull[],
+      };
+    });
+  } else {
+    debug(`WARNING no SPOTIFY_TOKEN provided`);
   }
 }

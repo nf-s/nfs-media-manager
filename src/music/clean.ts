@@ -1,55 +1,5 @@
-import { AlbumId, albumTitle, library } from ".";
-
-export interface CleanAlbum {
-  id: AlbumId;
-  spotifyId: string;
-  title: string;
-  artist: string;
-  durationSec: number;
-  dateReleased: string;
-  dateAdded: string;
-  genres: string[];
-  tracks: string[];
-  art: string | undefined;
-  acousticness: number;
-  danceability: number;
-  energy: number;
-  instrumentalness: number;
-  liveness: number;
-  loudness: number;
-  mode: number;
-  speechiness: number;
-  tempo: number;
-  valence: number;
-  ratingRymVotes?: number;
-  ratingRymValue?: number;
-  ratingDiscogsVotes?: number;
-  ratingDiscogsValue?: number;
-  ratingMetacriticVotes?: number;
-  ratingMetacriticValue?: number;
-  popularityDiscogs?: number;
-  popularitySpotify?: number;
-  popularityLastFm?: number;
-  scrobbles?: number;
-  links: {
-    spotify: string;
-    rym?: string;
-    discogs?: string;
-    lastfm?: string;
-    mb?: string;
-    mc?: string;
-  };
-  otherTitles: {
-    rym?: string;
-    discogs?: string;
-    lastfm?: string;
-    mb?: string;
-    csv?: string;
-    mc?: string;
-  };
-}
-
-export type CleanLibrary = CleanAlbum[];
+import { albumTitle, library } from ".";
+import { AlbumId, CleanAlbum, CleanLibrary } from "./interfaces";
 
 export async function clean(): Promise<CleanLibrary> {
   return Object.values(library.albums)

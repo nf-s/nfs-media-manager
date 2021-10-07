@@ -6,6 +6,7 @@ import { IReleaseGroup } from "musicbrainz-api";
 import { join } from "path";
 import { fileExists, readJSONFile, writeFile } from "../util/fs";
 import { clean } from "./clean";
+import { clean as cleanPlaylist } from "./clean-playlist";
 import { albumCsv } from "./scrape/album-csv";
 import {
   discogs,
@@ -23,11 +24,14 @@ import {
   rymGoogleRelease,
 } from "./scrape/google-custom-search";
 import {
+  getPlaylist,
   scrapeSpotify,
   spotifyAudioFeatures,
+  SpotifyPlaylistTrack,
   SpotifySavedAlbum,
 } from "./scrape/spotify";
 import { upcCsv } from "./scrape/upc-csv";
+import { AlbumId } from "./interfaces";
 
 const debug = debugInit("music-scraper:init");
 
@@ -39,14 +43,6 @@ if (typeof process.env.DATA_DIR === "undefined")
 
 // SETUP library JSON blob
 export const LIBRARY_PATH = join(process.env.DATA_DIR, "lib-music.json");
-
-export type AlbumId = {
-  spotify: string;
-  upc?: string;
-  // rymUrl?: string;
-  musicBrainz?: string;
-  discogs?: string;
-};
 
 export type Source =
   | { type: "spotify" }
@@ -89,10 +85,11 @@ export interface Album {
 
 interface Library {
   albums: { [id: string]: Album };
+  playlists: { [id: string]: SpotifyPlaylistTrack[] };
   missing: Source[];
 }
 
-export const library: Library = { albums: {}, missing: [] };
+export const library: Library = { albums: {}, missing: [], playlists: {} };
 
 export const albumTitle = (a: Album) =>
   `${a.spotify.artists[0].name}-${a.spotify.name}`;
@@ -106,6 +103,21 @@ export function skip(key: string) {
 }
 
 async function run() {
+  const playlist = await getPlaylist("2MSLhlwifL3i8b8vDZJ3h2");
+
+  if (!playlist) return;
+
+  const cleanedPlaylist = await cleanPlaylist(playlist);
+
+  await writeFile(
+    join(process.env.DATA_DIR!, "2MSLhlwifL3i8b8vDZJ3h2.json"),
+    JSON.stringify(cleanedPlaylist),
+    undefined,
+    debug
+  );
+
+  return;
+
   // Load library
   if (await fileExists(LIBRARY_PATH)) {
     debug(`${LIBRARY_PATH} library file found!\nreading...`);
