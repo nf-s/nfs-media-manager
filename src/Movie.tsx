@@ -4,7 +4,7 @@ export default interface Movie {}
 // import React, { useCallback, useEffect, useMemo, useState } from "react";
 // import DataGrid, { Column, SortDirection } from "react-data-grid";
 
-// import { CleanMovie } from "../../movie-scraper/src/movie/clean";
+// import { CleanMovie } from "../../movie-scraper/src/movie/interfaces";
 // import { NumericFilter } from "./NumericFilter";
 
 // const columns: Column<CleanMovie>[] = [

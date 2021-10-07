@@ -2,7 +2,10 @@ import axios from "axios";
 import React, { useCallback, useEffect, useState } from "react";
 import SpotifyPlayer from "react-spotify-web-playback";
 import SpotifyWebApi from "spotify-web-api-js";
-import { CleanAlbum } from "../../movie-scraper/src/music/clean";
+import {
+  CleanTrack,
+  CleanAlbum,
+} from "../../movie-scraper/src/music/interfaces";
 import Browser from "./Browser";
 import config from "./config.json";
 import { getQueuePlaylistId } from "./Spotify";
@@ -11,21 +14,20 @@ import {
   defaultVisible,
   numericCols,
   textColumns,
-} from "./Table/Columns";
+} from "./Table/Album";
 
-const { Document } = require("flexsearch");
-
-export type FilterValue<T> = {
-  label: string;
-  value: string;
-  field: keyof T;
-};
+import * as Playlist from "./Table/Playlist";
 
 function Music(props: { spotifyToken: string; darkMode: boolean }) {
   const [spotifyApi, setSpotifyApi] = useState<SpotifyWebApi.SpotifyWebApiJs>();
   const [rowData, setData] = useState<{
     rows: CleanAlbum[];
   }>({ rows: [] });
+
+  const [playlistData, setPlaylistData] = useState<{
+    rows: CleanTrack[];
+  }>({ rows: [] });
+
   const [deviceId, setDeviceId] = useState<{ id?: string }>({});
 
   const [playerState, setSpotifyPlayer] = useState<{
@@ -89,20 +91,12 @@ function Music(props: { spotifyToken: string; darkMode: boolean }) {
         }),
       });
 
-      const searchIndex = new Document({
-        id: "spotifyId",
-        index: [
-          {
-            field: "title",
-            tokenize: "full",
-            resolution: 9,
-          },
-          {
-            field: "artist",
-            tokenize: "full",
-            resolution: 9,
-          },
-        ],
+      const playlist = await axios("/2MSLhlwifL3i8b8vDZJ3h2.json");
+
+      const tracks = playlist.data as CleanTrack[];
+
+      setPlaylistData({
+        rows: tracks,
       });
     };
 
@@ -129,7 +123,7 @@ function Music(props: { spotifyToken: string; darkMode: boolean }) {
 
   return (
     <div className="root-music">
-      <Browser
+      {/* <Browser
         rows={rowData.rows}
         filterCols={["title", "artist", "genres"]}
         defaultSort={defaultSort}
@@ -142,6 +136,21 @@ function Music(props: { spotifyToken: string; darkMode: boolean }) {
         }}
         play={play}
         queue={queue}
+      /> */}
+      <Browser
+        rows={playlistData.rows}
+        filterCols={["title", "artists", "genres"]}
+        defaultSort={Playlist.defaultSort}
+        defaultVisible={Playlist.defaultVisible}
+        numericCols={Playlist.numericCols}
+        textColumns={Playlist.textColumns}
+        gridColumns={{
+          cols: [
+            Playlist.textColumns[0],
+            Playlist.textColumns[1],
+            Playlist.textColumns[5],
+          ],
+        }}
       />
       <div className={"player"}>
         <SpotifyPlayer
