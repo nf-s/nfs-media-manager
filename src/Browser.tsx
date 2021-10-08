@@ -1,4 +1,5 @@
 import { GridLayout } from "@egjs/react-infinitegrid";
+import { Index } from "flexsearch";
 import React, {
   useCallback,
   useEffect,
@@ -19,21 +20,23 @@ import {
   StringCol,
 } from "./Table/Columns";
 
-import { Document, IndexOptions } from "flexsearch";
-
 type ColumnWithFieldRenderer<T> = Column<T> & {
   fieldRenderer?: FieldRenderer<T>;
 };
 type SelectValues<T> = OptionsType<FilterValue<T>>;
 
 function Browser<T>(props: {
+  tag: string;
   rows: T[];
   filterCols: (keyof T)[];
   defaultSort: [keyof T, SortDirection];
   defaultVisible: (keyof T | "Controls")[];
+  idCol: keyof PickProperties<T, string>;
   numericCols: NumericCol<T>[];
   textColumns: StringCol<T>[];
   gridColumns: {
+    width: number;
+    height: number;
     art?: keyof PickProperties<T, string | undefined>;
     /** maximum of 3 columns */ cols: (StringCol<T> | NumericCol<T>)[];
   };
@@ -41,58 +44,99 @@ function Browser<T>(props: {
   queue?: (item: T) => void;
 }) {
   const {
+    tag,
     rows,
     play,
     queue,
     filterCols,
     defaultSort,
+    idCol,
     numericCols,
     textColumns,
     gridColumns,
     defaultVisible,
   } = props;
 
-  const searchIndex = useMemo(() => {
-    const index = new Document({
-      document: {
-        id: "spotifyId",
-        index: filterCols.map((col) => ({
-          field: col,
-          tokenize: "full",
-          resolution: 9,
-        })) as Array<IndexOptions<T> & { field: string }>,
-      },
-    });
+  // const searchIndex = useMemo(() => {
+  //   if (typeof idCol !== "string") return;
+  //   const index = new Document({
+  //     document: {
+  //       id: idCol,
+  //       index: filterCols.map((col) => ({
+  //         field: col,
+  //         tokenize: "full",
+  //         resolution: 9,
+  //       })) as Array<IndexOptions<T> & { field: string }>,
+  //     },
+  //   });
 
-    for (let i = 0; i < rows.length; i++) {
-      index.add(rows[i]);
-    }
+  //   for (let i = 0; i < rows.length; i++) {
+  //     index.add(rows[i]);
+  //   }
 
-    return index;
-  }, [filterCols, rows]);
+  //   return index;
+  // }, [filterCols, idCol, rows]);
 
   const [filterData, setFilterData] = useState<{
     filters: FilterValue<T>[];
   }>({ filters: [] });
+
+  const filterSearchIndex = useMemo(() => {
+    const index = new Index({ tokenize: "full", preset: "score" });
+
+    for (let i = 0; i < filterData.filters.length; i++) {
+      const filter = filterData.filters[i];
+      index.add(i, filter.value);
+    }
+
+    return index;
+  }, [filterData]);
+
   const [columns, setColumns] = useState<ColumnWithFieldRenderer<T>[]>([]);
 
   const [viewMode, setViewMode] = useState<"grid" | "table">(
-    (localStorage.getItem("viewMode") as any) ?? "grid"
+    (localStorage.getItem(`${tag}-viewMode`) as any) ?? "grid"
   );
 
   const [[sortColumn, sortDirection], setSort] = useState<
     [keyof T, SortDirection]
   >(
-    localStorage.getItem("sortColumn") && localStorage.getItem("sortDirection")
+    localStorage.getItem(`${tag}-sortColumn`) &&
+      localStorage.getItem(`${tag}-sortDirection`)
       ? ([
-          localStorage.getItem("sortColumn"),
-          localStorage.getItem("sortDirection"),
+          localStorage.getItem(`${tag}-sortColumn`),
+          localStorage.getItem(`${tag}-sortDirection`),
         ] as any)
       : defaultSort
   );
 
   // Default value is set in fetchData
   const [visibleColumns, setVisibleColumns] = useState<Column<T>[]>();
+
+  const [filterInputValue, setFilterInputValue] = useState("");
+
+  const filteredOptions: FilterValue<T>[] = useMemo(() => {
+    if (!filterInputValue || !filterSearchIndex) {
+      return filterData.filters;
+    }
+
+    const searchResults = filterSearchIndex.search(filterInputValue);
+
+    const results: FilterValue<T>[] = [];
+
+    searchResults.forEach((fieldResult) => {
+      if (typeof fieldResult === "number" && filterData.filters[fieldResult]) {
+        results.push(filterData.filters[fieldResult]);
+      }
+    });
+
+    return results;
+  }, [filterInputValue, filterSearchIndex, filterData.filters]);
+
+  const slicedOptions = useMemo(
+    () => filteredOptions.slice(0, 500),
+    [filteredOptions]
+  );
 
   // Default value is set in fetchData
   function filterReducer(
@@ -129,38 +173,33 @@ function Browser<T>(props: {
 
   useEffect(() => {
     // storing input name
-    localStorage.setItem("viewMode", viewMode);
-  }, [viewMode]);
+    localStorage.setItem(`${tag}-viewMode`, viewMode);
+  }, [viewMode, tag]);
 
   useEffect(() => {
     // storing input name
-    localStorage.setItem("viewMode", viewMode);
-  }, [viewMode]);
+    localStorage.setItem(`${tag}-sortColumn`, sortColumn.toString());
+  }, [sortColumn, tag]);
 
   useEffect(() => {
     // storing input name
-    localStorage.setItem("sortColumn", sortColumn.toString());
-  }, [sortColumn]);
-
-  useEffect(() => {
-    // storing input name
-    localStorage.setItem("sortDirection", sortDirection);
-  }, [sortDirection]);
+    localStorage.setItem(`${tag}-sortDirection`, sortDirection);
+  }, [sortDirection, tag]);
 
   useEffect(() => {
     if (!visibleColumns) return;
     // storing input name
     localStorage.setItem(
-      "visibleColumns",
+      `${tag}-visibleColumns`,
       JSON.stringify(visibleColumns.map((col) => col.key))
     );
-  }, [visibleColumns]);
+  }, [visibleColumns, tag]);
 
   useEffect(() => {
     if (!activeFilters) return;
     // storing input name
-    localStorage.setItem("activeFilters", JSON.stringify(activeFilters));
-  }, [activeFilters]);
+    localStorage.setItem(`${tag}-activeFilters`, JSON.stringify(activeFilters));
+  }, [activeFilters, tag]);
 
   useEffect(() => {
     const filters = filterCols.reduce<FilterValue<T>[]>(
@@ -168,9 +207,9 @@ function Browser<T>(props: {
       []
     );
 
-    const savedActiveFilters = JSON.parse(
-      localStorage.getItem("activeFilters") ?? ""
-    );
+    const savedActiveFilters = localStorage.getItem(`${tag}-activeFilters`)
+      ? JSON.parse(localStorage.getItem(`${tag}-activeFilters`)!)
+      : undefined;
     if (Array.isArray(savedActiveFilters)) {
       setActiveFilters({
         type: "set",
@@ -185,7 +224,7 @@ function Browser<T>(props: {
     setFilterData({
       filters,
     });
-  }, [rows, filterCols]);
+  }, [rows, filterCols, tag]);
 
   useEffect(() => {
     const maximums = numericCols.reduce(
@@ -255,12 +294,12 @@ function Browser<T>(props: {
         : undefined;
 
     if (controlCol) {
-      columns.push(controlCol);
+      columns.unshift(controlCol);
     }
 
-    const savedVisibleColumns = JSON.parse(
-      localStorage.getItem("visibleColumns") ?? ""
-    );
+    const savedVisibleColumns = localStorage.getItem(`${tag}-visibleColumns`)
+      ? JSON.parse(localStorage.getItem(`${tag}-visibleColumns`)!)
+      : undefined;
     if (Array.isArray(savedVisibleColumns)) {
       setVisibleColumns(
         columns.filter((c) => savedVisibleColumns.includes(c.key))
@@ -272,7 +311,16 @@ function Browser<T>(props: {
     }
 
     setColumns(columns);
-  }, [rows, queue, numericCols, textColumns, play, addFilter, defaultVisible]);
+  }, [
+    rows,
+    queue,
+    numericCols,
+    textColumns,
+    play,
+    addFilter,
+    defaultVisible,
+    tag,
+  ]);
 
   const sortedRows = useMemo(() => {
     let sortedRows = [...rows];
@@ -339,7 +387,9 @@ function Browser<T>(props: {
           onChange={(filter) => {
             setActiveFilters({ type: "set", values: filter });
           }}
-          options={filterData.filters}
+          options={slicedOptions}
+          onInputChange={(value) => setFilterInputValue(value)}
+          filterOption={() => true} // disable native filter
           isClearable={true}
           closeMenuOnSelect={false}
           styles={{
@@ -532,8 +582,16 @@ function Browser<T>(props: {
                     ? columns.find((col) => col.key === sortColumn)
                     : undefined;
 
+                const padding = 5;
+
                 return typeof art === "string" ? (
-                  <div key={i} style={{ width: 250 }}>
+                  <div
+                    key={i}
+                    style={{
+                      width: gridColumns.width,
+                      padding: `${padding}px`,
+                    }}
+                  >
                     <div className="image-wrapper">
                       {queue || play ? (
                         <div className="image-buttons-wrapper">
@@ -555,7 +613,11 @@ function Browser<T>(props: {
                       ) : null}
                       <LazyLoadImage
                         src={art}
-                        style={{ width: "250px", height: "250px" }}
+                        style={{
+                          objectFit: "cover",
+                          width: `${gridColumns.width}px`,
+                          height: `${gridColumns.height}px`,
+                        }}
                       />
                     </div>
 

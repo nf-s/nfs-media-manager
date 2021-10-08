@@ -20,20 +20,20 @@ export function formatTime(seconds: number) {
 export type FieldRenderer<T> = (props: {
   data: T;
   addFilter: (field: keyof T, value: string) => void;
-}) => JSX.Element;
+}) => JSX.Element | null;
 
 export const Numeric = <T,>(col: NumericCol<T>) => {
   if (col.key === undefined) return () => <></>;
 
-  return (props: { data: T }) => (
-    <>
-      {(
-        ((props.data[col.key] ?? 0) * (col.mult ?? 1)) /
-        (col.max ?? 1)
-      ).toFixed(col.precision)}
-      {col.append}
-    </>
-  );
+  return (props: { data: T }) =>
+    typeof props.data[col.key] === "undefined" ? null : (
+      <>
+        {((props.data[col.key]! * (col.mult ?? 1)) / (col.max ?? 1)).toFixed(
+          col.precision ?? 2
+        )}
+        {col.append}
+      </>
+    );
 };
 
 export type DefaultSort<T> = [keyof T, SortDirection];
@@ -45,8 +45,9 @@ export type NumericCol<T> = {
   name: string;
   max?: number | undefined;
   generateMaximumFromData?: boolean;
-  append: string;
-  precision: number;
+  append?: string;
+  /** Number of digits after the decimal point. Must be in the range 0 - 20, inclusive. */
+  precision?: number;
   mult?: number | undefined;
 };
 

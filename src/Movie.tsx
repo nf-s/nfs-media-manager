@@ -1,134 +1,56 @@
-export default interface Movie {}
+import axios from "axios";
+import React, { useEffect, useState } from "react";
+import { CleanMovie } from "../../movie-scraper/src/movie/interfaces";
+import Browser from "./Browser";
+import * as Movie from "./Table/Movie";
 
-// import axios from "axios";
-// import React, { useCallback, useEffect, useMemo, useState } from "react";
-// import DataGrid, { Column, SortDirection } from "react-data-grid";
+export default function M(props: { darkMode: boolean }) {
+  const [playlistData, setPlaylistData] = useState<{
+    rows: CleanMovie[];
+  }>({ rows: [] });
 
-// import { CleanMovie } from "../../movie-scraper/src/movie/interfaces";
-// import { NumericFilter } from "./NumericFilter";
+  useEffect(() => {
+    const fetchData = async () => {
+      const library = await axios("/lib-movie.json");
 
-// const columns: Column<CleanMovie>[] = [
-//   { key: "title", name: "Title", sortable: true },
-//   { key: "releaseDate", name: "Release" },
-//   // {
-//   //   key: "ratingImdbValue",
-//   //   name: "IMDB",
-//   //   sortable: true,
-//   //   filterRenderer: NumericFilter,
-//   // },
-//   { key: "ratingPtpValue", name: "PTP", sortable: true },
-//   { key: "ratingMetascore", name: "MC", sortable: true },
-//   { key: "ratingTmdbValue", name: "TMDB", sortable: true },
-//   { key: "ratingRt", name: "RT", sortable: true },
-//   { key: "ratingImdbPersonal", name: "My Rating", sortable: true },
-// ];
+      const movies = library.data as CleanMovie[];
 
-// function Movie() {
-//   const [rowData, setData] = useState<{ rows: CleanMovie[] }>({ rows: [] });
-//   const [[sortColumn, sortDirection], setSort] = useState<
-//     [string, SortDirection]
-//   >(["title", "DESC"]);
+      setPlaylistData({
+        rows: movies,
+      });
+    };
 
-//   // const [filters, setFilters] = useState<Filters>({
-//   //   ratingImdbValue: "",
-//   // });
-//   // const [enableFilterRow, setEnableFilterRow] = useState(true);
+    fetchData();
+  }, []);
 
-//   useEffect(() => {
-//     const fetchData = async () => {
-//       const result = await axios("/lib.json");
-
-//       setData({ rows: result.data });
-//     };
-
-//     fetchData();
-//   }, []);
-
-//   const sortedRows = useMemo(() => {
-//     let sortedRows = [...rowData.rows];
-
-//     switch (sortColumn) {
-//       case "title":
-//       case "releaseDate":
-//         sortedRows = sortedRows.sort((a, b) =>
-//           (a[sortColumn] ?? "").localeCompare(b[sortColumn] ?? "")
-//         );
-//         break;
-//       case "ratingImdbValue":
-//       case "ratingPtpValue":
-//       case "ratingMetascore":
-//       case "ratingTmdbValue":
-//       case "ratingRt":
-//       case "ratingImdbPersonal":
-//         sortedRows = sortedRows.sort((a, b) =>
-//           typeof a[sortColumn] === "undefined"
-//             ? -1
-//             : a[sortColumn]! - (b[sortColumn] ?? -Infinity)
-//         );
-//         break;
-//       default:
-//     }
-
-//     return sortDirection === "DESC" ? sortedRows.reverse() : sortedRows;
-//   }, [rowData.rows, sortDirection, sortColumn]);
-
-//   const filteredRows = useMemo(() => {
-//     return sortedRows.filter((r) => {
-//       return filters.ratingImdbValue
-//         ? filters.ratingImdbValue.filterValues(
-//             r,
-//             filters.ratingImdbValue,
-//             "ratingImdbValue"
-//           )
-//         : true;
-//     });
-//   }, [sortedRows, filters]);
-
-//   function clearFilters() {
-//     setFilters({
-//       ratingImdbValue: "",
-//     });
-//   }
-
-//   function toggleFilters() {
-//     setEnableFilterRow(!enableFilterRow);
-//   }
-
-//   const handleSort = useCallback(
-//     (columnKey: string, direction: SortDirection) => {
-//       setSort([columnKey, direction]);
-//     },
-//     []
-//   );
-
-//   return (
-//     <>
-//       <div className="header-filters-toolbar">
-//         <button type="button" onClick={toggleFilters}>
-//           Toggle Filters
-//         </button>
-//         <button type="button" onClick={clearFilters}>
-//           Clear Filters
-//         </button>
-//       </div>
-//       <DataGrid
-//         columns={columns}
-//         rows={filteredRows}
-//         rowClass={(row) => (row.watched ? "watched" : "unwatched")}
-//         defaultColumnOptions={{
-//           sortable: true,
-//           resizable: true,
-//         }}
-//         // sortColumn={sortColumn}
-//         // sortDirection={sortDirection}
-//         // onSort={handleSort}
-//         // enableFilterRow={enableFilterRow}
-//         // filters={filters}
-//         // onFiltersChange={setFilters}
-//         className="fill-grid"
-//       />
-//     </>
-//   );
-// }
-
-// export default Movie;
+  return (
+    <div className="root-music">
+      <Browser
+        idCol={"id"}
+        tag={"movie"}
+        rows={playlistData.rows}
+        filterCols={["directors", "tags", "collections"]}
+        defaultSort={["releaseDate", "DESC"]}
+        defaultVisible={[
+          "Controls",
+          "title",
+          "directors",
+          "releaseDate",
+          "tags",
+        ]}
+        numericCols={Movie.numericCols}
+        textColumns={Movie.textColumns}
+        gridColumns={{
+          art: "poster",
+          width: 150,
+          height: 220,
+          cols: [
+            Movie.textColumns[0],
+            Movie.textColumns[1],
+            Movie.textColumns[2],
+          ],
+        }}
+      />
+    </div>
+  );
+}
