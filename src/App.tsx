@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import Movie from "./Movie";
 
 // import Movie from "./Movie";
 import Music from "./Music";
@@ -34,7 +35,7 @@ function App() {
         </button>
       </div>
 
-      {/* {mode.mode === "movie" ? <Movie></Movie> : null} */}
+      {mode.mode === "movie" ? <Movie darkMode={darkMode}></Movie> : null}
       {mode.mode === "music" && spotifyAuthToken ? (
         <Music spotifyToken={spotifyAuthToken} darkMode={darkMode}></Music>
       ) : null}
