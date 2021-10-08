@@ -1,24 +1,21 @@
-import { Movie as OMDBMovie } from "imdb-api";
-import { MovieResponse as TMDBMovie } from "moviedb-promise/dist/request-types";
+export interface CleanMovie {
+  id: string;
+  title: string;
+  poster?: string;
+  directors: string[];
+  watched: boolean;
+  ratingImdbPersonal?: number;
+  ratingImdbPersonalDate?: string;
+  releaseDate?: string;
+  ratingImdbValue?: number;
+  ratingImdbVotes?: number;
 
 
+  ratingTmdbValue?: number;
+  ratingTmdbVotes?: number;
+  ratingMetascore?: number;
+  ratingRt?: number;
+  tags?: string[];
 
-export interface Movie {
-
-  title?: string;
-  originalTitle?: string;
-  /** Raw dump from NFO file */
-  raw?: any;
-  tmdb?: TMDBMovie | null;
-  omdb?: OMDBMovie | null;
-  imdb?: { myRating: { value: number; date: string } };
-
-
-}
-
-export interface Library {
-  nfoFiles: string[];
-  /** NFO files which failed to parse */
-  failedNfos: string[];
-  movies: { [file: string]: Movie };
+  collections?: string[];
 }
