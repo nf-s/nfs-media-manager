@@ -1,13 +1,37 @@
 require("dotenv").config();
 
 import { debug as debugInit } from "debug";
+import { Movie as OMDBMovie } from "imdb-api";
+import { MovieResponse as TMDBMovie } from "moviedb-promise/dist/request-types";
+import { default as PTPMovie } from "passthepopcorn/lib/objects/movie";
 import { join } from "path";
+import { fileExists, readJSONFile, writeFile } from "../util/fs";
+import { skip } from "../util/skip";
 import { clean } from "./clean";
-import { Library } from "./interfaces";
-import scanNfos from "./scrape/nfo";
 import scrapeMovie from "./scrape";
 import myImdbRatings from "./scrape/imdb-ratings";
-import { fileExists, readJSONFile, writeFile } from "../util/fs";
+import scanNfos from "./scrape/nfo";
+import { PtpMovieScrape } from "./scrape/ptp";
+
+export interface Movie {
+  id?: { imdb?: string; tmdb?: string; ptp?: number };
+  title?: string;
+  originalTitle?: string;
+  /** Raw dump from NFO file */
+  raw?: any;
+  tmdb?: TMDBMovie | null;
+  omdb?: OMDBMovie | null;
+  imdb?: { myRating: { value: number; date: string } };
+  ptp?: PTPMovie | null;
+  ptpScrape?: PtpMovieScrape | null;
+}
+
+export interface Library {
+  nfoFiles: string[];
+  /** NFO files which failed to parse */
+  failedNfos: string[];
+  movies: { [file: string]: Movie };
+}
 
 const debug = debugInit("movie-scraper:init");
 
@@ -37,24 +61,34 @@ async function init() {
     Object.assign(library, await readJSONFile(LIBRARY_PATH, debug));
 
     debug(`library has ${library.nfoFiles.length} NFO files`);
+
+    debug(`Backing up lib to ${LIBRARY_PATH}-backup`);
+    await writeFile(
+      `${LIBRARY_PATH}-backup`,
+      JSON.stringify(library),
+      undefined,
+      debug
+    );
   }
 
-  await scanNfos();
+  if (!skip("nfo")) await scanNfos();
 
-  await scrapeMovie();
+  if (!skip("movie")) await scrapeMovie();
 
-  await myImdbRatings();
+  if (!skip("imdb")) await myImdbRatings();
 
-  const cleanLibrary = await clean();
+  if (!skip("clean") && process.env.MOVIE_CLEAN_JSON) {
+    const cleanLibrary = await clean();
 
-  debug("saving cleaned library file");
+    debug("saving cleaned library file");
 
-  await writeFile(
-    "/home/nfs/code/movie-browser/public/lib.json",
-    JSON.stringify(cleanLibrary),
-    undefined,
-    debug
-  );
+    await writeFile(
+      process.env.MOVIE_CLEAN_JSON,
+      JSON.stringify(cleanLibrary),
+      undefined,
+      debug
+    );
+  }
 }
 
 init();

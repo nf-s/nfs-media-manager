@@ -1,20 +1,5 @@
 import { library } from ".";
-
-export interface CleanMovie {
-  title: string;
-  watched: boolean;
-  ratingImdbPersonal?: number;
-  ratingImdbPersonalDate?: string;
-  releaseDate?: string;
-  ratingImdbValue?: number;
-  ratingImdbVotes?: number;
-  ratingPtpValue?: number;
-  ratingPtpVotes?: number;
-  ratingTmdbValue?: number;
-  ratingTmdbVotes?: number;
-  ratingMetascore?: number;
-  ratingRt?: number;
-}
+import { CleanMovie } from "./interfaces";
 
 export type CleanLibrary = CleanMovie[];
 
@@ -22,8 +7,21 @@ export async function clean(): Promise<CleanLibrary> {
   return Object.values(library.movies)
     .filter((m) => m.title)
     .map((movie) => {
+      const tags = new Set<string>();
+
+      movie.ptpScrape?.tags.forEach((t) => tags.add(t.trim().toLowerCase()));
+      movie.omdb?.genres
+        ?.split(", ")
+        .forEach((g) => tags.add(g.trim().toLowerCase()));
+      movie.tmdb?.genres?.forEach(
+        (g) => g.name && tags.add(g.name.trim().toLowerCase())
+      );
+
       const cleanMovie: CleanMovie = {
+        id: movie.id?.imdb ?? movie.title!,
         title: movie.title!,
+        poster: movie.omdb?.poster,
+        directors: movie.omdb?.director ? [movie.omdb?.director] : [],
         watched: typeof movie.imdb?.myRating.value !== "undefined",
         releaseDate: movie.tmdb?.release_date,
         ratingImdbPersonal: movie.imdb?.myRating.value,
@@ -39,6 +37,8 @@ export async function clean(): Promise<CleanLibrary> {
         ratingMetascore: movie.omdb?.metascore
           ? parseInt(movie.omdb?.metascore.replace(/\D/g, ""), 10)
           : undefined,
+        tags: Array.from(tags),
+        collections: movie.ptpScrape?.collections.map((t) => t.name),
       };
 
       // RT rating

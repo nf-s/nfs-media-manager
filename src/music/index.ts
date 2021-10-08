@@ -5,8 +5,10 @@ import { debug as debugInit } from "debug";
 import { IReleaseGroup } from "musicbrainz-api";
 import { join } from "path";
 import { fileExists, readJSONFile, writeFile } from "../util/fs";
+import { skip } from "../util/skip";
 import { clean } from "./clean";
 import { clean as cleanPlaylist } from "./clean-playlist";
+import { AlbumId } from "./interfaces";
 import { albumCsv } from "./scrape/album-csv";
 import {
   discogs,
@@ -15,14 +17,14 @@ import {
   DiscogsMasterReleaseWithRating,
   DiscogsRelease,
 } from "./scrape/discogs";
-import { LastFmAlbum, scrapeLastFm as lastFm } from "./scrape/last-fm";
-import { musicBrainz } from "./scrape/mb";
 import {
   GoogleResult,
   metacriticGoogleRelease,
   RymGoogle,
   rymGoogleRelease,
 } from "./scrape/google-custom-search";
+import { LastFmAlbum, scrapeLastFm as lastFm } from "./scrape/last-fm";
+import { musicBrainz } from "./scrape/mb";
 import {
   getPlaylist,
   scrapeSpotify,
@@ -31,7 +33,6 @@ import {
   SpotifySavedAlbum,
 } from "./scrape/spotify";
 import { upcCsv } from "./scrape/upc-csv";
-import { AlbumId } from "./interfaces";
 
 const debug = debugInit("music-scraper:init");
 
@@ -98,10 +99,6 @@ export async function save() {
   await writeFile(LIBRARY_PATH, JSON.stringify(library), undefined, debug);
 }
 
-export function skip(key: string) {
-  return (process.env.SKIP?.split(",") ?? []).includes(key);
-}
-
 async function run() {
   const playlist = await getPlaylist("6H6tTq8Is6D2X8PZi5rJmK");
 
@@ -122,8 +119,6 @@ async function run() {
     undefined,
     debug
   );
-
-  return;
 
   // Load library
   if (await fileExists(LIBRARY_PATH)) {
