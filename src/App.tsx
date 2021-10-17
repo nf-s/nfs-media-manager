@@ -28,7 +28,7 @@ function App() {
           Music
         </button>
         <button type="button" onClick={() => setMode({ mode: "playlist" })}>
-          Music
+          Playlist
         </button>
         <button type="button" onClick={() => setDarkMode(!darkMode)}>
           {darkMode ? "Light" : "Dark"}
@@ -37,10 +37,18 @@ function App() {
 
       {mode.mode === "movie" ? <Movie darkMode={darkMode}></Movie> : null}
       {mode.mode === "music" && spotifyAuthToken ? (
-        <Music spotifyToken={spotifyAuthToken} darkMode={darkMode}></Music>
+        <Music
+          spotifyToken={spotifyAuthToken}
+          darkMode={darkMode}
+          mode={"albums"}
+        ></Music>
       ) : null}
       {mode.mode === "playlist" && spotifyAuthToken ? (
-        <Music spotifyToken={spotifyAuthToken} darkMode={darkMode}></Music>
+        <Music
+          spotifyToken={spotifyAuthToken}
+          darkMode={darkMode}
+          mode={"playlist"}
+        ></Music>
       ) : null}
       {!spotifyAuthToken ? <h2>Fetching Spotify token</h2> : null}
     </div>

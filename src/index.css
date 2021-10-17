@@ -295,3 +295,21 @@ a.reverse-sort {
 .row-external-links:hover {
   opacity: 0.5;
 }
+
+.numerical-filter-range {
+  padding: 5px;
+}
+
+.numerical-filter-range .rc-slider-mark {
+  top: -10px;
+  left: 10px;
+  width: calc(100% - 20px);
+  pointer-events: none;
+}
+
+.numerical-filter-title {
+  height: min-content;
+  padding: 5px 0 0 0;
+  line-height: initial;
+  cursor: pointer;
+}

@@ -18,7 +18,11 @@ import {
 
 import * as Playlist from "./Table/Playlist";
 
-function Music(props: { spotifyToken: string; darkMode: boolean }) {
+function Music(props: {
+  spotifyToken: string;
+  darkMode: boolean;
+  mode: "albums" | "playlist";
+}) {
   const [spotifyApi, setSpotifyApi] = useState<SpotifyWebApi.SpotifyWebApiJs>();
   const [rowData, setData] = useState<{
     rows: CleanAlbum[];
@@ -114,7 +118,7 @@ function Music(props: { spotifyToken: string; darkMode: boolean }) {
       const tracks = playlist.data as CleanTrack[];
 
       setPlaylistData({
-        rows: tracks.filter((t) => t.tempo && t.tempo > 128 && t.tempo < 141),
+        rows: tracks,
       });
     };
 
@@ -141,44 +145,49 @@ function Music(props: { spotifyToken: string; darkMode: boolean }) {
 
   return (
     <div className="root-music">
-      <Browser
-        idCol={"spotifyId"}
-        tag={"album"}
-        rows={rowData.rows}
-        filterCols={["title", "artist", "genres"]}
-        defaultSort={defaultSort}
-        defaultVisible={defaultVisible}
-        numericCols={numericCols}
-        textColumns={textColumns}
-        gridColumns={{
-          width: 250,
-          height: 250,
-          art: "art",
-          cols: [textColumns[0], textColumns[1], textColumns[5]],
-        }}
-        play={playAlbum}
-        queue={queueAlbum}
-      />
-      {/* <Browser
-        tag={"playlist"}
-        rows={playlistData.rows}
-        filterCols={["artists", "genres"]}
-        defaultSort={Playlist.defaultSort}
-        defaultVisible={Playlist.defaultVisible}
-        numericCols={Playlist.numericCols}
-        textColumns={Playlist.textColumns}
-        gridColumns={{
-          width: 250,
-          height: 250,
-          cols: [
-            Playlist.textColumns[0],
-            Playlist.textColumns[1],
-            Playlist.textColumns[5],
-          ],
-        }}
-        play={playTrack}
-        queue={queueTrack}
-      /> */}
+      {props.mode === "albums" ? (
+        <Browser
+          idCol={"spotifyId"}
+          tag={"album"}
+          rows={rowData.rows}
+          filterCols={["title", "artist", "genres"]}
+          defaultSort={defaultSort}
+          defaultVisible={defaultVisible}
+          numericCols={numericCols}
+          textColumns={textColumns}
+          gridColumns={{
+            width: 250,
+            height: 250,
+            art: "art",
+            cols: [textColumns[0], textColumns[1], textColumns[5]],
+          }}
+          play={playAlbum}
+          queue={queueAlbum}
+        />
+      ) : (
+        <Browser
+          idCol={"spotifyId"}
+          tag={"playlist"}
+          rows={playlistData.rows}
+          filterCols={["artists", "genres"]}
+          defaultSort={Playlist.defaultSort}
+          defaultVisible={Playlist.defaultVisible}
+          numericCols={Playlist.numericCols}
+          textColumns={Playlist.textColumns}
+          gridColumns={{
+            width: 250,
+            height: 250,
+            cols: [
+              Playlist.textColumns[0],
+              Playlist.textColumns[1],
+              Playlist.textColumns[5],
+            ],
+          }}
+          play={playTrack}
+          queue={queueTrack}
+        />
+      )}
+
       <div className={"player"}>
         <SpotifyPlayer
           name="Nick's Web Player"

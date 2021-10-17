@@ -1,10 +1,19 @@
 import React from "react";
-import { SortDirection } from "react-data-grid";
+import { HeaderRendererProps, SortDirection } from "react-data-grid";
 import { PickProperties } from "ts-essentials";
+import { Handle, Range, SliderProps, SliderTooltip } from "rc-slider";
+
+import "rc-slider/assets/index.css";
 
 export type FilterValue<T> = {
   label: string;
   value: string;
+  field: keyof T;
+};
+
+export type NumericFilterValue<T> = {
+  min: number;
+  max: number;
   field: keyof T;
 };
 
@@ -22,18 +31,76 @@ export type FieldRenderer<T> = (props: {
   addFilter: (field: keyof T, value: string) => void;
 }) => JSX.Element | null;
 
+export const NumberFomat = <T,>(props: {
+  col: NumericCol<T>;
+  value: number;
+}) => (
+  <>
+    {((props.value * (props.col.mult ?? 1)) / (props.col.max ?? 1)).toFixed(
+      props.col.precision ?? 2
+    )}
+    {props.col.append}
+  </>
+);
+
 export const Numeric = <T,>(col: NumericCol<T>) => {
   if (col.key === undefined) return () => <></>;
 
-  return (props: { data: T }) =>
-    typeof props.data[col.key] === "undefined" ? null : (
-      <>
-        {((props.data[col.key]! * (col.mult ?? 1)) / (col.max ?? 1)).toFixed(
-          col.precision ?? 2
-        )}
-        {col.append}
-      </>
+  return (props: { data: T }) => {
+    const value = props.data[col.key];
+    return typeof value === "number" ? (
+      <NumberFomat col={col} value={value} />
+    ) : null;
+  };
+};
+
+const handle: <T>(col: NumericCol<T>) => SliderProps["handle"] =
+  (col) => (props) => {
+    const { value, dragging, index, ...restProps } = props;
+    return (
+      <SliderTooltip
+        prefixCls="rc-slider-tooltip"
+        overlay={<NumberFomat col={col} value={value} />}
+        visible={dragging}
+        placement="bottom"
+        key={index}
+      >
+        <Handle
+          value={value}
+          {...restProps}
+          ariaValueTextFormatter={undefined}
+        />
+      </SliderTooltip>
     );
+  };
+
+export const NumericFilter = <T,>(
+  col: NumericCol<T>,
+  min: number,
+  max: number,
+  addFilter: (field: keyof T, min: number, max: number) => void
+): React.ComponentType<HeaderRendererProps<T>> => {
+  if (col.key === undefined) return () => <></>;
+
+  const marks: Record<number, React.ReactNode> = {};
+  marks[min] = <NumberFomat col={col} value={min} />;
+  marks[max] = <NumberFomat col={col} value={max} />;
+  return (props) => (
+    <>
+      <div className={"numerical-filter-title"}>{col.name}</div>
+      <div className={"numerical-filter-range"}>
+        <Range
+          step={max - min < 10 ? (max - min) / 100 : 1}
+          min={min}
+          max={max}
+          defaultValue={[min, max]}
+          onAfterChange={(value) => addFilter(col.key, value[0], value[1])}
+          marks={marks}
+          handle={handle(col)}
+        />
+      </div>
+    </>
+  );
 };
 
 export type DefaultSort<T> = [keyof T, SortDirection];

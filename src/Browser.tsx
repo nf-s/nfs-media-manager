@@ -17,6 +17,8 @@ import {
   getColumnWithTotals,
   Numeric,
   NumericCol,
+  NumericFilter,
+  NumericFilterValue,
   StringCol,
 } from "./Table/Columns";
 
@@ -171,6 +173,42 @@ function Browser<T>(props: {
     setActiveFilters({ type: "add", field, value });
   }, []);
 
+  function filterNumericReducer(
+    state: NumericFilterValue<T>[],
+    action:
+      | { type: "add"; field: keyof T; min: number; max: number }
+      | { type: "clear" }
+      | { type: "set"; values: NumericFilterValue<T>[] }
+  ): NumericFilterValue<T>[] {
+    switch (action.type) {
+      case "add":
+        const found = numericCols.find((a) => a.key === action.field);
+        if (found) {
+          return [
+            ...state.filter((f) => f.field !== action.field),
+            { field: action.field, min: action.min, max: action.max },
+          ];
+        }
+        return state;
+      case "set":
+        return action.values;
+      case "clear":
+        return [];
+    }
+  }
+
+  const [activeNumericFilters, setActiveNumericFilters] = useReducer(
+    filterNumericReducer,
+    []
+  );
+
+  const addNumericFilter = useCallback(
+    (field: keyof T, min: number, max: number) => {
+      setActiveNumericFilters({ type: "add", field, min, max });
+    },
+    []
+  );
+
   useEffect(() => {
     // storing input name
     localStorage.setItem(`${tag}-viewMode`, viewMode);
@@ -233,19 +271,31 @@ function Browser<T>(props: {
       new Map<keyof T, number>()
     );
 
+    const minimums = numericCols.reduce(
+      (map, numCol) =>
+        map.set(numCol.key, Math.min(...rows.map((r) => r[numCol.key] ?? 0))),
+      new Map<keyof T, number>()
+    );
+
     const columns: ColumnWithFieldRenderer<T>[] = [
       ...textColumns,
       ...numericCols.map((col) => {
+        const min = minimums.get(col.key);
+        const max = maximums.get(col.key);
         if (col.generateMaximumFromData) {
-          col.max = maximums.get(col.key);
+          col.max = max;
         }
         return {
           key: col.key,
           name: col.name !== "" ? col.name : col.key.toString(),
           sortable: true,
-          resizable: false,
-          width: 80,
+          // resizable: false,
+          // width: 80,
           fieldRenderer: Numeric(col),
+          headerRenderer:
+            typeof min !== "undefined" && typeof max !== "undefined"
+              ? NumericFilter(col, min, max, addNumericFilter)
+              : undefined,
         };
       }),
     ]
@@ -320,6 +370,7 @@ function Browser<T>(props: {
     addFilter,
     defaultVisible,
     tag,
+    addNumericFilter,
   ]);
 
   const sortedRows = useMemo(() => {
@@ -347,28 +398,55 @@ function Browser<T>(props: {
   }, [rows, sortDirection, sortColumn, numericCols, textColumns]);
 
   const filteredRows = useMemo(() => {
-    if (!activeFilters || activeFilters.length === 0) return sortedRows;
+    if (
+      (!activeFilters || activeFilters.length === 0) &&
+      activeNumericFilters.length === 0
+    )
+      return sortedRows;
 
     const filterdRows = new Set<T>();
 
     for (let i = 0; i < sortedRows.length; i++) {
+      let include = false;
       const row = sortedRows[i];
-      for (let j = 0; j < activeFilters.length; j++) {
-        const filter = activeFilters[j];
+      if (activeFilters && activeFilters.length !== 0) {
+        for (let j = 0; j < activeFilters.length; j++) {
+          const filter = activeFilters[j];
+          const rowValue = row[filter.field];
+          if (Array.isArray(rowValue)) {
+            if (rowValue.includes(filter.value)) include = true;
+            continue;
+          }
+          if (typeof rowValue === "string") {
+            if (rowValue === filter.value) include = true;
+            continue;
+          }
+        }
+      } else {
+        include = true;
+      }
+
+      for (let j = 0; j < activeNumericFilters.length; j++) {
+        const filter = activeNumericFilters[j];
         const rowValue = row[filter.field];
-        if (Array.isArray(rowValue)) {
-          if (rowValue.includes(filter.value)) filterdRows.add(row);
-          continue;
+        if (typeof rowValue === "number") {
+          if (include && rowValue <= filter.max && rowValue >= filter.min) {
+            include = true;
+          } else {
+            include = false;
+          }
+        } else {
+          include = false;
         }
-        if (typeof rowValue === "string") {
-          if (rowValue === filter.value) filterdRows.add(row);
-          continue;
-        }
+      }
+
+      if (include) {
+        filterdRows.add(row);
       }
     }
 
     return Array.from(filterdRows);
-  }, [sortedRows, activeFilters]);
+  }, [sortedRows, activeFilters, activeNumericFilters]);
 
   return (
     <>
@@ -554,6 +632,7 @@ function Browser<T>(props: {
             }
             className="fill-grid"
             onRowClick={(e) => console.log(e)}
+            headerRowHeight={70}
           />
         </div>
       ) : (
