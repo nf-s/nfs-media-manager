@@ -176,7 +176,7 @@ function Browser<T>(props: {
   function filterNumericReducer(
     state: NumericFilterValue<T>[],
     action:
-      | { type: "add"; field: keyof T; min: number; max: number }
+      | ({ type: "add" } & NumericFilterValue<T>)
       | { type: "clear" }
       | { type: "set"; values: NumericFilterValue<T>[] }
   ): NumericFilterValue<T>[] {
@@ -290,10 +290,13 @@ function Browser<T>(props: {
           name: col.name !== "" ? col.name : col.key.toString(),
           sortable: true,
           // resizable: false,
-          // width: 80,
+          width: 80,
           fieldRenderer: Numeric(col),
           headerRenderer:
-            typeof min !== "undefined" && typeof max !== "undefined"
+            typeof min !== "undefined" &&
+            min !== Infinity &&
+            typeof max !== "undefined" &&
+            max !== -Infinity
               ? NumericFilter(col, min, max, addNumericFilter)
               : undefined,
         };
@@ -466,7 +469,13 @@ function Browser<T>(props: {
             setActiveFilters({ type: "set", values: filter });
           }}
           options={slicedOptions}
-          onInputChange={(value) => setFilterInputValue(value)}
+          inputValue={filterInputValue}
+          onInputChange={(value, action) => {
+            if (action.action === "set-value") {
+            } else {
+              setFilterInputValue(value);
+            }
+          }}
           filterOption={() => true} // disable native filter
           isClearable={true}
           closeMenuOnSelect={false}
@@ -511,58 +520,56 @@ function Browser<T>(props: {
           })}
         />
 
-        {viewMode === "grid" ? (
-          <div>
-            <Select
-              closeMenuOnSelect={false}
-              placeholder="Sort"
-              className={"filter-select sort-select"}
-              value={{
-                value: sortColumn,
-                label:
-                  columns.find(
-                    (c) => c.key === sortColumn && typeof c.name === "string"
-                  )?.name ?? sortColumn,
-              }}
-              onChange={(sort) => {
-                sort?.value &&
-                  setSort([
-                    sort?.value,
-                    sort?.value === sortColumn
-                      ? sortDirection === "ASC"
-                        ? "DESC"
-                        : "ASC"
-                      : sortDirection,
-                  ]);
-              }}
-              options={columns
-                .filter((c) => c.sortable)
-                .map((d) => ({
-                  value: d.key as keyof T,
-                  label: typeof d.name === "string" ? d.name : d.key,
-                }))}
-              theme={(theme) => ({
-                ...theme,
-                colors: {
-                  ...theme.colors,
-                  primary25: "#00ffab24",
-                  primary50: "#00ffab50",
-                  primary75: "#00ffab",
-                  primary: "#00c583",
-                },
-              })}
-            />
-            {/* eslint-disable-next-line jsx-a11y/anchor-is-valid */}
-            <a
-              className="reverse-sort"
-              onClick={() =>
-                setSort([sortColumn, sortDirection === "ASC" ? "DESC" : "ASC"])
-              }
-            >
-              &#8597;
-            </a>
-          </div>
-        ) : null}
+        <div>
+          <Select
+            closeMenuOnSelect={false}
+            placeholder="Sort"
+            className={"filter-select sort-select"}
+            value={{
+              value: sortColumn,
+              label:
+                columns.find(
+                  (c) => c.key === sortColumn && typeof c.name === "string"
+                )?.name ?? sortColumn,
+            }}
+            onChange={(sort) => {
+              sort?.value &&
+                setSort([
+                  sort?.value,
+                  sort?.value === sortColumn
+                    ? sortDirection === "ASC"
+                      ? "DESC"
+                      : "ASC"
+                    : sortDirection,
+                ]);
+            }}
+            options={columns
+              .filter((c) => c.sortable)
+              .map((d) => ({
+                value: d.key as keyof T,
+                label: typeof d.name === "string" ? d.name : d.key,
+              }))}
+            theme={(theme) => ({
+              ...theme,
+              colors: {
+                ...theme.colors,
+                primary25: "#00ffab24",
+                primary50: "#00ffab50",
+                primary75: "#00ffab",
+                primary: "#00c583",
+              },
+            })}
+          />
+          {/* eslint-disable-next-line jsx-a11y/anchor-is-valid */}
+          <a
+            className="reverse-sort"
+            onClick={() =>
+              setSort([sortColumn, sortDirection === "ASC" ? "DESC" : "ASC"])
+            }
+          >
+            &#8597;
+          </a>
+        </div>
 
         {viewMode === "table" ? (
           <Select
@@ -632,7 +639,8 @@ function Browser<T>(props: {
             }
             className="fill-grid"
             onRowClick={(e) => console.log(e)}
-            headerRowHeight={70}
+            headerRowHeight={50}
+            rowHeight={35}
           />
         </div>
       ) : (

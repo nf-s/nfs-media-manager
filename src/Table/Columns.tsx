@@ -90,7 +90,7 @@ export const NumericFilter = <T,>(
       <div className={"numerical-filter-title"}>{col.name}</div>
       <div className={"numerical-filter-range"}>
         <Range
-          step={max - min < 10 ? (max - min) / 100 : 1}
+          step={max - min < 10 ? (max - min) / 200 : 1}
           min={min}
           max={max}
           defaultValue={[min, max]}
