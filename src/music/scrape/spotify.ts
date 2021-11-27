@@ -16,7 +16,7 @@ export interface SpotifyPlaylistTrack extends SpotifyApi.PlaylistTrackObject {
 
 const spotifyLimiter = new Bottleneck({
   maxConcurrent: 1,
-  minTime: 1000,
+  minTime: 1500,
 });
 
 export async function scrapeSpotify() {

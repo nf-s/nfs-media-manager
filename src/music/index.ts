@@ -100,25 +100,25 @@ export async function save() {
 }
 
 async function run() {
-  const playlist = await getPlaylist("6H6tTq8Is6D2X8PZi5rJmK");
+  // const playlist = await getPlaylist("6H6tTq8Is6D2X8PZi5rJmK");
 
-  if (!playlist) return;
+  // if (!playlist) return;
 
-  await writeFile(
-    join(process.env.DATA_DIR!, "6H6tTq8Is6D2X8PZi5rJmK-raw.json"),
-    JSON.stringify(playlist),
-    undefined,
-    debug
-  );
+  // await writeFile(
+  //   join(process.env.DATA_DIR!, "6H6tTq8Is6D2X8PZi5rJmK-raw.json"),
+  //   JSON.stringify(playlist),
+  //   undefined,
+  //   debug
+  // );
 
-  const cleanedPlaylist = await cleanPlaylist(playlist);
+  // const cleanedPlaylist = await cleanPlaylist(playlist);
 
-  await writeFile(
-    join(process.env.DATA_DIR!, "6H6tTq8Is6D2X8PZi5rJmK.json"),
-    JSON.stringify(cleanedPlaylist),
-    undefined,
-    debug
-  );
+  // await writeFile(
+  //   join(process.env.DATA_DIR!, "6H6tTq8Is6D2X8PZi5rJmK.json"),
+  //   JSON.stringify(cleanedPlaylist),
+  //   undefined,
+  //   debug
+  // );
 
   // Load library
   if (await fileExists(LIBRARY_PATH)) {

@@ -48,8 +48,9 @@ export default async function scrapeMovie() {
   }
 
   // Calculate how many movies have TMDB metadata
-  const tmdbFound = Object.values(library.movies).filter((movie) => movie.tmdb)
-    .length;
+  const tmdbFound = Object.values(library.movies).filter(
+    (movie) => movie.tmdb
+  ).length;
 
   debug(
     `library has TMDB metadata for ${tmdbFound}/${
@@ -93,8 +94,9 @@ export default async function scrapeMovie() {
   }
 
   // Calculate how many movies have OMDB metadata
-  const omdbFound = Object.values(library.movies).filter((movie) => movie.omdb)
-    .length;
+  const omdbFound = Object.values(library.movies).filter(
+    (movie) => movie.omdb
+  ).length;
 
   debug(
     `library has OMDB metadata for ${omdbFound}/${
@@ -189,7 +191,8 @@ export default async function scrapeMovie() {
 
 
 
-    .length;
+
+  ).length;
 
   debug(
 
