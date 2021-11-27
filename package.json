@@ -35,7 +35,7 @@
     "moviedb-promise": "^3.1.2",
     "musicbrainz-api": "^0.5.2",
     "ncp": "^2.0.0",
-    "passthepopcorn": "0.6.13-nfs",
+    "nfs-passthepopcorn": "0.6.13",
     "spotify-web-api-node": "^5.0.2",
     "ts-essentials": "^8.1.0",
     "tslint": "^6.1.3",

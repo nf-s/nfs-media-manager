@@ -2,7 +2,7 @@ import Bottleneck from "bottleneck";
 import { debug as debugInit } from "debug";
 import { Client as OMDBClient } from "imdb-api";
 import { MovieDb as TMDBClient } from "moviedb-promise";
-import { default as PTPClient } from "passthepopcorn/lib/api";
+import { default as PTPClient } from "nfs-passthepopcorn/lib/api";
 import { join } from "path";
 import { library, save } from "..";
 import ptpScrape from "./ptp";
@@ -48,8 +48,9 @@ export default async function scrapeMovie() {
   }
 
   // Calculate how many movies have TMDB metadata
-  const tmdbFound = Object.values(library.movies).filter((movie) => movie.tmdb)
-    .length;
+  const tmdbFound = Object.values(library.movies).filter(
+    (movie) => movie.tmdb
+  ).length;
 
   debug(
     `library has TMDB metadata for ${tmdbFound}/${
@@ -93,8 +94,9 @@ export default async function scrapeMovie() {
   }
 
   // Calculate how many movies have OMDB metadata
-  const omdbFound = Object.values(library.movies).filter((movie) => movie.omdb)
-    .length;
+  const omdbFound = Object.values(library.movies).filter(
+    (movie) => movie.omdb
+  ).length;
 
   debug(
     `library has OMDB metadata for ${omdbFound}/${
@@ -188,8 +190,9 @@ export default async function scrapeMovie() {
   }
 
   // Calculate how many movies have PTP metadata
-  const ptpFound = Object.values(library.movies).filter((movie) => movie.ptp)
-    .length;
+  const ptpFound = Object.values(library.movies).filter(
+    (movie) => movie.ptp
+  ).length;
 
   debug(
     `library has PTP metadata for ${ptpFound}/${
