@@ -81,6 +81,10 @@ code {
   overflow-x: hidden;
 }
 
+.rdg-cell {
+  font-size: 12px;
+}
+
 .rdg-row.unwatched {
   background-color: #dbfff8;
   color: #093c33;
@@ -105,11 +109,10 @@ code {
 
 .header {
   display: grid;
-  grid-template-columns: 50px auto 250px;
-  /* grid-template-columns: 50px repeat(
+  grid-template-columns: 50px 500px repeat(
       auto-fill,
       [col-start] minmax(250px, 1fr) [col-end]
-    ); */
+    );
   grid-column-gap: 10px;
   padding: 10px;
   height: 38px;
@@ -127,6 +130,10 @@ code {
   cursor: pointer;
   background: #00c583;
   color: #fff;
+}
+
+.player {
+  overflow: hidden;
 }
 
 .filter-select {
@@ -210,17 +217,17 @@ code {
 }
 
 .image-album-title {
-  font-size: 16px;
+  font-size: 14px;
   font-weight: 600;
 }
 
 .image-album-artist {
-  font-size: 14px;
+  font-size: 12px;
 }
 
 .image-album-extra {
   font-weight: 200;
-  font-size: 12px;
+  font-size: 10px;
   height: 16px;
 }
 
@@ -297,11 +304,11 @@ a.reverse-sort {
 }
 
 .numerical-filter-range {
-  padding: 5px;
+  padding: 1px 5px 5px 5px;
 }
 
 .numerical-filter-range .rc-slider-mark {
-  top: -10px;
+  top: -6px;
   left: 10px;
   width: calc(100% - 20px);
   pointer-events: none;
@@ -312,4 +319,9 @@ a.reverse-sort {
   padding: 5px 0 0 0;
   line-height: initial;
   cursor: pointer;
+}
+
+.numerical-filter-range .rc-slider-mark-text {
+  font-size: 10px;
+  font-weight: 100;
 }
