@@ -69,6 +69,7 @@ body {
   grid-template-rows: 20px auto;
   width: 100vw;
   height: 100vh;
+  overflow: hidden;
 }
 
 code {
@@ -133,7 +134,8 @@ code {
 }
 
 .player {
-  overflow: hidden;
+  overflow-x: visible;
+  overflow-y: visible;
 }
 
 .filter-select {

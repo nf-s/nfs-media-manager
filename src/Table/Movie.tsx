@@ -1,6 +1,15 @@
 import React from "react";
 import { CleanMovie } from "../../../movie-scraper/src/movie/interfaces";
-import { FieldRenderer, NumericCol, StringCol } from "./Columns";
+import {
+  BooleanCol,
+  DefaultSort,
+  DefaultVisible,
+  FieldRenderer,
+  FilterColKey,
+  GridCols,
+  NumericCol,
+  StringCol,
+} from "./Columns";
 
 export const Tags: FieldRenderer<CleanMovie> = (props) => {
   return (
@@ -53,6 +62,9 @@ export const Directors: FieldRenderer<CleanMovie> = (props) => {
   );
 };
 
+export const booleanCols: BooleanCol<CleanMovie>[] = [
+  { key: "watched", name: "Watched" },
+];
 export const numericCols: NumericCol<CleanMovie>[] = [
   {
     key: "ratingImdbValue",
@@ -97,3 +109,24 @@ export const textColumns: StringCol<CleanMovie>[] = [
     fieldRenderer: Collections,
   },
 ];
+
+export const defaultSort: DefaultSort<CleanMovie> = ["releaseDate", "DESC"];
+export const defaultFilter: FilterColKey<CleanMovie>[] = [
+  "directors",
+  "tags",
+  "collections",
+];
+export const defaultVisible: DefaultVisible<CleanMovie> = [
+  "Controls",
+  "title",
+  "directors",
+  "releaseDate",
+  "tags",
+];
+
+export const gridCols: GridCols<CleanMovie> = {
+  art: "poster",
+  width: 150,
+  height: 220,
+  cols: [textColumns[0], textColumns[1], textColumns[2]],
+};

@@ -1,12 +1,14 @@
 import React from "react";
 import { CleanAlbum } from "../../../movie-scraper/src/music/interfaces";
 import {
-  FieldRenderer,
   DefaultSort,
   DefaultVisible,
+  FieldRenderer,
+  FilterColKey,
+  formatTime,
+  GridCols,
   NumericCol,
   StringCol,
-  formatTime,
 } from "./Columns";
 
 export const Genres: FieldRenderer<CleanAlbum> = (props) => {
@@ -96,19 +98,6 @@ export const Release: FieldRenderer<CleanAlbum> = (props) => (
     ) : null}
   </>
 );
-
-export const defaultSort: DefaultSort<CleanAlbum> = ["dateAdded", "DESC"];
-export const defaultVisible: DefaultVisible<CleanAlbum> = [
-  "Controls",
-  "title",
-  "artist",
-  "durationSec",
-  "dateReleased",
-  "dateAdded",
-  "genres",
-  "ratingRymValue",
-  "ratingRymVotes",
-];
 
 export const numericCols: NumericCol<CleanAlbum>[] = [
   {
@@ -279,3 +268,28 @@ export const textColumns: StringCol<CleanAlbum>[] = [
     fieldRenderer: Genres,
   },
 ];
+
+export const defaultSort: DefaultSort<CleanAlbum> = ["dateAdded", "DESC"];
+export const defaultFilter: FilterColKey<CleanAlbum>[] = [
+  "title",
+  "artist",
+  "genres",
+];
+export const defaultVisible: DefaultVisible<CleanAlbum> = [
+  "Controls",
+  "title",
+  "artist",
+  "durationSec",
+  "dateReleased",
+  "dateAdded",
+  "genres",
+  "ratingRymValue",
+  "ratingRymVotes",
+];
+
+export const gridCols: GridCols<CleanAlbum> = {
+  width: 250,
+  height: 250,
+  art: "art",
+  cols: [textColumns[0], textColumns[1], textColumns[5]],
+};
