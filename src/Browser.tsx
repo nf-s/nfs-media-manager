@@ -1,50 +1,49 @@
 import { GridLayout } from "@egjs/react-infinitegrid";
-import { Index } from "flexsearch";
-import React, {
-  useCallback,
-  useEffect,
-  useMemo,
-  useReducer,
-  useState,
-} from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import DataGrid, { Column, SortDirection } from "react-data-grid";
 import { LazyLoadImage } from "react-lazy-load-image-component";
-import Select, { OptionsType } from "react-select";
+import Select from "react-select";
 import { PickProperties } from "ts-essentials";
 import {
+  BooleanCol,
+  BooleanField,
+  BooleanFilter,
   FieldRenderer,
-  FilterValue,
-  getColumnWithTotals,
-  Numeric,
+  FilterColKey,
+  GridCols,
   NumericCol,
+  NumericColKey,
+  NumericField,
   NumericFilter,
-  NumericFilterValue,
   StringCol,
 } from "./Table/Columns";
+import {
+  useBooleanFilter,
+  useNumericFilter,
+  useTextFilter,
+} from "./Table/Filters";
+import { useTraceUpdate } from "./util";
 
 type ColumnWithFieldRenderer<T> = Column<T> & {
   fieldRenderer?: FieldRenderer<T>;
 };
-type SelectValues<T> = OptionsType<FilterValue<T>>;
 
 function Browser<T>(props: {
   tag: string;
   rows: T[];
-  filterCols: (keyof T)[];
+  filterCols: FilterColKey<T>[];
   defaultSort: [keyof T, SortDirection];
   defaultVisible: (keyof T | "Controls")[];
   idCol: keyof PickProperties<T, string>;
-  numericCols: NumericCol<T>[];
-  textColumns: StringCol<T>[];
-  gridColumns: {
-    width: number;
-    height: number;
-    art?: keyof PickProperties<T, string | undefined>;
-    /** maximum of 3 columns */ cols: (StringCol<T> | NumericCol<T>)[];
-  };
+  numericCols?: NumericCol<T>[];
+  textColumns?: StringCol<T>[];
+  booleanColumns?: BooleanCol<T>[];
+  gridColumns: GridCols<T>;
   play?: (item: T) => void;
   queue?: (item: T) => void;
 }) {
+  useTraceUpdate(props);
+
   const {
     tag,
     rows,
@@ -55,6 +54,7 @@ function Browser<T>(props: {
     idCol,
     numericCols,
     textColumns,
+    booleanColumns,
     gridColumns,
     defaultVisible,
   } = props;
@@ -79,21 +79,6 @@ function Browser<T>(props: {
   //   return index;
   // }, [filterCols, idCol, rows]);
 
-  const [filterData, setFilterData] = useState<{
-    filters: FilterValue<T>[];
-  }>({ filters: [] });
-
-  const filterSearchIndex = useMemo(() => {
-    const index = new Index({ tokenize: "full", preset: "score" });
-
-    for (let i = 0; i < filterData.filters.length; i++) {
-      const filter = filterData.filters[i];
-      index.add(i, filter.value);
-    }
-
-    return index;
-  }, [filterData]);
-
   const [columns, setColumns] = useState<ColumnWithFieldRenderer<T>[]>([]);
 
   const [viewMode, setViewMode] = useState<"grid" | "table">(
@@ -115,118 +100,37 @@ function Browser<T>(props: {
   // Default value is set in fetchData
   const [visibleColumns, setVisibleColumns] = useState<Column<T>[]>();
 
-  const [filterInputValue, setFilterInputValue] = useState("");
+  const {
+    activeFilters,
+    addFilter,
+    setFilters,
+    slicedOptions,
+    filterInputValue,
+    setFilterInputValue,
+  } = useTextFilter<T>(filterCols, rows, tag);
 
-  const filteredOptions: FilterValue<T>[] = useMemo(() => {
-    if (!filterInputValue || !filterSearchIndex) {
-      return filterData.filters;
-    }
-
-    const searchResults = filterSearchIndex.search(filterInputValue);
-
-    const results: FilterValue<T>[] = [];
-
-    searchResults.forEach((fieldResult) => {
-      if (typeof fieldResult === "number" && filterData.filters[fieldResult]) {
-        results.push(filterData.filters[fieldResult]);
-      }
-    });
-
-    return results;
-  }, [filterInputValue, filterSearchIndex, filterData.filters]);
-
-  const slicedOptions = useMemo(
-    () => filteredOptions.slice(0, 500),
-    [filteredOptions]
+  const { activeNumericFilters, addNumericFilter } = useNumericFilter<T>(
+    numericCols ?? []
   );
 
-  // Default value is set in fetchData
-  function filterReducer(
-    state: SelectValues<T> | undefined,
-    action:
-      | { type: "add"; field: keyof T; value: string }
-      | { type: "clear" }
-      | { type: "set"; values: SelectValues<T> }
-  ): SelectValues<T> | undefined {
-    switch (action.type) {
-      case "add":
-        const found = filterData.filters.find(
-          (a) => a.field === action.field && a.value === action.value
-        );
-        if (found) {
-          return Array.from(new Set([...(state ?? []), found]));
-        }
-        return state;
-      case "set":
-        return action.values;
-      case "clear":
-        return [];
-    }
-  }
-
-  const [activeFilters, setActiveFilters] = useReducer(
-    filterReducer,
-    undefined
-  );
-
-  const addFilter = useCallback((field: keyof T, value: string) => {
-    setActiveFilters({ type: "add", field, value });
-  }, []);
-
-  function filterNumericReducer(
-    state: NumericFilterValue<T>[],
-    action:
-      | ({ type: "add" } & NumericFilterValue<T>)
-      | { type: "clear" }
-      | { type: "set"; values: NumericFilterValue<T>[] }
-  ): NumericFilterValue<T>[] {
-    switch (action.type) {
-      case "add":
-        const found = numericCols.find((a) => a.key === action.field);
-        if (found) {
-          return [
-            ...state.filter((f) => f.field !== action.field),
-            { field: action.field, min: action.min, max: action.max },
-          ];
-        }
-        return state;
-      case "set":
-        return action.values;
-      case "clear":
-        return [];
-    }
-  }
-
-  const [activeNumericFilters, setActiveNumericFilters] = useReducer(
-    filterNumericReducer,
-    []
-  );
-
-  const addNumericFilter = useCallback(
-    (field: keyof T, min: number, max: number) => {
-      setActiveNumericFilters({ type: "add", field, min, max });
-    },
-    []
+  const { activeBooleanFilters, addBooleanFilter } = useBooleanFilter<T>(
+    booleanColumns ?? []
   );
 
   useEffect(() => {
-    // storing input name
     localStorage.setItem(`${tag}-viewMode`, viewMode);
   }, [viewMode, tag]);
 
   useEffect(() => {
-    // storing input name
     localStorage.setItem(`${tag}-sortColumn`, sortColumn.toString());
   }, [sortColumn, tag]);
 
   useEffect(() => {
-    // storing input name
     localStorage.setItem(`${tag}-sortDirection`, sortDirection);
   }, [sortDirection, tag]);
 
   useEffect(() => {
     if (!visibleColumns) return;
-    // storing input name
     localStorage.setItem(
       `${tag}-visibleColumns`,
       JSON.stringify(visibleColumns.map((col) => col.key))
@@ -234,52 +138,29 @@ function Browser<T>(props: {
   }, [visibleColumns, tag]);
 
   useEffect(() => {
-    if (!activeFilters) return;
-    // storing input name
-    localStorage.setItem(`${tag}-activeFilters`, JSON.stringify(activeFilters));
-  }, [activeFilters, tag]);
-
-  useEffect(() => {
-    const filters = filterCols.reduce<FilterValue<T>[]>(
-      (acc, curr) => [...acc, ...getColumnWithTotals(rows, curr)],
-      []
-    );
-
-    const savedActiveFilters = localStorage.getItem(`${tag}-activeFilters`)
-      ? JSON.parse(localStorage.getItem(`${tag}-activeFilters`)!)
-      : undefined;
-    if (Array.isArray(savedActiveFilters)) {
-      setActiveFilters({
-        type: "set",
-        values: filters.filter((a) =>
-          savedActiveFilters.find(
-            (b) => a.field === b.field && a.value === b.value
-          )
-        ),
-      });
-    }
-
-    setFilterData({
-      filters,
-    });
-  }, [rows, filterCols, tag]);
-
-  useEffect(() => {
-    const maximums = numericCols.reduce(
+    console.log("setColumns");
+    const maximums = (numericCols ?? []).reduce(
       (map, numCol) =>
         map.set(numCol.key, Math.max(...rows.map((r) => r[numCol.key] ?? 0))),
-      new Map<keyof T, number>()
+      new Map<NumericColKey<T>, number>()
     );
 
-    const minimums = numericCols.reduce(
+    const minimums = (numericCols ?? []).reduce(
       (map, numCol) =>
         map.set(numCol.key, Math.min(...rows.map((r) => r[numCol.key] ?? 0))),
-      new Map<keyof T, number>()
+      new Map<NumericColKey<T>, number>()
     );
 
     const columns: ColumnWithFieldRenderer<T>[] = [
-      ...textColumns,
-      ...numericCols.map((col) => {
+      ...(textColumns ?? []),
+      ...(booleanColumns ?? []).map((col) => {
+        return {
+          ...col,
+          fieldRenderer: BooleanField(col),
+          headerRenderer: BooleanFilter(col, addBooleanFilter),
+        };
+      }),
+      ...(numericCols ?? []).map((col) => {
         const min = minimums.get(col.key);
         const max = maximums.get(col.key);
         if (col.generateMaximumFromData) {
@@ -291,7 +172,7 @@ function Browser<T>(props: {
           sortable: true,
           // resizable: false,
           width: 80,
-          fieldRenderer: Numeric(col),
+          fieldRenderer: NumericField(col),
           headerRenderer:
             typeof min !== "undefined" &&
             min !== Infinity &&
@@ -374,12 +255,16 @@ function Browser<T>(props: {
     defaultVisible,
     tag,
     addNumericFilter,
+    booleanColumns,
+    addBooleanFilter,
   ]);
 
   const sortedRows = useMemo(() => {
     let sortedRows = [...rows];
 
-    const textSortKey = textColumns.find((col) => col.key === sortColumn)?.key;
+    const textSortKey = (textColumns ?? []).find(
+      (col) => col.key === sortColumn
+    )?.key;
 
     if (textSortKey) {
       sortedRows = sortedRows.sort((a, b) => {
@@ -389,7 +274,9 @@ function Browser<T>(props: {
       });
     }
 
-    const numSortKey = numericCols.find((col) => col.key === sortColumn)?.key;
+    const numSortKey = (numericCols ?? []).find(
+      (col) => col.key === sortColumn
+    )?.key;
 
     if (numSortKey) {
       sortedRows = sortedRows
@@ -403,44 +290,59 @@ function Browser<T>(props: {
   const filteredRows = useMemo(() => {
     if (
       (!activeFilters || activeFilters.length === 0) &&
-      activeNumericFilters.length === 0
+      activeNumericFilters.length === 0 &&
+      activeBooleanFilters.length === 0
     )
       return sortedRows;
 
     const filterdRows = new Set<T>();
 
+    // Apply text filters (additive - union)
     for (let i = 0; i < sortedRows.length; i++) {
-      let include = false;
+      let include = true;
       const row = sortedRows[i];
       if (activeFilters && activeFilters.length !== 0) {
+        include = false;
         for (let j = 0; j < activeFilters.length; j++) {
           const filter = activeFilters[j];
           const rowValue = row[filter.field];
-          if (Array.isArray(rowValue)) {
-            if (rowValue.includes(filter.value)) include = true;
-            continue;
-          }
-          if (typeof rowValue === "string") {
-            if (rowValue === filter.value) include = true;
-            continue;
+          if (
+            (Array.isArray(rowValue) && rowValue.includes(filter.value)) ||
+            (typeof rowValue === "string" && rowValue === filter.value)
+          ) {
+            include = true;
           }
         }
-      } else {
-        include = true;
       }
 
+      // Numeric and boolean filters are subtractive (intersecting)
+      // Apply numeric filters
       for (let j = 0; j < activeNumericFilters.length; j++) {
         const filter = activeNumericFilters[j];
         const rowValue = row[filter.field];
-        if (typeof rowValue === "number") {
-          if (include && rowValue <= filter.max && rowValue >= filter.min) {
-            include = true;
-          } else {
-            include = false;
-          }
-        } else {
-          include = false;
+        if (
+          typeof rowValue === "number" &&
+          include &&
+          rowValue <= filter.max &&
+          rowValue >= filter.min
+        ) {
+          continue;
         }
+
+        include = false;
+      }
+
+      // Apply boolean filters
+      for (let j = 0; j < activeBooleanFilters.length; j++) {
+        const filter = activeBooleanFilters[j];
+
+        if (
+          typeof filter.value === "undefined" ||
+          !!row[filter.field] === filter.value
+        )
+          continue;
+
+        include = false;
       }
 
       if (include) {
@@ -449,7 +351,7 @@ function Browser<T>(props: {
     }
 
     return Array.from(filterdRows);
-  }, [sortedRows, activeFilters, activeNumericFilters]);
+  }, [sortedRows, activeFilters, activeNumericFilters, activeBooleanFilters]);
 
   return (
     <>
@@ -466,7 +368,7 @@ function Browser<T>(props: {
           value={activeFilters}
           isMulti
           onChange={(filter) => {
-            setActiveFilters({ type: "set", values: filter });
+            setFilters(filter);
           }}
           options={slicedOptions}
           inputValue={filterInputValue}

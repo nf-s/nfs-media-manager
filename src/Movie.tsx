@@ -29,27 +29,13 @@ export default function M(props: { darkMode: boolean }) {
         idCol={"id"}
         tag={"movie"}
         rows={playlistData.rows}
-        filterCols={["directors", "tags", "collections"]}
-        defaultSort={["releaseDate", "DESC"]}
-        defaultVisible={[
-          "Controls",
-          "title",
-          "directors",
-          "releaseDate",
-          "tags",
-        ]}
+        filterCols={Movie.defaultFilter}
+        defaultSort={Movie.defaultSort}
+        defaultVisible={Movie.defaultVisible}
         numericCols={Movie.numericCols}
         textColumns={Movie.textColumns}
-        gridColumns={{
-          art: "poster",
-          width: 150,
-          height: 220,
-          cols: [
-            Movie.textColumns[0],
-            Movie.textColumns[1],
-            Movie.textColumns[2],
-          ],
-        }}
+        booleanColumns={Movie.booleanCols}
+        gridColumns={Movie.gridCols}
       />
     </div>
   );

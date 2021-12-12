@@ -10,20 +10,25 @@ import Browser from "./Browser";
 import config from "./config.json";
 import { getQueuePlaylistId } from "./Spotify";
 import {
+  defaultFilter,
   defaultSort,
   defaultVisible,
+  gridCols,
   numericCols,
   textColumns,
 } from "./Table/Album";
 
 import * as Playlist from "./Table/Playlist";
+import { useTraceUpdate } from "./util";
 
 function Music(props: {
   spotifyToken: string;
   darkMode: boolean;
   mode: "albums" | "playlist";
 }) {
-  const [spotifyApi, setSpotifyApi] = useState<SpotifyWebApi.SpotifyWebApiJs>();
+  useTraceUpdate(props);
+  const [spotify, setSpotifyApi] =
+    useState<{ api: SpotifyWebApi.SpotifyWebApiJs }>();
   const [rowData, setData] = useState<{
     rows: CleanAlbum[];
   }>({ rows: [] });
@@ -45,48 +50,54 @@ function Music(props: {
     queuePlaylist: string;
   }>();
 
-  const playAlbum = (row: CleanAlbum) => {
-    setSpotifyPlayer({
-      uris: [`spotify:album:${row.id.spotify}`],
-      play: true,
-    });
-  };
+  const playAlbum = useCallback(
+    (row: CleanAlbum) => {
+      setSpotifyPlayer({
+        uris: [`spotify:album:${row.id.spotify}`],
+        play: true,
+      });
+    },
+    [setSpotifyPlayer]
+  );
 
   const queueAlbum = useCallback(
     (row: CleanAlbum) => {
-      spotifyState?.queuePlaylist && spotifyApi
-        ? spotifyApi.addTracksToPlaylist(
+      spotifyState?.queuePlaylist && spotify
+        ? spotify.api.addTracksToPlaylist(
             spotifyState?.queuePlaylist,
             row.tracks.map((id) => `spotify:track:${id}`)
           )
         : alert("Queue playlist ID not set!");
     },
-    [spotifyState, spotifyApi]
+    [spotifyState, spotify]
   );
 
-  const playTrack = (row: CleanTrack) => {
-    setSpotifyPlayer({
-      uris: [`spotify:track:${row.spotifyId}`],
-      play: true,
-    });
-  };
+  const playTrack = useCallback(
+    (row: CleanTrack) => {
+      setSpotifyPlayer({
+        uris: [`spotify:track:${row.spotifyId}`],
+        play: true,
+      });
+    },
+    [setSpotifyPlayer]
+  );
 
   const queueTrack = useCallback(
     (row: CleanTrack) => {
-      spotifyState?.queuePlaylist && spotifyApi
-        ? spotifyApi.addTracksToPlaylist(spotifyState?.queuePlaylist, [
+      spotifyState?.queuePlaylist && spotify
+        ? spotify.api.addTracksToPlaylist(spotifyState?.queuePlaylist, [
             `spotify:track:${row.spotifyId}`,
           ])
         : alert("Queue playlist ID not set!");
     },
-    [spotifyState, spotifyApi]
+    [spotifyState, spotify]
   );
 
   useEffect(() => {
     const spotifyApi = new SpotifyWebApi();
     spotifyApi.setAccessToken(props.spotifyToken);
 
-    setSpotifyApi(spotifyApi);
+    setSpotifyApi({ api: spotifyApi });
   }, [props.spotifyToken]);
 
   useEffect(() => {
@@ -127,12 +138,12 @@ function Music(props: {
 
   useEffect(() => {
     const fetchSpotifyUser = async () => {
-      if (!spotifyApi) return;
-      const user = await spotifyApi.getMe();
+      if (!spotify) return;
+      const user = await spotify.api.getMe();
 
       let playlistId =
         config.spotifyPlaylistId ??
-        (await getQueuePlaylistId(spotifyApi, user.id));
+        (await getQueuePlaylistId(spotify.api, user.id));
 
       setSpotifyUser({ id: user.id, queuePlaylist: playlistId });
       if (playerState.uris && playerState.uris.length === 0) {
@@ -141,7 +152,7 @@ function Music(props: {
     };
 
     fetchSpotifyUser();
-  }, [playerState, spotifyApi]);
+  }, [playerState, spotify]);
 
   return (
     <div className="root-music">
@@ -150,17 +161,12 @@ function Music(props: {
           idCol={"spotifyId"}
           tag={"album"}
           rows={rowData.rows}
-          filterCols={["title", "artist", "genres"]}
+          filterCols={defaultFilter}
           defaultSort={defaultSort}
           defaultVisible={defaultVisible}
           numericCols={numericCols}
           textColumns={textColumns}
-          gridColumns={{
-            width: 250,
-            height: 250,
-            art: "art",
-            cols: [textColumns[0], textColumns[1], textColumns[5]],
-          }}
+          gridColumns={gridCols}
           play={playAlbum}
           queue={queueAlbum}
         />
@@ -223,15 +229,15 @@ function Music(props: {
               state.isPlaying &&
               playerState.uris?.[0] ===
                 `spotify:playlist:${spotifyState.queuePlaylist}` &&
-              spotifyApi
+              spotify
             ) {
-              spotifyApi.getMyCurrentPlaybackState().then((playbackState) => {
+              spotify.api.getMyCurrentPlaybackState().then((playbackState) => {
                 if (
                   playbackState.context?.uri ===
                   `spotify:playlist:${spotifyState.queuePlaylist}`
                 ) {
                   console.log(`removing ${state.track.uri} from quu`);
-                  spotifyApi.removeTracksFromPlaylist(
+                  spotify.api.removeTracksFromPlaylist(
                     spotifyState.queuePlaylist,
                     [state.track.uri]
                   );

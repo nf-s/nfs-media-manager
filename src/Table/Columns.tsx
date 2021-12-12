@@ -1,21 +1,9 @@
-import React from "react";
+import { Handle, Range, SliderProps, SliderTooltip } from "rc-slider";
+import "rc-slider/assets/index.css";
+import React, { useState } from "react";
 import { HeaderRendererProps, SortDirection } from "react-data-grid";
 import { PickProperties } from "ts-essentials";
-import { Handle, Range, SliderProps, SliderTooltip } from "rc-slider";
-
-import "rc-slider/assets/index.css";
-
-export type FilterValue<T> = {
-  label: string;
-  value: string;
-  field: keyof T;
-};
-
-export type NumericFilterValue<T> = {
-  min: number;
-  max: number;
-  field: keyof T;
-};
+import { FilterValue } from "./Filters";
 
 export function formatTime(seconds: number) {
   const h = Math.floor(seconds / 3600);
@@ -43,7 +31,7 @@ export const NumberFomat = <T,>(props: {
   </>
 );
 
-export const Numeric = <T,>(col: NumericCol<T>) => {
+export const NumericField = <T,>(col: NumericCol<T>) => {
   if (col.key === undefined) return () => <></>;
 
   return (props: { data: T }) => {
@@ -52,6 +40,12 @@ export const Numeric = <T,>(col: NumericCol<T>) => {
       <NumberFomat col={col} value={value} />
     ) : null;
   };
+};
+
+export const BooleanField = <T,>(col: BooleanCol<T>) => {
+  if (col.key === undefined) return () => <></>;
+
+  return (props: { data: T }) => (props.data[col.key] ? <span>X</span> : null);
 };
 
 const handle: <T>(col: NumericCol<T>) => SliderProps["handle"] =
@@ -78,7 +72,7 @@ export const NumericFilter = <T,>(
   col: NumericCol<T>,
   min: number,
   max: number,
-  addFilter: (field: keyof T, min: number, max: number) => void
+  addFilter: (field: NumericColKey<T>, min: number, max: number) => void
 ): React.ComponentType<HeaderRendererProps<T>> => {
   if (col.key === undefined) return () => <></>;
 
@@ -103,12 +97,82 @@ export const NumericFilter = <T,>(
   );
 };
 
+export const BooleanFilter = <T,>(
+  col: BooleanCol<T>,
+  addFilter: (field: BooleanColKey<T>, value: boolean | undefined) => void
+): React.ComponentType<HeaderRendererProps<T>> => {
+  if (col.key === undefined) return () => <></>;
+
+  return (props) => (
+    <BooleanControls
+      {...props}
+      onChange={(value) => addFilter(col.key, value)}
+    />
+  );
+};
+
+function BooleanControls<T>(
+  props: HeaderRendererProps<T> & {
+    onChange: (value: boolean | undefined) => void;
+  }
+) {
+  const [value, setValue] = useState<boolean | undefined>(undefined);
+  return (
+    <>
+      <input
+        type="radio"
+        id="false"
+        name="false"
+        value="false"
+        onChange={() => {
+          props.onChange(false);
+          setValue(false);
+        }}
+        checked={value === false}
+      />
+      <label htmlFor="false">False</label>
+      <input
+        type="radio"
+        id="true"
+        name="true"
+        value="true"
+        onChange={() => {
+          props.onChange(true);
+          setValue(true);
+        }}
+        checked={value === true}
+      />
+      <label htmlFor="true">True</label>
+      <input
+        type="radio"
+        id="all"
+        name="all"
+        value="all"
+        onChange={() => {
+          props.onChange(undefined);
+          setValue(undefined);
+        }}
+        checked={value === undefined}
+      />
+      <label htmlFor="all">All</label>
+    </>
+  );
+}
+
 export type DefaultSort<T> = [keyof T, SortDirection];
+
+export type GridCols<T> = {
+  width: number;
+  height: number;
+  art?: keyof PickProperties<T, string | undefined>;
+  /** maximum of 3 columns */ cols: (StringCol<T> | NumericCol<T>)[];
+};
 
 export type DefaultVisible<T> = (keyof T | "Controls")[];
 
+export type NumericColKey<T> = keyof PickProperties<T, number | undefined>;
 export type NumericCol<T> = {
-  key: keyof PickProperties<T, number | undefined>;
+  key: NumericColKey<T>;
   name: string;
   max?: number | undefined;
   generateMaximumFromData?: boolean;
@@ -117,6 +181,20 @@ export type NumericCol<T> = {
   precision?: number;
   mult?: number | undefined;
 };
+
+export type BooleanColKey<T> = keyof PickProperties<
+  T,
+  boolean | number | string | undefined
+>;
+export type BooleanCol<T> = {
+  key: BooleanColKey<T>;
+  name: string;
+};
+
+export type FilterColKey<T> = keyof PickProperties<
+  T,
+  string[] | string | undefined
+>;
 
 export type StringCol<T> = (
   | // String columns
@@ -132,7 +210,7 @@ export type StringCol<T> = (
 
 export function getColumnWithTotals<K>(
   rows: K[],
-  colName: keyof K,
+  colName: FilterColKey<K>,
   sort: "key" | "value" = "key"
 ): FilterValue<K>[] {
   const total = new Map<string, number>();
