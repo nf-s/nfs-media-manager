@@ -19,17 +19,21 @@ export type AlbumId = {
   discogs?: string;
 };
 
-export interface CleanAlbum extends AudioFeatures {
-  id: AlbumId;
+export interface CleanAlbumBase {
   spotifyId: string;
   title: string;
-  artist: string;
-  durationSec: number;
+  artists: string[];
   dateReleased: string;
+
+  art: string | undefined;
+}
+export interface CleanAlbum extends AudioFeatures, CleanAlbumBase {
+  id: AlbumId;
+  durationSec: number;
   dateAdded: string;
   genres: string[];
+  playlists: string[];
   tracks: string[];
-  art: string | undefined;
 
   ratingRymVotes?: number;
   ratingRymValue?: number;
@@ -59,7 +63,16 @@ export interface CleanAlbum extends AudioFeatures {
   };
 }
 
-export type CleanLibrary = CleanAlbum[];
+export interface CleanAlbumPlaylist {
+  name: string;
+  id: string;
+  albums: (CleanAlbumBase | string)[];
+}
+
+export interface CleanLibrary {
+  albums: { [id: string]: CleanAlbum };
+  playlists: { [id: string]: CleanAlbumPlaylist };
+}
 
 export interface CleanTrack extends AudioFeatures {
   spotifyId: string;
@@ -73,4 +86,7 @@ export interface CleanTrack extends AudioFeatures {
   key?: number;
 }
 
-export type CleanPlaylist = CleanTrack[];
+export interface CleanTrackPlaylist {
+  name: string;
+  tracks: CleanTrack[];
+}
