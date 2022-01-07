@@ -22,6 +22,7 @@ export async function musicBrainz() {
     const mbLimiter = new Bottleneck({
       maxConcurrent: 1,
       minTime: 500,
+      timeout: 5000,
     });
 
     await Promise.all(
@@ -80,7 +81,7 @@ export async function musicBrainz() {
                   album.id.discogs = (releaseGroup as any).relations
                     ?.find((rel: any) => rel.type === "discogs")
                     ?.url?.resource?.split("master/")?.[1];
-                
+
                 // Check for last.fm URL
 
                 // if (!album.id.rymUrl)

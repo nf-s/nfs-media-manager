@@ -9,6 +9,7 @@ const googleSearchLimiter = new Bottleneck({
   maxConcurrent: 20,
   // 100 queries per minute
   minTime: 1000 * (60 / 100),
+  timeout: 5000,
 });
 
 const auth = process.env.GOOGLE_SEARCH_API_KEY

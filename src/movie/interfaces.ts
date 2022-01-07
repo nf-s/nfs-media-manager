@@ -16,6 +16,5 @@ export interface CleanMovie {
   ratingMetascore?: number;
   ratingRt?: number;
   tags?: string[];
-
   collections?: string[];
 }
