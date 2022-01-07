@@ -236,6 +236,7 @@ export async function discogs() {
     const discogLimiter = new Bottleneck({
       maxConcurrent: 2,
       minTime: 1050,
+      timeout: 5000,
     });
 
     debug(`fetching masters`);
@@ -336,15 +337,16 @@ export async function discogs() {
                 )
                 .slice(0, 10);
 
-              const releasesWithRatings: DiscogsMasterReleaseWithRating[] = await Promise.all(
-                top10releases.map(async (release) => {
-                  const ratings = await discogLimiter.schedule(() => {
-                    debug(`fetching ratings for release  ${release.id}`);
-                    return client.getCommunityReleaseRating(release.id);
-                  });
-                  return { ...release, ratings };
-                })
-              );
+              const releasesWithRatings: DiscogsMasterReleaseWithRating[] =
+                await Promise.all(
+                  top10releases.map(async (release) => {
+                    const ratings = await discogLimiter.schedule(() => {
+                      debug(`fetching ratings for release  ${release.id}`);
+                      return client.getCommunityReleaseRating(release.id);
+                    });
+                    return { ...release, ratings };
+                  })
+                );
 
               album.discogs.releasesWithRatings = releasesWithRatings;
             }
@@ -395,8 +397,9 @@ export async function discogs() {
   }
 
   // Calculate how many albums have Discogs metadata
-  const discoFound = Object.values(library.albums).filter((a) => a.discogs)
-    .length;
+  const discoFound = Object.values(library.albums).filter(
+    (a) => a.discogs
+  ).length;
 
   debug(
     `library has Discogs metadata for ${discoFound}/${
