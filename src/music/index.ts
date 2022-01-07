@@ -26,12 +26,16 @@ import {
 import { LastFmAlbum, scrapeLastFm as lastFm } from "./scrape/last-fm";
 import { musicBrainz } from "./scrape/mb";
 import {
-  getPlaylist,
-  scrapeSpotify,
-  spotifyAudioFeatures,
-  SpotifyPlaylistTrack,
+  scrapeSpotifyAlbumArtists,
+  scrapeSpotifyAlbumAudioFeatures,
+  scrapeSpotifyAlbums,
   SpotifySavedAlbum,
 } from "./scrape/spotify";
+import {
+  scrapeSpotifyAlbumPlaylists,
+  scrapeSpotifyTrackPlaylists,
+  SpotifyPlaylistTrack,
+} from "./scrape/spotify-playlist";
 import { upcCsv } from "./scrape/upc-csv";
 
 const debug = debugInit("music-scraper:init");
@@ -82,15 +86,50 @@ export interface Album {
   rymGoogle?: RymGoogle | null;
   metacriticGoogle?: GoogleResult | null;
   source: Source | undefined;
+  playlists: string[];
+}
+
+export interface Artist {
+  spotify: SpotifyApi.ArtistObjectFull;
+}
+
+export type Playlist = TrackPlaylist | AlbumPlaylist;
+
+interface PlaylistBase extends SpotifyApi.PlaylistBaseObject {
+  chart: boolean;
+  /** Chart playlists starts at 1. (Defaults to true) */
+  ascending: boolean;
+}
+export interface TrackPlaylist extends PlaylistBase {
+  tracks: SpotifyPlaylistTrack[];
+}
+
+export interface AlbumPlaylist extends PlaylistBase {
+  albums: (SpotifyApi.AlbumObjectSimplified | string)[];
+  tracks: undefined;
+}
+
+export function isTrackPlaylist(p: Playlist): p is TrackPlaylist {
+  return !isAlbumPlaylist(p) && Array.isArray(p.tracks);
+}
+
+export function isAlbumPlaylist(p: Playlist): p is AlbumPlaylist {
+  return "albums" in p;
 }
 
 interface Library {
   albums: { [id: string]: Album };
-  playlists: { [id: string]: SpotifyPlaylistTrack[] };
+  artists: { [id: string]: Artist };
+  playlists: { [id: string]: Playlist };
   missing: Source[];
 }
 
-export const library: Library = { albums: {}, missing: [], playlists: {} };
+export const library: Library = {
+  albums: {},
+  artists: {},
+  missing: [],
+  playlists: {},
+};
 
 export const albumTitle = (a: Album) =>
   `${a.spotify.artists[0].name}-${a.spotify.name}`;
@@ -100,26 +139,6 @@ export async function save() {
 }
 
 async function run() {
-  // const playlist = await getPlaylist("6H6tTq8Is6D2X8PZi5rJmK");
-
-  // if (!playlist) return;
-
-  // await writeFile(
-  //   join(process.env.DATA_DIR!, "6H6tTq8Is6D2X8PZi5rJmK-raw.json"),
-  //   JSON.stringify(playlist),
-  //   undefined,
-  //   debug
-  // );
-
-  // const cleanedPlaylist = await cleanPlaylist(playlist);
-
-  // await writeFile(
-  //   join(process.env.DATA_DIR!, "6H6tTq8Is6D2X8PZi5rJmK.json"),
-  //   JSON.stringify(cleanedPlaylist),
-  //   undefined,
-  //   debug
-  // );
-
   // Load library
   if (await fileExists(LIBRARY_PATH)) {
     debug(`${LIBRARY_PATH} library file found!\nreading...`);
@@ -140,14 +159,14 @@ async function run() {
     );
   }
 
-  debug("Start scraping!");
+  debug("Start scraping albums!");
 
   try {
     if (!skip("album-csv")) await albumCsv();
 
     if (!skip("upc")) await upcCsv();
 
-    if (!skip("spotify-fav")) await scrapeSpotify();
+    if (!skip("spotify-fav")) await scrapeSpotifyAlbums();
   } catch (e) {
     debug(e);
     debug("ERROR occured while scraping new albums");
@@ -155,11 +174,23 @@ async function run() {
 
   await save();
 
+  debug("Start scraping playlists!");
+
+  if (!skip("spotify-album-playlists")) await scrapeSpotifyAlbumPlaylists();
+  if (!skip("spotify-track-playlists")) await scrapeSpotifyTrackPlaylists();
+
+  await save();
+
+  debug("Start scraping metadata!");
+
   // These can all be done in parallel
   try {
     await Promise.all([
+      !skip("spotify-artists")
+        ? scrapeSpotifyAlbumArtists()
+        : Promise.resolve(),
       !skip("spotify-audio-features")
-        ? spotifyAudioFeatures()
+        ? scrapeSpotifyAlbumAudioFeatures()
         : Promise.resolve(),
       !skip("mb") ? musicBrainz() : Promise.resolve(),
       !skip("discogs") ? discogs() : Promise.resolve(),
@@ -193,6 +224,22 @@ async function run() {
       undefined,
       debug
     );
+
+    debug("saving cleaned track playlist files");
+
+    for (const playlist of Object.values(library.playlists)) {
+      if (isTrackPlaylist(playlist)) {
+        debug(`saving playlist ${playlist.name}`);
+        const cleanedPlaylist = await cleanPlaylist(playlist);
+
+        await writeFile(
+          join(process.env.DATA_DIR!, `${playlist.id}.json`),
+          JSON.stringify(cleanedPlaylist),
+          undefined,
+          debug
+        );
+      }
+    }
   }
 }
 
