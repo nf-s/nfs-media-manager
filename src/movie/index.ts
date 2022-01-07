@@ -3,7 +3,7 @@ require("dotenv").config();
 import { debug as debugInit } from "debug";
 import { Movie as OMDBMovie } from "imdb-api";
 import { MovieResponse as TMDBMovie } from "moviedb-promise/dist/request-types";
-import { default as PTPMovie } from "passthepopcorn/lib/objects/movie";
+import { default as PTPMovie } from "nfs-passthepopcorn/lib/objects/movie";
 import { join } from "path";
 import { fileExists, readJSONFile, writeFile } from "../util/fs";
 import { skip } from "../util/skip";
