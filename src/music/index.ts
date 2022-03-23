@@ -134,7 +134,7 @@ export const library: Library = {
 export const albumTitle = (a: Album) =>
   `${a.spotify.artists[0].name}-${a.spotify.name}`;
 
-export async function save() {
+async function save() {
   await writeFile(LIBRARY_PATH, JSON.stringify(library), undefined, debug);
 }
 
@@ -169,7 +169,7 @@ async function run() {
     if (!skip("spotify-fav")) await scrapeSpotifyAlbums();
   } catch (e) {
     debug(e);
-    debug("ERROR occured while scraping new albums");
+    debug("ERROR occurred while scraping new albums");
   }
 
   await save();
@@ -200,7 +200,7 @@ async function run() {
     ]);
   } catch (e) {
     debug(e);
-    debug("ERROR occured while scraping metadata for albums");
+    debug("ERROR occurred while scraping metadata for albums");
   }
 
   await save();
@@ -241,6 +241,8 @@ async function run() {
       }
     }
   }
+
+  process.exit();
 }
 
 run();

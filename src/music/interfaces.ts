@@ -23,17 +23,18 @@ export interface CleanAlbumBase {
   spotifyId: string;
   title: string;
   artists: string[];
-  dateReleased: string;
+  dateReleased: number;
 
   art: string | undefined;
 }
 export interface CleanAlbum extends AudioFeatures, CleanAlbumBase {
   id: AlbumId;
   durationSec: number;
-  dateAdded: string;
+  dateAdded: number;
   genres: string[];
   playlists: string[];
   tracks: string[];
+  countries: string[];
 
   ratingRymVotes?: number;
   ratingRymValue?: number;

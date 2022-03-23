@@ -16,7 +16,7 @@ export async function clean(): Promise<CleanLibrary> {
                 spotifyId: album.id,
                 title: album.name,
                 artists: album.artists.map((a) => a.name),
-                dateReleased: album.release_date,
+                dateReleased: new Date(album.release_date).getTime(),
                 art: album.images.find((i) => i.height === 300)?.url,
               }
         ),
@@ -122,11 +122,15 @@ export async function clean(): Promise<CleanLibrary> {
           (sec, track) => sec + track.duration_ms / 1000,
           0
         ),
-        dateReleased: album.spotify.release_date,
-        dateAdded,
+        dateReleased: new Date(album.spotify.release_date).getTime(),
+        dateAdded: new Date(dateAdded).getTime(),
         genres: Array.from(new Set(genres)),
         playlists: album.playlists,
         tracks: album.spotify.tracks.items.map((track) => track.id),
+        countries:
+          (album.mb?.releaseGroup["artist-credit"]
+            ?.map((a) => a.artist.country)
+            .filter((c) => typeof c === "string") as string[]) ?? [],
         art: album.spotify.images.find((i) => i.height === 300)?.url,
         ratingRymValue: album.rymGoogle?.rating.average,
         ratingRymVotes: album.rymGoogle?.rating.count,

@@ -144,7 +144,11 @@ export async function scrapeSpotifyAlbumAudioFeatures() {
 
       for (let j = 0; j < albumsWhichNeedFeatures.length; j++) {
         const album = albumsWhichNeedFeatures[j];
-        if (album.spotify.tracks.items.find((t) => t.id === track.id)) {
+        if (
+          album.spotify.tracks.items.find(
+            (t) => t !== null && t.id === track.id
+          )
+        ) {
           album.spotify.audioFeatures.push(track);
         }
       }
@@ -229,7 +233,7 @@ export async function searchSpotify(albums: Source[]) {
     );
     if (notFound.length > 0) {
       debug(`WARNING albums not found: ${notFound.length}`);
-      console.log(notFound);
+      debug(notFound);
     }
 
     debug(`imported ${newAlbums} new albums from spotify`);
