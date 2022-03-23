@@ -8,10 +8,13 @@ import { join } from "path";
 import { fileExists, readJSONFile, writeFile } from "../util/fs";
 import { skip } from "../util/skip";
 import { clean } from "./clean";
-import scrapeMovie from "./scrape";
+import scrapePtp from "./scrape/ptp";
 import myImdbRatings from "./scrape/imdb-ratings";
+import myImdbWatchlist from "./scrape/imdb-watchlist";
 import scanNfos from "./scrape/nfo";
 import { PtpMovieScrape } from "./scrape/ptp";
+import scrapeOmdb from "./scrape/omdb";
+import scrapeTmdb from "./scrape/tmdb";
 
 export interface Movie {
   id?: { imdb?: string; tmdb?: string; ptp?: number };
@@ -21,7 +24,10 @@ export interface Movie {
   raw?: any;
   tmdb?: TMDBMovie | null;
   omdb?: OMDBMovie | null;
-  imdb?: { myRating: { value: number; date: string } };
+  imdb?: {
+    myRating?: { value: number; date: string };
+    myWatchlist?: { date: string };
+  };
   ptp?: PTPMovie | null;
   ptpScrape?: PtpMovieScrape | null;
 }
@@ -50,7 +56,7 @@ export const library: Library = {
   movies: {},
 };
 
-export async function save() {
+async function save() {
   await writeFile(LIBRARY_PATH, JSON.stringify(library), undefined, debug);
 }
 
@@ -71,11 +77,50 @@ async function init() {
     );
   }
 
-  if (!skip("nfo")) await scanNfos();
+  try {
+    if (!skip("nfo")) await scanNfos();
 
-  if (!skip("movie")) await scrapeMovie();
+    if (!skip("imdb-watchlist")) await myImdbWatchlist();
+    if (!skip("imdb")) await myImdbRatings();
+  } catch (e) {
+    debug(e);
+    debug("ERROR occurred while scraping new movies");
+  }
 
-  if (!skip("imdb")) await myImdbRatings();
+  await save();
+
+  // These can all be done in parallel
+  try {
+    await Promise.all([
+      !skip("ptp") ? scrapePtp() : Promise.resolve(),
+      !skip("omdb") ? scrapeOmdb() : Promise.resolve(),
+      !skip("tmdb") ? scrapeTmdb() : Promise.resolve(),
+    ]);
+  } catch (e) {
+    debug(e);
+    debug("ERROR occurred while scraping metadata for movies");
+  }
+
+  await save();
+
+  // Calculate how many movies have NO metadata
+  const notFound = Object.values(library.movies).filter(
+    (movie) => !(movie.omdb || movie.tmdb || movie.ptp)
+  );
+
+  debug(
+    `library is missing metadata for ${notFound.length}/${
+      Object.entries(library.movies).length
+    } (${
+      (notFound.length * 100) / Object.entries(library.movies).length
+    }%) found`
+  );
+
+  debug(
+    notFound.map(
+      (movie) => movie.raw?.movie?.title?.[0] ?? movie.id?.imdb ?? "OMG WHAT"
+    )
+  );
 
   if (!skip("clean") && process.env.MOVIE_CLEAN_JSON) {
     const cleanLibrary = await clean();
@@ -89,6 +134,8 @@ async function init() {
       debug
     );
   }
+
+  process.exit();
 }
 
 init();

@@ -6,7 +6,7 @@ export interface CleanMovie {
   watched: boolean;
   ratingImdbPersonal?: number;
   ratingImdbPersonalDate?: string;
-  releaseDate?: string;
+  releaseDate?: number;
   ratingImdbValue?: number;
   ratingImdbVotes?: number;
   ratingPtpValue?: number;
@@ -15,6 +15,6 @@ export interface CleanMovie {
   ratingTmdbVotes?: number;
   ratingMetascore?: number;
   ratingRt?: number;
-  tags?: string[];
-  collections?: string[];
+  tags: string[];
+  collections: string[];
 }

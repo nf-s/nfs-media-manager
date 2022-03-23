@@ -5,8 +5,16 @@ export type CleanLibrary = CleanMovie[];
 
 export async function clean(): Promise<CleanLibrary> {
   return Object.values(library.movies)
-    .filter((m) => m.title)
     .map((movie) => {
+      const title = movie.title ?? movie.omdb?.title ?? movie.tmdb?.title;
+
+      if (!title || movie.omdb?.series) return;
+
+      const releaseDate = movie.omdb?.released
+        ? new Date(movie.omdb?.released).getTime()
+        : movie.tmdb?.release_date
+        ? new Date(movie.tmdb!.release_date!).getTime()
+        : undefined;
       const tags = new Set<string>();
 
       movie.ptpScrape?.tags.forEach((t) => tags.add(t.trim().toLowerCase()));
@@ -18,14 +26,19 @@ export async function clean(): Promise<CleanLibrary> {
       );
 
       const cleanMovie: CleanMovie = {
-        id: movie.id?.imdb ?? movie.title!,
-        title: movie.title!,
-        poster: movie.omdb?.poster,
-        directors: movie.omdb?.director ? [movie.omdb?.director] : [],
-        watched: typeof movie.imdb?.myRating.value !== "undefined",
-        releaseDate: movie.tmdb?.release_date,
-        ratingImdbPersonal: movie.imdb?.myRating.value,
-        ratingImdbPersonalDate: movie.imdb?.myRating.date,
+        id: movie.id?.imdb ?? title,
+        title,
+        poster:
+          movie.omdb?.poster ?? movie.tmdb?.poster_path
+            ? `https://image.tmdb.org/t/p/w154/${movie.tmdb?.poster_path}`
+            : undefined,
+        directors: movie.omdb?.director
+          ? movie.omdb?.director.split(",").map((s) => s.trim())
+          : [],
+        watched: typeof movie.imdb?.myRating?.value !== "undefined",
+        releaseDate,
+        ratingImdbPersonal: movie.imdb?.myRating?.value,
+        ratingImdbPersonalDate: movie.imdb?.myRating?.date,
         ratingTmdbValue: movie.tmdb?.vote_average,
         ratingTmdbVotes: movie.tmdb?.vote_count,
         ratingPtpValue: movie.ptpScrape?.rating.value,
@@ -38,7 +51,7 @@ export async function clean(): Promise<CleanLibrary> {
           ? parseInt(movie.omdb?.metascore.replace(/\D/g, ""), 10)
           : undefined,
         tags: Array.from(tags),
-        collections: movie.ptpScrape?.collections.map((t) => t.name),
+        collections: movie.ptpScrape?.collections.map((t) => t.name) ?? [],
       };
 
       // RT rating
@@ -48,5 +61,6 @@ export async function clean(): Promise<CleanLibrary> {
       if (rt) cleanMovie.ratingRt = parseInt(rt.replace(/\D/g, ""), 10);
 
       return cleanMovie;
-    });
+    })
+    .filter((m) => typeof m !== "undefined") as CleanMovie[];
 }
