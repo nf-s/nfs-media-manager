@@ -1,6 +1,6 @@
 import { debug as debugInit } from "debug";
 import { parse } from "path";
-import { library, LIBRARY_PATH, save } from "../";
+import { library, LIBRARY_PATH } from "../";
 import { forEachFileInDir, loadXml } from "../../util/fs";
 
 const debug = debugInit("movie-scraper:nfo-scraper");
@@ -33,9 +33,6 @@ export default async function scanNfos() {
       undefined,
       debug
     );
-
-    debug(`writing library file to ${LIBRARY_PATH}`);
-    await save();
   } else {
     debug(`WARNING SCAN_DIR is undefined - not scanning directory for NFOs`);
   }
@@ -128,6 +125,4 @@ export default async function scanNfos() {
       Object.entries(library.movies).length
     } (${(found * 100) / Object.entries(library.movies).length}%) found`
   );
-
-  await save();
 }
