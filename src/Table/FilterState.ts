@@ -4,8 +4,7 @@ import { OptionsType } from "react-select";
 import {
   BooleanCol,
   BooleanColKey,
-  FilterColKey,
-  getColumnWithTotals,
+  FilterCol,
   NumericCol,
   NumericColKey,
 } from "./Columns";
@@ -13,13 +12,15 @@ import {
 export type FilterValue<T> = {
   label: string;
   value: string;
-  field: FilterColKey<T>;
+  count: number;
+  col: FilterCol<T>;
 };
 
 export type NumericFilterValue<T> = {
   min: number;
   max: number;
   field: NumericColKey<T>;
+  includeUndefined: boolean;
 };
 
 export type BooleanFilterValue<T> = {
@@ -43,7 +44,7 @@ export function useNumericFilter<T>(cols: NumericCol<T>[]) {
         if (found) {
           return [
             ...state.filter((f) => f.field !== action.field),
-            { field: action.field, min: action.min, max: action.max },
+            { ...action },
           ];
         }
         return state;
@@ -60,8 +61,19 @@ export function useNumericFilter<T>(cols: NumericCol<T>[]) {
   );
 
   const addNumericFilter = useCallback(
-    (field: NumericColKey<T>, min: number, max: number) => {
-      setActiveNumericFilters({ type: "add", field, min, max });
+    (
+      field: NumericColKey<T>,
+      min: number,
+      max: number,
+      includeUndefined: boolean
+    ) => {
+      setActiveNumericFilters({
+        type: "add",
+        field,
+        min,
+        max,
+        includeUndefined,
+      });
     },
     []
   );
@@ -110,7 +122,7 @@ export function useBooleanFilter<T>(cols: BooleanCol<T>[]) {
 }
 
 export function useTextFilter<T>(
-  filterCols: FilterColKey<T>[],
+  filterCols: FilterCol<T>[],
   rows: T[],
   tag: string
 ) {
@@ -123,7 +135,7 @@ export function useTextFilter<T>(
 
     for (let i = 0; i < filterData.filters.length; i++) {
       const filter = filterData.filters[i];
-      index.add(i, filter.value);
+      index.add(i, filter.label);
     }
 
     return index;
@@ -146,7 +158,7 @@ export function useTextFilter<T>(
       }
     });
 
-    return results;
+    return results.sort((a, b) => b.count - a.count);
   }, [filterInputValue, filterSearchIndex, filterData.filters]);
 
   const slicedOptions = useMemo(() => {
@@ -164,7 +176,7 @@ export function useTextFilter<T>(
     switch (action.type) {
       case "add":
         const found = filterData.filters.find(
-          (a) => a.field === action.field && a.value === action.value
+          (a) => a.col.key === action.field && a.value === action.value
         );
         if (found) {
           return Array.from(new Set([...(state ?? []), found]));
@@ -192,10 +204,12 @@ export function useTextFilter<T>(
 
   useEffect(() => {
     if (rows.length === 0) return;
-    const filters = filterCols.reduce<FilterValue<T>[]>(
-      (acc, curr) => [...acc, ...getColumnWithTotals(rows, curr)],
-      []
-    );
+    const filters = filterCols
+      .reduce<FilterValue<T>[]>(
+        (acc, curr) => [...acc, ...getColumnWithTotals(rows, curr)],
+        []
+      )
+      .sort((a, b) => b.count - a.count);
 
     // Get saved filters from local storage
     const savedActiveFilters = localStorage.getItem(`${tag}-activeFilters`)
@@ -204,9 +218,7 @@ export function useTextFilter<T>(
 
     if (Array.isArray(savedActiveFilters)) {
       const found = filters.filter((a) =>
-        savedActiveFilters.find(
-          (b) => a.field === b.field && a.value === b.value
-        )
+        savedActiveFilters.find((b) => a.col === b.field && a.value === b.value)
       );
       setFilters(found);
     }
@@ -229,4 +241,35 @@ export function useTextFilter<T>(
     filterInputValue,
     setFilterInputValue,
   };
+}
+
+function getColumnWithTotals<K>(
+  rows: K[],
+  filterCol: FilterCol<K>,
+  sort: "key" | "value" = "key"
+): FilterValue<K>[] {
+  const total = new Map<string, number>();
+  for (let i = 0; i < rows.length; i++) {
+    const value = rows[i][filterCol.key];
+    const values =
+      typeof value === "string" ? [value] : Array.isArray(value) ? value : [];
+    for (let j = 0; j < values.length; j++) {
+      total.set(values[j], (total.get(values[j]) ?? 0) + 1);
+    }
+  }
+
+  let totalArray = Array.from(total).sort((a, b) =>
+    (a[0] ?? "").localeCompare(b[0] ?? "")
+  );
+
+  if (sort === "value") {
+    totalArray = totalArray.sort((a, b) => a[1] - b[1]);
+  }
+
+  return totalArray.map((r) => ({
+    label: `${filterCol.label ? filterCol.label(r[0]) : r[0]} (${r[1]})`,
+    value: r[0],
+    count: r[1],
+    col: filterCol,
+  }));
 }

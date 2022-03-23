@@ -58,12 +58,14 @@ const keyMap = [
   "B",
 ];
 
+const camelotKeyMap = [8, 3, 10, 5, 12, 7, 2, 9, 4, 11, 6, 1];
+
 export const Key: FieldRenderer<CleanTrack> = (props) => {
   return (
     // Major is represented by 1 and minor is 0
     <>
       {typeof props.data.key !== "undefined"
-        ? `${keyMap[props.data.key]} ${props.data.mode ? "M" : "m"}`
+        ? `${camelotKeyMap[props.data.key]} ${props.data.mode ? "B" : "A"}`
         : ""}
     </>
   );
@@ -82,6 +84,7 @@ export const defaultVisible: DefaultVisible<CleanTrack> = [
 
 export const numericCols: NumericCol<CleanTrack>[] = [
   {
+    type: "numeric",
     key: "acousticness",
     name: "Acousticness",
     append: "%",
@@ -89,6 +92,7 @@ export const numericCols: NumericCol<CleanTrack>[] = [
     precision: 1,
   },
   {
+    type: "numeric",
     key: "danceability",
     name: "Danceability",
     append: "%",
@@ -96,6 +100,7 @@ export const numericCols: NumericCol<CleanTrack>[] = [
     precision: 1,
   },
   {
+    type: "numeric",
     key: "energy",
     name: "Energy",
     append: "%",
@@ -103,6 +108,7 @@ export const numericCols: NumericCol<CleanTrack>[] = [
     precision: 1,
   },
   {
+    type: "numeric",
     key: "instrumentalness",
     name: "Intrumentalness",
     append: "%",
@@ -110,6 +116,7 @@ export const numericCols: NumericCol<CleanTrack>[] = [
     precision: 1,
   },
   {
+    type: "numeric",
     key: "liveness",
     name: "Liveness",
     append: "%",
@@ -117,21 +124,32 @@ export const numericCols: NumericCol<CleanTrack>[] = [
     precision: 1,
   },
   {
+    type: "numeric",
     key: "loudness",
     name: "Loudness",
     append: "dB",
     precision: 1,
   },
-  { key: "mode", name: "Mode", max: 1, append: "%", mult: 100, precision: 1 },
   {
+    type: "numeric",
+    key: "mode",
+    name: "Mode",
+    max: 1,
+    append: "%",
+    mult: 100,
+    precision: 1,
+  },
+  {
+    type: "numeric",
     key: "speechiness",
     name: "Speechiness",
     append: "%",
     mult: 100,
     precision: 1,
   },
-  { key: "tempo", name: "BPM", append: "", precision: 1 },
+  { type: "numeric", key: "tempo", name: "BPM", append: "", precision: 1 },
   {
+    type: "numeric",
     key: "valence",
     name: "Valence",
     append: "%",
@@ -141,11 +159,13 @@ export const numericCols: NumericCol<CleanTrack>[] = [
 ];
 export const textColumns: StringCol<CleanTrack>[] = [
   {
+    type: "string",
     key: "title",
     name: "Title",
     sortable: true,
   },
   {
+    type: "string",
     key: "durationSec",
     name: "Duration",
     sortable: true,
@@ -155,12 +175,14 @@ export const textColumns: StringCol<CleanTrack>[] = [
     width: 80,
   },
   {
+    type: "string",
     key: "artists",
     name: "Artist",
     sortable: true,
     fieldRenderer: Artist,
   },
   {
+    type: "string",
     key: "dateReleased",
     name: "Release",
     sortable: true,
@@ -168,20 +190,13 @@ export const textColumns: StringCol<CleanTrack>[] = [
     resizable: false,
   },
   {
+    type: "string",
     key: "dateAdded",
     name: "Added",
     sortable: true,
     width: 100,
     resizable: false,
   },
-  {
-    key: "genres",
-    name: "Genres",
-    fieldRenderer: Genres,
-  },
-  {
-    key: "key",
-    name: "Key",
-    fieldRenderer: Key,
-  },
+  { type: "string", key: "genres", name: "Genres", fieldRenderer: Genres },
+  { type: "string", key: "key", name: "Key", fieldRenderer: Key },
 ];
