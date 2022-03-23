@@ -4,36 +4,13 @@ import {
   DefaultSort,
   DefaultVisible,
   FieldRenderer,
-  FilterColKey,
   formatTime,
   GridCols,
   NumericCol,
   StringCol,
 } from "./Columns";
-
-export const Genres: FieldRenderer<CleanAlbum> = (props) => {
-  return (
-    <>
-      {props.data.genres.map((g, i) => (
-        // eslint-disable-next-line jsx-a11y/anchor-is-valid
-        <a
-          onClick={() => props.addFilter("genres", g)}
-          key={`${props.data.id.spotify}-${g}`}
-        >
-          {g}
-          {i < props.data.genres.length - 1 ? ", " : ""}
-        </a>
-      ))}
-    </>
-  );
-};
-
-export const Artist: FieldRenderer<CleanAlbum> = (props) => (
-  // eslint-disable-next-line jsx-a11y/anchor-is-valid
-  <a onClick={() => props.addFilter("artist", props.data.artist)}>
-    {props.data.artist}
-  </a>
-);
+import { timeToDateString } from "./Date";
+import { ArrayFilterRenderer } from "./Filters";
 
 export const Release: FieldRenderer<CleanAlbum> = (props) => (
   <>
@@ -101,18 +78,39 @@ export const Release: FieldRenderer<CleanAlbum> = (props) => (
 
 export const numericCols: NumericCol<CleanAlbum>[] = [
   {
+    type: "numeric",
+    key: "dateReleased",
+    name: "Release",
+    sortable: true,
+    width: 120,
+    resizable: false,
+    numberFormat: timeToDateString,
+  },
+  {
+    type: "numeric",
+    key: "dateAdded",
+    name: "Added",
+    sortable: true,
+    width: 120,
+    resizable: false,
+    numberFormat: timeToDateString,
+  },
+  {
+    type: "numeric",
     key: "scrobbles",
     name: "Scrobbles",
     append: "",
     precision: 0,
   },
   {
+    type: "numeric",
     key: "ratingRymVotes",
     name: "RYM Votes",
     append: "",
     precision: 0,
   },
   {
+    type: "numeric",
     key: "ratingRymValue",
     name: "RYM Rating",
     max: 5,
@@ -121,12 +119,14 @@ export const numericCols: NumericCol<CleanAlbum>[] = [
     precision: 1,
   },
   {
+    type: "numeric",
     key: "ratingDiscogsVotes",
     name: "Discogs Votes",
     append: "",
     precision: 0,
   },
   {
+    type: "numeric",
     key: "ratingDiscogsValue",
     name: "Discogs Rating",
     max: 5,
@@ -135,18 +135,21 @@ export const numericCols: NumericCol<CleanAlbum>[] = [
     precision: 1,
   },
   {
+    type: "numeric",
     key: "ratingMetacriticVotes",
     name: "MC Votes",
     append: "",
     precision: 0,
   },
   {
+    type: "numeric",
     key: "ratingMetacriticValue",
     name: "MC Value",
     append: "%",
     precision: 1,
   },
   {
+    type: "numeric",
     key: "popularityDiscogs",
     name: "Discogs Popularity",
     generateMaximumFromData: true,
@@ -155,12 +158,14 @@ export const numericCols: NumericCol<CleanAlbum>[] = [
     precision: 1,
   },
   {
+    type: "numeric",
     key: "popularitySpotify",
     name: "Spotify Popularity",
     append: "%",
     precision: 1,
   },
   {
+    type: "numeric",
     key: "popularityLastFm",
     name: "Last.fm Popularity",
     generateMaximumFromData: true,
@@ -169,6 +174,7 @@ export const numericCols: NumericCol<CleanAlbum>[] = [
     precision: 1,
   },
   {
+    type: "numeric",
     key: "acousticness",
     name: "Acousticness",
     append: "%",
@@ -176,6 +182,7 @@ export const numericCols: NumericCol<CleanAlbum>[] = [
     precision: 1,
   },
   {
+    type: "numeric",
     key: "danceability",
     name: "Danceability",
     append: "%",
@@ -183,6 +190,7 @@ export const numericCols: NumericCol<CleanAlbum>[] = [
     precision: 1,
   },
   {
+    type: "numeric",
     key: "energy",
     name: "Energy",
     append: "%",
@@ -190,13 +198,15 @@ export const numericCols: NumericCol<CleanAlbum>[] = [
     precision: 1,
   },
   {
+    type: "numeric",
     key: "instrumentalness",
-    name: "Intrumentalness",
+    name: "Instrumentalness",
     append: "%",
     mult: 100,
     precision: 1,
   },
   {
+    type: "numeric",
     key: "liveness",
     name: "Liveness",
     append: "%",
@@ -204,21 +214,32 @@ export const numericCols: NumericCol<CleanAlbum>[] = [
     precision: 1,
   },
   {
+    type: "numeric",
     key: "loudness",
     name: "Loudness",
     append: "dB",
     precision: 1,
   },
-  { key: "mode", name: "Mode", max: 1, append: "%", mult: 100, precision: 1 },
   {
+    type: "numeric",
+    key: "mode",
+    name: "Mode",
+    max: 1,
+    append: "%",
+    mult: 100,
+    precision: 1,
+  },
+  {
+    type: "numeric",
     key: "speechiness",
     name: "Speechiness",
     append: "%",
     mult: 100,
     precision: 1,
   },
-  { key: "tempo", name: "BPM", append: "", precision: 1 },
+  { type: "numeric", key: "tempo", name: "BPM", append: "", precision: 1 },
   {
+    type: "numeric",
     key: "valence",
     name: "Valence",
     append: "%",
@@ -228,18 +249,21 @@ export const numericCols: NumericCol<CleanAlbum>[] = [
 ];
 export const textColumns: StringCol<CleanAlbum>[] = [
   {
+    type: "string",
     key: "title",
     name: "Title",
     sortable: true,
     fieldRenderer: Release,
   },
   {
-    key: "artist",
-    name: "Artist",
+    type: "string",
+    key: "artists",
+    name: "Artists",
     sortable: true,
-    fieldRenderer: Artist,
+    fieldRenderer: ArrayFilterRenderer<CleanAlbum>("artists", "spotifyId"),
   },
   {
+    type: "string",
     key: "durationSec",
     name: "Duration",
     sortable: true,
@@ -249,36 +273,25 @@ export const textColumns: StringCol<CleanAlbum>[] = [
     width: 80,
   },
   {
-    key: "dateReleased",
-    name: "Release",
-    sortable: true,
-    width: 100,
-    resizable: false,
-  },
-  {
-    key: "dateAdded",
-    name: "Added",
-    sortable: true,
-    width: 100,
-    resizable: false,
-  },
-  {
+    type: "string",
     key: "genres",
     name: "Genres",
-    fieldRenderer: Genres,
+    fieldRenderer: ArrayFilterRenderer<CleanAlbum>("genres", "spotifyId"),
+  },
+  {
+    type: "string",
+    key: "countries",
+    name: "Countries",
+    fieldRenderer: ArrayFilterRenderer<CleanAlbum>("countries", "spotifyId"),
   },
 ];
 
 export const defaultSort: DefaultSort<CleanAlbum> = ["dateAdded", "DESC"];
-export const defaultFilter: FilterColKey<CleanAlbum>[] = [
-  "title",
-  "artist",
-  "genres",
-];
+
 export const defaultVisible: DefaultVisible<CleanAlbum> = [
   "Controls",
   "title",
-  "artist",
+  "artists",
   "durationSec",
   "dateReleased",
   "dateAdded",
@@ -291,5 +304,5 @@ export const gridCols: GridCols<CleanAlbum> = {
   width: 250,
   height: 250,
   art: "art",
-  cols: [textColumns[0], textColumns[1], textColumns[5]],
+  cols: [textColumns[0], textColumns[1], numericCols[0]],
 };

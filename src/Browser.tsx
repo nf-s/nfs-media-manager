@@ -1,37 +1,25 @@
 import { GridLayout } from "@egjs/react-infinitegrid";
-import React, { useEffect, useMemo, useState } from "react";
-import DataGrid, { Column, SortDirection } from "react-data-grid";
+import React, { useEffect, useState } from "react";
+import DataGrid, { SortDirection } from "react-data-grid";
 import { LazyLoadImage } from "react-lazy-load-image-component";
 import Select from "react-select";
 import { PickProperties } from "ts-essentials";
 import {
   BooleanCol,
-  BooleanField,
-  BooleanFilter,
-  FieldRenderer,
-  FilterColKey,
+  Col,
+  FilterCol,
   GridCols,
+  NumberFormat,
   NumericCol,
-  NumericColKey,
-  NumericField,
-  NumericFilter,
   StringCol,
 } from "./Table/Columns";
-import {
-  useBooleanFilter,
-  useNumericFilter,
-  useTextFilter,
-} from "./Table/Filters";
+import { ColumnWithFieldRenderer, useRowState } from "./Table/RowState";
 import { useTraceUpdate } from "./util";
-
-type ColumnWithFieldRenderer<T> = Column<T> & {
-  fieldRenderer?: FieldRenderer<T>;
-};
 
 function Browser<T>(props: {
   tag: string;
   rows: T[];
-  filterCols: FilterColKey<T>[];
+  filterCols: FilterCol<T>[];
   defaultSort: [keyof T, SortDirection];
   defaultVisible: (keyof T | "Controls")[];
   idCol: keyof PickProperties<T, string>;
@@ -39,16 +27,14 @@ function Browser<T>(props: {
   textColumns?: StringCol<T>[];
   booleanColumns?: BooleanCol<T>[];
   gridColumns: GridCols<T>;
-  play?: (item: T) => void;
-  queue?: (item: T) => void;
+  gridButtons?: React.FC<{ row: T }>;
+  customColumns?: ColumnWithFieldRenderer<T>[];
 }) {
   useTraceUpdate(props);
 
   const {
     tag,
     rows,
-    play,
-    queue,
     filterCols,
     defaultSort,
     idCol,
@@ -57,301 +43,42 @@ function Browser<T>(props: {
     booleanColumns,
     gridColumns,
     defaultVisible,
+    customColumns,
   } = props;
 
-  // const searchIndex = useMemo(() => {
-  //   if (typeof idCol !== "string") return;
-  //   const index = new Document({
-  //     document: {
-  //       id: idCol,
-  //       index: filterCols.map((col) => ({
-  //         field: col,
-  //         tokenize: "full",
-  //         resolution: 9,
-  //       })) as Array<IndexOptions<T> & { field: string }>,
-  //     },
-  //   });
-
-  //   for (let i = 0; i < rows.length; i++) {
-  //     index.add(rows[i]);
-  //   }
-
-  //   return index;
-  // }, [filterCols, idCol, rows]);
-
-  const [columns, setColumns] = useState<ColumnWithFieldRenderer<T>[]>([]);
+  const {
+    columns,
+    filteredRows,
+    setFilters,
+    slicedOptions,
+    filterInputValue,
+    setFilterInputValue,
+    sortColumn,
+    setSort,
+    sortDirection,
+    visibleColumns,
+    setVisibleColumns,
+    addFilter,
+    activeFilters,
+  } = useRowState(
+    tag,
+    rows,
+    filterCols,
+    defaultSort,
+    defaultVisible,
+    numericCols,
+    textColumns,
+    booleanColumns,
+    customColumns
+  );
 
   const [viewMode, setViewMode] = useState<"grid" | "table">(
     (localStorage.getItem(`${tag}-viewMode`) as any) ?? "grid"
   );
 
-  const [[sortColumn, sortDirection], setSort] = useState<
-    [keyof T, SortDirection]
-  >(
-    localStorage.getItem(`${tag}-sortColumn`) &&
-      localStorage.getItem(`${tag}-sortDirection`)
-      ? ([
-          localStorage.getItem(`${tag}-sortColumn`),
-          localStorage.getItem(`${tag}-sortDirection`),
-        ] as any)
-      : defaultSort
-  );
-
-  // Default value is set in fetchData
-  const [visibleColumns, setVisibleColumns] = useState<Column<T>[]>();
-
-  const {
-    activeFilters,
-    addFilter,
-    setFilters,
-    slicedOptions,
-    filterInputValue,
-    setFilterInputValue,
-  } = useTextFilter<T>(filterCols, rows, tag);
-
-  const { activeNumericFilters, addNumericFilter } = useNumericFilter<T>(
-    numericCols ?? []
-  );
-
-  const { activeBooleanFilters, addBooleanFilter } = useBooleanFilter<T>(
-    booleanColumns ?? []
-  );
-
   useEffect(() => {
     localStorage.setItem(`${tag}-viewMode`, viewMode);
   }, [viewMode, tag]);
-
-  useEffect(() => {
-    localStorage.setItem(`${tag}-sortColumn`, sortColumn.toString());
-  }, [sortColumn, tag]);
-
-  useEffect(() => {
-    localStorage.setItem(`${tag}-sortDirection`, sortDirection);
-  }, [sortDirection, tag]);
-
-  useEffect(() => {
-    if (!visibleColumns) return;
-    localStorage.setItem(
-      `${tag}-visibleColumns`,
-      JSON.stringify(visibleColumns.map((col) => col.key))
-    );
-  }, [visibleColumns, tag]);
-
-  useEffect(() => {
-    console.log("setColumns");
-    const maximums = (numericCols ?? []).reduce(
-      (map, numCol) =>
-        map.set(numCol.key, Math.max(...rows.map((r) => r[numCol.key] ?? 0))),
-      new Map<NumericColKey<T>, number>()
-    );
-
-    const minimums = (numericCols ?? []).reduce(
-      (map, numCol) =>
-        map.set(numCol.key, Math.min(...rows.map((r) => r[numCol.key] ?? 0))),
-      new Map<NumericColKey<T>, number>()
-    );
-
-    const columns: ColumnWithFieldRenderer<T>[] = [
-      ...(textColumns ?? []),
-      ...(booleanColumns ?? []).map((col) => {
-        return {
-          ...col,
-          fieldRenderer: BooleanField(col),
-          headerRenderer: BooleanFilter(col, addBooleanFilter),
-        };
-      }),
-      ...(numericCols ?? []).map((col) => {
-        const min = minimums.get(col.key);
-        const max = maximums.get(col.key);
-        if (col.generateMaximumFromData) {
-          col.max = max;
-        }
-        return {
-          key: col.key,
-          name: col.name !== "" ? col.name : col.key.toString(),
-          sortable: true,
-          // resizable: false,
-          width: 80,
-          fieldRenderer: NumericField(col),
-          headerRenderer:
-            typeof min !== "undefined" &&
-            min !== Infinity &&
-            typeof max !== "undefined" &&
-            max !== -Infinity
-              ? NumericFilter(col, min, max, addNumericFilter)
-              : undefined,
-        };
-      }),
-    ]
-      .filter((col) => col)
-      // If column has `fieldRenderer` (which isn't part of data-grid), translate it into `formatter` so it can be used in table-cells
-      .map((col) => {
-        if (
-          "fieldRenderer" in col! &&
-          col.fieldRenderer &&
-          !("formatter" in col)
-        ) {
-          return {
-            ...col,
-            key: col.key.toString(),
-            formatter: (props) =>
-              col.fieldRenderer!({
-                data: props.row,
-                addFilter,
-              }),
-          };
-        } else {
-          return { ...col, key: col!.key.toString() };
-        }
-      });
-
-    const controlCol =
-      queue || play
-        ? {
-            key: "Controls",
-            name: "",
-            formatter: (formatterProps: { row: T }) => (
-              <>
-                {queue ? (
-                  <button onClick={() => queue(formatterProps.row)}>+</button>
-                ) : null}
-                {play ? (
-                  <button onClick={() => play(formatterProps.row)}>
-                    &#9654;
-                  </button>
-                ) : null}
-              </>
-            ),
-            width: 80,
-            resizable: false,
-          }
-        : undefined;
-
-    if (controlCol) {
-      columns.unshift(controlCol);
-    }
-
-    const savedVisibleColumns = localStorage.getItem(`${tag}-visibleColumns`)
-      ? JSON.parse(localStorage.getItem(`${tag}-visibleColumns`)!)
-      : undefined;
-    if (Array.isArray(savedVisibleColumns)) {
-      setVisibleColumns(
-        columns.filter((c) => savedVisibleColumns.includes(c.key))
-      );
-    } else {
-      setVisibleColumns(
-        columns.filter((c) => defaultVisible.includes(c.key as any))
-      );
-    }
-
-    setColumns(columns);
-  }, [
-    rows,
-    queue,
-    numericCols,
-    textColumns,
-    play,
-    addFilter,
-    defaultVisible,
-    tag,
-    addNumericFilter,
-    booleanColumns,
-    addBooleanFilter,
-  ]);
-
-  const sortedRows = useMemo(() => {
-    let sortedRows = [...rows];
-
-    const textSortKey = (textColumns ?? []).find(
-      (col) => col.key === sortColumn
-    )?.key;
-
-    if (textSortKey) {
-      sortedRows = sortedRows.sort((a, b) => {
-        let text = a[textSortKey];
-        text = Array.isArray(text) ? text[0] : text;
-        return (text ?? "").localeCompare(b[sortColumn] ?? "");
-      });
-    }
-
-    const numSortKey = (numericCols ?? []).find(
-      (col) => col.key === sortColumn
-    )?.key;
-
-    if (numSortKey) {
-      sortedRows = sortedRows
-        .filter((a) => a[numSortKey] !== undefined)
-        .sort((a, b) => a[numSortKey]! - b[numSortKey]!);
-    }
-
-    return sortDirection === "DESC" ? sortedRows.reverse() : sortedRows;
-  }, [rows, sortDirection, sortColumn, numericCols, textColumns]);
-
-  const filteredRows = useMemo(() => {
-    if (
-      (!activeFilters || activeFilters.length === 0) &&
-      activeNumericFilters.length === 0 &&
-      activeBooleanFilters.length === 0
-    )
-      return sortedRows;
-
-    const filterdRows = new Set<T>();
-
-    // Apply text filters (additive - union)
-    for (let i = 0; i < sortedRows.length; i++) {
-      let include = true;
-      const row = sortedRows[i];
-      if (activeFilters && activeFilters.length !== 0) {
-        include = false;
-        for (let j = 0; j < activeFilters.length; j++) {
-          const filter = activeFilters[j];
-          const rowValue = row[filter.field];
-          if (
-            (Array.isArray(rowValue) && rowValue.includes(filter.value)) ||
-            (typeof rowValue === "string" && rowValue === filter.value)
-          ) {
-            include = true;
-          }
-        }
-      }
-
-      // Numeric and boolean filters are subtractive (intersecting)
-      // Apply numeric filters
-      for (let j = 0; j < activeNumericFilters.length; j++) {
-        const filter = activeNumericFilters[j];
-        const rowValue = row[filter.field];
-        if (
-          typeof rowValue === "number" &&
-          include &&
-          rowValue <= filter.max &&
-          rowValue >= filter.min
-        ) {
-          continue;
-        }
-
-        include = false;
-      }
-
-      // Apply boolean filters
-      for (let j = 0; j < activeBooleanFilters.length; j++) {
-        const filter = activeBooleanFilters[j];
-
-        if (
-          typeof filter.value === "undefined" ||
-          !!row[filter.field] === filter.value
-        )
-          continue;
-
-        include = false;
-      }
-
-      if (include) {
-        filterdRows.add(row);
-      }
-    }
-
-    return Array.from(filterdRows);
-  }, [sortedRows, activeFilters, activeNumericFilters, activeBooleanFilters]);
 
   return (
     <>
@@ -389,7 +116,7 @@ function Browser<T>(props: {
             }),
             multiValue: (styles, { data }) => {
               const color =
-                data.field === "artist"
+                data.col.key === "artist"
                   ? "rgba(255,0,0,.3)"
                   : "rgba(0,0,255,.3)";
               return {
@@ -568,7 +295,11 @@ function Browser<T>(props: {
                   col1.key !== sortColumn &&
                   col2.key !== sortColumn &&
                   col3.key !== sortColumn
-                    ? columns.find((col) => col.key === sortColumn)
+                    ? [
+                        ...(textColumns ?? []),
+                        ...(numericCols ?? []),
+                        ...(booleanColumns ?? []),
+                      ].find((col) => col.key === sortColumn)
                     : undefined;
 
                 const padding = 5;
@@ -582,23 +313,8 @@ function Browser<T>(props: {
                     }}
                   >
                     <div className="image-wrapper">
-                      {queue || play ? (
-                        <div className="image-buttons-wrapper">
-                          <div className="image-buttons">
-                            {queue ? (
-                              <button onClick={() => queue(row)}>+</button>
-                            ) : null}
-                            {play ? (
-                              <button
-                                onClick={() => {
-                                  play(row);
-                                }}
-                              >
-                                &#9654;
-                              </button>
-                            ) : null}
-                          </div>
-                        </div>
+                      {props.gridButtons ? (
+                        <props.gridButtons row={row} />
                       ) : null}
                       <LazyLoadImage
                         src={art}
@@ -611,34 +327,34 @@ function Browser<T>(props: {
                     </div>
 
                     <div className="image-album-title">
-                      {"fieldRenderer" in col1 ? (
-                        col1.fieldRenderer({ data: row, addFilter })
-                      ) : (
-                        <>{row[col1.key]}</>
-                      )}
+                      <FieldRenderer
+                        col={col1}
+                        row={row}
+                        addFilter={addFilter}
+                      />
                     </div>
                     <div className="image-album-artist">
-                      {"fieldRenderer" in col2 ? (
-                        col2.fieldRenderer({ data: row, addFilter })
-                      ) : (
-                        <>{row[col2.key]}</>
-                      )}
+                      <FieldRenderer
+                        col={col2}
+                        row={row}
+                        addFilter={addFilter}
+                      />
                     </div>
                     <div className="image-album-extra">
-                      {"fieldRenderer" in col3 ? (
-                        col3.fieldRenderer({ data: row, addFilter })
-                      ) : (
-                        <>{row[col3.key]}</>
-                      )}
+                      <FieldRenderer
+                        col={col3}
+                        row={row}
+                        addFilter={addFilter}
+                      />
                     </div>
                     {/* Show extra line of information if sorting by a column which isn't displayed (title, artist or genre) */}
                     <div className="image-album-extra">
                       {sortCol ? (
-                        "fieldRenderer" in sortCol && sortCol.fieldRenderer ? (
-                          sortCol.fieldRenderer({ data: row, addFilter })
-                        ) : (
-                          <>{row[sortColumn]}</>
-                        )
+                        <FieldRenderer
+                          col={sortCol}
+                          row={row}
+                          addFilter={addFilter}
+                        />
                       ) : null}
                     </div>
                   </div>
@@ -650,6 +366,30 @@ function Browser<T>(props: {
       )}
     </>
   );
+}
+
+function FieldRenderer<T>(props: {
+  col: Col<T>;
+  row: T;
+  addFilter: (field: keyof T, value: string) => void;
+}) {
+  if (props.col.type === "string") {
+    if ("fieldRenderer" in props.col) {
+      return props.col.fieldRenderer({
+        data: props.row,
+        addFilter: props.addFilter,
+      });
+    }
+    return <>{props.row[props.col.key]}</>;
+  } else if (props.col.type === "numeric") {
+    const value = props.row[props.col.key];
+    if (typeof value === "number") {
+      return <NumberFormat col={props.col} value={value} />;
+    }
+    return <>{value}</>;
+  } else {
+    return <>{props.row[props.col.key]}</>;
+  }
 }
 
 export default Browser;

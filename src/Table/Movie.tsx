@@ -1,83 +1,62 @@
-import React from "react";
 import { CleanMovie } from "../../../movie-scraper/src/movie/interfaces";
 import {
   BooleanCol,
   DefaultSort,
   DefaultVisible,
-  FieldRenderer,
-  FilterColKey,
+  FilterCol,
   GridCols,
   NumericCol,
   StringCol,
 } from "./Columns";
-
-export const Tags: FieldRenderer<CleanMovie> = (props) => {
-  return (
-    <>
-      {props.data.tags?.map((g, i) => (
-        // eslint-disable-next-line jsx-a11y/anchor-is-valid
-        <a
-          onClick={() => props.addFilter("tags", g)}
-          key={`${props.data.id}-${g}`}
-        >
-          {g}
-          {i < props.data.tags!.length - 1 ? ", " : ""}
-        </a>
-      ))}
-    </>
-  );
-};
-
-export const Collections: FieldRenderer<CleanMovie> = (props) => {
-  return (
-    <>
-      {props.data.collections?.map((g, i) => (
-        // eslint-disable-next-line jsx-a11y/anchor-is-valid
-        <a
-          onClick={() => props.addFilter("collections", g)}
-          key={`${props.data.id}-${g}`}
-        >
-          {g}
-          {i < props.data.collections!.length - 1 ? ", " : ""}
-        </a>
-      ))}
-    </>
-  );
-};
-
-export const Directors: FieldRenderer<CleanMovie> = (props) => {
-  return (
-    <>
-      {props.data.directors?.map((g, i) => (
-        // eslint-disable-next-line jsx-a11y/anchor-is-valid
-        <a
-          onClick={() => props.addFilter("directors", g)}
-          key={`${props.data.id}-${g}`}
-        >
-          {g}
-          {i < props.data.directors!.length - 1 ? ", " : ""}
-        </a>
-      ))}
-    </>
-  );
-};
+import { timeToDateString } from "./Date";
+import { ArrayFilterRenderer } from "./Filters";
 
 export const booleanCols: BooleanCol<CleanMovie>[] = [
-  { key: "watched", name: "Watched" },
+  { type: "boolean", key: "watched", name: "Watched" },
 ];
 export const numericCols: NumericCol<CleanMovie>[] = [
   {
+    type: "numeric",
+    key: "releaseDate",
+    name: "Added",
+    sortable: true,
+    width: 120,
+    resizable: false,
+    numberFormat: timeToDateString,
+  },
+  {
+    type: "numeric",
     key: "ratingImdbValue",
     name: "IMDB",
     mult: 10,
     precision: 0,
     append: "%",
   },
-  { key: "ratingPtpValue", name: "PTP", precision: 0, append: "%" },
-  { key: "ratingMetascore", name: "MC", precision: 0, append: "%" },
-  { key: "ratingTmdbValue", name: "TMDB", mult: 10, precision: 0, append: "%" },
-  { key: "ratingRt", name: "RT", precision: 0, append: "%" },
   {
+    type: "numeric",
+    key: "ratingPtpValue",
+    name: "PTP",
+    precision: 0,
+    append: "%",
+  },
+  {
+    type: "numeric",
+    key: "ratingMetascore",
+    name: "MC",
+    precision: 0,
+    append: "%",
+  },
+  {
+    type: "numeric",
+    key: "ratingTmdbValue",
+    name: "TMDB",
+    mult: 10,
+    precision: 0,
+    append: "%",
+  },
+  { type: "numeric", key: "ratingRt", name: "RT", precision: 0, append: "%" },
+  {
+    type: "numeric",
     key: "ratingImdbPersonal",
     name: "My Rating",
     mult: 10,
@@ -86,35 +65,33 @@ export const numericCols: NumericCol<CleanMovie>[] = [
   },
 ];
 export const textColumns: StringCol<CleanMovie>[] = [
+  { type: "string", key: "title", name: "Title", sortable: true },
   {
-    key: "title",
-    name: "Title",
-    sortable: true,
-  },
-  {
+    type: "string",
     key: "directors",
     name: "Director",
     sortable: true,
-    fieldRenderer: Directors,
+    fieldRenderer: ArrayFilterRenderer<CleanMovie>("directors", "id"),
   },
-  { key: "releaseDate", name: "Release", sortable: true },
   {
+    type: "string",
     key: "tags",
     name: "Tags",
-    fieldRenderer: Tags,
+    fieldRenderer: ArrayFilterRenderer<CleanMovie>("tags", "id"),
   },
   {
+    type: "string",
     key: "collections",
     name: "Collections",
-    fieldRenderer: Collections,
+    fieldRenderer: ArrayFilterRenderer<CleanMovie>("collections", "id"),
   },
 ];
 
 export const defaultSort: DefaultSort<CleanMovie> = ["releaseDate", "DESC"];
-export const defaultFilter: FilterColKey<CleanMovie>[] = [
-  "directors",
-  "tags",
-  "collections",
+export const defaultFilter: FilterCol<CleanMovie>[] = [
+  { key: "directors" },
+  { key: "tags" },
+  { key: "collections" },
 ];
 export const defaultVisible: DefaultVisible<CleanMovie> = [
   "Controls",
@@ -128,5 +105,5 @@ export const gridCols: GridCols<CleanMovie> = {
   art: "poster",
   width: 150,
   height: 220,
-  cols: [textColumns[0], textColumns[1], textColumns[2]],
+  cols: [textColumns[0], textColumns[1], numericCols[0]],
 };

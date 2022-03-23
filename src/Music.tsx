@@ -3,21 +3,21 @@ import React, { useCallback, useEffect, useState } from "react";
 import SpotifyPlayer from "react-spotify-web-playback";
 import SpotifyWebApi from "spotify-web-api-js";
 import {
-  CleanTrack,
   CleanAlbum,
+  CleanLibrary,
+  CleanTrack,
 } from "../../movie-scraper/src/music/interfaces";
 import Browser from "./Browser";
 import config from "./config.json";
 import { getQueuePlaylistId } from "./Spotify";
 import {
-  defaultFilter,
   defaultSort,
   defaultVisible,
   gridCols,
   numericCols,
   textColumns,
 } from "./Table/Album";
-
+import { FilterCol } from "./Table/Columns";
 import * as Playlist from "./Table/Playlist";
 import { useTraceUpdate } from "./util";
 
@@ -49,6 +49,10 @@ function Music(props: {
     id: string;
     queuePlaylist: string;
   }>();
+
+  const [filterColumns, setFilterColumns] = useState<FilterCol<CleanAlbum>[]>(
+    []
+  );
 
   const playAlbum = useCallback(
     (row: CleanAlbum) => {
@@ -104,33 +108,26 @@ function Music(props: {
     const fetchData = async () => {
       const result = await axios("/lib-music.json");
 
-      const rows = result.data as CleanAlbum[];
-
-      const ye = new Intl.DateTimeFormat("en", { year: "numeric" });
-      const mo = new Intl.DateTimeFormat("en", { month: "2-digit" });
-      const da = new Intl.DateTimeFormat("en", { day: "2-digit" });
+      const library = result.data as CleanLibrary;
 
       setData({
-        rows: rows.map((row) => {
-          const dateAdded = new Date(row.dateAdded);
-          row.dateAdded = `${ye.format(dateAdded)}/${mo.format(
-            dateAdded
-          )}/${da.format(dateAdded)}`;
-          const dateReleased = new Date(row.dateReleased);
-          row.dateReleased = `${ye.format(dateReleased)}/${mo.format(
-            dateReleased
-          )}/${da.format(dateReleased)}`;
-          return row;
-        }),
+        rows: Object.values(library.albums),
       });
 
-      const playlist = await axios("/6H6tTq8Is6D2X8PZi5rJmK.json");
+      setFilterColumns([
+        { key: "title" },
+        { key: "countries" },
+        { key: "artists" },
+        { key: "genres" },
+        { key: "playlists", label: (id) => library.playlists[id].name },
+      ]);
 
-      const tracks = playlist.data as CleanTrack[];
+      // const playlist = (await axios("/4VZp1yvv27nEcEJXG3dVYb.json"))
+      //   .data as CleanTrackPlaylist;
 
-      setPlaylistData({
-        rows: tracks,
-      });
+      // setPlaylistData({
+      //   rows: playlist.tracks,
+      // });
     };
 
     fetchData();
@@ -161,21 +158,38 @@ function Music(props: {
           idCol={"spotifyId"}
           tag={"album"}
           rows={rowData.rows}
-          filterCols={defaultFilter}
+          filterCols={filterColumns}
           defaultSort={defaultSort}
           defaultVisible={defaultVisible}
           numericCols={numericCols}
           textColumns={textColumns}
           gridColumns={gridCols}
-          play={playAlbum}
-          queue={queueAlbum}
+          gridButtons={AlbumButtons(queueAlbum, playAlbum)}
+          customColumns={[
+            {
+              key: "Controls",
+              name: "",
+              formatter: (formatterProps: { row: CleanAlbum }) => (
+                <>
+                  <button onClick={() => queueAlbum(formatterProps.row)}>
+                    +
+                  </button>
+                  <button onClick={() => playAlbum(formatterProps.row)}>
+                    &#9654;
+                  </button>
+                </>
+              ),
+              width: 80,
+              resizable: false,
+            },
+          ]}
         />
       ) : (
         <Browser
           idCol={"spotifyId"}
           tag={"playlist"}
           rows={playlistData.rows}
-          filterCols={["artists", "genres"]}
+          filterCols={[{ key: "artists" }, { key: "genres" }]}
           defaultSort={Playlist.defaultSort}
           defaultVisible={Playlist.defaultVisible}
           numericCols={Playlist.numericCols}
@@ -189,8 +203,24 @@ function Music(props: {
               Playlist.textColumns[5],
             ],
           }}
-          play={playTrack}
-          queue={queueTrack}
+          customColumns={[
+            {
+              key: "Controls",
+              name: "",
+              formatter: (formatterProps: { row: CleanTrack }) => (
+                <>
+                  <button onClick={() => queueTrack(formatterProps.row)}>
+                    +
+                  </button>
+                  <button onClick={() => playTrack(formatterProps.row)}>
+                    &#9654;
+                  </button>
+                </>
+              ),
+              width: 80,
+              resizable: false,
+            },
+          ]}
         />
       )}
 
@@ -265,3 +295,25 @@ function Music(props: {
 }
 
 export default Music;
+
+const AlbumButtons: (
+  queue: (row: CleanAlbum) => void,
+  play: (row: CleanAlbum) => void
+) => React.FC<{ row: CleanAlbum }> = (queue, play) => (props) => {
+  return (
+    <div className="image-buttons-wrapper">
+      <div className="image-buttons">
+        {queue ? <button onClick={() => queue(props.row)}>+</button> : null}
+        {play ? (
+          <button
+            onClick={() => {
+              play(props.row);
+            }}
+          >
+            &#9654;
+          </button>
+        ) : null}
+      </div>
+    </div>
+  );
+};
