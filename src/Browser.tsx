@@ -76,6 +76,8 @@ function Browser<T>(props: {
     (localStorage.getItem(`${tag}-viewMode`) as any) ?? "grid"
   );
 
+  const [selectedRow, setSelectedRow] = useState<T | undefined>();
+
   useEffect(() => {
     localStorage.setItem(`${tag}-viewMode`, viewMode);
   }, [viewMode, tag]);
@@ -246,6 +248,7 @@ function Browser<T>(props: {
       {viewMode === "table" ? (
         <div className={"data-grid"}>
           <DataGrid
+            onRowDoubleClick={(row) => setSelectedRow(row)}
             columns={visibleColumns ?? []}
             rows={filteredRows}
             // rowClass={(row) => (row.watched ? "watched" : "unwatched")}
@@ -364,6 +367,55 @@ function Browser<T>(props: {
           </div>
         </div>
       )}
+      {selectedRow ? (
+        <div className={"overlay"} onClick={() => setSelectedRow(undefined)}>
+          <div className={"info"} onClick={(evt) => evt.stopPropagation()}>
+            <div>
+              <h1>
+                <FieldRenderer
+                  col={gridColumns.cols[0]}
+                  row={selectedRow}
+                  addFilter={addFilter}
+                />
+              </h1>
+              <h2>
+                <FieldRenderer
+                  col={gridColumns.cols[1]}
+                  row={selectedRow}
+                  addFilter={addFilter}
+                />
+              </h2>
+              {gridColumns.art ? (
+                <img src={selectedRow[gridColumns.art] as any} />
+              ) : null}
+            </div>
+            <div className={"scroll"}>
+              {[
+                ...(textColumns ?? []),
+                ...(numericCols ?? []),
+                ...(booleanColumns ?? []),
+              ]
+                // Filter out grid cols
+                .filter(
+                  (col) =>
+                    !gridColumns.cols.find((gridCol) => gridCol.key === col.key)
+                )
+                .map((col) => (
+                  <>
+                    <h3>{col.name}</h3>
+                    <span>
+                      <FieldRenderer
+                        col={col}
+                        row={selectedRow}
+                        addFilter={addFilter}
+                      />
+                    </span>
+                  </>
+                ))}
+            </div>
+          </div>
+        </div>
+      ) : null}
     </>
   );
 }
