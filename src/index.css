@@ -327,3 +327,33 @@ a.reverse-sort {
   font-size: 10px;
   font-weight: 100;
 }
+
+.overlay {
+  position: absolute;
+  z-index: 100;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background: #0000000a;
+}
+
+.overlay .info {
+  background: white;
+  z-index: 100;
+  position: relative;
+  max-width: 800px;
+  margin: auto;
+  padding: 10px;
+  display: grid;
+  grid-template-columns: 50% 50%;
+}
+
+.overlay .info div {
+  padding: 5px;
+}
+
+.overlay .info .scroll {
+  height: calc(100vh - 30px);
+  overflow: scroll;
+}
