@@ -33,6 +33,8 @@ export async function clean(): Promise<CleanLibrary> {
       let lastFmTags = album.lastFm?.tags?.tag ?? [];
       lastFmTags = Array.isArray(lastFmTags) ? lastFmTags : [lastFmTags];
 
+      const countries = new Set<string>();
+
       const discogsGenres = [];
       const discogsStyles = [];
       let discogsRating = { votes: 0, value: 0 };
@@ -113,6 +115,12 @@ export async function clean(): Promise<CleanLibrary> {
           ? album.spotify.addedDate
           : album.spotify.release_date;
 
+      album.mb?.releaseGroup["artist-credit"]?.forEach((a) => {
+        if (typeof a.artist.country === "string") {
+          countries.add(a.artist.country);
+        }
+      });
+
       const cleanAlbum: CleanAlbum = {
         id: album.id,
         spotifyId: album.id.spotify,
@@ -127,10 +135,7 @@ export async function clean(): Promise<CleanLibrary> {
         genres: Array.from(new Set(genres)),
         playlists: album.playlists,
         tracks: album.spotify.tracks.items.map((track) => track.id),
-        countries:
-          (album.mb?.releaseGroup["artist-credit"]
-            ?.map((a) => a.artist.country)
-            .filter((c) => typeof c === "string") as string[]) ?? [],
+        countries: Array.from(countries),
         art: album.spotify.images.find((i) => i.height === 300)?.url,
         ratingRymValue: album.rymGoogle?.rating.average,
         ratingRymVotes: album.rymGoogle?.rating.count,

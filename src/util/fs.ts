@@ -1,4 +1,5 @@
 import archiver from "archiver";
+import { parse } from "csv-parse/sync";
 import extract from "extract-zip";
 import {
   access as fsAccess,
@@ -447,13 +448,10 @@ export async function loadXml(path: string, debug = console.log): Promise<any> {
 
 export async function readCsv(
   file: string,
-  del = ",",
+  delimiter = ",",
   debug = console.log
 ): Promise<string[][]> {
-  return (await readFile(file, "utf8", debug))
-    .toString()
-    .replace(/[\r]+/g, "")
-    .split("\n")
-    .map((row) => (row !== "" ? row.split(del) : undefined))
-    .filter((row) => typeof row !== "undefined") as string[][];
+  const string = (await readFile(file, "utf8", debug)).toString();
+
+  return parse(string, { delimiter, skip_empty_lines: true });
 }

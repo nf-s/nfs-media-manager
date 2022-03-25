@@ -8,12 +8,12 @@ import { join } from "path";
 import { fileExists, readJSONFile, writeFile } from "../util/fs";
 import { skip } from "../util/skip";
 import { clean } from "./clean";
-
 import myImdbRatings from "./scrape/imdb-ratings";
 import myImdbWatchlist from "./scrape/imdb-watchlist";
 import scanNfos from "./scrape/nfo";
-
 import scrapeOmdb from "./scrape/omdb";
+
+
 import scrapeTmdb from "./scrape/tmdb";
 
 export interface Movie {
@@ -30,13 +30,14 @@ export interface Movie {
   };
 
 
+
 }
 
 export interface Library {
   nfoFiles: string[];
   /** NFO files which failed to parse */
   failedNfos: string[];
-  movies: { [file: string]: Movie };
+  movies: { [fileOrImdbId: string]: Movie };
 }
 
 const debug = debugInit("movie-scraper:init");
@@ -79,9 +80,9 @@ async function init() {
 
   try {
     if (!skip("nfo")) await scanNfos();
-
-    if (!skip("imdb-watchlist")) await myImdbWatchlist();
     if (!skip("imdb")) await myImdbRatings();
+    if (!skip("imdb-watchlist")) await myImdbWatchlist();
+
   } catch (e) {
     debug(e);
     debug("ERROR occurred while scraping new movies");
