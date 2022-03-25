@@ -155,7 +155,6 @@ function Music(props: {
     <div className="root-music">
       {props.mode === "albums" ? (
         <Browser
-          idCol={"spotifyId"}
           tag={"album"}
           rows={rowData.rows}
           filterCols={filterColumns}
@@ -186,7 +185,6 @@ function Music(props: {
         />
       ) : (
         <Browser
-          idCol={"spotifyId"}
           tag={"playlist"}
           rows={playlistData.rows}
           filterCols={[{ key: "artists" }, { key: "genres" }]}
@@ -301,19 +299,17 @@ const AlbumButtons: (
   play: (row: CleanAlbum) => void
 ) => React.FC<{ row: CleanAlbum }> = (queue, play) => (props) => {
   return (
-    <div className="image-buttons-wrapper">
-      <div className="image-buttons">
-        {queue ? <button onClick={() => queue(props.row)}>+</button> : null}
-        {play ? (
-          <button
-            onClick={() => {
-              play(props.row);
-            }}
-          >
-            &#9654;
-          </button>
-        ) : null}
-      </div>
+    <div className="image-buttons">
+      {queue ? <button onClick={() => queue(props.row)}>+</button> : null}
+      {play ? (
+        <button
+          onClick={() => {
+            play(props.row);
+          }}
+        >
+          &#9654;
+        </button>
+      ) : null}
     </div>
   );
 };

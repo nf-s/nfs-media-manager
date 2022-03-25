@@ -26,7 +26,6 @@ export default function M(props: { darkMode: boolean }) {
   return (
     <div className="root-music">
       <Browser
-        idCol={"id"}
         tag={"movie"}
         rows={playlistData.rows}
         filterCols={Movie.defaultFilter}

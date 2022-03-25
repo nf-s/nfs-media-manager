@@ -22,7 +22,6 @@ function Browser<T>(props: {
   filterCols: FilterCol<T>[];
   defaultSort: [keyof T, SortDirection];
   defaultVisible: (keyof T | "Controls")[];
-  idCol: keyof PickProperties<T, string>;
   numericCols?: NumericCol<T>[];
   textColumns?: StringCol<T>[];
   booleanColumns?: BooleanCol<T>[];
@@ -37,7 +36,6 @@ function Browser<T>(props: {
     rows,
     filterCols,
     defaultSort,
-    idCol,
     numericCols,
     textColumns,
     booleanColumns,
@@ -315,10 +313,15 @@ function Browser<T>(props: {
                       padding: `${padding}px`,
                     }}
                   >
-                    <div className="image-wrapper">
-                      {props.gridButtons ? (
-                        <props.gridButtons row={row} />
-                      ) : null}
+                    <div
+                      className="image-wrapper"
+                      onClick={() => setSelectedRow(row)}
+                    >
+                      <div className="image-buttons-wrapper">
+                        {props.gridButtons ? (
+                          <props.gridButtons row={row} />
+                        ) : null}
+                      </div>
                       <LazyLoadImage
                         src={art}
                         style={{
@@ -353,11 +356,16 @@ function Browser<T>(props: {
                     {/* Show extra line of information if sorting by a column which isn't displayed (title, artist or genre) */}
                     <div className="image-album-extra">
                       {sortCol ? (
-                        <FieldRenderer
-                          col={sortCol}
-                          row={row}
-                          addFilter={addFilter}
-                        />
+                        <>
+                          <span className="image-album-extra-title">
+                            {sortCol.name}:{" "}
+                          </span>
+                          <FieldRenderer
+                            col={sortCol}
+                            row={row}
+                            addFilter={addFilter}
+                          />
+                        </>
                       ) : null}
                     </div>
                   </div>
@@ -385,6 +393,13 @@ function Browser<T>(props: {
                   addFilter={addFilter}
                 />
               </h2>
+              <p>
+                <FieldRenderer
+                  col={gridColumns.cols[2]}
+                  row={selectedRow}
+                  addFilter={addFilter}
+                />
+              </p>
               {gridColumns.art ? (
                 <img src={selectedRow[gridColumns.art] as any} />
               ) : null}
