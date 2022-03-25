@@ -17,6 +17,15 @@ export async function clean(): Promise<CleanLibrary> {
         : undefined;
       const tags = new Set<string>();
 
+      let runTime = movie.tmdb?.runtime;
+
+      if (!runTime && movie.omdb?.runtime) {
+        const omdbRuntime = movie.omdb.runtime.split(" min")?.[0];
+        if (omdbRuntime) {
+          runTime = parseFloat(omdbRuntime);
+        }
+      }
+
       movie.ptpScrape?.tags.forEach((t) => tags.add(t.trim().toLowerCase()));
       movie.omdb?.genres
         ?.split(", ")
@@ -28,6 +37,14 @@ export async function clean(): Promise<CleanLibrary> {
       const cleanMovie: CleanMovie = {
         id: movie.id?.imdb ?? title,
         title,
+        description: movie.omdb?.plot ?? movie.tmdb?.overview,
+        source: movie.raw
+          ? "file"
+          : movie.imdb?.myRating
+          ? "imdb-rating"
+          : movie.imdb?.myWatchlist
+          ? "imdb-watchlist"
+          : "ptp-bookmark",
         poster:
           movie.omdb?.poster ?? movie.tmdb?.poster_path
             ? `https://image.tmdb.org/t/p/w154/${movie.tmdb?.poster_path}`
@@ -35,6 +52,35 @@ export async function clean(): Promise<CleanLibrary> {
         directors: movie.omdb?.director
           ? movie.omdb?.director.split(",").map((s) => s.trim())
           : [],
+        actors: movie.omdb?.actors
+          ? movie.omdb?.actors.split(",").map((s) => s.trim())
+          : [],
+        writers: movie.omdb?.writer
+          ? movie.omdb?.writer.split(",").map((s) => s.trim())
+          : [],
+        countries: movie.omdb?.country
+          ? movie.omdb?.country.split(",").map((s) => s.trim())
+          : [],
+        languages: movie.omdb?.languages
+          ? movie.omdb?.languages.split(",").map((s) => s.trim())
+          : [],
+        productionCompanies:
+          movie.omdb?.production?.split(",")?.map((s) => s.trim()) ??
+          (movie.tmdb?.production_companies
+            ?.map((p) => p.name)
+            ?.filter((n) => n) as undefined | string[]) ??
+          [],
+        awards: movie.omdb?.awards,
+        budget: movie.tmdb?.budget,
+        boxOffice: movie.omdb?.boxoffice
+          ? parseFloat(
+              movie.omdb?.boxoffice
+                .replace(",", "")
+                .replace(" ", "")
+                .replace("$", "")
+            )
+          : movie.tmdb?.revenue,
+        runTime,
         watched: typeof movie.imdb?.myRating?.value !== "undefined",
         releaseDate,
         ratingImdbPersonal: movie.imdb?.myRating?.value,
@@ -50,6 +96,8 @@ export async function clean(): Promise<CleanLibrary> {
         ratingMetascore: movie.omdb?.metascore
           ? parseInt(movie.omdb?.metascore.replace(/\D/g, ""), 10)
           : undefined,
+        popularityTmdb: movie.tmdb?.popularity,
+        popularityPtp: movie.ptp?.totalSnatched,
         tags: Array.from(tags),
         collections: movie.ptpScrape?.collections.map((t) => t.name) ?? [],
       };

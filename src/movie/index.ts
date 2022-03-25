@@ -8,12 +8,12 @@ import { join } from "path";
 import { fileExists, readJSONFile, writeFile } from "../util/fs";
 import { skip } from "../util/skip";
 import { clean } from "./clean";
-import scrapePtp from "./scrape/ptp";
 import myImdbRatings from "./scrape/imdb-ratings";
 import myImdbWatchlist from "./scrape/imdb-watchlist";
 import scanNfos from "./scrape/nfo";
-import { PtpMovieScrape } from "./scrape/ptp";
 import scrapeOmdb from "./scrape/omdb";
+import scrapePtp, { PtpMovieScrape } from "./scrape/ptp";
+import ptpBookmarks from "./scrape/ptp-bookmarks";
 import scrapeTmdb from "./scrape/tmdb";
 
 export interface Movie {
@@ -29,6 +29,7 @@ export interface Movie {
     myWatchlist?: { date: string };
   };
   ptp?: PTPMovie | null;
+  ptpBookmark?: { date: string };
   ptpScrape?: PtpMovieScrape | null;
 }
 
@@ -36,7 +37,7 @@ export interface Library {
   nfoFiles: string[];
   /** NFO files which failed to parse */
   failedNfos: string[];
-  movies: { [file: string]: Movie };
+  movies: { [fileOrImdbId: string]: Movie };
 }
 
 const debug = debugInit("movie-scraper:init");
@@ -79,9 +80,9 @@ async function init() {
 
   try {
     if (!skip("nfo")) await scanNfos();
-
-    if (!skip("imdb-watchlist")) await myImdbWatchlist();
     if (!skip("imdb")) await myImdbRatings();
+    if (!skip("imdb-watchlist")) await myImdbWatchlist();
+    if (!skip("ptp-bookmarks")) await ptpBookmarks();
   } catch (e) {
     debug(e);
     debug("ERROR occurred while scraping new movies");

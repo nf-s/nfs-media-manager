@@ -34,13 +34,15 @@ export default async function scrapePtp() {
           debug(`fetching PTP ${movie.id?.imdb}`);
           try {
             const response = await ptpClient.searchByImdbId(movie.id?.imdb!);
-            movie.ptp = response;
+
             if (response) {
               movie.id!.ptp = response.id;
+              movie.ptp = response;
               debug(`SUCCESSFULLY fetched PTP ${movie.id?.imdb}`);
+            } else {
+              debug(`FAILED to fetched PTP ${movie.id?.imdb}`);
+              movie.ptp = null;
             }
-            debug(`FAILED to fetched PTP ${movie.id?.imdb}`);
-            movie.ptp = null;
           } catch (error) {
             debug(`FAILED to fetched PTP ${movie.id?.imdb}`);
             debug(error);
