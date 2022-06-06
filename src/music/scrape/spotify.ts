@@ -146,7 +146,7 @@ export async function scrapeSpotifyAlbumAudioFeatures() {
         const album = albumsWhichNeedFeatures[j];
         if (
           album.spotify.tracks.items.find(
-            (t) => t !== null && t.id === track.id
+            (t) => t !== null && track !== null && t.id === track.id
           )
         ) {
           album.spotify.audioFeatures.push(track);

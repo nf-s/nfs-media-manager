@@ -38,12 +38,15 @@ export async function clean(): Promise<CleanLibrary> {
         id: movie.id?.imdb ?? title,
         title,
         description: movie.omdb?.plot ?? movie.tmdb?.overview,
-        source: movie.raw
-          ? "file"
-          : movie.imdb?.myRating
-          ? "imdb-rating"
-          : movie.imdb?.myWatchlist
-          ? "imdb-watchlist"
+        source:
+          movie.owned?.type === "bluray"
+            ? "bluray"
+            : movie.raw
+            ? "file"
+            : movie.imdb?.myRating
+            ? "imdb-rating"
+            : movie.imdb?.myWatchlist
+            ? "imdb-watchlist"
 
         poster:
           movie.omdb?.poster ?? movie.tmdb?.poster_path
