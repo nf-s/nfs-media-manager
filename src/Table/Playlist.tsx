@@ -7,6 +7,7 @@ import {
   NumericCol,
   StringCol,
   formatTime,
+  DataColumn,
 } from "./Columns";
 
 export const Genres: FieldRenderer<CleanTrack> = (props) => {
@@ -82,7 +83,48 @@ export const defaultVisible: DefaultVisible<CleanTrack> = [
   "genres",
 ];
 
-export const numericCols: NumericCol<CleanTrack>[] = [
+export const dataColumns: DataColumn<CleanTrack>[] = [
+  {
+    type: "string",
+    key: "title",
+    name: "Title",
+    sortable: true,
+  },
+  {
+    type: "string",
+    key: "durationSec",
+    name: "Duration",
+    sortable: true,
+    fieldRenderer: ((props) => (
+      <>{formatTime(props.data.durationSec)}</>
+    )) as FieldRenderer<CleanTrack>,
+    width: 80,
+  },
+  {
+    type: "string",
+    key: "artists",
+    name: "Artist",
+    sortable: true,
+    fieldRenderer: Artist,
+  },
+  {
+    type: "string",
+    key: "dateReleased",
+    name: "Release",
+    sortable: true,
+    width: 100,
+    resizable: false,
+  },
+  {
+    type: "string",
+    key: "dateAdded",
+    name: "Added",
+    sortable: true,
+    width: 100,
+    resizable: false,
+  },
+  { type: "string", key: "genres", name: "Genres", fieldRenderer: Genres },
+  { type: "string", key: "key", name: "Key", fieldRenderer: Key },
   {
     type: "numeric",
     key: "acousticness",
@@ -156,47 +198,4 @@ export const numericCols: NumericCol<CleanTrack>[] = [
     mult: 100,
     precision: 1,
   },
-];
-export const textColumns: StringCol<CleanTrack>[] = [
-  {
-    type: "string",
-    key: "title",
-    name: "Title",
-    sortable: true,
-  },
-  {
-    type: "string",
-    key: "durationSec",
-    name: "Duration",
-    sortable: true,
-    fieldRenderer: ((props) => (
-      <>{formatTime(props.data.durationSec)}</>
-    )) as FieldRenderer<CleanTrack>,
-    width: 80,
-  },
-  {
-    type: "string",
-    key: "artists",
-    name: "Artist",
-    sortable: true,
-    fieldRenderer: Artist,
-  },
-  {
-    type: "string",
-    key: "dateReleased",
-    name: "Release",
-    sortable: true,
-    width: 100,
-    resizable: false,
-  },
-  {
-    type: "string",
-    key: "dateAdded",
-    name: "Added",
-    sortable: true,
-    width: 100,
-    resizable: false,
-  },
-  { type: "string", key: "genres", name: "Genres", fieldRenderer: Genres },
-  { type: "string", key: "key", name: "Key", fieldRenderer: Key },
 ];

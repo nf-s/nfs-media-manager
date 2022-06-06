@@ -5,7 +5,7 @@ import Browser from "./Browser";
 import * as Movie from "./Table/Movie";
 
 export default function M(props: { darkMode: boolean }) {
-  const [playlistData, setPlaylistData] = useState<{
+  const [movieData, setMovieData] = useState<{
     rows: CleanMovie[];
   }>({ rows: [] });
 
@@ -15,7 +15,7 @@ export default function M(props: { darkMode: boolean }) {
 
       const movies = library.data as CleanMovie[];
 
-      setPlaylistData({
+      setMovieData({
         rows: movies,
       });
     };
@@ -27,14 +27,12 @@ export default function M(props: { darkMode: boolean }) {
     <div className="root-music">
       <Browser
         tag={"movie"}
-        rows={playlistData.rows}
-        filterCols={Movie.defaultFilter}
+        rows={movieData.rows}
         defaultSort={Movie.defaultSort}
         defaultVisible={Movie.defaultVisible}
-        numericCols={Movie.numericCols}
-        textColumns={Movie.textColumns}
-        booleanColumns={Movie.booleanCols}
+        dataColumns={Movie.dataColumns}
         gridColumns={Movie.gridCols}
+        customColumns={[]}
       />
     </div>
   );

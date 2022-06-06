@@ -1,11 +1,13 @@
 import { Index } from "flexsearch";
 import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
 import { OptionsType } from "react-select";
+import { useTraceUpdate } from "../util";
 import {
-  BooleanCol,
   BooleanColKey,
+  DataColumn,
   FilterCol,
-  NumericCol,
+  getFilterCols,
+  getNumericCols,
   NumericColKey,
 } from "./Columns";
 
@@ -23,14 +25,14 @@ export type NumericFilterValue<T> = {
   includeUndefined: boolean;
 };
 
-export type BooleanFilterValue<T> = {
-  value: true | false | undefined;
+export type RowFilterValues<T> = {
+  value: T[BooleanColKey<T>][];
   field: BooleanColKey<T>;
 };
 
 type SelectValues<T> = OptionsType<FilterValue<T>>;
 
-export function useNumericFilter<T>(cols: NumericCol<T>[]) {
+export function useNumericFilter<T>(dataColumns: DataColumn<T>[] | undefined) {
   function filterNumericReducer(
     state: NumericFilterValue<T>[],
     action:
@@ -40,7 +42,9 @@ export function useNumericFilter<T>(cols: NumericCol<T>[]) {
   ): NumericFilterValue<T>[] {
     switch (action.type) {
       case "add":
-        const found = cols.find((a) => a.key === action.field);
+        const found = getNumericCols(dataColumns).find(
+          (a) => a.key === action.field
+        );
         if (found) {
           return [
             ...state.filter((f) => f.field !== action.field),
@@ -81,48 +85,10 @@ export function useNumericFilter<T>(cols: NumericCol<T>[]) {
   return { activeNumericFilters, addNumericFilter };
 }
 
-export function useBooleanFilter<T>(cols: BooleanCol<T>[]) {
-  function filterBooleanReducer(
-    state: BooleanFilterValue<T>[],
-    action:
-      | ({ type: "add" } & BooleanFilterValue<T>)
-      | { type: "clear" }
-      | { type: "set"; values: BooleanFilterValue<T>[] }
-  ): BooleanFilterValue<T>[] {
-    switch (action.type) {
-      case "add":
-        const found = cols.find((a) => a.key === action.field);
-        if (found) {
-          return [
-            ...state.filter((f) => f.field !== action.field),
-            { field: action.field, value: action.value },
-          ];
-        }
-        return state;
-      case "set":
-        return action.values;
-      case "clear":
-        return [];
-    }
-  }
-
-  const [activeBooleanFilters, setActiveBooleanFilters] = useReducer(
-    filterBooleanReducer,
-    []
-  );
-
-  const addBooleanFilter = useCallback(
-    (field: BooleanColKey<T>, value: boolean | undefined) => {
-      setActiveBooleanFilters({ type: "add", field, value });
-    },
-    []
-  );
-
-  return { activeBooleanFilters, addBooleanFilter };
-}
+export type AddFilter<T> = (field: keyof T, value: string) => void;
 
 export function useTextFilter<T>(
-  filterCols: FilterCol<T>[],
+  dataColumns: DataColumn<T>[] | undefined,
   rows: T[],
   tag: string
 ) {
@@ -194,9 +160,12 @@ export function useTextFilter<T>(
     undefined
   );
 
-  const addFilter = useCallback((field: keyof T, value: string) => {
-    setActiveFilters({ type: "add", field, value });
-  }, []);
+  const addFilter: AddFilter<T> = useCallback(
+    (field: keyof T, value: string) => {
+      setActiveFilters({ type: "add", field, value });
+    },
+    []
+  );
 
   const setFilters = useCallback((filter: SelectValues<T>) => {
     setActiveFilters({ type: "set", values: filter });
@@ -204,7 +173,7 @@ export function useTextFilter<T>(
 
   useEffect(() => {
     if (rows.length === 0) return;
-    const filters = filterCols
+    const filters = getFilterCols(dataColumns)
       .reduce<FilterValue<T>[]>(
         (acc, curr) => [...acc, ...getColumnWithTotals(rows, curr)],
         []
@@ -226,12 +195,21 @@ export function useTextFilter<T>(
     setFilterData({
       filters,
     });
-  }, [rows, filterCols, setFilterData, setFilters, tag]);
+  }, [rows, dataColumns, setFilterData, setFilters, tag]);
 
   useEffect(() => {
     if (!activeFilters) return;
     localStorage.setItem(`${tag}-activeFilters`, JSON.stringify(activeFilters));
   }, [activeFilters, tag]);
+
+  useTraceUpdate({
+    activeFilters,
+    addFilter,
+    setFilters,
+    slicedOptions,
+    filterInputValue,
+    setFilterInputValue,
+  });
 
   return {
     activeFilters,
@@ -267,7 +245,9 @@ function getColumnWithTotals<K>(
   }
 
   return totalArray.map((r) => ({
-    label: `${filterCol.label ? filterCol.label(r[0]) : r[0]} (${r[1]})`,
+    label: `${filterCol.name}: ${
+      filterCol.filterLabel ? filterCol.filterLabel(r[0]) : r[0]
+    } (${r[1]})`,
     value: r[0],
     count: r[1],
     col: filterCol,

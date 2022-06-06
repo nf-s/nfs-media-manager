@@ -118,7 +118,7 @@ function throwUnexpectedError(
 }
 
 // from https://stackoverflow.com/questions/41004631/trace-why-a-react-component-is-re-rendering
-export function useTraceUpdate(props: any) {
+export function useTraceUpdate(props: any, message?: string) {
   const prev = useRef(props);
   useEffect(() => {
     const changedProps = Object.entries(props).reduce((ps: any, [k, v]) => {
@@ -128,7 +128,8 @@ export function useTraceUpdate(props: any) {
       return ps;
     }, {});
     if (Object.keys(changedProps).length > 0) {
-      console.log("Changed props:", changedProps);
+      console.log(message);
+      console.log(message ?? "", "Changed props:", changedProps);
     }
     prev.current = props;
   });

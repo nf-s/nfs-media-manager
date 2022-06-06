@@ -10,14 +10,8 @@ import {
 import Browser from "./Browser";
 import config from "./config.json";
 import { getQueuePlaylistId } from "./Spotify";
-import {
-  defaultSort,
-  defaultVisible,
-  gridCols,
-  numericCols,
-  textColumns,
-} from "./Table/Album";
-import { FilterCol } from "./Table/Columns";
+import { dataCols, defaultSort, defaultVisible, gridCols } from "./Table/Album";
+import { FilterCol, isFilterCol } from "./Table/Columns";
 import * as Playlist from "./Table/Playlist";
 import { useTraceUpdate } from "./util";
 
@@ -27,8 +21,9 @@ function Music(props: {
   mode: "albums" | "playlist";
 }) {
   useTraceUpdate(props);
-  const [spotify, setSpotifyApi] =
-    useState<{ api: SpotifyWebApi.SpotifyWebApiJs }>();
+  const [spotify, setSpotifyApi] = useState<{
+    api: SpotifyWebApi.SpotifyWebApiJs;
+  }>();
   const [rowData, setData] = useState<{
     rows: CleanAlbum[];
   }>({ rows: [] });
@@ -49,10 +44,6 @@ function Music(props: {
     id: string;
     queuePlaylist: string;
   }>();
-
-  const [filterColumns, setFilterColumns] = useState<FilterCol<CleanAlbum>[]>(
-    []
-  );
 
   const playAlbum = useCallback(
     (row: CleanAlbum) => {
@@ -114,14 +105,6 @@ function Music(props: {
         rows: Object.values(library.albums),
       });
 
-      setFilterColumns([
-        { key: "title" },
-        { key: "countries" },
-        { key: "artists" },
-        { key: "genres" },
-        { key: "playlists", label: (id) => library.playlists[id].name },
-      ]);
-
       // const playlist = (await axios("/4VZp1yvv27nEcEJXG3dVYb.json"))
       //   .data as CleanTrackPlaylist;
 
@@ -157,23 +140,31 @@ function Music(props: {
         <Browser
           tag={"album"}
           rows={rowData.rows}
-          filterCols={filterColumns}
           defaultSort={defaultSort}
           defaultVisible={defaultVisible}
-          numericCols={numericCols}
-          textColumns={textColumns}
+          dataColumns={dataCols}
           gridColumns={gridCols}
-          gridButtons={AlbumButtons(queueAlbum, playAlbum)}
+          GridButtons={AlbumButtons(queueAlbum, playAlbum)}
           customColumns={[
             {
               key: "Controls",
               name: "",
               formatter: (formatterProps: { row: CleanAlbum }) => (
                 <>
-                  <button onClick={() => queueAlbum(formatterProps.row)}>
+                  <button
+                    onClick={(evt) => {
+                      queueAlbum(formatterProps.row);
+                      evt.stopPropagation();
+                    }}
+                  >
                     +
                   </button>
-                  <button onClick={() => playAlbum(formatterProps.row)}>
+                  <button
+                    onClick={(evt) => {
+                      playAlbum(formatterProps.row);
+                      evt.stopPropagation();
+                    }}
+                  >
                     &#9654;
                   </button>
                 </>
@@ -187,19 +178,13 @@ function Music(props: {
         <Browser
           tag={"playlist"}
           rows={playlistData.rows}
-          filterCols={[{ key: "artists" }, { key: "genres" }]}
           defaultSort={Playlist.defaultSort}
           defaultVisible={Playlist.defaultVisible}
-          numericCols={Playlist.numericCols}
-          textColumns={Playlist.textColumns}
+          dataColumns={Playlist.dataColumns}
           gridColumns={{
             width: 250,
             height: 250,
-            cols: [
-              Playlist.textColumns[0],
-              Playlist.textColumns[1],
-              Playlist.textColumns[5],
-            ],
+            cols: ["title", "artists", "dateReleased"],
           }}
           customColumns={[
             {
@@ -300,11 +285,21 @@ const AlbumButtons: (
 ) => React.FC<{ row: CleanAlbum }> = (queue, play) => (props) => {
   return (
     <div className="image-buttons">
-      {queue ? <button onClick={() => queue(props.row)}>+</button> : null}
+      {queue ? (
+        <button
+          onClick={(evt) => {
+            queue(props.row);
+            evt.stopPropagation();
+          }}
+        >
+          +
+        </button>
+      ) : null}
       {play ? (
         <button
-          onClick={() => {
+          onClick={(evt) => {
             play(props.row);
+            evt.stopPropagation();
           }}
         >
           &#9654;

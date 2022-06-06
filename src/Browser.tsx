@@ -3,45 +3,34 @@ import React, { useEffect, useState } from "react";
 import DataGrid, { SortDirection } from "react-data-grid";
 import { LazyLoadImage } from "react-lazy-load-image-component";
 import Select from "react-select";
-import { PickProperties } from "ts-essentials";
-import {
-  BooleanCol,
-  Col,
-  FilterCol,
-  GridCols,
-  NumberFormat,
-  NumericCol,
-  StringCol,
-} from "./Table/Columns";
-import { ColumnWithFieldRenderer, useRowState } from "./Table/RowState";
+import { DataColumn, GridCols, NumberFormat } from "./Table/Columns";
+import { AddFilter } from "./Table/FilterState";
+import { ColumnWithFieldRenderer, useColumnState } from "./Table/ColumnState";
 import { useTraceUpdate } from "./util";
+
+export type GridButtonsFC<T> = React.FC<{ row: T }>;
 
 function Browser<T>(props: {
   tag: string;
   rows: T[];
-  filterCols: FilterCol<T>[];
   defaultSort: [keyof T, SortDirection];
   defaultVisible: (keyof T | "Controls")[];
-  numericCols?: NumericCol<T>[];
-  textColumns?: StringCol<T>[];
-  booleanColumns?: BooleanCol<T>[];
+  dataColumns: DataColumn<T>[];
+  customColumns: ColumnWithFieldRenderer<T>[];
   gridColumns: GridCols<T>;
-  gridButtons?: React.FC<{ row: T }>;
-  customColumns?: ColumnWithFieldRenderer<T>[];
+  GridButtons?: GridButtonsFC<T>;
 }) {
   useTraceUpdate(props);
 
   const {
     tag,
     rows,
-    filterCols,
     defaultSort,
-    numericCols,
-    textColumns,
-    booleanColumns,
+    dataColumns,
     gridColumns,
     defaultVisible,
     customColumns,
+    GridButtons,
   } = props;
 
   const {
@@ -58,15 +47,12 @@ function Browser<T>(props: {
     setVisibleColumns,
     addFilter,
     activeFilters,
-  } = useRowState(
+  } = useColumnState(
     tag,
     rows,
-    filterCols,
     defaultSort,
     defaultVisible,
-    numericCols,
-    textColumns,
-    booleanColumns,
+    dataColumns,
     customColumns
   );
 
@@ -268,7 +254,6 @@ function Browser<T>(props: {
                 : setSort(defaultSort)
             }
             className="fill-grid"
-            onRowClick={(e) => console.log(e)}
             headerRowHeight={50}
             rowHeight={35}
           />
@@ -276,102 +261,15 @@ function Browser<T>(props: {
       ) : (
         <div className={"image-grid"}>
           <div className={"image-grid-container"}>
-            <GridLayout
-              tag="div"
-              options={{
-                useRecycle: true,
-                isConstantSize: true,
-                isEqualSize: true,
-              }}
-            >
-              {filteredRows.map((row, i) => {
-                const art = gridColumns.art ? row[gridColumns.art] : undefined;
-
-                const col1 = gridColumns.cols[0];
-                const col2 = gridColumns.cols[1];
-                const col3 = gridColumns.cols[2];
-
-                // Only show sort column if it is not already being shown
-                const sortCol =
-                  col1.key !== sortColumn &&
-                  col2.key !== sortColumn &&
-                  col3.key !== sortColumn
-                    ? [
-                        ...(textColumns ?? []),
-                        ...(numericCols ?? []),
-                        ...(booleanColumns ?? []),
-                      ].find((col) => col.key === sortColumn)
-                    : undefined;
-
-                const padding = 5;
-
-                return typeof art === "string" ? (
-                  <div
-                    key={i}
-                    style={{
-                      width: gridColumns.width,
-                      padding: `${padding}px`,
-                    }}
-                  >
-                    <div
-                      className="image-wrapper"
-                      onClick={() => setSelectedRow(row)}
-                    >
-                      <div className="image-buttons-wrapper">
-                        {props.gridButtons ? (
-                          <props.gridButtons row={row} />
-                        ) : null}
-                      </div>
-                      <LazyLoadImage
-                        src={art}
-                        style={{
-                          objectFit: "cover",
-                          width: `${gridColumns.width}px`,
-                          height: `${gridColumns.height}px`,
-                        }}
-                      />
-                    </div>
-
-                    <div className="image-album-title">
-                      <FieldRenderer
-                        col={col1}
-                        row={row}
-                        addFilter={addFilter}
-                      />
-                    </div>
-                    <div className="image-album-artist">
-                      <FieldRenderer
-                        col={col2}
-                        row={row}
-                        addFilter={addFilter}
-                      />
-                    </div>
-                    <div className="image-album-extra">
-                      <FieldRenderer
-                        col={col3}
-                        row={row}
-                        addFilter={addFilter}
-                      />
-                    </div>
-                    {/* Show extra line of information if sorting by a column which isn't displayed (title, artist or genre) */}
-                    <div className="image-album-extra">
-                      {sortCol ? (
-                        <>
-                          <span className="image-album-extra-title">
-                            {sortCol.name}:{" "}
-                          </span>
-                          <FieldRenderer
-                            col={sortCol}
-                            row={row}
-                            addFilter={addFilter}
-                          />
-                        </>
-                      ) : null}
-                    </div>
-                  </div>
-                ) : null;
-              })}
-            </GridLayout>
+            <ImageGrid
+              rows={filteredRows}
+              gridColumns={gridColumns}
+              sortColumn={sortColumn}
+              dataColumns={dataColumns}
+              setSelectedRow={setSelectedRow}
+              addFilter={addFilter}
+              GridButtons={GridButtons}
+            />
           </div>
         </div>
       )}
@@ -381,21 +279,27 @@ function Browser<T>(props: {
             <div>
               <h1>
                 <FieldRenderer
-                  col={gridColumns.cols[0]}
+                  col={(dataColumns ?? []).find(
+                    (col) => col.key === gridColumns.cols[0]
+                  )}
                   row={selectedRow}
                   addFilter={addFilter}
                 />
               </h1>
               <h2>
                 <FieldRenderer
-                  col={gridColumns.cols[1]}
+                  col={(dataColumns ?? []).find(
+                    (col) => col.key === gridColumns.cols[1]
+                  )}
                   row={selectedRow}
                   addFilter={addFilter}
                 />
               </h2>
               <p>
                 <FieldRenderer
-                  col={gridColumns.cols[2]}
+                  col={(dataColumns ?? []).find(
+                    (col) => col.key === gridColumns.cols[2]
+                  )}
                   row={selectedRow}
                   addFilter={addFilter}
                 />
@@ -405,18 +309,14 @@ function Browser<T>(props: {
               ) : null}
             </div>
             <div className={"scroll"}>
-              {[
-                ...(textColumns ?? []),
-                ...(numericCols ?? []),
-                ...(booleanColumns ?? []),
-              ]
+              {(dataColumns ?? [])
                 // Filter out grid cols
                 .filter(
                   (col) =>
-                    !gridColumns.cols.find((gridCol) => gridCol.key === col.key)
+                    !gridColumns.cols.find((gridCol) => gridCol === col.key)
                 )
-                .map((col) => (
-                  <>
+                .map((col, i) => (
+                  <React.Fragment key={i}>
                     <h3>{col.name}</h3>
                     <span>
                       <FieldRenderer
@@ -425,7 +325,7 @@ function Browser<T>(props: {
                         addFilter={addFilter}
                       />
                     </span>
-                  </>
+                  </React.Fragment>
                 ))}
             </div>
           </div>
@@ -436,10 +336,11 @@ function Browser<T>(props: {
 }
 
 function FieldRenderer<T>(props: {
-  col: Col<T>;
+  col: DataColumn<T> | undefined;
   row: T;
-  addFilter: (field: keyof T, value: string) => void;
+  addFilter: AddFilter<T>;
 }) {
+  if (!props.col) return <></>;
   if (props.col.type === "string") {
     if ("fieldRenderer" in props.col) {
       return props.col.fieldRenderer({
@@ -457,6 +358,114 @@ function FieldRenderer<T>(props: {
   } else {
     return <>{props.row[props.col.key]}</>;
   }
+}
+
+function ImageGrid<T>(props: {
+  rows: T[];
+  gridColumns: GridCols<T>;
+  sortColumn: keyof T;
+  dataColumns: DataColumn<T>[] | undefined;
+  setSelectedRow: (row: T) => void;
+  addFilter: AddFilter<T>;
+  GridButtons?: GridButtonsFC<T>;
+}) {
+  const {
+    rows,
+    gridColumns,
+    sortColumn,
+    dataColumns,
+    setSelectedRow,
+    addFilter,
+    GridButtons,
+  } = props;
+
+  useTraceUpdate(props, "Image grid");
+
+  if (!gridColumns.art) return null;
+
+  const col1 = (dataColumns ?? []).find(
+    (col) => col.key === gridColumns.cols[0]
+  );
+  const col2 = (dataColumns ?? []).find(
+    (col) => col.key === gridColumns.cols[1]
+  );
+  const col3 = (dataColumns ?? []).find(
+    (col) => col.key === gridColumns.cols[2]
+  );
+
+  // Only show sort column if it is not already being shown
+  const sortCol =
+    col1?.key !== sortColumn &&
+    col2?.key !== sortColumn &&
+    col3?.key !== sortColumn
+      ? (dataColumns ?? []).find((col) => col.key === sortColumn)
+      : undefined;
+
+  const padding = 5;
+
+  return (
+    <GridLayout
+      tag="div"
+      options={{
+        useRecycle: true,
+        isConstantSize: true,
+        isEqualSize: true,
+      }}
+    >
+      {rows.map((row, i) => {
+        const art = row[gridColumns.art!];
+
+        return typeof art === "string" ? (
+          <div
+            key={i}
+            style={{
+              width: gridColumns.width,
+              padding: `${padding}px`,
+            }}
+          >
+            <div className="image-wrapper" onClick={() => setSelectedRow(row)}>
+              <div className="image-buttons-wrapper">
+                {GridButtons ? <GridButtons row={row} /> : null}
+              </div>
+              <LazyLoadImage
+                src={art}
+                style={{
+                  objectFit: "cover",
+                  width: `${gridColumns.width}px`,
+                  height: `${gridColumns.height}px`,
+                }}
+              />
+            </div>
+
+            <div className="image-album-title">
+              <FieldRenderer col={col1} row={row} addFilter={addFilter} />
+            </div>
+            <div className="image-album-artist">
+              <FieldRenderer col={col2} row={row} addFilter={addFilter} />
+            </div>
+            <div className="image-album-extra">
+              <FieldRenderer col={col3} row={row} addFilter={addFilter} />
+            </div>
+            {/* Show extra line of information if sorting by a column which isn't displayed (title, artist or genre) */}
+            <div className="image-album-extra">
+              {sortCol ? (
+                <>
+                  <span className="image-album-extra-title">
+                    {sortCol.name}:{" "}
+                  </span>
+                  <FieldRenderer
+                    col={sortCol}
+                    row={row}
+                    addFilter={addFilter}
+                  />
+                </>
+              ) : null}
+            </div>
+          </div>
+        ) : null;
+      })}
+    </GridLayout>
+  );
 }
 
 export default Browser;
