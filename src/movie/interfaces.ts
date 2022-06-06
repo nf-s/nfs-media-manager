@@ -1,7 +1,7 @@
 export interface CleanMovie {
   id: string;
   title: string;
-  source: "file" | "imdb-rating" | "imdb-watchlist" | "ptp-bookmark";
+  source: "file" | "imdb-rating" | "imdb-watchlist" | "ptp-bookmark" | "bluray";
   description?: string;
   poster?: string;
   directors: string[];

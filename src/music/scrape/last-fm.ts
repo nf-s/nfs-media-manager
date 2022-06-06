@@ -54,66 +54,71 @@ export async function scrapeLastFm() {
       });
     };
 
+    const albumsToFind = Object.values(library.albums)
+      // Filter albums which have no LastFm metadata
+      // Or haven't been scraped in last 15 days
+      .filter(
+        (album) =>
+          album.lastFm === undefined ||
+          (process.env.RETRY_FAILED === "true" && album.lastFm === null) ||
+          (album.lastFm &&
+            (!album.lastFm.dateScraped ||
+              new Date(album.lastFm.dateScraped).getTime() <
+                new Date().getTime() - 15 * 24 * 60 * 60 * 1000)) // refresh every 15 days
+      );
+
+    let counter = 0;
+
     await Promise.all(
-      Object.values(library.albums)
-        // Filter albums which have no LastFm metadata
-        // Or haven't been scraped in last 15 days
-        .filter(
-          (album) =>
-            album.lastFm === undefined ||
-            (process.env.RETRY_FAILED === "true" && album.lastFm === null) ||
-            (album.lastFm &&
-              (!album.lastFm.dateScraped ||
-                new Date(album.lastFm.dateScraped).getTime() <
-                  new Date().getTime() - 15 * 24 * 60 * 60 * 1000)) // refresh every 15 days
-        )
-        .map(async (album) => {
-          let lfmAlbum: AlbumResponse | undefined;
-          try {
-            // Use lastFm album and artist name if already set
-            if (album.lastFm) {
-              const artist =
-                typeof album.lastFm?.artist === "string"
-                  ? album.lastFm?.artist
-                  : album.lastFm?.artist?.name;
-              if (album.lastFm.name && artist) {
-                debug(`Refreshing album ${albumTitle(album)}`);
-                lfmAlbum = await getAlbum({
-                  artist,
-                  album: album.lastFm.name,
-                });
-              }
-            }
-
-            // Try music brainz ID
-            if (!lfmAlbum && album.id.musicBrainz) {
-              lfmAlbum = await getAlbum({ mbid: album.id.musicBrainz });
-            }
-
-            // Search with spotify artist and name
-            if (!lfmAlbum) {
+      albumsToFind.map(async (album) => {
+        let lfmAlbum: AlbumResponse | undefined;
+        try {
+          // Use lastFm album and artist name if already set
+          if (album.lastFm) {
+            const artist =
+              typeof album.lastFm?.artist === "string"
+                ? album.lastFm?.artist
+                : album.lastFm?.artist?.name;
+            if (album.lastFm.name && artist) {
+              debug(`Refreshing album ${albumTitle(album)}`);
               lfmAlbum = await getAlbum({
-                artist: album.spotify.artists[0].name,
-                album: album.spotify.name,
+                artist,
+                album: album.lastFm.name,
               });
             }
+          }
 
-            if (lfmAlbum) {
-              album.lastFm = {
-                ...lfmAlbum,
-                dateScraped: new Date().toISOString(),
-              };
-              debug(`SUCCESSFULLY fetched last.fm ${albumTitle(album)}`);
-            } else {
-              debug(`FAILED to fetched lastFm ${albumTitle(album)}`);
-              album.lastFm = null;
-            }
-          } catch (error) {
+          // Try music brainz ID
+          if (!lfmAlbum && album.id.musicBrainz) {
+            lfmAlbum = await getAlbum({ mbid: album.id.musicBrainz });
+          }
+
+          // Search with spotify artist and name
+          if (!lfmAlbum) {
+            lfmAlbum = await getAlbum({
+              artist: album.spotify.artists[0].name,
+              album: album.spotify.name,
+            });
+          }
+
+          if (lfmAlbum) {
+            album.lastFm = {
+              ...lfmAlbum,
+              dateScraped: new Date().toISOString(),
+            };
+            debug(`SUCCESSFULLY fetched last.fm ${albumTitle(album)}`);
+          } else {
             debug(`FAILED to fetched lastFm ${albumTitle(album)}`);
-            debug(error);
             album.lastFm = null;
           }
-        })
+        } catch (error) {
+          debug(`FAILED to fetched lastFm ${albumTitle(album)}`);
+          debug(error);
+          album.lastFm = null;
+        }
+        counter++;
+        debug(`DONE ${(counter * 100) / albumsToFind.length}%`);
+      })
     );
   } else {
     debug(`WARNING, LASTFM_API_KEY && LASTFM_USERNAME have not been set`);

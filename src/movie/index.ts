@@ -31,6 +31,7 @@ export interface Movie {
   ptp?: PTPMovie | null;
   ptpBookmark?: { date: string };
   ptpScrape?: PtpMovieScrape | null;
+  owned?: { type: "bluray" };
 }
 
 export interface Library {
@@ -77,6 +78,23 @@ async function init() {
       debug
     );
   }
+
+  /*
+
+Owned to fix
+
+Should be bluray
+- What Have I Done to Deserve This? (is imdb-rating)
+
+
+Should be imdb-watchlist
+- Belle
+- After Yang
+- Great Freedom
+- Ascension
+
+
+*/
 
   try {
     if (!skip("nfo")) await scanNfos();
