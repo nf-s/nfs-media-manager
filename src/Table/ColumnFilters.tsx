@@ -2,7 +2,7 @@ import { Handle, Range, SliderProps, SliderTooltip } from "rc-slider";
 import "rc-slider/assets/index.css";
 import React, { useState } from "react";
 import { HeaderRendererProps } from "react-data-grid";
-import { isJsonArray, isJsonString, JsonObject } from "../util";
+import { isJsonArray, isJsonString } from "../util";
 import {
   BooleanCol,
   BooleanColKey,
@@ -11,7 +11,6 @@ import {
   NumberFormat,
   NumericCol,
   NumericColKey,
-  StringCol,
   StringColKey,
 } from "./Columns";
 
@@ -74,7 +73,7 @@ export function NumericFilter<T>(
         onClick={(e) => e.stopPropagation()}
       >
         <Range
-          step={props.max - props.min < 10 ? (props.max - props.min) / 200 : 1}
+          step={props.max - props.min < 10 ? (props.max - props.min) / 500 : 1}
           min={props.min}
           max={props.max}
           defaultValue={[props.min, props.max]}
@@ -92,70 +91,6 @@ export function NumericFilter<T>(
         />
       </div>
     </div>
-  );
-}
-
-type BooleanFilterProps<T> = {
-  col: BooleanCol<T>;
-  addFilter: (field: BooleanColKey<T>, value: boolean | undefined) => void;
-};
-
-export const BooleanFilter = <T,>(
-  props: BooleanFilterProps<T> & HeaderRendererProps<T>
-) => {
-  return props.col.key === undefined ? null : (
-    <BooleanControls
-      {...props}
-      onChange={(value) => props.addFilter(props.col.key, value)}
-    />
-  );
-};
-
-function BooleanControls<T>(
-  props: HeaderRendererProps<T> & {
-    onChange: (value: boolean | undefined) => void;
-  }
-) {
-  const [value, setValue] = useState<boolean | undefined>(undefined);
-  return (
-    <>
-      <input
-        type="radio"
-        id="false"
-        name="false"
-        value="false"
-        onChange={() => {
-          props.onChange(false);
-          setValue(false);
-        }}
-        checked={value === false}
-      />
-      <label htmlFor="false">False</label>
-      <input
-        type="radio"
-        id="true"
-        name="true"
-        value="true"
-        onChange={() => {
-          props.onChange(true);
-          setValue(true);
-        }}
-        checked={value === true}
-      />
-      <label htmlFor="true">True</label>
-      <input
-        type="radio"
-        id="all"
-        name="all"
-        value="all"
-        onChange={() => {
-          props.onChange(undefined);
-          setValue(undefined);
-        }}
-        checked={value === undefined}
-      />
-      <label htmlFor="all">All</label>
-    </>
   );
 }
 

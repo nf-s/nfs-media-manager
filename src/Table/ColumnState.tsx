@@ -1,36 +1,32 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Column, SortDirection } from "react-data-grid";
+import { NumericFilter } from "./ColumnFilters";
 import {
-  BooleanCol,
   BooleanField,
+  DataColumn,
   FieldRenderer,
-  FilterCol,
-  NumericCol,
+  getNumericCols,
+  getStringCols,
+  isBooleanCol,
+  isNumericCol,
   NumericColKey,
   NumericField,
-  StringCol,
 } from "./Columns";
-import { BooleanFilter, NumericFilter } from "./Filters";
-import {
-  useBooleanFilter,
-  useNumericFilter,
-  useTextFilter,
-} from "./FilterState";
+import { useNumericFilter, useTextFilter } from "./FilterState";
 
-export type ColumnWithFieldRenderer<T> = Column<T> & {
-  fieldRenderer?: FieldRenderer<T>;
-};
+export type ColumnWithFieldRenderer<T> = Readonly<
+  Column<T> & {
+    fieldRenderer?: FieldRenderer<T>;
+  }
+>;
 
-export function useRowState<T>(
+export function useColumnState<T>(
   tag: string,
   rows: T[],
-  filterCols: FilterCol<T>[],
   defaultSort: [keyof T, SortDirection],
   defaultVisible: (keyof T | "Controls")[],
-  numericCols?: NumericCol<T>[],
-  textColumns?: StringCol<T>[],
-  booleanColumns?: BooleanCol<T>[],
-  customColumns?: ColumnWithFieldRenderer<T>[]
+  dataColumns: DataColumn<T>[],
+  customColumns: ColumnWithFieldRenderer<T>[]
 ) {
   const [[sortColumn, sortDirection], setSort] = useState<
     [keyof T, SortDirection]
@@ -56,15 +52,10 @@ export function useRowState<T>(
     slicedOptions,
     filterInputValue,
     setFilterInputValue,
-  } = useTextFilter<T>(filterCols, rows, tag);
+  } = useTextFilter<T>(dataColumns, rows, tag);
 
-  const { activeNumericFilters, addNumericFilter } = useNumericFilter<T>(
-    numericCols ?? []
-  );
-
-  const { activeBooleanFilters, addBooleanFilter } = useBooleanFilter<T>(
-    booleanColumns ?? []
-  );
+  const { activeNumericFilters, addNumericFilter } =
+    useNumericFilter<T>(dataColumns);
 
   useEffect(() => {
     localStorage.setItem(`${tag}-sortColumn`, sortColumn.toString());
@@ -84,86 +75,90 @@ export function useRowState<T>(
 
   useEffect(() => {
     console.log("setColumns");
-    const maximums = (numericCols ?? []).reduce(
-      (map, numCol) =>
-        map.set(
-          numCol.key,
-          Math.max(...rows.map((r) => r[numCol.key] ?? -Infinity))
-        ),
-      new Map<NumericColKey<T>, number>()
-    );
+    const maximums = new Map<NumericColKey<T>, number>();
+    const minimums = new Map<NumericColKey<T>, number>();
 
-    const minimums = (numericCols ?? []).reduce(
-      (map, numCol) =>
-        map.set(
-          numCol.key,
-          Math.min(...rows.map((r) => r[numCol.key] ?? Infinity))
-        ),
-      new Map<NumericColKey<T>, number>()
-    );
+    getNumericCols(dataColumns).forEach((numCol) => {
+      maximums.set(
+        numCol.key,
+        Math.max(...rows.map((r) => r[numCol.key] ?? -Infinity))
+      );
+
+      minimums.set(
+        numCol.key,
+        Math.min(...rows.map((r) => r[numCol.key] ?? Infinity))
+      );
+    });
 
     const columns: ColumnWithFieldRenderer<T>[] = [
-      ...(customColumns ?? []),
-      ...(textColumns ?? []),
-      ...(booleanColumns ?? []).map((col) => {
+      ...customColumns,
+      ...dataColumns.map((col) => {
+        if (isNumericCol(col)) {
+          const min = minimums.get(col.key);
+          const max = maximums.get(col.key);
+          // if (col.generateMaximumFromData) {
+          //   col.max = max;
+          // }
+          console.log(`Numeric ${col.key}`);
+          const resolvedCol: ColumnWithFieldRenderer<T> = {
+            key: col.key.toString(),
+            name: col.name !== "" ? col.name : col.key.toString(),
+            sortable: col.sortable ?? true,
+            resizable: col.resizable ?? true,
+            width: col.width ?? 80,
+            fieldRenderer: NumericField(col),
+            headerRenderer: (props) => (
+              <NumericFilter
+                {...props}
+                col={col}
+                min={min}
+                max={max}
+                addFilter={addNumericFilter}
+              />
+            ),
+          };
+
+          return resolvedCol;
+        }
+
+        if (isBooleanCol(col)) {
+          const resolvedCol: ColumnWithFieldRenderer<T> = {
+            ...col,
+            key: col.key.toString(),
+            fieldRenderer: BooleanField(col),
+          };
+          return resolvedCol;
+        }
+
+        // StringCol / FilterCol
+        return {
+          ...col,
+          sortable: col.sortable ?? true,
+          resizable: col.resizable ?? true,
+        };
+      }),
+    ].map((col) => {
+      // If column has `fieldRenderer` (which isn't part of data-grid), translate it into `formatter` so it can be used in table-cells
+      if (
+        "fieldRenderer" in col! &&
+        col.fieldRenderer &&
+        !("formatter" in col)
+      ) {
         const resolvedCol: ColumnWithFieldRenderer<T> = {
           ...col,
           key: col.key.toString(),
-          fieldRenderer: BooleanField(col),
-          headerRenderer: (props) => (
-            <BooleanFilter {...props} col={col} addFilter={addBooleanFilter} />
-          ),
-        };
-        return resolvedCol;
-      }),
-      ...(numericCols ?? []).map((col) => {
-        const min = minimums.get(col.key);
-        const max = maximums.get(col.key);
-        if (col.generateMaximumFromData) {
-          col.max = max;
-        }
-        const resolvedCol: ColumnWithFieldRenderer<T> = {
-          key: col.key.toString(),
-          name: col.name !== "" ? col.name : col.key.toString(),
-          sortable: col.sortable ?? true,
-          resizable: col.resizable ?? true,
-          width: col.width ?? 80,
-          fieldRenderer: NumericField(col),
-          headerRenderer: (props) => (
-            <NumericFilter
-              {...props}
-              col={col}
-              min={min}
-              max={max}
-              addFilter={addNumericFilter}
-            />
-          ),
+          formatter: (props) =>
+            col.fieldRenderer!({
+              data: props.row,
+              addFilter,
+            }),
         };
 
         return resolvedCol;
-      }),
-    ]
-      .filter((col) => col)
-      // If column has `fieldRenderer` (which isn't part of data-grid), translate it into `formatter` so it can be used in table-cells
-      .map((col) => {
-        if (
-          "fieldRenderer" in col! &&
-          col.fieldRenderer &&
-          !("formatter" in col)
-        ) {
-          return {
-            ...col,
-            key: col.key.toString(),
-            formatter: (props) =>
-              col.fieldRenderer!({
-                data: props.row,
-                addFilter,
-              }),
-          };
-        } else {
-          return { ...col, key: col!.key.toString() };
-        }
-      });
+      } else {
+        return { ...col, key: col.key.toString() };
+      }
+    });
 
     const savedVisibleColumns = localStorage.getItem(`${tag}-visibleColumns`)
       ? JSON.parse(localStorage.getItem(`${tag}-visibleColumns`)!)
@@ -181,21 +176,18 @@ export function useRowState<T>(
     setColumns(columns);
   }, [
     rows,
-    numericCols,
-    textColumns,
+    dataColumns,
     addFilter,
     defaultVisible,
     tag,
     addNumericFilter,
-    booleanColumns,
-    addBooleanFilter,
     customColumns,
   ]);
 
   const sortedRows = useMemo(() => {
     let sortedRows = [...rows];
 
-    const textSortKey = (textColumns ?? []).find(
+    const textSortKey = getStringCols(dataColumns).find(
       (col) => col.key === sortColumn
     )?.key;
 
@@ -207,7 +199,7 @@ export function useRowState<T>(
       });
     }
 
-    const numSortKey = (numericCols ?? []).find(
+    const numSortKey = getNumericCols(dataColumns).find(
       (col) => col.key === sortColumn
     )?.key;
 
@@ -218,17 +210,16 @@ export function useRowState<T>(
     }
 
     return sortDirection === "DESC" ? sortedRows.reverse() : sortedRows;
-  }, [rows, sortDirection, sortColumn, numericCols, textColumns]);
+  }, [rows, sortDirection, sortColumn, dataColumns]);
 
   const filteredRows = useMemo(() => {
     if (
       (!activeFilters || activeFilters.length === 0) &&
-      activeNumericFilters.length === 0 &&
-      activeBooleanFilters.length === 0
+      activeNumericFilters.length === 0
     )
       return sortedRows;
 
-    const filterdRows = new Set<T>();
+    const filteredRows = new Set<T>();
 
     // Apply text filters (additive - union)
     for (let i = 0; i < sortedRows.length; i++) {
@@ -266,26 +257,13 @@ export function useRowState<T>(
         include = false;
       }
 
-      // Apply boolean filters
-      for (let j = 0; j < activeBooleanFilters.length; j++) {
-        const filter = activeBooleanFilters[j];
-
-        if (
-          typeof filter.value === "undefined" ||
-          !!row[filter.field] === filter.value
-        )
-          continue;
-
-        include = false;
-      }
-
       if (include) {
-        filterdRows.add(row);
+        filteredRows.add(row);
       }
     }
 
-    return Array.from(filterdRows);
-  }, [sortedRows, activeFilters, activeNumericFilters, activeBooleanFilters]);
+    return Array.from(filteredRows);
+  }, [sortedRows, activeFilters, activeNumericFilters]);
 
   return {
     columns,

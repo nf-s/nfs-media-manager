@@ -1,6 +1,7 @@
 import React from "react";
 import { CleanAlbum } from "../../../movie-scraper/src/music/interfaces";
 import {
+  DataColumn,
   DefaultSort,
   DefaultVisible,
   FieldRenderer,
@@ -10,7 +11,7 @@ import {
   StringCol,
 } from "./Columns";
 import { timeToDateString } from "./Date";
-import { ArrayFilterRenderer } from "./Filters";
+import { ArrayFilterRenderer } from "./ColumnFilters";
 
 export const Release: FieldRenderer<CleanAlbum> = (props) => (
   <>
@@ -76,14 +77,60 @@ export const Release: FieldRenderer<CleanAlbum> = (props) => (
   </>
 );
 
-export const numericCols: NumericCol<CleanAlbum>[] = [
+export const dataCols: DataColumn<CleanAlbum>[] = [
+  {
+    type: "string",
+    key: "title",
+    name: "Title",
+    sortable: true,
+    fieldRenderer: Release,
+    enableFilter: true,
+  },
+  {
+    type: "string",
+    key: "artists",
+    name: "Artists",
+    sortable: true,
+    fieldRenderer: ArrayFilterRenderer<CleanAlbum>("artists", "spotifyId"),
+    enableFilter: true,
+  },
+  {
+    type: "string",
+    key: "durationSec",
+    name: "Duration",
+    sortable: true,
+    fieldRenderer: ((props) => (
+      <>{formatTime(props.data.durationSec)}</>
+    )) as FieldRenderer<CleanAlbum>,
+    width: 80,
+  },
+  {
+    type: "string",
+    key: "genres",
+    name: "Genres",
+    fieldRenderer: ArrayFilterRenderer<CleanAlbum>("genres", "spotifyId"),
+    enableFilter: true,
+  },
+  {
+    type: "string",
+    key: "countries",
+    name: "Countries",
+    fieldRenderer: ArrayFilterRenderer<CleanAlbum>("countries", "spotifyId"),
+  },
+  {
+    type: "string",
+    key: "playlists",
+    name: "Playlists",
+    fieldRenderer: ArrayFilterRenderer<CleanAlbum>("playlists", "spotifyId"),
+    enableFilter: true,
+    // filterLabel: (id) => library.playlists[id].name
+  },
   {
     type: "numeric",
     key: "dateReleased",
     name: "Release",
     sortable: true,
-    width: 120,
-    resizable: false,
+    width: 150,
     numberFormat: timeToDateString,
   },
   {
@@ -91,8 +138,7 @@ export const numericCols: NumericCol<CleanAlbum>[] = [
     key: "dateAdded",
     name: "Added",
     sortable: true,
-    width: 120,
-    resizable: false,
+    width: 150,
     numberFormat: timeToDateString,
   },
   {
@@ -247,44 +293,6 @@ export const numericCols: NumericCol<CleanAlbum>[] = [
     precision: 1,
   },
 ];
-export const textColumns: StringCol<CleanAlbum>[] = [
-  {
-    type: "string",
-    key: "title",
-    name: "Title",
-    sortable: true,
-    fieldRenderer: Release,
-  },
-  {
-    type: "string",
-    key: "artists",
-    name: "Artists",
-    sortable: true,
-    fieldRenderer: ArrayFilterRenderer<CleanAlbum>("artists", "spotifyId"),
-  },
-  {
-    type: "string",
-    key: "durationSec",
-    name: "Duration",
-    sortable: true,
-    fieldRenderer: ((props) => (
-      <>{formatTime(props.data.durationSec)}</>
-    )) as FieldRenderer<CleanAlbum>,
-    width: 80,
-  },
-  {
-    type: "string",
-    key: "genres",
-    name: "Genres",
-    fieldRenderer: ArrayFilterRenderer<CleanAlbum>("genres", "spotifyId"),
-  },
-  {
-    type: "string",
-    key: "countries",
-    name: "Countries",
-    fieldRenderer: ArrayFilterRenderer<CleanAlbum>("countries", "spotifyId"),
-  },
-];
 
 export const defaultSort: DefaultSort<CleanAlbum> = ["dateAdded", "DESC"];
 
@@ -304,5 +312,5 @@ export const gridCols: GridCols<CleanAlbum> = {
   width: 250,
   height: 250,
   art: "art",
-  cols: [textColumns[0], textColumns[1], numericCols[0]],
+  cols: ["title", "artists", "dateReleased"],
 };

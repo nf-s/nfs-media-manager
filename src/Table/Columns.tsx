@@ -2,6 +2,7 @@ import "rc-slider/assets/index.css";
 import React from "react";
 import { SortDirection } from "react-data-grid";
 import { PickProperties } from "ts-essentials";
+import { AddFilter } from "./FilterState";
 
 export function formatTime(seconds: number) {
   const h = Math.floor(seconds / 3600);
@@ -14,7 +15,7 @@ export function formatTime(seconds: number) {
 
 export type FieldRenderer<T> = (props: {
   data: T;
-  addFilter: (field: keyof T, value: string) => void;
+  addFilter: AddFilter<T>;
 }) => JSX.Element | null;
 
 export const NumberFormat = <T,>(props: {
@@ -37,8 +38,11 @@ export const NumericField = <T,>(col: NumericCol<T>) => {
 
   return (props: { data: T }) => {
     const value = props.data[col.key];
+
     return typeof value === "number" ? (
       <NumberFormat col={col} value={value} />
+    ) : typeof value === "string" ? (
+      <NumberFormat col={col} value={parseFloat(value)} />
     ) : null;
   };
 };
@@ -49,16 +53,23 @@ export const BooleanField = <T,>(col: BooleanCol<T>) => {
   return (props: { data: T }) => (props.data[col.key] ? <span>X</span> : null);
 };
 
+type ColumnBase = {
+  readonly width?: number;
+  readonly name: string;
+  readonly sortable?: boolean;
+  readonly resizable?: boolean;
+};
+
 export type DefaultSort<T> = [keyof T, SortDirection];
 
 export type GridCols<T> = {
-  width: number;
-  height: number;
-  art?: keyof PickProperties<T, string | undefined>;
-  /** maximum of 3 columns */ cols: [
-    StringCol<T> | NumericCol<T>,
-    StringCol<T> | NumericCol<T>,
-    StringCol<T> | NumericCol<T>
+  readonly width: number;
+  readonly height: number;
+  readonly art?: keyof PickProperties<T, string | undefined>;
+  /** maximum of 3 columns */ readonly cols: [
+    DataColumnKey<T>,
+    DataColumnKey<T>,
+    DataColumnKey<T>
   ];
 };
 
@@ -66,54 +77,48 @@ export type DefaultVisible<T> = (keyof T | "Controls")[];
 
 export type NumericColKey<T> = keyof PickProperties<T, number | undefined>;
 export type NumericCol<T> = {
-  type: "numeric";
-  key: NumericColKey<T>;
-  name: string;
-  max?: number | undefined;
-  generateMaximumFromData?: boolean;
-  append?: string;
+  readonly type: "numeric";
+  readonly key: NumericColKey<T>;
+  readonly max?: number | undefined;
+  readonly generateMaximumFromData?: boolean;
+  readonly append?: string;
   /** Number of digits after the decimal point. Must be in the range 0 - 20, inclusive. */
-  precision?: number;
-  mult?: number | undefined;
+  readonly precision?: number;
+  readonly mult?: number | undefined;
 
   /** This overrides append, precision and mult */
-  numberFormat?: (num: number) => string;
-} & { width?: number; sortable?: boolean; resizable?: boolean };
+  readonly numberFormat?: (num: number) => string;
+} & ColumnBase;
 
 export type BooleanColKey<T> = keyof PickProperties<
   T,
   boolean | number | string | undefined
 >;
 export type BooleanCol<T> = {
-  type: "boolean";
-  key: BooleanColKey<T>;
-  name: string;
-};
+  readonly type: "boolean";
+  readonly key: BooleanColKey<T>;
+} & ColumnBase;
 
 export type StringColKey<T> = keyof PickProperties<T, string | undefined>;
 export type StringCol<T> = (
   | // String columns
   {
-      key: keyof PickProperties<T, string | undefined>;
+      readonly key: keyof PickProperties<T, string | undefined>;
     }
   // Not string columns (require fieldRenderer)
   | {
-      key: keyof PickProperties<T, Exclude<any, string>>;
-      fieldRenderer: FieldRenderer<T>;
+      readonly key: keyof PickProperties<T, Exclude<any, string>>;
+      readonly fieldRenderer: FieldRenderer<T>;
     }
 ) & {
-  type: "string";
-  width?: number;
-  name: string;
-  sortable?: boolean;
-  resizable?: boolean;
-};
+  readonly type: "string";
+} & ColumnBase;
 
-export type Col<T> = StringCol<T> | NumericCol<T> | BooleanCol<T>;
-
-export type FilterCol<T> = {
-  key: FilterColKey<T>;
-  label?: (value: string) => string;
+export type FilterCol<T> = StringCol<T> & {
+  readonly enableFilter: true;
+  readonly enableRowFilter?: boolean;
+  readonly key: FilterColKey<T>;
+  readonly filterLabel?: (value: string) => string;
 };
 
 export type FilterColKey<T> = keyof PickProperties<
@@ -123,6 +128,50 @@ export type FilterColKey<T> = keyof PickProperties<
 
 export type FilterColArrayKey<T> = keyof PickProperties<T, string[]>;
 
-export function getFilterColKey<T>(col: FilterCol<T>) {
-  return typeof col === "object" && "key" in col ? col.key : col;
+export type DataColumn<T> =
+  | FilterCol<T>
+  | StringCol<T>
+  | NumericCol<T>
+  | BooleanCol<T>;
+export type DataColumnKey<T> =
+  | FilterColKey<T>
+  | StringColKey<T>
+  | NumericColKey<T>
+  | BooleanColKey<T>;
+
+export function isNumericCol<T>(col: DataColumn<T>): col is NumericCol<T> {
+  return col.type === "numeric";
+}
+export function getNumericCols<T>(
+  cols: DataColumn<T>[] | undefined
+): NumericCol<T>[] {
+  return (cols ?? []).filter(isNumericCol);
+}
+export function isStringCol<T>(col: DataColumn<T>): col is StringCol<T> {
+  return col.type === "string";
+}
+export function getStringCols<T>(
+  cols: DataColumn<T>[] | undefined
+): StringCol<T>[] {
+  return (cols ?? []).filter(isStringCol);
+}
+export function isBooleanCol<T>(col: DataColumn<T>): col is BooleanCol<T> {
+  return col.type === "boolean";
+}
+export function getBooleanCols<T>(
+  cols: DataColumn<T>[] | undefined
+): BooleanCol<T>[] {
+  return (cols ?? []).filter(isBooleanCol);
+}
+
+export function isFilterCol<T>(col: DataColumn<T>): col is FilterCol<T> {
+  return (
+    col.type === "string" && "enableFilter" in col && col.enableFilter === true
+  );
+}
+
+export function getFilterCols<T>(
+  cols: DataColumn<T>[] | undefined
+): FilterCol<T>[] {
+  return (cols ?? []).filter(isFilterCol);
 }
