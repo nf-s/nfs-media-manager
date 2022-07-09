@@ -216,3 +216,72 @@ export async function getPlaylistTracksWithMetadata(
     debug(`WARNING no SPOTIFY_TOKEN provided`);
   }
 }
+
+export async function getUserPlaylists(spotifyApi: SpotifyWebApi) {
+  const usersPlaylists: SpotifyApi.PlaylistObjectSimplified[] = [];
+
+  await new Promise((resolve, reject) => {
+    const getPlaylists = async (offset = 0, limit = 50) => {
+      debug(`fetching users spotify playlists offset=${offset}`);
+      try {
+        const response = await spotifyLimiter.schedule(() =>
+          spotifyApi.getUserPlaylists({
+            limit,
+            offset,
+          })
+        );
+
+        usersPlaylists.push(...response.body.items);
+
+        const nextOffset = response.body.next
+          ?.match(/offset=([0-9]+)/g)?.[0]
+          ?.split("=")?.[1];
+        if (nextOffset) {
+          getPlaylists(parseInt(nextOffset, 10));
+        } else {
+          debug(`FINISHED fetching users spotify playlists`);
+          resolve("done");
+        }
+      } catch (error) {
+        debug(`FAILED to users spotify playlists offset=${offset}`);
+        debug(error);
+        reject();
+      }
+    };
+
+    getPlaylists();
+  });
+
+  return usersPlaylists;
+}
+
+export async function addTracksToPlaylist(
+  spotifyApi: SpotifyWebApi,
+  playlistId: string,
+  /** array of track IDS */
+  trackIds: string[]
+) {
+  const limit = 100;
+
+  const trackUris = trackIds.map((id) => `spotify:track:${id}`);
+  const numBatches = Math.ceil(trackUris.length / limit);
+
+  debug(
+    `adding ${trackUris.length} tracks to playlist ${playlistId} - will take ${numBatches} requests to complete`
+  );
+
+  const tracksBatch = new Array(numBatches)
+    .fill(0)
+    .map((v, index) => trackUris.slice(index * limit, (index + 1) * limit));
+
+  await Promise.all(
+    tracksBatch.map((batch, i) =>
+      spotifyLimiter.schedule(async () => {
+        debug(`adding tracks to playlist ${playlistId} offset=${i * limit}`);
+        await spotifyApi.addTracksToPlaylist(playlistId, batch);
+      })
+    )
+  );
+
+  debug(`FINISHED adding tracks to playlist ${playlistId}`);
+}

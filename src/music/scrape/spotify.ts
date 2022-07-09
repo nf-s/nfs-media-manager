@@ -302,3 +302,7 @@ export async function getAudioFeatures(
 
   return tracks;
 }
+
+export async function getCurrentSpotifyUser(spotifyApi: SpotifyWebApi) {
+  return (await spotifyLimiter.schedule(() => spotifyApi.getMe())).body;
+}
