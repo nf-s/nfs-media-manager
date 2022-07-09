@@ -1,18 +1,14 @@
 import { Handle, Range, SliderProps, SliderTooltip } from "rc-slider";
 import "rc-slider/assets/index.css";
-import React, { useState } from "react";
+import React from "react";
 import { HeaderRendererProps } from "react-data-grid";
-import { isJsonArray, isJsonString } from "../util";
 import {
-  BooleanCol,
-  BooleanColKey,
-  FieldRenderer,
   FilterColArrayKey,
-  NumberFormat,
-  NumericCol,
   NumericColKey,
   StringColKey,
-} from "./Columns";
+} from "../../../movie-scraper/src/types/fields";
+import { isJsonArray, isJsonString } from "../util";
+import { FieldRenderer, NumberFormat, NumericCol } from "./Columns";
 
 type NumericFilterProps<T> = {
   col: NumericCol<T>;
