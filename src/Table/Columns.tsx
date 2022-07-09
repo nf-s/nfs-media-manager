@@ -3,6 +3,12 @@ import React from "react";
 import { SortDirection } from "react-data-grid";
 import { PickProperties } from "ts-essentials";
 import { AddFilter } from "./FilterState";
+import {
+  BooleanColKey,
+  FilterColKey,
+  NumericColKey,
+  StringColKey,
+} from "../../../movie-scraper/src/types/fields";
 
 export function formatTime(seconds: number) {
   const h = Math.floor(seconds / 3600);
@@ -75,7 +81,6 @@ export type GridCols<T> = {
 
 export type DefaultVisible<T> = (keyof T | "Controls")[];
 
-export type NumericColKey<T> = keyof PickProperties<T, number | undefined>;
 export type NumericCol<T> = {
   readonly type: "numeric";
   readonly key: NumericColKey<T>;
@@ -90,16 +95,11 @@ export type NumericCol<T> = {
   readonly numberFormat?: (num: number) => string;
 } & ColumnBase;
 
-export type BooleanColKey<T> = keyof PickProperties<
-  T,
-  boolean | number | string | undefined
->;
 export type BooleanCol<T> = {
   readonly type: "boolean";
   readonly key: BooleanColKey<T>;
 } & ColumnBase;
 
-export type StringColKey<T> = keyof PickProperties<T, string | undefined>;
 export type StringCol<T> = (
   | // String columns
   {
@@ -120,13 +120,6 @@ export type FilterCol<T> = StringCol<T> & {
   readonly key: FilterColKey<T>;
   readonly filterLabel?: (value: string) => string;
 };
-
-export type FilterColKey<T> = keyof PickProperties<
-  T,
-  string[] | string | undefined
->;
-
-export type FilterColArrayKey<T> = keyof PickProperties<T, string[]>;
 
 export type DataColumn<T> =
   | FilterCol<T>

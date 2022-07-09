@@ -1,14 +1,16 @@
 import { Index } from "flexsearch";
 import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
 import { OptionsType } from "react-select";
-import { useTraceUpdate } from "../util";
 import {
   BooleanColKey,
+  NumericColKey,
+} from "../../../movie-scraper/src/types/fields";
+import { useTraceUpdate } from "../util";
+import {
   DataColumn,
   FilterCol,
   getFilterCols,
   getNumericCols,
-  NumericColKey,
 } from "./Columns";
 
 export type FilterValue<T> = {

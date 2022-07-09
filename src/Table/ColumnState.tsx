@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Column, SortDirection } from "react-data-grid";
+import { NumericColKey } from "../../../movie-scraper/src/types/fields";
 import { NumericFilter } from "./ColumnFilters";
 import {
   BooleanField,
@@ -9,7 +10,6 @@ import {
   getStringCols,
   isBooleanCol,
   isNumericCol,
-  NumericColKey,
   NumericField,
 } from "./Columns";
 import { useNumericFilter, useTextFilter } from "./FilterState";
