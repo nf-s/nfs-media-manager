@@ -8,7 +8,7 @@ import { fileExists, readJSONFile, writeFile } from "../util/fs";
 import { skip } from "../util/skip";
 import { clean } from "./clean";
 import { clean as cleanPlaylist } from "./clean-playlist";
-import { AlbumId } from "./interfaces";
+import { AlbumId, CleanLibrary } from "./interfaces";
 import { albumCsv } from "./scrape/album-csv";
 import {
   discogs,
@@ -37,6 +37,7 @@ import {
   SpotifyPlaylistTrack,
 } from "./scrape/spotify-playlist";
 import { upcCsv } from "./scrape/upc-csv";
+import { syncPlaylists } from "./sync-playlist";
 
 const debug = debugInit("music-scraper:init");
 
@@ -172,14 +173,15 @@ async function run() {
     debug("ERROR occurred while scraping new albums");
   }
 
-  await save();
+  if (!skip("album-csv") || !skip("upc") || !skip("spotify-fav")) await save();
 
   debug("Start scraping playlists!");
 
   if (!skip("spotify-album-playlists")) await scrapeSpotifyAlbumPlaylists();
   if (!skip("spotify-track-playlists")) await scrapeSpotifyTrackPlaylists();
 
-  await save();
+  if (!skip("spotify-album-playlists") || !skip("spotify-track-playlists"))
+    await save();
 
   debug("Start scraping metadata!");
 
@@ -203,7 +205,16 @@ async function run() {
     debug("ERROR occurred while scraping metadata for albums");
   }
 
-  await save();
+  if (
+    !skip("spotify-artists") ||
+    !skip("spotify-audio-features") ||
+    !skip("mb") ||
+    !skip("discogs") ||
+    !skip("lastfm") ||
+    !skip("rym") ||
+    !skip("metacritic")
+  )
+    await save();
 
   debug(
     `library has ${
@@ -213,33 +224,46 @@ async function run() {
 
   debug(`library has ${library.missing.length} missing albums`);
 
-  if (!skip("clean") && process.env.MUSIC_CLEAN_JSON) {
-    const cleanLibrary = await clean();
+  if (process.env.MUSIC_CLEAN_JSON) {
+    let cleanLibrary: CleanLibrary | undefined;
+    if (!skip("clean") && process.env.MUSIC_CLEAN_JSON) {
+      cleanLibrary = await clean();
 
-    debug("saving cleaned library file");
+      debug("saving cleaned library file");
 
-    await writeFile(
-      process.env.MUSIC_CLEAN_JSON!,
-      JSON.stringify(cleanLibrary),
-      undefined,
-      debug
-    );
+      await writeFile(
+        process.env.MUSIC_CLEAN_JSON!,
+        JSON.stringify(cleanLibrary),
+        undefined,
+        debug
+      );
 
-    debug("saving cleaned track playlist files");
+      debug("saving cleaned track playlist files");
 
-    for (const playlist of Object.values(library.playlists)) {
-      if (isTrackPlaylist(playlist)) {
-        debug(`saving playlist ${playlist.name}`);
-        const cleanedPlaylist = await cleanPlaylist(playlist);
+      for (const playlist of Object.values(library.playlists)) {
+        if (isTrackPlaylist(playlist)) {
+          debug(`saving playlist ${playlist.name}`);
+          const cleanedPlaylist = await cleanPlaylist(playlist);
 
-        await writeFile(
-          join(process.env.DATA_DIR!, `${playlist.id}.json`),
-          JSON.stringify(cleanedPlaylist),
-          undefined,
-          debug
-        );
+          await writeFile(
+            join(process.env.DATA_DIR!, `${playlist.id}.json`),
+            JSON.stringify(cleanedPlaylist),
+            undefined,
+            debug
+          );
+        }
       }
     }
+
+    if (!cleanLibrary) {
+      cleanLibrary = await readJSONFile(process.env.MUSIC_CLEAN_JSON);
+    }
+
+    await syncPlaylists(cleanLibrary!);
+  } else {
+    debug(
+      "process.env.MUSIC_CLEAN_JSON is undefined - cannot save cleaned library or sync playlists"
+    );
   }
 
   process.exit();

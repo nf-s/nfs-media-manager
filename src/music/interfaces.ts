@@ -33,6 +33,7 @@ export interface CleanAlbum extends AudioFeatures, CleanAlbumBase {
   dateAdded: number;
   genres: string[];
   playlists: string[];
+  /** Array of track IDS (eg `"4iV5W9uYEdYUVa79Axb7Rh"`) - NOT Spotify URIs (eg `"spotify:track:4iV5W9uYEdYUVa79Axb7Rh"`) */
   tracks: string[];
   countries: string[];
 
