@@ -1,17 +1,15 @@
 import React from "react";
-import { CleanAlbum } from "../../../movie-scraper/src/music/interfaces";
+import { CleanAlbum } from "nfs-media-scraper/src/music/interfaces";
+import { SortValue } from "nfs-media-scraper/dist/types/fields";
+import { ArrayFilterRenderer } from "../Table/ColumnFilters";
 import {
   DataColumn,
-  DefaultSort,
   DefaultVisible,
   FieldRenderer,
   formatTime,
   GridCols,
-  NumericCol,
-  StringCol,
-} from "./Columns";
-import { timeToDateString } from "./Date";
-import { ArrayFilterRenderer } from "./ColumnFilters";
+} from "../Table/Columns";
+import { timeToDateString } from "../Table/Date";
 
 export const Release: FieldRenderer<CleanAlbum> = (props) => (
   <>
@@ -294,7 +292,7 @@ export const dataCols: DataColumn<CleanAlbum>[] = [
   },
 ];
 
-export const defaultSort: DefaultSort<CleanAlbum> = ["dateAdded", "DESC"];
+export const defaultSort: SortValue<CleanAlbum> = ["dateAdded", "DESC"];
 
 export const defaultVisible: DefaultVisible<CleanAlbum> = [
   "Controls",

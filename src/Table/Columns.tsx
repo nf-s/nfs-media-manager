@@ -1,14 +1,13 @@
 import "rc-slider/assets/index.css";
 import React from "react";
-import { SortDirection } from "react-data-grid";
 import { PickProperties } from "ts-essentials";
-import { AddFilter } from "./FilterState";
 import {
   BooleanColKey,
   FilterColKey,
   NumericColKey,
   StringColKey,
-} from "../../../movie-scraper/src/types/fields";
+} from "nfs-media-scraper/dist/types/fields";
+import { AddFilter } from "./FilterState";
 
 export function formatTime(seconds: number) {
   const h = Math.floor(seconds / 3600);
@@ -62,11 +61,8 @@ export const BooleanField = <T,>(col: BooleanCol<T>) => {
 type ColumnBase = {
   readonly width?: number;
   readonly name: string;
-  readonly sortable?: boolean;
   readonly resizable?: boolean;
 };
-
-export type DefaultSort<T> = [keyof T, SortDirection];
 
 export type GridCols<T> = {
   readonly width: number;
@@ -82,6 +78,7 @@ export type GridCols<T> = {
 export type DefaultVisible<T> = (keyof T | "Controls")[];
 
 export type NumericCol<T> = {
+  readonly sortable?: boolean;
   readonly type: "numeric";
   readonly key: NumericColKey<T>;
   readonly max?: number | undefined;
@@ -112,6 +109,8 @@ export type StringCol<T> = (
     }
 ) & {
   readonly type: "string";
+
+  readonly sortable?: boolean;
 } & ColumnBase;
 
 export type FilterCol<T> = StringCol<T> & {
@@ -126,7 +125,8 @@ export type DataColumn<T> =
   | StringCol<T>
   | NumericCol<T>
   | BooleanCol<T>;
-export type DataColumnKey<T> =
+
+type DataColumnKey<T> =
   | FilterColKey<T>
   | StringColKey<T>
   | NumericColKey<T>

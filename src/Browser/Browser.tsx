@@ -1,19 +1,20 @@
 import { GridLayout } from "@egjs/react-infinitegrid";
 import React, { useEffect, useState } from "react";
-import DataGrid, { SortDirection } from "react-data-grid";
+import DataGrid from "react-data-grid";
 import { LazyLoadImage } from "react-lazy-load-image-component";
 import Select from "react-select";
-import { DataColumn, GridCols, NumberFormat } from "./Table/Columns";
-import { AddFilter } from "./Table/FilterState";
-import { ColumnWithFieldRenderer, useColumnState } from "./Table/ColumnState";
-import { useTraceUpdate } from "./util";
+import { SortColumnKey, SortValue } from "nfs-media-scraper/dist/types/fields";
+import { DataColumn, GridCols, NumberFormat } from "../Table/Columns";
+import { ColumnWithFieldRenderer, useColumnState } from "../Table/ColumnState";
+import { AddFilter } from "../Table/FilterState";
+import { useTraceUpdate } from "../Common/util";
 
 export type GridButtonsFC<T> = React.FC<{ row: T }>;
 
 function Browser<T>(props: {
   tag: string;
   rows: T[];
-  defaultSort: [keyof T, SortDirection];
+  defaultSort: SortValue<T>;
   defaultVisible: (keyof T | "Controls")[];
   dataColumns: DataColumn<T>[];
   customColumns: ColumnWithFieldRenderer<T>[];
@@ -102,7 +103,7 @@ function Browser<T>(props: {
             }),
             multiValue: (styles, { data }) => {
               const color =
-                data.col.key === "artist"
+                data.field === "artist"
                   ? "rgba(255,0,0,.3)"
                   : "rgba(0,0,255,.3)";
               return {
@@ -161,7 +162,7 @@ function Browser<T>(props: {
             options={columns
               .filter((c) => c.sortable)
               .map((d) => ({
-                value: d.key as keyof T,
+                value: d.key as SortColumnKey<T>,
                 label: typeof d.name === "string" ? d.name : d.key,
               }))}
             theme={(theme) => ({
@@ -248,7 +249,7 @@ function Browser<T>(props: {
             onSortColumnsChange={(sortColumns) =>
               typeof sortColumns[0] !== "undefined"
                 ? setSort([
-                    sortColumns[0].columnKey as keyof T,
+                    sortColumns[0].columnKey as any,
                     sortColumns[0].direction,
                   ])
                 : setSort(defaultSort)

@@ -6,14 +6,18 @@ import {
   CleanAlbum,
   CleanLibrary,
   CleanTrack,
-} from "../../movie-scraper/src/music/interfaces";
+} from "nfs-media-scraper/src/music/interfaces";
+import { useTraceUpdate } from "../Common/util";
+import config from "../config.json";
+import {
+  dataCols,
+  defaultSort,
+  defaultVisible,
+  gridCols,
+} from "../Models/Album";
+import * as Playlist from "../Models/Playlist";
 import Browser from "./Browser";
-import config from "./config.json";
 import { getQueuePlaylistId } from "./Spotify";
-import { dataCols, defaultSort, defaultVisible, gridCols } from "./Table/Album";
-import { FilterCol, isFilterCol } from "./Table/Columns";
-import * as Playlist from "./Table/Playlist";
-import { useTraceUpdate } from "./util";
 
 function Music(props: {
   spotifyToken: string;

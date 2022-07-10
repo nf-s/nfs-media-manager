@@ -1,7 +1,8 @@
-import { CleanMovie } from "../../../movie-scraper/src/movie/interfaces";
-import { DataColumn, DefaultSort, DefaultVisible, GridCols } from "./Columns";
-import { timeToDateString } from "./Date";
-import { ArrayFilterRenderer } from "./ColumnFilters";
+import { CleanMovie } from "nfs-media-scraper/src/movie/interfaces";
+import { SortValue } from "nfs-media-scraper/dist/types/fields";
+import { ArrayFilterRenderer } from "../Table/ColumnFilters";
+import { DataColumn, DefaultVisible, GridCols } from "../Table/Columns";
+import { timeToDateString } from "../Table/Date";
 
 export const dataColumns: DataColumn<CleanMovie>[] = [
   {
@@ -203,7 +204,7 @@ export const dataColumns: DataColumn<CleanMovie>[] = [
   },
 ];
 
-export const defaultSort: DefaultSort<CleanMovie> = ["releaseDate", "DESC"];
+export const defaultSort: SortValue<CleanMovie> = ["releaseDate", "DESC"];
 
 export const defaultVisible: DefaultVisible<CleanMovie> = [
   "Controls",

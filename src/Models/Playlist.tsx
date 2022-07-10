@@ -1,14 +1,12 @@
 import React from "react";
-import { CleanTrack } from "../../../movie-scraper/src/music/interfaces";
+import { CleanTrack } from "nfs-media-scraper/src/music/interfaces";
+import { SortValue } from "nfs-media-scraper/dist/types/fields";
 import {
-  FieldRenderer,
-  DefaultSort,
-  DefaultVisible,
-  NumericCol,
-  StringCol,
-  formatTime,
   DataColumn,
-} from "./Columns";
+  DefaultVisible,
+  FieldRenderer,
+  formatTime,
+} from "../Table/Columns";
 
 export const Genres: FieldRenderer<CleanTrack> = (props) => {
   return (
@@ -72,7 +70,7 @@ export const Key: FieldRenderer<CleanTrack> = (props) => {
   );
 };
 
-export const defaultSort: DefaultSort<CleanTrack> = ["dateAdded", "DESC"];
+export const defaultSort: SortValue<CleanTrack> = ["dateAdded", "DESC"];
 export const defaultVisible: DefaultVisible<CleanTrack> = [
   "Controls",
   "title",

@@ -1,6 +1,6 @@
 import axios from "axios";
 import SpotifyWebApi from "spotify-web-api-js";
-import config from "./config.json";
+import config from "../config.json";
 
 export class SpotifyAuth {
   static scopeString = [
