@@ -27,6 +27,8 @@ export type FilterValue<T> = TextFilterValue<T> | NumericFilterValue<T>;
 export type TextFilterValue<T> = {
   value: string;
   field: FilterColKey<T>;
+  /** If true, the exclude fields which have specified value */
+  exclude?: boolean;
 };
 
 export type NumericFilterValue<T> = {
@@ -48,26 +50,51 @@ export function isNumericFilter<T>(
   return "max" in filter;
 }
 
-export function applyFilter<T>(row: T, filter: FilterValue<T>) {
-  const rowValue = row[filter.field];
-  if (isTextFilter(filter)) {
-    return (
-      (Array.isArray(rowValue) && rowValue.includes(filter.value)) ||
-      (typeof rowValue === "string" && rowValue === filter.value)
-    );
-  } else {
-    return (
-      (typeof rowValue === "number" &&
-        rowValue <= filter.max &&
-        rowValue >= filter.min) ||
-      (typeof rowValue === "undefined" && filter.includeUndefined)
-    );
-  }
+export function applyFilters<T>(rows: T[], filters: FilterValue<T>[]) {
+  return rows.filter(
+    (row) =>
+      // Union all text filters (not exclude text filters)
+      filters.filter(isTextFilter).reduce<boolean>((include, filter) => {
+        const rowValue = row[filter.field];
+        return (
+          include ||
+          (Array.isArray(rowValue) && rowValue.includes(filter.value)) ||
+          (typeof rowValue === "string" && rowValue === filter.value)
+        );
+      }, false) &&
+      // Intersect all EXCLUDE text filters
+      filters
+        .filter(isTextFilter)
+        .filter((filter) => filter.exclude)
+        .reduce<boolean>((include, filter) => {
+          const rowValue = row[filter.field];
+          return (
+            include &&
+            ((Array.isArray(rowValue) && !rowValue.includes(filter.value)) ||
+              (typeof rowValue === "string" && rowValue !== filter.value))
+          );
+        }, true) &&
+      // Intersect all numeric filters
+      filters.filter(isNumericFilter).reduce<boolean>((include, filter) => {
+        const rowValue = row[filter.field];
+        return (
+          (include &&
+            typeof rowValue === "number" &&
+            rowValue <= filter.max &&
+            rowValue >= filter.min) ||
+          (typeof rowValue === "undefined" && filter.includeUndefined)
+        );
+      }, true)
+  );
 }
 
-export function applySort<T>(rows: T[], sort: SortValue<T>) {
+export function applySort<T>(
+  rows: T[],
+  sort: SortValue<T>,
+  includeUndefined = true
+) {
   const sortedRows = rows
-    .filter((row) => typeof row[sort[0]] !== "undefined")
+    .filter((row) => includeUndefined || typeof row[sort[0]] !== "undefined")
     .sort((a, b) => {
       const aValue = a[sort[0]];
       const bValue = b[sort[0]];
@@ -76,6 +103,8 @@ export function applySort<T>(rows: T[], sort: SortValue<T>) {
         return (aValue ?? "").localeCompare(bValue ?? "");
       if (typeof aValue === "number" && typeof bValue === "number")
         return aValue - bValue;
+      if (typeof aValue === "undefined") return sort[1] === "ASC" ? -1 : 1;
+      if (typeof bValue === "undefined") return sort[1] === "ASC" ? 1 : -1;
       return 0;
     });
 
