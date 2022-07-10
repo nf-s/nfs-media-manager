@@ -6,7 +6,7 @@ import {
   FilterColKey,
   NumericColKey,
   StringColKey,
-} from "nfs-media-scraper/dist/types/fields";
+} from "nfs-media-scraper/src/types/fields";
 import { AddFilter } from "./FilterState";
 
 export function formatTime(seconds: number) {

@@ -3,7 +3,7 @@ import React, { useEffect, useState } from "react";
 import DataGrid from "react-data-grid";
 import { LazyLoadImage } from "react-lazy-load-image-component";
 import Select from "react-select";
-import { SortColumnKey, SortValue } from "nfs-media-scraper/dist/types/fields";
+import { SortColumnKey, SortValue } from "nfs-media-scraper/src/types/fields";
 import { DataColumn, GridCols, NumberFormat } from "../Table/Columns";
 import { ColumnWithFieldRenderer, useColumnState } from "../Table/ColumnState";
 import { AddFilter } from "../Table/FilterState";
