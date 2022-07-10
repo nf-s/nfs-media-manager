@@ -81,12 +81,13 @@ export type NumericCol<T> = {
   readonly sortable?: boolean;
   readonly type: "numeric";
   readonly key: NumericColKey<T>;
-  readonly max?: number | undefined;
+  max?: number | undefined;
   readonly generateMaximumFromData?: boolean;
   readonly append?: string;
   /** Number of digits after the decimal point. Must be in the range 0 - 20, inclusive. */
   readonly precision?: number;
   readonly mult?: number | undefined;
+  readonly default?: number;
 
   /** This overrides append, precision and mult */
   readonly numberFormat?: (num: number) => string;

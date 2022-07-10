@@ -145,6 +145,7 @@ export const dataCols: DataColumn<CleanAlbum>[] = [
     name: "Scrobbles",
     append: "",
     precision: 0,
+    default: 0,
   },
   {
     type: "numeric",
