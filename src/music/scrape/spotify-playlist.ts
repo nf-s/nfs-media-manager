@@ -143,7 +143,7 @@ export async function getPlaylistAlbums(id: string) {
     const tracks = await getPlaylistTracks(spotifyApi, id);
     const albums = tracks.reduce<SpotifyApi.AlbumObjectSimplified[]>(
       (acc, track) => {
-        if (!acc.find((a) => a.id === track.track.album.id)) {
+        if (track.track && !acc.find((a) => a.id === track.track!.album.id)) {
           acc.push(track.track.album);
         }
         return acc;
@@ -188,7 +188,7 @@ export async function getPlaylistTracksWithMetadata(
     const unprocessedTracks = await getPlaylistTracks(spotifyApi, id);
     const artistsToFetch = new Set<string>();
     unprocessedTracks.forEach((t) =>
-      t.track.artists.forEach((a) => artistsToFetch.add(a.id))
+      t.track?.artists.forEach((a) => artistsToFetch.add(a.id))
     );
     const unprocessedArtists = await getArtists(
       spotifyApi,
@@ -196,20 +196,19 @@ export async function getPlaylistTracksWithMetadata(
     );
     const unprocessedAudioFeatures = await getAudioFeatures(
       spotifyApi,
-      unprocessedTracks.map((t) => t.track.id)
+      unprocessedTracks.filter((t) => t.track).map((t) => t.track!.id)
     );
 
     return unprocessedTracks.map((track) => {
       return {
         ...track,
         audioFeatures: unprocessedAudioFeatures.find(
-          (a) => a.id === track.track.id
+          (a) => a.id === track.track?.id
         ),
-        artists: track.track.artists
+        artists: (track.track?.artists
           .map((artist) => unprocessedArtists.find((a) => a.id === artist.id))
-          .filter(
-            (a) => typeof a !== "undefined"
-          ) as SpotifyApi.ArtistObjectFull[],
+          .filter((a) => typeof a !== "undefined") ??
+          []) as SpotifyApi.ArtistObjectFull[],
       };
     });
   } else {

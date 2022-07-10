@@ -10,7 +10,7 @@ export interface CleanMovie {
   countries: string[];
   languages: string[];
   awards?: string;
-  watched: boolean;
+  watched: string;
   ratingImdbPersonal?: number;
   ratingImdbPersonalDate?: string;
   releaseDate?: number;

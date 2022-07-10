@@ -28,7 +28,6 @@ export default async function myImdbWatchlist() {
         if (!movie.imdb?.myWatchlist) {
           if (!movie.imdb) {
             movie.imdb = {};
-            movie.owned = { type: 'bluray' }
           }
           movie.imdb.myWatchlist = { date: row[2] };
           debug(`found personal IMDB watchlist from ${id}`);
