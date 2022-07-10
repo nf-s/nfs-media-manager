@@ -84,7 +84,8 @@ export async function clean(): Promise<CleanLibrary> {
             )
           : movie.tmdb?.revenue,
         runTime,
-        watched: typeof movie.imdb?.myRating?.value !== "undefined",
+        watched:
+          typeof movie.imdb?.myRating?.value !== "undefined" ? "Yes" : "No",
         releaseDate,
         ratingImdbPersonal: movie.imdb?.myRating?.value,
         ratingImdbPersonalDate: movie.imdb?.myRating?.date,

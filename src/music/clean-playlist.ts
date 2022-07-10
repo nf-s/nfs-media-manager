@@ -13,6 +13,8 @@ export async function clean(
             a.genres.forEach((genre) => genres.add(genre))
           );
 
+          if (!track.track) return undefined;
+
           const cleanTrack: CleanTrack = {
             spotifyId: track.track.id,
             title: track.track.name,
@@ -39,7 +41,7 @@ export async function clean(
           return cleanTrack;
         } catch (error) {
           console.error(
-            `FAILED to clean track ${track.track.name} - ${track.artists
+            `FAILED to clean track ${track.track?.name} - ${track.artists
               ?.map((a) => a.name)
               .join(",")}`
           );

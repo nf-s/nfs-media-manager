@@ -1,5 +1,3 @@
-require("dotenv").config();
-
 import { debug as debugInit } from "debug";
 import { Movie as OMDBMovie } from "imdb-api";
 import { MovieResponse as TMDBMovie } from "moviedb-promise/dist/request-types";
@@ -15,6 +13,8 @@ import scrapeOmdb from "./scrape/omdb";
 import scrapePtp, { PtpMovieScrape } from "./scrape/ptp";
 import ptpBookmarks from "./scrape/ptp-bookmarks";
 import scrapeTmdb from "./scrape/tmdb";
+
+require("dotenv").config();
 
 export interface Movie {
   id?: { imdb?: string; tmdb?: string; ptp?: number };
@@ -95,10 +95,9 @@ Should be imdb-watchlist
 
 
 */
-
   try {
     if (!skip("nfo")) await scanNfos();
-    if (!skip("imdb")) await myImdbRatings();
+    if (!skip("imdb-ratings")) await myImdbRatings();
     if (!skip("imdb-watchlist")) await myImdbWatchlist();
     if (!skip("ptp-bookmarks")) await ptpBookmarks();
   } catch (e) {
