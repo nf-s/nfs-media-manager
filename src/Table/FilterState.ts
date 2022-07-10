@@ -5,7 +5,7 @@ import {
   NumericColKey,
   NumericFilterValue,
   TextFilterValue,
-} from "nfs-media-scraper/dist/types/fields";
+} from "nfs-media-scraper/src/types/fields";
 import { useTraceUpdate } from "../Common/util";
 import {
   DataColumn,

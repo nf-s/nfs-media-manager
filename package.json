@@ -6,6 +6,13 @@
     "packages/nfs-media-scraper"
   ],
   "dependencies": {
+    "@types/flexsearch": "^0.7.1",
+    "@types/react": "^16.8.0",
+    "@types/react-dom": "^16.8.0",
+    "@types/react-lazy-load-image-component": "^1.5.1",
+    "@types/react-lazyload": "^3.1.1",
+    "@types/react-select": "^4.0.13",
+    "ts-essentials": "^7.0.1",
     "@babel/core": "7.12.3",
     "@egjs/react-infinitegrid": "^3.2.2",
     "@pmmmwh/react-refresh-webpack-plugin": "0.4.2",
@@ -106,15 +113,7 @@
       "last 1 safari version"
     ]
   },
-  "devDependencies": {
-    "@types/flexsearch": "^0.7.1",
-    "@types/react": "^16.8.0",
-    "@types/react-dom": "^16.8.0",
-    "@types/react-lazy-load-image-component": "^1.5.1",
-    "@types/react-lazyload": "^3.1.1",
-    "@types/react-select": "^4.0.13",
-    "ts-essentials": "^7.0.1"
-  },
+  "devDependencies": {},
   "jest": {
     "roots": [
       "<rootDir>/src"

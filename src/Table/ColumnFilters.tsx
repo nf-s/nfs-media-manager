@@ -6,7 +6,7 @@ import {
   FilterColArrayKey,
   NumericColKey,
   StringColKey,
-} from "nfs-media-scraper/dist/types/fields";
+} from "nfs-media-scraper/src/types/fields";
 import { isJsonArray, isJsonString } from "../Common/util";
 import { FieldRenderer, NumberFormat, NumericCol } from "./Columns";
 

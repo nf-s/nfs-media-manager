@@ -1,11 +1,11 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Column } from "react-data-grid";
 import {
-  applyFilter,
+  applyFilters,
   applySort,
   NumericColKey,
   SortValue,
-} from "nfs-media-scraper/dist/types/fields";
+} from "nfs-media-scraper/src/types/fields";
 import { NumericFilter } from "./ColumnFilters";
 import {
   BooleanField,
@@ -197,37 +197,10 @@ export function useColumnState<T>(
     )
       return sortedRows;
 
-    const filteredRows = new Set<T>();
-
-    // Apply text filters (additive - union)
-    for (let i = 0; i < sortedRows.length; i++) {
-      let include = true;
-      const row = sortedRows[i];
-      if (activeFilters && activeFilters.length !== 0) {
-        include = false;
-        for (let j = 0; j < activeFilters.length; j++) {
-          if (applyFilter(row, activeFilters[j])) {
-            include = true;
-          }
-        }
-      }
-
-      // Numeric and boolean filters are subtractive (intersecting)
-      // Apply numeric filters
-      for (let j = 0; j < activeNumericFilters.length; j++) {
-        if (include && applyFilter(row, activeNumericFilters[j])) {
-          continue;
-        }
-
-        include = false;
-      }
-
-      if (include) {
-        filteredRows.add(row);
-      }
-    }
-
-    return Array.from(filteredRows);
+    return applyFilters(sortedRows, [
+      ...(activeFilters ?? []),
+      ...activeNumericFilters,
+    ]);
   }, [sortedRows, activeFilters, activeNumericFilters]);
 
   return {
