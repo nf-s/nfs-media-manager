@@ -1,13 +1,13 @@
 import { GridLayout } from "@egjs/react-infinitegrid";
+import { SortColumnKey, SortValue } from "nfs-media-scraper/src/types/fields";
 import React, { useEffect, useState } from "react";
 import DataGrid from "react-data-grid";
 import { LazyLoadImage } from "react-lazy-load-image-component";
-import Select from "react-select";
-import { SortColumnKey, SortValue } from "nfs-media-scraper/src/types/fields";
+import Select, { components } from "react-select";
+import { useTraceUpdate } from "../Common/util";
 import { DataColumn, GridCols, NumberFormat } from "../Table/Columns";
 import { ColumnWithFieldRenderer, useColumnState } from "../Table/ColumnState";
-import { AddFilter } from "../Table/FilterState";
-import { useTraceUpdate } from "../Common/util";
+import { AddFilter, TextFilterValueWithLabel } from "../Table/FilterState";
 
 export type GridButtonsFC<T> = React.FC<{ row: T }>;
 
@@ -77,6 +77,35 @@ function Browser<T>(props: {
           {viewMode === "grid" ? "Table" : "Grid"}
         </button>
         <Select
+          components={{
+            MultiValueLabel: (props) => {
+              function handleMultiValueClick(e: React.MouseEvent) {
+                e.stopPropagation();
+                e.preventDefault();
+
+                const clickedFilter = props.data as
+                  | TextFilterValueWithLabel<T>
+                  | undefined;
+
+                if (activeFilters && clickedFilter) {
+                  setFilters(
+                    activeFilters.map((f) =>
+                      f.field === clickedFilter.field &&
+                      f.value === clickedFilter.value
+                        ? { ...f, exclude: !f.exclude }
+                        : f
+                    )
+                  );
+                }
+              }
+
+              return (
+                <div onClick={(e) => handleMultiValueClick(e)}>
+                  <components.MultiValueLabel {...props} />
+                </div>
+              );
+            },
+          }}
           placeholder="Filter"
           className={"filter-select"}
           value={activeFilters}
@@ -102,10 +131,9 @@ function Browser<T>(props: {
               ":hover": { maxHeight: "none" },
             }),
             multiValue: (styles, { data }) => {
-              const color =
-                data.field === "artist"
-                  ? "rgba(255,0,0,.3)"
-                  : "rgba(0,0,255,.3)";
+              const color = data.exclude
+                ? "rgba(255,0,0,.3)"
+                : "rgba(0,0,255,.3)";
               return {
                 ...styles,
                 backgroundColor: color,

@@ -14,12 +14,12 @@ import {
   getNumericCols,
 } from "./Columns";
 
-type TextFilterValueWithLabel<T> = TextFilterValue<T> & {
+export type TextFilterValueWithLabel<T> = TextFilterValue<T> & {
   label: string;
   count: number;
 };
 
-type SelectValues<T> = OptionsType<TextFilterValueWithLabel<T>>;
+export type SelectValues<T> = OptionsType<TextFilterValueWithLabel<T>>;
 
 export function useNumericFilter<T>(dataColumns: DataColumn<T>[] | undefined) {
   function filterNumericReducer(
