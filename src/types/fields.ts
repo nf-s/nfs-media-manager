@@ -51,17 +51,24 @@ export function isNumericFilter<T>(
 }
 
 export function applyFilters<T>(rows: T[], filters: FilterValue<T>[]) {
-  return rows.filter(
-    (row) =>
-      // Union all text filters (not exclude text filters)
-      filters.filter(isTextFilter).reduce<boolean>((include, filter) => {
-        const rowValue = row[filter.field];
-        return (
-          include ||
-          (Array.isArray(rowValue) && rowValue.includes(filter.value)) ||
-          (typeof rowValue === "string" && rowValue === filter.value)
-        );
-      }, false) &&
+  return rows.filter((row) => {
+    const includeTextFilters = filters
+      .filter(isTextFilter)
+      .filter((filter) => !filter.exclude);
+    // Union all text filters (not exclude text filters)
+    return (
+      includeTextFilters.reduce<boolean>(
+        (include, filter) => {
+          const rowValue = row[filter.field];
+          return (
+            include ||
+            (Array.isArray(rowValue) && rowValue.includes(filter.value)) ||
+            (typeof rowValue === "string" && rowValue === filter.value)
+          );
+        },
+        // Set default to `true` if no filters to apply
+        includeTextFilters.length === 0
+      ) &&
       // Intersect all EXCLUDE text filters
       filters
         .filter(isTextFilter)
@@ -85,7 +92,8 @@ export function applyFilters<T>(rows: T[], filters: FilterValue<T>[]) {
           (typeof rowValue === "undefined" && filter.includeUndefined)
         );
       }, true)
-  );
+    );
+  });
 }
 
 export function applySort<T>(
