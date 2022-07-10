@@ -1,11 +1,10 @@
 import { debug as debugInit } from "debug";
 import SpotifyWebApi from "spotify-web-api-node";
 import {
-  applyFilter,
+  applyFilters,
+  applySort,
   FilterValue,
   SortValue,
-  isTextFilter,
-  isNumericFilter,
 } from "../types/fields";
 import { CleanAlbum, CleanLibrary } from "./interfaces";
 import { spotifyLimiter } from "./scrape/spotify";
@@ -102,39 +101,11 @@ export async function syncPlaylists(cleanLibrary: CleanLibrary) {
       let albums = Object.values(cleanLibrary.albums);
 
       if (playlistToSync.filters) {
-        albums = albums.filter(
-          (album) =>
-            // Union all text filters
-            playlistToSync
-              .filters!.filter(isTextFilter)
-              .reduce<boolean>((include, filter) => {
-                return include || applyFilter(album, filter);
-              }, false) &&
-            // Intersect all numeric filters
-
-            playlistToSync
-              .filters!.filter(isNumericFilter)
-              .reduce<boolean>((include, filter) => {
-                return include && applyFilter(album, filter);
-              }, true)
-        );
+        albums = applyFilters(albums, playlistToSync.filters);
       }
 
       if (playlistToSync.sort) {
-        albums = albums.sort((a, b) => {
-          const aValue = a[playlistToSync.sort![0]];
-          const bValue = b[playlistToSync.sort![0]];
-
-          if (typeof aValue === "string" && typeof bValue === "string")
-            return (aValue ?? "").localeCompare(bValue ?? "");
-          if (typeof aValue === "number" && typeof bValue === "number")
-            return aValue - bValue;
-          return 0;
-        });
-
-        if (playlistToSync.sort?.[1] === "DESC") {
-          albums.reverse();
-        }
+        albums = applySort(albums, playlistToSync.sort);
       }
 
       if (existingPlaylist && !playlistToSync.forceRecreate) {
