@@ -27,8 +27,10 @@ export type FilterValue<T> = TextFilterValue<T> | NumericFilterValue<T>;
 export type TextFilterValue<T> = {
   value: string;
   field: FilterColKey<T>;
-  /** If true, the exclude fields which have specified value */
+  /** If true, the exclude fields which have specified value (treated as intersection) */
   exclude?: boolean;
+  /** If true, then intersect filter (instead of union) */
+  intersection?: boolean;
 };
 
 export type NumericFilterValue<T> = {
@@ -54,7 +56,7 @@ export function applyFilters<T>(rows: T[], filters: FilterValue<T>[]) {
   return rows.filter((row) => {
     const includeTextFilters = filters
       .filter(isTextFilter)
-      .filter((filter) => !filter.exclude);
+      .filter((filter) => !filter.exclude && !filter.intersection);
     // Union all text filters (not exclude text filters)
     return (
       includeTextFilters.reduce<boolean>(
@@ -69,6 +71,18 @@ export function applyFilters<T>(rows: T[], filters: FilterValue<T>[]) {
         // Set default to `true` if no filters to apply
         includeTextFilters.length === 0
       ) &&
+      // Intersect all `intersection` text filters
+      filters
+        .filter(isTextFilter)
+        .filter((filter) => filter.intersection)
+        .reduce<boolean>((include, filter) => {
+          const rowValue = row[filter.field];
+          return (
+            include &&
+            ((Array.isArray(rowValue) && rowValue.includes(filter.value)) ||
+              (typeof rowValue === "string" && rowValue === filter.value))
+          );
+        }, true) &&
       // Intersect all EXCLUDE text filters
       filters
         .filter(isTextFilter)
@@ -111,6 +125,8 @@ export function applySort<T>(
         return (aValue ?? "").localeCompare(bValue ?? "");
       if (typeof aValue === "number" && typeof bValue === "number")
         return aValue - bValue;
+
+      // Push undefined values to end of sort
       if (typeof aValue === "undefined") return sort[1] === "ASC" ? -1 : 1;
       if (typeof bValue === "undefined") return sort[1] === "ASC" ? 1 : -1;
       return 0;
