@@ -1,13 +1,17 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Column, SortDirection } from "react-data-grid";
-import { NumericColKey } from "../../../movie-scraper/src/types/fields";
+import { Column } from "react-data-grid";
+import {
+  applyFilter,
+  applySort,
+  NumericColKey,
+  SortValue,
+} from "nfs-media-scraper/dist/types/fields";
 import { NumericFilter } from "./ColumnFilters";
 import {
   BooleanField,
   DataColumn,
   FieldRenderer,
   getNumericCols,
-  getStringCols,
   isBooleanCol,
   isNumericCol,
   NumericField,
@@ -23,14 +27,12 @@ export type ColumnWithFieldRenderer<T> = Readonly<
 export function useColumnState<T>(
   tag: string,
   rows: T[],
-  defaultSort: [keyof T, SortDirection],
+  defaultSort: SortValue<T>,
   defaultVisible: (keyof T | "Controls")[],
   dataColumns: DataColumn<T>[],
   customColumns: ColumnWithFieldRenderer<T>[]
 ) {
-  const [[sortColumn, sortDirection], setSort] = useState<
-    [keyof T, SortDirection]
-  >(
+  const [[sortColumn, sortDirection], setSort] = useState<SortValue<T>>(
     localStorage.getItem(`${tag}-sortColumn`) &&
       localStorage.getItem(`${tag}-sortDirection`)
       ? ([
@@ -185,32 +187,8 @@ export function useColumnState<T>(
   ]);
 
   const sortedRows = useMemo(() => {
-    let sortedRows = [...rows];
-
-    const textSortKey = getStringCols(dataColumns).find(
-      (col) => col.key === sortColumn
-    )?.key;
-
-    if (textSortKey) {
-      sortedRows = sortedRows.sort((a, b) => {
-        let text = a[textSortKey];
-        text = Array.isArray(text) ? text[0] : text;
-        return (text ?? "").localeCompare(b[sortColumn] ?? "");
-      });
-    }
-
-    const numSortKey = getNumericCols(dataColumns).find(
-      (col) => col.key === sortColumn
-    )?.key;
-
-    if (numSortKey) {
-      sortedRows = sortedRows
-        .filter((a) => a[numSortKey] !== undefined)
-        .sort((a, b) => a[numSortKey]! - b[numSortKey]!);
-    }
-
-    return sortDirection === "DESC" ? sortedRows.reverse() : sortedRows;
-  }, [rows, sortDirection, sortColumn, dataColumns]);
+    return applySort(rows, [sortColumn, sortDirection]);
+  }, [rows, sortDirection, sortColumn]);
 
   const filteredRows = useMemo(() => {
     if (
@@ -228,12 +206,7 @@ export function useColumnState<T>(
       if (activeFilters && activeFilters.length !== 0) {
         include = false;
         for (let j = 0; j < activeFilters.length; j++) {
-          const filter = activeFilters[j];
-          const rowValue = row[filter.col.key];
-          if (
-            (Array.isArray(rowValue) && rowValue.includes(filter.value)) ||
-            (typeof rowValue === "string" && rowValue === filter.value)
-          ) {
+          if (applyFilter(row, activeFilters[j])) {
             include = true;
           }
         }
@@ -242,15 +215,7 @@ export function useColumnState<T>(
       // Numeric and boolean filters are subtractive (intersecting)
       // Apply numeric filters
       for (let j = 0; j < activeNumericFilters.length; j++) {
-        const filter = activeNumericFilters[j];
-        const rowValue = row[filter.field];
-        if (
-          include &&
-          ((typeof rowValue === "number" &&
-            rowValue <= filter.max &&
-            rowValue >= filter.min) ||
-            (typeof rowValue === "undefined" && filter.includeUndefined))
-        ) {
+        if (include && applyFilter(row, activeNumericFilters[j])) {
           continue;
         }
 

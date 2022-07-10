@@ -6,8 +6,8 @@ import {
   FilterColArrayKey,
   NumericColKey,
   StringColKey,
-} from "../../../movie-scraper/src/types/fields";
-import { isJsonArray, isJsonString } from "../util";
+} from "nfs-media-scraper/dist/types/fields";
+import { isJsonArray, isJsonString } from "../Common/util";
 import { FieldRenderer, NumberFormat, NumericCol } from "./Columns";
 
 type NumericFilterProps<T> = {

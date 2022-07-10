@@ -1,7 +1,10 @@
 {
-  "name": "movie-browser",
+  "name": "nfs-media-browser",
   "version": "0.1.0",
   "private": true,
+  "workspaces": [
+    "packages/nfs-media-scraper"
+  ],
   "dependencies": {
     "@babel/core": "7.12.3",
     "@egjs/react-infinitegrid": "^3.2.2",
@@ -44,6 +47,7 @@
     "jest-resolve": "26.6.0",
     "jest-watch-typeahead": "0.6.1",
     "mini-css-extract-plugin": "0.11.3",
+    "nfs-media-scraper": "1.0.0",
     "optimize-css-assets-webpack-plugin": "5.0.4",
     "pnp-webpack-plugin": "1.6.4",
     "postcss-flexbugs-fixes": "4.2.1",

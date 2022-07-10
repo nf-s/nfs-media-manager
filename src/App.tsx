@@ -1,9 +1,9 @@
 import React, { useEffect, useState } from "react";
-import Movie from "./Movie";
+import Movie from "./Browser/Movie";
 
 // import Movie from "./Movie";
-import Music from "./Music";
-import { SpotifyAuth } from "./Spotify";
+import Music from "./Browser/Music";
+import { SpotifyAuth } from "./Browser/Spotify";
 
 function App() {
   const [spotifyAuthToken, setSpotifyAuthToken] = useState<string>();

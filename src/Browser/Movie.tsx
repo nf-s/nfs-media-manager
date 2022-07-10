@@ -1,8 +1,8 @@
 import axios from "axios";
 import React, { useEffect, useState } from "react";
-import { CleanMovie } from "../../movie-scraper/src/movie/interfaces";
+import { CleanMovie } from "nfs-media-scraper/src/movie/interfaces";
 import Browser from "./Browser";
-import * as Movie from "./Table/Movie";
+import * as Movie from "../Models/Movie";
 
 export default function M(props: { darkMode: boolean }) {
   const [movieData, setMovieData] = useState<{

@@ -2,10 +2,11 @@ import { Index } from "flexsearch";
 import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
 import { OptionsType } from "react-select";
 import {
-  BooleanColKey,
   NumericColKey,
-} from "../../../movie-scraper/src/types/fields";
-import { useTraceUpdate } from "../util";
+  NumericFilterValue,
+  TextFilterValue,
+} from "nfs-media-scraper/dist/types/fields";
+import { useTraceUpdate } from "../Common/util";
 import {
   DataColumn,
   FilterCol,
@@ -13,26 +14,12 @@ import {
   getNumericCols,
 } from "./Columns";
 
-export type FilterValue<T> = {
+type TextFilterValueWithLabel<T> = TextFilterValue<T> & {
   label: string;
-  value: string;
   count: number;
-  col: FilterCol<T>;
 };
 
-export type NumericFilterValue<T> = {
-  min: number;
-  max: number;
-  field: NumericColKey<T>;
-  includeUndefined: boolean;
-};
-
-export type RowFilterValues<T> = {
-  value: T[BooleanColKey<T>][];
-  field: BooleanColKey<T>;
-};
-
-type SelectValues<T> = OptionsType<FilterValue<T>>;
+type SelectValues<T> = OptionsType<TextFilterValueWithLabel<T>>;
 
 export function useNumericFilter<T>(dataColumns: DataColumn<T>[] | undefined) {
   function filterNumericReducer(
@@ -95,7 +82,7 @@ export function useTextFilter<T>(
   tag: string
 ) {
   const [filterData, setFilterData] = useState<{
-    filters: FilterValue<T>[];
+    filters: TextFilterValueWithLabel<T>[];
   }>({ filters: [] });
 
   const filterSearchIndex = useMemo(() => {
@@ -103,7 +90,7 @@ export function useTextFilter<T>(
 
     for (let i = 0; i < filterData.filters.length; i++) {
       const filter = filterData.filters[i];
-      index.add(i, filter.label);
+      index.add(i, filter.label ?? filter.value);
     }
 
     return index;
@@ -111,14 +98,14 @@ export function useTextFilter<T>(
 
   const [filterInputValue, setFilterInputValue] = useState("");
 
-  const filteredOptions: FilterValue<T>[] = useMemo(() => {
+  const filteredOptions: TextFilterValueWithLabel<T>[] = useMemo(() => {
     if (!filterInputValue || !filterSearchIndex) {
       return filterData.filters;
     }
 
     const searchResults = filterSearchIndex.search(filterInputValue);
 
-    const results: FilterValue<T>[] = [];
+    const results: TextFilterValueWithLabel<T>[] = [];
 
     searchResults.forEach((fieldResult) => {
       if (typeof fieldResult === "number" && filterData.filters[fieldResult]) {
@@ -144,7 +131,7 @@ export function useTextFilter<T>(
     switch (action.type) {
       case "add":
         const found = filterData.filters.find(
-          (a) => a.col.key === action.field && a.value === action.value
+          (a) => a.field === action.field && a.value === action.value
         );
         if (found) {
           return Array.from(new Set([...(state ?? []), found]));
@@ -176,7 +163,7 @@ export function useTextFilter<T>(
   useEffect(() => {
     if (rows.length === 0) return;
     const filters = getFilterCols(dataColumns)
-      .reduce<FilterValue<T>[]>(
+      .reduce<TextFilterValueWithLabel<T>[]>(
         (acc, curr) => [...acc, ...getColumnWithTotals(rows, curr)],
         []
       )
@@ -189,7 +176,9 @@ export function useTextFilter<T>(
 
     if (Array.isArray(savedActiveFilters)) {
       const found = filters.filter((a) =>
-        savedActiveFilters.find((b) => a.col === b.field && a.value === b.value)
+        savedActiveFilters.find(
+          (b) => a.field === b.field && a.value === b.value
+        )
       );
       setFilters(found);
     }
@@ -227,7 +216,7 @@ function getColumnWithTotals<K>(
   rows: K[],
   filterCol: FilterCol<K>,
   sort: "key" | "value" = "key"
-): FilterValue<K>[] {
+): TextFilterValueWithLabel<K>[] {
   const total = new Map<string, number>();
   for (let i = 0; i < rows.length; i++) {
     const value = rows[i][filterCol.key];
@@ -252,6 +241,6 @@ function getColumnWithTotals<K>(
     } (${r[1]})`,
     value: r[0],
     count: r[1],
-    col: filterCol,
+    field: filterCol.key,
   }));
 }
