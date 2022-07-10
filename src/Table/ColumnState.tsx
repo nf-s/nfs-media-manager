@@ -98,9 +98,9 @@ export function useColumnState<T>(
         if (isNumericCol(col)) {
           const min = minimums.get(col.key);
           const max = maximums.get(col.key);
-          // if (col.generateMaximumFromData) {
-          //   col.max = max;
-          // }
+          if (col.generateMaximumFromData) {
+            col.max = max;
+          }
           console.log(`Numeric ${col.key}`);
           const resolvedCol: ColumnWithFieldRenderer<T> = {
             key: col.key.toString(),
@@ -186,9 +186,24 @@ export function useColumnState<T>(
     customColumns,
   ]);
 
+  const processedRows = useMemo(() => {
+    return rows.map((row) => {
+      dataColumns.forEach((col) => {
+        if (
+          isNumericCol(col) &&
+          typeof col.default !== "undefined" &&
+          typeof row[col.key] === "undefined"
+        ) {
+          row[col.key] = col.default as any;
+        }
+      });
+      return row;
+    });
+  }, [rows, dataColumns]);
+
   const sortedRows = useMemo(() => {
-    return applySort(rows, [sortColumn, sortDirection]);
-  }, [rows, sortDirection, sortColumn]);
+    return applySort(processedRows, [sortColumn, sortDirection]);
+  }, [processedRows, sortDirection, sortColumn]);
 
   const filteredRows = useMemo(() => {
     if (

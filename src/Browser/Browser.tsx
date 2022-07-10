@@ -88,11 +88,23 @@ function Browser<T>(props: {
                   | undefined;
 
                 if (activeFilters && clickedFilter) {
+                  // Normal -> exclude -> intersection -> normal
+                  if (clickedFilter.exclude) {
+                    clickedFilter.exclude = undefined;
+                    clickedFilter.intersection = true;
+                  } else if (clickedFilter.intersection) {
+                    clickedFilter.exclude = undefined;
+                    clickedFilter.intersection = undefined;
+                  } else {
+                    clickedFilter.exclude = true;
+                    clickedFilter.intersection = undefined;
+                  }
+                  console.log(clickedFilter);
                   setFilters(
                     activeFilters.map((f) =>
                       f.field === clickedFilter.field &&
                       f.value === clickedFilter.value
-                        ? { ...f, exclude: !f.exclude }
+                        ? clickedFilter
                         : f
                     )
                   );
@@ -133,6 +145,8 @@ function Browser<T>(props: {
             multiValue: (styles, { data }) => {
               const color = data.exclude
                 ? "rgba(255,0,0,.3)"
+                : data.intersection
+                ? "rgba(255,0,255,.3)"
                 : "rgba(0,0,255,.3)";
               return {
                 ...styles,

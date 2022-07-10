@@ -92,7 +92,7 @@ export const dataColumns: DataColumn<CleanMovie>[] = [
     fieldRenderer: ArrayFilterRenderer<CleanMovie>("collections", "id"),
     enableFilter: true,
   },
-  { type: "boolean", key: "watched", name: "Watched" },
+  { type: "string", key: "watched", name: "Watched", enableFilter: true },
   {
     type: "numeric",
     key: "releaseDate",
