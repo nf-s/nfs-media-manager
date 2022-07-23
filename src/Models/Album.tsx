@@ -1,5 +1,5 @@
 import React from "react";
-import { CleanAlbum } from "nfs-media-scraper/src/music/interfaces";
+import { CleanAlbum } from "nfs-media-scraper/src/music/clean/interfaces";
 import {
   SortValue,
   timeToDateString,

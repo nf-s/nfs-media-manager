@@ -1,5 +1,5 @@
 import { GridLayout } from "@egjs/react-infinitegrid";
-import { SyncPlaylist } from "nfs-media-scraper/src/music/interfaces";
+import { SyncPlaylist } from "nfs-media-scraper/src/music/clean/interfaces";
 import { SortColumnKey, SortValue } from "nfs-media-scraper/src/types/fields";
 import React, { useEffect, useState } from "react";
 import DataGrid from "react-data-grid";

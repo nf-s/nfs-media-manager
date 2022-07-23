@@ -62,6 +62,7 @@ export class SpotifyAuth {
     if (this._token !== t) {
       this._token = t;
       console.log(`UPDATING SPOTIFY TOKEN`);
+      console.log(t);
       if (t) this._onTokenUpdate(t);
       if (this._refreshTimer) clearTimeout(this._refreshTimer);
       this._refreshTimer = setTimeout(() => {

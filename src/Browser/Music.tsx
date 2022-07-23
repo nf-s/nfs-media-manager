@@ -6,7 +6,7 @@ import {
   CleanAlbum,
   CleanLibrary,
   CleanTrack,
-} from "nfs-media-scraper/src/music/interfaces";
+} from "nfs-media-scraper/src/music/clean/interfaces";
 import { useTraceUpdate } from "../Common/util";
 import config from "../config.json";
 import {
