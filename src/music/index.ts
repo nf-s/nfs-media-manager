@@ -1,6 +1,3 @@
-// tslint:disable-next-line: no-var-requires
-require("dotenv").config();
-
 import { debug as debugInit } from "debug";
 import { IReleaseGroup } from "musicbrainz-api";
 import { join } from "path";
@@ -39,6 +36,7 @@ import {
 import { upcCsv } from "./scrape/upc-csv";
 import { syncPlaylists } from "./sync-playlist";
 
+require("dotenv").config();
 const debug = debugInit("music-scraper:init");
 
 debug("HELLO!");
