@@ -232,5 +232,6 @@ export function useColumnState<T>(
     setVisibleColumns,
     addFilter,
     activeFilters,
+    activeNumericFilters,
   };
 }

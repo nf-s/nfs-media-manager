@@ -1,8 +1,10 @@
 import { CleanMovie } from "nfs-media-scraper/src/movie/interfaces";
-import { SortValue } from "nfs-media-scraper/src/types/fields";
+import {
+  SortValue,
+  timeToDateString,
+} from "nfs-media-scraper/src/types/fields";
 import { ArrayFilterRenderer } from "../Table/ColumnFilters";
 import { DataColumn, DefaultVisible, GridCols } from "../Table/Columns";
-import { timeToDateString } from "../Table/Date";
 
 export const dataColumns: DataColumn<CleanMovie>[] = [
   {

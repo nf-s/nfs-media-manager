@@ -1,4 +1,5 @@
 import { GridLayout } from "@egjs/react-infinitegrid";
+import { SyncPlaylist } from "nfs-media-scraper/src/music/interfaces";
 import { SortColumnKey, SortValue } from "nfs-media-scraper/src/types/fields";
 import React, { useEffect, useState } from "react";
 import DataGrid from "react-data-grid";
@@ -48,6 +49,7 @@ function Browser<T>(props: {
     setVisibleColumns,
     addFilter,
     activeFilters,
+    activeNumericFilters,
   } = useColumnState(
     tag,
     rows,
@@ -66,6 +68,22 @@ function Browser<T>(props: {
   useEffect(() => {
     localStorage.setItem(`${tag}-viewMode`, viewMode);
   }, [viewMode, tag]);
+
+  useEffect(() => {
+    const test: SyncPlaylist<T> = {
+      name: "test",
+      filters: [...(activeFilters ?? []), ...activeNumericFilters]?.map(
+        (f) => ({
+          ...f,
+          label: undefined,
+          count: undefined,
+          type: undefined,
+        })
+      ),
+      sort: [sortColumn, sortDirection],
+    };
+    console.log(JSON.stringify(test));
+  }, [activeFilters, sortColumn, sortDirection, activeNumericFilters]);
 
   return (
     <>
