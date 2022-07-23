@@ -1,4 +1,4 @@
-import { albumTitle, isAlbumPlaylist, library } from ".";
+import { albumTitle, isAlbumPlaylist, library } from "../";
 import { CleanAlbum, CleanAlbumPlaylist, CleanLibrary } from "./interfaces";
 
 export async function clean(): Promise<CleanLibrary> {

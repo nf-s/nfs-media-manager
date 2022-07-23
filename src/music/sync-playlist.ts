@@ -1,7 +1,7 @@
 import { debug as debugInit } from "debug";
 import SpotifyWebApi from "spotify-web-api-node";
 import { applyFilters, applySort } from "../types/fields";
-import { CleanLibrary } from "./interfaces";
+import { CleanLibrary } from "./clean/interfaces";
 import { spotifyLimiter } from "./scrape/spotify";
 import {
   addTracksToPlaylist,

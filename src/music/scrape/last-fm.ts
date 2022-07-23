@@ -102,6 +102,7 @@ export async function scrapeLastFm() {
           }
 
           if (lfmAlbum) {
+            album.id.lastFmUrl = lfmAlbum.url;
             album.lastFm = {
               ...lfmAlbum,
               dateScraped: new Date().toISOString(),

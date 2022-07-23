@@ -1,4 +1,4 @@
-import { FilterValue, SortValue } from "../types/fields";
+import { FilterValue, SortValue } from "../../types/fields";
 
 export interface AudioFeatures {
   acousticness?: number;
@@ -19,6 +19,7 @@ export type AlbumId = {
   // rymUrl?: string;
   musicBrainz?: string;
   discogs?: string;
+  lastFmUrl?: string;
 };
 
 export interface CleanAlbumBase {
