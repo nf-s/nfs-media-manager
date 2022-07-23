@@ -3,9 +3,10 @@ import { IReleaseGroup } from "musicbrainz-api";
 import { join } from "path";
 import { fileExists, readJSONFile, writeFile } from "../util/fs";
 import { skip } from "../util/skip";
-import { clean } from "./clean";
-import { clean as cleanPlaylist } from "./clean-playlist";
-import { AlbumId, CleanLibrary } from "./interfaces";
+import { clean as cleanPlaylist } from "./clean/clean-playlist";
+import { clean } from "./clean/index";
+import { AlbumId, CleanLibrary } from "./clean/interfaces";
+import { removeDupes } from "./remove-dupe";
 import { albumCsv } from "./scrape/album-csv";
 import {
   discogs,
@@ -131,7 +132,7 @@ export const library: Library = {
 };
 
 export const albumTitle = (a: Album) =>
-  `${a.spotify.artists[0].name}-${a.spotify.name}`;
+  `${a.spotify.artists.map((a) => a.name).join(", ")}-${a.spotify.name}`;
 
 async function save() {
   await writeFile(LIBRARY_PATH, JSON.stringify(library), undefined, debug);
@@ -213,6 +214,11 @@ async function run() {
     !skip("metacritic")
   )
     await save();
+
+  if (!skip("remove-dupes")) {
+    await removeDupes();
+    await save();
+  }
 
   debug(
     `library has ${

@@ -1,7 +1,7 @@
-import { SyncPlaylist, CleanAlbum } from "./interfaces";
+import { SyncPlaylist, CleanAlbum } from "./clean/interfaces";
 
 export const playlistToSync: SyncPlaylist<CleanAlbum>[] = [
-  // Years 2012-2022
+  // Top 30 albums added - Years 2012-2022
   ...new Array(11)
     .fill(1)
     .map((_, i) => i + 2012)
@@ -18,7 +18,27 @@ export const playlistToSync: SyncPlaylist<CleanAlbum>[] = [
         ],
         sort: ["scrobbles", "DESC"],
         limit: 30,
-        forceRecreate: true,
+      };
+      return yearPlaylist;
+    }),
+
+  // RYM Top 30 albums added - Years 2012-2022
+  ...new Array(11)
+    .fill(1)
+    .map((_, i) => i + 2012)
+    .map((year) => {
+      const yearPlaylist: SyncPlaylist<CleanAlbum> = {
+        name: `RYM Top 20 albums ${year}`,
+        filters: [
+          {
+            field: "dateAdded",
+            min: new Date(`${year}`).getTime(),
+            max: new Date(`${year + 1}`).getTime() - 1,
+            includeUndefined: false,
+          },
+        ],
+        sort: ["scrobbles", "DESC"],
+        limit: 30,
       };
       return yearPlaylist;
     }),

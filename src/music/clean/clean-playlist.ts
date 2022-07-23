@@ -1,4 +1,4 @@
-import { isTrackPlaylist, Playlist } from ".";
+import { isTrackPlaylist, Playlist } from "..";
 import { CleanTrackPlaylist, CleanTrack } from "./interfaces";
 
 export async function clean(
