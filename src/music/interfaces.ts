@@ -1,3 +1,5 @@
+import { FilterValue, SortValue } from "../types/fields";
+
 export interface AudioFeatures {
   acousticness?: number;
   danceability?: number;
@@ -91,4 +93,12 @@ export interface CleanTrack extends AudioFeatures {
 export interface CleanTrackPlaylist {
   name: string;
   tracks: CleanTrack[];
+}
+
+export interface SyncPlaylist<T> {
+  name: string;
+  filters?: FilterValue<T>[];
+  sort?: SortValue<T>;
+  forceRecreate?: boolean;
+  limit?: number;
 }

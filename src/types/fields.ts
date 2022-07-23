@@ -127,10 +127,19 @@ export function applySort<T>(
         return aValue - bValue;
 
       // Push undefined values to end of sort
-      if (typeof aValue === "undefined") return sort[1] === "ASC" ? -1 : 1;
-      if (typeof bValue === "undefined") return sort[1] === "ASC" ? 1 : -1;
+      if (typeof aValue === "undefined") return -1;
+      if (typeof bValue === "undefined") return 1;
       return 0;
     });
 
   return sort[1] === "DESC" ? sortedRows.reverse() : sortedRows;
+}
+
+export function timeToDateString(time: number) {
+  const ye = new Intl.DateTimeFormat("en", { year: "numeric" });
+  const mo = new Intl.DateTimeFormat("en", { month: "2-digit" });
+  const da = new Intl.DateTimeFormat("en", { day: "2-digit" });
+
+  const date = new Date(time);
+  return `${ye.format(date)}/${mo.format(date)}/${da.format(date)}`;
 }
