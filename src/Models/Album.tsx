@@ -1,6 +1,9 @@
 import React from "react";
 import { CleanAlbum } from "nfs-media-scraper/src/music/interfaces";
-import { SortValue } from "nfs-media-scraper/src/types/fields";
+import {
+  SortValue,
+  timeToDateString,
+} from "nfs-media-scraper/src/types/fields";
 import { ArrayFilterRenderer } from "../Table/ColumnFilters";
 import {
   DataColumn,
@@ -9,7 +12,6 @@ import {
   formatTime,
   GridCols,
 } from "../Table/Columns";
-import { timeToDateString } from "../Table/Date";
 
 export const Release: FieldRenderer<CleanAlbum> = (props) => (
   <>
