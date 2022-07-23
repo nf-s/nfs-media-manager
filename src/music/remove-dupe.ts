@@ -90,6 +90,10 @@ export async function removeDupes(testMode = false) {
     dupes.forEach((dupe) => {
       debug(`DELETING!! ${dupe}`);
       delete library.albums[dupe];
+      if (!library.blacklistedAlbums) {
+        library.blacklistedAlbums = [];
+      }
+      library.blacklistedAlbums.push(dupe);
     });
   }
 }
