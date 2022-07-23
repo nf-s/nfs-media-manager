@@ -1,5 +1,5 @@
 import React from "react";
-import { CleanTrack } from "nfs-media-scraper/src/music/interfaces";
+import { CleanTrack } from "nfs-media-scraper/src/music/clean/interfaces";
 import { SortValue } from "nfs-media-scraper/src/types/fields";
 import {
   DataColumn,
