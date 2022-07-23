@@ -122,10 +122,12 @@ interface Library {
   artists: { [id: string]: Artist };
   playlists: { [id: string]: Playlist };
   missing: Source[];
+  blacklistedAlbums: string[];
 }
 
 export const library: Library = {
   albums: {},
+  blacklistedAlbums: [],
   artists: {},
   missing: [],
   playlists: {},

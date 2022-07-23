@@ -35,7 +35,10 @@ export async function scrapeSpotifyAlbums() {
             });
 
             response.body.items.forEach((savedAlbum) => {
-              if (!library.albums[savedAlbum.album.id]) {
+              if (
+                !library.albums[savedAlbum.album.id] &&
+                !library.blacklistedAlbums?.includes(savedAlbum.album.id)
+              ) {
                 newAlbums += 1;
                 library.albums[savedAlbum.album.id] = {
                   id: {

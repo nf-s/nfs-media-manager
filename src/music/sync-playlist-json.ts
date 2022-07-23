@@ -2,12 +2,12 @@ import { SyncPlaylist, CleanAlbum } from "./clean/interfaces";
 
 export const playlistToSync: SyncPlaylist<CleanAlbum>[] = [
   // Top 30 albums added - Years 2012-2022
-  ...new Array(11)
+  ...new Array(2022 - 2012 + 1)
     .fill(1)
     .map((_, i) => i + 2012)
     .map((year) => {
       const yearPlaylist: SyncPlaylist<CleanAlbum> = {
-        name: `Top 30 albums added ${year}`,
+        name: `${year} Most Played`,
         filters: [
           {
             field: "dateAdded",
@@ -22,23 +22,44 @@ export const playlistToSync: SyncPlaylist<CleanAlbum>[] = [
       return yearPlaylist;
     }),
 
-  // RYM Top 30 albums added - Years 2012-2022
-  ...new Array(11)
+  // RYM Top 20 albums - Years 1993-2022
+  ...new Array(2022 - 1993 + 1)
     .fill(1)
-    .map((_, i) => i + 2012)
+    .map((_, i) => i + 1993)
     .map((year) => {
       const yearPlaylist: SyncPlaylist<CleanAlbum> = {
-        name: `RYM Top 20 albums ${year}`,
+        name: `${year} Top Albums - by RYM rating`,
         filters: [
           {
-            field: "dateAdded",
+            field: "dateReleased",
             min: new Date(`${year}`).getTime(),
             max: new Date(`${year + 1}`).getTime() - 1,
             includeUndefined: false,
           },
         ],
-        sort: ["scrobbles", "DESC"],
-        limit: 30,
+        sort: ["ratingRymValue", "DESC"],
+        limit: 20,
+      };
+      return yearPlaylist;
+    }),
+
+  // Discogs Top 20 albums - Years 1993-2022
+  ...new Array(2022 - 1993 + 1)
+    .fill(1)
+    .map((_, i) => i + 1993)
+    .map((year) => {
+      const yearPlaylist: SyncPlaylist<CleanAlbum> = {
+        name: `${year} Top Albums - by Discogs rating`,
+        filters: [
+          {
+            field: "dateReleased",
+            min: new Date(`${year}`).getTime(),
+            max: new Date(`${year + 1}`).getTime() - 1,
+            includeUndefined: false,
+          },
+        ],
+        sort: ["ratingDiscogsValue", "DESC"],
+        limit: 20,
       };
       return yearPlaylist;
     }),
