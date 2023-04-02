@@ -1,8 +1,8 @@
 import { SyncPlaylist, CleanAlbum } from "./clean/interfaces";
 
 export const playlistToSync: SyncPlaylist<CleanAlbum>[] = [
-  // Top 30 albums added - Years 2012-2022
-  ...new Array(2022 - 2012 + 1)
+  // Top 30 albums added - Years 2012-2023
+  ...new Array(2023 - 2012 + 1)
     .fill(1)
     .map((_, i) => i + 2012)
     .map((year) => {
@@ -18,12 +18,13 @@ export const playlistToSync: SyncPlaylist<CleanAlbum>[] = [
         ],
         sort: ["scrobbles", "DESC"],
         limit: 30,
+        forceRecreate: true,
       };
       return yearPlaylist;
     }),
 
-  // RYM Top 20 albums - Years 1993-2022
-  ...new Array(2022 - 1993 + 1)
+  // RYM Top 20 albums - Years 1993-2023
+  ...new Array(2023 - 1993 + 1)
     .fill(1)
     .map((_, i) => i + 1993)
     .map((year) => {
@@ -43,8 +44,8 @@ export const playlistToSync: SyncPlaylist<CleanAlbum>[] = [
       return yearPlaylist;
     }),
 
-  // Discogs Top 20 albums - Years 1993-2022
-  ...new Array(2022 - 1993 + 1)
+  // Discogs Top 20 albums - Years 1993-2023
+  ...new Array(2023 - 1993 + 1)
     .fill(1)
     .map((_, i) => i + 1993)
     .map((year) => {
@@ -63,6 +64,27 @@ export const playlistToSync: SyncPlaylist<CleanAlbum>[] = [
       };
       return yearPlaylist;
     }),
+  ...new Array(2023 - 1993 + 1)
+    .fill(1)
+    .map((_, i) => i + 1993)
+    .map((year) => {
+      const yearPlaylist: SyncPlaylist<CleanAlbum> = {
+        name: `${year} Top Albums - less than 10 scrobbles - by RYM rating`,
+        filters: [
+          {
+            field: "dateReleased",
+            min: new Date(`${year}`).getTime(),
+            max: new Date(`${year + 1}`).getTime() - 1,
+            includeUndefined: false,
+          },
+          { field: "scrobbles", max: 10, min: 0, includeUndefined: true },
+        ],
+        sort: ["ratingRymValue", "DESC"],
+        limit: 20,
+      };
+      return yearPlaylist;
+    }),
+
   {
     name: "Ambient (sorted by energy)",
     sort: ["energy", "ASC"],
