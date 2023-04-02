@@ -99,11 +99,11 @@ export function applyFilters<T>(rows: T[], filters: FilterValue<T>[]) {
       filters.filter(isNumericFilter).reduce<boolean>((include, filter) => {
         const rowValue = row[filter.field];
         return (
-          (include &&
-            typeof rowValue === "number" &&
+          include &&
+          ((typeof rowValue === "number" &&
             rowValue <= filter.max &&
             rowValue >= filter.min) ||
-          (typeof rowValue === "undefined" && filter.includeUndefined)
+            (typeof rowValue === "undefined" && filter.includeUndefined))
         );
       }, true)
     );
