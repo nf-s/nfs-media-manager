@@ -18,7 +18,7 @@ export const playlistToSync: SyncPlaylist<CleanAlbum>[] = [
         ],
         sort: ["scrobbles", "DESC"],
         limit: 30,
-        forceRecreate: true,
+        // forceRecreate: true,
       };
       return yearPlaylist;
     }),
@@ -544,5 +544,18 @@ export const playlistToSync: SyncPlaylist<CleanAlbum>[] = [
         exclude: true,
       },
     ],
+  },
+  {
+    name: "Power pop/punk/emo (sorted by RYM)",
+    filters: [
+      { value: "power pop", field: "genres" },
+      { value: "pop punk", field: "genres" },
+      { value: "bubblegrunge", field: "genres" },
+      { value: "emo", field: "genres" },
+      { value: "modern power pop", field: "genres" },
+      { value: "alternative emo", field: "genres" },
+      { value: "synth punk", field: "genres" },
+    ],
+    sort: ["ratingRymValue", "DESC"],
   },
 ];
