@@ -18,7 +18,8 @@ export const playlistToSync: SyncPlaylist<CleanAlbum>[] = [
         ],
         sort: ["scrobbles", "DESC"],
         limit: 30,
-        // forceRecreate: true,
+        // Only do exhaustive update comparison for 2023
+        lazyUpdate: year !== 2023,
       };
       return yearPlaylist;
     }),
@@ -40,6 +41,8 @@ export const playlistToSync: SyncPlaylist<CleanAlbum>[] = [
         ],
         sort: ["ratingRymValue", "DESC"],
         limit: 20,
+        // Only do exhaustive update comparison for 2023
+        lazyUpdate: year !== 2023,
       };
       return yearPlaylist;
     }),
@@ -61,6 +64,8 @@ export const playlistToSync: SyncPlaylist<CleanAlbum>[] = [
         ],
         sort: ["ratingDiscogsValue", "DESC"],
         limit: 20,
+        // Only do exhaustive update comparison for 2023
+        lazyUpdate: year !== 2023,
       };
       return yearPlaylist;
     }),
@@ -81,6 +86,8 @@ export const playlistToSync: SyncPlaylist<CleanAlbum>[] = [
         ],
         sort: ["ratingRymValue", "DESC"],
         limit: 20,
+        // Only do exhaustive update comparison for 2023
+        lazyUpdate: year !== 2023,
       };
       return yearPlaylist;
     }),
@@ -339,21 +346,29 @@ export const playlistToSync: SyncPlaylist<CleanAlbum>[] = [
         exclude: true,
       },
     ],
+    limit: 100,
+    // forceRecreate: true,
   },
   {
     name: "Ambient albums",
     filters: [{ field: "genres", value: "ambient" }],
     sort: ["dateAdded", "DESC"],
+    limit: 100,
+    // forceRecreate: true,
   },
   {
     name: "Funk / soul albums",
     filters: [{ field: "genres", value: "funk / soul" }],
     sort: ["dateAdded", "DESC"],
+    limit: 100,
+    // forceRecreate: true,
   },
   {
     name: "Alt rock albums (sorted by RYM)",
     filters: [{ field: "genres", value: "alternative rock" }],
     sort: ["ratingRymValue", "DESC"],
+    limit: 100,
+    // forceRecreate: true,
   },
   {
     name: "Jazz albums (sorted by scrobbles)",
@@ -392,6 +407,8 @@ export const playlistToSync: SyncPlaylist<CleanAlbum>[] = [
         field: "genres",
       },
     ],
+    limit: 100,
+    // forceRecreate: true,
   },
   {
     name: "House (high energy/danceability)",
@@ -544,6 +561,8 @@ export const playlistToSync: SyncPlaylist<CleanAlbum>[] = [
         exclude: true,
       },
     ],
+    limit: 100,
+    // forceRecreate: true,
   },
   {
     name: "Power pop/punk/emo (sorted by RYM)",
@@ -557,5 +576,7 @@ export const playlistToSync: SyncPlaylist<CleanAlbum>[] = [
       { value: "synth punk", field: "genres" },
     ],
     sort: ["ratingRymValue", "DESC"],
+    limit: 100,
+    // forceRecreate: true,
   },
 ];

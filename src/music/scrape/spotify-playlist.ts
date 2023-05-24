@@ -134,6 +134,53 @@ export async function getPlaylistTracks(spotifyApi: SpotifyWebApi, id: string) {
   return unprocessedTracks;
 }
 
+export async function playlistHasTracks(
+  spotifyApi: SpotifyWebApi,
+  playlistId: string,
+  trackIds: string[]
+) {
+  return await new Promise<boolean>((resolve, reject) => {
+    const getTracks = async (offset = 0, limit = 100) => {
+      debug(`fetching spotify playlist tracks offset=${offset}`);
+      try {
+        const response = await spotifyLimiter.schedule(() =>
+          spotifyApi.getPlaylistTracks(playlistId, {
+            limit,
+            offset,
+          })
+        );
+
+        const currentTracks = trackIds.slice(offset, offset + limit);
+        if (
+          currentTracks.length !== response.body.items.length ||
+          currentTracks.some(
+            (trackId, index) => response.body.items[index].track?.id !== trackId
+          )
+        ) {
+          debug(`FINISHED playlist does not have tracks`);
+          resolve(false);
+        }
+
+        const nextOffset = response.body.next
+          ?.match(/offset=([0-9]+)/g)?.[0]
+          ?.split("=")?.[1];
+        if (nextOffset) {
+          getTracks(parseInt(nextOffset, 10));
+        } else {
+          debug(`FINISHED playlist has all tracks`);
+          resolve(true);
+        }
+      } catch (error) {
+        debug(`FAILED to fetched spotify playlist tracks offset=${offset}`);
+        debug(error);
+        reject();
+      }
+    };
+
+    getTracks();
+  });
+}
+
 export async function getPlaylistAlbums(id: string) {
   if (process.env.SPOTIFY_TOKEN) {
     const spotifyApi = new SpotifyWebApi();
@@ -278,6 +325,56 @@ export async function addTracksToPlaylist(
       spotifyLimiter.schedule(async () => {
         debug(`adding tracks to playlist ${playlistId} offset=${i * limit}`);
         await spotifyApi.addTracksToPlaylist(playlistId, batch);
+      })
+    )
+  );
+
+  debug(`FINISHED adding tracks to playlist ${playlistId}`);
+}
+
+export async function removeAllTracksFromPlaylist(
+  spotifyApi: SpotifyWebApi,
+  playlistId: string,
+  snapshotId: string,
+  /** array of track IDS */
+  numberOfTracks: number
+) {
+  const limit = 100;
+
+  const numBatches = Math.ceil(numberOfTracks / limit);
+
+  debug(
+    `deleting ${numberOfTracks} tracks from playlist ${playlistId} - will take ${numBatches} requests to complete`
+  );
+
+  /**
+   * Spotify API only allows you to remove 100 tracks at a time
+   * so we need to batch the requests. For example:
+   * - `0-99`
+   * - `100-199`
+   * - ...
+   */
+  const trackPositionsBatches = new Array(numBatches)
+    .fill(0)
+    .map((_, batchIndex) =>
+      new Array(Math.min(limit, numberOfTracks - batchIndex * limit))
+        .fill(0)
+        .map((_, innerIndex) => innerIndex + batchIndex * limit)
+    );
+
+  await Promise.all(
+    trackPositionsBatches.map((trackPositions, i) =>
+      spotifyLimiter.schedule(async () => {
+        debug(
+          `removing tracks from playlist ${playlistId} tracks=${trackPositions.join(
+            ","
+          )}`
+        );
+        await spotifyApi.removeTracksFromPlaylistByPosition(
+          playlistId,
+          trackPositions,
+          snapshotId
+        );
       })
     )
   );
