@@ -15,7 +15,11 @@ export const spotifyLimiter = new Bottleneck({
   timeout: 5000,
 });
 
-export async function scrapeSpotifyAlbums() {
+/**
+ *
+ * @param lazyScrape If true, then scraping spotify albums will stop when an existing album is found
+ */
+export async function scrapeSpotifyAlbums(lazyScrape = true) {
   if (process.env.SPOTIFY_TOKEN) {
     const spotifyApi = new SpotifyWebApi();
     spotifyApi.setAccessToken(process.env.SPOTIFY_TOKEN);
@@ -34,8 +38,12 @@ export async function scrapeSpotifyAlbums() {
               offset,
             });
 
+            let continueScraping = true;
+
             response.body.items.forEach((savedAlbum) => {
-              if (
+              if (lazyScrape && library.albums[savedAlbum.album.id]) {
+                continueScraping = false;
+              } else if (
                 !library.albums[savedAlbum.album.id] &&
                 !library.blacklistedAlbums?.includes(savedAlbum.album.id)
               ) {
@@ -55,10 +63,11 @@ export async function scrapeSpotifyAlbums() {
                 };
               }
             });
+
             const nextOffset = response.body.next
               ?.match(/offset=([0-9]+)/g)?.[0]
               ?.split("=")?.[1];
-            if (nextOffset) {
+            if (nextOffset && continueScraping) {
               getAlbums(parseInt(nextOffset));
             } else {
               debug(`FINISHED fetching spotify albums`);

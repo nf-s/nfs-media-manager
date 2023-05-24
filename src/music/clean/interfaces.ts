@@ -102,4 +102,6 @@ export interface SyncPlaylist<T> {
   sort?: SortValue<T>;
   forceRecreate?: boolean;
   limit?: number;
+  /** Defaults to true. If true, then playlist will only be synced if number of tracks has changed. If false, then full sync will occur. */
+  lazyUpdate?: boolean;
 }
