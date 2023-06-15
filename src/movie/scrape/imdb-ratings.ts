@@ -1,8 +1,8 @@
-import { debug as debugInit } from "debug";
-import { library } from "..";
-import { readCsv } from "../../util/fs";
+import debugPkg from "debug";
+import { library } from "../index.js";
+import { readCsv } from "../../util/fs.js";
 
-const debug = debugInit("movie-scraper:my-imdb-ratings");
+const debug = debugPkg.debug("movie-scraper:my-imdb-ratings");
 
 export default async function myImdbRatings() {
   if (typeof process.env.IMDB_RATINGS_CSV === "undefined") {

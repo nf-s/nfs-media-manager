@@ -1,5 +1,5 @@
-import { albumTitle, isAlbumPlaylist, library } from "../";
-import { CleanAlbum, CleanAlbumPlaylist, CleanLibrary } from "./interfaces";
+import { albumTitle, isAlbumPlaylist, library } from "../index.js";
+import { CleanAlbum, CleanAlbumPlaylist, CleanLibrary } from "./interfaces.js";
 
 export async function clean(): Promise<CleanLibrary> {
   const playlists: { [id: string]: CleanAlbumPlaylist } = {};

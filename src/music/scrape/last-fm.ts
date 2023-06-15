@@ -1,8 +1,8 @@
-import { IAlbum } from "@toplast/lastfm/lib/common/common.interface";
-import { ApiRequest } from "@toplast/lastfm/lib/modules/request/request.service";
+import { IAlbum } from "@toplast/lastfm/lib/common/common.interface.js";
+import { ApiRequest } from "@toplast/lastfm/lib/modules/request/request.service.js";
 import Bottleneck from "bottleneck";
-import { debug as debugInit } from "debug";
-import { albumTitle, library } from "..";
+import debugPkg from "debug";
+import { albumTitle, library } from "../index.js";
 
 interface GetAlbumReponse {
   album: AlbumResponse;
@@ -16,7 +16,7 @@ type AlbumResponse = IAlbum & {
 
 export type LastFmAlbum = AlbumResponse & { dateScraped: string };
 
-const debug = debugInit("music-scraper:last-fm");
+const debug = debugPkg.debug("music-scraper:last-fm");
 
 export async function scrapeLastFm() {
   if (process.env.LASTFM_API_KEY && process.env.LASTFM_USERNAME) {

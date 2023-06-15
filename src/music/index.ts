@@ -1,46 +1,48 @@
-import { debug as debugInit } from "debug";
+import debugPkg from "debug";
 import { IReleaseGroup } from "musicbrainz-api";
 import { join } from "path";
-import { fileExists, readJSONFile, writeFile } from "../util/fs";
-import { skip } from "../util/skip";
-import { clean as cleanPlaylist } from "./clean/clean-playlist";
-import { clean } from "./clean/index";
-import { AlbumId, CleanLibrary } from "./clean/interfaces";
-import { removeDupes } from "./remove-dupe";
-import { albumCsv } from "./scrape/album-csv";
+import { fileExists, readJSONFile, writeFile } from "../util/fs.js";
+import { skip } from "../util/skip.js";
+import { clean as cleanPlaylist } from "./clean/clean-playlist.js";
+import { clean } from "./clean/index.js";
+import { AlbumId, CleanLibrary } from "./clean/interfaces.js";
+import { removeDupes } from "./remove-dupe.js";
+import { albumCsv } from "./scrape/album-csv.js";
 import {
   discogs,
   DiscogsMaster,
   DiscogsMasterRelease,
   DiscogsMasterReleaseWithRating,
   DiscogsRelease,
-} from "./scrape/discogs";
+} from "./scrape/discogs.js";
 import {
   GoogleResult,
   metacriticGoogleRelease,
   RymGoogle,
   rymGoogleRelease,
-} from "./scrape/google-custom-search";
-import { LastFmAlbum, scrapeLastFm as lastFm } from "./scrape/last-fm";
-import { musicBrainz } from "./scrape/mb";
+} from "./scrape/google-custom-search.js";
+import { LastFmAlbum, scrapeLastFm as lastFm } from "./scrape/last-fm.js";
+import { musicBrainz } from "./scrape/mb.js";
+import {
+  scrapeSpotifyAlbumPlaylists,
+  scrapeSpotifyTrackPlaylists,
+  SpotifyPlaylistTrack,
+} from "./scrape/spotify-playlist.js";
 import {
   scrapeSpotifyAlbumArtists,
   scrapeSpotifyAlbumAudioFeatures,
   scrapeSpotifyAlbums,
   SpotifySavedAlbum,
-} from "./scrape/spotify";
-import {
-  scrapeSpotifyAlbumPlaylists,
-  scrapeSpotifyTrackPlaylists,
-  SpotifyPlaylistTrack,
-} from "./scrape/spotify-playlist";
-import { upcCsv } from "./scrape/upc-csv";
-import { syncPlaylists } from "./sync-playlist";
+} from "./scrape/spotify.js";
+import { upcCsv } from "./scrape/upc-csv.js";
+import { getSpotifyToken } from "./server.js";
+import { syncPlaylists } from "./sync-playlist.js";
 
-require("dotenv").config();
-const debug = debugInit("music-scraper:init");
+import dotenv from "dotenv";
+import SpotifyWebApi from "spotify-web-api-node";
 
-debug("HELLO!");
+dotenv.config();
+const debug = debugPkg.debug("music-scraper:init");
 
 // SETUP data directories
 if (typeof process.env.DATA_DIR === "undefined")
@@ -140,7 +142,12 @@ async function save() {
   await writeFile(LIBRARY_PATH, JSON.stringify(library), undefined, debug);
 }
 
-async function run() {
+export async function run() {
+  const token = await getSpotifyToken();
+
+  const spotifyApi = new SpotifyWebApi();
+  spotifyApi.setAccessToken(token);
+
   // Load library
   if (await fileExists(LIBRARY_PATH)) {
     debug(`${LIBRARY_PATH} library file found!\nreading...`);
@@ -164,11 +171,11 @@ async function run() {
   debug("Start scraping albums!");
 
   try {
-    if (!skip("album-csv")) await albumCsv();
+    if (!skip("album-csv")) await albumCsv(spotifyApi);
 
-    if (!skip("upc")) await upcCsv();
+    if (!skip("upc")) await upcCsv(spotifyApi);
 
-    if (!skip("spotify-fav")) await scrapeSpotifyAlbums();
+    if (!skip("spotify-fav")) await scrapeSpotifyAlbums(spotifyApi);
   } catch (e) {
     debug(e);
     debug("ERROR occurred while scraping new albums");
@@ -178,8 +185,10 @@ async function run() {
 
   debug("Start scraping playlists!");
 
-  if (!skip("spotify-album-playlists")) await scrapeSpotifyAlbumPlaylists();
-  if (!skip("spotify-track-playlists")) await scrapeSpotifyTrackPlaylists();
+  if (!skip("spotify-album-playlists"))
+    await scrapeSpotifyAlbumPlaylists(spotifyApi);
+  if (!skip("spotify-track-playlists"))
+    await scrapeSpotifyTrackPlaylists(spotifyApi);
 
   if (!skip("spotify-album-playlists") || !skip("spotify-track-playlists"))
     await save();
@@ -190,10 +199,10 @@ async function run() {
   try {
     await Promise.all([
       !skip("spotify-artists")
-        ? scrapeSpotifyAlbumArtists()
+        ? scrapeSpotifyAlbumArtists(spotifyApi)
         : Promise.resolve(),
       !skip("spotify-audio-features")
-        ? scrapeSpotifyAlbumAudioFeatures()
+        ? scrapeSpotifyAlbumAudioFeatures(spotifyApi)
         : Promise.resolve(),
       !skip("mb") ? musicBrainz() : Promise.resolve(),
       !skip("discogs") ? discogs() : Promise.resolve(),
@@ -265,14 +274,10 @@ async function run() {
       cleanLibrary = await readJSONFile(process.env.MUSIC_CLEAN_JSON);
     }
 
-    await syncPlaylists(cleanLibrary!);
+    await syncPlaylists(spotifyApi, cleanLibrary!);
   } else {
     debug(
       "process.env.MUSIC_CLEAN_JSON is undefined - cannot save cleaned library or sync playlists"
     );
   }
-
-  process.exit();
 }
-
-run();

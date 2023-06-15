@@ -1,8 +1,8 @@
-import { debug as debugInit } from "debug";
-import { albumTitle, library } from ".";
-import { AlbumId } from "./clean/interfaces";
+import debugPkg from "debug";
+import { albumTitle, library } from "./index.js";
+import { AlbumId } from "./clean/interfaces.js";
 
-const debug = debugInit("music-scraper:remove-dupes");
+const debug = debugPkg.debug("music-scraper:remove-dupes");
 
 /** Keep A Album if addedDate is before B */
 function keepA(a: string, b: string) {

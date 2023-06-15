@@ -8,7 +8,7 @@ import {
   promises as fsPromises,
   watch as fsWatch,
 } from "fs";
-import { ncp } from "ncp";
+import ncp from "ncp";
 import {
   basename,
   basename as pathBasename,
@@ -105,7 +105,7 @@ export async function cpDir(
     }
   } else {
     await new Promise((resolve, reject) => {
-      ncp(source, dest, (error) => {
+      ncp.ncp(source, dest, (error) => {
         if (error) {
           reject(`FAILED to copy directory ${source} to ${dest}: ${error}`);
         } else {

@@ -1,9 +1,9 @@
 import Bottleneck from "bottleneck";
-import { debug as debugInit } from "debug";
+import debugPkg from "debug";
 import { Client as OMDBClient } from "imdb-api";
-import { library } from "..";
+import { library } from "../index.js";
 
-const debug = debugInit("movie-scraper:scrape-omdb");
+const debug = debugPkg.debug("movie-scraper:scrape-omdb");
 
 export default async function scrapeOmdb() {
   // GET OMDB THINGS!

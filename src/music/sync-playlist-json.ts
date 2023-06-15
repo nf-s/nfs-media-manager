@@ -1,4 +1,4 @@
-import { SyncPlaylist, CleanAlbum } from "./clean/interfaces";
+import { SyncPlaylist, CleanAlbum } from "./clean/interfaces.js";
 
 export const playlistToSync: SyncPlaylist<CleanAlbum>[] = [
   // Top 30 albums added - Years 2012-2023

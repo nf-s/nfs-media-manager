@@ -1,9 +1,9 @@
 import Bottleneck from "bottleneck";
-import { debug as debugInit } from "debug";
+import debugPkg from "debug";
 import { MusicBrainzApi } from "musicbrainz-api";
-import { albumTitle, library } from "..";
+import { albumTitle, library } from "../index.js";
 
-const debug = debugInit("music-scraper:music-brainz");
+const debug = debugPkg.debug("music-scraper:music-brainz");
 
 export async function musicBrainz() {
   // GET MB THINGS!

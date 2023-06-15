@@ -1,9 +1,9 @@
-import { debug as debugInit } from "debug";
+import debugPkg from "debug";
 import { parse } from "path";
-import { library, LIBRARY_PATH } from "../";
-import { forEachFileInDir, loadXml } from "../../util/fs";
+import { library, LIBRARY_PATH } from "../index.js";
+import { forEachFileInDir, loadXml } from "../../util/fs.js";
 
-const debug = debugInit("movie-scraper:nfo-scraper");
+const debug = debugPkg.debug("movie-scraper:nfo-scraper");
 
 export default async function scanNfos() {
   // Scan directory for NFO files
