@@ -1,16 +1,16 @@
-import { debug as debugInit } from "debug";
+import debugPkg from "debug";
 import SpotifyWebApi from "spotify-web-api-node";
-import { Album, isAlbumPlaylist, library } from "..";
-import { getArtists, getAudioFeatures, spotifyLimiter } from "./spotify";
+import { isAlbumPlaylist, library } from "../index.js";
+import { getArtists, getAudioFeatures, spotifyLimiter } from "./spotify.js";
 
-const debug = debugInit("music-scraper:spotify-playlist");
+const debug = debugPkg.debug("music-scraper:spotify-playlist");
 
 export interface SpotifyPlaylistTrack extends SpotifyApi.PlaylistTrackObject {
   audioFeatures?: SpotifyApi.AudioFeaturesObject;
   artists?: SpotifyApi.ArtistObjectFull[];
 }
 
-export async function scrapeSpotifyTrackPlaylists() {
+export async function scrapeSpotifyTrackPlaylists(spotifyApi: SpotifyWebApi) {
   const trackPlaylists: string[] = []; /*["4VZp1yvv27nEcEJXG3dVYb"]; */
   // EF-all 6H6tTq8Is6D2X8PZi5rJmK
 
@@ -19,8 +19,8 @@ export async function scrapeSpotifyTrackPlaylists() {
 
     debug(`Scraping track playlist ${id}`);
 
-    const playlist = await getPlaylist(id);
-    const tracks = await getPlaylistTracksWithMetadata(id);
+    const playlist = await getPlaylist(spotifyApi, id);
+    const tracks = await getPlaylistTracksWithMetadata(spotifyApi, id);
 
     if (playlist && tracks) {
       debug(`Saving track playlist ${playlist.name}`);
@@ -36,7 +36,7 @@ export async function scrapeSpotifyTrackPlaylists() {
   }
 }
 
-export async function scrapeSpotifyAlbumPlaylists() {
+export async function scrapeSpotifyAlbumPlaylists(spotifyApi: SpotifyWebApi) {
   const chartPlaylists = ["7emRnrvtROcn2YgsKdHlPc"];
 
   // Go through existing playlists and clean up albums array
@@ -67,8 +67,8 @@ export async function scrapeSpotifyAlbumPlaylists() {
 
     debug(`Scraping album playlist ${id}`);
 
-    const playlist = await getPlaylist(id);
-    const albums = await getPlaylistAlbums(id);
+    const playlist = await getPlaylist(spotifyApi, id);
+    const albums = await getPlaylistAlbums(spotifyApi, id);
 
     if (playlist?.id && albums) {
       debug(`Saving album playlist ${playlist.name}`);
@@ -181,86 +181,62 @@ export async function playlistHasTracks(
   });
 }
 
-export async function getPlaylistAlbums(id: string) {
-  if (process.env.SPOTIFY_TOKEN) {
-    const spotifyApi = new SpotifyWebApi();
-    spotifyApi.setAccessToken(process.env.SPOTIFY_TOKEN);
-
-    debug(`connected to spotify`);
-    const tracks = await getPlaylistTracks(spotifyApi, id);
-    const albums = tracks.reduce<SpotifyApi.AlbumObjectSimplified[]>(
-      (acc, track) => {
-        if (track.track && !acc.find((a) => a.id === track.track!.album.id)) {
-          acc.push(track.track.album);
-        }
-        return acc;
-      },
-      []
-    );
-    return albums;
-  } else {
-    debug(`WARNING no SPOTIFY_TOKEN provided`);
-  }
+export async function getPlaylistAlbums(spotifyApi: SpotifyWebApi, id: string) {
+  const tracks = await getPlaylistTracks(spotifyApi, id);
+  const albums = tracks.reduce<SpotifyApi.AlbumObjectSimplified[]>(
+    (acc, track) => {
+      if (track.track && !acc.find((a) => a.id === track.track!.album.id)) {
+        acc.push(track.track.album);
+      }
+      return acc;
+    },
+    []
+  );
+  return albums;
 }
 
-export async function getPlaylist(id: string) {
-  if (process.env.SPOTIFY_TOKEN) {
-    const spotifyApi = new SpotifyWebApi();
-    spotifyApi.setAccessToken(process.env.SPOTIFY_TOKEN);
-
-    debug(`connected to spotify`);
-    try {
-      const response = await spotifyLimiter.schedule(() =>
-        spotifyApi.getPlaylist(id)
-      );
-      return response.body;
-    } catch (error) {
-      debug(`FAILED to fetched spotify playlist ${id}`);
-      debug(error);
-    }
-  } else {
-    debug(`WARNING no SPOTIFY_TOKEN provided`);
+export async function getPlaylist(spotifyApi: SpotifyWebApi, id: string) {
+  try {
+    const response = await spotifyLimiter.schedule(() =>
+      spotifyApi.getPlaylist(id)
+    );
+    return response.body;
+  } catch (error) {
+    debug(`FAILED to fetched spotify playlist ${id}`);
+    debug(error);
   }
 }
 
 export async function getPlaylistTracksWithMetadata(
+  spotifyApi: SpotifyWebApi,
   id: string
 ): Promise<SpotifyPlaylistTrack[] | undefined> {
-  if (process.env.SPOTIFY_TOKEN) {
-    const spotifyApi = new SpotifyWebApi();
-    spotifyApi.setAccessToken(process.env.SPOTIFY_TOKEN);
+  const unprocessedTracks = await getPlaylistTracks(spotifyApi, id);
+  const artistsToFetch = new Set<string>();
+  unprocessedTracks.forEach((t) =>
+    t.track?.artists.forEach((a) => artistsToFetch.add(a.id))
+  );
+  const unprocessedArtists = await getArtists(
+    spotifyApi,
+    Array.from(artistsToFetch)
+  );
+  const unprocessedAudioFeatures = await getAudioFeatures(
+    spotifyApi,
+    unprocessedTracks.filter((t) => t.track).map((t) => t.track!.id)
+  );
 
-    debug(`connected to spotify`);
-
-    const unprocessedTracks = await getPlaylistTracks(spotifyApi, id);
-    const artistsToFetch = new Set<string>();
-    unprocessedTracks.forEach((t) =>
-      t.track?.artists.forEach((a) => artistsToFetch.add(a.id))
-    );
-    const unprocessedArtists = await getArtists(
-      spotifyApi,
-      Array.from(artistsToFetch)
-    );
-    const unprocessedAudioFeatures = await getAudioFeatures(
-      spotifyApi,
-      unprocessedTracks.filter((t) => t.track).map((t) => t.track!.id)
-    );
-
-    return unprocessedTracks.map((track) => {
-      return {
-        ...track,
-        audioFeatures: unprocessedAudioFeatures.find(
-          (a) => a.id === track.track?.id
-        ),
-        artists: (track.track?.artists
-          .map((artist) => unprocessedArtists.find((a) => a.id === artist.id))
-          .filter((a) => typeof a !== "undefined") ??
-          []) as SpotifyApi.ArtistObjectFull[],
-      };
-    });
-  } else {
-    debug(`WARNING no SPOTIFY_TOKEN provided`);
-  }
+  return unprocessedTracks.map((track) => {
+    return {
+      ...track,
+      audioFeatures: unprocessedAudioFeatures.find(
+        (a) => a.id === track.track?.id
+      ),
+      artists: (track.track?.artists
+        .map((artist) => unprocessedArtists.find((a) => a.id === artist.id))
+        .filter((a) => typeof a !== "undefined") ??
+        []) as SpotifyApi.ArtistObjectFull[],
+    };
+  });
 }
 
 export async function getUserPlaylists(spotifyApi: SpotifyWebApi) {
@@ -339,6 +315,16 @@ export async function removeAllTracksFromPlaylist(
   /** array of track IDS */
   numberOfTracks: number
 ) {
+  // There is a bug that only lets us delete ~1000 tracks at a time - https://community.spotify.com/t5/Spotify-for-Developers/500-Internal-server-error-when-removing-songs-from-playlist/td-p/5262957
+  // So we cap it at 900 and then just run it again
+  const retry = numberOfTracks > 900;
+  if (retry)
+    debug(
+      `WARNING: numberOfTracks > 900, maximum is 900 so will take multiple attempts`
+    );
+
+  numberOfTracks = Math.min(numberOfTracks, 900);
+
   const limit = 100;
 
   const numBatches = Math.ceil(numberOfTracks / limit);
@@ -378,6 +364,20 @@ export async function removeAllTracksFromPlaylist(
       })
     )
   );
+
+  // We have to get the playlist again to get the new snapshot ID - and then we retry
+  if (retry) {
+    const newPlaylist = await getPlaylist(spotifyApi, playlistId);
+    if (!newPlaylist) {
+      throw new Error(`Failed to get playlist ${playlistId}`);
+    }
+    await removeAllTracksFromPlaylist(
+      spotifyApi,
+      playlistId,
+      newPlaylist.snapshot_id,
+      newPlaylist.tracks.total
+    );
+  }
 
   debug(`FINISHED adding tracks to playlist ${playlistId}`);
 }

@@ -1,9 +1,9 @@
 import * as search from "@googleapis/customsearch";
 import Bottleneck from "bottleneck";
-import { debug as debugInit } from "debug";
-import { Album, albumTitle, library } from "..";
+import debugPkg from "debug";
+import { Album, albumTitle, library } from "../index.js";
 
-const debug = debugInit("music-scraper:rym-google");
+const debug = debugPkg.debug("music-scraper:rym-google");
 
 const googleSearchLimiter = new Bottleneck({
   maxConcurrent: 20,

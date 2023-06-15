@@ -1,5 +1,5 @@
-import { isTrackPlaylist, Playlist } from "..";
-import { CleanTrackPlaylist, CleanTrack } from "./interfaces";
+import { isTrackPlaylist, Playlist } from "../index.js";
+import { CleanTrackPlaylist, CleanTrack } from "./interfaces.js";
 
 export async function clean(
   playlist: Playlist

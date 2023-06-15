@@ -1,10 +1,11 @@
-import { debug as debugInit } from "debug";
-import { library, Source } from "..";
-import { fileExists, readCsv } from "../../util/fs";
-import { searchSpotify } from "./spotify";
-const debug = debugInit("music-scraper:album-csv");
+import debugPkg from "debug";
+import SpotifyWebApi from "spotify-web-api-node";
+import { fileExists, readCsv } from "../../util/fs.js";
+import { library, Source } from "../index.js";
+import { searchSpotify } from "./spotify.js";
+const debug = debugPkg.debug("music-scraper:album-csv");
 
-export async function albumCsv() {
+export async function albumCsv(spotifyApi: SpotifyWebApi) {
   if (process.env.ALBUM_CSV && (await fileExists(process.env.ALBUM_CSV))) {
     debug(`Importing CSV with Albums`);
 
@@ -69,7 +70,7 @@ export async function albumCsv() {
     if (rowsToSearch.length > 0) {
       debug(`rows to search for: ${rowsToSearch.length}`);
 
-      await searchSpotify(rowsToSearch);
+      await searchSpotify(spotifyApi, rowsToSearch);
     }
   } else {
     debug(`${process.env.ALBUM_CSV} is not a valid ALBUM_CSV`);

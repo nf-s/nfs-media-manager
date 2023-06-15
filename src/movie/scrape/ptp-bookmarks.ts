@@ -1,8 +1,8 @@
-import { debug as debugInit } from "debug";
-import { library } from "..";
-import { readCsv } from "../../util/fs";
+import debugPkg from "debug";
+import { library } from "../index.js";
+import { readCsv } from "../../util/fs.js";
 
-const debug = debugInit("movie-scraper:ptp-bookmarks");
+const debug = debugPkg.debug("movie-scraper:ptp-bookmarks");
 
 export default async function ptpBookmarks() {
   if (typeof process.env.PTP_BOOKMARKS_CSV === "undefined") {

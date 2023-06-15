@@ -1,5 +1,5 @@
-import { library } from ".";
-import { CleanMovie } from "./interfaces";
+import { library } from "./index.js";
+import { CleanMovie } from "./interfaces.js";
 
 export type CleanLibrary = CleanMovie[];
 

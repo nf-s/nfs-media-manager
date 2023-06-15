@@ -1,10 +1,10 @@
 import Bottleneck from "bottleneck";
-import { debug as debugInit } from "debug";
+import debugPkg from "debug";
 import { MovieDb as TMDBClient } from "moviedb-promise";
-import { ExternalId } from "moviedb-promise/dist/request-types";
-import { library } from "..";
+import { ExternalId } from "moviedb-promise/dist/request-types.js";
+import { library } from "../index.js";
 
-const debug = debugInit("movie-scraper:scrape-tmdb");
+const debug = debugPkg.debug("movie-scraper:scrape-tmdb");
 
 export default async function scrapeTmdb() {
   // GET TMDB THINGS!

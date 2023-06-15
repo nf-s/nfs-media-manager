@@ -1,20 +1,21 @@
-import { debug as debugInit } from "debug";
+import debugPkg from "debug";
+import dotenv from "dotenv";
 import { Movie as OMDBMovie } from "imdb-api";
-import { MovieResponse as TMDBMovie } from "moviedb-promise/dist/request-types";
-import { default as PTPMovie } from "nfs-passthepopcorn/lib/objects/movie";
+import { MovieResponse as TMDBMovie } from "moviedb-promise/dist/request-types.js";
+import type PTPMovie from "nfs-passthepopcorn/lib/objects/movie.js";
 import { join } from "path";
-import { fileExists, readJSONFile, writeFile } from "../util/fs";
-import { skip } from "../util/skip";
-import { clean } from "./clean";
-import myImdbRatings from "./scrape/imdb-ratings";
-import myImdbWatchlist from "./scrape/imdb-watchlist";
-import scanNfos from "./scrape/nfo";
-import scrapeOmdb from "./scrape/omdb";
-import scrapePtp, { PtpMovieScrape } from "./scrape/ptp";
-import ptpBookmarks from "./scrape/ptp-bookmarks";
-import scrapeTmdb from "./scrape/tmdb";
+import { fileExists, readJSONFile, writeFile } from "../util/fs.js";
+import { skip } from "../util/skip.js";
+import { clean } from "./clean.js";
+import myImdbRatings from "./scrape/imdb-ratings.js";
+import myImdbWatchlist from "./scrape/imdb-watchlist.js";
+import scanNfos from "./scrape/nfo.js";
+import scrapeOmdb from "./scrape/omdb.js";
+import ptpBookmarks from "./scrape/ptp-bookmarks.js";
+import scrapePtp, { PtpMovieScrape } from "./scrape/ptp.js";
+import scrapeTmdb from "./scrape/tmdb.js";
 
-require("dotenv").config();
+dotenv.config();
 
 export interface Movie {
   id?: { imdb?: string; tmdb?: string; ptp?: number };
@@ -28,10 +29,11 @@ export interface Movie {
     myRating?: { value: number; date: string };
     myWatchlist?: { date: string };
   };
-  ptp?: PTPMovie | null;
+  ptp?: PTPMovie.default | null;
   ptpBookmark?: { date: string };
   ptpScrape?: PtpMovieScrape | null;
-  owned?: { type: "bluray" };
+  owned?: { type: "bluray"; date?: string };
+  file?: { nfoPath: string; date: string };
 }
 
 export interface Library {
@@ -41,9 +43,7 @@ export interface Library {
   movies: { [fileOrImdbId: string]: Movie };
 }
 
-const debug = debugInit("movie-scraper:init");
-
-debug("HELLO!");
+const debug = debugPkg.debug("movie-scraper:init");
 
 // SETUP data directories
 if (typeof process.env.DATA_DIR === "undefined")
@@ -62,7 +62,7 @@ async function save() {
   await writeFile(LIBRARY_PATH, JSON.stringify(library), undefined, debug);
 }
 
-async function init() {
+export async function run() {
   // Load library
   if (await fileExists(LIBRARY_PATH)) {
     debug(`${LIBRARY_PATH} library file found!\nreading...`);
@@ -152,8 +152,4 @@ Should be imdb-watchlist
       debug
     );
   }
-
-  process.exit();
 }
-
-init();

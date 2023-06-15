@@ -1,4 +1,4 @@
-import { FilterValue, SortValue } from "../../types/fields";
+import { FilterValue, SortValue } from "../../types/fields.js";
 
 export interface AudioFeatures {
   acousticness?: number;

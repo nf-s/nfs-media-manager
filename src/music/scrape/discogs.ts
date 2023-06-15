@@ -1,10 +1,10 @@
 import Bottleneck from "bottleneck";
-import { debug as debugInit } from "debug";
+import debugPkg from "debug";
 import { CommunityStatusesEnum, DataQualityEnum, Discojs } from "discojs";
-import { albumTitle, library } from "..";
-import { googleSearch } from "./google-custom-search";
+import { albumTitle, library } from "../index.js";
+import { googleSearch } from "./google-custom-search.js";
 
-const debug = debugInit("music-scraper:discogs");
+const debug = debugPkg.debug("music-scraper:discogs");
 
 export type DiscogsRelease = {
   resource_url: string;

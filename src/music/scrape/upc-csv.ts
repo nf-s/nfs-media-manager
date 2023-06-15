@@ -1,10 +1,11 @@
-import { debug as debugInit } from "debug";
-import { library, Source } from "..";
-import { fileExists, readCsv } from "../../util/fs";
-import { searchSpotify } from "./spotify";
-const debug = debugInit("music-scraper:upc-csv");
+import debugPkg from "debug";
+import { library, Source } from "../index.js";
+import { fileExists, readCsv } from "../../util/fs.js";
+import { searchSpotify } from "./spotify.js";
+import SpotifyWebApi from "spotify-web-api-node";
+const debug = debugPkg.debug("music-scraper:upc-csv");
 
-export async function upcCsv() {
+export async function upcCsv(spotifyApi: SpotifyWebApi) {
   if (process.env.UPC_CSV && (await fileExists(process.env.UPC_CSV))) {
     debug(`Importing CSV with UPCs`);
 
@@ -93,7 +94,7 @@ export async function upcCsv() {
       if (rowsToSearch.length > 0) {
         debug(`rows to search for: ${rowsToSearch.length}`);
 
-        await searchSpotify(rowsToSearch);
+        await searchSpotify(spotifyApi, rowsToSearch);
       }
     }
   }

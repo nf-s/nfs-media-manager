@@ -1,19 +1,19 @@
 import Bottleneck from "bottleneck";
 import { load } from "cheerio";
-import { debug as debugInit } from "debug";
-import { default as PTPClient } from "nfs-passthepopcorn/lib/api";
+import debugPkg from "debug";
+import ptp from "nfs-passthepopcorn/lib/api.js";
 import { join } from "path";
-import { library } from "..";
-import { writeFile } from "../../util/fs";
+import { library } from "../index.js";
+import { writeFile } from "../../util/fs.js";
 
-const debug = debugInit("movie-scraper:scrape-ptp");
+const debug = debugPkg.debug("movie-scraper:scrape-ptp");
 
 export default async function scrapePtp() {
   // GET PTP THINGS!
   if (process.env.PTP_API_USER && process.env.PTP_API_KEY) {
     debug(`connected to PTP!`);
 
-    const ptpClient = new PTPClient(
+    const ptpClient = new ptp.default(
       process.env.PTP_API_USER!,
       process.env.PTP_API_KEY!
     );
