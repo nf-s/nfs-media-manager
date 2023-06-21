@@ -1,8 +1,0 @@
-// Rename this file to config.json
-{
-  "spotifyCreds": {
-    "clientId": "xxx",
-    "clientSecret": "xxx"
-  },
-  "spotifyPlaylistId": "xxx"
-}

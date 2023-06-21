@@ -1,14 +1,10 @@
-import { Handle, Range, SliderProps, SliderTooltip } from "rc-slider";
+// import { Handle, Range, SliderProps, SliderTooltip } from "rc-slider";
 import "rc-slider/assets/index.css";
 import React from "react";
-import { HeaderRendererProps } from "react-data-grid";
-import {
-  FilterColArrayKey,
-  NumericColKey,
-  StringColKey,
-} from "nfs-media-scraper/src/types/fields";
-import { isJsonArray, isJsonString } from "../Common/util";
-import { FieldRenderer, NumberFormat, NumericCol } from "./Columns";
+import { RenderHeaderCellProps } from "react-data-grid";
+import { FilterColArrayKey, NumericColKey, StringColKey } from "data-types";
+import { isJsonArray, isJsonString } from "../Common/util.js";
+import { FieldRenderer, NumberFormat, NumericCol } from "./Columns.jsx";
 
 type NumericFilterProps<T> = {
   col: NumericCol<T>;
@@ -22,28 +18,28 @@ type NumericFilterProps<T> = {
   ) => void;
 };
 
-const handle: <T>(col: NumericCol<T>) => SliderProps["handle"] =
-  (col) => (props) => {
-    const { value, dragging, index, ...restProps } = props;
-    return (
-      <SliderTooltip
-        prefixCls="rc-slider-tooltip"
-        overlay={<NumberFormat col={col} value={value} />}
-        visible={dragging}
-        placement="bottom"
-        key={index}
-      >
-        <Handle
-          value={value}
-          {...restProps}
-          ariaValueTextFormatter={undefined}
-        />
-      </SliderTooltip>
-    );
-  };
+// const handle: <T>(col: NumericCol<T>) => SliderProps["handleRender"] =
+//   (col) => (props) => {
+//     const { value, dragging, index, ...restProps } = props;
+//     return (
+//       <SliderTooltip
+//         prefixCls="rc-slider-tooltip"
+//         overlay={<NumberFormat col={col} value={value} />}
+//         visible={dragging}
+//         placement="bottom"
+//         key={index}
+//       >
+//         <Handle
+//           value={value}
+//           {...restProps}
+//           ariaValueTextFormatter={undefined}
+//         />
+//       </SliderTooltip>
+//     );
+//   };
 
 export function NumericFilter<T>(
-  props: NumericFilterProps<T> & HeaderRendererProps<T>
+  props: NumericFilterProps<T> & RenderHeaderCellProps<T>
 ) {
   if (
     typeof props.col.key === "undefined" ||
@@ -67,8 +63,12 @@ export function NumericFilter<T>(
       <div
         className={"numerical-filter-range"}
         onClick={(e) => e.stopPropagation()}
-      >
-        <Range
+      ></div>
+    </div>
+  );
+}
+
+/*<Range
           step={props.max - props.min < 10 ? (props.max - props.min) / 500 : 1}
           min={props.min}
           max={props.max}
@@ -79,16 +79,12 @@ export function NumericFilter<T>(
               value[0],
               value[1],
               value[0] ===
-                props.min /** include undefined if minimum value is selected */
+                props.min /** include undefined if minimum value is selected 
             );
           }}
           marks={marks}
           handle={handle(props.col)}
-        />
-      </div>
-    </div>
-  );
-}
+        />*/
 
 export const ArrayFilterRenderer: <T>(
   col: FilterColArrayKey<T>,
@@ -101,7 +97,6 @@ export const ArrayFilterRenderer: <T>(
     <>
       {data.map((g, i) =>
         isJsonString(g) ? (
-          // eslint-disable-next-line jsx-a11y/anchor-is-valid
           <a
             onClick={() => props.addFilter(col, g)}
             key={`${props.data?.[idCol]}-${g}`}

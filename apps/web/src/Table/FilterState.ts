@@ -1,25 +1,21 @@
 import { Index } from "flexsearch";
 import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
-import { OptionsType } from "react-select";
-import {
-  NumericColKey,
-  NumericFilterValue,
-  TextFilterValue,
-} from "nfs-media-scraper/src/types/fields";
-import { useTraceUpdate } from "../Common/util";
+import type { Options } from "react-select";
+import { NumericColKey, NumericFilterValue, TextFilterValue } from "data-types";
+import { useTraceUpdate } from "../Common/util.js";
 import {
   DataColumn,
   FilterCol,
   getFilterCols,
   getNumericCols,
-} from "./Columns";
+} from "./Columns.jsx";
 
 export type TextFilterValueWithLabel<T> = TextFilterValue<T> & {
   label: string;
   count: number;
 };
 
-export type SelectValues<T> = OptionsType<TextFilterValueWithLabel<T>>;
+export type SelectValues<T> = Options<TextFilterValueWithLabel<T>>;
 
 export function useNumericFilter<T>(dataColumns: DataColumn<T>[] | undefined) {
   function filterNumericReducer(
@@ -30,7 +26,7 @@ export function useNumericFilter<T>(dataColumns: DataColumn<T>[] | undefined) {
       | { type: "set"; values: NumericFilterValue<T>[] }
   ): NumericFilterValue<T>[] {
     switch (action.type) {
-      case "add":
+      case "add": {
         const found = getNumericCols(dataColumns).find(
           (a) => a.key === action.field
         );
@@ -41,6 +37,7 @@ export function useNumericFilter<T>(dataColumns: DataColumn<T>[] | undefined) {
           ];
         }
         return state;
+      }
       case "set":
         return action.values;
       case "clear":
@@ -129,7 +126,7 @@ export function useTextFilter<T>(
       | { type: "set"; values: SelectValues<T> }
   ): SelectValues<T> | undefined {
     switch (action.type) {
-      case "add":
+      case "add": {
         const found = filterData.filters.find(
           (a) => a.field === action.field && a.value === action.value
         );
@@ -137,6 +134,7 @@ export function useTextFilter<T>(
           return Array.from(new Set([...(state ?? []), found]));
         }
         return state;
+      }
       case "set":
         return action.values;
       case "clear":

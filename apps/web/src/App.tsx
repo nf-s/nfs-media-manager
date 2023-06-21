@@ -1,17 +1,12 @@
-import React, { useEffect, useState } from "react";
-import Movie from "./Browser/Movie";
+import React, { useState } from "react";
+import Movie from "./Browser/Movie.jsx";
 
 // import Movie from "./Movie";
-import Music from "./Browser/Music";
-import { SpotifyAuth } from "./Browser/Spotify";
+import Music from "./Browser/Music.jsx";
 
 function App() {
-  const [spotifyAuthToken, setSpotifyAuthToken] = useState<string>();
-
-  useEffect(() => {
-    const spotifyAuth = new SpotifyAuth(setSpotifyAuthToken);
-    spotifyAuth.init();
-  }, []);
+  // const [spotifyAuthToken, setSpotifyAuthToken] = useState<string>();
+  const spotifyAuthToken = undefined;
 
   const [mode, setMode] = useState<{ mode: "movie" | "music" | "playlist" }>({
     mode: "music",
@@ -35,7 +30,7 @@ function App() {
         </button>
       </div>
 
-      {mode.mode === "movie" ? <Movie darkMode={darkMode}></Movie> : null}
+      {mode.mode === "movie" ? <Movie></Movie> : null}
       {mode.mode === "music" && spotifyAuthToken ? (
         <Music
           spotifyToken={spotifyAuthToken}

@@ -1,18 +1,16 @@
 import React from "react";
-import { CleanTrack } from "nfs-media-scraper/src/music/clean/interfaces";
-import { SortValue } from "nfs-media-scraper/src/types/fields";
+import { CleanTrack, SortValue } from "data-types";
 import {
   DataColumn,
   DefaultVisible,
   FieldRenderer,
   formatTime,
-} from "../Table/Columns";
+} from "../Table/Columns.jsx";
 
 export const Genres: FieldRenderer<CleanTrack> = (props) => {
   return (
     <>
       {props.data.genres.map((g, i) => (
-        // eslint-disable-next-line jsx-a11y/anchor-is-valid
         <a
           onClick={() => props.addFilter("genres", g)}
           key={`${props.data.spotifyId}-${g}`}
@@ -29,7 +27,6 @@ export const Artist: FieldRenderer<CleanTrack> = (props) => {
   return (
     <>
       {props.data.artists.map((a, i) => (
-        // eslint-disable-next-line jsx-a11y/anchor-is-valid
         <a
           onClick={() => props.addFilter("artists", a)}
           key={`${props.data.spotifyId}-${a}`}
@@ -42,20 +39,20 @@ export const Artist: FieldRenderer<CleanTrack> = (props) => {
   );
 };
 
-const keyMap = [
-  "C",
-  "C#/Db",
-  "D",
-  "D#/Eb",
-  "E",
-  "F",
-  "F#/Gb",
-  "G",
-  "G#/Ab",
-  "A",
-  "A#/Bb",
-  "B",
-];
+// const keyMap = [
+//   "C",
+//   "C#/Db",
+//   "D",
+//   "D#/Eb",
+//   "E",
+//   "F",
+//   "F#/Gb",
+//   "G",
+//   "G#/Ab",
+//   "A",
+//   "A#/Bb",
+//   "B",
+// ];
 
 const camelotKeyMap = [8, 3, 10, 5, 12, 7, 2, 9, 4, 11, 6, 1];
 

@@ -6,8 +6,8 @@ import {
   FilterColKey,
   NumericColKey,
   StringColKey,
-} from "nfs-media-scraper/src/types/fields";
-import { AddFilter } from "./FilterState";
+} from "data-types";
+import { AddFilter } from "./FilterState.js";
 
 export function formatTime(seconds: number) {
   const h = Math.floor(seconds / 3600);
