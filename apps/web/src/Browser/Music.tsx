@@ -2,22 +2,17 @@ import axios from "axios";
 import React, { useCallback, useEffect, useState } from "react";
 import SpotifyPlayer from "react-spotify-web-playback";
 import SpotifyWebApi from "spotify-web-api-js";
-import {
-  CleanAlbum,
-  CleanLibrary,
-  CleanTrack,
-} from "nfs-media-scraper/src/music/clean/interfaces";
-import { useTraceUpdate } from "../Common/util";
-import config from "../config.json";
+import { CleanAlbum, CleanLibrary, CleanTrack } from "data-types";
+import { useTraceUpdate } from "../Common/util.js";
 import {
   dataCols,
   defaultSort,
   defaultVisible,
   gridCols,
-} from "../Models/Album";
-import * as Playlist from "../Models/Playlist";
-import Browser from "./Browser";
-import { getQueuePlaylistId } from "./Spotify";
+} from "../Models/Album.jsx";
+import * as Playlist from "../Models/Playlist.jsx";
+import Browser from "./Browser.jsx";
+import { getQueuePlaylistId } from "./Spotify.js";
 
 function Music(props: {
   spotifyToken: string;
@@ -26,17 +21,20 @@ function Music(props: {
 }) {
   useTraceUpdate(props);
   const [spotify, setSpotifyApi] = useState<{
-    api: SpotifyWebApi.SpotifyWebApiJs;
+    api: SpotifyWebApi.default.SpotifyWebApiJs;
   }>();
   const [rowData, setData] = useState<{
     rows: CleanAlbum[];
   }>({ rows: [] });
 
-  const [playlistData, setPlaylistData] = useState<{
-    rows: CleanTrack[];
-  }>({ rows: [] });
+  // const [playlistData, setPlaylistData] = useState<{
+  //   rows: CleanTrack[];
+  // }>({ rows: [] });
+  const playlistData = { rows: [] };
 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [deviceId, setDeviceId] = useState<{ id?: string }>({});
+  console.log(deviceId);
 
   const [playerState, setSpotifyPlayer] = useState<{
     uris?: string | string[];
@@ -46,7 +44,7 @@ function Music(props: {
 
   const [spotifyState, setSpotifyUser] = useState<{
     id: string;
-    queuePlaylist: string;
+    queuePlaylist: string | undefined;
   }>();
 
   const playAlbum = useCallback(
@@ -93,7 +91,7 @@ function Music(props: {
   );
 
   useEffect(() => {
-    const spotifyApi = new SpotifyWebApi();
+    const spotifyApi = new SpotifyWebApi.default();
     spotifyApi.setAccessToken(props.spotifyToken);
 
     setSpotifyApi({ api: spotifyApi });
@@ -101,7 +99,7 @@ function Music(props: {
 
   useEffect(() => {
     const fetchData = async () => {
-      const result = await axios("/lib-music.json");
+      const result = await axios.default("/lib-music.json");
 
       const library = result.data as CleanLibrary;
 
@@ -125,9 +123,7 @@ function Music(props: {
       if (!spotify) return;
       const user = await spotify.api.getMe();
 
-      let playlistId =
-        config.spotifyPlaylistId ??
-        (await getQueuePlaylistId(spotify.api, user.id));
+      const playlistId = await getQueuePlaylistId(spotify.api, user.id);
 
       setSpotifyUser({ id: user.id, queuePlaylist: playlistId });
       if (playerState.uris && playerState.uris.length === 0) {
@@ -153,7 +149,7 @@ function Music(props: {
             {
               key: "Controls",
               name: "",
-              formatter: (formatterProps: { row: CleanAlbum }) => (
+              renderCell: (formatterProps: { row: CleanAlbum }) => (
                 <>
                   <button
                     onClick={(evt) => {
@@ -194,7 +190,7 @@ function Music(props: {
             {
               key: "Controls",
               name: "",
-              formatter: (formatterProps: { row: CleanTrack }) => (
+              renderCell: (formatterProps: { row: CleanTrack }) => (
                 <>
                   <button onClick={() => queueTrack(formatterProps.row)}>
                     +
@@ -217,7 +213,7 @@ function Music(props: {
           persistDeviceSelection={true}
           showSaveIcon={true}
           token={props.spotifyToken}
-          callback={(state) => {
+          callback={(state: any) => {
             console.log(playerState.uris);
             console.log(state);
 
@@ -250,8 +246,9 @@ function Music(props: {
             ) {
               spotify.api.getMyCurrentPlaybackState().then((playbackState) => {
                 if (
+                  spotifyState.queuePlaylist &&
                   playbackState.context?.uri ===
-                  `spotify:playlist:${spotifyState.queuePlaylist}`
+                    `spotify:playlist:${spotifyState.queuePlaylist}`
                 ) {
                   console.log(`removing ${state.track.uri} from quu`);
                   spotify.api.removeTracksFromPlaylist(

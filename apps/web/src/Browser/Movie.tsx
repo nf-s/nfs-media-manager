@@ -1,17 +1,17 @@
 import axios from "axios";
 import React, { useEffect, useState } from "react";
-import { CleanMovie } from "nfs-media-scraper/src/movie/interfaces";
-import Browser from "./Browser";
-import * as Movie from "../Models/Movie";
+import { CleanMovie } from "data-types";
+import Browser from "./Browser.jsx";
+import * as Movie from "../Models/Movie.jsx";
 
-export default function M(props: { darkMode: boolean }) {
+export default function M(/* props: { darkMode: boolean } */) {
   const [movieData, setMovieData] = useState<{
     rows: CleanMovie[];
   }>({ rows: [] });
 
   useEffect(() => {
     const fetchData = async () => {
-      const library = await axios("/lib-movie.json");
+      const library = await axios.default("/lib-movie.json");
 
       const movies = library.data as CleanMovie[];
 

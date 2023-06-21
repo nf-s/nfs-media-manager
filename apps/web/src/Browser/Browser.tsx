@@ -1,14 +1,17 @@
 import { GridLayout } from "@egjs/react-infinitegrid";
-import { SyncPlaylist } from "nfs-media-scraper/src/music/clean/interfaces";
-import { SortColumnKey, SortValue } from "nfs-media-scraper/src/types/fields";
+import { SortColumnKey, SortValue, SyncPlaylist } from "data-types";
 import React, { useEffect, useState } from "react";
 import DataGrid from "react-data-grid";
+import "react-data-grid/lib/styles.css";
 import { LazyLoadImage } from "react-lazy-load-image-component";
 import Select, { components } from "react-select";
-import { useTraceUpdate } from "../Common/util";
-import { DataColumn, GridCols, NumberFormat } from "../Table/Columns";
-import { ColumnWithFieldRenderer, useColumnState } from "../Table/ColumnState";
-import { AddFilter, TextFilterValueWithLabel } from "../Table/FilterState";
+import { useTraceUpdate } from "../Common/util.js";
+import {
+  ColumnWithFieldRenderer,
+  useColumnState,
+} from "../Table/ColumnState.jsx";
+import { DataColumn, GridCols, NumberFormat } from "../Table/Columns.jsx";
+import { AddFilter, TextFilterValueWithLabel } from "../Table/FilterState.jsx";
 
 export type GridButtonsFC<T> = React.FC<{ row: T }>;
 
@@ -146,8 +149,7 @@ function Browser<T>(props: {
           options={slicedOptions}
           inputValue={filterInputValue}
           onInputChange={(value, action) => {
-            if (action.action === "set-value") {
-            } else {
+            if (action.action !== "set-value") {
               setFilterInputValue(value);
             }
           }}
@@ -155,7 +157,7 @@ function Browser<T>(props: {
           isClearable={true}
           closeMenuOnSelect={false}
           styles={{
-            valueContainer: (base, props) => ({
+            valueContainer: (base) => ({
               ...base,
               maxHeight: "36px",
               ":hover": { maxHeight: "none" },
@@ -236,7 +238,6 @@ function Browser<T>(props: {
               },
             })}
           />
-          {/* eslint-disable-next-line jsx-a11y/anchor-is-valid */}
           <a
             className="reverse-sort"
             onClick={() =>
@@ -293,7 +294,7 @@ function Browser<T>(props: {
       {viewMode === "table" ? (
         <div className={"data-grid"}>
           <DataGrid
-            onRowDoubleClick={(row) => setSelectedRow(row)}
+            onCellDoubleClick={(cell) => setSelectedRow(cell.row)}
             columns={visibleColumns ?? []}
             rows={filteredRows}
             // rowClass={(row) => (row.watched ? "watched" : "unwatched")}

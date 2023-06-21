@@ -1,12 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Column } from "react-data-grid";
-import {
-  applyFilters,
-  applySort,
-  NumericColKey,
-  SortValue,
-} from "nfs-media-scraper/src/types/fields";
-import { NumericFilter } from "./ColumnFilters";
+import { applyFilters, applySort, NumericColKey, SortValue } from "data-types";
+import { NumericFilter } from "./ColumnFilters.jsx";
 import {
   BooleanField,
   DataColumn,
@@ -15,8 +10,8 @@ import {
   isBooleanCol,
   isNumericCol,
   NumericField,
-} from "./Columns";
-import { useNumericFilter, useTextFilter } from "./FilterState";
+} from "./Columns.jsx";
+import { useNumericFilter, useTextFilter } from "./FilterState.js";
 
 export type ColumnWithFieldRenderer<T> = Readonly<
   Column<T> & {
@@ -83,12 +78,12 @@ export function useColumnState<T>(
     getNumericCols(dataColumns).forEach((numCol) => {
       maximums.set(
         numCol.key,
-        Math.max(...rows.map((r) => r[numCol.key] ?? -Infinity))
+        Math.max(...rows.map((r) => r[numCol.key] ?? (-Infinity as any)))
       );
 
       minimums.set(
         numCol.key,
-        Math.min(...rows.map((r) => r[numCol.key] ?? Infinity))
+        Math.min(...rows.map((r) => r[numCol.key] ?? (Infinity as any)))
       );
     });
 
@@ -101,7 +96,7 @@ export function useColumnState<T>(
           if (col.generateMaximumFromData) {
             col.max = max;
           }
-          console.log(`Numeric ${col.key}`);
+          console.log(`Numeric ${col.key as any}`);
           const resolvedCol: ColumnWithFieldRenderer<T> = {
             key: col.key.toString(),
             name: col.name !== "" ? col.name : col.key.toString(),
@@ -109,7 +104,7 @@ export function useColumnState<T>(
             resizable: col.resizable ?? true,
             width: col.width ?? 80,
             fieldRenderer: NumericField(col),
-            headerRenderer: (props) => (
+            renderHeaderCell: (props) => (
               <NumericFilter
                 {...props}
                 col={col}
@@ -149,7 +144,7 @@ export function useColumnState<T>(
         const resolvedCol: ColumnWithFieldRenderer<T> = {
           ...col,
           key: col.key.toString(),
-          formatter: (props) =>
+          renderCell: (props) =>
             col.fieldRenderer!({
               data: props.row,
               addFilter,
