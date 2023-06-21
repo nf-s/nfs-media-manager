@@ -26,3 +26,5 @@ yarn-error.log*
 
 spotify-token.md
 src/config.json
+
+.DS_Store
