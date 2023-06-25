@@ -1,3 +1,4 @@
+import { AlbumId, CleanLibrary } from "data-types";
 import debugPkg from "debug";
 import { IReleaseGroup } from "musicbrainz-api";
 import { join } from "path";
@@ -5,37 +6,36 @@ import { fileExists, readJSONFile, writeFile } from "../util/fs.js";
 import { skip } from "../util/skip.js";
 import { clean as cleanPlaylist } from "./clean/clean-playlist.js";
 import { clean } from "./clean/index.js";
-import { AlbumId, CleanLibrary } from "data-types";
 import { removeDupes } from "./remove-dupe.js";
 import { albumCsv } from "./scrape/album-csv.js";
 import {
-  discogs,
   DiscogsMaster,
   DiscogsMasterRelease,
   DiscogsMasterReleaseWithRating,
   DiscogsRelease,
+  discogs,
 } from "./scrape/discogs.js";
 import {
   GoogleResult,
-  metacriticGoogleRelease,
   RymGoogle,
+  metacriticGoogleRelease,
   rymGoogleRelease,
 } from "./scrape/google-custom-search.js";
 import { LastFmAlbum, scrapeLastFm as lastFm } from "./scrape/last-fm.js";
 import { musicBrainz } from "./scrape/mb.js";
 import {
+  SpotifyPlaylistTrack,
   scrapeSpotifyAlbumPlaylists,
   scrapeSpotifyTrackPlaylists,
-  SpotifyPlaylistTrack,
 } from "./scrape/spotify-playlist.js";
 import {
+  SpotifySavedAlbum,
   scrapeSpotifyAlbumArtists,
   scrapeSpotifyAlbumAudioFeatures,
   scrapeSpotifyAlbums,
-  SpotifySavedAlbum,
 } from "./scrape/spotify.js";
 import { upcCsv } from "./scrape/upc-csv.js";
-import { getSpotifyToken } from "./server.js";
+import { getSpotifyToken } from "./spotify-server.js";
 import { syncPlaylists } from "./sync-playlist.js";
 
 import dotenv from "dotenv";
