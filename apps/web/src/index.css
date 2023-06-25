@@ -77,8 +77,9 @@ code {
     monospace;
 }
 
-.rdg.fill-grid {
-  height: 100%;
+.fill-grid {
+  /* Hack to get height working again :( */
+  height: calc(100vh - 80px);
   overflow-x: hidden;
 }
 

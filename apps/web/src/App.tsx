@@ -31,21 +31,20 @@ function App() {
       </div>
 
       {mode.mode === "movie" ? <Movie></Movie> : null}
-      {mode.mode === "music" && spotifyAuthToken ? (
+      {mode.mode === "music" ? (
         <Music
           spotifyToken={spotifyAuthToken}
           darkMode={darkMode}
           mode={"albums"}
         ></Music>
       ) : null}
-      {mode.mode === "playlist" && spotifyAuthToken ? (
+      {mode.mode === "playlist" ? (
         <Music
           spotifyToken={spotifyAuthToken}
           darkMode={darkMode}
           mode={"playlist"}
         ></Music>
       ) : null}
-      {!spotifyAuthToken ? <h2>Fetching Spotify token</h2> : null}
     </div>
   );
 }
