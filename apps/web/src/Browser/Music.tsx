@@ -15,7 +15,7 @@ import Browser from "./Browser.jsx";
 import { getQueuePlaylistId } from "./Spotify.js";
 
 function Music(props: {
-  spotifyToken: string;
+  spotifyToken: string | undefined;
   darkMode: boolean;
   mode: "albums" | "playlist";
 }) {
@@ -91,10 +91,12 @@ function Music(props: {
   );
 
   useEffect(() => {
-    const spotifyApi = new SpotifyWebApi.default();
-    spotifyApi.setAccessToken(props.spotifyToken);
+    if (props.spotifyToken) {
+      const spotifyApi = new SpotifyWebApi.default();
+      spotifyApi.setAccessToken(props.spotifyToken);
 
-    setSpotifyApi({ api: spotifyApi });
+      setSpotifyApi({ api: spotifyApi });
+    }
   }, [props.spotifyToken]);
 
   useEffect(() => {
@@ -208,71 +210,75 @@ function Music(props: {
       )}
 
       <div className={"player"}>
-        <SpotifyPlayer
-          name="Nick's Web Player"
-          persistDeviceSelection={true}
-          showSaveIcon={true}
-          token={props.spotifyToken}
-          callback={(state: any) => {
-            console.log(playerState.uris);
-            console.log(state);
+        {props.spotifyToken ? (
+          <SpotifyPlayer
+            name="Nick's Web Player"
+            persistDeviceSelection={true}
+            showSaveIcon={true}
+            token={props.spotifyToken}
+            callback={(state: any) => {
+              console.log(playerState.uris);
+              console.log(state);
 
-            if (state.deviceId) setDeviceId({ id: state.deviceId });
-            if (state.isPlaying) playerState.waitForPlay = false;
-            if (!state.isPlaying && playerState.waitForPlay) return;
+              if (state.deviceId) setDeviceId({ id: state.deviceId });
+              if (state.isPlaying) playerState.waitForPlay = false;
+              if (!state.isPlaying && playerState.waitForPlay) return;
 
-            if (!spotifyState?.queuePlaylist || state.type !== "track_update")
-              return;
+              if (!spotifyState?.queuePlaylist || state.type !== "track_update")
+                return;
 
-            if (!state.isPlaying && state.nextTracks.length === 0) {
-              // Hacky way to get my playlist queue to start if there aren't any tracks to play
-              setSpotifyPlayer({
-                uris: [],
-                play: false,
-                waitForPlay: true,
-              });
-              setTimeout(() => {
+              if (!state.isPlaying && state.nextTracks.length === 0) {
+                // Hacky way to get my playlist queue to start if there aren't any tracks to play
                 setSpotifyPlayer({
-                  uris: [`spotify:playlist:${spotifyState.queuePlaylist}`],
-                  play: true,
+                  uris: [],
+                  play: false,
                   waitForPlay: true,
                 });
-              }, 500);
-            } else if (
-              state.isPlaying &&
-              playerState.uris?.[0] ===
-                `spotify:playlist:${spotifyState.queuePlaylist}` &&
-              spotify
-            ) {
-              spotify.api.getMyCurrentPlaybackState().then((playbackState) => {
-                if (
-                  spotifyState.queuePlaylist &&
-                  playbackState.context?.uri ===
-                    `spotify:playlist:${spotifyState.queuePlaylist}`
-                ) {
-                  console.log(`removing ${state.track.uri} from quu`);
-                  spotify.api.removeTracksFromPlaylist(
-                    spotifyState.queuePlaylist,
-                    [state.track.uri]
-                  );
-                }
-              });
-            }
-          }}
-          play={playerState.play}
-          autoPlay={true}
-          uris={playerState.uris}
-          styles={{
-            activeColor: "#00c583",
-            bgColor: "#333",
-            color: "#fff",
-            loaderColor: "#fff",
-            sliderColor: "#00c583",
-            sliderHandleColor: "#dbfff8",
-            trackArtistColor: "#ccc",
-            trackNameColor: "#fff",
-          }}
-        />
+                setTimeout(() => {
+                  setSpotifyPlayer({
+                    uris: [`spotify:playlist:${spotifyState.queuePlaylist}`],
+                    play: true,
+                    waitForPlay: true,
+                  });
+                }, 500);
+              } else if (
+                state.isPlaying &&
+                playerState.uris?.[0] ===
+                  `spotify:playlist:${spotifyState.queuePlaylist}` &&
+                spotify
+              ) {
+                spotify.api
+                  .getMyCurrentPlaybackState()
+                  .then((playbackState) => {
+                    if (
+                      spotifyState.queuePlaylist &&
+                      playbackState.context?.uri ===
+                        `spotify:playlist:${spotifyState.queuePlaylist}`
+                    ) {
+                      console.log(`removing ${state.track.uri} from quu`);
+                      spotify.api.removeTracksFromPlaylist(
+                        spotifyState.queuePlaylist,
+                        [state.track.uri]
+                      );
+                    }
+                  });
+              }
+            }}
+            play={playerState.play}
+            autoPlay={true}
+            uris={playerState.uris}
+            styles={{
+              activeColor: "#00c583",
+              bgColor: "#333",
+              color: "#fff",
+              loaderColor: "#fff",
+              sliderColor: "#00c583",
+              sliderHandleColor: "#dbfff8",
+              trackArtistColor: "#ccc",
+              trackNameColor: "#fff",
+            }}
+          />
+        ) : null}
       </div>
     </div>
   );
