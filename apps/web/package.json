@@ -14,7 +14,6 @@
     "@types/flexsearch": "^0.7.1",
     "@types/react-lazy-load-image-component": "^1.5.3",
     "@types/react-lazyload": "^3.1.1",
-    "axios": "^0.21.4",
     "data-types": "workspace:*",
     "flexsearch": "^0.7.21",
     "rc-slider": "^10.2.1",

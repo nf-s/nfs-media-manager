@@ -138,9 +138,6 @@ importers:
       '@types/react-lazyload':
         specifier: ^3.1.1
         version: 3.1.1
-      axios:
-        specifier: ^0.21.4
-        version: 0.21.4(debug@4.3.1)
       data-types:
         specifier: workspace:*
         version: link:../../packages/data-types
@@ -2275,6 +2272,7 @@ packages:
       follow-redirects: 1.15.2(debug@4.3.1)
     transitivePeerDependencies:
       - debug
+    dev: true
 
   /babel-jest@26.6.3(@babel/core@7.12.3):
     resolution: {integrity: sha512-pl4Q+GAVOHwvjrck6jKjvmGhnO3jHX/xuB9d27f+EJZ/6k+6nMuPjorrYp7s++bKKdANwzElBWnLWaObvTnaZA==}
@@ -2950,6 +2948,7 @@ packages:
         optional: true
     dependencies:
       ms: 2.1.2
+    dev: true
 
   /debug@4.3.4:
     resolution: {integrity: sha512-PRWFHuSU3eDtQJPvnNY7Jcket1j0t5OuOsFzPPzsekD52Zl8qUfFIPEiswXqIvHWGVHOgX+7G/vCNNhehwxfkQ==}
@@ -4020,6 +4019,7 @@ packages:
         optional: true
     dependencies:
       debug: 4.3.1
+    dev: true
 
   /follow-redirects@1.5.10:
     resolution: {integrity: sha512-0V5l4Cizzvqt5D44aTXbFZz+FtyXV1vrDN6qrelxtfYQKW0KO0W2T/hkE8xvGa/540LkZlkaUjO4ailYTFtHVQ==}

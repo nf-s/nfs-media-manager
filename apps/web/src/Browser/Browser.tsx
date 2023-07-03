@@ -21,7 +21,7 @@ function Browser<T>(props: {
   defaultSort: SortValue<T>;
   defaultVisible: (keyof T | "Controls")[];
   dataColumns: DataColumn<T>[];
-  customColumns: ColumnWithFieldRenderer<T>[];
+  customColumns: ColumnWithFieldRenderer<T>[] | undefined;
   gridColumns: GridCols<T>;
   GridButtons?: GridButtonsFC<T>;
 }) {
@@ -63,7 +63,7 @@ function Browser<T>(props: {
   );
 
   const [viewMode, setViewMode] = useState<"grid" | "table">(
-    (localStorage.getItem(`${tag}-viewMode`) as any) ?? "grid"
+    (localStorage.getItem(`${tag}-viewMode`) as any) ?? "table"
   );
 
   const [selectedRow, setSelectedRow] = useState<T | undefined>();

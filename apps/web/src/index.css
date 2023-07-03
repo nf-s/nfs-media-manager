@@ -83,6 +83,11 @@ code {
   overflow-x: hidden;
 }
 
+.root-music .fill-grid {
+  /* Hack to get height working again :( */
+  height: calc(100vh - 158px);
+}
+
 .rdg-cell {
   font-size: 12px;
 }

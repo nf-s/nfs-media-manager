@@ -1,8 +1,7 @@
-import axios from "axios";
+import { CleanAlbum, CleanLibrary, CleanTrack } from "data-types";
 import React, { useCallback, useEffect, useState } from "react";
 import SpotifyPlayer from "react-spotify-web-playback";
 import SpotifyWebApi from "spotify-web-api-js";
-import { CleanAlbum, CleanLibrary, CleanTrack } from "data-types";
 import { useTraceUpdate } from "../Common/util.js";
 import {
   dataCols,
@@ -12,17 +11,24 @@ import {
 } from "../Models/Album.jsx";
 import * as Playlist from "../Models/Playlist.jsx";
 import Browser from "./Browser.jsx";
-import { getQueuePlaylistId } from "./Spotify.js";
+import { SpotifyAuth, getQueuePlaylistId } from "./Spotify.js";
 
-function Music(props: {
-  spotifyToken: string | undefined;
-  darkMode: boolean;
-  mode: "albums" | "playlist";
-}) {
+function Music(props: { darkMode: boolean; mode: "albums" | "playlist" }) {
   useTraceUpdate(props);
+
+  const [spotifyAuthToken, setSpotifyAuthToken] = useState<string>();
+
+  useEffect(() => {
+    if (!spotifyAuthToken) {
+      const spotifyAuth = new SpotifyAuth(setSpotifyAuthToken);
+      spotifyAuth.init();
+    }
+  }, [spotifyAuthToken]);
+
   const [spotify, setSpotifyApi] = useState<{
     api: SpotifyWebApi.default.SpotifyWebApiJs;
   }>();
+
   const [rowData, setData] = useState<{
     rows: CleanAlbum[];
   }>({ rows: [] });
@@ -32,29 +38,32 @@ function Music(props: {
   // }>({ rows: [] });
   const playlistData = { rows: [] };
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const [deviceId, setDeviceId] = useState<{ id?: string }>({});
-  console.log(deviceId);
+  const [playerState, setSpotifyPlayerState] = useState<
+    | {
+        uris?: string | string[];
+        play?: boolean;
+        waitForPlay?: boolean;
+      }
+    | undefined
+  >(undefined);
 
-  const [playerState, setSpotifyPlayer] = useState<{
-    uris?: string | string[];
-    play?: boolean;
-    waitForPlay?: boolean;
-  }>({ play: true });
-
-  const [spotifyState, setSpotifyUser] = useState<{
-    id: string;
-    queuePlaylist: string | undefined;
-  }>();
+  const [spotifyState, setSpotifyState] = useState<
+    | {
+        userId?: string | undefined;
+        queuePlaylist?: string | undefined;
+        deviceId?: string | undefined;
+      }
+    | undefined
+  >(undefined);
 
   const playAlbum = useCallback(
     (row: CleanAlbum) => {
-      setSpotifyPlayer({
+      setSpotifyPlayerState({
         uris: [`spotify:album:${row.id.spotify}`],
         play: true,
       });
     },
-    [setSpotifyPlayer]
+    [setSpotifyPlayerState]
   );
 
   const queueAlbum = useCallback(
@@ -71,12 +80,12 @@ function Music(props: {
 
   const playTrack = useCallback(
     (row: CleanTrack) => {
-      setSpotifyPlayer({
+      setSpotifyPlayerState({
         uris: [`spotify:track:${row.spotifyId}`],
         play: true,
       });
     },
-    [setSpotifyPlayer]
+    [setSpotifyPlayerState]
   );
 
   const queueTrack = useCallback(
@@ -91,19 +100,21 @@ function Music(props: {
   );
 
   useEffect(() => {
-    if (props.spotifyToken) {
-      const spotifyApi = new SpotifyWebApi.default();
-      spotifyApi.setAccessToken(props.spotifyToken);
+    if (spotifyAuthToken && !spotify?.api) {
+      const spotifyApi = new (SpotifyWebApi as any)();
+      spotifyApi.setAccessToken(spotifyAuthToken);
 
       setSpotifyApi({ api: spotifyApi });
     }
-  }, [props.spotifyToken]);
+  }, [spotifyAuthToken, spotify]);
 
   useEffect(() => {
-    const fetchData = async () => {
-      const result = await axios.default("/lib-music.json");
+    if (rowData.rows.length > 0) return;
 
-      const library = result.data as CleanLibrary;
+    const fetchData = async () => {
+      const library = (await (
+        await fetch("/lib-music.json")
+      ).json()) as CleanLibrary;
 
       setData({
         rows: Object.values(library.albums),
@@ -118,23 +129,39 @@ function Music(props: {
     };
 
     fetchData();
-  }, []);
+  }, [rowData]);
 
   useEffect(() => {
+    if (!spotify || spotifyState) return;
+
     const fetchSpotifyUser = async () => {
-      if (!spotify) return;
       const user = await spotify.api.getMe();
 
-      const playlistId = await getQueuePlaylistId(spotify.api, user.id);
+      let playlistId = localStorage.getItem("spotifyPlaylistId");
 
-      setSpotifyUser({ id: user.id, queuePlaylist: playlistId });
-      if (playerState.uris && playerState.uris.length === 0) {
-        setSpotifyPlayer({ uris: [`spotify:playlist:${playlistId}`] });
+      if (!playlistId) {
+        playlistId = await getQueuePlaylistId(spotify.api, user.id);
+        if (playlistId)
+          localStorage.setItem("spotifyPlaylistId", playlistId ?? "");
       }
+
+      setSpotifyState({
+        userId: user.id,
+        queuePlaylist: playlistId,
+      });
     };
 
     fetchSpotifyUser();
-  }, [playerState, spotify]);
+  }, [spotifyState, spotify]);
+
+  useEffect(() => {
+    if (playerState || !spotifyState?.queuePlaylist) return;
+
+    setSpotifyPlayerState({
+      uris: [`spotify:playlist:${spotifyState.queuePlaylist}`],
+      play: true,
+    });
+  }, [spotifyState, playerState]);
 
   return (
     <div className="root-music">
@@ -210,32 +237,36 @@ function Music(props: {
       )}
 
       <div className={"player"}>
-        {props.spotifyToken ? (
+        {spotifyAuthToken ? (
           <SpotifyPlayer
             name="Nick's Web Player"
             persistDeviceSelection={true}
             showSaveIcon={true}
-            token={props.spotifyToken}
+            token={spotifyAuthToken}
             callback={(state: any) => {
-              console.log(playerState.uris);
+              console.log(playerState?.uris);
               console.log(state);
 
-              if (state.deviceId) setDeviceId({ id: state.deviceId });
-              if (state.isPlaying) playerState.waitForPlay = false;
-              if (!state.isPlaying && playerState.waitForPlay) return;
+              if (state.deviceId)
+                setSpotifyState({ ...spotifyState, deviceId: state.deviceId });
+              if (state.isPlaying)
+                setSpotifyPlayerState({ ...playerState, waitForPlay: false });
+              if (!state.isPlaying && playerState?.waitForPlay) return;
 
               if (!spotifyState?.queuePlaylist || state.type !== "track_update")
                 return;
 
               if (!state.isPlaying && state.nextTracks.length === 0) {
                 // Hacky way to get my playlist queue to start if there aren't any tracks to play
-                setSpotifyPlayer({
+                setSpotifyPlayerState({
+                  ...playerState,
                   uris: [],
                   play: false,
                   waitForPlay: true,
                 });
                 setTimeout(() => {
-                  setSpotifyPlayer({
+                  setSpotifyPlayerState({
+                    ...playerState,
                     uris: [`spotify:playlist:${spotifyState.queuePlaylist}`],
                     play: true,
                     waitForPlay: true,
@@ -243,7 +274,7 @@ function Music(props: {
                 }, 500);
               } else if (
                 state.isPlaying &&
-                playerState.uris?.[0] ===
+                playerState?.uris?.[0] ===
                   `spotify:playlist:${spotifyState.queuePlaylist}` &&
                 spotify
               ) {
@@ -264,9 +295,9 @@ function Music(props: {
                   });
               }
             }}
-            play={playerState.play}
+            play={playerState?.play}
             autoPlay={true}
-            uris={playerState.uris}
+            uris={playerState?.uris}
             styles={{
               activeColor: "#00c583",
               bgColor: "#333",
