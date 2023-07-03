@@ -1,4 +1,3 @@
-import axios from "axios";
 import React, { useEffect, useState } from "react";
 import { CleanMovie } from "data-types";
 import Browser from "./Browser.jsx";
@@ -11,9 +10,9 @@ export default function M(/* props: { darkMode: boolean } */) {
 
   useEffect(() => {
     const fetchData = async () => {
-      const library = await axios.default("/lib-movie.json");
-
-      const movies = library.data as CleanMovie[];
+      const movies = (await (
+        await fetch("/lib-movie.json")
+      ).json()) as CleanMovie[];
 
       setMovieData({
         rows: movies,

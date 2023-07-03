@@ -5,9 +5,6 @@ import Movie from "./Browser/Movie.jsx";
 import Music from "./Browser/Music.jsx";
 
 function App() {
-  // const [spotifyAuthToken, setSpotifyAuthToken] = useState<string>();
-  const spotifyAuthToken = undefined;
-
   const [mode, setMode] = useState<{ mode: "movie" | "music" | "playlist" }>({
     mode: "music",
   });
@@ -32,18 +29,10 @@ function App() {
 
       {mode.mode === "movie" ? <Movie></Movie> : null}
       {mode.mode === "music" ? (
-        <Music
-          spotifyToken={spotifyAuthToken}
-          darkMode={darkMode}
-          mode={"albums"}
-        ></Music>
+        <Music darkMode={darkMode} mode={"albums"}></Music>
       ) : null}
       {mode.mode === "playlist" ? (
-        <Music
-          spotifyToken={spotifyAuthToken}
-          darkMode={darkMode}
-          mode={"playlist"}
-        ></Music>
+        <Music darkMode={darkMode} mode={"playlist"}></Music>
       ) : null}
     </div>
   );

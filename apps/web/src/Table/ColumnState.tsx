@@ -25,7 +25,7 @@ export function useColumnState<T>(
   defaultSort: SortValue<T>,
   defaultVisible: (keyof T | "Controls")[],
   dataColumns: DataColumn<T>[],
-  customColumns: ColumnWithFieldRenderer<T>[]
+  customColumns?: ColumnWithFieldRenderer<T>[]
 ) {
   const [[sortColumn, sortDirection], setSort] = useState<SortValue<T>>(
     localStorage.getItem(`${tag}-sortColumn`) &&
@@ -88,7 +88,7 @@ export function useColumnState<T>(
     });
 
     const columns: ColumnWithFieldRenderer<T>[] = [
-      ...customColumns,
+      ...(customColumns ?? []),
       ...dataColumns.map((col) => {
         if (isNumericCol(col)) {
           const min = minimums.get(col.key);
