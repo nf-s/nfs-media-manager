@@ -12,6 +12,8 @@ export type StringColKey<T> = Exclude<
   keyof PickProperties<T, string | undefined>,
   undefined
 >;
+export type IdColKey<T> = Exclude<keyof PickProperties<T, string>, undefined>;
+
 export type FilterColKey<T> = Exclude<
   keyof PickProperties<T, string[] | string | undefined>,
   undefined

@@ -10,7 +10,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@egjs/react-infinitegrid": "^3.2.2",
+    "@egjs/react-infinitegrid": "^4.1.0",
     "@types/flexsearch": "^0.7.1",
     "@types/react-lazy-load-image-component": "^1.5.3",
     "@types/react-lazyload": "^3.1.1",

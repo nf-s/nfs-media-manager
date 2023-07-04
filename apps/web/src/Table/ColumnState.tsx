@@ -1,17 +1,48 @@
+import {
+  IdColKey,
+  NumericColKey,
+  SortValue,
+  applyFilters,
+  applySort,
+} from "data-types";
 import React, { useEffect, useMemo, useState } from "react";
 import { Column } from "react-data-grid";
-import { applyFilters, applySort, NumericColKey, SortValue } from "data-types";
+import { PickProperties } from "ts-essentials";
 import { NumericFilter } from "./ColumnFilters.jsx";
 import {
   BooleanField,
   DataColumn,
+  DataColumnKey,
   FieldRenderer,
+  NumericField,
   getNumericCols,
   isBooleanCol,
   isNumericCol,
-  NumericField,
 } from "./Columns.jsx";
 import { useNumericFilter, useTextFilter } from "./FilterState.js";
+
+export type GridButtonsFC<T> = React.FC<{ row: T }>;
+
+export type GridConfig<T> = {
+  readonly width: number;
+  readonly height: number;
+  readonly art?: keyof PickProperties<T, string | undefined>;
+  /** maximum of 3 columns */ readonly cols: [
+    DataColumnKey<T>,
+    DataColumnKey<T>,
+    DataColumnKey<T>
+  ];
+  buttons?: GridButtonsFC<T>;
+};
+
+export interface ColumnsConfig<T> {
+  data: DataColumn<T>[];
+  custom?: ColumnWithFieldRenderer<T>[];
+  grid: GridConfig<T>;
+  id: IdColKey<T>;
+  defaultSort: SortValue<T>;
+  defaultVisible: (keyof T | "Controls")[];
+}
 
 export type ColumnWithFieldRenderer<T> = Readonly<
   Column<T> & {
@@ -22,10 +53,7 @@ export type ColumnWithFieldRenderer<T> = Readonly<
 export function useColumnState<T>(
   tag: string,
   rows: T[],
-  defaultSort: SortValue<T>,
-  defaultVisible: (keyof T | "Controls")[],
-  dataColumns: DataColumn<T>[],
-  customColumns?: ColumnWithFieldRenderer<T>[]
+  columnsConfig: ColumnsConfig<T>
 ) {
   const [[sortColumn, sortDirection], setSort] = useState<SortValue<T>>(
     localStorage.getItem(`${tag}-sortColumn`) &&
@@ -34,7 +62,7 @@ export function useColumnState<T>(
           localStorage.getItem(`${tag}-sortColumn`),
           localStorage.getItem(`${tag}-sortDirection`),
         ] as any)
-      : defaultSort
+      : columnsConfig.defaultSort
   );
 
   const [columns, setColumns] = useState<ColumnWithFieldRenderer<T>[]>([]);
@@ -49,10 +77,11 @@ export function useColumnState<T>(
     slicedOptions,
     filterInputValue,
     setFilterInputValue,
-  } = useTextFilter<T>(dataColumns, rows, tag);
+  } = useTextFilter<T>(columnsConfig.data, rows, tag);
 
-  const { activeNumericFilters, addNumericFilter } =
-    useNumericFilter<T>(dataColumns);
+  const { activeNumericFilters, addNumericFilter } = useNumericFilter<T>(
+    columnsConfig.data
+  );
 
   useEffect(() => {
     localStorage.setItem(`${tag}-sortColumn`, sortColumn.toString());
@@ -75,7 +104,7 @@ export function useColumnState<T>(
     const maximums = new Map<NumericColKey<T>, number>();
     const minimums = new Map<NumericColKey<T>, number>();
 
-    getNumericCols(dataColumns).forEach((numCol) => {
+    getNumericCols(columnsConfig.data).forEach((numCol) => {
       maximums.set(
         numCol.key,
         Math.max(...rows.map((r) => r[numCol.key] ?? (-Infinity as any)))
@@ -88,8 +117,8 @@ export function useColumnState<T>(
     });
 
     const columns: ColumnWithFieldRenderer<T>[] = [
-      ...(customColumns ?? []),
-      ...dataColumns.map((col) => {
+      ...(columnsConfig.custom ?? []),
+      ...columnsConfig.data.map((col) => {
         if (isNumericCol(col)) {
           const min = minimums.get(col.key);
           const max = maximums.get(col.key);
@@ -166,24 +195,18 @@ export function useColumnState<T>(
       );
     } else {
       setVisibleColumns(
-        columns.filter((c) => defaultVisible.includes(c.key as any))
+        columns.filter((c) =>
+          columnsConfig.defaultVisible.includes(c.key as any)
+        )
       );
     }
 
     setColumns(columns);
-  }, [
-    rows,
-    dataColumns,
-    addFilter,
-    defaultVisible,
-    tag,
-    addNumericFilter,
-    customColumns,
-  ]);
+  }, [rows, columnsConfig, addFilter, tag, addNumericFilter]);
 
   const processedRows = useMemo(() => {
     return rows.map((row) => {
-      dataColumns.forEach((col) => {
+      columnsConfig.data.forEach((col) => {
         if (
           isNumericCol(col) &&
           typeof col.default !== "undefined" &&
@@ -194,7 +217,7 @@ export function useColumnState<T>(
       });
       return row;
     });
-  }, [rows, dataColumns]);
+  }, [rows, columnsConfig]);
 
   const sortedRows = useMemo(() => {
     return applySort(processedRows, [sortColumn, sortDirection]);

@@ -23,15 +23,11 @@ export default function M(/* props: { darkMode: boolean } */) {
   }, []);
 
   return (
-    <div className="root-music">
+    <div className="root-movie">
       <Browser
         tag={"movie"}
         rows={movieData.rows}
-        defaultSort={Movie.defaultSort}
-        defaultVisible={Movie.defaultVisible}
-        dataColumns={Movie.dataColumns}
-        gridColumns={Movie.gridCols}
-        customColumns={[]}
+        columnsConfig={Movie.columnsConfig}
       />
     </div>
   );
