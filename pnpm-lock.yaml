@@ -127,8 +127,8 @@ importers:
   apps/web:
     dependencies:
       '@egjs/react-infinitegrid':
-        specifier: ^3.2.2
-        version: 3.2.2
+        specifier: ^4.1.0
+        version: 4.1.0
       '@types/flexsearch':
         specifier: ^0.7.1
         version: 0.7.1
@@ -646,12 +646,22 @@ packages:
       minimist: 1.2.8
     dev: true
 
-  /@egjs/component@2.2.2:
-    resolution: {integrity: sha512-2m6nu6/Mbs6VnoT4IHFGUBX6V82Zp01zDmlWpIJ3fMatHpe7BB1qUYFgMmSWGY0uOvOl4plvflwbCRUAGMfwWQ==}
+  /@egjs/children-differ@1.0.1:
+    resolution: {integrity: sha512-DRvyqMf+CPCOzAopQKHtW+X8iN6Hy6SFol+/7zCUiE5y4P/OB8JP8FtU4NxtZwtafvSL4faD5KoQYPj3JHzPFQ==}
+    dependencies:
+      '@egjs/list-differ': 1.0.1
     dev: false
 
   /@egjs/component@3.0.4:
     resolution: {integrity: sha512-sXA7bGbIeLF2OAw/vpka66c6QBBUPcA4UUhR4WGJfnp2XWdiI8QrnJGJMr/UxpE/xnevX9tN3jvNPlW8WkHl3g==}
+    dev: false
+
+  /@egjs/grid@1.14.1:
+    resolution: {integrity: sha512-xICx7COEqVdcfsEYnh22otobqOBqb/69NooDF6W4Tg35SS3Tans9yrgv0a4J6/dEykVcH6kdDEy53gPxl9wIUQ==}
+    dependencies:
+      '@egjs/children-differ': 1.0.1
+      '@egjs/component': 3.0.4
+      '@egjs/imready': 1.4.1
     dev: false
 
   /@egjs/imready@1.4.1:
@@ -661,11 +671,12 @@ packages:
       '@egjs/component': 3.0.4
     dev: false
 
-  /@egjs/infinitegrid@3.9.0:
-    resolution: {integrity: sha512-t3B+zJUf6zOaIBv/q4repcvtODcsba3mI7YEi3vSILqU4dgvWbH5Ri3C3PFQhmavCnwWsHXfNlYHIsWCr5VyMQ==}
+  /@egjs/infinitegrid@4.1.1:
+    resolution: {integrity: sha512-ss1cDSHk1gVv/Wupu2fnZL5nllrImgj01fYx9V9tJ/i37LjN43R7s6rFeUX6jj3OaiaWJM8IU6iJsJSr27QmTQ==}
     dependencies:
-      '@egjs/component': 2.2.2
-      '@egjs/imready': 1.4.1
+      '@egjs/children-differ': 1.0.1
+      '@egjs/component': 3.0.4
+      '@egjs/grid': 1.14.1
       '@egjs/list-differ': 1.0.1
     dev: false
 
@@ -673,11 +684,10 @@ packages:
     resolution: {integrity: sha512-OTFTDQcWS+1ZREOdCWuk5hCBgYO4OsD30lXcOCyVOAjXMhgL5rBRDnt/otb6Nz8CzU0L/igdcaQBDLWc4t9gvg==}
     dev: false
 
-  /@egjs/react-infinitegrid@3.2.2:
-    resolution: {integrity: sha512-HpgtNySNraRDyy0cpF3ZPTJR9/sRhfeAN9ywhdIcdNXshEHEhBX3JHjeUPXDQ5NokHx1Q4Sg9Udkl3XaVjEwXg==}
+  /@egjs/react-infinitegrid@4.1.0:
+    resolution: {integrity: sha512-fMv9ziez/fTqyOPRJsfMeKwZrGhImmNJsKURhl4Gs8nJ114dZHM+tBodaT+xQk8PXzhEzgZ5lQQiDomyAjL/EQ==}
     dependencies:
-      '@egjs/infinitegrid': 3.9.0
-      '@egjs/list-differ': 1.0.1
+      '@egjs/infinitegrid': 4.1.1
     dev: false
 
   /@emotion/babel-plugin@11.11.0:

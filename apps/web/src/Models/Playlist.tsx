@@ -1,11 +1,7 @@
+import { CleanTrack } from "data-types";
 import React from "react";
-import { CleanTrack, SortValue } from "data-types";
-import {
-  DataColumn,
-  DefaultVisible,
-  FieldRenderer,
-  formatTime,
-} from "../Table/Columns.jsx";
+import { ColumnsConfig } from "../Table/ColumnState.js";
+import { FieldRenderer, formatTime } from "../Table/Columns.jsx";
 
 export const Genres: FieldRenderer<CleanTrack> = (props) => {
   return (
@@ -67,130 +63,155 @@ export const Key: FieldRenderer<CleanTrack> = (props) => {
   );
 };
 
-export const defaultSort: SortValue<CleanTrack> = ["dateAdded", "DESC"];
-export const defaultVisible: DefaultVisible<CleanTrack> = [
-  "Controls",
-  "title",
-  "durationSec",
-  "artists",
-  "dateReleased",
-  "dateAdded",
-  "genres",
-];
-
-export const dataColumns: DataColumn<CleanTrack>[] = [
-  {
-    type: "string",
-    key: "title",
-    name: "Title",
-    sortable: true,
+export const columnsConfig: ColumnsConfig<CleanTrack> = {
+  id: "spotifyId",
+  data: [
+    {
+      type: "string",
+      key: "title",
+      name: "Title",
+      sortable: true,
+    },
+    {
+      type: "string",
+      key: "durationSec",
+      name: "Duration",
+      sortable: true,
+      fieldRenderer: ((props) => (
+        <>{formatTime(props.data.durationSec)}</>
+      )) as FieldRenderer<CleanTrack>,
+      width: 80,
+    },
+    {
+      type: "string",
+      key: "artists",
+      name: "Artist",
+      sortable: true,
+      fieldRenderer: Artist,
+    },
+    {
+      type: "string",
+      key: "dateReleased",
+      name: "Release",
+      sortable: true,
+      width: 100,
+      resizable: false,
+    },
+    {
+      type: "string",
+      key: "dateAdded",
+      name: "Added",
+      sortable: true,
+      width: 100,
+      resizable: false,
+    },
+    { type: "string", key: "genres", name: "Genres", fieldRenderer: Genres },
+    { type: "string", key: "key", name: "Key", fieldRenderer: Key },
+    {
+      type: "numeric",
+      key: "acousticness",
+      name: "Acousticness",
+      append: "%",
+      mult: 100,
+      precision: 1,
+    },
+    {
+      type: "numeric",
+      key: "danceability",
+      name: "Danceability",
+      append: "%",
+      mult: 100,
+      precision: 1,
+    },
+    {
+      type: "numeric",
+      key: "energy",
+      name: "Energy",
+      append: "%",
+      mult: 100,
+      precision: 1,
+    },
+    {
+      type: "numeric",
+      key: "instrumentalness",
+      name: "Intrumentalness",
+      append: "%",
+      mult: 100,
+      precision: 1,
+    },
+    {
+      type: "numeric",
+      key: "liveness",
+      name: "Liveness",
+      append: "%",
+      mult: 100,
+      precision: 1,
+    },
+    {
+      type: "numeric",
+      key: "loudness",
+      name: "Loudness",
+      append: "dB",
+      precision: 1,
+    },
+    {
+      type: "numeric",
+      key: "mode",
+      name: "Mode",
+      max: 1,
+      append: "%",
+      mult: 100,
+      precision: 1,
+    },
+    {
+      type: "numeric",
+      key: "speechiness",
+      name: "Speechiness",
+      append: "%",
+      mult: 100,
+      precision: 1,
+    },
+    { type: "numeric", key: "tempo", name: "BPM", append: "", precision: 1 },
+    {
+      type: "numeric",
+      key: "valence",
+      name: "Valence",
+      append: "%",
+      mult: 100,
+      precision: 1,
+    },
+  ],
+  custom: [
+    {
+      key: "Controls",
+      name: "",
+      renderCell: (formatterProps: { row: CleanTrack }) => (
+        <>
+          {/* <button onClick={() => queueTrack(formatterProps.row)}>
+            +
+          </button>
+          <button onClick={() => playTrack(formatterProps.row)}>
+            &#9654;
+          </button> */}
+        </>
+      ),
+      width: 80,
+      resizable: false,
+    },
+  ],
+  grid: {
+    width: 250,
+    height: 250,
+    cols: ["title", "artists", "dateReleased"],
   },
-  {
-    type: "string",
-    key: "durationSec",
-    name: "Duration",
-    sortable: true,
-    fieldRenderer: ((props) => (
-      <>{formatTime(props.data.durationSec)}</>
-    )) as FieldRenderer<CleanTrack>,
-    width: 80,
-  },
-  {
-    type: "string",
-    key: "artists",
-    name: "Artist",
-    sortable: true,
-    fieldRenderer: Artist,
-  },
-  {
-    type: "string",
-    key: "dateReleased",
-    name: "Release",
-    sortable: true,
-    width: 100,
-    resizable: false,
-  },
-  {
-    type: "string",
-    key: "dateAdded",
-    name: "Added",
-    sortable: true,
-    width: 100,
-    resizable: false,
-  },
-  { type: "string", key: "genres", name: "Genres", fieldRenderer: Genres },
-  { type: "string", key: "key", name: "Key", fieldRenderer: Key },
-  {
-    type: "numeric",
-    key: "acousticness",
-    name: "Acousticness",
-    append: "%",
-    mult: 100,
-    precision: 1,
-  },
-  {
-    type: "numeric",
-    key: "danceability",
-    name: "Danceability",
-    append: "%",
-    mult: 100,
-    precision: 1,
-  },
-  {
-    type: "numeric",
-    key: "energy",
-    name: "Energy",
-    append: "%",
-    mult: 100,
-    precision: 1,
-  },
-  {
-    type: "numeric",
-    key: "instrumentalness",
-    name: "Intrumentalness",
-    append: "%",
-    mult: 100,
-    precision: 1,
-  },
-  {
-    type: "numeric",
-    key: "liveness",
-    name: "Liveness",
-    append: "%",
-    mult: 100,
-    precision: 1,
-  },
-  {
-    type: "numeric",
-    key: "loudness",
-    name: "Loudness",
-    append: "dB",
-    precision: 1,
-  },
-  {
-    type: "numeric",
-    key: "mode",
-    name: "Mode",
-    max: 1,
-    append: "%",
-    mult: 100,
-    precision: 1,
-  },
-  {
-    type: "numeric",
-    key: "speechiness",
-    name: "Speechiness",
-    append: "%",
-    mult: 100,
-    precision: 1,
-  },
-  { type: "numeric", key: "tempo", name: "BPM", append: "", precision: 1 },
-  {
-    type: "numeric",
-    key: "valence",
-    name: "Valence",
-    append: "%",
-    mult: 100,
-    precision: 1,
-  },
-];
+  defaultVisible: [
+    "Controls",
+    "title",
+    "durationSec",
+    "artists",
+    "dateReleased",
+    "dateAdded",
+    "genres",
+  ],
+  defaultSort: ["dateAdded", "DESC"],
+};

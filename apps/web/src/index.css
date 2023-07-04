@@ -77,15 +77,18 @@ code {
     monospace;
 }
 
-.fill-grid {
+.root-movie .fill-grid,
+.root-movie .container {
   /* Hack to get height working again :( */
   height: calc(100vh - 80px);
   overflow-x: hidden;
 }
 
-.root-music .fill-grid {
+.root-music .fill-grid,
+.root-music .container {
   /* Hack to get height working again :( */
   height: calc(100vh - 158px);
+  overflow-x: hidden;
 }
 
 .rdg-cell {
@@ -105,13 +108,6 @@ code {
 .image-grid {
   overflow: hidden;
   position: relative;
-}
-
-.image-grid-container {
-  height: 100%;
-  position: absolute;
-  overflow: auto;
-  width: 100vw;
 }
 
 .header {

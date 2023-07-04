@@ -1,12 +1,12 @@
-import "rc-slider/assets/index.css";
-import React from "react";
-import { PickProperties } from "ts-essentials";
 import {
   BooleanColKey,
   FilterColKey,
   NumericColKey,
   StringColKey,
 } from "data-types";
+import "rc-slider/assets/index.css";
+import React from "react";
+import { PickProperties } from "ts-essentials";
 import { AddFilter } from "./FilterState.js";
 
 export function formatTime(seconds: number) {
@@ -64,17 +64,6 @@ type ColumnBase = {
   readonly resizable?: boolean;
 };
 
-export type GridCols<T> = {
-  readonly width: number;
-  readonly height: number;
-  readonly art?: keyof PickProperties<T, string | undefined>;
-  /** maximum of 3 columns */ readonly cols: [
-    DataColumnKey<T>,
-    DataColumnKey<T>,
-    DataColumnKey<T>
-  ];
-};
-
 export type DefaultVisible<T> = (keyof T | "Controls")[];
 
 export type NumericCol<T> = {
@@ -127,7 +116,7 @@ export type DataColumn<T> =
   | NumericCol<T>
   | BooleanCol<T>;
 
-type DataColumnKey<T> =
+export type DataColumnKey<T> =
   | FilterColKey<T>
   | StringColKey<T>
   | NumericColKey<T>

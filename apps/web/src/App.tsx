@@ -1,14 +1,32 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import Movie from "./Browser/Movie.jsx";
 
 // import Movie from "./Movie";
 import Music from "./Browser/Music.jsx";
 
+function parseMode(
+  mode: string | null
+): "movie" | "music" | "playlist" | undefined {
+  switch (mode) {
+    case "movie":
+      return "movie";
+    case "music":
+      return "music";
+    case "playlist":
+      return "playlist";
+  }
+  return;
+}
+
 function App() {
   const [mode, setMode] = useState<{ mode: "movie" | "music" | "playlist" }>({
-    mode: "music",
+    mode: parseMode(localStorage.getItem("mode")) ?? "music",
   });
   const [darkMode, setDarkMode] = useState<boolean>(false);
+
+  useEffect(() => {
+    localStorage.setItem("mode", mode.mode);
+  }, [mode]);
 
   return (
     <div id="root" className={darkMode ? "dark" : ""}>
