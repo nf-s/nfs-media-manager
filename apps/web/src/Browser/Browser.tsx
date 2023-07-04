@@ -395,6 +395,8 @@ function FieldRenderer<T>(props: {
   }
 }
 
+const GRID_GROUP_SIZE = 100;
+
 function ImageGrid<T>(props: {
   rows: T[];
   columnsConfig: ColumnsConfig<T>;
@@ -408,7 +410,9 @@ function ImageGrid<T>(props: {
 
   const igRef = useRef<MasonryInfiniteGrid>();
 
-  const [items, setItems] = useState(() => getItems(0, 10, rows.length - 1));
+  const [items, setItems] = useState(() =>
+    getItems(0, GRID_GROUP_SIZE, rows.length - 1)
+  );
 
   const [numRows, setNumRows] = useState(() => rows.length);
 
@@ -416,7 +420,7 @@ function ImageGrid<T>(props: {
   useEffect(() => {
     if (numRows !== rows.length) {
       setNumRows(rows.length);
-      setItems(getItems(0, 10, rows.length - 1));
+      setItems(getItems(0, GRID_GROUP_SIZE, rows.length - 1));
     }
   }, [rows]);
 
@@ -432,11 +436,15 @@ function ImageGrid<T>(props: {
         const nextGroupKey = (+e.groupKey! || 0) + 1;
 
         // Only add more items if there are more rows to add
-        if (nextGroupKey * 10 < rows.length - 1) {
-          setItems([...items, ...getItems(nextGroupKey, 10, rows.length - 1)]);
+        if (nextGroupKey * GRID_GROUP_SIZE < rows.length - 1) {
+          setItems([
+            ...items,
+            ...getItems(nextGroupKey, GRID_GROUP_SIZE, rows.length - 1),
+          ]);
         }
       }}
       align="start"
+      threshold={1500}
       isConstantSize
       isEqualSize
       useResizeObserver
