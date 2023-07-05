@@ -65,8 +65,9 @@ export class SpotifyAuth {
     const spotifyCode = urlParams.get("code");
 
     if (spotifyCode) {
-      this.fetchToken(spotifyCode);
-      // window.history.pushState("", "", "/");
+      await this.fetchToken(spotifyCode);
+      // Remove "code" from URL
+      window.history.pushState("", "", "/");
     } else {
       if (!this.token) {
         this.redirect();
