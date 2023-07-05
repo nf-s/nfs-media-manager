@@ -1,5 +1,11 @@
+/* eslint-disable react-hooks/rules-of-hooks */
 import { CleanAlbum, timeToDateString } from "data-types";
-import React from "react";
+import React, { useContext } from "react";
+import {
+  SpotifyContext,
+  SpotifyDispatchContext,
+  queueAlbum,
+} from "../Browser/SpotifyContext.js";
 import { ArrayFilterRenderer } from "../Table/ColumnFilters.jsx";
 import { ColumnsConfig } from "../Table/ColumnState.js";
 import { FieldRenderer, formatTime } from "../Table/Columns.jsx";
@@ -69,28 +75,34 @@ const Release: FieldRenderer<CleanAlbum> = (props) => (
 );
 
 const AlbumButtons: React.FC<{ row: CleanAlbum }> = (props) => {
+  const spotifyContext = useContext(SpotifyContext);
+  const spotifyDispatch = useContext(SpotifyDispatchContext);
+
   return (
     <div className="image-buttons">
-      {/* {queue ? (
+      {
         <button
           onClick={(evt) => {
-            queue(props.row);
+            queueAlbum(spotifyContext, props.row);
             evt.stopPropagation();
           }}
         >
           +
         </button>
-      ) : null}
-      {play ? (
+      }
+      {
         <button
           onClick={(evt) => {
-            play(props.row);
+            spotifyDispatch?.({
+              type: "playAlbum",
+              row: props.row,
+            });
             evt.stopPropagation();
           }}
         >
           &#9654;
         </button>
-      ) : null} */}
+      }
     </div>
   );
 };
@@ -325,26 +337,33 @@ export const columnsConfig: ColumnsConfig<CleanAlbum> = {
     {
       key: "Controls",
       name: "",
-      renderCell: (formatterProps: { row: CleanAlbum }) => (
-        <>
-          {/* <button
-            onClick={(evt) => {
-              queueAlbum(formatterProps.row);
-              evt.stopPropagation();
-            }}
-          >
-            +
-          </button>
-          <button
-            onClick={(evt) => {
-              playAlbum(formatterProps.row);
-              evt.stopPropagation();
-            }}
-          >
-            &#9654;
-          </button> */}
-        </>
-      ),
+      renderCell: (formatterProps: { row: CleanAlbum }) => {
+        const spotifyContext = useContext(SpotifyContext);
+        const spotifyDispatch = useContext(SpotifyDispatchContext);
+        return (
+          <>
+            <button
+              onClick={(evt) => {
+                queueAlbum(spotifyContext, formatterProps.row);
+                evt.stopPropagation();
+              }}
+            >
+              +
+            </button>
+            <button
+              onClick={(evt) => {
+                spotifyDispatch?.({
+                  type: "playAlbum",
+                  row: formatterProps.row,
+                });
+                evt.stopPropagation();
+              }}
+            >
+              &#9654;
+            </button>
+          </>
+        );
+      },
       width: 80,
       resizable: false,
     },

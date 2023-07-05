@@ -3,6 +3,7 @@ import Movie from "./Browser/Movie.jsx";
 
 // import Movie from "./Movie";
 import Music from "./Browser/Music.jsx";
+import { SpotifyProvider } from "./Browser/SpotifyContext.js";
 
 function parseMode(
   mode: string | null
@@ -47,10 +48,14 @@ function App() {
 
       {mode.mode === "movie" ? <Movie></Movie> : null}
       {mode.mode === "music" ? (
-        <Music darkMode={darkMode} mode={"albums"}></Music>
+        <SpotifyProvider>
+          <Music darkMode={darkMode} mode={"albums"}></Music>
+        </SpotifyProvider>
       ) : null}
       {mode.mode === "playlist" ? (
-        <Music darkMode={darkMode} mode={"playlist"}></Music>
+        <SpotifyProvider>
+          <Music darkMode={darkMode} mode={"playlist"}></Music>
+        </SpotifyProvider>
       ) : null}
     </div>
   );
