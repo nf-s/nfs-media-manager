@@ -1,21 +1,21 @@
 // import { Handle, Range, SliderProps, SliderTooltip } from "rc-slider";
 import "rc-slider/assets/index.css";
-import React from "react";
-import { RenderHeaderCellProps } from "react-data-grid";
+import React, { ReactNode } from "react";
+import { RenderCellProps, RenderHeaderCellProps } from "react-data-grid";
 import { FilterColArrayKey, NumericColKey, StringColKey } from "data-types";
 import { isJsonArray, isJsonString } from "../Common/util.js";
-import { FieldRenderer, NumberFormat, NumericCol } from "./Columns.jsx";
+import { NumberFormat, NumericCol } from "./Columns.jsx";
 
 type NumericFilterProps<T> = {
   col: NumericCol<T>;
   min: number | undefined;
   max: number | undefined;
-  addFilter: (
-    field: NumericColKey<T>,
-    min: number,
-    max: number,
-    includeUndefined: boolean
-  ) => void;
+  // addFilter: (
+  //   field: NumericColKey<T>,
+  //   min: number,
+  //   max: number,
+  //   includeUndefined: boolean
+  // ) => void;
 };
 
 // const handle: <T>(col: NumericCol<T>) => SliderProps["handleRender"] =
@@ -87,10 +87,10 @@ export function NumericFilter<T>(
         />*/
 
 export const ArrayFilterRenderer: <T>(
-  col: FilterColArrayKey<T>,
-  idCol: StringColKey<T>
-) => FieldRenderer<T> = (col, idCol) => (props) => {
-  const data = props.data[col];
+  props: RenderCellProps<T>
+) => ReactNode = (props) => {
+  const data = (props.row as any)[props.column.key];
+
   if (!isJsonArray(data)) return null;
 
   return (
@@ -98,8 +98,9 @@ export const ArrayFilterRenderer: <T>(
       {data.map((g, i) =>
         isJsonString(g) ? (
           <a
-            onClick={() => props.addFilter(col, g)}
-            key={`${props.data?.[idCol]}-${g}`}
+            key={`${data.join("-")}-${i}`}
+            // onClick={() => props.addFilter(col, g)}
+            // key={`${props.data?.[idCol]}-${g}`}
           >
             {g}
             {i < data.length - 1 ? ", " : ""}

@@ -40,7 +40,7 @@ export const columnsConfig: ColumnsConfig<CleanMovie> = {
       key: "directors",
       name: "Director",
       sortable: true,
-      fieldRenderer: ArrayFilterRenderer<CleanMovie>("directors", "id"),
+      renderCell: ArrayFilterRenderer,
       enableFilter: true,
     },
     {
@@ -48,7 +48,7 @@ export const columnsConfig: ColumnsConfig<CleanMovie> = {
       key: "actors",
       name: "Actors",
       sortable: true,
-      fieldRenderer: ArrayFilterRenderer<CleanMovie>("actors", "id"),
+      renderCell: ArrayFilterRenderer,
       enableFilter: true,
     },
     {
@@ -56,7 +56,7 @@ export const columnsConfig: ColumnsConfig<CleanMovie> = {
       key: "writers",
       name: "Writers",
       sortable: true,
-      fieldRenderer: ArrayFilterRenderer<CleanMovie>("writers", "id"),
+      renderCell: ArrayFilterRenderer,
       enableFilter: true,
     },
     {
@@ -64,7 +64,7 @@ export const columnsConfig: ColumnsConfig<CleanMovie> = {
       key: "countries",
       name: "Countries",
       sortable: true,
-      fieldRenderer: ArrayFilterRenderer<CleanMovie>("countries", "id"),
+      renderCell: ArrayFilterRenderer,
       enableFilter: true,
     },
     {
@@ -72,7 +72,7 @@ export const columnsConfig: ColumnsConfig<CleanMovie> = {
       key: "languages",
       name: "Languages",
       sortable: true,
-      fieldRenderer: ArrayFilterRenderer<CleanMovie>("languages", "id"),
+      renderCell: ArrayFilterRenderer,
       enableFilter: true,
     },
     {
@@ -80,24 +80,21 @@ export const columnsConfig: ColumnsConfig<CleanMovie> = {
       key: "productionCompanies",
       name: "Production Companies",
       sortable: true,
-      fieldRenderer: ArrayFilterRenderer<CleanMovie>(
-        "productionCompanies",
-        "id"
-      ),
+      renderCell: ArrayFilterRenderer,
       enableFilter: true,
     },
     {
       type: "string",
       key: "tags",
       name: "Tags",
-      fieldRenderer: ArrayFilterRenderer<CleanMovie>("tags", "id"),
+      renderCell: ArrayFilterRenderer,
       enableFilter: true,
     },
     {
       type: "string",
       key: "collections",
       name: "Collections",
-      fieldRenderer: ArrayFilterRenderer<CleanMovie>("collections", "id"),
+      renderCell: ArrayFilterRenderer,
       enableFilter: true,
     },
     { type: "string", key: "watched", name: "Watched", enableFilter: true },

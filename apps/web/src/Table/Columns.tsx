@@ -5,9 +5,9 @@ import {
   StringColKey,
 } from "data-types";
 import "rc-slider/assets/index.css";
-import React from "react";
+import React, { ReactNode } from "react";
+import { RenderCellProps } from "react-data-grid";
 import { PickProperties } from "ts-essentials";
-import { AddFilter } from "./FilterState.js";
 
 export function formatTime(seconds: number) {
   const h = Math.floor(seconds / 3600);
@@ -17,11 +17,6 @@ export function formatTime(seconds: number) {
     .filter(Boolean)
     .join(":");
 }
-
-export type FieldRenderer<T> = (props: {
-  data: T;
-  addFilter: AddFilter<T>;
-}) => JSX.Element | null;
 
 export const NumberFormat = <T,>(props: {
   col: NumericCol<T>;
@@ -38,30 +33,33 @@ export const NumberFormat = <T,>(props: {
     </>
   );
 
-export const NumericField = <T,>(col: NumericCol<T>) => {
-  if (col.key === undefined) return () => <></>;
+export type RenderCell<T> = (props: RenderCellProps<T>) => ReactNode;
 
-  return (props: { data: T }) => {
-    const value = props.data[col.key];
+export const NumericField: <T>(props: RenderCellProps<T>) => ReactNode = (
+  props
+) => {
+  const value = (props.row as any)[props.column.key];
+  return value;
 
-    return typeof value === "number" ? (
-      <NumberFormat col={col} value={value} />
-    ) : typeof value === "string" ? (
-      <NumberFormat col={col} value={parseFloat(value)} />
-    ) : null;
-  };
+  // return typeof value === "number" ? (
+  //   <NumberFormat col={col} value={value} />
+  // ) : typeof value === "string" ? (
+  //   <NumberFormat col={col} value={parseFloat(value)} />
+  // ) : null;
 };
 
-export const BooleanField = <T,>(col: BooleanCol<T>) => {
-  if (col.key === undefined) return () => <></>;
-
-  return (props: { data: T }) => (props.data[col.key] ? <span>X</span> : null);
+export const BooleanField: <T>(props: RenderCellProps<T>) => ReactNode = (
+  props
+) => {
+  const value = (props.row as any)[props.column.key];
+  return value ? <span>X</span> : null;
 };
 
-type ColumnBase = {
+type ColumnBase<T> = {
   readonly width?: number;
   readonly name: string;
   readonly resizable?: boolean;
+  readonly renderCell?: RenderCell<T>;
 };
 
 export type DefaultVisible<T> = (keyof T | "Controls")[];
@@ -80,28 +78,28 @@ export type NumericCol<T> = {
 
   /** This overrides append, precision and mult */
   readonly numberFormat?: (num: number) => string;
-} & ColumnBase;
+} & ColumnBase<T>;
 
 export type BooleanCol<T> = {
   readonly type: "boolean";
   readonly key: BooleanColKey<T>;
-} & ColumnBase;
+} & ColumnBase<T>;
 
 export type StringCol<T> = (
   | // String columns
   {
       readonly key: keyof PickProperties<T, string | undefined>;
     }
-  // Not string columns (require fieldRenderer)
+  // Not string columns (require renderCell)
   | {
       readonly key: keyof PickProperties<T, Exclude<any, string>>;
-      readonly fieldRenderer: FieldRenderer<T>;
+      readonly renderCell?: RenderCell<T>;
     }
 ) & {
   readonly type: "string";
 
   readonly sortable?: boolean;
-} & ColumnBase;
+} & ColumnBase<T>;
 
 export type FilterCol<T> = StringCol<T> & {
   readonly enableFilter: true;

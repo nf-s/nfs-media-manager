@@ -1,213 +1,143 @@
-import { Index } from "flexsearch";
-import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
-import type { Options } from "react-select";
-import { NumericColKey, NumericFilterValue, TextFilterValue } from "data-types";
-import { useTraceUpdate } from "../Common/util.js";
-import {
-  DataColumn,
-  FilterCol,
-  getFilterCols,
-  getNumericCols,
-} from "./Columns.jsx";
+import { NumericFilterValue, TextFilterValue } from "data-types";
+import { useEffect, useMemo, useReducer, useState } from "react";
+import { ColumnsConfig } from "./ColumnState.js";
+import { FilterCol, getFilterCols } from "./Columns.js";
 
 export type TextFilterValueWithLabel<T> = TextFilterValue<T> & {
   label: string;
   count: number;
 };
 
-export type SelectValues<T> = Options<TextFilterValueWithLabel<T>>;
-
-export function useNumericFilter<T>(dataColumns: DataColumn<T>[] | undefined) {
-  function filterNumericReducer(
-    state: NumericFilterValue<T>[],
-    action:
-      | ({ type: "add" } & NumericFilterValue<T>)
-      | { type: "clear" }
-      | { type: "set"; values: NumericFilterValue<T>[] }
-  ): NumericFilterValue<T>[] {
-    switch (action.type) {
-      case "add": {
-        const found = getNumericCols(dataColumns).find(
-          (a) => a.key === action.field
-        );
-        if (found) {
-          return [
-            ...state.filter((f) => f.field !== action.field),
-            { ...action },
-          ];
-        }
-        return state;
-      }
-      case "set":
-        return action.values;
-      case "clear":
-        return [];
-    }
-  }
-
-  const [activeNumericFilters, setActiveNumericFilters] = useReducer(
-    filterNumericReducer,
-    []
-  );
-
-  const addNumericFilter = useCallback(
-    (
-      field: NumericColKey<T>,
-      min: number,
-      max: number,
-      includeUndefined: boolean
-    ) => {
-      setActiveNumericFilters({
-        type: "add",
-        field,
-        min,
-        max,
-        includeUndefined,
-      });
-    },
-    []
-  );
-
-  return { activeNumericFilters, addNumericFilter };
+export interface FilterState<T> {
+  filterData: TextFilterValueWithLabel<T>[];
+  activeFilters: TextFilterValueWithLabel<T>[];
+  activeFiltersDispatch: React.Dispatch<
+  FilterDispatchActions<T>
+  >;
+  activeNumericFilters: NumericFilterValue<T>[];
+  activeNumericFiltersDispatch: React.Dispatch<
+  NumericFilterDispatchActions<T>
+  >;
 }
 
-export type AddFilter<T> = (field: keyof T, value: string) => void;
+type FilterDispatchActions<T> =
+  | { type: "add"; value: TextFilterValueWithLabel<T> }
+  | { type: "clear" }
+  | { type: "set"; values: TextFilterValueWithLabel<T>[] }
 
-export function useTextFilter<T>(
-  dataColumns: DataColumn<T>[] | undefined,
-  rows: T[],
-  tag: string
-) {
-  const [filterData, setFilterData] = useState<{
-    filters: TextFilterValueWithLabel<T>[];
-  }>({ filters: [] });
 
-  const filterSearchIndex = useMemo(() => {
-    const index = new Index({ tokenize: "full", preset: "score" });
+  type NumericFilterDispatchActions<T> =
+  | ({ type: "add" } & NumericFilterValue<T>)
+  | { type: "clear" }
+  | { type: "set"; values: NumericFilterValue<T>[] }
 
-    for (let i = 0; i < filterData.filters.length; i++) {
-      const filter = filterData.filters[i];
-      index.add(i, filter.label ?? filter.value);
-    }
 
-    return index;
-  }, [filterData]);
+export function useFilterState<T>(tag: string, rows: T[],
 
-  const [filterInputValue, setFilterInputValue] = useState("");
-
-  const filteredOptions: TextFilterValueWithLabel<T>[] = useMemo(() => {
-    if (!filterInputValue || !filterSearchIndex) {
-      return filterData.filters;
-    }
-
-    const searchResults = filterSearchIndex.search(filterInputValue);
-
-    const results: TextFilterValueWithLabel<T>[] = [];
-
-    searchResults.forEach((fieldResult) => {
-      if (typeof fieldResult === "number" && filterData.filters[fieldResult]) {
-        results.push(filterData.filters[fieldResult]);
-      }
-    });
-
-    return results.sort((a, b) => b.count - a.count);
-  }, [filterInputValue, filterSearchIndex, filterData.filters]);
-
-  const slicedOptions = useMemo(() => {
-    return filteredOptions.slice(0, 500);
-  }, [filteredOptions]);
-
-  // Default value is set in fetchData
-  function filterReducer(
-    state: SelectValues<T> | undefined,
-    action:
-      | { type: "add"; field: keyof T; value: string }
-      | { type: "clear" }
-      | { type: "set"; values: SelectValues<T> }
-  ): SelectValues<T> | undefined {
-    switch (action.type) {
-      case "add": {
-        const found = filterData.filters.find(
-          (a) => a.field === action.field && a.value === action.value
-        );
-        if (found) {
-          return Array.from(new Set([...(state ?? []), found]));
-        }
-        return state;
-      }
-      case "set":
-        return action.values;
-      case "clear":
-        return [];
-    }
-  }
-
-  const [activeFilters, setActiveFilters] = useReducer(
-    filterReducer,
-    undefined
+  columnsConfig: ColumnsConfig<T>): FilterState<T> {
+  const [filterData, setFilterData] = useState<TextFilterValueWithLabel<T>[]>(
+    []
   );
-
-  const addFilter: AddFilter<T> = useCallback(
-    (field: keyof T, value: string) => {
-      setActiveFilters({ type: "add", field, value });
-    },
+  
+  const [activeFilters, activeFiltersDispatch] = useReducer(
+    filterReducer<T>,
     []
   );
 
-  const setFilters = useCallback((filter: SelectValues<T>) => {
-    setActiveFilters({ type: "set", values: filter });
-  }, []);
-
-  useEffect(() => {
+  useMemo(() => {
     if (rows.length === 0) return;
-    const filters = getFilterCols(dataColumns)
+    const filters = getFilterCols(columnsConfig.data)
       .reduce<TextFilterValueWithLabel<T>[]>(
         (acc, curr) => [...acc, ...getColumnWithTotals(rows, curr)],
         []
       )
       .sort((a, b) => b.count - a.count);
 
-    // Get saved filters from local storage
-    const savedActiveFilters = localStorage.getItem(`${tag}-activeFilters`)
-      ? JSON.parse(localStorage.getItem(`${tag}-activeFilters`)!)
-      : undefined;
+    setFilterData(filters);
+  }, [rows, columnsConfig, setFilterData]);
 
-    if (Array.isArray(savedActiveFilters)) {
-      const found = filters.filter((a) =>
-        savedActiveFilters.find(
-          (b) => a.field === b.field && a.value === b.value
-        )
-      );
-      setFilters(found);
-    }
+  // useEffect(() => {
+    
+  //   if (filterData.length === 0) return;
 
-    setFilterData({
-      filters,
-    });
-  }, [rows, dataColumns, setFilterData, setFilters, tag]);
+  //   console.log("set form localstorage");
+
+  //   // Get saved filters from local storage
+  //   const savedActiveFilters = localStorage.getItem(`${tag}-activeFilters`)
+  //   ? JSON.parse(localStorage.getItem(`${tag}-activeFilters`)!)
+  //   : undefined;
+
+  //   console.log(savedActiveFilters);
+
+  //   if (Array.isArray(savedActiveFilters)) {
+      
+  //     const found = filterData.filter((a) =>
+  //       savedActiveFilters.find(
+  //         (b) => a.field === b.field && a.value === b.value
+  //       )
+  //     );
+  //     activeFiltersDispatch({type:"set", values:found});
+  //   }
+  // }, [filterData, tag])
 
   useEffect(() => {
     if (!activeFilters) return;
+    console.log("set to localstorage");
     localStorage.setItem(`${tag}-activeFilters`, JSON.stringify(activeFilters));
   }, [activeFilters, tag]);
 
-  useTraceUpdate({
-    activeFilters,
-    addFilter,
-    setFilters,
-    slicedOptions,
-    filterInputValue,
-    setFilterInputValue,
-  });
+  const [activeNumericFilters, activeNumericFiltersDispatch] = useReducer(
+    filterNumericReducer<T>,
+    []
+  );
 
   return {
+    filterData,
     activeFilters,
-    addFilter,
-    setFilters,
-    slicedOptions,
-    filterInputValue,
-    setFilterInputValue,
+    activeFiltersDispatch,
+    activeNumericFilters,
+    activeNumericFiltersDispatch,
   };
+}
+
+// Default value is set in fetchData
+function filterReducer<T>(
+  state: TextFilterValueWithLabel<T>[],
+  action:
+  FilterDispatchActions<T>
+): TextFilterValueWithLabel<T>[] {
+  switch (action.type) {
+    case "add": {
+      if (!state) {
+        return [action.value]
+      }
+      const index = state.findIndex(filterValue => filterValue.field === action.value.field && filterValue.value === action.value.value)
+      if (index === -1) {
+        return [...state, action.value]
+      } else {
+        return [...state.slice(0, index), action.value, ...state.slice(index+1)]
+      }
+    }
+    case "set":
+      return action.values;
+    case "clear":
+      return [];
+  }
+}
+function filterNumericReducer<T>(
+  state: NumericFilterValue<T>[],
+  action:
+  NumericFilterDispatchActions<T>
+): NumericFilterValue<T>[] {
+  switch (action.type) {
+    case "add": {
+      return [...state.filter((f) => f.field !== action.field), { ...action }];
+    }
+    case "set":
+      return action.values;
+    case "clear":
+      return [];
+  }
 }
 
 function getColumnWithTotals<K>(
