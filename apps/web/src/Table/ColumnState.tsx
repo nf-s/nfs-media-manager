@@ -2,6 +2,7 @@ import { IdColKey, NumericColKey, SortValue } from "data-types";
 import React, { createContext, useEffect, useMemo, useState } from "react";
 import { Column } from "react-data-grid";
 import { PickProperties } from "ts-essentials";
+import { ColumnFieldRenderer } from "../Browser/FieldRenderer.js";
 import { NumericFilter } from "./ColumnFilters.jsx";
 import {
   BooleanField,
@@ -12,6 +13,12 @@ import {
   isBooleanCol,
   isNumericCol,
 } from "./Columns.jsx";
+
+export type ColumnWithFieldRenderer<T> = Readonly<
+  Column<T> & {
+    fieldRenderer?: ColumnFieldRenderer<T>;
+  }
+>;
 
 export const ColumnConfigContext = createContext<
   ColumnsConfig<any> | undefined
@@ -83,7 +90,7 @@ export function useColumnsState<T>(
       );
     });
 
-    const columns: Column<T>[] = [
+    const columns: ColumnWithFieldRenderer<T>[] = [
       ...(columnsConfig.custom ?? []),
       ...columnsConfig.data.map((col) => {
         if (isNumericCol(col)) {
@@ -93,13 +100,17 @@ export function useColumnsState<T>(
             col.max = max;
           }
           console.log(`Numeric ${col.key as any}`);
-          const resolvedCol: Column<T> = {
+          const resolvedCol: ColumnWithFieldRenderer<T> = {
             key: col.key.toString(),
             name: col.name !== "" ? col.name : col.key.toString(),
             sortable: col.sortable ?? true,
             resizable: col.resizable ?? true,
             width: col.width ?? 80,
-            renderCell: NumericField,
+            renderCell: (props) =>
+              NumericField({
+                data: props.row,
+                col,
+              }),
             renderHeaderCell: (props) => (
               <NumericFilter {...props} col={col} min={min} max={max} />
             ),
@@ -109,24 +120,37 @@ export function useColumnsState<T>(
         }
 
         if (isBooleanCol(col)) {
-          const resolvedCol: Column<T> = {
+          const resolvedCol: ColumnWithFieldRenderer<T> = {
             ...col,
             key: col.key.toString(),
-            renderCell: BooleanField,
+            renderCell: (props) =>
+              BooleanField({
+                data: props.row,
+                col,
+              }),
           };
           return resolvedCol;
         }
 
         // StringCol / FilterCol
-        return {
+        const resolvedCol: ColumnWithFieldRenderer<T> = {
           ...col,
+          key: col.key.toString(),
           sortable: col.sortable ?? true,
           resizable: col.resizable ?? true,
+          renderCell:
+            "fieldRenderer" in col
+              ? (props) => {
+                  return col.fieldRenderer({
+                    data: props.row,
+                    col,
+                  });
+                }
+              : undefined,
         };
+        return resolvedCol;
       }),
-    ].map((col) => {
-      return { ...col, key: col.key.toString() };
-    });
+    ];
 
     const savedVisibleColumns = localStorage.getItem(`${tag}-visibleColumns`)
       ? JSON.parse(localStorage.getItem(`${tag}-visibleColumns`)!)

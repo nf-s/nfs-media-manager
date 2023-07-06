@@ -1,5 +1,5 @@
 import { NumericFilterValue, TextFilterValue } from "data-types";
-import { useEffect, useMemo, useReducer, useState } from "react";
+import { createContext, useEffect, useMemo, useReducer, useState } from "react";
 import { ColumnsConfig } from "./ColumnState.js";
 import { FilterCol, getFilterCols } from "./Columns.js";
 
@@ -10,7 +10,7 @@ export type TextFilterValueWithLabel<T> = TextFilterValue<T> & {
 
 export interface FilterState<T> {
   filterData: TextFilterValueWithLabel<T>[];
-  activeFilters: TextFilterValueWithLabel<T>[];
+  activeFilters: TextFilterValue<T>[];
   activeFiltersDispatch: React.Dispatch<
   FilterDispatchActions<T>
   >;
@@ -21,9 +21,9 @@ export interface FilterState<T> {
 }
 
 type FilterDispatchActions<T> =
-  | { type: "add"; value: TextFilterValueWithLabel<T> }
+  | { type: "add"; value: TextFilterValue<T> }
   | { type: "clear" }
-  | { type: "set"; values: TextFilterValueWithLabel<T>[] }
+  | { type: "set"; values: TextFilterValue<T>[] }
 
 
   type NumericFilterDispatchActions<T> =
@@ -31,6 +31,9 @@ type FilterDispatchActions<T> =
   | { type: "clear" }
   | { type: "set"; values: NumericFilterValue<T>[] }
 
+  export const FilterStateContext = createContext<FilterState<any> | undefined>(
+    undefined
+  );
 
 export function useFilterState<T>(tag: string, rows: T[],
 
@@ -102,10 +105,10 @@ export function useFilterState<T>(tag: string, rows: T[],
 
 // Default value is set in fetchData
 function filterReducer<T>(
-  state: TextFilterValueWithLabel<T>[],
+  state: TextFilterValue<T>[],
   action:
   FilterDispatchActions<T>
-): TextFilterValueWithLabel<T>[] {
+): TextFilterValue<T>[] {
   switch (action.type) {
     case "add": {
       if (!state) {
