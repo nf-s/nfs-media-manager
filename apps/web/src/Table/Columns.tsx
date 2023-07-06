@@ -5,9 +5,12 @@ import {
   StringColKey,
 } from "data-types";
 import "rc-slider/assets/index.css";
-import React, { ReactNode } from "react";
-import { RenderCellProps } from "react-data-grid";
+import React from "react";
 import { PickProperties } from "ts-essentials";
+import {
+  ColumnFieldRenderer,
+  ColumnFieldRendererProps,
+} from "../Browser/FieldRenderer.js";
 
 export function formatTime(seconds: number) {
   const h = Math.floor(seconds / 3600);
@@ -33,33 +36,30 @@ export const NumberFormat = <T,>(props: {
     </>
   );
 
-export type RenderCell<T> = (props: RenderCellProps<T>) => ReactNode;
+export const NumericField = <T,>(props: ColumnFieldRendererProps<T>) => {
+  const value = props.data[props.col.key];
+  const col = props.col;
 
-export const NumericField: <T>(props: RenderCellProps<T>) => ReactNode = (
-  props
-) => {
-  const value = (props.row as any)[props.column.key];
-  return value;
+  if (!isNumericCol(col)) {
+    console.log(col);
+    console.log("is not numeric");
+    return null;
+  }
 
-  // return typeof value === "number" ? (
-  //   <NumberFormat col={col} value={value} />
-  // ) : typeof value === "string" ? (
-  //   <NumberFormat col={col} value={parseFloat(value)} />
-  // ) : null;
+  return typeof value === "number" ? (
+    <NumberFormat col={col} value={value} />
+  ) : typeof value === "string" ? (
+    <NumberFormat col={col} value={parseFloat(value)} />
+  ) : null;
 };
 
-export const BooleanField: <T>(props: RenderCellProps<T>) => ReactNode = (
-  props
-) => {
-  const value = (props.row as any)[props.column.key];
-  return value ? <span>X</span> : null;
-};
+export const BooleanField = <T,>(props: ColumnFieldRendererProps<T>) =>
+  props.data[props.col.key] ? <span>X</span> : null;
 
-type ColumnBase<T> = {
+type ColumnBase = {
   readonly width?: number;
   readonly name: string;
   readonly resizable?: boolean;
-  readonly renderCell?: RenderCell<T>;
 };
 
 export type DefaultVisible<T> = (keyof T | "Controls")[];
@@ -78,12 +78,12 @@ export type NumericCol<T> = {
 
   /** This overrides append, precision and mult */
   readonly numberFormat?: (num: number) => string;
-} & ColumnBase<T>;
+} & ColumnBase;
 
 export type BooleanCol<T> = {
   readonly type: "boolean";
   readonly key: BooleanColKey<T>;
-} & ColumnBase<T>;
+} & ColumnBase;
 
 export type StringCol<T> = (
   | // String columns
@@ -93,13 +93,13 @@ export type StringCol<T> = (
   // Not string columns (require renderCell)
   | {
       readonly key: keyof PickProperties<T, Exclude<any, string>>;
-      readonly renderCell?: RenderCell<T>;
+      readonly fieldRenderer: ColumnFieldRenderer<T>;
     }
 ) & {
   readonly type: "string";
 
   readonly sortable?: boolean;
-} & ColumnBase<T>;
+} & ColumnBase;
 
 export type FilterCol<T> = StringCol<T> & {
   readonly enableFilter: true;

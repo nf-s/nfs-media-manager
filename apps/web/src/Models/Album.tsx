@@ -1,6 +1,7 @@
 /* eslint-disable react-hooks/rules-of-hooks */
 import { CleanAlbum, timeToDateString } from "data-types";
 import React, { useContext } from "react";
+import { ColumnFieldRenderer } from "../Browser/FieldRenderer.js";
 import {
   SpotifyContext,
   SpotifyDispatchContext,
@@ -8,41 +9,41 @@ import {
 } from "../Browser/SpotifyContext.js";
 import { ArrayFilterRenderer } from "../Table/ColumnFilters.jsx";
 import { ColumnsConfig } from "../Table/ColumnState.js";
-import { RenderCell, formatTime } from "../Table/Columns.jsx";
+import { formatTime } from "../Table/Columns.jsx";
 
-const Release: RenderCell<CleanAlbum> = (props) => (
+const Release: ColumnFieldRenderer<CleanAlbum> = (props) => (
   <>
     <a
-      href={`https://open.spotify.com/album/${props.row.id.spotify}`}
-      title={props.row.title}
+      href={`https://open.spotify.com/album/${props.data.id.spotify}`}
+      title={props.data.title}
       target="blank"
     >
-      {props.row.title}
+      {props.data.title}
     </a>
-    {props.row.links.rym ? (
+    {props.data.links.rym ? (
       <a
-        href={props.row.links.rym}
-        title={props.row.otherTitles.rym}
+        href={props.data.links.rym}
+        title={props.data.otherTitles.rym}
         target="blank"
         className="row-external-links"
       >
         <img src="/img/sonemic.png" width="16px" alt="Sonemic link" />
       </a>
     ) : null}
-    {props.row.links.discogs ? (
+    {props.data.links.discogs ? (
       <a
-        href={props.row.links.discogs}
-        title={props.row.otherTitles.discogs}
+        href={props.data.links.discogs}
+        title={props.data.otherTitles.discogs}
         target="blank"
         className="row-external-links"
       >
         <img src="/img/discogs.png" width="16px" alt="Discogs link" />
       </a>
     ) : null}
-    {props.row.links.mb ? (
+    {props.data.links.mb ? (
       <a
-        href={props.row.links.mb}
-        title={props.row.otherTitles.mb}
+        href={props.data.links.mb}
+        title={props.data.otherTitles.mb}
         target="blank"
         className="row-external-links"
       >
@@ -50,10 +51,10 @@ const Release: RenderCell<CleanAlbum> = (props) => (
       </a>
     ) : null}
 
-    {props.row.links.lastfm ? (
+    {props.data.links.lastfm ? (
       <a
-        href={props.row.links.lastfm}
-        title={props.row.otherTitles.lastfm}
+        href={props.data.links.lastfm}
+        title={props.data.otherTitles.lastfm}
         target="blank"
         className="row-external-links"
       >
@@ -61,10 +62,10 @@ const Release: RenderCell<CleanAlbum> = (props) => (
       </a>
     ) : null}
 
-    {props.row.links.mc ? (
+    {props.data.links.mc ? (
       <a
-        href={props.row.links.mc}
-        title={props.row.otherTitles.mc}
+        href={props.data.links.mc}
+        title={props.data.otherTitles.mc}
         target="blank"
         className="row-external-links"
       >
@@ -115,7 +116,7 @@ export const columnsConfig: ColumnsConfig<CleanAlbum> = {
       key: "title",
       name: "Title",
       sortable: true,
-      renderCell: Release,
+      fieldRenderer: Release,
       enableFilter: true,
     },
     {
@@ -123,7 +124,7 @@ export const columnsConfig: ColumnsConfig<CleanAlbum> = {
       key: "artists",
       name: "Artists",
       sortable: true,
-      renderCell: ArrayFilterRenderer,
+      fieldRenderer: ArrayFilterRenderer,
       enableFilter: true,
     },
     {
@@ -131,27 +132,27 @@ export const columnsConfig: ColumnsConfig<CleanAlbum> = {
       key: "durationSec",
       name: "Duration",
       sortable: true,
-      renderCell: (props) => <>{formatTime(props.row.durationSec)}</>,
+      fieldRenderer: (props) => <>{formatTime(props.data.durationSec)}</>,
       width: 80,
     },
     {
       type: "string",
       key: "genres",
       name: "Genres",
-      renderCell: ArrayFilterRenderer,
+      fieldRenderer: ArrayFilterRenderer,
       enableFilter: true,
     },
     {
       type: "string",
       key: "countries",
       name: "Countries",
-      renderCell: ArrayFilterRenderer,
+      fieldRenderer: ArrayFilterRenderer,
     },
     {
       type: "string",
       key: "playlists",
       name: "Playlists",
-      renderCell: ArrayFilterRenderer,
+      fieldRenderer: ArrayFilterRenderer,
       enableFilter: true,
       // filterLabel: (id) => library.playlists[id].name
     },

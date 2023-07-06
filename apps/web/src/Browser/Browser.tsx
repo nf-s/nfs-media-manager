@@ -9,14 +9,13 @@ import {
   ColumnsConfig,
   useColumnsState,
 } from "../Table/ColumnState.jsx";
-import { useFilterState } from "../Table/FilterState.js";
+import { FilterStateContext, useFilterState } from "../Table/FilterState.js";
 import { useRowState } from "../Table/RowState.js";
 import { useSortState } from "../Table/SortState.js";
-import { FieldRenderer } from "./FieldRenderer.js";
 import { Filter } from "./Filter.js";
 import { ImageGrid } from "./ImageGrid.js";
-import { Sort } from "./Sort.js";
 import { SelectedRow } from "./SelectedRow.js";
+import { Sort } from "./Sort.js";
 
 function Browser<T>(props: {
   tag: string;
@@ -91,96 +90,101 @@ function Browser<T>(props: {
 
   return (
     <ColumnConfigContext.Provider value={columnsConfig}>
-      <div className="header">
-        <button
-          type="button"
-          onClick={() => setViewMode(viewMode === "grid" ? "table" : "grid")}
-        >
-          {viewMode === "grid" ? "Table" : "Grid"}
-        </button>
-        <Filter filterState={filterState} />
-        <Sort sortState={sortState} columnsState={columnState} />
+      <FilterStateContext.Provider value={filterState}>
+        <div className="header">
+          <button
+            type="button"
+            onClick={() => setViewMode(viewMode === "grid" ? "table" : "grid")}
+          >
+            {viewMode === "grid" ? "Table" : "Grid"}
+          </button>
+          <Filter filterState={filterState} />
+          <Sort sortState={sortState} columnsState={columnState} />
 
-        {viewMode === "table" ? (
-          <Select
-            controlShouldRenderValue={false}
-            closeMenuOnSelect={false}
-            isMulti
-            hideSelectedOptions={false}
-            isClearable={false}
-            placeholder="Columns"
-            className={"filter-select"}
-            value={(columnState.visibleColumns ?? []).map((col) => ({
-              value: col.key,
-              label:
-                typeof col.name === "string" && col.name !== ""
-                  ? col.name
-                  : col.key,
-            }))}
-            onChange={(selectedCols) => {
-              columnState.setVisibleColumns(
-                columnState.columns.filter((col) =>
-                  selectedCols.find((c) => c.value === col.key)
-                )
-              );
-            }}
-            options={columnState.columns.map((col) => ({
-              value: col.key,
-              label:
-                typeof col.name === "string" && col.name !== ""
-                  ? col.name
-                  : col.key,
-            }))}
-            theme={(theme) => ({
-              ...theme,
-              colors: {
-                ...theme.colors,
-                primary25: "#00ffab24",
-                primary50: "#00ffab50",
-                primary75: "#00ffab",
-                primary: "#00c583",
-              },
-            })}
-          />
-        ) : null}
-      </div>
-      {viewMode === "table" ? (
-        <div className={"data-grid"}>
-          <DataGrid
-            onCellDoubleClick={(cell) => setSelectedRow(cell.row)}
-            columns={columnState.visibleColumns ?? []}
-            rows={rowState.rows}
-            // rowClass={(row) => (row.watched ? "watched" : "unwatched")}
-            defaultColumnOptions={{
-              resizable: true,
-            }}
-            sortColumns={[
-              {
-                columnKey: sortState.column.toString(),
-                direction: sortState.direction,
-              },
-            ]}
-            onSortColumnsChange={(sortColumns) =>
-              typeof sortColumns[0] !== "undefined"
-                ? sortState.dispatch([
-                    sortColumns[0].columnKey as any,
-                    sortColumns[0].direction,
-                  ])
-                : sortState.dispatch(columnsConfig.defaultSort)
-            }
-            className="fill-grid"
-            headerRowHeight={50}
-            rowHeight={35}
-          />
+          {viewMode === "table" ? (
+            <Select
+              controlShouldRenderValue={false}
+              closeMenuOnSelect={false}
+              isMulti
+              hideSelectedOptions={false}
+              isClearable={false}
+              placeholder="Columns"
+              className={"filter-select"}
+              value={(columnState.visibleColumns ?? []).map((col) => ({
+                value: col.key,
+                label:
+                  typeof col.name === "string" && col.name !== ""
+                    ? col.name
+                    : col.key,
+              }))}
+              onChange={(selectedCols) => {
+                columnState.setVisibleColumns(
+                  columnState.columns.filter((col) =>
+                    selectedCols.find((c) => c.value === col.key)
+                  )
+                );
+              }}
+              options={columnState.columns.map((col) => ({
+                value: col.key,
+                label:
+                  typeof col.name === "string" && col.name !== ""
+                    ? col.name
+                    : col.key,
+              }))}
+              theme={(theme) => ({
+                ...theme,
+                colors: {
+                  ...theme.colors,
+                  primary25: "#00ffab24",
+                  primary50: "#00ffab50",
+                  primary75: "#00ffab",
+                  primary: "#00c583",
+                },
+              })}
+            />
+          ) : null}
         </div>
-      ) : (
-        <ImageGrid<T>
-          rows={rowState.rows}
-          sortColumn={sortState.column}
+        {viewMode === "table" ? (
+          <div className={"data-grid"}>
+            <DataGrid
+              onCellDoubleClick={(cell) => setSelectedRow(cell.row)}
+              columns={columnState.visibleColumns ?? []}
+              rows={rowState.rows}
+              // rowClass={(row) => (row.watched ? "watched" : "unwatched")}
+              defaultColumnOptions={{
+                resizable: true,
+              }}
+              sortColumns={[
+                {
+                  columnKey: sortState.column.toString(),
+                  direction: sortState.direction,
+                },
+              ]}
+              onSortColumnsChange={(sortColumns) =>
+                typeof sortColumns[0] !== "undefined"
+                  ? sortState.dispatch([
+                      sortColumns[0].columnKey as any,
+                      sortColumns[0].direction,
+                    ])
+                  : sortState.dispatch(columnsConfig.defaultSort)
+              }
+              className="fill-grid"
+              headerRowHeight={50}
+              rowHeight={35}
+            />
+          </div>
+        ) : (
+          <ImageGrid<T>
+            rows={rowState.rows}
+            sortColumn={sortState.column}
+            setSelectedRow={setSelectedRow}
+          />
+        )}
+        <SelectedRow
+          selectedRow={selectedRow}
           setSelectedRow={setSelectedRow}
         />
-      )}
-      <SelectedRow selectedRow={selectedRow} setSelectedRow={setSelectedRow} />
+      </FilterStateContext.Provider>
     </ColumnConfigContext.Provider>
   );
 }

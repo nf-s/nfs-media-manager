@@ -1,34 +1,52 @@
 import { CleanTrack } from "data-types";
-import React from "react";
+import React, { useContext } from "react";
+import { ColumnFieldRenderer } from "../Browser/FieldRenderer.js";
 import { ColumnsConfig } from "../Table/ColumnState.js";
-import { RenderCell, formatTime } from "../Table/Columns.jsx";
+import { formatTime } from "../Table/Columns.jsx";
+import { FilterStateContext } from "../Table/FilterState.js";
 
-export const Genres: RenderCell<CleanTrack> = (props) => {
+export const Genres: ColumnFieldRenderer<CleanTrack> = (props) => {
+  const filterState = useContext(FilterStateContext);
+
+  if (!filterState) return null;
   return (
     <>
-      {props.row.genres.map((g, i) => (
+      {props.data.genres.map((g, i) => (
         <a
-          // onClick={() => props.addFilter("genres", g)}
-          key={`${props.row.spotifyId}-${g}`}
+          onClick={() =>
+            filterState.activeFiltersDispatch({
+              type: "add",
+              value: { field: "genres", value: g },
+            })
+          }
+          key={`${props.data.spotifyId}-${g}`}
         >
           {g}
-          {i < props.row.genres.length - 1 ? ", " : ""}
+          {i < props.data.genres.length - 1 ? ", " : ""}
         </a>
       ))}
     </>
   );
 };
 
-export const Artist: RenderCell<CleanTrack> = (props) => {
+export const Artist: ColumnFieldRenderer<CleanTrack> = (props) => {
+  const filterState = useContext(FilterStateContext);
+
+  if (!filterState) return null;
   return (
     <>
-      {props.row.artists.map((a, i) => (
+      {props.data.artists.map((a, i) => (
         <a
-          // onClick={() => props.addFilter("artists", a)}
-          key={`${props.row.spotifyId}-${a}`}
+          onClick={() =>
+            filterState.activeFiltersDispatch({
+              type: "add",
+              value: { field: "artists", value: a },
+            })
+          }
+          key={`${props.data.spotifyId}-${a}`}
         >
           {a}
-          {i < props.row.artists.length - 1 ? ", " : ""}
+          {i < props.data.artists.length - 1 ? ", " : ""}
         </a>
       ))}
     </>
@@ -52,12 +70,12 @@ export const Artist: RenderCell<CleanTrack> = (props) => {
 
 const camelotKeyMap = [8, 3, 10, 5, 12, 7, 2, 9, 4, 11, 6, 1];
 
-export const Key: RenderCell<CleanTrack> = (props) => {
+export const Key: ColumnFieldRenderer<CleanTrack> = (props) => {
   return (
     // Major is represented by 1 and minor is 0
     <>
-      {typeof props.row.key !== "undefined"
-        ? `${camelotKeyMap[props.row.key]} ${props.row.mode ? "B" : "A"}`
+      {typeof props.data.key !== "undefined"
+        ? `${camelotKeyMap[props.data.key]} ${props.data.mode ? "B" : "A"}`
         : ""}
     </>
   );
@@ -73,11 +91,11 @@ export const columnsConfig: ColumnsConfig<CleanTrack> = {
       sortable: true,
     },
     {
-      type: "numeric",
+      type: "string",
       key: "durationSec",
       name: "Duration",
       sortable: true,
-      renderCell: (props) => <>{formatTime(props.row.durationSec)}</>,
+      fieldRenderer: (props) => <>{formatTime(props.data.durationSec)}</>,
       width: 80,
     },
     {
@@ -85,7 +103,7 @@ export const columnsConfig: ColumnsConfig<CleanTrack> = {
       key: "artists",
       name: "Artist",
       sortable: true,
-      renderCell: Artist,
+      fieldRenderer: Artist,
     },
     {
       type: "string",
@@ -103,8 +121,8 @@ export const columnsConfig: ColumnsConfig<CleanTrack> = {
       width: 100,
       resizable: false,
     },
-    { type: "string", key: "genres", name: "Genres", renderCell: Genres },
-    { type: "string", key: "key", name: "Key", renderCell: Key },
+    { type: "string", key: "genres", name: "Genres", fieldRenderer: Genres },
+    { type: "string", key: "key", name: "Key", fieldRenderer: Key },
     {
       type: "numeric",
       key: "acousticness",
@@ -183,7 +201,7 @@ export const columnsConfig: ColumnsConfig<CleanTrack> = {
     {
       key: "Controls",
       name: "",
-      renderCell: (props) => (
+      renderCell: (formatterProps: { row: CleanTrack }) => (
         <>
           {/* <button onClick={() => queueTrack(formatterProps.row)}>
             +

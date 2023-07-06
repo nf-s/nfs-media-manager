@@ -1,21 +1,16 @@
 // import { Handle, Range, SliderProps, SliderTooltip } from "rc-slider";
 import "rc-slider/assets/index.css";
-import React, { ReactNode } from "react";
-import { RenderCellProps, RenderHeaderCellProps } from "react-data-grid";
-import { FilterColArrayKey, NumericColKey, StringColKey } from "data-types";
+import React, { useContext } from "react";
+import { RenderHeaderCellProps } from "react-data-grid";
+import { ColumnFieldRendererProps } from "../Browser/FieldRenderer.js";
 import { isJsonArray, isJsonString } from "../Common/util.js";
 import { NumberFormat, NumericCol } from "./Columns.jsx";
+import { FilterStateContext } from "./FilterState.js";
 
 type NumericFilterProps<T> = {
   col: NumericCol<T>;
   min: number | undefined;
   max: number | undefined;
-  // addFilter: (
-  //   field: NumericColKey<T>,
-  //   min: number,
-  //   max: number,
-  //   includeUndefined: boolean
-  // ) => void;
 };
 
 // const handle: <T>(col: NumericCol<T>) => SliderProps["handleRender"] =
@@ -69,38 +64,43 @@ export function NumericFilter<T>(
 }
 
 /*<Range
-          step={props.max - props.min < 10 ? (props.max - props.min) / 500 : 1}
-          min={props.min}
-          max={props.max}
-          defaultValue={[props.min, props.max]}
-          onAfterChange={(value) => {
-            props.addFilter(
-              props.col.key,
-              value[0],
-              value[1],
-              value[0] ===
-                props.min /** include undefined if minimum value is selected 
-            );
-          }}
-          marks={marks}
-          handle={handle(props.col)}
-        />*/
+  step={props.max - props.min < 10 ? (props.max - props.min) / 500 : 1}
+  min={props.min}
+  max={props.max}
+  defaultValue={[props.min, props.max]}
+  onAfterChange={(value) => {
+    props.addFilter(
+      props.col.key,
+      value[0],
+      value[1],
+      value[0] ===
+        props.min /** include undefined if minimum value is selected 
+    );
+  }}
+  marks={marks}
+  handle={handle(props.col)}
+/>*/
 
 export const ArrayFilterRenderer: <T>(
-  props: RenderCellProps<T>
-) => ReactNode = (props) => {
-  const data = (props.row as any)[props.column.key];
+  props: ColumnFieldRendererProps<T>
+) => JSX.Element | null = (props) => {
+  const data = props.data[props.col.key];
+  const filterState = useContext(FilterStateContext);
 
-  if (!isJsonArray(data)) return null;
+  if (!isJsonArray(data) || !filterState) return null;
 
   return (
     <>
       {data.map((g, i) =>
         isJsonString(g) ? (
           <a
-            key={`${data.join("-")}-${i}`}
-            // onClick={() => props.addFilter(col, g)}
-            // key={`${props.data?.[idCol]}-${g}`}
+            onClick={() =>
+              filterState.activeFiltersDispatch({
+                type: "add",
+                value: { field: props.col.key.toString(), value: g },
+              })
+            }
+            key={`${props.col.key.toString()}-${g}`}
           >
             {g}
             {i < data.length - 1 ? ", " : ""}
