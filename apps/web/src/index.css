@@ -364,3 +364,12 @@ a.reverse-sort {
   height: calc(100vh - 30px);
   overflow: scroll;
 }
+
+.loading {
+  height: 100vh;
+  text-align: center;
+  padding-top: 100px;
+  font-size: 64px;
+  font-weight: 100;
+  color: #ccc;
+}
