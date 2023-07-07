@@ -46,7 +46,7 @@ function Music(props: { darkMode: boolean; mode: "albums" | "playlist" }) {
   }, [rowData]);
 
   return (
-    <div className="root-music">
+    <div className="music-root">
       {props.mode === "albums" ? (
         <Browser
           tag={"album"}

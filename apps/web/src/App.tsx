@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import Movie from "./Browser/Movie.jsx";
 
 // import Movie from "./Movie";
+import Select from "react-select";
 import Music from "./Browser/Music.jsx";
 import { SpotifyProvider } from "./Browser/SpotifyContext.js";
 
@@ -19,45 +20,83 @@ function parseMode(
   return;
 }
 
+type Mode = "movie" | "music" | "playlist";
+interface Library {
+  value: Mode;
+  label: string;
+}
+
 function App() {
-  const [mode, setMode] = useState<{ mode: "movie" | "music" | "playlist" }>({
-    mode: parseMode(localStorage.getItem("mode")) ?? "music",
-  });
   const [darkMode, setDarkMode] = useState<boolean>(false);
 
+  const [libraries, setLibraries] = useState<Library[]>([
+    { value: "movie", label: "Movies" },
+    { value: "music", label: "Music" },
+    { value: "playlist", label: "Playlist" },
+  ]);
+
+  const [selectedLibrary, setSelectedLibrary] = useState<Library>();
+
   useEffect(() => {
-    localStorage.setItem("mode", mode.mode);
-  }, [mode]);
+    if (!selectedLibrary) {
+      const savedMode = parseMode(localStorage.getItem("mode"));
+      const savedLibrary = libraries.find(
+        (library) => library.value === savedMode
+      );
+      if (savedLibrary) setSelectedLibrary(savedLibrary);
+      else setSelectedLibrary(libraries[0]);
+    }
+  }, [libraries, selectedLibrary]);
+
+  useEffect(() => {
+    selectedLibrary?.value &&
+      localStorage.setItem("mode", selectedLibrary?.value);
+  }, [selectedLibrary?.value]);
 
   return (
-    <div id="root" className={darkMode ? "dark" : ""}>
-      <div className={"toolbar"}>
-        <button type="button" onClick={() => setMode({ mode: "movie" })}>
-          Movies
-        </button>
-        <button type="button" onClick={() => setMode({ mode: "music" })}>
-          Music
-        </button>
-        <button type="button" onClick={() => setMode({ mode: "playlist" })}>
-          Playlist
-        </button>
-        <button type="button" onClick={() => setDarkMode(!darkMode)}>
+    <SpotifyProvider
+      authRequired={
+        selectedLibrary?.value === "music" ||
+        selectedLibrary?.value === "playlist"
+      }
+    >
+      <div id="app-root" className={darkMode ? "dark" : ""}>
+        <div className={"app-header"}>
+          <Select
+            hideSelectedOptions={false}
+            isClearable={false}
+            placeholder="Library"
+            className={"filter-select"}
+            value={selectedLibrary}
+            onChange={(lib) => {
+              if (lib) setSelectedLibrary(lib);
+            }}
+            options={libraries}
+            theme={(theme) => ({
+              ...theme,
+              colors: {
+                ...theme.colors,
+                primary25: "#00ffab24",
+                primary50: "#00ffab50",
+                primary75: "#00ffab",
+                primary: "#00c583",
+              },
+            })}
+          />
+          {/* <button type="button" onClick={() => setDarkMode(!darkMode)}>
           {darkMode ? "Light" : "Dark"}
-        </button>
-      </div>
+        </button> */}
+        </div>
 
-      {mode.mode === "movie" ? <Movie></Movie> : null}
-      {mode.mode === "music" ? (
-        <SpotifyProvider>
+        {selectedLibrary?.value === "movie" ? <Movie></Movie> : null}
+        {selectedLibrary?.value === "music" ? (
           <Music darkMode={darkMode} mode={"albums"}></Music>
-        </SpotifyProvider>
-      ) : null}
-      {mode.mode === "playlist" ? (
-        <SpotifyProvider>
+        ) : null}
+        {selectedLibrary?.value === "playlist" ? (
           <Music darkMode={darkMode} mode={"playlist"}></Music>
-        </SpotifyProvider>
-      ) : null}
-    </div>
+        ) : null}
+      </div>
+    </SpotifyProvider>
   );
 }
 

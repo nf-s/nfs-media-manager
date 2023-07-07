@@ -22,19 +22,20 @@ export const SpotifyDispatchContext = createContext<
 >(undefined);
 
 export const SpotifyProvider: React.FC<{
+  authRequired: boolean;
   children: React.ReactNode;
-}> = ({ children }) => {
+}> = ({ authRequired, children }) => {
   const [state, dispatch] = useReducer(spotifyReducer, undefined);
 
   // Init spotify auth (which sets authToken)
   useEffect(() => {
-    if (!state?.authToken) {
+    if (!state?.authToken && authRequired) {
       const spotifyAuth = new SpotifyAuth((token) => {
         dispatch({ type: "update", value: { authToken: token } });
       });
       spotifyAuth.init();
     }
-  }, [dispatch, state?.authToken]);
+  }, [dispatch, state?.authToken, authRequired]);
 
   // Set spotify api object after auth token is set
   useEffect(() => {
@@ -105,7 +106,6 @@ function spotifyReducer(
       return { ...spotifyState, ...action.value };
     }
     case "playAlbum": {
-      console.log("play album");
       return {
         ...spotifyState,
         uris: [`spotify:album:${action.row.id.spotify}`],
@@ -113,7 +113,6 @@ function spotifyReducer(
       };
     }
     case "playTrack": {
-      console.log("play track");
       return {
         ...spotifyState,
         uris: [`spotify:track:${action.row.spotifyId}`],

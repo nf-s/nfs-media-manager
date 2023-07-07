@@ -24,7 +24,7 @@ export default function M(/* props: { darkMode: boolean } */) {
   }, [movieData]);
 
   return (
-    <div className="root-movie">
+    <div className="movie-root">
       <Browser
         tag={"movie"}
         rows={movieData.rows}
