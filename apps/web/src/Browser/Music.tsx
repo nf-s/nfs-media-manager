@@ -27,7 +27,7 @@ function Music(props: { darkMode: boolean; mode: "albums" | "playlist" }) {
 
     const fetchData = async () => {
       const library = (await (
-        await fetch("/lib-music.json")
+        await fetch("/data/lib-music.json")
       ).json()) as CleanLibrary;
 
       setData({

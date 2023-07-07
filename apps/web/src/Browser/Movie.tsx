@@ -12,7 +12,7 @@ export default function M(/* props: { darkMode: boolean } */) {
     if (movieData.rows.length > 0) return;
     const fetchData = async () => {
       const movies = (await (
-        await fetch("/lib-movie.json")
+        await fetch("/data/lib-movie.json")
       ).json()) as CleanMovie[];
 
       setMovieData({
