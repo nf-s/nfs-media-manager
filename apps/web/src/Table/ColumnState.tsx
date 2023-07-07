@@ -74,7 +74,6 @@ export function useColumnsState<T>(
   }, [visibleColumns, tag]);
 
   useMemo(() => {
-    console.log("setColumns");
     const maximums = new Map<NumericColKey<T>, number>();
     const minimums = new Map<NumericColKey<T>, number>();
 
@@ -99,7 +98,6 @@ export function useColumnsState<T>(
           if (col.generateMaximumFromData) {
             col.max = max;
           }
-          console.log(`Numeric ${col.key as any}`);
           const resolvedCol: ColumnWithFieldRenderer<T> = {
             key: col.key.toString(),
             name: col.name !== "" ? col.name : col.key.toString(),

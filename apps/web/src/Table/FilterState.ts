@@ -10,7 +10,7 @@ export type TextFilterValueWithLabel<T> = TextFilterValue<T> & {
 
 export interface FilterState<T> {
   filterData: TextFilterValueWithLabel<T>[];
-  activeFilters: TextFilterValue<T>[];
+  activeFilters: TextFilterValueWithLabel<T>[];
   activeFiltersDispatch: React.Dispatch<
   FilterDispatchActions<T>
   >;
@@ -21,9 +21,9 @@ export interface FilterState<T> {
 }
 
 type FilterDispatchActions<T> =
-  | { type: "add"; value: TextFilterValue<T> }
+  | { type: "add"; value: TextFilterValueWithLabel<T> }
   | { type: "clear" }
-  | { type: "set"; values: TextFilterValue<T>[] }
+  | { type: "set"; values: TextFilterValueWithLabel<T>[] }
 
 
   type NumericFilterDispatchActions<T> =
@@ -85,7 +85,6 @@ export function useFilterState<T>(tag: string, rows: T[],
 
   useEffect(() => {
     if (!activeFilters) return;
-    console.log("set to localstorage");
     localStorage.setItem(`${tag}-activeFilters`, JSON.stringify(activeFilters));
   }, [activeFilters, tag]);
 
@@ -105,10 +104,10 @@ export function useFilterState<T>(tag: string, rows: T[],
 
 // Default value is set in fetchData
 function filterReducer<T>(
-  state: TextFilterValue<T>[],
+  state: TextFilterValueWithLabel<T>[],
   action:
   FilterDispatchActions<T>
-): TextFilterValue<T>[] {
+): TextFilterValueWithLabel<T>[] {
   switch (action.type) {
     case "add": {
       if (!state) {
@@ -127,6 +126,18 @@ function filterReducer<T>(
       return [];
   }
 }
+
+export function addFilter<T>(
+  filterState: FilterState<T>,
+  value: TextFilterValue<T>
+) {
+  if (!filterState) return
+
+  const found = filterState.filterData.find(f => f.field === value.field && f.value === value.value)
+  if (found)
+    filterState.activeFiltersDispatch({ type: "add", value: found});
+}
+
 function filterNumericReducer<T>(
   state: NumericFilterValue<T>[],
   action:

@@ -41,8 +41,6 @@ export const NumericField = <T,>(props: ColumnFieldRendererProps<T>) => {
   const col = props.col;
 
   if (!isNumericCol(col)) {
-    console.log(col);
-    console.log("is not numeric");
     return null;
   }
 

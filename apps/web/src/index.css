@@ -64,7 +64,7 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
-#root {
+#app-root {
   display: grid;
   grid-template-rows: 20px auto;
   width: 100vw;
@@ -77,17 +77,21 @@ code {
     monospace;
 }
 
-.root-movie .fill-grid,
-.root-movie .container {
-  /* Hack to get height working again :( */
-  height: calc(100vh - 80px);
+.browser-root {
+  height: 100vh;
   overflow-x: hidden;
 }
 
-.root-music .fill-grid,
-.root-music .container {
+.movie-root .fill-grid,
+.movie-root .container {
   /* Hack to get height working again :( */
-  height: calc(100vh - 158px);
+  height: calc(100vh - 59px);
+}
+
+.music-root .fill-grid,
+.music-root .container {
+  /* Hack to get height working again :( */
+  height: calc(100vh - 138px);
   overflow-x: hidden;
 }
 
@@ -100,9 +104,9 @@ code {
   color: #093c33;
 }
 
-.root-music {
+.music-root {
   display: grid;
-  grid-template-rows: min-content auto min-content;
+  grid-template-rows: min-content auto;
 }
 
 .image-grid {
@@ -110,9 +114,17 @@ code {
   position: relative;
 }
 
-.header {
+.app-header {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 120px;
+}
+
+.header,
+.app-header {
   display: grid;
-  grid-template-columns: 50px 500px repeat(
+  grid-template-columns: 120px 50px 500px repeat(
       auto-fill,
       [col-start] minmax(250px, 1fr) [col-end]
     );
@@ -136,8 +148,10 @@ code {
 }
 
 .player {
-  overflow-x: visible;
-  overflow-y: visible;
+  overflow: hidden;
+  position: absolute;
+  bottom: 0;
+  width: 100vw;
 }
 
 .filter-select {
@@ -190,12 +204,12 @@ code {
   background: #00ffab24;
 }
 
-.root-music .rdg-cell button:hover {
+.music-root .rdg-cell button:hover {
   cursor: pointer;
   color: #00c583;
 }
 
-.root-music .rdg-cell button {
+.music-root .rdg-cell button {
   height: 26px;
   border-radius: 15px;
   width: 26px;
@@ -286,11 +300,11 @@ a.reverse-sort {
   color: #000;
 }
 
-.dark .root-music .rdg-cell button:hover {
+.dark .music-root .rdg-cell button:hover {
   color: #00ffab;
 }
 
-.dark .root-music .rdg-cell button {
+.dark .music-root .rdg-cell button {
   color: #d6d6d6;
 }
 

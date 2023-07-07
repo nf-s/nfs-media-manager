@@ -72,7 +72,6 @@ export function Filter<T>(p: { filterState: FilterState<T> }) {
                 clickedFilter.exclude = true;
                 clickedFilter.intersection = undefined;
               }
-              console.log(clickedFilter);
               filterState.activeFiltersDispatch({
                 type: "add",
                 value: clickedFilter,

@@ -3,7 +3,7 @@ import React, { useContext } from "react";
 import { ColumnFieldRenderer } from "../Browser/FieldRenderer.js";
 import { ColumnsConfig } from "../Table/ColumnState.js";
 import { formatTime } from "../Table/Columns.jsx";
-import { FilterStateContext } from "../Table/FilterState.js";
+import { FilterStateContext, addFilter } from "../Table/FilterState.js";
 
 export const Genres: ColumnFieldRenderer<CleanTrack> = (props) => {
   const filterState = useContext(FilterStateContext);
@@ -13,12 +13,7 @@ export const Genres: ColumnFieldRenderer<CleanTrack> = (props) => {
     <>
       {props.data.genres.map((g, i) => (
         <a
-          onClick={() =>
-            filterState.activeFiltersDispatch({
-              type: "add",
-              value: { field: "genres", value: g },
-            })
-          }
+          onClick={() => addFilter(filterState, { field: "genres", value: g })}
           key={`${props.data.spotifyId}-${g}`}
         >
           {g}
@@ -37,12 +32,7 @@ export const Artist: ColumnFieldRenderer<CleanTrack> = (props) => {
     <>
       {props.data.artists.map((a, i) => (
         <a
-          onClick={() =>
-            filterState.activeFiltersDispatch({
-              type: "add",
-              value: { field: "artists", value: a },
-            })
-          }
+          onClick={() => addFilter(filterState, { field: "artists", value: a })}
           key={`${props.data.spotifyId}-${a}`}
         >
           {a}

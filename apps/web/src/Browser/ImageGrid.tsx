@@ -84,8 +84,6 @@ function getItems(nextGroupKey: number, count: number, maxIndex: number) {
     nextItems.push({ groupKey: nextGroupKey, key: nextKey + i });
   }
 
-  console.log(nextItems);
-
   return nextItems;
 }
 

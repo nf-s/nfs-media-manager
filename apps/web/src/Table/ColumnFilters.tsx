@@ -5,7 +5,7 @@ import { RenderHeaderCellProps } from "react-data-grid";
 import { ColumnFieldRendererProps } from "../Browser/FieldRenderer.js";
 import { isJsonArray, isJsonString } from "../Common/util.js";
 import { NumberFormat, NumericCol } from "./Columns.jsx";
-import { FilterStateContext } from "./FilterState.js";
+import { FilterStateContext, addFilter } from "./FilterState.js";
 
 type NumericFilterProps<T> = {
   col: NumericCol<T>;
@@ -95,9 +95,9 @@ export const ArrayFilterRenderer: <T>(
         isJsonString(g) ? (
           <a
             onClick={() =>
-              filterState.activeFiltersDispatch({
-                type: "add",
-                value: { field: props.col.key.toString(), value: g },
+              addFilter(filterState, {
+                field: props.col.key.toString(),
+                value: g,
               })
             }
             key={`${props.col.key.toString()}-${g}`}
