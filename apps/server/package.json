@@ -9,7 +9,7 @@
     "start": "tsc && node dist/index.js"
   },
   "author": "",
-  "license": "ISC",
+  "license": "MIT",
   "devDependencies": {
     "@googleapis/customsearch": "^0.2.0",
     "@toplast/lastfm": "^0.1.2",
