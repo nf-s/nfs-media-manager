@@ -60,7 +60,9 @@ type ColumnBase = {
   readonly resizable?: boolean;
 };
 
-export type DefaultVisible<T> = (keyof T | "Controls")[];
+export type ColumnKey<T> = keyof T | "Controls" | "Links";
+
+export type DefaultVisible<T> = ColumnKey<T>[];
 
 export type NumericCol<T> = {
   readonly sortable?: boolean;

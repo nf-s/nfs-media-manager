@@ -11,6 +11,63 @@ import { ArrayFilterRenderer } from "../Table/ColumnFilters.jsx";
 import { ColumnsConfig } from "../Table/ColumnState.js";
 import { formatTime } from "../Table/Columns.jsx";
 
+const Links = (row: CleanAlbum) => (
+  <>
+    {row.links.rym ? (
+      <a
+        href={row.links.rym}
+        title={row.otherTitles.rym}
+        target="blank"
+        className="row-external-links"
+      >
+        <img src="/img/sonemic.png" width="16px" alt="Sonemic link" />
+      </a>
+    ) : null}
+    {row.links.discogs ? (
+      <a
+        href={row.links.discogs}
+        title={row.otherTitles.discogs}
+        target="blank"
+        className="row-external-links"
+      >
+        <img src="/img/discogs.png" width="16px" alt="Discogs link" />
+      </a>
+    ) : null}
+    {row.links.mb ? (
+      <a
+        href={row.links.mb}
+        title={row.otherTitles.mb}
+        target="blank"
+        className="row-external-links"
+      >
+        <img src="/img/mb.png" width="16px" alt="MusicBrainz link" />
+      </a>
+    ) : null}
+
+    {row.links.lastfm ? (
+      <a
+        href={row.links.lastfm}
+        title={row.otherTitles.lastfm}
+        target="blank"
+        className="row-external-links"
+      >
+        <img src="/img/lastfm.png" width="16px" alt="Lastfm link" />
+      </a>
+    ) : null}
+
+    {row.links.mc ? (
+      <a
+        href={row.links.mc}
+        title={row.otherTitles.mc}
+        target="blank"
+        className="row-external-links"
+      >
+        <img src="/img/metacritic.svg" width="16px" alt="Metacritic link" />
+      </a>
+    ) : null}
+  </>
+);
+
 const Release: ColumnFieldRenderer<CleanAlbum> = (props) => (
   <>
     <a
@@ -20,58 +77,6 @@ const Release: ColumnFieldRenderer<CleanAlbum> = (props) => (
     >
       {props.data.title}
     </a>
-    {props.data.links.rym ? (
-      <a
-        href={props.data.links.rym}
-        title={props.data.otherTitles.rym}
-        target="blank"
-        className="row-external-links"
-      >
-        <img src="/img/sonemic.png" width="16px" alt="Sonemic link" />
-      </a>
-    ) : null}
-    {props.data.links.discogs ? (
-      <a
-        href={props.data.links.discogs}
-        title={props.data.otherTitles.discogs}
-        target="blank"
-        className="row-external-links"
-      >
-        <img src="/img/discogs.png" width="16px" alt="Discogs link" />
-      </a>
-    ) : null}
-    {props.data.links.mb ? (
-      <a
-        href={props.data.links.mb}
-        title={props.data.otherTitles.mb}
-        target="blank"
-        className="row-external-links"
-      >
-        <img src="/img/mb.png" width="16px" alt="MusicBrainz link" />
-      </a>
-    ) : null}
-
-    {props.data.links.lastfm ? (
-      <a
-        href={props.data.links.lastfm}
-        title={props.data.otherTitles.lastfm}
-        target="blank"
-        className="row-external-links"
-      >
-        <img src="/img/lastfm.png" width="16px" alt="Lastfm link" />
-      </a>
-    ) : null}
-
-    {props.data.links.mc ? (
-      <a
-        href={props.data.links.mc}
-        title={props.data.otherTitles.mc}
-        target="blank"
-        className="row-external-links"
-      >
-        <img src="/img/metacritic.svg" width="16px" alt="Metacritic link" />
-      </a>
-    ) : null}
   </>
 );
 
@@ -331,11 +336,13 @@ export const columnsConfig: ColumnsConfig<CleanAlbum> = {
     art: "art",
     cols: ["title", "artists", "dateReleased"],
     ButtonFC: AlbumButtons,
+    links: Links,
   },
   custom: [
     {
       key: "Controls",
       name: "",
+
       renderCell: (formatterProps: { row: CleanAlbum }) => {
         const spotifyContext = useContext(SpotifyContext);
         const spotifyDispatch = useContext(SpotifyDispatchContext);
@@ -366,9 +373,18 @@ export const columnsConfig: ColumnsConfig<CleanAlbum> = {
       width: 80,
       resizable: false,
     },
+    {
+      key: "Links",
+      name: "",
+      renderCell: (formatterProps: { row: CleanAlbum }) => {
+        return Links(formatterProps.row);
+      },
+      resizable: false,
+    },
   ],
   defaultVisible: [
     "Controls",
+    "Links",
     "title",
     "artists",
     "durationSec",

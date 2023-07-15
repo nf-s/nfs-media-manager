@@ -6,6 +6,7 @@ import { ColumnFieldRenderer } from "../Browser/FieldRenderer.js";
 import { NumericFilter } from "./ColumnFilters.jsx";
 import {
   BooleanField,
+  ColumnKey,
   DataColumn,
   DataColumnKey,
   NumericField,
@@ -35,6 +36,7 @@ export type GridConfig<T> = {
     DataColumnKey<T>,
     DataColumnKey<T>
   ];
+  readonly links?: (row: T) => JSX.Element;
   ButtonFC?: GridButtonsFC<T>;
 };
 
@@ -44,7 +46,7 @@ export interface ColumnsConfig<T> {
   grid: GridConfig<T>;
   id: IdColKey<T>;
   defaultSort: SortValue<T>;
-  defaultVisible: (keyof T | "Controls")[];
+  defaultVisible: ColumnKey<T>[];
 }
 
 export interface ColumnsState<T> {

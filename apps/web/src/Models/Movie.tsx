@@ -214,6 +214,13 @@ export const columnsConfig: ColumnsConfig<CleanMovie> = {
     height: 220,
     cols: ["title", "directors", "releaseDate"],
   },
-  defaultVisible: ["Controls", "title", "directors", "releaseDate", "tags"],
+  defaultVisible: [
+    "Controls",
+    "Links",
+    "title",
+    "directors",
+    "releaseDate",
+    "tags",
+  ],
   defaultSort: ["releaseDate", "DESC"],
 };

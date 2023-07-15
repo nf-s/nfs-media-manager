@@ -43,7 +43,14 @@ export function SelectedRow<T>(props: {
             />
           </p>
           {columnsConfig.grid.art ? (
-            <img src={selectedRow[columnsConfig.grid.art] as any} />
+            <div>
+              <img src={selectedRow[columnsConfig.grid.art] as any} />
+            </div>
+          ) : null}
+          {columnsConfig.grid.links ? (
+            <div style={{ float: "left" }}>
+              {columnsConfig.grid.links(selectedRow)}
+            </div>
           ) : null}
         </div>
         <div className={"scroll"}>

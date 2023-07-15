@@ -139,6 +139,9 @@ function ImageGridItem<T>(props: {
           {columnsConfig.grid.ButtonFC ? (
             <columnsConfig.grid.ButtonFC row={row} />
           ) : null}
+          {columnsConfig.grid.links ? (
+            <div className="image-links">{columnsConfig.grid.links(row)}</div>
+          ) : null}
         </div>
         <LazyLoadImage
           src={art}
