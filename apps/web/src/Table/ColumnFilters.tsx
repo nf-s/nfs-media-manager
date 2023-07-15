@@ -2,7 +2,7 @@
 import "rc-slider/assets/index.css";
 import React, { useContext } from "react";
 import { RenderHeaderCellProps } from "react-data-grid";
-import { ColumnFieldRendererProps } from "../Browser/FieldRenderer.js";
+import { ColumnFieldRendererProps } from "./FieldRenderer.js";
 import { isJsonArray, isJsonString } from "../Common/util.js";
 import { NumberFormat, NumericCol } from "./Columns.jsx";
 import { FilterStateContext, addFilter } from "./FilterState.js";

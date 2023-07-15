@@ -1,6 +1,33 @@
+import { faImdb } from "@fortawesome/free-brands-svg-icons";
+import { faFilm, faSquareMinus } from "@fortawesome/free-solid-svg-icons";
+import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { CleanMovie, timeToDateString } from "data-types";
+import React from "react";
+import { LinksColumn, LinksRenderer } from "../Table/FieldRenderer.js";
 import { ArrayFilterRenderer } from "../Table/ColumnFilters.jsx";
 import { ColumnsConfig } from "../Table/ColumnState.js";
+
+const MovieLinkRenderer = LinksRenderer([
+  {
+    key: "imdb",
+    img: (
+      <span>
+        <FontAwesomeIcon
+          icon={faImdb}
+          style={{ color: "#000", background: "#f5c518" }}
+          size="1x"
+        />
+      </span>
+    ),
+    alt: "IMDB link",
+  },
+  {
+    key: "tmdb",
+    img: <FontAwesomeIcon icon={faSquareMinus} style={{ color: "#01b4e4" }} />,
+    alt: "TMDB link",
+  },
+  { key: "ptp", img: <FontAwesomeIcon icon={faFilm} />, alt: "PTP link" },
+]);
 
 export const columnsConfig: ColumnsConfig<CleanMovie> = {
   id: "id",
@@ -208,11 +235,13 @@ export const columnsConfig: ColumnsConfig<CleanMovie> = {
       name: "Box Office",
     },
   ],
+  custom: [LinksColumn(MovieLinkRenderer)],
   grid: {
     art: "poster",
     width: 150,
     height: 220,
     cols: ["title", "directors", "releaseDate"],
+    links: MovieLinkRenderer,
   },
   defaultVisible: [
     "Controls",

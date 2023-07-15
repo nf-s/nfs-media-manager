@@ -1,6 +1,6 @@
 import React, { useContext } from "react";
 import { ColumnConfigContext, ColumnsConfig } from "../Table/ColumnState.js";
-import { FieldRenderer } from "./FieldRenderer.js";
+import { FieldRenderer } from "../Table/FieldRenderer.js";
 
 export function SelectedRow<T>(props: {
   selectedRow: T | undefined;

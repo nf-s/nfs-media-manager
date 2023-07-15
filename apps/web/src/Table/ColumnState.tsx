@@ -2,7 +2,7 @@ import { IdColKey, NumericColKey, SortValue } from "data-types";
 import React, { createContext, useEffect, useMemo, useState } from "react";
 import { Column } from "react-data-grid";
 import { PickProperties } from "ts-essentials";
-import { ColumnFieldRenderer } from "../Browser/FieldRenderer.js";
+import { ColumnFieldRenderer } from "./FieldRenderer.js";
 import { NumericFilter } from "./ColumnFilters.jsx";
 import {
   BooleanField,

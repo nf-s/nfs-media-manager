@@ -104,6 +104,26 @@ export async function clean(): Promise<CleanLibrary> {
         popularityPtp: movie.ptp?.totalSnatched,
         tags: Array.from(tags),
         collections: movie.ptpScrape?.collections.map((t) => t.name) ?? [],
+        links: {
+          imdb: {
+            href: movie.id?.imdb
+              ? `https://www.imdb.com/title/${movie.id?.imdb}/`
+              : undefined,
+            title: `${movie.omdb?.name}`,
+          },
+          tmdb: {
+            href: movie.tmdb?.id
+              ? `https://www.themoviedb.org/movie/${movie.tmdb?.id}`
+              : undefined,
+            title: `${movie.tmdb?.title}`,
+          },
+          ptp: {
+            href: movie.ptp?.id
+              ? `https://passthepopcorn.me/torrents.php?id=${movie.ptp?.id}`
+              : undefined,
+            title: `${movie.ptp?.title}`,
+          },
+        },
       };
 
       // RT rating

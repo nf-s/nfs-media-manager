@@ -1,3 +1,5 @@
+import { Links } from "./common.js";
+
 export interface CleanMovie {
   id: string;
   title: string;
@@ -31,4 +33,5 @@ export interface CleanMovie {
   tags: string[];
   collections: string[];
   productionCompanies: string[];
+  links: Links<"imdb" | "tmdb" | "ptp">;
 }
