@@ -15,9 +15,9 @@ export function Filter<T>(p: { filterState: FilterState<T> }) {
   const filterSearchIndex = useMemo(() => {
     const index = new Index({ tokenize: "full", preset: "score" });
 
-    for (let i = 0; i < filterState.filterData.length; i++) {
-      const filter = filterState.filterData[i];
-      index.add(i, filter.label ?? filter.value);
+    for (let i = 0; i < (filterState.filterData?.length ?? 0); i++) {
+      const filter = filterState.filterData?.[i];
+      if (filter) index.add(i, filter.label ?? filter.value);
     }
 
     return index;
@@ -25,7 +25,7 @@ export function Filter<T>(p: { filterState: FilterState<T> }) {
 
   const filteredOptions: TextFilterValueWithLabel<T>[] = useMemo(() => {
     if (!filterInputValue || !filterSearchIndex) {
-      return filterState.filterData;
+      return filterState.filterData ?? [];
     }
 
     const searchResults = filterSearchIndex.search(filterInputValue);
@@ -35,7 +35,7 @@ export function Filter<T>(p: { filterState: FilterState<T> }) {
     searchResults.forEach((fieldResult) => {
       if (
         typeof fieldResult === "number" &&
-        filterState.filterData[fieldResult]
+        filterState.filterData?.[fieldResult]
       ) {
         results.push(filterState.filterData[fieldResult]);
       }
