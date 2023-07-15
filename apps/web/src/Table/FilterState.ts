@@ -69,8 +69,8 @@ export function useFilterState<T>(tag: string, rows: T[],
     : undefined;
     if (Array.isArray(savedActiveFilters)) {
 
-        const found = filterData.filter((a) =>
-        savedActiveFilters.find(
+        const found = savedActiveFilters.filter((a) =>
+          filterData.find(
           (b) => a.field === b.field && a.value === b.value
         )
       );
