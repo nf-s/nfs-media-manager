@@ -177,6 +177,9 @@ importers:
       react-spotify-web-playback:
         specifier: ^0.14.0
         version: 0.14.0(react-dom@18.2.0)(react@18.2.0)
+      react-tooltip:
+        specifier: ^5.18.0
+        version: 5.18.0(react-dom@18.2.0)(react@18.2.0)
       spotify-web-api-js:
         specifier: ^1.5.1
         version: 1.5.1
@@ -6715,6 +6718,18 @@ packages:
       react: 18.2.0
     transitivePeerDependencies:
       - react-dom
+    dev: false
+
+  /react-tooltip@5.18.0(react-dom@18.2.0)(react@18.2.0):
+    resolution: {integrity: sha512-qjDK/skUJJ27sc9lTWeNxp2rLzmenBTskSsRiDOCPnupGSz2GhL5IZxDizK/sOsk0hn5iSCywt+3jKxUJ3Y4Sw==}
+    peerDependencies:
+      react: '>=16.14.0'
+      react-dom: '>=16.14.0'
+    dependencies:
+      '@floating-ui/dom': 1.4.2
+      classnames: 2.3.2
+      react: 18.2.0
+      react-dom: 18.2.0(react@18.2.0)
     dev: false
 
   /react-transition-group@4.4.5(react-dom@18.2.0)(react@18.2.0):

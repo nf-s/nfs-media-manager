@@ -40,7 +40,9 @@ export const SpotifyProvider: React.FC<{
   // Set spotify api object after auth token is set
   useEffect(() => {
     if (dispatch && state?.authToken && !state?.api) {
-      const spotifyApi = new (SpotifyWebApi as any)();
+      // TODO fix this
+      const spotifyApi =
+        new (SpotifyWebApi as unknown as typeof SpotifyWebApi.default)();
       spotifyApi.setAccessToken(state.authToken);
       dispatch({ type: "update", value: { api: spotifyApi } });
     }

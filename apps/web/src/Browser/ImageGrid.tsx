@@ -117,7 +117,7 @@ function ImageGridItem<T>(props: {
       ? (columnsConfig.data ?? []).find((col) => col.key === sortColumn)
       : undefined;
 
-  const padding = 5;
+  const padding = 3;
 
   const art = row?.[columnsConfig.grid.art!];
 
