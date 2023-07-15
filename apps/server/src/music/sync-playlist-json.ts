@@ -626,4 +626,12 @@ export const playlistToSync: SyncPlaylist<CleanAlbum>[] = [
     ],
     sort: ["ratingRymValue", "DESC"],
   },
+  {
+    name: "Baroque/chamber pop (sorted by RYM)",
+    filters: [
+      { value: "chamber pop", field: "genres" },
+      { value: "baroque pop", field: "genres" },
+    ],
+    sort: ["ratingRymValue", "DESC"],
+  },
 ];
