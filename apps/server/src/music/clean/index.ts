@@ -170,39 +170,48 @@ export async function clean(): Promise<CleanLibrary> {
           ? parseInt(album.lastFm?.userplaycount, 10)
           : undefined,
         links: {
-          rym: album.rymGoogle?.link,
-          lastfm: album.lastFm?.url,
-          mb: album.mb?.releaseGroup.id
-            ? `https://musicbrainz.org/release-group/${album.mb?.releaseGroup.id}`
-            : undefined,
-          discogs: album.discogs
-            ? "master" in album.discogs
-              ? album.discogs.master.uri
-              : album.discogs.release.uri
-            : undefined,
-          spotify: album.spotify.external_urls.spotify,
-          mc: album.metacriticGoogle?.link,
-        },
-        otherTitles: {
-          csv:
-            album.source && album.source.type !== "spotify"
-              ? `${album.source.title} by ${album.source.artist}`
+          rym: {
+            href: album.rymGoogle?.link,
+            title: album.rymGoogle?.rawResponse?.title,
+          },
+          lastfm: {
+            href: album.lastFm?.url,
+            title: `${album.lastFm?.name} by ${album.lastFm?.artist?.name}`,
+          },
+          mb: {
+            href: album.mb?.releaseGroup.id
+              ? `https://musicbrainz.org/release-group/${album.mb?.releaseGroup.id}`
               : undefined,
-          rym: album.rymGoogle?.rawResponse?.title,
-          lastfm: `${album.lastFm?.name} by ${album.lastFm?.artist?.name}`,
-          mb: `${album.mb?.releaseGroup.title}`,
-          discogs: album.discogs
-            ? "master" in album.discogs
-              ? `${album.discogs.master.title} by ${album.discogs.master.artists
-                  .map((a) => a.name)
-                  .join(", ")}`
-              : `${
-                  album.discogs.release.title
-                } by ${album.discogs.release.artists
-                  .map((a) => a.name)
-                  .join(", ")}`
-            : undefined,
-          mc: album.metacriticGoogle?.rawResponse?.title,
+            title: `${album.mb?.releaseGroup.title}`,
+          },
+          discogs: {
+            href: album.discogs
+              ? "master" in album.discogs
+                ? album.discogs.master.uri
+                : album.discogs.release.uri
+              : undefined,
+            title: album.discogs
+              ? "master" in album.discogs
+                ? `${
+                    album.discogs.master.title
+                  } by ${album.discogs.master.artists
+                    .map((a) => a.name)
+                    .join(", ")}`
+                : `${
+                    album.discogs.release.title
+                  } by ${album.discogs.release.artists
+                    .map((a) => a.name)
+                    .join(", ")}`
+              : undefined,
+          },
+          spotify: {
+            href: album.spotify.external_urls.spotify,
+            title: albumTitle(album),
+          },
+          mc: {
+            href: album.metacriticGoogle?.link,
+            title: album.metacriticGoogle?.rawResponse?.title,
+          },
         },
       };
 

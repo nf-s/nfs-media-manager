@@ -4,7 +4,7 @@ import "react-data-grid/lib/styles.css";
 import { LazyLoadImage } from "react-lazy-load-image-component";
 import { useTraceUpdate } from "../Common/util.js";
 import { ColumnConfigContext, ColumnsConfig } from "../Table/ColumnState.jsx";
-import { FieldRenderer } from "./FieldRenderer.js";
+import { FieldRenderer } from "../Table/FieldRenderer.js";
 
 const GRID_GROUP_SIZE = 100;
 

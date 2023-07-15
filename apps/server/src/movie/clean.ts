@@ -104,6 +104,26 @@ export async function clean(): Promise<CleanLibrary> {
 
         tags: Array.from(tags),
 
+        links: {
+          imdb: {
+            href: movie.id?.imdb
+              ? `https://www.imdb.com/title/${movie.id?.imdb}/`
+              : undefined,
+            title: `${movie.omdb?.name}`,
+          },
+          tmdb: {
+            href: movie.tmdb?.id
+              ? `https://www.themoviedb.org/movie/${movie.tmdb?.id}`
+              : undefined,
+            title: `${movie.tmdb?.title}`,
+          },
+
+
+
+              : undefined,
+
+          },
+        },
       };
 
       // RT rating

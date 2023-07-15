@@ -1,6 +1,6 @@
 import { CleanTrack } from "data-types";
 import React, { useContext } from "react";
-import { ColumnFieldRenderer } from "../Browser/FieldRenderer.js";
+import { ColumnFieldRenderer } from "../Table/FieldRenderer.js";
 import { ColumnsConfig } from "../Table/ColumnState.js";
 import { formatTime } from "../Table/Columns.jsx";
 import { FilterStateContext, addFilter } from "../Table/FilterState.js";

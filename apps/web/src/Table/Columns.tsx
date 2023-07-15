@@ -10,7 +10,7 @@ import { PickProperties } from "ts-essentials";
 import {
   ColumnFieldRenderer,
   ColumnFieldRendererProps,
-} from "../Browser/FieldRenderer.js";
+} from "./FieldRenderer.js";
 
 export function formatTime(seconds: number) {
   const h = Math.floor(seconds / 3600);

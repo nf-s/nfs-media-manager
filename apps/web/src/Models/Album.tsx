@@ -1,7 +1,11 @@
 /* eslint-disable react-hooks/rules-of-hooks */
 import { CleanAlbum, timeToDateString } from "data-types";
 import React, { useContext } from "react";
-import { ColumnFieldRenderer } from "../Browser/FieldRenderer.js";
+import {
+  ColumnFieldRenderer,
+  LinksColumn,
+  LinksRenderer,
+} from "../Table/FieldRenderer.js";
 import LinkIcon from "../Browser/LinkIcon.js";
 import {
   SpotifyContext,
@@ -12,62 +16,13 @@ import { ArrayFilterRenderer } from "../Table/ColumnFilters.jsx";
 import { ColumnsConfig } from "../Table/ColumnState.js";
 import { formatTime } from "../Table/Columns.jsx";
 
-const Links = (row: CleanAlbum) => (
-  <>
-    {row.links.rym ? (
-      <a
-        href={row.links.rym}
-        title={row.otherTitles.rym}
-        target="blank"
-        className="row-external-links"
-      >
-        <img src="/img/sonemic.png" width="16px" alt="Sonemic link" />
-      </a>
-    ) : null}
-    {row.links.discogs ? (
-      <a
-        href={row.links.discogs}
-        title={row.otherTitles.discogs}
-        target="blank"
-        className="row-external-links"
-      >
-        <img src="/img/discogs.png" width="16px" alt="Discogs link" />
-      </a>
-    ) : null}
-    {row.links.mb ? (
-      <a
-        href={row.links.mb}
-        title={row.otherTitles.mb}
-        target="blank"
-        className="row-external-links"
-      >
-        <img src="/img/mb.png" width="16px" alt="MusicBrainz link" />
-      </a>
-    ) : null}
-
-    {row.links.lastfm ? (
-      <a
-        href={row.links.lastfm}
-        title={row.otherTitles.lastfm}
-        target="blank"
-        className="row-external-links"
-      >
-        <img src="/img/lastfm.png" width="16px" alt="Lastfm link" />
-      </a>
-    ) : null}
-
-    {row.links.mc ? (
-      <a
-        href={row.links.mc}
-        title={row.otherTitles.mc}
-        target="blank"
-        className="row-external-links"
-      >
-        <img src="/img/metacritic.svg" width="16px" alt="Metacritic link" />
-      </a>
-    ) : null}
-  </>
-);
+const AlbumLinkRenderer = LinksRenderer([
+  { key: "rym", img: "/img/sonemic.png", alt: "Sonemic link" },
+  { key: "discogs", img: "/img/discogs.png", alt: "Discogs link" },
+  { key: "mb", img: "/img/mb.png", alt: "MusicBrainz link" },
+  { key: "lastfm", img: "/img/lastfm.png", alt: "Lastfm link" },
+  { key: "mc", img: "/img/metacritic.svg", alt: "Metacritic link" },
+]);
 
 const Release: ColumnFieldRenderer<CleanAlbum> = (props) => (
   <>
@@ -338,7 +293,7 @@ export const columnsConfig: ColumnsConfig<CleanAlbum> = {
     art: "art",
     cols: ["title", "artists", "dateReleased"],
     ButtonFC: AlbumButtons,
-    links: Links,
+    links: AlbumLinkRenderer,
   },
   custom: [
     {
@@ -375,14 +330,7 @@ export const columnsConfig: ColumnsConfig<CleanAlbum> = {
       width: 80,
       resizable: false,
     },
-    {
-      key: "Links",
-      name: "",
-      renderCell: (formatterProps: { row: CleanAlbum }) => {
-        return Links(formatterProps.row);
-      },
-      resizable: false,
-    },
+    LinksColumn(AlbumLinkRenderer),
   ],
   defaultVisible: [
     "Controls",

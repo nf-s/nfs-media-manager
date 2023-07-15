@@ -1,3 +1,4 @@
+import { Links } from "./common.js";
 import { FilterValue, SortValue } from "./fields.js";
 
 export interface AudioFeatures {
@@ -50,22 +51,7 @@ export interface CleanAlbum extends AudioFeatures, CleanAlbumBase {
   popularitySpotify?: number;
   popularityLastFm?: number;
   scrobbles?: number;
-  links: {
-    spotify: string;
-    rym?: string;
-    discogs?: string;
-    lastfm?: string;
-    mb?: string;
-    mc?: string;
-  };
-  otherTitles: {
-    rym?: string;
-    discogs?: string;
-    lastfm?: string;
-    mb?: string;
-    csv?: string;
-    mc?: string;
-  };
+  links: Links<"spotify" | "rym" | "discogs" | "lastfm" | "mb" | "mc">;
 }
 
 export interface CleanAlbumPlaylist {
