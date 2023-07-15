@@ -133,7 +133,8 @@ code {
   height: 38px;
 }
 
-.header > button {
+.header > button,
+.player-login-button {
   height: 38px;
   border-radius: 4px;
   border: solid #00c583 1px;
@@ -141,10 +142,18 @@ code {
   color: #00c583;
 }
 
-.header > button:hover {
+.header > button:hover,
+.player-login-button:hover {
   cursor: pointer;
   background: #00c583;
   color: #fff;
+}
+
+.player-login-button {
+  margin: auto;
+  display: block;
+  transform: translate(0, 50%);
+  height: 40px;
 }
 
 .player {
@@ -152,6 +161,8 @@ code {
   position: absolute;
   bottom: 0;
   width: 100vw;
+  height: 80px;
+  background-color: rgb(51, 51, 51);
 }
 
 .filter-select {
@@ -356,7 +367,8 @@ a.reverse-sort {
   left: 0;
   width: 100vw;
   height: 100vh;
-  background: #0000000a;
+  background: #0000000f;
+  backdrop-filter: blur(1px);
 }
 
 .overlay .info {

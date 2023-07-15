@@ -54,12 +54,7 @@ function App() {
   }, [selectedLibrary?.value]);
 
   return (
-    <SpotifyProvider
-      authRequired={
-        selectedLibrary?.value === "music" ||
-        selectedLibrary?.value === "playlist"
-      }
-    >
+    <SpotifyProvider>
       <div id="app-root" className={darkMode ? "dark" : ""}>
         <div className={"app-header"}>
           <Select

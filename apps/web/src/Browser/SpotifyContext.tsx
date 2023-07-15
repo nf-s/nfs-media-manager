@@ -4,6 +4,7 @@ import SpotifyWebApi from "spotify-web-api-js";
 import { SpotifyAuth } from "./SpotifyAuth.js";
 
 interface SpotifyState {
+  enabled?: boolean;
   authToken?: string;
   api?: SpotifyWebApi.default.SpotifyWebApiJs;
   userId?: string | undefined;
@@ -22,20 +23,19 @@ export const SpotifyDispatchContext = createContext<
 >(undefined);
 
 export const SpotifyProvider: React.FC<{
-  authRequired: boolean;
   children: React.ReactNode;
-}> = ({ authRequired, children }) => {
+}> = ({ children }) => {
   const [state, dispatch] = useReducer(spotifyReducer, undefined);
 
   // Init spotify auth (which sets authToken)
   useEffect(() => {
-    if (!state?.authToken && authRequired) {
+    if (!state?.authToken) {
       const spotifyAuth = new SpotifyAuth((token) => {
         dispatch({ type: "update", value: { authToken: token } });
       });
-      spotifyAuth.init();
+      spotifyAuth.init(!!state?.enabled);
     }
-  }, [dispatch, state?.authToken, authRequired]);
+  }, [dispatch, state?.authToken, state?.enabled]);
 
   // Set spotify api object after auth token is set
   useEffect(() => {
