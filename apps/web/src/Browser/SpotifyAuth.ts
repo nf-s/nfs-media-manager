@@ -49,7 +49,7 @@ export class SpotifyAuth {
 
   constructor(private _onTokenUpdate: (t: string) => unknown) {}
 
-  async init() {
+  async init(triggerAuthFlow = true) {
     const config = await (await fetch("/config.json")).json();
 
     if (typeof config.spotifyClientId !== "string") {
@@ -68,12 +68,8 @@ export class SpotifyAuth {
       await this.fetchToken(spotifyCode);
       // Remove "code" from URL
       window.history.pushState("", "", "/");
-    } else {
-      if (!this.token) {
-        this.redirect();
-      } else {
-        this._onTokenUpdate(this.token);
-      }
+    } else if (!this.token && triggerAuthFlow) {
+      this.redirect();
     }
   }
 
