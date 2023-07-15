@@ -4,7 +4,6 @@ import {
   NumericColKey,
   StringColKey,
 } from "data-types";
-import "rc-slider/assets/index.css";
 import React from "react";
 import { PickProperties } from "ts-essentials";
 import {

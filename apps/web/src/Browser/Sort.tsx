@@ -1,6 +1,5 @@
 import { SortColumnKey } from "data-types";
 import React from "react";
-import "react-data-grid/lib/styles.css";
 import Select from "react-select";
 import { ColumnsState } from "../Table/ColumnState.jsx";
 import { SortState } from "../Table/SortState.js";

@@ -6,6 +6,9 @@ import Select from "react-select";
 import Music from "./Browser/Music.jsx";
 import { SpotifyProvider } from "./Browser/SpotifyContext.js";
 
+import "rc-slider/assets/index.css";
+import "react-data-grid/lib/styles.css";
+
 function parseMode(
   mode: string | null
 ): "movie" | "music" | "playlist" | undefined {
