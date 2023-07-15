@@ -634,4 +634,18 @@ export const playlistToSync: SyncPlaylist<CleanAlbum>[] = [
     ],
     sort: ["ratingRymValue", "DESC"],
   },
+  {
+    name: "Dance pop (sorted by RYM)",
+    filters: [
+      { value: "dance pop", field: "genres" },
+      { value: "electropop", field: "genres" },
+      { value: "dance-pop", field: "genres" },
+      { value: "nu-disco", field: "genres" },
+      { value: "eurodance", field: "genres" },
+      { value: "europop", field: "genres" },
+      { value: "electro-disco", field: "genres" },
+    ],
+    sort: ["ratingRymValue", "DESC"],
+    limit: 100,
+  },
 ];
