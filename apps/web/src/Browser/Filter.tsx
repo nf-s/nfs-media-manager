@@ -1,6 +1,5 @@
 import { Index } from "flexsearch";
 import React, { useMemo, useState } from "react";
-import "react-data-grid/lib/styles.css";
 import Select, { components } from "react-select";
 import {
   FilterState,

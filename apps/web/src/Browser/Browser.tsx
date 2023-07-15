@@ -1,7 +1,7 @@
 import { SyncPlaylist } from "data-types";
 import React, { useEffect, useState } from "react";
 import DataGrid from "react-data-grid";
-import "react-data-grid/lib/styles.css";
+
 import Select from "react-select";
 import { useTraceUpdate } from "../Common/util.js";
 import {

@@ -1,5 +1,5 @@
 // import { Handle, Range, SliderProps, SliderTooltip } from "rc-slider";
-import "rc-slider/assets/index.css";
+
 import React, { useContext } from "react";
 import { RenderHeaderCellProps } from "react-data-grid";
 import { ColumnFieldRendererProps } from "./FieldRenderer.js";
