@@ -369,6 +369,7 @@ a.reverse-sort {
   height: 100vh;
   background: #0000000f;
   backdrop-filter: blur(1px);
+  overflow-x: hidden;
 }
 
 .overlay .info {
