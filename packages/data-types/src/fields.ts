@@ -124,13 +124,23 @@ export function applySort<T>(
       const bValue = b[sort[0]];
 
       if (typeof aValue === "string" && typeof bValue === "string")
-        return (aValue ?? "").localeCompare(bValue ?? "");
+        return aValue.localeCompare(bValue);
       if (typeof aValue === "number" && typeof bValue === "number")
         return aValue - bValue;
+
+      if (Array.isArray(aValue) && Array.isArray(bValue)) {
+        const aFirst = aValue[0];
+        const bFirst = bValue[0];
+        if (typeof aFirst === "string" && typeof bFirst === "string")
+          return aFirst.localeCompare(bFirst);
+        if (typeof aFirst === "number" && typeof bFirst === "number")
+          return aFirst - bFirst;
+      }
 
       // Push undefined values to end of sort
       if (typeof aValue === "undefined") return -1;
       if (typeof bValue === "undefined") return 1;
+
       return 0;
     });
 
