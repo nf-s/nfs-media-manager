@@ -2,6 +2,7 @@
 import { CleanAlbum, timeToDateString } from "data-types";
 import React, { useContext } from "react";
 import { ColumnFieldRenderer } from "../Browser/FieldRenderer.js";
+import LinkIcon from "../Browser/LinkIcon.js";
 import {
   SpotifyContext,
   SpotifyDispatchContext,
@@ -76,6 +77,7 @@ const Release: ColumnFieldRenderer<CleanAlbum> = (props) => (
       target="blank"
     >
       {props.data.title}
+      <LinkIcon size="xs" />
     </a>
   </>
 );
