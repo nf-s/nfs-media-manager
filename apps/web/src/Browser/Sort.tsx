@@ -19,7 +19,7 @@ export function Sort<T>(props: {
         value={{
           value: sortState.column,
           label:
-            columnsState.columns.find(
+            columnsState.columns?.find(
               (c) => c.key === sortState.column && typeof c.name === "string"
             )?.name ?? sortState.column,
         }}
@@ -35,7 +35,7 @@ export function Sort<T>(props: {
             ]);
         }}
         options={columnsState.columns
-          .filter((c) => c.sortable)
+          ?.filter((c) => c.sortable)
           .map((d) => ({
             value: d.key as SortColumnKey<T>,
             label: typeof d.name === "string" ? d.name : d.key,

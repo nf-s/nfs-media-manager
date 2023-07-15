@@ -1,85 +1,77 @@
-// import { Handle, Range, SliderProps, SliderTooltip } from "rc-slider";
+import Slider from "rc-slider";
 
 import React, { useContext } from "react";
 import { RenderHeaderCellProps } from "react-data-grid";
-import { ColumnFieldRendererProps } from "./FieldRenderer.js";
 import { isJsonArray, isJsonString } from "../Common/util.js";
-import { NumberFormat, NumericCol } from "./Columns.jsx";
+import { NumberFormat } from "./Columns.jsx";
+import { ColumnFieldRendererProps } from "./FieldRenderer.js";
 import { FilterStateContext, addFilter } from "./FilterState.js";
 
-type NumericFilterProps<T> = {
-  col: NumericCol<T>;
-  min: number | undefined;
-  max: number | undefined;
-};
+// TODO fix this
+const RcSlider = Slider as unknown as typeof Slider.default;
 
-// const handle: <T>(col: NumericCol<T>) => SliderProps["handleRender"] =
-//   (col) => (props) => {
-//     const { value, dragging, index, ...restProps } = props;
-//     return (
-//       <SliderTooltip
-//         prefixCls="rc-slider-tooltip"
-//         overlay={<NumberFormat col={col} value={value} />}
-//         visible={dragging}
-//         placement="bottom"
-//         key={index}
-//       >
-//         <Handle
-//           value={value}
-//           {...restProps}
-//           ariaValueTextFormatter={undefined}
-//         />
-//       </SliderTooltip>
-//     );
-//   };
-
-export function NumericFilter<T>(
-  props: NumericFilterProps<T> & RenderHeaderCellProps<T>
-) {
-  if (
-    typeof props.col.key === "undefined" ||
-    typeof props.min === "undefined" ||
-    props.min === Infinity ||
-    typeof props.max === "undefined" ||
-    props.max === -Infinity
-  )
-    return null;
-
-  const marks: Record<number, React.ReactNode> = {};
-  marks[props.min] = <NumberFormat col={props.col} value={props.min} />;
-  marks[props.max] = <NumberFormat col={props.col} value={props.max} />;
+export function NumericFilterHeader<T>(props: RenderHeaderCellProps<T>) {
   return (
     <div
       onClick={() => {
         props.onSort(false);
       }}
     >
-      <div className={"numerical-filter-title"}>{props.col.name}</div>
-      <div
-        className={"numerical-filter-range"}
-        onClick={(e) => e.stopPropagation()}
-      ></div>
+      <a data-tooltip-id="my-tooltip" data-column-key={props.column.key}>
+        {props.column.name}
+      </a>
     </div>
   );
 }
 
-/*<Range
-  step={props.max - props.min < 10 ? (props.max - props.min) / 500 : 1}
-  min={props.min}
-  max={props.max}
-  defaultValue={[props.min, props.max]}
-  onAfterChange={(value) => {
-    props.addFilter(
-      props.col.key,
-      value[0],
-      value[1],
-      value[0] ===
-        props.min /** include undefined if minimum value is selected 
-    );
-  }}
-  marks={marks}
-  handle={handle(props.col)}
-/>*/
+export function NumericFilterTooltip(props: { colKey: string | undefined }) {
+  const filterState = useContext(FilterStateContext);
+
+  const filter = filterState?.numericFilterData?.find(
+    (f) => f.col.key === props.colKey
+  );
+
+  if (!filter) return null;
+
+  if (!filter || filter.min === Infinity || filter.max === -Infinity)
+    return null;
+
+  const marks: Record<number, React.ReactNode> = {};
+  marks[filter.min] = <NumberFormat col={filter.col} value={filter.min} />;
+  marks[filter.max] = <NumberFormat col={filter.col} value={filter.max} />;
+
+  // Find active filter (if it exists)
+  const activeFilter = filterState?.activeNumericFilters.find(
+    (filter) => filter.field === filter.field
+  );
+
+  return (
+    <RcSlider
+      range
+      min={filter.min}
+      max={filter.max}
+      // Use active filter if it exists, otherwise use default
+      defaultValue={[
+        activeFilter?.min ?? filter.min,
+        activeFilter?.max ?? filter.max,
+      ]}
+      onChange={(value) => {
+        if (!Array.isArray(value)) return;
+
+        filterState?.activeNumericFiltersDispatch({
+          type: "add",
+          value: {
+            min: value[0],
+            max: value[1],
+            field: filter.col.key as string,
+            includeUndefined: value[0] === filter.min, //include undefined if minimum value is selected
+          },
+        });
+      }}
+      marks={marks}
+    />
+  );
+}
 
 export const ArrayFilterRenderer: <T>(
   props: ColumnFieldRendererProps<T>

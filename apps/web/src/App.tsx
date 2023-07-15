@@ -8,6 +8,7 @@ import { SpotifyProvider } from "./Browser/SpotifyContext.js";
 
 import "rc-slider/assets/index.css";
 import "react-data-grid/lib/styles.css";
+import "react-tooltip/dist/react-tooltip.css";
 
 function parseMode(
   mode: string | null

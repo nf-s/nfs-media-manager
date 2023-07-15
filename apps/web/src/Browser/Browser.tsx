@@ -1,9 +1,10 @@
 import { SyncPlaylist } from "data-types";
 import React, { useEffect, useState } from "react";
 import DataGrid from "react-data-grid";
-
 import Select from "react-select";
+import { Tooltip } from "react-tooltip";
 import { useTraceUpdate } from "../Common/util.js";
+import { NumericFilterTooltip } from "../Table/ColumnFilters.js";
 import {
   ColumnConfigContext,
   ColumnsConfig,
@@ -189,6 +190,19 @@ function Browser<T>(props: {
             setSelectedRow={setSelectedRow}
           />
         </div>
+        <Tooltip
+          className="numeric-filter-tooltip"
+          id="my-tooltip"
+          place="bottom"
+          clickable={true}
+          render={({ activeAnchor }) => (
+            <NumericFilterTooltip
+              colKey={
+                activeAnchor?.getAttribute("data-column-key") ?? undefined
+              }
+            />
+          )}
+        />
       </FilterStateContext.Provider>
     </ColumnConfigContext.Provider>
   );

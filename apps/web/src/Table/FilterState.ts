@@ -1,19 +1,26 @@
 import { NumericFilterValue, TextFilterValue } from "data-types";
 import { createContext, useEffect, useMemo, useReducer, useState } from "react";
 import { ColumnsConfig } from "./ColumnState.js";
-import { FilterCol, getFilterCols } from "./Columns.js";
+import { FilterCol, NumericCol, getFilterCols, getNumericCols } from "./Columns.js";
 
 export type TextFilterValueWithLabel<T> = TextFilterValue<T> & {
   label: string;
   count: number;
 };
 
+
+export interface NumericFilterData<T> {
+  col: NumericCol<T>
+  min: number
+  max: number
+}
 export interface FilterState<T> {
   filterData: TextFilterValueWithLabel<T>[] | undefined;
   activeFilters: TextFilterValueWithLabel<T>[] | undefined;
   activeFiltersDispatch: React.Dispatch<
   FilterDispatchActions<T>
   >;
+  numericFilterData: NumericFilterData<T>[] | undefined;
   activeNumericFilters: NumericFilterValue<T>[];
   activeNumericFiltersDispatch: React.Dispatch<
   NumericFilterDispatchActions<T>
@@ -26,14 +33,14 @@ type FilterDispatchActions<T> =
   | { type: "set"; values: TextFilterValueWithLabel<T>[] }
 
 
-  type NumericFilterDispatchActions<T> =
-  | ({ type: "add" } & NumericFilterValue<T>)
+type NumericFilterDispatchActions<T> =
+  | ({ type: "add";  value: NumericFilterValue<T>})
   | { type: "clear" }
   | { type: "set"; values: NumericFilterValue<T>[] }
 
-  export const FilterStateContext = createContext<FilterState<any> | undefined>(
-    undefined
-  );
+export const FilterStateContext = createContext<FilterState<any> | undefined>(
+  undefined
+);
 
 export function useFilterState<T>(tag: string, rows: T[],
 
@@ -47,6 +54,15 @@ export function useFilterState<T>(tag: string, rows: T[],
     undefined
   );
 
+
+  const [activeNumericFilters, activeNumericFiltersDispatch] = useReducer(
+    filterNumericReducer<T>,
+    []
+  );
+
+  const [numericFilterData, setNumericFilterData] = useState<NumericFilterData<T>[]>()
+
+  // Set filterData
   useMemo(() => {
     if (rows.length === 0) return;
     const filters = getFilterCols(columnsConfig.data)
@@ -57,7 +73,18 @@ export function useFilterState<T>(tag: string, rows: T[],
       .sort((a, b) => b.count - a.count);
 
     setFilterData(filters);
-  }, [rows, columnsConfig, setFilterData]);
+  }, [rows, columnsConfig.data, setFilterData]);
+
+  // Set numericFilterData
+  useMemo(() => {
+    const numericFilters = getNumericCols(columnsConfig.data).map((numCol) => ({
+      col: numCol,
+      max: numCol.max ?? Math.max(...rows.map((r) => r[numCol.key] ?? (-Infinity as any))),
+      min: numCol.min ?? Math.min(...rows.map((r) => r[numCol.key] ?? (Infinity as any))),
+    }))
+
+    setNumericFilterData(numericFilters)
+  }, [columnsConfig.data, rows])
 
   // Get activeFilters from localStorage
   useEffect(() => {   
@@ -86,15 +113,12 @@ export function useFilterState<T>(tag: string, rows: T[],
     localStorage.setItem(`${tag}-activeFilters`, JSON.stringify(activeFilters));
   }, [activeFilters, tag]);
 
-  const [activeNumericFilters, activeNumericFiltersDispatch] = useReducer(
-    filterNumericReducer<T>,
-    []
-  );
 
   return {
     filterData,
     activeFilters,
     activeFiltersDispatch,
+    numericFilterData,
     activeNumericFilters,
     activeNumericFiltersDispatch,
   };
@@ -142,7 +166,7 @@ function filterNumericReducer<T>(
 ): NumericFilterValue<T>[] {
   switch (action.type) {
     case "add": {
-      return [...state.filter((f) => f.field !== action.field), { ...action }];
+      return [...state.filter((f) => f.field !== action.value.field), { ...action.value }];
     }
     case "set":
       return action.values;

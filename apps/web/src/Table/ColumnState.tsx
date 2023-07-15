@@ -1,19 +1,18 @@
-import { IdColKey, NumericColKey, SortValue } from "data-types";
+import { IdColKey, SortValue } from "data-types";
 import React, { createContext, useEffect, useMemo, useState } from "react";
 import { Column } from "react-data-grid";
 import { PickProperties } from "ts-essentials";
-import { ColumnFieldRenderer } from "./FieldRenderer.js";
-import { NumericFilter } from "./ColumnFilters.jsx";
+import { NumericFilterHeader } from "./ColumnFilters.jsx";
 import {
   BooleanField,
   ColumnKey,
   DataColumn,
   DataColumnKey,
   NumericField,
-  getNumericCols,
   isBooleanCol,
-  isNumericCol,
+  isNumericCol
 } from "./Columns.jsx";
+import { ColumnFieldRenderer } from "./FieldRenderer.js";
 
 export type ColumnWithFieldRenderer<T> = Readonly<
   Column<T> & {
@@ -80,30 +79,10 @@ export function useColumnsState<T>(
   // Generate columns from columnsConfig and row data
   // It will also set visibleColumns from localStorage
   useMemo(() => {
-    const maximums = new Map<NumericColKey<T>, number>();
-    const minimums = new Map<NumericColKey<T>, number>();
-
-    getNumericCols(columnsConfig.data).forEach((numCol) => {
-      maximums.set(
-        numCol.key,
-        Math.max(...rows.map((r) => r[numCol.key] ?? (-Infinity as any)))
-      );
-
-      minimums.set(
-        numCol.key,
-        Math.min(...rows.map((r) => r[numCol.key] ?? (Infinity as any)))
-      );
-    });
-
     const columns: ColumnWithFieldRenderer<T>[] = [
       ...(columnsConfig.custom ?? []),
       ...columnsConfig.data.map((col) => {
         if (isNumericCol(col)) {
-          const min = minimums.get(col.key);
-          const max = maximums.get(col.key);
-          if (col.generateMaximumFromData) {
-            col.max = max;
-          }
           const resolvedCol: ColumnWithFieldRenderer<T> = {
             key: col.key.toString(),
             name: col.name !== "" ? col.name : col.key.toString(),
@@ -115,9 +94,7 @@ export function useColumnsState<T>(
                 data: props.row,
                 col,
               }),
-            renderHeaderCell: (props) => (
-              <NumericFilter {...props} col={col} min={min} max={max} />
-            ),
+            renderHeaderCell: NumericFilterHeader<T>,
           };
 
           return resolvedCol;

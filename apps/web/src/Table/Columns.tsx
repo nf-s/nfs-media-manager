@@ -4,12 +4,13 @@ import {
   NumericColKey,
   StringColKey,
 } from "data-types";
-import React from "react";
+import React, { useContext } from "react";
 import { PickProperties } from "ts-essentials";
 import {
   ColumnFieldRenderer,
   ColumnFieldRendererProps,
 } from "./FieldRenderer.js";
+import { FilterStateContext } from "./FilterState.js";
 
 export function formatTime(seconds: number) {
   const h = Math.floor(seconds / 3600);
@@ -23,17 +24,31 @@ export function formatTime(seconds: number) {
 export const NumberFormat = <T,>(props: {
   col: NumericCol<T>;
   value: number;
-}) =>
-  props.col.numberFormat ? (
+}) => {
+  const filterState = useContext(FilterStateContext);
+  let divisor = 1;
+
+  // If we are displaying as percent of max, we need to divide by max value
+  // This can be found in the corresponding numericFilter
+  if (props.col.displayAsPercentOfMax) {
+    const numericFilter = filterState?.numericFilterData?.find(
+      (filter) => filter.col.key === props.col.key
+    );
+
+    divisor = numericFilter?.max ?? 1;
+  }
+
+  return props.col.numberFormat ? (
     <>{props.col.numberFormat(props.value)}</>
   ) : (
     <>
-      {((props.value * (props.col.mult ?? 1)) / (props.col.max ?? 1)).toFixed(
+      {((props.value * (props.col.mult ?? 1)) / divisor).toFixed(
         props.col.precision ?? 2
       )}
       {props.col.append}
     </>
   );
+};
 
 export const NumericField = <T,>(props: ColumnFieldRendererProps<T>) => {
   const value = props.data[props.col.key];
@@ -67,8 +82,12 @@ export type NumericCol<T> = {
   readonly sortable?: boolean;
   readonly type: "numeric";
   readonly key: NumericColKey<T>;
-  max?: number | undefined;
-  readonly generateMaximumFromData?: boolean;
+  /** Minimum value for filter. If left empty, this will be generated from column values */
+  readonly min?: number | undefined;
+  /** Maximum value for filter. If left empty, this will be generated from column values */
+  readonly max?: number | undefined;
+  /** If true, then value will be divided by `max`, and multiplied by `100` */
+  readonly displayAsPercentOfMax?: boolean;
   readonly append?: string;
   /** Number of digits after the decimal point. Must be in the range 0 - 20, inclusive. */
   readonly precision?: number;
