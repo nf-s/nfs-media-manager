@@ -48,7 +48,7 @@ export interface ColumnsConfig<T> {
 }
 
 export interface ColumnsState<T> {
-  columns: Column<T>[];
+  columns: Column<T>[] | undefined;
   visibleColumns: Column<T>[] | undefined;
   setVisibleColumns: React.Dispatch<
     React.SetStateAction<Column<T>[] | undefined>
@@ -60,11 +60,13 @@ export function useColumnsState<T>(
   rows: T[],
   columnsConfig: ColumnsConfig<T>
 ): ColumnsState<T> {
-  const [columns, setColumns] = useState<Column<T>[]>([]);
+  const [columns, setColumns] = useState<Column<T>[] | undefined>(undefined);
 
-  // Default value is set in fetchData
-  const [visibleColumns, setVisibleColumns] = useState<Column<T>[]>();
+  const [visibleColumns, setVisibleColumns] = useState<
+    Column<T>[] | undefined
+  >();
 
+  // Save visibleColumns to localStorage
   useEffect(() => {
     if (!visibleColumns) return;
     localStorage.setItem(
@@ -73,6 +75,8 @@ export function useColumnsState<T>(
     );
   }, [visibleColumns, tag]);
 
+  // Generate columns from columnsConfig and row data
+  // It will also set visibleColumns from localStorage
   useMemo(() => {
     const maximums = new Map<NumericColKey<T>, number>();
     const minimums = new Map<NumericColKey<T>, number>();
@@ -150,6 +154,8 @@ export function useColumnsState<T>(
       }),
     ];
 
+    // Get saved visible columns from localStorage
+    // If none saved, use defaultVisible from config
     const savedVisibleColumns = localStorage.getItem(`${tag}-visibleColumns`)
       ? JSON.parse(localStorage.getItem(`${tag}-visibleColumns`)!)
       : undefined;

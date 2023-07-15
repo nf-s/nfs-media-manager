@@ -9,8 +9,8 @@ export type TextFilterValueWithLabel<T> = TextFilterValue<T> & {
 };
 
 export interface FilterState<T> {
-  filterData: TextFilterValueWithLabel<T>[];
-  activeFilters: TextFilterValueWithLabel<T>[];
+  filterData: TextFilterValueWithLabel<T>[] | undefined;
+  activeFilters: TextFilterValueWithLabel<T>[] | undefined;
   activeFiltersDispatch: React.Dispatch<
   FilterDispatchActions<T>
   >;
@@ -38,13 +38,13 @@ type FilterDispatchActions<T> =
 export function useFilterState<T>(tag: string, rows: T[],
 
   columnsConfig: ColumnsConfig<T>): FilterState<T> {
-  const [filterData, setFilterData] = useState<TextFilterValueWithLabel<T>[]>(
-    []
+  const [filterData, setFilterData] = useState<TextFilterValueWithLabel<T>[] | undefined>(
+    undefined
   );
   
   const [activeFilters, activeFiltersDispatch] = useReducer(
     filterReducer<T>,
-    []
+    undefined
   );
 
   useMemo(() => {
@@ -59,32 +59,30 @@ export function useFilterState<T>(tag: string, rows: T[],
     setFilterData(filters);
   }, [rows, columnsConfig, setFilterData]);
 
-  // useEffect(() => {
+  // Get activeFilters from localStorage
+  useEffect(() => {   
+    if (!filterData) return 
+
+    // TODO add validation
+    const savedActiveFilters = localStorage.getItem(`${tag}-activeFilters`)
+    ? JSON.parse(localStorage.getItem(`${tag}-activeFilters`)!)
+    : undefined;
+    if (Array.isArray(savedActiveFilters)) {
+
+        const found = filterData.filter((a) =>
+        savedActiveFilters.find(
+          (b) => a.field === b.field && a.value === b.value
+        )
+      );
+      activeFiltersDispatch({type:"set", values:found});
+        }
     
-  //   if (filterData.length === 0) return;
+  }, [filterData, tag])
 
-  //   console.log("set form localstorage");
-
-  //   // Get saved filters from local storage
-  //   const savedActiveFilters = localStorage.getItem(`${tag}-activeFilters`)
-  //   ? JSON.parse(localStorage.getItem(`${tag}-activeFilters`)!)
-  //   : undefined;
-
-  //   console.log(savedActiveFilters);
-
-  //   if (Array.isArray(savedActiveFilters)) {
-      
-  //     const found = filterData.filter((a) =>
-  //       savedActiveFilters.find(
-  //         (b) => a.field === b.field && a.value === b.value
-  //       )
-  //     );
-  //     activeFiltersDispatch({type:"set", values:found});
-  //   }
-  // }, [filterData, tag])
-
+  // Save activeFilters to localStorage
   useEffect(() => {
     if (!activeFilters) return;
+
     localStorage.setItem(`${tag}-activeFilters`, JSON.stringify(activeFilters));
   }, [activeFilters, tag]);
 
@@ -102,12 +100,11 @@ export function useFilterState<T>(tag: string, rows: T[],
   };
 }
 
-// Default value is set in fetchData
 function filterReducer<T>(
-  state: TextFilterValueWithLabel<T>[],
+  state: TextFilterValueWithLabel<T>[] | undefined,
   action:
   FilterDispatchActions<T>
-): TextFilterValueWithLabel<T>[] {
+): TextFilterValueWithLabel<T>[] | undefined {
   switch (action.type) {
     case "add": {
       if (!state) {
@@ -133,7 +130,7 @@ export function addFilter<T>(
 ) {
   if (!filterState) return
 
-  const found = filterState.filterData.find(f => f.field === value.field && f.value === value.value)
+  const found = filterState.filterData?.find(f => f.field === value.field && f.value === value.value)
   if (found)
     filterState.activeFiltersDispatch({ type: "add", value: found});
 }
@@ -154,6 +151,7 @@ function filterNumericReducer<T>(
   }
 }
 
+/** Returns all unique values for a given column, with a total/count */
 function getColumnWithTotals<K>(
   rows: K[],
   filterCol: FilterCol<K>,

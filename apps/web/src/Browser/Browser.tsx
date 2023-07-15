@@ -70,8 +70,8 @@ function Browser<T>(props: {
     if (
       !ready &&
       rowState.rows.length > 0 &&
-      columnState.columns.length > 0 &&
-      filterState.filterData.length > 0
+      columnState.columns &&
+      filterState.filterData
     ) {
       setReady(true);
     }
@@ -82,8 +82,8 @@ function Browser<T>(props: {
     filterState.activeNumericFilters,
     ready,
     rowState.rows.length,
-    columnState.columns.length,
-    filterState.filterData.length,
+    columnState.columns,
+    filterState.filterData,
   ]);
 
   if (!ready) return <div className="loading">Loading...</div>;
@@ -123,12 +123,12 @@ function Browser<T>(props: {
                 }))}
                 onChange={(selectedCols) => {
                   columnState.setVisibleColumns(
-                    columnState.columns.filter((col) =>
+                    columnState.columns?.filter((col) =>
                       selectedCols.find((c) => c.value === col.key)
                     )
                   );
                 }}
-                options={columnState.columns.map((col) => ({
+                options={columnState.columns?.map((col) => ({
                   value: col.key,
                   label:
                     typeof col.name === "string" && col.name !== ""
