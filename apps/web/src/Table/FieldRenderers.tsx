@@ -50,7 +50,7 @@ export const NumberFormat = <T,>(props: {
 
   // If we are displaying as percent of max, we need to divide by max value
   // This can be found in the corresponding numericFilter
-  if (props.col.displayAsPercentOfMax) {
+  if (props.col.divideByMax) {
     const numericFilter = filterState?.numericFilterData?.find(
       (filter) => filter.col.key === props.col.key
     );
