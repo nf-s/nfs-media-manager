@@ -39,7 +39,7 @@ export function SortSelect<T>() {
             ]);
         }}
         options={columnConfig?.data
-          ?.filter((c) => "sortable" in c && c.sortable)
+          ?.filter((c) => !("sortable" in c) || c.sortable)
           .map((d) => ({
             value: d.key as SortColumnKey<T>,
             label: typeof d.name === "string" ? d.name : (d.key as string),
