@@ -2,19 +2,20 @@ import { MasonryInfiniteGrid } from "@egjs/react-infinitegrid";
 import React, { useContext, useEffect, useRef, useState } from "react";
 import { LazyLoadImage } from "react-lazy-load-image-component";
 import { useTraceUpdate } from "../Common/util.js";
-import { ColumnConfigContext, ColumnsConfig } from "../Table/ColumnState.jsx";
-import { FieldRenderer } from "../Table/FieldRenderer.js";
+import { ColumnStateContext } from "../Table/ColumnState.js";
+import { ColumnConfigContext, ColumnsConfig } from "../Table/Columns.js";
+import { FieldRenderer } from "../Table/FieldRenderers.js";
 
 const GRID_GROUP_SIZE = 100;
 
 export function ImageGrid<T>(props: {
   rows: T[];
-  sortColumn: keyof T;
   setSelectedRow: (row: T) => void;
 }) {
-  const { rows, sortColumn, setSelectedRow } = props;
+  const { rows, setSelectedRow } = props;
 
   const columnsConfig = useContext(ColumnConfigContext);
+  const columnState = useContext(ColumnStateContext);
 
   useTraceUpdate(props, "Image grid");
 
@@ -65,7 +66,7 @@ export function ImageGrid<T>(props: {
             data-grid-groupkey={item.groupKey}
             key={item.key}
             row={rows[item.key]}
-            sortColumn={sortColumn}
+            sortColumn={columnState?.sortColumn}
             setSelectedRow={setSelectedRow}
           />
         ))}
@@ -89,7 +90,7 @@ function getItems(nextGroupKey: number, count: number, maxIndex: number) {
 function ImageGridItem<T>(props: {
   key: string | number;
   row: T | undefined;
-  sortColumn: keyof T;
+  sortColumn: string | undefined;
   setSelectedRow: (row: T) => void;
 }) {
   const { row, sortColumn, setSelectedRow } = props;

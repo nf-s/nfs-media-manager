@@ -1,30 +1,33 @@
 import { Index } from "flexsearch";
-import React, { useMemo, useState } from "react";
+import React, { useContext, useMemo, useState } from "react";
 import Select, { components } from "react-select";
 import {
   FilterState,
+  FilterStateContext,
   TextFilterValueWithLabel,
-} from "../Table/FilterState.jsx";
+} from "../Table/FilterState.js";
 
-export function Filter<T>(p: { filterState: FilterState<T> }) {
-  const { filterState } = p;
+export function FilterSelect<T>() {
+  const filterState = useContext<FilterState<T> | undefined>(
+    FilterStateContext
+  );
 
   const [filterInputValue, setFilterInputValue] = useState("");
 
   const filterSearchIndex = useMemo(() => {
     const index = new Index({ tokenize: "full", preset: "score" });
 
-    for (let i = 0; i < (filterState.filterData?.length ?? 0); i++) {
-      const filter = filterState.filterData?.[i];
+    for (let i = 0; i < (filterState?.filterData?.length ?? 0); i++) {
+      const filter = filterState?.filterData?.[i];
       if (filter) index.add(i, filter.label ?? filter.value);
     }
 
     return index;
-  }, [filterState.filterData]);
+  }, [filterState?.filterData]);
 
   const filteredOptions: TextFilterValueWithLabel<T>[] = useMemo(() => {
     if (!filterInputValue || !filterSearchIndex) {
-      return filterState.filterData ?? [];
+      return filterState?.filterData ?? [];
     }
 
     const searchResults = filterSearchIndex.search(filterInputValue);
@@ -34,14 +37,14 @@ export function Filter<T>(p: { filterState: FilterState<T> }) {
     searchResults.forEach((fieldResult) => {
       if (
         typeof fieldResult === "number" &&
-        filterState.filterData?.[fieldResult]
+        filterState?.filterData?.[fieldResult]
       ) {
         results.push(filterState.filterData[fieldResult]);
       }
     });
 
     return results.sort((a, b) => b.count - a.count);
-  }, [filterInputValue, filterSearchIndex, filterState.filterData]);
+  }, [filterInputValue, filterSearchIndex, filterState?.filterData]);
 
   const slicedOptions = useMemo(() => {
     return filteredOptions.slice(0, 500);
@@ -59,7 +62,7 @@ export function Filter<T>(p: { filterState: FilterState<T> }) {
               | TextFilterValueWithLabel<T>
               | undefined;
 
-            if (filterState.activeFilters && clickedFilter) {
+            if (filterState?.activeFilters && clickedFilter) {
               // Normal -> exclude -> intersection -> normal
               if (clickedFilter.exclude) {
                 clickedFilter.exclude = undefined;
@@ -87,10 +90,10 @@ export function Filter<T>(p: { filterState: FilterState<T> }) {
       }}
       placeholder="Filter"
       className={"filter-select"}
-      value={filterState.activeFilters}
+      value={filterState?.activeFilters}
       isMulti
       onChange={(filter) => {
-        filterState.activeFiltersDispatch({
+        filterState?.activeFiltersDispatch({
           type: "set",
           values: filter.map((f) => ({ ...f })),
         });

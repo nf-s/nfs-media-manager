@@ -2,19 +2,18 @@
 import { CleanAlbum, timeToDateString } from "data-types";
 import React, { useContext } from "react";
 import {
-  ColumnFieldRenderer,
-  LinksColumn,
-  LinksRenderer,
-} from "../Table/FieldRenderer.js";
-import LinkIcon from "../Browser/LinkIcon.js";
-import {
   SpotifyContext,
   SpotifyDispatchContext,
   queueAlbum,
-} from "../Browser/SpotifyContext.js";
-import { ArrayFilterRenderer } from "../Table/ColumnFilters.jsx";
-import { ColumnsConfig } from "../Table/ColumnState.js";
-import { formatTime } from "../Table/Columns.jsx";
+} from "../Browser/Spotify/SpotifyContext.js";
+import LinkIcon from "../Common/LinkIcon.js";
+import { ColumnFieldRenderer, ColumnsConfig } from "../Table/Columns.js";
+import {
+  LinksColumn,
+  LinksRenderer,
+  formatTime,
+} from "../Table/FieldRenderers.js";
+import { ArrayFilterRenderer } from "../Table/FilterRenderers.js";
 
 const AlbumLinkRenderer = LinksRenderer([
   { key: "rym", img: "/img/sonemic.png", alt: "Sonemic link" },
@@ -40,6 +39,8 @@ const Release: ColumnFieldRenderer<CleanAlbum> = (props) => (
 const AlbumButtons: React.FC<{ row: CleanAlbum }> = (props) => {
   const spotifyContext = useContext(SpotifyContext);
   const spotifyDispatch = useContext(SpotifyDispatchContext);
+
+  if (!spotifyContext?.api) return null;
 
   return (
     <div className="image-buttons">
@@ -303,6 +304,9 @@ export const columnsConfig: ColumnsConfig<CleanAlbum> = {
       renderCell: (formatterProps: { row: CleanAlbum }) => {
         const spotifyContext = useContext(SpotifyContext);
         const spotifyDispatch = useContext(SpotifyDispatchContext);
+
+        if (!spotifyContext?.api) return null;
+
         return (
           <>
             <button

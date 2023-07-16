@@ -3,9 +3,9 @@ import Slider from "rc-slider";
 import React, { useContext } from "react";
 import { RenderHeaderCellProps } from "react-data-grid";
 import { isJsonArray, isJsonString } from "../Common/util.js";
-import { NumberFormat } from "./Columns.jsx";
-import { ColumnFieldRendererProps } from "./FieldRenderer.js";
+import { NumberFormat } from "./FieldRenderers.js";
 import { FilterStateContext, addFilter } from "./FilterState.js";
+import { ColumnFieldRendererProps } from "./Columns.js";
 
 // TODO fix this
 const RcSlider = Slider as unknown as typeof Slider.default;

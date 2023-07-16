@@ -82,12 +82,15 @@ export class SpotifyAuth {
       this._token = t;
       if (t) this._onTokenUpdate(t);
       if (this._refreshTimer) clearTimeout(this._refreshTimer);
-      this._refreshTimer = setTimeout(() => {
-        if (this.refreshToken) {
-          console.log(`REFRESHING SPOTIFY TOKEN`);
-          this.fetchToken(this.refreshToken, "refresh_token");
-        }
-      }, 50 * 60 * 1000); // update every 50 mins
+      this._refreshTimer = setTimeout(
+        () => {
+          if (this.refreshToken) {
+            console.log(`REFRESHING SPOTIFY TOKEN`);
+            this.fetchToken(this.refreshToken, "refresh_token");
+          }
+        },
+        50 * 60 * 1000
+      ); // update every 50 mins
     }
   }
 

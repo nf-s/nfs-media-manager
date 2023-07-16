@@ -3,9 +3,9 @@ import { faFilm, faSquareMinus } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { CleanMovie, timeToDateString } from "data-types";
 import React from "react";
-import { LinksColumn, LinksRenderer } from "../Table/FieldRenderer.js";
-import { ArrayFilterRenderer } from "../Table/ColumnFilters.jsx";
-import { ColumnsConfig } from "../Table/ColumnState.js";
+import { ColumnsConfig } from "../Table/Columns.js";
+import { ArrayFilterRenderer } from "../Table/FilterRenderers.js";
+import { LinksColumn, LinksRenderer } from "../Table/FieldRenderers.js";
 
 const MovieLinkRenderer = LinksRenderer([
   {
@@ -53,7 +53,7 @@ export const columnsConfig: ColumnsConfig<CleanMovie> = {
           "imdb-rating": "IMDB Rating",
           "imdb-watchlist": "IMDB Watchlist",
           "ptp-bookmark": "PTP Bookmark",
-        }[value] ?? value),
+        })[value] ?? value,
     },
     {
       type: "string",
