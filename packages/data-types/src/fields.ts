@@ -22,7 +22,8 @@ export type FilterColKey<T> = Exclude<
 export type FilterColArrayKey<T> = keyof PickProperties<T, string[]>;
 
 export type SortColumnKey<T> = StringColKey<T> | NumericColKey<T>;
-export type SortValue<T> = [SortColumnKey<T>, "ASC" | "DESC"];
+export type SortColumnDirection = "ASC" | "DESC";
+export type SortValue<T> = [SortColumnKey<T>, SortColumnDirection];
 
 export type FilterValue<T> = TextFilterValue<T> | NumericFilterValue<T>;
 

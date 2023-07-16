@@ -1,22 +1,18 @@
 import { SyncPlaylist } from "data-types";
 import React, { useEffect, useState } from "react";
-import DataGrid from "react-data-grid";
-import Select from "react-select";
 import { Tooltip } from "react-tooltip";
 import { useTraceUpdate } from "../Common/util.js";
-import { NumericFilterTooltip } from "../Table/ColumnFilters.js";
-import {
-  ColumnConfigContext,
-  ColumnsConfig,
-  useColumnsState,
-} from "../Table/ColumnState.jsx";
+import { ColumnStateContext, useColumnState } from "../Table/ColumnState.js";
+import { ColumnConfigContext, ColumnsConfig } from "../Table/Columns.js";
+import { NumericFilterTooltip } from "../Table/FilterRenderers.js";
 import { FilterStateContext, useFilterState } from "../Table/FilterState.js";
 import { useRowState } from "../Table/RowState.js";
-import { useSortState } from "../Table/SortState.js";
-import { Filter } from "./Filter.js";
+import { FilterSelect } from "./FilterSelect.js";
 import { ImageGrid } from "./ImageGrid.js";
-import { SelectedRow } from "./SelectedRow.js";
-import { Sort } from "./Sort.js";
+import { SelectedRowOverlay } from "./SelectedRowOverlay.js";
+import { SortSelect } from "./SortSelect.js";
+import TableGrid from "./TableGrid.js";
+import VisibleColumnSelect from "./VisibleColumnSelect.js";
 
 function Browser<T>(props: {
   tag: string;
@@ -28,10 +24,9 @@ function Browser<T>(props: {
 
   const { tag, rows, columnsConfig } = props;
 
-  const columnState = useColumnsState(tag, rows, columnsConfig);
   const filterState = useFilterState(tag, rows, columnsConfig);
-  const sortState = useSortState(tag, columnsConfig);
-  const rowState = useRowState(columnsConfig, rows, sortState, filterState);
+  const columnState = useColumnState(tag, columnsConfig);
+  const rowState = useRowState(columnsConfig, rows, columnState, filterState);
 
   const [viewMode, setViewMode] = useState<"grid" | "table">(
     (localStorage.getItem(`${tag}-viewMode`) as any) ?? "table"
@@ -46,44 +41,40 @@ function Browser<T>(props: {
   }, [viewMode, tag]);
 
   useEffect(() => {
-    const test: SyncPlaylist<T> = {
-      name: "test",
-      filters: [
-        ...(filterState.activeFilters ?? []),
-        ...filterState.activeNumericFilters,
-      ]?.map((f) => ({
-        ...f,
-        label: undefined,
-        count: undefined,
-        type: undefined,
-      })),
-      sort: [sortState.column, sortState.direction],
-    };
-    console.log(JSON.stringify(test));
+    if (columnState.sortColumn && columnState.sortDirection) {
+      const test: SyncPlaylist<T> = {
+        name: "test",
+        filters: [
+          ...(filterState.activeFilters ?? []),
+          ...filterState.activeNumericFilters,
+        ]?.map((f) => ({
+          ...f,
+          label: undefined,
+          count: undefined,
+          type: undefined,
+        })),
+        sort: [columnState.sortColumn, columnState.sortDirection],
+      };
+      console.log(JSON.stringify(test));
+    }
   }, [
     filterState.activeFilters,
-    sortState.column,
-    sortState.direction,
+    columnState.sortColumn,
+    columnState.sortDirection,
     filterState.activeNumericFilters,
   ]);
 
   useEffect(() => {
-    if (
-      !ready &&
-      rowState.rows.length > 0 &&
-      columnState.columns &&
-      filterState.filterData
-    ) {
+    if (!ready && rowState.rows.length > 0 && filterState.filterData) {
       setReady(true);
     }
   }, [
     filterState.activeFilters,
-    sortState.column,
-    sortState.direction,
+    columnState.sortColumn,
+    columnState.sortDirection,
     filterState.activeNumericFilters,
     ready,
     rowState.rows.length,
-    columnState.columns,
     filterState.filterData,
   ]);
 
@@ -92,117 +83,52 @@ function Browser<T>(props: {
   return (
     <ColumnConfigContext.Provider value={columnsConfig}>
       <FilterStateContext.Provider value={filterState}>
-        <div className="browser-root">
-          <div className="header">
-            <span>{/*Dummy element for app-toolbar*/}</span>
-            <button
-              type="button"
-              onClick={() =>
-                setViewMode(viewMode === "grid" ? "table" : "grid")
-              }
-            >
-              {viewMode === "grid" ? "Table" : "Grid"}
-            </button>
-            <Filter filterState={filterState} />
-            <Sort sortState={sortState} columnsState={columnState} />
-
-            {viewMode === "table" ? (
-              <Select
-                controlShouldRenderValue={false}
-                closeMenuOnSelect={false}
-                isMulti
-                hideSelectedOptions={false}
-                isClearable={false}
-                placeholder="Columns"
-                className={"filter-select"}
-                value={(columnState.visibleColumns ?? []).map((col) => ({
-                  value: col.key,
-                  label:
-                    typeof col.name === "string" && col.name !== ""
-                      ? col.name
-                      : col.key,
-                }))}
-                onChange={(selectedCols) => {
-                  columnState.setVisibleColumns(
-                    columnState.columns?.filter((col) =>
-                      selectedCols.find((c) => c.value === col.key)
-                    )
-                  );
-                }}
-                options={columnState.columns?.map((col) => ({
-                  value: col.key,
-                  label:
-                    typeof col.name === "string" && col.name !== ""
-                      ? col.name
-                      : col.key,
-                }))}
-                theme={(theme) => ({
-                  ...theme,
-                  colors: {
-                    ...theme.colors,
-                    primary25: "#00ffab24",
-                    primary50: "#00ffab50",
-                    primary75: "#00ffab",
-                    primary: "#00c583",
-                  },
-                })}
-              />
-            ) : null}
-          </div>
-          {viewMode === "table" ? (
-            <div className={"data-grid"}>
-              <DataGrid
-                onCellDoubleClick={(cell) => setSelectedRow(cell.row)}
-                columns={columnState.visibleColumns ?? []}
-                rows={rowState.rows}
-                // rowClass={(row) => (row.watched ? "watched" : "unwatched")}
-                defaultColumnOptions={{
-                  resizable: true,
-                }}
-                sortColumns={[
-                  {
-                    columnKey: sortState.column.toString(),
-                    direction: sortState.direction,
-                  },
-                ]}
-                onSortColumnsChange={(sortColumns) =>
-                  typeof sortColumns[0] !== "undefined"
-                    ? sortState.dispatch([
-                        sortColumns[0].columnKey as any,
-                        sortColumns[0].direction,
-                      ])
-                    : sortState.dispatch(columnsConfig.defaultSort)
+        <ColumnStateContext.Provider value={columnState}>
+          <div className="browser-root">
+            <div className="header">
+              <span>{/*Dummy element for app-toolbar*/}</span>
+              <button
+                type="button"
+                onClick={() =>
+                  setViewMode(viewMode === "grid" ? "table" : "grid")
                 }
-                className="fill-grid"
-                headerRowHeight={50}
-                rowHeight={35}
-              />
+              >
+                {viewMode === "grid" ? "Table" : "Grid"}
+              </button>
+              <FilterSelect />
+              <SortSelect />
+              {viewMode === "table" ? <VisibleColumnSelect /> : null}
             </div>
-          ) : (
-            <ImageGrid<T>
-              rows={rowState.rows}
-              sortColumn={sortState.column}
+            {viewMode === "table" ? (
+              <TableGrid
+                rows={rowState.rows}
+                setSelectedRow={setSelectedRow}
+              ></TableGrid>
+            ) : (
+              <ImageGrid<T>
+                rows={rowState.rows}
+                setSelectedRow={setSelectedRow}
+              />
+            )}
+            <SelectedRowOverlay
+              selectedRow={selectedRow}
               setSelectedRow={setSelectedRow}
             />
-          )}
-          <SelectedRow
-            selectedRow={selectedRow}
-            setSelectedRow={setSelectedRow}
+          </div>
+          <Tooltip
+            className="numeric-filter-tooltip"
+            id="my-tooltip"
+            place="bottom"
+            clickable={true}
+            render={({ activeAnchor }) => (
+              <NumericFilterTooltip
+                colKey={
+                  activeAnchor?.getAttribute("data-column-key") ?? undefined
+                }
+              />
+            )}
           />
-        </div>
-        <Tooltip
-          className="numeric-filter-tooltip"
-          id="my-tooltip"
-          place="bottom"
-          clickable={true}
-          render={({ activeAnchor }) => (
-            <NumericFilterTooltip
-              colKey={
-                activeAnchor?.getAttribute("data-column-key") ?? undefined
-              }
-            />
-          )}
-        />
+        </ColumnStateContext.Provider>
       </FilterStateContext.Provider>
     </ColumnConfigContext.Provider>
   );

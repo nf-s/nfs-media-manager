@@ -1,8 +1,8 @@
 import React, { useContext } from "react";
-import { ColumnConfigContext, ColumnsConfig } from "../Table/ColumnState.js";
-import { FieldRenderer } from "../Table/FieldRenderer.js";
+import { ColumnConfigContext, ColumnsConfig } from "../Table/Columns.js";
+import { FieldRenderer } from "../Table/FieldRenderers.js";
 
-export function SelectedRow<T>(props: {
+export function SelectedRowOverlay<T>(props: {
   selectedRow: T | undefined;
   setSelectedRow: (row: T | undefined) => void;
 }) {

@@ -1,9 +1,8 @@
-import { applySort, applyFilters } from "data-types";
+import { applyFilters, applySort } from "data-types";
 import { useMemo } from "react";
-import { ColumnsConfig } from "./ColumnState.js";
-import { isNumericCol } from "./Columns.js";
-import { SortState } from "./SortState.js";
+import { ColumnsConfig, isNumericCol } from "./Columns.js";
 import { FilterState } from "./FilterState.js";
+import { ColumnState } from "./ColumnState.js";
 
 export interface RowState<T> {
   rows: T[];
@@ -12,7 +11,7 @@ export interface RowState<T> {
 export function useRowState<T>(
   columnsConfig: ColumnsConfig<T>,
   rows: T[],
-  sortState: SortState<T>,
+  sortState: ColumnState<T>,
   filterState: FilterState<T>
 ): RowState<T> {
   const processedRows = useMemo(() => {
@@ -31,8 +30,13 @@ export function useRowState<T>(
   }, [rows, columnsConfig]);
 
   const sortedRows = useMemo(() => {
-    return applySort(processedRows, [sortState.column, sortState.direction]);
-  }, [processedRows, sortState.column, sortState.direction]);
+    if (sortState.sortColumn && sortState.sortDirection)
+      return applySort(processedRows, [
+        sortState.sortColumn,
+        sortState.sortDirection,
+      ]);
+    else return processedRows;
+  }, [processedRows, sortState.sortColumn, sortState.sortDirection]);
 
   const filteredRows = useMemo(() => {
     if (

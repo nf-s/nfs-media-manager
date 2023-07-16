@@ -4,7 +4,7 @@ import Movie from "./Browser/Movie.jsx";
 // import Movie from "./Movie";
 import Select from "react-select";
 import Music from "./Browser/Music.jsx";
-import { SpotifyProvider } from "./Browser/SpotifyContext.js";
+import { SpotifyProvider } from "./Browser/Spotify/SpotifyContext.js";
 
 import "rc-slider/assets/index.css";
 import "react-data-grid/lib/styles.css";

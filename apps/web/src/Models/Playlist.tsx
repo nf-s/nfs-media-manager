@@ -1,8 +1,7 @@
 import { CleanTrack } from "data-types";
 import React, { useContext } from "react";
-import { ColumnFieldRenderer } from "../Table/FieldRenderer.js";
-import { ColumnsConfig } from "../Table/ColumnState.js";
-import { formatTime } from "../Table/Columns.jsx";
+import { ColumnFieldRenderer, ColumnsConfig } from "../Table/Columns.js";
+import { formatTime } from "../Table/FieldRenderers.js";
 import { FilterStateContext, addFilter } from "../Table/FilterState.js";
 
 export const Genres: ColumnFieldRenderer<CleanTrack> = (props) => {

@@ -1,14 +1,12 @@
-import React from "react";
-import { DataColumn, NumberFormat } from "./Columns.js";
 import { Links } from "data-types/dist/common.js";
-
-export type ColumnFieldRendererProps<T> = {
-  col: DataColumn<T>;
-  data: T;
-};
-export type ColumnFieldRenderer<T> = (
-  props: ColumnFieldRendererProps<T>
-) => JSX.Element | null;
+import React, { useContext } from "react";
+import {
+  ColumnFieldRendererProps,
+  DataColumn,
+  NumericCol,
+  isNumericCol,
+} from "./Columns.js";
+import { FilterStateContext } from "./FilterState.js";
 
 export function FieldRenderer<T>(props: {
   col: DataColumn<T> | undefined;
@@ -33,6 +31,62 @@ export function FieldRenderer<T>(props: {
     return <>{props.row[props.col.key]}</>;
   }
 }
+
+export function formatTime(seconds: number) {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = Math.round(seconds % 60);
+  return [h, m > 9 ? m : h ? "0" + m : m || "0", s > 9 ? s : "0" + s]
+    .filter(Boolean)
+    .join(":");
+}
+
+export const NumberFormat = <T,>(props: {
+  col: NumericCol<T>;
+  value: number;
+}) => {
+  const filterState = useContext(FilterStateContext);
+  let divisor = 1;
+
+  // If we are displaying as percent of max, we need to divide by max value
+  // This can be found in the corresponding numericFilter
+  if (props.col.displayAsPercentOfMax) {
+    const numericFilter = filterState?.numericFilterData?.find(
+      (filter) => filter.col.key === props.col.key
+    );
+
+    divisor = numericFilter?.max ?? 1;
+  }
+
+  return props.col.numberFormat ? (
+    <>{props.col.numberFormat(props.value)}</>
+  ) : (
+    <>
+      {((props.value * (props.col.mult ?? 1)) / divisor).toFixed(
+        props.col.precision ?? 2
+      )}
+      {props.col.append}
+    </>
+  );
+};
+
+export const NumericField = <T,>(props: ColumnFieldRendererProps<T>) => {
+  const value = props.data[props.col.key];
+  const col = props.col;
+
+  if (!isNumericCol(col)) {
+    return null;
+  }
+
+  return typeof value === "number" ? (
+    <NumberFormat col={col} value={value} />
+  ) : typeof value === "string" ? (
+    <NumberFormat col={col} value={parseFloat(value)} />
+  ) : null;
+};
+
+export const BooleanField = <T,>(props: ColumnFieldRendererProps<T>) =>
+  props.data[props.col.key] ? <span>X</span> : null;
 
 export interface LinkIconConfig<T> {
   key: T;

@@ -1,72 +1,14 @@
 import {
   BooleanColKey,
   FilterColKey,
+  IdColKey,
   NumericColKey,
+  SortValue,
   StringColKey,
 } from "data-types";
-import React, { useContext } from "react";
+import { createContext } from "react";
+import { Column } from "react-data-grid";
 import { PickProperties } from "ts-essentials";
-import {
-  ColumnFieldRenderer,
-  ColumnFieldRendererProps,
-} from "./FieldRenderer.js";
-import { FilterStateContext } from "./FilterState.js";
-
-export function formatTime(seconds: number) {
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  const s = Math.round(seconds % 60);
-  return [h, m > 9 ? m : h ? "0" + m : m || "0", s > 9 ? s : "0" + s]
-    .filter(Boolean)
-    .join(":");
-}
-
-export const NumberFormat = <T,>(props: {
-  col: NumericCol<T>;
-  value: number;
-}) => {
-  const filterState = useContext(FilterStateContext);
-  let divisor = 1;
-
-  // If we are displaying as percent of max, we need to divide by max value
-  // This can be found in the corresponding numericFilter
-  if (props.col.displayAsPercentOfMax) {
-    const numericFilter = filterState?.numericFilterData?.find(
-      (filter) => filter.col.key === props.col.key
-    );
-
-    divisor = numericFilter?.max ?? 1;
-  }
-
-  return props.col.numberFormat ? (
-    <>{props.col.numberFormat(props.value)}</>
-  ) : (
-    <>
-      {((props.value * (props.col.mult ?? 1)) / divisor).toFixed(
-        props.col.precision ?? 2
-      )}
-      {props.col.append}
-    </>
-  );
-};
-
-export const NumericField = <T,>(props: ColumnFieldRendererProps<T>) => {
-  const value = props.data[props.col.key];
-  const col = props.col;
-
-  if (!isNumericCol(col)) {
-    return null;
-  }
-
-  return typeof value === "number" ? (
-    <NumberFormat col={col} value={value} />
-  ) : typeof value === "string" ? (
-    <NumberFormat col={col} value={parseFloat(value)} />
-  ) : null;
-};
-
-export const BooleanField = <T,>(props: ColumnFieldRendererProps<T>) =>
-  props.data[props.col.key] ? <span>X</span> : null;
 
 type ColumnBase = {
   readonly width?: number;
@@ -137,6 +79,48 @@ export type DataColumnKey<T> =
   | StringColKey<T>
   | NumericColKey<T>
   | BooleanColKey<T>;
+
+export type ColumnFieldRendererProps<T> = {
+  col: DataColumn<T>;
+  data: T;
+};
+export type ColumnFieldRenderer<T> = (
+  props: ColumnFieldRendererProps<T>
+) => JSX.Element | null;
+
+export type ColumnWithFieldRenderer<T> = Readonly<
+  Column<T> & {
+    fieldRenderer?: ColumnFieldRenderer<T>;
+  }
+>;
+
+export type GridButtonsFC<T> = React.FC<{ row: T }>;
+
+export type GridConfig<T> = {
+  readonly width: number;
+  readonly height: number;
+  readonly art?: keyof PickProperties<T, string | undefined>;
+  /** maximum of 3 columns */ readonly cols: [
+    DataColumnKey<T>,
+    DataColumnKey<T>,
+    DataColumnKey<T>,
+  ];
+  readonly links?: (row: T) => JSX.Element;
+  ButtonFC?: GridButtonsFC<T>;
+};
+
+export interface ColumnsConfig<T> {
+  data: DataColumn<T>[];
+  custom?: Column<T>[];
+  grid: GridConfig<T>;
+  id: IdColKey<T>;
+  defaultSort: SortValue<T>;
+  defaultVisible: ColumnKey<T>[];
+}
+
+export const ColumnConfigContext = createContext<
+  ColumnsConfig<any> | undefined
+>(undefined);
 
 export function isNumericCol<T>(col: DataColumn<T>): col is NumericCol<T> {
   return col.type === "numeric";

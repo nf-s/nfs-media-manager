@@ -4,7 +4,7 @@ import { useTraceUpdate } from "../Common/util.js";
 import * as Album from "../Models/Album.jsx";
 import * as Playlist from "../Models/Playlist.jsx";
 import Browser from "./Browser.jsx";
-import SpotifyPlayer from "./SpotifyPlayer.js";
+import SpotifyPlayer from "./Spotify/SpotifyPlayer.js";
 
 function Music(props: { darkMode: boolean; mode: "albums" | "playlist" }) {
   useTraceUpdate(props);
@@ -17,6 +17,7 @@ function Music(props: { darkMode: boolean; mode: "albums" | "playlist" }) {
   // }>({ rows: [] });
   const playlistData = { rows: [] };
 
+  // Fetch album data
   useEffect(() => {
     if (rowData.rows.length > 0) return;
 
