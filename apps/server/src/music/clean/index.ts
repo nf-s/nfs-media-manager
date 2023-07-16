@@ -93,20 +93,21 @@ export async function clean(): Promise<CleanLibrary> {
         }
       }
 
+      // Order is important here, as we want to prioritize the genres from RYM and then Spotify artist
       const genres = [
+        ...(album.rymGoogle?.genres ?? []),
         ...album.spotify.artists
           .map((a) => library.artists[a.id])
           .filter((a) => a)
           .map((a) => a.spotify.genres)
           .flat(),
-        ...(album.rymGoogle?.genres ?? []),
+        ...lastFmTags.map((t) => t.name),
         ...discogsGenres,
         ...discogsStyles,
         ...(!album.id.discogs
           ? (album.mb?.releaseGroup as any)?.genres?.map((g: any) => g.name) ??
             []
           : []),
-        ...lastFmTags.map((t) => t.name),
       ].map((g) => (g as string).toLowerCase());
 
       // Only use addedDate if it occurs after the release date
