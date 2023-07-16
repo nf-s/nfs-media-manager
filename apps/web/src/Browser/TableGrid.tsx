@@ -21,25 +21,29 @@ function TableGrid<T>(props: { rows: T[]; setSelectedRow: (row: T) => void }) {
     ColumnStateContext
   );
 
-  const [columns, setColumns] = useState<Column<T>[] | undefined>(undefined);
-  const [visibleColumns, setVisibleColumns] = useState<Column<T>[] | undefined>(
-    undefined
-  );
+  const [dataGridColumns, setDataGridColumns] = useState<
+    Column<T>[] | undefined
+  >(undefined);
+  const [visibleDataGridColumns, setVisibleDataGridColumns] = useState<
+    Column<T>[] | undefined
+  >(undefined);
 
+  // Set visibleDataGridColumns when columnState.visibleColumns changes
   useEffect(() => {
-    if (!columnState?.visibleColumns || !columns) return;
+    if (!columnState?.visibleColumns || !dataGridColumns) return;
 
-    setVisibleColumns(
-      columns.filter((col) => columnState.visibleColumns?.includes(col.key))
+    setVisibleDataGridColumns(
+      dataGridColumns.filter(
+        (col) => columnState.visibleColumns?.includes(col.key)
+      )
     );
-  }, [columnState?.visibleColumns, columns, visibleColumns]);
+  }, [columnState?.visibleColumns, dataGridColumns]);
 
-  // Generate DataGrid columns from columnsConfig and row data
-  // It will also set visibleColumns from localStorage
+  // Generate dataGridColumns from columnsConfig and row data
   useMemo(() => {
     if (!columnsConfig) return;
 
-    const columns: ColumnWithFieldRenderer<T>[] = [
+    const dataGridColumns: ColumnWithFieldRenderer<T>[] = [
       ...(columnsConfig.custom ?? []),
       ...columnsConfig.data.map((col) => {
         if (isNumericCol(col)) {
@@ -93,14 +97,14 @@ function TableGrid<T>(props: { rows: T[]; setSelectedRow: (row: T) => void }) {
       }),
     ];
 
-    setColumns(columns);
+    setDataGridColumns(dataGridColumns);
   }, [columnsConfig]);
 
   return (
     <div className={"data-grid"}>
       <DataGrid
         onCellDoubleClick={(cell) => setSelectedRow(cell.row)}
-        columns={visibleColumns ?? []}
+        columns={visibleDataGridColumns ?? []}
         rows={rows}
         // rowClass={(row) => (row.watched ? "watched" : "unwatched")}
         defaultColumnOptions={{

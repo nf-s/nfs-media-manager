@@ -28,8 +28,8 @@ export type NumericCol<T> = {
   readonly min?: number | undefined;
   /** Maximum value for filter. If left empty, this will be generated from column values */
   readonly max?: number | undefined;
-  /** If true, then value will be divided by `max`, and multiplied by `100` */
-  readonly displayAsPercentOfMax?: boolean;
+  /** If true, then value will be divided by `max`*/
+  readonly divideByMax?: boolean;
   readonly append?: string;
   /** Number of digits after the decimal point. Must be in the range 0 - 20, inclusive. */
   readonly precision?: number;
