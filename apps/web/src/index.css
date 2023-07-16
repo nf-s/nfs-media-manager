@@ -413,3 +413,10 @@ a.reverse-sort {
   width: 150px;
   height: 30px;
 }
+
+.header-status-text {
+  display: flex;
+  align-items: center;
+  justify-content: right;
+  font-weight: 300;
+}

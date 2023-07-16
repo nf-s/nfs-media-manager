@@ -97,7 +97,10 @@ function Browser<T>(props: {
               </button>
               <FilterSelect />
               <SortSelect />
-              {viewMode === "table" ? <VisibleColumnSelect /> : null}
+              {viewMode === "table" ? <VisibleColumnSelect /> : <div />}
+              <div className="header-status-text">
+                {rowState.rows.length} items
+              </div>
             </div>
             {viewMode === "table" ? (
               <TableGrid
