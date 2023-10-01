@@ -251,7 +251,8 @@ export async function discogs() {
           (album.discogs !== null &&
             "master" in album.discogs &&
             !album.discogs.releasesWithRatings) ||
-          (process.env.RETRY_FAILED === "true" && album.discogs === null)
+          (process.env.RETRY_FAILED?.includes("discogs") &&
+            album.discogs === null)
       );
 
     await Promise.all(

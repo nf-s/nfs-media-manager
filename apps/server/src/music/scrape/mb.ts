@@ -31,7 +31,7 @@ export async function musicBrainz() {
         .filter(
           (album) =>
             album.mb === undefined ||
-            (process.env.RETRY_FAILED === "true" && album.mb === null)
+            (process.env.RETRY_FAILED?.includes("mb") && album.mb === null)
         )
         .map((album) =>
           mbLimiter.schedule(async () => {

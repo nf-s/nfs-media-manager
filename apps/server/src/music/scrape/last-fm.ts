@@ -60,7 +60,8 @@ export async function scrapeLastFm() {
       .filter(
         (album) =>
           album.lastFm === undefined ||
-          (process.env.RETRY_FAILED === "true" && album.lastFm === null) ||
+          (process.env.RETRY_FAILED?.includes("lastfm") &&
+            album.lastFm === null) ||
           (album.lastFm &&
             (!album.lastFm.dateScraped ||
               new Date(album.lastFm.dateScraped).getTime() <
