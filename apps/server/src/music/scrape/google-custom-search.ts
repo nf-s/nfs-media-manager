@@ -92,7 +92,8 @@ export async function googleRelease<T extends Keys>(
         .filter(
           (album) =>
             album[prop] === undefined ||
-            (process.env.RETRY_FAILED === "true" && album[prop] === null)
+            (process.env.RETRY_FAILED?.includes("google") &&
+              album[prop] === null)
         );
 
       await Promise.all(
