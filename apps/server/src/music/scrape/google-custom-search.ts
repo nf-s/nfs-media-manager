@@ -3,7 +3,7 @@ import Bottleneck from "bottleneck";
 import debugPkg from "debug";
 import { Album, albumTitle, library } from "../index.js";
 
-const debug = debugPkg.debug("music-scraper:rym-google");
+const debug = debugPkg.debug("music-scraper:google");
 
 const googleSearchLimiter = new Bottleneck({
   maxConcurrent: 20,
@@ -139,6 +139,7 @@ export async function googleRelease<T extends Keys>(
             throw error;
           }
           counter++;
+          debug(`SUCCESSFULLY fetched ${prop} ${albumTitle(album)}`);
           debug(`DONE ${(counter * 100) / albumsToFind.length}%`);
         })
       );
