@@ -1,8 +1,8 @@
 import { SyncPlaylist, CleanAlbum } from "data-types";
 
 export const playlistToSync: SyncPlaylist<CleanAlbum>[] = [
-  // Top 30 albums added - Years 2012-2023
-  ...new Array(2023 - 2012 + 1)
+  // Top 30 albums added - Years 2012-2024
+  ...new Array(2024 - 2012 + 1)
     .fill(1)
     .map((_, i) => i + 2012)
     .map((year) => {
@@ -18,14 +18,14 @@ export const playlistToSync: SyncPlaylist<CleanAlbum>[] = [
         ],
         sort: ["scrobbles", "DESC"],
         limit: 30,
-        // Only do exhaustive update comparison for 2023
-        lazyUpdate: year !== 2023,
+        // Only do exhaustive update comparison for 2024
+        lazyUpdate: year !== 2024,
       };
       return yearPlaylist;
     }),
 
-  // RYM Top 20 albums - Years 1993-2023
-  ...new Array(2023 - 1993 + 1)
+  // RYM Top 20 albums - Years 1993-2024
+  ...new Array(2024 - 1993 + 1)
     .fill(1)
     .map((_, i) => i + 1993)
     .map((year) => {
@@ -41,14 +41,14 @@ export const playlistToSync: SyncPlaylist<CleanAlbum>[] = [
         ],
         sort: ["ratingRymValue", "DESC"],
         limit: 20,
-        // Only do exhaustive update comparison for 2023
-        lazyUpdate: year !== 2023,
+        // Only do exhaustive update comparison for 2024
+        lazyUpdate: year !== 2024,
       };
       return yearPlaylist;
     }),
 
-  // Discogs Top 20 albums - Years 1993-2023
-  ...new Array(2023 - 1993 + 1)
+  // Discogs Top 20 albums - Years 1993-2024
+  ...new Array(2024 - 1993 + 1)
     .fill(1)
     .map((_, i) => i + 1993)
     .map((year) => {
@@ -64,12 +64,12 @@ export const playlistToSync: SyncPlaylist<CleanAlbum>[] = [
         ],
         sort: ["ratingDiscogsValue", "DESC"],
         limit: 20,
-        // Only do exhaustive update comparison for 2023
-        lazyUpdate: year !== 2023,
+        // Only do exhaustive update comparison for 2024
+        lazyUpdate: year !== 2024,
       };
       return yearPlaylist;
     }),
-  ...new Array(2023 - 1993 + 1)
+  ...new Array(2024 - 1993 + 1)
     .fill(1)
     .map((_, i) => i + 1993)
     .map((year) => {
@@ -86,8 +86,8 @@ export const playlistToSync: SyncPlaylist<CleanAlbum>[] = [
         ],
         sort: ["ratingRymValue", "DESC"],
         limit: 20,
-        // Only do exhaustive update comparison for 2023
-        lazyUpdate: year !== 2023,
+        // Only do exhaustive update comparison for 2024
+        lazyUpdate: year !== 2024,
       };
       return yearPlaylist;
     }),
