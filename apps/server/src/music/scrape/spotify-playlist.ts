@@ -213,8 +213,8 @@ export async function getPlaylistTracksWithMetadata(
 ): Promise<SpotifyPlaylistTrack[] | undefined> {
   const unprocessedTracks = await getPlaylistTracks(spotifyApi, id);
   const artistsToFetch = new Set<string>();
-  unprocessedTracks.forEach((t) =>
-    t.track?.artists.forEach((a) => artistsToFetch.add(a.id))
+  unprocessedTracks.forEach(
+    (t) => t.track?.artists.forEach((a) => artistsToFetch.add(a.id))
   );
   const unprocessedArtists = await getArtists(
     spotifyApi,
@@ -339,13 +339,14 @@ export async function removeAllTracksFromPlaylist(
    * - `0-99`
    * - `100-199`
    * - ...
+   * Note every request still deletes tracks 0 to 100
    */
   const trackPositionsBatches = new Array(numBatches)
     .fill(0)
     .map((_, batchIndex) =>
       new Array(Math.min(limit, numberOfTracks - batchIndex * limit))
         .fill(0)
-        .map((_, innerIndex) => innerIndex + batchIndex * limit)
+        .map((_, innerIndex) => innerIndex)
     );
 
   await Promise.all(
