@@ -1,0 +1,1 @@
+CREATE INDEX "media_item_tag_tag_media_idx" ON "media_item_tag" USING btree ("tag_id","media_item_id");

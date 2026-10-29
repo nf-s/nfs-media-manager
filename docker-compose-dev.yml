@@ -1,0 +1,11 @@
+services:
+  db:
+    platform: linux/x86_64
+    image: postgres:17
+    restart: always
+    environment:
+      POSTGRES_PASSWORD: admin
+      POSTGRES_USER: admin
+      POSTGRES_DB: media-manager-dev
+    ports:
+      - 127.0.0.1:5431:5432

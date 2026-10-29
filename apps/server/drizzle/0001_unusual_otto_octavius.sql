@@ -1,0 +1,2 @@
+DROP INDEX "provider_reference_provider_external_uidx";--> statement-breakpoint
+CREATE UNIQUE INDEX "provider_reference_media_item_provider_external_uidx" ON "provider_reference" USING btree ("media_item_id","provider","reference_type","external_id");

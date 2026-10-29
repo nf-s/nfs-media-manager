@@ -1,0 +1,59 @@
+{
+  "name": "nfs-media-manager",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "author": "Nick Forbes-Smith",
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "lint": "turbo lint",
+    "typecheck": "turbo typecheck",
+    "typecheck:watch": "turbo typecheck:watch",
+    "format": "prettier --write \"**/*.{js,jsx,ts,tsx,md,scss,css,html}\"",
+    "ui": "pnpm --filter @repo/ui ui",
+    "create:migration": "turbo run --filter @repo/server create:migration",
+    "migrate": "turbo run migrate",
+    "drizzle-studio": "turbo run --filter @repo/server drizzle-studio",
+    "seed": "turbo run seed",
+    "import:legacy": "turbo run --filter @repo/server import:legacy",
+    "test:unit": "turbo run test:unit",
+    "prepare": "husky",
+    "pre-commit": "lint-staged",
+    "clean-deps": "rm -rf node_modules && pnpm -r exec rm -rf node_modules"
+  },
+  "devDependencies": {
+    "@repo/eslint-config": "workspace:*",
+    "@repo/typescript-config": "workspace:*",
+    "husky": "^9.1.7",
+    "lint-staged": "^15.5.2",
+    "prettier": "catalog:",
+    "turbo": "2.1.1"
+  },
+  "packageManager": "pnpm@9.12.0",
+  "pnpm": {
+    "overrides": {
+      "next": "15.5.28",
+      "next>sharp": "0.35.5",
+      "postcss@<8.5.23": "8.5.23",
+      "glob@10.4.5": "10.5.0",
+      "minimatch@9.0.5": "9.0.7",
+      "brace-expansion@2.0.2": "2.1.7",
+      "picomatch@2.3.1": "2.3.2"
+    }
+  },
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "lint-staged": {
+    "**/*.{js,jsx,ts,tsx,md,scss,css,html}": [
+      "prettier --write"
+    ],
+    "**/*.json": [
+      "prettier --write --parser json-stringify"
+    ],
+    "**/*.{ts,tsx}": [
+      "pnpm lint --"
+    ]
+  }
+}

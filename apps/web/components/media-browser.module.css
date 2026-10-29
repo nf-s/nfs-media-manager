@@ -1,0 +1,62 @@
+.browser :global(.browse-toolbar) {
+  flex-wrap: wrap;
+}
+
+.grid .fallback {
+  padding: 8px;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  background: #eeeeec;
+  color: #333333;
+  text-align: center;
+  line-height: 1.4;
+}
+
+.grid[data-mobile='true'] :global(.tile-title) {
+  height: 20px;
+  margin-top: 0;
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.grid[data-mobile='true'] :global(.tile-byline) {
+  height: 20px;
+  color: #444;
+  font-size: 12px;
+  line-height: 20px;
+}
+
+.grid[data-mobile='true'] :global(.tile-byline) > span:last-child {
+  flex-shrink: 0;
+}
+
+.grid[data-mobile='true'] :global(.tile-extra) {
+  height: 24px;
+}
+
+.grid[data-mobile='true']
+  :global(.tile-extra)
+  > span:first-child:not(:global(.service-links)) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.grid[data-mobile='true'] :global(.service-links) {
+  min-width: 0;
+  overflow-x: auto;
+  gap: 4px;
+}
+
+.grid[data-mobile='true'] :global(.service-links a) {
+  min-width: 24px;
+  min-height: 24px;
+  flex-shrink: 0;
+}
+
+.grid :global(.art-button):focus-visible,
+.grid :global(.tile-title):focus-visible,
+.grid :global(.tile-byline button):focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: -2px;
+}

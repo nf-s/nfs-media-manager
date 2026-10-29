@@ -1,0 +1,2 @@
+ALTER TABLE "provider_request_event" ADD COLUMN "request_class" text DEFAULT 'read' NOT NULL;--> statement-breakpoint
+ALTER TABLE "provider_request_state" ADD COLUMN "request_leases" jsonb DEFAULT '[]'::jsonb NOT NULL;

@@ -1,0 +1,40 @@
+.control {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  min-height: 24px;
+  color: #6b7280;
+  vertical-align: middle;
+}
+.control:hover,
+.control[aria-expanded='true'] {
+  color: #111827;
+  background: #eef0f2;
+  border-radius: 50%;
+}
+.control:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 1px;
+}
+.panel {
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  width: 330px;
+  max-width: calc(100vw - 16px);
+  max-height: min(420px, calc(100dvh - 16px));
+  padding: 12px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  background: #fff;
+  color: #111827;
+  border: 1px solid #d9dde2;
+  box-shadow: 0 4px 16px #0002;
+  font-size: 13px;
+}
+.sources {
+  display: grid;
+  gap: 10px;
+}

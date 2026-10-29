@@ -1,0 +1,3 @@
+ALTER TABLE "provider_request_state" ADD COLUMN "request_budget_override" jsonb;--> statement-breakpoint
+ALTER TABLE "provider_request_state" ADD COLUMN "budget_updated_by_user_id" text;--> statement-breakpoint
+ALTER TABLE "provider_request_state" ADD CONSTRAINT "provider_request_state_budget_updated_by_user_id_user_id_fk" FOREIGN KEY ("budget_updated_by_user_id") REFERENCES "public"."user"("id") ON DELETE set null ON UPDATE no action;

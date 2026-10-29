@@ -1,0 +1,71 @@
+name: Checks
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: media_manager_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d media_manager_ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      NODE_ENV: test
+      APP_URL: http://localhost:3000
+      AUTH_BASE_URL: http://localhost:4000
+      INTERNAL_BACKEND_URL: http://localhost:4000
+      TRUSTED_ORIGINS: http://localhost:3000,http://localhost:4000
+      DATABASE_HOST: localhost
+      DATABASE_PORT: 5432
+      DATABASE_USER: postgres
+      DATABASE_PASSWORD: postgres
+      DATABASE_NAME: media_manager_ci
+      BETTER_AUTH_SECRET: ci-only-better-auth-secret-at-least-32-characters
+      MEDIA_ENCRYPTION_KEY: ci-only-media-encryption-key-at-least-32-characters
+      MEDIA_PLUGIN_PATHS: ''
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build shared packages
+        run: |
+          pnpm --filter @repo/schemas build
+          pnpm --filter @repo/media-plugin-sdk build
+          pnpm --filter @repo/server build:types
+      - name: Typecheck
+        run: |
+          pnpm --filter @repo/server typecheck
+          pnpm --filter web typecheck
+      - name: Schema unit tests
+        run: pnpm --filter @repo/schemas test:unit
+      - name: Server unit tests
+        run: pnpm --filter @repo/server test:unit
+      - name: Web component and utility tests
+        run: >-
+          apps/server/node_modules/.bin/tsx
+          --tsconfig apps/web/tsconfig.test.json
+          --test apps/web/components/*.test.ts apps/web/components/*.test.tsx apps/web/utils/*.test.ts
+      - name: Server integration tests
+        run: pnpm --filter @repo/server test:integration

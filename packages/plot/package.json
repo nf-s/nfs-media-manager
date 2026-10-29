@@ -1,0 +1,36 @@
+{
+  "name": "@repo/plot",
+  "version": "0.0.0",
+  "private": true,
+  "exports": {
+    "./*": "./src/*.tsx"
+  },
+  "scripts": {
+    "lint": "eslint ."
+  },
+  "peerDependencies": {
+    "react": "^19"
+  },
+  "devDependencies": {
+    "@repo/eslint-config": "workspace:*",
+    "@repo/typescript-config": "workspace:*",
+    "@types/d3": "catalog:",
+    "@types/d3-array": "catalog:",
+    "@types/d3-color": "catalog:",
+    "@types/d3-scale": "catalog:",
+    "@types/d3-scale-chromatic": "catalog:",
+    "@types/node": "catalog:",
+    "@types/react": "catalog:react19",
+    "typescript": "catalog:"
+  },
+  "dependencies": {
+    "@observablehq/plot": "^0.6.17",
+    "@repo/schemas": "workspace:*",
+    "clsx": "catalog:",
+    "d3": "catalog:",
+    "d3-array": "catalog:",
+    "d3-color": "catalog:",
+    "d3-scale": "catalog:",
+    "d3-scale-chromatic": "catalog:"
+  }
+}

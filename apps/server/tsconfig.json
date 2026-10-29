@@ -1,0 +1,30 @@
+{
+  "extends": "@repo/typescript-config/base.json",
+  "compilerOptions": {
+    "skipLibCheck": true,
+    "noEmit": true,
+    "paths": {
+      "@repo/schemas/*": [
+        "../../packages/schemas/src/*"
+      ],
+      "@repo/media-plugin-sdk": [
+        "../../packages/media-plugin-sdk/src/index.ts"
+      ],
+      "@/*": [
+        "./src/*"
+      ]
+    },
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "incremental": true,
+    "strict": true
+  },
+  "include": [
+    "src/**/*",
+    "scripts/**/*"
+  ],
+  "exclude": [
+    "node_modules"
+  ]
+}

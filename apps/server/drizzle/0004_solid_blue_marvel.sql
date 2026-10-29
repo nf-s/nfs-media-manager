@@ -1,0 +1,1 @@
+ALTER TABLE "provider_request_state" ADD COLUMN "halted" boolean DEFAULT false NOT NULL;

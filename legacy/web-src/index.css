@@ -1,0 +1,422 @@
+img {
+  -webkit-animation: fadein 0.5s; /* Safari, Chrome and Opera > 12.1 */
+  -moz-animation: fadein 0.5s; /* Firefox < 16 */
+  -ms-animation: fadein 0.5s; /* Internet Explorer */
+  -o-animation: fadein 0.5s; /* Opera < 12.1 */
+  animation: fadein 0.5s;
+}
+
+@keyframes fadein {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Firefox < 16 */
+@-moz-keyframes fadein {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Safari, Chrome and Opera > 12.1 */
+@-webkit-keyframes fadein {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Internet Explorer */
+@-ms-keyframes fadein {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Opera < 12.1 */
+@-o-keyframes fadein {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", "Oxygen",
+    "Ubuntu", "Cantarell", "Fira Sans", "Droid Sans", "Helvetica Neue",
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+#app-root {
+  display: grid;
+  grid-template-rows: 20px auto;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+}
+
+code {
+  font-family: source-code-pro, Menlo, Monaco, Consolas, "Courier New",
+    monospace;
+}
+
+.browser-root {
+  height: 100vh;
+  overflow-x: hidden;
+}
+
+.movie-root .fill-grid,
+.movie-root .container {
+  /* Hack to get height working again :( */
+  height: calc(100vh - 59px);
+}
+
+.music-root .fill-grid,
+.music-root .container {
+  /* Hack to get height working again :( */
+  height: calc(100vh - 138px);
+  overflow-x: hidden;
+}
+
+.rdg-cell {
+  font-size: 12px;
+}
+
+.rdg-row.unwatched {
+  background-color: #dbfff8;
+  color: #093c33;
+}
+
+.music-root {
+  display: grid;
+  grid-template-rows: min-content auto;
+}
+
+.image-grid {
+  overflow: hidden;
+  position: relative;
+}
+
+.app-header {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 120px;
+}
+
+.header,
+.app-header {
+  display: grid;
+  grid-template-columns: 120px 50px 500px repeat(
+      auto-fill,
+      [col-start] minmax(250px, 1fr) [col-end]
+    );
+  grid-column-gap: 10px;
+  padding: 10px;
+  height: 38px;
+}
+
+.header > button,
+.player-login-button {
+  height: 38px;
+  border-radius: 4px;
+  border: solid #00c583 1px;
+  background: none;
+  color: #00c583;
+}
+
+.header > button:hover,
+.player-login-button:hover {
+  cursor: pointer;
+  background: #00c583;
+  color: #fff;
+}
+
+.player-login-button {
+  margin: auto;
+  display: block;
+  transform: translate(0, 50%);
+  height: 40px;
+  padding: 0 15px;
+}
+
+.player {
+  overflow: visible;
+  position: absolute;
+  bottom: 0;
+  width: 100vw;
+  height: 80px;
+  background-color: rgb(51, 51, 51);
+}
+
+.filter-select {
+  z-index: 99;
+}
+
+.image-wrapper {
+  position: relative;
+  cursor: pointer;
+}
+
+.image-buttons-wrapper {
+  width: 100%;
+  height: 220px; /* TODO make this not hard coded */
+  opacity: 0;
+  transition: opacity 100ms;
+  position: absolute;
+  background: none;
+}
+
+.image-buttons-wrapper:hover {
+  opacity: 1;
+  background: rgba(0, 0, 0, 20%);
+}
+
+.image-buttons {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.image-buttons button {
+  background: none;
+  border-radius: 20px;
+  height: 40px;
+  width: 40px;
+  border: white solid 1px;
+  color: white;
+  margin: 7px;
+  font-size: 25px;
+  padding-bottom: 4px;
+  z-index: 99;
+}
+
+.image-links {
+  position: absolute;
+  bottom: 0;
+  right: 0;
+  background: rgba(255, 255, 255, 0.5);
+  border-radius: 3px 0 0 0;
+  padding: 2px;
+}
+
+.image-buttons button:hover {
+  cursor: pointer;
+  color: #00ffab;
+  border-color: #00ffab;
+  background: #00ffab24;
+}
+
+.music-root .rdg-cell button:hover {
+  cursor: pointer;
+  color: #00c583;
+}
+
+.music-root .rdg-cell button {
+  height: 26px;
+  border-radius: 15px;
+  width: 26px;
+  text-align: center;
+  font-size: 16px;
+  display: block;
+  margin-top: 4px;
+  float: left;
+  background: none;
+  border: none;
+  color: #282828;
+}
+
+.image-album {
+  padding: 5px;
+}
+
+.image-album-title,
+.image-album-artist,
+.image-album-extra {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.image-album-title {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.image-album-artist {
+  font-size: 12px;
+}
+
+.image-album-extra {
+  font-weight: 200;
+  font-size: 10px;
+  height: 16px;
+}
+
+.image-album-extra-title {
+  font-weight: 300;
+}
+
+a {
+  text-decoration: none;
+  color: black;
+}
+
+a:hover {
+  cursor: pointer;
+  color: #00c583;
+  text-decoration: underline;
+}
+
+a.reverse-sort {
+  display: table-cell;
+  width: 10px;
+  height: 32px;
+  font-size: 16px;
+  vertical-align: middle;
+  padding-left: 6px;
+}
+
+.sort-select {
+  float: left;
+  width: calc(100% - 14px);
+}
+
+/* DARK mode */
+#root.dark {
+  background-color: #000;
+  color: #fff;
+}
+
+.dark .rdg-row.unwatched {
+  background-color: #093c33;
+  color: #dbfff8;
+}
+
+.dark .header > button {
+  border: solid #00c583 1px;
+  color: #00c583;
+}
+
+.dark .header > button:hover {
+  background: #00c583;
+  color: #000;
+}
+
+.dark .music-root .rdg-cell button:hover {
+  color: #00ffab;
+}
+
+.dark .music-root .rdg-cell button {
+  color: #d6d6d6;
+}
+
+.dark a {
+  color: white;
+}
+
+.dark a:hover {
+  color: #00c583;
+}
+
+.row-external-links {
+  padding: 0 3px;
+  opacity: 0.5;
+  float: right;
+}
+
+.row-external-links:hover {
+  opacity: 0.8;
+}
+
+.numerical-filter-range {
+  padding: 1px 5px 5px 5px;
+}
+
+.numerical-filter-range .rc-slider-mark {
+  top: -6px;
+  left: 10px;
+  width: calc(100% - 20px);
+  pointer-events: none;
+}
+
+.numerical-filter-title {
+  height: min-content;
+  padding: 5px 0 0 0;
+  line-height: initial;
+  cursor: pointer;
+}
+
+.numerical-filter-range .rc-slider-mark-text {
+  font-size: 10px;
+  font-weight: 100;
+}
+
+.overlay {
+  position: absolute;
+  z-index: 100;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background: #0000000f;
+  backdrop-filter: blur(1px);
+  overflow-x: hidden;
+}
+
+.overlay .info {
+  background: white;
+  z-index: 100;
+  position: relative;
+  max-width: 800px;
+  margin: auto;
+  padding: 10px;
+  display: grid;
+  grid-template-columns: 50% 50%;
+}
+
+.overlay .info .scroll {
+  height: calc(100vh - 30px);
+  overflow: scroll;
+}
+
+.loading {
+  height: 100vh;
+  text-align: center;
+  padding-top: 100px;
+  font-size: 64px;
+  font-weight: 100;
+  color: #ccc;
+}
+
+.numeric-filter-tooltip {
+  background: #ddd;
+  padding: 10px 30px;
+  width: 150px;
+  height: 30px;
+}
+
+.header-status-text {
+  display: flex;
+  align-items: center;
+  justify-content: right;
+  font-weight: 300;
+}

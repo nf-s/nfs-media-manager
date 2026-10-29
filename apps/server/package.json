@@ -1,0 +1,65 @@
+{
+  "name": "@repo/server",
+  "version": "0.0.0",
+  "exports": {
+    "./app": {
+      "import": {
+        "types": "./dist/types/src/app.d.ts"
+      }
+    }
+  },
+  "scripts": {
+    "start": "NODE_ENV=production tsx src/index.ts",
+    "dev": "pnpm --filter @repo/server --parallel \"/^dev:.*/\"",
+    "dev:types": "tsc -p tsconfig.build-types.json --watch",
+    "dev:server": "tsx watch src/index.ts",
+    "build": "pnpm build:types",
+    "build:types": "tsc -p tsconfig.build-types.json",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "typecheck:watch": "tsc --noEmit --watch",
+    "create:migration": "drizzle-kit generate",
+    "drizzle-studio": "drizzle-kit studio",
+    "migrate": "tsx scripts/migrate.ts",
+    "migrate:dev": "tsx scripts/migrate.ts",
+    "seed": "tsx scripts/seed.ts",
+    "seed:dev": "tsx scripts/seed.ts",
+    "import:legacy": "tsx scripts/import-legacy.ts",
+    "test:unit": "vitest run",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "verify:legacy": "tsx scripts/verify-legacy.ts",
+    "backfill:film-added": "tsx scripts/backfill-film-added.ts"
+  },
+  "devDependencies": {
+    "@repo/eslint-config": "workspace:*",
+    "@repo/typescript-config": "workspace:*",
+    "@types/eslint": "catalog:",
+    "@types/node": "catalog:",
+    "@types/papaparse": "catalog:",
+    "@types/pg": "^8.11.11",
+    "eslint": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "^4.1.12"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.13.8",
+    "@hono/zod-openapi": "catalog:",
+    "@hono/zod-validator": "^0.7.3",
+    "@repo/media-plugin-sdk": "workspace:*",
+    "@repo/schemas": "workspace:*",
+    "@scalar/hono-api-reference": "^0.9.19",
+    "@t3-oss/env-core": "^0.13.8",
+    "better-auth": "catalog:",
+    "dotenv": "^17.4.0",
+    "drizzle-kit": "^0.31.5",
+    "drizzle-orm": "^0.45.4",
+    "fast-xml-parser": "^5.11.2",
+    "hono": "catalog:",
+    "nanoid": "^5.1.16",
+    "papaparse": "catalog:",
+    "pg": "^8.13.3",
+    "tsx": "^4.19.3",
+    "zod": "catalog:",
+    "zx": "^8.8.4"
+  }
+}

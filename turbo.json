@@ -1,0 +1,98 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "ui": "tui",
+  "tasks": {
+    "build:types": {
+      "dependsOn": ["^build"],
+      "outputs": ["dist/types/**"]
+    },
+    "build": {
+      "dependsOn": ["^build", "build:types"],
+      "inputs": ["$TURBO_DEFAULT$", ".env*"],
+      "outputs": [".next/**", "!.next/cache/**", "dist/**"]
+    },
+    "lint": {
+      "dependsOn": ["^build"]
+    },
+    "typecheck": {
+      "dependsOn": ["^build"]
+    },
+    "typecheck:watch": {
+      "dependsOn": ["^build"]
+    },
+    "dev": {
+      "cache": false,
+      "persistent": true,
+      "inputs": [".env*"]
+    },
+    "create:migration": {
+      "inputs": [".env*"],
+      "cache": false,
+      "persistent": true
+    },
+    "migrate": {
+      "inputs": [".env*"],
+      "cache": false
+    },
+    "import:legacy": {
+      "inputs": [".env*"],
+      "cache": false
+    },
+    "seed": {
+      "inputs": [".env*"],
+      "cache": false
+    },
+    "drizzle-studio": {
+      "inputs": [".env*"],
+      "cache": false
+    },
+    "test:unit": {
+      "inputs": [".env*"],
+      "persistent": true
+    }
+  },
+  "globalEnv": [
+    "APP_URL",
+    "AUTH_BASE_URL",
+    "AUTH_EMAIL_MODE",
+    "AUTH_USE_TESTCONTAINERS",
+    "BETTER_AUTH_SECRET",
+    "CI",
+    "DATABASE_URL",
+    "DATABASE_SCHEMA",
+    "INTERNAL_FRONTEND_URL",
+    "INTERNAL_BACKEND_URL",
+    "NODE_ENV",
+    "PORT",
+    "SCAN_DIR",
+    "SCAN_EXCLUDE",
+    "TRUSTED_ORIGINS",
+    "DEV_USE_INTERNAL_BACKEND_URL_IN_FRONTEND",
+    "DATABASE_HOST",
+    "DATABASE_PORT",
+    "DATABASE_USER",
+    "DATABASE_PASSWORD",
+    "DATABASE_NAME",
+    "MEDIA_ENCRYPTION_KEY",
+    "MEDIA_PLUGIN_PATHS",
+    "LEGACY_SERVER_DATA_DIR",
+    "LEGACY_WEB_DIST_DIR",
+    "S3_BUCKET_NAME",
+    "S3_SPACES_ENDPOINT",
+    "S3_SPACES_SECRET_KEY",
+    "S3_SPACES_ACCESS_KEY_ID",
+    "SMTP_PASSWORD",
+    "SMTP_USERNAME",
+    "SMTP_HOST",
+    "SMTP_PORT",
+    "EMAIL_SENDER",
+    "EMAIL_CATCHER",
+    "GOOGLE_CLIENT_ID",
+    "GOOGLE_CLIENT_SECRET",
+    "GOOGLE_REDIRECT_URI",
+    "INITIAL_USER_EMAIL",
+    "INITIAL_USER_NAME",
+    "INITIAL_USER_PASSWORD",
+    "AUTH_REQUIRE_EMAIL_VERIFICATION"
+  ]
+}
