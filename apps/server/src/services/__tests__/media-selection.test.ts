@@ -49,9 +49,7 @@ const providers = ['one', 'two'].map((id) =>
     identifierTypes: [id === 'one' ? 'imdb' : 'tmdb'],
     rateLimit: { minTimeMs: 1000, maxConcurrent: 1 },
     supportsScrape: true,
-    supportsSync: false,
     supportsLegacyImport: false,
-    connection: null,
     secrets:
       id === 'two'
         ? [

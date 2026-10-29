@@ -9,8 +9,6 @@ import {
   type BrowseRange,
   type BrowseFilter,
 } from '@repo/schemas/browse'
-import type { AlbumListItem, FilmListItem } from '@repo/schemas/media'
-import ExternalLink from './external-link'
 import { FilterButton } from './filter-affordance'
 
 export function filterModeClass(mode: BrowseFilter['mode']) {
@@ -74,33 +72,6 @@ export function BrowseFilterChips({
       </span>
     )
   })
-}
-
-export function ServiceLinks({ item }: { item: AlbumListItem | FilmListItem }) {
-  const links = [
-    ...new Map(
-      [
-        ...(item.mediaType === 'album' && item.spotifyUrl
-          ? [{ label: 'Spotify', url: item.spotifyUrl, provider: 'spotify' }]
-          : []),
-        ...item.links,
-      ].map((link) => [link.url.replace(/\/$/, ''), link]),
-    ).values(),
-  ]
-  return (
-    <span className="service-links">
-      {links.map((link) => (
-        <ExternalLink
-          key={link.url}
-          href={link.url}
-          title={`Open ${link.label}`}
-          className={link.provider === 'spotify' ? 'spotify-link' : ''}
-        >
-          {link.label}
-        </ExternalLink>
-      ))}
-    </span>
-  )
 }
 
 export function RangeEditor({

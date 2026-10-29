@@ -16,8 +16,7 @@ const buttonVariants = cva(
           'border-transparent bg-white text-[hsl(var(--foreground))] shadow-[inset_0_0_0_1px_hsl(var(--input))] hover:bg-[hsl(var(--secondary))]',
         ghost:
           'border-transparent bg-transparent text-[hsl(var(--foreground))] hover:bg-[hsl(var(--secondary))]',
-        destructive:
-          'border-red-700 bg-red-700 text-white hover:bg-red-800',
+        destructive: 'border-red-700 bg-red-700 text-white hover:bg-red-800',
       },
       size: {
         default: 'h-9 px-3 py-2',
@@ -32,8 +31,9 @@ const buttonVariants = cva(
   },
 )
 
-export interface ButtonProps
-  extends React.ButtonHTMLAttributes<HTMLButtonElement>,
+interface ButtonProps
+  extends
+    React.ButtonHTMLAttributes<HTMLButtonElement>,
     VariantProps<typeof buttonVariants> {
   asChild?: boolean
 }
@@ -52,4 +52,4 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
 )
 Button.displayName = 'Button'
 
-export { Button, buttonVariants }
+export { Button }

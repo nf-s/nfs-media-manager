@@ -25,8 +25,6 @@ export { MediaTypeSchema } from './common'
 
 export const AlbumSortSchema = BrowseKeySchema
 export const FilmSortSchema = BrowseKeySchema
-export const AlbumBrowseFilterFieldSchema = BrowseKeySchema
-export const FilmBrowseFilterFieldSchema = BrowseKeySchema
 export const AlbumBrowseFilterSchema = BrowseFilterSchema
 export const FilmBrowseFilterSchema = BrowseFilterSchema
 
@@ -194,14 +192,8 @@ export const MediaRescrapeSchema = z.object({
 
 export type AlbumQuery = z.infer<typeof AlbumQuerySchema>
 export type FilmQuery = z.infer<typeof FilmQuerySchema>
-export type AlbumBrowseFilterField = z.infer<
-  typeof AlbumBrowseFilterFieldSchema
->
-export type FilmBrowseFilterField = z.infer<typeof FilmBrowseFilterFieldSchema>
 export type AlbumBrowseFilter = z.infer<typeof AlbumBrowseFilterSchema>
 export type FilmBrowseFilter = z.infer<typeof FilmBrowseFilterSchema>
-export type AlbumFilterOption = z.infer<typeof AlbumFilterOptionSchema>
-export type FilmFilterOption = z.infer<typeof FilmFilterOptionSchema>
 export type AlbumListItem = z.infer<typeof AlbumListItemSchema>
 export type AlbumDetail = z.infer<typeof AlbumDetailSchema>
 export type FilmListItem = z.infer<typeof FilmListItemSchema>

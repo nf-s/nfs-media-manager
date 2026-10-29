@@ -47,9 +47,7 @@ const albumProvider = ProviderSummarySchema.parse({
   mediaTypes: ['album'],
   rateLimit: { minTimeMs: 1000, maxConcurrent: 1 },
   supportsScrape: true,
-  supportsSync: false,
   supportsLegacyImport: false,
-  connection: null,
   secrets: [],
   pluginPath: null,
 })

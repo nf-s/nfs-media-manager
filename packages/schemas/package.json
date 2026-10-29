@@ -24,8 +24,6 @@
     "vitest": "^4.1.12"
   },
   "dependencies": {
-    "@hono/zod-openapi": "catalog:",
-    "zod": "catalog:",
-    "wkx": "catalog:"
+    "zod": "catalog:"
   }
 }

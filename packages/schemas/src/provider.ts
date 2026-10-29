@@ -1,7 +1,5 @@
 import { z } from 'zod'
 
-export const ProviderConnectionStatusSchema = z.enum(['connected', 'error'])
-
 export const ProviderRequestBudgetSchema = z.object({
   period: z.enum(['hour', 'day']),
   limit: z.number().int().positive().max(100000),
@@ -12,16 +10,6 @@ export const ProviderBudgetStatusSchema = z.object({
   budget: ProviderRequestBudgetSchema,
   used: z.number().int().nonnegative(),
   resetsAt: z.string().datetime(),
-})
-
-export const ProviderConnectionSchema = z.object({
-  provider: z.string(),
-  status: ProviderConnectionStatusSchema,
-  accountId: z.string().nullable(),
-  accountLabel: z.string().nullable(),
-  connectedAt: z.string().nullable(),
-  lastSyncedAt: z.string().nullable(),
-  tokenExpiresAt: z.string().nullable(),
 })
 
 export const ProviderSecretFieldSchema = z.object({
@@ -101,9 +89,7 @@ export const ProviderSummarySchema = z.object({
   requireExplicitSelection: z.boolean().optional(),
   identifierTypes: z.array(z.string()).default([]),
   supportsNameLookup: z.boolean().default(false),
-  supportsSync: z.boolean(),
   supportsLegacyImport: z.boolean(),
-  connection: ProviderConnectionSchema.nullable(),
   secrets: z.array(ProviderSecretFieldSchema),
   pluginPath: z.string().nullable(),
   reviewableErrors: z
@@ -148,19 +134,8 @@ export const ProviderSecretsSchema = z.object({
   lastVerifiedStatus: z.string().nullable(),
 })
 
-export const ProviderConnectStartSchema = z.object({
-  authorizationUrl: z.string().url(),
-})
-
-export const SpotifySavedAlbumsSyncSchema = z.object({
-  limit: z.number().int().positive().max(50).default(5),
-  stopOnExisting: z.boolean().default(true),
-  confirmBroadRun: z.boolean().default(false),
-})
-
 export type ProviderSummary = z.infer<typeof ProviderSummarySchema>
 export type ProviderSecrets = z.infer<typeof ProviderSecretsSchema>
-export type ProviderConnection = z.infer<typeof ProviderConnectionSchema>
 export type ProviderActivity = z.infer<typeof ProviderActivitySchema>
 export type ProviderActivityRange = z.infer<
   typeof ProviderActivityQuerySchema

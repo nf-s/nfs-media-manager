@@ -65,49 +65,6 @@ export const createResponseSchema = <T extends z.ZodTypeAny>(schema: T) =>
     data: schema,
   })
 
-export const createPaginatedResponseSchema = <T extends z.ZodTypeAny>(
-  schema: T,
-  name?: string,
-) =>
-  createResponseSchema(
-    z
-      .object({
-        pageCount: z.number().int().openapi({ example: 5 }),
-        totalCount: z.number().int().openapi({ example: 25 }),
-        data: z.array(schema),
-      })
-      .openapi(name ?? 'PaginatedPayload'),
-  )
-
-export const PaginationQuerySchema = z
-  .object({
-    page: z
-      .number()
-      .int()
-      .positive()
-      .optional()
-      .openapi({
-        param: {
-          name: 'page',
-          in: 'query',
-        },
-        example: 1,
-      }),
-    size: z
-      .number()
-      .int()
-      .positive()
-      .optional()
-      .openapi({
-        param: {
-          name: 'size',
-          in: 'query',
-        },
-        example: 10,
-      }),
-  })
-  .openapi('PaginationQuery')
-
 export const validationErrorResponse = {
   description: 'Validation error',
   content: {

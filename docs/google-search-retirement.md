@@ -41,8 +41,8 @@ namespace remain unchanged. Removing the executable adapter does not remove the
 import translator. Historical RYM and Metacritic ratings remain browseable;
 retirement does not promise that those retained scores are current.
 
-The archived scraper under `legacy/` remains reference material, not a production
-entrypoint. Do not run it as a workaround. No legacy source JSON is rewritten.
+The archived scraper has been removed. The current importer preserves compatible
+saved metadata without running the retired scraper or rewriting source JSON.
 
 ## Offline Verification
 

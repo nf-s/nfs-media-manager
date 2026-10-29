@@ -56,11 +56,6 @@ export const AlbumRymUrlSchema = AlbumHttpUrlSchema.refine((value) => {
   }
 }, 'Expected a RYM release or album review URL')
 
-export function albumRymPage(value: string) {
-  const url = new URL(AlbumRymUrlSchema.parse(value))
-  return `${url.hostname.replace(/^www\./, '')}${url.pathname.replace(/\/$/, '')}`
-}
-
 export function albumReference(
   context: MediaPluginScrapeContext,
   provider: string,

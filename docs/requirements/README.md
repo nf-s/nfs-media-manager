@@ -1,6 +1,6 @@
 # Feature parity requirements
 
-Audited 2026-10-27 against `master` at `5485054`, including the current uncommitted fixes, source code and the running Vite app in Chrome DevTools. Implement on `refactor`; do not replace the old checkout's data or environment.
+These requirements record the media-library behavior carried into the current Next.js and Hono application. They were established during the 2026-10-27 migration audit; the archived application source has since been removed. Use [Getting started](../getting-started.md) and [Development](../development.md) for current setup and verification commands.
 
 ## Feature sets
 
@@ -14,7 +14,7 @@ Audited 2026-10-27 against `master` at `5485054`, including the current uncommit
 
 ## Audit evidence
 
-The old UI is defined by `apps/web/src/Browser`, `Table`, and `Models`; filter semantics are in `packages/data-types/src/fields.ts`. Its strengths are one shared toolbar, clickable metadata, persistent table/grid preferences, incremental image loading, a virtualized table and an overlay that leaves browsing mounted. Its Spotify player is optional. The Playlist library has no data loader and stays on Loading; preserve its data and definitions rather than copying this broken state.
+The migration audit identified the behaviors to retain: one shared toolbar, clickable metadata, persistent table/grid preferences, incremental image loading, a virtualized table and an overlay that leaves browsing mounted. Saved playlist data remains importable. Spotify uses outbound links; embedded playback and queue controls are outside the current app.
 
 Chrome confirmed 2,640 films, source autocomplete with counts, table/grid switching, all film columns and sort controls. Code inspection covers album metrics, numeric range filters, playback/queue actions, importer scripts and smart-playlist synchronization. Do not interpret source inspection as a successful live integration test.
 
@@ -26,7 +26,7 @@ Current inputs: raw music has 3,360 albums, 1,891 artists, 49 blacklisted albums
 - Reconcile imported counts, identifiers, every cleaned field, source categories, snapshots, playlists and private-provider data. Keep a reproducible local-only report, not private payloads in Git.
 - Exercise filter selection/removal/modes, numeric bounds, all sort choices, column visibility, scrolling, detail/back navigation and errors.
 - No live scraping or remote account mutations during this overhaul. Imports read local files only.
-- Preserve existing credentials, database, ignored local packages and old branch edits. Do not push.
+- Preserve existing credentials, database and ignored local packages during verification.
 
 ## Intentional corrections
 

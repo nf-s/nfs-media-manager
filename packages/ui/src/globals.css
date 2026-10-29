@@ -2,21 +2,6 @@
 @tailwind components;
 @tailwind utilities;
 
-.import-file-form {
-  display: grid;
-  gap: 0.75rem;
-  margin: 1rem 0;
-}
-.import-file-form > label {
-  display: grid;
-  gap: 0.25rem;
-}
-.import-file-form select {
-  padding: 0.4rem;
-  background: var(--background);
-  border: 1px solid hsl(var(--border));
-}
-
 .admin-page {
   padding: 20px;
   max-width: 1200px;
@@ -260,8 +245,7 @@
 .import-kind,
 .import-review-summary,
 .enrichment-providers,
-.batch-actions,
-.refresh-controls {
+.batch-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 12px 20px;
@@ -273,14 +257,12 @@
   gap: 20px;
   align-items: start;
 }
-.csv-upload > label:first-child,
-.refresh-controls > label {
+.csv-upload > label:first-child {
   display: grid;
   gap: 6px;
   font-size: 12px;
 }
-.csv-upload select,
-.refresh-controls select {
+.csv-upload select {
   padding: 6px 8px;
   border: 1px solid #ddd;
   background: white;
@@ -345,13 +327,6 @@
 .enrichment-providers label {
   white-space: nowrap;
 }
-.refresh-controls {
-  margin: 12px 0;
-  align-items: end;
-}
-.refresh-controls input {
-  width: 110px;
-}
 .needs-id {
   display: inline-block;
   font-size: 10px;
@@ -393,8 +368,7 @@
   font-size: 12px;
 }
 .identifier-row [role='alert'],
-.film-import-workflow [role='alert'],
-.job-retry [role='alert'] {
+.film-import-workflow [role='alert'] {
   color: #a32318;
 }
 .job-activity {
@@ -471,10 +445,6 @@
 }
 .job-activity-error {
   color: #a32318;
-}
-.job-retry,
-.job-pagination {
-  margin: 12px 0;
 }
 .batch-actions {
   font-size: 12px;
@@ -720,20 +690,6 @@
   padding: 6px 0;
   font-size: 13px;
 }
-.job-items-scroll {
-  margin-bottom: 12px;
-}
-.job-items td:first-child {
-  min-width: 180px;
-}
-.job-items td:last-child {
-  min-width: 200px;
-  overflow-wrap: anywhere;
-}
-.job-items a {
-  text-decoration: underline;
-  text-underline-offset: 3px;
-}
 .job-status {
   font-size: 12px;
   text-transform: capitalize;
@@ -747,11 +703,6 @@
 }
 .job-status[data-status='running'] {
   color: #19457c;
-}
-.job-progress {
-  font-size: 12px;
-  color: #737373;
-  font-variant-numeric: tabular-nums;
 }
 .job-logs > summary {
   padding: 4px 0 8px;
@@ -858,8 +809,6 @@
   :root {
     --background: 0 0% 100%;
     --foreground: 0 0% 8%;
-    --card: 0 0% 100%;
-    --card-foreground: 0 0% 8%;
     --primary: 0 0% 10%;
     --primary-foreground: 0 0% 100%;
     --secondary: 0 0% 94%;
@@ -871,7 +820,6 @@
     --border: 0 0% 91%;
     --input: 0 0% 84%;
     --ring: 0 0% 8%;
-    --radius: 0rem;
   }
 
   * {
@@ -1712,23 +1660,6 @@
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 14px;
-  }
-  .reference-editor {
-    padding: 15px 0;
-  }
-  .reference-list {
-    font-size: 12px;
-    display: grid;
-    gap: 8px;
-    margin-bottom: 12px;
-  }
-  .reference-list > div {
-    display: flex;
-    justify-content: space-between;
-    gap: 20px;
-  }
-  .reference-list dd {
-    word-break: break-all;
   }
   .form-actions,
   .rescrape-row {

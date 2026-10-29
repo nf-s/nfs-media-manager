@@ -11,13 +11,11 @@
     "typecheck:watch": "tsc --noEmit --watch"
   },
   "dependencies": {
-    "@hookform/resolvers": "catalog:",
     "@repo/schemas": "workspace:*",
     "@repo/server": "workspace:*",
     "@repo/ui": "workspace:*",
     "@t3-oss/env-nextjs": "^0.13.8",
     "@tanstack/react-query": "^5.66.7",
-    "@tanstack/react-table": "^8.21.2",
     "better-auth": "catalog:",
     "dotenv": "^17.4.0",
     "hono": "catalog:",
@@ -25,7 +23,6 @@
     "next": "15.5.28",
     "react": "catalog:react19",
     "react-dom": "catalog:react19",
-    "react-hook-form": "catalog:",
     "zod": "catalog:"
   },
   "devDependencies": {

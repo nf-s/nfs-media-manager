@@ -11,7 +11,6 @@ Start with [getting started](getting-started.md) to configure PostgreSQL, secret
 | `packages/schemas`          | Zod request/response contracts and shared helpers.                         |
 | `packages/media-plugin-sdk` | Local provider plugin contracts.                                           |
 | `packages/ui`               | Shared components and styles.                                              |
-| `legacy`                    | Historical reference code; not a supported runtime entrypoint.             |
 
 `corepack pnpm dev` runs the apps and shared build watchers. To run a single app, use `corepack pnpm --filter web dev` or `corepack pnpm --filter @repo/server dev:server`. The root environment is loaded automatically. Restart after environment/plugin changes.
 
@@ -39,4 +38,4 @@ Run the configured Prettier formatter on changed files as the final edit step. D
 
 Use the registry and [plugin SDK workflow](local-plugins.md). Validate untrusted inputs at the boundary. Route handlers validate/authenticate, call services and return results. Providers must use the shared request gate; no direct networking, hidden retries or broad automatic runs.
 
-Use synthetic test fixtures. Keep live scraping to an explicitly reviewed small selection, and never run legacy scraper entrypoints as a test.
+Use synthetic test fixtures. Keep live scraping to an explicitly reviewed small selection. The archived application and unused spatial/editor packages have been removed; legacy-data imports are supported by the current server and covered by its tests.

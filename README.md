@@ -2,6 +2,8 @@
 
 A personal library for films and albums. Bring in your collection, enrich it with metadata from the providers you choose, and browse it in an artwork grid or a compact table.
 
+This project is a fork of [CSDR Cloud Spatial App](https://github.com/SustainableDevelopmentReform/csdr-cloud-spatial-app), adapted into a personal media library. See [attribution and licenses](NOTICE) for its origins and retained upstream notices.
+
 ![Film library with artwork and provider ratings](docs/screenshots/films.jpg)
 
 ## What it does
@@ -78,4 +80,4 @@ This is an early release. Back up your database before upgrading. Provider avail
 
 ## License
 
-[MIT](LICENSE). Provider names, marks and media artwork belong to their respective owners. The screenshots show an example personal library; no library data is bundled with the app.
+Original NFS Media Manager code is licensed under [MIT](LICENSE). Code adapted from CSDR Cloud Spatial App retains its [Apache 2.0 license and upstream MIT notice](LICENSES/csdr-cloud-spatial-app.txt); see [NOTICE](NOTICE) for attribution. Provider names, marks and media artwork belong to their respective owners. The screenshots show an example personal library; no library data is bundled with the app.

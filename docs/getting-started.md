@@ -64,7 +64,6 @@ The example supplies the local defaults below. Change the account details and bo
 | `SCAN_EXCLUDE`           | Comma-separated folder names to skip during NFO scans.                                                                          |
 | `MEDIA_PLUGIN_PATHS`     | Comma-separated local provider entry-file paths. Leave empty for the built-in providers. See [local plugins](local-plugins.md). |
 | `LEGACY_SERVER_DATA_DIR` | Legacy raw JSON directory; defaults to `apps/server/data`.                                                                      |
-| `LEGACY_WEB_DIST_DIR`    | Legacy cleaned-data fallback directory; defaults to `apps/web/dist`.                                                            |
 | Provider variables       | Optional alternatives to saving credentials in Providers; see the table below.                                                  |
 
 ## 3. Start PostgreSQL

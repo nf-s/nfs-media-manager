@@ -44,7 +44,6 @@
   "dependencies": {
     "@hono/node-server": "^1.13.8",
     "@hono/zod-openapi": "catalog:",
-    "@hono/zod-validator": "^0.7.3",
     "@repo/media-plugin-sdk": "workspace:*",
     "@repo/schemas": "workspace:*",
     "@scalar/hono-api-reference": "^0.9.19",
@@ -59,7 +58,6 @@
     "papaparse": "catalog:",
     "pg": "^8.13.3",
     "tsx": "^4.19.3",
-    "zod": "catalog:",
-    "zx": "^8.8.4"
+    "zod": "catalog:"
   }
 }

@@ -121,8 +121,6 @@ export async function listProviders(): Promise<ProviderSummary[]> {
         safety: await getProviderSafety(provider.id),
         budgetStatus,
         supportsScrape: provider.supportsScrape,
-        supportsSync: false,
-        connection: null,
         supportsLegacyImport: provider.supportsLegacyImport,
         pluginPath: provider.pluginPath,
         secrets: provider.secrets.map((field) => ({

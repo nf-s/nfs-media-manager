@@ -2,7 +2,7 @@
   "name": "nfs-media-manager",
   "version": "0.1.0",
   "private": true,
-  "license": "MIT",
+  "license": "MIT AND Apache-2.0",
   "author": "Nick Forbes-Smith",
   "scripts": {
     "build": "turbo run build",
@@ -18,15 +18,9 @@
     "seed": "turbo run seed",
     "import:legacy": "turbo run --filter @repo/server import:legacy",
     "test:unit": "turbo run test:unit",
-    "prepare": "husky",
-    "pre-commit": "lint-staged",
     "clean-deps": "rm -rf node_modules && pnpm -r exec rm -rf node_modules"
   },
   "devDependencies": {
-    "@repo/eslint-config": "workspace:*",
-    "@repo/typescript-config": "workspace:*",
-    "husky": "^9.1.7",
-    "lint-staged": "^15.5.2",
     "prettier": "catalog:",
     "turbo": "2.1.1"
   },
@@ -44,16 +38,5 @@
   },
   "engines": {
     "node": ">=20.19.0"
-  },
-  "lint-staged": {
-    "**/*.{js,jsx,ts,tsx,md,scss,css,html}": [
-      "prettier --write"
-    ],
-    "**/*.json": [
-      "prettier --write --parser json-stringify"
-    ],
-    "**/*.{ts,tsx}": [
-      "pnpm lint --"
-    ]
   }
 }

@@ -85,7 +85,6 @@ export const SpotifyTokenSchema = z.object({
   refresh_token: z.string().min(1).optional(),
   scope: z.string().optional(),
 })
-export type SpotifyAlbum = z.infer<typeof SpotifyAlbumSchema>
 export type SpotifyRequest = MediaPluginTestContext['request']
 
 export function spotifyAlbumId(value: string): string | null {

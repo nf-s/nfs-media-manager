@@ -179,7 +179,6 @@ export default function ProviderConfiguration({
   const capabilities = [
     provider.supportsScrape ? 'Scraping' : null,
     provider.supportsLegacyImport ? 'Legacy imports' : null,
-    provider.supportsSync ? 'Account sync' : null,
   ].filter((value) => value !== null)
   return (
     <section className="provider-settings">
