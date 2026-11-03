@@ -208,13 +208,13 @@ describe('bounded job diagnostics', () => {
         evidence: Array(20).fill('🎬'.repeat(1000)),
       })
     const snapshot = collector.snapshot()
-    expect(snapshot.length).toBeLessThanOrEqual(8)
+    expect(snapshot.length).toBeLessThanOrEqual(14)
     expect(snapshot.at(-1)).toEqual({
       stage: 'diagnostics.truncated',
       evidence: true,
     })
     expect(Buffer.byteLength(JSON.stringify(snapshot))).toBeLessThanOrEqual(
-      128 * 1024,
+      384 * 1024,
     )
     expect(JsonValueSchema.safeParse(snapshot).success).toBe(true)
   })
@@ -226,16 +226,16 @@ describe('bounded job diagnostics', () => {
     evidence.reason = 'after'
     for (let index = 0; index < 100; index++)
       collector.recordDiagnostic({ stage: 'lookup', evidence: index })
-    expect(collector.snapshot()).toHaveLength(8)
+    expect(collector.snapshot()).toHaveLength(14)
     expect(collector.snapshot()[0]).toEqual({
       stage: 'lookup',
       evidence: { reason: 'before' },
     })
   })
 
-  it('retains both response budgets alongside maximum candidate summaries', () => {
+  it('retains six response budgets, candidate summaries and the final decision', () => {
     const collector = createJobDiagnostics([])
-    for (let attempt = 0; attempt < 2; attempt++) {
+    for (let attempt = 0; attempt < 6; attempt++) {
       const response = sanitizeJobDiagnostic(
         {
           stage: 'serply.response',
@@ -250,8 +250,12 @@ describe('bounded job diagnostics', () => {
         evidence: Array(20).fill('x'.repeat(512)),
       })
     }
+    collector.recordDiagnostic({
+      stage: 'serply.selection',
+      evidence: { reason: 'not-found' },
+    })
     const snapshot = collector.snapshot()
-    expect(snapshot).toHaveLength(4)
+    expect(snapshot).toHaveLength(13)
     expect(snapshot[0]).toMatchObject({
       stage: 'serply.response',
       evidence: { attempt: 0 },
@@ -260,6 +264,15 @@ describe('bounded job diagnostics', () => {
       stage: 'serply.response',
       evidence: { attempt: 1 },
     })
+    expect(snapshot[8]).toMatchObject({
+      stage: 'serply.response',
+      evidence: { attempt: 4 },
+    })
+    expect(snapshot[10]).toMatchObject({
+      stage: 'serply.response',
+      evidence: { attempt: 5 },
+    })
+    expect(snapshot[12]).toMatchObject({ stage: 'serply.selection' })
     expect(JSON.stringify(snapshot)).not.toContain('diagnostics.truncated')
     expect(JSON.stringify(snapshot)).toContain('[truncated]')
     expect(Buffer.byteLength(JSON.stringify(snapshot))).toBeGreaterThan(
@@ -276,7 +289,7 @@ describe('bounded job diagnostics', () => {
     })
     expect(
       Buffer.byteLength(JSON.stringify(collector.snapshot())),
-    ).toBeLessThanOrEqual(128 * 1024)
+    ).toBeLessThanOrEqual(384 * 1024)
   })
 
   it('bounds response depth, breadth, UTF-8 strings and numeric data explicitly', () => {

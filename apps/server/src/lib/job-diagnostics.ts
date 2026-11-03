@@ -13,10 +13,10 @@ const EnvelopeSchema = z.object({
 const REDACTED = '[REDACTED]'
 const TRUNCATED = '[truncated]'
 const INVALID = '[invalid-json]'
-// Two response entries (48 KiB each) plus two candidate summaries (8 KiB
-// each) must fit together, including the collection's truncation marker.
-const MAX_BYTES = 128 * 1024
-const MAX_ENTRIES = 8
+// Six search responses and candidate summaries plus the final decision fit
+// together without losing the later fallback evidence. Individual caps still apply.
+const MAX_BYTES = 384 * 1024
+const MAX_ENTRIES = 14
 const sensitiveKey =
   /secret|password|passwd|passkey|token|authorization|authentication|cookie|headers?|credential|session|apikey|apiuser|privatekey|clientsecret|csrf|xsrf|signature|^auth$|^key$|^jwt$/i
 

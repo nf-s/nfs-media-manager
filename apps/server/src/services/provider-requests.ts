@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { and, count, eq, gt, gte, lt, min } from 'drizzle-orm'
-import { z } from 'zod'
 import {
+  PluginRequestTimeoutSchema,
   ProviderRequestError,
   ProviderItemNotFoundError,
   isProviderItemNotFoundError,
@@ -91,12 +91,7 @@ type Reservation =
   | { kind: 'blocked'; until: number | null; reason: string }
 const delay = (ms: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, ms))
-const RequestTimeoutSchema = z
-  .number()
-  .int()
-  .positive()
-  .max(180000)
-  .default(15000)
+const RequestTimeoutSchema = PluginRequestTimeoutSchema.default(15000)
 
 async function readBoundedBody(
   response: Response,
@@ -403,7 +398,11 @@ export function createProviderRequest(
   assertActive?: () => Promise<void>,
   configuration: { timeoutMs?: number } = {},
 ): MediaPluginTestContext['request'] {
-  const timeoutMs = RequestTimeoutSchema.parse(configuration.timeoutMs)
+  const timeoutMs = RequestTimeoutSchema.parse(
+    configuration.timeoutMs === undefined
+      ? plugin.manifest.rateLimit.requestTimeoutMs
+      : configuration.timeoutMs,
+  )
   return async (url, init, options) => {
     await assertActive?.()
     let reservation = await reserve(plugin, init?.method ?? 'GET', timeoutMs)

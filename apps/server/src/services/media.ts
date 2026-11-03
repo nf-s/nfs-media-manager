@@ -21,6 +21,7 @@ import {
 import { nanoid } from 'nanoid'
 import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
+import { withRymRatingSourceLink } from '@/lib/rym-rating-links'
 import {
   createStableId,
   parseOptionalDate,
@@ -183,7 +184,7 @@ function buildCommonPayload<TMediaType extends 'album' | 'film'>(
     metadata: record.metadata ?? null,
     tags: mapTags(record.tags),
     credits: mapCredits(record.credits),
-    links: mapLinks(record.links),
+    links: withRymRatingSourceLink(mapLinks(record.links), record.metadata),
     providerReferences: mapReferences(record.providerReferences),
     playlists: mapPlaylists(record.playlistItems),
     createdAt: record.createdAt.toISOString(),

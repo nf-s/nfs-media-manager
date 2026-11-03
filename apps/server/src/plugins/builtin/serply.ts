@@ -28,7 +28,11 @@ const ResultSchema = z.object({
   description: z.string().default(''),
   link: AlbumHttpUrlSchema,
   metadata: z
-    .object({ rating: z.unknown().optional(), reviews: z.unknown().optional() })
+    .object({
+      rating: z.unknown().optional(),
+      reviews: z.unknown().optional(),
+      published_time: z.unknown().optional(),
+    })
     .nullish(),
 })
 const RatingSchema = AlbumNumberSchema.pipe(z.number().min(0).max(5))
@@ -38,17 +42,33 @@ const CountSchema = z
     typeof value === 'string' ? value.replaceAll(',', '') : value,
   )
   .pipe(AlbumCountSchema)
+const releaseKinds: Record<string, string> = {
+  album: 'album',
+  ep: 'ep',
+  mixtape: 'mixtape',
+  comp: 'compilation',
+  single: 'single',
+  djmix: 'dj mix',
+}
 
-function rymPage(value: string) {
+function rymPage(value: string, reviewKind: string | null = null) {
   const parsed = AlbumHttpUrlSchema.safeParse(value)
   if (!parsed.success) return null
   const url = new URL(parsed.data)
   const base = new URL(url)
-  base.pathname = base.pathname.replace(/\/(?:reviews|lists)\/\d+\/?$/, '/')
+  base.pathname = base.pathname.replace(
+    /\/(?:reviews|lists)(?:\/\d+)?\/?$/,
+    '/',
+  )
   if (!AlbumRymUrlSchema.safeParse(base.href).success) return null
   const parts = base.pathname.split('/').filter(Boolean).map(decodeURIComponent)
   const review = parts[0] === 'music-review'
-  if (!review && !['album', 'ep', 'mixtape'].includes(parts[1] ?? ''))
+  if (
+    !review &&
+    !['album', 'ep', 'mixtape', 'comp', 'single', 'djmix'].includes(
+      parts[1] ?? '',
+    )
+  )
     return null
   const artist = parts[2]
   const title = parts[3]?.replace(/\.p$/, '')
@@ -56,9 +76,15 @@ function rymPage(value: string) {
   base.search = ''
   base.hash = ''
   const release = new URL(base)
-  if (review) release.pathname = `/release/album/${parts[2]}/${parts[3]}/`
+  if (review && reviewKind)
+    release.pathname = `/release/${reviewKind}/${parts[2]}/${parts[3]}/`
   release.search = ''
   release.hash = ''
+  release.protocol = 'https:'
+  release.hostname = 'rateyourmusic.com'
+  // Compare release identity without .p, but retain the observed URL and
+  // primary-issue rating scope rather than assuming identical aggregates.
+  release.pathname = `${release.pathname.replace(/\/$/, '').replace(/\.p$/, '')}/`
   return {
     artist,
     title,
@@ -66,7 +92,333 @@ function rymPage(value: string) {
     referenceUrl: base.href,
     review,
     child: base.pathname !== url.pathname,
+    primaryIssue: /\.p$/.test(parts[3] ?? ''),
+    single: review ? reviewKind === 'single' : parts[1] === 'single',
+    kind: review ? (reviewKind ?? '') : (parts[1] ?? ''),
   }
+}
+
+function identityMatches(actual: string, expected: string) {
+  const fold = (value: string) =>
+    value
+      .normalize('NFKD')
+      .replace(/\p{M}/gu, '')
+      .replace(
+        /(?<![\p{L}\p{N},._])(?:\d{1,3}(?:,\d{3})+|\d{1,3}(?:_\d{3})+)(?![\p{L}\p{N},._])/gu,
+        (number) => number.replace(/[,_]/g, ''),
+      )
+      .replace(/([\p{L}\p{N}])['\u2019\u02bc](?=[\p{L}\p{N}])/gu, '$1')
+      .replaceAll('&', ' and ')
+  return albumNameMatches(fold(actual), fold(expected))
+}
+
+function displayIdentityMatches(actual: string, expected: string) {
+  const expand = (value: string) =>
+    value.replace(/(^|\s)w\/(?=\s*\p{L})/giu, '$1with ')
+  return identityMatches(expand(actual), expand(expected))
+}
+
+function baseTitle(value: string) {
+  // Only recognized trailing edition labels, never arbitrary parentheticals.
+  const label =
+    /^(?:(?:\d{1,3}(?:st|nd|rd|th)\s+)?anniversary(?:\s+(?:edition|deluxe\s+edition))?|\d{1,3}\s+year\s+anniversary(?:\s+remastered)?|\d{1,3}(?:st|nd|rd|th)\s+anniversary\s+(?:analogue\s+remaster\s+edition|edition\s+\/\s+remastered\s+\d{4})|deluxe\s+version|(?:super\s+)?deluxe(?:\s+edition)?|expanded(?:\s+edition)?|(?:special|collector'?s)\s+edition|(?:\d{4}\s+)?(?:digitally\s+)?remaster(?:ed)?(?:\s+(?:edition|version|\d{4}))?)$/i
+  let title = value.trim()
+  for (;;) {
+    const suffix =
+      title.match(/\s*(?:\(([^()]*)\)|\[([^\][]*)\])$/) ??
+      title.match(/\s[-–—]\s([^-–—]*)$/)
+    const text = suffix?.[1] ?? suffix?.[2] ?? suffix?.[3]
+    if (!suffix || !text || !label.test(text.trim())) return title
+    const cleaned = title.slice(0, suffix.index).trim()
+    if (!cleaned) return title
+    title = cleaned
+  }
+}
+
+function truncatedIdentityMatches(actual: string, expected: string) {
+  if (!/(?:\.\.\.|…)\s*$/.test(actual)) return false
+  const prefix = actual.replace(/(?:\.\.\.|…)\s*$/, '').trim()
+  return (
+    prefix.length >= 4 &&
+    identityMatches(prefix, expected.slice(0, prefix.length))
+  )
+}
+
+function titleIdentities(value: string) {
+  const header = value.match(
+    /^(?:Reviews of |Lists with )?(.+) \((Album|EP|Mixtape|Compilation|Single|DJ Mix)[,);]/i,
+  )
+  if (header?.[1]) {
+    const parts = header[1].split(/ by /i)
+    return parts.slice(1).map((_part, index) => ({
+      title: parts.slice(0, index + 1).join(' by '),
+      artist: parts.slice(index + 1).join(' by '),
+      kind: header[2]?.toLowerCase() ?? null,
+    }))
+  }
+  const review = value.match(/^Review for (.+) - (.+) by /i)
+  return review?.[1] && review[2]
+    ? [{ title: review[1], artist: review[2], kind: null }]
+    : []
+}
+
+function descriptionIdentity(value: string) {
+  const prefix = value.match(
+    /^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) (\d{1,2}), (\d{4}) [—–-] /i,
+  )
+  const date = prefix
+    ? z.coerce.date().safeParse(`${prefix[1]} ${prefix[2]}, ${prefix[3]} UTC`)
+    : null
+  const validPrefix =
+    prefix &&
+    date?.success &&
+    date.data.getUTCDate() === Number(prefix[2]) &&
+    date.data.getUTCFullYear() === Number(prefix[3])
+  const identity = validPrefix ? value.slice(prefix[0].length) : value
+  const match = identity.match(
+    /^(.+), an? (?:classical music )?(Album|EP|Mixtape|Compilation|Single|DJ Mix)(?: of songs)? by (.+?)(?:\.\s+(?:Released|Genres:)|\.$)/i,
+  )
+  return match?.[1] && match[2] && match[3]
+    ? { title: match[1], artist: match[3], kind: match[2].toLowerCase() }
+    : null
+}
+
+function indexedReleaseDate(result: z.infer<typeof ResultSchema>) {
+  const date =
+    result.description.match(
+      /\bReleased[,\s]+(\d{1,2}\s+[A-Za-z]+\s+\d{4})\b/i,
+    )?.[1] ?? result.metadata?.published_time
+  if (
+    typeof date !== 'string' ||
+    !/^(?:\d{1,2}\s+[A-Za-z]+\s+\d{4}|[A-Za-z]+\s+\d{1,2},\s+\d{4})$/.test(date)
+  )
+    return null
+  const parsed = z.coerce.date().safeParse(`${date} UTC`)
+  if (
+    !parsed.success ||
+    parsed.data.getUTCDate() !== Number(date.match(/\b\d{1,2}\b/)?.[0])
+  )
+    return null
+  return parsed.data.toISOString().slice(0, 10)
+}
+
+function bilingualName(value: string) {
+  const pair = value.match(/^([^()[\]]+)\s+\[([^()[\]]+)\]$/)
+  const native = pair?.[1]?.trim()
+  const latin = pair?.[2]?.trim()
+  if (!native || !latin) return null
+  if (
+    baseTitle(`Fixture (${latin})`) === 'Fixture' ||
+    /^(?:live|karaoke|instrumental|remix|acoustic|demo)(?:\s+version)?$/i.test(
+      latin,
+    )
+  )
+    return null
+  const nativeLetters = native.match(/\p{L}/gu) ?? []
+  const latinLetters = latin.match(/\p{L}/gu) ?? []
+  if (
+    !nativeLetters.length ||
+    !latinLetters.length ||
+    nativeLetters.some((letter) => /\p{Script=Latin}/u.test(letter)) ||
+    latinLetters.some((letter) => !/\p{Script=Latin}/u.test(letter))
+  )
+    return null
+  return { native, latin }
+}
+
+function bilingualIdentity(
+  result: z.infer<typeof ResultSchema>,
+  page: NonNullable<ReturnType<typeof rymPage>>,
+  names: { title: string; artist: string },
+) {
+  if (page.review || page.child) return null
+  const description = descriptionIdentity(result.description)
+  if (!description || description.kind !== releaseKinds[page.kind]) return null
+  const headers = titleIdentities(result.title)
+  const untyped = result.title.match(
+    /^(.+) by (.+?) - (?:Rate Your Music|RYM)$/i,
+  )
+  if (untyped?.[1] && untyped[2])
+    headers.push({
+      title: untyped[1],
+      artist: untyped[2],
+      kind: description.kind,
+    })
+  const reversed = result.title.match(/^By (.+?) - (.+) - Rate Your Music$/i)
+  if (reversed?.[1] && reversed[2])
+    headers.push({
+      title: reversed[2],
+      artist: reversed[1],
+      kind: description.kind,
+    })
+  for (const header of headers) {
+    if (header.kind !== description.kind) continue
+    const title =
+      bilingualName(header.title) ?? bilingualName(description.title)
+    const artist =
+      bilingualName(header.artist) ?? bilingualName(description.artist)
+    if (!title && !artist) continue
+    const matches = (
+      first: string,
+      second: string,
+      input: string,
+      slug: string,
+      pair: ReturnType<typeof bilingualName>,
+      allowTranslatedTitle = false,
+    ) => {
+      if (!pair)
+        return (
+          displayIdentityMatches(first, input) &&
+          displayIdentityMatches(second, input) &&
+          identityMatches(slug, first)
+        )
+      const observed = (value: string) =>
+        identityMatches(value, pair.native) ||
+        (identityMatches(bilingualName(value)?.native ?? '', pair.native) &&
+          identityMatches(bilingualName(value)?.latin ?? '', pair.latin))
+      return (
+        (observed(first) ||
+          (allowTranslatedTitle &&
+            bilingualName(second) !== null &&
+            displayIdentityMatches(first, pair.latin))) &&
+        observed(second) &&
+        identityMatches(slug, pair.native) &&
+        (displayIdentityMatches(input, pair.latin) ||
+          displayIdentityMatches(input, pair.native))
+      )
+    }
+    if (
+      matches(
+        header.title,
+        description.title,
+        names.title,
+        page.title,
+        title,
+        true,
+      ) &&
+      matches(
+        header.artist,
+        description.artist,
+        names.artist,
+        page.artist,
+        artist,
+      )
+    )
+      return {
+        title: title?.native ?? header.title,
+        artist: artist?.native ?? header.artist,
+        bilingual: { title, artist },
+      }
+  }
+  return null
+}
+
+function corroboratedIdentity(
+  result: z.infer<typeof ResultSchema>,
+  page: NonNullable<ReturnType<typeof rymPage>>,
+  names: { title: string; artist: string },
+  expectedDate: string | null,
+  artistCredits: string[],
+) {
+  const sourceDate = indexedReleaseDate(result)
+  if (page.review || !expectedDate || sourceDate !== expectedDate) return null
+  const bilingual =
+    artistCredits.length === 1 ? bilingualIdentity(result, page, names) : null
+  if (bilingual) return { ...bilingual, sourceDate, rule: 'explicit-bilingual' }
+  const description = descriptionIdentity(result.description)
+  const identities = [
+    ...titleIdentities(result.title),
+    ...(description ? [description] : []),
+  ]
+  const untyped = result.title.match(/^(.+) by (.+?) - Rate Your Music$/i)
+  const kind = result.description.match(/\bType,\s*(Album)\s*;/i)?.[1]
+  if (untyped?.[1] && untyped[2] && kind)
+    identities.push({
+      title: untyped[1],
+      artist: untyped[2],
+      kind: kind.toLowerCase(),
+    })
+  for (const identity of identities) {
+    if (identity.kind !== releaseKinds[page.kind]) continue
+    const exactTitlePath = identityMatches(page.title, identity.title)
+    const exactArtistPath = identityMatches(page.artist, identity.artist)
+    if (
+      artistCredits.length > 1 &&
+      exactTitlePath &&
+      displayIdentityMatches(identity.title, names.title) &&
+      displayIdentityMatches(identity.artist, artistCredits.join(' & ')) &&
+      (exactArtistPath || identityMatches(page.artist, artistCredits.join(' ')))
+    )
+      return {
+        title: identity.title,
+        artist: identity.artist,
+        sourceDate,
+        rule: 'combined-credits',
+      }
+    if (artistCredits.length > 1) continue
+    const soundtrackTitle = names.title.match(
+      /^(.+)\s+\((?:Original Soundtrack|Original Series Soundtrack|Original Motion Picture Soundtrack|Adult Swim Original Series Soundtrack)\)$/i,
+    )?.[1]
+    const soundtrackEvidence =
+      /\(Album,\s*(?:Soundtrack|Film Score)\)/i.test(result.title) ||
+      /\bGenres:\s*(?:Soundtrack|Film Score)(?:[,.]|$)/i.test(
+        result.description,
+      ) ||
+      /\bRanked,\s*#[\d,]+\s+for soundtracks\b/i.test(result.description)
+    if (
+      page.kind === 'album' &&
+      soundtrackTitle &&
+      soundtrackEvidence &&
+      exactArtistPath &&
+      displayIdentityMatches(identity.artist, names.artist) &&
+      displayIdentityMatches(identity.title, soundtrackTitle) &&
+      (exactTitlePath || identityMatches(page.title, names.title))
+    )
+      return {
+        title: identity.title,
+        artist: identity.artist,
+        sourceDate,
+        rule: 'soundtrack-role',
+      }
+    if (!exactTitlePath || !exactArtistPath) continue
+    const primary = identity.artist.match(
+      /^(.+?)\s+(?:feat\.|featuring)\s+\S.+$/i,
+    )?.[1]
+    if (
+      primary &&
+      displayIdentityMatches(primary, names.artist) &&
+      displayIdentityMatches(identity.title, names.title)
+    )
+      return {
+        title: identity.title,
+        artist: identity.artist,
+        sourceDate,
+        rule: 'featured-credit',
+      }
+    const mixTitle = names.title.match(/^(.+)\s+\(DJ Mix\)$/i)?.[1]
+    const composedMixTitle = displayIdentityMatches(
+      names.title,
+      `${identity.title}: ${identity.artist}`,
+    )
+    if (
+      page.kind === 'djmix' &&
+      displayIdentityMatches(identity.artist, names.artist) &&
+      (composedMixTitle ||
+        (mixTitle &&
+          (displayIdentityMatches(mixTitle, identity.title) ||
+            displayIdentityMatches(
+              mixTitle,
+              `${identity.title} ${identity.artist}`,
+            ))))
+    )
+      return {
+        title: identity.title,
+        artist: identity.artist,
+        sourceDate,
+        rule: 'djmix-title-composition',
+      }
+  }
+  return null
 }
 
 function rating(result: z.infer<typeof ResultSchema>, review: boolean) {
@@ -119,7 +471,9 @@ function genres(result: z.infer<typeof ResultSchema>) {
   )
     return { names: [firstGenre], source: 'header' }
   // The title's explicitly labelled genre also remains usable.
-  const title = result.title.match(/\((?:Album|EP|Mixtape),\s*([^;)]+)\)/i)
+  const title = result.title.match(
+    /\((?:Album|EP|Mixtape|Compilation|Single|DJ Mix),\s*([^;)]+)\)/i,
+  )
   return {
     names: title?.[1] ? [title[1].trim()] : [],
     source: 'title',
@@ -128,15 +482,41 @@ function genres(result: z.infer<typeof ResultSchema>) {
 
 function candidates(
   payload: unknown,
-  names: { title: string; artist: string },
+  requestedNames: { title: string; artist: string },
   reference: ReturnType<typeof rymPage>,
   expectedYear: number | undefined,
+  manualReference: boolean,
+  expectedDate: string | null,
+  artistCredits: string[],
+  singleEvidence: { artist: string; title: string }[],
   diagnostic: { candidates: JsonValue[]; reasons: Record<string, number> },
 ) {
   const matches = []
-  for (const [index, entry] of ResponseSchema.parse(
-    payload,
-  ).results.entries()) {
+  const results = ResponseSchema.parse(payload).results
+  for (const entry of results) {
+    const result = ResultSchema.safeParse(entry)
+    if (!result.success) continue
+    try {
+      const page = rymPage(result.data.link)
+      const description = descriptionIdentity(result.data.description)
+      if (
+        page?.single &&
+        !page.child &&
+        description?.kind === 'single' &&
+        identityMatches(page.artist, description.artist) &&
+        identityMatches(page.title, description.title) &&
+        !singleEvidence.some(
+          (known) =>
+            identityMatches(known.artist, page.artist) &&
+            identityMatches(known.title, page.title),
+        )
+      )
+        singleEvidence.push({ artist: page.artist, title: page.title })
+    } catch {
+      /* Malformed URL remains an invalid-url candidate below. */
+    }
+  }
+  for (const [index, entry] of results.entries()) {
     const record = (reason: string) => {
       diagnostic.reasons[reason] = (diagnostic.reasons[reason] ?? 0) + 1
       if (diagnostic.candidates.length >= 20) return
@@ -182,71 +562,262 @@ function candidates(
       record('invalid-url')
       continue
     }
+    if (page.review) {
+      if (/^.+, an? (?:Song|Music video) by /i.test(result.description)) {
+        record('unsupported-review-kind')
+        continue
+      }
+      const description = descriptionIdentity(result.description)
+      const headers = titleIdentities(result.title)
+      const headerKind = headers.find((title) => title.kind)?.kind
+      if (headerKind && description && headerKind !== description.kind) {
+        record('review-kind-conflict')
+        continue
+      }
+      const declaredKind =
+        description &&
+        identityMatches(page.artist, description.artist) &&
+        identityMatches(page.title, description.title) &&
+        headers.some(
+          (title) =>
+            identityMatches(title.title, description.title) &&
+            identityMatches(title.artist, description.artist),
+        )
+          ? Object.entries(releaseKinds).find(
+              ([, kind]) => kind === description.kind,
+            )?.[0]
+          : undefined
+      const referencedKind =
+        reference &&
+        !reference.review &&
+        identityMatches(page.artist, reference.artist) &&
+        identityMatches(page.title, reference.title)
+          ? reference.kind
+          : undefined
+      if (
+        referencedKind &&
+        ((description && description.kind !== releaseKinds[referencedKind]) ||
+          (headerKind && headerKind !== releaseKinds[referencedKind]))
+      ) {
+        record('review-kind-conflict')
+        continue
+      }
+      if (
+        (description?.kind === 'single' || headerKind === 'single') &&
+        !reference?.single
+      ) {
+        record('single-without-owned-reference')
+        continue
+      }
+      const resolved = rymPage(
+        result.link,
+        referencedKind ?? declaredKind ?? null,
+      )
+      if (!resolved) continue
+      page = resolved
+      if (
+        !resolved.kind &&
+        !reference?.single &&
+        singleEvidence.some(
+          (single) =>
+            identityMatches(single.artist, resolved.artist) &&
+            identityMatches(single.title, resolved.title),
+        )
+      ) {
+        record('related-single-without-owned-reference')
+        continue
+      }
+    }
+    const exactReviewReference =
+      reference?.review &&
+      page.review &&
+      page.referenceUrl === reference.referenceUrl
     if (
       reference &&
-      (!albumNameMatches(page.artist, reference.artist) ||
-        !albumNameMatches(page.title, reference.title))
+      page.releaseUrl !== reference.releaseUrl &&
+      !exactReviewReference
     ) {
       record('reference-identity-mismatch')
       continue
     }
-    const title =
-      result.title.match(
-        /^(?:Reviews of |Lists with )?(.+) by (.+) \((?:Album|EP|Mixtape)[,)]/i,
-      ) ?? result.title.match(/^Review for (.+) - (.+) by /i)
-    const titleMatches =
-      title?.[1] &&
-      title[2] &&
-      albumNameMatches(title[1], names.title) &&
-      albumNameMatches(title[2], names.artist)
+    if (page.single && !reference?.single) {
+      record('single-without-owned-reference')
+      continue
+    }
+    const corroborated = corroboratedIdentity(
+      result,
+      page,
+      requestedNames,
+      expectedDate,
+      artistCredits,
+    )
+    const names = corroborated ?? requestedNames
+    const bilingual =
+      corroborated && 'bilingual' in corroborated
+        ? corroborated.bilingual
+        : null
+    const displayMatches = (actual: string, expected: string) =>
+      displayIdentityMatches(actual, expected) ||
+      (bilingual !== null &&
+        displayIdentityMatches(
+          bilingualName(actual)?.native ?? actual,
+          expected,
+        ))
+    const cleanTitle = baseTitle(names.title)
+    const titles = titleIdentities(result.title)
+    const titleMatches = titles.some(
+      (title) =>
+        displayMatches(title.title, cleanTitle) &&
+        displayMatches(title.artist, names.artist),
+    )
     const pathMatches =
-      albumNameMatches(page.artist, names.artist) &&
-      albumNameMatches(page.title, names.title)
-    if (title && !titleMatches) {
+      corroborated !== null ||
+      (identityMatches(page.artist, names.artist) &&
+        identityMatches(page.title, cleanTitle))
+    // Abbreviated slugs need the actual display spelling as evidence. Never
+    // expand a bare "w" in a path or discard additional title/artist words.
+    const displayPathMatches = titles.some(
+      (title) =>
+        displayIdentityMatches(title.title, cleanTitle) &&
+        displayIdentityMatches(title.artist, names.artist) &&
+        identityMatches(page.title, title.title) &&
+        identityMatches(page.artist, title.artist),
+    )
+    const truncatedTitleMatches =
+      pathMatches &&
+      titles.some(
+        (title) =>
+          (identityMatches(title.title, cleanTitle) ||
+            truncatedIdentityMatches(title.title, cleanTitle)) &&
+          (identityMatches(title.artist, names.artist) ||
+            truncatedIdentityMatches(title.artist, names.artist)),
+      )
+    const titleConflict =
+      titles.length > 0 && !titleMatches && !truncatedTitleMatches
+    if (titleConflict && !manualReference) {
       record('title-identity-mismatch')
       continue
     }
-    if (!reference && !titleMatches && !pathMatches) {
+    const disambiguatedPath =
+      !page.review &&
+      titleMatches &&
+      (identityMatches(page.artist, names.artist) ||
+        identityMatches(page.artist.replace(/[-_]\d+$/, ''), names.artist)) &&
+      (identityMatches(page.title, cleanTitle) ||
+        identityMatches(page.title.replace(/[-_]\d+$/, ''), cleanTitle))
+    if (
+      !reference &&
+      !pathMatches &&
+      !displayPathMatches &&
+      !disambiguatedPath
+    ) {
       record('identity-mismatch')
       continue
     }
-    if (/\((?:Album|EP|Mixtape);/i.test(result.title)) {
+    if (
+      /\((?:Album|EP|Mixtape|Compilation|Single|DJ Mix);/i.test(result.title)
+    ) {
       record('edition-title')
       continue
     }
     if (
       /[-_]\d+$/.test(page.title) &&
-      !albumNameMatches(page.title, names.title)
+      !identityMatches(page.title, cleanTitle) &&
+      !disambiguatedPath &&
+      !manualReference
     ) {
       record('edition-path')
       continue
     }
-    const descriptionIdentity = result.description.match(
-      /^(.+), an? (?:Album|EP|Mixtape) by (.+?)(?:\.\s+(?:Released|Genres:)|\.$)/i,
+    const description = descriptionIdentity(result.description)
+    const descriptionConflict = Boolean(
+      description &&
+      (!displayMatches(description.title, cleanTitle) ||
+        !displayMatches(description.artist, names.artist)),
     )
-    if (
-      descriptionIdentity &&
-      (!albumNameMatches(descriptionIdentity[1] ?? '', names.title) ||
-        !albumNameMatches(descriptionIdentity[2] ?? '', names.artist))
-    ) {
+    if (descriptionConflict && !manualReference) {
       record('description-identity-mismatch')
       continue
     }
     const year = result.description.match(
-      /\bReleased\s+(?:\d{1,2}\s+\w+\s+)?(\d{4})\b/i,
+      /\bReleased\s+(?:in\s+)?(?:\d{1,2}\s+)?(?:[A-Za-z]+\s+)?(\d{4})\b/i,
     )?.[1]
-    if (expectedYear !== undefined && year && Number(year) !== expectedYear) {
+    const editionYear =
+      cleanTitle !== names.title &&
+      (pathMatches || displayPathMatches || disambiguatedPath) &&
+      titleMatches &&
+      year &&
+      expectedYear !== undefined &&
+      Number(year) < expectedYear
+    if (
+      expectedYear !== undefined &&
+      year &&
+      Number(year) !== expectedYear &&
+      !editionYear &&
+      !manualReference
+    ) {
       record('year-mismatch')
       continue
     }
     const score = rating(result, page.review || page.child)
     const tags = genres(result)
-    record(!score && !tags.names.length ? 'no-rating-or-genres' : 'accepted')
+    const sourcePublishedTime =
+      typeof result.metadata?.published_time === 'string'
+        ? result.metadata.published_time
+        : null
+    const sourceYearText =
+      year ??
+      (manualReference
+        ? sourcePublishedTime?.match(/\b(?:18|19|20)\d{2}\b/)?.[0]
+        : undefined)
+    const sourceYear = sourceYearText ? Number(sourceYearText) : null
+    const yearConflict =
+      sourceYear !== null &&
+      expectedYear !== undefined &&
+      sourceYear !== expectedYear
+    record(!score && !tags.names.length ? 'identity-only' : 'accepted')
     matches.push({
       result,
       page,
       rating: score,
       genres: tags,
+      sourceYear,
+      sourcePublishedTime,
+      yearConflict,
+      corroboratedIdentity: corroborated
+        ? {
+            rule: corroborated.rule,
+            inputTitle: requestedNames.title,
+            inputArtist: requestedNames.artist,
+            inputArtists: artistCredits,
+            sourceTitle: corroborated.title,
+            sourceArtist: corroborated.artist,
+            sourceDate: corroborated.sourceDate,
+            bilingual,
+          }
+        : null,
+      identityConflict:
+        titleConflict ||
+        descriptionConflict ||
+        (!pathMatches && !displayPathMatches && !disambiguatedPath),
+      identityEvidence: manualReference
+        ? 'manual-reference'
+        : corroborated
+          ? corroborated.rule
+          : pathMatches
+            ? 'exact-path'
+            : displayPathMatches
+              ? 'corroborated-display-title'
+              : disambiguatedPath
+                ? 'corroborated-disambiguation'
+                : 'owned-reference',
+      yearEvidence: manualReference
+        ? yearConflict
+          ? 'manual-reference-year-conflict'
+          : 'manual-reference'
+        : editionYear
+          ? 'edition-to-original'
+          : 'consistent-or-unknown',
     })
   }
   return matches.sort(
@@ -261,6 +832,55 @@ function diagnosticField(value: unknown): JsonValue {
     return value.length > 4096 ? '[omitted oversized field]' : value
   if (typeof value === 'number' && Number.isFinite(value)) return value
   return null
+}
+
+function selectMatches(
+  matches: ReturnType<typeof candidates>,
+  singleEvidence: { artist: string; title: string }[],
+) {
+  const ordered = matches
+    .filter(
+      (match) =>
+        !(
+          match.page.review &&
+          !match.page.kind &&
+          singleEvidence.some(
+            (single) =>
+              identityMatches(single.artist, match.page.artist) &&
+              identityMatches(single.title, match.page.title),
+          )
+        ),
+    )
+    .sort(
+      (a, b) =>
+        Number(a.page.review || a.page.child) -
+          Number(b.page.review || b.page.child) ||
+        Number(a.page.primaryIssue) - Number(b.page.primaryIssue),
+    )
+  const selected =
+    ordered.find((match) => match.rating) ??
+    ordered.find((match) => match.genres.names.length) ??
+    ordered[0]
+  // A primary-credit shortcut cannot choose between different featured releases.
+  if (
+    selected?.corroboratedIdentity &&
+    ordered.some(
+      (match) =>
+        match.corroboratedIdentity &&
+        match.page.releaseUrl !== selected.page.releaseUrl,
+    )
+  )
+    return { selected: undefined, rated: undefined, tagged: undefined }
+  const release = ordered.filter(
+    (match) => match.page.releaseUrl === selected?.page.releaseUrl,
+  )
+  const rated = release.find((match) => match.rating)
+  const tagged =
+    release.find(
+      (match) =>
+        match.genres.source === 'description' && match.genres.names.length,
+    ) ?? release.find((match) => match.genres.names.length)
+  return { selected, rated, tagged }
 }
 
 function diagnosticMetadata(value: unknown): JsonValue {
@@ -303,6 +923,7 @@ export const serplyPlugin: MediaProviderPlugin = {
       maxConcurrent: 2,
       concurrentRequests: true,
       minTimeMs: 250,
+      requestTimeoutMs: 120000,
       configurableRequestBudget: true,
     },
     secrets: [
@@ -312,7 +933,7 @@ export const serplyPlugin: MediaProviderPlugin = {
         required: true,
         envVars: ['SERPLY_API_KEY'],
         helpText:
-          'Searches Google through Serply. Up to two searches per album; indexed ratings may lag RYM.',
+          'Searches Google through Serply. Up to six searches per album; indexed ratings may lag RYM.',
       },
     ],
   },
@@ -324,14 +945,28 @@ export const serplyPlugin: MediaProviderPlugin = {
       context.existingReferences.find(
         (item) => item.referenceType === 'rym-url',
       )
-    const reference = existing
-      ? rymPage(AlbumRymUrlSchema.parse(existing.externalId))
+    // Owned references include explicit corrections and remain authoritative.
+    // Historical Google references are hints, not constraints on new evidence.
+    const reference = owned
+      ? rymPage(AlbumRymUrlSchema.parse(owned.externalId))
       : null
+    if (owned && !reference)
+      throw new Error('Invalid Serply release reference.')
+    const manualReference =
+      reference !== null && owned?.metadata?.['manualOverride'] === true
+    let hint = reference
+    if (!owned && existing) {
+      try {
+        hint = rymPage(existing.externalId)
+      } catch {
+        hint = null
+      }
+    }
     const names =
       context.media?.title && context.media.artists.some((name) => name.trim())
         ? albumNames(context)
-        : reference
-          ? { title: reference.title, artist: reference.artist }
+        : hint
+          ? { title: hint.title, artist: hint.artist }
           : albumNames(context)
     const releaseDate = context.media?.releaseDate
       ? z.coerce.date().safeParse(context.media.releaseDate)
@@ -341,14 +976,50 @@ export const serplyPlugin: MediaProviderPlugin = {
       : undefined
     const searches = []
     const matches: ReturnType<typeof candidates> = []
-    let query = `site:rateyourmusic.com ${names.artist} ${names.title}`
-    for (let attempt = 0; attempt < 2; attempt++) {
+    const singleEvidence: { artist: string; title: string }[] = []
+    const cleanTitle = baseTitle(names.title)
+    // Search vocabulary only: matching still requires explicit role evidence.
+    const queryTitle = cleanTitle.replace(
+      /\s+\((?:Original Soundtrack|Original Series Soundtrack|Original Motion Picture Soundtrack|Adult Swim Original Series Soundtrack|DJ Mix)\)$/i,
+      '',
+    )
+    const quote = (value: string) => `"${value.replaceAll('"', ' ')}"`
+    const queries = [
+      `site:rateyourmusic.com ${names.artist} ${names.title}`,
+      `site:rateyourmusic.com/release/ ${names.artist} ${cleanTitle}`,
+      `site:rateyourmusic.com/release/ ${quote(names.artist)} ${quote(cleanTitle)}`,
+      `${names.artist} ${cleanTitle} Rate Your Music rating genres`,
+    ]
+    const maxSearches = queryTitle !== cleanTitle ? 6 : 5
+    if (queryTitle !== cleanTitle)
+      queries.push(
+        `${names.artist} ${queryTitle} Rate Your Music rating genres`,
+      )
+    const searched = new Set<string>()
+    for (let attempt = 0; attempt < maxSearches; attempt++) {
+      const query = queries.find((value) => !searched.has(value))
+      if (!query) break
+      searched.add(query)
       const payload = await search(context, query)
       searches.push({ query, response: payload })
       const diagnostic = { candidates: [], reasons: {} }
       try {
         matches.push(
-          ...candidates(payload, names, reference, expectedYear, diagnostic),
+          ...candidates(
+            payload,
+            names,
+            reference,
+            expectedYear,
+            manualReference,
+            releaseDate?.success
+              ? releaseDate.data.toISOString().slice(0, 10)
+              : null,
+            context.media?.artists
+              .map((artist) => artist.trim())
+              .filter(Boolean) ?? [names.artist],
+            singleEvidence,
+            diagnostic,
+          ),
         )
       } finally {
         recordSearchDiagnostic(context, {
@@ -364,36 +1035,79 @@ export const serplyPlugin: MediaProviderPlugin = {
           candidates: diagnostic.candidates,
         })
       }
-      const selected = matches.find((match) => match.rating) ?? matches[0]
+      const { selected, rated, tagged } = selectMatches(matches, singleEvidence)
       if (
-        matches.some((match) => match.rating) &&
-        matches.some((match) => match.genres.source === 'description')
+        rated &&
+        !rated.page.primaryIssue &&
+        (!rated.page.review || Boolean(rated.page.kind)) &&
+        tagged?.genres.source === 'description'
       )
         break
-      const releaseUrl = reference?.releaseUrl ?? selected?.page.releaseUrl
-      const nextQuery = releaseUrl
-        ? `site:${releaseUrl}`
-        : `${names.artist} ${names.title} Rate Your Music rating genres`
-      if (nextQuery === query) break
-      query = nextQuery
+      const queryPage = reference ?? selected?.page ?? hint
+      const releaseUrl = queryPage?.primaryIssue
+        ? queryPage.referenceUrl
+        : queryPage?.releaseUrl
+      if (releaseUrl && !searched.has(`site:${releaseUrl}`))
+        queries.unshift(`site:${releaseUrl}`)
     }
-    matches.sort(
-      (a, b) =>
-        Number(a.page.review || a.page.child) -
-        Number(b.page.review || b.page.child),
-    )
-    const rated = matches.find((match) => match.rating)
-    const tagged =
-      matches.find(
-        (match) =>
-          match.genres.source === 'description' && match.genres.names.length,
-      ) ?? matches.find((match) => match.genres.names.length)
-    const selected = rated ?? tagged
-    if (!selected)
-      throw new ProviderItemNotFoundError(
-        'Serply found no matching RYM rating or genres.',
+    const { selected, rated, tagged } = selectMatches(matches, singleEvidence)
+    if (!selected) {
+      recordSearchDiagnostic(
+        context,
+        { reason: 'no-match', searchCount: searches.length },
+        'serply.selection',
       )
+      throw new ProviderItemNotFoundError(
+        'Serply found no matching RYM release.',
+      )
+    }
     const score = rated?.rating
+    const manualEvidence = manualReference
+      ? {
+          referenceUrl: owned?.externalId ?? null,
+          libraryTitle: names.title,
+          libraryArtist: names.artist,
+          libraryReleaseDate: context.media?.releaseDate ?? null,
+          sourceTitle: selected.result.title,
+          sourceTitleSlug: selected.page.title,
+          sourceArtistSlug: selected.page.artist,
+          sourceYear: selected.sourceYear,
+          sourcePublishedTime: selected.sourcePublishedTime,
+          identityConflict: selected.identityConflict,
+          yearConflict: selected.yearConflict,
+        }
+      : null
+    const ratingScope = rated
+      ? rated.page.primaryIssue
+        ? 'primary-issue'
+        : 'release'
+      : null
+    const matchStatus = score
+      ? 'rated'
+      : tagged
+        ? 'genres-only'
+        : 'identity-only'
+    recordSearchDiagnostic(
+      context,
+      {
+        reason: matchStatus,
+        releaseUrl: selected.page.releaseUrl,
+        releaseKind: selected.page.kind || null,
+        identityEvidence: selected.identityEvidence,
+        yearEvidence: selected.yearEvidence,
+        ratingScope,
+        manualReference: manualEvidence,
+        corroboratedIdentity: selected.corroboratedIdentity,
+      },
+      'serply.selection',
+    )
+    if (!score)
+      await context.log(
+        'info',
+        tagged
+          ? 'Serply matched a RYM release with genres but no indexed aggregate rating.'
+          : 'Serply matched a RYM release identity only; no indexed aggregate rating or genres.',
+      )
     return PluginResultSchema.parse({
       payload: { searches },
       normalized: {
@@ -406,7 +1120,15 @@ export const serplyPlugin: MediaProviderPlugin = {
               source: 'rym',
               retrievalProvider: 'serply',
               sourceUrl: selected.result.link,
+              releaseUrl: selected.page.releaseUrl,
+              releaseKind: selected.page.kind || null,
+              matchStatus,
+              identityEvidence: selected.identityEvidence,
+              yearEvidence: selected.yearEvidence,
               ratingSourceUrl: rated?.result.link ?? null,
+              ratingScope,
+              manualReference: manualEvidence,
+              corroboratedIdentity: selected.corroboratedIdentity,
               ratingField: score?.source ?? null,
               genresSourceUrl: tagged?.result.link ?? null,
               genresField: tagged?.genres.source ?? null,
@@ -457,7 +1179,17 @@ async function search(context: MediaPluginScrapeContext, query: string) {
     {
       ...context,
       request: async (input, init, options) => {
-        const response = await context.request(input, init, options)
+        let response: Response
+        try {
+          response = await context.request(input, init, options)
+        } catch (error) {
+          recordResponse({
+            query,
+            status: null,
+            responseUnavailable: 'request-failed',
+          })
+          throw error
+        }
         status = response.status
         if (response.ok) {
           try {

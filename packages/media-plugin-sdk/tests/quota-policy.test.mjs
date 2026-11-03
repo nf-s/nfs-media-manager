@@ -2,6 +2,33 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { PluginRateLimitSchema } from '../dist/index.js'
 
+test('provider request timeout is optional and bounded without changing defaults', () => {
+  const policy = { maxConcurrent: 1, minTimeMs: 1000 }
+  assert.equal(PluginRateLimitSchema.parse(policy).requestTimeoutMs, undefined)
+  for (const requestTimeoutMs of [1, 15000, 30000, 120000, 180000]) {
+    assert.equal(
+      PluginRateLimitSchema.parse({ ...policy, requestTimeoutMs })
+        .requestTimeoutMs,
+      requestTimeoutMs,
+    )
+  }
+  for (const requestTimeoutMs of [
+    0,
+    -1,
+    1.5,
+    180001,
+    NaN,
+    Infinity,
+    '30000',
+    null,
+  ]) {
+    assert.equal(
+      PluginRateLimitSchema.safeParse({ ...policy, requestTimeoutMs }).success,
+      false,
+    )
+  }
+})
+
 test('concurrency and fixed read/write windows survive manifest validation', () => {
   const policy = {
     maxConcurrent: 3,

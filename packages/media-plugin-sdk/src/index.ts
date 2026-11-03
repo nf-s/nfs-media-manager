@@ -33,6 +33,12 @@ export const PluginRequestBudgetSchema = z.object({
   limit: z.number().int().positive().max(100000),
 })
 
+export const PluginRequestTimeoutSchema = z
+  .number()
+  .int()
+  .positive()
+  .max(180000)
+
 export const PluginRateLimitSchema = z.object({
   maxConcurrent: z.number().int().positive(),
   concurrentRequests: z.boolean().optional(),
@@ -44,6 +50,7 @@ export const PluginRateLimitSchema = z.object({
     })
     .optional(),
   minTimeMs: z.number().int().nonnegative(),
+  requestTimeoutMs: PluginRequestTimeoutSchema.optional(),
   maxRequestsPerHour: z.number().int().positive().optional(),
   requestBudget: PluginRequestBudgetSchema.optional(),
   configurableRequestBudget: z.boolean().optional(),

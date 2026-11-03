@@ -51,6 +51,7 @@ import {
   scrapeJobLog,
 } from '@/schemas/db'
 import { applyProviderResultInTransaction } from '@/services/provider-state'
+import { getProviderReferenceHints } from '@/services/provider-reference-hints'
 import {
   createProviderRequest,
   getProviderSafety,
@@ -502,6 +503,12 @@ async function processJob(
       )
       diagnostics = createJobDiagnostics(jobLogSecrets(secrets))
 
+      const referenceHints = await getProviderReferenceHints({
+        provider: plugin.manifest.id,
+        mediaType: mediaRecord.mediaType,
+        mediaItemId,
+        existingReferences: [...references, ...overrides],
+      })
       await assertActive()
       const scraped = PluginResultSchema.parse(
         await scrapeMediaItem({
@@ -520,7 +527,10 @@ async function processJob(
               referenceType,
               externalId,
               isPrimary: true,
-              metadata: { sourceProvider: plugin.manifest.id },
+              metadata: {
+                sourceProvider: plugin.manifest.id,
+                manualOverride: true,
+              },
             })),
             ...references
               .filter((reference) => !effectiveIds.has(reference.referenceType))
@@ -529,15 +539,21 @@ async function processJob(
                   Number(b.provider === plugin.manifest.id) -
                   Number(a.provider === plugin.manifest.id),
               )
-              .map((reference) => ({
-                referenceType: reference.referenceType,
-                externalId: reference.externalId,
-                isPrimary: reference.isPrimary,
-                metadata: {
-                  ...reference.metadata,
-                  sourceProvider: reference.provider,
-                },
-              })),
+              .map((reference) => {
+                const metadata = { ...reference.metadata }
+                // Only reviewed override rows may grant manual-match authority.
+                delete metadata['manualOverride']
+                return {
+                  referenceType: reference.referenceType,
+                  externalId: reference.externalId,
+                  isPrimary: reference.isPrimary,
+                  metadata: {
+                    ...metadata,
+                    sourceProvider: reference.provider,
+                  },
+                }
+              }),
+            ...referenceHints,
           ],
           secrets,
           request: createProviderRequest(plugin, assertActive),

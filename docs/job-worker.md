@@ -79,7 +79,11 @@ responses cannot be reconstructed; viewing their JSON must not trigger a retry.
 Serply records each search query, HTTP status and response JSON before validating
 the result or reporting a lookup miss. These diagnostics are credential-redacted
 and bounded: each response entry is at most 48 KiB, and a job's diagnostic
-collection is at most 128 KiB. Truncation and unavailable bodies are explicitly
+collection is at most 384 KiB and 14 entries, allowing up to six search responses
+with candidate summaries and a final decision within those bounds. Serply normally
+caps searches at five; six is allowed only when OST/DJ Mix role simplification
+adds a distinct natural-language fallback. These are ceilings, not required calls.
+Truncation and unavailable bodies are explicitly
 marked. HTTP error-body reads use the existing 16 KiB helper limit. If the request
 gateway fails before returning a response, there is no response body to retain;
 the normal error log remains the evidence. This adds no requests or retries.
