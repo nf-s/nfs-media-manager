@@ -7,7 +7,7 @@ The current album adapters validate responses at the provider boundary and retur
 | Provider    | Behavior                                                                                                                                     |
 | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
 | MusicBrainz | Uses an owned release-group ID first, then bounded barcode/name searches. Retains relations without changing another provider's identifiers. |
-| Last.fm     | Performs one album lookup by album MBID, corrected URL, or canonical names. Release-group IDs are not treated as album MBIDs.                |
+| Last.fm     | Looks up the album by album MBID, corrected URL, or canonical names. Ranked album tags are opt-in. Release-group IDs are not album MBIDs.    |
 | Discogs     | Uses an owned corrected ID or bounded native barcode/master/release searches. A master lookup fetches its main release only.                 |
 | Spotify     | Supports album metadata and the separately authorized [saved-album import](spotify-album-imports.md). Audio-feature acquisition is excluded. |
 | Serply      | Looks up indexed Rate Your Music results. Search-derived ratings can lag the source.                                                         |
@@ -19,7 +19,7 @@ Google Custom Search is retired. Historical ratings and source links remain impo
 | Provider    | Concurrency / minimum spacing | Maximum calls per album                               |
 | ----------- | ----------------------------- | ----------------------------------------------------- |
 | MusicBrainz | 1 / 1000 ms                   | 1 direct; 2 name or barcode; 3 barcode miss then name |
-| Last.fm     | 1 / 200 ms                    | 1                                                     |
+| Last.fm     | 1 / 200 ms                    | 1 normally; 2 with `options.includeTopTags: true`     |
 | Discogs     | 1 / 1050 ms                   | 1 release; 2 master; at most 4 with searches          |
 
 Every HTTP request, including searches, uses `context.request`. There are no client libraries, direct fetches, hidden retries, pagination walks, quota-discovery calls, or network activity on module import. The persistent server gate owns spacing, timeouts, cooldowns and shared budgets. Runtime account access is not proven by these offline tests. The MusicBrainz, Last.fm and Discogs plugins do not claim a connection-test hook; no credentials are tested on import.
@@ -70,13 +70,19 @@ The user's preference is the underlying album's rating and genres, not necessari
 
 Release results are preferred over review/list headers, with non-`.p` results preferred within the same page class; ratings and genres are selected only within the same normalized release identity. Terminal `.p` is removed for identity comparison, not from the observed source URL/reference. URL-restricted fallback queries preserve an observed `.p` URL from the owned reference, selected result or legacy hint rather than silently querying its stripped counterpart. Rating provenance distinguishes `primary-issue` from `release`. This is request/identity handling, not proof of equivalent rating scope or improved coverage; see the [research caveat](serply-search-notes.md#rym-p-suffix).
 
-Structured `metadata.rating` and `metadata.reviews` are supported on release results. Explicit aggregate snippet pairs preserve more precision when available. Scores without a count clear the old count instead of combining observations. Explicit `Genres:` lists are retained; flattened headers contribute their first complete comma-delimited genre, with a bounded title genre as another fallback. Missing genre tiers and descriptors do not prevent saving a usable rating or genre. Indexed observations can differ between pages and are not labelled current RYM values.
+Structured `metadata.rating` and `metadata.reviews` are supported on release results. Explicit aggregate snippet pairs preserve more precision when available. Scores without a count clear the old count instead of combining observations. The adapter extracts genres and descriptors from explicitly labelled fields on results for the selected release. It does not infer tags from review prose or infer mood from audio. In flattened genre lists, ambiguous joins and truncated tokens are skipped unless corroborating evidence establishes the labels. Each extracted tag retains its field kind and evidence URL in normalized snapshot provenance. Indexed observations can differ between pages and are not labelled current RYM values.
 
 Provenance distinguishes `rated`, `genres-only` and `identity-only` matches, with identity/year evidence, source URLs and retrieval time. An identity-only match saves its link/reference without inventing a rating or genres; it is not a rated success. No matching identity throws `ProviderItemNotFoundError`. Full search responses remain in provider history, and diagnostics distinguish empty results, rejected candidates and missing fields.
 
 Album serialization prioritizes the validated `ratingSourceUrl` when metadata has a finite RYM score in range and Serply provenance with `matchStatus: rated`. The link points to the exact page that supplied the rating, including valid review/list child URLs, not the identity or genre source; child URLs are validated through their release parent without rewriting the displayed destination. The serializer reorders or supplies this response link without database writes, new queries or provider calls. Missing/invalid rated provenance and genres-only/identity-only results retain the existing generic/legacy link fallback. This link fix does not acquire or validate a new rating.
 
 Offline adapter tests cover supplied/captured responses and matching guards; isolated queue tests cover persistence and request-gate behavior. Fixtures do not establish live coverage improvements. Bing is not a production fallback: saved q-only experiments returned no supported album match, including for a known Google-positive control, despite HTTP 200. This does not establish missing RYM coverage or a query-parsing cause. See [search notes](serply-search-notes.md#final-coverage) for final selected-cohort outcomes and research limitations.
+
+### Replaying saved tags
+
+Run `pnpm --filter @repo/server exec tsx scripts/replay-rym-tags.ts --report=/private/path/preview.json`. The default is read-only and local; remote use requires an explicit direct connection in `RYM_REPLAY_DATABASE_URL`. Review the database target, skipped albums, proposed memberships and evidence URLs. Apply with the same command plus `--apply --review=<preview hash>` and a new report path. Take a recovery point first and repeat the preview after commit; it should propose zero additions. Reports contain library data and should stay private.
+
+Replay considers successful saved Serply results for the current release identity, including earlier confirmed snapshots of the same issue. Retained structured Google genre names can disambiguate flattened words; they do not link a Google search result to an album. The replay inserts only missing album tags, memberships and source occurrences after resolving existing tag identities. It performs no searches and does not replace snapshots, ratings or canonical media fields.
 
 ## Current Service Constraints
 
@@ -99,6 +105,10 @@ Future explicit scrapes retain these details from responses already needed by th
 ## Offline Verification
 
 ### Last.fm Response Audit
+
+An album job with `options: { "includeTopTags": true }` requests [album.getTopTags](https://www.last.fm/api/show/album.getTopTags) after a successful `album.getInfo`. It uses the resolved album identity and the same provider request gate. No other job gains an extra request. The snapshot preserves the original album and the dedicated response separately. Last.fm's count is a relative weight out of 100, not a vote count. The adapter retains all returned rows in the raw response but only adds dedicated tags with weight at least 10 to the usual album tag merge. Ordinary album tags are retained even if absent from the dedicated list.
+
+For tag enrichment without replacing tracks, artwork, links or other canonical fields, set both `includeTopTags: true` and `tagsOnly: true`. Use one explicit album per job.
 
 The Last.fm boundary is checked against the [official album.getInfo example](https://www.last.fm/api/show/album.getInfo), [client schemas](https://github.com/ansango/lastfm-api/blob/54494963c25177aaf13a29ec7eeb09efc0d0a85b/src/api/album/schemas.ts), [client fixtures](https://github.com/ansango/lastfm-api/blob/54494963c25177aaf13a29ec7eeb09efc0d0a85b/src/__tests__/album.test.ts), and retained local responses. The client types supplement the official XML example; neither is treated as an exhaustive specification of JSON wire shapes.
 

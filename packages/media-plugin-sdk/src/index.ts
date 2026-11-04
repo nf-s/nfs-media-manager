@@ -191,6 +191,7 @@ export interface MediaPluginTestContext {
 export interface MediaPluginScrapeContext {
   mediaItemId: string
   mediaType: PluginMediaType
+  options?: Readonly<Record<string, JsonValue>>
   media?: { title: string; artists: string[]; releaseDate?: string }
   existingReferences: PluginReference[]
   secrets: Record<string, string>

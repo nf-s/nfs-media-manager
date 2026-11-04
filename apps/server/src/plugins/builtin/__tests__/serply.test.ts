@@ -6,7 +6,7 @@ import {
   ProviderRequestError,
   type MediaPluginScrapeContext,
 } from '@repo/media-plugin-sdk'
-import { serplyPlugin } from '../serply'
+import { extractSerplyAlbumTags, serplyPlugin } from '../serply'
 import { getBuiltinScrapePlugin } from '../index'
 import { getBuiltinProviderCatalog } from '@/lib/provider-catalog'
 import { createJobDiagnostics } from '@/lib/job-diagnostics'
@@ -3405,7 +3405,7 @@ describe('Serply indexed RYM provider', () => {
     )
   })
 
-  it('retains the complete first genre from the live Pripyat indexed header', async () => {
+  it('extracts complete genre and descriptor labels from an aggregate header', async () => {
     const output = await scrape(
       context({
         results: [
@@ -3425,7 +3425,226 @@ describe('Serply indexed RYM provider', () => {
     })
     expect(output.normalized.tags.map((tag) => tag.name)).toEqual([
       'Glitch Pop',
+      'Choral',
+      'Deconstructed Club',
+      'Art Pop',
+      'avant-garde',
+      'female vocalist',
+      'suspenseful',
     ])
+  })
+
+  it('replays only exact-scope album headers, with evidence for each tag', () => {
+    const root = {
+      ...pripyat,
+      description: 'Genres: Progressive Electronic.',
+      title: 'Pripyat by Marina Herlop (Album)',
+    }
+    const review = {
+      link: 'https://rateyourmusic.com/music-review/listener/marina-herlop/pripyat/1122',
+      title: 'Review for Pripyat - Marina Herlop by listener',
+      description:
+        '3.86 from 7,730 ratings Genres Progressive Electronic Berlin School, Minimalism, Krautrock, Minimal Techno. My favorite is Disco.',
+    }
+    const other = { ...root, description: 'Genres: Disco.' }
+    const results = [
+      root,
+      review,
+      review,
+      { ...other, link: pripyatUrl.replace('pripyat/', 'pripyat.p/') },
+      { ...other, link: pripyatUrl.replace('pripyat/', 'pripyat-1/') },
+      { ...other, link: pripyatUrl.replace('/album/', '/ep/') },
+      {
+        ...review,
+        description:
+          'In my opinion Genres Disco, House Descriptors funky, bright.',
+      },
+    ]
+    const payload = { searches: [{ response: { results } }] }
+    expect(extractSerplyAlbumTags(payload, root.link)).toEqual(
+      [
+        'Progressive Electronic',
+        'Berlin School',
+        'Minimalism',
+        'Krautrock',
+        'Minimal Techno',
+      ].map((name, index) => ({
+        name,
+        rawName: name,
+        kind: 'genre',
+        source: 'rym',
+        sourceUrl: index === 0 ? root.link : review.link,
+      })),
+    )
+    expect(
+      extractSerplyAlbumTags(
+        payload,
+        'https://example.org/release/album/marina-herlop/pripyat/',
+      ),
+    ).toEqual([])
+    expect(extractSerplyAlbumTags({}, root.link)).toEqual([])
+  })
+
+  it('does not import a truncated descriptor or use review stars for album metadata', async () => {
+    const review = {
+      link: 'https://rateyourmusic.com/music-review/listener/marina-herlop/pripyat/1122',
+      title: 'Review for Pripyat - Marina Herlop by listener',
+      description:
+        '3.94 from 543 ratings Genres Afrobeat, Afro-Funk Highlife, Jùjú, Psychedelic Rock Descriptors female vocalist, rhythmic, eclectic, male ...',
+      metadata: { rating: '1', reviews: '1' },
+    }
+    const root = {
+      ...pripyat,
+      title: 'Pripyat by Marina Herlop (Album)',
+      description: 'Genres: Afrobeat.',
+    }
+    const request = replies({ results: [root, review] })
+    const output = await scrape(context(undefined, { request }))
+    expect(request).toHaveBeenCalledTimes(1)
+    expect(output.normalized.mediaPatch?.metadata?.browse).toEqual({
+      ratingRymValue: 3.4,
+      ratingRymVotes: 1836,
+    })
+    expect(
+      output.normalized.tags.map(({ name, kind }) => [name, kind]),
+    ).toEqual([
+      ['Afrobeat', 'genre'],
+      ['Jùjú', 'genre'],
+      ['Psychedelic Rock', 'genre'],
+      ['female vocalist', 'descriptor'],
+      ['rhythmic', 'descriptor'],
+      ['eclectic', 'descriptor'],
+    ])
+    expect(
+      output.normalized.mediaPatch?.metadata?.['plugin.serply.provenance'],
+    ).toMatchObject({
+      genresSourceUrl: root.link,
+      ratingSourceUrl: root.link,
+      tagSources: expect.arrayContaining([
+        { name: 'rhythmic', kind: 'descriptor', sourceUrl: review.link },
+      ]),
+    })
+  })
+
+  it.each([
+    [
+      '3.5 from 100 ratings Genres Descriptors Languages French, English Track listing',
+      [],
+    ],
+    ['Genres Descriptors Track listing 1 Song 3:43.', []],
+    [
+      'Genres: Trip Hop, Downtempo, Contemporary melodic, nocturnal, mellow, introspective, psychedelic ...',
+      ['Trip Hop', 'Downtempo'],
+    ],
+    [
+      'Genres: Trip Hop, Downtempo, Contemporary R&amp;B.',
+      ['Trip Hop', 'Downtempo', 'Contemporary R&B'],
+    ],
+    [
+      '3.5 from 100 ratings. Genres. IDM · Ambient Techno, Downtempo. Descriptors. melancholic, rhythmic, cold. Personal review.',
+      ['IDM', 'Ambient Techno', 'Downtempo', 'melancholic', 'rhythmic', 'cold'],
+    ],
+    [
+      '3.5 from 100 ratings Genres IDM Descriptors rhythmic, dense, female',
+      ['IDM', 'rhythmic', 'dense'],
+    ],
+    [
+      '3.5 from 100 ratings Genres IDM. The review mentions Descriptors ecstatic, energetic.',
+      ['IDM'],
+    ],
+  ])('preserves field boundaries in %s', (description, expected) => {
+    const result = {
+      ...pripyat,
+      title: 'Pripyat by Marina Herlop (Album)',
+      description,
+    }
+    const payload = { searches: [{ response: { results: [result] } }] }
+    expect(
+      extractSerplyAlbumTags(payload, result.link).map(({ name }) => name),
+    ).toEqual(expected)
+  })
+
+  it('retains observed compound labels only when the vocabulary supports the boundary', () => {
+    const result = {
+      ...pripyat,
+      title: 'Pripyat by Marina Herlop (Album)',
+      description:
+        '3.5 from 100 ratings Genres Example Genre Other Style, Afro-Funk Highlife Descriptors rhythmic, ...',
+    }
+    const payload = { searches: [{ response: { results: [result] } }] }
+    const vocab = new Set([
+      'Afro-Funk',
+      'Highlife',
+      'Example Genre',
+      'Other Style',
+      'Example',
+      'Genre Other Style',
+      'Never Mentioned',
+    ])
+    expect(
+      extractSerplyAlbumTags(payload, result.link, vocab).map(
+        ({ name }) => name,
+      ),
+    ).toEqual(['Afro-Funk', 'Highlife', 'rhythmic'])
+    expect(
+      extractSerplyAlbumTags(payload, result.link).map(({ name }) => name),
+    ).toEqual(['rhythmic'])
+  })
+
+  it('does not keep a clipped prefix when the same source identifies the complete title genre', () => {
+    const result = {
+      ...pripyat,
+      title: 'Pripyat by Marina Herlop (Album, Nouvelle chanson française)',
+      description:
+        'Genres: Nouvelle. Genres Nouvelle chanson française, Art Pop, Art ...',
+    }
+    expect(
+      extractSerplyAlbumTags(
+        { searches: [{ response: { results: [result] } }] },
+        result.link,
+      ).map(({ name }) => name),
+    ).toEqual(['Nouvelle chanson française'])
+  })
+
+  it.each([
+    ['656 ratings', ['IDM', 'rhythmic']],
+    ['Marina Herlop ratings', ['IDM', 'rhythmic']],
+    ['Another artist ratings', []],
+  ])('checks abbreviated review header anchor %s', (prefix, expected) => {
+    const result = {
+      title: 'Review for Pripyat - Marina Herlop by listener',
+      link: 'https://rateyourmusic.com/music-review/listener/marina-herlop/pripyat/1122',
+      description: prefix + ' Genres IDM Descriptors rhythmic, female',
+    }
+    expect(
+      extractSerplyAlbumTags(
+        { searches: [{ response: { results: [result] } }] },
+        result.link,
+      ).map(({ name }) => name),
+    ).toEqual(expected)
+  })
+
+  it('retains alternate header snippets for the exact same bilingual source title', () => {
+    const root = {
+      link: pripyatUrl,
+      title: 'Pripyat by Marina Herlop [Alias] (Album, House)',
+      description: '',
+    }
+    const other = {
+      ...root,
+      description:
+        '2.57 from 836 ratings Genres House, Techno Descriptors deadpan, ...',
+    }
+    const conflict = {
+      ...root,
+      description: 'Other Record, an Album by Other Band. Genres: Punk.',
+    }
+    expect(
+      extractSerplyAlbumTags(
+        { searches: [{ response: { results: [root, other, conflict] } }] },
+        root.link,
+      ).map(({ name }) => name),
+    ).toEqual(['House', 'Techno', 'deadpan'])
   })
 
   it('keeps the first matching review rating and count together', async () => {
@@ -3616,6 +3835,62 @@ describe('Serply indexed RYM provider', () => {
       ratingRymValue: 3.4,
       ratingRymVotes: 1836,
     })
+  })
+
+  it('keeps a predecessor aggregate separate from its unrated sequel', async () => {
+    const original =
+      'https://rateyourmusic.com/release/album/clark/steep-stims/'
+    const sequel =
+      'https://rateyourmusic.com/release/album/clark/steep-stims-ii/'
+    const payload = {
+      results: [
+        {
+          link: original,
+          title: 'Steep Stims by Clark (Album, IDM)',
+          description: 'Steep Stims, an Album by Clark. Genres: IDM.',
+          metadata: { rating: '3.4', reviews: '470' },
+        },
+        {
+          link: sequel,
+          title: 'Steep Stims II by Clark (Album, IDM)',
+          description:
+            'Steep Stims II, an Album by Clark. Genres: IDM, Techno.',
+          metadata: {},
+        },
+        {
+          link: 'https://rateyourmusic.com/music-review/BarnabyNutt/clark/steep-stims/271016868',
+          title: 'Review for Steep Stims - Clark by BarnabyNutt',
+          metadata: {
+            rating: '3.5',
+            attributes: ['Rating', 'Review by BarnabyNutt'],
+          },
+        },
+      ],
+    }
+    for (const { title, sourceUrl, browse, ratingSourceUrl } of [
+      {
+        title: 'Steep Stims',
+        sourceUrl: original,
+        browse: { ratingRymValue: 3.4, ratingRymVotes: 470 },
+        ratingSourceUrl: original,
+      },
+      {
+        title: 'Steep Stims II',
+        sourceUrl: sequel,
+        browse: {},
+        ratingSourceUrl: null,
+      },
+    ]) {
+      const output = await scrape(
+        context(payload, { media: { title, artists: ['Clark'] } }),
+      )
+      const metadata = output.normalized.mediaPatch?.metadata
+      expect(metadata?.['browse']).toEqual(browse)
+      expect(metadata?.['plugin.serply.provenance']).toMatchObject({
+        sourceUrl,
+        ratingSourceUrl,
+      })
+    }
   })
 
   it('does not mistake a personal review score for an aggregate', async () => {

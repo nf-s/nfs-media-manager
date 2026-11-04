@@ -108,6 +108,72 @@ const base = {
 }
 
 describe('Last.fm adapter through queue and persistence, with offline HTTP', () => {
+  it('passes the top-tags opt-in through a job and merges an existing tag across sources', async () => {
+    const { lockTagWrites, upsertProviderTags } =
+      await import('@/services/tag-state')
+    await databaseClient.transaction(async (tx) => {
+      await lockTagWrites(tx)
+      await upsertProviderTags(tx, 'album-fixture', 'serply', 'album', [
+        { name: 'Ambient', kind: 'genre', source: 'rym' },
+      ])
+    })
+    const topTagsResponse = {
+      toptags: {
+        '@attr': { artist: base.artist, album: base.name },
+        tag: [
+          {
+            name: 'ambient',
+            count: 100,
+            url: 'https://www.last.fm/tag/ambient',
+          },
+          { name: 'dreamy', count: 80, url: 'https://www.last.fm/tag/dreamy' },
+        ],
+      },
+    }
+    const tracks = { track: { name: 'Different Last.fm track', duration: 5 } }
+    await databaseClient.insert(schema.track).values({
+      id: 'streaming-track',
+      albumMediaItemId: 'album-fixture',
+      title: 'Original streaming track',
+      position: 1,
+    })
+    request.mockImplementationOnce(async () =>
+      Response.json({ album: { ...base, tracks } }),
+    )
+    request.mockImplementationOnce(async () => Response.json(topTagsResponse))
+    const { createJob, processQueuedJobs, getJob } =
+      await import('@/services/jobs')
+    const job = await createJob(
+      CreateJobSchema.parse({
+        provider: 'lastfm',
+        scope: { mediaItemIds: ['album-fixture'], mediaType: 'album' },
+        options: { includeTopTags: true, tagsOnly: true },
+      }),
+      null,
+    )
+    await processQueuedJobs()
+    expect((await getJob(job.id))?.status).toBe('succeeded')
+    expect(request).toHaveBeenCalledTimes(2)
+    expect(
+      (await databaseClient.select().from(schema.tag))
+        .map((t) => t.name)
+        .sort(),
+    ).toEqual(['Ambient', 'dreamy'])
+    expect(
+      await databaseClient.select().from(schema.tagOccurrence),
+    ).toHaveLength(3)
+    const [snapshot] = await databaseClient
+      .select()
+      .from(schema.providerSnapshot)
+    expect(snapshot?.payload).toMatchObject({
+      album: { ...base, tracks },
+      topTagsResponse,
+    })
+    expect(
+      (await databaseClient.select().from(schema.track)).map((t) => t.id),
+    ).toEqual(['streaming-track'])
+  })
+
   it('honors a Last.fm rate-limit error inside HTTP 200 without retrying', async () => {
     const job = await runJob({ error: 29, message: 'Rate limit exceeded' })
     expect(job?.status).toBe('failed')

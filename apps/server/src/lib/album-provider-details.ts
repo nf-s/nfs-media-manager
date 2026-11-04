@@ -4,6 +4,7 @@ import {
   type AlbumProviderDetails,
 } from '@repo/schemas/album-provider-details'
 import { z } from 'zod'
+import { normalizeSourceTagName, tagSourceUrl } from '@/lib/source-navigation'
 import {
   AlbumCountSchema,
   AlbumHttpUrlSchema,
@@ -332,7 +333,117 @@ function discogsAlbumDetails(
   } satisfies Record<string, JsonValue> & { provider: 'discogs' }
 }
 
-function lastFmAlbumDetails(album: z.infer<typeof LastFmAlbumSchema>) {
+const WeightedTagSchema = LastFmTagSchema.extend({
+  name: z.string().refine((name) => normalizeSourceTagName(name).length > 0),
+  count: AlbumCountSchema.pipe(z.number().max(100)),
+  url: AlbumHttpUrlSchema.refine((value) => {
+    if (!URL.canParse(value)) return false
+    const url = new URL(value)
+    return (
+      ['www.last.fm', 'last.fm'].includes(url.hostname) &&
+      !url.port &&
+      /^\/tag\/[^/]+\/?$/.test(url.pathname)
+    )
+  }, 'Expected a Last.fm tag URL').optional(),
+})
+
+const TopTagsAttrSchema = z.object({
+  artist: z.string().min(1).optional(),
+  album: z.string().min(1).optional(),
+  mbid: z.union([AlbumMbidSchema, z.literal('')]).optional(),
+})
+const TopTagsResponseSchema = z.object({
+  toptags: z.union([
+    z.object({
+      tag: z.union([
+        z.array(WeightedTagSchema),
+        WeightedTagSchema.transform((tag) => [tag]),
+      ]),
+      '@attr': TopTagsAttrSchema.optional(),
+    }),
+    z
+      .strictObject({ '@attr': TopTagsAttrSchema })
+      .transform((empty) => ({ ...empty, tag: [] })),
+  ]),
+})
+
+export const LastFmSnapshotSchema = z
+  .object({
+    album: LastFmAlbumSchema,
+    topTagsResponse: TopTagsResponseSchema.optional(),
+  })
+  .superRefine(({ album, topTagsResponse }, ctx) => {
+    const attr = topTagsResponse?.toptags['@attr']
+    if (!attr) return
+    const artist =
+      typeof album.artist === 'string' ? album.artist : album.artist.name
+    if (
+      (attr.artist &&
+        normalizeSourceTagName(attr.artist) !==
+          normalizeSourceTagName(artist)) ||
+      (attr.album &&
+        normalizeSourceTagName(attr.album) !==
+          normalizeSourceTagName(album.name)) ||
+      (attr.mbid &&
+        album.mbid &&
+        attr.mbid.toLowerCase() !== album.mbid.toLowerCase())
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['topTagsResponse', 'toptags', '@attr'],
+        message: 'Last.fm returned top tags for a different album.',
+      })
+    }
+  })
+
+export function lastFmAlbumTagEvidence({
+  album,
+  topTagsResponse,
+}: z.infer<typeof LastFmSnapshotSchema>) {
+  const evidence = (
+    tag: z.infer<typeof LastFmTagSchema>,
+    sourceKind: string,
+  ) => ({
+    name: tag.name,
+    rawName: tag.name,
+    source: 'lastfm',
+    sourceKind,
+    count: tag.count ?? null,
+    sourceId: null,
+    url: tag.url ?? null,
+  })
+  const infoTags = [
+    ...(album.tags?.tag ?? []).map((tag) => evidence(tag, 'tag')),
+    ...(album.toptags?.tag ?? []).map((tag) => evidence(tag, 'toptag')),
+  ]
+  if (!topTagsResponse) return infoTags
+  const tags = new Map(
+    infoTags.map((tag) => [normalizeSourceTagName(tag.name), tag]),
+  )
+  for (const tag of topTagsResponse.toptags.tag) {
+    // https://www.last.fm/api/show/album.getTopTags: count is a weight out of 100, not votes.
+    if (tag.count < 10) continue
+    const key = normalizeSourceTagName(tag.name)
+    const prior = tags.get(key)
+    if (
+      prior?.sourceKind === 'album.getTopTags' &&
+      (prior.count ?? 0) >= tag.count
+    )
+      continue
+    const weighted = evidence(tag, 'album.getTopTags')
+    tags.set(key, {
+      ...weighted,
+      url:
+        weighted.url ??
+        tagSourceUrl({ ...weighted, provider: 'lastfm', kind: 'general' }) ??
+        null,
+    })
+  }
+  return [...tags.values()]
+}
+
+function lastFmAlbumDetails(snapshot: z.infer<typeof LastFmSnapshotSchema>) {
+  const { album } = snapshot
   return {
     provider: 'lastfm',
     sourceLabel: 'Last.fm',
@@ -353,26 +464,7 @@ function lastFmAlbumDetails(album: z.infer<typeof LastFmAlbumSchema>) {
       position: index + 1,
       url: track.url ?? null,
     })),
-    tags: [
-      ...(album.tags?.tag ?? []).map((tag) => ({
-        name: tag.name,
-        rawName: tag.name,
-        source: 'lastfm',
-        sourceKind: 'tag',
-        count: tag.count ?? null,
-        sourceId: null,
-        url: tag.url ?? null,
-      })),
-      ...(album.toptags?.tag ?? []).map((tag) => ({
-        name: tag.name,
-        rawName: tag.name,
-        source: 'lastfm',
-        sourceKind: 'toptag',
-        count: tag.count ?? null,
-        sourceId: null,
-        url: tag.url ?? null,
-      })),
-    ],
+    tags: lastFmAlbumTagEvidence(snapshot),
   } satisfies Record<string, JsonValue> & { provider: 'lastfm' }
 }
 
@@ -388,11 +480,10 @@ function readNativeAlbumDetails(provider: string, payload: unknown) {
     return group.success ? musicBrainzAlbumDetails(group.data) : null
   }
   if (provider === 'lastfm') {
-    const wrapped = z.object({ album: LastFmAlbumSchema }).safeParse(payload)
-    const album = LastFmAlbumSchema.safeParse(
-      wrapped.success ? wrapped.data.album : payload,
-    )
-    return album.success ? lastFmAlbumDetails(album.data) : null
+    const wrapped = LastFmSnapshotSchema.safeParse(payload)
+    if (wrapped.success) return lastFmAlbumDetails(wrapped.data)
+    const album = LastFmAlbumSchema.safeParse(payload)
+    return album.success ? lastFmAlbumDetails({ album: album.data }) : null
   }
   if (provider === 'discogs') {
     const master = z
@@ -448,7 +539,11 @@ function projectAlbumDetails(
         : {
             count: tag.count,
             countLabel:
-              details.provider === 'musicbrainz' ? 'votes' : 'tag count',
+              tag.sourceKind === 'album.getTopTags'
+                ? 'weight'
+                : details.provider === 'musicbrainz'
+                  ? 'votes'
+                  : 'tag count',
           }),
     })),
   }

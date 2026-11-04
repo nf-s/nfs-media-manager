@@ -514,6 +514,7 @@ async function processJob(
         await scrapeMediaItem({
           mediaItemId: mediaRecord.id,
           mediaType: mediaRecord.mediaType,
+          options: nextJob.options,
           media: {
             title: mediaRecord.title,
             artists: mediaRecord.credits

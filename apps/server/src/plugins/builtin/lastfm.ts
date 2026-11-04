@@ -8,8 +8,10 @@ import {
 import { z } from 'zod'
 import {
   LastFmAlbumSchema,
+  LastFmSnapshotSchema,
   LastFmUrlSchema,
   albumProviderDetailsMetadata,
+  lastFmAlbumTagEvidence,
 } from '@/lib/album-provider-details'
 import {
   AlbumMbidSchema,
@@ -50,6 +52,41 @@ function lastFmLookup(
   return { artist: names.artist, album: names.title }
 }
 
+async function requestLastFm(
+  context: MediaPluginScrapeContext,
+  method: 'album.getInfo' | 'album.getTopTags',
+  params: Record<string, string>,
+) {
+  const url = new URL('https://ws.audioscrobbler.com/2.0/')
+  url.search = new URLSearchParams({
+    method,
+    format: 'json',
+    api_key: albumSecret(context, 'apiKey', 'Last.fm'),
+    autocorrect: '1',
+    ...params,
+  }).toString()
+  const payload = await requestAlbumJson(
+    context,
+    'Last.fm',
+    url,
+    undefined,
+    lastFmErrorCode,
+  )
+  if ('error' in payload) {
+    const error = z
+      .object({ error: z.number().int(), message: z.string() })
+      .parse(payload)
+    if (
+      method === 'album.getInfo' &&
+      error.error === 6 &&
+      /^album not found\.?$/i.test(error.message.trim())
+    )
+      throw new ProviderItemNotFoundError('Last.fm album not found.')
+    throw new Error('Last.fm returned a service error.')
+  }
+  return payload
+}
+
 export const lastfmPlugin: MediaProviderPlugin = {
   manifest: {
     id: 'lastfm',
@@ -87,42 +124,45 @@ export const lastfmPlugin: MediaProviderPlugin = {
   async scrapeMediaItem(context) {
     requireAlbum(context, 'Last.fm')
     const lookup = lastFmLookup(context)
-    const url = new URL('https://ws.audioscrobbler.com/2.0/')
-    for (const [key, value] of Object.entries({
-      method: 'album.getInfo',
-      format: 'json',
-      api_key: albumSecret(context, 'apiKey', 'Last.fm'),
-      autocorrect: '1',
-      ...lookup,
-    }))
-      url.searchParams.set(key, value)
     const username = context.secrets['username']?.trim()
-    if (username) url.searchParams.set('username', username)
-    const payload = await requestAlbumJson(
-      context,
-      'Last.fm',
-      url,
-      undefined,
-      lastFmErrorCode,
-    )
-    if ('error' in payload) {
-      const error = z
-        .object({ error: z.number().int(), message: z.string() })
-        .parse(payload)
-      if (
-        error.error === 6 &&
-        /^album not found\.?$/i.test(error.message.trim())
-      )
-        throw new ProviderItemNotFoundError('Last.fm album not found.')
-      throw new Error('Last.fm returned a service error.')
-    }
-    const { album } = z.object({ album: LastFmAlbumSchema }).parse(payload)
+    const info = await requestLastFm(context, 'album.getInfo', {
+      ...lookup,
+      ...(username ? { username } : {}),
+    })
+    const { album } = z.object({ album: LastFmAlbumSchema }).parse(info)
     if (
       lookup['mbid'] &&
       album.mbid &&
       lookup['mbid'].toLowerCase() !== album.mbid.toLowerCase()
     )
       throw new Error('Last.fm returned a different MBID.')
+    const mbid = album.mbid || lookup['mbid']
+    const includeTopTags = context.options?.['includeTopTags'] === true
+    const payload = includeTopTags
+      ? {
+          ...info,
+          topTagsResponse: await requestLastFm(context, 'album.getTopTags', {
+            artist:
+              typeof album.artist === 'string'
+                ? album.artist
+                : album.artist.name,
+            album: album.name,
+          }),
+        }
+      : info
+    const snapshot = LastFmSnapshotSchema.parse(payload)
+    const echoedMbid = snapshot.topTagsResponse?.toptags['@attr']?.mbid
+    if (mbid && echoedMbid && mbid.toLowerCase() !== echoedMbid.toLowerCase())
+      throw new Error('Last.fm returned top tags for a different MBID.')
+    const tags = lastFmAlbumTagEvidence(snapshot).map((tag) => ({
+      name: tag.name,
+      kind: 'general',
+      source: tag.source,
+      rawName: tag.rawName,
+    }))
+    if (includeTopTags && context.options?.['tagsOnly'] === true)
+      return PluginResultSchema.parse({ payload, normalized: { tags } })
+
     const tracks = (album.tracks?.track ?? []).map((track, index) => ({
       title: track.name,
       position: index + 1,
@@ -169,14 +209,7 @@ export const lastfmPlugin: MediaProviderPlugin = {
           },
         ],
         links: [{ provider: 'lastfm', label: 'Last.fm', url: album.url }],
-        tags: [...(album.tags?.tag ?? []), ...(album.toptags?.tag ?? [])].map(
-          (tag) => ({
-            name: tag.name,
-            kind: 'general',
-            source: 'lastfm',
-            rawName: tag.name,
-          }),
-        ),
+        tags,
         tracks,
       },
     })
