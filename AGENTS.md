@@ -1,6 +1,10 @@
 # Working on Media Manager
 
-Start with the [project handoff](docs/handoff.md), then read the relevant [requirements and guides](docs/README.md), READMEs and decision notes. Find the closest working example and search for existing helpers and shared types before writing code. Follow the surrounding structure and naming; extend a utility rather than creating a parallel version.
+Start with the [application architecture](docs/handoff.md), then read the relevant [requirements and guides](docs/README.md), READMEs and decision notes. Find the closest working example and search for existing helpers and shared types before writing code. Follow the surrounding structure and naming; extend a utility rather than creating a parallel version.
+
+Create new projects as local Git repositories; do not use Sites. Deploy only on explicit request to a specified or agreed destination.
+
+Keep installation-specific Markdown in ignored `docs/.local/`. Do not publish library contents, measured library counts, deployment records, personal identifiers or real-library screenshots. Use synthetic examples instead.
 
 ## Implementation
 

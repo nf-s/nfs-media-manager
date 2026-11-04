@@ -22,8 +22,8 @@ Choose **Album CSV** for title/artist rows:
 
 ```csv
 title,artist,dateAdded
-Kind of Blue,Miles Davis,2026-01-01
-Blue,Joni Mitchell,2026-01-02
+First Example,Example Artist,2026-01-01
+Second Example,Example Artist,2026-01-02
 ```
 
 Choose **UPC CSV** when the file also has a `upc` column. Barcodes are strings, so preserve leading zeroes. Optional Spotify values can be album IDs, album URIs or HTTPS album links in a `spotify`, `spotifyId` or `spotifyUrl` column. Dates must be ISO dates/timestamps. Artist is one complete artist name; quote a CSV value when it contains a comma.

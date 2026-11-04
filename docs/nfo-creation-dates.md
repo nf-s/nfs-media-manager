@@ -6,13 +6,13 @@ The Overview shows the NFO path as selectable text. These are local filesystem p
 
 ## Existing library audit
 
-Run from the repository root, using normal dotenv configuration:
+Run from the repository root, using normal dotenv configuration. Set the shell variables below to the current scan root, the root recorded in older paths, and a new private report path:
 
 ```sh
 pnpm --filter @repo/server exec tsx scripts/audit-nfo-dates.ts \
-  --root /Volumes/movies \
-  --map /mnt/nas/movies=/Volumes/movies \
-  --report /tmp/nfo-dates-dry-run.json
+  --root "$CURRENT_ROOT" \
+  --map "$OLD_ROOT=$CURRENT_ROOT" \
+  --report "$REPORT_PATH"
 ```
 
 `--root` may be omitted when `SCAN_DIR` is configured. Repeat `--map oldRoot=currentRoot` for additional explicit roots. Reports use exclusive creation and restrictive permissions; choose a new filename for each run. No credentials, scrapers or provider requests are used.

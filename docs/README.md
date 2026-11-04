@@ -1,6 +1,6 @@
 # Documentation
 
-Start with the [project handoff](handoff.md) for the data model, decisions and open work. See [production operations](production-operations.md) before changing dispatch or deploying; local setup is not the production runbook. Coding agents should also read [AGENTS.md](../AGENTS.md).
+Start with [getting started](getting-started.md) for installation or [application architecture](handoff.md) for the data model. Coding agents should also read [AGENTS.md](../AGENTS.md).
 
 ## Using the app
 
@@ -26,6 +26,6 @@ Back up the database and encryption key before migrations or repair commands.
 - [Development commands and checks](development.md)
 - [UI guidelines](dev-guidelines-ui.md) and [backend guidelines](dev-guidelines-backend.md)
 - [Job worker](job-worker.md)
-- [Feature requirements](requirements/README.md) and [verification history](requirements/verification.md)
+- [Feature requirements](requirements/README.md) and [verification checklist](requirements/verification.md)
 
-The requirements and verification history describe development decisions and past checks. Start with Getting started for the current installation steps.
+Keep installation-specific Markdown in ignored `docs/.local/`. Use only synthetic examples and screenshots in public documentation.

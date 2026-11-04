@@ -1,0 +1,5 @@
+# Installation notes and private audit evidence stay on the operator's machine.
+/.local/
+/cloudflare-deployment.md
+/local-worker.md
+/mobile-home-screen.md

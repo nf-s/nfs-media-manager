@@ -1,8 +1,8 @@
 # Albums, music and playlists
 
-## Migration baseline and retained data
+## Album metadata
 
-`Models/Album.tsx` and `music/clean/index.ts` define title, artists, artwork, duration, release/added dates, genres, countries, playlist memberships, provider IDs and links. Latest cleaned album title/art/artist selection is authoritative for initial browse parity; a different release returned by another service must not silently replace it.
+Preserve title, artists, artwork, duration, release/added dates, genres, countries, playlist memberships, provider IDs and links. Latest cleaned album title/art/artist selection is authoritative for initial browse parity; a different release returned by another service must not silently replace it.
 
 Retain, display, filter and sort scrobbles; RYM rating/votes; Discogs rating/votes/popularity; Metacritic rating/votes; Spotify popularity; and Last.fm listeners. Preserve raw rating units, distinguish milliseconds/seconds correctly, and use UTC dates. Zero is a valid value. Default browse order is added date descending.
 
@@ -23,4 +23,4 @@ Spotify audio features are intentionally discontinued. Remove existing acousticn
 
 ## Acceptance
 
-Reconcile all 3,360 migration album rows against cleaned input, excluding only retired audio features while preserving every other nonempty metric, dates and links. Test an album with zero values, one with many genres, one missing artwork, one with Spotify data and one with playlist membership. Verify raw snapshots and track lists match input apart from this targeted removal without making Spotify requests. A cleanup dry run after apply must report zero changed rows; retained backup copies must contain the original removed values.
+Reconcile every album in the migration fixture against its cleaned input, excluding only retired audio features while preserving every other nonempty metric, dates and links. Test an album with zero values, one with many genres, one missing artwork, one with Spotify data and one with playlist membership. Verify raw snapshots and track lists match input apart from this targeted removal without making Spotify requests. A cleanup dry run after apply must report zero changed rows; retained backup copies must contain the original removed values.

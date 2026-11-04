@@ -30,7 +30,7 @@ Snapshots keep their IDs, payloads, checksums and timestamps; `scrapeJobId` foll
 
 ## Limits And Safety
 
-The service runs atomically with queue advisory lock `614104`. Apply also briefly locks affected tables against concurrent writers and refuses lock contention after five seconds. Use a quiet maintenance window. It imports no queue, worker or provider code.
+The service runs atomically with the queue advisory lock. Apply also briefly locks affected tables against concurrent writers and refuses lock contention after five seconds. Use a quiet maintenance window. It imports no queue, worker or provider code.
 
 Queued/running multi-item parents, missing media identities and duplicate media identities block the entire apply. Retry links are resolved by media identity and provider; unknown or mismatched links are removed from split jobs but retained in original-options provenance. If splitting would make an inbound retry link from an untouched job incorrect, apply refuses rather than editing that single-item job. Resolve these cases separately.
 

@@ -1,6 +1,6 @@
 # Retired Spotify audio features
 
-This removes existing values, rather than only hiding columns. Do not run apply until the database has a verified restorable backup and the dry-run report has been reviewed. Source library JSON and the old repository are read-only; neither command below reads or rewrites those files. No provider registry, scraper, import runner or job queue is loaded.
+This removes existing values, rather than only hiding columns. Do not run apply until the database has a verified restorable backup and the dry-run report has been reviewed. Neither command reads or rewrites source library files. No provider registry, scraper, import runner or job queue is loaded.
 
 ## Audit
 

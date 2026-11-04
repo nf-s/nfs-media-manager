@@ -22,7 +22,7 @@ Connect is an explicit authenticated POST from a trusted app origin. The public 
 
 ## Preview and Commit
 
-`GET /api/v1/spotify/status` is local-only. Spotify's saved-albums endpoint does not document a sort parameter or guarantee saved-date order. A live five-album check on 2026-10-27 returned dates out of order. The import UI permits a preview with **Read all** unchecked; it sends `{scanAll: false, limit: 20, offset: 0, confirmBroadRun: false}` for a bounded 20-album read, not necessarily the newest additions across the whole library. Checking **Read all** explicitly confirms a full-library scan and sends `{scanAll: true, limit: 20, offset: 0, confirmBroadRun: true}`. For a full scan, `limit` controls the newest results shown, not the number read. The server reads sequential pages of at most 50, sorts by Spotify's `added_at` descending, and only then takes the requested newest albums. The preview exposes Added dates and scanned counts. It never uses playback or release dates for this ordering.
+`GET /api/v1/spotify/status` is local-only. Spotify's saved-albums endpoint does not document a sort parameter or guarantee saved-date order. The import UI permits a preview with **Read all** unchecked; it sends `{scanAll: false, limit: 20, offset: 0, confirmBroadRun: false}` for a bounded 20-album read, not necessarily the newest additions across the whole library. Checking **Read all** explicitly confirms a full-library scan and sends `{scanAll: true, limit: 20, offset: 0, confirmBroadRun: true}`. For a full scan, `limit` controls the newest results shown, not the number read. The server reads sequential pages of at most 50, sorts by Spotify's `added_at` descending, and only then takes the requested newest albums. The preview exposes Added dates and scanned counts. It never uses playback or release dates for this ordering.
 
 Full scans require confirmation even for a one-album preview, start at offset zero, and stop if the reported library exceeds 10,000 albums. Duplicate IDs, changing totals, incomplete pagination, and provider errors abort without staging partial newest results. Overlapping previews for one user are rejected in the current single-process server. Returned next URLs are never followed. Every request uses the same persistent rate gate; discovery does not import canonical albums or queue jobs. Full-scan behavior is covered with fixtures, not a live full-library test.
 
@@ -36,7 +36,7 @@ Existing albums are always unchanged: no title/date/identifier overwrite, provid
 
 ## Verification and API Notes
 
-Automated tests use mocked HTTP, mocked persistence and authenticated route fixtures; no live provider calls, queue workers or production imports run in tests. Chrome verification on 2026-10-27 confirmed both simulated denial and successful live authorization through the loopback callback, returning to the localhost app with its session intact. After the account owner signed in and the exact callback was registered in Spotify's dashboard, token exchange succeeded and the local status endpoint confirmed `connected: true` with `user-library-read`. No saved-album discovery or scraping was triggered by these checks.
+Automated tests use mocked HTTP, mocked persistence and authenticated route fixtures; no live provider calls, queue workers or production imports run in tests.
 
 Official references verified 2026-10-27:
 

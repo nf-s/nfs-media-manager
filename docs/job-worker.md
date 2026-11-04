@@ -1,6 +1,6 @@
 # Job Worker Lifecycle
 
-This describes the local Node server. Production uses a different [Cloudflare dispatch path](production-operations.md#dispatch-and-provider-policy); do not start this worker against the production database.
+This describes the Node server. Do not start a second dispatcher against the same database. See [production safeguards](production-operations.md#dispatch-and-provider-policy).
 
 `apps/server/src/services/job-worker.ts` owns worker startup and shutdown. The
 dispatcher remains in `services/jobs.ts`; its `shouldDispatch` predicate stops
