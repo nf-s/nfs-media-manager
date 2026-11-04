@@ -4,6 +4,8 @@ A personal library for films and albums. Bring in your collection, enrich it wit
 
 This project is a fork of [CSDR Cloud Spatial App](https://github.com/SustainableDevelopmentReform/csdr-cloud-spatial-app), adapted into a personal media library. See [attribution and licenses](NOTICE) for its origins and retained upstream notices.
 
+![Film library with artwork and provider ratings](docs/screenshots/films.jpg)
+
 ## What it does
 
 - **Browse your collection.** Search titles, people and tags; filter and sort metadata; switch between grid and table views. Open details without losing your place.
@@ -47,15 +49,21 @@ The [getting started guide](docs/getting-started.md) covers the full setup, envi
 
 Choose **Providers → Credentials** to configure a service, **Activity** to inspect requests and **Settings** to see its limits. Only configure the services you want to use. Some services require an account or paid API access. Serply uses indexed search results, so its ratings can lag the source.
 
+![Album library](docs/screenshots/albums.jpg)
+
 ## Working with your library
 
 Use the Films/Albums selector to switch libraries. Filters, sorting, visible table columns and grid density are saved separately. **Views** holds grid density and saved album views; **Ranges** narrows numeric and date fields.
 
 Film and album details bring together ratings, credits, tags, provider links and history. Correct metadata in Edit; those overrides survive later imports and refreshes.
 
+![Film details](docs/screenshots/film-details.jpg)
+
 **Jobs → Metadata** handles both first-time lookups and refreshes. Select items and providers, review the total, then confirm. In job history, select an action and review it before applying it. Viewing a page never starts a metadata job.
 
-![Album metadata workspace with one synthetic album and no jobs selected](docs/screenshots/album-metadata-fixture.png)
+![Job history](docs/screenshots/jobs.jpg)
+
+![Provider activity and settings navigation](docs/screenshots/providers.jpg)
 
 ## Documentation
 
