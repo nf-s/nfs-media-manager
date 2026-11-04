@@ -167,6 +167,8 @@ Stop the app before upgrading, install the lockfile's dependencies, rebuild the 
 
 ## Hosting beyond your computer
 
+This section is for self-hosting the Node processes. For the owner's Cloudflare/Neon deployment, read [production operations](production-operations.md) instead. Never point the development server, local dispatcher or test suite at that production database.
+
 The quick start is a development setup. For an HTTPS deployment, build the web app, run the API and web processes separately, and proxy `/api/*` to Hono on the same public origin. Set `APP_URL`, `AUTH_BASE_URL` and `TRUSTED_ORIGINS` to that origin; set `DEV_USE_INTERNAL_BACKEND_URL_IN_FRONTEND=false`; keep `INTERNAL_BACKEND_URL` reachable from the web server. Production auth uses secure cookies, so HTTP sign-in will not work.
 
 Run one API worker process per database. Use a durable PostgreSQL service with verified TLS, private database networking and regular backups. Migrate before starting the API. Provider secrets, OAuth callback query strings and local plugins must remain out of public logs and source control. There is no supported container image or one-click production deployment in this release.

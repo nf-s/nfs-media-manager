@@ -102,3 +102,11 @@ The user subsequently selected underlying-album ratings and genres rather than e
 - Nigeria 70 - Funky Lagos: the underlying 2001 compilation root supplied 3.9 from 551 votes; a matching review-page genre header supplied Afrobeat. The library retains its 2009-03-23 date and abridged 17-track configuration. Personal review stars were not used.
 
 Both jobs succeeded; their raw responses, normalized snapshots and Chrome rating destinations were checked. E2-E4 required one search, Nigeria 70 five; concurrency, spacing, budgets and cooldown handling were unchanged. The final safety check showed no halt or accumulated failures. Private follow-up evidence is in `underlying-album-outcomes.json` and `underlying-album-responses.json`; these jobs are separate from the original cohort manifest above. Dreamcast Summer Songs and Lanquidity already referenced their reviewed underlying albums and needed no further requests. Incorrect legacy Discogs associations noticed on E2-E4 and Nigeria 70 remain outside this RYM repair.
+
+## Saved tag replay (2026-11-04)
+
+The replay scanned 355 albums with current Serply results, not the earlier 267-job cohort. Saved evidence added **154 net album-tag memberships across 44 albums**: 83 genre and 71 descriptor memberships. It created 26 previously unseen tags and recorded 215 source occurrences. In total, 62 albums changed: 44 gained memberships and 18 gained only provenance for existing memberships.
+
+No new Serply searches or direct RYM requests were made, and ratings were unchanged. A second preview over the same 355 albums proposed zero tags, memberships or occurrences. Use the [saved-tag replay](album-providers.md#replaying-saved-tags) before considering fresh requests.
+
+One useful regression case is Clark's _Steep Stims II_. In the saved results, 3.4 from 470 ratings belongs to _Steep Stims_, the preceding album. The sequel has a matching release result and genres, but no aggregate score; 3.5 on a separate result is one person's review of the predecessor. Keep the sequel's genres and leave its score empty. The [matching tests](../apps/server/src/plugins/builtin/__tests__/serply.test.ts) exercise both titles against the same results.

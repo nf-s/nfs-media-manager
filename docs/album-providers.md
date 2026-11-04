@@ -84,6 +84,8 @@ Run `pnpm --filter @repo/server exec tsx scripts/replay-rym-tags.ts --report=/pr
 
 Replay considers successful saved Serply results for the current release identity, including earlier confirmed snapshots of the same issue. Retained structured Google genre names can disambiguate flattened words; they do not link a Google search result to an album. The replay inserts only missing album tags, memberships and source occurrences after resolving existing tag identities. It performs no searches and does not replace snapshots, ratings or canonical media fields.
 
+The [2026-11-04 replay results](serply-search-notes.md#saved-tag-replay-2026-11-04) measure new memberships, not rating recoveries. For example, a regression fixture pairs a matching Marina Herlop _Pripyat_ URL with an indexed title naming _Dja Dja_ and a snippet reporting 3.4 from 1,836 ratings. The adapter rejects it even with a saved reference: a plausible score and matching artist do not establish the album.
+
 ## Current Service Constraints
 
 MusicBrainz requires an identifying User-Agent and at most one request per second. The plugin uses configured app name/version/contact and the JSON release-group API, including artists, tags, genres and URL relations in the same lookup. Public reads need no account authentication. [Official API documentation](https://musicbrainz.org/doc/MusicBrainz_API), [search reference](https://musicbrainz.org/doc/MusicBrainz_API/Search).
@@ -109,6 +111,16 @@ Future explicit scrapes retain these details from responses already needed by th
 An album job with `options: { "includeTopTags": true }` requests [album.getTopTags](https://www.last.fm/api/show/album.getTopTags) after a successful `album.getInfo`. It uses the resolved album identity and the same provider request gate. No other job gains an extra request. The snapshot preserves the original album and the dedicated response separately. Last.fm's count is a relative weight out of 100, not a vote count. The adapter retains all returned rows in the raw response but only adds dedicated tags with weight at least 10 to the usual album tag merge. Ordinary album tags are retained even if absent from the dedicated list.
 
 For tag enrichment without replacing tracks, artwork, links or other canonical fields, set both `includeTopTags: true` and `tagsOnly: true`. Use one explicit album per job.
+
+In the 2026-11-04 production pilot, the MBID-based `album.getTopTags` request for _Kid A_ returned HTTP 400. The successful lookup used the artist and album names returned by `album.getInfo`. Use those resolved names for the second call, not an MBID attempt followed by a retry. This does not change MBID support for the first call.
+
+| Album                    | Embedded tags | Top tags returned | Weight ≥10 | Distinct tags merged | Net new memberships |
+| ------------------------ | ------------: | ----------------: | ---------: | -------------------: | ------------------- |
+| Kid A                    |             5 |                10 |          7 |                    9 | 1 (`2000`)          |
+| E2-E4 (Mixed)            |             5 |                10 |         10 |                   10 | 1 (`edm`)           |
+| Nigeria 70 - Funky Lagos |             5 |                 0 |          0 |                    5 | 0                   |
+
+Keep ranked tags opt-in: the three albums gained only two memberships, one a year rather than a genre. Prefer retained MusicBrainz tags/genres and Discogs genres/styles where release identity is established; neither requires a new source integration. Bandcamp release tags and AllMusic moods/styles are candidates for separate evaluation, not enabled providers. Before adding either, establish permitted access, album-level matching and whether the labels add anything beyond retained evidence.
 
 The Last.fm boundary is checked against the [official album.getInfo example](https://www.last.fm/api/show/album.getInfo), [client schemas](https://github.com/ansango/lastfm-api/blob/54494963c25177aaf13a29ec7eeb09efc0d0a85b/src/api/album/schemas.ts), [client fixtures](https://github.com/ansango/lastfm-api/blob/54494963c25177aaf13a29ec7eeb09efc0d0a85b/src/__tests__/album.test.ts), and retained local responses. The client types supplement the official XML example; neither is treated as an exhaustive specification of JSON wire shapes.
 

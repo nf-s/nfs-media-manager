@@ -1,6 +1,6 @@
 # Browsing and navigation
 
-## Existing behaviour
+## Historical migration baseline
 
 `Browser.tsx`, `ImageGrid.tsx`, `TableGrid.tsx`, `SelectedRowOverlay.tsx`, `ColumnState.ts`: library switcher, table/grid toggle, count, sorting and column picker share a toolbar. Preferences are stored separately per library. The table has 35px rows, resizable columns, sortable headings and double-click details. The grid loads groups of 100 near the viewport, uses square album art and portrait film posters, and shows title, creator, release and the current sort metric. Details open above the still-mounted list.
 
@@ -16,6 +16,8 @@
 - BROWSE-07: Persist view, columns, sorting and filters independently for albums and films; URL state wins over stored defaults. Mobile controls wrap sensibly, cards shrink to at least two columns, and touch actions do not depend on hover.
 - BROWSE-08: Loading, errors, empty results and completed pagination are explicit. No blank infinite spinner. Show filtered total, not just currently loaded count.
 - BROWSE-10: Grid density is configurable and saved independently per library. Compact mobile cards prioritize artwork and legible title/artist information, with touch-accessible details and outbound links. Changing density recomputes virtual row geometry without unbounded loading, overlap or horizontal page overflow. Album titles linked to Spotify must not be accompanied by a duplicate Spotify action in the same card or detail heading.
+
+- BROWSE-11: One Library selector scopes Browse, Tags, Imports, Jobs and Providers. Switching libraries keeps the section where applicable, not stale previews, selections or item links. The header activity control still shows both libraries and links to the correct scoped jobs or imports. See [workspace navigation](../import-navigation.md).
 
 ## Acceptance
 

@@ -1,6 +1,6 @@
 # Verification and Remaining Work
 
-Verified locally on 2026-10-27, on `refactor`. This is an implementation status report, not a claim that every requirement below is complete.
+Historical migration evidence from 2026-10-27 and subsequent follow-ups on `refactor`. Counts, test results, live checks and gaps below describe those checks, not the current installation. For current behavior use the [requirements index](README.md), [import workflows](../importing.md), [album providers](../album-providers.md) and [worker lifecycle](../job-worker.md).
 
 ## Delivered
 
@@ -35,7 +35,7 @@ The local report is ignored at `apps/server/data/legacy-reconciliation.json`. Tw
 - Chrome DevTools: masked credential screen, conservative job form and two tiny local web imports with success/progress. No provider test, scrape or playlist-sync action was executed. The two pre-existing completed scrape jobs were unchanged.
 - Direct and percent-encoded legacy data URLs returned 404 after the public-file guard was added; normal authenticated API reads remained available.
 
-## Remaining Work
+## Gaps at the time of the audit
 
 - Film CSV upload/preview and server-configured NFO scanning are implemented (see workflow follow-up below). Direct album/UPC CSV imports remain unimplemented.
 - Live music scraping, Spotify saved-album account discovery/OAuth and remote playlist publishing are not implemented on this branch. Music provider payloads, metrics, links and playlist definitions are imported and browseable. These are separate from the confirmed removal of the embedded player.

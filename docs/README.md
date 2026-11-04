@@ -1,5 +1,7 @@
 # Documentation
 
+Start with the [project handoff](handoff.md) for the data model, decisions and open work. See [production operations](production-operations.md) before changing dispatch or deploying; local setup is not the production runbook. Coding agents should also read [AGENTS.md](../AGENTS.md).
+
 ## Using the app
 
 - [Getting started](getting-started.md): installation, account setup, environment variables, provider API keys and troubleshooting.
