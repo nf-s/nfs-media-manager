@@ -37,6 +37,13 @@ export default async function RootLayout({
         <Providers appUrl={env.APP_URL ?? ''} apiBaseUrl={getApiBaseUrl()}>
           {children}
         </Providers>
+        {env.APP_URL === 'https://nfs-media-manager.nf-s.workers.dev' && (
+          <script
+            defer
+            src="https://static.cloudflareinsights.com/beacon.min.js"
+            data-cf-beacon='{"token":"a43244f52d2b4fbcad1bab12f441422f"}'
+          />
+        )}
       </body>
     </html>
   )
