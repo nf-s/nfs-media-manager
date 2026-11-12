@@ -55,7 +55,10 @@ import {
 } from '@/schemas/db'
 import { applyProviderResultInTransaction } from '@/services/provider-state'
 import { getProviderReferenceHints } from '@/services/provider-reference-hints'
-import { wakeJobProvider } from '@/services/job-dispatch-context'
+import {
+  resumeJobProvider,
+  wakeJobProvider,
+} from '@/services/job-dispatch-context'
 import type { CloudJobOutcome } from '@/services/cloud-job-contract'
 import {
   prepareLastfmSyncRun,
@@ -854,6 +857,8 @@ async function insertTaskJob(
 /**
  * Queues a task job, or returns the one already queued or running. With
  * `retryOf`, the failed or cancelled original is linked to its replacement.
+ * Unless `scheduled`, the request is the owner's and restarts a dispatcher
+ * that stopped after errors; a cooldown or access halt still refuses it.
  */
 export async function createTaskJob(
   task: string,
@@ -862,6 +867,7 @@ export async function createTaskJob(
     retryOf?: string
     skipExistingRetry?: boolean
     confirmRunning?: boolean
+    scheduled?: boolean
   } = {},
 ): Promise<Job> {
   const definition = taskJobs.get(task)
@@ -952,7 +958,8 @@ export async function createTaskJob(
     created = true
     return id
   })
-  if (created) await wakeJobProvider(definition.provider)
+  if (!scheduling.scheduled) await resumeJobProvider(definition.provider)
+  else if (created) await wakeJobProvider(definition.provider)
   const job = await getJobRecord(jobId)
   if (!job)
     throw new ServerError({ statusCode: 500, message: 'Failed to create job' })

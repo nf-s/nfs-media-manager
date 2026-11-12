@@ -46,6 +46,10 @@ const PAGE_SPACING_MS = 1000
 const CHUNK_PAGES = 300
 const CHUNK_BUDGET_MS = 8 * 60 * 1000
 const LOG_EVERY_PAGES = 50
+// Waits before repeating a page after a temporary Last.fm failure.
+const RETRY_DELAYS_MS = [5000, 20000, 60000]
+// Operation failed, service offline and temporarily unavailable.
+const TEMPORARY_ERROR_CODES = [8, 11, 16]
 const MAX_LINK_CANDIDATES = 10
 // Offline scrobbles can arrive later with older timestamps.
 const OVERLAP_SECONDS = 7 * 24 * 60 * 60
@@ -414,12 +418,54 @@ async function fetchPage(
     { headers: { 'User-Agent': USER_AGENT } },
     lastFmErrorCode,
   )
-  if ('error' in payload) throw new Error('Last.fm returned a service error.')
+  if ('error' in payload) {
+    const code = z.object({ error: z.number().int() }).safeParse(payload)
+    if (code.success && TEMPORARY_ERROR_CODES.includes(code.data.error))
+      throw new ProviderRequestError(
+        'Last.fm returned a temporary service error.',
+        'request-failed',
+      )
+    throw new Error('Last.fm returned a service error.')
+  }
   const page = RecentTracksSchema.parse(payload)
   const attributes = page.recenttracks['@attr']
   if (attributes.totalPages > 0 && attributes.page !== run.nextPage)
     throw new Error('Last.fm returned a different page than requested.')
   return page
+}
+
+/**
+ * Repeats a page after a failed request, timeout or temporary service error.
+ * Rate limits, access denials and invalid responses are not repeated.
+ */
+async function fetchPageWithRetry(
+  request: ReturnType<typeof createProviderRequest>,
+  configured: NonNullable<Awaited<ReturnType<typeof credentials>>>,
+  run: SyncRow,
+  context: LastfmSyncJobContext,
+  retryDelaysMs: number[],
+) {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      const page = await fetchPage(request, configured, run)
+      if (attempt > 0) await recordProviderSuccess('lastfm')
+      return page
+    } catch (error) {
+      const wait = retryDelaysMs[attempt]
+      if (
+        wait === undefined ||
+        !(error instanceof ProviderRequestError) ||
+        error.code !== 'request-failed' ||
+        !(await context.isActive())
+      )
+        throw error
+      await context.log(
+        'warn',
+        `Page ${run.nextPage}: ${error.message}. Retry ${attempt + 1} of ${retryDelaysMs.length} in ${Math.round(wait / 1000)} seconds.`,
+      )
+      await delay(wait)
+    }
+  }
 }
 
 async function insertScrobbles(
@@ -508,12 +554,18 @@ export type LastfmSyncJobResult =
   | { outcome: 'stopped' }
   | { outcome: 'failed'; error: unknown }
 
-type ChunkOptions = { maxPages?: number; budgetMs?: number; spacingMs?: number }
+type ChunkOptions = {
+  maxPages?: number
+  budgetMs?: number
+  spacingMs?: number
+  retryDelaysMs?: number[]
+}
 
 /**
  * One sync job: fetches pages from the saved checkpoint until the run
  * completes or the chunk limit is reached. `continue` asks the job system to
- * queue a follow-on job. A failure ends the job; nothing retries automatically.
+ * queue a follow-on job. A temporary failure repeats its page a few times; any
+ * other failure, or one that persists, ends the job.
  */
 export async function runLastfmSyncJob(
   context: LastfmSyncJobContext,
@@ -521,6 +573,7 @@ export async function runLastfmSyncJob(
 ): Promise<LastfmSyncJobResult> {
   const maxPages = options.maxPages ?? CHUNK_PAGES
   const spacingMs = options.spacingMs ?? PAGE_SPACING_MS
+  const retryDelaysMs = options.retryDelaysMs ?? RETRY_DELAYS_MS
   const deadline = Date.now() + (options.budgetMs ?? CHUNK_BUDGET_MS)
   const token = randomUUID()
   let account: string | null = null
@@ -535,7 +588,13 @@ export async function runLastfmSyncJob(
       if (!run) return { outcome: 'complete', message: 'No sync run was open.' }
       // A run interrupted after its last page only has linking left to do.
       if (run.totalPages === null || run.nextPage <= run.totalPages) {
-        const page = await fetchPage(request, configured, run)
+        const page = await fetchPageWithRetry(
+          request,
+          configured,
+          run,
+          context,
+          retryDelaysMs,
+        )
         // A page that arrives after cancellation is discarded.
         if (!(await context.isActive())) return { outcome: 'stopped' }
         pages += 1

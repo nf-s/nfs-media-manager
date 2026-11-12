@@ -448,6 +448,33 @@ describe('durable provider dispatch', () => {
     },
   )
 
+  it('clears a safety stop on an explicit restart once its slot is released, and keeps a pause', async () => {
+    const f = fixture(1)
+    await f.coordinator.setPaused('fixture', false)
+    await f.coordinator.alarm()
+    const message = f.message()
+    await f.coordinator.begin(message)
+    await f.coordinator.recordOutcome(message, 'stopped')
+
+    await f.coordinator.resume('fixture')
+    expect(f.state()?.stopped).toBe(true)
+
+    f.records.set(message.jobId, 'failed')
+    await f.coordinator.finish(message)
+    await f.recreate().alarm()
+    expect(f.sent).toHaveLength(1)
+
+    await f.recreate().resume('fixture')
+    expect(f.state()).toMatchObject({ stopped: false, failures: 0 })
+    await f.coordinator.alarm()
+    expect(f.sent).toHaveLength(2)
+
+    const paused = fixture(1)
+    await paused.coordinator.resume('fixture')
+    expect(paused.state()).toMatchObject({ paused: true, stopped: false })
+    expect(paused.alarmAt()).toBeNull()
+  })
+
   it('resets consecutive serial failures on success without clearing a safety stop', async () => {
     const f = fixture(1)
     await f.coordinator.setPaused('fixture', false)

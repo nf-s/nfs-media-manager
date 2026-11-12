@@ -18,7 +18,9 @@ Open Imports → Last.fm scrobbles and choose **Sync now**. Opening the page onl
 - Later syncs read from seven days before the previous sync's end, so scrobbles submitted late with older timestamps are picked up. Scrobbles already stored are not duplicated.
 - Each run fixes its time window when it is queued. New listening during a run cannot shift page numbers; it is picked up by the next sync.
 - A page and its checkpoint are saved together. A failed or cancelled run resumes at the next unread page.
-- A rate limit, access error, invalid response or unexpected page fails the job. Nothing retries automatically. Retry the job in Jobs, or choose **Resume sync**, once any Last.fm cooldown has passed.
+- A failed request, a timeout, an HTTP 5xx response or a temporary Last.fm service error repeats the same page up to three times, after 5, 20 and 60 seconds. Each retry is written to the job log. These failures delay the next Last.fm request by five seconds and do not open a provider cooldown.
+- A rate limit, access error, invalid response, unexpected page or a temporary failure that outlasts its retries fails the job. A failed job is not retried automatically. Retry the job in Jobs, or choose **Resume sync**, once any Last.fm cooldown has passed.
+- A failed job can stop the Last.fm dispatcher in the hosted deployment. **Sync now**, **Resume sync** and retrying the job restart it; a deliberate pause, a cooldown and an access halt are not cleared. The schedule never restarts it.
 - Cancelling the job stops the sync before the next request and discards a page still in flight. Stored scrobbles are kept.
 - An interrupted worker leaves the job failed, like any other job.
 

@@ -26,7 +26,7 @@ export async function queueDueLastfmSync(now = Date.now()): Promise<boolean> {
   if (!status.nextScheduledAt || Date.parse(status.nextScheduledAt) > now)
     return false
   try {
-    await createTaskJob(LASTFM_SCROBBLE_SYNC_TASK, null)
+    await createTaskJob(LASTFM_SCROBBLE_SYNC_TASK, null, { scheduled: true })
     return true
   } catch (error) {
     // A cooldown or halt defers the sync to a later check.

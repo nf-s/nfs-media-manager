@@ -97,7 +97,15 @@ export const lastfmPlugin: MediaProviderPlugin = {
     mediaTypes: ['album'],
     identifierTypes: ['mbid', 'url'],
     supportsNameLookup: true,
-    rateLimit: { maxConcurrent: 1, minTimeMs: 200 },
+    // Last.fm's HTTP 5xx responses are backend faults, not throttling: wait
+    // briefly before the next request without opening a provider cooldown.
+    // Rate limits and access denials keep their own cooldown and halt.
+    rateLimit: {
+      maxConcurrent: 1,
+      minTimeMs: 200,
+      errorBackoffMs: 5000,
+      failureCooldownMs: 0,
+    },
     secrets: [
       {
         key: 'apiKey',

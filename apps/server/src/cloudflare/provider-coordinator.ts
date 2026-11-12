@@ -46,6 +46,10 @@ export class ProviderCoordinator extends DurableObject<CloudflareBindings> {
     return this.coordinator.wake(provider)
   }
 
+  resume(provider: string): Promise<void> {
+    return this.coordinator.resume(provider)
+  }
+
   getStatus(provider: string) {
     return this.coordinator.getStatus(provider)
   }

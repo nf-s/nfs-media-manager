@@ -43,7 +43,11 @@ vi.mock('@/services/lastfm-scrobbles', async (importOriginal) => {
   return {
     ...actual,
     runLastfmSyncJob: (context: LastfmSyncJobContext) =>
-      actual.runLastfmSyncJob(context, { maxPages: 1, spacingMs: 0 }),
+      actual.runLastfmSyncJob(context, {
+        maxPages: 1,
+        spacingMs: 0,
+        retryDelaysMs: [0, 0],
+      }),
   }
 })
 vi.mock('@/lib/provider-secrets', () => ({
@@ -366,6 +370,55 @@ describe('Last.fm scrobble sync jobs with offline HTTP and a temporary database'
     ])
     expect(jobs[1]?.options['retryJobId']).toBe(jobs[2]?.id)
     expect((await listJobs({ status: 'attention' })).totalCount).toBe(0)
+  })
+
+  it('repeats a page after a temporary Last.fm failure without failing the job', async () => {
+    request.mockImplementationOnce(
+      async () => new Response('Internal error', { status: 500 }),
+    )
+    respond(
+      { error: 8, message: 'Operation failed' },
+      page(1, 1, [scrobble(recent, 'First track')]),
+    )
+    const status = await syncToEnd()
+
+    expect(status).toMatchObject({
+      state: 'complete',
+      storedScrobbles: 1,
+      job: { status: 'succeeded' },
+    })
+    expect(request).toHaveBeenCalledTimes(3)
+    expect(requestedUrl(2).searchParams.get('page')).toBe('1')
+    const [safety] = await databaseClient
+      .select()
+      .from(schema.providerRequestState)
+    expect(safety).toMatchObject({ failureCount: 0, cooldownUntil: null })
+    const logs = await databaseClient.select().from(schema.scrapeJobLog)
+    expect(logs.filter((log) => log.level === 'warn')).toHaveLength(2)
+  })
+
+  it('fails the job when a temporary failure persists, without a provider cooldown', async () => {
+    request.mockImplementation(async () =>
+      Response.json({ error: 8, message: 'Operation failed' }),
+    )
+    const status = await syncToEnd()
+
+    expect(status).toMatchObject({ state: 'failed', storedScrobbles: 0 })
+    expect(status.errorMessage).toContain('temporary service error')
+    expect(request).toHaveBeenCalledTimes(3)
+    const [safety] = await databaseClient
+      .select()
+      .from(schema.providerRequestState)
+    expect(safety?.cooldownUntil).toBeNull()
+
+    const { queueLastfmSync } = await import('@/services/lastfm-sync-jobs')
+    request.mockReset()
+    respond(page(1, 1, [scrobble(recent, 'First track')]))
+    await queueLastfmSync(null)
+    expect(await drain()).toMatchObject({
+      state: 'complete',
+      storedScrobbles: 1,
+    })
   })
 
   it('retries a failed sync job from the jobs API', async () => {

@@ -126,6 +126,22 @@ export class CloudJobCoordinator {
     })
   }
 
+  /**
+   * The owner explicitly restarted work: clear a safety stop once its slots
+   * are released. A pause and the job selection are left as they are.
+   */
+  resume(provider: string): Promise<void> {
+    return this.exclusive(async () => {
+      const state = await this.state(provider)
+      if (!state) return
+      if (state.stopped && state.slots.length === 0) {
+        state.stopped = false
+        state.failures = 0
+      }
+      await this.save(state, this.now() + 1)
+    })
+  }
+
   getStatus(provider: string): Promise<CloudJobCoordinatorState | null> {
     return this.exclusive(() => this.state(provider))
   }

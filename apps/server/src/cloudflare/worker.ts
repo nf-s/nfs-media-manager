@@ -54,12 +54,23 @@ function run<T>(
             },
           },
           () =>
-            withJobDispatchWakeup(async (provider) => {
-              if (env.SCRAPING_ENABLED)
-                await bindings.PROVIDER_COORDINATORS.getByName(provider).wake(
-                  provider,
-                )
-            }, execute),
+            withJobDispatchWakeup(
+              {
+                wake: async (provider) => {
+                  if (env.SCRAPING_ENABLED)
+                    await bindings.PROVIDER_COORDINATORS.getByName(
+                      provider,
+                    ).wake(provider)
+                },
+                resume: async (provider) => {
+                  if (env.SCRAPING_ENABLED)
+                    await bindings.PROVIDER_COORDINATORS.getByName(
+                      provider,
+                    ).resume(provider)
+                },
+              },
+              execute,
+            ),
         ),
       ),
   )
