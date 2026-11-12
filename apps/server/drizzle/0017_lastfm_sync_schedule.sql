@@ -1,0 +1,1 @@
+ALTER TABLE "lastfm_sync" ADD COLUMN "schedule" text DEFAULT 'daily' NOT NULL;

@@ -9,7 +9,7 @@ import { getScrapePlugin, listLoadedScrapePlugins } from '@/plugins/registry'
 import { consumeCloudJobMessage } from '@/services/cloud-job-queue'
 import { withJobDispatchWakeup } from '@/services/job-dispatch-context'
 import { dispatchQueuedImports, executeQueuedImport } from '@/services/imports'
-import { continueScheduledLastfmSync } from '@/services/lastfm-scrobbles'
+import { queueDueLastfmSync } from '@/services/lastfm-sync-jobs'
 import { withCloudQueue } from '@/lib/runtime'
 import { withCloudDatabase } from './db'
 import { withProviderTransport } from '@/services/provider-transport'
@@ -197,15 +197,12 @@ export default {
     await run(bindings, async () => {
       await dispatchQueuedImports()
       if (env.SCRAPING_ENABLED) {
+        await queueDueLastfmSync()
         for (const plugin of await listLoadedScrapePlugins()) {
           await bindings.PROVIDER_COORDINATORS.getByName(
             plugin.manifest.id,
           ).wake(plugin.manifest.id)
         }
-        // A completed scrobble sync refreshes daily; a running one advances.
-        await continueScheduledLastfmSync(24 * 60 * 60 * 1000, {
-          budgetMs: 5 * 60 * 1000,
-        })
       }
     })
   },

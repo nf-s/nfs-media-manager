@@ -1,8 +1,13 @@
 'use client'
 
+import Link from 'next/link'
 import { useEffect, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { AlbumListeningSchema } from '@repo/schemas/lastfm'
+import {
+  AlbumListeningSchema,
+  type AlbumListening as AlbumListeningData,
+  type ListeningSource,
+} from '@repo/schemas/lastfm'
 import { Button } from '@repo/ui/components/ui/button'
 import { useConfig } from './providers'
 import { fetchApiData } from '@/utils/api'
@@ -40,6 +45,59 @@ function formatDate(value: string | null) {
 
 function scrobbleLabel(count: number) {
   return `${count.toLocaleString()} ${count === 1 ? 'scrobble' : 'scrobbles'}`
+}
+
+function SourceList({
+  label,
+  sources,
+}: {
+  label: string
+  sources: ListeningSource[]
+}) {
+  return (
+    <section aria-label={label} className="text-sm">
+      <h3 className="font-semibold">{label}</h3>
+      <ul>
+        {sources.map((source) => (
+          <li key={`${source.artistName}\u0000${source.albumName}`}>
+            {source.artistName} — {source.albumName} ·{' '}
+            <span className="tabular-nums">
+              {source.count.toLocaleString()}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </section>
+  )
+}
+
+export function ListeningSources({
+  data,
+}: {
+  data: Pick<AlbumListeningData, 'sources' | 'similarUnlinked'>
+}) {
+  if (!data.sources.length && !data.similarUnlinked.length) return null
+  return (
+    <div className="mt-4 grid gap-3">
+      {data.sources.length > 0 && (
+        <SourceList label="Linked scrobble names" sources={data.sources} />
+      )}
+      {data.similarUnlinked.length > 0 && (
+        <div className="grid gap-1">
+          <SourceList
+            label="Similar unlinked names"
+            sources={data.similarUnlinked}
+          />
+          <Link
+            className="text-sm underline underline-offset-2"
+            href="/imports/lastfm?mediaType=album&reason=unlinked"
+          >
+            Review scrobble links
+          </Link>
+        </div>
+      )}
+    </div>
+  )
 }
 
 export function ListeningChart({
@@ -126,7 +184,12 @@ export default function AlbumListening({ albumId }: { albumId: string }) {
     )
   const data = listening.data
   if (!track && data.total === 0)
-    return <p className="quiet">No scrobbles linked to this album.</p>
+    return (
+      <div>
+        <p className="quiet">No scrobbles linked to this album.</p>
+        <ListeningSources data={data} />
+      </div>
+    )
   const bars = listeningBars(data.months, period)
   return (
     <div>
@@ -184,6 +247,7 @@ export default function AlbumListening({ albumId }: { albumId: string }) {
       ) : (
         <p className="quiet">No scrobbles for this track.</p>
       )}
+      <ListeningSources data={data} />
     </div>
   )
 }

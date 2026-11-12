@@ -4,6 +4,7 @@ import React, { type ReactNode } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { JobSchema, type Job } from '@repo/schemas/job'
+import { LASTFM_SCROBBLE_SYNC_TASK } from '@repo/schemas/lastfm'
 import JobBulkActions from './job-bulk-actions'
 import { JobLogEntry } from './pages/jobs-page-client'
 
@@ -103,6 +104,21 @@ test('running work with no remaining media still supports cancellation but no re
   const html = render([job('running', 'running', 0)], ['running'])
   assert.match(html, /value="cancel">Cancel \(1\)/)
   assert.doesNotMatch(html, /value="retry"/)
+})
+
+test('scrobble sync jobs without media items keep retry, dismissal and cancellation', () => {
+  const sync = (id: string, status: Job['status']) =>
+    JobSchema.parse({
+      ...job(id, status, 0),
+      provider: 'lastfm',
+      options: { task: LASTFM_SCROBBLE_SYNC_TASK },
+    })
+  const failed = render([sync('failed', 'failed')], ['failed'])
+  assert.match(failed, /value="retry">Retry \(1\)/)
+  assert.match(failed, /value="dismiss">Dismiss \(1\)/)
+  const running = render([sync('running', 'running')], ['running'])
+  assert.match(running, /value="retry">Cancel and retry \(1\)/)
+  assert.match(running, /value="cancel">Cancel \(1\)/)
 })
 
 test('mixed statuses retain the independent eligibility counts', () => {

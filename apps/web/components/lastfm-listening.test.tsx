@@ -9,6 +9,7 @@ import {
 } from 'next/dist/shared/lib/hooks-client-context.shared-runtime'
 import {
   AlbumListeningSchema,
+  LastfmLinkReportSchema,
   LastfmSyncStatusSchema,
 } from '@repo/schemas/lastfm'
 import ImportsWorkspace from './imports-workspace'
@@ -24,6 +25,9 @@ const network = mock.method(globalThis, 'fetch', async () => {
 const idle = LastfmSyncStatusSchema.parse({
   configured: true,
   state: 'never',
+  job: null,
+  schedule: 'off',
+  nextScheduledAt: null,
   pagesFetched: 0,
   totalPages: null,
   newScrobbles: 0,
@@ -34,7 +38,67 @@ const idle = LastfmSyncStatusSchema.parse({
   errorMessage: null,
 })
 
-function render(seed: Array<[unknown[], unknown]>, children: ReactNode) {
+const fixtureAlbum = {
+  id: 'album-1',
+  slug: 'album-fixture',
+  title: 'Album fixture',
+  artists: ['Artist fixture'],
+}
+
+const report = LastfmLinkReportSchema.parse({
+  page: 1,
+  size: 50,
+  totalCount: 4,
+  pageCount: 1,
+  summary: [
+    { reason: 'linked', groups: 1, scrobbles: 40 },
+    { reason: 'ambiguous', groups: 1, scrobbles: 7 },
+    { reason: 'no-album', groups: 1, scrobbles: 2 },
+  ],
+  items: [
+    {
+      artistName: 'Artist fixture',
+      albumName: 'Album fixture',
+      scrobbles: 40,
+      lastListenedAt: '2026-01-02T00:00:00Z',
+      reason: 'linked',
+      album: fixtureAlbum,
+      candidates: [],
+    },
+    {
+      artistName: 'Artist fixture',
+      albumName: 'Shared title',
+      scrobbles: 7,
+      lastListenedAt: '2026-01-01T00:00:00Z',
+      reason: 'ambiguous',
+      album: null,
+      candidates: [
+        { ...fixtureAlbum, id: 'album-2', title: 'Shared title' },
+        {
+          ...fixtureAlbum,
+          id: 'album-3',
+          title: 'Shared title',
+          artists: ['Artist fixture', 'Second artist'],
+        },
+      ],
+    },
+    {
+      artistName: 'Other artist',
+      albumName: null,
+      scrobbles: 2,
+      lastListenedAt: '2025-12-01T00:00:00Z',
+      reason: 'no-album',
+      album: null,
+      candidates: [],
+    },
+  ],
+})
+
+function render(
+  seed: Array<[unknown[], unknown]>,
+  children: ReactNode,
+  search = 'mediaType=album',
+) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
@@ -51,9 +115,7 @@ function render(seed: Array<[unknown[], unknown]>, children: ReactNode) {
           }}
         >
           <PathnameContext.Provider value="/imports/lastfm">
-            <SearchParamsContext.Provider
-              value={new URLSearchParams('mediaType=album')}
-            >
+            <SearchParamsContext.Provider value={new URLSearchParams(search)}>
               {children}
             </SearchParamsContext.Provider>
           </PathnameContext.Provider>
@@ -66,12 +128,16 @@ function render(seed: Array<[unknown[], unknown]>, children: ReactNode) {
   }
 }
 
-function syncPage(status: unknown) {
+function syncPage(status: unknown, search?: string, reason = '') {
   return render(
-    [[['lastfm-sync'], status]],
+    [
+      [['lastfm-sync'], status],
+      [['lastfm-links', reason, ''], { pages: [report], pageParams: [1] }],
+    ],
     <ImportsWorkspace>
       <LastfmSyncPageClient />
     </ImportsWorkspace>,
+    search,
   )
 }
 
@@ -83,24 +149,30 @@ test('Last.fm page is an album import destination and only shows stored status',
   )
   assert.match(html, /Last\.fm scrobbles/)
   assert.match(html, /Not synced/)
-  assert.match(html, />Sync scrobbles</)
-  assert.doesNotMatch(html, /<progress|>Stop<|Resume sync/)
+  assert.match(html, />Sync now</)
+  assert.match(html, /runs as a background job; this page can be closed/)
+  assert.doesNotMatch(
+    html,
+    /<progress|>Stop<|Resume sync|View (current|last) job/,
+  )
   assert.doesNotMatch(html, /provider settings/)
 })
 
-test('unconfigured Last.fm links to provider settings and disables sync', () => {
+test('unconfigured Last.fm links to provider settings and disables sync and schedule', () => {
   const html = syncPage({ ...idle, configured: false })
   assert.match(
     html,
     /href="\/providers\?provider=lastfm&amp;mediaType=album">Last\.fm provider settings/,
   )
-  assert.match(html, /disabled=""[^>]*>Sync scrobbles/)
+  assert.match(html, /disabled=""[^>]*>Sync now/)
+  assert.match(html, /<select disabled=""><option value="off" selected="">Off/)
 })
 
-test('running sync shows page progress, added scrobbles and Stop', () => {
+test('running sync shows progress, the current job and Stop', () => {
   const html = syncPage({
     ...idle,
     state: 'running',
+    job: { id: 'job-1', status: 'running' },
     pagesFetched: 12,
     totalPages: 340,
     newScrobbles: 2400,
@@ -109,11 +181,40 @@ test('running sync shows page progress, added scrobbles and Stop', () => {
     startedAt: '2026-01-01T00:00:00Z',
   })
   assert.match(html, /<progress[^>]*value="12"[^>]*max="340"/)
-  assert.match(html, /Page 12 of 340/)
-  assert.match(html, /2,400 scrobbles added/)
+  assert.match(html, /<dt>Pages fetched<\/dt><dd>12 of 340<\/dd>/)
+  assert.match(html, /<dt>New scrobbles this run<\/dt><dd>2,400<\/dd>/)
   assert.match(html, /1,800 of 2,400/)
   assert.match(html, />Stop</)
-  assert.match(html, /disabled=""[^>]*>Sync scrobbles/)
+  assert.match(html, /disabled=""[^>]*>Sync now/)
+  assert.match(
+    html,
+    /href="\/jobs\?jobId=job-1&amp;mediaType=album">View current job/,
+  )
+  assert.match(html, /disabled=""[^>]*>Relink/)
+})
+
+test('running sync between chained jobs hides Stop for a finished job', () => {
+  const html = syncPage({
+    ...idle,
+    state: 'running',
+    job: { id: 'job-1', status: 'succeeded' },
+  })
+  assert.doesNotMatch(html, />Stop</)
+})
+
+test('schedule shows the saved value and next scheduled sync', () => {
+  const html = syncPage({
+    ...idle,
+    state: 'complete',
+    job: { id: 'job-2', status: 'succeeded' },
+    schedule: 'daily',
+    nextScheduledAt: '2026-02-01T00:00:00Z',
+  })
+  assert.match(html, /<option value="daily" selected="">Daily<\/option>/)
+  assert.match(html, /<option value="6h">Every 6 hours<\/option>/)
+  assert.match(html, /Next sync /)
+  assert.match(html, /does not start the first sync or resume a failed/)
+  assert.match(html, />View last job</)
 })
 
 test('failed and stopped syncs offer Resume sync with the stored error', () => {
@@ -127,6 +228,38 @@ test('failed and stopped syncs offer Resume sync with the stored error', () => {
   assert.match(failed, />Resume sync</)
   assert.match(failed, /role="alert">Last\.fm returned an error/)
   assert.match(syncPage({ ...idle, state: 'stopped' }), />Resume sync</)
+})
+
+test('scrobble links show reason totals and link library albums', () => {
+  const html = syncPage(idle)
+  assert.match(html, /credited artists, ignoring case and repeated\s+spaces/)
+  assert.match(html, /Links are recomputed after every sync/)
+  assert.match(
+    html,
+    /aria-pressed="false">Linked<\/button><\/td><td>1<\/td><td>40<\/td>/,
+  )
+  assert.match(html, /Links at next sync<\/button><\/td><td>0<\/td><td>0<\/td>/)
+  assert.match(html, /<option value="unlinked">Unlinked<\/option>/)
+  assert.match(html, /href="\/albums\/album-1">Album fixture<\/a>/)
+  assert.match(html, /<td>Several albums match<\/td>/)
+  assert.match(
+    html,
+    /href="\/albums\/album-2">Shared title — Artist fixture<\/a>/,
+  )
+  assert.match(
+    html,
+    /href="\/albums\/album-3">Shared title — Artist fixture, Second artist<\/a>/,
+  )
+  assert.match(html, /<td>-<\/td><td class="tabular-nums">2<\/td>/)
+  assert.match(html, />Relink</)
+  assert.doesNotMatch(html, /disabled=""[^>]*>Relink/)
+})
+
+test('scrobble link filter is read from the URL', () => {
+  const html = syncPage(idle, 'mediaType=album&reason=unlinked', 'unlinked')
+  assert.match(html, /<option value="unlinked" selected="">Unlinked<\/option>/)
+  const unknown = syncPage(idle, 'mediaType=album&reason=unknown')
+  assert.match(unknown, /<option value="" selected="">All<\/option>/)
 })
 
 test('listening tab summarises scrobbles with a year chart and track selector', () => {
@@ -147,6 +280,9 @@ test('listening tab summarises scrobbles with a year chart and track selector', 
         lastListenedAt: '2022-01-05T10:00:00Z',
       },
     ],
+    sources: [
+      { artistName: 'Artist fixture', albumName: 'Album fixture', count: 12 },
+    ],
   })
   const html = render(
     [[['album-listening', 'one', ''], listening]],
@@ -164,6 +300,9 @@ test('listening tab summarises scrobbles with a year chart and track selector', 
   ])
     assert.ok(html.includes(label), label)
   assert.match(html, /aria-pressed="true"[^>]*>Year</)
+  assert.match(html, /Linked scrobble names/)
+  assert.match(html, /Artist fixture — Album fixture ·/)
+  assert.doesNotMatch(html, /Similar unlinked names|Review scrobble links/)
   assert.doesNotMatch(html, /Loading/)
 })
 
@@ -172,19 +311,52 @@ test('albums without linked scrobbles show a plain empty state', () => {
     [
       [
         ['album-listening', 'one', ''],
-        {
+        AlbumListeningSchema.parse({
           total: 0,
           firstListenedAt: null,
           lastListenedAt: null,
           months: [],
           tracks: [],
-        },
+        }),
       ],
     ],
     <AlbumListening albumId="one" />,
   )
   assert.match(html, /No scrobbles linked to this album\./)
-  assert.doesNotMatch(html, /<select|Scrobbles by/)
+  assert.doesNotMatch(html, /<select|Scrobbles by|Linked scrobble names/)
+  assert.doesNotMatch(html, /Similar unlinked names/)
+})
+
+test('albums without linked scrobbles list similar unlinked names', () => {
+  const html = render(
+    [
+      [
+        ['album-listening', 'one', ''],
+        AlbumListeningSchema.parse({
+          total: 0,
+          firstListenedAt: null,
+          lastListenedAt: null,
+          months: [],
+          tracks: [],
+          similarUnlinked: [
+            {
+              artistName: 'Artist fixture',
+              albumName: 'Album fixture (Deluxe)',
+              count: 3,
+            },
+          ],
+        }),
+      ],
+    ],
+    <AlbumListening albumId="one" />,
+  )
+  assert.match(html, /No scrobbles linked to this album\./)
+  assert.match(html, /Similar unlinked names/)
+  assert.match(html, /Artist fixture — Album fixture \(Deluxe\) ·/)
+  assert.match(
+    html,
+    /href="\/imports\/lastfm\?mediaType=album&amp;reason=unlinked">Review scrobble links/,
+  )
 })
 
 test('chart bars carry accessible period and count text', () => {

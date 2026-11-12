@@ -85,6 +85,11 @@ export function getJobDismissal(options: Record<string, unknown>) {
   return result.success ? result.data : null
 }
 
+/** Account-level jobs carry a task name and no media item. */
+export function getJobTask(options: Record<string, unknown>) {
+  return typeof options.task === 'string' ? options.task : null
+}
+
 export const JobLogSchema = z.object({
   id: z.string(),
   level: z.enum(['info', 'warn', 'error']),

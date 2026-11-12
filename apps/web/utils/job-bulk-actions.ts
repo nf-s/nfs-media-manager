@@ -6,7 +6,7 @@ import type {
 import { canCancelJob } from './job-selection'
 
 export async function dispatchJobCancellation(
-  jobs: Job[],
+  jobs: Array<Pick<Job, 'id' | 'status'>>,
   confirmedRunning: boolean,
   send: (input: BulkCancelJobsInput) => Promise<BulkCancelJobsResult>,
   onProgress: (processed: number) => void,

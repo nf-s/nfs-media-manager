@@ -35,6 +35,7 @@ import {
   canCancelJob,
   canDismissJob,
   canRetryJob,
+  jobTaskTitle,
   updateJobSelection,
 } from '@/utils/job-selection'
 
@@ -466,6 +467,7 @@ export default function JobsPageClient() {
         <div className="job-list">
           {visibleJobs.map((job) => {
             const dismissal = getJobDismissal(job.options)
+            const taskTitle = jobTaskTitle(job)
             return (
               <details
                 key={job.id}
@@ -488,7 +490,7 @@ export default function JobsPageClient() {
                     <input
                       type="checkbox"
                       className="job-select"
-                      aria-label={`Select ${providerName(job.provider)} job for ${job.items[0]?.mediaTitle ?? 'unavailable item'}`}
+                      aria-label={`Select ${providerName(job.provider)} job for ${taskTitle ?? job.items[0]?.mediaTitle ?? 'unavailable item'}`}
                       title="Shift-click to select a range"
                       disabled={bulkPending || retryBatch.isPending}
                       checked={selectedIds.includes(job.id)}
@@ -512,10 +514,11 @@ export default function JobsPageClient() {
                   />
                   <strong>{providerName(job.provider)}</strong>
                   <span className="job-titles">
-                    {job.items
-                      .slice(0, 2)
-                      .map((item) => item.mediaTitle ?? 'Unavailable item')
-                      .join(', ')}
+                    {taskTitle ??
+                      job.items
+                        .slice(0, 2)
+                        .map((item) => item.mediaTitle ?? 'Unavailable item')
+                        .join(', ')}
                     {job.items.length > 2 ? ` +${job.items.length - 2}` : ''}
                   </span>
                   <span className="job-status" data-status={job.status}>

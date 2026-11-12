@@ -17,6 +17,8 @@ import {
   canDismissJob,
   canCancelJob,
   canRetryJob,
+  isScrobbleSyncJob,
+  jobTaskTitle,
   unfinishedJobItems,
 } from '@/utils/job-selection'
 import {
@@ -25,6 +27,11 @@ import {
 } from '@/utils/job-bulk-actions'
 
 const ActionSchema = z.enum(['retry', 'dismiss', 'cancel'])
+
+function jobActionTitle(job: Job | undefined) {
+  if (!job) return 'View job'
+  return jobTaskTitle(job) ?? job.items[0]?.mediaTitle ?? 'View job'
+}
 
 export default function JobBulkActions({
   jobs,
@@ -67,6 +74,7 @@ export default function JobBulkActions({
     (total, job) => total + unfinishedJobItems(job),
     0,
   )
+  const syncRetries = retryJobs.filter(isScrobbleSyncJob).length
   const selectionKey = JSON.stringify([
     selectedAction,
     selectedJobs.map((job) => [job.id, job.status, unfinishedJobItems(job)]),
@@ -243,7 +251,13 @@ export default function JobBulkActions({
                 {selectedIds.length > targetJobs.length &&
                   ` · ${selectedIds.length - targetJobs.length} ineligible jobs will be skipped`}
               </p>
-              {selectedAction === 'retry' && (
+              {selectedAction === 'retry' && syncRetries > 0 && (
+                <p>
+                  Queue {syncRetries} scrobble{' '}
+                  {syncRetries === 1 ? 'sync' : 'syncs'}.
+                </p>
+              )}
+              {selectedAction === 'retry' && itemCount > 0 && (
                 <p>
                   Queue {itemCount} unfinished{' '}
                   {itemCount === 1 ? 'item' : 'items'}. Completed items stay
@@ -331,8 +345,9 @@ export default function JobBulkActions({
                       <Link
                         href={`/jobs?jobId=${encodeURIComponent(entry.jobId)}`}
                       >
-                        {jobs.find((job) => job.id === entry.jobId)?.items[0]
-                          ?.mediaTitle ?? 'View job'}
+                        {jobActionTitle(
+                          jobs.find((job) => job.id === entry.jobId),
+                        )}
                       </Link>
                       : {entry.message ?? entry.status}
                     </li>

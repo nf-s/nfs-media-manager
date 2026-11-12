@@ -120,6 +120,13 @@
       "when": 1794444762541,
       "tag": "0016_lastfm_scrobbles",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1794447078694,
+      "tag": "0017_lastfm_sync_schedule",
+      "breakpoints": true
     }
   ]
 }

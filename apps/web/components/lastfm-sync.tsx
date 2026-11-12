@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   useMutation,
   useQuery,
@@ -9,76 +9,117 @@ import {
   type QueryClient,
 } from '@tanstack/react-query'
 import { z } from 'zod'
+import { BulkCancelJobsResultSchema } from '@repo/schemas/job'
 import {
+  LastfmSyncScheduleSchema,
   LastfmSyncStatusSchema,
+  type LastfmSyncSchedule,
   type LastfmSyncStatus,
 } from '@repo/schemas/lastfm'
 import { Button } from '@repo/ui/components/ui/button'
 import { useConfig } from './providers'
 import { fetchApiData } from '@/utils/api'
-import { driveLastfmSync, lastfmSyncStateLabels } from '@/utils/lastfm-sync'
+import { dispatchJobCancellation } from '@/utils/job-bulk-actions'
+import { canCancelJob } from '@/utils/job-selection'
+import {
+  lastfmScheduleLabels,
+  lastfmSyncPollInterval,
+  lastfmSyncStateLabels,
+} from '@/utils/lastfm-sync'
+import { scopedHref } from '@/utils/media-scope'
 
 const ErrorMessageSchema = z.object({ message: z.string().min(1) })
 
-function errorMessage(failure: unknown, fallback: string) {
+export function errorMessage(failure: unknown, fallback: string) {
   const parsed = ErrorMessageSchema.safeParse(failure)
   return parsed.success ? parsed.data.message : fallback
 }
 
-function postSync(apiBaseUrl: string, path: string, signal?: AbortSignal) {
-  return fetchApiData(apiBaseUrl, path, LastfmSyncStatusSchema, {
-    method: 'POST',
-    body: '{}',
-    signal,
+function formatDateTime(value: string | null) {
+  return value ? new Date(value).toLocaleString() : '-'
+}
+
+/** Refreshes everything derived from scrobble links. */
+export function invalidateScrobbleLinks(client: QueryClient) {
+  return client.invalidateQueries({
+    predicate: (query) =>
+      ['albums', 'album', 'album-listening', 'lastfm-links'].includes(
+        String(query.queryKey[0]),
+      ),
   })
 }
 
-function applySyncStatus(client: QueryClient, next: LastfmSyncStatus) {
-  client.setQueryData(['lastfm-sync'], next)
-  if (next.state !== 'running')
-    void client.invalidateQueries({
-      predicate: (query) =>
-        ['albums', 'album', 'album-listening'].includes(
-          String(query.queryKey[0]),
-        ),
-    })
+export function useLastfmSyncStatus() {
+  const { apiBaseUrl } = useConfig()
+  return useQuery({
+    queryKey: ['lastfm-sync'],
+    staleTime: 0,
+    refetchInterval: (query) =>
+      lastfmSyncPollInterval(query.state.data?.state ?? null),
+    queryFn: () =>
+      fetchApiData(apiBaseUrl, '/api/v1/lastfm/sync', LastfmSyncStatusSchema),
+  })
 }
 
 export default function LastfmSync() {
   const { apiBaseUrl } = useConfig()
   const client = useQueryClient()
-  const [stepError, setStepError] = useState('')
-  const status = useQuery({
-    queryKey: ['lastfm-sync'],
-    staleTime: 0,
-    queryFn: () =>
-      fetchApiData(apiBaseUrl, '/api/v1/lastfm/sync', LastfmSyncStatusSchema),
-  })
-  const update = (next: LastfmSyncStatus) => applySyncStatus(client, next)
+  const [confirmingStop, setConfirmingStop] = useState(false)
+  const status = useLastfmSyncStatus()
+  const update = (next: LastfmSyncStatus) =>
+    client.setQueryData(['lastfm-sync'], next)
   const sync = useMutation({
-    mutationFn: () => postSync(apiBaseUrl, '/api/v1/lastfm/sync'),
-    onMutate: () => setStepError(''),
+    mutationFn: () =>
+      fetchApiData(apiBaseUrl, '/api/v1/lastfm/sync', LastfmSyncStatusSchema, {
+        method: 'POST',
+        body: '{}',
+      }),
+    onSuccess: update,
+  })
+  const schedule = useMutation({
+    mutationFn: (value: LastfmSyncSchedule) =>
+      fetchApiData(
+        apiBaseUrl,
+        '/api/v1/lastfm/sync/settings',
+        LastfmSyncStatusSchema,
+        { method: 'PUT', body: JSON.stringify({ schedule: value }) },
+      ),
     onSuccess: update,
   })
   const stop = useMutation({
-    mutationFn: () => postSync(apiBaseUrl, '/api/v1/lastfm/sync/stop'),
-    onSuccess: update,
+    mutationFn: async (job: NonNullable<LastfmSyncStatus['job']>) => {
+      const result = await dispatchJobCancellation(
+        [job],
+        true,
+        (input) =>
+          fetchApiData(
+            apiBaseUrl,
+            '/api/v1/scrape/jobs/cancel',
+            BulkCancelJobsResultSchema,
+            { method: 'POST', body: JSON.stringify(input) },
+          ),
+        () => {},
+      )
+      const failure = result.results.find(
+        (entry) => entry.status !== 'cancelled',
+      )
+      if (failure)
+        throw new Error(failure.message ?? 'The sync job was not cancelled.')
+    },
+    onSettled: async () => {
+      setConfirmingStop(false)
+      await client.invalidateQueries({ queryKey: ['lastfm-sync'] })
+      await client.invalidateQueries({ queryKey: ['jobs'] })
+      await client.invalidateQueries({ queryKey: ['job-activity'] })
+    },
   })
-  const running = status.data?.state === 'running'
+  const state = status.data?.state ?? null
+  const previousState = useRef(state)
   useEffect(() => {
-    if (!running || stepError) return
-    const controller = new AbortController()
-    driveLastfmSync({
-      signal: controller.signal,
-      step: (signal) =>
-        postSync(apiBaseUrl, '/api/v1/lastfm/sync/step', signal),
-      onStatus: (next) => applySyncStatus(client, next),
-    }).catch((failure: unknown) => {
-      if (!controller.signal.aborted)
-        setStepError(errorMessage(failure, 'Could not continue the sync.'))
-    })
-    return () => controller.abort()
-  }, [running, stepError, apiBaseUrl, client])
+    if (previousState.current === 'running' && state && state !== 'running')
+      void invalidateScrobbleLinks(client)
+    previousState.current = state
+  }, [state, client])
 
   if (status.isPending)
     return (
@@ -94,8 +135,11 @@ export default function LastfmSync() {
       </p>
     )
   const data = status.data
+  const running = data.state === 'running'
   const resumable = data.state === 'failed' || data.state === 'stopped'
-  const actionError = sync.error ?? stop.error
+  const stopJob =
+    running && data.job && canCancelJob(data.job) ? data.job : null
+  const actionError = sync.error ?? stop.error ?? schedule.error
   return (
     <section className="film-import-workflow">
       {!data.configured && (
@@ -113,11 +157,24 @@ export default function LastfmSync() {
           <dd>{lastfmSyncStateLabels[data.state]}</dd>
         </div>
         <div>
+          <dt>Pages fetched</dt>
+          <dd>
+            {data.pagesFetched.toLocaleString()}
+            {data.totalPages === null
+              ? ''
+              : ` of ${data.totalPages.toLocaleString()}`}
+          </dd>
+        </div>
+        <div>
+          <dt>New scrobbles this run</dt>
+          <dd>{data.newScrobbles.toLocaleString()}</dd>
+        </div>
+        <div>
           <dt>Stored scrobbles</dt>
           <dd>{data.storedScrobbles.toLocaleString()}</dd>
         </div>
         <div>
-          <dt>Linked to library albums</dt>
+          <dt>Linked scrobbles</dt>
           <dd>
             {data.matchedScrobbles.toLocaleString()} of{' '}
             {data.storedScrobbles.toLocaleString()}
@@ -125,37 +182,19 @@ export default function LastfmSync() {
         </div>
         <div>
           <dt>Last completed</dt>
-          <dd>
-            {data.lastCompletedAt
-              ? new Date(data.lastCompletedAt).toLocaleString()
-              : '-'}
-          </dd>
+          <dd>{formatDateTime(data.lastCompletedAt)}</dd>
         </div>
       </dl>
       {running && (
-        <div role="status">
-          <progress
-            className="w-full max-w-md"
-            value={data.pagesFetched}
-            max={data.totalPages ?? undefined}
-            aria-label="Sync progress"
-          />
-          <p className="muted">
-            Page {data.pagesFetched.toLocaleString()}
-            {data.totalPages === null
-              ? ''
-              : ` of ${data.totalPages.toLocaleString()}`}{' '}
-            · {data.newScrobbles.toLocaleString()} scrobbles added
-          </p>
-        </div>
+        <progress
+          className="w-full max-w-md"
+          value={data.pagesFetched}
+          max={data.totalPages ?? undefined}
+          aria-label="Sync progress"
+        />
       )}
       {data.state === 'failed' && data.errorMessage && (
         <p role="alert">{data.errorMessage}</p>
-      )}
-      {stepError && (
-        <p role="alert">
-          {stepError} <button onClick={() => setStepError('')}>Retry</button>
-        </p>
       )}
       {actionError && (
         <p role="alert">
@@ -171,22 +210,77 @@ export default function LastfmSync() {
             ? 'Starting...'
             : resumable
               ? 'Resume sync'
-              : 'Sync scrobbles'}
+              : 'Sync now'}
         </Button>
-        {running && (
+        {stopJob && !confirmingStop && (
           <Button
             variant="outline"
             disabled={stop.isPending}
-            onClick={() => stop.mutate()}
+            onClick={() => setConfirmingStop(true)}
           >
             Stop
           </Button>
         )}
+        {stopJob && confirmingStop && (
+          <>
+            <span>Stop the sync job? Stored scrobbles are kept.</span>
+            <Button
+              variant="outline"
+              disabled={stop.isPending}
+              onClick={() => stop.mutate(stopJob)}
+            >
+              {stop.isPending ? 'Stopping...' : 'Confirm stop'}
+            </Button>
+            <Button
+              variant="ghost"
+              disabled={stop.isPending}
+              onClick={() => setConfirmingStop(false)}
+            >
+              Back
+            </Button>
+          </>
+        )}
+        {data.job && (
+          <Link
+            href={scopedHref(
+              `/jobs?jobId=${encodeURIComponent(data.job.id)}`,
+              'album',
+            )}
+          >
+            {running ? 'View current job' : 'View last job'}
+          </Link>
+        )}
       </div>
       <p className="muted">
-        The first sync reads the full listening history at about one request per
-        second and can take around 20 minutes. On the hosted deployment, keep
-        this page open while it runs.
+        The sync runs as a background job; this page can be closed.
+      </p>
+      <div className="form-actions">
+        <label className="flex items-center gap-2">
+          Schedule
+          <select
+            value={data.schedule}
+            disabled={!data.configured || schedule.isPending}
+            onChange={(event) => {
+              const parsed = LastfmSyncScheduleSchema.safeParse(
+                event.target.value,
+              )
+              if (parsed.success) schedule.mutate(parsed.data)
+            }}
+          >
+            {LastfmSyncScheduleSchema.options.map((value) => (
+              <option key={value} value={value}>
+                {lastfmScheduleLabels[value]}
+              </option>
+            ))}
+          </select>
+        </label>
+        {data.nextScheduledAt && (
+          <span>Next sync {formatDateTime(data.nextScheduledAt)}</span>
+        )}
+      </div>
+      <p className="muted">
+        The schedule does not start the first sync or resume a failed or stopped
+        one.
       </p>
     </section>
   )

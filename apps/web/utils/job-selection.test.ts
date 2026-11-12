@@ -1,10 +1,13 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import type { Job } from '@repo/schemas/job'
+import { LASTFM_SCROBBLE_SYNC_TASK } from '@repo/schemas/lastfm'
 import {
   canDismissJob,
   canCancelJob,
   canRetryJob,
+  isScrobbleSyncJob,
+  jobTaskTitle,
   unfinishedJobItems,
   updateJobSelection,
 } from './job-selection'
@@ -116,6 +119,36 @@ test('valid dismissal prevents dismissing again without disabling retry', () => 
   for (const dismissal of invalidDismissals) {
     assert.equal(canDismissJob({ ...failedJob, options: { dismissal } }), true)
   }
+})
+
+const scrobbleSync: Job = {
+  ...failedJob,
+  id: 'scrobble-sync',
+  provider: 'lastfm',
+  scope: { mediaItemIds: [], mediaType: 'album', limit: 1 },
+  options: { task: LASTFM_SCROBBLE_SYNC_TASK },
+  items: [],
+}
+
+test('scrobble sync jobs have no items but keep retry, cancel and dismiss', () => {
+  assert.equal(isScrobbleSyncJob(scrobbleSync), true)
+  assert.equal(jobTaskTitle(scrobbleSync), 'Scrobble sync')
+  assert.equal(isScrobbleSyncJob(failedJob), false)
+  assert.equal(jobTaskTitle(failedJob), null)
+  assert.equal(jobTaskTitle({ options: { task: 'other-task' } }), null)
+  assert.equal(unfinishedJobItems(scrobbleSync), 0)
+  assert.equal(canRetryJob(scrobbleSync), true)
+  assert.equal(canDismissJob(scrobbleSync), true)
+  assert.equal(canRetryJob({ ...scrobbleSync, status: 'succeeded' }), false)
+  assert.equal(
+    canRetryJob({
+      ...scrobbleSync,
+      options: { ...scrobbleSync.options, retryJobId: 'next' },
+    }),
+    false,
+  )
+  for (const status of ['queued', 'running'] satisfies Job['status'][])
+    assert.equal(canCancelJob({ ...scrobbleSync, status }), true, status)
 })
 
 const rows = ['a', 'b', 'c', 'd', 'e']

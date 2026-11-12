@@ -1,14 +1,19 @@
 import { randomUUID } from 'node:crypto'
-import { and, eq, sql } from 'drizzle-orm'
+import { and, desc, eq, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import { ProviderRequestError } from '@repo/media-plugin-sdk'
 import {
   AlbumListeningSchema,
-  LastfmSyncStatusSchema,
+  LASTFM_SCROBBLE_SYNC_TASK,
+  LastfmLinkQuerySchema,
+  LastfmLinkReasonSchema,
+  LastfmLinkReportSchema,
+  LastfmSyncScheduleSchema,
   type AlbumListening,
+  type LastfmLinkReport,
+  type LastfmSyncSchedule,
   type LastfmSyncStatus,
 } from '@repo/schemas/lastfm'
-import { env } from '@/env'
 import { albumNameKey } from '@/lib/album-import-candidates'
 import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
@@ -20,7 +25,13 @@ import {
   requestAlbumJson,
 } from '@/plugins/builtin/album-provider-helpers'
 import { lastFmErrorCode, lastfmPlugin } from '@/plugins/builtin/lastfm'
-import { lastfmScrobble, lastfmSync, providerSecret, track } from '@/schemas/db'
+import {
+  lastfmScrobble,
+  lastfmSync,
+  providerSecret,
+  scrapeJob,
+  track,
+} from '@/schemas/db'
 import {
   createProviderRequest,
   recordProviderFailure,
@@ -30,8 +41,12 @@ import {
 const PAGE_SIZE = 200
 // Last.fm publishes no numeric limit but warns against several calls per second.
 const PAGE_SPACING_MS = 1000
-const LEASE_MS = 90_000
-const STEP_BUDGET_MS = 20_000
+// One job stays well inside a Cloudflare Queue invocation's 15-minute limit
+// and its subrequest allowance; a longer sync continues in a follow-on job.
+const CHUNK_PAGES = 300
+const CHUNK_BUDGET_MS = 8 * 60 * 1000
+const LOG_EVERY_PAGES = 50
+const MAX_LINK_CANDIDATES = 10
 // Offline scrobbles can arrive later with older timestamps.
 const OVERLAP_SECONDS = 7 * 24 * 60 * 60
 // Earlier timestamps come from devices with an unset clock.
@@ -61,7 +76,6 @@ const RecentTracksSchema = z.object({
 })
 
 type SyncRow = typeof lastfmSync.$inferSelect
-type StepOptions = { budgetMs?: number; spacingMs?: number }
 
 const delay = (ms: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, ms))
@@ -137,18 +151,23 @@ function scrobbleRows(
   })
 }
 
+// SQL form of `albumNameKey`.
+const nameKey = (value: ReturnType<typeof sql>) =>
+  sql`lower(regexp_replace(trim(${value}), '[[:space:]]+', ' ', 'g'))`
+
+// One row per album and credited artist, keyed the way scrobbles are.
+const albumKeys = sql`
+  select mi.id, ${nameKey(sql`mi.title`)} as album_key,
+    ${nameKey(sql`a.name`)} as artist_key
+  from media_item mi
+  join media_credit c on c.media_item_id = mi.id and c.role = 'artist'
+  join artist a on a.id = c.artist_id
+  where mi.media_type = 'album'`
+
 /** Links scrobbles to the one album whose title and a credited artist match by name. */
-export async function linkScrobblesToAlbums() {
-  const key = (value: ReturnType<typeof sql>) =>
-    sql`lower(regexp_replace(trim(${value}), '[[:space:]]+', ' ', 'g'))`
+async function linkScrobblesToAlbums() {
   await db.execute(sql`
-    with album_keys as (
-      select mi.id, ${key(sql`mi.title`)} as album_key, ${key(sql`a.name`)} as artist_key
-      from media_item mi
-      join media_credit c on c.media_item_id = mi.id and c.role = 'artist'
-      join artist a on a.id = c.artist_id
-      where mi.media_type = 'album'
-    ), unambiguous as (
+    with album_keys as (${albumKeys}), unambiguous as (
       select album_key, artist_key, min(id) as id
       from album_keys group by album_key, artist_key having count(distinct id) = 1
     )
@@ -159,7 +178,7 @@ export async function linkScrobblesToAlbums() {
 }
 
 /** Recomputes the scrobble-derived album browse values, including the rolling windows. */
-export async function refreshAlbumListeningFields() {
+async function refreshAlbumListeningFields() {
   await db.execute(sql`
     update media_item m set metadata = jsonb_set(
       coalesce(m.metadata, '{}'::jsonb), '{browse}',
@@ -190,9 +209,46 @@ const CountsSchema = z
   .array(z.object({ stored: z.coerce.number(), matched: z.coerce.number() }))
   .length(1)
 
-function syncState(row: SyncRow | undefined): LastfmSyncStatus['state'] {
-  if (!row) return 'never'
-  return LastfmSyncStatusSchema.shape.state.parse(row.status)
+const SCHEDULE_HOURS: Record<LastfmSyncSchedule, number | null> = {
+  off: null,
+  '6h': 6,
+  daily: 24,
+  weekly: 7 * 24,
+}
+
+async function latestSyncJob() {
+  const [job] = await db
+    .select({
+      id: scrapeJob.id,
+      status: scrapeJob.status,
+      errorMessage: scrapeJob.errorMessage,
+    })
+    .from(scrapeJob)
+    .where(
+      and(
+        eq(scrapeJob.provider, 'lastfm'),
+        sql`${scrapeJob.options}->>'task' = ${LASTFM_SCROBBLE_SYNC_TASK}`,
+      ),
+    )
+    .orderBy(desc(scrapeJob.createdAt), desc(scrapeJob.id))
+    .limit(1)
+  return job ?? null
+}
+
+type SyncJob = Awaited<ReturnType<typeof latestSyncJob>>
+
+// The checkpoint row records the run; the job table records who is working on it.
+function syncState(
+  row: SyncRow | undefined,
+  job: SyncJob,
+): LastfmSyncStatus['state'] {
+  if (job?.status === 'queued' || job?.status === 'running') return 'running'
+  if (!row || row.status === 'idle') return 'never'
+  if (row.status === 'complete') return 'complete'
+  // An open run without a job was cancelled, or its worker was interrupted.
+  return row.status === 'failed' || job?.status === 'failed'
+    ? 'failed'
+    : 'stopped'
 }
 
 export async function getLastfmSyncStatus(): Promise<LastfmSyncStatus> {
@@ -201,6 +257,9 @@ export async function getLastfmSyncStatus(): Promise<LastfmSyncStatus> {
     return {
       configured: false,
       state: 'never',
+      job: null,
+      schedule: 'daily',
+      nextScheduledAt: null,
       pagesFetched: 0,
       totalPages: null,
       newScrobbles: 0,
@@ -214,6 +273,7 @@ export async function getLastfmSyncStatus(): Promise<LastfmSyncStatus> {
     .select()
     .from(lastfmSync)
     .where(eq(lastfmSync.username, configured.account))
+  const job = await latestSyncJob()
   const counts = CountsSchema.parse(
     (
       await db.execute(sql`
@@ -221,21 +281,58 @@ export async function getLastfmSyncStatus(): Promise<LastfmSyncStatus> {
         from lastfm_scrobble where username = ${configured.account}`)
     ).rows,
   )
+  const state = syncState(row, job)
+  const schedule = LastfmSyncScheduleSchema.catch('daily').parse(row?.schedule)
+  const hours = SCHEDULE_HOURS[schedule]
   return {
     configured: true,
-    state: syncState(row),
+    state,
+    job: job ? { id: job.id, status: job.status } : null,
+    schedule,
+    nextScheduledAt:
+      state === 'complete' && row?.completedAt && hours !== null
+        ? new Date(
+            row.completedAt.getTime() + hours * 60 * 60 * 1000,
+          ).toISOString()
+        : null,
     pagesFetched: row ? row.nextPage - 1 : 0,
     totalPages: row?.totalPages ?? null,
     newScrobbles: row?.newScrobbles ?? 0,
     storedScrobbles: counts[0]?.stored ?? 0,
     matchedScrobbles: counts[0]?.matched ?? 0,
-    startedAt: row?.startedAt.toISOString() ?? null,
+    startedAt:
+      row && row.status !== 'idle' ? row.startedAt.toISOString() : null,
     lastCompletedAt: row?.completedAt?.toISOString() ?? null,
-    errorMessage: row?.errorMessage ?? null,
+    errorMessage:
+      state === 'failed'
+        ? (row?.errorMessage ?? job?.errorMessage ?? null)
+        : null,
   }
 }
 
-async function beginRun(account: string, userId: string | null) {
+export async function setLastfmSyncSchedule(schedule: LastfmSyncSchedule) {
+  const configured = await requireCredentials()
+  const now = new Date()
+  // The setting can be saved before the first sync creates a run.
+  await db
+    .insert(lastfmSync)
+    .values({
+      username: configured.account,
+      status: 'idle',
+      schedule,
+      windowTo: Math.floor(now.getTime() / 1000),
+      startedAt: now,
+    })
+    .onConflictDoUpdate({ target: lastfmSync.username, set: { schedule } })
+  return getLastfmSyncStatus()
+}
+
+/**
+ * Opens a run for a sync job to work on. A completed account gets a new fixed
+ * window; an unfinished run keeps its window and page so it resumes in place.
+ */
+export async function prepareLastfmSyncRun(userId: string | null) {
+  const { account } = await requireCredentials()
   const now = new Date()
   await db.transaction(async (tx) => {
     await tx
@@ -254,8 +351,7 @@ async function beginRun(account: string, userId: string | null) {
       .where(eq(lastfmSync.username, account))
       .for('update')
     if (!row || row.status === 'running') return
-    // A failed or stopped run keeps its window and page so it resumes in place.
-    if (row.status !== 'complete') {
+    if (row.status !== 'complete' && row.status !== 'idle') {
       await tx
         .update(lastfmSync)
         .set({ status: 'running', errorMessage: null })
@@ -282,68 +378,17 @@ async function beginRun(account: string, userId: string | null) {
   })
 }
 
-let driving = false
-
-/** Node has no queue or cron, so one in-process loop carries a run to its end. */
-async function driveLastfmSync() {
-  if (driving) return
-  driving = true
-  try {
-    let status = await runLastfmSyncStep()
-    while (status.state === 'running') {
-      // Also paces the loop while another driver holds the lease.
-      await delay(PAGE_SPACING_MS)
-      status = await runLastfmSyncStep()
-    }
-  } catch {
-    // The step records its own failure; the status endpoint reports it.
-  } finally {
-    driving = false
-  }
-}
-
-export async function startLastfmSync(userId: string | null) {
-  const configured = await requireCredentials()
-  await beginRun(configured.account, userId)
-  if (env.RUNTIME_KIND === 'node') void driveLastfmSync()
-  return getLastfmSyncStatus()
-}
-
-export async function stopLastfmSync() {
-  const configured = await credentials()
-  if (configured)
-    await db
-      .update(lastfmSync)
-      .set({ status: 'stopped', leaseToken: null, leaseUntil: null })
-      .where(
-        and(
-          eq(lastfmSync.username, configured.account),
-          eq(lastfmSync.status, 'running'),
-        ),
-      )
-  return getLastfmSyncStatus()
-}
-
+// Only one sync job is active at a time, so the newest job takes the run. The
+// token fences a cancelled job that is still finishing a request.
 async function claim(account: string, token: string) {
-  return db.transaction(async (tx) => {
-    const [row] = await tx
-      .select()
-      .from(lastfmSync)
-      .where(eq(lastfmSync.username, account))
-      .for('update')
-    if (!row || row.status !== 'running') return null
-    if (
-      row.leaseToken !== token &&
-      row.leaseUntil &&
-      row.leaseUntil.getTime() > Date.now()
+  const [row] = await db
+    .update(lastfmSync)
+    .set({ leaseToken: token, leaseUntil: null })
+    .where(
+      and(eq(lastfmSync.username, account), eq(lastfmSync.status, 'running')),
     )
-      return null
-    await tx
-      .update(lastfmSync)
-      .set({ leaseToken: token, leaseUntil: new Date(Date.now() + LEASE_MS) })
-      .where(eq(lastfmSync.username, account))
-    return row
-  })
+    .returning()
+  return row ?? null
 }
 
 async function fetchPage(
@@ -418,7 +463,6 @@ async function storePage(
         nextPage: run.nextPage + 1,
         totalPages,
         newScrobbles: current.newScrobbles + inserted,
-        leaseUntil: new Date(Date.now() + LEASE_MS),
       })
       .where(eq(lastfmSync.username, account))
     return run.nextPage >= totalPages ? 'fetched-all' : 'more'
@@ -435,7 +479,6 @@ async function completeRun(account: string, token: string, run: SyncRow) {
       syncedThrough: run.windowTo,
       completedAt: new Date(),
       leaseToken: null,
-      leaseUntil: null,
     })
     .where(
       and(
@@ -446,96 +489,281 @@ async function completeRun(account: string, token: string, run: SyncRow) {
     )
 }
 
+/** Recomputes links and browse fields from stored scrobbles; no Last.fm requests. */
+export async function relinkLastfmScrobbles() {
+  await linkScrobblesToAlbums()
+  await refreshAlbumListeningFields()
+  return getLastfmSyncStatus()
+}
+
+export interface LastfmSyncJobContext {
+  /** Rejects once the job is cancelled or its dispatcher withdraws the slot. */
+  assertActive(): Promise<void>
+  isActive(): Promise<boolean>
+  log(level: 'info' | 'warn', message: string): Promise<void>
+}
+
+export type LastfmSyncJobResult =
+  | { outcome: 'complete' | 'continue'; message: string }
+  | { outcome: 'stopped' }
+  | { outcome: 'failed'; error: unknown }
+
+type ChunkOptions = { maxPages?: number; budgetMs?: number; spacingMs?: number }
+
 /**
- * Fetches pages of the running sync until it completes, stops, or the time
- * budget ends. A failure stops the run; it is resumed only on request.
+ * One sync job: fetches pages from the saved checkpoint until the run
+ * completes or the chunk limit is reached. `continue` asks the job system to
+ * queue a follow-on job. A failure ends the job; nothing retries automatically.
  */
-export async function runLastfmSyncStep(
-  options: StepOptions = {},
-): Promise<LastfmSyncStatus> {
-  const configured = await requireCredentials()
-  const deadline = Date.now() + (options.budgetMs ?? STEP_BUDGET_MS)
+export async function runLastfmSyncJob(
+  context: LastfmSyncJobContext,
+  options: ChunkOptions = {},
+): Promise<LastfmSyncJobResult> {
+  const maxPages = options.maxPages ?? CHUNK_PAGES
   const spacingMs = options.spacingMs ?? PAGE_SPACING_MS
+  const deadline = Date.now() + (options.budgetMs ?? CHUNK_BUDGET_MS)
   const token = randomUUID()
-  const request = createProviderRequest(lastfmPlugin)
-  let fetched = false
+  let account: string | null = null
+  let pages = 0
   try {
+    const configured = await requireCredentials()
+    account = configured.account
+    const request = createProviderRequest(lastfmPlugin, context.assertActive)
     for (;;) {
+      if (!(await context.isActive())) return { outcome: 'stopped' }
       const run = await claim(configured.account, token)
-      if (!run) break
+      if (!run) return { outcome: 'complete', message: 'No sync run was open.' }
       // A run interrupted after its last page only has linking left to do.
       if (run.totalPages === null || run.nextPage <= run.totalPages) {
         const page = await fetchPage(request, configured, run)
-        fetched = true
+        // A page that arrives after cancellation is discarded.
+        if (!(await context.isActive())) return { outcome: 'stopped' }
+        pages += 1
         const stored = await storePage(configured.account, token, run, page)
-        if (stored === 'lost') break
+        if (stored === 'lost') return { outcome: 'stopped' }
         if (stored === 'more') {
-          if (Date.now() + spacingMs >= deadline) break
+          const total = page.recenttracks['@attr'].totalPages
+          if (pages >= maxPages || Date.now() + spacingMs >= deadline) {
+            await recordProviderSuccess('lastfm')
+            return {
+              outcome: 'continue',
+              message: `Fetched through page ${run.nextPage} of ${total}. The next job continues from page ${run.nextPage + 1}.`,
+            }
+          }
+          if (pages % LOG_EVERY_PAGES === 0)
+            await context.log(
+              'info',
+              `Fetched page ${run.nextPage} of ${total}.`,
+            )
           await delay(spacingMs)
           continue
         }
       }
       await completeRun(configured.account, token, run)
-      break
+      if (pages > 0) await recordProviderSuccess('lastfm')
+      const status = await getLastfmSyncStatus()
+      return {
+        outcome: 'complete',
+        message: `Sync complete. ${status.newScrobbles} new scrobbles; ${status.matchedScrobbles} of ${status.storedScrobbles} stored scrobbles are linked to albums.`,
+      }
     }
-    if (fetched) await recordProviderSuccess('lastfm')
   } catch (error) {
+    // A cancelled job's request rejects before it is sent; that is not a provider failure.
+    if (!(await context.isActive())) return { outcome: 'stopped' }
     await recordProviderFailure(lastfmPlugin, error)
-    await db
-      .update(lastfmSync)
-      .set({
-        status: 'failed',
-        errorMessage:
-          error instanceof ProviderRequestError
-            ? error.message
-            : 'Last.fm sync failed or returned invalid data. No further requests were made.',
-        leaseToken: null,
-        leaseUntil: null,
-      })
-      .where(
-        and(
-          eq(lastfmSync.username, configured.account),
-          eq(lastfmSync.leaseToken, token),
-        ),
-      )
+    if (account)
+      await db
+        .update(lastfmSync)
+        .set({
+          status: 'failed',
+          errorMessage:
+            error instanceof ProviderRequestError
+              ? error.message
+              : 'Last.fm sync failed or returned invalid data. No further requests were made.',
+          leaseToken: null,
+        })
+        .where(
+          and(
+            eq(lastfmSync.username, account),
+            eq(lastfmSync.leaseToken, token),
+          ),
+        )
+    return { outcome: 'failed', error }
   }
-  // Free the lease so the next step, possibly from another driver, can continue.
-  await db
-    .update(lastfmSync)
-    .set({ leaseToken: null, leaseUntil: null })
-    .where(
-      and(
-        eq(lastfmSync.username, configured.account),
-        eq(lastfmSync.leaseToken, token),
-      ),
-    )
-  return getLastfmSyncStatus()
 }
 
-/**
- * Cron entry point: continues a running sync, or starts an incremental one
- * when the last completed sync is at least `intervalMs` old. Never starts the
- * first sync or resumes a failed or stopped one.
- */
-export async function continueScheduledLastfmSync(
-  intervalMs: number,
-  options: StepOptions = {},
-) {
+const LinkAlbumRowsSchema = z.array(
+  z.object({
+    id: z.string(),
+    slug: z.string(),
+    title: z.string(),
+    album_key: z.string(),
+    artists: z.array(z.string()),
+  }),
+)
+const LinkGroupRowsSchema = z.array(
+  z.object({
+    artist_name: z.string(),
+    album_name: z.string().nullable(),
+    album_key: z.string().nullable(),
+    scrobbles: z.coerce.number(),
+    last: z.coerce.number(),
+    reason: LastfmLinkReasonSchema,
+    album_id: z.string().nullable(),
+    total: z.coerce.number(),
+  }),
+)
+const LinkSummaryRowsSchema = z.array(
+  z.object({
+    reason: LastfmLinkReasonSchema,
+    groups: z.coerce.number(),
+    scrobbles: z.coerce.number(),
+  }),
+)
+
+/** Every scrobbled artist and album name for the account with its link outcome. */
+function classifiedGroups(account: string) {
+  return sql`
+    with album_keys as (${albumKeys}),
+    pairs as (
+      select album_key, artist_key, count(distinct id) as n, min(id) as id
+      from album_keys group by album_key, artist_key
+    ), titles as (
+      select ${nameKey(sql`title`)} as album_key from media_item
+      where media_type = 'album' group by 1
+    ), groups as (
+      select artist_key, album_key, max(artist_name) as artist_name,
+        max(album_name) as album_name, count(*) as scrobbles,
+        extract(epoch from max(listened_at))::float8 as last,
+        max(album_media_item_id) as linked_id
+      from lastfm_scrobble where username = ${account}
+      group by artist_key, album_key
+    ), classified as (
+      select g.*, case
+          when g.album_key is null then 'no-album'
+          when g.linked_id is not null then 'linked'
+          when p.n > 1 then 'ambiguous'
+          when p.n = 1 then 'pending'
+          when t.album_key is not null then 'artist-mismatch'
+          else 'no-title-match' end as reason,
+        coalesce(g.linked_id, case when p.n = 1 then p.id end) as album_id
+      from groups g
+      left join pairs p on p.album_key = g.album_key and p.artist_key = g.artist_key
+      left join titles t on t.album_key = g.album_key
+    )`
+}
+
+export async function getLastfmLinkReport(
+  input: z.input<typeof LastfmLinkQuerySchema> = {},
+): Promise<LastfmLinkReport> {
+  const query = LastfmLinkQuerySchema.parse(input)
   const configured = await credentials()
-  if (!configured) return
-  const [row] = await db
-    .select()
-    .from(lastfmSync)
-    .where(eq(lastfmSync.username, configured.account))
-  if (!row) return
-  if (
-    row.status === 'complete' &&
-    row.completedAt &&
-    row.completedAt.getTime() <= Date.now() - intervalMs
+  if (!configured)
+    return {
+      summary: [],
+      items: [],
+      totalCount: 0,
+      page: query.page,
+      size: query.size,
+      pageCount: 0,
+    }
+  const groups = classifiedGroups(configured.account)
+  const summary = LinkSummaryRowsSchema.parse(
+    (
+      await db.execute(sql`${groups}
+        select reason, count(*) as groups, sum(scrobbles) as scrobbles
+        from classified group by reason order by sum(scrobbles) desc`)
+    ).rows,
   )
-    await beginRun(configured.account, null)
-  else if (row.status !== 'running') return
-  await runLastfmSyncStep(options)
+  const pattern = `%${(query.q ?? '').replace(/[\\%_]/g, '\\$&')}%`
+  const rows = LinkGroupRowsSchema.parse(
+    (
+      await db.execute(sql`${groups}
+        select artist_name, album_name, album_key, scrobbles, last, reason,
+          album_id, count(*) over () as total
+        from classified
+        where ${
+          query.reason === undefined
+            ? sql`true`
+            : query.reason === 'unlinked'
+              ? sql`reason <> 'linked'`
+              : sql`reason = ${query.reason}`
+        } and ${
+          query.q
+            ? sql`(artist_name ilike ${pattern} or album_name ilike ${pattern})`
+            : sql`true`
+        }
+        order by scrobbles desc, artist_key, album_key
+        limit ${query.size} offset ${(query.page - 1) * query.size}`)
+    ).rows,
+  )
+  const ids = rows.flatMap((row) => (row.album_id ? [row.album_id] : []))
+  const titleKeys = rows.flatMap((row) =>
+    row.album_key &&
+    (row.reason === 'ambiguous' || row.reason === 'artist-mismatch')
+      ? [row.album_key]
+      : [],
+  )
+  const list = (values: string[]) =>
+    sql.join(
+      values.map((value) => sql`${value}`),
+      sql`, `,
+    )
+  const albums =
+    ids.length || titleKeys.length
+      ? LinkAlbumRowsSchema.parse(
+          (
+            await db.execute(sql`
+              select mi.id, mi.slug, mi.title,
+                ${nameKey(sql`mi.title`)} as album_key,
+                coalesce(array_agg(a.name order by c.billing_order)
+                  filter (where a.id is not null), '{}') as artists
+              from media_item mi
+              left join media_credit c on c.media_item_id = mi.id and c.role = 'artist'
+              left join artist a on a.id = c.artist_id
+              where mi.media_type = 'album' and (
+                ${ids.length ? sql`mi.id in (${list(ids)})` : sql`false`}
+                or ${
+                  titleKeys.length
+                    ? sql`${nameKey(sql`mi.title`)} in (${list(titleKeys)})`
+                    : sql`false`
+                })
+              group by mi.id order by mi.title, mi.id`)
+          ).rows,
+        )
+      : []
+  const album = ({ id, slug, title, artists }: (typeof albums)[number]) => ({
+    id,
+    slug,
+    title,
+    artists,
+  })
+  const totalCount = rows[0]?.total ?? 0
+  return LastfmLinkReportSchema.parse({
+    summary,
+    items: rows.map((row) => {
+      const linked = albums.find((item) => item.id === row.album_id)
+      return {
+        artistName: row.artist_name,
+        albumName: row.album_name,
+        scrobbles: row.scrobbles,
+        lastListenedAt: isoSeconds(row.last),
+        reason: row.reason,
+        album: linked ? album(linked) : null,
+        candidates:
+          row.reason === 'ambiguous' || row.reason === 'artist-mismatch'
+            ? albums
+                .filter((item) => item.album_key === row.album_key)
+                .slice(0, MAX_LINK_CANDIDATES)
+                .map(album)
+            : [],
+      }
+    }),
+    totalCount,
+    page: query.page,
+    size: query.size,
+    pageCount: Math.ceil(totalCount / query.size),
+  })
 }
 
 const SummarySchema = z
@@ -558,6 +786,19 @@ const TrackRowsSchema = z.array(
     last: z.coerce.number(),
   }),
 )
+
+const SourceRowsSchema = z.array(
+  z.object({
+    artist_name: z.string(),
+    album_name: z.string(),
+    count: z.coerce.number(),
+  }),
+)
+const source = (row: z.infer<typeof SourceRowsSchema>[number]) => ({
+  artistName: row.artist_name,
+  albumName: row.album_name,
+  count: row.count,
+})
 
 const isoSeconds = (value: number | null) =>
   value === null ? null : new Date(value * 1000).toISOString()
@@ -599,6 +840,43 @@ export async function getAlbumListening(
         group by track_key order by count(*) desc, track_key`)
     ).rows,
   )
+  const sources = SourceRowsSchema.parse(
+    (
+      await db.execute(sql`
+        select max(artist_name) as artist_name, max(album_name) as album_name,
+          count(*) as count
+        from lastfm_scrobble
+        where album_media_item_id = ${albumId} and album_name is not null
+        group by artist_key, album_key
+        order by count(*) desc, artist_key, album_key limit 20`)
+    ).rows,
+  )
+  // Same title under another artist, or the same artist with a longer or
+  // shorter title such as an edition suffix.
+  const similar = SourceRowsSchema.parse(
+    (
+      await db.execute(sql`
+        with target as (
+          select ${nameKey(sql`title`)} as album_key from media_item
+          where id = ${albumId} and media_type = 'album'
+        ), credited as (
+          select ${nameKey(sql`a.name`)} as artist_key
+          from media_credit c join artist a on a.id = c.artist_id
+          where c.media_item_id = ${albumId} and c.role = 'artist'
+        )
+        select max(s.artist_name) as artist_name,
+          max(s.album_name) as album_name, count(*) as count
+        from lastfm_scrobble s cross join target t
+        where s.album_media_item_id is null and s.album_key is not null and (
+          s.album_key = t.album_key
+          or (s.artist_key in (select artist_key from credited) and (
+            starts_with(s.album_key, t.album_key)
+            or (length(s.album_key) >= 4 and starts_with(t.album_key, s.album_key))
+          )))
+        group by s.artist_key, s.album_key
+        order by count(*) desc, s.artist_key, s.album_key limit 10`)
+    ).rows,
+  )
   const albumTracks = await db
     .select({ title: track.title, position: track.position })
     .from(track)
@@ -617,5 +895,7 @@ export async function getAlbumListening(
       count: row.count,
       lastListenedAt: isoSeconds(row.last),
     })),
+    sources: sources.map(source),
+    similarUnlinked: similar.map(source),
   })
 }

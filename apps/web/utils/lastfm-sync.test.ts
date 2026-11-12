@@ -1,119 +1,80 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
-  LastfmSyncStatusSchema,
+  LastfmLinkReasonSchema,
   type LastfmSyncStatus,
 } from '@repo/schemas/lastfm'
-import { MIN_STEP_INTERVAL_MS, driveLastfmSync, waitFor } from './lastfm-sync'
+import {
+  LASTFM_SYNC_POLL_MS,
+  lastfmLinkFilter,
+  lastfmLinkFilters,
+  lastfmLinkReasonLabels,
+  lastfmLinkSummaryRows,
+  lastfmLinksPath,
+  lastfmSyncPollInterval,
+} from './lastfm-sync'
 
-function status(state: LastfmSyncStatus['state'], pagesFetched: number) {
-  return LastfmSyncStatusSchema.parse({
-    configured: true,
-    state,
-    pagesFetched,
-    totalPages: 3,
-    newScrobbles: pagesFetched * 200,
-    storedScrobbles: pagesFetched * 200,
-    matchedScrobbles: 0,
-    startedAt: '2026-01-01T00:00:00Z',
-    lastCompletedAt: null,
-    errorMessage: null,
-  })
-}
-
-test('steps one at a time until the sync leaves running', async () => {
-  const responses = [
-    status('running', 1),
-    status('running', 2),
-    status('complete', 3),
+test('status is polled only while a sync job is queued or running', () => {
+  assert.equal(lastfmSyncPollInterval('running'), LASTFM_SYNC_POLL_MS)
+  const idle: LastfmSyncStatus['state'][] = [
+    'never',
+    'stopped',
+    'failed',
+    'complete',
   ]
-  const seen: number[] = []
-  const waits: number[] = []
-  let clock = 0
-  let inFlight = 0
-  await driveLastfmSync({
-    signal: new AbortController().signal,
-    now: () => clock,
-    wait: async (ms) => {
-      waits.push(ms)
-      clock += ms
-    },
-    step: async () => {
-      inFlight += 1
-      assert.equal(inFlight, 1)
-      clock += 500
-      const next = responses.shift()
-      inFlight -= 1
-      if (!next) throw new Error('Stepped after completion')
-      return next
-    },
-    onStatus: (next) => seen.push(next.pagesFetched),
-  })
-  assert.deepEqual(seen, [1, 2, 3])
-  assert.deepEqual(waits, [
-    MIN_STEP_INTERVAL_MS - 500,
-    MIN_STEP_INTERVAL_MS - 500,
-  ])
+  for (const state of idle)
+    assert.equal(lastfmSyncPollInterval(state), false, state)
+  assert.equal(lastfmSyncPollInterval(null), false)
 })
 
-test('long steps continue immediately without an extra wait', async () => {
-  const responses = [status('running', 1), status('stopped', 1)]
-  const waits: number[] = []
-  let clock = 0
-  await driveLastfmSync({
-    signal: new AbortController().signal,
-    now: () => clock,
-    wait: async (ms) => {
-      waits.push(ms)
-    },
-    step: async () => {
-      clock += 20_000
-      const next = responses.shift()
-      if (!next) throw new Error('Stepped after stop')
-      return next
-    },
-    onStatus: () => {},
-  })
-  assert.deepEqual(waits, [])
+test('link filter accepts reasons and unlinked, ignoring anything else', () => {
+  assert.equal(lastfmLinkFilter('unlinked'), 'unlinked')
+  assert.equal(lastfmLinkFilter('artist-mismatch'), 'artist-mismatch')
+  assert.equal(lastfmLinkFilter('unknown'), '')
+  assert.equal(lastfmLinkFilter(''), '')
+  assert.equal(lastfmLinkFilter(null), '')
 })
 
-test('aborting stops the loop and ignores the in-flight response', async () => {
-  const controller = new AbortController()
-  const seen: LastfmSyncStatus[] = []
-  let steps = 0
-  await driveLastfmSync({
-    signal: controller.signal,
-    wait: async () => {},
-    step: async () => {
-      steps += 1
-      controller.abort()
-      return status('running', 1)
-    },
-    onStatus: (next) => seen.push(next),
-  })
-  assert.equal(steps, 1)
-  assert.deepEqual(seen, [])
-})
-
-test('step failures propagate so the page can stop and offer a retry', async () => {
-  await assert.rejects(
-    driveLastfmSync({
-      signal: new AbortController().signal,
-      wait: async () => {},
-      step: async () => {
-        throw new Error('Last.fm unavailable')
-      },
-      onStatus: () => {},
-    }),
-    /Last\.fm unavailable/,
+test('link filters list All, Unlinked, then every reason with its label', () => {
+  assert.deepEqual(
+    lastfmLinkFilters.map((option) => option.value),
+    ['', 'unlinked', ...LastfmLinkReasonSchema.options],
+  )
+  assert.deepEqual(
+    lastfmLinkFilters.slice(2).map((option) => option.label),
+    [
+      'Linked',
+      'Links at next sync',
+      'Several albums match',
+      'Title matches, artist differs',
+      'No album with this title',
+      'Scrobbled without an album',
+    ],
   )
 })
 
-test('waiting resolves early when aborted', async () => {
-  const controller = new AbortController()
-  const started = Date.now()
-  const pending = waitFor(10_000, controller.signal)
-  controller.abort()
-  await pending
-  assert.ok(Date.now() - started < 1000)
+test('links path includes only the filters in use', () => {
+  assert.equal(
+    lastfmLinksPath({ reason: '', q: '', page: 1 }),
+    '/api/v1/lastfm/links?page=1&size=50',
+  )
+  assert.equal(
+    lastfmLinksPath({ reason: 'unlinked', q: 'Artist fixture & co', page: 3 }),
+    '/api/v1/lastfm/links?page=3&size=50&reason=unlinked&q=Artist+fixture+%26+co',
+  )
+})
+
+test('summary rows keep reason order and fill missing reasons with zero', () => {
+  const rows = lastfmLinkSummaryRows([
+    { reason: 'no-album', groups: 2, scrobbles: 9 },
+    { reason: 'linked', groups: 5, scrobbles: 120 },
+  ])
+  assert.deepEqual(
+    rows.map((row) => row.reason),
+    LastfmLinkReasonSchema.options,
+  )
+  assert.deepEqual(rows[0], { reason: 'linked', groups: 5, scrobbles: 120 })
+  assert.deepEqual(rows[1], { reason: 'pending', groups: 0, scrobbles: 0 })
+  assert.deepEqual(rows[5], { reason: 'no-album', groups: 2, scrobbles: 9 })
+  assert.equal(lastfmLinkReasonLabels.pending, 'Links at next sync')
 })

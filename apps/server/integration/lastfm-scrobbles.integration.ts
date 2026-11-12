@@ -12,7 +12,9 @@ import {
   vi,
 } from 'vitest'
 import { env } from '@/env'
+import { lastfmPlugin } from '@/plugins/builtin/lastfm'
 import * as schema from '@/schemas/db'
+import type { LastfmSyncJobContext } from '@/services/lastfm-scrobbles'
 
 const database = `lastfm_scrobbles_${randomUUID().replaceAll('-', '')}`
 const connection = {
@@ -30,6 +32,20 @@ vi.mock('@/lib/db', () => ({
     return databaseClient
   },
 }))
+vi.mock('@/plugins/registry', () => ({
+  getScrapePlugin: async (id: string) =>
+    id === 'lastfm' ? lastfmPlugin : null,
+}))
+// One page per job and no pacing, so every page boundary chains a follow-on job.
+vi.mock('@/services/lastfm-scrobbles', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('@/services/lastfm-scrobbles')>()
+  return {
+    ...actual,
+    runLastfmSyncJob: (context: LastfmSyncJobContext) =>
+      actual.runLastfmSyncJob(context, { maxPages: 1, spacingMs: 0 }),
+  }
+})
 vi.mock('@/lib/provider-secrets', () => ({
   resolveProviderSecrets: () => ({
     apiKey: 'offline-fixture-key',
@@ -40,9 +56,14 @@ vi.mock('@/lib/provider-secrets', () => ({
 const recent = Math.floor(Date.now() / 1000) - 3600
 const old = Math.floor(Date.UTC(2015, 4, 10) / 1000)
 
-function scrobble(uts: number, name: string, album = 'Album fixture') {
+function scrobble(
+  uts: number,
+  name: string,
+  album = 'Album fixture',
+  artist = 'Artist fixture',
+) {
   return {
-    artist: { mbid: '', '#text': 'Artist fixture' },
+    artist: { mbid: '', '#text': artist },
     album: { mbid: '', '#text': album },
     name,
     mbid: '',
@@ -73,19 +94,40 @@ const nowPlaying = {
   '@attr': { nowplaying: 'true' },
 }
 
+function respond(...pages: unknown[]) {
+  for (const body of pages)
+    request.mockImplementationOnce(async () => Response.json(body))
+}
+
 function requestedUrl(call: number) {
   return new URL(String(request.mock.calls[call]?.[0]))
 }
 
-async function syncToEnd() {
-  const { getLastfmSyncStatus, startLastfmSync } =
-    await import('@/services/lastfm-scrobbles')
-  await startLastfmSync(null)
+async function syncJobs() {
+  return databaseClient
+    .select()
+    .from(schema.scrapeJob)
+    .orderBy(schema.scrapeJob.createdAt, schema.scrapeJob.id)
+}
+
+// Stands in for the job worker's polling loop.
+async function drain() {
+  const { processQueuedJobs } = await import('@/services/jobs')
+  const { getLastfmSyncStatus } = await import('@/services/lastfm-scrobbles')
   await vi.waitFor(
-    async () => expect((await getLastfmSyncStatus()).state).not.toBe('running'),
-    { timeout: 10000, interval: 50 },
+    async () => {
+      await processQueuedJobs()
+      expect((await getLastfmSyncStatus()).state).not.toBe('running')
+    },
+    { timeout: 10000, interval: 100 },
   )
   return getLastfmSyncStatus()
+}
+
+async function syncToEnd() {
+  const { queueLastfmSync } = await import('@/services/lastfm-sync-jobs')
+  await queueLastfmSync(null)
+  return drain()
 }
 
 let created = false
@@ -101,6 +143,7 @@ beforeEach(async () => {
   request.mockImplementation(async () => {
     throw new Error('Unexpected request')
   })
+  await databaseClient.delete(schema.scrapeJob)
   await databaseClient.delete(schema.lastfmScrobble)
   await databaseClient.delete(schema.lastfmSync)
   await databaseClient.delete(schema.mediaItem)
@@ -139,20 +182,28 @@ afterAll(async () => {
   vi.unstubAllGlobals()
 })
 
-describe('Last.fm scrobble sync with offline HTTP and a temporary database', () => {
-  it('stores every dated scrobble across pages, links albums by name and fills browse fields', async () => {
-    request.mockImplementationOnce(async () =>
-      Response.json(
-        page(1, 2, [
-          nowPlaying,
-          scrobble(recent, 'First track'),
-          scrobble(old, 'First track'),
-        ]),
-      ),
-    )
-    request.mockImplementationOnce(async () =>
+async function addAlbum(id: string, title: string) {
+  await databaseClient
+    .insert(schema.mediaItem)
+    .values({ id, slug: id, title, mediaType: 'album' })
+  await databaseClient.insert(schema.album).values({ mediaItemId: id })
+  await databaseClient.insert(schema.mediaCredit).values({
+    mediaItemId: id,
+    artistId: 'artist-fixture',
+    role: 'artist',
+  })
+}
+
+describe('Last.fm scrobble sync jobs with offline HTTP and a temporary database', () => {
+  it('runs as chained jobs, stores every dated scrobble, links albums and fills browse fields', async () => {
+    respond(
+      page(1, 2, [
+        nowPlaying,
+        scrobble(recent, 'First track'),
+        scrobble(old, 'First track'),
+      ]),
       // A page holding one track arrives as a bare object.
-      Response.json(page(2, 2, scrobble(old - 60, 'Other', 'Unknown album'))),
+      page(2, 2, scrobble(old - 60, 'Other', 'Unknown album')),
     )
     const status = await syncToEnd()
 
@@ -166,6 +217,25 @@ describe('Last.fm scrobble sync with offline HTTP and a temporary database', () 
       matchedScrobbles: 2,
       errorMessage: null,
     })
+    const jobs = await syncJobs()
+    expect(jobs.map((job) => [job.provider, job.status])).toEqual([
+      ['lastfm', 'succeeded'],
+      ['lastfm', 'succeeded'],
+    ])
+    expect(jobs[0]?.options).toEqual({ task: 'lastfm-scrobble-sync' })
+    expect(jobs[1]?.options).toEqual({
+      task: 'lastfm-scrobble-sync',
+      continues: jobs[0]?.id,
+    })
+    expect(status.job).toEqual({ id: jobs[1]?.id, status: 'succeeded' })
+    const { getJob, listJobs } = await import('@/services/jobs')
+    const finished = await getJob(jobs[1]?.id ?? '')
+    expect(finished?.items).toEqual([])
+    expect(finished?.logs.at(-1)?.message).toBe(
+      'Sync complete. 3 new scrobbles; 2 of 3 stored scrobbles are linked to albums.',
+    )
+    expect((await listJobs({ status: 'attention' })).totalCount).toBe(0)
+
     expect(request).toHaveBeenCalledTimes(2)
     const first = requestedUrl(0).searchParams
     const second = requestedUrl(1).searchParams
@@ -203,20 +273,25 @@ describe('Last.fm scrobble sync with offline HTTP and a temporary database', () 
     })
   })
 
+  it('returns the active job instead of queueing a second sync', async () => {
+    const { queueLastfmSync } = await import('@/services/lastfm-sync-jobs')
+    const first = await queueLastfmSync(null)
+    const second = await queueLastfmSync(null)
+    expect(first.state).toBe('running')
+    expect(second.job).toEqual(first.job)
+    expect(await syncJobs()).toHaveLength(1)
+  })
+
   it('re-reads an overlap on the next sync without duplicating scrobbles', async () => {
-    request.mockImplementationOnce(async () =>
-      Response.json(page(1, 1, [scrobble(recent, 'First track')])),
-    )
+    respond(page(1, 1, [scrobble(recent, 'First track')]))
     await syncToEnd()
     const firstTo = Number(requestedUrl(0).searchParams.get('to'))
 
-    request.mockImplementationOnce(async () =>
-      Response.json(
-        page(1, 1, [
-          scrobble(recent + 60, 'First track'),
-          scrobble(recent, 'First track'),
-        ]),
-      ),
+    respond(
+      page(1, 1, [
+        scrobble(recent + 60, 'First track'),
+        scrobble(recent, 'First track'),
+      ]),
     )
     const status = await syncToEnd()
 
@@ -231,40 +306,46 @@ describe('Last.fm scrobble sync with offline HTTP and a temporary database', () 
   })
 
   it('completes an empty window without storing anything', async () => {
-    request.mockImplementationOnce(async () =>
-      Response.json(page(1, 0, [nowPlaying])),
-    )
+    respond(page(1, 0, [nowPlaying]))
     const status = await syncToEnd()
     expect(status).toMatchObject({ state: 'complete', storedScrobbles: 0 })
     expect(request).toHaveBeenCalledTimes(1)
   })
 
-  it('stops on a rate limit without retrying, then resumes the same page and window', async () => {
-    request.mockImplementationOnce(async () =>
-      Response.json(page(1, 2, [scrobble(recent, 'First track')])),
-    )
-    request.mockImplementationOnce(async () =>
-      Response.json({ error: 29, message: 'Rate limit exceeded' }),
-    )
+  it('fails the job on a rate limit without retrying, then resumes the same page and window', async () => {
+    respond(page(1, 2, [scrobble(recent, 'First track')]), {
+      error: 29,
+      message: 'Rate limit exceeded',
+    })
     const failed = await syncToEnd()
 
     expect(failed).toMatchObject({
       state: 'failed',
       pagesFetched: 1,
       storedScrobbles: 1,
+      nextScheduledAt: null,
     })
     expect(failed.errorMessage).toBeTruthy()
+    expect(failed.job?.status).toBe('failed')
     expect(request).toHaveBeenCalledTimes(2)
+    const { listJobs } = await import('@/services/jobs')
+    expect((await listJobs({ status: 'attention' })).totalCount).toBe(1)
     const [safety] = await databaseClient
       .select()
       .from(schema.providerRequestState)
     expect(safety?.cooldownUntil?.getTime()).toBeGreaterThan(Date.now())
 
+    const { queueLastfmSync, queueDueLastfmSync } =
+      await import('@/services/lastfm-sync-jobs')
+    await expect(queueLastfmSync(null)).rejects.toMatchObject({
+      response: { statusCode: 429 },
+    })
+    // The schedule never resumes a failed run.
+    expect(await queueDueLastfmSync(Date.now() + 365 * 86400000)).toBe(false)
+
     // The cooldown is cleared by hand, as an operator would in Providers.
     await databaseClient.delete(schema.providerRequestState)
-    request.mockImplementationOnce(async () =>
-      Response.json(page(2, 2, [scrobble(old, 'First track')])),
-    )
+    respond(page(2, 2, [scrobble(old, 'First track')]))
     const resumed = await syncToEnd()
 
     expect(resumed).toMatchObject({
@@ -277,51 +358,204 @@ describe('Last.fm scrobble sync with offline HTTP and a temporary database', () 
     expect(requestedUrl(2).searchParams.get('to')).toBe(
       requestedUrl(0).searchParams.get('to'),
     )
+    const jobs = await syncJobs()
+    expect(jobs.map((job) => job.status)).toEqual([
+      'succeeded',
+      'failed',
+      'succeeded',
+    ])
+    expect(jobs[1]?.options['retryJobId']).toBe(jobs[2]?.id)
+    expect((await listJobs({ status: 'attention' })).totalCount).toBe(0)
   })
 
-  it('rejects a response for a different page', async () => {
-    request.mockImplementationOnce(async () =>
-      Response.json(page(3, 5, [scrobble(recent, 'First track')])),
-    )
+  it('retries a failed sync job from the jobs API', async () => {
+    respond(page(3, 5, [scrobble(recent, 'First track')]))
     const status = await syncToEnd()
     expect(status).toMatchObject({ state: 'failed', storedScrobbles: 0 })
+
+    await databaseClient.delete(schema.providerRequestState)
+    const { retryJob } = await import('@/services/jobs')
+    const retry = await retryJob(status.job?.id ?? '', null, false)
+    expect(retry.id).not.toBe(status.job?.id)
+    respond(page(1, 1, [scrobble(recent, 'First track')]))
+    expect(await drain()).toMatchObject({
+      state: 'complete',
+      storedScrobbles: 1,
+      job: { id: retry.id, status: 'succeeded' },
+    })
   })
 
-  it('keeps stored scrobbles when a running sync is stopped', async () => {
-    const { getLastfmSyncStatus, startLastfmSync, stopLastfmSync } =
-      await import('@/services/lastfm-scrobbles')
+  it('discards the in-flight page when the job is cancelled and resumes on request', async () => {
+    const { bulkCancelJobs } = await import('@/services/jobs')
     request.mockImplementationOnce(async () =>
       Response.json(page(1, 3, [scrobble(recent, 'First track')])),
     )
-    request.mockImplementation(async () => {
-      await stopLastfmSync()
+    request.mockImplementationOnce(async () => {
+      const running = (await syncJobs()).find((job) => job.status === 'running')
+      await bulkCancelJobs(
+        { jobIds: [running?.id ?? ''], confirmRunning: true },
+        null,
+      )
       return Response.json(page(2, 3, [scrobble(old, 'First track')]))
     })
-    await startLastfmSync(null)
-    await vi.waitFor(
-      async () => expect((await getLastfmSyncStatus()).state).toBe('stopped'),
-      { timeout: 10000, interval: 50 },
-    )
-    // Let the in-flight step observe the stop before the next test starts.
-    await vi.waitFor(() => expect(request).toHaveBeenCalledTimes(2))
-    await new Promise((resolve) => setTimeout(resolve, 200))
-    expect(await getLastfmSyncStatus()).toMatchObject({
+    const stopped = await syncToEnd()
+    expect(stopped).toMatchObject({
       state: 'stopped',
       pagesFetched: 1,
       storedScrobbles: 1,
+      job: { status: 'cancelled' },
     })
+
+    respond(
+      page(2, 3, [scrobble(old, 'First track')]),
+      page(3, 3, [scrobble(old - 60, 'First track')]),
+    )
+    expect(await syncToEnd()).toMatchObject({
+      state: 'complete',
+      pagesFetched: 3,
+      storedScrobbles: 3,
+    })
+    expect(requestedUrl(2).searchParams.get('page')).toBe('2')
   })
 
-  it('reports album listening by month and by track', async () => {
-    const { getAlbumListening } = await import('@/services/lastfm-scrobbles')
-    request.mockImplementationOnce(async () =>
-      Response.json(
-        page(1, 1, [
-          scrobble(recent, 'First track'),
-          scrobble(old + 120, 'Bonus track'),
-          scrobble(old, 'First track'),
-        ]),
+  it('queues a sync only when the schedule is due after a completed sync', async () => {
+    const { getLastfmSyncStatus, setLastfmSyncSchedule } =
+      await import('@/services/lastfm-scrobbles')
+    const { queueDueLastfmSync } = await import('@/services/lastfm-sync-jobs')
+    const day = 24 * 60 * 60 * 1000
+
+    // The setting can be saved first, but the schedule never starts the first sync.
+    expect(await setLastfmSyncSchedule('weekly')).toMatchObject({
+      state: 'never',
+      schedule: 'weekly',
+      nextScheduledAt: null,
+      startedAt: null,
+    })
+    expect(await queueDueLastfmSync(Date.now() + 365 * day)).toBe(false)
+
+    respond(page(1, 1, [scrobble(recent, 'First track')]))
+    const complete = await syncToEnd()
+    const completedAt = Date.parse(complete.lastCompletedAt ?? '')
+    expect(complete.nextScheduledAt).toBe(
+      new Date(completedAt + 7 * day).toISOString(),
+    )
+    expect((await setLastfmSyncSchedule('off')).nextScheduledAt).toBeNull()
+    expect(await queueDueLastfmSync(completedAt + 365 * day)).toBe(false)
+    expect((await setLastfmSyncSchedule('6h')).nextScheduledAt).toBe(
+      new Date(completedAt + day / 4).toISOString(),
+    )
+
+    expect(await queueDueLastfmSync(completedAt + day / 4 - 1000)).toBe(false)
+    expect(await queueDueLastfmSync(completedAt + day / 4)).toBe(true)
+    expect(await queueDueLastfmSync(completedAt + day)).toBe(false)
+    expect(await getLastfmSyncStatus()).toMatchObject({
+      state: 'running',
+      schedule: '6h',
+      nextScheduledAt: null,
+    })
+    respond(page(1, 0, []))
+    expect((await drain()).state).toBe('complete')
+    expect(await syncJobs()).toHaveLength(2)
+  })
+
+  it('reports how each scrobbled artist and album name is linked', async () => {
+    const { getLastfmLinkReport, relinkLastfmScrobbles } =
+      await import('@/services/lastfm-scrobbles')
+    await addAlbum('twin-a', 'Twin album')
+    await addAlbum('twin-b', 'Twin Album')
+    respond(
+      page(1, 1, [
+        scrobble(recent, 'First track'),
+        scrobble(recent - 10, 'First track'),
+        scrobble(recent - 20, 'First track'),
+        scrobble(recent - 30, 'Second', 'Album fixture', 'Other artist'),
+        scrobble(recent - 40, 'Second', 'Album fixture', 'Other artist'),
+        scrobble(recent - 50, 'Third', 'Twin album'),
+        scrobble(recent - 60, 'Fourth', 'Late album'),
+        scrobble(recent - 70, 'Fifth', 'Unknown album'),
+        scrobble(recent - 80, 'Sixth', ''),
+      ]),
+    )
+    await syncToEnd()
+    await addAlbum('late-album', 'Late Album')
+
+    const fixture = {
+      id: 'album-fixture',
+      slug: 'album-fixture',
+      title: 'Album  Fixture',
+      artists: ['Artist fixture'],
+    }
+    const report = await getLastfmLinkReport()
+    expect(report).toMatchObject({ totalCount: 6, page: 1, pageCount: 1 })
+    expect(
+      Object.fromEntries(
+        report.summary.map((row) => [row.reason, [row.groups, row.scrobbles]]),
       ),
+    ).toEqual({
+      linked: [1, 3],
+      'artist-mismatch': [1, 2],
+      ambiguous: [1, 1],
+      pending: [1, 1],
+      'no-title-match': [1, 1],
+      'no-album': [1, 1],
+    })
+    expect(report.items[0]).toEqual({
+      artistName: 'Artist fixture',
+      albumName: 'Album fixture',
+      scrobbles: 3,
+      lastListenedAt: new Date(recent * 1000).toISOString(),
+      reason: 'linked',
+      album: fixture,
+      candidates: [],
+    })
+    expect(report.items[1]).toMatchObject({
+      artistName: 'Other artist',
+      reason: 'artist-mismatch',
+      album: null,
+      candidates: [fixture],
+    })
+    const byReason = (reason: string) =>
+      report.items.find((item) => item.reason === reason)
+    expect(byReason('ambiguous')?.candidates.map((album) => album.id)).toEqual([
+      'twin-a',
+      'twin-b',
+    ])
+    expect(byReason('pending')?.album?.id).toBe('late-album')
+    expect(byReason('no-title-match')).toMatchObject({
+      albumName: 'Unknown album',
+      album: null,
+      candidates: [],
+    })
+    expect(byReason('no-album')?.albumName).toBeNull()
+
+    const unlinked = await getLastfmLinkReport({ reason: 'unlinked', size: 2 })
+    expect(unlinked).toMatchObject({ totalCount: 5, pageCount: 3 })
+    expect(unlinked.items).toHaveLength(2)
+    expect(unlinked.summary).toEqual(report.summary)
+    const searched = await getLastfmLinkReport({ q: 'other art' })
+    expect(searched.items.map((item) => item.artistName)).toEqual([
+      'Other artist',
+    ])
+
+    // Relinking applies the album added after the sync without any request.
+    const relinked = await relinkLastfmScrobbles()
+    expect(relinked.matchedScrobbles).toBe(4)
+    expect(request).toHaveBeenCalledTimes(1)
+    const pending = await getLastfmLinkReport({ reason: 'pending' })
+    expect(pending.totalCount).toBe(0)
+  })
+
+  it('reports album listening by month and by track with its scrobbled names', async () => {
+    const { getAlbumListening } = await import('@/services/lastfm-scrobbles')
+    respond(
+      page(1, 1, [
+        scrobble(recent, 'First track'),
+        scrobble(old + 120, 'Bonus track'),
+        scrobble(old, 'First track'),
+        scrobble(old - 60, 'First track', 'Album fixture (Edition)'),
+        scrobble(old - 120, 'First track', 'Album fixture', 'Other artist'),
+        scrobble(old - 180, 'First track', 'Unrelated'),
+      ]),
     )
     await syncToEnd()
 
@@ -346,6 +580,15 @@ describe('Last.fm scrobble sync with offline HTTP and a temporary database', () 
         count: 1,
         lastListenedAt: new Date((old + 120) * 1000).toISOString(),
       },
+    ])
+    expect(all.sources).toEqual([
+      { artistName: 'Artist fixture', albumName: 'Album fixture', count: 3 },
+    ])
+    expect(
+      all.similarUnlinked.map((item) => [item.artistName, item.albumName]),
+    ).toEqual([
+      ['Artist fixture', 'Album fixture (Edition)'],
+      ['Other artist', 'Album fixture'],
     ])
 
     const bonus = await getAlbumListening('album-fixture', 'bonus track')

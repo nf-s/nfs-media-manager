@@ -5,8 +5,10 @@ import { z } from 'zod'
 import { db } from '@/lib/db'
 import { scrapeJob, scrapeJobItem, scrapeJobLog } from '@/schemas/db'
 import { processQueuedJobs } from '@/services/jobs'
+import { queueDueLastfmSync } from '@/services/lastfm-sync-jobs'
 
 const workerLock = 614105
+const scheduleCheckMs = 5 * 60 * 1000
 const interruptionReason =
   'Worker interrupted before the job finished. Review the retained results and retry unfinished work manually.'
 const lockResultSchema = z.object({
@@ -35,6 +37,7 @@ export async function startJobWorker({
   let processing: Promise<void> | undefined
   let checking: Promise<void> | undefined
   let stopPromise: Promise<void> | undefined
+  let nextScheduleCheck = 0
 
   function disableDispatch(): void {
     stopping = true
@@ -172,6 +175,10 @@ export async function startJobWorker({
       if (watchdog !== undefined) clearTimeout(watchdog)
     }
     if (stopping || processing !== undefined) return
+    if (Date.now() >= nextScheduleCheck) {
+      nextScheduleCheck = Date.now() + scheduleCheckMs
+      await queueDueLastfmSync()
+    }
     processing = processQueuedJobs(() => !stopping)
       .catch(fatal)
       .finally(() => {

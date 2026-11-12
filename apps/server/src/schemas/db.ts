@@ -698,7 +698,9 @@ export const lastfmScrobble = pgTable(
 
 export const lastfmSync = pgTable('lastfm_sync', {
   username: text('username').primaryKey(),
+  // running, failed, complete, or idle before the first run.
   status: text('status').notNull(),
+  schedule: text('schedule').notNull().default('daily'),
   // Unix seconds. The window is fixed for a run so page numbers stay stable.
   windowFrom: bigint('window_from', { mode: 'number' }),
   windowTo: bigint('window_to', { mode: 'number' }).notNull(),

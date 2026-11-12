@@ -1,7 +1,10 @@
 import { createRoute, type OpenAPIHono } from '@hono/zod-openapi'
 import { createMiddleware } from 'hono/factory'
 import {
+  LastfmLinkQuerySchema,
+  LastfmLinkReportSchema,
   LastfmSyncInputSchema,
+  LastfmSyncSettingsSchema,
   LastfmSyncStatusSchema,
 } from '@repo/schemas/lastfm'
 import { env } from '@/env'
@@ -16,11 +19,12 @@ import {
 import { generateJsonResponse } from '@/lib/response'
 import { authMiddleware } from '@/middlewares/auth'
 import {
+  getLastfmLinkReport,
   getLastfmSyncStatus,
-  runLastfmSyncStep,
-  startLastfmSync,
-  stopLastfmSync,
+  relinkLastfmScrobbles,
+  setLastfmSyncSchedule,
 } from '@/services/lastfm-scrobbles'
+import { queueLastfmSync } from '@/services/lastfm-sync-jobs'
 
 const sameOrigin = createMiddleware<AppEnv>(async (c, next) => {
   const origin = c.req.header('origin')
@@ -70,8 +74,33 @@ const app: OpenAPIHono<AppEnv> = createOpenAPIApp()
       request: { body: emptyBody },
       responses: {
         200: statusResponse(
-          'Start a scrobble sync or resume an unfinished one',
+          'Queue a scrobble sync job, or resume an unfinished run',
         ),
+        401: jsonErrorResponse('Unauthorized'),
+        422: validationErrorResponse,
+        429: jsonErrorResponse('Last.fm is cooling down or halted'),
+      },
+    }),
+    async (c) =>
+      generateJsonResponse(
+        c,
+        await queueLastfmSync(c.get('user')?.id ?? null),
+        200,
+      ),
+  )
+  .openapi(
+    createRoute({
+      method: 'put',
+      path: '/sync/settings',
+      middleware: [authMiddleware(), sameOrigin],
+      request: {
+        body: {
+          required: true,
+          content: { 'application/json': { schema: LastfmSyncSettingsSchema } },
+        },
+      },
+      responses: {
+        200: statusResponse('Set how often a sync is queued automatically'),
         401: jsonErrorResponse('Unauthorized'),
         422: validationErrorResponse,
       },
@@ -79,37 +108,52 @@ const app: OpenAPIHono<AppEnv> = createOpenAPIApp()
     async (c) =>
       generateJsonResponse(
         c,
-        await startLastfmSync(c.get('user')?.id ?? null),
+        await setLastfmSyncSchedule(c.req.valid('json').schedule),
+        200,
+      ),
+  )
+  .openapi(
+    createRoute({
+      method: 'get',
+      path: '/links',
+      middleware: [authMiddleware()],
+      request: { query: LastfmLinkQuerySchema },
+      responses: {
+        200: {
+          description:
+            'Scrobbled artist and album names with the library album each links to, or why it is unlinked',
+          content: {
+            'application/json': {
+              schema: createResponseSchema(LastfmLinkReportSchema),
+            },
+          },
+        },
+        401: jsonErrorResponse('Unauthorized'),
+        422: validationErrorResponse,
+      },
+    }),
+    async (c) =>
+      generateJsonResponse(
+        c,
+        await getLastfmLinkReport(c.req.valid('query')),
         200,
       ),
   )
   .openapi(
     createRoute({
       method: 'post',
-      path: '/sync/step',
+      path: '/links/refresh',
       middleware: [authMiddleware(), sameOrigin],
       request: { body: emptyBody },
       responses: {
-        200: statusResponse('Fetch further pages of a running sync'),
+        200: statusResponse(
+          'Recompute album links from stored scrobbles; no Last.fm requests',
+        ),
         401: jsonErrorResponse('Unauthorized'),
         422: validationErrorResponse,
       },
     }),
-    async (c) => generateJsonResponse(c, await runLastfmSyncStep(), 200),
-  )
-  .openapi(
-    createRoute({
-      method: 'post',
-      path: '/sync/stop',
-      middleware: [authMiddleware(), sameOrigin],
-      request: { body: emptyBody },
-      responses: {
-        200: statusResponse('Stop a running sync; stored scrobbles are kept'),
-        401: jsonErrorResponse('Unauthorized'),
-        422: validationErrorResponse,
-      },
-    }),
-    async (c) => generateJsonResponse(c, await stopLastfmSync(), 200),
+    async (c) => generateJsonResponse(c, await relinkLastfmScrobbles(), 200),
   )
 
 app.onError((error, c) =>

@@ -1,52 +1,17 @@
-import type { LastfmSyncStatus } from '@repo/schemas/lastfm'
+import type { z } from 'zod'
+import {
+  LastfmLinkQuerySchema,
+  LastfmLinkReasonSchema,
+  type LastfmLinkReason,
+  type LastfmLinkReport,
+  type LastfmSyncSchedule,
+  type LastfmSyncStatus,
+} from '@repo/schemas/lastfm'
 
-/** Minimum time between step requests so a quickly returning step never spins. */
-export const MIN_STEP_INTERVAL_MS = 2000
+/** How often the page re-reads status while a sync job is queued or running. */
+export const LASTFM_SYNC_POLL_MS = 3000
 
-export function waitFor(ms: number, signal: AbortSignal) {
-  return new Promise<void>((resolve) => {
-    if (signal.aborted) {
-      resolve()
-      return
-    }
-    const timer = setTimeout(done, ms)
-    signal.addEventListener('abort', done, { once: true })
-    function done() {
-      clearTimeout(timer)
-      signal.removeEventListener('abort', done)
-      resolve()
-    }
-  })
-}
-
-/**
- * Calls `step` one request at a time while the sync reports `running`.
- * Stops when the state changes, the signal aborts, or a step fails (the error propagates).
- */
-export async function driveLastfmSync({
-  step,
-  onStatus,
-  signal,
-  now = Date.now,
-  wait = waitFor,
-}: {
-  step: (signal: AbortSignal) => Promise<LastfmSyncStatus>
-  onStatus: (status: LastfmSyncStatus) => void
-  signal: AbortSignal
-  now?: () => number
-  wait?: (ms: number, signal: AbortSignal) => Promise<void>
-}) {
-  while (!signal.aborted) {
-    const started = now()
-    const status = await step(signal)
-    if (signal.aborted) return
-    onStatus(status)
-    if (status.state !== 'running') return
-    const elapsed = now() - started
-    if (elapsed < MIN_STEP_INTERVAL_MS)
-      await wait(MIN_STEP_INTERVAL_MS - elapsed, signal)
-  }
-}
+export const LASTFM_LINKS_PAGE_SIZE = 50
 
 export const lastfmSyncStateLabels: Record<LastfmSyncStatus['state'], string> =
   {
@@ -56,3 +21,79 @@ export const lastfmSyncStateLabels: Record<LastfmSyncStatus['state'], string> =
     failed: 'Failed',
     complete: 'Complete',
   }
+
+export const lastfmScheduleLabels: Record<LastfmSyncSchedule, string> = {
+  off: 'Off',
+  '6h': 'Every 6 hours',
+  daily: 'Daily',
+  weekly: 'Weekly',
+}
+
+export const lastfmLinkReasonLabels: Record<LastfmLinkReason, string> = {
+  linked: 'Linked',
+  pending: 'Links at next sync',
+  ambiguous: 'Several albums match',
+  'artist-mismatch': 'Title matches, artist differs',
+  'no-title-match': 'No album with this title',
+  'no-album': 'Scrobbled without an album',
+}
+
+export type LastfmLinkFilter = NonNullable<
+  z.infer<typeof LastfmLinkQuerySchema>['reason']
+>
+
+export const lastfmLinkFilters: Array<{
+  value: LastfmLinkFilter | ''
+  label: string
+}> = [
+  { value: '', label: 'All' },
+  { value: 'unlinked', label: 'Unlinked' },
+  ...LastfmLinkReasonSchema.options.map((reason) => ({
+    value: reason,
+    label: lastfmLinkReasonLabels[reason],
+  })),
+]
+
+/** Reads the `reason` search parameter, ignoring unknown values. */
+export function lastfmLinkFilter(value: string | null): LastfmLinkFilter | '' {
+  const parsed = LastfmLinkQuerySchema.shape.reason.safeParse(
+    value ?? undefined,
+  )
+  return parsed.success && parsed.data ? parsed.data : ''
+}
+
+export function lastfmLinksPath({
+  reason,
+  q,
+  page,
+}: {
+  reason: LastfmLinkFilter | ''
+  q: string
+  page: number
+}) {
+  const params = new URLSearchParams({
+    page: String(page),
+    size: String(LASTFM_LINKS_PAGE_SIZE),
+  })
+  if (reason) params.set('reason', reason)
+  if (q) params.set('q', q)
+  return `/api/v1/lastfm/links?${params}`
+}
+
+/** Every reason in display order, with zero totals for reasons the server omitted. */
+export function lastfmLinkSummaryRows(summary: LastfmLinkReport['summary']) {
+  return LastfmLinkReasonSchema.options.map(
+    (reason) =>
+      summary.find((row) => row.reason === reason) ?? {
+        reason,
+        groups: 0,
+        scrobbles: 0,
+      },
+  )
+}
+
+export function lastfmSyncPollInterval(
+  state: LastfmSyncStatus['state'] | null,
+) {
+  return state === 'running' ? LASTFM_SYNC_POLL_MS : false
+}

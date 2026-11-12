@@ -7,6 +7,7 @@ import {
   JobListQuerySchema,
   JobActivitySchema,
   getJobDismissal,
+  getJobTask,
   isRetryableJobStatus,
   isUnfinishedJobItem,
   type CreateJobInput,
@@ -20,6 +21,7 @@ import {
   type JobPage,
 } from '@repo/schemas/job'
 import type { JsonValue } from '@repo/schemas/common'
+import { LASTFM_SCROBBLE_SYNC_TASK } from '@repo/schemas/lastfm'
 import { z } from 'zod'
 import {
   PluginResultSchema,
@@ -55,6 +57,10 @@ import { applyProviderResultInTransaction } from '@/services/provider-state'
 import { getProviderReferenceHints } from '@/services/provider-reference-hints'
 import { wakeJobProvider } from '@/services/job-dispatch-context'
 import type { CloudJobOutcome } from '@/services/cloud-job-contract'
+import {
+  prepareLastfmSyncRun,
+  runLastfmSyncJob,
+} from '@/services/lastfm-scrobbles'
 import {
   createProviderRequest,
   getProviderSafety,
@@ -380,6 +386,12 @@ async function processJob(
     .where(and(eq(scrapeJob.id, nextJob.id), eq(scrapeJob.status, 'queued')))
     .returning({ id: scrapeJob.id })
   if (!claimed) return
+
+  const task = getJobTask(nextJob.options)
+  if (task !== null) {
+    await processTaskJob(nextJob, task, plugin, execution, control)
+    return
+  }
 
   const item = nextJob.items[0]
   if (
@@ -803,6 +815,307 @@ async function processJob(
       })
       .where(eq(scrapeJob.id, nextJob.id))
   })
+}
+
+// Account-level work has a provider and a task name instead of a media item.
+// It still runs through the provider's dispatcher, cooldowns and cancellation.
+const taskJobs = new Map([
+  [
+    LASTFM_SCROBBLE_SYNC_TASK,
+    {
+      provider: 'lastfm',
+      prepare: prepareLastfmSyncRun,
+      run: runLastfmSyncJob,
+    },
+  ],
+])
+
+async function insertTaskJob(
+  tx: JobTransaction,
+  provider: string,
+  options: Record<string, JsonValue>,
+  userId: string | null,
+  message: string,
+): Promise<string> {
+  const jobId = nanoid()
+  await tx.insert(scrapeJob).values({
+    id: jobId,
+    provider,
+    status: 'queued',
+    scope: { mediaItemIds: [], mediaType: 'album', limit: 1 },
+    options,
+    confirmBroadRun: false,
+    requestedByUserId: userId,
+  })
+  await logJob(jobId, 'info', message, {}, tx)
+  return jobId
+}
+
+/**
+ * Queues a task job, or returns the one already queued or running. With
+ * `retryOf`, the failed or cancelled original is linked to its replacement.
+ */
+export async function createTaskJob(
+  task: string,
+  userId: string | null,
+  scheduling: {
+    retryOf?: string
+    skipExistingRetry?: boolean
+    confirmRunning?: boolean
+  } = {},
+): Promise<Job> {
+  const definition = taskJobs.get(task)
+  if (!definition)
+    throw new ServerError({ statusCode: 422, message: 'Unknown job task' })
+  const safety = await getProviderSafety(definition.provider)
+  if (safety.halted || safety.cooldownUntil)
+    throw new ServerError({
+      statusCode: 429,
+      message: safety.halted
+        ? 'Provider requests are halted after access denial'
+        : `Provider is cooling down until ${safety.cooldownUntil}`,
+    })
+  await definition.prepare(userId)
+
+  let created = false
+  const jobId = await db.transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(614104)`)
+    const retryOptions: Record<string, JsonValue> = {}
+    if (scheduling.retryOf) {
+      const [original] = await tx
+        .select()
+        .from(scrapeJob)
+        .where(eq(scrapeJob.id, scheduling.retryOf))
+        .for('update')
+      if (!original || getJobTask(original.options) !== task)
+        throw new ServerError({ statusCode: 404, message: 'Job not found' })
+      if (typeof original.options.retryJobId === 'string') {
+        const [previous] = await tx
+          .select({ id: scrapeJob.id })
+          .from(scrapeJob)
+          .where(eq(scrapeJob.id, original.options.retryJobId))
+        if (previous) {
+          if (scheduling.skipExistingRetry)
+            throw new ServerError({
+              statusCode: 409,
+              message: 'Job already retried',
+            })
+          return previous.id
+        }
+      }
+      if (
+        !isRetryableJobStatus(original.status) ||
+        (original.status === 'running' && !scheduling.confirmRunning)
+      )
+        throw new ServerError({
+          statusCode: 409,
+          message: 'Job is not retryable',
+        })
+      if (original.status === 'running')
+        await cancelActiveJobInTransaction(tx, original.id, userId, 'running')
+      retryOptions.retryOf = original.id
+    }
+    const [active] = await tx
+      .select({ id: scrapeJob.id })
+      .from(scrapeJob)
+      .where(
+        and(
+          eq(scrapeJob.provider, definition.provider),
+          inArray(scrapeJob.status, ['queued', 'running']),
+          sql`${scrapeJob.options}->>'task' = ${task}`,
+        ),
+      )
+      .limit(1)
+    if (active) return active.id
+    const id = await insertTaskJob(
+      tx,
+      definition.provider,
+      { task, ...retryOptions },
+      userId,
+      `Queued for ${definition.provider}`,
+    )
+    if (scheduling.retryOf) {
+      await tx
+        .update(scrapeJob)
+        .set({
+          options: sql`${scrapeJob.options} || ${JSON.stringify({ retryJobId: id })}::jsonb`,
+        })
+        .where(eq(scrapeJob.id, scheduling.retryOf))
+      await logJob(
+        scheduling.retryOf,
+        'info',
+        'Queued again from the saved checkpoint.',
+        { retryJobId: id },
+        tx,
+      )
+    }
+    created = true
+    return id
+  })
+  if (created) await wakeJobProvider(definition.provider)
+  const job = await getJobRecord(jobId)
+  if (!job)
+    throw new ServerError({ statusCode: 500, message: 'Failed to create job' })
+  return job
+}
+
+async function processTaskJob(
+  nextJob: NonNullable<Awaited<ReturnType<typeof nextQueuedJob>>>,
+  task: string,
+  plugin: MediaProviderPlugin | null,
+  execution: ProviderExecution,
+  control?: QueuedJobExecution,
+): Promise<void> {
+  const finish = (
+    status: 'succeeded' | 'failed' | 'cancelled',
+    level: 'info' | 'warn' | 'error',
+    message: string,
+    metadata: Record<string, JsonValue> = {},
+    write?: (tx: JobTransaction) => Promise<void>,
+  ) =>
+    withRunningJob(nextJob.id, async (tx) => {
+      await tx
+        .update(scrapeJob)
+        .set({
+          status,
+          errorMessage: status === 'succeeded' ? null : message,
+          finishedAt: new Date(),
+          updatedAt: new Date(),
+        })
+        .where(eq(scrapeJob.id, nextJob.id))
+      await logJob(nextJob.id, level, message, metadata, tx)
+      await write?.(tx)
+    })
+
+  const definition = taskJobs.get(task)
+  if (!definition || !plugin || definition.provider !== nextJob.provider) {
+    await finish('failed', 'error', 'No handler is loaded for this job task.')
+    return
+  }
+  await withRunningJob(nextJob.id, (tx) =>
+    logJob(nextJob.id, 'info', `Started job for ${nextJob.provider}`, {}, tx),
+  )
+  const stoppedMessage =
+    'Stopped to protect provider limits. No retry scheduled.'
+  const assertActive = async () => {
+    const job = await db.query.scrapeJob.findFirst({
+      where: (table, operators) => operators.eq(table.id, nextJob.id),
+      columns: { status: true },
+    })
+    if (job?.status !== 'running') throw new Error('Job is no longer running')
+    if (execution.stopped) throw new Error(stoppedMessage)
+    if (!control) return
+    let active: boolean
+    try {
+      active = await control.canContinue()
+    } catch (cause) {
+      throw new JobExecutionControlError('Cloud job ownership check failed', {
+        cause,
+      })
+    }
+    if (!active) {
+      execution.stopped = true
+      throw new Error(stoppedMessage)
+    }
+  }
+
+  const result = await definition.run({
+    assertActive,
+    isActive: async () => {
+      try {
+        await assertActive()
+        return true
+      } catch (error) {
+        if (error instanceof JobExecutionControlError) throw error
+        return false
+      }
+    },
+    log: async (level, message) => {
+      await withRunningJob(nextJob.id, (tx) =>
+        logJob(nextJob.id, level, message, {}, tx),
+      )
+    },
+  })
+
+  if (result.outcome === 'stopped') {
+    // A user cancellation has already closed the job; this covers a dispatcher stop.
+    await finish('cancelled', 'warn', stoppedMessage)
+    return
+  }
+  if (result.outcome === 'failed') {
+    const providerSecrets = await db.query.providerSecret.findMany({
+      where: (table, operators) =>
+        operators.eq(table.provider, plugin.manifest.id),
+    })
+    const details = jobErrorDetails(
+      result.error,
+      jobLogSecrets(
+        resolveProviderSecrets(
+          plugin.manifest.id,
+          providerSecrets,
+          plugin.manifest.secrets,
+        ),
+      ),
+    )
+    const handled = await finish(
+      'failed',
+      'error',
+      `${details.name}: ${details.message}`.slice(0, 1000),
+      { error: details },
+      async (tx) => {
+        execution.failures += 1
+        const safety = await getProviderSafety(plugin.manifest.id)
+        if (
+          execution.failures >= 2 ||
+          safety.halted ||
+          safety.cooldownUntil ||
+          safety.consecutiveFailures >= 2
+        ) {
+          execution.stopped = true
+          await logJob(
+            nextJob.id,
+            'warn',
+            'Provider dispatch paused after errors or cooldown. No automatic retry scheduled.',
+            {},
+            tx,
+          )
+        }
+      },
+    )
+    if (handled)
+      await control?.recordOutcome(execution.stopped ? 'stopped' : 'failure')
+    return
+  }
+
+  let continued = false
+  const saved = await finish(
+    'succeeded',
+    'info',
+    result.message,
+    {},
+    async (tx) => {
+      if (result.outcome !== 'continue') return
+      const nextJobId = await insertTaskJob(
+        tx,
+        nextJob.provider,
+        { task, continues: nextJob.id },
+        nextJob.requestedByUserId,
+        `Continues job ${nextJob.id}`,
+      )
+      await logJob(
+        nextJob.id,
+        'info',
+        'Queued the next job to continue.',
+        { nextJobId },
+        tx,
+      )
+      continued = true
+    },
+  )
+  if (!saved) return
+  if (!execution.stopped) execution.failures = 0
+  await control?.recordOutcome('success')
+  if (continued) await wakeJobProvider(nextJob.provider)
 }
 
 export async function createJob(
@@ -1509,6 +1822,13 @@ export async function retryJob(
       return previous
     }
   }
+  const task = getJobTask(original.options)
+  if (task !== null)
+    return createTaskJob(task, userId, {
+      retryOf: original.id,
+      skipExistingRetry,
+      confirmRunning,
+    })
   if (
     !isRetryableJobStatus(original.status) ||
     (original.status === 'running' && !confirmRunning)

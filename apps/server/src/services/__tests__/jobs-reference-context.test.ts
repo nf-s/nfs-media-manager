@@ -38,6 +38,7 @@ describe('job reference context', () => {
             id: 'job-1',
             provider: 'fixture-provider',
             status: 'running',
+            options: {},
             items: [
               {
                 id: 'item-1',

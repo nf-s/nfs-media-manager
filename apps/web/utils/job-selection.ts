@@ -1,11 +1,23 @@
 import {
   getJobDismissal,
+  getJobTask,
   isRetryableJobStatus,
   isUnfinishedJobItem,
   type Job,
 } from '@repo/schemas/job'
+import { LASTFM_SCROBBLE_SYNC_TASK } from '@repo/schemas/lastfm'
 
-export function canCancelJob(job: Job): boolean {
+/** Scrobble sync jobs are account-level and have no media items. */
+export function isScrobbleSyncJob(job: Pick<Job, 'options'>): boolean {
+  return getJobTask(job.options) === LASTFM_SCROBBLE_SYNC_TASK
+}
+
+/** Title for a job without media items, or null for media jobs. */
+export function jobTaskTitle(job: Pick<Job, 'options'>): string | null {
+  return isScrobbleSyncJob(job) ? 'Scrobble sync' : null
+}
+
+export function canCancelJob(job: Pick<Job, 'status'>): boolean {
   return job.status === 'queued' || job.status === 'running'
 }
 
@@ -26,7 +38,7 @@ export function canRetryJob(job: Job): boolean {
   return (
     isRetryableJobStatus(job.status) &&
     typeof job.options.retryJobId !== 'string' &&
-    unfinishedJobItems(job) > 0
+    (unfinishedJobItems(job) > 0 || isScrobbleSyncJob(job))
   )
 }
 

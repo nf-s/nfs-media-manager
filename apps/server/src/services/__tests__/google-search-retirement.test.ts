@@ -162,6 +162,7 @@ describe('Google Custom Search retirement', () => {
       mocks.nextJob.mockResolvedValueOnce({
         id: 'legacy-google-job',
         provider,
+        options: {},
         items: [
           {
             id: 'legacy-item',
