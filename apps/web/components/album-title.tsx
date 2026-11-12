@@ -22,7 +22,7 @@ export default function AlbumTitle({
     return (
       <ExternalLink
         href={href}
-        className={`${className ?? ''} text-[#087339] hover:underline`}
+        className={`${className ?? ''} text-[#334155] underline decoration-[#b8c0cc] underline-offset-2 hover:decoration-current`}
         title={`Open ${item.title} on Spotify (new tab)`}
         aria-label={`${item.title} on Spotify (opens in a new tab)`}
         onClick={(event) => event.stopPropagation()}

@@ -5,17 +5,17 @@
   justify-content: center;
   min-width: 24px;
   min-height: 24px;
-  color: #6b7280;
+  border-radius: 50%;
+  color: #667080;
   vertical-align: middle;
 }
 .control:hover,
 .control[aria-expanded='true'] {
-  color: #111827;
-  background: #eef0f2;
-  border-radius: 50%;
+  color: #14171c;
+  background: #edf0f4;
 }
 .control:focus-visible {
-  outline: 2px solid currentColor;
+  outline: 2px solid #334155;
   outline-offset: 1px;
 }
 .panel {
@@ -25,16 +25,19 @@
   width: 330px;
   max-width: calc(100vw - 16px);
   max-height: min(420px, calc(100dvh - 16px));
-  padding: 12px;
+  padding: 10px 12px;
   overflow: auto;
   overscroll-behavior: contain;
-  background: #fff;
-  color: #111827;
-  border: 1px solid #d9dde2;
-  box-shadow: 0 4px 16px #0002;
-  font-size: 13px;
+  background: #ffffffdb;
+  -webkit-backdrop-filter: blur(18px) saturate(1.3);
+  backdrop-filter: blur(18px) saturate(1.3);
+  color: #14171c;
+  border: 1px solid #d9dee5;
+  border-radius: 10px;
+  box-shadow: 0 2px 6px #14171c1a;
+  font-size: 12px;
 }
 .sources {
   display: grid;
-  gap: 10px;
+  gap: 6px;
 }

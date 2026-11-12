@@ -2,6 +2,8 @@
 
 import Link from 'next/link'
 import React, { type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
+import { useRailSlot } from '@/hooks/useRailSlot'
 
 type SidebarItem = {
   id: string
@@ -21,7 +23,8 @@ export function SectionSidebar({
   items: SidebarItem[]
   activeId: string
 }) {
-  return (
+  const railSlot = useRailSlot()
+  const navigation = (
     <nav className="section-sidebar" aria-label={label}>
       {items.map((item) => {
         const content = (
@@ -51,6 +54,7 @@ export function SectionSidebar({
       })}
     </nav>
   )
+  return railSlot ? createPortal(navigation, railSlot) : navigation
 }
 
 export function SectionWorkspace({

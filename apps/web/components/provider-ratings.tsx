@@ -37,9 +37,11 @@ function ProviderMark({ rating }: { rating: ProviderRating }) {
 export function ProviderRatingBadge({
   rating,
   stacked = false,
+  highlighted = false,
 }: {
   rating: ProviderRating
   stacked?: boolean
+  highlighted?: boolean
 }) {
   const id = useId()
   const trigger = useRef<HTMLSpanElement>(null)
@@ -114,6 +116,7 @@ export function ProviderRatingBadge({
     <span
       ref={trigger}
       className="rating-anchor"
+      data-sorted={highlighted || undefined}
       onFocus={() => {
         setFocused(true)
         setDismissed(false)
@@ -179,10 +182,12 @@ export default function ProviderRatings({
   ratings,
   context,
   trailerUrl,
+  highlightKey,
 }: {
   ratings: ProviderRating[]
   context: 'poster' | 'table' | 'detail'
   trailerUrl?: string
+  highlightKey?: string
 }) {
   const visibleRatings =
     context === 'detail' ? ratings : ratings.filter(isCompactRating)
@@ -205,6 +210,7 @@ export default function ProviderRatings({
           key={rating.key}
           rating={rating}
           stacked={context === 'poster'}
+          highlighted={rating.key === highlightKey}
         />
       ))}
       {trailer && (

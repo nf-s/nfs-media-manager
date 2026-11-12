@@ -261,11 +261,14 @@ export default function MediaDetail({
   id,
   onFilter,
   onFiltersChange,
+  highlightField,
 }: {
   mediaType: 'album' | 'film'
   id: string
   onFilter?: (filter: BrowseFilter, keepOpen?: boolean) => void
   onFiltersChange?: (filters: BrowseFilter[]) => void
+  /** Browse sort field, pinned first among the metrics. */
+  highlightField?: string
 }) {
   const { apiBaseUrl } = useConfig()
   const searchParams = useSearchParams()
@@ -513,7 +516,10 @@ export default function MediaDetail({
               .map((field) => {
                 const value = values[field.key]
                 return value === undefined || value === null ? null : (
-                  <div key={field.key}>
+                  <div
+                    key={field.key}
+                    data-sorted={field.key === highlightField || undefined}
+                  >
                     <dt>{field.label}</dt>
                     <dd>
                       {formatBrowseValue(field, value)}

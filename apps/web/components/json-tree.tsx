@@ -21,7 +21,7 @@ function JsonNode({
   if (value === null || typeof value !== 'object') {
     const color =
       typeof value === 'string'
-        ? 'text-emerald-700'
+        ? 'text-slate-700'
         : typeof value === 'number'
           ? 'text-blue-700'
           : 'text-amber-800'
@@ -66,7 +66,7 @@ function JsonNode({
           {count > visible && (
             <button
               type="button"
-              className="py-1 text-blue-700 underline underline-offset-2"
+              className="py-1 text-slate-700 underline underline-offset-2"
               onClick={() => setVisible((current) => current + PAGE_SIZE)}
             >
               Show {Math.min(PAGE_SIZE, count - visible)} more (
@@ -82,8 +82,8 @@ function JsonNode({
 export default function JsonTree({ value }: { value: JsonValue }) {
   const [rawOpen, setRawOpen] = useState(false)
   return (
-    <div className="min-w-0 space-y-2 py-2">
-      <div className="max-h-[60vh] overflow-auto px-4 font-mono text-xs leading-5">
+    <div className="json-tree min-w-0 space-y-2 py-2">
+      <div className="json-tree-body max-h-[60vh] overflow-auto px-3 py-2 font-mono text-xs leading-5">
         <JsonNode value={value} initiallyOpen />
       </div>
       <details

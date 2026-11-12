@@ -40,7 +40,7 @@ export const metadata: Metadata = {
 }
 
 export const viewport: Viewport = {
-  themeColor: '#ffffff',
+  themeColor: '#e9ecf0',
 }
 
 // Note: Need to be force-dynamic to get the correct env variables at runtime

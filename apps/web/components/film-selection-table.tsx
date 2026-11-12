@@ -439,7 +439,7 @@ function SelectionTable({ providers, mediaType = 'film' }: Props) {
                         {sorted ? (direction === 'asc' ? ' ↑' : ' ↓') : ''}
                       </button>
                       <select
-                        className="w-full min-w-0 border bg-background py-1 text-xs font-normal"
+                        className="w-full min-w-0 text-xs font-normal"
                         aria-label={`${item.displayName} freshness`}
                         disabled={queue.isPending}
                         value={
@@ -575,7 +575,7 @@ function SelectionTable({ providers, mediaType = 'film' }: Props) {
                         )}
                         {state && !state.hasProviderIdentifier && (
                           <span
-                            className="ml-2 text-amber-700"
+                            className="needs-id ml-2"
                             title={`Needs ID for ${source.displayName}`}
                           >
                             Needs ID
@@ -637,95 +637,97 @@ function SelectionTable({ providers, mediaType = 'film' }: Props) {
             </p>
           )}
         </div>
-      </TableScroll>
-      <FilmProviderSelection
-        providers={providers}
-        selected={launchProviders}
-        disabled={queue.isPending}
-        onChange={(next) => {
-          setSelectedProviders(next)
-          setConfirmed(false)
-        }}
-      />
-      <div className="job-selection-toolbar">
-        {selected.length > 0 && (
-          <Button
-            type="button"
-            size="sm"
-            variant="ghost"
+        <div className="film-selection-footer">
+          <FilmProviderSelection
+            providers={providers}
+            selected={launchProviders}
             disabled={queue.isPending}
-            onClick={clear}
-          >
-            Clear selection
-          </Button>
-        )}
-        {!broadConfirmed && (
-          <Button
-            type="button"
-            size="sm"
-            disabled={
-              queue.isPending || !selected.length || !launchProviders.length
-            }
-            onClick={() => {
-              setConfirmed(true)
-              setConfirmedKey(confirmationKey)
+            onChange={(next) => {
+              setSelectedProviders(next)
+              setConfirmed(false)
             }}
-          >
-            {selected.length > 0
-              ? `Review ${operations} metadata jobs`
-              : `Launch metadata jobs for 0 selected ${plural}`}
-          </Button>
-        )}
-        {broadConfirmed && (
-          <div
-            className="job-action-review"
-            role="region"
-            aria-label="Review metadata jobs"
-          >
-            <p>
-              <strong>Queue up to {operations} metadata jobs</strong> ·{' '}
-              {selected.length} {plural} × {launchProviders.length}{' '}
-              {launchProviders.length === 1 ? 'provider' : 'providers'}
-            </p>
-            <p>
-              Only selected {plural} are queued. Missing IDs and active jobs are
-              skipped; provider limits and cooldowns apply.
-            </p>
-            <div className="flex items-center gap-2">
-              <Button
-                type="button"
-                size="sm"
-                disabled={queue.isPending}
-                onClick={() => queue.mutate()}
-              >
-                {queue.isPending
-                  ? `Queueing ${progress}/${selected.length} ${plural}...`
-                  : `Confirm ${operations} metadata jobs`}
-              </Button>
+          />
+          <div className="job-selection-toolbar">
+            {selected.length > 0 && (
               <Button
                 type="button"
                 size="sm"
                 variant="ghost"
                 disabled={queue.isPending}
-                onClick={() => setConfirmed(false)}
+                onClick={clear}
               >
-                Back
+                Clear selection
               </Button>
-            </div>
+            )}
+            {!broadConfirmed && (
+              <Button
+                type="button"
+                size="sm"
+                disabled={
+                  queue.isPending || !selected.length || !launchProviders.length
+                }
+                onClick={() => {
+                  setConfirmed(true)
+                  setConfirmedKey(confirmationKey)
+                }}
+              >
+                {selected.length > 0
+                  ? `Review ${operations} metadata jobs`
+                  : `Launch metadata jobs for 0 selected ${plural}`}
+              </Button>
+            )}
+            {broadConfirmed && (
+              <div
+                className="job-action-review"
+                role="region"
+                aria-label="Review metadata jobs"
+              >
+                <p>
+                  <strong>Queue up to {operations} metadata jobs</strong> ·{' '}
+                  {selected.length} {plural} × {launchProviders.length}{' '}
+                  {launchProviders.length === 1 ? 'provider' : 'providers'}
+                </p>
+                <p>
+                  Only selected {plural} are queued. Missing IDs and active jobs
+                  are skipped; provider limits and cooldowns apply.
+                </p>
+                <div className="flex items-center gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={queue.isPending}
+                    onClick={() => queue.mutate()}
+                  >
+                    {queue.isPending
+                      ? `Queueing ${progress}/${selected.length} ${plural}...`
+                      : `Confirm ${operations} metadata jobs`}
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    disabled={queue.isPending}
+                    onClick={() => setConfirmed(false)}
+                  >
+                    Back
+                  </Button>
+                </div>
+              </div>
+            )}
           </div>
-        )}
-      </div>
-      <details className="muted text-xs">
-        <summary>Scrape rules</summary>
-        <p>
-          Dates show successful scrapes, not imports. Failed, running and
-          cancelled show the latest actual attempt. Never means no attempt or
-          successful scrape; No successful scrape also includes failures. Only
-          checked {plural} are queued, at provider limits. Missing IDs and
-          active jobs are skipped. Freshness filters are rechecked before
-          queueing; All scrape statuses allows rescraping.
-        </p>
-      </details>
+          <details className="scrape-rules muted text-xs">
+            <summary>Scrape rules</summary>
+            <p>
+              Dates show successful scrapes, not imports. Failed, running and
+              cancelled show the latest actual attempt. Never means no attempt
+              or successful scrape; No successful scrape also includes failures.
+              Only checked {plural} are queued, at provider limits. Missing IDs
+              and active jobs are skipped. Freshness filters are rechecked
+              before queueing; All scrape statuses allows rescraping.
+            </p>
+          </details>
+        </div>
+      </TableScroll>
       {queue.isError && (
         <p role="alert">
           Could not queue selection. Check progress before retrying.

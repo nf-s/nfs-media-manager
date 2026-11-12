@@ -12,7 +12,8 @@
 - Use [`apps/web/components/page-auth-guard.tsx`](../apps/web/components/page-auth-guard.tsx) for server-side auth gating.
 - Use [`apps/web/components/providers.tsx`](../apps/web/components/providers.tsx) for the shared query client and config context.
 - Keep list state in URL search params when practical so views are shareable and recoverable.
-- Use `SectionSidebar` and `SectionWorkspace` for secondary navigation, as in Jobs and Providers. Route destinations use links; in-page selections use buttons. Keep the shell bounded and scroll only the sidebar/content regions. Jobs monitoring retains its own infinite-scroll region.
+- Use `SectionSidebar` and `SectionWorkspace` for secondary navigation, as in Jobs and Providers. Route destinations use links; in-page selections use buttons. Above 700px the sidebar is placed in the navigation rail under the main navigation (`useRailSlot`); on phones it is a scrolling segmented row above the content. Keep the shell bounded and scroll only the rail section/content regions. Jobs monitoring retains its own infinite-scroll region.
+- The shell is a navigation rail beside one white content panel; on phones the rail becomes a top row (library, activity, sign out) and a bottom tab bar. Browse places its active filters in the rail above 700px.
 
 ## Data Fetching
 
@@ -28,9 +29,13 @@
 
 ## Visual Direction
 
-- Prefer compact, high-density browsing with high-contrast text and subtle dividers.
-- No gradients, decorative banners, rounded cards or repeated administrative labels. Rounded tag pills are appropriate.
+- Prefer compact, high-density browsing with high-contrast text and subtle dividers. Do not trade density for whitespace.
+- Cool grey page (`--page`) with light grain, flat white panels, near-black text and slate accents. No green. Success is neutral slate, failure muted red, running/queued/needs-attention amber. Provider rating marks keep their own brand colours.
+- Modest radii: panels 10–12px, controls 6–8px, artwork 4–6px, pills fully rounded. Hairline dividers (`--line`, `--line-soft`) instead of nested bordered cards.
+- Use blur only on artwork overlays, bars that content scrolls under, popovers and sheets.
+- No gradients, decorative banners or repeated administrative labels.
 - Use shared buttons, inputs and other primitives. Do not wrap every group in a card.
 - Keep grids artwork-first and tables compact. Keep filters, sort and view controls together.
-- Open details without losing browse state or scroll. Show useful information immediately; keep raw data in History and advanced controls in tabs/popovers.
-- Use consistent metadata pills for clickable filters in detail pages and modals, including creators, source and watched status. Keep table/grid values compact without repeated filter icons; their filtering behavior and keyboard access must remain intact.
+- Open details without losing browse state or scroll: a persistent inspector beside the results from 1100px, a drawer below that and a bottom sheet on phones. Show useful information immediately; keep raw data in History and advanced controls in tabs/popovers.
+- Grid artwork carries the ratings strip, the active sort value and optional tag pills (Views > On artwork). Toolbar popovers open one at a time and close on Escape or an outside click.
+- Use consistent metadata pills for clickable filters in detail pages and the inspector, including creators, source and watched status. Keep table/grid values compact without repeated filter icons; their filtering behavior and keyboard access must remain intact.

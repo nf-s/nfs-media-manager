@@ -411,48 +411,50 @@ export default function JobsPageClient() {
       {selectedJob.isError && (
         <p role="alert">Could not load the selected job.</p>
       )}
-      <div className="job-toolbar">
-        <Input
-          type="search"
-          aria-label="Search jobs"
-          placeholder="Search titles or providers"
-          value={query}
-          disabled={bulkPending}
-          onChange={(event) => {
-            setQuery(event.target.value)
-            setParams({ page: '' })
-          }}
+      <div className="jobs-controls">
+        <div className="job-toolbar">
+          <Input
+            type="search"
+            aria-label="Search jobs"
+            placeholder="Search titles or providers"
+            value={query}
+            disabled={bulkPending}
+            onChange={(event) => {
+              setQuery(event.target.value)
+              setParams({ page: '' })
+            }}
+          />
+          <select
+            aria-label="Job status"
+            value={status}
+            disabled={bulkPending}
+            onChange={(event) =>
+              setParams({ status: event.target.value, page: '', jobId: '' })
+            }
+          >
+            <option value="">All statuses</option>
+            <option value="active">Active</option>
+            <option value="attention">Needs attention</option>
+            {['queued', 'running', 'succeeded', 'failed', 'cancelled'].map(
+              (value) => (
+                <option key={value} value={value}>
+                  {value}
+                </option>
+              ),
+            )}
+          </select>
+          <span className="muted">
+            {jobs.data?.pages[0]?.totalCount ?? 0} jobs
+          </span>
+        </div>
+        <JobBulkActions
+          jobs={actionableJobs}
+          selectedIds={selectedIds}
+          onSelect={selectJobs}
+          onPending={setBulkPending}
+          disabled={bulkPending || retryBatch.isPending}
         />
-        <select
-          aria-label="Job status"
-          value={status}
-          disabled={bulkPending}
-          onChange={(event) =>
-            setParams({ status: event.target.value, page: '', jobId: '' })
-          }
-        >
-          <option value="">All statuses</option>
-          <option value="active">Active</option>
-          <option value="attention">Needs attention</option>
-          {['queued', 'running', 'succeeded', 'failed', 'cancelled'].map(
-            (value) => (
-              <option key={value} value={value}>
-                {value}
-              </option>
-            ),
-          )}
-        </select>
-        <span className="muted">
-          {jobs.data?.pages[0]?.totalCount ?? 0} jobs
-        </span>
       </div>
-      <JobBulkActions
-        jobs={actionableJobs}
-        selectedIds={selectedIds}
-        onSelect={selectJobs}
-        onPending={setBulkPending}
-        disabled={bulkPending || retryBatch.isPending}
-      />
       <div className="jobs-scroll" ref={scroller} aria-busy={jobs.isFetching}>
         {jobs.isPending && (
           <p className="muted" role="status">

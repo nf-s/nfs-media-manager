@@ -104,10 +104,9 @@ export default function TagsPageClient({
   }
   return (
     <section className="admin-page tags-page table-workspace">
-      <div className="mb-3 flex flex-wrap items-center gap-3">
-        <h1 className="!mb-0">{hidden ? 'Hidden tags' : 'Tags'}</h1>
+      <div className="tags-toolbar">
+        <h1>{hidden ? 'Hidden tags' : 'Tags'}</h1>
         <Input
-          className="max-w-sm"
           aria-label="Search tags"
           placeholder="Search tags or original names..."
           maxLength={200}
@@ -119,8 +118,11 @@ export default function TagsPageClient({
           {tags.data?.pages[0]?.totalCount.toLocaleString() ?? '...'} tags
         </span>
       </div>
-      <div className="mb-2 flex flex-wrap items-start gap-3">
-        <span className="quiet py-1 text-xs">
+      <div
+        className="tags-bulk"
+        data-active={selectedTags.length > 0 || undefined}
+      >
+        <span className="quiet">
           {selectedTags.length
             ? `${selectedTags.length} selected`
             : 'Shift-click to select a range.'}
@@ -154,7 +156,7 @@ export default function TagsPageClient({
       </div>
       {outcome && (
         <p
-          className="mb-2 text-xs"
+          className="tags-outcome"
           role={outcome.interrupted ? 'alert' : 'status'}
         >
           {outcome.message}
@@ -183,8 +185,12 @@ export default function TagsPageClient({
                 />
               </th>
               <th scope="col">Tag</th>
-              <th scope="col">Items</th>
-              <th scope="col">Sources</th>
+              <th scope="col" className="numeric">
+                Items
+              </th>
+              <th scope="col" className="numeric">
+                Sources
+              </th>
               <th scope="col">
                 <span className="sr-only">Actions</span>
               </th>
@@ -227,14 +233,14 @@ export default function TagsPageClient({
                 <td>
                   <button
                     type="button"
-                    className="text-left font-medium hover:underline"
+                    className="tag-name"
                     onClick={() => updateParams('tag', tag.id)}
                   >
                     {tag.name}
                   </button>
                 </td>
-                <td>{tag.mediaCount.toLocaleString()}</td>
-                <td>
+                <td className="numeric">{tag.mediaCount.toLocaleString()}</td>
+                <td className="numeric">
                   <span className="inline-flex items-center gap-1">
                     {tag.sourceCount.toLocaleString()}
                     <MetadataSourceControl

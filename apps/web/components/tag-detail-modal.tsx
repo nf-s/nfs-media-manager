@@ -170,7 +170,7 @@ export default function TagDetailModal({
   return (
     <dialog
       ref={dialog}
-      className="media-dialog"
+      className="tag-drawer"
       aria-labelledby={titleId}
       onCancel={(event) => {
         event.preventDefault()
@@ -183,7 +183,7 @@ export default function TagDetailModal({
       }}
       onKeyDown={(event) => event.stopPropagation()}
     >
-      <div className="detail-dialog-inner">
+      <div className="tag-drawer-inner">
         <div className="detail-topbar">
           <span>Tag details</span>
           <button
@@ -194,84 +194,85 @@ export default function TagDetailModal({
             <X size={20} />
           </button>
         </div>
-        <h1 id={titleId} className="mb-2 text-2xl font-semibold">
-          {data?.tag.name ?? 'Tag details'}
-        </h1>
-        {detail.isPending && <p role="status">Loading tag details...</p>}
-        {detail.isError && (
-          <p role="alert">
-            Could not load tag details.{' '}
-            <button
-              className="underline"
-              onClick={() =>
-                detail.isFetchNextPageError
-                  ? detail.fetchNextPage()
-                  : detail.refetch()
-              }
-            >
-              Retry
-            </button>
-          </p>
-        )}
-        {data && (
-          <div className="space-y-6">
-            <p className="quiet text-sm">
-              {data.tag.mediaCount.toLocaleString()} items ·{' '}
-              {data.tag.sourceCount.toLocaleString()} sources
-              {data.tag.hidden ? ' · Hidden' : ''}
-            </p>
-            <div className="flex flex-wrap gap-3 text-sm">
-              <Link
+        <div className="tag-drawer-body">
+          <h1 id={titleId}>{data?.tag.name ?? 'Tag details'}</h1>
+          {detail.isPending && <p role="status">Loading tag details...</p>}
+          {detail.isError && (
+            <p role="alert">
+              Could not load tag details.{' '}
+              <button
                 className="underline"
-                href={`/${data.tag.mediaType === 'album' ? 'albums' : 'films'}?${new URLSearchParams({ filters: JSON.stringify([{ field: 'genre', value: data.tag.name }]) })}`}
-              >
-                Browse {data.tag.mediaType === 'album' ? 'albums' : 'films'}{' '}
-                with this tag
-              </Link>
-            </div>
-            <TagManagement key={data.tag.id} tag={data.tag} />
-            <section>
-              <h2 className="mb-2 font-semibold">Merged names</h2>
-              {data.aliases.length ? (
-                <ul className="flex flex-wrap gap-2">
-                  {data.aliases.map((alias) => (
-                    <li key={alias.id} className="metadata-tag">
-                      {alias.name}{' '}
-                      <span className="quiet text-xs">({alias.kind})</span>
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <p className="quiet text-sm">No merged aliases.</p>
-              )}
-            </section>
-            <section>
-              <h2 className="mb-3 font-semibold">Detailed provenance</h2>
-              <MetadataSourceList
-                items={
-                  detail.data?.pages.flatMap((page) => page.provenance.items) ??
-                  []
+                onClick={() =>
+                  detail.isFetchNextPageError
+                    ? detail.fetchNextPage()
+                    : detail.refetch()
                 }
-              />
-              {data.provenance.totalCount === 0 && (
-                <p className="quiet text-sm">
-                  No original source metadata was saved for this tag.
-                </p>
-              )}
-              {detail.hasNextPage && (
-                <Button
-                  className="mt-3"
-                  size="sm"
-                  variant="outline"
-                  disabled={detail.isFetchingNextPage}
-                  onClick={() => detail.fetchNextPage()}
+              >
+                Retry
+              </button>
+            </p>
+          )}
+          {data && (
+            <div className="tag-drawer-sections">
+              <p className="quiet text-sm">
+                {data.tag.mediaCount.toLocaleString()} items ·{' '}
+                {data.tag.sourceCount.toLocaleString()} sources
+                {data.tag.hidden ? ' · Hidden' : ''}
+              </p>
+              <div className="flex flex-wrap gap-3 text-sm">
+                <Link
+                  className="underline"
+                  href={`/${data.tag.mediaType === 'album' ? 'albums' : 'films'}?${new URLSearchParams({ filters: JSON.stringify([{ field: 'genre', value: data.tag.name }]) })}`}
                 >
-                  {detail.isFetchingNextPage ? 'Loading...' : 'More sources'}
-                </Button>
-              )}
-            </section>
-          </div>
-        )}
+                  Browse {data.tag.mediaType === 'album' ? 'albums' : 'films'}{' '}
+                  with this tag
+                </Link>
+              </div>
+              <TagManagement key={data.tag.id} tag={data.tag} />
+              <section>
+                <h2 className="mb-2 font-semibold">Merged names</h2>
+                {data.aliases.length ? (
+                  <ul className="flex flex-wrap gap-2">
+                    {data.aliases.map((alias) => (
+                      <li key={alias.id} className="metadata-tag">
+                        {alias.name}{' '}
+                        <span className="quiet text-xs">({alias.kind})</span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="quiet text-sm">No merged aliases.</p>
+                )}
+              </section>
+              <section>
+                <h2 className="mb-3 font-semibold">Detailed provenance</h2>
+                <MetadataSourceList
+                  items={
+                    detail.data?.pages.flatMap(
+                      (page) => page.provenance.items,
+                    ) ?? []
+                  }
+                />
+                {data.provenance.totalCount === 0 && (
+                  <p className="quiet text-sm">
+                    No original source metadata was saved for this tag.
+                  </p>
+                )}
+                {detail.hasNextPage && (
+                  <Button
+                    className="mt-3"
+                    size="sm"
+                    variant="outline"
+                    disabled={detail.isFetchingNextPage}
+                    onClick={() => detail.fetchNextPage()}
+                  >
+                    {detail.isFetchingNextPage ? 'Loading...' : 'More sources'}
+                  </Button>
+                )}
+              </section>
+            </div>
+          )}
+        </div>
       </div>
     </dialog>
   )

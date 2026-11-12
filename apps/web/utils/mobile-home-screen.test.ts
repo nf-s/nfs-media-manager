@@ -11,7 +11,7 @@ test('home-screen launches use the existing session-aware root within app scope'
   assert.equal(app.start_url, '/')
   assert.equal(app.scope, '/')
   assert.equal(app.display, 'standalone')
-  assert.equal(app.theme_color, '#ffffff')
+  assert.equal(app.theme_color, '#e9ecf0')
   assert.equal(app.background_color, app.theme_color)
 })
 
@@ -60,7 +60,7 @@ test('root layout declares Apple metadata and an unobscured default status bar',
   )
   assert.match(
     layout,
-    /export const viewport: Viewport = \{\s*themeColor: '#ffffff'/,
+    /export const viewport: Viewport = \{\s*themeColor: '#e9ecf0'/,
   )
   assert.doesNotMatch(layout, /viewportFit:|maximumScale:|userScalable:/)
 })

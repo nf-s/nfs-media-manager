@@ -1,15 +1,16 @@
 'use client'
 import Link from 'next/link'
 import { usePathname, useSearchParams } from 'next/navigation'
+import { Cog, Download, LayoutGrid, ListChecks, Tag } from 'lucide-react'
 import { scopedHref } from '@/utils/media-scope'
 import { useMediaScope } from './media-scope'
 
 const items = [
-  { href: '/browse', label: 'Browse' },
-  { href: '/tags', label: 'Tags' },
-  { href: '/imports', label: 'Imports' },
-  { href: '/jobs', label: 'Jobs' },
-  { href: '/providers', label: 'Providers' },
+  { href: '/browse', label: 'Browse', Icon: LayoutGrid },
+  { href: '/tags', label: 'Tags', Icon: Tag },
+  { href: '/imports', label: 'Imports', Icon: Download },
+  { href: '/jobs', label: 'Jobs', Icon: ListChecks },
+  { href: '/providers', label: 'Providers', Icon: Cog },
 ]
 export default function AppNavigation() {
   const path = usePathname()
@@ -37,6 +38,7 @@ export default function AppNavigation() {
             aria-current={active ? 'page' : undefined}
           >
             {item.label}
+            <item.Icon size={16} aria-hidden="true" />
           </Link>
         )
       })}

@@ -8,6 +8,34 @@ export function parseGridDensity(value: unknown): GridDensity {
   return result.success ? result.data : 'standard'
 }
 
+const ArtworkOverlaySchema = z.enum(['ratings', 'sort', 'tags'])
+export type ArtworkOverlay = z.infer<typeof ArtworkOverlaySchema>
+export const artworkOverlays = ArtworkOverlaySchema.options
+
+/** Albums show tags on artwork unless a saved preference says otherwise. */
+export function parseArtworkOverlays(
+  value: string | null,
+  mediaType: 'album' | 'film',
+): ArtworkOverlay[] {
+  if (value === null)
+    return mediaType === 'album' ? [...artworkOverlays] : ['ratings', 'sort']
+  return value.split(',').flatMap((key) => {
+    const result = ArtworkOverlaySchema.safeParse(key)
+    return result.success ? [result.data] : []
+  })
+}
+
+export function formatArtworkOverlays(overlays: ArtworkOverlay[]): string {
+  return overlays.length ? overlays.join(',') : 'none'
+}
+
+const BrowseViewSchema = z.enum(['grid', 'list', 'table'])
+
+export function parseBrowseView(value: unknown) {
+  const result = BrowseViewSchema.safeParse(value)
+  return result.success ? result.data : 'grid'
+}
+
 export function preserveGridScroll(
   scrollTop: number,
   previous: { columns: number; rowHeight: number },
@@ -35,8 +63,8 @@ export function mediaGridGeometry({
   const mobile = width <= 700
   const gap = mobile ? 8 : 12
   const targetWidths = {
-    compact: mobile ? 112 : mediaType === 'album' ? 138 : 122,
-    standard: mediaType === 'album' ? 182 : 152,
+    compact: mobile ? 84 : mediaType === 'album' ? 138 : 122,
+    standard: mobile ? 112 : mediaType === 'album' ? 182 : 152,
     roomy: mediaType === 'album' ? 236 : 202,
   }
   const columns = Math.max(2, Math.floor(width / targetWidths[density]))

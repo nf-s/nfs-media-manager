@@ -2,10 +2,19 @@
 
 import Link from 'next/link'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useSearchParams } from 'next/navigation'
 import { useQuery } from '@tanstack/react-query'
 import { z } from 'zod'
-import { ArrowDown, ArrowUp, Grid2X2, List, Columns3, X } from 'lucide-react'
+import {
+  ArrowDown,
+  ArrowUp,
+  Columns3,
+  Grid2X2,
+  Rows3,
+  Table2,
+  X,
+} from 'lucide-react'
 import { Button } from '@repo/ui/components/ui/button'
 import { SavedViewSchema } from '@repo/schemas/imports'
 import { PaginatedDataSchema } from '@repo/schemas/common'
@@ -41,10 +50,15 @@ import ServiceLinks from './service-icon-links'
 import AlbumTitle from './album-title'
 import { albumSpotifyDestination } from '@/utils/album-links'
 import {
+  artworkOverlays,
+  formatArtworkOverlays,
   mediaGridGeometry,
+  parseArtworkOverlays,
+  parseBrowseView,
   parseGridDensity,
   preserveGridScroll,
 } from '@/utils/media-grid'
+import { useRailSlot } from '@/hooks/useRailSlot'
 import styles from './media-browser.module.css'
 import { FilterButton } from './filter-affordance'
 import ProviderRatings from './provider-ratings'
@@ -83,6 +97,9 @@ const defaultFilmColumns = [
   'links',
 ]
 
+const overlayLabels = { ratings: 'Ratings', sort: 'Sort value', tags: 'Tags' }
+const visibleTileTags = 3
+
 function parseFilters(value: string | null): BrowseFilter[] {
   try {
     return z
@@ -113,7 +130,9 @@ export default function MediaBrowser({
   const [viewport, setViewport] = useState({ width: 1000, height: 800 })
   const [widths, setWidths] = useState<Record<string, number>>({})
   const scroller = useRef<HTMLDivElement>(null)
-  const dialog = useRef<HTMLDialogElement>(null)
+  const browser = useRef<HTMLElement>(null)
+  const inspector = useRef<HTMLElement>(null)
+  const railSlot = useRailSlot()
   const openedHere = useRef(false)
   const detailTrigger = useRef<HTMLElement | null>(null)
   const resize = useRef<{ key: string; x: number; width: number } | null>(null)
@@ -140,7 +159,8 @@ export default function MediaBrowser({
       (mediaType === 'album' ? 'dateAdded' : 'releaseDate'),
   )
   const direction = searchParams.get('direction') === 'asc' ? 'asc' : 'desc'
-  const view = searchParams.get('view') === 'table' ? 'table' : 'grid'
+  const view = parseBrowseView(searchParams.get('view'))
+  const overlays = parseArtworkOverlays(searchParams.get('overlays'), mediaType)
   const density = parseGridDensity(searchParams.get('density'))
   const selectedId = searchParams.get('item')
   const detailParams = new URLSearchParams(searchParams)
@@ -298,16 +318,25 @@ export default function MediaBrowser({
   ])
   useEffect(() => {
     if (selectedId) {
-      if (!dialog.current?.open) dialog.current?.showModal()
-    } else {
-      dialog.current?.close()
-      if (detailTrigger.current?.isConnected)
-        detailTrigger.current.focus({ preventScroll: true })
-    }
+      // The inspector covers the results below this width, so it takes focus.
+      if (window.matchMedia('(max-width: 1099px)').matches)
+        inspector.current?.focus({ preventScroll: true })
+      scroller.current
+        ?.querySelector('[data-selected="true"]')
+        ?.scrollIntoView({ block: 'nearest' })
+    } else if (detailTrigger.current?.isConnected)
+      detailTrigger.current.focus({ preventScroll: true })
   }, [selectedId])
 
   const gridColumns = grid.columns
-  const rowHeight = view === 'table' ? 36 : grid.rowHeight
+  const rowHeight =
+    view === 'table'
+      ? 36
+      : view === 'list'
+        ? grid.mobile
+          ? 52
+          : 44
+        : grid.rowHeight
   const params = new URLSearchParams({
     q,
     filters: JSON.stringify(filters),
@@ -323,7 +352,7 @@ export default function MediaBrowser({
     identity: queryKey,
     params,
     enabled: ready,
-    columns: view === 'table' ? 1 : gridColumns,
+    columns: view === 'grid' ? gridColumns : 1,
     rowHeight,
     scrollTop,
     viewportHeight: viewport.height,
@@ -368,6 +397,63 @@ export default function MediaBrowser({
           filter.field === option.field && filter.value === option.value,
       ),
   )
+  useEffect(() => {
+    function openPopovers() {
+      return [
+        ...(browser.current?.querySelectorAll<HTMLDetailsElement>(
+          '.toolbar-popover[open]',
+        ) ?? []),
+      ]
+    }
+    function onPointerDown(event: PointerEvent) {
+      for (const popover of openPopovers())
+        if (!(event.target instanceof Node && popover.contains(event.target)))
+          popover.open = false
+    }
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.defaultPrevented) return
+      const target = event.target instanceof Element ? event.target : null
+      if (event.key === 'Escape') {
+        const popovers = openPopovers()
+        if (popovers.length) {
+          for (const popover of popovers) popover.open = false
+          event.preventDefault()
+        } else if (selectedId && !document.querySelector('dialog[open]')) {
+          event.preventDefault()
+          closeDetail()
+        }
+        return
+      }
+      if (
+        !selectedId ||
+        (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') ||
+        event.altKey ||
+        event.ctrlKey ||
+        event.metaKey ||
+        event.shiftKey
+      )
+        return
+      // Arrow keys keep their usual meaning inside forms, tabs and the detail body.
+      if (
+        target &&
+        target !== document.body &&
+        !target.closest('.browse-scroll, .detail-topbar') &&
+        target !== inspector.current
+      )
+        return
+      const current = slots.findIndex(({ item }) => item?.id === selectedId)
+      const next = slots[current + (event.key === 'ArrowDown' ? 1 : -1)]?.item
+      if (current < 0 || !next) return
+      event.preventDefault()
+      setParams({ item: next.id })
+    }
+    document.addEventListener('pointerdown', onPointerDown)
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown)
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  })
   const columnCount =
     columns.length + 1 + (columnKeys.includes('links') ? 1 : 0)
   const ratingsWidth = compactRatingStripWidth(fields)
@@ -402,345 +488,570 @@ export default function MediaBrowser({
     return formatBrowseValue(field, value)
   }
 
+  const sortRating =
+    sortField?.rating && isCompactRating({ display: sortField.rating })
+      ? sortField.key
+      : undefined
+  const showsSortValue =
+    sortField !== undefined &&
+    sortRating === undefined &&
+    !['title', 'artist', 'director', 'releaseDate'].includes(sortBy)
+  function sortValue(item: AlbumListItem | FilmListItem, className?: string) {
+    if (!sortField || !showsSortValue) return null
+    return (
+      <span
+        className={className}
+        title={
+          sortBy === 'dateAdded' && item.mediaType === 'film'
+            ? item.dateAddedSource
+            : sortField.label
+        }
+      >
+        {sortBy === 'dateAdded' ? 'Added ' : ''}
+        {formatBrowseValue(sortField, getBrowseValues(item)[sortBy])}
+      </span>
+    )
+  }
+  function itemRatings(item: AlbumListItem | FilmListItem) {
+    return getDetailProviderLinks(
+      fields,
+      getBrowseValues(item),
+      item.links,
+      undefined,
+      item.providerReferences,
+    )
+  }
+  function titleControl(item: AlbumListItem | FilmListItem, className: string) {
+    return item.mediaType === 'album' ? (
+      <AlbumTitle
+        item={item}
+        className={className}
+        onOpenDetails={(event) => openDetail(item.id, event.currentTarget)}
+      />
+    ) : (
+      <button
+        className={className}
+        onClick={(event) => openDetail(item.id, event.currentTarget)}
+        title={item.title}
+      >
+        {item.title}
+        {filmIdentificationStatus(item.providerReferences) === 'Needs ID' && (
+          <span className="needs-id">Needs ID</span>
+        )}
+      </button>
+    )
+  }
+  function creatorButtons(item: AlbumListItem | FilmListItem) {
+    const creatorField = item.mediaType === 'album' ? 'artist' : 'director'
+    const creator = getBrowseValues(item)[creatorField]
+    return (Array.isArray(creator) ? creator : []).map((name) => (
+      <FilterButton
+        key={name}
+        title={`Filter ${creatorField}: ${name}`}
+        onClick={() => addFilter({ field: creatorField, value: name })}
+      >
+        {name}
+      </FilterButton>
+    ))
+  }
+  const hasActiveFilters =
+    Boolean(q) || filters.length > 0 || ranges.length > 0 || limitResults
+  const activeFilters = hasActiveFilters ? (
+    <div className="active-filters">
+      {railSlot && <h2 className="rail-heading">Filters</h2>}
+      {limitResults && (
+        <FilterButton
+          className="filter-pill"
+          onClick={() => setParams({ limitResults: null })}
+        >
+          Top {limitResults} <X size={12} />
+        </FilterButton>
+      )}
+      {q && (
+        <FilterButton
+          className="filter-pill"
+          onClick={() => setParams({ q: null })}
+        >
+          Search: {q} <X size={12} />
+        </FilterButton>
+      )}
+      <BrowseFilterChips
+        filters={filters}
+        fields={fields}
+        onChange={changeFilters}
+      />
+      {ranges.map((range) => {
+        const field = fields.find((field) => field.key === range.field)
+        const bound = (value: number | undefined) =>
+          value === undefined
+            ? '*'
+            : field?.type === 'date'
+              ? formatBrowseValue(field, value)
+              : value
+        return (
+          <FilterButton
+            key={range.field}
+            className="filter-pill"
+            onClick={() =>
+              setParams({
+                ranges: JSON.stringify(
+                  ranges.filter((item) => item.field !== range.field),
+                ),
+              })
+            }
+          >
+            {field?.label}: {bound(range.min)} to {bound(range.max)}
+            {range.includeMissing ? ' + missing' : ''} <X size={12} />
+          </FilterButton>
+        )
+      })}
+      <button
+        className="clear-filters"
+        onClick={() =>
+          setParams({
+            q: null,
+            filters: null,
+            ranges: null,
+            limitResults: null,
+          })
+        }
+      >
+        Clear all
+      </button>
+    </div>
+  ) : null
+
   return (
     <section
       className={`media-browser ${styles.browser}`}
       aria-label={collection}
+      ref={browser}
     >
-      <div className="browse-toolbar">
-        {mediaType === 'film' && (
-          <Link className="browse-refresh" href="/jobs?refresh=films">
-            Refresh
-          </Link>
-        )}
-        <BrowseFilterAutocomplete
-          items={titleItems}
-          titlesLoading={titlesLoading}
-          titlesError={
-            facets.isError || (titleFilters.length > 0 && titleMatches.isError)
-          }
-          onOpenItem={openDetail}
-          options={options}
-          placeholder="Search titles, people, tags, sources..."
-          value={draft}
-          onValueChange={setDraft}
-          onAddFilter={addFilter}
-          onApplyText={(value) => {
-            setParams({ q: value || null })
-            setDraft('')
-          }}
-        />
-        <select
-          aria-label="Sort by"
-          value={sortBy}
-          onChange={(event) => sort(event.target.value)}
-        >
-          {fields.map((field) => (
-            <option key={field.key} value={field.key}>
-              {field.label}
-            </option>
-          ))}
-        </select>
-        <Button
-          variant="ghost"
-          className="icon-button"
-          aria-label={
-            direction === 'desc' ? 'Sort ascending' : 'Sort descending'
-          }
-          onClick={() =>
-            setParams({ direction: direction === 'asc' ? 'desc' : 'asc' })
-          }
-        >
-          {direction === 'desc' ? (
-            <ArrowDown size={16} />
-          ) : (
-            <ArrowUp size={16} />
+      <div className="browse-main">
+        <div className="browse-toolbar">
+          {mediaType === 'film' && (
+            <Link className="browse-refresh" href="/jobs?refresh=films">
+              Refresh
+            </Link>
           )}
-        </Button>
-        <details className="toolbar-popover">
-          <summary>Views</summary>
-          <div className="popover-panel">
-            {view === 'grid' && (
-              <label>
-                Grid density
-                <select
-                  aria-label="Grid density"
-                  value={density}
-                  onChange={(event) =>
-                    setParams({ density: parseGridDensity(event.target.value) })
-                  }
-                >
-                  <option value="compact">Compact</option>
-                  <option value="standard">Standard</option>
-                  <option value="roomy">Roomy</option>
-                </select>
-              </label>
-            )}
-            <label className="check-label">
-              <input
-                type="checkbox"
-                checked={includeArchived}
-                onChange={(event) =>
-                  setParams({
-                    includeArchived: event.target.checked ? 'true' : null,
-                  })
-                }
-              />
-              Include archived imports
-            </label>
-            {mediaType === 'album' && (
-              <label>
-                Smart playlists
-                <select
-                  aria-label="Smart playlist"
-                  value=""
-                  onChange={(event) => {
-                    const view = savedViews.data?.find(
-                      (view) => view.name === event.target.value,
-                    )
-                    if (view)
-                      setParams({
-                        filters: JSON.stringify(view.filters),
-                        ranges: JSON.stringify(view.ranges),
-                        sortBy: view.sortBy,
-                        direction: view.direction,
-                        limitResults: view.limit ? String(view.limit) : null,
-                        q: null,
-                      })
-                  }}
-                >
-                  <option value="">
-                    {savedViews.isPending
-                      ? 'Loading...'
-                      : 'Choose a saved view'}
-                  </option>
-                  {savedViews.data?.map((view) => (
-                    <option key={view.name} value={view.name}>
-                      {view.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            )}
-            {savedViews.isError && (
-              <p role="alert">
-                Saved views unavailable.{' '}
-                <button onClick={() => savedViews.refetch()}>Retry</button>
-              </p>
-            )}
-          </div>
-        </details>
-        <RangeEditor
-          fields={fields}
-          ranges={ranges}
-          onChange={(ranges) =>
-            setParams({ ranges: ranges.length ? JSON.stringify(ranges) : null })
-          }
-        />
-        {view === 'table' && (
-          <details className="toolbar-popover columns-picker">
-            <summary>
-              <Columns3 size={15} /> Columns
-            </summary>
-            <div className="popover-panel">
-              {[...fields, { key: 'links', label: 'Links' }].map((field) => (
-                <label className="check-label" key={field.key}>
+          <BrowseFilterAutocomplete
+            items={titleItems}
+            titlesLoading={titlesLoading}
+            titlesError={
+              facets.isError ||
+              (titleFilters.length > 0 && titleMatches.isError)
+            }
+            onOpenItem={openDetail}
+            options={options}
+            placeholder="Search titles, people, tags, sources..."
+            value={draft}
+            onValueChange={setDraft}
+            onAddFilter={addFilter}
+            onApplyText={(value) => {
+              setParams({ q: value || null })
+              setDraft('')
+            }}
+          />
+          <div className="browse-controls">
+            <select
+              aria-label="Sort by"
+              value={sortBy}
+              onChange={(event) => sort(event.target.value)}
+            >
+              {fields.map((field) => (
+                <option key={field.key} value={field.key}>
+                  {field.label}
+                </option>
+              ))}
+            </select>
+            <Button
+              variant="ghost"
+              className="icon-button"
+              aria-label={
+                direction === 'desc' ? 'Sort ascending' : 'Sort descending'
+              }
+              onClick={() =>
+                setParams({ direction: direction === 'asc' ? 'desc' : 'asc' })
+              }
+            >
+              {direction === 'desc' ? (
+                <ArrowDown size={16} />
+              ) : (
+                <ArrowUp size={16} />
+              )}
+            </Button>
+            <details className="toolbar-popover">
+              <summary>Views</summary>
+              <div className="popover-panel">
+                {view === 'grid' && (
+                  <label>
+                    Grid density
+                    <select
+                      aria-label="Grid density"
+                      value={density}
+                      onChange={(event) =>
+                        setParams({
+                          density: parseGridDensity(event.target.value),
+                        })
+                      }
+                    >
+                      <option value="compact">Compact</option>
+                      <option value="standard">Standard</option>
+                      <option value="roomy">Roomy</option>
+                    </select>
+                  </label>
+                )}
+                {view === 'grid' && (
+                  <fieldset className="overlay-options">
+                    <legend>On artwork</legend>
+                    {artworkOverlays.map((overlay) => (
+                      <label className="check-label" key={overlay}>
+                        <input
+                          type="checkbox"
+                          checked={overlays.includes(overlay)}
+                          onChange={(event) =>
+                            setParams({
+                              overlays: formatArtworkOverlays(
+                                artworkOverlays.filter((key) =>
+                                  key === overlay
+                                    ? event.target.checked
+                                    : overlays.includes(key),
+                                ),
+                              ),
+                            })
+                          }
+                        />
+                        {overlayLabels[overlay]}
+                      </label>
+                    ))}
+                  </fieldset>
+                )}
+                <label className="check-label">
                   <input
                     type="checkbox"
-                    checked={columnKeys.includes(field.key)}
-                    disabled={field.key === 'title'}
-                    onChange={() =>
+                    checked={includeArchived}
+                    onChange={(event) =>
                       setParams({
-                        columns: (columnKeys.includes(field.key)
-                          ? columnKeys.filter((key) => key !== field.key)
-                          : [...columnKeys, field.key]
-                        ).join(','),
+                        includeArchived: event.target.checked ? 'true' : null,
                       })
                     }
                   />
-                  {field.label}
+                  Include archived imports
                 </label>
-              ))}
+                {mediaType === 'album' && (
+                  <label>
+                    Smart playlists
+                    <select
+                      aria-label="Smart playlist"
+                      value=""
+                      onChange={(event) => {
+                        const view = savedViews.data?.find(
+                          (view) => view.name === event.target.value,
+                        )
+                        if (view)
+                          setParams({
+                            filters: JSON.stringify(view.filters),
+                            ranges: JSON.stringify(view.ranges),
+                            sortBy: view.sortBy,
+                            direction: view.direction,
+                            limitResults: view.limit
+                              ? String(view.limit)
+                              : null,
+                            q: null,
+                          })
+                      }}
+                    >
+                      <option value="">
+                        {savedViews.isPending
+                          ? 'Loading...'
+                          : 'Choose a saved view'}
+                      </option>
+                      {savedViews.data?.map((view) => (
+                        <option key={view.name} value={view.name}>
+                          {view.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+                {savedViews.isError && (
+                  <p role="alert">
+                    Saved views unavailable.{' '}
+                    <button onClick={() => savedViews.refetch()}>Retry</button>
+                  </p>
+                )}
+              </div>
+            </details>
+            <RangeEditor
+              fields={fields}
+              ranges={ranges}
+              onChange={(ranges) =>
+                setParams({
+                  ranges: ranges.length ? JSON.stringify(ranges) : null,
+                })
+              }
+            />
+            {view === 'table' && (
+              <details className="toolbar-popover columns-picker">
+                <summary>
+                  <Columns3 size={15} /> Columns
+                </summary>
+                <div className="popover-panel">
+                  {[...fields, { key: 'links', label: 'Links' }].map(
+                    (field) => (
+                      <label className="check-label" key={field.key}>
+                        <input
+                          type="checkbox"
+                          checked={columnKeys.includes(field.key)}
+                          disabled={field.key === 'title'}
+                          onChange={() =>
+                            setParams({
+                              columns: (columnKeys.includes(field.key)
+                                ? columnKeys.filter((key) => key !== field.key)
+                                : [...columnKeys, field.key]
+                              ).join(','),
+                            })
+                          }
+                        />
+                        {field.label}
+                      </label>
+                    ),
+                  )}
+                </div>
+              </details>
+            )}
+            <div className="view-switch">
+              <Button
+                variant={view === 'grid' ? 'default' : 'ghost'}
+                aria-label="Grid view"
+                aria-pressed={view === 'grid'}
+                onClick={() => setParams({ view: 'grid' })}
+              >
+                <Grid2X2 size={16} />
+              </Button>
+              <Button
+                variant={view === 'list' ? 'default' : 'ghost'}
+                aria-label="List view"
+                aria-pressed={view === 'list'}
+                onClick={() => setParams({ view: 'list' })}
+              >
+                <Rows3 size={16} />
+              </Button>
+              <Button
+                variant={view === 'table' ? 'default' : 'ghost'}
+                aria-label="Table view"
+                aria-pressed={view === 'table'}
+                onClick={() => setParams({ view: 'table' })}
+              >
+                <Table2 size={16} />
+              </Button>
             </div>
-          </details>
-        )}
-        <div className="view-switch">
-          <Button
-            variant={view === 'grid' ? 'default' : 'ghost'}
-            aria-label="Grid view"
-            aria-pressed={view === 'grid'}
-            onClick={() => setParams({ view: 'grid' })}
-          >
-            <Grid2X2 size={16} />
-          </Button>
-          <Button
-            variant={view === 'table' ? 'default' : 'ghost'}
-            aria-label="Table view"
-            aria-pressed={view === 'table'}
-            onClick={() => setParams({ view: 'table' })}
-          >
-            <List size={16} />
-          </Button>
+            <span className="browse-count" aria-live="polite">
+              {query.isPending
+                ? 'Loading...'
+                : `${total.toLocaleString()} ${collection}`}
+            </span>
+          </div>
         </div>
-        <span className="browse-count" aria-live="polite">
-          {query.isPending
-            ? 'Loading...'
-            : `${total.toLocaleString()} ${collection}`}
-        </span>
-      </div>
-      {(q || filters.length > 0 || ranges.length > 0 || limitResults) && (
-        <div className="active-filters">
-          {limitResults && (
-            <FilterButton
-              className="filter-pill"
-              onClick={() => setParams({ limitResults: null })}
-            >
-              Top {limitResults} <X size={12} />
-            </FilterButton>
+        {railSlot && activeFilters
+          ? createPortal(activeFilters, railSlot)
+          : activeFilters}
+        <div
+          className="browse-scroll"
+          data-view={view}
+          ref={scroller}
+          tabIndex={0}
+          role="region"
+          aria-label={`${collection} ${view}`}
+          onScroll={(event) =>
+            setScroll({
+              identity: scrollIdentity,
+              top: event.currentTarget.scrollTop,
+            })
+          }
+        >
+          {query.isError && (
+            <div className="virtual-browse-error">
+              <div role="alert" className="virtual-browse-error-message">
+                Could not load this section.{' '}
+                <Button onClick={query.retry}>Retry</Button>
+              </div>
+            </div>
           )}
-          {q && (
-            <FilterButton
-              className="filter-pill"
-              onClick={() => setParams({ q: null })}
-            >
-              Search: {q} <X size={12} />
-            </FilterButton>
-          )}
-          <BrowseFilterChips
-            filters={filters}
-            fields={fields}
-            onChange={changeFilters}
-          />
-          {ranges.map((range) => {
-            const field = fields.find((field) => field.key === range.field)
-            const bound = (value: number | undefined) =>
-              value === undefined
-                ? '*'
-                : field?.type === 'date'
-                  ? formatBrowseValue(field, value)
-                  : value
-            return (
-              <FilterButton
-                key={range.field}
-                className="filter-pill"
+          <span className="sr-only" role="status">
+            {query.isFetching ? 'Loading items' : ''}
+          </span>
+          {!query.isPending && !query.isError && total === 0 && (
+            <div className="browse-empty">
+              No matches.{' '}
+              <button
                 onClick={() =>
                   setParams({
-                    ranges: JSON.stringify(
-                      ranges.filter((item) => item.field !== range.field),
-                    ),
+                    q: null,
+                    filters: null,
+                    ranges: null,
+                    limitResults: null,
                   })
                 }
               >
-                {field?.label}: {bound(range.min)} to {bound(range.max)}
-                {range.includeMissing ? ' + missing' : ''} <X size={12} />
-              </FilterButton>
-            )
-          })}
-          <button
-            className="clear-filters"
-            onClick={() =>
-              setParams({
-                q: null,
-                filters: null,
-                ranges: null,
-                limitResults: null,
-              })
-            }
-          >
-            Clear all
-          </button>
-        </div>
-      )}
-      <div
-        className="browse-scroll"
-        ref={scroller}
-        tabIndex={0}
-        role="region"
-        aria-label={`${collection} ${view}`}
-        onScroll={(event) =>
-          setScroll({
-            identity: scrollIdentity,
-            top: event.currentTarget.scrollTop,
-          })
-        }
-      >
-        {query.isError && (
-          <div className="virtual-browse-error">
-            <div role="alert" className="virtual-browse-error-message">
-              Could not load this section.{' '}
-              <Button onClick={query.retry}>Retry</Button>
+                Clear filters
+              </button>
             </div>
-          </div>
-        )}
-        <span className="sr-only" role="status">
-          {query.isFetching ? 'Loading items' : ''}
-        </span>
-        {!query.isPending && !query.isError && total === 0 && (
-          <div className="browse-empty">
-            No matches.{' '}
-            <button
-              onClick={() =>
-                setParams({
-                  q: null,
-                  filters: null,
-                  ranges: null,
-                  limitResults: null,
-                })
-              }
-            >
-              Clear filters
-            </button>
-          </div>
-        )}
-        {view === 'grid' ? (
-          <div
-            className="virtual-browse-grid"
-            style={{ height: Math.max(0, query.height - grid.gap) }}
-          >
+          )}
+          {view === 'grid' ? (
             <div
-              className={`media-grid ${mediaType} ${styles.grid}`}
-              data-mobile={grid.mobile}
-              style={{
-                gridTemplateColumns: `repeat(${gridColumns}, minmax(0, 1fr))`,
-                gap: grid.gap,
-                gridAutoRows: grid.cardHeight,
-                position: 'absolute',
-                top: padTop,
-                left: 0,
-                right: 0,
-              }}
+              className="virtual-browse-grid"
+              style={{ height: Math.max(0, query.height - grid.gap) }}
             >
-              {slots.map(({ item, index }) => {
-                if (!item)
+              <div
+                className={`media-grid ${mediaType} ${styles.grid}`}
+                data-mobile={grid.mobile}
+                style={{
+                  gridTemplateColumns: `repeat(${gridColumns}, minmax(0, 1fr))`,
+                  gap: grid.gap,
+                  gridAutoRows: grid.cardHeight,
+                  position: 'absolute',
+                  top: padTop,
+                  left: 0,
+                  right: 0,
+                }}
+              >
+                {slots.map(({ item, index }) => {
+                  if (!item)
+                    return (
+                      <div
+                        key={`slot-${index}`}
+                        className="virtual-browse-placeholder"
+                        aria-hidden="true"
+                        style={{ height: grid.cardHeight }}
+                      >
+                        <div
+                          className={`virtual-browse-shimmer ${mediaType === 'album' ? 'aspect-square' : 'aspect-[2/3]'}`}
+                        />
+                        <div className="virtual-browse-line virtual-browse-shimmer" />
+                        <div className="virtual-browse-line virtual-browse-line-short virtual-browse-shimmer" />
+                      </div>
+                    )
+                  const values = getBrowseValues(item)
+                  const provider = itemRatings(item)
+                  const tags = Array.isArray(values.genre) ? values.genre : []
                   return (
-                    <div
-                      key={`slot-${index}`}
-                      className="virtual-browse-placeholder"
-                      aria-hidden="true"
+                    <article
+                      className="media-tile"
+                      key={item.id}
+                      data-item-index={index}
+                      data-selected={item.id === selectedId}
                       style={{ height: grid.cardHeight }}
                     >
-                      <div
-                        className={`virtual-browse-shimmer ${mediaType === 'album' ? 'aspect-square' : 'aspect-[2/3]'}`}
-                      />
-                      <div className="virtual-browse-line virtual-browse-shimmer" />
-                      <div className="virtual-browse-line virtual-browse-line-short virtual-browse-shimmer" />
-                    </div>
+                      <div className="tile-artwork">
+                        <button
+                          className="art-button"
+                          aria-label={`Open details for ${item.title}`}
+                          onClick={(event) =>
+                            openDetail(item.id, event.currentTarget)
+                          }
+                        >
+                          <MediaArtwork
+                            src={item.artworkUrl}
+                            alt={item.title}
+                            fallbackLabel={item.title}
+                            imageClassName={
+                              mediaType === 'album'
+                                ? 'aspect-square object-cover w-full'
+                                : 'aspect-[2/3] object-cover w-full'
+                            }
+                            fallbackClassName={`${mediaType === 'album' ? 'aspect-square' : 'aspect-[2/3]'} ${styles.fallback}`}
+                          />
+                        </button>
+                        {overlays.includes('sort') &&
+                          sortValue(item, 'tile-sort')}
+                        {overlays.includes('tags') && tags.length > 0 && (
+                          <div className="tile-tags" title={tags.join(', ')}>
+                            {tags.slice(0, visibleTileTags).map((tag) => (
+                              <FilterButton
+                                key={tag}
+                                title={`Filter genre: ${tag}`}
+                                onClick={() =>
+                                  addFilter({ field: 'genre', value: tag })
+                                }
+                              >
+                                {tag}
+                              </FilterButton>
+                            ))}
+                            {tags.length > visibleTileTags && (
+                              <span>+{tags.length - visibleTileTags}</span>
+                            )}
+                          </div>
+                        )}
+                        {overlays.includes('ratings') && (
+                          <ProviderRatings
+                            ratings={provider.ratings}
+                            context="poster"
+                            highlightKey={
+                              overlays.includes('sort') ? sortRating : undefined
+                            }
+                          />
+                        )}
+                      </div>
+                      {titleControl(item, 'tile-title')}
+                      <div className="tile-byline">
+                        <span>{creatorButtons(item)}</span>
+                        <span>{item.releaseDate?.slice(0, 4)}</span>
+                      </div>
+                      <div className="tile-extra">
+                        {!overlays.includes('sort') && sortValue(item)}
+                        <ServiceLinks
+                          hideSpotify={
+                            item.mediaType === 'album' &&
+                            Boolean(albumSpotifyDestination(item))
+                          }
+                          item={{ ...item, links: provider.links }}
+                        />
+                      </div>
+                    </article>
                   )
-                const values = getBrowseValues(item)
-                const creatorField =
-                  mediaType === 'album' ? 'artist' : 'director'
-                const creator = values[creatorField]
-                const creators = Array.isArray(creator) ? creator : []
-                return (
-                  <article
-                    className="media-tile"
-                    key={item.id}
-                    data-item-index={index}
-                    style={{ height: grid.cardHeight }}
-                  >
-                    <div className="tile-artwork">
+                })}
+              </div>
+            </div>
+          ) : view === 'list' ? (
+            <div
+              className="virtual-browse-grid"
+              style={{ height: query.height }}
+            >
+              <div
+                className={`media-list ${mediaType}`}
+                data-mobile={grid.mobile}
+                style={{ top: padTop }}
+              >
+                {slots.map(({ item, index }) => {
+                  if (!item)
+                    return (
+                      <div
+                        key={`slot-${index}`}
+                        className="list-row virtual-browse-placeholder"
+                        aria-hidden="true"
+                      >
+                        <div className="list-thumb virtual-browse-shimmer" />
+                        <div className="virtual-browse-line virtual-browse-shimmer" />
+                      </div>
+                    )
+                  const provider = itemRatings(item)
+                  return (
+                    <article
+                      className="list-row"
+                      key={item.id}
+                      data-item-index={index}
+                      data-selected={item.id === selectedId}
+                      style={
+                        grid.mobile
+                          ? undefined
+                          : {
+                              gridTemplateColumns: `32px minmax(0, 2fr) minmax(0, 1.6fr) ${ratingsWidth}px 132px`,
+                            }
+                      }
+                    >
                       <button
-                        className="art-button"
+                        className="list-thumb art-button"
                         aria-label={`Open details for ${item.title}`}
                         onClick={(event) =>
                           openDetail(item.id, event.currentTarget)
@@ -748,401 +1059,332 @@ export default function MediaBrowser({
                       >
                         <MediaArtwork
                           src={item.artworkUrl}
-                          alt={item.title}
-                          fallbackLabel={item.title}
-                          imageClassName={
-                            mediaType === 'album'
-                              ? 'aspect-square object-cover w-full'
-                              : 'aspect-[2/3] object-cover w-full'
-                          }
-                          fallbackClassName={`${mediaType === 'album' ? 'aspect-square' : 'aspect-[2/3]'} ${styles.fallback}`}
+                          alt=""
+                          fallbackLabel=""
+                          imageClassName="list-thumb-image"
+                          fallbackClassName="list-thumb-image"
                         />
                       </button>
+                      <div className="list-title">
+                        {titleControl(item, 'table-title')}
+                      </div>
+                      <div className="list-byline">
+                        <span className="inline-values">
+                          {creatorButtons(item)}
+                        </span>
+                        <span className="list-year">
+                          {item.releaseDate?.slice(0, 4)}
+                        </span>
+                        {sortValue(item, 'list-sort')}
+                      </div>
                       <ProviderRatings
-                        ratings={
-                          getDetailProviderLinks(
-                            fields,
-                            values,
-                            item.links,
-                            undefined,
-                            item.providerReferences,
-                          ).ratings
-                        }
-                        context="poster"
+                        ratings={provider.ratings}
+                        context="table"
+                        highlightKey={sortRating}
                       />
-                    </div>
-                    {item.mediaType === 'album' ? (
-                      <AlbumTitle
-                        item={item}
-                        className="tile-title"
-                        onOpenDetails={(event) =>
-                          openDetail(item.id, event.currentTarget)
-                        }
-                      />
-                    ) : (
-                      <button
-                        className="tile-title"
-                        onClick={(event) =>
-                          openDetail(item.id, event.currentTarget)
-                        }
-                        title={item.title}
-                      >
-                        {item.title}
-                        {item.mediaType === 'film' &&
-                          filmIdentificationStatus(item.providerReferences) ===
-                            'Needs ID' && (
-                            <span className="needs-id">Needs ID</span>
-                          )}
-                      </button>
-                    )}
-                    <div className="tile-byline">
-                      <span>
-                        {creators.map((name) => (
-                          <FilterButton
-                            key={name}
-                            title={`Filter ${creatorField}: ${name}`}
-                            onClick={() =>
-                              addFilter({ field: creatorField, value: name })
-                            }
-                          >
-                            {name}
-                          </FilterButton>
-                        ))}
-                      </span>
-                      <span>{item.releaseDate?.slice(0, 4)}</span>
-                    </div>
-                    <div className="tile-extra">
-                      {sortField &&
-                        (!sortField.rating ||
-                          !isCompactRating({ display: sortField.rating })) &&
-                        ![
-                          'title',
-                          'artist',
-                          'director',
-                          'releaseDate',
-                        ].includes(sortBy) && (
-                          <span
-                            title={
-                              sortBy === 'dateAdded' &&
-                              item.mediaType === 'film'
-                                ? item.dateAddedSource
-                                : sortField.label
-                            }
-                          >
-                            {sortBy === 'dateAdded' ? 'Added ' : ''}
-                            {formatBrowseValue(sortField, values[sortBy])}
-                          </span>
-                        )}
                       <ServiceLinks
                         hideSpotify={
                           item.mediaType === 'album' &&
                           Boolean(albumSpotifyDestination(item))
                         }
-                        item={{
-                          ...item,
-                          links: getDetailProviderLinks(
-                            fields,
-                            values,
-                            item.links,
-                            undefined,
-                            item.providerReferences,
-                          ).links,
+                        item={{ ...item, links: provider.links }}
+                      />
+                    </article>
+                  )
+                })}
+              </div>
+            </div>
+          ) : (
+            <table
+              className="browse-table"
+              aria-rowcount={total + 1}
+              style={{
+                width: columns.reduce(
+                  (sum, field) => sum + widthFor(field),
+                  ratingsWidth + (columnKeys.includes('links') ? 220 : 0),
+                ),
+              }}
+            >
+              <colgroup>
+                {columns.map((field) => (
+                  <col key={field.key} style={{ width: widthFor(field) }} />
+                ))}
+                <col style={{ width: ratingsWidth }} />
+                {columnKeys.includes('links') && <col style={{ width: 220 }} />}
+              </colgroup>
+              <thead>
+                <tr>
+                  {columns.map((field) => (
+                    <th
+                      key={field.key}
+                      aria-sort={
+                        sortBy === field.key
+                          ? direction === 'asc'
+                            ? 'ascending'
+                            : 'descending'
+                          : 'none'
+                      }
+                    >
+                      <button onClick={() => sort(field.key)}>
+                        {field.label}
+                        {sortBy === field.key
+                          ? direction === 'asc'
+                            ? ' ↑'
+                            : ' ↓'
+                          : ''}
+                      </button>
+                      <span
+                        className="column-resizer"
+                        role="separator"
+                        aria-label={`Resize ${field.label}`}
+                        aria-orientation="vertical"
+                        tabIndex={0}
+                        onKeyDown={(event) => {
+                          if (
+                            event.key === 'ArrowLeft' ||
+                            event.key === 'ArrowRight'
+                          ) {
+                            event.preventDefault()
+                            saveWidths({
+                              ...widths,
+                              [field.key]: Math.max(
+                                70,
+                                Math.min(
+                                  650,
+                                  widthFor(field) +
+                                    (event.key === 'ArrowRight' ? 10 : -10),
+                                ),
+                              ),
+                            })
+                          }
+                        }}
+                        onPointerDown={(event) => {
+                          event.currentTarget.setPointerCapture(event.pointerId)
+                          resize.current = {
+                            key: field.key,
+                            x: event.clientX,
+                            width: widthFor(field),
+                          }
+                        }}
+                        onPointerMove={(event) => {
+                          if (resize.current?.key === field.key)
+                            setWidths({
+                              ...widths,
+                              [field.key]: Math.max(
+                                70,
+                                Math.min(
+                                  650,
+                                  resize.current.width +
+                                    event.clientX -
+                                    resize.current.x,
+                                ),
+                              ),
+                            })
+                        }}
+                        onPointerUp={() => {
+                          resize.current = null
+                          saveWidths(widths)
                         }}
                       />
-                    </div>
-                  </article>
-                )
-              })}
-            </div>
-          </div>
-        ) : (
-          <table
-            className="browse-table"
-            aria-rowcount={total + 1}
-            style={{
-              width: columns.reduce(
-                (sum, field) => sum + widthFor(field),
-                ratingsWidth + (columnKeys.includes('links') ? 220 : 0),
-              ),
-            }}
-          >
-            <colgroup>
-              {columns.map((field) => (
-                <col key={field.key} style={{ width: widthFor(field) }} />
-              ))}
-              <col style={{ width: ratingsWidth }} />
-              {columnKeys.includes('links') && <col style={{ width: 220 }} />}
-            </colgroup>
-            <thead>
-              <tr>
-                {columns.map((field) => (
-                  <th
-                    key={field.key}
-                    aria-sort={
-                      sortBy === field.key
-                        ? direction === 'asc'
-                          ? 'ascending'
-                          : 'descending'
-                        : 'none'
-                    }
-                  >
-                    <button onClick={() => sort(field.key)}>
-                      {field.label}
-                      {sortBy === field.key
-                        ? direction === 'asc'
-                          ? ' ↑'
-                          : ' ↓'
-                        : ''}
-                    </button>
-                    <span
-                      className="column-resizer"
-                      role="separator"
-                      aria-label={`Resize ${field.label}`}
-                      aria-orientation="vertical"
-                      tabIndex={0}
-                      onKeyDown={(event) => {
-                        if (
-                          event.key === 'ArrowLeft' ||
-                          event.key === 'ArrowRight'
-                        ) {
-                          event.preventDefault()
-                          saveWidths({
-                            ...widths,
-                            [field.key]: Math.max(
-                              70,
-                              Math.min(
-                                650,
-                                widthFor(field) +
-                                  (event.key === 'ArrowRight' ? 10 : -10),
-                              ),
-                            ),
-                          })
-                        }
-                      }}
-                      onPointerDown={(event) => {
-                        event.currentTarget.setPointerCapture(event.pointerId)
-                        resize.current = {
-                          key: field.key,
-                          x: event.clientX,
-                          width: widthFor(field),
-                        }
-                      }}
-                      onPointerMove={(event) => {
-                        if (resize.current?.key === field.key)
-                          setWidths({
-                            ...widths,
-                            [field.key]: Math.max(
-                              70,
-                              Math.min(
-                                650,
-                                resize.current.width +
-                                  event.clientX -
-                                  resize.current.x,
-                              ),
-                            ),
-                          })
-                      }}
-                      onPointerUp={() => {
-                        resize.current = null
-                        saveWidths(widths)
-                      }}
-                    />
-                  </th>
-                ))}
-                <th>Ratings</th>
-                {columnKeys.includes('links') && <th>Links</th>}
-              </tr>
-            </thead>
-            <tbody>
-              {padTop > 0 && (
-                <tr aria-hidden="true">
-                  <td
-                    colSpan={columnCount}
-                    style={{ height: padTop, padding: 0, border: 0 }}
-                  />
+                    </th>
+                  ))}
+                  <th>Ratings</th>
+                  {columnKeys.includes('links') && <th>Links</th>}
                 </tr>
-              )}
-              {slots.map(({ item, index }) =>
-                item ? (
-                  <tr
-                    key={item.id}
-                    data-item-index={index}
-                    aria-rowindex={index + 2}
-                    onDoubleClick={(event) => {
-                      if (
-                        event.target instanceof Element &&
-                        event.target.closest(
-                          'a, button, input, select, textarea',
+              </thead>
+              <tbody>
+                {padTop > 0 && (
+                  <tr aria-hidden="true">
+                    <td
+                      colSpan={columnCount}
+                      style={{ height: padTop, padding: 0, border: 0 }}
+                    />
+                  </tr>
+                )}
+                {slots.map(({ item, index }) =>
+                  item ? (
+                    <tr
+                      key={item.id}
+                      data-item-index={index}
+                      data-selected={item.id === selectedId}
+                      aria-rowindex={index + 2}
+                      onDoubleClick={(event) => {
+                        if (
+                          event.target instanceof Element &&
+                          event.target.closest(
+                            'a, button, input, select, textarea',
+                          )
                         )
-                      )
-                        return
-                      openDetail(
-                        item.id,
-                        event.currentTarget.querySelector<HTMLElement>(
-                          '.table-title',
-                        ) ?? undefined,
-                      )
-                    }}
-                  >
-                    {columns.map((field) => (
-                      <td
-                        key={field.key}
-                        className={field.type === 'text' ? '' : 'numeric'}
-                        title={
-                          field.key === 'dateAdded' && item.mediaType === 'film'
-                            ? item.dateAddedSource
-                            : formatBrowseValue(
-                                field,
-                                getBrowseValues(item)[field.key],
-                              )
-                        }
-                      >
-                        <div
-                          className={`browse-cell ${field.key === 'title' && item.mediaType === 'album' ? 'flex items-center gap-2' : ''}`}
+                          return
+                        openDetail(
+                          item.id,
+                          event.currentTarget.querySelector<HTMLElement>(
+                            '.table-title',
+                          ) ?? undefined,
+                        )
+                      }}
+                    >
+                      {columns.map((field) => (
+                        <td
+                          key={field.key}
+                          className={field.type === 'text' ? '' : 'numeric'}
+                          title={
+                            field.key === 'dateAdded' &&
+                            item.mediaType === 'film'
+                              ? item.dateAddedSource
+                              : formatBrowseValue(
+                                  field,
+                                  getBrowseValues(item)[field.key],
+                                )
+                          }
                         >
-                          {field.key === 'title' &&
-                          item.mediaType === 'album' ? (
-                            <>
-                              <AlbumTitle
-                                item={item}
-                                className="table-title min-w-0 flex-1 truncate"
-                                onOpenDetails={(event) =>
-                                  openDetail(item.id, event.currentTarget)
-                                }
-                              />
+                          <div
+                            className={`browse-cell ${field.key === 'title' && item.mediaType === 'album' ? 'flex items-center gap-2' : ''}`}
+                          >
+                            {field.key === 'title' &&
+                            item.mediaType === 'album' ? (
+                              <>
+                                <AlbumTitle
+                                  item={item}
+                                  className="table-title min-w-0 flex-1 truncate"
+                                  onOpenDetails={(event) =>
+                                    openDetail(item.id, event.currentTarget)
+                                  }
+                                />
+                                <button
+                                  className="shrink-0 text-xs quiet"
+                                  aria-label={`Open details for ${item.title}`}
+                                  onClick={(event) => {
+                                    event.stopPropagation()
+                                    openDetail(item.id, event.currentTarget)
+                                  }}
+                                  onDoubleClick={(event) =>
+                                    event.stopPropagation()
+                                  }
+                                >
+                                  Open details
+                                </button>
+                              </>
+                            ) : field.key === 'title' ? (
                               <button
-                                className="shrink-0 text-xs quiet"
-                                aria-label={`Open details for ${item.title}`}
-                                onClick={(event) => {
-                                  event.stopPropagation()
+                                className="table-title"
+                                onClick={(event) =>
                                   openDetail(item.id, event.currentTarget)
-                                }}
-                                onDoubleClick={(event) =>
-                                  event.stopPropagation()
                                 }
                               >
-                                Open details
+                                {item.title}
+                                {item.mediaType === 'film' &&
+                                  filmIdentificationStatus(
+                                    item.providerReferences,
+                                  ) === 'Needs ID' && (
+                                    <span className="needs-id">Needs ID</span>
+                                  )}
                               </button>
-                            </>
-                          ) : field.key === 'title' ? (
-                            <button
-                              className="table-title"
-                              onClick={(event) =>
-                                openDetail(item.id, event.currentTarget)
-                              }
-                            >
-                              {item.title}
-                              {item.mediaType === 'film' &&
-                                filmIdentificationStatus(
-                                  item.providerReferences,
-                                ) === 'Needs ID' && (
-                                  <span className="needs-id">Needs ID</span>
-                                )}
-                            </button>
-                          ) : (
-                            renderValue(item, field)
-                          )}
-                        </div>
-                      </td>
-                    ))}
-                    <td>
-                      <ProviderRatings
-                        ratings={
-                          getDetailProviderLinks(
-                            fields,
-                            getBrowseValues(item),
-                            item.links,
-                            undefined,
-                            item.providerReferences,
-                          ).ratings
-                        }
-                        context="table"
-                      />
-                    </td>
-                    {columnKeys.includes('links') && (
+                            ) : (
+                              renderValue(item, field)
+                            )}
+                          </div>
+                        </td>
+                      ))}
                       <td>
-                        <div className="browse-cell">
-                          <ServiceLinks
-                            hideSpotify={
-                              columns.some((field) => field.key === 'title') &&
-                              item.mediaType === 'album' &&
-                              Boolean(albumSpotifyDestination(item))
-                            }
-                            item={{
-                              ...item,
-                              links: getDetailProviderLinks(
-                                fields,
-                                getBrowseValues(item),
-                                item.links,
-                                undefined,
-                                item.providerReferences,
-                              ).links,
-                            }}
-                          />
-                        </div>
+                        <ProviderRatings
+                          ratings={
+                            getDetailProviderLinks(
+                              fields,
+                              getBrowseValues(item),
+                              item.links,
+                              undefined,
+                              item.providerReferences,
+                            ).ratings
+                          }
+                          context="table"
+                        />
                       </td>
-                    )}
+                      {columnKeys.includes('links') && (
+                        <td>
+                          <div className="browse-cell">
+                            <ServiceLinks
+                              hideSpotify={
+                                columns.some(
+                                  (field) => field.key === 'title',
+                                ) &&
+                                item.mediaType === 'album' &&
+                                Boolean(albumSpotifyDestination(item))
+                              }
+                              item={{
+                                ...item,
+                                links: getDetailProviderLinks(
+                                  fields,
+                                  getBrowseValues(item),
+                                  item.links,
+                                  undefined,
+                                  item.providerReferences,
+                                ).links,
+                              }}
+                            />
+                          </div>
+                        </td>
+                      )}
+                    </tr>
+                  ) : (
+                    <tr
+                      key={`slot-${index}`}
+                      aria-hidden="true"
+                      className="virtual-browse-placeholder"
+                    >
+                      {Array.from({ length: columnCount }, (_, column) => (
+                        <td key={column}>
+                          <div className="virtual-browse-line virtual-browse-shimmer" />
+                        </td>
+                      ))}
+                    </tr>
+                  ),
+                )}
+                {padBottom > 0 && (
+                  <tr aria-hidden="true">
+                    <td
+                      colSpan={columnCount}
+                      style={{ height: padBottom, padding: 0, border: 0 }}
+                    />
                   </tr>
-                ) : (
-                  <tr
-                    key={`slot-${index}`}
-                    aria-hidden="true"
-                    className="virtual-browse-placeholder"
-                  >
-                    {Array.from({ length: columnCount }, (_, column) => (
-                      <td key={column}>
-                        <div className="virtual-browse-line virtual-browse-shimmer" />
-                      </td>
-                    ))}
-                  </tr>
-                ),
-              )}
-              {padBottom > 0 && (
-                <tr aria-hidden="true">
-                  <td
-                    colSpan={columnCount}
-                    style={{ height: padBottom, padding: 0, border: 0 }}
-                  />
-                </tr>
-              )}
-            </tbody>
-          </table>
-        )}
-      </div>
-      <dialog
-        ref={dialog}
-        aria-label="Media details"
-        className="media-dialog"
-        onCancel={(event) => {
-          event.preventDefault()
-          closeDetail()
-        }}
-        onClick={(event) => {
-          if (event.target === event.currentTarget) closeDetail()
-        }}
-      >
-        <div className="detail-dialog-inner">
-          <div className="detail-topbar">
-            <a
-              href={`/${collection}/${selectedId}${detailParams.size ? `?${detailParams}` : ''}`}
-            >
-              Open page
-            </a>
-            <button aria-label="Close details" onClick={closeDetail}>
-              <X size={20} />
-            </button>
-          </div>
-          {selectedId && (
-            <MediaDetail
-              key={selectedId}
-              mediaType={mediaType}
-              id={selectedId}
-              onFilter={addFilter}
-              onFiltersChange={changeFilters}
-            />
+                )}
+              </tbody>
+            </table>
           )}
         </div>
-      </dialog>
+      </div>
+      {selectedId && (
+        <>
+          <div className="inspector-backdrop" onClick={closeDetail} />
+          <aside
+            ref={inspector}
+            tabIndex={-1}
+            aria-label="Media details"
+            className="media-inspector"
+          >
+            <div className="detail-topbar">
+              <a
+                href={`/${collection}/${selectedId}${detailParams.size ? `?${detailParams}` : ''}`}
+              >
+                Open page
+              </a>
+              <button aria-label="Close details" onClick={closeDetail}>
+                <X size={18} />
+              </button>
+            </div>
+            <div className="inspector-scroll">
+              <MediaDetail
+                key={selectedId}
+                mediaType={mediaType}
+                id={selectedId}
+                onFilter={addFilter}
+                onFiltersChange={changeFilters}
+                highlightField={sortBy}
+              />
+            </div>
+          </aside>
+        </>
+      )}
     </section>
   )
 }

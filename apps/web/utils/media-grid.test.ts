@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
+  formatArtworkOverlays,
   mediaGridGeometry,
+  parseArtworkOverlays,
+  parseBrowseView,
   parseGridDensity,
   preserveGridScroll,
 } from './media-grid'
@@ -49,7 +52,42 @@ test('standard desktop geometry preserves existing album and film layouts', () =
   }
 })
 
-test('mobile density supports three compact columns, at least two roomy columns and bounded metadata', () => {
+test('browse view accepts grid, list and table and falls back to grid', () => {
+  for (const view of ['grid', 'list', 'table'])
+    assert.equal(parseBrowseView(view), view)
+  for (const invalid of [null, '', 'cards', 'Table'])
+    assert.equal(parseBrowseView(invalid), 'grid')
+})
+
+test('artwork overlays default per library and round-trip saved preferences', () => {
+  assert.deepEqual(parseArtworkOverlays(null, 'album'), [
+    'ratings',
+    'sort',
+    'tags',
+  ])
+  assert.deepEqual(parseArtworkOverlays(null, 'film'), ['ratings', 'sort'])
+  for (const mediaType of ['album', 'film'] satisfies Array<'album' | 'film'>) {
+    assert.deepEqual(parseArtworkOverlays('tags,unknown,sort', mediaType), [
+      'tags',
+      'sort',
+    ])
+    // An explicit empty choice must not fall back to the library default.
+    assert.equal(formatArtworkOverlays([]), 'none')
+    assert.deepEqual(
+      parseArtworkOverlays(formatArtworkOverlays([]), mediaType),
+      [],
+    )
+    assert.deepEqual(
+      parseArtworkOverlays(
+        formatArtworkOverlays(['ratings', 'tags']),
+        mediaType,
+      ),
+      ['ratings', 'tags'],
+    )
+  }
+})
+
+test('mobile density supports four compact, three standard and at least two roomy columns with bounded metadata', () => {
   for (const mediaType of ['album', 'film'] satisfies Array<'album' | 'film'>) {
     const compact = mediaGridGeometry({
       width: 350,
@@ -61,8 +99,8 @@ test('mobile density supports three compact columns, at least two roomy columns 
       mediaType,
       density: 'standard',
     })
-    assert.equal(compact.columns, 3)
-    assert.equal(standard.columns, 2)
+    assert.equal(compact.columns, 4)
+    assert.equal(standard.columns, 3)
     assert.ok(compact.rowHeight < standard.rowHeight)
     for (const width of [280, 350, 390, 600, 700]) {
       for (const density of ['compact', 'standard', 'roomy']) {
