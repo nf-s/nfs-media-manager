@@ -32,7 +32,7 @@
 - Prefer compact, high-density browsing with high-contrast text and subtle dividers. Do not trade density for whitespace.
 - Cool grey page (`--page`) with light grain, flat white panels, near-black text and slate accents. No green. Success is neutral slate, failure muted red, running/queued/needs-attention amber. Provider rating marks keep their own brand colours.
 - Modest radii: panels 10–12px, controls 6–8px, artwork 4–6px, pills fully rounded. Hairline dividers (`--line`, `--line-soft`) instead of nested bordered cards.
-- Use blur only on artwork overlays, bars that content scrolls under, popovers and sheets.
+- Use blur only on bars that content scrolls under, popovers and sheets. Never on repeated elements such as artwork overlays or on full-screen backdrops: it is slow in Firefox.
 - No gradients, decorative banners or repeated administrative labels.
 - Use shared buttons, inputs and other primitives. Do not wrap every group in a card.
 - Keep grids artwork-first and tables compact. Keep filters, sort and view controls together.

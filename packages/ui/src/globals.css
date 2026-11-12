@@ -1313,7 +1313,7 @@
     --line: #d9dee5;
     --line-soft: #eceff3;
     --chip: #edf0f4;
-    --glass-dark: #0f172a99;
+    --glass-dark: #0f172ac2;
     --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .1 0 0 0 0 .12 0 0 0 0 .16 0 0 0 .08 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
   }
 
@@ -1643,7 +1643,6 @@
     overflow: hidden;
     border-radius: 20px;
     background: var(--glass-dark);
-    backdrop-filter: blur(8px) saturate(1.4);
     color: white;
     font-size: 10px;
     font-weight: 600;
@@ -1671,8 +1670,8 @@
     padding: 0 6px;
     overflow: hidden;
     border-radius: 20px;
-    background: #ffffffc7;
-    backdrop-filter: blur(8px) saturate(1.4);
+    background: #dfe4ebeb;
+    box-shadow: inset 0 0 0 1px #0f172a24;
     color: #1e293b;
     font-size: 10px;
     line-height: 18px;
@@ -1680,7 +1679,7 @@
     white-space: nowrap;
   }
   .tile-tags button:hover {
-    background: white;
+    background: #eef1f5;
   }
   .provider-ratings {
     display: flex;
@@ -1698,7 +1697,6 @@
     overflow-x: auto;
     scrollbar-width: none;
     background: var(--glass-dark);
-    backdrop-filter: blur(10px) saturate(1.4);
     color: white;
   }
   .ratings-poster [data-sorted] {
@@ -2412,7 +2410,6 @@
       z-index: 39;
       inset: 0;
       background: #0f172a47;
-      backdrop-filter: blur(2px);
     }
   }
   .detail-page {
@@ -2952,8 +2949,6 @@
 }
 .tag-drawer::backdrop {
   background: #0f172a47;
-  -webkit-backdrop-filter: blur(2px);
-  backdrop-filter: blur(2px);
 }
 .tag-drawer-inner {
   min-height: 100%;
