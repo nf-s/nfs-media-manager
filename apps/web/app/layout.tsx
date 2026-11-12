@@ -1,5 +1,5 @@
 import '@repo/ui/globals.css'
-import type { Metadata } from 'next'
+import type { Metadata, Viewport } from 'next'
 import { IBM_Plex_Mono, IBM_Plex_Sans } from 'next/font/google'
 import Providers from '@/components/providers'
 import { env, getApiBaseUrl } from '@/env'
@@ -19,6 +19,28 @@ const plexMono = IBM_Plex_Mono({
 export const metadata: Metadata = {
   title: 'NFS Media Manager',
   description: 'Media library',
+  applicationName: 'NFS Media',
+  appleWebApp: {
+    capable: true,
+    title: 'NFS Media',
+    statusBarStyle: 'default',
+  },
+  icons: {
+    icon: {
+      url: '/icons/app/icon-192.png',
+      sizes: '192x192',
+      type: 'image/png',
+    },
+    apple: {
+      url: '/icons/app/apple-touch-icon.png',
+      sizes: '180x180',
+      type: 'image/png',
+    },
+  },
+}
+
+export const viewport: Viewport = {
+  themeColor: '#ffffff',
 }
 
 // Note: Need to be force-dynamic to get the correct env variables at runtime
@@ -37,11 +59,13 @@ export default async function RootLayout({
         <Providers appUrl={env.APP_URL ?? ''} apiBaseUrl={getApiBaseUrl()}>
           {children}
         </Providers>
-        {env.APP_URL === 'https://nfs-media-manager.nf-s.workers.dev' && (
+        {env.CLOUDFLARE_WEB_ANALYTICS_TOKEN && (
           <script
             defer
             src="https://static.cloudflareinsights.com/beacon.min.js"
-            data-cf-beacon='{"token":"a43244f52d2b4fbcad1bab12f441422f"}'
+            data-cf-beacon={JSON.stringify({
+              token: env.CLOUDFLARE_WEB_ANALYTICS_TOKEN,
+            })}
           />
         )}
       </body>

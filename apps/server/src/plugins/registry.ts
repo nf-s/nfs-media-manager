@@ -6,6 +6,7 @@ import {
   type MediaProviderPlugin,
 } from '@repo/media-plugin-sdk'
 import { env } from '@/env'
+import { bundledPlugins } from '@/plugins/bundled'
 import { findWorkspaceRootPath } from '@/lib/load-workspace-env'
 import {
   createCatalogEntryFromPlugin,
@@ -51,6 +52,23 @@ async function loadExternalPlugins(): Promise<Map<string, LoadedPlugin>> {
   }
 
   const loaded = new Map<string, LoadedPlugin>()
+
+  if (env.RUNTIME_KIND === 'cloudflare') {
+    for (const plugin of bundledPlugins) {
+      if (
+        !isMediaProviderPlugin(plugin) ||
+        loaded.has(plugin.manifest.id) ||
+        getBuiltinProviderCatalog().some(
+          (entry) => entry.id === plugin.manifest.id,
+        )
+      ) {
+        throw new Error('Invalid or conflicting bundled provider')
+      }
+      loaded.set(plugin.manifest.id, { plugin, pluginPath: 'bundled' })
+    }
+    pluginCache = loaded
+    return loaded
+  }
 
   for (const pluginPath of env.MEDIA_PLUGIN_PATHS) {
     const resolvedPath = resolve(workspaceRoot, pluginPath)

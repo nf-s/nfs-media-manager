@@ -1,4 +1,4 @@
-import { asc, eq } from 'drizzle-orm'
+import { and, asc, eq, isNotNull, notExists, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import { JsonValueSchema } from '@repo/schemas/common'
 import type { JobData } from '@repo/schemas/job'
@@ -37,10 +37,16 @@ export async function getJobData(jobId: string): Promise<JobData> {
     .select({
       id: scrapeJobLog.id,
       createdAt: scrapeJobLog.createdAt,
-      metadata: scrapeJobLog.metadata,
+      metadata: sql<unknown>`jsonb_build_object('diagnostics', ${scrapeJobLog.metadata}->'diagnostics')`,
     })
     .from(scrapeJobLog)
-    .where(eq(scrapeJobLog.jobId, jobId))
+    .where(
+      and(
+        eq(scrapeJobLog.jobId, jobId),
+        sql`jsonb_typeof(${scrapeJobLog.metadata}->'diagnostics') = 'array'`,
+        sql`${scrapeJobLog.metadata}->'diagnostics' <> '[]'::jsonb`,
+      ),
+    )
     .orderBy(asc(scrapeJobLog.createdAt), asc(scrapeJobLog.id))
   const items = await db
     .select({
@@ -48,10 +54,28 @@ export async function getJobData(jobId: string): Promise<JobData> {
       mediaItemId: scrapeJobItem.mediaItemId,
       provider: scrapeJobItem.provider,
       payload: scrapeJobItem.payload,
-      status: scrapeJobItem.status,
     })
     .from(scrapeJobItem)
-    .where(eq(scrapeJobItem.jobId, jobId))
+    .where(
+      and(
+        eq(scrapeJobItem.jobId, jobId),
+        eq(scrapeJobItem.status, 'succeeded'),
+        isNotNull(scrapeJobItem.payload),
+        sql`${scrapeJobItem.payload} <> 'null'::jsonb`,
+        notExists(
+          db
+            .select({ id: providerSnapshot.id })
+            .from(providerSnapshot)
+            .where(
+              and(
+                eq(providerSnapshot.scrapeJobId, jobId),
+                sql`${providerSnapshot.mediaItemId} is not distinct from ${scrapeJobItem.mediaItemId}`,
+                eq(providerSnapshot.provider, scrapeJobItem.provider),
+              ),
+            ),
+        ),
+      ),
+    )
     .orderBy(asc(scrapeJobItem.createdAt), asc(scrapeJobItem.id))
 
   return {
@@ -74,23 +98,6 @@ export async function getJobData(jobId: string): Promise<JobData> {
     }),
     // Legacy jobs may retain their response on the item without a snapshot.
     // Never substitute another attempt's current state or media history.
-    itemPayloads: items.flatMap((item) =>
-      item.status === 'succeeded' &&
-      item.payload !== null &&
-      !snapshots.some(
-        (snapshot) =>
-          snapshot.mediaItemId === item.mediaItemId &&
-          snapshot.provider === item.provider,
-      )
-        ? [
-            {
-              id: item.id,
-              mediaItemId: item.mediaItemId,
-              provider: item.provider,
-              payload: item.payload,
-            },
-          ]
-        : [],
-    ),
+    itemPayloads: items,
   }
 }

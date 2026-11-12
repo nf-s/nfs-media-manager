@@ -12,12 +12,14 @@ import {
 } from '@/lib/openapi'
 import { generateJsonResponse } from '@/lib/response'
 import { logger } from '@/middlewares/logger'
+import { authMiddleware, mutationOriginMiddleware } from '@/middlewares/auth'
 import albums from '@/routes/albums'
 import films from '@/routes/films'
 import jobs from '@/routes/jobs'
 import imports from '@/routes/imports'
 import albumImports from '@/routes/album-imports'
 import spotify from '@/routes/spotify'
+import lastfm from '@/routes/lastfm'
 import media from '@/routes/media'
 import providers from '@/routes/providers'
 import tags from '@/routes/tags'
@@ -28,8 +30,17 @@ const app = createOpenAPIApp({
   strict: false,
 })
 
-app.use(compress())
+// Workers compress responses at the edge; pre-compressing an internal service
+// response causes a second compression pass through the Next.js proxy.
+if (env.RUNTIME_KIND !== 'cloudflare') app.use(compress())
 app.use(logger())
+app.use('*', async (c, next) => {
+  c.header('Cache-Control', 'private, no-store')
+  c.header('CDN-Cache-Control', 'no-store')
+  c.header('Cloudflare-CDN-Cache-Control', 'no-store')
+  c.header('Referrer-Policy', 'no-referrer')
+  await next()
+})
 app.use(
   cors({
     origin: env.TRUSTED_ORIGINS,
@@ -41,23 +52,27 @@ app.use(
 )
 app.use('*', secureHeaders())
 
-app.use('*', async (c, next) => {
-  const session = await auth.api.getSession({ headers: c.req.raw.headers })
-
-  if (!session) {
-    c.set('user', null)
-    c.set('session', null)
-    return next()
-  }
-
-  c.set('user', session.user)
-  c.set('session', session.session)
-
-  return next()
-})
+app.use('*', mutationOriginMiddleware())
 
 app.on(['POST', 'GET'], '/api/auth/*', async (c) => {
   return auth.handler(c.req.raw)
+})
+
+const requireOwner = authMiddleware()
+app.use('*', (c, next) => {
+  // Health probes and the OAuth relay carry no library/account data. Spotify's
+  // completion endpoint still requires the owner session and validates state.
+  if (
+    ['GET', 'HEAD'].includes(c.req.method) &&
+    [
+      '/api/v1/healthcheck',
+      '/api/v1/healthcheck/',
+      '/api/v1/spotify/callback',
+      '/api/v1/spotify/callback/',
+    ].includes(c.req.path)
+  )
+    return next()
+  return requireOwner(c, next)
 })
 
 const v1ApiBase = app.basePath('/api/v1')
@@ -70,6 +85,7 @@ v1ApiBase.route('/scrape/jobs', jobs)
 v1ApiBase.route('/imports', imports)
 v1ApiBase.route('/album-imports', albumImports)
 v1ApiBase.route('/spotify', spotify)
+v1ApiBase.route('/lastfm', lastfm)
 v1ApiBase.route('/tags', tags)
 
 const v1ApiRoutes = v1ApiBase

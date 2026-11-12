@@ -100,6 +100,7 @@ function SelectionTable({ providers, mediaType = 'film' }: Props) {
   const { fields, facets, films } = useFilmSelection(
     params.toString(),
     mediaType,
+    draft,
   )
   const available =
     fields.data ??
@@ -226,8 +227,8 @@ function SelectionTable({ providers, mediaType = 'film' }: Props) {
           <BrowseFilterAutocomplete
             options={facets.data ?? []}
             items={[]}
-            titlesLoading={false}
-            titlesError={false}
+            titlesLoading={facets.isDebouncing || facets.isPending}
+            titlesError={facets.isError}
             placeholder={`Search ${plural} or add a filter`}
             value={draft}
             onValueChange={setDraft}

@@ -1,0 +1,14 @@
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="512"
+  height="512"
+  viewBox="0 0 512 512"
+>
+  <title>NFS Media</title>
+  <path fill="#245c39" d="M0 0h512v512H0z" />
+  <g fill="none" stroke="#ffffff" stroke-width="24" stroke-linejoin="miter">
+    <path d="M100 324V188l80 136V188" />
+    <path d="M224 336V188h72m-72 64h60" />
+    <path d="M416 188h-76v64h76v72h-76" />
+  </g>
+</svg>

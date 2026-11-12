@@ -5,12 +5,18 @@
   "scripts": {
     "dev": "node ./scripts/dev.mjs",
     "build": "next build",
+    "build:cloudflare": "node scripts/build-cloudflare.mjs",
+    "check:cloudflare": "node scripts/check-cloudflare-build.mjs",
+    "deploy:cloudflare": "pnpm build:cloudflare && node scripts/deploy-cloudflare.mjs",
+    "preview:cloudflare": "pnpm build:cloudflare && opennextjs-cloudflare preview",
+    "cf-typegen": "wrangler types --env-interface CloudflareEnv cloudflare-env.d.ts",
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "typecheck:watch": "tsc --noEmit --watch"
   },
   "dependencies": {
+    "@opennextjs/cloudflare": "1.20.14",
     "@repo/schemas": "workspace:*",
     "@repo/server": "workspace:*",
     "@repo/ui": "workspace:*",
@@ -37,6 +43,7 @@
     "eslint": "catalog:",
     "postcss": "catalog:",
     "tailwindcss": "catalog:",
-    "typescript": "catalog:"
+    "typescript": "catalog:",
+    "wrangler": "4.156.0"
   }
 }

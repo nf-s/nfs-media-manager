@@ -9,6 +9,7 @@ import {
   type MediaPluginTestContext,
 } from '@repo/media-plugin-sdk'
 import { db } from '@/lib/db'
+import { getProviderTransport } from '@/services/provider-transport'
 import {
   ProviderRequestBudgetSchema,
   type ProviderRequestBudget,
@@ -85,12 +86,20 @@ export async function getProviderBudgetStatus(
   return budget ? budgetUsage(db, provider, budget, Date.now()) : undefined
 }
 
+type ReadyReservation = {
+  kind: 'ready'
+  token: string
+  reservedAt: number
+  dispatchBefore: number
+}
 type Reservation =
-  | { kind: 'ready'; token: string }
+  | ReadyReservation
   | { kind: 'wait'; ms: number }
   | { kind: 'blocked'; until: number | null; reason: string }
 const delay = (ms: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, ms))
+const LEASE_GRACE_MS = 5000
+const DISPATCH_WINDOW_MS = 4000
 const RequestTimeoutSchema = PluginRequestTimeoutSchema.default(15000)
 
 async function readBoundedBody(
@@ -126,6 +135,7 @@ async function reserve(
   plugin: MediaProviderPlugin,
   method: string,
   timeoutMs: number,
+  localWorker = false,
 ): Promise<Reservation> {
   return db.transaction(async (tx) => {
     const provider = plugin.manifest.id
@@ -139,6 +149,21 @@ async function reserve(
       .where(eq(providerRequestState.provider, provider))
       .for('update')
     if (!state) throw new Error('Missing provider request state')
+    if (
+      localWorker &&
+      (plugin.manifest.rateLimit.concurrentRequests ||
+        plugin.manifest.rateLimit.fixedWindow ||
+        effectiveRequestBudget(
+          plugin.manifest.rateLimit,
+          state.requestBudgetOverride,
+        )?.period === 'day')
+    )
+      throw new ProviderRequestError(
+        'Local workers currently require serial, rolling-hour provider limits',
+        'request-failed',
+        null,
+        true,
+      )
     const now = Date.now()
     if (state.halted)
       return {
@@ -216,8 +241,20 @@ async function reserve(
     if (state.leaseUntil && state.leaseUntil.getTime() > now)
       return {
         kind: 'wait',
-        ms: Math.min(500, state.leaseUntil.getTime() - now),
+        ms: Math.min(
+          plugin.manifest.rateLimit.concurrentRequests ? 10 : 500,
+          state.leaseUntil.getTime() - now,
+        ),
       }
+    // An expired dispatch lock may belong to a process that sent its request
+    // but never persisted the start time. Do not reclaim it with stale spacing.
+    const abandonedSpacing = state.leaseId
+      ? (state.leaseUntil?.getTime() ?? 0) +
+        plugin.manifest.rateLimit.minTimeMs -
+        now
+      : 0
+    if (abandonedSpacing > 0)
+      return { kind: 'wait', ms: Math.min(abandonedSpacing, 1000) }
     const leases = state.requestLeases.filter((lease) => lease.expiresAt > now)
     const concurrency = plugin.manifest.rateLimit.concurrentRequests
       ? plugin.manifest.rateLimit.maxConcurrent
@@ -226,6 +263,16 @@ async function reserve(
     const wait = (state.nextAllowedAt?.getTime() ?? 0) - now
     if (wait > 0) return { kind: 'wait', ms: Math.min(wait, 1000) }
     const token = randomUUID()
+    const dispatchBefore = Math.min(
+      now + DISPATCH_WINDOW_MS,
+      fixedWindow
+        ? fixedRequestWindow(fixedWindow.durationMs, now).resetsAt
+        : Infinity,
+      requestBudget?.period === 'day'
+        ? requestBudgetWindow('day', now).resetsAt
+        : Infinity,
+    )
+    const expiresAt = now + timeoutMs + LEASE_GRACE_MS
     await tx
       .insert(providerRequestEvent)
       .values({ id: token, provider, requestedAt: new Date(now), requestClass })
@@ -234,22 +281,89 @@ async function reserve(
       .set({
         requests: [...budget.recent, now],
         nextAllowedAt: new Date(now + plugin.manifest.rateLimit.minTimeMs),
-        ...(plugin.manifest.rateLimit.concurrentRequests
-          ? {
-              requestLeases: [
-                ...leases,
-                { id: token, expiresAt: now + timeoutMs + 5000 },
-              ],
-            }
-          : {
-              leaseId: token,
-              leaseUntil: new Date(now + timeoutMs + 5000),
-              requestLeases: leases,
-            }),
+        // Concurrent providers also hold this lock until actual dispatch pacing
+        // is durable; their in-flight slots remain in requestLeases afterwards.
+        leaseId: token,
+        leaseUntil: new Date(expiresAt),
+        requestLeases: plugin.manifest.rateLimit.concurrentRequests
+          ? [...leases, { id: token, expiresAt }]
+          : leases,
         updatedAt: new Date(),
       })
       .where(eq(providerRequestState.provider, provider))
-    return { kind: 'ready', token }
+    return { kind: 'ready', token, reservedAt: now, dispatchBefore }
+  })
+}
+
+function expiredReservation() {
+  return new ProviderRequestError(
+    'Provider request reservation expired before dispatch',
+    'request-failed',
+    null,
+    true,
+  )
+}
+
+async function checkDispatch(provider: string, reservation: ReadyReservation) {
+  const [state] = await db
+    .select()
+    .from(providerRequestState)
+    .where(eq(providerRequestState.provider, provider))
+  if (state?.halted)
+    throw new ProviderRequestError(
+      state.lastError ?? 'Provider access is halted',
+      'access-denied',
+      null,
+      true,
+    )
+  if (state?.cooldownUntil && state.cooldownUntil.getTime() > Date.now())
+    throw new ProviderRequestError(
+      state.lastError ?? 'Provider cooldown',
+      'cooldown',
+      state.cooldownUntil.getTime(),
+      true,
+    )
+  if (state?.leaseId !== reservation.token) throw expiredReservation()
+}
+
+async function recordDispatch(
+  plugin: MediaProviderPlugin,
+  reservation: ReadyReservation,
+  startedAt: number,
+) {
+  await db.transaction(async (tx) => {
+    const [state] = await tx
+      .select()
+      .from(providerRequestState)
+      .where(eq(providerRequestState.provider, plugin.manifest.id))
+      .for('update')
+    if (!state || state.leaseId !== reservation.token)
+      throw new Error('Provider dispatch lease lost')
+    // Move, never refund, the reservation so rolling budgets cannot age out
+    // earlier than the actual request. The dispatch lock excludes new reserves.
+    const requestIndex = state.requests.lastIndexOf(reservation.reservedAt)
+    await tx
+      .update(providerRequestEvent)
+      .set({ requestedAt: new Date(startedAt) })
+      .where(eq(providerRequestEvent.id, reservation.token))
+    await tx
+      .update(providerRequestState)
+      .set({
+        requests: state.requests.map((time, index) =>
+          index === requestIndex ? Math.max(time, startedAt) : time,
+        ),
+        nextAllowedAt: new Date(
+          Math.max(
+            state.nextAllowedAt?.getTime() ?? 0,
+            startedAt + plugin.manifest.rateLimit.minTimeMs,
+          ),
+        ),
+        ...(plugin.manifest.rateLimit.concurrentRequests
+          ? { leaseId: null, leaseUntil: null }
+          : {}),
+        updatedAt: new Date(),
+      })
+      .where(eq(providerRequestState.provider, plugin.manifest.id))
   })
 }
 
@@ -316,9 +430,6 @@ export async function recordProviderFailure(
           error instanceof ProviderRequestError
             ? error.message
             : 'Provider execution failed',
-        ...(leaseId === state.leaseId
-          ? { leaseId: null, leaseUntil: null }
-          : {}),
         updatedAt: new Date(),
       })
       .where(eq(providerRequestState.provider, provider))
@@ -393,6 +504,65 @@ export async function getProviderSafety(provider: string) {
   }
 }
 
+// Local responses may arrive after their job has timed out. Preserve restrictive
+// safety evidence independently of job completion; never clear a prior restriction.
+export async function protectProviderFromLocalResponse(
+  plugin: MediaProviderPlugin,
+  status: number,
+  headers: Headers,
+  body: string,
+) {
+  let quotaError = false
+  if (headers.get('content-type')?.includes('json')) {
+    try {
+      quotaError = hasProviderQuotaError(
+        JSON.parse(body),
+        status >= 200 && status < 300,
+      )
+    } catch {
+      /* HTTP status remains authoritative. */
+    }
+  }
+  const limited = status === 429 || quotaError
+  const denied = !limited && (status === 401 || status === 403)
+  if (!limited && !denied) return
+  const retryAt = limited
+    ? rateLimitRetryAt(
+        headers,
+        Date.now(),
+        plugin.manifest.rateLimit.rateLimitCooldownMs ?? 60000,
+        responseQuota(headers, Date.now()),
+        plugin.manifest.rateLimit.retryAfterIsAuthoritative,
+      )
+    : null
+  await db.transaction(async (tx) => {
+    await tx
+      .insert(providerRequestState)
+      .values({ provider: plugin.manifest.id })
+      .onConflictDoNothing()
+    const [state] = await tx
+      .select()
+      .from(providerRequestState)
+      .where(eq(providerRequestState.provider, plugin.manifest.id))
+      .for('update')
+    if (!state) throw new Error('Missing provider safety state')
+    await tx
+      .update(providerRequestState)
+      .set({
+        halted: state.halted || denied,
+        cooldownUntil:
+          retryAt === null
+            ? state.cooldownUntil
+            : new Date(Math.max(state.cooldownUntil?.getTime() ?? 0, retryAt)),
+        lastError: limited
+          ? 'Local worker reported a provider rate limit'
+          : 'Local worker reported provider access denial',
+        updatedAt: new Date(),
+      })
+      .where(eq(providerRequestState.provider, plugin.manifest.id))
+  })
+}
+
 export function createProviderRequest(
   plugin: MediaProviderPlugin,
   assertActive?: () => Promise<void>,
@@ -405,11 +575,32 @@ export function createProviderRequest(
   )
   return async (url, init, options) => {
     await assertActive?.()
-    let reservation = await reserve(plugin, init?.method ?? 'GET', timeoutMs)
+    const transport = await getProviderTransport(plugin)
+    if (
+      transport &&
+      ((init?.method ?? 'GET').toUpperCase() !== 'GET' || init?.body)
+    )
+      throw new ProviderRequestError(
+        'Local workers support metadata GET requests only',
+        'request-failed',
+        null,
+        true,
+      )
+    let reservation = await reserve(
+      plugin,
+      init?.method ?? 'GET',
+      timeoutMs,
+      transport !== null,
+    )
     while (reservation.kind === 'wait') {
       await delay(reservation.ms)
       await assertActive?.()
-      reservation = await reserve(plugin, init?.method ?? 'GET', timeoutMs)
+      reservation = await reserve(
+        plugin,
+        init?.method ?? 'GET',
+        timeoutMs,
+        transport !== null,
+      )
     }
     if (reservation.kind === 'blocked')
       throw new ProviderRequestError(
@@ -421,18 +612,44 @@ export function createProviderRequest(
         true,
       )
     const token = reservation.token
-    let requestStarted = false
+    const reservedAt = reservation.reservedAt
+    let requestStartedAt: number | undefined
+    let remoteAccountingComplete = false
     try {
-      await assertActive?.()
+      await checkDispatch(plugin.manifest.id, reservation)
       const timeout = AbortSignal.timeout(timeoutMs)
-      requestStarted = true
-      const response = await fetch(url, {
-        ...init,
-        redirect: 'error',
-        signal: init?.signal
-          ? AbortSignal.any([init.signal, timeout])
-          : timeout,
-      })
+      const signal = init?.signal
+        ? AbortSignal.any([init.signal, timeout])
+        : timeout
+      signal.throwIfAborted()
+      const startedAt = Date.now()
+      // No async work between this deadline check and fetch. The full timeout
+      // still fits inside the durable lease, with a margin for abort delivery.
+      if (startedAt >= reservation.dispatchBefore) throw expiredReservation()
+      requestStartedAt = startedAt
+      const responsePromise = transport
+        ? transport.execute(String(url), {
+            dispatchBefore: reservation.dispatchBefore,
+            expiresAt: reservation.dispatchBefore + timeoutMs,
+          })
+        : fetch(url, { ...init, redirect: 'manual', signal })
+      const activeReservation = reservation
+      const recordRemoteReceipt = async () => {
+        requestStartedAt = Date.now()
+        await recordDispatch(plugin, activeReservation, requestStartedAt)
+        remoteAccountingComplete = true
+      }
+      // Remote attempts retain their lease until completion or the full execution
+      // horizon. Receipt-time accounting deliberately overestimates usage/spacing.
+      const dispatchPromise = transport
+        ? responsePromise.then(recordRemoteReceipt, recordRemoteReceipt)
+        : recordDispatch(plugin, reservation, startedAt)
+      const [responseResult, dispatchResult] = await Promise.allSettled([
+        responsePromise,
+        dispatchPromise,
+      ])
+      if (responseResult.status === 'rejected') throw responseResult.reason
+      const response = responseResult.value
       const quota = plugin.manifest.rateLimit.respectRateLimitHeaders
         ? responseQuota(response.headers, Date.now())
         : null
@@ -466,7 +683,8 @@ export function createProviderRequest(
           /* Malformed success bodies reach the adapter; failed responses retain HTTP classification. */
         }
       }
-      if (!response.ok || apiLimit) {
+      const redirected = response.status >= 300 && response.status < 400
+      if (redirected || !response.ok || apiLimit) {
         if (response.status === 404 && options?.notFoundOn404) {
           throw new ProviderItemNotFoundError(
             'Provider has no matching item (HTTP 404)',
@@ -499,6 +717,8 @@ export function createProviderRequest(
           until,
         )
       }
+      // HTTP safety signals take precedence over dispatch bookkeeping errors.
+      if (dispatchResult.status === 'rejected') throw dispatchResult.reason
       return new Response(
         response.status === 204 || response.status === 205 ? null : body,
         {
@@ -508,8 +728,9 @@ export function createProviderRequest(
         },
       )
     } catch (error) {
-      if (!requestStarted) throw error
+      if (requestStartedAt === undefined) throw error
       if (isProviderItemNotFoundError(error)) throw error
+      if (error instanceof ProviderRequestError && error.recorded) throw error
       const safe =
         error instanceof ProviderRequestError
           ? error
@@ -535,10 +756,39 @@ export function createProviderRequest(
           .from(providerRequestState)
           .where(eq(providerRequestState.provider, plugin.manifest.id))
           .for('update')
-        if (state)
+        if (state) {
+          const accountingAt = requestStartedAt
+          const recoverRemoteAccounting =
+            transport !== null &&
+            !remoteAccountingComplete &&
+            accountingAt !== undefined
+          if (recoverRemoteAccounting && accountingAt !== undefined)
+            await tx
+              .update(providerRequestEvent)
+              .set({ requestedAt: new Date(accountingAt) })
+              .where(eq(providerRequestEvent.id, token))
           await tx
             .update(providerRequestState)
             .set({
+              ...(recoverRemoteAccounting && accountingAt !== undefined
+                ? {
+                    requests: state.requests.map((time, index) =>
+                      index === state.requests.lastIndexOf(reservedAt)
+                        ? Math.max(time, accountingAt)
+                        : time,
+                    ),
+                  }
+                : {}),
+              ...(requestStartedAt === undefined
+                ? {}
+                : {
+                    nextAllowedAt: new Date(
+                      Math.max(
+                        state.nextAllowedAt?.getTime() ?? 0,
+                        requestStartedAt + plugin.manifest.rateLimit.minTimeMs,
+                      ),
+                    ),
+                  }),
               ...(state.leaseId === token
                 ? { leaseId: null, leaseUntil: null }
                 : {}),
@@ -547,6 +797,7 @@ export function createProviderRequest(
               ),
             })
             .where(eq(providerRequestState.provider, plugin.manifest.id))
+        }
       })
     }
   }

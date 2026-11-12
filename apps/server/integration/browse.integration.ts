@@ -53,6 +53,92 @@ afterAll(async () => {
   vi.unstubAllGlobals()
 })
 
+describe('bounded searchable facets', () => {
+  it('finds values outside the default top page without crowding out other fields', async () => {
+    const { listBrowseFacets } = await import('@/services/browse')
+    const ids = Array.from(
+      { length: 90 },
+      (_, index) => `facet-bound-${String(index).padStart(2, '0')}`,
+    )
+    try {
+      await databaseClient.insert(schema.mediaItem).values(
+        ids.map((id, index) => ({
+          id,
+          slug: id,
+          mediaType: 'film',
+          title: `boundedfacet ${String(index).padStart(2, '0')}`,
+          metadata: {
+            browse: {
+              country: [
+                `boundedfacet country ${String(index).padStart(2, '0')}`,
+              ],
+              productionCompany: ['50%_literal'],
+            },
+          },
+        })),
+      )
+      await databaseClient.insert(schema.tag).values(
+        ids.map((id, index) => ({
+          id,
+          mediaType: 'film',
+          kind: 'keyword',
+          name: `boundedfacet tag ${String(index).padStart(2, '0')}`,
+        })),
+      )
+      await databaseClient
+        .insert(schema.mediaItemTag)
+        .values(ids.map((id) => ({ mediaItemId: id, tagId: id })))
+      const defaults = await listBrowseFacets('film')
+      expect(defaults.filter((row) => row.field === 'genre')).toHaveLength(25)
+      expect(defaults.filter((row) => row.field === 'title')).toHaveLength(25)
+      expect(defaults.some((row) => row.value === 'boundedfacet tag 89')).toBe(
+        false,
+      )
+      expect(defaults.length).toBeLessThanOrEqual(1000)
+      const searched = await listBrowseFacets('film', {
+        q: '89 boundedfacet',
+        limitPerField: 1,
+      })
+      expect(searched).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            field: 'title',
+            value: 'boundedfacet 89',
+            count: 1,
+          }),
+          expect.objectContaining({
+            field: 'genre',
+            value: 'boundedfacet tag 89',
+            count: 1,
+          }),
+          expect.objectContaining({
+            field: 'country',
+            value: 'boundedfacet country 89',
+            count: 1,
+          }),
+        ]),
+      )
+      expect(
+        (await listBrowseFacets('film', { q: '50%_' })).filter(
+          (row) => row.field === 'productionCompany',
+        ),
+      ).toEqual([expect.objectContaining({ value: '50%_literal', count: 90 })])
+      expect(
+        await listBrowseFacets('film', { q: 'no-facet-matches-this-token' }),
+      ).toEqual([])
+    } finally {
+      // Remove only this test's generated fixture so later browse tests retain
+      // their existing whole-library expectations.
+      for (const id of ids) {
+        await databaseClient
+          .delete(schema.mediaItem)
+          .where(eq(schema.mediaItem.id, id))
+        await databaseClient.delete(schema.tag).where(eq(schema.tag.id, id))
+      }
+    }
+  })
+})
+
 describe('temporary Postgres browse and import integration', () => {
   it('recovers film added dates offline, sorts and filters them, and preserves manual corrections', async () => {
     const { applyProviderResult } = await import('@/services/provider-state')

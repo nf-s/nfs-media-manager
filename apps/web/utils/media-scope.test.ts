@@ -32,6 +32,7 @@ test('route-implied scope is consistent across library details and album import 
     '/albums',
     '/albums/first',
     '/imports/spotify',
+    '/imports/lastfm',
     '/imports/albums',
   ])
     assert.equal(mediaScopeForPath(path, 'film'), 'album')
@@ -91,7 +92,7 @@ test('switching libraries drops record, provider and filter state but retains jo
 })
 
 test('scope changes leave incompatible imports and media details for the target library', () => {
-  for (const path of ['/imports/spotify', '/imports/albums'])
+  for (const path of ['/imports/spotify', '/imports/lastfm', '/imports/albums'])
     assert.equal(
       switchMediaScopeHref(path, 'format=old&mediaType=album', 'film'),
       '/imports?mediaType=film',

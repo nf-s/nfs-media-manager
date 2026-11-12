@@ -134,12 +134,12 @@ export default function BrowseFilterAutocomplete({
           <div id={`${id}-list`} role="listbox" aria-label="Filter suggestions">
             {titlesLoading && (
               <p role="status" className="quiet">
-                Finding titles...
+                Loading suggestions...
               </p>
             )}
             {titlesError && (
               <p role="alert" className="quiet">
-                Could not load titles. Try searching again.
+                Could not load suggestions. Try searching again.
               </p>
             )}
             {suggestions.map((option, index) => (

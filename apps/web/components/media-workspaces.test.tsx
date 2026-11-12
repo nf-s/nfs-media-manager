@@ -120,7 +120,7 @@ function render(
     redirectUri: null,
   })
   client.setQueryData(['album-fields'], albumBrowseFields)
-  client.setQueryData(['album-facets'], [])
+  client.setQueryData(['albums', 'facets', ''], [])
   const params = new URLSearchParams({
     q: '',
     sortBy: 'dateAdded',

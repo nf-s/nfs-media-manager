@@ -8,7 +8,12 @@ export const env = createEnv({
       .default('development'),
   },
   server: {
+    WEB_RUNTIME: z.enum(['node', 'cloudflare']).default('node'),
     APP_URL: z.url().default('http://localhost:3000'),
+    CLOUDFLARE_WEB_ANALYTICS_TOKEN: z
+      .string()
+      .regex(/^[a-f0-9]{32}$/)
+      .optional(),
     INTERNAL_BACKEND_URL: z.url().optional(),
     INTERNAL_FRONTEND_URL: z.url().optional(),
     DEV_USE_INTERNAL_BACKEND_URL_IN_FRONTEND: z
@@ -18,7 +23,9 @@ export const env = createEnv({
       .transform((val) => val === 'true'),
   },
   runtimeEnv: {
+    WEB_RUNTIME: process.env.WEB_RUNTIME,
     APP_URL: process.env.APP_URL,
+    CLOUDFLARE_WEB_ANALYTICS_TOKEN: process.env.CLOUDFLARE_WEB_ANALYTICS_TOKEN,
     INTERNAL_BACKEND_URL: process.env.INTERNAL_BACKEND_URL,
     INTERNAL_FRONTEND_URL: process.env.INTERNAL_FRONTEND_URL,
     NODE_ENV: process.env.NODE_ENV,
@@ -28,6 +35,8 @@ export const env = createEnv({
 })
 
 export function getApiBaseUrl() {
+  if (env.WEB_RUNTIME === 'cloudflare') return ''
+
   return env.DEV_USE_INTERNAL_BACKEND_URL_IN_FRONTEND &&
     env.INTERNAL_BACKEND_URL
     ? env.INTERNAL_BACKEND_URL

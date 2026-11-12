@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import pg from 'pg'
+import { inArray } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { migrate } from 'drizzle-orm/node-postgres/migrator'
 import {
@@ -19,6 +20,7 @@ import {
 import { CreateJobSchema } from '@repo/schemas/job'
 import { env } from '@/env'
 import * as schema from '@/schemas/db'
+import type { QueuedJobExecution } from '@/services/jobs'
 
 const database = `concurrent_jobs_test_${randomUUID().replaceAll('-', '')}`
 const connection = {
@@ -183,6 +185,235 @@ async function createFixtureJobs(
 }
 
 describe('bounded concurrent one-item jobs', () => {
+  it('claims a queued ID only once across independent Queue executions', async () => {
+    const jobs = await import('@/services/jobs')
+    const requests = holdRequests()
+    const job = await createFixtureJob()
+    const control = {
+      canContinue: vi.fn(async () => true),
+      recordOutcome: vi.fn(async () => {}),
+    }
+    const work = Promise.all([
+      jobs.processQueuedJobById(job.id, job.provider, control),
+      jobs.processQueuedJobById(job.id, job.provider, control),
+    ])
+    try {
+      await vi.waitFor(() => expect(requests.pending).toHaveLength(1))
+      requests.releaseAll()
+      await work
+      await jobs.processQueuedJobById(job.id, job.provider, control)
+      expect(execute).toHaveBeenCalledOnce()
+      expect(network).toHaveBeenCalledOnce()
+      expect(control.recordOutcome).toHaveBeenCalledExactlyOnceWith('success')
+      expect((await jobs.getJob(job.id))?.items[0]).toMatchObject({
+        status: 'succeeded',
+        attemptCount: 1,
+      })
+    } finally {
+      requests.releaseAll()
+      await work
+    }
+  })
+
+  it('does not claim a Queue job for the wrong provider or a fenced delivery', async () => {
+    const jobs = await import('@/services/jobs')
+    const job = await createFixtureJob()
+    const control = {
+      canContinue: vi.fn(async () => true),
+      recordOutcome: vi.fn(async () => {}),
+    }
+    await jobs.processQueuedJobById(job.id, 'other-provider', control)
+    control.canContinue.mockResolvedValue(false)
+    await jobs.processQueuedJobById(job.id, job.provider, control)
+    expect((await jobs.getJob(job.id))?.status).toBe('queued')
+    expect(execute).not.toHaveBeenCalled()
+    expect(network).not.toHaveBeenCalled()
+  })
+
+  it.each(['access-denied', 'two failures'])(
+    'stops controlled dispatch after %s without mutating the unselected backlog',
+    async (failure) => {
+      const jobs = await import('@/services/jobs')
+      const { ProviderRequestError } = await import('@repo/media-plugin-sdk')
+      const { getProviderSafety } = await import('@/services/provider-requests')
+      const canaries = await createFixtureJobs(
+        failure === 'access-denied' ? 1 : 2,
+      )
+      const backlog = [
+        ...(await createFixtureJobs(3, 2)),
+        ...(await createFixtureJobs(1, 5, serialPlugin.manifest.id)),
+      ]
+      const backlogIds = backlog.map((job) => job.id)
+      const readBacklog = async () => ({
+        jobs: await databaseClient
+          .select()
+          .from(schema.scrapeJob)
+          .where(inArray(schema.scrapeJob.id, backlogIds))
+          .orderBy(schema.scrapeJob.id),
+        items: await databaseClient
+          .select()
+          .from(schema.scrapeJobItem)
+          .where(inArray(schema.scrapeJobItem.jobId, backlogIds))
+          .orderBy(schema.scrapeJobItem.id),
+        logs: await databaseClient
+          .select()
+          .from(schema.scrapeJobLog)
+          .where(inArray(schema.scrapeJobLog.jobId, backlogIds))
+          .orderBy(schema.scrapeJobLog.id),
+      })
+      const before = await readBacklog()
+      execute.mockRejectedValue(
+        failure === 'access-denied'
+          ? new ProviderRequestError('Fixture access denial', 'access-denied')
+          : new Error('Fixture adapter failure'),
+      )
+      let stopped = false
+      const control = {
+        canContinue: vi.fn(async () => !stopped),
+        recordOutcome: vi.fn<QueuedJobExecution['recordOutcome']>(
+          async (outcome) => {
+            if (outcome === 'stopped') stopped = true
+          },
+        ),
+      }
+
+      for (const job of canaries) {
+        await jobs.processQueuedJobById(job.id, job.provider, control)
+        expect((await jobs.getJob(job.id))?.status).toBe('failed')
+      }
+
+      expect(await readBacklog()).toEqual(before)
+      for (const [index] of canaries.entries())
+        expect(control.recordOutcome).toHaveBeenNthCalledWith(
+          index + 1,
+          index === canaries.length - 1 ? 'stopped' : 'failure',
+        )
+
+      expect(stopped).toBe(true)
+      expect(await getProviderSafety(plugin.manifest.id)).toMatchObject({
+        consecutiveFailures: canaries.length,
+        halted: failure === 'access-denied',
+        cooldownUntil: null,
+      })
+      for (const job of backlog.filter(
+        (job) => job.provider === plugin.manifest.id,
+      ))
+        await jobs.processQueuedJobById(job.id, job.provider, control)
+      expect(await readBacklog()).toEqual(before)
+      expect(execute).toHaveBeenCalledTimes(canaries.length)
+      expect(control.recordOutcome).toHaveBeenCalledTimes(canaries.length)
+      expect(network).not.toHaveBeenCalled()
+    },
+  )
+
+  it('does not record benign lookup misses as cloud provider failures or retry them', async () => {
+    const jobs = await import('@/services/jobs')
+    const { getProviderSafety } = await import('@/services/provider-requests')
+    network.mockImplementation(async () => Response.json({ matches: [] }))
+    execute.mockImplementation(async ({ request }) => {
+      await request('https://fixture.invalid/missing')
+      throw new ProviderItemNotFoundError('No fixture match')
+    })
+    const job = await createFixtureJob()
+    const control = {
+      canContinue: vi.fn(async () => true),
+      recordOutcome: vi.fn(async () => {}),
+    }
+    await jobs.processQueuedJobById(job.id, job.provider, control)
+    await jobs.processQueuedJobById(job.id, job.provider, control)
+    expect((await jobs.getJob(job.id))?.status).toBe('failed')
+    expect((await getProviderSafety(job.provider)).consecutiveFailures).toBe(0)
+    expect(control.recordOutcome).not.toHaveBeenCalled()
+    expect(network).toHaveBeenCalledOnce()
+  })
+
+  it('preserves cancellation fences for Queue execution results and logs', async () => {
+    const jobs = await import('@/services/jobs')
+    const requests = holdRequests()
+    const job = await createFixtureJob()
+    const control = {
+      canContinue: vi.fn(async () => true),
+      recordOutcome: vi.fn(async () => {}),
+    }
+    const work = jobs.processQueuedJobById(job.id, job.provider, control)
+    try {
+      await vi.waitFor(() => expect(requests.pending).toHaveLength(1))
+      await jobs.bulkCancelJobs(
+        { jobIds: [job.id], confirmRunning: true },
+        null,
+      )
+      const cancelled = await jobs.getJob(job.id)
+      requests.releaseAll()
+      await work
+      expect(await jobs.getJob(job.id)).toEqual(cancelled)
+      expect(
+        await databaseClient.select().from(schema.providerSnapshot),
+      ).toHaveLength(0)
+      expect(control.recordOutcome).not.toHaveBeenCalled()
+    } finally {
+      requests.releaseAll()
+      await work
+    }
+  })
+
+  it('recovers a saved result when the completion RPC fails without recording a provider failure', async () => {
+    const jobs = await import('@/services/jobs')
+    const { recoverCloudJobById } = await import('@/services/cloud-job-store')
+    const { getProviderSafety } = await import('@/services/provider-requests')
+    network.mockImplementation(async () => Response.json({ fixture: true }))
+    const job = await createFixtureJob()
+    const control = {
+      canContinue: vi.fn(async () => true),
+      recordOutcome: vi.fn(async () => {
+        throw new Error('Coordinator unavailable')
+      }),
+    }
+    await expect(
+      jobs.processQueuedJobById(job.id, job.provider, control),
+    ).rejects.toThrow('Coordinator unavailable')
+    expect((await jobs.getJob(job.id))?.items[0]?.status).toBe('succeeded')
+    await recoverCloudJobById(job.id, job.provider)
+    const recovered = await jobs.getJob(job.id)
+    await recoverCloudJobById(job.id, job.provider)
+    expect(await jobs.getJob(job.id)).toEqual(recovered)
+    expect(recovered?.status).toBe('succeeded')
+    expect(recovered?.logs.at(-1)?.metadata).toMatchObject({
+      reason: 'worker_recovered_completed',
+    })
+    expect((await getProviderSafety(job.provider)).consecutiveFailures).toBe(0)
+    expect(network).toHaveBeenCalledOnce()
+  })
+
+  it('recovers a lost Queue execution without spending any provider requests', async () => {
+    const jobs = await import('@/services/jobs')
+    const { recoverCloudJobById } = await import('@/services/cloud-job-store')
+    const { getProviderSafety } = await import('@/services/provider-requests')
+    const job = await createFixtureJob()
+    let checks = 0
+    const control = {
+      canContinue: vi.fn(async () => {
+        checks += 1
+        if (checks > 1) throw new Error('Coordinator unavailable')
+        return true
+      }),
+      recordOutcome: vi.fn(async () => {}),
+    }
+    await expect(
+      jobs.processQueuedJobById(job.id, job.provider, control),
+    ).rejects.toThrow('ownership check failed')
+    await recoverCloudJobById(job.id, job.provider)
+    const recovered = await jobs.getJob(job.id)
+    await recoverCloudJobById(job.id, job.provider)
+    expect(await jobs.getJob(job.id)).toEqual(recovered)
+    expect(recovered?.status).toBe('failed')
+    expect(recovered?.logs.at(-1)?.metadata).toMatchObject({
+      reason: 'worker_interrupted',
+    })
+    expect((await getProviderSafety(job.provider)).consecutiveFailures).toBe(0)
+    expect(execute).not.toHaveBeenCalled()
+    expect(network).not.toHaveBeenCalled()
+  })
+
   it('drains in-flight work on shutdown without claiming the remaining queue', async () => {
     const jobs = await import('@/services/jobs')
     const requests = holdRequests()

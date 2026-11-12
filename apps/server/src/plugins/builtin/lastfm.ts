@@ -22,7 +22,9 @@ import {
   requireAlbum,
 } from './album-provider-helpers'
 
-function lastFmErrorCode(body: unknown): ProviderRequestError['code'] | null {
+export function lastFmErrorCode(
+  body: unknown,
+): ProviderRequestError['code'] | null {
   const parsed = z.object({ error: z.number().int() }).safeParse(body)
   if (!parsed.success) return null
   if (parsed.data.error === 29) return 'rate-limit'

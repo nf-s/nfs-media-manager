@@ -5,6 +5,7 @@ import { eq } from 'drizzle-orm'
 import { migrate } from 'drizzle-orm/node-postgres/migrator'
 import {
   afterAll,
+  afterEach,
   beforeAll,
   beforeEach,
   describe,
@@ -27,6 +28,9 @@ import { env } from '@/env'
 import { encryptSecretValue } from '@/lib/crypto'
 import * as schema from '@/schemas/db'
 import { mdblistPlugin } from '@/plugins/builtin/mdblist'
+
+// Keep explicit test connection settings isolated from local application overrides.
+vi.mock('@/lib/load-workspace-env', () => ({ loadWorkspaceEnv: () => {} }))
 
 const database = `media_request_test_${randomUUID().replaceAll('-', '')}`
 const connection = {
@@ -139,6 +143,370 @@ async function createFixtureJobs(mediaItemIds: string[]) {
   return jobs
 }
 
+function latch() {
+  let release = () => {}
+  const promise = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  return { promise, release }
+}
+
+function delayReservationResult() {
+  const committed = latch()
+  const resume = latch()
+  const transaction = databaseClient.transaction.bind(databaseClient)
+  let paused = false
+  vi.spyOn(databaseClient, 'transaction').mockImplementation(
+    async <T>(
+      work: Parameters<typeof databaseClient.transaction<T>>[0],
+      config?: Parameters<typeof databaseClient.transaction<T>>[1],
+    ) => {
+      const result = await transaction(work, config)
+      if (
+        !paused &&
+        result &&
+        typeof result === 'object' &&
+        'kind' in result &&
+        result.kind === 'ready'
+      ) {
+        paused = true
+        committed.release()
+        await resume.promise
+      }
+      return result
+    },
+  )
+  return { committed: committed.promise, resume: resume.release }
+}
+
+describe('provider request dispatch timing', () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  it('does not await an activity callback after reserving', async () => {
+    const { createProviderRequest } =
+      await import('@/services/provider-requests')
+    const assertActive = vi.fn(async () => {
+      expect(
+        await databaseClient.select().from(schema.providerRequestEvent),
+      ).toEqual([])
+    })
+    fetchMock.mockResolvedValue(Response.json({ ok: true }))
+    await createProviderRequest(plugin, assertActive)('https://fixture.invalid')
+    expect(assertActive).toHaveBeenCalledOnce()
+    expect(fetchMock).toHaveBeenCalledOnce()
+  })
+
+  it.each([false, true])(
+    'rejects a stale reservation beside an active sibling (concurrent=%s)',
+    async (concurrentRequests) => {
+      const { createProviderRequest } =
+        await import('@/services/provider-requests')
+      const configuredPlugin: MediaProviderPlugin = {
+        ...plugin,
+        manifest: {
+          ...plugin.manifest,
+          rateLimit: { ...plugin.manifest.rateLimit, concurrentRequests },
+        },
+      }
+      const now = Date.now.bind(Date)
+      let offset = 0
+      vi.spyOn(Date, 'now').mockImplementation(() => now() + offset)
+      const delayed = delayReservationResult()
+      const siblingStarted = latch()
+      const finishSibling = latch()
+      let active = 0
+      let maximum = 0
+      fetchMock.mockImplementation(async () => {
+        active++
+        maximum = Math.max(maximum, active)
+        if (fetchMock.mock.calls.length === 1) {
+          siblingStarted.release()
+          await finishSibling.promise
+        }
+        active--
+        return Response.json({ ok: true })
+      })
+      const stale = createProviderRequest(configuredPlugin)(
+        'https://fixture.invalid',
+      ).catch((error: unknown) => error)
+      await delayed.committed
+      offset = 21000
+      const sibling = createProviderRequest(configuredPlugin)(
+        'https://fixture.invalid',
+      )
+      await siblingStarted.promise
+      delayed.resume()
+      const result = await stale
+      finishSibling.release()
+      await sibling
+      expect(result).toMatchObject({ code: 'request-failed', recorded: true })
+      expect(maximum).toBe(1)
+      expect(fetchMock).toHaveBeenCalledOnce()
+      expect(
+        await databaseClient.select().from(schema.providerRequestEvent),
+      ).toHaveLength(2)
+      const [state] = await databaseClient
+        .select()
+        .from(schema.providerRequestState)
+      expect(state?.failureCount).toBe(0)
+    },
+  )
+
+  it.each([false, true])(
+    'paces actual fetch starts after delayed commit delivery (concurrent=%s)',
+    async (concurrentRequests) => {
+      const { createProviderRequest } =
+        await import('@/services/provider-requests')
+      const configuredPlugin: MediaProviderPlugin = {
+        ...plugin,
+        manifest: {
+          ...plugin.manifest,
+          rateLimit: {
+            ...plugin.manifest.rateLimit,
+            concurrentRequests,
+            maxConcurrent: 2,
+            minTimeMs: 100,
+          },
+        },
+      }
+      const now = Date.now.bind(Date)
+      let offset = 0
+      vi.spyOn(Date, 'now').mockImplementation(() => now() + offset)
+      const delayed = delayReservationResult()
+      const started = latch()
+      const starts: number[] = []
+      fetchMock.mockImplementation(async () => {
+        starts.push(Date.now())
+        started.release()
+        return Response.json({ ok: true })
+      })
+      const first = createProviderRequest(configuredPlugin)(
+        'https://fixture.invalid',
+      )
+      await delayed.committed
+      offset = 1000
+      delayed.resume()
+      await started.promise
+      await Promise.all([
+        first,
+        createProviderRequest(configuredPlugin)('https://fixture.invalid'),
+      ])
+      expect(starts).toHaveLength(2)
+      expect((starts[1] ?? 0) - (starts[0] ?? 0)).toBeGreaterThanOrEqual(100)
+    },
+  )
+
+  it('rechecks persisted 429 cooldown after a delayed activity callback', async () => {
+    const { createProviderRequest } =
+      await import('@/services/provider-requests')
+    const checking = latch()
+    const resume = latch()
+    const assertActive = vi.fn(async () => {
+      checking.release()
+      await resume.promise
+    })
+    const delayed = createProviderRequest(
+      plugin,
+      assertActive,
+    )('https://fixture.invalid').catch((error: unknown) => error)
+    await checking.promise
+    fetchMock.mockResolvedValue(
+      new Response(null, { status: 429, headers: { 'retry-after': '7200' } }),
+    )
+    await expect(
+      createProviderRequest(plugin)('https://fixture.invalid'),
+    ).rejects.toMatchObject({ code: 'rate-limit' })
+    resume.release()
+    expect(await delayed).toMatchObject({ code: 'cooldown', recorded: true })
+    expect(fetchMock).toHaveBeenCalledOnce()
+    expect(
+      await databaseClient.select().from(schema.providerRequestEvent),
+    ).toHaveLength(1)
+  })
+
+  it('blocks a delayed reservation after an in-flight sibling persists a 429', async () => {
+    const { createProviderRequest } =
+      await import('@/services/provider-requests')
+    const concurrentPlugin: MediaProviderPlugin = {
+      ...plugin,
+      manifest: {
+        ...plugin.manifest,
+        rateLimit: {
+          ...plugin.manifest.rateLimit,
+          concurrentRequests: true,
+          maxConcurrent: 2,
+        },
+      },
+    }
+    const started = latch()
+    const respond = latch()
+    fetchMock.mockImplementation(async () => {
+      started.release()
+      await respond.promise
+      return new Response(null, {
+        status: 429,
+        headers: { 'retry-after': '7200' },
+      })
+    })
+    const sibling = createProviderRequest(concurrentPlugin)(
+      'https://fixture.invalid',
+    ).catch((error: unknown) => error)
+    await started.promise
+    const pause = delayReservationResult()
+    const delayed = createProviderRequest(concurrentPlugin)(
+      'https://fixture.invalid',
+    ).catch((error: unknown) => error)
+    await pause.committed
+    respond.release()
+    expect(await sibling).toMatchObject({ code: 'rate-limit' })
+    pause.resume()
+    expect(await delayed).toMatchObject({ code: 'cooldown', recorded: true })
+    expect(fetchMock).toHaveBeenCalledOnce()
+    expect(
+      await databaseClient.select().from(schema.providerRequestEvent),
+    ).toHaveLength(2)
+    const [state] = await databaseClient
+      .select()
+      .from(schema.providerRequestState)
+    expect(state?.cooldownUntil?.getTime()).toBeGreaterThan(
+      Date.now() + 7190000,
+    )
+    expect(state?.failureCount).toBe(1)
+  })
+
+  it('retains a 429 and Retry-After when dispatch bookkeeping fails', async () => {
+    const { createProviderRequest } =
+      await import('@/services/provider-requests')
+    fetchMock.mockImplementation(async () => {
+      vi.spyOn(databaseClient, 'transaction').mockRejectedValueOnce(
+        new Error('Dispatch persistence unavailable'),
+      )
+      return new Response(null, {
+        status: 429,
+        headers: { 'retry-after': '7200' },
+      })
+    })
+    await expect(
+      createProviderRequest(plugin)('https://fixture.invalid'),
+    ).rejects.toMatchObject({ code: 'rate-limit', recorded: true })
+    await expect(
+      createProviderRequest(plugin)('https://fixture.invalid'),
+    ).rejects.toMatchObject({ code: 'cooldown' })
+    const [state] = await databaseClient
+      .select()
+      .from(schema.providerRequestState)
+    expect(state?.cooldownUntil?.getTime()).toBeGreaterThan(
+      Date.now() + 7190000,
+    )
+    expect(fetchMock).toHaveBeenCalledOnce()
+    expect(
+      await databaseClient.select().from(schema.providerRequestEvent),
+    ).toHaveLength(1)
+  })
+})
+
+describe('dispatch bookkeeping failure spacing', () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  it.each([false, true])(
+    'retains actual spacing (concurrent=%s)',
+    async (concurrentRequests) => {
+      const { createProviderRequest } =
+        await import('@/services/provider-requests')
+      const configuredPlugin: MediaProviderPlugin = {
+        ...plugin,
+        manifest: {
+          ...plugin.manifest,
+          rateLimit: {
+            ...plugin.manifest.rateLimit,
+            concurrentRequests,
+            minTimeMs: 100,
+          },
+        },
+      }
+      const now = Date.now.bind(Date)
+      let offset = 0
+      vi.spyOn(Date, 'now').mockImplementation(() => now() + offset)
+      const pause = delayReservationResult()
+      const starts: number[] = []
+      fetchMock.mockImplementation(async () => {
+        starts.push(Date.now())
+        if (starts.length === 1)
+          vi.spyOn(databaseClient, 'transaction').mockRejectedValueOnce(
+            new Error('Dispatch persistence unavailable'),
+          )
+        return Response.json({ ok: true })
+      })
+      const first = createProviderRequest(configuredPlugin)(
+        'https://fixture.invalid',
+      ).catch((error: unknown) => error)
+      await pause.committed
+      offset = 1000
+      pause.resume()
+      expect(await first).toMatchObject({ code: 'request-failed' })
+      await createProviderRequest(configuredPlugin)('https://fixture.invalid')
+      expect(starts).toHaveLength(2)
+      expect((starts[1] ?? 0) - (starts[0] ?? 0)).toBeGreaterThanOrEqual(100)
+    },
+  )
+})
+
+describe('provider request redirect safety', () => {
+  it('uses the runtime-compatible manual redirect policy for successful requests', async () => {
+    const { createProviderRequest } =
+      await import('@/services/provider-requests')
+    fetchMock.mockImplementation(async (_url, init) => {
+      if (init?.redirect !== 'manual')
+        throw new TypeError('Invalid redirect value: must be follow or manual')
+      return Response.json({ ok: true })
+    })
+    const response = await createProviderRequest(plugin)(
+      'https://fixture.invalid',
+    )
+    expect(await response.json()).toEqual({ ok: true })
+    expect(fetchMock).toHaveBeenCalledOnce()
+  })
+
+  it.each([300, 301, 302, 303, 304, 305, 307, 308, 399])(
+    'rejects HTTP %s without following Location or refunding its reservation',
+    async (status) => {
+      const { createProviderRequest } =
+        await import('@/services/provider-requests')
+      fetchMock.mockResolvedValue(
+        new Response(null, {
+          status,
+          headers: { location: 'https://redirect-target.invalid/private' },
+        }),
+      )
+      await expect(
+        createProviderRequest(plugin)('https://fixture.invalid', {
+          redirect: 'follow',
+        }),
+      ).rejects.toMatchObject({
+        code: 'request-failed',
+        recorded: true,
+        message: `Provider request failed (HTTP ${status})`,
+      })
+      expect(fetchMock).toHaveBeenCalledExactlyOnceWith(
+        'https://fixture.invalid',
+        expect.objectContaining({ redirect: 'manual' }),
+      )
+      expect(
+        await databaseClient.select().from(schema.providerRequestEvent),
+      ).toHaveLength(1)
+      const [state] = await databaseClient
+        .select()
+        .from(schema.providerRequestState)
+      expect(state).toMatchObject({
+        failureCount: 1,
+        leaseId: null,
+        leaseUntil: null,
+        requestLeases: [],
+      })
+    },
+  )
+})
+
 describe('provider request timeout configuration', () => {
   it.each([
     { concurrentRequests: false, timeoutMs: undefined, expected: 15000 },
@@ -167,10 +535,25 @@ describe('provider request timeout configuration', () => {
           .from(schema.providerRequestEvent)
         if (!state || !event)
           throw new Error('Missing in-flight request reservation')
-        const expiresAt = event.requestedAt.getTime() + expected + 5000
+        const expiresAt = concurrentRequests
+          ? state.requestLeases[0]?.expiresAt
+          : state.leaseUntil?.getTime()
+        if (expiresAt === undefined)
+          throw new Error('Missing durable request expiry')
+        expect(expiresAt).toBeGreaterThanOrEqual(
+          event.requestedAt.getTime() + expected + 1000,
+        )
+        expect(expiresAt).toBeLessThanOrEqual(
+          event.requestedAt.getTime() + expected + 5000,
+        )
         if (concurrentRequests) {
-          expect(state.leaseUntil).toBeNull()
           expect(state.requestLeases).toEqual([{ id: event.id, expiresAt }])
+          if (state.leaseId !== null) {
+            expect(state.leaseId).toBe(event.id)
+            expect(state.leaseUntil?.getTime()).toBe(expiresAt)
+          } else {
+            expect(state.leaseUntil).toBeNull()
+          }
         } else {
           expect(state.leaseId).toBe(event.id)
           expect(state.leaseUntil?.getTime()).toBe(expiresAt)
@@ -1100,18 +1483,26 @@ describe('persistent provider request safety', () => {
     }
     let active = 0
     let peak = 0
+    const release = latch()
     fetchMock.mockImplementation(async () => {
       active++
       peak = Math.max(peak, active)
-      await new Promise((resolve) => setTimeout(resolve, 100))
+      await release.promise
       active--
       return Response.json({ ok: true })
     })
-    await Promise.all(
+    const pending = Promise.all(
       Array.from({ length: 6 }, () =>
         createProviderRequest(concurrentPlugin)('https://fixture.invalid'),
       ),
     )
+    try {
+      await vi.waitFor(() => expect(active).toBe(3))
+      expect(fetchMock).toHaveBeenCalledTimes(3)
+    } finally {
+      release.release()
+      await pending
+    }
     expect(peak).toBe(3)
     expect(fetchMock).toHaveBeenCalledTimes(6)
   })

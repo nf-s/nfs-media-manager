@@ -11,6 +11,13 @@ export const env = createEnv({
       .default('development'),
   },
   server: {
+    RUNTIME_KIND: z.enum(['node', 'cloudflare']).default('node'),
+    OWNER_EMAIL: z.email().optional(),
+    OWNER_USER_ID: z.string().min(1).optional(),
+    SCRAPING_ENABLED: z
+      .enum(['true', 'false'])
+      .default('false')
+      .transform((value) => value === 'true'),
     APP_URL: z.url().default('http://localhost:3000'),
     AUTH_BASE_URL: z.url().optional(),
     INTERNAL_BACKEND_URL: z.url().optional(),
@@ -57,6 +64,10 @@ export const env = createEnv({
     SCAN_DIR: z.string().optional(),
   },
   runtimeEnv: {
+    RUNTIME_KIND: process.env.RUNTIME_KIND,
+    OWNER_EMAIL: process.env.OWNER_EMAIL,
+    OWNER_USER_ID: process.env.OWNER_USER_ID,
+    SCRAPING_ENABLED: process.env.SCRAPING_ENABLED,
     APP_URL: process.env.APP_URL,
     AUTH_BASE_URL: process.env.AUTH_BASE_URL,
     INTERNAL_BACKEND_URL: process.env.INTERNAL_BACKEND_URL,

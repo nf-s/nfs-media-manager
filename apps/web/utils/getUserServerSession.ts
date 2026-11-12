@@ -1,6 +1,8 @@
 import { cookies, headers } from 'next/headers'
 import { env } from '@/env'
 import { createAuthClient } from '@/utils/authClient'
+import { fetchMediaApi } from '@/utils/media-api'
+import { readServerSession } from '@/utils/server-session'
 
 export async function getUserServerSession(): Promise<{
   user: {
@@ -18,6 +20,16 @@ export async function getUserServerSession(): Promise<{
   const headersList = await headers()
 
   try {
+    if (env.WEB_RUNTIME === 'cloudflare') {
+      const response = await fetchMediaApi(
+        new Request(new URL('/api/auth/get-session', env.APP_URL), {
+          headers: { cookie: cookieStore.toString() },
+          cache: 'no-store',
+        }),
+      )
+      return await readServerSession(response)
+    }
+
     const response = await createAuthClient(
       env.INTERNAL_BACKEND_URL ?? env.APP_URL,
     ).getSession({

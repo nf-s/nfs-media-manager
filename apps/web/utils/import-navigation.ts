@@ -42,3 +42,25 @@ export function importDestinations(formats: ImportFormat[]) {
     },
   ]
 }
+
+export function albumImportDestinations() {
+  return [
+    { id: '/imports', href: '/imports', label: 'Recent imports' },
+    {
+      id: '/imports/spotify',
+      href: '/imports/spotify',
+      label: 'Spotify saved albums',
+    },
+    {
+      id: '/imports/lastfm',
+      href: '/imports/lastfm',
+      label: 'Last.fm scrobbles',
+    },
+    { id: '/imports/albums', href: '/imports/albums', label: 'Album CSV' },
+    {
+      id: '/imports/legacy',
+      href: '/imports/legacy',
+      label: 'Legacy JSON library',
+    },
+  ]
+}

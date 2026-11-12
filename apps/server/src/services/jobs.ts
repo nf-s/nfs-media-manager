@@ -42,6 +42,7 @@ import { createJobDiagnostics } from '@/lib/job-diagnostics'
 import { canIdentifyMedia } from '@/lib/provider-identification'
 import { sanitizeAlbumProviderResult } from '@/lib/spotify-audio-features'
 import { importMediaTypeExpression } from '@/lib/import-media-type'
+import { createDatabaseReadCache } from '@/lib/database-read-cache'
 import { getScrapePlugin } from '@/plugins/registry'
 import {
   libraryImport,
@@ -52,6 +53,8 @@ import {
 } from '@/schemas/db'
 import { applyProviderResultInTransaction } from '@/services/provider-state'
 import { getProviderReferenceHints } from '@/services/provider-reference-hints'
+import { wakeJobProvider } from '@/services/job-dispatch-context'
+import type { CloudJobOutcome } from '@/services/cloud-job-contract'
 import {
   createProviderRequest,
   getProviderSafety,
@@ -230,6 +233,41 @@ async function nextQueuedJob(
 
 type ProviderExecution = { failures: number; stopped: boolean }
 
+export interface QueuedJobExecution {
+  canContinue(): Promise<boolean>
+  recordOutcome(outcome: CloudJobOutcome): Promise<void>
+}
+
+class JobExecutionControlError extends Error {}
+
+// The Queue/DO owns the provider slot; the conditional Postgres transition is
+// still the sole authority to execute an original job ID at most once.
+export async function processQueuedJobById(
+  jobId: string,
+  provider: string,
+  control: QueuedJobExecution,
+): Promise<void> {
+  const job = await db.query.scrapeJob.findFirst({
+    where: (table, operators) =>
+      operators.and(
+        operators.eq(table.id, jobId),
+        operators.eq(table.provider, provider),
+        operators.eq(table.status, 'queued'),
+      ),
+    with: { items: true },
+  })
+  if (!job || !(await control.canContinue())) return
+  await processJob(
+    job,
+    await getScrapePlugin(provider),
+    {
+      failures: 0,
+      stopped: false,
+    },
+    control,
+  )
+}
+
 export async function processQueuedJobs(
   shouldDispatch: () => boolean = () => true,
 ): Promise<void> {
@@ -330,6 +368,7 @@ async function processJob(
   nextJob: NonNullable<Awaited<ReturnType<typeof nextQueuedJob>>>,
   plugin: MediaProviderPlugin | null,
   execution: ProviderExecution,
+  control?: QueuedJobExecution,
 ): Promise<void> {
   const [claimed] = await db
     .update(scrapeJob)
@@ -343,8 +382,13 @@ async function processJob(
   if (!claimed) return
 
   const item = nextJob.items[0]
-  if (nextJob.items.length !== 1 || !item) {
-    const message = 'Legacy multi-item jobs must be split before they can run.'
+  if (
+    nextJob.items.length !== 1 ||
+    !item ||
+    item.provider !== nextJob.provider
+  ) {
+    const message =
+      'Jobs must contain exactly one item for the same provider. Legacy jobs must be split before they can run.'
     await withRunningJob(nextJob.id, async (tx) => {
       await tx
         .update(scrapeJob)
@@ -403,6 +447,20 @@ async function processJob(
     })
     if (job?.status !== 'running') throw new Error('Job is no longer running')
     if (stopped || execution.stopped) throw stoppedError
+    if (control) {
+      let active: boolean
+      try {
+        active = await control.canContinue()
+      } catch (cause) {
+        throw new JobExecutionControlError('Cloud job ownership check failed', {
+          cause,
+        })
+      }
+      if (!active) {
+        stopped = execution.stopped = true
+        throw stoppedError
+      }
+    }
   }
 
   const scrapeMediaItem = plugin.scrapeMediaItem.bind(plugin)
@@ -490,6 +548,7 @@ async function processJob(
 
     let secrets: Record<string, string> = {}
     let diagnostics: ReturnType<typeof createJobDiagnostics> | undefined
+    let succeeded = false
     try {
       const providerSecrets = await db.query.providerSecret.findMany({
         where: (table, operators) =>
@@ -615,7 +674,9 @@ async function processJob(
         if (!execution.stopped) execution.failures = 0
       })
       if (!saved) return
+      succeeded = true
     } catch (error) {
+      if (error instanceof JobExecutionControlError) throw error
       const notFound = isProviderItemNotFoundError(error)
       const stoppedBeforeRequest = error === stoppedError
       const handled = await withRunningJob(nextJob.id, async (tx) => {
@@ -666,10 +727,14 @@ async function processJob(
           safety.halted ||
           safety.consecutiveFailures >= 2
         ) {
-          await cancelQueuedJobs(
-            { provider: plugin.manifest.id },
-            'Stopped after repeated provider errors or access denial. Review the error before retrying.',
-          )
+          // Controlled dispatch may select only a canary, not the backlog.
+          // Latch persisted failures too so its outcome stops the coordinator.
+          if (control) stopped = execution.stopped = true
+          else
+            await cancelQueuedJobs(
+              { provider: plugin.manifest.id },
+              'Stopped after repeated provider errors or access denial. Review the error before retrying.',
+            )
         }
         if (
           stopped ||
@@ -688,7 +753,10 @@ async function processJob(
         }
       })
       if (!handled) stopped = true
+      else if (!notFound && !stoppedBeforeRequest)
+        await control?.recordOutcome(execution.stopped ? 'stopped' : 'failure')
     }
+    if (succeeded) await control?.recordOutcome('success')
   }
 
   if (!stopped && !execution.stopped) await processItem(item)
@@ -862,9 +930,17 @@ export async function createJob(
         .from(scrapeJobItem)
         .where(eq(scrapeJobItem.jobId, original.id))
       const states = await tx
-        .select()
+        .select({
+          mediaItemId: providerCurrentState.mediaItemId,
+          lastScrapedAt: providerCurrentState.lastScrapedAt,
+        })
         .from(providerCurrentState)
-        .where(eq(providerCurrentState.provider, original.provider))
+        .where(
+          and(
+            eq(providerCurrentState.provider, original.provider),
+            inArray(providerCurrentState.mediaItemId, mediaItemIds),
+          ),
+        )
       mediaItemIds = mediaItemIds.filter((id) => {
         const item = items.find((item) => item.mediaItemId === id)
         const checked = states.find(
@@ -949,6 +1025,8 @@ export async function createJob(
       'info',
       `Queued ${mediaItemIds.length} item(s) for ${parsedInput.provider}`,
     )
+
+  await wakeJobProvider(parsedInput.provider)
 
   const job = await getJobRecord(queuedJobId)
 
@@ -1230,7 +1308,18 @@ export async function dismissJob(
   return job
 }
 
+const jobActivityCache = createDatabaseReadCache<
+  z.infer<typeof JobActivitySchema>
+>({
+  maxEntries: 1,
+  maxValueBytes: 4096,
+})
+
 export async function getJobActivity() {
+  return jobActivityCache('job-activity', readJobActivity)
+}
+
+async function readJobActivity() {
   const albums = jobsInMediaScope('album')
   const films = jobsInMediaScope('film')
   const importScope = importMediaTypeExpression(libraryImport.result)
@@ -1432,9 +1521,22 @@ export async function retryJob(
           : 'Only unfinished failed or cancelled work can be retried',
     })
   const states = await db
-    .select()
+    .select({
+      mediaItemId: providerCurrentState.mediaItemId,
+      lastScrapedAt: providerCurrentState.lastScrapedAt,
+    })
     .from(providerCurrentState)
-    .where(eq(providerCurrentState.provider, original.provider))
+    .where(
+      and(
+        eq(providerCurrentState.provider, original.provider),
+        inArray(
+          providerCurrentState.mediaItemId,
+          original.items.flatMap((item) =>
+            item.mediaItemId ? [item.mediaItemId] : [],
+          ),
+        ),
+      ),
+    )
   const mediaItemIds = original.items.flatMap((item) => {
     const checked = states.find(
       (state) => state.mediaItemId === item.mediaItemId,

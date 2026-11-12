@@ -9,6 +9,21 @@ export const JobStatusSchema = z.enum([
   'cancelled',
 ])
 
+export const CloudDispatchJobIdsSchema = z
+  .array(z.string().min(1).max(200))
+  .max(10)
+  .refine((ids) => new Set(ids).size === ids.length, {
+    message: 'Job IDs must be unique',
+  })
+  .nullable()
+
+export const CloudDispatchControlSchema = z
+  .object({
+    paused: z.boolean(),
+    jobIds: CloudDispatchJobIdsSchema.optional(),
+  })
+  .strict()
+
 export const JobScopeSchema = z.object({
   mediaItemIds: z.array(z.string()).default([]),
   mediaType: z.enum(['album', 'film']).nullable().default(null),

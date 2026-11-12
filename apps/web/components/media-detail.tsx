@@ -49,6 +49,8 @@ import AlbumProviderDetails from './album-provider-details'
 import { albumSpotifyDestination } from '@/utils/album-links'
 import { scopedHref } from '@/utils/media-scope'
 import MetadataSourceControl from './metadata-source-control'
+import AlbumListening, { useAlbumListening } from './album-listening'
+import { scrobblesByPosition } from '@/utils/listening-chart'
 import type { SourceNavigationLink } from '@repo/schemas/tags'
 
 const DetailSchema = z.union([AlbumDetailSchema, FilmDetailSchema])
@@ -311,6 +313,11 @@ export default function MediaDetail({
         z.array(ProviderSummarySchema),
       ),
   })
+  const listening = useAlbumListening(
+    id,
+    '',
+    mediaType === 'album' && tab === 'tracks',
+  )
   const rescrape = useMutation({
     mutationFn: () =>
       fetchApiData(apiBaseUrl, `/api/v1/media/${id}/rescrape`, JobSchema, {
@@ -372,6 +379,9 @@ export default function MediaDetail({
     (mediaType === 'album' ? albumBrowseFields : filmBrowseFields)
   const creatorField = mediaType === 'album' ? 'artist' : 'director'
   const creators = values[creatorField]
+  const trackScrobbles = listening.data?.total
+    ? scrobblesByPosition(listening.data.tracks)
+    : null
   return (
     <div className="media-detail">
       <header className="detail-heading">
@@ -477,6 +487,9 @@ export default function MediaDetail({
               Tracks ({item.tracks.length})
             </TabsTrigger>
           )}
+          {item.mediaType === 'album' && (
+            <TabsTrigger value="listening">Listening</TabsTrigger>
+          )}
           <TabsTrigger value="edit">Edit</TabsTrigger>
           <TabsTrigger value="history">History</TabsTrigger>
         </TabsList>
@@ -577,7 +590,8 @@ export default function MediaDetail({
                 <tr>
                   <th>#</th>
                   <th>Track</th>
-                  <th>Duration</th>
+                  <th className="text-right">Duration</th>
+                  {trackScrobbles && <th>Scrobbles</th>}
                 </tr>
               </thead>
               <tbody>
@@ -595,11 +609,17 @@ export default function MediaDetail({
                         track.title
                       )}
                     </td>
-                    <td>
+                    <td className="text-right tabular-nums">
                       {track.durationSec === null
                         ? '-'
                         : `${Math.floor(track.durationSec / 60)}:${String(track.durationSec % 60).padStart(2, '0')}`}
                     </td>
+                    {trackScrobbles && (
+                      <td>
+                        {trackScrobbles.get(track.position)?.toLocaleString() ??
+                          '-'}
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
@@ -607,6 +627,11 @@ export default function MediaDetail({
             {!item.tracks.length && (
               <p className="quiet">No imported tracks.</p>
             )}
+          </TabsContent>
+        )}
+        {item.mediaType === 'album' && (
+          <TabsContent value="listening">
+            <AlbumListening key={item.id} albumId={item.id} />
           </TabsContent>
         )}
         <TabsContent value="edit" onInputCapture={() => setSaved(false)}>

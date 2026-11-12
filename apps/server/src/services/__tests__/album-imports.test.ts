@@ -18,6 +18,8 @@ const mocks = vi.hoisted(() => {
     where: vi.fn(),
     apply: vi.fn(),
     start: vi.fn(),
+    queued: vi.fn(),
+    environment: { RUNTIME_KIND: 'node' },
     validate: vi.fn(),
     confirmation: vi.fn(),
     enrichment: vi.fn(),
@@ -29,7 +31,11 @@ vi.mock('@/lib/db', () => ({
 vi.mock('@/services/provider-state', () => ({
   applyProviderResultInTransaction: mocks.apply,
 }))
-vi.mock('@/services/imports', () => ({ startManagedImport: mocks.start }))
+vi.mock('@/env', () => ({ env: mocks.environment }))
+vi.mock('@/services/imports', () => ({
+  startManagedImport: mocks.start,
+  startQueuedImport: mocks.queued,
+}))
 vi.mock('@/services/film-enrichment', () => ({
   validateMediaProviders: mocks.validate,
   requireEnrichmentConfirmation: mocks.confirmation,
@@ -95,6 +101,7 @@ function stored(
 describe('album preview and commit policies (mock persistence only)', () => {
   beforeEach(() => {
     vi.resetAllMocks()
+    mocks.environment.RUNTIME_KIND = 'node'
     vi.stubGlobal(
       'fetch',
       vi.fn(() => {
@@ -334,5 +341,36 @@ describe('album preview and commit policies (mock persistence only)', () => {
       ),
     ).rejects.toThrow('Selection')
     expect(mocks.database.update).not.toHaveBeenCalled()
+  })
+
+  it('dispatches only a serialized selected-row task in cloud, never a detached closure', async () => {
+    mocks.environment.RUNTIME_KIND = 'cloudflare'
+    mocks.database.select.mockReturnValueOnce(
+      query([stored([{ ...candidate('Album'), action: 'new' }])]),
+    )
+    mocks.queued.mockResolvedValue({ id: 'execution', status: 'queued' })
+    expect(
+      await confirmAlbumImport(
+        {
+          previewId: 'preview',
+          rows: [0, 0],
+          providers: [],
+          confirmBroadRun: false,
+        },
+        'user-1',
+      ),
+    ).toEqual({ id: 'execution', status: 'queued' })
+    expect(mocks.queued).toHaveBeenCalledWith('user-1', {
+      version: 1,
+      mediaType: 'album',
+      previewId: 'preview',
+      rows: [0],
+      providers: [],
+      confirmBroadRun: false,
+    })
+    expect(mocks.start).not.toHaveBeenCalled()
+    expect(mocks.database.update).not.toHaveBeenCalled()
+    expect(mocks.enrichment).not.toHaveBeenCalled()
+    expect(fetch).not.toHaveBeenCalled()
   })
 })

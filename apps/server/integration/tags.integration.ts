@@ -142,6 +142,44 @@ afterAll(async () => {
 })
 
 describe('temporary Postgres tag provenance and media-scoped merges', () => {
+  it('reuses resolved tag pages and invalidates after an independent database write', async () => {
+    const { listTags } = await import('@/services/tags')
+    const id = 'cached-tag-fixture'
+    await databaseClient.insert(schema.tag).values({
+      id,
+      name: 'cached-tag-fixture',
+      kind: 'keyword',
+      mediaType: 'film',
+    })
+    const select = vi.spyOn(databaseClient, 'select')
+    try {
+      const query = TagListQuerySchema.parse({
+        mediaType: 'film',
+        q: 'cached-tag-fixture',
+      })
+      const first = await listTags(query)
+      const reads = select.mock.calls.length
+      expect(reads).toBeGreaterThan(0)
+      expect(first.items.map((item) => item.name)).toEqual([
+        'cached-tag-fixture',
+      ])
+      expect(await listTags(query)).toEqual(first)
+      expect(select.mock.calls).toHaveLength(reads)
+      // No service invalidation hook: scripts and other workers must work too.
+      await databaseClient
+        .update(schema.tag)
+        .set({ name: 'cached-tag-fixture-renamed' })
+        .where(eq(schema.tag.id, id))
+      expect((await listTags(query)).items.map((item) => item.name)).toEqual([
+        'cached-tag-fixture-renamed',
+      ])
+      expect(select.mock.calls.length).toBeGreaterThan(reads)
+    } finally {
+      select.mockRestore()
+      await databaseClient.delete(schema.tag).where(eq(schema.tag.id, id))
+    }
+  })
+
   it('hides whole groups reversibly without changing stored memberships or provenance', async () => {
     const { listTags, setTagVisibility, getTagDetail } =
       await import('@/services/tags')

@@ -163,7 +163,12 @@ describe('Google Custom Search retirement', () => {
         id: 'legacy-google-job',
         provider,
         items: [
-          { id: 'legacy-item', mediaItemId: 'album-1', status: 'queued' },
+          {
+            id: 'legacy-item',
+            provider,
+            mediaItemId: 'album-1',
+            status: 'queued',
+          },
         ],
       })
       await processQueuedJobs()

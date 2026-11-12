@@ -28,7 +28,12 @@ import {
   requireEnrichmentConfirmation,
   validateFilmProviders,
 } from './film-enrichment'
-import { startManagedImport } from './imports'
+import {
+  requireLocalImportSource,
+  startManagedImport,
+  startQueuedImport,
+  type ImportTransaction,
+} from './imports'
 import { describeFilmImport, loadFilmImportState } from './film-import-changes'
 
 const StoredCandidateSchema = FilmImportCandidateSchema.extend({
@@ -37,6 +42,7 @@ const StoredCandidateSchema = FilmImportCandidateSchema.extend({
 })
 
 export async function getNfoSource() {
+  if (env.RUNTIME_KIND === 'cloudflare') return { path: null, available: false }
   const path = env.SCAN_DIR?.trim() ? resolve(env.SCAN_DIR) : null
   try {
     const info = path ? await lstat(path) : null
@@ -51,6 +57,7 @@ export async function prepareFilmImport(
   userId: string | null,
 ) {
   const options = FilmPreviewInputSchema.parse(input)
+  if (options.kind === 'nfo') requireLocalImportSource()
   const source = options.kind === 'nfo' ? await getNfoSource() : null
   if (options.kind === 'nfo' && !source?.available)
     throw new ServerError({
@@ -120,7 +127,12 @@ export async function prepareFilmImport(
   const expiresAt = new Date(Date.now() + 3600000)
   await db
     .delete(filmImportPreview)
-    .where(lt(filmImportPreview.expiresAt, new Date()))
+    .where(
+      and(
+        lt(filmImportPreview.expiresAt, new Date()),
+        eq(filmImportPreview.claimed, false),
+      ),
+    )
   await db.insert(filmImportPreview).values({
     id,
     requestedByUserId: userId,
@@ -163,6 +175,7 @@ export async function confirmFilmImport(
     .where(eq(filmImportPreview.id, options.previewId))
   if (
     !preview ||
+    !['csv', 'nfo'].includes(preview.kind) ||
     preview.requestedByUserId !== userId ||
     preview.expiresAt < new Date()
   )
@@ -185,6 +198,17 @@ export async function confirmFilmImport(
       providers.length,
     options.confirmBroadRun,
   )
+  if (env.RUNTIME_KIND === 'cloudflare') {
+    if (preview.kind === 'nfo') requireLocalImportSource()
+    return startQueuedImport(userId, {
+      version: 1,
+      mediaType: 'film',
+      previewId: preview.id,
+      rows,
+      providers,
+      confirmBroadRun: options.confirmBroadRun,
+    })
+  }
   const [claimed] = await db
     .update(filmImportPreview)
     .set({ claimed: true })
@@ -273,4 +297,19 @@ export async function confirmFilmImport(
       .where(eq(filmImportPreview.id, preview.id))
     throw error
   }
+}
+
+export async function commitQueuedFilmImportRow(
+  storedRecords: unknown,
+  row: number,
+  tx: ImportTransaction,
+) {
+  const record = StoredCandidateSchema.parse(
+    z.array(z.unknown()).parse(storedRecords)[row],
+  )
+  return commitFilmImportRecord(
+    record,
+    { allowCreate: record.action === 'new' },
+    tx,
+  )
 }

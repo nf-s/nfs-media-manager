@@ -1,4 +1,4 @@
-import { BrowseFieldSchema } from '@repo/schemas/browse'
+import { BrowseFacetQuerySchema, BrowseFieldSchema } from '@repo/schemas/browse'
 import { listBrowseFields } from '@/services/browse'
 import { createRoute, type OpenAPIHono } from '@hono/zod-openapi'
 import { z } from 'zod'
@@ -31,6 +31,11 @@ import {
   AlbumSelectionQuerySchema,
 } from '@repo/schemas/album-selection'
 import { listAlbumSelection } from '@/services/album-selection'
+import {
+  AlbumListeningQuerySchema,
+  AlbumListeningSchema,
+} from '@repo/schemas/lastfm'
+import { getAlbumListening } from '@/services/lastfm-scrobbles'
 
 const app: OpenAPIHono<AppEnv> = createOpenAPIApp()
   .openapi(
@@ -116,7 +121,9 @@ const app: OpenAPIHono<AppEnv> = createOpenAPIApp()
       method: 'get',
       path: '/facets',
       middleware: [authMiddleware()],
+      request: { query: BrowseFacetQuerySchema },
       responses: {
+        422: validationErrorResponse,
         200: {
           description: 'Album filter options',
           content: {
@@ -129,7 +136,7 @@ const app: OpenAPIHono<AppEnv> = createOpenAPIApp()
       },
     }),
     async (c) => {
-      const data = await listAlbumFilterOptions()
+      const data = await listAlbumFilterOptions(c.req.valid('query'))
       return generateJsonResponse(c, data, 200)
     },
   )
@@ -167,6 +174,39 @@ const app: OpenAPIHono<AppEnv> = createOpenAPIApp()
 
       return generateJsonResponse(c, record, 200)
     },
+  )
+  .openapi(
+    createRoute({
+      method: 'get',
+      path: '/:id/listening',
+      middleware: [authMiddleware()],
+      request: {
+        params: z.object({ id: z.string().min(1) }),
+        query: AlbumListeningQuerySchema,
+      },
+      responses: {
+        200: {
+          description:
+            'Stored scrobbles linked to the album, by month and track',
+          content: {
+            'application/json': {
+              schema: createResponseSchema(AlbumListeningSchema),
+            },
+          },
+        },
+        401: jsonErrorResponse('Unauthorized'),
+        422: validationErrorResponse,
+      },
+    }),
+    async (c) =>
+      generateJsonResponse(
+        c,
+        await getAlbumListening(
+          c.req.valid('param').id,
+          c.req.valid('query').track,
+        ),
+        200,
+      ),
   )
   .openapi(
     createRoute({

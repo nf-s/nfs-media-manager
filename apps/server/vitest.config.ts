@@ -5,11 +5,22 @@ export default defineConfig({
   root: '.',
   resolve: {
     alias: {
+      '@repo/media-plugin-sdk/local-worker': fileURLToPath(
+        new URL(
+          '../../packages/media-plugin-sdk/src/local-worker.ts',
+          import.meta.url,
+        ),
+      ),
       '@': fileURLToPath(new URL('./src', import.meta.url)),
       '~': fileURLToPath(new URL('./src', import.meta.url)),
-      '@repo/schemas': fileURLToPath(new URL('../../packages/schemas/src', import.meta.url)),
+      '@repo/schemas': fileURLToPath(
+        new URL('../../packages/schemas/src', import.meta.url),
+      ),
       '@repo/media-plugin-sdk': fileURLToPath(
-        new URL('../../packages/media-plugin-sdk/src/index.ts', import.meta.url),
+        new URL(
+          '../../packages/media-plugin-sdk/src/index.ts',
+          import.meta.url,
+        ),
       ),
     },
   },

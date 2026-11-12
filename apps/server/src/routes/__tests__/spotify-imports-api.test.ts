@@ -54,8 +54,8 @@ describe('Spotify and album import API security', () => {
       }),
     )
     mocks.session.mockResolvedValue({
-      user: { id: 'user-1' },
-      session: { id: 'session-1' },
+      user: { id: 'user-1', email: 'admin@example.com', role: 'admin' },
+      session: { id: 'session-1', userId: 'user-1' },
     })
   })
   afterEach(() => vi.unstubAllGlobals())

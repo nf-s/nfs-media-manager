@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { FileImportFormatSchema } from '@repo/schemas/imports'
 import {
+  albumImportDestinations,
   csvImportHref,
   importDestinations,
   resolveCsvFormat,
@@ -62,4 +63,18 @@ test('empty or unavailable catalogs still expose the CSV loading/retry destinati
     importDestinations(formats).some((item) => item.href === '/imports/csv'),
     false,
   )
+})
+
+test('album destinations list Spotify, Last.fm scrobbles and album CSV before legacy', () => {
+  assert.deepEqual(
+    albumImportDestinations().map((item) => [item.href, item.label]),
+    [
+      ['/imports', 'Recent imports'],
+      ['/imports/spotify', 'Spotify saved albums'],
+      ['/imports/lastfm', 'Last.fm scrobbles'],
+      ['/imports/albums', 'Album CSV'],
+      ['/imports/legacy', 'Legacy JSON library'],
+    ],
+  )
+  assert.ok(albumImportDestinations().every((item) => item.id === item.href))
 })

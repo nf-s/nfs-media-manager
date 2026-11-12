@@ -15,6 +15,7 @@ import { fetchApiData } from '@/utils/api'
 import { useMediaScope } from './media-scope'
 import { scopedHref } from '@/utils/media-scope'
 import {
+  albumImportDestinations,
   csvImportHref,
   importDestinations,
   resolveCsvFormat,
@@ -138,28 +139,7 @@ export default function ImportsWorkspace({
             <SectionSidebar
               label="Imports navigation"
               items={(mediaType === 'album'
-                ? [
-                    {
-                      id: '/imports',
-                      href: '/imports',
-                      label: 'Recent imports',
-                    },
-                    {
-                      id: '/imports/spotify',
-                      href: '/imports/spotify',
-                      label: 'Spotify saved albums',
-                    },
-                    {
-                      id: '/imports/albums',
-                      href: '/imports/albums',
-                      label: 'Album CSV',
-                    },
-                    {
-                      id: '/imports/legacy',
-                      href: '/imports/legacy',
-                      label: 'Legacy JSON library',
-                    },
-                  ]
+                ? albumImportDestinations()
                 : importDestinations(data.formats.data ?? [])
               ).map((item) => ({
                 ...item,

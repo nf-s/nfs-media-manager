@@ -18,6 +18,10 @@
   },
   "include": [
     "next-env.d.ts",
+    "cloudflare-env.d.ts",
+    "open-next-worker.d.ts",
+    "open-next.config.ts",
+    "worker.ts",
     "next.config.mjs",
     "tailwind.config.ts",
     "env.ts",

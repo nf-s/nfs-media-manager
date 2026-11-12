@@ -12,7 +12,8 @@ export function mediaScopeForPath(
     path === '/albums' ||
     path.startsWith('/albums/') ||
     path === '/imports/albums' ||
-    path === '/imports/spotify'
+    path === '/imports/spotify' ||
+    path === '/imports/lastfm'
   )
     return 'album'
   if (path === '/films' || path.startsWith('/films/')) return 'film'

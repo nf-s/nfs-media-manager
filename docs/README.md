@@ -7,6 +7,7 @@ Start with [getting started](getting-started.md) for installation or [applicatio
 - [Getting started](getting-started.md): installation, account setup, environment variables, provider API keys and troubleshooting.
 - [Importing a library](importing.md): CSV, NFO, Spotify and legacy JSON workflows.
 - [Spotify account setup](spotify-album-imports.md): callbacks, saved-album previews and read-only access.
+- [Last.fm scrobble history](lastfm-scrobbles.md): syncing scrobbles, album linking, listening charts and browse fields.
 - [Local provider plugins](local-plugins.md): optional integrations outside this repository.
 - [Album provider behavior](album-providers.md) and [film providers](film-keyword-providers.md): supported metadata and lookup limits.
 

@@ -1,0 +1,6 @@
+.open-next/
+.open-next-publish-*/
+.wrangler/
+.dev.vars
+.dev.vars.*
+!.dev.vars.example

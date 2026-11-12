@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNotNull, ne, sql } from 'drizzle-orm'
+import { and, eq, inArray, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import {
   QueueFilmSelectionSchema,
@@ -11,7 +11,7 @@ import type { ProviderSummary } from '@repo/schemas/provider'
 import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
 import { canIdentifyMedia } from '@/lib/provider-identification'
-import { mediaItem, providerCurrentState, scrapeJobItem } from '@/schemas/db'
+import { mediaItem, providerCurrentState } from '@/schemas/db'
 import { listProviders } from './providers'
 import {
   previewMediaRefresh,
@@ -51,43 +51,46 @@ function freshnessExpression(provider: string) {
   return sql`(select s.last_scraped_at from provider_current_state s where s.media_item_id = ${mediaItem.id} and s.provider = ${provider})`
 }
 
+const LatestAttemptRowSchema = z.object({
+  id: z.string(),
+  provider: z.string(),
+  status: ProviderScrapeAttemptSchema.shape.status,
+  startedAt: z.coerce.date(),
+  finishedAt: z.coerce.date().nullable(),
+  message: z.string().nullable(),
+  jobId: z.string(),
+})
+
 async function latestAttempts(
   ids: string[],
   providers: string[],
 ): Promise<Map<string, z.infer<typeof ProviderScrapeAttemptSchema>>> {
   if (!ids.length || !providers.length) return new Map()
-  const attempts = await db
-    .selectDistinctOn([scrapeJobItem.mediaItemId, scrapeJobItem.provider], {
-      id: scrapeJobItem.mediaItemId,
-      provider: scrapeJobItem.provider,
-      status: scrapeJobItem.status,
-      startedAt: scrapeJobItem.startedAt,
-      finishedAt: scrapeJobItem.finishedAt,
-      message: scrapeJobItem.message,
-      jobId: scrapeJobItem.jobId,
-    })
-    .from(scrapeJobItem)
-    .where(
-      and(
-        inArray(scrapeJobItem.mediaItemId, ids),
-        inArray(scrapeJobItem.provider, providers),
-        isNotNull(scrapeJobItem.startedAt),
-        ne(scrapeJobItem.status, 'queued'),
-      ),
-    )
-    .orderBy(
-      scrapeJobItem.mediaItemId,
-      scrapeJobItem.provider,
-      desc(scrapeJobItem.startedAt),
-      desc(scrapeJobItem.createdAt),
-      desc(scrapeJobItem.id),
-    )
+  // One index probe per requested pair, rather than sorting all their history.
+  // UTC instants preserve Drizzle's timestamp-without-time-zone mapping.
+  const result = await db.execute(sql`
+    select requested.media_item_id as id, requested_provider.provider,
+      latest.status, latest.started_at at time zone 'UTC' as "startedAt",
+      latest.finished_at at time zone 'UTC' as "finishedAt", latest.message, latest.job_id as "jobId"
+    from unnest(${sql.param([...new Set(ids)])}::text[]) requested(media_item_id)
+    cross join unnest(${sql.param([...new Set(providers)])}::text[]) requested_provider(provider)
+    cross join lateral (
+      select i.status, i.started_at, i.finished_at, i.message, i.job_id
+      from scrape_job_item i
+      where i.media_item_id = requested.media_item_id
+        and i.provider = requested_provider.provider
+        and i.started_at is not null and i.status <> 'queued'
+      order by i.started_at desc nulls last, i.created_at desc nulls last, i.id desc nulls last
+      limit 1
+    ) latest
+  `)
+  const attempts = z.array(LatestAttemptRowSchema).parse(result.rows)
   return new Map(
     attempts.map((attempt) => [
       JSON.stringify([attempt.id, attempt.provider]),
       ProviderScrapeAttemptSchema.parse({
         ...attempt,
-        startedAt: attempt.startedAt?.toISOString(),
+        startedAt: attempt.startedAt.toISOString(),
         finishedAt: attempt.finishedAt?.toISOString() ?? null,
         error:
           attempt.status === 'failed' || attempt.status === 'cancelled'
@@ -123,14 +126,14 @@ export function selectionBrowseOptions(
       const freshness = freshnessExpression(filter.provider)
       if (filter.mode === 'failed')
         return [
-          sql`${mediaItem.id} in (
-          select latest.media_item_id from (
-            select distinct on (i.media_item_id) i.media_item_id, i.status
+          sql`(
+            select i.status
             from scrape_job_item i
-            where i.provider = ${filter.provider} and i.started_at is not null and i.status <> 'queued'
-            order by i.media_item_id, i.started_at desc, i.created_at desc, i.id desc
-          ) latest where latest.status = 'failed'
-        )`,
+            where i.media_item_id = ${mediaItem.id} and i.provider = ${filter.provider}
+              and i.started_at is not null and i.status <> 'queued'
+            order by i.started_at desc nulls last, i.created_at desc nulls last, i.id desc nulls last
+            limit 1
+          ) = 'failed'`,
         ]
       if (filter.mode === 'never')
         return [

@@ -142,6 +142,32 @@ describe('albums api', () => {
         },
       ],
     })
+    expect(listAlbumFilterOptions).toHaveBeenCalledExactlyOnceWith({
+      limitPerField: 25,
+    })
+  })
+
+  it('validates and forwards bounded facet searches', async () => {
+    mockAppSession(true)
+    listAlbumFilterOptions.mockResolvedValue([])
+    const { default: app } = await import('@/app')
+    expect(
+      (
+        await app.request(
+          '/api/v1/albums/facets?q=rare%20artist&limitPerField=50',
+        )
+      ).status,
+    ).toBe(200)
+    expect(listAlbumFilterOptions).toHaveBeenCalledExactlyOnceWith({
+      q: 'rare artist',
+      limitPerField: 50,
+    })
+    expect(
+      (await app.request(`/api/v1/albums/facets?q=${'x'.repeat(201)}`)).status,
+    ).toBe(422)
+    expect(
+      (await app.request('/api/v1/albums/facets?limitPerField=0')).status,
+    ).toBe(422)
     expect(listAlbumFilterOptions).toHaveBeenCalledTimes(1)
   })
 })

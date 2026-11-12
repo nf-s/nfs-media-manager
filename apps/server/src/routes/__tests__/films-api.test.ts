@@ -143,6 +143,32 @@ describe('films api', () => {
         },
       ],
     })
+    expect(listFilmFilterOptions).toHaveBeenCalledExactlyOnceWith({
+      limitPerField: 25,
+    })
+  })
+
+  it('validates and forwards bounded facet searches', async () => {
+    mockAppSession(true)
+    listFilmFilterOptions.mockResolvedValue([])
+    const { default: app } = await import('@/app')
+    expect(
+      (
+        await app.request(
+          '/api/v1/films/facets?q=rare%20title&limitPerField=50',
+        )
+      ).status,
+    ).toBe(200)
+    expect(listFilmFilterOptions).toHaveBeenCalledExactlyOnceWith({
+      q: 'rare title',
+      limitPerField: 50,
+    })
+    expect(
+      (await app.request(`/api/v1/films/facets?q=${'x'.repeat(201)}`)).status,
+    ).toBe(422)
+    expect(
+      (await app.request('/api/v1/films/facets?limitPerField=1000')).status,
+    ).toBe(422)
     expect(listFilmFilterOptions).toHaveBeenCalledTimes(1)
   })
 })

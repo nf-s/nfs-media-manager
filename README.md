@@ -71,6 +71,7 @@ Film and album details bring together ratings, credits, tags, provider links and
 - [Import formats and existing-library migration](docs/importing.md)
 - [Spotify saved albums and account setup](docs/spotify-album-imports.md)
 - [Local provider plugins](docs/local-plugins.md)
+- [Local HTTP worker for cloud jobs](docs/local-worker.md)
 - [Development and verification](docs/development.md)
 - [All documentation](docs/README.md)
 

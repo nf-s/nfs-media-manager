@@ -6,9 +6,9 @@ export default async function PageAuthGuard({
 }: {
   children: React.ReactNode
 }) {
-  const { user } = await getUserServerSession()
+  const { user, session } = await getUserServerSession()
 
-  if (!user) {
+  if (!user || !session || session.userId !== user.id) {
     redirect('/login')
   }
 

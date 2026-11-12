@@ -1,5 +1,6 @@
 import { relations, sql } from 'drizzle-orm'
 import {
+  bigint,
   boolean,
   check,
   index,
@@ -56,6 +57,11 @@ export const mediaItem = pgTable(
     uniqueIndex('media_item_slug_uidx').on(table.slug),
     index('media_item_type_idx').on(table.mediaType),
     index('media_item_title_idx').on(table.title),
+    index('media_item_type_title_id_idx').on(
+      table.mediaType,
+      sql`lower(${table.title})`,
+      table.id,
+    ),
   ],
 )
 
@@ -234,6 +240,11 @@ export const tagOccurrence = pgTable(
   (table) => [
     index('tag_occurrence_tag_idx').on(table.tagId),
     index('tag_occurrence_media_idx').on(table.mediaItemId),
+    index('tag_occurrence_tag_media_kind_idx').on(
+      table.tagId,
+      table.mediaItemId,
+      table.kind,
+    ),
   ],
 )
 
@@ -355,6 +366,11 @@ export const providerRequestEvent = pgTable(
       table.provider,
       table.requestedAt,
     ),
+    index('provider_request_event_class_time_idx').on(
+      table.provider,
+      table.requestClass,
+      table.requestedAt,
+    ),
   ],
 )
 
@@ -445,6 +461,13 @@ export const scrapeJob = pgTable(
   (table) => [
     index('scrape_job_status_idx').on(table.status),
     index('scrape_job_provider_idx').on(table.provider),
+    index('scrape_job_dispatch_idx').on(
+      table.provider,
+      table.status,
+      table.createdAt,
+      table.id,
+    ),
+    index('scrape_job_queued_provider_idx').on(table.status, table.provider),
   ],
 )
 
@@ -473,7 +496,21 @@ export const scrapeJobItem = pgTable(
     }),
     ...timestampColumns,
   },
-  (table) => [index('scrape_job_item_job_idx').on(table.jobId)],
+  (table) => [
+    index('scrape_job_item_job_idx').on(table.jobId),
+    index('scrape_job_item_latest_idx').on(
+      table.provider,
+      table.mediaItemId,
+      table.startedAt.desc(),
+      table.createdAt.desc(),
+      table.id.desc(),
+    ),
+    index('scrape_job_item_media_history_idx').on(
+      table.mediaItemId,
+      table.createdAt.desc(),
+      table.id.desc(),
+    ),
+  ],
 )
 
 export const scrapeJobLog = pgTable(
@@ -511,6 +548,16 @@ export const providerSnapshot = pgTable(
   (table) => [
     index('provider_snapshot_media_item_idx').on(table.mediaItemId),
     index('provider_snapshot_provider_idx').on(table.provider),
+    index('provider_snapshot_job_time_idx').on(
+      table.scrapeJobId,
+      table.createdAt,
+      table.id,
+    ),
+    index('provider_snapshot_media_time_idx').on(
+      table.mediaItemId,
+      table.createdAt.desc(),
+      table.id.desc(),
+    ),
   ],
 )
 
@@ -613,6 +660,62 @@ export const providerSecret = pgTable(
     ),
   ],
 )
+
+export const lastfmScrobble = pgTable(
+  'lastfm_scrobble',
+  {
+    id: text('id').primaryKey(),
+    username: text('username').notNull(),
+    // UTC, as reported by Last.fm.
+    listenedAt: timestamp('listened_at', {
+      mode: 'date',
+      withTimezone: false,
+    }).notNull(),
+    artistName: text('artist_name').notNull(),
+    albumName: text('album_name'),
+    trackName: text('track_name').notNull(),
+    artistKey: text('artist_key').notNull(),
+    albumKey: text('album_key'),
+    trackKey: text('track_key').notNull(),
+    artistMbid: text('artist_mbid'),
+    albumMbid: text('album_mbid'),
+    trackMbid: text('track_mbid'),
+    albumMediaItemId: text('album_media_item_id').references(
+      () => album.mediaItemId,
+      { onDelete: 'set null' },
+    ),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (table) => [
+    index('lastfm_scrobble_album_time_idx').on(
+      table.albumMediaItemId,
+      table.listenedAt,
+    ),
+    index('lastfm_scrobble_name_idx').on(table.albumKey, table.artistKey),
+    index('lastfm_scrobble_user_time_idx').on(table.username, table.listenedAt),
+  ],
+)
+
+export const lastfmSync = pgTable('lastfm_sync', {
+  username: text('username').primaryKey(),
+  status: text('status').notNull(),
+  // Unix seconds. The window is fixed for a run so page numbers stay stable.
+  windowFrom: bigint('window_from', { mode: 'number' }),
+  windowTo: bigint('window_to', { mode: 'number' }).notNull(),
+  nextPage: integer('next_page').notNull().default(1),
+  totalPages: integer('total_pages'),
+  newScrobbles: integer('new_scrobbles').notNull().default(0),
+  syncedThrough: bigint('synced_through', { mode: 'number' }),
+  errorMessage: text('error_message'),
+  leaseToken: text('lease_token'),
+  leaseUntil: timestamp('lease_until'),
+  startedAt: timestamp('started_at').notNull(),
+  completedAt: timestamp('completed_at'),
+  requestedByUserId: text('requested_by_user_id').references(() => user.id, {
+    onDelete: 'set null',
+  }),
+  ...timestampColumns,
+})
 
 export const mediaItemRelations = relations(mediaItem, ({ many, one }) => ({
   album: one(album, {

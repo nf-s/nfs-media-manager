@@ -25,6 +25,8 @@ import { env } from '@/env'
 import { ServerError } from '@/lib/error'
 import * as schema from '@/schemas/db'
 
+vi.mock('@/lib/load-workspace-env', () => ({ loadWorkspaceEnv: () => {} }))
+
 const database = `media_retry_test_${randomUUID().replaceAll('-', '')}`
 const connection = {
   host: env.DATABASE_HOST,
@@ -34,7 +36,8 @@ const connection = {
 }
 const admin = new pg.Client({ ...connection, database: env.DATABASE_NAME })
 const pool = new pg.Pool({ ...connection, database })
-const databaseClient = drizzle(pool, { schema })
+const logQuery = vi.fn<(query: string, params: unknown[]) => void>()
+const databaseClient = drizzle(pool, { schema, logger: { logQuery } })
 const execute = vi.fn<NonNullable<MediaProviderPlugin['scrapeMediaItem']>>()
 const network = vi.fn(() => {
   throw new Error('Network forbidden in retry tests')
@@ -93,6 +96,7 @@ beforeEach(async () => {
   )
   execute.mockClear()
   network.mockClear()
+  logQuery.mockClear()
 })
 afterEach(() => {
   vi.restoreAllMocks()
@@ -132,6 +136,24 @@ async function seedJob(
 }
 
 describe('selected job retries', () => {
+  it('reads only retry item timestamps, never the provider-wide payload library', async () => {
+    const { retryJob } = await import('@/services/jobs')
+    await seedJob('bounded-retry', 'failed', ['film-1'])
+    await retryJob('bounded-retry', null, false)
+    const stateQueries = logQuery.mock.calls.filter(
+      ([query]) =>
+        query.startsWith('select') &&
+        query.includes('from "provider_current_state"'),
+    )
+    expect(stateQueries).toHaveLength(2)
+    for (const [query, params] of stateQueries) {
+      expect(query).toContain('"media_item_id" in (')
+      expect(query).toContain('"last_scraped_at"')
+      expect(query).not.toContain('"payload"')
+      expect(params).toEqual([plugin.manifest.id, 'film-1'])
+    }
+  })
+
   it('rejects aggregate legacy unfinished work above five before any writes, even with only two jobs', async () => {
     const { bulkRetryJobs } = await import('@/services/jobs')
     await seedJob('first', 'failed', ['film-1', 'film-2', 'film-3'])

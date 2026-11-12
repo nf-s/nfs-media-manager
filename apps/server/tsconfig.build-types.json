@@ -14,5 +14,10 @@
     }
   },
   "include": ["src/**/*"],
-  "exclude": ["node_modules", "**/*.test.ts", "**/__tests__/**"]
+  "exclude": [
+    "node_modules",
+    "src/cloudflare",
+    "**/*.test.ts",
+    "**/__tests__/**"
+  ]
 }

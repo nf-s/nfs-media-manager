@@ -1,6 +1,12 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { env } from '@/env'
 
+const privateHeaders = {
+  'Cache-Control': 'private, no-store',
+  'CDN-Cache-Control': 'no-store',
+  'Cloudflare-CDN-Cache-Control': 'no-store',
+}
+
 const protectedPrefixes = [
   '/albums',
   '/films',
@@ -21,13 +27,13 @@ export async function middleware(request: NextRequest) {
       request.url,
     ).pathname
   } catch {
-    return new NextResponse(null, { status: 404 })
+    return new NextResponse(null, { status: 404, headers: privateHeaders })
   }
   // Legacy libraries are local import inputs, never public application assets.
   if (pathname === '/data' || pathname.startsWith('/data/')) {
     return new NextResponse(null, {
       status: 404,
-      headers: { 'Cache-Control': 'no-store' },
+      headers: privateHeaders,
     })
   }
   const sessionToken =
@@ -37,10 +43,11 @@ export async function middleware(request: NextRequest) {
   if (!sessionToken && isProtectedRoute(pathname)) {
     return NextResponse.redirect(
       new URL('/login', env.INTERNAL_FRONTEND_URL ?? env.APP_URL),
+      { headers: privateHeaders },
     )
   }
 
-  return NextResponse.next()
+  return NextResponse.next({ headers: privateHeaders })
 }
 
 export const config = {

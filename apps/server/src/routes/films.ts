@@ -1,4 +1,4 @@
-import { BrowseFieldSchema } from '@repo/schemas/browse'
+import { BrowseFacetQuerySchema, BrowseFieldSchema } from '@repo/schemas/browse'
 import { listBrowseFields } from '@/services/browse'
 import { createRoute, type OpenAPIHono } from '@hono/zod-openapi'
 import { z } from 'zod'
@@ -116,7 +116,9 @@ const app: OpenAPIHono<AppEnv> = createOpenAPIApp()
       method: 'get',
       path: '/facets',
       middleware: [authMiddleware()],
+      request: { query: BrowseFacetQuerySchema },
       responses: {
+        422: validationErrorResponse,
         200: {
           description: 'Film filter options',
           content: {
@@ -129,7 +131,7 @@ const app: OpenAPIHono<AppEnv> = createOpenAPIApp()
       },
     }),
     async (c) => {
-      const data = await listFilmFilterOptions()
+      const data = await listFilmFilterOptions(c.req.valid('query'))
       return generateJsonResponse(c, data, 200)
     },
   )

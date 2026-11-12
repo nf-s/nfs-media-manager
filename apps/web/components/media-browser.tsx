@@ -32,6 +32,7 @@ import {
 import { useConfig } from './providers'
 import { fetchApiData } from '@/utils/api'
 import { useVirtualBrowse } from '@/hooks/useVirtualBrowse'
+import { useBrowseFacets } from '@/hooks/useBrowseFacets'
 import BrowseFilterAutocomplete from './browse-filter-autocomplete'
 import MediaArtwork from './media-artwork'
 import MediaDetail from './media-detail'
@@ -60,10 +61,6 @@ import {
 const PageSchema = PaginatedDataSchema(
   z.union([AlbumListItemSchema, FilmListItemSchema]),
 )
-const OptionSchema = BrowseFilterSchema.extend({
-  label: z.string(),
-  count: z.number(),
-})
 const WidthsSchema = z.record(z.string(), z.number().min(70).max(650))
 const defaultAlbumColumns = [
   'title',
@@ -107,7 +104,6 @@ export default function MediaBrowser({
   const searchParams = useSearchParams()
   const [ready, setReady] = useState(false)
   const [draft, setDraft] = useState('')
-  const [titleSearch, setTitleSearch] = useState('')
   const [scroll, setScroll] = useState({ identity: '', top: 0 })
   const [gridLayout, setGridLayout] = useState<{
     identity: string
@@ -334,21 +330,8 @@ export default function MediaBrowser({
     headerHeight: view === 'table' ? 34 : 0,
   })
   const { total, slots, padTop, padBottom } = query
-  const facets = useQuery({
-    queryKey: [collection, 'facets'],
-    enabled: ready,
-    queryFn: () =>
-      fetchApiData(
-        apiBaseUrl,
-        `/api/v1/${collection}/facets`,
-        z.array(OptionSchema),
-      ),
-  })
-  useEffect(() => {
-    const timer = window.setTimeout(() => setTitleSearch(draft.trim()), 200)
-    return () => window.clearTimeout(timer)
-  }, [draft])
-  const titleFilters = matchingTitleFilters(facets.data ?? [], titleSearch)
+  const facets = useBrowseFacets(apiBaseUrl, collection, draft, ready)
+  const titleFilters = matchingTitleFilters(facets.data ?? [], facets.search)
   const titleMatches = useQuery({
     queryKey: [collection, 'title-suggestions', titleFilters, includeArchived],
     enabled: ready && titleFilters.length > 0,
@@ -371,7 +354,7 @@ export default function MediaBrowser({
   })
   const titlesLoading =
     Boolean(draft.trim()) &&
-    (titleSearch !== draft.trim() ||
+    (facets.isDebouncing ||
       facets.isPending ||
       (titleFilters.length > 0 && titleMatches.isPending))
   const titleItems =

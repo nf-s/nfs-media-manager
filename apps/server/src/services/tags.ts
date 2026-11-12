@@ -28,6 +28,7 @@ import {
 } from '@repo/schemas/tags'
 import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
+import { createDatabaseReadCache } from '@/lib/database-read-cache'
 import {
   mediaItem,
   mediaItemTag,
@@ -52,6 +53,11 @@ import {
   sourceProviderLabel,
   storedTmdbTagSourceUrl,
 } from '@/lib/source-navigation'
+
+const tagPageCache = createDatabaseReadCache<TagPage>({
+  maxEntries: 16,
+  maxValueBytes: 256 * 1024,
+})
 
 function visibleTagOccurrenceSql(occurrence: SQL): SQL {
   // Hide only redundant migration placeholders, not unresolved items or aliases.
@@ -348,6 +354,15 @@ async function queryTagPage(
   tagId?: string,
 ): Promise<TagPage> {
   const query = TagListQuerySchema.parse(input)
+  return tagPageCache(JSON.stringify([query, tagId]), () =>
+    readTagPage(query, tagId),
+  )
+}
+
+async function readTagPage(
+  query: TagListQuery,
+  tagId?: string,
+): Promise<TagPage> {
   const pattern = `%${(query.q ?? '').trim().replace(/[\\%_]/g, '\\$&')}%`
   // Join distinct matching IDs once; correlated membership subplans can degrade
   // to repeated scans when a broad search outgrows PostgreSQL's hash budget.
@@ -401,18 +416,34 @@ async function queryTagPage(
       : eq(groups.hidden, query.visibility === 'hidden'),
     tagId ? sql`${tagId} = any(${groups.ids})` : undefined,
   )
-  const rows = await db
+  // Apply OFFSET before correlated detail reads, not after computing them for
+  // every preceding row. The window total still covers all matching groups.
+  const pageGroups = db
     .select({
-      totalCount: sql<number>`count(*) over()::integer`,
+      totalCount: sql<number>`count(*) over()::integer`.as('total_count'),
       id: groups.id,
       name: groups.name,
       hidden: groups.hidden,
+      ids: groups.ids,
+    })
+    .from(groups)
+    .where(groupWhere)
+    .orderBy(asc(groups.name), asc(groups.id))
+    .limit(query.size)
+    .offset((query.page - 1) * query.size)
+    .as('page_groups')
+  const rows = await db
+    .select({
+      totalCount: pageGroups.totalCount,
+      id: pageGroups.id,
+      name: pageGroups.name,
+      hidden: pageGroups.hidden,
       kind: sql<string>`'tag'`,
       mergedNames: sql<
         string[]
-      >`array(select distinct original.name from tag_alias a join tag original on original.id = a.source_tag_id where a.target_tag_id = any(${groups.ids}) order by original.name)`,
-      mediaCount: sql<number>`(select count(distinct m.media_item_id)::integer from media_item_tag m where m.tag_id = any(${groups.ids}))`,
-      sourceCount: sql<number>`(select count(distinct (o.provider, o.source, o.raw_name, o.source_id, o.kind))::integer from tag_occurrence o where o.tag_id = any(${groups.ids}) and ${visibleTagOccurrenceSql(sql`o`)})`,
+      >`array(select distinct original.name from tag_alias a join tag original on original.id = a.source_tag_id where a.target_tag_id = any(${pageGroups.ids}) order by original.name)`,
+      mediaCount: sql<number>`(select count(distinct m.media_item_id)::integer from media_item_tag m where m.tag_id = any(${pageGroups.ids}))`,
+      sourceCount: sql<number>`(select count(distinct (o.provider, o.source, o.raw_name, o.source_id, o.kind))::integer from tag_occurrence o where o.tag_id = any(${pageGroups.ids}) and ${visibleTagOccurrenceSql(sql`o`)})`,
       sources: sql<
         Array<{
           provider: string | null
@@ -421,13 +452,10 @@ async function queryTagPage(
           sourceId: string | null
           kind: string
         }>
-      >`coalesce((select jsonb_agg(s) from (select distinct o.provider, o.source, o.raw_name as "rawName", o.source_id as "sourceId", o.kind from tag_occurrence o where o.tag_id = any(${groups.ids}) and ${visibleTagOccurrenceSql(sql`o`)} order by o.provider, o.source, o.raw_name, o.source_id, o.kind limit 20) s), '[]'::jsonb)`,
+      >`coalesce((select jsonb_agg(s) from (select distinct o.provider, o.source, o.raw_name as "rawName", o.source_id as "sourceId", o.kind from tag_occurrence o where o.tag_id = any(${pageGroups.ids}) and ${visibleTagOccurrenceSql(sql`o`)} order by o.provider, o.source, o.raw_name, o.source_id, o.kind limit 20) s), '[]'::jsonb)`,
     })
-    .from(groups)
-    .where(groupWhere)
-    .orderBy(asc(groups.name), asc(groups.id))
-    .limit(query.size)
-    .offset((query.page - 1) * query.size)
+    .from(pageGroups)
+    .orderBy(asc(pageGroups.name), asc(pageGroups.id))
   // Window counts share the grouping work with the page; an out-of-range page
   // still needs its total even though there is no row carrying the window value.
   const totalCount =

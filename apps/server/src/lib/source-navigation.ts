@@ -122,7 +122,7 @@ export function sourceProviderLabel(
   )
 }
 
-function normalizeSourceTagName(value: string): string {
+export function normalizeSourceTagName(value: string): string {
   return value.normalize('NFC').replace(/\s+/gu, ' ').trim().toLowerCase()
 }
 

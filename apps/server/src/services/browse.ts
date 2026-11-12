@@ -1,19 +1,33 @@
 import { and, eq, sql, type SQL } from 'drizzle-orm'
+import { PgDialect } from 'drizzle-orm/pg-core'
 import { z } from 'zod'
 import {
   albumBrowseFields,
   filmBrowseFields,
   BrowseFieldSchema,
+  BrowseFacetQuerySchema,
+  type BrowseFacetQuery,
   type BrowseField,
 } from '@repo/schemas/browse'
 import type { AlbumQuery, FilmQuery } from '@repo/schemas/media'
 import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
+import { createDatabaseReadCache } from '@/lib/database-read-cache'
 import { mediaItem, album, film } from '@/schemas/db'
 import { listLoadedScrapePlugins } from '@/plugins/registry'
 import { normalizedTagSql, normalizeTagName } from './tag-state'
 
 type MediaType = 'album' | 'film'
+
+const countCache = createDatabaseReadCache<number>({
+  maxEntries: 128,
+  maxValueBytes: 64,
+})
+const facetCache = createDatabaseReadCache<z.infer<typeof FacetRowSchema>[]>({
+  maxEntries: 4,
+  maxValueBytes: 512 * 1024,
+})
+const dialect = new PgDialect()
 
 export type BrowseQueryOptions = {
   conditions?: SQL[]
@@ -198,15 +212,23 @@ export async function queryBrowseIds(
       .from(mediaItem)
       .leftJoin(album, eq(album.mediaItemId, mediaItem.id))
       .leftJoin(film, eq(film.mediaItemId, mediaItem.id))
-  const total = await db
-    .select({ value: sql<number>`count(*)::int` })
-    .from(mediaItem)
-    .leftJoin(album, eq(album.mediaItemId, mediaItem.id))
-    .leftJoin(film, eq(film.mediaItemId, mediaItem.id))
-    .where(where)
+  // Cache the raw count by the actual predicate, including caller SQL options.
+  // Page, ordering and result caps do not change membership; IDs stay uncached.
+  const total = await countCache(
+    JSON.stringify(dialect.sqlToQuery(sql`${where}`)),
+    async () => {
+      const rows = await db
+        .select({ value: sql<number>`count(*)::int` })
+        .from(mediaItem)
+        .leftJoin(album, eq(album.mediaItemId, mediaItem.id))
+        .leftJoin(film, eq(film.mediaItemId, mediaItem.id))
+        .where(where)
+      return rows[0]?.value ?? 0
+    },
+  )
   const offset = (query.page - 1) * query.size
   const totalCount = Math.min(
-    total[0]?.value ?? 0,
+    total,
     query.limitResults ?? Number.MAX_SAFE_INTEGER,
   )
   const rows = await base()
@@ -227,10 +249,37 @@ const FacetRowSchema = z.object({
   count: z.coerce.number().int().positive(),
 })
 
-export async function listBrowseFacets(mediaType: MediaType) {
+export async function listBrowseFacets(
+  mediaType: MediaType,
+  input: Partial<BrowseFacetQuery> = {},
+) {
+  const query = BrowseFacetQuerySchema.parse(input)
   const fields = (await listBrowseFields(mediaType)).filter(
     (field) => field.type === 'text' && field.filterable,
   )
+  const rows = await facetCache(
+    JSON.stringify([mediaType, fields, query]),
+    () => queryBrowseFacets(mediaType, fields, query),
+  )
+  return rows
+    .map((row) => ({
+      ...row,
+      label: `${fields.find((field) => field.key === row.field)?.label ?? row.field}: ${row.value}`,
+    }))
+    .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label))
+}
+
+async function queryBrowseFacets(
+  mediaType: MediaType,
+  fields: BrowseField[],
+  query: BrowseFacetQuery,
+) {
+  if (!fields.length) return []
+  const limit = Math.min(
+    query.limitPerField,
+    Math.max(1, Math.floor(1000 / fields.length)),
+  )
+  const words = (query.q ?? '').toLowerCase().split(/\s+/).filter(Boolean)
   const queries = fields.map((field) => {
     let source: SQL = sql`select media_item.id, v.value from media_item left join film on film.media_item_id = media_item.id
       cross join lateral jsonb_array_elements_text(case when jsonb_typeof(${valueExpression(field.key)}) = 'array' then ${valueExpression(field.key)} else jsonb_build_array(${valueExpression(field.key)}) end) v(value)
@@ -245,15 +294,24 @@ export async function listBrowseFacets(mediaType: MediaType) {
     } else if (field.key === 'provider') {
       source = sql`select media_item.id, r.provider as value from media_item join provider_reference r on r.media_item_id = media_item.id where ${visible}`
     }
-    return sql`select ${field.key}::text as field, value, count(distinct id)::int as count from (${source}) values_for_field where value is not null and value <> '' group by value`
+    const matches = words
+      .filter(
+        (word) =>
+          field.key === 'title' ||
+          !`${field.label}:`.toLowerCase().includes(word),
+      )
+      .map((word) => sql`value ilike ${`%${word.replace(/[\\%_]/g, '\\$&')}%`}`)
+    const search = matches.length ? sql`and ${and(...matches)}` : sql``
+    // Limit each field independently so common tags never crowd out titles or
+    // rarer fields. Search the full value set before counting and limiting.
+    return sql`(select ${field.key}::text as field, value, count(distinct id)::int as count
+      from (${source}) values_for_field
+      where value is not null and value <> '' ${search}
+      group by value
+      order by case when lower(value) = ${query.q?.toLowerCase() ?? ''} then 0 else 1 end,
+        count desc, value asc
+      limit ${limit})`
   })
   const result = await db.execute(sql.join(queries, sql` union all `))
-  return z
-    .array(FacetRowSchema)
-    .parse(result.rows)
-    .map((row) => ({
-      ...row,
-      label: `${fields.find((f) => f.key === row.field)?.label ?? row.field}: ${row.value}`,
-    }))
-    .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label))
+  return z.array(FacetRowSchema).parse(result.rows)
 }

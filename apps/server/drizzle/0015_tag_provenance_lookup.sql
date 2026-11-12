@@ -1,0 +1,1 @@
+CREATE INDEX "tag_occurrence_tag_media_kind_idx" ON "tag_occurrence" USING btree ("tag_id","media_item_id","kind");

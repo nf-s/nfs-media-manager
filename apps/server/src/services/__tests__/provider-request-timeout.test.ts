@@ -9,6 +9,9 @@ const mocks = vi.hoisted(() => ({
 }))
 let state: typeof providerRequestState.$inferSelect
 
+vi.mock('@/services/provider-transport', () => ({
+  getProviderTransport: async () => null,
+}))
 vi.mock('@/lib/db', () => {
   const client = {
     select: () => ({

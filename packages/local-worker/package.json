@@ -1,0 +1,28 @@
+{
+  "name": "@repo/local-worker",
+  "type": "module",
+  "version": "0.0.0",
+  "private": true,
+  "main": "./dist/worker.js",
+  "types": "./dist/worker.d.ts",
+  "bin": {
+    "media-local-worker": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "start": "node dist/cli.js start",
+    "status": "node dist/cli.js status",
+    "test:unit": "pnpm build && node --test tests/*.test.mjs"
+  },
+  "dependencies": {
+    "@repo/media-plugin-sdk": "workspace:*",
+    "dotenv": "^17.4.0",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@repo/typescript-config": "workspace:*",
+    "@types/node": "catalog:",
+    "typescript": "catalog:"
+  }
+}

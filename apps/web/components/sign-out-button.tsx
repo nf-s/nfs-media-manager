@@ -1,12 +1,12 @@
 'use client'
 
 import { Button } from '@repo/ui/components/ui/button'
-import { useMutation } from '@tanstack/react-query'
-import { useRouter } from 'next/navigation'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useAuthClient } from '@/hooks/useAuthClient'
+import { clearSessionData } from '@/utils/logout'
 
 export default function SignOutButton() {
-  const router = useRouter()
+  const queryClient = useQueryClient()
   const authClient = useAuthClient()
 
   const signOutMutation = useMutation({
@@ -18,8 +18,9 @@ export default function SignOutButton() {
       }
     },
     onSuccess: async () => {
-      router.replace('/login')
-      router.refresh()
+      await clearSessionData(queryClient, (path) =>
+        window.location.replace(path),
+      )
     },
   })
 

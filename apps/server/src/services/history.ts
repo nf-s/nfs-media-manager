@@ -17,7 +17,14 @@ export async function getMediaHistory(
   const [snapshots, overrides, referenceOverrides, jobItems] =
     await Promise.all([
       db
-        .select()
+        .select({
+          id: providerSnapshot.id,
+          scrapeJobId: providerSnapshot.scrapeJobId,
+          provider: providerSnapshot.provider,
+          source: providerSnapshot.source,
+          createdAt: providerSnapshot.createdAt,
+          payload: providerSnapshot.payload,
+        })
         .from(providerSnapshot)
         .where(eq(providerSnapshot.mediaItemId, mediaItemId)),
       db
@@ -29,16 +36,27 @@ export async function getMediaHistory(
         .from(providerReferenceOverride)
         .where(eq(providerReferenceOverride.mediaItemId, mediaItemId)),
       db
-        .select()
+        .select({
+          id: scrapeJobItem.id,
+          jobId: scrapeJobItem.jobId,
+          provider: scrapeJobItem.provider,
+          message: scrapeJobItem.message,
+          createdAt: scrapeJobItem.createdAt,
+          payload: scrapeJobItem.payload,
+        })
         .from(scrapeJobItem)
         .where(eq(scrapeJobItem.mediaItemId, mediaItemId)),
     ])
 
-  const jobIds = jobItems.map((item) => item.jobId)
+  const jobIds = [...new Set(jobItems.map((item) => item.jobId))]
   const jobs =
     jobIds.length > 0
-      ? await db.select().from(scrapeJob).where(inArray(scrapeJob.id, jobIds))
+      ? await db
+          .select({ id: scrapeJob.id, errorMessage: scrapeJob.errorMessage })
+          .from(scrapeJob)
+          .where(inArray(scrapeJob.id, jobIds))
       : []
+  const jobsById = new Map(jobs.map((job) => [job.id, job]))
 
   const snapshotEvents: MediaHistoryEvent[] = snapshots.map((snapshot) => ({
     id: snapshot.id,
@@ -76,7 +94,7 @@ export async function getMediaHistory(
   )
 
   const jobEvents: MediaHistoryEvent[] = jobItems.flatMap((item) => {
-    const job = jobs.find((candidate) => candidate.id === item.jobId)
+    const job = jobsById.get(item.jobId)
 
     return [
       {

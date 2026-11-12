@@ -22,7 +22,11 @@ import {
   existingFilmImportResult,
   loadFilmImportState,
 } from './film-import-changes'
-import { startManagedImport } from './imports'
+import {
+  requireLocalImportSource,
+  startManagedImport,
+  type ImportTransaction,
+} from './imports'
 
 type FileInput = z.infer<typeof FileImportSchema>
 export const FilmImportCandidateSchema = z.object({
@@ -75,6 +79,7 @@ export async function listFileImportFormats(): Promise<FileFormat[]> {
 }
 
 export async function* nfoFiles(path: string): AsyncGenerator<string> {
+  requireLocalImportSource()
   const rootInfo = await lstat(path)
   if (rootInfo.isSymbolicLink())
     throw new Error('Symlink input is not supported')
@@ -119,6 +124,7 @@ export async function* nfoFiles(path: string): AsyncGenerator<string> {
 }
 
 async function readLimited(path: string, limit: number) {
+  requireLocalImportSource()
   const info = await lstat(path)
   if (!info.isFile() || info.isSymbolicLink() || info.size > limit)
     throw new Error('Unsupported file or size limit exceeded')
@@ -146,6 +152,8 @@ export async function collectFilmRecords(
   input: FileInput,
   uploadedContent?: string,
 ) {
+  if (uploadedContent === undefined || input.format === 'nfo')
+    requireLocalImportSource()
   const records: FilmImportCandidate[] = []
   const warnings: string[] = []
   let skipped = 0
@@ -368,6 +376,7 @@ export async function matchFilmCandidates(
 export async function commitFilmImportRecord(
   candidate: FilmImportCandidate,
   options: { newOnly?: boolean; allowCreate?: boolean } = {},
+  transaction?: ImportTransaction,
 ): Promise<{
   id: string
   action: FilmImportPreview['items'][number]['action']
@@ -379,7 +388,13 @@ export async function commitFilmImportRecord(
   )
   const primary = refs.find((ref) => ref.referenceType === 'imdb') ?? refs[0]
   const title = result.normalized.mediaPatch?.title ?? 'Untitled'
-  return db.transaction(async (tx) => {
+  const commit = async (
+    tx: ImportTransaction,
+  ): Promise<{
+    id: string
+    action: FilmImportPreview['items'][number]['action']
+    changes: FilmImportPreview['items'][number]['changes']
+  }> => {
     // Recheck and create atomically across file import entry points, including shared IDs.
     await tx.execute(
       sql`select pg_advisory_xact_lock(hashtext('film-file-import'))`,
@@ -424,7 +439,8 @@ export async function commitFilmImportRecord(
       tx,
     )
     return { id, action: inserted ? 'new' : 'update', changes }
-  })
+  }
+  return transaction ? commit(transaction) : db.transaction(commit)
 }
 
 export async function importFilmRecord(

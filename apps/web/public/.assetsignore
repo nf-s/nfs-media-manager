@@ -1,0 +1,4 @@
+/data
+/data/**
+/config.json
+**/*.map

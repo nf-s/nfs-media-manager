@@ -50,6 +50,11 @@ export const BrowseFieldSchema = z.object({
   rating: RatingDisplaySchema.optional(),
 })
 export type BrowseField = z.infer<typeof BrowseFieldSchema>
+export const BrowseFacetQuerySchema = z.object({
+  q: z.string().max(200).trim().optional(),
+  limitPerField: z.coerce.number().int().min(1).max(50).default(25),
+})
+export type BrowseFacetQuery = z.infer<typeof BrowseFacetQuerySchema>
 export const BrowseValueSchema = z.union([
   z.string(),
   z.number(),
@@ -101,6 +106,9 @@ export const albumBrowseFields: BrowseField[] = [
   date('dateAdded', 'Added'),
   number('durationSec', 'Duration', 'seconds'),
   number('scrobbles', 'Scrobbles'),
+  date('lastListenedAt', 'Last listened'),
+  number('scrobblesLast1y', 'Scrobbles, last year'),
+  number('scrobblesLast5y', 'Scrobbles, last 5 years'),
   rating('ratingRymValue', 'RYM rating', 'rym', 5, 'ratingRymVotes', 'rating5'),
   number('ratingRymVotes', 'RYM votes'),
   rating(

@@ -1,7 +1,11 @@
 import type { Env } from 'hono'
 import { OpenAPIHono, type OpenAPIHonoOptions, z } from '@hono/zod-openapi'
+import { JsonValueSchema } from '@repo/schemas/common'
 import type { AuthType } from '@/lib/auth'
 import { generateJsonResponse } from './response'
+
+// Recursive JSON must be referenced by name instead of expanded indefinitely.
+JsonValueSchema.openapi('JsonValue')
 
 export type AppEnv = Env & {
   Variables: AuthType

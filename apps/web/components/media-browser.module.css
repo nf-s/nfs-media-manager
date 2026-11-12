@@ -2,6 +2,11 @@
   flex-wrap: wrap;
 }
 
+.grid :global(.tile-title) {
+  /* Keep absolute screen-reader labels inside the clipped title, not the grid. */
+  position: relative;
+}
+
 .grid .fallback {
   padding: 8px;
   overflow: hidden;

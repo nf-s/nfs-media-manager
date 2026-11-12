@@ -4,6 +4,34 @@ import { test } from 'node:test'
 import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import MediaArtwork from './media-artwork'
+import AlbumTitle from './album-title'
+
+test('clipped grid titles contain absolute outbound-link labels without hiding the grid', () => {
+  const css = readFileSync(
+    new URL('./media-browser.module.css', import.meta.url),
+    'utf8',
+  )
+  const titleRule = /\.grid :global\(\.tile-title\)\s*\{([^}]+)\}/.exec(
+    css,
+  )?.[1]
+  assert.ok(titleRule)
+  assert.match(titleRule, /position:\s*relative;/)
+
+  const html = renderToStaticMarkup(
+    <AlbumTitle
+      item={{
+        title: 'A long album title that exceeds a compact mobile grid column',
+        spotifyUrl: 'https://open.spotify.com/album/1234567890ABCDEFGHIJKL',
+        links: [],
+        providerReferences: [],
+      }}
+      className="tile-title"
+    />,
+  )
+  assert.match(html, /<a[^>]+class="tile-title /)
+  assert.match(html, /<span class="sr-only"> \(opens in a new tab\)<\/span>/)
+  assert.doesNotMatch(css, /touch-action:\s*(none|pan-y)/)
+})
 
 test('missing grid artwork retains its title and album or film aspect ratio', () => {
   for (const aspect of ['aspect-square', 'aspect-[2/3]']) {

@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "paths": {
+      "@repo/schemas/*": ["../../packages/schemas/src/*"],
+      "@repo/media-plugin-sdk": [
+        "../../packages/media-plugin-sdk/src/index.ts"
+      ],
+      "@/lib/db": ["./src/cloudflare/db.ts"],
+      "@/*": ["./src/*"]
+    }
+  },
+  "include": ["src/cloudflare/**/*"],
+  "exclude": ["node_modules", "**/*.test.ts", "**/__tests__/**"]
+}

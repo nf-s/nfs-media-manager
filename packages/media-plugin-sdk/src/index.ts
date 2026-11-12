@@ -1,4 +1,8 @@
 import { z } from 'zod'
+import {
+  LocalWorkerPolicySchema,
+  type LocalWorkerPolicy,
+} from './local-worker.js'
 
 export const JsonValueSchema: z.ZodType<JsonValue> = z.lazy(() =>
   z.union([
@@ -218,6 +222,7 @@ export interface MediaPluginLegacyImportContext {
 }
 
 export interface MediaPluginManifest {
+  localWorker?: LocalWorkerPolicy
   id: string
   displayName: string
   description: string
@@ -333,6 +338,7 @@ export class ProviderRequestError extends Error {
 
 export const MediaPluginManifestSchema = z
   .object({
+    localWorker: LocalWorkerPolicySchema.optional(),
     id: z.string().regex(/^[a-z][a-z0-9-]*$/),
     displayName: z.string().min(1),
     description: z.string(),

@@ -1,0 +1,46 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "nfs-media-api",
+  "main": "src/cloudflare/worker.ts",
+  "compatibility_date": "2026-10-30",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "upload_source_maps": false,
+  "limits": { "cpu_ms": 30000 },
+  "tsconfig": "tsconfig.cloudflare.json",
+  "alias": {
+    "@/lib/db": "./src/cloudflare/db.ts",
+    "@/plugins/bundled": "../../.cloudflare/private-plugins.ts",
+  },
+  "vars": {
+    "NODE_ENV": "production",
+    "RUNTIME_KIND": "cloudflare",
+    "SCRAPING_ENABLED": "true",
+  },
+  "queues": {
+    "producers": [{ "binding": "SCRAPE_QUEUE", "queue": "nfs-media-scrape" }],
+    "consumers": [
+      {
+        "queue": "nfs-media-scrape",
+        "max_batch_size": 1,
+        "max_batch_timeout": 1,
+        "max_concurrency": 16,
+        "max_retries": 3,
+        "dead_letter_queue": "nfs-media-scrape-dead",
+      },
+    ],
+  },
+  "durable_objects": {
+    "bindings": [
+      { "name": "PROVIDER_COORDINATORS", "class_name": "ProviderCoordinator" },
+      { "name": "LOCAL_WORKERS", "class_name": "LocalRequestWorker" },
+    ],
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["ProviderCoordinator"] },
+    { "tag": "v2", "new_sqlite_classes": ["LocalRequestWorker"] },
+  ],
+  "triggers": { "crons": ["17 * * * *"] },
+  "observability": { "enabled": true, "head_sampling_rate": 0.1 },
+}

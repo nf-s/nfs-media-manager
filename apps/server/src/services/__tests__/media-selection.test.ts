@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { PgDialect } from 'drizzle-orm/pg-core'
-import { and } from 'drizzle-orm'
+import { and, type SQL } from 'drizzle-orm'
 import { FilmListItemSchema } from '@repo/schemas/media'
 import { ProviderSummarySchema } from '@repo/schemas/provider'
 import {
@@ -11,6 +11,7 @@ import {
 const mocks = vi.hoisted(() => ({
   rows: vi.fn(),
   attempts: vi.fn(),
+  attemptQuery: vi.fn<(query: SQL) => void>(),
   providers: vi.fn(),
   queue: vi.fn(),
   validate: vi.fn(),
@@ -18,9 +19,10 @@ const mocks = vi.hoisted(() => ({
 vi.mock('@/lib/db', () => ({
   db: {
     select: () => ({ from: () => ({ where: mocks.rows }) }),
-    selectDistinctOn: () => ({
-      from: () => ({ where: () => ({ orderBy: mocks.attempts }) }),
-    }),
+    execute: async (query: SQL) => {
+      mocks.attemptQuery(query)
+      return { rows: await mocks.attempts() }
+    },
   },
 }))
 vi.mock('../providers', () => ({ listProviders: mocks.providers }))
@@ -261,6 +263,36 @@ describe('unified metadata selection', () => {
       },
     })
     expect(mocks.attempts).toHaveBeenCalledTimes(1)
+    const query = mocks.attemptQuery.mock.calls[0]?.[0]
+    if (!query) throw new Error('Expected latest-attempt query')
+    const compiled = new PgDialect().sqlToQuery(query)
+    expect(compiled.sql).toContain('cross join lateral')
+    expect(compiled.sql).toContain('limit 1')
+    expect(compiled.sql).toContain("latest.started_at at time zone 'UTC'")
+    expect(compiled.sql).toContain("latest.finished_at at time zone 'UTC'")
+    expect(compiled.sql).toContain(
+      'i.started_at desc nulls last, i.created_at desc nulls last, i.id desc nulls last',
+    )
+    expect(compiled.sql).toContain("i.status <> 'queued'")
+    expect(compiled.sql).not.toContain('payload')
+    expect(compiled.params).toEqual([[film.id], ['one', 'two']])
+  })
+
+  it('filters failures by the latest started attempt, not any historical failure', () => {
+    const options = selectionBrowseOptions(
+      FilmSelectionQuerySchema.parse({
+        freshness: [{ provider: 'one', mode: 'failed' }],
+      }),
+    )
+    const predicate = and(...options.conditions)
+    if (!predicate) throw new Error('Expected failure predicate')
+    const query = new PgDialect().sqlToQuery(predicate)
+    expect(query.sql).toContain('i.media_item_id = "media_item"."id"')
+    expect(query.sql).toContain('i.started_at is not null')
+    expect(query.sql).toContain('limit 1')
+    expect(query.sql).toMatch(/\) = 'failed'/)
+    expect(query.sql).not.toContain('distinct on')
+    expect(query.params).toEqual(['one'])
   })
 
   it('rechecks failed selections and skips a provider whose latest attempt recovered', async () => {

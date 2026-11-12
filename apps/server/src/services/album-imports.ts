@@ -10,6 +10,7 @@ import {
   type AlbumImportPreview,
 } from '@repo/schemas/album-imports'
 import { db } from '@/lib/db'
+import { env } from '@/env'
 import { ServerError } from '@/lib/error'
 import { parseOptionalDate, slugifyParts } from '@/lib/media-utils'
 import {
@@ -37,7 +38,11 @@ import {
   requireEnrichmentConfirmation,
   validateMediaProviders,
 } from './film-enrichment'
-import { startManagedImport } from './imports'
+import {
+  startManagedImport,
+  startQueuedImport,
+  type ImportTransaction,
+} from './imports'
 
 const StoredCandidateSchema = AlbumImportCandidateSchema.extend({
   action: z.enum(['new', 'unchanged']),
@@ -252,8 +257,9 @@ export async function prepareAlbumCsv(
 
 export async function commitAlbumImportRecord(
   candidate: z.infer<typeof StoredCandidateSchema>,
+  transaction?: ImportTransaction,
 ) {
-  return db.transaction(async (tx) => {
+  const commit = async (tx: ImportTransaction) => {
     await tx.execute(
       sql`select pg_advisory_xact_lock(hashtext('album-file-import'))`,
     )
@@ -299,7 +305,8 @@ export async function commitAlbumImportRecord(
       tx,
     )
     return { id, created: true }
-  })
+  }
+  return transaction ? commit(transaction) : db.transaction(commit)
 }
 
 export async function confirmAlbumImport(
@@ -337,6 +344,15 @@ export async function confirmAlbumImport(
       providers.length,
     options.confirmBroadRun,
   )
+  if (env.RUNTIME_KIND === 'cloudflare')
+    return startQueuedImport(userId, {
+      version: 1,
+      mediaType: 'album',
+      previewId: preview.id,
+      rows: [...new Set(options.rows)],
+      providers,
+      confirmBroadRun: options.confirmBroadRun,
+    })
   const [claimed] = await db
     .update(filmImportPreview)
     .set({ claimed: true })
@@ -419,4 +435,17 @@ export async function confirmAlbumImport(
       .where(eq(filmImportPreview.id, preview.id))
     throw error
   }
+}
+
+export async function commitQueuedAlbumImportRow(
+  storedRecords: unknown,
+  row: number,
+  tx: ImportTransaction,
+) {
+  const stored = z
+    .object({ mediaType: z.literal('album'), records: z.array(z.unknown()) })
+    .parse(storedRecords)
+  const record = StoredCandidateSchema.parse(stored.records[row])
+  const outcome = await commitAlbumImportRecord(record, tx)
+  return { id: outcome.id, action: outcome.created ? 'new' : 'unchanged' }
 }
