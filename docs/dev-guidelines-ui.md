@@ -13,7 +13,7 @@
 - Use [`apps/web/components/providers.tsx`](../apps/web/components/providers.tsx) for the shared query client and config context.
 - Keep list state in URL search params when practical so views are shareable and recoverable.
 - Use `SectionSidebar` and `SectionWorkspace` for secondary navigation, as in Jobs and Providers. Route destinations use links; in-page selections use buttons. Above 700px the sidebar is placed in the navigation rail under the main navigation (`useRailSlot`); on phones it is a scrolling segmented row above the content. Keep the shell bounded and scroll only the rail section/content regions. Jobs monitoring retains its own infinite-scroll region.
-- The shell is a navigation rail beside one white content panel; on phones the rail becomes a top row (library, activity, sign out) and a bottom tab bar. Browse places its active filters in the rail above 700px.
+- The shell is a navigation rail beside one white content panel; on phones the rail becomes a top row (library, activity, sign out) and a bottom tab bar. Browse places its active filters in the rail above 700px. With Spotify playback connected, a player dock spans the bottom of the shell once something is played or queued; drawers end above it, and on phones it is a mini-player above the tab bar.
 
 ## Data Fetching
 

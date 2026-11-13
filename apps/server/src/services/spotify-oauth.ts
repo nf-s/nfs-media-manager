@@ -4,8 +4,11 @@ import { nanoid } from 'nanoid'
 import { z } from 'zod'
 import { ProviderRequestError } from '@repo/media-plugin-sdk'
 import {
+  SPOTIFY_PLAYBACK_UNAVAILABLE,
+  SpotifyAuthorizeInputSchema,
   SpotifyCallbackSchema,
   SpotifyDisconnectResultSchema,
+  SpotifyPlaybackTokenSchema,
 } from '@repo/schemas/spotify'
 import { db } from '@/lib/db'
 import { env } from '@/env'
@@ -13,6 +16,7 @@ import { decryptSecretValue, encryptSecretValue } from '@/lib/crypto'
 import { ServerError } from '@/lib/error'
 import { resolveProviderSecrets } from '@/lib/provider-secrets'
 import {
+  SPOTIFY_PLAYBACK_SCOPES,
   SPOTIFY_SCOPE,
   spotifyAuthorization,
   spotifyRedirectUri,
@@ -36,6 +40,8 @@ const StateSchema = z.object({
   returnOrigin: z.string().url(),
   expiresAt: z.number(),
   consumed: z.boolean().default(false),
+  playback: z.boolean().default(false),
+  returnTo: z.enum(['imports', 'providers']).default('imports'),
 })
 const AccountSchema = z.object({
   accessToken: z.string().min(1),
@@ -47,9 +53,36 @@ const AccountSchema = z.object({
 const hash = (value: string) => createHash('sha256').update(value).digest('hex')
 const namespace = (userId: string) => `spotify-account-${hash(userId)}`
 type SecretDatabase = Pick<typeof db, 'insert' | 'select' | 'delete' | 'update'>
+type AccountAccess = {
+  scopes: readonly string[]
+  notConfigured: string
+  notConnected: string
+  changed: string
+  missing: string
+}
+const LIBRARY_ACCESS: AccountAccess = {
+  scopes: [SPOTIFY_SCOPE],
+  notConfigured:
+    'Spotify is not configured. Configure and connect the account first.',
+  notConnected: 'Connect a Spotify account before discovering saved albums',
+  changed: 'Spotify account configuration changed. Connect again.',
+  missing: 'Spotify saved album permission is missing',
+}
+const PLAYBACK_ACCESS: AccountAccess = {
+  scopes: [SPOTIFY_SCOPE, ...SPOTIFY_PLAYBACK_SCOPES],
+  notConfigured: SPOTIFY_PLAYBACK_UNAVAILABLE,
+  notConnected: SPOTIFY_PLAYBACK_UNAVAILABLE,
+  changed: SPOTIFY_PLAYBACK_UNAVAILABLE,
+  missing: 'Spotify playback permission is missing',
+}
 
 function unavailable(message: string) {
   return new ServerError({ statusCode: 422, message })
+}
+
+function hasScopes(granted: string | undefined, required: readonly string[]) {
+  const scopes = granted?.split(' ') ?? []
+  return required.every((scope) => scopes.includes(scope))
 }
 
 async function readSecret(
@@ -134,17 +167,21 @@ export async function spotifyOperation<T>(
   }
 }
 
-export async function getSpotifyAccountStatus(userId: string) {
-  const configured = await settings()
+async function storedAccount(userId: string) {
   const row = await readSecret(db, userId, 'tokens')
-  const account = row
+  return row
     ? AccountSchema.parse(JSON.parse(decryptSecretValue(row.encryptedValue)))
     : null
+}
+
+export async function getSpotifyAccountStatus(userId: string) {
+  const configured = await settings()
+  const account = await storedAccount(userId)
   const connected = Boolean(
     account &&
     configured &&
     account.clientId === configured.clientId &&
-    account.scope.split(' ').includes(SPOTIFY_SCOPE),
+    hasScopes(account.scope, [SPOTIFY_SCOPE]),
   )
   return {
     configured: configured !== null,
@@ -153,6 +190,7 @@ export async function getSpotifyAccountStatus(userId: string) {
       connected && account ? new Date(account.expiresAt).toISOString() : null,
     scope: connected ? SPOTIFY_SCOPE : null,
     redirectUri: configured?.redirectUri ?? null,
+    playback: connected && hasScopes(account?.scope, SPOTIFY_PLAYBACK_SCOPES),
   }
 }
 
@@ -160,6 +198,7 @@ export async function authorizeSpotify(
   userId: string,
   sessionId: string,
   browserOrigin = new URL(env.APP_URL).origin,
+  options: z.infer<typeof SpotifyAuthorizeInputSchema> = {},
 ) {
   const config = await settings()
   if (!config)
@@ -171,9 +210,14 @@ export async function authorizeSpotify(
     throw unavailable('Start Spotify authorization from a trusted app origin.')
   }
   spotifyCompletionUrl()
+  // A reconnect without an explicit choice keeps the playback access already granted.
+  const playback =
+    options.playback ??
+    hasScopes((await storedAccount(userId))?.scope, SPOTIFY_PLAYBACK_SCOPES)
   const authorization = spotifyAuthorization(
     config.clientId,
     config.redirectUri,
+    playback ? PLAYBACK_ACCESS.scopes : LIBRARY_ACCESS.scopes,
   )
   const expiresAt = Date.now() + 10 * 60 * 1000
   await writeSecret(db, userId, 'state', {
@@ -183,6 +227,8 @@ export async function authorizeSpotify(
     ...config,
     returnOrigin: browser.origin,
     expiresAt,
+    playback,
+    returnTo: options.playback === undefined ? 'imports' : 'providers',
   })
   return {
     url: authorization.url,
@@ -281,7 +327,11 @@ export async function finishSpotifyAuthorization(
           eq(providerSecret.encryptedValue, state.encryptedValue),
         ),
       )
-    return { connected: false, returnOrigin: state.returnOrigin }
+    return {
+      connected: false,
+      returnOrigin: state.returnOrigin,
+      returnTo: state.returnTo,
+    }
   }
   const code = options.code
   await spotifyOperation(async (request) => {
@@ -295,11 +345,10 @@ export async function finishSpotifyAuthorization(
         code_verifier: state.verifier,
       }),
     )
-    if (
-      !token.refresh_token ||
-      !token.scope?.split(' ').includes(SPOTIFY_SCOPE)
-    )
+    if (!token.refresh_token || !hasScopes(token.scope, [SPOTIFY_SCOPE]))
       throw new Error('Spotify did not grant saved album access')
+    if (state.playback && !hasScopes(token.scope, SPOTIFY_PLAYBACK_SCOPES))
+      throw new Error('Spotify did not grant playback access')
     await db.transaction(async (tx) => {
       const [pending] = await tx
         .select()
@@ -325,18 +374,26 @@ export async function finishSpotifyAuthorization(
       await tx.delete(providerSecret).where(eq(providerSecret.id, state.rowId))
     })
   })
-  return { connected: true, returnOrigin: state.returnOrigin }
+  return {
+    connected: true,
+    returnOrigin: state.returnOrigin,
+    returnTo: state.returnTo,
+  }
 }
 
-export async function spotifyAccountToken(
+function currentToken(account: z.infer<typeof AccountSchema>) {
+  return account.expiresAt > Date.now() + 60000
+    ? { accessToken: account.accessToken, expiresAt: account.expiresAt }
+    : null
+}
+
+async function lockedAccountToken(
   userId: string,
   request: SpotifyRequest,
+  access: AccountAccess,
 ) {
   const config = await settings()
-  if (!config)
-    throw unavailable(
-      'Spotify is not configured. Configure and connect the account first.',
-    )
+  if (!config) throw unavailable(access.notConfigured)
   return db.transaction(async (tx) => {
     // Serialize refresh/disconnect so a rotated token cannot overwrite a newer account state.
     const [row] = await tx
@@ -350,19 +407,17 @@ export async function spotifyAccountToken(
         ),
       )
       .for('update')
-    if (!row)
-      throw unavailable(
-        'Connect a Spotify account before discovering saved albums',
-      )
+    if (!row) throw unavailable(access.notConnected)
     const account = AccountSchema.parse(
       JSON.parse(decryptSecretValue(row.encryptedValue)),
     )
     if (
       account.clientId !== config.clientId ||
-      !account.scope.split(' ').includes(SPOTIFY_SCOPE)
+      !hasScopes(account.scope, access.scopes)
     )
-      throw unavailable('Spotify account configuration changed. Connect again.')
-    if (account.expiresAt > Date.now() + 60000) return account.accessToken
+      throw unavailable(access.changed)
+    const current = currentToken(account)
+    if (current) return current
     const token = await spotifyToken(
       request,
       new URLSearchParams({
@@ -372,16 +427,46 @@ export async function spotifyAccountToken(
       }),
     )
     const scope = token.scope ?? account.scope
-    if (!scope.split(' ').includes(SPOTIFY_SCOPE))
-      throw new Error('Spotify saved album permission is missing')
+    if (!hasScopes(scope, access.scopes)) throw new Error(access.missing)
+    const expiresAt = Date.now() + token.expires_in * 1000
     await writeSecret(tx, userId, 'tokens', {
       ...account,
       accessToken: token.access_token,
       refreshToken: token.refresh_token ?? account.refreshToken,
-      expiresAt: Date.now() + token.expires_in * 1000,
+      expiresAt,
       scope,
     })
-    return token.access_token
+    return { accessToken: token.access_token, expiresAt }
+  })
+}
+
+export async function spotifyAccountToken(
+  userId: string,
+  request: SpotifyRequest,
+) {
+  const token = await lockedAccountToken(userId, request, LIBRARY_ACCESS)
+  return token.accessToken
+}
+
+export async function spotifyPlaybackToken(userId: string) {
+  const config = await settings()
+  const account = config ? await storedAccount(userId) : null
+  // A stored token that is still valid needs no Spotify request, so it must
+  // not count as a provider success that clears earlier failures.
+  const stored =
+    account &&
+    account.clientId === config?.clientId &&
+    hasScopes(account.scope, PLAYBACK_ACCESS.scopes)
+      ? currentToken(account)
+      : null
+  const token =
+    stored ??
+    (await spotifyOperation((request) =>
+      lockedAccountToken(userId, request, PLAYBACK_ACCESS),
+    ))
+  return SpotifyPlaybackTokenSchema.parse({
+    accessToken: token.accessToken,
+    expiresAt: new Date(token.expiresAt).toISOString(),
   })
 }
 

@@ -4,7 +4,7 @@ Next.js App Router with authenticated pages under `app/(admin)`, TanStack Query 
 
 Run `pnpm --filter web dev` from the workspace root. The dev launcher uses dotenv and the root `WEB_PORT`; no separate browser JSON configuration is needed. See the [root README](../../README.md), [UI guidelines](../../docs/dev-guidelines-ui.md) and [feature requirements](../../docs/requirements/README.md).
 
-Spotify is an outbound link only. Opening a page, changing a filter or viewing history must never trigger scraping or remote playlist changes.
+Spotify is an outbound link unless [playback](../../docs/spotify-playback.md) is connected in Providers; then the shell adds play controls and a player dock. Opening a page, changing a filter or viewing history must never trigger scraping, playback or remote playlist changes.
 
 Jobs expose a compact **Stored JSON** disclosure for every outcome. Expanding it reads only that job's stored snapshots, diagnostics and legacy successful item payloads through the schema-validated `/api/v1/scrape/jobs/:id/data` endpoint. The viewer reuses `JsonTree`, polls every three seconds only while both disclosures are open and the job is queued/running, and reads again on status changes. Closing either disclosure stops polling and cancels an in-flight read. Missing historical failed responses are explicitly distinguished from empty search results. Viewing or reloading stored data never queues a retry or calls a provider.
 

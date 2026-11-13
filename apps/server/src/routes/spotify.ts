@@ -7,6 +7,7 @@ import {
   SpotifyAuthorizeResultSchema,
   SpotifyCallbackSchema,
   SpotifyDisconnectResultSchema,
+  SpotifyPlaybackTokenSchema,
   SpotifySavedAlbumsInputSchema,
 } from '@repo/schemas/spotify'
 import { AlbumImportPreviewSchema } from '@repo/schemas/album-imports'
@@ -27,6 +28,7 @@ import {
   finishSpotifyAuthorization,
   getSpotifyAccountStatus,
   spotifyCallbackDestination,
+  spotifyPlaybackToken,
 } from '@/services/spotify-oauth'
 import { previewSpotifyAlbums } from '@/services/spotify-imports'
 
@@ -98,7 +100,8 @@ app.openapi(
     },
     responses: {
       200: {
-        description: 'Explicit read-only OAuth authorization URL',
+        description:
+          'Explicit OAuth authorization URL for saved album access, with optional playback access',
         content: {
           'application/json': {
             schema: createResponseSchema(SpotifyAuthorizeResultSchema),
@@ -117,10 +120,34 @@ app.openapi(
         current.userId,
         current.sessionId,
         c.req.header('origin'),
+        c.req.valid('json'),
       ),
       200,
     )
   },
+)
+
+app.openapi(
+  createRoute({
+    method: 'post',
+    path: '/playback/token',
+    middleware: [authMiddleware(), sameOrigin],
+    responses: {
+      200: {
+        description:
+          'Short-lived access token for in-app playback; refreshes through the provider request gate',
+        content: {
+          'application/json': {
+            schema: createResponseSchema(SpotifyPlaybackTokenSchema),
+          },
+        },
+      },
+      401: jsonErrorResponse('Unauthorized'),
+      422: jsonErrorResponse('Spotify playback is not connected'),
+    },
+  }),
+  async (c) =>
+    generateJsonResponse(c, await spotifyPlaybackToken(actor(c).userId), 200),
 )
 
 app.openapi(
@@ -145,7 +172,7 @@ app.openapi(
     responses: {
       302: {
         description:
-          'Return to album imports, without exposing tokens or authorization codes',
+          'Return to album imports or Providers, without exposing tokens or authorization codes',
       },
       401: jsonErrorResponse('Unauthorized'),
       422: validationErrorResponse,
@@ -155,6 +182,7 @@ app.openapi(
     const current = actor(c)
     let connected = false
     let returnOrigin = env.APP_URL
+    let returnTo: 'imports' | 'providers' = 'imports'
     try {
       const result = await finishSpotifyAuthorization(
         c.req.valid('query'),
@@ -163,14 +191,25 @@ app.openapi(
       )
       connected = result.connected
       returnOrigin = result.returnOrigin
+      returnTo = result.returnTo
     } catch {
       /* Never expose token responses, codes or state in the redirect. */
     }
-    const destination = new URL('/imports/spotify', returnOrigin)
-    destination.search = new URLSearchParams({
-      mediaType: 'album',
-      spotify: connected ? 'connected' : 'error',
-    }).toString()
+    const outcome = connected ? 'connected' : 'error'
+    const destination =
+      returnTo === 'providers'
+        ? new URL('/providers', returnOrigin)
+        : new URL('/imports/spotify', returnOrigin)
+    destination.search = new URLSearchParams(
+      returnTo === 'providers'
+        ? {
+            provider: 'spotify',
+            mediaType: 'album',
+            section: 'settings',
+            spotify: outcome,
+          }
+        : { mediaType: 'album', spotify: outcome },
+    ).toString()
     return c.redirect(destination.toString(), 302)
   },
 )

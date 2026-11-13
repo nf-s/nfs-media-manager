@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { albumSpotifyDestination, spotifyAlbumUrl } from './album-links'
+import {
+  albumSpotifyDestination,
+  albumSpotifyUri,
+  spotifyAlbumUrl,
+  spotifyTrackUri,
+} from './album-links'
 
 const id = '1234567890ABCDEFGHIJKL'
 const url = `https://open.spotify.com/album/${id}`
@@ -69,4 +74,29 @@ test('uses stored URLs then explicitly typed Spotify album references without gu
     }),
     undefined,
   )
+})
+
+test('derives Spotify URIs only from valid album destinations and track identifiers', () => {
+  const item = { spotifyUrl: null, links: [], providerReferences: [] }
+  assert.equal(albumSpotifyUri(item), undefined)
+  assert.equal(
+    albumSpotifyUri({ ...item, spotifyUrl: `${url}?si=tracking` }),
+    `spotify:album:${id}`,
+  )
+  assert.equal(
+    albumSpotifyUri({
+      ...item,
+      providerReferences: [{ ...reference, externalId: id }],
+    }),
+    `spotify:album:${id}`,
+  )
+  assert.equal(spotifyTrackUri(id), `spotify:track:${id}`)
+  for (const externalId of [
+    null,
+    undefined,
+    '',
+    'short',
+    `spotify:track:${id}`,
+  ])
+    assert.equal(spotifyTrackUri(externalId), undefined)
 })

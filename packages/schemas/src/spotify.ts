@@ -6,8 +6,11 @@ export const SpotifyAccountStatusSchema = z.object({
   expiresAt: z.string().datetime().nullable(),
   scope: z.string().nullable(),
   redirectUri: z.string().nullable(),
+  playback: z.boolean(),
 })
-export const SpotifyAuthorizeInputSchema = z.object({}).strict()
+export const SpotifyAuthorizeInputSchema = z
+  .object({ playback: z.boolean().optional() })
+  .strict()
 export const SpotifyAuthorizeResultSchema = z.object({
   url: z.string().url(),
   expiresAt: z.string().datetime(),
@@ -42,6 +45,13 @@ export const SpotifySavedAlbumsInputSchema = z
       'Newest-added discovery must start at the beginning of the library',
     path: ['offset'],
   })
+/** The token endpoint's message when playback access has not been granted. */
+export const SPOTIFY_PLAYBACK_UNAVAILABLE =
+  'Connect Spotify playback in Providers first'
+export const SpotifyPlaybackTokenSchema = z.object({
+  accessToken: z.string().min(1),
+  expiresAt: z.string().datetime(),
+})
 export const SpotifyDisconnectResultSchema = z.object({
   disconnected: z.literal(true),
 })

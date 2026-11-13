@@ -38,3 +38,20 @@ export function albumSpotifyDestination(
   }
   return undefined
 }
+
+export function albumSpotifyUri(
+  item: Pick<AlbumListItem, 'spotifyUrl' | 'links' | 'providerReferences'>,
+): string | undefined {
+  const id = /\/album\/([A-Za-z0-9]{22})$/.exec(
+    albumSpotifyDestination(item) ?? '',
+  )?.[1]
+  return id ? `spotify:album:${id}` : undefined
+}
+
+export function spotifyTrackUri(
+  externalId: string | null | undefined,
+): string | undefined {
+  return externalId && /^[A-Za-z0-9]{22}$/.test(externalId)
+    ? `spotify:track:${externalId}`
+    : undefined
+}

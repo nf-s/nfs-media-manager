@@ -14,7 +14,7 @@ This project is a fork of [CSDR Cloud Spatial App](https://github.com/Sustainabl
 - **Keep track of changes.** Inspect provider history, correct identifiers, manage tags and preserve personal ratings and manual edits.
 - **Control background work.** Review jobs before starting them, monitor progress, and retry unfinished work. Provider budgets and cooldowns stay in place.
 
-This is a self-hosted app for a personal collection. It runs a Next.js frontend, a Hono API and PostgreSQL. Spotify links open in Spotify; there is no embedded player.
+This is a self-hosted app for a personal collection. It runs a Next.js frontend, a Hono API and PostgreSQL. Spotify links open in Spotify. Optional [in-app playback](docs/spotify-playback.md) for Spotify Premium accounts is off until connected in Providers.
 
 ## Getting started
 

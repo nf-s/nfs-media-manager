@@ -1,0 +1,59 @@
+# Spotify Playback
+
+Optional in-app playback of library albums and tracks through a connected Spotify Premium account. It is off until connected in Providers. Without it, every Spotify link still opens in Spotify.
+
+## Turning it on
+
+1. Configure Spotify and its redirect URI as described in [Spotify albums and CSV imports](spotify-album-imports.md#account-setup).
+2. Open **Providers → Spotify → Settings** and choose **Connect playback**. Spotify asks for consent, then returns to the same page.
+
+Connecting requests `user-library-read` plus the playback scopes `streaming`, `user-read-email`, `user-read-private`, `user-read-playback-state` and `user-modify-playback-state`. **Turn off playback** reconnects with `user-library-read` only. Connecting from **Imports → Spotify** keeps whichever access is already granted.
+
+Requirements:
+
+- A Spotify Premium account. Playing in the browser and controlling other devices both need it.
+- The Spotify developer app must allow the Web Playback SDK, and in development mode the account must be on the app's user list.
+- A browser that supports protected media in a secure context (HTTPS or `localhost`). Other devices can still be controlled when the browser cannot play.
+
+## Using it
+
+- **Grid tiles** show play and add-to-queue buttons over the artwork on hover or focus. Touch devices show the play button only. List and table views have no play controls.
+- **The album drawer** has **Play** and **Add to queue** in its heading. In **Tracks**, a track number plays the album from that track, and each row can queue the single track.
+- **The player dock** appears at the bottom once something is played or queued: current track, previous, play/pause, next, a seek bar, the queue, the device, volume and a link to the track in Spotify. Selecting the current track opens its album. On phones the dock is a mini-player above the tab bar that opens a player sheet.
+- **Queue:** an album plays in full, then the next queued album or track starts. Entries can be played now, reordered, removed or cleared. The queue is kept in the open page only; reloading clears it. It is the app's own queue, separate from Spotify's.
+- **Play on:** **This browser** or any device Spotify lists for the account. Playback started here that moves to another device is followed there.
+
+Albums and tracks without a valid Spotify album URL or track ID have no play controls.
+
+## How it works
+
+`POST /api/v1/spotify/playback/token` (authenticated, same-origin) returns the account's access token and its expiry. The server refreshes it through the Spotify request gate when it is within a minute of expiring. The refresh token, client secret and PKCE verifier never leave the server. The browser keeps the access token in memory only and asks again shortly before it expires. The endpoint answers 422 unless the stored account has every playback scope.
+
+The browser then talks to Spotify directly:
+
+- The Web Playback SDK script loads from `sdk.scdn.co` only when playback is connected, and registers the browser as a Spotify device named **Media Manager**.
+- Player commands and device listings go to `api.spotify.com/v1/me/player`. These calls come from the browser, so they do **not** pass through the server's Spotify request gate and are not recorded as provider requests. While something plays on another device, the browser reads the player state every five seconds so the queue can advance; playing in the browser reads state from the SDK without Web API polling.
+
+[`apps/web/utils/playback-engine.ts`](../apps/web/utils/playback-engine.ts) owns the queue, the device target and the session rules in [`playback.ts`](../apps/web/utils/playback.ts); it takes the Spotify API, token source and SDK loader as arguments so it runs under test without a browser. [`playback-provider.tsx`](../apps/web/components/playback-provider.tsx) exposes it to the shell, [`player-dock.tsx`](../apps/web/components/player-dock.tsx) and [`play-controls.tsx`](../apps/web/components/play-controls.tsx).
+
+## Failures
+
+- **Spotify disconnected:** the token endpoint or Spotify rejected the account. The dock offers **Reconnect**, which repeats the playback consent.
+- **Other errors** (Premium required, device unavailable, rate limited, playback did not start) appear above the dock with **Open in Spotify**. The queue is kept.
+- A command is not retried, except that a browser device Spotify has not registered yet is retried twice. Three failed state reads in a row end the session.
+
+## Limits
+
+- The queue and the current session do not survive a reload, and two open tabs each have their own.
+- No shuffle or repeat controls.
+- When another device jumps straight to the end of an album between two state reads, the album can go unnoticed as finished and the next queue entry does not start.
+- Tests use a fake SDK player and fake Spotify responses. Audio, the consent round trip and phone browsers are not covered by automated tests.
+
+## Verification
+
+```bash
+apps/server/node_modules/.bin/tsx --tsconfig apps/web/tsconfig.test.json --test apps/web/utils/playback.test.ts apps/web/utils/playback-engine.test.ts apps/web/utils/spotify-player-api.test.ts apps/web/utils/album-links.test.ts apps/web/components/play-controls.test.tsx apps/web/components/player-dock.test.tsx apps/web/components/spotify-playback-setting.test.tsx
+pnpm --filter @repo/server exec vitest run src/services/__tests__/spotify-oauth.test.ts src/routes/__tests__/spotify-imports-api.test.ts
+```
+
+References: [Web Playback SDK](https://developer.spotify.com/documentation/web-playback-sdk) and the Web API [player endpoints](https://developer.spotify.com/documentation/web-api/reference/get-information-about-the-users-current-playback).

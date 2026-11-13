@@ -6,6 +6,14 @@ import {
 } from '@repo/media-plugin-sdk'
 
 export const SPOTIFY_SCOPE = 'user-library-read'
+// Web Playback SDK scopes, plus the player Web API state and control scopes.
+export const SPOTIFY_PLAYBACK_SCOPES: readonly string[] = [
+  'streaming',
+  'user-read-email',
+  'user-read-private',
+  'user-read-playback-state',
+  'user-modify-playback-state',
+]
 export const SpotifyIdSchema = z.string().regex(/^[A-Za-z0-9]{22}$/)
 export const UpcSchema = z.string().regex(/^\d{8,14}$/)
 const HttpsUrlSchema = z
@@ -127,7 +135,11 @@ export function spotifyRedirectUri(value: string): string {
   return url.toString()
 }
 
-export function spotifyAuthorization(clientId: string, redirectUri: string) {
+export function spotifyAuthorization(
+  clientId: string,
+  redirectUri: string,
+  scopes: readonly string[] = [SPOTIFY_SCOPE],
+) {
   const state = randomBytes(32).toString('base64url')
   const verifier = randomBytes(64).toString('base64url')
   const url = new URL('https://accounts.spotify.com/authorize')
@@ -135,7 +147,7 @@ export function spotifyAuthorization(clientId: string, redirectUri: string) {
     client_id: clientId,
     response_type: 'code',
     redirect_uri: spotifyRedirectUri(redirectUri),
-    scope: SPOTIFY_SCOPE,
+    scope: scopes.join(' '),
     state,
     code_challenge_method: 'S256',
     code_challenge: createHash('sha256').update(verifier).digest('base64url'),

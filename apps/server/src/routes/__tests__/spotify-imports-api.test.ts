@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   destination: vi.fn(),
   callback: vi.fn(),
   disconnect: vi.fn(),
+  playbackToken: vi.fn(),
   preview: vi.fn(),
   csv: vi.fn(),
   commit: vi.fn(),
@@ -25,6 +26,7 @@ vi.mock('@/services/spotify-oauth', () => ({
   spotifyCallbackDestination: mocks.destination,
   finishSpotifyAuthorization: mocks.callback,
   disconnectSpotify: mocks.disconnect,
+  spotifyPlaybackToken: mocks.playbackToken,
 }))
 vi.mock('@/services/spotify-imports', () => ({
   previewSpotifyAlbums: mocks.preview,
@@ -34,6 +36,7 @@ vi.mock('@/services/album-imports', () => ({
   confirmAlbumImport: mocks.commit,
   albumImportFormats: [],
 }))
+import { ServerError } from '@/lib/error'
 import spotify from '../spotify'
 import albumImports from '../album-imports'
 
@@ -69,7 +72,7 @@ describe('Spotify and album import API security', () => {
       expect(
         (await spotify.request(`http://localhost:4001${path}`)).status,
       ).toBe(401)
-    for (const path of ['/authorize', '/preview'])
+    for (const path of ['/authorize', '/preview', '/playback/token'])
       expect((await spotify.request(post(path, {}))).status).toBe(401)
     expect(
       (
@@ -89,6 +92,7 @@ describe('Spotify and album import API security', () => {
       mocks.destination,
       mocks.callback,
       mocks.disconnect,
+      mocks.playbackToken,
       mocks.preview,
       mocks.csv,
       mocks.commit,
@@ -102,6 +106,22 @@ describe('Spotify and album import API security', () => {
         .status,
     ).toBe(403)
     expect(mocks.authorize).not.toHaveBeenCalled()
+    expect(
+      (
+        await spotify.request(
+          post('/playback/token', undefined, 'https://evil.invalid'),
+        )
+      ).status,
+    ).toBe(403)
+    expect(
+      (
+        await spotify.request('http://localhost:4001/playback/token', {
+          method: 'POST',
+          headers: { 'sec-fetch-site': 'cross-site' },
+        })
+      ).status,
+    ).toBe(403)
+    expect(mocks.playbackToken).not.toHaveBeenCalled()
   })
 
   it('binds authorization to authenticated user/session and browser origin', async () => {
@@ -116,7 +136,71 @@ describe('Spotify and album import API security', () => {
       'user-1',
       'session-1',
       'http://localhost:3001',
+      {},
     )
+  })
+
+  it.each([true, false])(
+    'passes an explicit playback choice of %s to authorization',
+    async (playback) => {
+      mocks.authorize.mockResolvedValue({
+        url: 'https://accounts.spotify.com/authorize',
+        expiresAt: new Date().toISOString(),
+      })
+      expect(
+        (await spotify.request(post('/authorize', { playback }))).status,
+      ).toBe(200)
+      expect(mocks.authorize).toHaveBeenCalledWith(
+        'user-1',
+        'session-1',
+        'http://localhost:3001',
+        { playback },
+      )
+    },
+  )
+
+  it('rejects malformed authorization options before service work', async () => {
+    for (const body of [
+      { playback: 'yes' },
+      { playback: true, returnTo: 'https://evil.invalid' },
+    ])
+      expect((await spotify.request(post('/authorize', body))).status).toBe(422)
+    expect(mocks.authorize).not.toHaveBeenCalled()
+  })
+
+  it('returns a playback token for the authenticated owner without caching', async () => {
+    const token = {
+      accessToken: 'fake-access-token',
+      expiresAt: new Date(Date.now() + 3600000).toISOString(),
+    }
+    mocks.playbackToken.mockResolvedValue(token)
+    const response = await spotify.request(post('/playback/token', undefined))
+    expect(response.status).toBe(200)
+    expect(response.headers.get('cache-control')).toBe('no-store')
+    expect(await response.json()).toMatchObject({ data: token })
+    expect(mocks.playbackToken).toHaveBeenCalledExactlyOnceWith('user-1')
+  })
+
+  it('returns playback availability errors without leaking provider errors', async () => {
+    mocks.playbackToken.mockRejectedValueOnce(
+      new ServerError({
+        statusCode: 422,
+        message: 'Connect Spotify playback in Providers first',
+      }),
+    )
+    const unavailable = await spotify.request(
+      post('/playback/token', undefined),
+    )
+    expect(unavailable.status).toBe(422)
+    expect(await unavailable.text()).toContain(
+      'Connect Spotify playback in Providers first',
+    )
+    mocks.playbackToken.mockRejectedValueOnce(new Error('fake-sensitive-token'))
+    const failed = await spotify.request(post('/playback/token', undefined))
+    expect(failed.status).toBe(500)
+    expect(failed.headers.get('cache-control')).toBe('no-store')
+    expect(await failed.text()).not.toContain('fake-sensitive-token')
+    expect(fetch).not.toHaveBeenCalled()
   })
 
   it('relays an unauthenticated callback to the service destination with only validated fields', async () => {
@@ -223,6 +307,7 @@ describe('Spotify and album import API security', () => {
     mocks.callback.mockResolvedValue({
       connected: true,
       returnOrigin: 'http://localhost:3001',
+      returnTo: 'imports',
     })
     const response = await spotify.request(
       `http://localhost:4001/complete?state=${'a'.repeat(43)}&code=secret-code&returnTo=https://evil.invalid`,
@@ -248,6 +333,7 @@ describe('Spotify and album import API security', () => {
     mocks.callback.mockResolvedValue({
       connected: false,
       returnOrigin: 'http://localhost:3001',
+      returnTo: 'imports',
     })
     const state = 'a'.repeat(43)
     const response = await spotify.request(
@@ -264,6 +350,29 @@ describe('Spotify and album import API security', () => {
     )
     expect(mocks.destination).not.toHaveBeenCalled()
   })
+
+  it.each([
+    { connected: true, outcome: 'connected' },
+    { connected: false, outcome: 'error' },
+  ])(
+    'returns playback-initiated completion ($outcome) to the fixed Providers path',
+    async ({ connected, outcome }) => {
+      mocks.callback.mockResolvedValue({
+        connected,
+        returnOrigin: 'http://localhost:3001',
+        returnTo: 'providers',
+      })
+      const response = await spotify.request(
+        `http://localhost:4001/complete?state=${'a'.repeat(43)}&code=secret-code&returnTo=https://evil.invalid`,
+      )
+      expect(response.status).toBe(302)
+      expect(response.headers.get('location')).toBe(
+        `http://localhost:3001/providers?provider=spotify&mediaType=album&section=settings&spotify=${outcome}`,
+      )
+      expect(response.headers.get('location')).not.toContain('secret-code')
+      expect(response.headers.get('location')).not.toContain('state=')
+    },
+  )
 
   it('does not leak token/provider errors in responses or failure redirects', async () => {
     mocks.callback.mockRejectedValue(new Error('fake-sensitive-token'))

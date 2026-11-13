@@ -47,6 +47,11 @@ import { parseAlbumBrowseFiltersParam } from '@repo/schemas/media'
 import DetailProviderLinks from './detail-provider-links'
 import AlbumTitle from './album-title'
 import AlbumProviderDetails from './album-provider-details'
+import {
+  AlbumPlayButtons,
+  TrackPlayButton,
+  TrackQueueButton,
+} from './play-controls'
 import { albumSpotifyDestination } from '@/utils/album-links'
 import { scopedHref } from '@/utils/media-scope'
 import MetadataSourceControl from './metadata-source-control'
@@ -492,6 +497,7 @@ export default function MediaDetail({
               item.mediaType === 'album' ? item.spotifyUrl : undefined
             }
           />
+          {item.mediaType === 'album' && <AlbumPlayButtons album={item} />}
         </div>
       </header>
       {selectedFilters.length > 0 && (
@@ -627,7 +633,9 @@ export default function MediaDetail({
               <tbody>
                 {item.tracks.map((track) => (
                   <tr key={track.position}>
-                    <td>{track.position}</td>
+                    <td>
+                      <TrackPlayButton album={item} track={track} />
+                    </td>
                     <td>
                       {track.externalId ? (
                         <ExternalLink
@@ -638,6 +646,7 @@ export default function MediaDetail({
                       ) : (
                         track.title
                       )}
+                      <TrackQueueButton album={item} track={track} />
                     </td>
                     <td className="text-right tabular-nums">
                       {track.durationSec === null

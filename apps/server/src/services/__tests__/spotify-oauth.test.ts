@@ -66,6 +66,7 @@ import {
   spotifyAccountToken,
   spotifyOperation,
   spotifyCallbackDestination,
+  spotifyPlaybackToken,
 } from '../spotify-oauth'
 import { spotifyTokenFixture } from '@/plugins/builtin/__tests__/fixtures/spotify'
 
@@ -90,12 +91,68 @@ const secretSchema = z.object({
   key: z.string(),
   lastUpdatedByUserId: z.string(),
 })
-async function begin(browserOrigin = 'http://127.0.0.1:3001') {
-  const response = await authorizeSpotify('user-1', 'session-1', browserOrigin)
+const playbackScope =
+  'user-library-read streaming user-read-email user-read-private user-read-playback-state user-modify-playback-state'
+async function begin(
+  browserOrigin = 'http://127.0.0.1:3001',
+  options: { playback?: boolean } = {},
+) {
+  const response = await authorizeSpotify(
+    'user-1',
+    'session-1',
+    browserOrigin,
+    options,
+  )
   const state = new URL(response.url).searchParams.get('state')
   if (!state) throw new Error('Missing state')
   const saved = secretSchema.parse(mocks.values.mock.calls.at(-1)?.[0])
-  return { state, saved: { ...saved, id: 'state-row' } }
+  return {
+    state,
+    scope: new URL(response.url).searchParams.get('scope'),
+    saved: { ...saved, id: 'state-row' },
+  }
+}
+function savedState(saved: { encryptedValue: string }) {
+  return z
+    .record(z.string(), z.unknown())
+    .parse(JSON.parse(decryptSecretValue(saved.encryptedValue)))
+}
+function storedTokens(values: Record<string, unknown>) {
+  return query([
+    {
+      id: 'tokens',
+      encryptedValue: encryptSecretValue(
+        JSON.stringify({
+          accessToken: 'fake-access-token',
+          refreshToken: 'fake-refresh-token',
+          expiresAt: Date.now() + 3600000,
+          scope: 'user-library-read',
+          clientId: 'fixture-client',
+          ...values,
+        }),
+      ),
+    },
+  ])
+}
+function mockCompletion(
+  saved: { id: string; encryptedValue: string },
+  stored = true,
+) {
+  mocks.database.select
+    .mockReturnValueOnce(query([]))
+    .mockReturnValueOnce(query([saved]))
+  // The pending state is only rechecked when the token response is accepted.
+  if (stored)
+    mocks.database.select.mockImplementationOnce(() =>
+      query([
+        {
+          id: 'state-row',
+          encryptedValue: z
+            .object({ encryptedValue: z.string() })
+            .parse(mocks.set.mock.calls.at(-1)?.[0]).encryptedValue,
+        },
+      ]),
+    )
 }
 
 describe('Spotify owner/session-bound OAuth (mock database and gate)', () => {
@@ -347,26 +404,18 @@ describe('Spotify owner/session-bound OAuth (mock database and gate)', () => {
     'consumes valid authorization, encrypts tokens, and returns to %s with the original exchange redirect',
     async (browserOrigin) => {
       const started = await begin(browserOrigin)
-      mocks.database.select
-        .mockReturnValueOnce(query([]))
-        .mockReturnValueOnce(query([started.saved]))
-        .mockImplementationOnce(() =>
-          query([
-            {
-              id: 'state-row',
-              encryptedValue: z
-                .object({ encryptedValue: z.string() })
-                .parse(mocks.set.mock.calls.at(-1)?.[0]).encryptedValue,
-            },
-          ]),
-        )
+      mockCompletion(started.saved)
       expect(
         await finishSpotifyAuthorization(
           { state: started.state, code: 'fixture-code' },
           'user-1',
           'session-1',
         ),
-      ).toEqual({ connected: true, returnOrigin: browserOrigin })
+      ).toEqual({
+        connected: true,
+        returnOrigin: browserOrigin,
+        returnTo: 'imports',
+      })
       const tokens = secretSchema.parse(mocks.values.mock.calls.at(-1)?.[0])
       expect(tokens.key).toBe('tokens')
       expect(tokens.encryptedValue).not.toContain('fake-access-token')
@@ -458,6 +507,273 @@ describe('Spotify owner/session-bound OAuth (mock database and gate)', () => {
       { refreshToken: 'retained-refresh', accessToken: 'renewed' },
     )
     expect(mocks.request).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([
+    { scope: 'user-library-read', playback: false },
+    { scope: 'user-library-read streaming', playback: false },
+    { scope: playbackScope, playback: true },
+  ])(
+    'reports playback $playback for stored scope "$scope"',
+    async ({ scope, playback }) => {
+      mocks.database.select
+        .mockReturnValueOnce(query([]))
+        .mockReturnValueOnce(storedTokens({ scope }))
+      const status = await getSpotifyAccountStatus('user-1')
+      expect(status).toMatchObject({ connected: true, playback })
+      expect(JSON.stringify(status)).not.toContain('fake-access-token')
+      expect(JSON.stringify(status)).not.toContain('fake-refresh-token')
+      expect(mocks.request).not.toHaveBeenCalled()
+    },
+  )
+
+  it('does not report playback for an account from another client', async () => {
+    mocks.database.select
+      .mockReturnValueOnce(query([]))
+      .mockReturnValueOnce(
+        storedTokens({ scope: playbackScope, clientId: 'other-client' }),
+      )
+    expect(await getSpotifyAccountStatus('user-1')).toMatchObject({
+      connected: false,
+      playback: false,
+    })
+  })
+
+  it.each([
+    {
+      name: 'explicit playback',
+      options: { playback: true },
+      stored: undefined,
+      scope: playbackScope,
+      playback: true,
+      returnTo: 'providers',
+    },
+    {
+      name: 'explicitly turning playback off',
+      options: { playback: false },
+      stored: playbackScope,
+      scope: 'user-library-read',
+      playback: false,
+      returnTo: 'providers',
+    },
+    {
+      name: 'a reconnect of a playback account',
+      options: {},
+      stored: playbackScope,
+      scope: playbackScope,
+      playback: true,
+      returnTo: 'imports',
+    },
+    {
+      name: 'a reconnect of a library-only account',
+      options: {},
+      stored: 'user-library-read',
+      scope: 'user-library-read',
+      playback: false,
+      returnTo: 'imports',
+    },
+    {
+      name: 'a first connection from imports',
+      options: {},
+      stored: undefined,
+      scope: 'user-library-read',
+      playback: false,
+      returnTo: 'imports',
+    },
+  ])(
+    'requests the right scopes for $name',
+    async ({ options, stored, scope, playback, returnTo }) => {
+      mocks.database.select.mockReturnValueOnce(query([]))
+      if (!('playback' in options))
+        mocks.database.select.mockReturnValueOnce(
+          stored ? storedTokens({ scope: stored }) : query([]),
+        )
+      const started = await begin('http://127.0.0.1:3001', options)
+      expect(started.scope).toBe(scope)
+      expect(savedState(started.saved)).toMatchObject({ playback, returnTo })
+      // An explicit choice does not read the stored account.
+      expect(mocks.database.select).toHaveBeenCalledTimes(
+        'playback' in options ? 1 : 2,
+      )
+      expect(mocks.request).not.toHaveBeenCalled()
+    },
+  )
+
+  it('rejects a playback completion without every playback scope and stores nothing', async () => {
+    const started = await begin('http://127.0.0.1:3001', { playback: true })
+    mockCompletion(started.saved, false)
+    mocks.request.mockResolvedValue(
+      Response.json({
+        ...spotifyTokenFixture,
+        scope: 'user-library-read streaming user-read-email user-read-private',
+      }),
+    )
+    await expect(
+      finishSpotifyAuthorization(
+        { state: started.state, code: 'fixture-code' },
+        'user-1',
+        'session-1',
+      ),
+    ).rejects.toThrow('Spotify request failed')
+    expect(mocks.values).toHaveBeenCalledTimes(1)
+    expect(mocks.failure).toHaveBeenCalledTimes(1)
+    expect(mocks.success).not.toHaveBeenCalled()
+  })
+
+  it('stores a playback completion with every scope and returns to Providers', async () => {
+    const started = await begin('http://localhost:3001', { playback: true })
+    mockCompletion(started.saved)
+    mocks.request.mockResolvedValue(
+      Response.json({ ...spotifyTokenFixture, scope: playbackScope }),
+    )
+    expect(
+      await finishSpotifyAuthorization(
+        { state: started.state, code: 'fixture-code' },
+        'user-1',
+        'session-1',
+      ),
+    ).toEqual({
+      connected: true,
+      returnOrigin: 'http://localhost:3001',
+      returnTo: 'providers',
+    })
+    const tokens = secretSchema.parse(mocks.values.mock.calls.at(-1)?.[0])
+    expect(tokens.key).toBe('tokens')
+    expect(JSON.parse(decryptSecretValue(tokens.encryptedValue))).toMatchObject(
+      { scope: playbackScope },
+    )
+  })
+
+  it('completes a pending state saved before playback options existed', async () => {
+    const started = await begin()
+    const legacy = savedState(started.saved)
+    delete legacy['playback']
+    delete legacy['returnTo']
+    mockCompletion({
+      ...started.saved,
+      encryptedValue: encryptSecretValue(JSON.stringify(legacy)),
+    })
+    expect(
+      await finishSpotifyAuthorization(
+        { state: started.state, code: 'fixture-code' },
+        'user-1',
+        'session-1',
+      ),
+    ).toEqual({
+      connected: true,
+      returnOrigin: 'http://127.0.0.1:3001',
+      returnTo: 'imports',
+    })
+  })
+
+  it.each([
+    { name: 'no account', rows: () => query([]) },
+    { name: 'a library-only account', rows: () => storedTokens({}) },
+    {
+      name: 'a partial playback account',
+      rows: () =>
+        storedTokens({
+          scope: 'user-library-read streaming user-read-email',
+        }),
+    },
+    {
+      name: 'an account from another client',
+      rows: () =>
+        storedTokens({ scope: playbackScope, clientId: 'other-client' }),
+    },
+  ])('refuses a playback token for $name', async ({ rows }) => {
+    mocks.database.select
+      .mockReturnValueOnce(query([]))
+      .mockReturnValueOnce(rows())
+      .mockReturnValueOnce(query([]))
+      .mockReturnValueOnce(rows())
+    await expect(spotifyPlaybackToken('user-1')).rejects.toThrow(
+      'Connect Spotify playback in Providers first',
+    )
+    expect(mocks.request).not.toHaveBeenCalled()
+    expect(mocks.values).not.toHaveBeenCalled()
+    expect(mocks.success).not.toHaveBeenCalled()
+    expect(mocks.failure).not.toHaveBeenCalled()
+  })
+
+  it('returns a current playback token and expiry without a Spotify request', async () => {
+    const expiresAt = Date.now() + 3600000
+    mocks.database.select
+      .mockReturnValueOnce(query([]))
+      .mockReturnValueOnce(storedTokens({ scope: playbackScope, expiresAt }))
+    const token = await spotifyPlaybackToken('user-1')
+    expect(token).toEqual({
+      accessToken: 'fake-access-token',
+      expiresAt: new Date(expiresAt).toISOString(),
+    })
+    expect(JSON.stringify(token)).not.toContain('fake-refresh-token')
+    expect(mocks.request).not.toHaveBeenCalled()
+    expect(mocks.values).not.toHaveBeenCalled()
+    // No request was made, so earlier provider failures stay recorded.
+    expect(mocks.success).not.toHaveBeenCalled()
+  })
+
+  it('refreshes a near-expiry playback token through the gate without exposing the refresh token', async () => {
+    const nearExpiry = () =>
+      storedTokens({ scope: playbackScope, expiresAt: Date.now() + 30000 })
+    mocks.database.select
+      .mockReturnValueOnce(query([]))
+      .mockReturnValueOnce(nearExpiry())
+      .mockReturnValueOnce(query([]))
+      .mockReturnValueOnce(nearExpiry())
+    mocks.request.mockResolvedValue(
+      Response.json({
+        access_token: 'renewed',
+        token_type: 'Bearer',
+        expires_in: 3600,
+      }),
+    )
+    const token = await spotifyPlaybackToken('user-1')
+    expect(token.accessToken).toBe('renewed')
+    expect(Date.parse(token.expiresAt)).toBeGreaterThan(Date.now() + 3500000)
+    expect(JSON.stringify(token)).not.toContain('fake-refresh-token')
+    expect(mocks.request).toHaveBeenCalledTimes(1)
+    const request = z
+      .tuple([
+        z.literal('https://accounts.spotify.com/api/token'),
+        z.object({ method: z.literal('POST'), body: z.string() }),
+      ])
+      .parse(mocks.request.mock.calls[0])
+    expect(new URLSearchParams(request[1].body).get('grant_type')).toBe(
+      'refresh_token',
+    )
+    const stored = secretSchema.parse(mocks.values.mock.calls.at(-1)?.[0])
+    expect(JSON.parse(decryptSecretValue(stored.encryptedValue))).toMatchObject(
+      {
+        accessToken: 'renewed',
+        refreshToken: 'fake-refresh-token',
+        scope: playbackScope,
+      },
+    )
+    expect(mocks.success).toHaveBeenCalledWith('spotify')
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('records a playback refresh that drops playback scopes without storing it', async () => {
+    const expired = () => storedTokens({ scope: playbackScope, expiresAt: 1 })
+    mocks.database.select
+      .mockReturnValueOnce(query([]))
+      .mockReturnValueOnce(expired())
+      .mockReturnValueOnce(query([]))
+      .mockReturnValueOnce(expired())
+    mocks.request.mockResolvedValue(
+      Response.json({
+        access_token: 'renewed',
+        token_type: 'Bearer',
+        expires_in: 3600,
+        scope: 'user-library-read',
+      }),
+    )
+    await expect(spotifyPlaybackToken('user-1')).rejects.toThrow(
+      'Spotify request failed',
+    )
+    expect(mocks.values).not.toHaveBeenCalled()
+    expect(mocks.failure).toHaveBeenCalledTimes(1)
   })
 
   it('status and disconnect remain local and expose no tokens', async () => {

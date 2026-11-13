@@ -115,6 +115,7 @@ function render(
   client.setQueryData(['spotify-account'], {
     configured: spotifyConnected,
     connected: spotifyConnected,
+    playback: false,
     expiresAt: null,
     scope: null,
     redirectUri: null,

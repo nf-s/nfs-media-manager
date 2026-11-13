@@ -10,6 +10,7 @@ import {
 import { Button } from '@repo/ui/components/ui/button'
 import { Input } from '@repo/ui/components/ui/input'
 import { useConfig } from './providers'
+import SpotifyPlaybackSetting from './spotify-playback-setting'
 import { fetchApiData } from '@/utils/api'
 
 function RequestBudgetForm({ provider }: { provider: ProviderSummary }) {
@@ -182,6 +183,7 @@ export default function ProviderConfiguration({
   ].filter((value) => value !== null)
   return (
     <section className="provider-settings">
+      {provider.id === 'spotify' && <SpotifyPlaybackSetting />}
       {provider.rateLimit.configurableRequestBudget && (
         <RequestBudgetForm
           key={`${provider.id}:${provider.rateLimit.requestBudget?.period}:${provider.rateLimit.requestBudget?.limit}`}

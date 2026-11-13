@@ -53,6 +53,7 @@ import AiSearch from './ai-search'
 import { aiSearchParams } from '@/utils/ai-search'
 import MediaArtwork from './media-artwork'
 import MediaDetail from './media-detail'
+import { TilePlayControls } from './play-controls'
 import ManualMediaAdd from './manual-media-add'
 import { BrowseFilterChips, RangeEditor } from './browse-controls'
 import { ListeningControls } from './listening-controls'
@@ -1159,6 +1160,9 @@ export default function MediaBrowser({
                           >
                             {serviceLinks}
                           </ProviderRatings>
+                        )}
+                        {item.mediaType === 'album' && (
+                          <TilePlayControls album={item} />
                         )}
                       </div>
                       {titleControl(item, 'tile-title')}
