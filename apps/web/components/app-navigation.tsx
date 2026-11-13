@@ -1,9 +1,17 @@
 'use client'
 import Link from 'next/link'
 import { usePathname, useSearchParams } from 'next/navigation'
-import { Cog, Download, LayoutGrid, ListChecks, Tag } from 'lucide-react'
+import {
+  Cog,
+  Download,
+  LayoutGrid,
+  ListChecks,
+  SquarePlay,
+  Tag,
+  Users,
+} from 'lucide-react'
 import { scopedHref } from '@/utils/media-scope'
-import { useMediaScope } from './media-scope'
+import { useLibrary, useMediaScope } from './media-scope'
 
 const items = [
   { href: '/browse', label: 'Browse', Icon: LayoutGrid },
@@ -12,10 +20,34 @@ const items = [
   { href: '/jobs', label: 'Jobs', Icon: ListChecks },
   { href: '/providers', label: 'Providers', Icon: Cog },
 ]
+const youtubeItems = [
+  { href: '/youtube', label: 'Videos', Icon: SquarePlay },
+  { href: '/youtube/subscriptions', label: 'Subscriptions', Icon: Users },
+]
 export default function AppNavigation() {
   const path = usePathname()
   const params = useSearchParams()
   const scope = useMediaScope()
+  const library = useLibrary()
+  if (library === 'youtube')
+    return (
+      <nav className="app-navigation" aria-label="Main navigation">
+        {youtubeItems.map((item) => (
+          <Link
+            href={
+              path === item.href && params.size
+                ? `${item.href}?${params}`
+                : item.href
+            }
+            key={item.href}
+            aria-current={path === item.href ? 'page' : undefined}
+          >
+            {item.label}
+            <item.Icon size={16} aria-hidden="true" />
+          </Link>
+        ))}
+      </nav>
+    )
   return (
     <nav className="app-navigation" aria-label="Main navigation">
       {items.map((item) => {

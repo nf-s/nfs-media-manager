@@ -7,6 +7,7 @@ import { musicbrainzPlugin } from '@/plugins/builtin/musicbrainz'
 import { lastfmPlugin } from '@/plugins/builtin/lastfm'
 import { discogsPlugin } from '@/plugins/builtin/discogs'
 import { serplyPlugin } from '@/plugins/builtin/serply'
+import { youtubePlugin } from '@/plugins/builtin/youtube'
 
 const builtinScrapePlugins = [
   omdbPlugin,
@@ -17,6 +18,7 @@ const builtinScrapePlugins = [
   lastfmPlugin,
   discogsPlugin,
   serplyPlugin,
+  youtubePlugin,
 ] satisfies MediaProviderPlugin[]
 
 export function getBuiltinScrapePlugin(

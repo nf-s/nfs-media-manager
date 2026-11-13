@@ -9,10 +9,16 @@ import {
   LASTFM_SCROBBLE_SYNC_TASK,
   LASTFM_SPOTIFY_SEARCH_TASK,
 } from '@repo/schemas/lastfm'
+import { YOUTUBE_SYNC_TASK } from '@repo/schemas/youtube'
 
 /** Scrobble sync jobs are account-level and have no media items. */
 export function isScrobbleSyncJob(job: Pick<Job, 'options'>): boolean {
   return getJobTask(job.options) === LASTFM_SCROBBLE_SYNC_TASK
+}
+
+/** YouTube subscription sync jobs are account-level; retrying one resumes the sync. */
+export function isYoutubeSyncJob(job: Pick<Job, 'options'>): boolean {
+  return getJobTask(job.options) === YOUTUBE_SYNC_TASK
 }
 
 export function isScrobbleSpotifySearchJob(job: Pick<Job, 'options'>): boolean {
@@ -22,6 +28,7 @@ export function isScrobbleSpotifySearchJob(job: Pick<Job, 'options'>): boolean {
 /** Title for a job without media items, or null for media jobs. */
 export function jobTaskTitle(job: Pick<Job, 'options'>): string | null {
   if (isScrobbleSyncJob(job)) return 'Scrobble sync'
+  if (isYoutubeSyncJob(job)) return 'YouTube subscription sync'
   if (isScrobbleSpotifySearchJob(job)) {
     const { artistName, albumName } = job.options
     const target = [artistName, albumName].filter(
@@ -57,6 +64,7 @@ export function canRetryJob(job: Job): boolean {
     typeof job.options.retryJobId !== 'string' &&
     (unfinishedJobItems(job) > 0 ||
       isScrobbleSyncJob(job) ||
+      isYoutubeSyncJob(job) ||
       isScrobbleSpotifySearchJob(job))
   )
 }

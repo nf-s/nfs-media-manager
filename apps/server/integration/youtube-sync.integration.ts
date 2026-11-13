@@ -1,0 +1,1083 @@
+import { randomUUID } from 'node:crypto'
+import pg from 'pg'
+import { eq } from 'drizzle-orm'
+import { drizzle } from 'drizzle-orm/node-postgres'
+import { migrate } from 'drizzle-orm/node-postgres/migrator'
+import {
+  afterAll,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from 'vitest'
+import { env } from '@/env'
+import * as schema from '@/schemas/db'
+import type { LastfmSyncJobContext } from '@/services/lastfm-scrobbles'
+
+const database = `youtube_sync_${randomUUID().replaceAll('-', '')}`
+const connection = {
+  host: env.DATABASE_HOST,
+  port: env.DATABASE_PORT,
+  user: env.DATABASE_USER,
+  password: env.DATABASE_PASSWORD,
+}
+const admin = new pg.Client({ ...connection, database: env.DATABASE_NAME })
+const pool = new pg.Pool({ ...connection, database })
+const databaseClient = drizzle(pool, { schema })
+const request = vi.fn<typeof fetch>()
+const APP_ORIGIN = 'http://localhost:3000'
+const USER = 'owner-fixture'
+const SESSION = 'session-fixture'
+
+vi.mock('@/env', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/env')>()
+  return {
+    env: {
+      ...actual.env,
+      APP_URL: 'http://localhost:3000',
+      AUTH_BASE_URL: undefined,
+      INTERNAL_BACKEND_URL: undefined,
+      TRUSTED_ORIGINS: ['http://localhost:3000'],
+    },
+  }
+})
+vi.mock('@/lib/db', () => ({
+  get db() {
+    return databaseClient
+  },
+}))
+// No request spacing, so the fixture API answers immediately.
+vi.mock('@/plugins/builtin/youtube', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('@/plugins/builtin/youtube')>()
+  const manifest = actual.youtubePlugin.manifest
+  return {
+    youtubePlugin: {
+      manifest: {
+        ...manifest,
+        rateLimit: { ...manifest.rateLimit, minTimeMs: 0 },
+      },
+    },
+  }
+})
+vi.mock('@/plugins/registry', () => ({
+  getScrapePlugin: async (id: string) =>
+    id === 'youtube'
+      ? (await import('@/plugins/builtin/youtube')).youtubePlugin
+      : null,
+}))
+// Two steps per job, so longer syncs chain follow-on jobs.
+vi.mock('@/services/youtube-sync', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('@/services/youtube-sync')>()
+  return {
+    ...actual,
+    runYoutubeSyncJob: (context: LastfmSyncJobContext) =>
+      actual.runYoutubeSyncJob(context, { maxSteps: 2 }),
+  }
+})
+vi.mock('@/lib/provider-secrets', () => ({
+  resolveProviderSecrets: () => ({
+    clientId: 'fixture-client.apps.googleusercontent.com',
+    clientSecret: 'offline-fixture-secret',
+    redirectUri: 'http://localhost:3000/api/v1/youtube/callback',
+  }),
+}))
+
+type FakeVideo = {
+  id: string
+  title: string
+  description?: string
+  publishedAt: string
+  duration?: string
+  views?: number
+  tags?: string[]
+  private?: boolean
+  live?: 'upcoming'
+}
+type FakeChannel = {
+  id: string
+  title: string
+  handle?: string
+  subscribed: boolean
+  noUploads?: boolean
+  /** Newest first, as the uploads playlist lists them. */
+  videos: FakeVideo[]
+}
+
+const channelId = (key: string) => `UC${key.padEnd(22, '0')}`
+const videoId = (key: string) => key.padEnd(11, '0')
+const ORBITAL = channelId('orbital')
+const COOKS = channelId('cooks')
+const EMPTY = channelId('empty')
+// The fixture API pages by two whatever page size is requested.
+const PAGE = 2
+
+function library(): FakeChannel[] {
+  return [
+    {
+      id: ORBITAL,
+      title: 'Kepler Mechanics Lab',
+      handle: '@keplermechanicslab',
+      subscribed: true,
+      videos: [
+        {
+          id: videoId('a3'),
+          title: 'Launch window livestream',
+          publishedAt: '2026-04-01T18:00:00Z',
+          duration: 'P0D',
+          live: 'upcoming',
+        },
+        {
+          id: videoId('a1'),
+          title: 'Transfer orbits explained',
+          description: 'Hohmann transfers and delta-v budgets.',
+          publishedAt: '2026-03-01T23:30:00Z',
+          duration: 'PT12M30S',
+          views: 5000,
+          tags: ['spaceflight'],
+        },
+        {
+          id: videoId('a2'),
+          title: 'Building a cloud chamber',
+          description: 'A weekend build. Mentions orbits once.',
+          publishedAt: '2026-02-01T10:00:00Z',
+          duration: 'PT45M',
+          views: 90000,
+        },
+        {
+          id: videoId('a4'),
+          title: 'Private video',
+          publishedAt: '2026-01-05T10:00:00Z',
+          private: true,
+        },
+        {
+          id: videoId('a5'),
+          title: 'Quick tip: torque wrenches',
+          publishedAt: '2025-12-25T09:00:00Z',
+          duration: 'PT58S',
+          views: 300,
+        },
+      ],
+    },
+    {
+      id: COOKS,
+      title: 'The Who Cooks',
+      subscribed: true,
+      videos: [
+        {
+          id: videoId('b1'),
+          title: 'Sourdough starter from scratch',
+          description: 'Flour, water, patience.',
+          publishedAt: '2026-01-15T08:00:00Z',
+          duration: 'PT8M',
+          views: 12000,
+        },
+        {
+          id: videoId('b2'),
+          title: 'Knife sharpening basics',
+          description: 'Whetstones explained for beginners.',
+          publishedAt: '2024-06-10T08:00:00Z',
+          duration: 'PT22M',
+          views: 700,
+        },
+        {
+          id: videoId('b3'),
+          title: 'Running a pop-up kitchen',
+          publishedAt: '2023-01-01T08:00:00Z',
+          duration: 'PT1H2M3S',
+          views: 40,
+        },
+      ],
+    },
+    {
+      id: EMPTY,
+      title: 'Empty Channel Fixture',
+      subscribed: true,
+      noUploads: true,
+      videos: [],
+    },
+  ]
+}
+
+const idle: (count: number) => Promise<void> = async () => {}
+
+const api = {
+  channels: library(),
+  /** API requests answered before the quota error; token requests are not counted. */
+  quotaAfter: Infinity,
+  /** Answers this numbered API request with HTTP 500. */
+  failAt: 0,
+  refreshStatus: 200,
+  expiresIn: 3600,
+  apiRequests: 0,
+  before: idle,
+}
+
+function paged<T>(items: T[], token: string | null) {
+  const offset = Number(token ?? 0)
+  const next = offset + PAGE
+  return {
+    items: items.slice(offset, next),
+    ...(next < items.length ? { nextPageToken: String(next) } : {}),
+  }
+}
+
+async function fakeYoutube(
+  input: Parameters<typeof fetch>[0],
+  init?: Parameters<typeof fetch>[1],
+) {
+  const url = new URL(String(input))
+  if (url.host === 'oauth2.googleapis.com') {
+    const form = new URLSearchParams(String(init?.body))
+    const refresh = form.get('grant_type') === 'refresh_token'
+    if (refresh && api.refreshStatus !== 200)
+      return Response.json(
+        { error: 'invalid_grant' },
+        { status: api.refreshStatus },
+      )
+    return Response.json({
+      access_token: refresh ? 'refreshed-access-token' : 'fixture-access-token',
+      token_type: 'Bearer',
+      expires_in: api.expiresIn,
+      scope: 'https://www.googleapis.com/auth/youtube.readonly',
+      ...(refresh ? {} : { refresh_token: 'fixture-refresh-token' }),
+    })
+  }
+  if (url.host !== 'www.googleapis.com') throw new Error('Unexpected request')
+  api.apiRequests += 1
+  await api.before(api.apiRequests)
+  if (api.apiRequests === api.failAt)
+    return new Response('upstream fault', { status: 500 })
+  if (api.apiRequests > api.quotaAfter)
+    return Response.json(
+      {
+        error: {
+          code: 403,
+          message: 'The request cannot be completed because of the quota.',
+          errors: [{ reason: 'quotaExceeded', domain: 'youtube.quota' }],
+        },
+      },
+      { status: 403 },
+    )
+  const params = url.searchParams
+  const ids = (params.get('id') ?? '').split(',')
+  switch (url.pathname) {
+    case '/youtube/v3/subscriptions':
+      return Response.json(
+        paged(
+          api.channels
+            .filter((channel) => channel.subscribed)
+            .map((channel) => ({
+              snippet: {
+                title: channel.title,
+                description: '',
+                resourceId: { kind: 'youtube#channel', channelId: channel.id },
+                thumbnails: {
+                  default: { url: `https://yt3.example/${channel.id}.jpg` },
+                },
+              },
+            })),
+          params.get('pageToken'),
+        ),
+      )
+    case '/youtube/v3/channels':
+      return Response.json({
+        items: api.channels
+          .filter((channel) => ids.includes(channel.id))
+          .map((channel) => ({
+            id: channel.id,
+            snippet: {
+              title: channel.title,
+              description: `About ${channel.title}`,
+              ...(channel.handle ? { customUrl: channel.handle } : {}),
+              thumbnails: {
+                default: { url: `https://yt3.example/${channel.id}.jpg` },
+              },
+            },
+            statistics: {
+              subscriberCount: '1200',
+              hiddenSubscriberCount: false,
+            },
+            contentDetails: {
+              relatedPlaylists: { uploads: `UU${channel.id.slice(2)}` },
+            },
+          })),
+      })
+    case '/youtube/v3/playlistItems': {
+      const channel = api.channels.find(
+        (item) => `UU${item.id.slice(2)}` === params.get('playlistId'),
+      )
+      if (!channel || channel.noUploads)
+        return Response.json(
+          { error: { code: 404, errors: [{ reason: 'playlistNotFound' }] } },
+          { status: 404 },
+        )
+      return Response.json(
+        paged(
+          channel.videos.map((video) => ({
+            contentDetails: { videoId: video.id },
+          })),
+          params.get('pageToken'),
+        ),
+      )
+    }
+    case '/youtube/v3/videos':
+      return Response.json({
+        items: api.channels.flatMap((channel) =>
+          channel.videos
+            .filter((video) => ids.includes(video.id) && !video.private)
+            .map((video) => ({
+              id: video.id,
+              snippet: {
+                channelId: channel.id,
+                title: video.title,
+                description: video.description ?? '',
+                publishedAt: video.publishedAt,
+                ...(video.tags ? { tags: video.tags } : {}),
+                liveBroadcastContent: video.live ?? 'none',
+              },
+              contentDetails: { duration: video.duration ?? 'PT5M' },
+              statistics:
+                video.views === undefined
+                  ? {}
+                  : { viewCount: String(video.views), likeCount: '7' },
+            })),
+        ),
+      })
+    default:
+      throw new Error('Unexpected request')
+  }
+}
+
+function channel(id: string) {
+  const found = api.channels.find((item) => item.id === id)
+  if (!found) throw new Error('Missing fixture channel')
+  return found
+}
+
+function apiPaths() {
+  return request.mock.calls
+    .map(([input]) => new URL(String(input)))
+    .filter((url) => url.host === 'www.googleapis.com')
+    .map((url) => url.pathname.replace('/youtube/v3/', ''))
+}
+
+async function connect() {
+  const { authorizeYoutube, finishYoutubeAuthorization } =
+    await import('@/services/youtube-oauth')
+  const authorization = await authorizeYoutube(USER, SESSION, APP_ORIGIN)
+  const state = new URL(authorization.url).searchParams.get('state') ?? ''
+  return finishYoutubeAuthorization(
+    { state, code: 'fixture-code' },
+    USER,
+    SESSION,
+  )
+}
+
+async function status() {
+  const { getYoutubeSyncStatus } = await import('@/services/youtube-sync')
+  return getYoutubeSyncStatus(USER)
+}
+
+async function syncJobs() {
+  return databaseClient
+    .select()
+    .from(schema.scrapeJob)
+    .orderBy(schema.scrapeJob.createdAt, schema.scrapeJob.id)
+}
+
+// Stands in for the job worker's polling loop.
+async function drain() {
+  const { processQueuedJobs } = await import('@/services/jobs')
+  await vi.waitFor(
+    async () => {
+      await processQueuedJobs()
+      expect((await status()).state).not.toBe('running')
+    },
+    { timeout: 20000, interval: 50 },
+  )
+  return status()
+}
+
+async function syncToEnd() {
+  const { queueYoutubeSync } = await import('@/services/youtube-sync-jobs')
+  await queueYoutubeSync(USER)
+  return drain()
+}
+
+// Stands in for a cooldown or request backoff running out.
+async function clearProviderState() {
+  await databaseClient.delete(schema.providerRequestState)
+}
+
+async function search(
+  input: Parameters<
+    typeof import('@/services/youtube-library').searchYoutubeVideos
+  >[0],
+) {
+  const { searchYoutubeVideos } = await import('@/services/youtube-library')
+  const page = await searchYoutubeVideos(input)
+  return { ...page, ids: page.items.map((item) => item.id) }
+}
+
+let created = false
+beforeAll(async () => {
+  vi.stubGlobal('fetch', request)
+  await admin.connect()
+  await admin.query(`create database ${database}`)
+  created = true
+  await migrate(databaseClient, { migrationsFolder: './drizzle' })
+})
+beforeEach(async () => {
+  Object.assign(api, {
+    channels: library(),
+    quotaAfter: Infinity,
+    failAt: 0,
+    refreshStatus: 200,
+    expiresIn: 3600,
+    apiRequests: 0,
+    before: idle,
+  })
+  request.mockReset()
+  request.mockImplementation(fakeYoutube)
+  await databaseClient.delete(schema.scrapeJob)
+  await databaseClient.delete(schema.youtubeVideo)
+  await databaseClient.delete(schema.youtubeChannel)
+  await databaseClient.delete(schema.youtubeSync)
+  await databaseClient.delete(schema.providerSecret)
+  await databaseClient.delete(schema.providerRequestState)
+  await databaseClient.delete(schema.providerRequestEvent)
+  await databaseClient.delete(schema.user)
+  await databaseClient.insert(schema.user).values({
+    id: USER,
+    name: 'Owner Fixture',
+    email: 'owner@example.test',
+  })
+})
+afterAll(async () => {
+  await pool.end()
+  if (created) await admin.query(`drop database ${database}`)
+  await admin.end()
+  vi.unstubAllGlobals()
+})
+
+describe('YouTube account connection with offline HTTP and a temporary database', () => {
+  it('requests read-only offline access and stores the account only after a matching callback', async () => {
+    const { authorizeYoutube, finishYoutubeAuthorization } =
+      await import('@/services/youtube-oauth')
+    expect((await status()).account).toEqual({
+      configured: true,
+      connected: false,
+      redirectUri: 'http://localhost:3000/api/v1/youtube/callback',
+    })
+
+    const authorization = await authorizeYoutube(USER, SESSION, APP_ORIGIN)
+    const url = new URL(authorization.url)
+    expect(url.origin + url.pathname).toBe(
+      'https://accounts.google.com/o/oauth2/v2/auth',
+    )
+    expect(Object.fromEntries(url.searchParams)).toMatchObject({
+      client_id: 'fixture-client.apps.googleusercontent.com',
+      redirect_uri: 'http://localhost:3000/api/v1/youtube/callback',
+      response_type: 'code',
+      scope: 'https://www.googleapis.com/auth/youtube.readonly',
+      access_type: 'offline',
+      prompt: 'consent',
+      code_challenge_method: 'S256',
+    })
+    const state = url.searchParams.get('state') ?? ''
+
+    // Another browser session cannot complete the authorization.
+    await expect(
+      finishYoutubeAuthorization(
+        { state, code: 'fixture-code' },
+        USER,
+        'other-session',
+      ),
+    ).rejects.toMatchObject({ message: expect.stringContaining('Connect') })
+    expect(request).not.toHaveBeenCalled()
+
+    expect(
+      await finishYoutubeAuthorization(
+        { state, code: 'fixture-code' },
+        USER,
+        SESSION,
+      ),
+    ).toEqual({ connected: true, returnOrigin: APP_ORIGIN })
+    const exchange = new URLSearchParams(
+      String(request.mock.calls[0]?.[1]?.body),
+    )
+    expect(Object.fromEntries(exchange)).toMatchObject({
+      grant_type: 'authorization_code',
+      code: 'fixture-code',
+      client_secret: 'offline-fixture-secret',
+      redirect_uri: 'http://localhost:3000/api/v1/youtube/callback',
+    })
+    expect(exchange.get('code_verifier')).toMatch(/^[A-Za-z0-9_-]{86}$/)
+    expect((await status()).account.connected).toBe(true)
+
+    // Tokens are stored encrypted, and a state value works once.
+    const secrets = await databaseClient.select().from(schema.providerSecret)
+    expect(secrets.map((row) => row.key)).toEqual(['tokens'])
+    expect(secrets[0]?.encryptedValue).not.toContain('fixture-access-token')
+    await expect(
+      finishYoutubeAuthorization(
+        { state, code: 'fixture-code' },
+        USER,
+        SESSION,
+      ),
+    ).rejects.toBeDefined()
+  })
+
+  it('stays disconnected when Google reports a denial, and disconnects on request', async () => {
+    const { authorizeYoutube, disconnectYoutube, finishYoutubeAuthorization } =
+      await import('@/services/youtube-oauth')
+    const authorization = await authorizeYoutube(USER, SESSION, APP_ORIGIN)
+    const state = new URL(authorization.url).searchParams.get('state') ?? ''
+    expect(
+      await finishYoutubeAuthorization(
+        { state, error: 'access_denied' },
+        USER,
+        SESSION,
+      ),
+    ).toEqual({ connected: false, returnOrigin: APP_ORIGIN })
+    expect(request).not.toHaveBeenCalled()
+    expect((await status()).account.connected).toBe(false)
+
+    await connect()
+    expect((await status()).account.connected).toBe(true)
+    expect(await disconnectYoutube(USER)).toEqual({ disconnected: true })
+    expect((await status()).account.connected).toBe(false)
+  })
+
+  it('refuses to sync without a connected account', async () => {
+    const { queueYoutubeSync } = await import('@/services/youtube-sync-jobs')
+    await expect(queueYoutubeSync(USER)).rejects.toMatchObject({
+      message: 'Connect a YouTube account in Subscriptions before syncing.',
+    })
+    expect(await syncJobs()).toHaveLength(0)
+  })
+})
+
+describe('YouTube subscription sync jobs with offline HTTP and a temporary database', () => {
+  it('reads every subscription and upload as chained jobs', async () => {
+    await connect()
+    const done = await syncToEnd()
+
+    expect(done).toMatchObject({
+      state: 'complete',
+      phase: 'videos',
+      channelsDone: 3,
+      channelsTotal: 3,
+      newVideos: 7,
+      storedChannels: 3,
+      storedVideos: 7,
+      resumeAfter: null,
+      errorMessage: null,
+    })
+    // Two subscription pages with their channel details, then each channel's
+    // uploads in channel ID order; the channel without uploads answers 404.
+    expect(apiPaths()).toEqual([
+      'subscriptions',
+      'channels',
+      'subscriptions',
+      'channels',
+      'playlistItems',
+      'videos',
+      'playlistItems',
+      'videos',
+      'playlistItems',
+      'playlistItems',
+      'videos',
+      'playlistItems',
+      'videos',
+      'playlistItems',
+      'videos',
+    ])
+    expect(
+      new Headers(request.mock.calls[1]?.[1]?.headers).get('authorization'),
+    ).toBe('Bearer fixture-access-token')
+
+    const jobs = await syncJobs()
+    expect(jobs.length).toBeGreaterThan(1)
+    expect(new Set(jobs.map((job) => `${job.provider}:${job.status}`))).toEqual(
+      new Set(['youtube:succeeded']),
+    )
+    expect(jobs[0]?.options).toEqual({ task: 'youtube-subscription-sync' })
+    expect(jobs[1]?.options).toEqual({
+      task: 'youtube-subscription-sync',
+      continues: jobs[0]?.id,
+    })
+    const { getJob, listJobs } = await import('@/services/jobs')
+    expect((await getJob(jobs.at(-1)?.id ?? ''))?.logs.at(-1)?.message).toBe(
+      'Sync complete. 7 new videos; 7 videos from 3 subscribed channels are stored.',
+    )
+    expect((await listJobs({ status: 'attention' })).totalCount).toBe(0)
+
+    const { listYoutubeChannels } = await import('@/services/youtube-library')
+    expect((await listYoutubeChannels()).items).toEqual([
+      {
+        id: EMPTY,
+        title: 'Empty Channel Fixture',
+        handle: null,
+        description: 'About Empty Channel Fixture',
+        thumbnailUrl: `https://yt3.example/${EMPTY}.jpg`,
+        subscriberCount: 1200,
+        storedVideos: 0,
+        latestVideoAt: null,
+        historyComplete: true,
+      },
+      expect.objectContaining({
+        id: ORBITAL,
+        handle: '@keplermechanicslab',
+        storedVideos: 4,
+        latestVideoAt: '2026-04-01T18:00:00.000Z',
+        historyComplete: true,
+      }),
+      expect.objectContaining({
+        id: COOKS,
+        title: 'The Who Cooks',
+        storedVideos: 3,
+        historyComplete: true,
+      }),
+    ])
+    const stored = await search({ channelId: ORBITAL, sortBy: 'publishedAt' })
+    expect(stored.items[1]).toEqual({
+      id: videoId('a1'),
+      channelId: ORBITAL,
+      channelTitle: 'Kepler Mechanics Lab',
+      channelThumbnailUrl: `https://yt3.example/${ORBITAL}.jpg`,
+      title: 'Transfer orbits explained',
+      description: 'Hohmann transfers and delta-v budgets.',
+      publishedAt: '2026-03-01T23:30:00.000Z',
+      durationSec: 750,
+      viewCount: 5000,
+      likeCount: 7,
+      commentCount: null,
+      live: 'none',
+    })
+    expect(stored.items[0]).toMatchObject({
+      id: videoId('a3'),
+      durationSec: 0,
+      viewCount: null,
+      live: 'upcoming',
+    })
+  })
+
+  it('reads only the newest page of a stored channel, and follows subscription changes', async () => {
+    await connect()
+    await syncToEnd()
+    request.mockClear()
+    const orbital = channel(ORBITAL)
+    orbital.title = 'Kepler Dynamics Lab'
+    orbital.videos = orbital.videos.map((video) =>
+      video.id === videoId('a3')
+        ? { ...video, title: 'Launch window replay' }
+        : video,
+    )
+    orbital.videos.unshift({
+      id: videoId('a6'),
+      title: 'Gravity assists',
+      publishedAt: '2026-05-01T12:00:00Z',
+      duration: 'PT9M',
+      views: 10,
+    })
+    channel(COOKS).subscribed = false
+
+    const second = await syncToEnd()
+    expect(second).toMatchObject({
+      state: 'complete',
+      channelsDone: 2,
+      channelsTotal: 2,
+      newVideos: 1,
+      storedChannels: 2,
+      storedVideos: 5,
+    })
+    // One page per stored channel: its first page already holds a known video.
+    expect(apiPaths()).toEqual([
+      'subscriptions',
+      'channels',
+      'playlistItems',
+      'playlistItems',
+      'videos',
+    ])
+    // The refreshed first page updates stored videos and the renamed channel is searchable.
+    expect((await search({ q: 'replay' })).ids).toEqual([videoId('a3')])
+    expect(
+      (await search({ q: 'dynamics', sortBy: 'publishedAt' })).ids,
+    ).toEqual([
+      videoId('a6'),
+      videoId('a3'),
+      videoId('a1'),
+      videoId('a2'),
+      videoId('a5'),
+    ])
+    expect((await search({ q: 'mechanics' })).ids).toEqual([])
+    // An unsubscribed channel leaves the list and the search; its videos are kept.
+    const { listYoutubeChannels } = await import('@/services/youtube-library')
+    expect((await listYoutubeChannels()).items.map((item) => item.id)).toEqual([
+      EMPTY,
+      ORBITAL,
+    ])
+    expect((await search({ q: 'sourdough' })).ids).toEqual([])
+    expect(
+      await databaseClient.$count(
+        schema.youtubeVideo,
+        eq(schema.youtubeVideo.channelId, COOKS),
+      ),
+    ).toBe(3)
+
+    request.mockClear()
+    channel(COOKS).subscribed = true
+    const third = await syncToEnd()
+    expect(third).toMatchObject({ newVideos: 0, storedVideos: 8 })
+    expect(apiPaths().filter((path) => path === 'playlistItems')).toHaveLength(
+      3,
+    )
+    expect((await search({ q: 'sourdough' })).ids).toEqual([videoId('b1')])
+  })
+
+  it('returns the active job instead of queueing a second sync', async () => {
+    await connect()
+    const { queueYoutubeSync } = await import('@/services/youtube-sync-jobs')
+    const first = await queueYoutubeSync(USER)
+    const second = await queueYoutubeSync(USER)
+    expect(first.state).toBe('running')
+    expect(second.job).toEqual(first.job)
+    expect(await syncJobs()).toHaveLength(1)
+  })
+
+  it('pauses on the YouTube quota and lets the schedule resume from the checkpoint', async () => {
+    await connect()
+    const { queueDueYoutubeSync } = await import('@/services/youtube-sync-jobs')
+    // The subscription list and the first uploads page fit; the next request does not.
+    api.quotaAfter = 6
+    const before = Date.now()
+    const paused = await syncToEnd()
+
+    expect(paused).toMatchObject({
+      state: 'paused',
+      phase: 'videos',
+      channelsDone: 0,
+      channelsTotal: 3,
+      storedVideos: 2,
+      errorMessage: null,
+    })
+    const resumeAfter = Date.parse(paused.resumeAfter ?? '')
+    expect(resumeAfter).toBeGreaterThanOrEqual(before + 60 * 60 * 1000)
+    expect(paused.nextScheduledAt).toBe(paused.resumeAfter)
+    const jobs = await syncJobs()
+    expect(jobs.at(-1)?.status).toBe('succeeded')
+    const { getJob, listJobs } = await import('@/services/jobs')
+    expect((await getJob(jobs.at(-1)?.id ?? ''))?.logs.at(-1)?.message).toMatch(
+      /^Paused: Provider rate limit reached\. Stored videos are kept;/,
+    )
+    expect((await listJobs({ status: 'attention' })).totalCount).toBe(0)
+    const [channelRow] = await databaseClient
+      .select()
+      .from(schema.youtubeChannel)
+      .where(eq(schema.youtubeChannel.id, ORBITAL))
+    expect(channelRow?.historyComplete).toBe(false)
+
+    // Not due yet, and still held while the provider cools down.
+    expect(await queueDueYoutubeSync(resumeAfter - 1000)).toBe(false)
+    expect(await queueDueYoutubeSync(resumeAfter + 1000)).toBe(false)
+    await clearProviderState()
+    api.quotaAfter = Infinity
+    request.mockClear()
+    expect(await queueDueYoutubeSync(resumeAfter + 1000)).toBe(true)
+    const done = await drain()
+    expect(done).toMatchObject({
+      state: 'complete',
+      channelsDone: 3,
+      newVideos: 7,
+      storedVideos: 7,
+      resumeAfter: null,
+    })
+    // The run continues at the second uploads page; nothing is read twice.
+    expect(apiPaths().slice(0, 2)).toEqual(['playlistItems', 'videos'])
+    expect(
+      new URL(String(request.mock.calls[0]?.[0])).searchParams.get('pageToken'),
+    ).toBe('2')
+    expect(apiPaths().includes('subscriptions')).toBe(false)
+  })
+
+  it('pauses until midnight UTC when the daily request budget is used, and waits for the owner when the schedule is off', async () => {
+    await connect()
+    const { setYoutubeSyncSchedule } = await import('@/services/youtube-sync')
+    const { queueDueYoutubeSync } = await import('@/services/youtube-sync-jobs')
+    await setYoutubeSyncSchedule(USER, 'off')
+    // The sign-in used one request; four more read the subscription list.
+    await databaseClient
+      .update(schema.providerRequestState)
+      .set({ requestBudgetOverride: { period: 'day', limit: 5 } })
+      .where(eq(schema.providerRequestState.provider, 'youtube'))
+
+    const paused = await syncToEnd()
+    const day = 24 * 60 * 60 * 1000
+    expect(paused).toMatchObject({
+      state: 'paused',
+      phase: 'videos',
+      storedChannels: 3,
+      storedVideos: 0,
+      resumeAfter: new Date(Math.ceil(Date.now() / day) * day).toISOString(),
+      nextScheduledAt: null,
+    })
+    expect(await queueDueYoutubeSync(Date.now() + 365 * day)).toBe(false)
+
+    await databaseClient
+      .update(schema.providerRequestState)
+      .set({ requestBudgetOverride: null })
+      .where(eq(schema.providerRequestState.provider, 'youtube'))
+    expect(await syncToEnd()).toMatchObject({
+      state: 'complete',
+      storedVideos: 7,
+    })
+  })
+
+  it('fails on a provider error without an automatic retry, then resumes on request', async () => {
+    await connect()
+    const { queueDueYoutubeSync } = await import('@/services/youtube-sync-jobs')
+    api.failAt = 7
+    const failed = await syncToEnd()
+    expect(failed).toMatchObject({
+      state: 'failed',
+      storedVideos: 2,
+      errorMessage: 'Provider request failed (HTTP 500)',
+      nextScheduledAt: null,
+      job: { status: 'failed' },
+    })
+    const { listJobs } = await import('@/services/jobs')
+    expect((await listJobs({ status: 'attention' })).totalCount).toBe(1)
+    await clearProviderState()
+    // The schedule never resumes a failed run.
+    expect(await queueDueYoutubeSync(Date.now() + 365 * 86400000)).toBe(false)
+
+    api.failAt = 0
+    const done = await syncToEnd()
+    expect(done).toMatchObject({ state: 'complete', storedVideos: 7 })
+    const jobs = await syncJobs()
+    const original = jobs.find((job) => job.status === 'failed')
+    expect(original?.options['retryJobId']).toEqual(expect.any(String))
+    expect((await listJobs({ status: 'attention' })).totalCount).toBe(0)
+  })
+
+  it('discards the in-flight page when the job is cancelled and resumes on request', async () => {
+    await connect()
+    const { bulkCancelJobs } = await import('@/services/jobs')
+    api.before = async (count) => {
+      if (count !== 6) return
+      const running = (await syncJobs()).find((job) => job.status === 'running')
+      await bulkCancelJobs(
+        { jobIds: [running?.id ?? ''], confirmRunning: true },
+        null,
+      )
+    }
+    const stopped = await syncToEnd()
+    expect(stopped).toMatchObject({
+      state: 'stopped',
+      phase: 'videos',
+      storedVideos: 0,
+      job: { status: 'cancelled' },
+    })
+
+    api.before = idle
+    expect(await syncToEnd()).toMatchObject({
+      state: 'complete',
+      storedVideos: 7,
+    })
+  })
+
+  it('renews an expired access token, and asks for a new sign-in when Google rejects it', async () => {
+    api.expiresIn = 1
+    await connect()
+    const done = await syncToEnd()
+    expect(done.state).toBe('complete')
+    const refresh = request.mock.calls
+      .map(([input, init]) => ({
+        host: new URL(String(input)).host,
+        form: new URLSearchParams(String(init?.body)),
+      }))
+      .filter((call) => call.host === 'oauth2.googleapis.com')
+      .at(-1)
+    expect(Object.fromEntries(refresh?.form ?? [])).toEqual({
+      grant_type: 'refresh_token',
+      refresh_token: 'fixture-refresh-token',
+      client_id: 'fixture-client.apps.googleusercontent.com',
+      client_secret: 'offline-fixture-secret',
+    })
+
+    api.refreshStatus = 400
+    const failed = await syncToEnd()
+    expect(failed).toMatchObject({
+      state: 'failed',
+      errorMessage:
+        'Google rejected the saved YouTube sign-in. Connect the account again.',
+    })
+
+    await clearProviderState()
+    api.refreshStatus = 200
+    api.expiresIn = 3600
+    await connect()
+    expect(await syncToEnd()).toMatchObject({ state: 'complete' })
+  })
+
+  it.each([
+    { schedule: '1h', minutes: 60 },
+    { schedule: 'daily', minutes: 1440 },
+    { schedule: 'weekly', minutes: 10080 },
+  ])(
+    'queues a $schedule sync only when due after a completed sync',
+    async ({ schedule, minutes }) => {
+      const { YoutubeSyncScheduleSchema } =
+        await import('@repo/schemas/youtube')
+      const { setYoutubeSyncSchedule } = await import('@/services/youtube-sync')
+      const { queueDueYoutubeSync } =
+        await import('@/services/youtube-sync-jobs')
+      const day = 24 * 60 * 60 * 1000
+      await connect()
+
+      // The setting can be saved first, but the schedule never starts the first sync.
+      expect(await setYoutubeSyncSchedule(USER, 'weekly')).toMatchObject({
+        state: 'never',
+        schedule: 'weekly',
+        nextScheduledAt: null,
+        startedAt: null,
+      })
+      expect(await queueDueYoutubeSync(Date.now() + 365 * day)).toBe(false)
+
+      const completed = await syncToEnd()
+      const completedAt = Date.parse(completed.lastCompletedAt ?? '')
+      const interval = minutes * 60 * 1000
+      expect(
+        (
+          await setYoutubeSyncSchedule(
+            USER,
+            YoutubeSyncScheduleSchema.parse(schedule),
+          )
+        ).nextScheduledAt,
+      ).toBe(new Date(completedAt + interval).toISOString())
+      expect(await queueDueYoutubeSync(completedAt + interval - 1000)).toBe(
+        false,
+      )
+      expect(await queueDueYoutubeSync(completedAt + interval)).toBe(true)
+      // The queued job is found instead of adding a second one.
+      expect(await queueDueYoutubeSync(completedAt + interval)).toBe(false)
+      expect((await drain()).state).toBe('complete')
+    },
+  )
+})
+
+describe('YouTube video search over stored videos', () => {
+  const all = ['a3', 'a1', 'a2', 'b1', 'a5', 'b2', 'b3'].map(videoId)
+
+  beforeEach(async () => {
+    await connect()
+    await syncToEnd()
+    request.mockClear()
+  })
+
+  it('lists newest first without a search, with totals for paging', async () => {
+    expect((await search({})).ids).toEqual(all)
+    expect(await search({ size: 2, page: 2 })).toMatchObject({
+      ids: [videoId('a2'), videoId('b1')],
+      totalCount: 7,
+      page: 2,
+      size: 2,
+      pageCount: 4,
+    })
+    expect((await search({ sortDirection: 'asc' })).ids).toEqual(
+      [...all].reverse(),
+    )
+    expect(request).not.toHaveBeenCalled()
+  })
+
+  it('matches every word across the title, tags, channel name and description', async () => {
+    // Word forms match, and a title match ranks above a description match.
+    expect((await search({ q: 'orbit' })).ids).toEqual([
+      videoId('a1'),
+      videoId('a2'),
+    ])
+    expect((await search({ q: 'orbits', fields: 'title' })).ids).toEqual([
+      videoId('a1'),
+    ])
+    expect((await search({ q: 'spaceflight' })).ids).toEqual([videoId('a1')])
+    expect((await search({ q: 'cooks sourdough' })).ids).toEqual([
+      videoId('b1'),
+    ])
+    expect((await search({ q: 'sourdough wrenches' })).ids).toEqual([])
+    expect((await search({ q: 'explained -orbits' })).ids).toEqual([
+      videoId('b2'),
+    ])
+    expect((await search({ q: '"cloud chamber"' })).ids).toEqual([
+      videoId('a2'),
+    ])
+    expect(
+      (await search({ q: 'sourdough or wrenches', sortBy: 'publishedAt' })).ids,
+    ).toEqual([videoId('b1'), videoId('a5')])
+    // Relevance is the default with a search; any other sort can replace it.
+    expect(
+      (
+        await search({
+          q: 'orbit',
+          sortBy: 'publishedAt',
+          sortDirection: 'asc',
+        })
+      ).ids,
+    ).toEqual([videoId('a2'), videoId('a1')])
+  })
+
+  it('falls back to the literal text when a search has only stop words', async () => {
+    expect((await search({ q: 'the who' })).ids).toEqual(
+      ['b1', 'b2', 'b3'].map(videoId),
+    )
+    expect((await search({ q: 'the' })).totalCount).toBe(3)
+    expect((await search({ q: 'the', channelId: ORBITAL })).totalCount).toBe(0)
+  })
+
+  it('filters by channel, duration and published day', async () => {
+    expect((await search({ channelId: COOKS })).ids).toEqual(
+      ['b1', 'b2', 'b3'].map(videoId),
+    )
+    expect((await search({ channelId: [COOKS, ORBITAL] })).totalCount).toBe(7)
+    expect((await search({ channelId: EMPTY })).totalCount).toBe(0)
+    // An unfinished live stream has no duration and is in no bucket.
+    expect((await search({ duration: 'short' })).ids).toEqual([videoId('a5')])
+    expect((await search({ duration: 'medium' })).ids).toEqual(
+      ['a1', 'b1'].map(videoId),
+    )
+    expect((await search({ duration: 'long' })).ids).toEqual(
+      ['a2', 'b2', 'b3'].map(videoId),
+    )
+    // Both days are inclusive in UTC.
+    expect(
+      (await search({ publishedFrom: '2026-02-01', publishedTo: '2026-03-01' }))
+        .ids,
+    ).toEqual(['a1', 'a2'].map(videoId))
+    expect((await search({ publishedTo: '2023-12-31' })).ids).toEqual([
+      videoId('b3'),
+    ])
+    expect(
+      (await search({ q: 'explained', channelId: COOKS, duration: 'long' }))
+        .ids,
+    ).toEqual([videoId('b2')])
+  })
+
+  it('sorts by views and duration', async () => {
+    // Videos without a view count sort last in either direction.
+    expect((await search({ sortBy: 'viewCount' })).ids).toEqual(
+      ['a2', 'b1', 'a1', 'b2', 'a5', 'b3', 'a3'].map(videoId),
+    )
+    expect(
+      (await search({ sortBy: 'viewCount', sortDirection: 'asc' })).ids,
+    ).toEqual(['b3', 'a5', 'b2', 'a1', 'b1', 'a2', 'a3'].map(videoId))
+    expect((await search({ sortBy: 'durationSec' })).ids).toEqual(
+      ['b3', 'a2', 'b2', 'a1', 'b1', 'a5', 'a3'].map(videoId),
+    )
+    // Relevance without a search is newest first.
+    expect((await search({ sortBy: 'relevance' })).ids).toEqual(all)
+  })
+})

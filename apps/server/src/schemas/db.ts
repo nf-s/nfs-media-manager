@@ -3,6 +3,7 @@ import {
   bigint,
   boolean,
   check,
+  customType,
   index,
   integer,
   jsonb,
@@ -747,6 +748,96 @@ export const lastfmSync = pgTable('lastfm_sync', {
   requestedByUserId: text('requested_by_user_id').references(() => user.id, {
     onDelete: 'set null',
   }),
+  ...timestampColumns,
+})
+
+const tsvector = customType<{ data: string }>({
+  dataType: () => 'tsvector',
+})
+
+export const youtubeChannel = pgTable(
+  'youtube_channel',
+  {
+    id: text('id').primaryKey(),
+    title: text('title').notNull(),
+    handle: text('handle'),
+    description: text('description'),
+    thumbnailUrl: text('thumbnail_url'),
+    uploadsPlaylistId: text('uploads_playlist_id'),
+    subscriberCount: bigint('subscriber_count', { mode: 'number' }),
+    // Cleared when a sync no longer lists the subscription; videos are kept.
+    subscribed: boolean('subscribed').notNull().default(true),
+    // The sync run that last listed the subscription.
+    seenRunId: text('seen_run_id'),
+    // Every page of the uploads playlist has been read at least once.
+    historyComplete: boolean('history_complete').notNull().default(false),
+    ...timestampColumns,
+  },
+  (table) => [
+    index('youtube_channel_subscribed_idx').on(table.subscribed, table.id),
+  ],
+)
+
+export const youtubeVideo = pgTable(
+  'youtube_video',
+  {
+    id: text('id').primaryKey(),
+    channelId: text('channel_id')
+      .notNull()
+      .references(() => youtubeChannel.id, { onDelete: 'cascade' }),
+    title: text('title').notNull(),
+    description: text('description').notNull().default(''),
+    tags: jsonb('tags').$type<string[]>().notNull().default([]),
+    // UTC, as reported by YouTube.
+    publishedAt: timestamp('published_at', {
+      mode: 'date',
+      withTimezone: false,
+    }).notNull(),
+    durationSec: integer('duration_sec').notNull().default(0),
+    viewCount: bigint('view_count', { mode: 'number' }),
+    likeCount: bigint('like_count', { mode: 'number' }),
+    commentCount: bigint('comment_count', { mode: 'number' }),
+    // none, live or upcoming.
+    live: text('live').notNull().default('none'),
+    // Title (A), channel name and tags (B), description (D).
+    search: tsvector('search').notNull(),
+    ...timestampColumns,
+  },
+  (table) => [
+    index('youtube_video_search_idx').using('gin', table.search),
+    index('youtube_video_channel_published_idx').on(
+      table.channelId,
+      table.publishedAt,
+    ),
+    index('youtube_video_published_idx').on(table.publishedAt, table.id),
+    index('youtube_video_views_idx').on(table.viewCount),
+    index('youtube_video_duration_idx').on(table.durationSec),
+  ],
+)
+
+export const youtubeSync = pgTable('youtube_sync', {
+  userId: text('user_id')
+    .primaryKey()
+    .references(() => user.id, { onDelete: 'cascade' }),
+  // running, paused, failed, complete, or idle before the first run.
+  status: text('status').notNull(),
+  schedule: text('schedule').notNull().default('daily'),
+  runId: text('run_id'),
+  // subscriptions, then videos.
+  phase: text('phase').notNull().default('subscriptions'),
+  // Next page of the subscription list, or of the current channel's uploads.
+  pageToken: text('page_token'),
+  // The last channel whose uploads were read in this run.
+  channelCursor: text('channel_cursor'),
+  channelsDone: integer('channels_done').notNull().default(0),
+  channelsTotal: integer('channels_total').notNull().default(0),
+  newVideos: integer('new_videos').notNull().default(0),
+  // When a run paused by the daily quota may continue.
+  resumeAfter: timestamp('resume_after'),
+  errorMessage: text('error_message'),
+  leaseToken: text('lease_token'),
+  startedAt: timestamp('started_at').notNull(),
+  completedAt: timestamp('completed_at'),
   ...timestampColumns,
 })
 

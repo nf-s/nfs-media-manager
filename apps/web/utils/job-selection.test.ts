@@ -5,12 +5,14 @@ import {
   LASTFM_SCROBBLE_SYNC_TASK,
   LASTFM_SPOTIFY_SEARCH_TASK,
 } from '@repo/schemas/lastfm'
+import { YOUTUBE_SYNC_TASK } from '@repo/schemas/youtube'
 import {
   canDismissJob,
   canCancelJob,
   canRetryJob,
   isScrobbleSyncJob,
   isScrobbleSpotifySearchJob,
+  isYoutubeSyncJob,
   jobTaskTitle,
   unfinishedJobItems,
   updateJobSelection,
@@ -153,6 +155,29 @@ test('scrobble sync jobs have no items but keep retry, cancel and dismiss', () =
   )
   for (const status of ['queued', 'running'] satisfies Job['status'][])
     assert.equal(canCancelJob({ ...scrobbleSync, status }), true, status)
+})
+
+test('YouTube subscription syncs are titled task jobs that resume on retry', () => {
+  const sync: Job = {
+    ...scrobbleSync,
+    id: 'youtube-sync',
+    provider: 'youtube',
+    options: { task: YOUTUBE_SYNC_TASK },
+  }
+  assert.equal(isYoutubeSyncJob(sync), true)
+  assert.equal(isScrobbleSyncJob(sync), false)
+  assert.equal(isYoutubeSyncJob(scrobbleSync), false)
+  assert.equal(jobTaskTitle(sync), 'YouTube subscription sync')
+  assert.equal(unfinishedJobItems(sync), 0)
+  assert.equal(canRetryJob(sync), true)
+  assert.equal(canRetryJob({ ...sync, status: 'cancelled' }), true)
+  assert.equal(canRetryJob({ ...sync, status: 'succeeded' }), false)
+  assert.equal(
+    canRetryJob({ ...sync, options: { ...sync.options, retryJobId: 'next' } }),
+    false,
+  )
+  assert.equal(canDismissJob(sync), true)
+  assert.equal(canCancelJob({ ...sync, status: 'running' }), true)
 })
 
 const rows = ['a', 'b', 'c', 'd', 'e']

@@ -42,11 +42,13 @@ export default function ProvidersPageClient() {
     refetchInterval: 10000,
     staleTime: 0,
   })
+  // Account-level providers belong to neither library and appear in both.
   const available =
     providers.data?.filter(
       (provider) =>
         provider.surface === 'provider' &&
-        provider.mediaTypes.includes(mediaType),
+        (provider.mediaTypes.length === 0 ||
+          provider.mediaTypes.includes(mediaType)),
     ) ?? []
   useEffect(() => {
     if (search.has('mediaType') || !selected) return
@@ -129,9 +131,11 @@ export default function ProvidersPageClient() {
                         (field) => field.required && !field.configured,
                       )
                     ? 'Needs credentials'
-                    : !item.supportsScrape
-                      ? 'Import only'
-                      : undefined,
+                    : item.mediaTypes.length === 0
+                      ? 'Account sync'
+                      : !item.supportsScrape
+                        ? 'Import only'
+                        : undefined,
               onSelect: () => {
                 const params = new URLSearchParams(window.location.search)
                 params.set('provider', item.id)

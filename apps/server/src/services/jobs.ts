@@ -25,6 +25,7 @@ import {
   LASTFM_SCROBBLE_SYNC_TASK,
   LASTFM_SPOTIFY_SEARCH_TASK,
 } from '@repo/schemas/lastfm'
+import { YOUTUBE_SYNC_TASK } from '@repo/schemas/youtube'
 import { z } from 'zod'
 import {
   PluginResultSchema,
@@ -69,6 +70,10 @@ import {
   type LastfmSyncJobContext,
   type LastfmSyncJobResult,
 } from '@/services/lastfm-scrobbles'
+import {
+  prepareYoutubeSyncRun,
+  runYoutubeSyncJob,
+} from '@/services/youtube-sync'
 import {
   createProviderRequest,
   getProviderSafety,
@@ -866,6 +871,17 @@ const taskJobs = new Map<string, TaskJobDefinition>([
       provider: 'spotify',
       prepare: prepareLastfmSpotifySearch,
       run: runLastfmSpotifySearch,
+    },
+  ],
+  [
+    YOUTUBE_SYNC_TASK,
+    {
+      provider: 'youtube',
+      prepare: async (userId) => {
+        await prepareYoutubeSyncRun(userId)
+        return {}
+      },
+      run: (context) => runYoutubeSyncJob(context),
     },
   ],
 ])

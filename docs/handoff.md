@@ -10,6 +10,8 @@ The main workflow is **browse, open an item, then drill down**. Keep table/grid 
 
 Imports and provider lookups are different operations. Preview files before writing, reconcile identifiers before creating a new film, and queue metadata for newly imported films, not every row in a CSV. A missing identifier is a visible correction task. A scrape job is **one provider and one media item**. Multi-selection creates multiple jobs; it does not change that relationship. Task jobs have no library item: Last.fm scrobble sync targets the account, and a Spotify album search targets one explicitly selected scrobbled artist/album group. Search candidates stay attached to that group until the owner chooses an album to add or link. Provider concurrency controls how many can run. See [imports](importing.md), [jobs and safety](requirements/imports-and-plugins.md) and [film Added dates](nfo-creation-dates.md).
 
+The optional [YouTube library](youtube-subscriptions.md) is a third choice in the library selector with its own Videos and Subscriptions pages. It stores subscribed channels and their videos in separate tables, not as media items: it has no scrape snapshots, tags or imports. Its sync is an account-level YouTube task job, listed with album jobs, and its search reads only stored rows through a PostgreSQL full-text index. The YouTube provider has no media types and appears in Providers in both libraries.
+
 ## How scraped data combines
 
 - **Identity:** Albums and films have internal IDs. A provider identifier points to the item; it is not its primary key. A user can correct the identifier and request a new scrape without creating another library item.

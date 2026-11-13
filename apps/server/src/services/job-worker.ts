@@ -6,6 +6,7 @@ import { db } from '@/lib/db'
 import { scrapeJob, scrapeJobItem, scrapeJobLog } from '@/schemas/db'
 import { processQueuedJobs } from '@/services/jobs'
 import { queueDueLastfmSync } from '@/services/lastfm-sync-jobs'
+import { queueDueYoutubeSync } from '@/services/youtube-sync-jobs'
 
 const workerLock = 614105
 const scheduleCheckMs = 5 * 60 * 1000
@@ -178,6 +179,7 @@ export async function startJobWorker({
     if (Date.now() >= nextScheduleCheck) {
       nextScheduleCheck = Date.now() + scheduleCheckMs
       await queueDueLastfmSync()
+      await queueDueYoutubeSync()
     }
     processing = processQueuedJobs(() => !stopping)
       .catch(fatal)

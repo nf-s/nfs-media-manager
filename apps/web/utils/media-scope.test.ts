@@ -2,9 +2,11 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { JobSchema } from '@repo/schemas/job'
 import {
+  libraryForPath,
   mediaScope,
   mediaScopeForPath,
   scopedHref,
+  switchLibraryHref,
   switchMediaScopeHref,
 } from './media-scope'
 import { jobMatchesScope, jobMediaScope } from './job-media-scope'
@@ -128,6 +130,42 @@ test('selecting the current library is a no-op that retains deep links and filte
   assert.equal(
     switchMediaScopeHref('/imports/spotify', '', 'album'),
     '/imports/spotify',
+  )
+})
+
+test('YouTube pages form a third library without changing the media scope', () => {
+  for (const path of ['/youtube', '/youtube/subscriptions'])
+    assert.equal(libraryForPath(path, 'album'), 'youtube')
+  assert.equal(libraryForPath('/youtube-other', null), 'film')
+  assert.equal(libraryForPath('/albums', null), 'album')
+  assert.equal(libraryForPath('/jobs', 'album'), 'album')
+  assert.equal(libraryForPath('/providers', null), 'film')
+  assert.equal(mediaScopeForPath('/youtube', 'album'), 'album')
+  assert.equal(mediaScopeForPath('/youtube', null), 'film')
+})
+
+test('switching to and from YouTube lands on each library home', () => {
+  for (const path of ['/albums', '/films/one', '/jobs', '/providers'])
+    assert.equal(
+      switchLibraryHref(path, 'mediaType=album&q=title', 'youtube'),
+      '/youtube',
+    )
+  assert.equal(
+    switchLibraryHref('/youtube', 'q=talk&channelId=one', 'youtube'),
+    '/youtube?q=talk&channelId=one',
+  )
+  assert.equal(
+    switchLibraryHref('/youtube/subscriptions', '', 'youtube'),
+    '/youtube/subscriptions',
+  )
+  assert.equal(switchLibraryHref('/youtube', 'q=talk', 'album'), '/albums')
+  assert.equal(
+    switchLibraryHref('/youtube/subscriptions', 'mediaType=album', 'film'),
+    '/films',
+  )
+  assert.equal(
+    switchLibraryHref('/jobs', 'mediaType=film&status=failed', 'album'),
+    '/jobs?status=failed&mediaType=album',
   )
 })
 

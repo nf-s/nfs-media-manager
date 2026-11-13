@@ -5,6 +5,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { JobSchema, type Job } from '@repo/schemas/job'
 import { LASTFM_SCROBBLE_SYNC_TASK } from '@repo/schemas/lastfm'
+import { YOUTUBE_SYNC_TASK } from '@repo/schemas/youtube'
 import JobBulkActions from './job-bulk-actions'
 import { JobLogEntry } from './pages/jobs-page-client'
 
@@ -112,6 +113,21 @@ test('scrobble sync jobs without media items keep retry, dismissal and cancellat
       ...job(id, status, 0),
       provider: 'lastfm',
       options: { task: LASTFM_SCROBBLE_SYNC_TASK },
+    })
+  const failed = render([sync('failed', 'failed')], ['failed'])
+  assert.match(failed, /value="retry">Retry \(1\)/)
+  assert.match(failed, /value="dismiss">Dismiss \(1\)/)
+  const running = render([sync('running', 'running')], ['running'])
+  assert.match(running, /value="retry">Cancel and retry \(1\)/)
+  assert.match(running, /value="cancel">Cancel \(1\)/)
+})
+
+test('YouTube subscription syncs without media items keep retry, dismissal and cancellation', () => {
+  const sync = (id: string, status: Job['status']) =>
+    JobSchema.parse({
+      ...job(id, status, 0),
+      provider: 'youtube',
+      options: { task: YOUTUBE_SYNC_TASK },
     })
   const failed = render([sync('failed', 'failed')], ['failed'])
   assert.match(failed, /value="retry">Retry \(1\)/)

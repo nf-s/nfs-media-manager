@@ -20,6 +20,7 @@ import imports from '@/routes/imports'
 import albumImports from '@/routes/album-imports'
 import spotify from '@/routes/spotify'
 import lastfm from '@/routes/lastfm'
+import youtube from '@/routes/youtube'
 import media from '@/routes/media'
 import providers from '@/routes/providers'
 import tags from '@/routes/tags'
@@ -62,8 +63,8 @@ app.on(['POST', 'GET'], '/api/auth/*', async (c) => {
 
 const requireOwner = authMiddleware()
 app.use('*', (c, next) => {
-  // Health probes and the OAuth relay carry no library/account data. Spotify's
-  // completion endpoint still requires the owner session and validates state.
+  // Health probes and the OAuth relays carry no library/account data. The
+  // completion endpoints still require the owner session and validate state.
   if (
     ['GET', 'HEAD'].includes(c.req.method) &&
     [
@@ -71,6 +72,8 @@ app.use('*', (c, next) => {
       '/api/v1/healthcheck/',
       '/api/v1/spotify/callback',
       '/api/v1/spotify/callback/',
+      '/api/v1/youtube/callback',
+      '/api/v1/youtube/callback/',
     ].includes(c.req.path)
   )
     return next()
@@ -88,6 +91,7 @@ v1ApiBase.route('/imports', imports)
 v1ApiBase.route('/album-imports', albumImports)
 v1ApiBase.route('/spotify', spotify)
 v1ApiBase.route('/lastfm', lastfm)
+v1ApiBase.route('/youtube', youtube)
 v1ApiBase.route('/tags', tags)
 v1ApiBase.route('/manual-add', manualAdd)
 v1ApiBase.route('/ai', ai)

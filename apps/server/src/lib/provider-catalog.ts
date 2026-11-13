@@ -8,6 +8,7 @@ import { musicbrainzPlugin } from '@/plugins/builtin/musicbrainz'
 import { lastfmPlugin } from '@/plugins/builtin/lastfm'
 import { discogsPlugin } from '@/plugins/builtin/discogs'
 import { serplyPlugin } from '@/plugins/builtin/serply'
+import { youtubePlugin } from '@/plugins/builtin/youtube'
 
 export interface ProviderCatalogEntry extends MediaPluginManifest {
   surface: 'provider' | 'import'
@@ -57,6 +58,13 @@ const builtinProviders = [
     surface: 'provider',
     supportsScrape: true,
     supportsLegacyImport: true,
+    pluginPath: null,
+  },
+  {
+    ...youtubePlugin.manifest,
+    surface: 'provider',
+    supportsScrape: false,
+    supportsLegacyImport: false,
     pluginPath: null,
   },
   {

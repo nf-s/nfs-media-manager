@@ -102,16 +102,17 @@ An empty library is expected. Choose Films or Albums in the top-left selector, t
 
 Open **Providers**, choose a service and select **Credentials**. Save its required fields. Saved values are encrypted in the database and take precedence over environment variables. Existing secret values are not displayed; leaving a field blank keeps its saved value.
 
-| Provider    | What to configure                                   | Where to get access                                                                                                                           | Optional environment variables                |
-| ----------- | --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------- |
-| TMDb        | API key (v3 key, not the read-access token)         | [TMDb account API settings](https://www.themoviedb.org/settings/api) and [setup guide](https://developer.themoviedb.org/docs/getting-started) | `TMDB_API_KEY`                                |
-| OMDb        | API key                                             | [Request an OMDb key](https://www.omdbapi.com/apikey.aspx)                                                                                    | `OMDB_API_KEY`                                |
-| MDBList     | API key                                             | [MDBList Preferences](https://mdblist.com/preferences/)                                                                                       | `MDBLIST_API_KEY`                             |
-| Spotify     | Client ID and client secret                         | [Spotify developer dashboard](https://developer.spotify.com/dashboard)                                                                        | `SPOTIFY_CLIENT_ID`, `SPOTIFY_CLIENT_SECRET`  |
-| MusicBrainz | App name, app version and contact email; no API key | [MusicBrainz API identification requirements](https://musicbrainz.org/doc/MusicBrainz_API/Rate_Limiting)                                      | `MB_APP_NAME`, `MB_APP_VERSION`, `MB_CONTACT` |
-| Last.fm     | API key; optional username for personal scrobbles   | [Create a Last.fm API account](https://www.last.fm/api/account/create)                                                                        | `LASTFM_API_KEY`, `LASTFM_USERNAME`           |
-| Discogs     | Personal access token                               | [Discogs developer settings](https://www.discogs.com/settings/developers)                                                                     | `DISCOGS_TOKEN`                               |
-| Serply      | API key for Rate Your Music search metadata         | [Serply dashboard](https://app.serply.io/)                                                                                                    | `SERPLY_API_KEY`                              |
+| Provider    | What to configure                                   | Where to get access                                                                                                                           | Optional environment variables                                       |
+| ----------- | --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| TMDb        | API key (v3 key, not the read-access token)         | [TMDb account API settings](https://www.themoviedb.org/settings/api) and [setup guide](https://developer.themoviedb.org/docs/getting-started) | `TMDB_API_KEY`                                                       |
+| OMDb        | API key                                             | [Request an OMDb key](https://www.omdbapi.com/apikey.aspx)                                                                                    | `OMDB_API_KEY`                                                       |
+| MDBList     | API key                                             | [MDBList Preferences](https://mdblist.com/preferences/)                                                                                       | `MDBLIST_API_KEY`                                                    |
+| Spotify     | Client ID and client secret                         | [Spotify developer dashboard](https://developer.spotify.com/dashboard)                                                                        | `SPOTIFY_CLIENT_ID`, `SPOTIFY_CLIENT_SECRET`                         |
+| MusicBrainz | App name, app version and contact email; no API key | [MusicBrainz API identification requirements](https://musicbrainz.org/doc/MusicBrainz_API/Rate_Limiting)                                      | `MB_APP_NAME`, `MB_APP_VERSION`, `MB_CONTACT`                        |
+| Last.fm     | API key; optional username for personal scrobbles   | [Create a Last.fm API account](https://www.last.fm/api/account/create)                                                                        | `LASTFM_API_KEY`, `LASTFM_USERNAME`                                  |
+| Discogs     | Personal access token                               | [Discogs developer settings](https://www.discogs.com/settings/developers)                                                                     | `DISCOGS_TOKEN`                                                      |
+| Serply      | API key for Rate Your Music search metadata         | [Serply dashboard](https://app.serply.io/)                                                                                                    | `SERPLY_API_KEY`                                                     |
+| YouTube     | OAuth client ID, client secret and redirect URI     | [Google Cloud console](https://console.cloud.google.com/) and the [YouTube guide](youtube-subscriptions.md#setup)                             | `YOUTUBE_CLIENT_ID`, `YOUTUBE_CLIENT_SECRET`, `YOUTUBE_REDIRECT_URI` |
 
 Where supported, **Check credentials** makes a small real request. Saving credentials alone does not scrape your collection. Providers without a credential-check endpoint are checked when you explicitly run a lookup. **Settings** shows limits and configurable budgets; **Activity** shows requests and cooldowns. A higher app budget cannot increase a service's account quota.
 
@@ -126,6 +127,10 @@ http://127.0.0.1:4000/api/v1/spotify/callback
 Save the same URL as Spotify's **OAuth redirect URI**, or set `SPOTIFY_CLIENT_REDIRECT_URI`. Keep the app and auth addresses on `localhost`; the callback uses `127.0.0.1` because Spotify rejects `localhost` callbacks. If your API port is different, change the callback port too. See [Spotify's redirect URI rules](https://developer.spotify.com/documentation/web-api/concepts/redirect_uri).
 
 Open **Imports → Spotify**, connect your account and approve read-only saved-album access. Preview a small batch first. A full-library read requires explicit confirmation. The [Spotify guide](spotify-album-imports.md) explains the exact authorization flow and preview limits.
+
+### YouTube subscriptions
+
+The optional YouTube library searches videos from the channels you subscribe to. It needs a Google OAuth client and a one-time sign-in; follow the [YouTube guide](youtube-subscriptions.md).
 
 ## Your first import and metadata refresh
 

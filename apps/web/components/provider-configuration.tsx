@@ -206,27 +206,32 @@ export default function ProviderConfiguration({
           MiB.
         </p>
       </section>
-      <section className="provider-settings-group">
-        <h2>Lookup rules</h2>
-        <p>
-          {provider.requireExplicitSelection
-            ? 'Exact-item lookups only. Select an item in the library to request an update.'
-            : 'More than five item/provider operations require confirmation.'}
-          {provider.maxItemsPerJob
-            ? ` Up to ${provider.maxItemsPerJob} items per job.`
-            : ''}
-        </p>
-        <p className="muted">
-          Identifiers: {provider.identifierTypes.join(', ') || 'None declared'}.
-          {provider.supportsNameLookup ? ' Name lookup is also supported.' : ''}
-          {!provider.supportsScrape ? ' No executable scraper loaded.' : ''}
-        </p>
-      </section>
+      {provider.mediaTypes.length > 0 && (
+        <section className="provider-settings-group">
+          <h2>Lookup rules</h2>
+          <p>
+            {provider.requireExplicitSelection
+              ? 'Exact-item lookups only. Select an item in the library to request an update.'
+              : 'More than five item/provider operations require confirmation.'}
+            {provider.maxItemsPerJob
+              ? ` Up to ${provider.maxItemsPerJob} items per job.`
+              : ''}
+          </p>
+          <p className="muted">
+            Identifiers:{' '}
+            {provider.identifierTypes.join(', ') || 'None declared'}.
+            {provider.supportsNameLookup
+              ? ' Name lookup is also supported.'
+              : ''}
+            {!provider.supportsScrape ? ' No executable scraper loaded.' : ''}
+          </p>
+        </section>
+      )}
       <details className="import-notes">
         <summary>Integration details</summary>
         <p>
           Supports: {capabilities.join(', ') || 'No executable capabilities'} ·{' '}
-          {provider.mediaTypes.join(', ')}
+          {provider.mediaTypes.join(', ') || 'Account level'}
         </p>
         <p>
           Provider ID: <code>{provider.id}</code>

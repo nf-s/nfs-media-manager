@@ -10,6 +10,7 @@ import { consumeCloudJobMessage } from '@/services/cloud-job-queue'
 import { withJobDispatchWakeup } from '@/services/job-dispatch-context'
 import { dispatchQueuedImports, executeQueuedImport } from '@/services/imports'
 import { queueDueLastfmSync } from '@/services/lastfm-sync-jobs'
+import { queueDueYoutubeSync } from '@/services/youtube-sync-jobs'
 import { withCloudQueue } from '@/lib/runtime'
 import {
   AI_TEXT_MODEL,
@@ -222,6 +223,7 @@ export default {
       await dispatchQueuedImports()
       if (env.SCRAPING_ENABLED) {
         await queueDueLastfmSync()
+        await queueDueYoutubeSync()
         for (const plugin of await listLoadedScrapePlugins()) {
           await bindings.PROVIDER_COORDINATORS.getByName(
             plugin.manifest.id,
