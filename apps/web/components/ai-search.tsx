@@ -2,7 +2,7 @@
 
 import { useEffect, useId, useRef, useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { Mic, Search, Square } from 'lucide-react'
+import { Eye, LoaderCircle, Mic, Square, X } from 'lucide-react'
 import { Button } from '@repo/ui/components/ui/button'
 import {
   AI_AUDIO_MAX_SECONDS,
@@ -23,47 +23,35 @@ import { describeAiSearchPlan } from '@/utils/ai-search'
 import { errorMessage } from './lastfm-sync'
 import { useConfig } from './providers'
 import { useAiMicrophone } from './use-ai-microphone'
+import BrowseFilterAutocomplete, {
+  type BrowseFilterAutocompleteProps,
+} from './browse-filter-autocomplete'
 import styles from './ai-search.module.css'
 
 type Props = {
   mediaType: 'album' | 'film'
   fields: BrowseField[]
+  queryIdentity: string
+  autocomplete: BrowseFilterAutocompleteProps
   onApply: (plan: AiSearchPlan) => void
 }
 
-export default function AiSearch(props: Props) {
-  const [open, setOpen] = useState(false)
-  const details = useRef<HTMLDetailsElement>(null)
-  return (
-    <details
-      ref={details}
-      className={`toolbar-popover ${styles.popover}`}
-      onToggle={(event) => setOpen(event.currentTarget.open)}
-    >
-      <summary>
-        <Search size={15} /> AI search
-      </summary>
-      {open && (
-        <AiSearchPanel
-          {...props}
-          onApply={(plan) => {
-            props.onApply(plan)
-            if (details.current) details.current.open = false
-            setOpen(false)
-          }}
-        />
-      )}
-    </details>
-  )
-}
-
-function AiSearchPanel({ mediaType, fields, onApply }: Props) {
+export default function AiSearch({
+  mediaType,
+  fields,
+  queryIdentity,
+  autocomplete,
+  onApply,
+}: Props) {
   const { apiBaseUrl } = useConfig()
   const id = useId()
-  const [text, setText] = useState('')
+  const [open, setOpen] = useState(false)
+  const [submittedText, setSubmittedText] = useState('')
   const [result, setResult] = useState<AiSearchResponse | null>(null)
   const [error, setError] = useState('')
   const sequence = useRef(0)
+  const currentQuery = useRef(queryIdentity)
+  currentQuery.current = queryIdentity
   const pending = useRef<{
     controller: AbortController
     timeout: ReturnType<typeof setTimeout>
@@ -124,11 +112,13 @@ function AiSearchPanel({ mediaType, fields, onApply }: Props) {
       { audio, signal: request.signal },
       {
         onSuccess: (data) => {
-          if (request.id !== sequence.current) return
-          setText(data.text)
+          if (!isCurrentRequest(request)) return
+          autocomplete.onValueChange(data.text)
+          submit(data.text)
         },
         onError: (failure) => {
-          if (request.id !== sequence.current) return
+          if (!isCurrentRequest(request)) return
+          setOpen(true)
           setError(
             request.signal.aborted
               ? 'Transcription timed out. Try again.'
@@ -163,13 +153,25 @@ function AiSearchPanel({ mediaType, fields, onApply }: Props) {
 
   function beginRequest() {
     cancelRequest()
-    setResult(null)
     setError('')
+    setOpen(false)
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), 90000)
     pending.current = { controller, timeout }
-    return { id: sequence.current, signal: controller.signal }
+    return { id: sequence.current, signal: controller.signal, queryIdentity }
   }
+
+  function isCurrentRequest(request: ReturnType<typeof beginRequest>) {
+    return (
+      request.id === sequence.current &&
+      request.queryIdentity === currentQuery.current
+    )
+  }
+
+  useEffect(() => {
+    cancelRequest()
+    microphone.cancel()
+  }, [queryIdentity])
 
   function finishRequest(request: number) {
     if (request !== sequence.current) return
@@ -177,10 +179,15 @@ function AiSearchPanel({ mediaType, fields, onApply }: Props) {
     pending.current = null
   }
 
-  function submit() {
+  function submit(text: string) {
+    if (!status.data?.available) {
+      setOpen(true)
+      return
+    }
     const input = AiSearchInputSchema.safeParse({ mediaType, text })
     if (!input.success) {
       setError(`Enter a request of up to ${AI_SEARCH_MAX_TEXT} characters.`)
+      setOpen(true)
       return
     }
     const request = beginRequest()
@@ -188,10 +195,15 @@ function AiSearchPanel({ mediaType, fields, onApply }: Props) {
       { input: input.data, signal: request.signal },
       {
         onSuccess: (data) => {
-          if (request.id === sequence.current) setResult(data)
+          if (!isCurrentRequest(request)) return
+          setResult(data)
+          setSubmittedText(input.data.text)
+          if (data.plan) onApply(data.plan)
+          setOpen(!data.plan || data.warnings.length > 0)
         },
         onError: (failure) => {
-          if (request.id !== sequence.current) return
+          if (!isCurrentRequest(request)) return
+          setOpen(true)
           setError(
             request.signal.aborted
               ? 'Search timed out. Try again.'
@@ -206,169 +218,187 @@ function AiSearchPanel({ mediaType, fields, onApply }: Props) {
     )
   }
 
+  useEffect(() => {
+    if (microphone.error) setOpen(true)
+  }, [microphone.error])
+
   const recording = microphone.phase !== 'idle'
   const working = search.isPending || transcription.isPending
   const available = status.data?.available === true
   const descriptions = result?.plan
     ? describeAiSearchPlan(result.plan, fields)
     : []
+  const hasDetails = Boolean(
+    result || error || microphone.error || (!status.isPending && !available),
+  )
+  const activity =
+    microphone.phase === 'requesting'
+      ? 'Allow microphone access…'
+      : microphone.phase === 'recording'
+        ? 'Dictating…'
+        : transcription.isPending
+          ? 'Transcribing…'
+          : search.isPending
+            ? 'Interpreting…'
+            : ''
+
+  function cancel() {
+    cancelRequest()
+    microphone.cancel()
+    setOpen(false)
+  }
+
   return (
-    <div className={`popover-panel ${styles.panel}`}>
-      <form
-        onSubmit={(event) => {
-          event.preventDefault()
-          if (!working && !recording && available) submit()
-        }}
-      >
-        <label htmlFor={`${id}-text`}>
-          Describe the {mediaType === 'album' ? 'albums' : 'films'} to find
-        </label>
-        <textarea
-          id={`${id}-text`}
-          value={text}
-          maxLength={AI_SEARCH_MAX_TEXT}
-          rows={3}
-          disabled={recording || transcription.isPending}
-          placeholder={
-            mediaType === 'album'
-              ? 'Rock albums I rarely play with a high RYM rating'
-              : 'Unwatched films with a high IMDb rating'
-          }
-          onChange={(event) => {
-            cancelRequest()
-            setText(event.target.value)
-            setResult(null)
-            setError('')
-            microphone.clearError()
-          }}
-        />
-        <div className={styles.actions}>
-          <Button
-            type="button"
-            variant="outline"
-            className="icon-button"
-            aria-label={
-              microphone.phase === 'recording'
-                ? 'Stop recording'
-                : 'Record search'
-            }
-            title={
-              microphone.phase === 'recording'
-                ? 'Stop recording'
-                : 'Record search'
-            }
-            disabled={
-              !available || working || microphone.phase === 'requesting'
-            }
-            onClick={() => {
-              if (microphone.phase === 'recording') microphone.stop()
-              else {
-                setResult(null)
-                setError('')
-                void microphone.start()
+    <BrowseFilterAutocomplete
+      {...autocomplete}
+      value={
+        recording || transcription.isPending ? activity : autocomplete.value
+      }
+      disabled={recording || transcription.isPending}
+      hideSuggestions={open || recording || working}
+      onFocus={() => setOpen(false)}
+      onValueChange={(value) => {
+        cancelRequest()
+        setError('')
+        microphone.clearError()
+        setOpen(false)
+        autocomplete.onValueChange(value)
+      }}
+      onAiSearch={submit}
+      aiSearchDisabled={recording || working || status.isPending}
+      inputActions={
+        <>
+          {working || microphone.phase === 'requesting' ? (
+            <LoaderCircle
+              size={15}
+              className={styles.spinner}
+              aria-hidden="true"
+            />
+          ) : (
+            <Button
+              type="button"
+              variant="ghost"
+              className="icon-button"
+              aria-label={
+                recording ? 'Stop recording and search' : 'Record search'
               }
-            }}
-          >
-            {microphone.phase === 'recording' ? (
-              <Square size={15} />
-            ) : (
-              <Mic size={15} />
-            )}
-          </Button>
-          {recording && (
-            <Button type="button" variant="ghost" onClick={microphone.cancel}>
-              Cancel recording
+              title={recording ? 'Stop recording and search' : 'Record search'}
+              disabled={status.isPending}
+              onClick={() => {
+                if (recording) microphone.stop()
+                else if (!available) setOpen(true)
+                else {
+                  setOpen(false)
+                  setError('')
+                  void microphone.start()
+                }
+              }}
+            >
+              {recording ? <Square size={14} /> : <Mic size={15} />}
             </Button>
           )}
-          {working && (
-            <Button type="button" variant="ghost" onClick={cancelRequest}>
-              Cancel
+          {recording || working ? (
+            <Button
+              type="button"
+              variant="ghost"
+              className="icon-button"
+              aria-label={recording ? 'Cancel recording' : 'Cancel AI search'}
+              title={recording ? 'Cancel recording' : 'Cancel AI search'}
+              onClick={cancel}
+            >
+              <X size={15} />
             </Button>
-          )}
-          <Button
-            type="submit"
-            disabled={!available || working || recording || !text.trim()}
-          >
-            {search.isPending ? 'Interpreting…' : 'Search'}
-          </Button>
-        </div>
-      </form>
-      <div role="status" aria-live="polite">
-        {status.isPending && <p>Checking AI availability…</p>}
-        {microphone.phase === 'requesting' && (
-          <p>Allow microphone access to begin recording.</p>
-        )}
-        {microphone.phase === 'recording' && (
-          <p>Recording · stops after {AI_AUDIO_MAX_SECONDS} seconds.</p>
-        )}
-        {transcription.isPending && <p>Transcribing…</p>}
-      </div>
-      {status.isError && (
-        <div role="alert">
-          <p>Could not check AI availability.</p>
-          <Button
-            type="button"
-            variant="ghost"
-            onClick={() => void status.refetch()}
-          >
-            Retry
-          </Button>
-        </div>
-      )}
-      {status.data && !available && (
-        <p role="status">{status.data.reason ?? 'AI search is unavailable.'}</p>
-      )}
-      {(error || microphone.error) && (
-        <p role="alert" className={styles.error}>
-          {error || microphone.error}
-        </p>
-      )}
-      {result && (
-        <div className={styles.result} aria-live="polite">
-          <p>{result.explanation}</p>
-          {descriptions.length > 0 && (
-            <ul aria-label="Proposed filters">
-              {descriptions.map((description, index) => (
-                <li key={index}>{description}</li>
-              ))}
-            </ul>
-          )}
-          {result.assumptions.length > 0 && (
-            <div>
-              <strong>Assumptions</strong>
-              <ul>
-                {result.assumptions.map((assumption, index) => (
-                  <li key={index}>{assumption}</li>
-                ))}
-              </ul>
-            </div>
-          )}
-          {result.warnings.length > 0 && (
-            <ul aria-label="Data limitations">
-              {result.warnings.map((warning, index) => (
-                <li key={index}>{warning}</li>
-              ))}
-            </ul>
-          )}
-          {result.plan && (
-            <div className={styles.actions}>
-              <Button
-                type="button"
-                onClick={() => {
-                  if (result.plan) onApply(result.plan)
-                }}
+          ) : hasDetails ? (
+            <details
+              open={open}
+              className={`toolbar-popover ${styles.popover}`}
+              onToggle={(event) => setOpen(event.currentTarget.open)}
+            >
+              <summary
+                aria-label="Show AI search interpretation"
+                title="Show AI search interpretation"
+                aria-controls={`${id}-interpretation`}
               >
-                Apply filters
-              </Button>
-              <span className={styles.note}>Replaces current filters.</span>
-            </div>
-          )}
-        </div>
-      )}
-      <p className={styles.note}>
-        Cloudflare processes search text and recordings. Review the
-        transcription before searching.
-      </p>
-    </div>
+                <Eye size={15} />
+              </summary>
+              <div
+                id={`${id}-interpretation`}
+                className={`popover-panel ${styles.panel}`}
+                role="region"
+                aria-label="AI search interpretation"
+              >
+                {status.isError && (
+                  <div role="alert">
+                    <p>Could not check AI availability.</p>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      onClick={() => void status.refetch()}
+                    >
+                      Retry
+                    </Button>
+                  </div>
+                )}
+                {status.data && !available && (
+                  <p role="status">
+                    {status.data.reason ?? 'AI search is unavailable.'}
+                  </p>
+                )}
+                {(error || microphone.error) && (
+                  <p role="alert" className={styles.error}>
+                    {error || microphone.error}
+                  </p>
+                )}
+                {result && (
+                  <div className={styles.result}>
+                    <div>
+                      <strong>Request</strong>
+                      <p>{submittedText}</p>
+                    </div>
+                    <p>{result.explanation}</p>
+                    {descriptions.length > 0 && (
+                      <ul aria-label="Interpreted filters">
+                        {descriptions.map((description, index) => (
+                          <li key={index}>{description}</li>
+                        ))}
+                      </ul>
+                    )}
+                    {result.assumptions.length > 0 && (
+                      <div>
+                        <strong>Assumptions</strong>
+                        <ul>
+                          {result.assumptions.map((assumption, index) => (
+                            <li key={index}>{assumption}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    {result.warnings.length > 0 && (
+                      <ul aria-label="Data limitations">
+                        {result.warnings.map((warning, index) => (
+                          <li key={index}>{warning}</li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                )}
+                <p className={styles.note}>
+                  Cloudflare processes search text and recordings.
+                </p>
+              </div>
+            </details>
+          ) : null}
+        </>
+      }
+    >
+      <span role="status" className="sr-only">
+        {microphone.phase === 'recording'
+          ? `Dictating. Stops after ${AI_AUDIO_MAX_SECONDS} seconds.`
+          : activity ||
+            (result?.plan
+              ? 'AI search applied. Use the eye icon to review its interpretation.'
+              : '')}
+      </span>
+    </BrowseFilterAutocomplete>
   )
 }

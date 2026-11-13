@@ -1,6 +1,6 @@
 # AI search and voice input
 
-Open **AI search** in the album or film browse toolbar. Type a request, or use the microphone button and choose **Stop** to transcribe it. Edit the transcription if needed, then choose **Search**. Review the interpretation and assumptions before choosing **Apply filters**. The resulting filters use the normal browse controls and survive reloads and detail navigation.
+Type a request into the album or film search box, then choose **AI search** below **Filter by text** in the suggestions. Or use the microphone inside the search box and choose **Stop recording and search** when finished. Dictation transcribes the request and runs the search automatically. Successful searches immediately apply the resulting filters. Use the eye icon inside the search box to review the original request, interpretation, applied conditions and assumptions. The resulting filters use the normal browse controls and survive reloads and detail navigation.
 
 Examples:
 
@@ -29,7 +29,7 @@ For the Node server, configure `CLOUDFLARE_AI_ACCOUNT_ID` and `CLOUDFLARE_AI_API
 
 ## Audio and data handling
 
-Microphone recording requires HTTPS or localhost and a browser supporting MediaRecorder. The browser asks for microphone access when recording starts. Recordings stop at 60 seconds and are limited to 5 MB. Cancel or close the control to discard a recording. Transcription fills the editable search input; it does not execute a search automatically.
+Microphone recording requires HTTPS or localhost and a browser supporting MediaRecorder. The browser asks for microphone access when recording starts. Recordings stop at 60 seconds and are limited to 5 MB. Use the cancel icon to discard a recording or cancel a pending AI request. Leaving the library releases the microphone and cancels pending requests. Transcription automatically starts AI search; typing a new request while interpretation is pending cancels the older request. Failed or cancelled searches leave the current filters unchanged.
 
 Only the submitted text and public filter definitions go to the text model. Recorded audio goes to the transcription model. Library records, listening history, stored tag vocabularies, plugin definitions and provider secrets are not sent to either model. Audio and raw prompts are not saved by the application; only applied browse conditions are retained in the URL and the existing browse preferences. API logs contain paths/statuses/timing, not request bodies. Cloudflare's own processing is governed by its [Workers AI data usage policy](https://developers.cloudflare.com/workers-ai/platform/data-usage/).
 

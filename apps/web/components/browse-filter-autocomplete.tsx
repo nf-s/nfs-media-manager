@@ -1,17 +1,75 @@
 'use client'
 
-import { useEffect, useId, useState } from 'react'
+import { useEffect, useId, useState, type ReactNode } from 'react'
+import { Sparkles } from 'lucide-react'
 import { Input } from '@repo/ui/components/ui/input'
 import { FilterIndicator } from './filter-affordance'
 import type { BrowseFilter } from '@repo/schemas/browse'
 import {
   browseSuggestions,
-  enterSuggestion,
   suggestionKey,
   type BrowseSuggestion,
   type FilterSuggestion,
   type TitleSuggestion,
 } from '@/utils/browse-suggestions'
+
+export type BrowseFilterAutocompleteProps = {
+  options: FilterSuggestion[]
+  items: TitleSuggestion[]
+  titlesLoading: boolean
+  titlesError: boolean
+  placeholder: string
+  emptyMessage?: string
+  value: string
+  onValueChange: (value: string) => void
+  onAddFilter: (filter: BrowseFilter) => void
+  onApplyText: (value: string) => void
+  onOpenItem: (id: string, trigger: HTMLElement | undefined) => void
+  inputActions?: ReactNode
+  children?: ReactNode
+  onAiSearch?: (value: string) => void
+  aiSearchDisabled?: boolean
+  disabled?: boolean
+  hideSuggestions?: boolean
+  onFocus?: () => void
+}
+
+type SearchMenuOption =
+  | { key: string; kind: 'suggestion'; suggestion: BrowseSuggestion }
+  | { key: string; kind: 'text' }
+  | { key: string; kind: 'ai'; disabled: boolean }
+
+export function autocompleteOptions(
+  suggestions: BrowseSuggestion[],
+  value: string,
+  includeAi: boolean,
+  aiDisabled = false,
+): SearchMenuOption[] {
+  const options: SearchMenuOption[] = suggestions.map((suggestion) => ({
+    key: suggestionKey(suggestion),
+    kind: 'suggestion',
+    suggestion,
+  }))
+  if (value.trim()) {
+    options.push({ key: 'action:text', kind: 'text' })
+    if (includeAi)
+      options.push({ key: 'action:ai', kind: 'ai', disabled: aiDisabled })
+  }
+  return options
+}
+
+export function autocompleteEnterOption(
+  options: SearchMenuOption[],
+  activeKey: string | null,
+) {
+  return (
+    options.find((option) => option.key === activeKey) ??
+    options.find(
+      (option) =>
+        option.kind === 'suggestion' && option.suggestion.kind === 'item',
+    )
+  )
+}
 
 export default function BrowseFilterAutocomplete({
   options,
@@ -24,27 +82,27 @@ export default function BrowseFilterAutocomplete({
   onAddFilter,
   onApplyText,
   onOpenItem,
-}: {
-  options: FilterSuggestion[]
-  items: TitleSuggestion[]
-  titlesLoading: boolean
-  titlesError: boolean
-  placeholder: string
-  emptyMessage?: string
-  value: string
-  onValueChange: (value: string) => void
-  onAddFilter: (filter: BrowseFilter) => void
-  onApplyText: (value: string) => void
-  onOpenItem: (id: string, trigger: HTMLElement | undefined) => void
-}) {
+  inputActions,
+  children,
+  onAiSearch,
+  aiSearchDisabled = false,
+  disabled = false,
+  hideSuggestions = false,
+  onFocus,
+}: BrowseFilterAutocompleteProps) {
   const id = useId()
   const [open, setOpen] = useState(false)
   const [activeKey, setActiveKey] = useState<string | null>(null)
   const [pendingEnter, setPendingEnter] = useState<string | null>(null)
   const suggestions = browseSuggestions(options, items, value)
-  const active = suggestions.findIndex(
-    (option) => suggestionKey(option) === activeKey,
+  const menuOptions = autocompleteOptions(
+    suggestions,
+    value,
+    Boolean(onAiSearch),
+    aiSearchDisabled,
   )
+  const active = menuOptions.findIndex((option) => option.key === activeKey)
+  const menuVisible = open && !hideSuggestions && !disabled
   function select(option: BrowseSuggestion) {
     if (option.kind === 'item') {
       setOpen(false)
@@ -55,19 +113,36 @@ export default function BrowseFilterAutocomplete({
     setActiveKey(null)
     setPendingEnter(null)
   }
+  function selectMenuOption(option: SearchMenuOption) {
+    if (option.kind === 'suggestion') {
+      select(option.suggestion)
+      return
+    }
+    if (option.kind === 'ai' && option.disabled) return
+    setPendingEnter(null)
+    setActiveKey(null)
+    setOpen(false)
+    if (option.kind === 'ai') onAiSearch?.(value.trim())
+    else onApplyText(value.trim())
+  }
   useEffect(() => {
+    if (hideSuggestions || disabled) {
+      if (pendingEnter !== null) setPendingEnter(null)
+      if (activeKey !== null) setActiveKey(null)
+      return
+    }
     if (pendingEnter !== value || titlesLoading) return
     setPendingEnter(null)
-    const option = enterSuggestion(suggestions, -1)
-    if (option && !titlesError) select(option)
+    const option = autocompleteEnterOption(menuOptions, null)
+    if (option && !titlesError) selectMenuOption(option)
     else if (!titlesError) {
       onApplyText(value.trim())
       setOpen(false)
     }
   })
   function highlight(index: number) {
-    const option = suggestions[index]
-    setActiveKey(option ? suggestionKey(option) : null)
+    const option = menuOptions[index]
+    setActiveKey(option?.key ?? null)
     document
       .getElementById(`${id}-${index}`)
       ?.scrollIntoView({ block: 'nearest' })
@@ -79,112 +154,142 @@ export default function BrowseFilterAutocomplete({
         if (!event.currentTarget.contains(event.relatedTarget)) {
           setOpen(false)
           setPendingEnter(null)
+          setActiveKey(null)
         }
       }}
     >
-      <Input
-        id={`${id}-input`}
-        aria-label="Search and filter library"
-        role="combobox"
-        aria-expanded={open}
-        aria-controls={`${id}-list`}
-        aria-autocomplete="list"
-        aria-activedescendant={
-          open && active >= 0 ? `${id}-${active}` : undefined
-        }
-        placeholder={placeholder}
-        value={value}
-        onFocus={() => setOpen(true)}
-        onChange={(event) => {
-          onValueChange(event.target.value)
-          setOpen(true)
-          setActiveKey(null)
-          setPendingEnter(null)
-        }}
-        onKeyDown={(event) => {
-          if (event.key === 'Escape') {
-            event.stopPropagation()
-            setOpen(false)
-            setPendingEnter(null)
+      <div className={`search-input-wrap${inputActions ? ' has-actions' : ''}`}>
+        <Input
+          id={`${id}-input`}
+          aria-label="Search and filter library"
+          role="combobox"
+          aria-expanded={menuVisible}
+          aria-controls={`${id}-list`}
+          aria-autocomplete="list"
+          aria-activedescendant={
+            menuVisible && active >= 0 ? `${id}-${active}` : undefined
           }
-          if (event.key === 'ArrowDown') {
-            event.preventDefault()
+          disabled={disabled}
+          placeholder={placeholder}
+          value={value}
+          onFocus={() => {
             setOpen(true)
-            highlight(Math.min(active + 1, suggestions.length - 1))
-          }
-          if (event.key === 'ArrowUp') {
-            event.preventDefault()
-            highlight(Math.max(-1, active - 1))
-          }
-          if (event.key === 'Enter') {
-            event.preventDefault()
-            const option = enterSuggestion(suggestions, active)
-            if (open && option) select(option)
-            else if (value.trim() && titlesLoading) setPendingEnter(value)
-            else if (titlesError) setOpen(true)
-            else {
-              onApplyText(value.trim())
+            onFocus?.()
+          }}
+          onChange={(event) => {
+            onValueChange(event.target.value)
+            setOpen(true)
+            setActiveKey(null)
+            setPendingEnter(null)
+          }}
+          onKeyDown={(event) => {
+            if (event.key === 'Escape') {
+              event.stopPropagation()
               setOpen(false)
+              setPendingEnter(null)
+              setActiveKey(null)
             }
-          }
-        }}
-      />
-      {open && (
+            if (hideSuggestions || disabled) {
+              if (['Enter', 'ArrowDown', 'ArrowUp'].includes(event.key))
+                event.preventDefault()
+              return
+            }
+            if (event.key === 'ArrowDown') {
+              event.preventDefault()
+              setOpen(true)
+              setPendingEnter(null)
+              highlight(Math.min(active + 1, menuOptions.length - 1))
+            }
+            if (event.key === 'ArrowUp') {
+              event.preventDefault()
+              setOpen(true)
+              setPendingEnter(null)
+              highlight(Math.max(-1, active - 1))
+            }
+            if (event.key === 'Enter') {
+              event.preventDefault()
+              const option = autocompleteEnterOption(menuOptions, activeKey)
+              if (menuVisible && option) selectMenuOption(option)
+              else if (value.trim() && titlesLoading) setPendingEnter(value)
+              else if (titlesError) setOpen(true)
+              else {
+                onApplyText(value.trim())
+                setOpen(false)
+              }
+            }
+          }}
+        />
+        {inputActions && (
+          <div className="search-input-actions">{inputActions}</div>
+        )}
+      </div>
+      {menuVisible && (
         <div className="search-menu">
           <div id={`${id}-list`} role="listbox" aria-label="Filter suggestions">
             {titlesLoading && (
-              <p role="status" className="quiet">
+              <p role="status" className="quiet search-status">
                 Loading suggestions...
               </p>
             )}
             {titlesError && (
-              <p role="alert" className="quiet">
+              <p role="alert" className="quiet search-status">
                 Could not load suggestions. Try searching again.
               </p>
             )}
-            {suggestions.map((option, index) => (
+            {!suggestions.length && !titlesLoading && !titlesError && (
+              <p className="quiet search-status">No matching suggestions.</p>
+            )}
+            {menuOptions.map((option, index) => (
               <button
                 type="button"
                 role="option"
                 aria-selected={index === active}
                 id={`${id}-${index}`}
-                key={suggestionKey(option)}
+                key={option.key}
+                className={
+                  option.kind === 'text'
+                    ? 'search-text-action'
+                    : option.kind === 'ai'
+                      ? 'search-ai-action'
+                      : undefined
+                }
+                aria-disabled={
+                  option.kind === 'ai' && option.disabled ? true : undefined
+                }
                 onMouseDown={(event) => event.preventDefault()}
-                onClick={() => select(option)}
+                onClick={() => selectMenuOption(option)}
               >
                 <span>
-                  {option.kind === 'filter' && <FilterIndicator />}
-                  {option.kind === 'item'
-                    ? option.item.label
-                    : option.filter.label}
+                  {option.kind === 'suggestion' ? (
+                    <>
+                      {option.suggestion.kind === 'filter' && (
+                        <FilterIndicator />
+                      )}
+                      {option.suggestion.kind === 'item'
+                        ? option.suggestion.item.label
+                        : option.suggestion.filter.label}
+                    </>
+                  ) : option.kind === 'text' ? (
+                    <>Filter by text: "{value.trim()}"</>
+                  ) : (
+                    <>
+                      <Sparkles size={14} aria-hidden="true" /> AI search
+                    </>
+                  )}
                 </span>
-                <small>
-                  {option.kind === 'item'
-                    ? 'Open'
-                    : option.filter.count.toLocaleString()}
-                </small>
+                {option.kind === 'suggestion' && (
+                  <small>
+                    {option.suggestion.kind === 'item'
+                      ? 'Open'
+                      : option.suggestion.filter.count.toLocaleString()}
+                  </small>
+                )}
               </button>
             ))}
-            {!suggestions.length && !titlesLoading && (
-              <p className="quiet">No matching suggestions.</p>
-            )}
           </div>
-          {value.trim() && (
-            <button
-              type="button"
-              className="search-text-action"
-              onMouseDown={(event) => event.preventDefault()}
-              onClick={() => {
-                setPendingEnter(null)
-                onApplyText(value.trim())
-                setOpen(false)
-              }}
-            >
-              Filter by text: "{value.trim()}"
-            </button>
-          )}
         </div>
       )}
+      {children}
     </div>
   )
 }

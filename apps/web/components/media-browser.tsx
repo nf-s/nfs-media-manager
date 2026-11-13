@@ -47,7 +47,6 @@ import { useConfig } from './providers'
 import { fetchApiData } from '@/utils/api'
 import { useVirtualBrowse } from '@/hooks/useVirtualBrowse'
 import { useBrowseFacets } from '@/hooks/useBrowseFacets'
-import BrowseFilterAutocomplete from './browse-filter-autocomplete'
 import AiSearch from './ai-search'
 import { aiSearchParams } from '@/utils/ai-search'
 import MediaArtwork from './media-artwork'
@@ -725,28 +724,28 @@ export default function MediaBrowser({
               Refresh
             </Link>
           )}
-          <BrowseFilterAutocomplete
-            items={titleItems}
-            titlesLoading={titlesLoading}
-            titlesError={
-              facets.isError ||
-              (titleFilters.length > 0 && titleMatches.isError)
-            }
-            onOpenItem={openDetail}
-            options={options}
-            placeholder="Search titles, people, tags, sources..."
-            value={draft}
-            onValueChange={setDraft}
-            onAddFilter={addFilter}
-            onApplyText={(value) => {
-              setParams({ q: value || null })
-              setDraft('')
-            }}
-          />
           <AiSearch
             key={mediaType}
             mediaType={mediaType}
             fields={fields}
+            queryIdentity={queryKey}
+            autocomplete={{
+              items: titleItems,
+              titlesLoading,
+              titlesError:
+                facets.isError ||
+                (titleFilters.length > 0 && titleMatches.isError),
+              onOpenItem: openDetail,
+              options,
+              placeholder: 'Search titles, people, tags, sources...',
+              value: draft,
+              onValueChange: setDraft,
+              onAddFilter: addFilter,
+              onApplyText: (value) => {
+                setParams({ q: value || null })
+                setDraft('')
+              },
+            }}
             onApply={(plan) => {
               setParams(aiSearchParams(plan))
               setDraft('')
