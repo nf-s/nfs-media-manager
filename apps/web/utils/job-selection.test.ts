@@ -5,8 +5,13 @@ import {
   LASTFM_SCROBBLE_SYNC_TASK,
   LASTFM_SPOTIFY_SEARCH_TASK,
 } from '@repo/schemas/lastfm'
+import {
+  SPOTIFY_PLAYLIST_ADD_ALBUM_TASK,
+  SPOTIFY_PLAYLIST_LISTING_TASK,
+} from '@repo/schemas/tracks'
 import { YOUTUBE_SYNC_TASK } from '@repo/schemas/youtube'
 import {
+  activeJobProgressLabel,
   canDismissJob,
   canCancelJob,
   canRetryJob,
@@ -197,6 +202,65 @@ test('YouTube subscription syncs are titled task jobs that resume on retry', () 
   )
   assert.equal(canDismissJob(sync), true)
   assert.equal(canCancelJob({ ...sync, status: 'running' }), true)
+})
+
+test('Spotify playlist listings and album additions are titled, retryable task jobs', () => {
+  const listing: Job = {
+    ...scrobbleSync,
+    id: 'playlist-listing',
+    provider: 'spotify',
+    options: { task: SPOTIFY_PLAYLIST_LISTING_TASK },
+  }
+  const addition: Job = {
+    ...listing,
+    id: 'playlist-addition',
+    options: {
+      task: SPOTIFY_PLAYLIST_ADD_ALBUM_TASK,
+      albumTitle: 'Album fixture',
+      playlistName: 'Synthetic mix',
+    },
+  }
+  assert.equal(jobTaskTitle(listing), 'Spotify playlist list')
+  assert.equal(
+    jobTaskTitle(addition),
+    'Add album to Spotify playlist · Album fixture to Synthetic mix',
+  )
+  assert.equal(
+    jobTaskTitle({ options: { task: SPOTIFY_PLAYLIST_ADD_ALBUM_TASK } }),
+    'Add album to Spotify playlist',
+  )
+  for (const job of [listing, addition]) {
+    assert.equal(canRetryJob(job), true)
+    assert.equal(canRetryJob({ ...job, status: 'succeeded' }), false)
+    assert.equal(canDismissJob(job), true)
+  }
+})
+
+test('active page-reading jobs show their page progress', () => {
+  const running: Job = {
+    ...scrobbleSync,
+    status: 'running',
+    options: {
+      task: SPOTIFY_PLAYLIST_LISTING_TASK,
+      progress: { pagesRead: 2, totalPages: 4 },
+    },
+  }
+  assert.equal(activeJobProgressLabel(running), '2 of 4 pages')
+  assert.equal(
+    activeJobProgressLabel({
+      ...running,
+      options: {
+        ...running.options,
+        progress: { pagesRead: 1, totalPages: null },
+      },
+    }),
+    '1 page',
+  )
+  assert.equal(
+    activeJobProgressLabel({ ...running, status: 'succeeded' }),
+    null,
+  )
+  assert.equal(activeJobProgressLabel(scrobbleSync), null)
 })
 
 const rows = ['a', 'b', 'c', 'd', 'e']

@@ -33,6 +33,8 @@ Each imported playlist and Liked Songs has its own schedule: off (the default), 
 
 The schedule queues nothing for a playlist whose import is queued or running, or while Spotify is cooling down or halted. After a failed or cancelled import it waits until the owner imports the playlist again. Legacy playlists without a Spotify source cannot be scheduled.
 
+The schedule is set on the [playlist drawer's](#playlist-drawer) **Sync** tab. The Playlists table shows each playlist's schedule and last check.
+
 | Limit                           | Behaviour                                                                                                                                                                                                             |
 | ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Playlists owned by someone else | Spotify returns the contents only of playlists the account owns or collaborates on. Others are listed but cannot be chosen, and their contents are never requested. Copy the playlist into your account to import it. |
@@ -44,7 +46,14 @@ An imported playlist that shares its name with a playlist from the legacy album 
 
 **Remove** on the Playlists page removes an imported playlist and the tracks that were only in it. Album memberships from the legacy import are kept.
 
-A playlist's own page lists its tracks in playlist order with their added dates, then any album members from the legacy import, 100 entries a page by default.
+## Playlist drawer
+
+Selecting a playlist's row or name on the Playlists page opens it in a drawer. A playlist shown in the Tracks table or in a track's details opens the same drawer over Tracks. The drawer is kept in the URL: `?playlist=<playlist ID>` opens it on the **Tracks** tab and `&tab=sync` on the **Sync** tab, on `/playlists` or `/tracks`, so back, forward, reload and shared links reopen it. Escape, the backdrop and the close button close it.
+
+The header shows the name, source, owner, track count and duration, **Filter tracks** (Tracks filtered by the playlist, as a required filter) and a Spotify link when the playlist has one.
+
+- **Tracks** lists the entries in playlist order with their added dates, then any album members from the legacy import, in the shared table. It reads 100 entries a page (`GET /api/v1/playlists/:id`) and loads the next page as the table scrolls. A track title opens the track: in the track drawer over Tracks, or on its own page from the Playlists page. On a phone-width screen the Album and Added columns are hidden.
+- **Sync** sets the schedule (`PUT /api/v1/playlists/:id/sync-schedule`) and has **Sync now**, which queues the playlist's normal import (Liked Songs or the Spotify playlist) and shows the server's message if it is refused, for example a playlist missing from the stored playlist list. It shows when the playlist was last checked, when its contents were last stored, and the next scheduled import or why there is none: the schedule is off, an import is in progress, or the last import failed or was cancelled and waits for **Sync now**. The latest import job shows its status, "N of M pages" read (or "N pages" until the total is known), its error, its finish time and a link to it in Jobs. While it is queued or running the drawer reads the playlist again every two seconds, and when it ends the playlist, Playlists, Tracks and album playlist views are refreshed. A legacy playlist says it is not synced from Spotify.
 
 ## Adding an album to a playlist
 
@@ -76,9 +85,11 @@ Tracks have their own table with search, [AI search](ai-search.md), filters, ran
 | Album tags               | Tags of the linked library album. Empty when the album is not in library. |
 | Scrobbles, Last listened | Linked Last.fm scrobbles; see [scrobbles](#scrobbles).                    |
 
-Setting two or more playlists to **required** shows the tracks in all of them. Opening a playlist from the Playlists page shows Tracks filtered by that playlist.
+Setting two or more playlists to **required** shows the tracks in all of them. A playlist in the **Playlists** column opens the [playlist drawer](#playlist-drawer), whose **Filter tracks** applies the filter.
 
-A track's detail shows its playlists, Spotify link, listening history and, when its album is in the library, a link to the album and the album's tags, labelled as coming from the album.
+A track's detail shows its playlists (each opens the playlist drawer), Spotify link, listening history and, when its album is in the library, a link to the album and the album's tags, labelled as coming from the album.
+
+With [Spotify playback](spotify-playback.md) connected, each row of the Tracks table has a play button and, on hover, an add-to-queue button; the track drawer has **Play** and **Add to queue**; and in the playlist drawer a row's number plays the track on hover, as in an album's track list. A track plays on its own, not as part of its album or playlist. Tracks without a Spotify track ID have no play controls, and none appear while playback is off. The player dock opens the track's library album only when it has one.
 
 ## Albums and playlists
 
@@ -123,3 +134,4 @@ Stored Last.fm scrobbles link to library tracks by artist and track name. A scro
 - `apps/server/src/lib/track-matching.test.ts`: linking rules.
 - `apps/server/src/lib/playlist-sync.test.ts`: schedule times.
 - `apps/server/integration/spotify-playlists.integration.ts`: the listing job, import, progress, re-import, schedule, playlist pages, album additions with batches and a retried failure, refusals, removal, limits, filters, album membership and scrobble counts against a disposable database with mocked Spotify responses.
+- `apps/web/components/playlist-detail.test.tsx`, `apps/web/components/playlists.test.tsx`, `apps/web/components/play-controls.test.tsx`, `apps/web/utils/playlist-sync.test.ts` and `apps/web/utils/playlist-links.test.ts`: the playlist drawer, its deep link, sync labels and the track play controls.

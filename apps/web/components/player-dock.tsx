@@ -595,7 +595,7 @@ function NowPlayingSheet({
   const titleId = useId()
   const [devicesOpen, setDevicesOpen] = useState(false)
   const shown = describe(view)
-  const { current } = view
+  const albumId = view.current?.albumId ?? null
   useEffect(() => {
     const element = dialog.current
     const previous = document.activeElement
@@ -654,13 +654,13 @@ function NowPlayingSheet({
               <MonitorSpeaker size={16} aria-hidden="true" />
               <span>{targetLabel(view.target)}</span>
             </button>
-            {current && (
+            {albumId && (
               <button
                 type="button"
                 className="player-tool"
                 onClick={() => {
                   onClose()
-                  onOpenAlbum(current.albumId)
+                  onOpenAlbum(albumId)
                 }}
               >
                 Open album
@@ -696,6 +696,7 @@ function Dock({ view }: { view: PlaybackView }) {
   })
   const shown = describe(view)
   const { current, failure } = view
+  const albumId = current?.albumId ?? null
 
   function openAlbum(albumId: string) {
     const browsing = pathname === '/albums'
@@ -769,12 +770,12 @@ function Dock({ view }: { view: PlaybackView }) {
             >
               {track}
             </button>
-          ) : current ? (
+          ) : current && albumId ? (
             <button
               type="button"
               className="player-track"
               aria-label={`Open ${current.albumTitle}`}
-              onClick={() => openAlbum(current.albumId)}
+              onClick={() => openAlbum(albumId)}
             >
               {track}
             </button>

@@ -3,6 +3,7 @@ import { test } from 'node:test'
 import {
   albumPlayable,
   formatClock,
+  libraryTrackPlayable,
   moveEntry,
   playRequest,
   positionAt,
@@ -89,6 +90,35 @@ test('builds playable albums and tracks only from valid Spotify identifiers', ()
   assert.equal(track?.uri, trackUri)
   assert.equal(track?.title, 'Second')
   assert.equal(track?.albumTitle, 'Fixture album')
+})
+
+test('library tracks play alone, with their linked album when there is one', () => {
+  const track = {
+    spotifyTrackId: trackId,
+    title: 'Playlist track',
+    artists: ['First artist', 'Second artist'],
+    album: { id: 'library-album', title: 'Fixture album' },
+    albumName: 'Spotify album name',
+    artworkUrl: null,
+  }
+  assert.deepEqual(libraryTrackPlayable(track), {
+    kind: 'track',
+    uri: trackUri,
+    title: 'Playlist track',
+    artist: 'First artist, Second artist',
+    albumId: 'library-album',
+    albumTitle: 'Fixture album',
+    artworkUrl: null,
+    trackCount: 1,
+  })
+  const unlinked = libraryTrackPlayable({ ...track, album: null })
+  assert.equal(unlinked?.albumId, null)
+  assert.equal(unlinked?.albumTitle, 'Spotify album name')
+  assert.deepEqual(unlinked && playRequest(unlinked), { uris: [trackUri] })
+  assert.equal(
+    libraryTrackPlayable({ ...track, spotifyTrackId: 'local-file' }),
+    null,
+  )
 })
 
 test('requests an album context, an album from a track, or a single track', () => {

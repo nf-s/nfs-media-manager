@@ -1,4 +1,5 @@
 import type { AlbumListItem } from '@repo/schemas/media'
+import type { TrackListItem } from '@repo/schemas/tracks'
 import { albumSpotifyUri, spotifyTrackUri } from './album-links'
 
 export type PlayableItem = {
@@ -9,13 +10,20 @@ export type PlayableItem = {
   startUri?: string
   title: string
   artist: string
-  albumId: string
+  /** The library album; null for a library track not linked to one. */
+  albumId: string | null
   albumTitle: string
   artworkUrl: string | null
   trackCount: number | null
 }
 
 export type QueueEntry = { key: string; item: PlayableItem }
+
+/** A track from the track library (playlists and Liked Songs). */
+export type LibraryTrackSource = Pick<
+  TrackListItem,
+  'spotifyTrackId' | 'title' | 'artists' | 'album' | 'albumName' | 'artworkUrl'
+>
 
 export type AlbumSource = Pick<
   AlbumListItem,
@@ -73,6 +81,24 @@ export function trackPlayable(
     albumId: album.id,
     albumTitle: album.title,
     artworkUrl: album.artworkUrl,
+    trackCount: 1,
+  }
+}
+
+/** A library track as a single-track item; its album is the linked library album, if any. */
+export function libraryTrackPlayable(
+  track: LibraryTrackSource,
+): PlayableItem | null {
+  const uri = spotifyTrackUri(track.spotifyTrackId)
+  if (!uri) return null
+  return {
+    kind: 'track',
+    uri,
+    title: track.title,
+    artist: track.artists.join(', '),
+    albumId: track.album?.id ?? null,
+    albumTitle: track.album?.title ?? track.albumName ?? '',
+    artworkUrl: track.artworkUrl,
     trackCount: 1,
   }
 }

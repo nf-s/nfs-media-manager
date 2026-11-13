@@ -2,12 +2,7 @@
 
 import Link from 'next/link'
 import { useState } from 'react'
-import {
-  useMutation,
-  useQuery,
-  useQueryClient,
-  type QueryClient,
-} from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { z } from 'zod'
 import {
   PlaylistRemovalSchema,
@@ -27,39 +22,30 @@ import {
 import { useConfig } from './providers'
 import MediaArtwork from './media-artwork'
 import { errorMessage } from './lastfm-sync'
+import { PlaylistDrawer } from './playlist-detail'
+import { usePlaylistDrawer } from '@/hooks/usePlaylistDrawer'
 import { fetchApiData } from '@/utils/api'
 import { scopedHref } from '@/utils/media-scope'
 import { playlistAlbumsHref, playlistTracksHref } from '@/utils/playlist-links'
+import {
+  formatPlaylistDuration,
+  invalidatePlaylists,
+  playlistSourceLabel,
+} from '@/utils/playlist-sync'
+import { youtubeScheduleLabels } from '@/utils/youtube'
+
+export { formatPlaylistDuration, invalidatePlaylists }
 
 type SortKey = 'name' | 'tracks' | 'imported'
 type Direction = 'asc' | 'desc'
 
-const sourceLabels = {
-  spotify: 'Spotify',
-  'spotify-liked': 'Liked Songs',
-}
-
 const importHref = scopedHref('/imports/spotify-playlists', 'album')
 
-/** Refreshes playlists and everything their tracks appear in. */
-export function invalidatePlaylists(client: QueryClient) {
-  return client.invalidateQueries({
-    predicate: (query) =>
-      [
-        'playlists',
-        'tracks',
-        'track',
-        'albums',
-        'album',
-        'album-playlists',
-      ].includes(String(query.queryKey[0])),
+function formatShortDateTime(value: string) {
+  return new Date(value).toLocaleString(undefined, {
+    dateStyle: 'short',
+    timeStyle: 'short',
   })
-}
-
-export function formatPlaylistDuration(seconds: number) {
-  const minutes = Math.round(seconds / 60)
-  if (minutes < 60) return `${minutes} min`
-  return `${Math.floor(minutes / 60)} h ${minutes % 60} min`
 }
 
 function sortPlaylists(
@@ -87,6 +73,7 @@ export default function PlaylistsWorkspace() {
   const [direction, setDirection] = useState<Direction>('asc')
   const [confirmingId, setConfirmingId] = useState<string | null>(null)
   const [outcome, setOutcome] = useState('')
+  const drawer = usePlaylistDrawer()
   const query = useQuery({
     queryKey: ['playlists'],
     queryFn: () =>
@@ -193,6 +180,8 @@ export default function PlaylistsWorkspace() {
               <TableHead className="numeric">Albums</TableHead>
               <TableHead className="numeric">Duration</TableHead>
               <SortHead sortKey="imported" label="Imported" {...sorting} />
+              <TableHead>Schedule</TableHead>
+              <TableHead>Last checked</TableHead>
               <TableHead>
                 <span className="sr-only">Actions</span>
               </TableHead>
@@ -200,7 +189,7 @@ export default function PlaylistsWorkspace() {
           </TableHeader>
           <TableBody>
             {!playlists.length && (
-              <TableState colSpan={10} error={query.isError}>
+              <TableState colSpan={12} error={query.isError}>
                 {query.isPending ? (
                   'Loading playlists...'
                 ) : query.isError ? (
@@ -225,7 +214,25 @@ export default function PlaylistsWorkspace() {
             {playlists.map((playlist) => (
               <TableRow
                 key={playlist.id}
-                data-selected={playlist.id === confirmingId || undefined}
+                className="cursor-pointer"
+                data-selected={
+                  playlist.id === confirmingId ||
+                  playlist.id === drawer.playlistId ||
+                  undefined
+                }
+                onClick={(event) => {
+                  if (
+                    event.target instanceof Element &&
+                    event.target.closest('a, button, input, select, textarea')
+                  )
+                    return
+                  drawer.open(
+                    playlist.id,
+                    event.currentTarget.querySelector<HTMLElement>(
+                      '.table-title',
+                    ) ?? undefined,
+                  )
+                }}
               >
                 <TableCell className="w-10">
                   {playlist.artworkUrl && (
@@ -240,16 +247,17 @@ export default function PlaylistsWorkspace() {
                   )}
                 </TableCell>
                 <TableCell>
-                  <Link
-                    className="font-medium hover:underline"
-                    href={playlistTracksHref(playlist.name)}
+                  <button
+                    type="button"
+                    className="table-title hover:underline"
+                    onClick={(event) =>
+                      drawer.open(playlist.id, event.currentTarget)
+                    }
                   >
                     {playlist.name}
-                  </Link>
+                  </button>
                 </TableCell>
-                <TableCell>
-                  {playlist.source ? sourceLabels[playlist.source] : 'Library'}
-                </TableCell>
+                <TableCell>{playlistSourceLabel(playlist.source)}</TableCell>
                 <TableCell>{playlist.ownerName ?? '-'}</TableCell>
                 <TableCell className="numeric">
                   <Link href={playlistTracksHref(playlist.name)}>
@@ -278,6 +286,20 @@ export default function PlaylistsWorkspace() {
                     '-'
                   )}
                 </TableCell>
+                <TableCell className="whitespace-nowrap">
+                  {playlist.sync.syncable
+                    ? youtubeScheduleLabels[playlist.sync.schedule]
+                    : '-'}
+                </TableCell>
+                <TableCell className="whitespace-nowrap">
+                  {playlist.sync.lastCheckedAt ? (
+                    <time dateTime={playlist.sync.lastCheckedAt}>
+                      {formatShortDateTime(playlist.sync.lastCheckedAt)}
+                    </time>
+                  ) : (
+                    '-'
+                  )}
+                </TableCell>
                 <TableCell className="text-right">
                   {playlist.source && (
                     <Button
@@ -300,6 +322,15 @@ export default function PlaylistsWorkspace() {
           </TableBody>
         </table>
       </TableScroll>
+      {drawer.playlistId && (
+        <PlaylistDrawer
+          id={drawer.playlistId}
+          tab={drawer.tab}
+          topbar={<span>Playlist</span>}
+          onClose={drawer.close}
+          onTabChange={drawer.setTab}
+        />
+      )}
     </section>
   )
 }

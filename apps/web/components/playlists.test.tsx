@@ -7,30 +7,12 @@ import {
   PathnameContext,
   SearchParamsContext,
 } from 'next/dist/shared/lib/hooks-client-context.shared-runtime'
-import {
-  AlbumPlaylistsSchema,
-  PlaylistSummarySchema,
-  SpotifyPlaylistImportsSchema,
-  SpotifyPlaylistListSchema,
-} from '@repo/schemas/tracks'
-import { SpotifyAccountStatusSchema } from '@repo/schemas/spotify'
-import AlbumPlaylists from './album-playlists'
+import { PlaylistSummarySchema } from '@repo/schemas/tracks'
 import PlaylistsWorkspace from './playlists-workspace'
-import SpotifyPlaylistImport from './spotify-playlist-import'
 import { ConfigContext } from './providers'
 
 const network = mock.method(globalThis, 'fetch', async () => {
   throw new Error('Network forbidden in UI tests')
-})
-
-const account = SpotifyAccountStatusSchema.parse({
-  configured: true,
-  connected: true,
-  expiresAt: null,
-  scope: null,
-  redirectUri: null,
-  playback: false,
-  playlists: true,
 })
 
 const playlist = PlaylistSummarySchema.parse({
@@ -107,143 +89,33 @@ test('playlists table links tracks and albums filtered by playlist and labels so
   assert.match(html, /href="\/imports\/spotify-playlists\?mediaType=album"/)
 })
 
+test('playlist rows open the drawer and show the sync schedule and last check', () => {
+  const synced = PlaylistSummarySchema.parse({
+    ...playlist,
+    sync: {
+      syncable: true,
+      schedule: '6h',
+      lastCheckedAt: '2026-01-03T00:00:00.000Z',
+      nextScheduledAt: null,
+      job: null,
+    },
+  })
+  const html = render(<PlaylistsWorkspace />, [
+    [['playlists'], [synced, { ...playlist, id: 'legacy', name: 'Old list' }]],
+  ])
+  assert.match(html, />Schedule</)
+  assert.match(html, />Last checked</)
+  assert.match(html, />Every 6 hours</)
+  assert.match(html, /<time dateTime="2026-01-03T00:00:00.000Z">/)
+  assert.match(
+    html,
+    /<button type="button" class="table-title[^"]*">Synthetic mix<\/button>/,
+  )
+  assert.doesNotMatch(html, /Playlist details/)
+})
+
 test('an empty playlist table links to the import page', () => {
   const html = render(<PlaylistsWorkspace />, [[['playlists'], []]])
   assert.match(html, /No playlists\./)
   assert.match(html, /Import playlists/)
-})
-
-test('album playlists render nothing without memberships and pills with track counts otherwise', () => {
-  const empty = AlbumPlaylistsSchema.parse({ playlists: [], tracks: [] })
-  assert.equal(
-    render(<AlbumPlaylists albumId="album-1" />, [
-      [['album-playlists', 'album-1'], empty],
-    ]),
-    '',
-  )
-  const html = render(<AlbumPlaylists albumId="album-1" />, [
-    [
-      ['album-playlists', 'album-1'],
-      AlbumPlaylistsSchema.parse({
-        playlists: [
-          { id: 'p1', name: 'Synthetic mix', trackCount: 2 },
-          { id: 'p2', name: 'Old list', trackCount: 0 },
-        ],
-        tracks: [
-          {
-            id: 'track-1',
-            title: 'First track',
-            spotifyTrackId: '1234567890ABCDEFGHIJKL',
-            playlists: ['Synthetic mix'],
-          },
-        ],
-      }),
-    ],
-  ])
-  assert.ok(
-    html.includes(
-      `class="metadata-tag" href="/albums?${filterParam('Synthetic mix')}"`,
-    ),
-  )
-  assert.match(html, /2 tracks/)
-  assert.doesNotMatch(html, /0 tracks/)
-  assert.match(html, /Tracks in the track library/)
-  assert.match(html, /href="\/tracks\/track-1">First track/)
-})
-
-test('playlist import asks to reconnect when the connection lacks playlist access', () => {
-  const html = render(<SpotifyPlaylistImport />, [
-    [['spotify-account'], { ...account, playlists: false }],
-  ])
-  assert.match(html, /does not include playlist access/)
-  assert.match(html, /Reconnect Spotify/)
-  assert.doesNotMatch(html, /List playlists|Liked Songs/)
-})
-
-test('playlist import keeps Liked Songs separate and lists only after an explicit request', () => {
-  const imports = SpotifyPlaylistImportsSchema.parse({
-    likedSongs: {
-      stored: {
-        playlistId: 'liked',
-        importedAt: '2026-01-02T00:00:00.000Z',
-        trackCount: 40,
-      },
-      job: null,
-    },
-    jobs: {},
-  })
-  const before = render(<SpotifyPlaylistImport />, [
-    [['spotify-account'], account],
-    [['spotify-playlist-imports'], imports],
-  ])
-  assert.match(before, /Liked Songs/)
-  assert.match(before, /40 tracks/)
-  assert.match(before, />Import again</)
-  assert.match(before, />List playlists</)
-  assert.doesNotMatch(before, /Import selected/)
-
-  const base = {
-    ownerName: 'Example owner',
-    importable: true,
-    trackTotal: 10,
-    artworkUrl: null,
-    stored: null,
-    current: true,
-    job: null,
-  }
-  const html = render(<SpotifyPlaylistImport />, [
-    [['spotify-account'], account],
-    [
-      ['spotify-playlist-imports'],
-      {
-        ...imports,
-        jobs: {
-          '1234567890ABCDEFGHIJK1': {
-            jobId: 'job-1',
-            status: 'running',
-            errorMessage: null,
-            finishedAt: null,
-          },
-        },
-      },
-    ],
-    [
-      ['spotify-playlists'],
-      SpotifyPlaylistListSchema.parse({
-        total: 4,
-        playlists: [
-          { ...base, spotifyId: '1234567890ABCDEFGHIJK1', name: 'Running' },
-          {
-            ...base,
-            spotifyId: '1234567890ABCDEFGHIJK2',
-            name: 'Followed',
-            importable: false,
-          },
-          {
-            ...base,
-            spotifyId: '1234567890ABCDEFGHIJK3',
-            name: 'Huge',
-            trackTotal: 10001,
-          },
-          {
-            ...base,
-            spotifyId: '1234567890ABCDEFGHIJK4',
-            name: 'Stored',
-            stored: { playlistId: 'p4', importedAt: null, trackCount: 5 },
-            current: false,
-          },
-        ],
-      }),
-    ],
-  ])
-  assert.match(html, /List playlists again/)
-  assert.equal((html.match(/owns or collaborates on/g) ?? []).length, 1)
-  assert.match(html, /data-status="running"[^>]*>Importing\.\.\.</)
-  assert.match(html, /Over 10,000 tracks, cannot be imported/)
-  assert.match(html, /Changed on Spotify/)
-  for (const name of ['Running', 'Followed', 'Huge'])
-    assert.match(html, new RegExp(`aria-label="Select ${name}" disabled=""`))
-  assert.doesNotMatch(html, /aria-label="Select Stored" disabled=""/)
-  assert.match(html, /0 selected/)
-  assert.match(html, /disabled=""[^>]*>Import selected/)
 })

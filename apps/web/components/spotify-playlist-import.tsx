@@ -3,18 +3,25 @@
 import Link from 'next/link'
 import { useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import type { z } from 'zod'
+import {
+  useMutation,
+  useQuery,
+  useQueryClient,
+  type QueryClient,
+} from '@tanstack/react-query'
+import { z } from 'zod'
 import { EnrichmentResultSchema } from '@repo/schemas/job'
 import { SpotifyAccountStatusSchema } from '@repo/schemas/spotify'
 import {
+  PlaylistSummarySchema,
   SPOTIFY_PLAYLIST_ITEM_LIMIT,
   SpotifyPlaylistImportInputSchema,
   SpotifyPlaylistImportsSchema,
   SpotifyPlaylistListSchema,
+  type PlaylistSummary,
   type SpotifyPlaylist,
   type SpotifyPlaylistImportInput,
-  type SpotifyPlaylistImportJobSchema,
+  type SpotifyPlaylistJob,
 } from '@repo/schemas/tracks'
 import { Button } from '@repo/ui/components/ui/button'
 import { Input } from '@repo/ui/components/ui/input'
@@ -25,75 +32,175 @@ import {
   TableHeader,
   TableRow,
   TableScroll,
+  TableState,
 } from '@repo/ui/components/ui/table'
 import { useConfig } from './providers'
 import MediaArtwork from './media-artwork'
 import { errorMessage } from './lastfm-sync'
-import { invalidatePlaylists } from './playlists-workspace'
+import AllowPlaylistChanges from './spotify-playlist-changes'
 import { fetchApiData } from '@/utils/api'
 import { scopedHref } from '@/utils/media-scope'
+import {
+  invalidatePlaylists,
+  playlistJobActive,
+  playlistJobLabels,
+  playlistJobProgress,
+} from '@/utils/playlist-sync'
 import { spotifyAuthorizationUrl } from '@/utils/spotify-authorize'
 import { spotifyCallbackSetup } from '@/utils/spotify-setup'
+import { youtubeScheduleLabels } from '@/utils/youtube'
 
-type ImportJob = z.infer<typeof SpotifyPlaylistImportJobSchema>
+type JobLabels = Record<SpotifyPlaylistJob['status'], string>
 
-const jobLabels = {
+const listingLabels: JobLabels = {
   queued: 'Queued',
-  running: 'Importing...',
-  succeeded: 'Imported',
+  running: 'Listing',
+  succeeded: 'Listed',
   failed: 'Failed',
   cancelled: 'Cancelled',
 }
 
-function jobActive(job: ImportJob | null | undefined) {
-  return job?.status === 'queued' || job?.status === 'running'
-}
+const columnCount = 8
 
-function formatDate(value: string | null) {
-  return value ? new Date(value).toLocaleDateString() : '-'
+function formatDateTime(value: string | null) {
+  return value ? new Date(value).toLocaleString() : '-'
 }
 
 function tracksLabel(count: number) {
   return `${count.toLocaleString()} ${count === 1 ? 'track' : 'tracks'}`
 }
 
-function JobStatus({ job }: { job: ImportJob | null }) {
-  if (!job) return <span className="muted">-</span>
+/** The playlist drawer on the Playlists page. */
+function playlistDrawerHref(playlistId: string, tab?: 'sync') {
+  const params = new URLSearchParams({ playlist: playlistId })
+  if (tab) params.set('tab', tab)
+  return `/playlists?${params}`
+}
+
+function jobHref(job: SpotifyPlaylistJob) {
+  return scopedHref(`/jobs?jobId=${encodeURIComponent(job.jobId)}`, 'album')
+}
+
+/** Refreshes the stored list and everything an import changes. */
+function invalidateImportedPlaylists(client: QueryClient) {
+  return Promise.all([
+    invalidatePlaylists(client),
+    client.invalidateQueries({ queryKey: ['spotify-playlists'] }),
+  ])
+}
+
+function JobStatus({
+  job,
+  labels,
+}: {
+  job: SpotifyPlaylistJob
+  labels: JobLabels
+}) {
   return (
     <Link
       className="job-status underline underline-offset-2"
       data-status={job.status}
-      href={scopedHref(`/jobs?jobId=${encodeURIComponent(job.jobId)}`, 'album')}
+      href={jobHref(job)}
       title={job.errorMessage ?? undefined}
     >
-      {jobLabels[job.status]}
+      {labels[job.status]}
     </Link>
   )
 }
 
-function playlistState(playlist: SpotifyPlaylist) {
-  if (!playlist.stored) return 'Not imported'
-  if (!playlist.current) return 'Changed on Spotify'
-  return `Imported ${formatDate(playlist.stored.importedAt)} · ${tracksLabel(playlist.stored.trackCount)}`
+/** Status, page progress and failure message of a playlist job. */
+function JobState({
+  job,
+  labels,
+}: {
+  job: SpotifyPlaylistJob
+  labels: JobLabels
+}) {
+  const progress = playlistJobActive(job)
+    ? playlistJobProgress(job.progress)
+    : null
+  return (
+    <>
+      <JobStatus job={job} labels={labels} />
+      {progress && <span className="muted"> {progress}</span>}
+      {job.status === 'failed' && job.errorMessage && (
+        <span className="block whitespace-normal">{job.errorMessage}</span>
+      )}
+    </>
+  )
 }
 
-function importsActive(
-  imports: z.infer<typeof SpotifyPlaylistImportsSchema> | undefined,
-) {
-  return imports
-    ? jobActive(imports.likedSongs.job) ||
-        Object.values(imports.jobs).some(jobActive)
-    : false
+function storedLabel(stored: NonNullable<SpotifyPlaylist['stored']>) {
+  return `Imported ${formatDateTime(stored.importedAt)} · ${tracksLabel(stored.trackCount)}`
+}
+
+function ImportState({ playlist }: { playlist: SpotifyPlaylist }) {
+  const { job, stored } = playlist
+  const showJob = job && job.status !== 'succeeded'
+  const reason = cannotImportReason(playlist)
+  return (
+    <>
+      {showJob && <JobState job={job} labels={playlistJobLabels} />}
+      {!playlistJobActive(job) &&
+        (stored ? (
+          <span className={showJob ? 'muted block' : undefined}>
+            {storedLabel(stored)}
+            {!playlist.current && ' · Changed on Spotify'}
+          </span>
+        ) : (
+          !showJob && 'Not imported'
+        ))}
+      {reason && (
+        <span className="muted block whitespace-normal">{reason}</span>
+      )}
+    </>
+  )
+}
+
+function ScheduleCell({ summary }: { summary: PlaylistSummary | undefined }) {
+  if (!summary?.sync.syncable) return <>-</>
+  const { schedule, nextScheduledAt } = summary.sync
+  return (
+    <Link
+      className="underline underline-offset-2"
+      href={playlistDrawerHref(summary.id, 'sync')}
+      title={
+        nextScheduledAt
+          ? `Next import ${formatDateTime(nextScheduledAt)}`
+          : undefined
+      }
+    >
+      {youtubeScheduleLabels[schedule]}
+    </Link>
+  )
 }
 
 function overItemLimit(playlist: SpotifyPlaylist) {
   return playlist.trackTotal > SPOTIFY_PLAYLIST_ITEM_LIMIT
 }
 
+function cannotImportReason(playlist: SpotifyPlaylist) {
+  if (playlist.notImportableReason) return playlist.notImportableReason
+  if (overItemLimit(playlist))
+    return `Over ${SPOTIFY_PLAYLIST_ITEM_LIMIT.toLocaleString()} tracks, cannot be imported.`
+  return null
+}
+
+function importsActive(
+  imports: z.infer<typeof SpotifyPlaylistImportsSchema> | undefined,
+) {
+  return imports
+    ? playlistJobActive(imports.likedSongs.job) ||
+        Object.values(imports.jobs).some(playlistJobActive)
+    : false
+}
+
 /** Playlists Spotify returns tracks for, within the item limit, with no import in progress. */
 function selectable(playlist: SpotifyPlaylist) {
   return (
-    playlist.importable && !overItemLimit(playlist) && !jobActive(playlist.job)
+    playlist.importable &&
+    cannotImportReason(playlist) === null &&
+    !playlistJobActive(playlist.job)
   )
 }
 
@@ -114,6 +221,8 @@ export default function SpotifyPlaylistImport() {
         SpotifyAccountStatusSchema,
       ),
   })
+  const status = account.data
+  const ready = Boolean(status?.connected && status.playlists)
   const imports = useQuery({
     queryKey: ['spotify-playlist-imports'],
     staleTime: 0,
@@ -126,24 +235,49 @@ export default function SpotifyPlaylistImport() {
         SpotifyPlaylistImportsSchema,
       ),
   })
-  // Listing reads Spotify, so it runs only from the List playlists button.
+  // The stored list; reading it makes no Spotify request.
   const listing = useQuery({
     queryKey: ['spotify-playlists'],
-    enabled: false,
-    staleTime: Infinity,
-    gcTime: 30 * 60 * 1000,
-    retry: false,
+    enabled: ready,
+    staleTime: 0,
+    refetchInterval: (query) =>
+      playlistJobActive(query.state.data?.job) ? 2000 : false,
     queryFn: () =>
+      fetchApiData(
+        apiBaseUrl,
+        '/api/v1/spotify/playlists',
+        SpotifyPlaylistListSchema,
+      ),
+  })
+  const library = useQuery({
+    queryKey: ['playlists'],
+    enabled: ready,
+    queryFn: () =>
+      fetchApiData(
+        apiBaseUrl,
+        '/api/v1/playlists',
+        z.array(PlaylistSummarySchema),
+      ),
+  })
+  const authorize = useMutation({
+    mutationFn: () => spotifyAuthorizationUrl(apiBaseUrl, { playlists: true }),
+    onSuccess: (url) => window.location.assign(url),
+  })
+  const list = useMutation({
+    mutationFn: () =>
       fetchApiData(
         apiBaseUrl,
         '/api/v1/spotify/playlists',
         SpotifyPlaylistListSchema,
         { method: 'POST', body: '{}' },
       ),
-  })
-  const authorize = useMutation({
-    mutationFn: () => spotifyAuthorizationUrl(apiBaseUrl, { playlists: true }),
-    onSuccess: (url) => window.location.assign(url),
+    onSuccess: (data) => client.setQueryData(['spotify-playlists'], data),
+    onSettled: async () => {
+      await Promise.all([
+        client.invalidateQueries({ queryKey: ['jobs'] }),
+        client.invalidateQueries({ queryKey: ['job-activity'] }),
+      ])
+    },
   })
   const queue = useMutation({
     mutationFn: (request: SpotifyPlaylistImportInput) =>
@@ -174,17 +308,32 @@ export default function SpotifyPlaylistImport() {
   const active = importsActive(imports.data)
   const wasActive = useRef(active)
   useEffect(() => {
-    if (wasActive.current && !active) void invalidatePlaylists(client)
+    if (wasActive.current && !active) void invalidateImportedPlaylists(client)
     wasActive.current = active
   }, [active, client])
 
-  const status = account.data
-  const ready = Boolean(status?.connected && status.playlists)
+  const listingJob = listing.data?.job ?? null
+  const listingActive = playlistJobActive(listingJob)
+  const wasListing = useRef(listingActive)
+  useEffect(() => {
+    if (wasListing.current && !listingActive)
+      void Promise.all([
+        client.invalidateQueries({ queryKey: ['jobs'] }),
+        client.invalidateQueries({ queryKey: ['job-activity'] }),
+      ])
+    wasListing.current = listingActive
+  }, [listingActive, client])
+
   const setup = spotifyCallbackSetup(
     apiBaseUrl,
     appUrl,
     status?.redirectUri ?? null,
   )
+  const summaries = new Map(
+    (library.data ?? []).map((summary) => [summary.id, summary]),
+  )
+  const summaryOf = (playlistId: string | undefined) =>
+    playlistId ? summaries.get(playlistId) : undefined
   const playlists = (listing.data?.playlists ?? []).map((playlist) => ({
     ...playlist,
     job: imports.data?.jobs[playlist.spotifyId] ?? playlist.job,
@@ -205,7 +354,9 @@ export default function SpotifyPlaylistImport() {
   const confirmed = confirmedKey === confirmationKey
   const tooMany = targets.length > 100
   const liked = imports.data?.likedSongs
+  const likedSummary = summaryOf(liked?.stored?.playlistId)
   const likedResult = queue.variables?.likedSongs === true
+  const listedAt = listing.data?.listedAt ?? null
   const result = queue.data && (
     <div role="status">
       {queue.data.queued} queued · {queue.data.skipped} skipped.{' '}
@@ -229,7 +380,7 @@ export default function SpotifyPlaylistImport() {
   )
 
   return (
-    <section className="film-import-workflow">
+    <section className="film-import-workflow table-workspace">
       {account.isPending && (
         <p className="muted">Loading Spotify connection...</p>
       )}
@@ -307,265 +458,322 @@ export default function SpotifyPlaylistImport() {
           )}
         </>
       )}
+      {ready && !status?.playlistChanges && (
+        <div className="form-actions">
+          <span className="muted">
+            Adding albums to playlists needs playlist change access.
+          </span>
+          <AllowPlaylistChanges />
+        </div>
+      )}
       {ready && (
-        <>
-          <section aria-labelledby="liked-songs-heading">
-            <h2 id="liked-songs-heading">Liked Songs</h2>
-            {imports.isPending && (
-              <p className="muted">Loading import state...</p>
-            )}
-            {imports.isError && (
-              <p role="alert">
-                Could not load import state.{' '}
-                <button onClick={() => imports.refetch()}>Retry</button>
-              </p>
-            )}
-            {liked !== undefined && (
-              <div className="form-actions">
-                <span>
-                  {liked.stored
-                    ? `Imported ${formatDate(liked.stored.importedAt)} · ${tracksLabel(liked.stored.trackCount)}`
-                    : 'Not imported'}
-                </span>
-                {liked.job && <JobStatus job={liked.job} />}
-                <Button
-                  size="sm"
-                  disabled={queue.isPending || jobActive(liked.job)}
-                  onClick={() =>
-                    queue.mutate({
-                      playlists: [],
-                      likedSongs: true,
-                      confirmBroadRun: false,
-                    })
-                  }
-                >
-                  {liked.stored ? 'Import again' : 'Import'}
-                </Button>
-              </div>
-            )}
-            {likedResult && result}
-            {likedResult && queueError}
-          </section>
-          <section aria-labelledby="playlists-heading" className="grid gap-2">
-            <h2 id="playlists-heading">Playlists</h2>
+        <section aria-labelledby="liked-songs-heading">
+          <h2 id="liked-songs-heading">Liked Songs</h2>
+          {imports.isPending && (
+            <p className="muted">Loading import state...</p>
+          )}
+          {imports.isError && (
+            <p role="alert">
+              Could not load import state.{' '}
+              <button onClick={() => imports.refetch()}>Retry</button>
+            </p>
+          )}
+          {liked !== undefined && (
             <div className="form-actions">
+              {liked.job && liked.job.status !== 'succeeded' && (
+                <span>
+                  <JobState job={liked.job} labels={playlistJobLabels} />
+                </span>
+              )}
+              {!playlistJobActive(liked.job) && (
+                <span>
+                  {liked.stored ? storedLabel(liked.stored) : 'Not imported'}
+                </span>
+              )}
+              {likedSummary?.sync.syncable && (
+                <span>
+                  Schedule: <ScheduleCell summary={likedSummary} />
+                  {likedSummary.sync.lastCheckedAt &&
+                    ` · Last checked ${formatDateTime(likedSummary.sync.lastCheckedAt)}`}
+                </span>
+              )}
               <Button
                 size="sm"
-                variant={listing.data ? 'outline' : 'default'}
-                disabled={listing.isFetching}
-                onClick={() => void listing.refetch()}
+                disabled={queue.isPending || playlistJobActive(liked.job)}
+                onClick={() =>
+                  queue.mutate({
+                    playlists: [],
+                    likedSongs: true,
+                    confirmBroadRun: false,
+                  })
+                }
               >
-                {listing.isFetching
-                  ? 'Listing playlists...'
-                  : listing.data
-                    ? 'List playlists again'
-                    : 'List playlists'}
+                {liked.stored ? 'Import again' : 'Import'}
               </Button>
-              <span className="muted">
-                Reads the playlist list from Spotify; nothing is imported.
-              </span>
             </div>
-            {listing.isError && (
+          )}
+          {likedResult && result}
+          {likedResult && queueError}
+        </section>
+      )}
+      {ready && (
+        <>
+          <h2>Playlists</h2>
+          <div className="form-actions">
+            <Button
+              size="sm"
+              variant={listedAt ? 'outline' : 'default'}
+              disabled={listingActive || list.isPending || listing.isPending}
+              onClick={() => list.mutate()}
+            >
+              {list.isPending
+                ? 'Queueing...'
+                : listedAt
+                  ? 'List again'
+                  : 'List playlists'}
+            </Button>
+            {listingJob && listingActive ? (
+              <span>
+                <JobState job={listingJob} labels={listingLabels} />
+              </span>
+            ) : (
+              listing.data && (
+                <span className="muted">
+                  {listedAt
+                    ? `Listed ${formatDateTime(listedAt)}`
+                    : 'Reads the playlist list from Spotify; nothing is imported.'}
+                </span>
+              )
+            )}
+          </div>
+          {list.isError && (
+            <p role="alert">
+              {errorMessage(list.error, 'Could not list playlists.')}
+            </p>
+          )}
+          {listingJob &&
+            (listingJob.status === 'failed' ||
+              listingJob.status === 'cancelled') && (
               <p role="alert">
-                {errorMessage(listing.error, 'Could not list playlists.')}
+                The last listing{' '}
+                {listingJob.status === 'failed' ? 'failed' : 'was cancelled'}
+                {listingJob.errorMessage
+                  ? `: ${listingJob.errorMessage}`
+                  : '.'}{' '}
+                <Link href={jobHref(listingJob)}>View job</Link>
               </p>
             )}
-            {listing.data && (
-              <>
-                {playlists.some((playlist) => !playlist.importable) && (
-                  <p className="muted">
-                    Spotify returns tracks only for playlists the account owns
-                    or collaborates on. Copy a playlist into the account to
-                    import it.
-                  </p>
-                )}
-                <div className="job-selection-toolbar">
-                  <Input
-                    aria-label="Filter playlists"
-                    placeholder="Filter playlists..."
-                    className="h-7 w-56 text-xs"
-                    value={search}
-                    onChange={(event) => setSearch(event.target.value)}
-                  />
-                  <span>
-                    {visible.length.toLocaleString()} of{' '}
-                    {listing.data.total.toLocaleString()} playlists ·{' '}
-                    {targets.length} selected
-                  </span>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    disabled={queue.isPending || !visible.some(selectable)}
-                    onClick={() =>
-                      setSelected([
-                        ...new Set([
-                          ...selected,
-                          ...visible
-                            .filter(selectable)
-                            .map((playlist) => playlist.spotifyId),
-                        ]),
-                      ])
-                    }
-                  >
-                    Select all importable
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    disabled={queue.isPending || !selected.length}
-                    onClick={() => {
-                      setSelected([])
-                      setConfirmedKey('')
-                    }}
-                  >
-                    Clear
-                  </Button>
-                  {broad && !tooMany && (
-                    <label className="check-label">
-                      <input
-                        type="checkbox"
-                        checked={confirmed}
-                        disabled={queue.isPending}
-                        onChange={(event) =>
-                          setConfirmedKey(
-                            event.target.checked ? confirmationKey : '',
-                          )
-                        }
-                      />
-                      Confirm {targets.length} playlist imports
-                    </label>
-                  )}
-                  <Button
-                    size="sm"
-                    disabled={
-                      queue.isPending ||
-                      !targets.length ||
-                      tooMany ||
-                      (broad && !confirmed)
-                    }
-                    onClick={() =>
-                      queue.mutate({
-                        playlists: targets.map(({ spotifyId, name }) => ({
-                          spotifyId,
-                          name,
-                        })),
-                        likedSongs: false,
-                        confirmBroadRun: broad && confirmed,
-                      })
-                    }
-                  >
-                    {queue.isPending && !likedResult
-                      ? 'Queueing...'
-                      : 'Import selected'}
-                  </Button>
-                  {tooMany && (
-                    <span role="alert">
-                      Import up to 100 playlists at a time.
-                    </span>
-                  )}
-                </div>
-                {!likedResult && result}
-                {!likedResult && queueError}
-                <TableScroll
-                  className="table-scroll-bounded"
-                  role="region"
-                  aria-label="Spotify playlists"
-                >
-                  <table
-                    className="compact-table"
-                    aria-label="Spotify playlists"
-                  >
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead className="table-selection-cell">
-                          <span className="sr-only">Select</span>
-                        </TableHead>
-                        <TableHead>
-                          <span className="sr-only">Artwork</span>
-                        </TableHead>
-                        <TableHead>Playlist</TableHead>
-                        <TableHead>Owner</TableHead>
-                        <TableHead className="numeric">Tracks</TableHead>
-                        <TableHead>State</TableHead>
-                        <TableHead>Import job</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {visible.map((playlist) => {
-                        const checked =
-                          selected.includes(playlist.spotifyId) &&
-                          selectable(playlist)
-                        return (
-                          <TableRow
-                            key={playlist.spotifyId}
-                            data-selected={checked || undefined}
-                          >
-                            <TableCell className="table-selection-cell">
-                              <input
-                                type="checkbox"
-                                aria-label={`Select ${playlist.name}`}
-                                checked={checked}
-                                disabled={
-                                  queue.isPending || !selectable(playlist)
-                                }
-                                onChange={(event) =>
-                                  setSelected(
-                                    event.target.checked
-                                      ? [...selected, playlist.spotifyId]
-                                      : selected.filter(
-                                          (id) => id !== playlist.spotifyId,
-                                        ),
-                                  )
-                                }
-                              />
-                            </TableCell>
-                            <TableCell className="w-10">
-                              {playlist.artworkUrl && (
-                                <MediaArtwork
-                                  src={playlist.artworkUrl}
-                                  alt=""
-                                  fallbackLabel=""
-                                  containerClassName="size-6 rounded"
-                                  imageClassName="size-6 object-cover"
-                                  fallbackClassName="size-6"
-                                />
-                              )}
-                            </TableCell>
-                            <TableCell>{playlist.name}</TableCell>
-                            <TableCell>{playlist.ownerName ?? '-'}</TableCell>
-                            <TableCell className="numeric">
-                              {playlist.trackTotal.toLocaleString()}
-                            </TableCell>
-                            <TableCell className="whitespace-nowrap">
-                              {playlistState(playlist)}
-                              {overItemLimit(playlist) && (
-                                <span className="muted">
-                                  {' '}
-                                  · Over{' '}
-                                  {SPOTIFY_PLAYLIST_ITEM_LIMIT.toLocaleString()}{' '}
-                                  tracks, cannot be imported
-                                </span>
-                              )}
-                            </TableCell>
-                            <TableCell>
-                              <JobStatus job={playlist.job} />
-                            </TableCell>
-                          </TableRow>
-                        )
-                      })}
-                    </TableBody>
-                  </table>
-                  {!visible.length && (
-                    <p className="p-3 muted">
-                      {playlists.length
-                        ? 'No playlists match this filter.'
-                        : 'No playlists in this Spotify account.'}
-                    </p>
-                  )}
-                </TableScroll>
-              </>
+          <div className="job-selection-toolbar">
+            <Input
+              aria-label="Filter playlists"
+              placeholder="Filter playlists..."
+              className="h-7 w-56 text-xs"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+            />
+            <span>
+              {visible.length.toLocaleString()} of{' '}
+              {playlists.length.toLocaleString()} playlists · {targets.length}{' '}
+              selected
+            </span>
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={queue.isPending || !visible.some(selectable)}
+              onClick={() =>
+                setSelected([
+                  ...new Set([
+                    ...selected,
+                    ...visible
+                      .filter(selectable)
+                      .map((playlist) => playlist.spotifyId),
+                  ]),
+                ])
+              }
+            >
+              Select all importable
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={queue.isPending || !selected.length}
+              onClick={() => {
+                setSelected([])
+                setConfirmedKey('')
+              }}
+            >
+              Clear
+            </Button>
+            {broad && !tooMany && (
+              <label className="check-label">
+                <input
+                  type="checkbox"
+                  checked={confirmed}
+                  disabled={queue.isPending}
+                  onChange={(event) =>
+                    setConfirmedKey(event.target.checked ? confirmationKey : '')
+                  }
+                />
+                Confirm {targets.length} playlist imports
+              </label>
             )}
-          </section>
+            <Button
+              size="sm"
+              disabled={
+                queue.isPending ||
+                !targets.length ||
+                tooMany ||
+                (broad && !confirmed)
+              }
+              onClick={() =>
+                queue.mutate({
+                  playlists: targets.map(({ spotifyId, name }) => ({
+                    spotifyId,
+                    name,
+                  })),
+                  likedSongs: false,
+                  confirmBroadRun: broad && confirmed,
+                })
+              }
+            >
+              {queue.isPending && !likedResult
+                ? 'Queueing...'
+                : 'Import selected'}
+            </Button>
+            {tooMany && (
+              <span role="alert">Import up to 100 playlists at a time.</span>
+            )}
+          </div>
+          {!likedResult && result}
+          {!likedResult && queueError}
+          <TableScroll
+            className="tags-scroll"
+            role="region"
+            aria-label="Spotify playlists"
+            aria-busy={listing.isFetching}
+          >
+            <table className="compact-table" aria-label="Spotify playlists">
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="table-selection-cell">
+                    <span className="sr-only">Select</span>
+                  </TableHead>
+                  <TableHead>
+                    <span className="sr-only">Artwork</span>
+                  </TableHead>
+                  <TableHead>Playlist</TableHead>
+                  <TableHead>Owner</TableHead>
+                  <TableHead className="numeric">Tracks</TableHead>
+                  <TableHead>Import</TableHead>
+                  <TableHead>Schedule</TableHead>
+                  <TableHead>Last checked</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {!visible.length && (
+                  <TableState colSpan={columnCount} error={listing.isError}>
+                    {listing.isPending ? (
+                      'Loading playlists...'
+                    ) : listing.isError ? (
+                      <>
+                        Could not load playlists.{' '}
+                        <button
+                          type="button"
+                          className="underline"
+                          onClick={() => listing.refetch()}
+                        >
+                          Retry
+                        </button>
+                      </>
+                    ) : playlists.length ? (
+                      'No playlists match this filter.'
+                    ) : listingActive ? (
+                      'Listing playlists...'
+                    ) : listedAt ? (
+                      'No playlists in this Spotify account.'
+                    ) : (
+                      'No stored playlist list.'
+                    )}
+                  </TableState>
+                )}
+                {visible.map((playlist) => {
+                  const checked =
+                    selected.includes(playlist.spotifyId) &&
+                    selectable(playlist)
+                  const summary = summaryOf(playlist.stored?.playlistId)
+                  return (
+                    <TableRow
+                      key={playlist.spotifyId}
+                      data-selected={checked || undefined}
+                    >
+                      <TableCell className="table-selection-cell">
+                        <input
+                          type="checkbox"
+                          aria-label={`Select ${playlist.name}`}
+                          checked={checked}
+                          disabled={queue.isPending || !selectable(playlist)}
+                          onChange={(event) =>
+                            setSelected(
+                              event.target.checked
+                                ? [...selected, playlist.spotifyId]
+                                : selected.filter(
+                                    (id) => id !== playlist.spotifyId,
+                                  ),
+                            )
+                          }
+                        />
+                      </TableCell>
+                      <TableCell className="w-10">
+                        {playlist.artworkUrl && (
+                          <MediaArtwork
+                            src={playlist.artworkUrl}
+                            alt=""
+                            fallbackLabel=""
+                            containerClassName="size-6 rounded"
+                            imageClassName="size-6 object-cover"
+                            fallbackClassName="size-6"
+                          />
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        {playlist.stored ? (
+                          <Link
+                            className="font-medium hover:underline"
+                            href={playlistDrawerHref(
+                              playlist.stored.playlistId,
+                            )}
+                          >
+                            {playlist.name}
+                          </Link>
+                        ) : (
+                          playlist.name
+                        )}
+                      </TableCell>
+                      <TableCell>{playlist.ownerName ?? '-'}</TableCell>
+                      <TableCell className="numeric">
+                        {playlist.trackTotal.toLocaleString()}
+                      </TableCell>
+                      <TableCell className="max-w-sm">
+                        <ImportState playlist={playlist} />
+                      </TableCell>
+                      <TableCell className="whitespace-nowrap">
+                        <ScheduleCell summary={summary} />
+                      </TableCell>
+                      <TableCell className="whitespace-nowrap">
+                        {summary?.sync.lastCheckedAt ? (
+                          <time dateTime={summary.sync.lastCheckedAt}>
+                            {formatDateTime(summary.sync.lastCheckedAt)}
+                          </time>
+                        ) : (
+                          '-'
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  )
+                })}
+              </TableBody>
+            </table>
+          </TableScroll>
         </>
       )}
     </section>

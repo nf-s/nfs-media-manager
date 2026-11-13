@@ -7,7 +7,7 @@ Optional in-app playback of library albums and tracks through a connected Spotif
 1. Configure Spotify and its redirect URI as described in [Spotify albums and CSV imports](spotify-album-imports.md#account-setup).
 2. Open **Providers → Spotify → Settings** and choose **Connect playback**. Spotify asks for consent, then returns to the same page.
 
-Connecting requests the read-only [library and playlist scopes](spotify-album-imports.md#account-setup) plus the playback scopes `streaming`, `user-read-email`, `user-read-private`, `user-read-playback-state` and `user-modify-playback-state`. **Turn off playback** reconnects with the library and playlist scopes only. Connecting from **Imports → Spotify** keeps whichever access is already granted.
+Connecting requests the read-only [library and playlist scopes](spotify-album-imports.md#account-setup) plus the playback scopes `streaming`, `user-read-email`, `user-read-private`, `user-read-playback-state` and `user-modify-playback-state`. **Turn off playback** reconnects without the playback scopes, keeping the library and playlist scopes and, if it was granted, [permission to change playlists](tracks-and-playlists.md#adding-an-album-to-a-playlist). Connecting from **Imports → Spotify** keeps whichever access is already granted.
 
 Requirements:
 
@@ -17,7 +17,7 @@ Requirements:
 
 ## Using it
 
-- **Grid tiles** show play and add-to-queue buttons over the artwork on hover or focus. Touch devices show the play button only. List and table views have no play controls.
+- **Grid tiles** show play and add-to-queue buttons over the artwork on hover or focus. Touch devices show the play button only. Album list and table views have no play controls; the Tracks table, the track drawer and the playlist drawer have play and add-to-queue controls on each track.
 - **The album drawer** has **Play** and **Add to queue** in its heading. In **Tracks**, a track number plays the album from that track, and each row can queue the single track.
 - **The player dock** appears at the bottom once something is played or queued, or while the account is already playing on another device: current track, previous, play/pause, next, a seek bar, the queue, the device, volume and a link to the track in Spotify. Selecting the current track opens its album. On phones the dock is a mini-player above the tab bar that opens a player sheet.
 - **Queue:** an album plays in full, then the next queued album or track starts. Entries can be played now, reordered, removed or cleared. The queue is kept in the open page only; reloading clears it. It is the app's own queue, separate from Spotify's.

@@ -9,6 +9,7 @@ import { TrackDetailSchema, type TrackDetail } from '@repo/schemas/tracks'
 import { useConfig } from './providers'
 import { fetchApiData } from '@/utils/api'
 import { monthBars } from '@/utils/listening-chart'
+import { playlistHref } from '@/utils/playlist-links'
 import {
   albumHref,
   formatTrackDuration,
@@ -21,6 +22,7 @@ import { filterModeClass } from './browse-controls'
 import { FilterButton } from './filter-affordance'
 import { ListeningChart } from './listening-chart'
 import MediaArtwork from './media-artwork'
+import { LibraryTrackPlayButtons } from './play-controls'
 import ServiceIconLinks from './service-icon-links'
 
 type OnFilter = (filter: BrowseFilter, keepOpen?: boolean) => void
@@ -76,6 +78,45 @@ function FilterValues({
           onFilter={onFilter}
         />
       ))}
+    </div>
+  )
+}
+
+type OnOpenPlaylist = (id: string, trigger: HTMLElement) => void
+
+/** The track's playlists; each opens the playlist drawer, which can filter by it. */
+function PlaylistValues({
+  playlists,
+  onOpenPlaylist,
+}: {
+  playlists: TrackDetail['playlists']
+  onOpenPlaylist?: OnOpenPlaylist
+}) {
+  return (
+    <div className="detail-tags">
+      {playlists.map((playlist) =>
+        onOpenPlaylist ? (
+          <button
+            key={playlist.id}
+            type="button"
+            className="metadata-tag"
+            title={`Open ${playlist.name}`}
+            onClick={(event) =>
+              onOpenPlaylist(playlist.id, event.currentTarget)
+            }
+          >
+            {playlist.name}
+          </button>
+        ) : (
+          <Link
+            key={playlist.id}
+            className="metadata-tag"
+            href={playlistHref(playlist.id)}
+          >
+            {playlist.name}
+          </Link>
+        ),
+      )}
     </div>
   )
 }
@@ -136,10 +177,13 @@ function TrackListening({
 export default function TrackDetailView({
   id,
   onFilter,
+  onOpenPlaylist,
 }: {
   id: string
   /** Applies a filter in the surrounding browser; without it values link to /tracks. */
   onFilter?: OnFilter
+  /** Opens a playlist's drawer in the surrounding browser; without it playlists link to the Playlists page. */
+  onOpenPlaylist?: OnOpenPlaylist
 }) {
   const { apiBaseUrl } = useConfig()
   const detail = useQuery({
@@ -195,6 +239,7 @@ export default function TrackDetailView({
               ]}
             />
           )}
+          <LibraryTrackPlayButtons track={item} />
         </div>
       </header>
       <dl className="detail-metrics">
@@ -219,10 +264,9 @@ export default function TrackDetailView({
         {item.playlists.length > 0 && (
           <section>
             <h2>Playlists</h2>
-            <FilterValues
-              field="playlist"
-              values={item.playlists.map((playlist) => playlist.name)}
-              onFilter={onFilter}
+            <PlaylistValues
+              playlists={item.playlists}
+              onOpenPlaylist={onOpenPlaylist}
             />
           </section>
         )}

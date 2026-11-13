@@ -6,8 +6,10 @@ import { usePlayback, usePlaybackControls } from './playback-provider'
 import { spotifyTrackUri } from '@/utils/album-links'
 import {
   albumPlayable,
+  libraryTrackPlayable,
   trackPlayable,
   type AlbumSource,
+  type LibraryTrackSource,
 } from '@/utils/playback'
 
 type Track = { position: number; externalId: string | null; title: string }
@@ -151,5 +153,124 @@ export function TrackQueueButton({
     >
       <ListPlus size={14} aria-hidden="true" />
     </button>
+  )
+}
+
+/** A library track's playable form and whether Spotify is playing it. Null while playback is off. */
+function useLibraryTrackPlayback(track: LibraryTrackSource) {
+  const view = usePlayback()
+  const controls = usePlaybackControls()
+  const item = view.enabled ? libraryTrackPlayable(track) : null
+  if (!item) return null
+  const { snapshot } = view
+  const current =
+    snapshot !== null &&
+    (snapshot.trackUri === item.uri || snapshot.linkedFromUri === item.uri)
+  return {
+    item,
+    current,
+    playing: current && !snapshot.paused,
+    controls,
+  }
+}
+
+/**
+ * Plays one library track. With a position it is the track number of a
+ * playlist row, which shows the play icon while its row (a `group`) is
+ * hovered, as in the album drawer; without one the icon is always shown.
+ */
+export function LibraryTrackPlayButton({
+  track,
+  position,
+}: {
+  track: LibraryTrackSource
+  position?: number
+}) {
+  const playback = useLibraryTrackPlayback(track)
+  if (!playback) return position === undefined ? null : <>{position}</>
+  const { item, current, playing, controls } = playback
+  const Icon = playing ? Pause : Play
+  const label = `${playing ? 'Pause' : 'Play'} ${track.title}`
+  const onClick = () => (current ? controls.toggle() : controls.play(item))
+  if (position === undefined)
+    return (
+      <button
+        type="button"
+        className="inline-flex size-5 items-center justify-center rounded-[5px] align-middle hover:bg-[var(--chip)] data-[current=true]:bg-[var(--chip)]"
+        data-current={current}
+        aria-label={label}
+        onClick={onClick}
+      >
+        <Icon size={12} aria-hidden="true" />
+      </button>
+    )
+  return (
+    <button
+      type="button"
+      className="track-play"
+      data-current={current}
+      aria-label={label}
+      onClick={onClick}
+    >
+      <span className="track-number group-hover:hidden">{position}</span>
+      <Icon size={12} aria-hidden="true" className="group-hover:block" />
+    </button>
+  )
+}
+
+/** Adds one library track to the queue; shown while its row (a `group`) is hovered. */
+export function LibraryTrackQueueButton({
+  track,
+}: {
+  track: LibraryTrackSource
+}) {
+  const playback = useLibraryTrackPlayback(track)
+  if (!playback) return null
+  const { item, controls } = playback
+  return (
+    <button
+      type="button"
+      className="track-queue group-hover:opacity-100"
+      aria-label={`Add ${track.title} to queue`}
+      onClick={() => controls.enqueue(item)}
+    >
+      <ListPlus size={14} aria-hidden="true" />
+    </button>
+  )
+}
+
+/** Play and queue buttons in the track drawer's heading. */
+export function LibraryTrackPlayButtons({
+  track,
+}: {
+  track: LibraryTrackSource
+}) {
+  const playback = useLibraryTrackPlayback(track)
+  if (!playback) return null
+  const { item, current, playing, controls } = playback
+  return (
+    <div className="detail-play">
+      <Button
+        type="button"
+        size="sm"
+        onClick={() => (current ? controls.toggle() : controls.play(item))}
+      >
+        {playing ? (
+          <Pause size={14} aria-hidden="true" />
+        ) : (
+          <Play size={14} aria-hidden="true" />
+        )}
+        {playing ? 'Pause' : 'Play'}
+      </Button>
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        onClick={() => controls.enqueue(item)}
+      >
+        <ListPlus size={14} aria-hidden="true" />
+        Add to queue
+      </Button>
+    </div>
   )
 }

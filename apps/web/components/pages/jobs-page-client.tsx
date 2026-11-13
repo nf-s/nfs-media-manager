@@ -32,6 +32,7 @@ import { useMediaScope } from '../media-scope'
 import { scopedHref } from '@/utils/media-scope'
 import { jobMatchesScope, jobMediaScope } from '@/utils/job-media-scope'
 import {
+  activeJobProgressLabel,
   canCancelJob,
   canDismissJob,
   canRetryJob,
@@ -470,6 +471,7 @@ export default function JobsPageClient() {
           {visibleJobs.map((job) => {
             const dismissal = getJobDismissal(job.options)
             const taskTitle = jobTaskTitle(job)
+            const progress = activeJobProgressLabel(job)
             return (
               <details
                 key={job.id}
@@ -522,6 +524,7 @@ export default function JobsPageClient() {
                         .map((item) => item.mediaTitle ?? 'Unavailable item')
                         .join(', ')}
                     {job.items.length > 2 ? ` +${job.items.length - 2}` : ''}
+                    {progress && <span className="quiet"> · {progress}</span>}
                   </span>
                   <span className="job-status" data-status={job.status}>
                     {job.status}

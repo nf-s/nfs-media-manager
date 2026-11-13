@@ -28,6 +28,7 @@ import { fetchApiData } from '@/utils/api'
 import { useVirtualBrowse } from '@/hooks/useVirtualBrowse'
 import { useBrowseFacets } from '@/hooks/useBrowseFacets'
 import { useRailSlot } from '@/hooks/useRailSlot'
+import { usePlaylistDrawer } from '@/hooks/usePlaylistDrawer'
 import { matchingTitleFilters } from '@/utils/browse-suggestions'
 import {
   albumHref,
@@ -38,10 +39,17 @@ import {
   withTrackFilter,
 } from '@/utils/track-browse'
 import { aiSearchParams, mediaAiSearchTarget } from '@/utils/ai-search'
+import { playlistFilter, playlistHref } from '@/utils/playlist-links'
 import AiSearch from './ai-search'
 import { BrowseFilterChips, RangeEditor } from './browse-controls'
 import BrowseFilterPanel, { FilterPanelSection } from './browse-filter-panel'
 import { FilterButton } from './filter-affordance'
+import {
+  LibraryTrackPlayButton,
+  LibraryTrackQueueButton,
+} from './play-controls'
+import { usePlayback } from './playback-provider'
+import { PlaylistDrawer } from './playlist-detail'
 import TrackDetailView from './track-detail'
 import styles from './media-browser.module.css'
 
@@ -50,6 +58,9 @@ const PageSchema = PaginatedDataSchema(TrackListItemSchema)
 const WidthsSchema = z.record(z.string(), z.number().min(70).max(650))
 const rowHeight = 36
 const headerHeight = 34
+const playColumnWidth = 68
+/** URL parameters of the open drawers; changing them keeps the page and is not saved. */
+const drawerParams = ['item', 'playlist', 'tab']
 
 export default function TrackBrowser() {
   const { apiBaseUrl } = useConfig()
@@ -65,6 +76,8 @@ export default function TrackBrowser() {
   const openedHere = useRef(false)
   const detailTrigger = useRef<HTMLElement | null>(null)
   const resize = useRef<{ key: string; x: number; width: number } | null>(null)
+  const playlistDrawer = usePlaylistDrawer({ replaces: ['item'] })
+  const playable = usePlayback().enabled
   const filters = parseTrackFilters(searchParams.get('filters'))
   const rangesResult = BrowseRangesParamSchema.safeParse(
     searchParams.get('ranges'),
@@ -73,9 +86,10 @@ export default function TrackBrowser() {
   const q = searchParams.get('q') ?? ''
   const sortBy = canonicalBrowseKey(searchParams.get('sortBy') ?? 'dateAdded')
   const direction = searchParams.get('direction') === 'asc' ? 'asc' : 'desc'
-  const selectedId = searchParams.get('item')
+  // One drawer at a time: the playlist drawer covers the track drawer.
+  const selectedId = playlistDrawer.playlistId ? null : searchParams.get('item')
   const detailParams = new URLSearchParams(searchParams)
-  detailParams.delete('item')
+  for (const key of drawerParams) detailParams.delete(key)
   const fieldsQuery = useQuery({
     queryKey: [collection, 'fields'],
     queryFn: () =>
@@ -100,13 +114,13 @@ export default function TrackBrowser() {
       if (value === null || value === '') params.delete(key)
       else params.set(key, value)
     }
-    if (Object.keys(updates).some((key) => key !== 'item'))
+    if (Object.keys(updates).some((key) => !drawerParams.includes(key)))
       params.delete('page')
     const url = `/${collection}${params.size ? `?${params}` : ''}`
     if (push) window.history.pushState(null, '', url)
     else window.history.replaceState(null, '', url)
     const saved = new URLSearchParams(params)
-    saved.delete('item')
+    for (const key of drawerParams) saved.delete(key)
     try {
       window.localStorage.setItem(`browse:${collection}`, saved.toString())
     } catch {
@@ -135,7 +149,15 @@ export default function TrackBrowser() {
   function openDetail(id: string, trigger?: HTMLElement) {
     detailTrigger.current = trigger ?? null
     openedHere.current = true
-    setParams({ item: id }, true)
+    setParams({ item: id, playlist: null, tab: null }, true)
+  }
+  function filterByPlaylist(name: string) {
+    playlistDrawer.forget()
+    setParams({
+      filters: JSON.stringify(withTrackFilter(filters, playlistFilter(name))),
+      playlist: null,
+      tab: null,
+    })
   }
   function sort(key: string) {
     setParams({
@@ -185,9 +207,9 @@ export default function TrackBrowser() {
       scroller.current
         ?.querySelector('[data-selected="true"]')
         ?.scrollIntoView({ block: 'nearest' })
-    } else if (detailTrigger.current?.isConnected)
+    } else if (!playlistDrawer.playlistId && detailTrigger.current?.isConnected)
       detailTrigger.current.focus({ preventScroll: true })
-  }, [selectedId])
+  }, [selectedId, playlistDrawer.playlistId])
 
   const params = new URLSearchParams({
     q,
@@ -315,6 +337,23 @@ export default function TrackBrowser() {
     }
     if (field.key === 'durationSec')
       return formatTrackDuration(item.durationSec)
+    if (field.key === 'playlist')
+      return (
+        <span className="inline-values">
+          {item.playlists.map((playlist) => (
+            <button
+              type="button"
+              key={playlist.id}
+              onClick={(event) =>
+                playlistDrawer.open(playlist.id, event.currentTarget)
+              }
+              title={`Open ${playlist.name}`}
+            >
+              {playlist.name}
+            </button>
+          ))}
+        </span>
+      )
     const value = getTrackBrowseValues(item)[field.key]
     if (field.type === 'text' && field.filterable) {
       const values = Array.isArray(value)
@@ -551,16 +590,25 @@ export default function TrackBrowser() {
             className="browse-table"
             aria-rowcount={total + 1}
             style={{
-              width: columns.reduce((sum, field) => sum + widthFor(field), 0),
+              width: columns.reduce(
+                (sum, field) => sum + widthFor(field),
+                playable ? playColumnWidth : 0,
+              ),
             }}
           >
             <colgroup>
+              {playable && <col style={{ width: playColumnWidth }} />}
               {columns.map((field) => (
                 <col key={field.key} style={{ width: widthFor(field) }} />
               ))}
             </colgroup>
             <thead>
               <tr>
+                {playable && (
+                  <th>
+                    <span className="sr-only">Play</span>
+                  </th>
+                )}
                 {columns.map((field) => (
                   <th
                     key={field.key}
@@ -641,7 +689,7 @@ export default function TrackBrowser() {
               {padTop > 0 && (
                 <tr aria-hidden="true">
                   <td
-                    colSpan={columns.length}
+                    colSpan={columns.length + Number(playable)}
                     style={{ height: padTop, padding: 0, border: 0 }}
                   />
                 </tr>
@@ -650,6 +698,7 @@ export default function TrackBrowser() {
                 item ? (
                   <tr
                     key={item.id}
+                    className="group"
                     data-item-index={index}
                     data-selected={item.id === selectedId}
                     aria-rowindex={index + 2}
@@ -669,6 +718,14 @@ export default function TrackBrowser() {
                       )
                     }}
                   >
+                    {playable && (
+                      <td>
+                        <div className="browse-cell">
+                          <LibraryTrackPlayButton track={item} />
+                          <LibraryTrackQueueButton track={item} />
+                        </div>
+                      </td>
+                    )}
                     {columns.map((field) => (
                       <td
                         key={field.key}
@@ -694,6 +751,7 @@ export default function TrackBrowser() {
                     aria-hidden="true"
                     className="virtual-browse-placeholder"
                   >
+                    {playable && <td />}
                     {columns.map((field) => (
                       <td key={field.key}>
                         <div className="virtual-browse-line virtual-browse-shimmer" />
@@ -705,7 +763,7 @@ export default function TrackBrowser() {
               {padBottom > 0 && (
                 <tr aria-hidden="true">
                   <td
-                    colSpan={columns.length}
+                    colSpan={columns.length + Number(playable)}
                     style={{ height: padBottom, padding: 0, border: 0 }}
                   />
                 </tr>
@@ -738,10 +796,26 @@ export default function TrackBrowser() {
                 key={selectedId}
                 id={selectedId}
                 onFilter={addFilter}
+                onOpenPlaylist={playlistDrawer.open}
               />
             </div>
           </aside>
         </>
+      )}
+      {playlistDrawer.playlistId && (
+        <PlaylistDrawer
+          id={playlistDrawer.playlistId}
+          tab={playlistDrawer.tab}
+          topbar={
+            <Link href={playlistHref(playlistDrawer.playlistId)}>
+              Open in Playlists
+            </Link>
+          }
+          onClose={playlistDrawer.close}
+          onTabChange={playlistDrawer.setTab}
+          onOpenTrack={openDetail}
+          filterTracks={(playlist) => filterByPlaylist(playlist.name)}
+        />
       )}
     </section>
   )

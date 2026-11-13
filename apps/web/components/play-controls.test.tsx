@@ -4,6 +4,9 @@ import React, { type ReactNode } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import {
   AlbumPlayButtons,
+  LibraryTrackPlayButton,
+  LibraryTrackPlayButtons,
+  LibraryTrackQueueButton,
   TilePlayControls,
   TrackPlayButton,
   TrackQueueButton,
@@ -116,5 +119,62 @@ test('albums and tracks without Spotify identifiers have no play controls', () =
       on,
     ),
     '2',
+  )
+})
+
+const libraryTrack = {
+  spotifyTrackId: trackId,
+  title: 'Playlist track',
+  artists: ['Example artist'],
+  album: null,
+  albumName: 'Fixture album',
+  artworkUrl: null,
+}
+
+function libraryControls(track = libraryTrack) {
+  return (
+    <>
+      <LibraryTrackPlayButton track={track} />
+      <LibraryTrackPlayButton track={track} position={7} />
+      <LibraryTrackQueueButton track={track} />
+      <LibraryTrackPlayButtons track={track} />
+    </>
+  )
+}
+
+test('library track controls are absent while playback is off, leaving the row number', () => {
+  assert.equal(render(libraryControls()), '7')
+})
+
+test('library track controls play, number and queue the track', () => {
+  const html = render(libraryControls(), on)
+  assert.equal(
+    (html.match(/aria-label="Play Playlist track"/g) ?? []).length,
+    2,
+  )
+  assert.match(html, /class="track-number[^"]*">7<\/span>/)
+  assert.match(
+    html,
+    /class="track-queue[^"]*" aria-label="Add Playlist track to queue"/,
+  )
+  assert.match(html, />Play<\/button>/)
+  assert.match(html, />Add to queue<\/button>/)
+  assert.doesNotMatch(html, /Pause/)
+})
+
+test('the playing library track offers pause', () => {
+  const html = render(libraryControls(), { ...on, active: true, snapshot })
+  assert.equal(
+    (html.match(/data-current="true" aria-label="Pause Playlist track"/g) ?? [])
+      .length,
+    2,
+  )
+  assert.match(html, />Pause<\/button>/)
+})
+
+test('library tracks without a Spotify track ID have no play controls', () => {
+  assert.equal(
+    render(libraryControls({ ...libraryTrack, spotifyTrackId: 'local' }), on),
+    '7',
   )
 })
