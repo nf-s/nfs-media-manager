@@ -14,9 +14,11 @@ import {
 } from '@repo/schemas/browse'
 import {
   lastScrapedField,
+  LegacyImportFilterSchema,
   ProviderFreshnessFilterSchema,
   QueueFilmSelectionSchema,
   type FilmSelectionItem,
+  type LegacyImportFilter,
   type ProviderFreshnessFilter,
 } from '@repo/schemas/film-selection'
 import type { AlbumSelectionItem } from '@repo/schemas/album-selection'
@@ -71,6 +73,7 @@ function SelectionTable({ providers, mediaType = 'film' }: Props) {
   const client = useQueryClient()
   const [provider, setProvider] = useState('')
   const [freshness, setFreshness] = useState<ProviderFreshnessFilter[]>([])
+  const [legacyImport, setLegacyImport] = useState<LegacyImportFilter>('all')
   const [selectedProviders, setSelectedProviders] = useState<string[]>([])
   const [q, setQ] = useState('')
   const [draft, setDraft] = useState('')
@@ -95,6 +98,7 @@ function SelectionTable({ providers, mediaType = 'film' }: Props) {
     filters: JSON.stringify(filters),
     ranges: JSON.stringify(ranges),
     freshness: JSON.stringify(freshness),
+    legacyImport,
   })
   if (sortBy === 'lastScrapedAt') params.set('provider', provider)
   const { fields, facets, films } = useFilmSelection(
@@ -114,6 +118,7 @@ function SelectionTable({ providers, mediaType = 'film' }: Props) {
   const tableWidth =
     28 +
     columnWidths.reduce((total, width) => total + width, 0) +
+    110 +
     providers.length * 110
   const items =
     films.data?.pages.flatMap<FilmSelectionItem | AlbumSelectionItem>(
@@ -360,6 +365,7 @@ function SelectionTable({ providers, mediaType = 'film' }: Props) {
             {visible.map((field, index) => (
               <col key={field.key} style={{ width: columnWidths[index] }} />
             ))}
+            <col style={{ width: 110 }} />
             {providers.map((item) => (
               <col key={`scraped-${item.id}`} style={{ width: 110 }} />
             ))}
@@ -409,6 +415,27 @@ function SelectionTable({ providers, mediaType = 'film' }: Props) {
                   </button>
                 </th>
               ))}
+              <th scope="col">
+                <div className="grid min-w-0 gap-1">
+                  <span>Legacy import</span>
+                  <select
+                    className="w-full min-w-0 text-xs font-normal"
+                    aria-label="Legacy import"
+                    disabled={queue.isPending}
+                    value={legacyImport}
+                    onChange={(event) => {
+                      setLegacyImport(
+                        LegacyImportFilterSchema.parse(event.target.value),
+                      )
+                      clear()
+                    }}
+                  >
+                    <option value="all">All</option>
+                    <option value="yes">Yes</option>
+                    <option value="no">No</option>
+                  </select>
+                </div>
+              </th>
               {providers.map((item) => {
                 const filter = freshness.find(
                   (entry) => entry.provider === item.id,
@@ -523,6 +550,7 @@ function SelectionTable({ providers, mediaType = 'film' }: Props) {
                       )}
                     </td>
                   ))}
+                  <td>{item.hasLegacyImport ? 'Yes' : 'No'}</td>
                   {providers.map((source) => {
                     const state = item.providerFreshness[source.id]
                     const date = state?.lastScrapedAt
@@ -589,7 +617,7 @@ function SelectionTable({ providers, mediaType = 'film' }: Props) {
             })}
             {!items.length && (
               <TableState
-                colSpan={visible.length + providers.length + 1}
+                colSpan={visible.length + providers.length + 2}
                 error={films.isError}
               >
                 {films.isPending

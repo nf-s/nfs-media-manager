@@ -4,6 +4,7 @@ import {
   QueueFilmSelectionSchema,
   ProviderScrapeAttemptSchema,
   lastScrapedField,
+  type LegacyImportFilter,
   type ProviderFreshnessFilter,
 } from '@repo/schemas/film-selection'
 import type { AlbumListItem, FilmListItem } from '@repo/schemas/media'
@@ -11,7 +12,7 @@ import type { ProviderSummary } from '@repo/schemas/provider'
 import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
 import { canIdentifyMedia } from '@/lib/provider-identification'
-import { mediaItem, providerCurrentState } from '@/schemas/db'
+import { mediaItem, providerCurrentState, providerSnapshot } from '@/schemas/db'
 import { listProviders } from './providers'
 import {
   previewMediaRefresh,
@@ -49,6 +50,19 @@ export async function listSelectionProviders(
 function freshnessExpression(provider: string) {
   // Imports and overrides never advance last_scraped_at.
   return sql`(select s.last_scraped_at from provider_current_state s where s.media_item_id = ${mediaItem.id} and s.provider = ${provider})`
+}
+
+function legacyImportExpression() {
+  return sql<boolean>`(
+    coalesce(${mediaItem.metadata}->>'legacyImport' = case when ${mediaItem.mediaType} = 'album' then 'music' else 'film' end, false)
+    or exists (
+      select 1 from ${providerSnapshot}
+      where ${providerSnapshot.mediaItemId} = ${mediaItem.id}
+        and (${providerSnapshot.source} = 'legacy-import'
+          or ${providerSnapshot.source} like 'legacy-import:%'
+          or ${providerSnapshot.source} = 'legacy-clean-import')
+    )
+  )`
 }
 
 const LatestAttemptRowSchema = z.object({
@@ -104,6 +118,7 @@ async function latestAttempts(
 export function selectionBrowseOptions(
   query: SelectionFreshnessQuery & {
     direction: 'asc' | 'desc'
+    legacyImport: LegacyImportFilter
   },
 ) {
   const filters: ProviderFreshnessFilter[] = [...query.freshness]
@@ -113,6 +128,38 @@ export function selectionBrowseOptions(
       mode: 'older',
       olderThanDays: query.olderThanDays,
     })
+  const conditions = filters.flatMap((filter) => {
+    if (filter.mode === 'all') return []
+    const freshness = freshnessExpression(filter.provider)
+    if (filter.mode === 'failed')
+      return [
+        sql`(
+          select i.status
+          from scrape_job_item i
+          where i.media_item_id = ${mediaItem.id} and i.provider = ${filter.provider}
+            and i.started_at is not null and i.status <> 'queued'
+          order by i.started_at desc nulls last, i.created_at desc nulls last, i.id desc nulls last
+          limit 1
+        ) = 'failed'`,
+      ]
+    if (filter.mode === 'never')
+      return [
+        sql`${freshness} is null and not exists (
+        select 1 from scrape_job_item i
+        where i.media_item_id = ${mediaItem.id} and i.provider = ${filter.provider}
+          and i.started_at is not null and i.status <> 'queued'
+      )`,
+      ]
+    return [
+      filter.mode === 'unscraped'
+        ? sql`${freshness} is null`
+        : sql`(${freshness} is null or ${freshness} < ${new Date(Date.now() - filter.olderThanDays * 86400000).toISOString()}::timestamp)`,
+    ]
+  })
+  if (query.legacyImport !== 'all')
+    conditions.push(
+      sql`${legacyImportExpression()} = ${query.legacyImport === 'yes'}`,
+    )
   return {
     sort: query.provider
       ? {
@@ -121,34 +168,7 @@ export function selectionBrowseOptions(
           missingFirst: query.direction === 'asc',
         }
       : undefined,
-    conditions: filters.flatMap((filter) => {
-      if (filter.mode === 'all') return []
-      const freshness = freshnessExpression(filter.provider)
-      if (filter.mode === 'failed')
-        return [
-          sql`(
-            select i.status
-            from scrape_job_item i
-            where i.media_item_id = ${mediaItem.id} and i.provider = ${filter.provider}
-              and i.started_at is not null and i.status <> 'queued'
-            order by i.started_at desc nulls last, i.created_at desc nulls last, i.id desc nulls last
-            limit 1
-          ) = 'failed'`,
-        ]
-      if (filter.mode === 'never')
-        return [
-          sql`${freshness} is null and not exists (
-          select 1 from scrape_job_item i
-          where i.media_item_id = ${mediaItem.id} and i.provider = ${filter.provider}
-            and i.started_at is not null and i.status <> 'queued'
-        )`,
-        ]
-      return [
-        filter.mode === 'unscraped'
-          ? sql`${freshness} is null`
-          : sql`(${freshness} is null or ${freshness} < ${new Date(Date.now() - filter.olderThanDays * 86400000).toISOString()}::timestamp)`,
-      ]
-    }),
+    conditions,
   }
 }
 
@@ -157,6 +177,24 @@ export async function annotateSelection<T extends AlbumListItem | FilmListItem>(
   query: { provider?: string; page: number; size: number },
   providers: ProviderSummary[],
 ) {
+  const legacyImports = result.items.length
+    ? await db
+        .select({
+          id: mediaItem.id,
+          // Keep correlated column qualifiers in this single-table selection.
+          hasLegacyImport: sql<boolean>`${legacyImportExpression()}`,
+        })
+        .from(mediaItem)
+        .where(
+          inArray(
+            mediaItem.id,
+            result.items.map((item) => item.id),
+          ),
+        )
+    : []
+  const legacyById = new Map(
+    legacyImports.map((item) => [item.id, item.hasLegacyImport]),
+  )
   const states =
     result.items.length && providers.length
       ? await db
@@ -217,6 +255,7 @@ export async function annotateSelection<T extends AlbumListItem | FilmListItem>(
         : undefined
       return {
         ...item,
+        hasLegacyImport: legacyById.get(item.id) ?? false,
         lastScrapedAt: legacy?.lastScrapedAt ?? null,
         hasProviderIdentifier: legacy?.hasProviderIdentifier ?? false,
         providerFreshness,

@@ -1,10 +1,21 @@
 import { describe, expect, it } from 'vitest'
+import { AlbumSelectionQuerySchema } from '../src/album-selection'
 import {
   FilmSelectionQuerySchema,
   QueueFilmSelectionSchema,
 } from '../src/film-selection'
 
 describe('film selection contracts', () => {
+  it.each([FilmSelectionQuerySchema, AlbumSelectionQuerySchema])(
+    'validates legacy import filters for either library',
+    (schema) => {
+      expect(schema.parse({}).legacyImport).toBe('all')
+      for (const legacyImport of ['all', 'yes', 'no'])
+        expect(schema.parse({ legacyImport }).legacyImport).toBe(legacyImport)
+      for (const legacyImport of ['', 'true', true, null, ['yes']])
+        expect(schema.safeParse({ legacyImport }).success).toBe(false)
+    },
+  )
   it('accepts existing browse filters and provider freshness sort', () => {
     const result = FilmSelectionQuerySchema.parse({
       provider: 'fixture',

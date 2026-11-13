@@ -42,10 +42,14 @@ const FreshnessParamSchema = z.preprocess((value) => {
   }
 }, ProviderFreshnessFiltersSchema)
 
+export const LegacyImportFilterSchema = z.enum(['all', 'yes', 'no'])
+export type LegacyImportFilter = z.infer<typeof LegacyImportFilterSchema>
+
 export const selectionQueryFields = {
   provider: z.string().min(1).optional(),
   olderThanDays: z.coerce.number().int().min(1).max(3650).optional(),
   freshness: FreshnessParamSchema,
+  legacyImport: LegacyImportFilterSchema.default('all'),
 }
 export const selectionProviderRequired = (query: {
   provider?: string
@@ -70,6 +74,7 @@ export const ProviderScrapeAttemptSchema = z.object({
   jobId: z.string(),
 })
 export const selectionItemFields = {
+  hasLegacyImport: z.boolean(),
   lastScrapedAt: z.string().nullable(),
   hasProviderIdentifier: z.boolean(),
   providerFreshness: z.record(

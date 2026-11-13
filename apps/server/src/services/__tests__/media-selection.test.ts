@@ -10,6 +10,7 @@ import {
 
 const mocks = vi.hoisted(() => ({
   rows: vi.fn(),
+  legacyRows: vi.fn(),
   attempts: vi.fn(),
   attemptQuery: vi.fn<(query: SQL) => void>(),
   providers: vi.fn(),
@@ -18,7 +19,11 @@ const mocks = vi.hoisted(() => ({
 }))
 vi.mock('@/lib/db', () => ({
   db: {
-    select: () => ({ from: () => ({ where: mocks.rows }) }),
+    select: (fields: Record<string, unknown>) => ({
+      from: () => ({
+        where: 'hasLegacyImport' in fields ? mocks.legacyRows : mocks.rows,
+      }),
+    }),
     execute: async (query: SQL) => {
       mocks.attemptQuery(query)
       return { rows: await mocks.attempts() }
@@ -114,6 +119,7 @@ const request = QueueFilmSelectionSchema.parse({
 
 beforeEach(() => {
   mocks.attempts.mockResolvedValue([])
+  mocks.legacyRows.mockResolvedValue([])
 })
 
 afterEach(() => {
@@ -122,6 +128,48 @@ afterEach(() => {
 })
 
 describe('unified metadata selection', () => {
+  it('annotates legacy import evidence in a single batch without scraping providers', async () => {
+    const items = [film, { ...film, id: 'film-2' }]
+    mocks.legacyRows.mockResolvedValue([
+      { id: film.id, hasLegacyImport: true },
+      { id: 'film-2', hasLegacyImport: false },
+    ])
+    const result = await annotateSelection(
+      { items, totalCount: items.length, pageCount: 1 },
+      { page: 1, size: 50 },
+      [],
+    )
+    expect(result.items.map((item) => item.hasLegacyImport)).toEqual([
+      true,
+      false,
+    ])
+    expect(mocks.legacyRows).toHaveBeenCalledTimes(1)
+    expect(mocks.rows).not.toHaveBeenCalled()
+    expect(mocks.attempts).not.toHaveBeenCalled()
+    expect(mocks.queue).not.toHaveBeenCalled()
+  })
+
+  it.each(['yes', 'no'])(
+    'combines legacy import %s with provider freshness using a null-safe predicate',
+    (legacyImport) => {
+      const options = selectionBrowseOptions(
+        FilmSelectionQuerySchema.parse({
+          legacyImport,
+          freshness: [{ provider: 'one', mode: 'unscraped' }],
+        }),
+      )
+      expect(options.conditions).toHaveLength(2)
+      const predicate = and(...options.conditions)
+      if (!predicate) throw new Error('Expected selection conditions')
+      const query = new PgDialect().sqlToQuery(predicate)
+      expect(query.sql).toContain(' and ')
+      expect(query.sql).toContain('last_scraped_at')
+      expect(query.sql).toContain('coalesce(')
+      expect(query.sql).toContain("->>'legacyImport'")
+      expect(query.params).toEqual(['one', legacyImport === 'yes'])
+    },
+  )
+
   it('loads all eligible providers, including ones awaiting credentials, and rejects foreign filters', async () => {
     mocks.providers.mockResolvedValue([
       ...providers,
@@ -181,6 +229,7 @@ describe('unified metadata selection', () => {
       { page: 1, size: 50 },
       providers,
     )
+    expect(mocks.legacyRows).not.toHaveBeenCalled()
     await annotateSelection(
       { items: [film], totalCount: 1, pageCount: 1 },
       { page: 1, size: 50 },

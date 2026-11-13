@@ -80,6 +80,7 @@ const album = AlbumSelectionItemSchema.parse({
   spotifyUrl: null,
   trackCount: 0,
   lastScrapedAt: null,
+  hasLegacyImport: false,
   hasProviderIdentifier: false,
   providerFreshness: {
     music: { lastScrapedAt: null, hasProviderIdentifier: false },
@@ -129,6 +130,7 @@ function render(
     filters: '[]',
     ranges: '[]',
     freshness: '[]',
+    legacyImport: 'all',
   })
   for (const scope of ['album', 'film']) {
     const items = selectionItems.filter((item) => item.mediaType === scope)
@@ -180,6 +182,50 @@ test('album selection renders artists and provider freshness with no initial sel
     html,
     /disabled=""[^>]*>Launch metadata jobs for 0 selected albums/,
   )
+})
+
+test('both metadata tables distinguish legacy imports and offer an All, Yes or No filter', () => {
+  const film = FilmSelectionItemSchema.parse({
+    ...album,
+    id: 'film-1',
+    mediaType: 'film',
+    title: 'First film',
+    runtimeMinutes: null,
+    watched: false,
+    sourceKind: null,
+    budget: null,
+    boxOffice: null,
+    providerFreshness: {
+      cinema: { lastScrapedAt: null, hasProviderIdentifier: true },
+    },
+  })
+  for (const item of [album, film]) {
+    const html = render(
+      '/jobs/metadata',
+      `mediaType=${item.mediaType}`,
+      <FilmSelectionTable
+        mediaType={item.mediaType}
+        providers={[item.mediaType === 'album' ? albumProvider : filmProvider]}
+      />,
+      [],
+      true,
+      [
+        { ...item, hasLegacyImport: true },
+        { ...item, id: `${item.id}-new`, title: 'New item' },
+      ],
+    )
+    assert.match(
+      html,
+      /aria-label="Legacy import"><option value="all" selected="">All<\/option><option value="yes">Yes<\/option><option value="no">No<\/option><\/select>/,
+    )
+    const rows = html.match(/<tr[^>]*>.*?<\/tr>/g) ?? []
+    assert.equal(rows.length, 3)
+    assert.match(rows[1] ?? '', /<td>Yes<\/td>/)
+    assert.match(rows[2] ?? '', /<td>No<\/td>/)
+    for (const row of rows.slice(1))
+      assert.match(row, /<td title="No successful scrape">Never/)
+    assert.match(html, /0 selected/)
+  }
 })
 
 test('failed metadata attempts show the error and scoped job link instead of Never', () => {

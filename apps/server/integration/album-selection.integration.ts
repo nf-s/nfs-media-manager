@@ -162,6 +162,158 @@ async function attempt(
 }
 
 describe('album selection and safe scheduling', () => {
+  it('recognizes retained raw and cleaned legacy snapshots after later scrapes', async () => {
+    const { listAlbumSelection } = await import('@/services/album-selection')
+    const { applyProviderResult } = await import('@/services/provider-state')
+    const sources = [
+      'legacy-import',
+      'legacy-import:fixture.json',
+      'legacy-clean-import',
+      'file-import',
+      'scrape-job',
+      'legacy-imported',
+    ]
+    for (const [index, source] of sources.entries())
+      await applyProviderResult({
+        mediaItemId: `album-${index}`,
+        mediaType: 'album',
+        provider: 'fixture-a',
+        source,
+        ...PluginResultSchema.parse({ payload: { source }, normalized: {} }),
+      })
+    await applyProviderResult({
+      mediaItemId: 'album-2',
+      mediaType: 'album',
+      provider: 'fixture-a',
+      source: 'scrape-job',
+      ...PluginResultSchema.parse({
+        payload: { refreshed: true },
+        normalized: {},
+      }),
+    })
+    const all = AlbumSelectionPageSchema.parse(
+      await listAlbumSelection(
+        AlbumSelectionQuerySchema.parse({ sortBy: 'title', direction: 'asc' }),
+      ),
+    )
+    expect(all.items.map((item) => item.hasLegacyImport)).toEqual([
+      true,
+      true,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+    ])
+    expect(
+      all.items[2]?.providerFreshness['fixture-a']?.lastScrapedAt,
+    ).not.toBeNull()
+    const imported = await listAlbumSelection(
+      AlbumSelectionQuerySchema.parse({
+        legacyImport: 'yes',
+        sortBy: 'title',
+        direction: 'asc',
+      }),
+    )
+    expect(imported.totalCount).toBe(3)
+    expect(imported.items.map((item) => item.id)).toEqual([
+      'album-0',
+      'album-1',
+      'album-2',
+    ])
+    const missing = await listAlbumSelection(
+      AlbumSelectionQuerySchema.parse({
+        legacyImport: 'no',
+        sortBy: 'title',
+        direction: 'asc',
+      }),
+    )
+    expect(missing.totalCount).toBe(5)
+    expect(missing.items.every((item) => !item.hasLegacyImport)).toBe(true)
+  })
+  it('filters legacy imports before pagination and combines with browse and freshness filters', async () => {
+    const { listAlbumSelection } = await import('@/services/album-selection')
+    for (const index of [0, 1, 2])
+      await databaseClient
+        .update(schema.mediaItem)
+        .set({
+          metadata: {
+            legacyImport: 'music',
+            browse: { country: index % 2 ? ['France'] : ['Japan'] },
+          },
+        })
+        .where(eq(schema.mediaItem.id, `album-${index}`))
+    await databaseClient
+      .update(schema.mediaItem)
+      .set({ metadata: null })
+      .where(eq(schema.mediaItem.id, 'album-4'))
+    for (const [id, legacyImport] of [
+      ['album-5', null],
+      ['album-6', 'film'],
+      ['album-7', 'unknown'],
+    ]) {
+      if (!id) throw new Error('Expected fixture ID')
+      await databaseClient
+        .update(schema.mediaItem)
+        .set({ metadata: { legacyImport: legacyImport ?? null } })
+        .where(eq(schema.mediaItem.id, id))
+    }
+    const all = AlbumSelectionPageSchema.parse(
+      await listAlbumSelection(
+        AlbumSelectionQuerySchema.parse({ sortBy: 'title', direction: 'asc' }),
+      ),
+    )
+    expect(all.totalCount).toBe(8)
+    expect(all.items.map((item) => item.hasLegacyImport)).toEqual([
+      true,
+      true,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+    ])
+    const imported = await listAlbumSelection(
+      AlbumSelectionQuerySchema.parse({
+        legacyImport: 'yes',
+        sortBy: 'title',
+        direction: 'asc',
+        size: 1,
+        page: 2,
+      }),
+    )
+    expect(imported.totalCount).toBe(3)
+    expect(imported.pageCount).toBe(3)
+    expect(imported.items.map((item) => item.id)).toEqual(['album-1'])
+    expect(imported.items.every((item) => item.hasLegacyImport)).toBe(true)
+    const missing = await listAlbumSelection(
+      AlbumSelectionQuerySchema.parse({
+        legacyImport: 'no',
+        sortBy: 'title',
+        direction: 'asc',
+        size: 2,
+        page: 2,
+      }),
+    )
+    expect(missing.totalCount).toBe(5)
+    expect(missing.pageCount).toBe(3)
+    expect(missing.items.map((item) => item.id)).toEqual(['album-5', 'album-6'])
+    expect(missing.items.every((item) => !item.hasLegacyImport)).toBe(true)
+    await state('album-0', 'fixture-a', new Date('2024-02-01'))
+    const combined = await listAlbumSelection(
+      AlbumSelectionQuerySchema.parse({
+        legacyImport: 'yes',
+        filters: JSON.stringify([
+          { field: 'country', value: 'Japan', mode: 'required' },
+        ]),
+        freshness: [{ provider: 'fixture-a', mode: 'unscraped' }],
+      }),
+    )
+    expect(combined.totalCount).toBe(1)
+    expect(combined.items.map((item) => item.id)).toEqual(['album-2'])
+  })
   it('shows the latest started failure without replacing prior success or another provider', async () => {
     const { listAlbumSelection } = await import('@/services/album-selection')
     await state('album-0', 'fixture-a', new Date('2024-02-01'))
