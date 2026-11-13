@@ -48,6 +48,8 @@ import { fetchApiData } from '@/utils/api'
 import { useVirtualBrowse } from '@/hooks/useVirtualBrowse'
 import { useBrowseFacets } from '@/hooks/useBrowseFacets'
 import BrowseFilterAutocomplete from './browse-filter-autocomplete'
+import AiSearch from './ai-search'
+import { aiSearchParams } from '@/utils/ai-search'
 import MediaArtwork from './media-artwork'
 import MediaDetail from './media-detail'
 import ManualMediaAdd from './manual-media-add'
@@ -738,6 +740,15 @@ export default function MediaBrowser({
             onAddFilter={addFilter}
             onApplyText={(value) => {
               setParams({ q: value || null })
+              setDraft('')
+            }}
+          />
+          <AiSearch
+            key={mediaType}
+            mediaType={mediaType}
+            fields={fields}
+            onApply={(plan) => {
+              setParams(aiSearchParams(plan))
               setDraft('')
             }}
           />

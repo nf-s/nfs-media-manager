@@ -9,6 +9,7 @@
   "upload_source_maps": false,
   "limits": { "cpu_ms": 30000 },
   "tsconfig": "tsconfig.cloudflare.json",
+  "ai": { "binding": "AI" },
   "alias": {
     "@/lib/db": "./src/cloudflare/db.ts",
     "@/plugins/bundled": "../../.cloudflare/private-plugins.ts",

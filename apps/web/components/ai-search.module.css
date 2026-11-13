@@ -1,0 +1,72 @@
+.popover .panel {
+  width: min(430px, calc(100vw - 36px));
+  gap: 10px;
+  line-height: 1.5;
+}
+
+.panel form {
+  display: grid;
+  gap: 8px;
+}
+
+.panel label {
+  font-weight: 600;
+}
+
+.panel textarea {
+  width: 100%;
+  min-height: 80px;
+  resize: vertical;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: white;
+  font: inherit;
+}
+
+.panel textarea:focus-visible {
+  outline: 2px solid #64748b;
+  outline-offset: 2px;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.actions button:last-of-type {
+  margin-left: auto;
+}
+
+.result {
+  display: grid;
+  gap: 10px;
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+
+.result ul {
+  padding-left: 18px;
+  list-style: disc;
+}
+
+.result li + li {
+  margin-top: 3px;
+}
+
+.note {
+  color: #64748b;
+  font-size: 11px;
+}
+
+.error {
+  color: #9f303b;
+}
+
+@media (max-width: 700px) {
+  .popover .panel {
+    width: auto;
+  }
+}

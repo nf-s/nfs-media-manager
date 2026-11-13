@@ -11,6 +11,11 @@ import { withJobDispatchWakeup } from '@/services/job-dispatch-context'
 import { dispatchQueuedImports, executeQueuedImport } from '@/services/imports'
 import { queueDueLastfmSync } from '@/services/lastfm-sync-jobs'
 import { withCloudQueue } from '@/lib/runtime'
+import {
+  AI_TEXT_MODEL,
+  AI_TRANSCRIPTION_MODEL,
+  withWorkersAi,
+} from '@/lib/workers-ai'
 import { withCloudDatabase } from './db'
 import { withProviderTransport } from '@/services/provider-transport'
 import {
@@ -175,7 +180,15 @@ export default {
       const local = await handleLocalWorkerRequest(request, bindings)
       if (local) return local
       return await workerBindings.run(bindings, () =>
-        run(bindings, async () => app.fetch(request)),
+        withWorkersAi(
+          {
+            text: (input, signal) =>
+              bindings.AI.run(AI_TEXT_MODEL, input, { signal }),
+            transcribe: (input, signal) =>
+              bindings.AI.run(AI_TRANSCRIPTION_MODEL, input, { signal }),
+          },
+          () => run(bindings, async () => app.fetch(request)),
+        ),
       )
     } catch {
       return Response.json(

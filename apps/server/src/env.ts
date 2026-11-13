@@ -12,6 +12,11 @@ export const env = createEnv({
   },
   server: {
     RUNTIME_KIND: z.enum(['node', 'cloudflare']).default('node'),
+    CLOUDFLARE_AI_ACCOUNT_ID: z
+      .string()
+      .regex(/^[a-fA-F0-9]{32}$/)
+      .optional(),
+    CLOUDFLARE_AI_API_TOKEN: z.string().min(1).optional(),
     OWNER_EMAIL: z.email().optional(),
     OWNER_USER_ID: z.string().min(1).optional(),
     SCRAPING_ENABLED: z
@@ -65,6 +70,8 @@ export const env = createEnv({
   },
   runtimeEnv: {
     RUNTIME_KIND: process.env.RUNTIME_KIND,
+    CLOUDFLARE_AI_ACCOUNT_ID: process.env.CLOUDFLARE_AI_ACCOUNT_ID,
+    CLOUDFLARE_AI_API_TOKEN: process.env.CLOUDFLARE_AI_API_TOKEN,
     OWNER_EMAIL: process.env.OWNER_EMAIL,
     OWNER_USER_ID: process.env.OWNER_USER_ID,
     SCRAPING_ENABLED: process.env.SCRAPING_ENABLED,
