@@ -9,7 +9,7 @@ import { withStoredTrailerLinks } from './stored-trailers'
 import { getAlbumProviderDetails } from './album-provider-details'
 import { albumAddedDates } from './album-added-dates'
 import { albumTrackPlaylistNames } from './album-playlists'
-import { and, eq, inArray, ne, sql } from 'drizzle-orm'
+import { and, eq, inArray, ne, sql, type SQL } from 'drizzle-orm'
 import type { JsonValue } from '@repo/media-plugin-sdk'
 import {
   type AlbumDetail,
@@ -128,7 +128,10 @@ function mapCredits(credits: CommonCredit[]): AlbumListItem['credits'] {
 // A year or decade, such as "2026" or "90s", says nothing about the music.
 const YEAR_TAG = /^(?:\d{4}|\d{2})s?$/
 
-/** Tags sourced from Rate Your Music come first, then other tags, then years. */
+/**
+ * Preferred tags come first, then other tags, then years. Preferred are an
+ * album's Rate Your Music tags and a film's genres.
+ */
 function mapTags(
   items: CommonTag[],
   preferredTagIds?: Set<string>,
@@ -148,27 +151,46 @@ function mapTags(
     .map((item) => ({ name: item.tag.name, kind: item.tag.kind }))
 }
 
-/** The Rate Your Music tags of each album, by album ID. */
-async function rymTagIds(albumIds: string[]) {
+/** The tags of each item that have an occurrence matching the condition, by item ID. */
+async function occurrenceTagIds(mediaItemIds: string[], condition: SQL) {
   const rows = await db
     .select({
       mediaItemId: tagOccurrence.mediaItemId,
       tagId: tagOccurrence.tagId,
     })
     .from(tagOccurrence)
-    .where(
-      and(
-        inArray(tagOccurrence.mediaItemId, albumIds),
-        eq(tagOccurrence.source, 'rym'),
-      ),
-    )
-  const byAlbum = new Map<string, Set<string>>()
+    .where(and(inArray(tagOccurrence.mediaItemId, mediaItemIds), condition))
+  const byItem = new Map<string, Set<string>>()
   for (const row of rows) {
-    const tags = byAlbum.get(row.mediaItemId) ?? new Set<string>()
+    const tags = byItem.get(row.mediaItemId) ?? new Set<string>()
     tags.add(row.tagId)
-    byAlbum.set(row.mediaItemId, tags)
+    byItem.set(row.mediaItemId, tags)
   }
-  return byAlbum
+  return byItem
+}
+
+/** The Rate Your Music tags of each album, by album ID. */
+const rymTagIds = (albumIds: string[]) =>
+  occurrenceTagIds(albumIds, eq(tagOccurrence.source, 'rym'))
+
+/**
+ * The genres of each film, by film ID. A keyword merged into a genre counts,
+ * as does a genre stored before occurrences were recorded.
+ */
+async function filmGenreTagIds(
+  records: Array<{ id: string; tags: CommonTag[] }>,
+) {
+  const byFilm = await occurrenceTagIds(
+    records.map((record) => record.id),
+    eq(tagOccurrence.kind, 'genre'),
+  )
+  for (const record of records) {
+    const tags = byFilm.get(record.id) ?? new Set<string>()
+    for (const item of record.tags)
+      if (item.tag.kind === 'genre') tags.add(item.tagId)
+    byFilm.set(record.id, tags)
+  }
+  return byFilm
 }
 
 function mapLinks(items: CommonLink[]): AlbumListItem['links'] {
@@ -385,17 +407,21 @@ export async function listFilms(
     },
   })
 
+  const genreTags = await filmGenreTagIds(records)
   const items = reorderRecords(records, ids).flatMap((record) => {
     if (!record.film) {
       return []
     }
 
     const item: FilmListItem = {
-      ...buildCommonPayload({
-        ...record,
-        mediaType: 'film',
-        metadata: { ...record.film.metadata, ...record.metadata },
-      }),
+      ...buildCommonPayload(
+        {
+          ...record,
+          mediaType: 'film',
+          metadata: { ...record.film.metadata, ...record.metadata },
+        },
+        genreTags.get(record.id),
+      ),
       mediaType: 'film',
       dateAdded: (record.film.dateAdded ?? record.createdAt).toISOString(),
       dateAddedSource:
@@ -528,11 +554,14 @@ export async function getFilmDetail(id: string): Promise<FilmDetail | null> {
       ...record.film.metadata,
       ...record.metadata,
     }),
-    ...buildCommonPayload({
-      ...record,
-      mediaType: 'film',
-      metadata: { ...record.film.metadata, ...record.metadata },
-    }),
+    ...buildCommonPayload(
+      {
+        ...record,
+        mediaType: 'film',
+        metadata: { ...record.film.metadata, ...record.metadata },
+      },
+      (await filmGenreTagIds([record])).get(id),
+    ),
     mediaType: 'film',
     dateAdded: (record.film.dateAdded ?? record.createdAt).toISOString(),
     dateAddedSource:

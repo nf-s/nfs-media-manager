@@ -135,8 +135,13 @@ export default function YoutubeChannels() {
   }
   const all = channels.data?.items ?? []
   const items = filterYoutubeChannels(all, query, sortBy, sortDirection)
+  // The table is the scroller and takes the height the sync panel leaves; a
+  // table that grows inside the page scroller cannot be scrolled over.
   return (
-    <section aria-labelledby="youtube-channels">
+    <section
+      aria-labelledby="youtube-channels"
+      className="flex min-h-80 flex-1 flex-col"
+    >
       <h2 id="youtube-channels">Channels</h2>
       <div className="job-toolbar">
         <Input
@@ -153,7 +158,11 @@ export default function YoutubeChannels() {
             : `${all.length.toLocaleString()} channels`}
         </span>
       </div>
-      <TableScroll role="region" aria-label="Subscribed channels">
+      <TableScroll
+        className="tags-scroll min-h-0 flex-1"
+        role="region"
+        aria-label="Subscribed channels"
+      >
         <table className="compact-table" aria-label="Subscribed channels">
           <TableHeader>
             <TableRow>

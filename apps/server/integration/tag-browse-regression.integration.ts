@@ -379,4 +379,55 @@ describe('tag browse predicate regression', () => {
     expect(index.rows).toHaveLength(1)
     expect(fetch).not.toHaveBeenCalled()
   })
+
+  it("lists a film's genres before its keywords, with year tags last", async () => {
+    const { getFilmDetail, listFilms } = await import('@/services/media')
+    await database.insert(schema.mediaItem).values({
+      id: 'film-order',
+      slug: 'film-order',
+      title: 'Ordered film',
+      mediaType: 'film',
+    })
+    await database.insert(schema.film).values({ mediaItemId: 'film-order' })
+    await database.insert(schema.tag).values([
+      { id: 'order-genre', mediaType: 'film', name: 'Thriller', kind: 'genre' },
+      {
+        id: 'order-keyword',
+        mediaType: 'film',
+        name: 'Abduction',
+        kind: 'keyword',
+      },
+      // A keyword that a provider also reported as a genre.
+      {
+        id: 'order-merged',
+        mediaType: 'film',
+        name: 'Zombie',
+        kind: 'keyword',
+      },
+      { id: 'order-year', mediaType: 'film', name: '1990s', kind: 'keyword' },
+    ])
+    await database
+      .insert(schema.mediaItemTag)
+      .values(
+        ['order-genre', 'order-keyword', 'order-merged', 'order-year'].map(
+          (tagId) => ({ mediaItemId: 'film-order', tagId }),
+        ),
+      )
+    await database.insert(schema.tagOccurrence).values({
+      id: 'order-merged-genre',
+      mediaItemId: 'film-order',
+      tagId: 'order-merged',
+      provider: 'fixture',
+      source: 'fixture',
+      rawName: 'Zombie',
+      kind: 'genre',
+    })
+
+    const expected = ['Thriller', 'Zombie', 'Abduction', '1990s']
+    const listed = await listFilms(FilmQuerySchema.parse({ q: 'Ordered film' }))
+    expect(listed.items.map((item) => item.id)).toEqual(['film-order'])
+    expect(listed.items[0]?.tags.map((tag) => tag.name)).toEqual(expected)
+    const detail = await getFilmDetail('film-order')
+    expect(detail?.tags.map((tag) => tag.name)).toEqual(expected)
+  })
 })
