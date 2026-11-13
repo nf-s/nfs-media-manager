@@ -760,6 +760,23 @@
   overflow: hidden;
   scrollbar-gutter: auto;
 }
+@media (max-width: 700px), (max-height: 500px) {
+  .imports-page:has(.film-import-workflow),
+  .film-selection-page {
+    overflow-y: auto;
+  }
+  .imports-page .film-import-workflow,
+  .imports-page:has(.import-review) .film-import-workflow,
+  .imports-page .import-review,
+  .film-selection-workspace {
+    flex: 0 0 auto;
+  }
+  .imports-page .import-review .import-preview-scroll,
+  .film-selection-scroll {
+    flex: 0 0 auto;
+    height: clamp(240px, 50dvh, 420px);
+  }
+}
 .section-sidebar > a,
 .section-sidebar > button {
   display: block;
