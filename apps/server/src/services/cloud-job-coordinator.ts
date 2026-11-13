@@ -57,7 +57,8 @@ export interface CloudJobCoordinatorDependencies {
     allowedJobIds?: string[] | null,
   ): Promise<string[]>
   recover(jobId: string, provider: string): Promise<void>
-  initiallyPaused?: boolean
+  /** Whether a provider's first stored state is paused. Defaults to paused. */
+  initiallyPaused?: (provider: string) => Promise<boolean>
   now?: () => number
   token?: () => string
 }
@@ -93,7 +94,7 @@ export class CloudJobCoordinator {
     const identity = CloudJobMessageSchema.shape.provider.parse(provider)
     return {
       provider: identity,
-      paused: this.dependencies.initiallyPaused ?? true,
+      paused: (await this.dependencies.initiallyPaused?.(identity)) ?? true,
       allowedJobIds: null,
       stopped: false,
       failures: 0,

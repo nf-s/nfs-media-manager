@@ -3,6 +3,7 @@ import { getOperators, type SQL } from 'drizzle-orm'
 import { PgDialect } from 'drizzle-orm/pg-core'
 import { scrapeJob } from '@/schemas/db'
 import {
+  cloudProviderStartsPaused,
   getCloudProviderDispatchPolicy,
   listCloudQueuedJobIds,
 } from '@/services/cloud-job-store'
@@ -118,6 +119,42 @@ describe('cloud dispatch preflight', () => {
       wakeAt: null,
     })
     expect(mocks.budget).not.toHaveBeenCalled()
+  })
+
+  it('dispatches account-level providers without an item scraper and blocks other task-only plugins', async () => {
+    mocks.plugin.mockResolvedValue({
+      manifest: { mediaTypes: [], rateLimit: { maxConcurrent: 1 } },
+    })
+    expect(await getCloudProviderDispatchPolicy('fixture')).toEqual({
+      maxConcurrent: 1,
+      blocked: false,
+      wakeAt: null,
+    })
+    mocks.state.mockResolvedValue({ halted: true })
+    expect(await getCloudProviderDispatchPolicy('fixture')).toMatchObject({
+      blocked: true,
+      wakeAt: null,
+    })
+    mocks.state.mockResolvedValue(undefined)
+    mocks.plugin.mockResolvedValue({
+      manifest: { mediaTypes: ['album'], rateLimit: { maxConcurrent: 1 } },
+    })
+    expect(await getCloudProviderDispatchPolicy('fixture')).toMatchObject({
+      blocked: true,
+      wakeAt: null,
+    })
+  })
+
+  it('starts only account-level providers unpaused', async () => {
+    mocks.plugin.mockResolvedValue({ manifest: { mediaTypes: [] } })
+    expect(await cloudProviderStartsPaused('fixture')).toBe(false)
+    mocks.plugin.mockResolvedValue({
+      manifest: { mediaTypes: ['film'] },
+      scrapeMediaItem: vi.fn(),
+    })
+    expect(await cloudProviderStartsPaused('fixture')).toBe(true)
+    mocks.plugin.mockResolvedValue(null)
+    expect(await cloudProviderStartsPaused('fixture')).toBe(true)
   })
 
   it('waits for the latest lease, cooldown, or spacing boundary without polling budgets', async () => {

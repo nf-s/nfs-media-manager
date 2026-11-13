@@ -107,6 +107,23 @@ describe('durable provider dispatch', () => {
     )
   })
 
+  it('dispatches a provider that starts unpaused and keeps a later pause', async () => {
+    const f = fixture(1)
+    const initiallyPaused = vi.fn(async () => false)
+    f.dependencies.initiallyPaused = initiallyPaused
+    await f.coordinator.wake('fixture')
+    expect(initiallyPaused).toHaveBeenCalledWith('fixture')
+    expect(f.state()).toMatchObject({ paused: false, slots: [] })
+    expect(f.alarmAt()).not.toBeNull()
+    await f.coordinator.alarm()
+    expect(f.sent).toHaveLength(1)
+
+    expect(await f.coordinator.setPaused('fixture', true)).toBe(true)
+    await f.recreate().wake('fixture')
+    expect(f.state()).toMatchObject({ paused: true })
+    expect(initiallyPaused).toHaveBeenCalledTimes(1)
+  })
+
   it('preserves selection across pause, resume, wake and eviction', async () => {
     const f = fixture()
     await f.coordinator.setPaused('fixture', true, ['job-30'])

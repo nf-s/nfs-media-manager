@@ -2,6 +2,7 @@ import { and, count, eq, gte, inArray, lt, sql } from 'drizzle-orm'
 import { nanoid } from 'nanoid'
 import { z } from 'zod'
 import { CloudDispatchJobIdsSchema } from '@repo/schemas/job'
+import type { MediaProviderPlugin } from '@repo/media-plugin-sdk'
 import { db } from '@/lib/db'
 import { getScrapePlugin } from '@/plugins/registry'
 import {
@@ -65,11 +66,28 @@ export async function listCloudJobProviders(
   return rows.map((row) => row.provider)
 }
 
+function isAccountLevel(plugin: MediaProviderPlugin): boolean {
+  return plugin.manifest.mediaTypes.length === 0
+}
+
+/**
+ * A new dispatcher starts paused so a backlog of media items waits for a live
+ * test. An account-level provider has no backlog: its jobs are started by the
+ * owner or by the schedule that follows a completed run.
+ */
+export async function cloudProviderStartsPaused(
+  provider: string,
+): Promise<boolean> {
+  const plugin = await getScrapePlugin(provider)
+  return !plugin || !isAccountLevel(plugin)
+}
+
 export async function getCloudProviderDispatchPolicy(
   provider: string,
 ): Promise<CloudProviderDispatchPolicy> {
   const plugin = await getScrapePlugin(provider)
-  if (!plugin?.scrapeMediaItem)
+  // An account-level provider runs task jobs only and has no item scraper.
+  if (!plugin || !(plugin.scrapeMediaItem || isAccountLevel(plugin)))
     return { maxConcurrent: 1, blocked: true, wakeAt: null }
   const safety = await db.query.providerRequestState.findFirst({
     where: (table, operators) => operators.eq(table.provider, provider),

@@ -53,6 +53,8 @@ When the daily limit or the Google quota is reached, the sync **pauses** instead
 
 Any other error fails the job. A failed job is not retried automatically: retry it in Jobs or choose **Resume sync**. If Google rejects the saved sign-in, connect the account again, then resume.
 
+In the hosted deployment the YouTube dispatcher starts unpaused, unlike a metadata provider's, because it has no backlog of media items: its only jobs are syncs the owner starts or the schedule queues. A failed job can stop it. **Sync now**, **Resume sync** and retrying the job restart it; a deliberate pause, a cooldown and an access halt are not cleared, and the schedule never restarts it.
+
 ### Schedule
 
 The page sets how often a sync is queued: off, every 1, 3 or 6 hours, daily (the default) or weekly, measured from the last completed sync. Both runtimes check every five minutes when scraping is enabled.

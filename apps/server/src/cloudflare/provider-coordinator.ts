@@ -7,6 +7,7 @@ import type {
   CloudJobOutcome,
 } from '@/services/cloud-job-contract'
 import {
+  cloudProviderStartsPaused,
   getCloudProviderDispatchPolicy,
   listCloudQueuedJobIds,
   recoverCloudJobById,
@@ -39,6 +40,7 @@ export class ProviderCoordinator extends DurableObject<CloudflareBindings> {
       },
       queued: listCloudQueuedJobIds,
       recover: recoverCloudJobById,
+      initiallyPaused: cloudProviderStartsPaused,
     })
   }
 
