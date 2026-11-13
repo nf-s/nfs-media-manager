@@ -5,6 +5,7 @@ import { migrate } from 'drizzle-orm/node-postgres/migrator'
 import { eq } from 'drizzle-orm'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { AlbumQuerySchema, FilmQuerySchema } from '@repo/schemas/media'
+import { TrackQuerySchema } from '@repo/schemas/tracks'
 import { PluginResultSchema } from '@repo/media-plugin-sdk'
 import { env } from '@/env'
 import * as schema from '@/schemas/db'
@@ -598,5 +599,87 @@ describe('temporary Postgres browse and import integration', () => {
       ).ids,
     ).toEqual(['film-fixture'])
     expect(fetch).not.toHaveBeenCalled()
+  })
+})
+
+describe('free-text browse search', () => {
+  it('matches each word in any text field of albums, films and tracks', async () => {
+    const { applyProviderResult } = await import('@/services/provider-state')
+    const { queryBrowseIds } = await import('@/services/browse')
+    const albums = [
+      { id: 'q-album-1', title: 'Harbour Lights', artists: ['Marlow Fenwick'] },
+      { id: 'q-album-2', title: 'Harbour Sessions', artists: ['Odile Brack'] },
+    ]
+    const ids = [...albums.map((item) => item.id), 'q-film', 'q-track']
+    try {
+      for (const fixture of albums) {
+        await databaseClient.insert(schema.mediaItem).values({
+          id: fixture.id,
+          title: fixture.title,
+          slug: fixture.id,
+          mediaType: 'album',
+        })
+        await databaseClient
+          .insert(schema.album)
+          .values({ mediaItemId: fixture.id })
+        await applyProviderResult({
+          mediaItemId: fixture.id,
+          mediaType: 'album',
+          provider: 'fixture',
+          source: 'legacy-import',
+          ...normalizeLegacyBrowse(
+            LegacyBrowseRecordSchema.parse(fixture),
+            'album',
+          ),
+        })
+      }
+      await databaseClient.insert(schema.mediaItem).values({
+        id: 'q-film',
+        title: 'Northern Crossing',
+        slug: 'q-film',
+        mediaType: 'film',
+        metadata: { browse: { country: ['Iceland'] } },
+      })
+      await databaseClient.insert(schema.film).values({ mediaItemId: 'q-film' })
+      await databaseClient.insert(schema.mediaItem).values({
+        id: 'q-track',
+        title: 'Night Ferry',
+        slug: 'q-track',
+        mediaType: 'track',
+      })
+      await databaseClient.insert(schema.libraryTrack).values({
+        mediaItemId: 'q-track',
+        spotifyTrackId: 'fixture-track',
+        albumName: 'Coastal Hours',
+      })
+      const albumIds = async (q: string) =>
+        (
+          await queryBrowseIds('album', AlbumQuerySchema.parse({ q }))
+        ).ids.sort()
+      const filmIds = async (q: string) =>
+        (await queryBrowseIds('film', FilmQuerySchema.parse({ q }))).ids
+      const trackIds = async (q: string) =>
+        (await queryBrowseIds('track', TrackQuerySchema.parse({ q }))).ids
+      expect(await albumIds('harb')).toEqual(['q-album-1', 'q-album-2'])
+      expect(await albumIds('Harbour Lights')).toEqual(['q-album-1'])
+      // Words may match different fields, in any order.
+      expect(await albumIds('fenwick harbour')).toEqual(['q-album-1'])
+      expect(await albumIds('  HARBOUR \t brack ')).toEqual(['q-album-2'])
+      expect(await albumIds('harbour unmatched-word')).toEqual([])
+      expect(await albumIds('harbour %')).toEqual([])
+      expect(await albumIds('harbour _')).toEqual([])
+      expect(await filmIds('icel')).toEqual(['q-film'])
+      expect(await filmIds('iceland crossing')).toEqual(['q-film'])
+      expect(await filmIds('iceland harbour')).toEqual([])
+      expect(await trackIds('ferry coastal')).toEqual(['q-track'])
+      expect(await trackIds('coastal night')).toEqual(['q-track'])
+      expect(await trackIds('ferry harbour')).toEqual([])
+      expect(fetch).not.toHaveBeenCalled()
+    } finally {
+      for (const id of ids)
+        await databaseClient
+          .delete(schema.mediaItem)
+          .where(eq(schema.mediaItem.id, id))
+    }
   })
 })

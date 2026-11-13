@@ -127,7 +127,7 @@ const channelIds = z
   .transform((value) => (Array.isArray(value) ? value : [value]))
 
 export const YoutubeVideoQuerySchema = z.object({
-  /** Web-search syntax: every word must match; "quoted phrases", `or` and `-exclusions` are supported. */
+  /** Web-search syntax: every word must match by its stem or as the start of a word; "quoted phrases", `or` and `-exclusions` are supported. */
   q: z.string().trim().max(200).optional(),
   fields: YoutubeSearchFieldsSchema.default('all'),
   /** Repeat the parameter to search several channels. */

@@ -83,22 +83,86 @@ const DURATION_FILTERS = {
   long: sql`v.duration_sec > 1200`,
 }
 
+type SearchTerm = { text: string; phrase: boolean; exclude: boolean }
+
+// An optional run of dashes, then a quoted phrase (an unclosed quote runs to
+// the end) or a word.
+const SEARCH_TOKEN = /(-*)(?:"([^"]*)"?|([^\s"]+))/g
+const WORD_PARTS = /[\p{L}\p{M}\p{N}]+/gu
+
+/**
+ * Reads web-search syntax as `websearch_to_tsquery` does: groups separated by
+ * `or`, matched if any group matches, each holding terms that must all match.
+ */
+function searchGroups(text: string) {
+  let group: SearchTerm[] = []
+  const groups = [group]
+  for (const [, dashes, phrase, word] of text.matchAll(SEARCH_TOKEN)) {
+    if (phrase === undefined && !dashes && word?.toLowerCase() === 'or') {
+      group = []
+      groups.push(group)
+    } else
+      group.push({
+        text: phrase ?? word ?? '',
+        phrase: phrase !== undefined,
+        exclude: Boolean(dashes),
+      })
+  }
+  return groups.filter((terms) => terms.length)
+}
+
+/**
+ * A phrase matches its English stems in order. A word matches its English
+ * stem or the start of an unstemmed stored word, so `depressio` finds
+ * "depression"; a stop word matches nothing. Operator characters in the text
+ * are never read as tsquery syntax: the text is a parameter, and each prefix
+ * holds only letters, marks and digits.
+ */
+function termQuery({ text, phrase }: SearchTerm) {
+  const stems = sql`phraseto_tsquery('english', ${text})`
+  const parts = phrase ? [] : (text.match(WORD_PARTS) ?? [])
+  if (!parts.length) return stems
+  const prefix = sql.join(
+    parts.map((part) => sql`to_tsquery('simple', ${`${part}:*`})`),
+    sql` <-> `,
+  )
+  return sql`case when numnode(${stems}) = 0 then ${stems} else ${stems} || (${prefix}) end`
+}
+
+/** The tsquery for a search, or null when it has no terms. */
+function searchQuery(text: string) {
+  const groups = searchGroups(text).map(
+    (terms) =>
+      sql`(${sql.join(
+        terms.map((term) =>
+          term.exclude
+            ? sql`!!(${termQuery(term)})`
+            : sql`(${termQuery(term)})`,
+        ),
+        sql` && `,
+      )})`,
+  )
+  return groups.length ? sql`(${sql.join(groups, sql` || `)})` : null
+}
+
 /** Searches stored videos from subscribed channels; no YouTube requests. */
 export async function searchYoutubeVideos(
   input: YoutubeVideoQueryInput = {},
 ): Promise<YoutubeVideoPage> {
   const query = YoutubeVideoQuerySchema.parse(input)
   const text = query.q || null
-  const match = sql`websearch_to_tsquery('english', ${text})`
-  // A search made only of stop words, such as "The Who", has no lexemes to
-  // match; it falls back to the literal text in the title or channel name.
+  const match = text === null ? null : searchQuery(text)
+  // A search made only of stop words, such as "The Who", or of punctuation has
+  // no lexemes to match; it falls back to the literal text in the title or
+  // channel name.
   const literal =
     text !== null &&
-    LexemeRowsSchema.parse(
-      (await db.execute(sql`select numnode(${match}) as nodes`)).rows,
-    )[0]?.nodes === 0
+    (match === null ||
+      LexemeRowsSchema.parse(
+        (await db.execute(sql`select numnode(${match}) as nodes`)).rows,
+      )[0]?.nodes === 0)
   const pattern = `%${(text ?? '').replace(/[\\%_]/g, '\\$&')}%`
-  const ranked = text !== null && !literal
+  const ranked = literal ? null : match
   const filters = [
     sql`c.subscribed`,
     ...(literal
@@ -106,10 +170,10 @@ export async function searchYoutubeVideos(
       : []),
     ...(ranked
       ? [
-          sql`v.search @@ ${match}`,
+          sql`v.search @@ ${ranked}`,
           // The index narrows on every field; titles-only rechecks the heavier weights.
           ...(query.fields === 'title'
-            ? [sql`ts_filter(v.search, '{a,b}') @@ ${match}`]
+            ? [sql`ts_filter(v.search, '{a,b}') @@ ${ranked}`]
             : []),
         ]
       : []),
@@ -130,11 +194,12 @@ export async function searchYoutubeVideos(
       : []),
   ]
   const direction = query.sortDirection === 'asc' ? sql`asc` : sql`desc`
-  const requested = query.sortBy ?? (ranked ? 'relevance' : 'publishedAt')
-  const sortBy =
-    requested === 'relevance' && !ranked ? 'publishedAt' : requested
+  const sortBy = query.sortBy ?? (ranked ? 'relevance' : 'publishedAt')
   const order = {
-    relevance: sql`ts_rank(v.search, ${match}) ${direction}, v.published_at desc`,
+    // Relevance without a ranked search is by published date.
+    relevance: ranked
+      ? sql`ts_rank(v.search, ${ranked}) ${direction}, v.published_at desc`
+      : sql`v.published_at ${direction}`,
     publishedAt: sql`v.published_at ${direction}`,
     viewCount: sql`v.view_count ${direction} nulls last, v.published_at desc`,
     durationSec: sql`v.duration_sec ${direction}, v.published_at desc`,

@@ -148,6 +148,13 @@
       "when": 1794564185471,
       "tag": "0020_youtube_subscriptions",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1794568473487,
+      "tag": "0021_youtube_search_prefix",
+      "breakpoints": true
     }
   ]
 }

@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { readFile } from 'node:fs/promises'
 import pg from 'pg'
 import { eq } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/node-postgres'
@@ -126,6 +127,7 @@ function library(): FakeChannel[] {
         {
           id: videoId('a3'),
           title: 'Launch window livestream',
+          description: 'Crew questions on isolation and depression.',
           publishedAt: '2026-04-01T18:00:00Z',
           duration: 'P0D',
           live: 'upcoming',
@@ -1030,12 +1032,110 @@ describe('YouTube video search over stored videos', () => {
     ).toEqual([videoId('a2'), videoId('a1')])
   })
 
+  it('matches a partial word as the start of a stored word', async () => {
+    expect((await search({ q: 'depressio' })).ids).toEqual([videoId('a3')])
+    expect((await search({ q: 'DEPRES' })).ids).toEqual([videoId('a3')])
+    expect((await search({ q: 'sourdo' })).ids).toEqual([videoId('b1')])
+    expect((await search({ q: 'whetst' })).ids).toEqual([videoId('b2')])
+    expect((await search({ q: 'transf orbi' })).ids).toEqual([videoId('a1')])
+    expect(
+      (await search({ q: 'kepler mech', sortBy: 'publishedAt' })).ids,
+    ).toEqual(['a3', 'a1', 'a2', 'a5'].map(videoId))
+    // A form that is not a prefix of the stored word still matches its stem.
+    expect((await search({ q: 'orbiting' })).ids).toEqual([
+      videoId('a1'),
+      videoId('a2'),
+    ])
+    // Titles only leaves out a description-only match.
+    expect((await search({ q: 'depressio', fields: 'title' })).ids).toEqual([])
+    expect((await search({ q: 'sourdo', fields: 'title' })).ids).toEqual([
+      videoId('b1'),
+    ])
+    // Quoted phrases match whole words.
+    expect((await search({ q: '"cloud chamb"' })).ids).toEqual([])
+    expect((await search({ q: '"cloud chamber"' })).ids).toEqual([
+      videoId('a2'),
+    ])
+    expect(
+      (await search({ q: 'sourdo or wrench', sortBy: 'publishedAt' })).ids,
+    ).toEqual([videoId('b1'), videoId('a5')])
+    expect((await search({ q: 'explained -whetst' })).ids).toEqual([
+      videoId('a1'),
+    ])
+    expect((await search({ q: '-"cloud chamber"' })).totalCount).toBe(6)
+    expect(request).not.toHaveBeenCalled()
+  })
+
+  it('treats operator characters in a search as plain text', async () => {
+    // Unbalanced quotes run to the end of the search.
+    expect((await search({ q: '"cloud chamber' })).ids).toEqual([videoId('a2')])
+    for (const q of ['orbit:*', '!orbit', '(orbit)', 'orbit\\', "orbit'"])
+      expect((await search({ q })).ids).toEqual([videoId('a1'), videoId('a2')])
+    for (const q of ['sourdough & wrenches', 'sourdough | wrenches'])
+      expect((await search({ q })).ids).toEqual([])
+    for (const q of [
+      '"',
+      '""',
+      "'",
+      '-',
+      ':*',
+      '&',
+      '|',
+      '!',
+      '!!',
+      '()',
+      '(',
+      '\\',
+      '%',
+      '_',
+      '50%_',
+      "'orbit':* & !(",
+      'or',
+      'or or -',
+    ])
+      expect(await search({ q })).toMatchObject({ page: 1 })
+    for (const q of ['%', '_', '\\', ':*', '&', '|', '!', '()'])
+      expect((await search({ q })).totalCount).toBe(0)
+  })
+
   it('falls back to the literal text when a search has only stop words', async () => {
     expect((await search({ q: 'the who' })).ids).toEqual(
       ['b1', 'b2', 'b3'].map(videoId),
     )
     expect((await search({ q: 'the' })).totalCount).toBe(3)
     expect((await search({ q: 'the', channelId: ORBITAL })).totalCount).toBe(0)
+    // Stop words beside other words are ignored.
+    expect((await search({ q: 'the orbit' })).ids).toEqual([
+      videoId('a1'),
+      videoId('a2'),
+    ])
+  })
+
+  it('rebuilds stored search text in the migration exactly as a sync writes it', async () => {
+    // The renamed channel's older videos keep the vector written on rename.
+    channel(COOKS).title = 'The Who Cooks Again'
+    await syncToEnd()
+    const vectors = async () =>
+      (
+        await pool.query<{ id: string; search: string }>(
+          'select id, search::text as search from youtube_video order by id',
+        )
+      ).rows
+    const synced = await vectors()
+    expect(synced).toHaveLength(7)
+    expect(synced.find((row) => row.id === videoId('a3'))?.search).toContain(
+      "'depression':",
+    )
+    await pool.query(
+      "update youtube_video set search = to_tsvector('english', 'stale')",
+    )
+    await pool.query(
+      await readFile(
+        new URL('../drizzle/0021_youtube_search_prefix.sql', import.meta.url),
+        'utf8',
+      ),
+    )
+    expect(await vectors()).toEqual(synced)
   })
 
   it('filters by channel, duration and published day', async () => {

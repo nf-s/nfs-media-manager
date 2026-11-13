@@ -65,10 +65,10 @@ The schedule follows a completed sync and resumes a paused one. It does not star
 
 Search runs against the stored videos only and makes no YouTube requests.
 
-- Every word must match. Word forms are matched, so `orbit` finds "orbits" and "orbital".
-- `"quoted phrases"` match adjacent words, `or` matches either side, and a leading `-` excludes a word.
+- Every word must match. Word forms are matched, so `orbit` finds "orbits" and "orbital", and a partial word matches the start of a word, so `depres` finds "depression".
+- `"quoted phrases"` match adjacent whole words, `or` matches either side, and a leading `-` excludes a word. Other punctuation has no special meaning.
 - A search matches the video title, tags, channel name and description. **Titles only**, in Filters, leaves out the description.
-- A search made only of common words such as "the who" falls back to the literal text in the title or channel name.
+- Common words such as "the" are ignored. A search made only of common words or punctuation, such as "the who", falls back to the literal text in the title or channel name.
 
 Results sort by relevance while searching, with title, tag and channel-name matches above description matches, and otherwise newest first. They can also sort by published date, views or duration.
 
@@ -86,4 +86,4 @@ For each channel: ID, title, handle, description, avatar URL and subscriber coun
 
 ## Verification
 
-`integration/youtube-sync.integration.ts` runs the connection, the sync through the job dispatcher and the search against a fake YouTube API and a temporary database. It covers chained jobs, incremental syncs, renamed and unsubscribed channels, both quota pauses, scheduled and manual resume, failure, cancellation, token renewal, a rejected sign-in, the schedule intervals, and search syntax, filters, sorting and paging. It makes no Google requests. Unit tests cover the API helpers, the query schema and the web helpers.
+`integration/youtube-sync.integration.ts` runs the connection, the sync through the job dispatcher and the search against a fake YouTube API and a temporary database. It covers chained jobs, incremental syncs, renamed and unsubscribed channels, both quota pauses, scheduled and manual resume, failure, cancellation, token renewal, a rejected sign-in, the schedule intervals, search syntax including partial words and operator characters, filters, sorting and paging, and the migration that rebuilds stored search text. It makes no Google requests. Unit tests cover the API helpers, the query schema and the web helpers.

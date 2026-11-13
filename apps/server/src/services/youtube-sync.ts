@@ -68,7 +68,11 @@ const SCHEDULE_MINUTES: Record<YoutubeSyncSchedule, number | null> = {
 // PostgreSQL text cannot hold a NUL character.
 const clean = (value: string) => value.replaceAll('\u0000', '')
 
-/** Title (A), channel name and tags (B), description (D). */
+/**
+ * Title (A), channel name and tags (B), description (D): English stems for
+ * word forms, then the same fields unstemmed for partial words. Migration 0021
+ * rebuilds stored rows with the same expression.
+ */
 function searchVector(
   title: SQL,
   channelTitle: SQL,
@@ -77,7 +81,10 @@ function searchVector(
 ) {
   return sql`setweight(to_tsvector('english', ${title}), 'A') ||
     setweight(to_tsvector('english', ${channelTitle} || ' ' || ${tags}), 'B') ||
-    setweight(to_tsvector('english', ${description}), 'D')`
+    setweight(to_tsvector('english', ${description}), 'D') ||
+    setweight(to_tsvector('simple', ${title}), 'A') ||
+    setweight(to_tsvector('simple', ${channelTitle} || ' ' || ${tags}), 'B') ||
+    setweight(to_tsvector('simple', ${description}), 'D')`
 }
 
 async function latestSyncJob() {

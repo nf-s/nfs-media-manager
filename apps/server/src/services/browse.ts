@@ -262,14 +262,15 @@ export async function queryBrowseIds(
         : predicate,
     )
   }
-  if (query.q?.trim()) {
-    const search = `%${query.q.trim().replace(/[\\%_]/g, '\\$&')}%`
-    const expressions = fields
-      .filter((field) => field.type === 'text')
-      .map(
-        (field) =>
-          sql`(${valueExpression(field.key, mediaType)} #>> '{}') ilike ${search}`,
-      )
+  // Every word must appear in at least one text field; words may match
+  // different fields.
+  const textFields = fields.filter((field) => field.type === 'text')
+  for (const word of new Set(query.q?.split(/\s+/).filter(Boolean))) {
+    const search = `%${word.replace(/[\\%_]/g, '\\$&')}%`
+    const expressions = textFields.map(
+      (field) =>
+        sql`(${valueExpression(field.key, mediaType)} #>> '{}') ilike ${search}`,
+    )
     conditions.push(sql`(${sql.join(expressions, sql` or `)})`)
   }
   const where = and(...conditions)
