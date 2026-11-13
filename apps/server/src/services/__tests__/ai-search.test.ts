@@ -4,6 +4,7 @@ import {
   AI_AUDIO_MAX_BYTES,
   AiSearchPlanSchema,
   type AiSearchPlan,
+  type AiSubscriptionInterpretedPlan,
   type AiYoutubeInterpretedPlan,
 } from '@repo/schemas/ai-search'
 
@@ -33,12 +34,14 @@ import {
   aiSearchStatus,
   interpretAiSearch,
   parseAiInterpretation,
+  parseAiSubscriptionInterpretation,
   parseAiYoutubeInterpretation,
   transcribeAiAudio,
   validateAiPlan,
+  validateAiSubscriptionPlan,
   validateAiYoutubePlan,
 } from '../ai-search'
-import { matchYoutubeChannelName } from '../youtube-channel-names'
+import { matchSourceName } from '../subscription-source-names'
 
 const now = new Date('2026-11-13T08:00:00Z')
 function plan(overrides: Partial<AiSearchPlan> = {}): AiSearchPlan {
@@ -489,10 +492,30 @@ describe('AI track search', () => {
 
 const channelId = (letter: string) => `UC${letter.repeat(22)}`
 const channelRows = [
-  { id: channelId('a'), title: 'Synthetic Science', handle: '@synthsci' },
-  { id: channelId('b'), title: 'Synthetic Science Shorts', handle: null },
-  { id: channelId('c'), title: 'Example Cooking', handle: '@examplekitchen' },
-  { id: channelId('d'), title: 'Woodwork Example', handle: '@woodwork' },
+  {
+    id: channelId('a'),
+    type: 'youtube',
+    title: 'Synthetic Science',
+    handle: '@synthsci',
+  },
+  {
+    id: channelId('b'),
+    type: 'youtube',
+    title: 'Synthetic Science Shorts',
+    handle: null,
+  },
+  {
+    id: channelId('c'),
+    type: 'youtube',
+    title: 'Example Cooking',
+    handle: '@examplekitchen',
+  },
+  {
+    id: channelId('d'),
+    type: 'youtube',
+    title: 'Woodwork Example',
+    handle: '@woodwork',
+  },
 ]
 function youtubePlan(
   overrides: Partial<AiYoutubeInterpretedPlan> = {},
@@ -665,29 +688,212 @@ describe('AI YouTube search', () => {
   })
 
   it('matches exact titles and handles before unique substrings', () => {
-    expect(matchYoutubeChannelName('synthetic science', channelRows)).toEqual({
+    expect(matchSourceName('synthetic science', channelRows)).toEqual({
       status: 'matched',
-      channel: channelRows[0],
+      source: channelRows[0],
     })
-    expect(matchYoutubeChannelName('@SynthSci', channelRows)).toEqual({
+    expect(matchSourceName('@SynthSci', channelRows)).toEqual({
       status: 'matched',
-      channel: channelRows[0],
+      source: channelRows[0],
     })
-    expect(matchYoutubeChannelName('kitchen', channelRows)).toEqual({
+    expect(matchSourceName('kitchen', channelRows)).toEqual({
       status: 'matched',
-      channel: channelRows[2],
+      source: channelRows[2],
     })
-    expect(matchYoutubeChannelName('shorts', channelRows)).toEqual({
+    expect(matchSourceName('shorts', channelRows)).toEqual({
       status: 'matched',
-      channel: channelRows[1],
+      source: channelRows[1],
     })
-    expect(matchYoutubeChannelName('example', channelRows).status).toBe(
-      'ambiguous',
+    expect(matchSourceName('example', channelRows).status).toBe('ambiguous')
+    expect(matchSourceName('@', channelRows).status).toBe('missing')
+    expect(matchSourceName('missing', channelRows).status).toBe('missing')
+  })
+})
+
+const showId = (letter: string) => `Show${letter.repeat(18)}`
+const sourceRows = [
+  ...channelRows,
+  { id: showId('a'), type: 'spotify', title: 'Orbit Talk', handle: null },
+  {
+    id: showId('b'),
+    type: 'spotify',
+    title: 'Example Cooking Hour',
+    handle: null,
+  },
+]
+function subscriptionPlan(
+  overrides: Partial<AiSubscriptionInterpretedPlan> = {},
+): AiSubscriptionInterpretedPlan {
+  return {
+    q: '',
+    fields: 'all',
+    sourceNames: [],
+    types: [],
+    publishedFrom: null,
+    publishedTo: null,
+    durationMinSec: null,
+    durationMaxSec: null,
+    sortBy: 'publishedAt',
+    direction: 'desc',
+    ...overrides,
+  }
+}
+function subscriptionInterpretation(search: AiSubscriptionInterpretedPlan) {
+  return { ...interpretation(null), plan: search }
+}
+
+describe('AI Subscriptions search', () => {
+  beforeEach(() => {
+    mocks.database.mockResolvedValue({ rows: sourceRows })
+  })
+
+  it('resolves channel and podcast names on the server and returns their ids and types', async () => {
+    mocks.text.mockResolvedValue(
+      completion(
+        subscriptionInterpretation(
+          subscriptionPlan({
+            q: 'docking',
+            sourceNames: ['orbit talk', '@WOODWORK'],
+            types: ['spotify', 'youtube'],
+            durationMinSec: 1201,
+            publishedFrom: '2026-10-01',
+            sortBy: 'relevance',
+          }),
+        ),
+      ),
     )
-    expect(matchYoutubeChannelName('@', channelRows).status).toBe('missing')
-    expect(matchYoutubeChannelName('missing', channelRows).status).toBe(
-      'missing',
+    const result = await interpretAiSearch(
+      {
+        mediaType: 'subscription',
+        text: 'Long docking episodes from Orbit Talk and @woodwork since October',
+      },
+      now,
     )
+    expect(result).toEqual({
+      plan: {
+        q: 'docking',
+        fields: 'all',
+        sources: [
+          { id: showId('a'), type: 'spotify', title: 'Orbit Talk' },
+          { id: channelId('d'), type: 'youtube', title: 'Woodwork Example' },
+        ],
+        types: ['spotify', 'youtube'],
+        publishedFrom: '2026-10-01',
+        publishedTo: null,
+        durationMinSec: 1201,
+        durationMaxSec: null,
+        sortBy: 'relevance',
+        direction: 'desc',
+      },
+      explanation: 'Search the selected library.',
+      assumptions: [],
+      warnings: [],
+    })
+    expect(mocks.database).toHaveBeenCalledOnce()
+  })
+
+  it('never sends stored channel or podcast names to the model', async () => {
+    mocks.text.mockResolvedValue(
+      completion(
+        subscriptionInterpretation(
+          subscriptionPlan({ sourceNames: ['orbit talk'] }),
+        ),
+      ),
+    )
+    await interpretAiSearch(
+      { mediaType: 'subscription', text: 'Episodes from orbit talk' },
+      now,
+    )
+    const sent = JSON.stringify(mocks.text.mock.calls)
+    expect(sent).toContain('episodes of saved Spotify podcasts')
+    expect(sent).toContain('durationMaxSec:239')
+    for (const source of sourceRows) {
+      expect(sent).not.toContain(source.title)
+      expect(sent).not.toContain(source.id)
+    }
+  })
+
+  it('does not read sources when the request names none', async () => {
+    mocks.text.mockResolvedValue(
+      completion(
+        subscriptionInterpretation(subscriptionPlan({ types: ['spotify'] })),
+      ),
+    )
+    const result = await interpretAiSearch(
+      { mediaType: 'subscription', text: 'Podcast episodes' },
+      now,
+    )
+    expect(result.plan).toMatchObject({ sources: [], types: ['spotify'] })
+    expect(mocks.database).not.toHaveBeenCalled()
+  })
+
+  it('returns ambiguous and missing names as warnings without a partial filter', async () => {
+    mocks.text.mockResolvedValue(
+      completion(
+        subscriptionInterpretation(
+          subscriptionPlan({ sourceNames: ['cooking', 'Unknown Show'] }),
+        ),
+      ),
+    )
+    const result = await interpretAiSearch(
+      { mediaType: 'subscription', text: 'Cooking and Unknown Show' },
+      now,
+    )
+    expect(result).toEqual({
+      plan: null,
+      explanation: expect.stringContaining('subscribed channel or podcast'),
+      assumptions: [],
+      warnings: [
+        '"cooking" matches several subscribed channels and podcasts: Example Cooking, Example Cooking Hour.',
+        'No subscribed channel or podcast matches "Unknown Show".',
+      ],
+    })
+  })
+
+  it.each([
+    subscriptionPlan({ sortBy: 'relevance' }),
+    subscriptionPlan({ q: 'bread', sortBy: 'relevance', direction: 'asc' }),
+    subscriptionPlan({ fields: 'title' }),
+    subscriptionPlan({
+      publishedFrom: '2026-10-31',
+      publishedTo: '2026-10-01',
+    }),
+    subscriptionPlan({ durationMinSec: 600, durationMaxSec: 300 }),
+    subscriptionPlan({ types: ['spotify', 'spotify'] }),
+  ])('rejects Subscriptions plans the page cannot apply', (search) => {
+    expect(() => validateAiSubscriptionPlan(search)).toThrow(
+      'unsupported search',
+    )
+  })
+
+  it.each([
+    { ...subscriptionPlan(), channelNames: [] },
+    { ...subscriptionPlan(), duration: 'long' },
+    { ...subscriptionPlan(), sortBy: 'scrobbles' },
+    { ...subscriptionPlan(), types: ['film'] },
+    { ...subscriptionPlan(), durationMaxSec: 1.5 },
+    { ...subscriptionPlan(), filters: [] },
+  ])(
+    'rejects unsupported Subscriptions fields at the model boundary',
+    (search) => {
+      expect(() =>
+        parseAiSubscriptionInterpretation(
+          completion({ ...interpretation(), plan: search }),
+        ),
+      ).toThrow('unsupported search')
+    },
+  )
+
+  it('accepts likes, comments, titles and channels as sorts', () => {
+    for (const sortBy of [
+      'likeCount',
+      'commentCount',
+      'title',
+      'source',
+    ] as const)
+      expect(() =>
+        validateAiSubscriptionPlan(subscriptionPlan({ sortBy })),
+      ).not.toThrow()
   })
 })
 

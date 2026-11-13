@@ -1,5 +1,7 @@
 # YouTube subscriptions
 
+The YouTube library is becoming part of the [Subscriptions library](subscriptions.md), which documents its storage, API and search.
+
 The YouTube library stores the channels one YouTube account subscribes to and the videos those channels have uploaded, then searches them locally. YouTube itself cannot search across only your subscriptions.
 
 Choose **YouTube** in the library selector. It has two pages:

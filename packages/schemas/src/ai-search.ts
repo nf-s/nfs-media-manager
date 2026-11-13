@@ -3,9 +3,19 @@ import {
   BrowseFilterSchema,
   BrowseKeySchema,
   BrowseRangeSchema,
+  type BrowseFilter,
+  type BrowseRange,
 } from './browse'
 import { DirectionSchema } from './common'
 import { ListeningFilterSchema, ListeningPeriodSchema } from './listening'
+import {
+  SubscriptionSearchFieldsSchema,
+  SubscriptionSortSchema,
+  SubscriptionSourceIdSchema,
+  SubscriptionTypeSchema,
+  subscriptionTypeLabels,
+  type SubscriptionSort,
+} from './subscriptions'
 import {
   YoutubeChannelIdSchema,
   YoutubeDurationSchema,
@@ -19,14 +29,21 @@ export const AI_AUDIO_MAX_BYTES = 5 * 1024 * 1024
 export const AI_AUDIO_MAX_SECONDS = 60
 /** The Videos page searches at most this many channels at once. */
 export const AI_YOUTUBE_MAX_CHANNELS = 50
+/** A subscription plan names at most this many channels and podcasts. */
+export const AI_SUBSCRIPTION_MAX_SOURCES = 50
 
 /** Libraries whose search is a media-item browse plan. */
 export const AiMediaLibrarySchema = z.enum(['album', 'film', 'track'])
 export type AiMediaLibrary = z.infer<typeof AiMediaLibrarySchema>
-/** `youtube` searches stored YouTube videos and returns an `AiYoutubeSearchResponse`. */
+/**
+ * `youtube` searches stored YouTube videos and returns an `AiYoutubeSearchResponse`.
+ * `subscription` searches stored videos and podcast episodes and returns an
+ * `AiSubscriptionSearchResponse`.
+ */
 export const AiSearchLibrarySchema = z.enum([
   ...AiMediaLibrarySchema.options,
   'youtube',
+  'subscription',
 ])
 export type AiSearchLibrary = z.infer<typeof AiSearchLibrarySchema>
 
@@ -116,6 +133,120 @@ export const AiYoutubeSearchResponseSchema =
 export type AiYoutubeSearchResponse = z.infer<
   typeof AiYoutubeSearchResponseSchema
 >
+
+const subscriptionPlanShape = {
+  q: z.string().max(200),
+  fields: SubscriptionSearchFieldsSchema,
+  /** Empty for both types. */
+  types: z.array(SubscriptionTypeSchema).max(2),
+  publishedFrom: youtubeDay.nullable(),
+  publishedTo: youtubeDay.nullable(),
+  /** Inclusive seconds. */
+  durationMinSec: z.number().int().nonnegative().nullable(),
+  durationMaxSec: z.number().int().nonnegative().nullable(),
+  sortBy: SubscriptionSortSchema,
+  direction: DirectionSchema,
+}
+
+/** The model's Subscriptions plan: sources are the names the request mentioned, resolved on the server. */
+export const AiSubscriptionInterpretedPlanSchema = z
+  .object({
+    ...subscriptionPlanShape,
+    sourceNames: z
+      .array(z.string().trim().min(1).max(100))
+      .max(AI_SUBSCRIPTION_MAX_SOURCES),
+  })
+  .strict()
+export type AiSubscriptionInterpretedPlan = z.infer<
+  typeof AiSubscriptionInterpretedPlanSchema
+>
+
+export const AiSubscriptionInterpretationSchema = z
+  .object({
+    plan: AiSubscriptionInterpretedPlanSchema.nullable(),
+    explanation: AiSearchInterpretationSchema.shape.explanation,
+    assumptions: AiSearchInterpretationSchema.shape.assumptions,
+  })
+  .strict()
+
+/** A Subscriptions plan whose source names matched stored subscribed channels or podcasts. */
+export const AiSubscriptionPlanSchema = z
+  .object({
+    ...subscriptionPlanShape,
+    sources: z
+      .array(
+        z.object({
+          id: SubscriptionSourceIdSchema,
+          type: SubscriptionTypeSchema,
+          title: z.string(),
+        }),
+      )
+      .max(AI_SUBSCRIPTION_MAX_SOURCES),
+  })
+  .strict()
+export type AiSubscriptionPlan = z.infer<typeof AiSubscriptionPlanSchema>
+
+export const AiSubscriptionSearchResponseSchema =
+  AiSubscriptionInterpretationSchema.extend({
+    plan: AiSubscriptionPlanSchema.nullable(),
+    warnings: AiSearchResponseSchema.shape.warnings,
+  })
+export type AiSubscriptionSearchResponse = z.infer<
+  typeof AiSubscriptionSearchResponseSchema
+>
+
+/**
+ * The Subscriptions browse query a plan applies: sources form one any-of
+ * group, a single type is required, and days become inclusive UTC epoch
+ * millisecond bounds.
+ */
+export function aiSubscriptionBrowseQuery(plan: AiSubscriptionPlan): {
+  q: string
+  fields: AiSubscriptionPlan['fields']
+  filters: BrowseFilter[]
+  ranges: BrowseRange[]
+  sortBy: SubscriptionSort
+  direction: AiSubscriptionPlan['direction']
+} {
+  const types = [...new Set(plan.types)]
+  const [type] = types
+  const filters: BrowseFilter[] = [
+    ...new Set(plan.sources.map((source) => source.title)),
+  ].map((title) => ({ field: 'source', value: title, mode: 'any' }))
+  if (types.length === 1 && type)
+    filters.push({
+      field: 'type',
+      value: subscriptionTypeLabels[type],
+      mode: 'required',
+    })
+  const ranges: BrowseRange[] = []
+  if (plan.publishedFrom || plan.publishedTo)
+    ranges.push({
+      field: 'publishedAt',
+      ...(plan.publishedFrom
+        ? { min: Date.parse(`${plan.publishedFrom}T00:00:00.000Z`) }
+        : {}),
+      ...(plan.publishedTo
+        ? { max: Date.parse(`${plan.publishedTo}T23:59:59.999Z`) }
+        : {}),
+      includeMissing: false,
+    })
+  if (plan.durationMinSec !== null || plan.durationMaxSec !== null)
+    ranges.push({
+      field: 'durationSec',
+      ...(plan.durationMinSec === null ? {} : { min: plan.durationMinSec }),
+      ...(plan.durationMaxSec === null ? {} : { max: plan.durationMaxSec }),
+      includeMissing: false,
+    })
+  return {
+    q: plan.q,
+    fields: plan.fields,
+    filters,
+    ranges,
+    sortBy: plan.sortBy,
+    direction: plan.direction,
+  }
+}
 
 export const AiStatusSchema = z.object({
   available: z.boolean(),

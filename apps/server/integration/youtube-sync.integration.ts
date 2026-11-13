@@ -643,6 +643,38 @@ describe('YouTube subscription sync jobs with offline HTTP and a temporary datab
     )
     expect((await listJobs({ status: 'attention' })).totalCount).toBe(0)
 
+    // The Subscriptions endpoints report the same run in provider-neutral names.
+    const { getSubscriptionSyncStatus, setSubscriptionSyncSchedule } =
+      await import('@/services/subscription-sync')
+    expect(await getSubscriptionSyncStatus('youtube', USER)).toEqual({
+      provider: 'youtube',
+      account: done.account,
+      state: 'complete',
+      job: done.job,
+      schedule: 'daily',
+      nextScheduledAt: done.nextScheduledAt,
+      phase: 'items',
+      sourcesDone: 3,
+      sourcesTotal: 3,
+      newItems: 7,
+      storedSources: 3,
+      storedItems: 7,
+      startedAt: done.startedAt,
+      lastCompletedAt: done.lastCompletedAt,
+      resumeAfter: null,
+      errorMessage: null,
+    })
+    expect(
+      await setSubscriptionSyncSchedule('youtube', USER, 'weekly'),
+    ).toMatchObject({ schedule: 'weekly' })
+    expect((await status()).schedule).toBe('weekly')
+    await expect(
+      getSubscriptionSyncStatus('spotify', USER),
+    ).rejects.toMatchObject({
+      statusCode: 404,
+      message: 'Podcast sync is not available yet.',
+    })
+
     const { listYoutubeChannels } = await import('@/services/youtube-library')
     expect((await listYoutubeChannels()).items).toEqual([
       {
@@ -823,11 +855,14 @@ describe('YouTube subscription sync jobs with offline HTTP and a temporary datab
       videoId('a2'),
     ])
     expect((await search({ channelId: [ORBITAL] })).totalCount).toBe(4)
-    const { listSubscribedYoutubeChannelNames } =
-      await import('@/services/youtube-channel-names')
+    const { listSubscribedSourceNames } =
+      await import('@/services/subscription-source-names')
     expect(
-      (await listSubscribedYoutubeChannelNames()).map((item) => item.id),
+      (await listSubscribedSourceNames('youtube')).map((item) => item.id),
     ).toEqual([EMPTY, ORBITAL])
+    expect(
+      (await listSubscribedSourceNames()).map((item) => item.type),
+    ).toEqual(['youtube', 'youtube', 'spotify'])
   })
 
   it('returns the active job instead of queueing a second sync', async () => {

@@ -1,14 +1,13 @@
 import { randomUUID } from 'node:crypto'
-import { and, asc, desc, eq, gt, inArray, sql, type SQL } from 'drizzle-orm'
+import { and, asc, eq, gt, inArray, sql } from 'drizzle-orm'
 import { nanoid } from 'nanoid'
 import { z } from 'zod'
 import {
   ProviderRequestError,
   isProviderItemNotFoundError,
 } from '@repo/media-plugin-sdk'
+import type { SubscriptionSyncStatus } from '@repo/schemas/subscriptions'
 import {
-  YOUTUBE_SYNC_TASK,
-  YoutubeSyncScheduleSchema,
   YoutubeSyncStatusSchema,
   type YoutubeSyncSchedule,
   type YoutubeSyncStatus,
@@ -28,7 +27,6 @@ import {
 } from '@/lib/youtube-api'
 import { youtubePlugin } from '@/plugins/builtin/youtube'
 import {
-  scrapeJob,
   subscriptionItem,
   subscriptionSource,
   subscriptionSync,
@@ -42,6 +40,13 @@ import {
   recordProviderFailure,
   recordProviderSuccess,
 } from './provider-requests'
+import { subscriptionSearchVector } from './subscription-library'
+import {
+  dueSubscriptionSyncUsers,
+  readSubscriptionSyncStatus,
+  saveSubscriptionSyncSchedule,
+  subscriptionSyncRun,
+} from './subscription-sync-state'
 import { getYoutubeAccountStatus, youtubeAccessToken } from './youtube-oauth'
 
 // One job stays well inside a Cloudflare Queue invocation's 15-minute limit
@@ -56,163 +61,62 @@ const DEFAULT_PAUSE_MS = 60 * 60 * 1000
 type SyncRow = typeof subscriptionSync.$inferSelect
 type VideoPage = z.infer<typeof YoutubeVideoListSchema>
 
-const SCHEDULE_MINUTES: Record<YoutubeSyncSchedule, number | null> = {
-  off: null,
-  '1h': 60,
-  '3h': 3 * 60,
-  '6h': 6 * 60,
-  daily: 24 * 60,
-  weekly: 7 * 24 * 60,
-}
-
 // Sources, items and checkpoints of this provider; other providers' rows share
 // the tables and are never read or changed here.
 const YOUTUBE = 'youtube'
-const youtubeRun = (userId: string) =>
-  and(
-    eq(subscriptionSync.userId, userId),
-    eq(subscriptionSync.provider, YOUTUBE),
-  )
+const youtubeRun = (userId: string) => subscriptionSyncRun(userId, YOUTUBE)
 
 // PostgreSQL text cannot hold a NUL character.
 const clean = (value: string) => value.replaceAll('\u0000', '')
 
-/**
- * Title (A), channel name and tags (B), description (D): English stems for
- * word forms, then the same fields unstemmed for partial words. Migration 0021
- * rebuilds stored rows with the same expression.
- */
-function searchVector(
-  title: SQL,
-  channelTitle: SQL,
-  tags: SQL,
-  description: SQL,
-) {
-  return sql`setweight(to_tsvector('english', ${title}), 'A') ||
-    setweight(to_tsvector('english', ${channelTitle} || ' ' || ${tags}), 'B') ||
-    setweight(to_tsvector('english', ${description}), 'D') ||
-    setweight(to_tsvector('simple', ${title}), 'A') ||
-    setweight(to_tsvector('simple', ${channelTitle} || ' ' || ${tags}), 'B') ||
-    setweight(to_tsvector('simple', ${description}), 'D')`
+/** The YouTube sync state in the shape every subscription provider shares. */
+export async function getYoutubeSubscriptionSyncStatus(userId: string) {
+  return readSubscriptionSyncStatus(
+    YOUTUBE,
+    userId,
+    await getYoutubeAccountStatus(userId),
+  )
 }
 
-async function latestSyncJob() {
-  const [job] = await db
-    .select({
-      id: scrapeJob.id,
-      status: scrapeJob.status,
-      errorMessage: scrapeJob.errorMessage,
-    })
-    .from(scrapeJob)
-    .where(
-      and(
-        eq(scrapeJob.provider, 'youtube'),
-        sql`${scrapeJob.options}->>'task' = ${YOUTUBE_SYNC_TASK}`,
-      ),
-    )
-    .orderBy(desc(scrapeJob.createdAt), desc(scrapeJob.id))
-    .limit(1)
-  return job ?? null
+/** The YouTube sync state in the YouTube contract's names. */
+export function youtubeSyncStatus(
+  status: SubscriptionSyncStatus,
+): YoutubeSyncStatus {
+  return YoutubeSyncStatusSchema.parse({
+    account: status.account,
+    state: status.state,
+    job: status.job,
+    schedule: status.schedule,
+    nextScheduledAt: status.nextScheduledAt,
+    phase:
+      status.phase === 'items'
+        ? 'videos'
+        : status.phase === 'sources'
+          ? 'subscriptions'
+          : null,
+    channelsDone: status.sourcesDone,
+    channelsTotal: status.sourcesTotal,
+    newVideos: status.newItems,
+    storedChannels: status.storedSources,
+    storedVideos: status.storedItems,
+    startedAt: status.startedAt,
+    lastCompletedAt: status.lastCompletedAt,
+    resumeAfter: status.resumeAfter,
+    errorMessage: status.errorMessage,
+  })
 }
-
-type SyncJob = Awaited<ReturnType<typeof latestSyncJob>>
-
-// The checkpoint row records the run; the job table records who is working on it.
-function syncState(
-  row: SyncRow | undefined,
-  job: SyncJob,
-): YoutubeSyncStatus['state'] {
-  if (job?.status === 'queued' || job?.status === 'running') return 'running'
-  if (!row || row.status === 'idle') return 'never'
-  if (row.status === 'complete') return 'complete'
-  if (row.status === 'paused') return 'paused'
-  // An open run without a job was cancelled, or its worker was interrupted.
-  return row.status === 'failed' || job?.status === 'failed'
-    ? 'failed'
-    : 'stopped'
-}
-
-const CountsSchema = z
-  .array(z.object({ channels: z.coerce.number(), videos: z.coerce.number() }))
-  .length(1)
 
 export async function getYoutubeSyncStatus(
   userId: string,
 ): Promise<YoutubeSyncStatus> {
-  const account = await getYoutubeAccountStatus(userId)
-  const [row] = await db
-    .select()
-    .from(subscriptionSync)
-    .where(youtubeRun(userId))
-  const job = await latestSyncJob()
-  const counts = CountsSchema.parse(
-    (
-      await db.execute(sql`
-        select
-          (select count(*) from subscription_source
-            where type = ${YOUTUBE} and subscribed) as channels,
-          (select count(*) from subscription_item i
-            join subscription_source s on s.id = i.source_id
-            where s.type = ${YOUTUBE} and s.subscribed) as videos`)
-    ).rows,
-  )
-  const state = syncState(row, job)
-  const schedule = YoutubeSyncScheduleSchema.catch('daily').parse(row?.schedule)
-  const minutes = SCHEDULE_MINUTES[schedule]
-  const next =
-    !account.connected || minutes === null
-      ? null
-      : state === 'complete' && row?.completedAt
-        ? new Date(row.completedAt.getTime() + minutes * 60 * 1000)
-        : state === 'paused'
-          ? (row?.resumeAfter ?? null)
-          : null
-  const started = row && row.status !== 'idle'
-  return YoutubeSyncStatusSchema.parse({
-    account,
-    state,
-    job: job ? { id: job.id, status: job.status } : null,
-    schedule,
-    nextScheduledAt: next?.toISOString() ?? null,
-    phase: started
-      ? row.phase === 'items'
-        ? 'videos'
-        : 'subscriptions'
-      : null,
-    channelsDone: row?.sourcesDone ?? 0,
-    channelsTotal: row?.sourcesTotal ?? 0,
-    newVideos: row?.newItems ?? 0,
-    storedChannels: counts[0]?.channels ?? 0,
-    storedVideos: counts[0]?.videos ?? 0,
-    startedAt: started ? row.startedAt.toISOString() : null,
-    lastCompletedAt: row?.completedAt?.toISOString() ?? null,
-    resumeAfter:
-      state === 'paused' ? (row?.resumeAfter?.toISOString() ?? null) : null,
-    errorMessage:
-      state === 'failed'
-        ? (row?.errorMessage ?? job?.errorMessage ?? null)
-        : null,
-  })
+  return youtubeSyncStatus(await getYoutubeSubscriptionSyncStatus(userId))
 }
 
 export async function setYoutubeSyncSchedule(
   userId: string,
   schedule: YoutubeSyncSchedule,
 ) {
-  // The setting can be saved before the first sync creates a run.
-  await db
-    .insert(subscriptionSync)
-    .values({
-      userId,
-      provider: YOUTUBE,
-      status: 'idle',
-      schedule,
-      startedAt: new Date(),
-    })
-    .onConflictDoUpdate({
-      target: [subscriptionSync.userId, subscriptionSync.provider],
-      set: { schedule },
-    })
+  await saveSubscriptionSyncSchedule(YOUTUBE, userId, schedule)
   return getYoutubeSyncStatus(userId)
 }
 
@@ -408,7 +312,7 @@ async function syncSubscriptionPage(
         await tx
           .update(subscriptionItem)
           .set({
-            search: searchVector(
+            search: subscriptionSearchVector(
               sql`${subscriptionItem.title}`,
               sql`${channel.title}::text`,
               sql`(select coalesce(string_agg(tag, ' '), '')
@@ -477,7 +381,7 @@ function videoRows(
       likeCount: video.statistics?.likeCount ?? null,
       commentCount: video.statistics?.commentCount ?? null,
       live: video.snippet.liveBroadcastContent,
-      search: searchVector(
+      search: subscriptionSearchVector(
         sql`${title}::text`,
         sql`${channel.title}::text`,
         sql`${tags.join(' ')}::text`,
@@ -736,21 +640,10 @@ export async function runYoutubeSyncJob(
 }
 
 /** Accounts whose schedule is due, or whose quota pause has passed. */
-export async function dueYoutubeSyncUsers(now: number): Promise<string[]> {
-  const rows = await db
-    .select({ userId: subscriptionSync.userId })
-    .from(subscriptionSync)
-    .where(
-      and(
-        eq(subscriptionSync.provider, YOUTUBE),
-        inArray(subscriptionSync.status, ['complete', 'paused']),
-      ),
-    )
-  const due: string[] = []
-  for (const row of rows) {
-    const status = await getYoutubeSyncStatus(row.userId)
-    if (status.nextScheduledAt && Date.parse(status.nextScheduledAt) <= now)
-      due.push(row.userId)
-  }
-  return due
+export function dueYoutubeSyncUsers(now: number): Promise<string[]> {
+  return dueSubscriptionSyncUsers(
+    YOUTUBE,
+    now,
+    getYoutubeSubscriptionSyncStatus,
+  )
 }
