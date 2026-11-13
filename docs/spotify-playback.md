@@ -23,6 +23,7 @@ Requirements:
 - **Queue:** an album plays in full, then the next queued album or track starts. Entries can be played now, reordered, removed or cleared. The queue is kept in the open page only; reloading clears it. It is the app's own queue, separate from Spotify's.
 - **Play on:** **This browser** or any device Spotify lists for the account. Playback started here that moves to another device is followed there.
 - **Playback started elsewhere:** when the account is playing on another device, for example from the Spotify app on a phone, the dock shows that track and controls that device: play/pause, previous, next, seek and volume. Playing an album here then plays it on that device; choose **This browser** to move it. Queued items do not start on their own after playback the app did not start: press **Next** or play one from the queue. Paused playback on another device is not picked up, and the dock hides again when that playback stops unless something was played or queued here.
+- **Devices apps cannot control:** Spotify marks some speakers, TVs and receivers as restricted and accepts no commands for them. Playback there is shown with the transport, seek bar and volume disabled; playing something here starts it in this browser (or the device chosen before), and **Play on** can move playback to another device.
 
 Albums and tracks without a valid Spotify album URL or track ID have no play controls.
 
@@ -47,7 +48,7 @@ The browser then talks to Spotify directly:
 
 - The queue and the current session do not survive a reload, and two open tabs each have their own.
 - No shuffle or repeat controls.
-- Playback started elsewhere is shown as Spotify reports it. It is not matched to a library album, Spotify's own queue is not shown, and it can take up to 30 seconds to appear.
+- Playback started elsewhere is shown as Spotify reports it. Whether a device is restricted is Spotify's decision and cannot be changed here. It is not matched to a library album, Spotify's own queue is not shown, and it can take up to 30 seconds to appear.
 - When another device jumps straight to the end of an album between two state reads, the album can go unnoticed as finished and the next queue entry does not start.
 - Tests use a fake SDK player and fake Spotify responses. Audio, the consent round trip and phone browsers are not covered by automated tests.
 

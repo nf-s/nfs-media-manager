@@ -159,9 +159,14 @@ test('reads remote playback, including nothing playing and non-track items', asy
     new Response(null, { status: 204 }),
     Response.json(state),
   ])
-  assert.deepEqual(await api.state(), { device: null, snapshot: null })
+  assert.deepEqual(await api.state(), {
+    device: null,
+    restricted: null,
+    snapshot: null,
+  })
   const playing = await api.state()
   assert.equal(playing.device?.id, 'speaker')
+  assert.equal(playing.restricted, null)
   assert.equal(playing.snapshot?.artists, 'First, Second')
   assert.equal(playing.snapshot?.paused, false)
   assert.equal(playing.snapshot?.hasNext, null)
@@ -185,6 +190,19 @@ test('reads remote playback, including nothing playing and non-track items', asy
   assert.equal(read.snapshot?.paused, true)
   assert.equal(read.snapshot?.artworkUrl, null)
   assert.equal(read.snapshot?.at, 5)
+  // Spotify gives a device apps cannot control no ID; its playback is still read.
+  for (const unreachable of [
+    { ...device, id: null, is_restricted: true },
+    { ...device, is_restricted: true },
+  ]) {
+    const observed = remotePlayback({ ...state, device: unreachable }, 0)
+    assert.equal(observed.device, null)
+    assert.deepEqual(observed.restricted, {
+      name: device.name,
+      type: device.type.toLowerCase(),
+    })
+    assert.equal(observed.snapshot?.paused, false)
+  }
   assert.equal(remotePlayback({ ...state, item: null }, 0).snapshot, null)
   assert.equal(
     remotePlayback({ ...state, item: { type: 'episode' } }, 0).snapshot,

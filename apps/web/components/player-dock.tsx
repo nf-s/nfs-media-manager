@@ -48,7 +48,7 @@ import {
   type PlaybackSnapshot,
   type QueueEntry,
 } from '@/utils/playback'
-import type { PlaybackTarget } from '@/utils/playback-engine'
+import type { PlaybackTarget, SelectableTarget } from '@/utils/playback-engine'
 import { spotifyAuthorizationUrl } from '@/utils/spotify-authorize'
 
 const phoneQuery = '(max-width: 700px)'
@@ -109,7 +109,8 @@ function itemDetail(item: PlayableItem) {
 }
 
 function targetLabel(target: PlaybackTarget) {
-  return target.kind === 'local' ? 'This browser' : target.device.name
+  if (target.kind === 'local') return 'This browser'
+  return target.kind === 'remote' ? target.device.name : target.name
 }
 
 function DeviceIcon({ type }: { type: string }) {
@@ -154,7 +155,13 @@ function Hairline({ snapshot }: { snapshot: PlaybackSnapshot | null }) {
   )
 }
 
-function Scrubber({ snapshot }: { snapshot: PlaybackSnapshot | null }) {
+function Scrubber({
+  snapshot,
+  readOnly,
+}: {
+  snapshot: PlaybackSnapshot | null
+  readOnly: boolean
+}) {
   const { seek } = usePlaybackControls()
   const position = usePosition(snapshot)
   const [drag, setDrag] = useState<number | null>(null)
@@ -181,7 +188,7 @@ function Scrubber({ snapshot }: { snapshot: PlaybackSnapshot | null }) {
           max={Math.max(duration, 1)}
           step={1000}
           value={shown}
-          disabled={duration === 0}
+          disabled={duration === 0 || readOnly}
           onChange={(event) => setDrag(Number(event.target.value))}
           onPointerUp={commit}
           onKeyUp={commit}
@@ -198,13 +205,15 @@ function Transport({ view }: { view: PlaybackView }) {
   const { snapshot, starting } = view
   const playing = snapshot !== null && !snapshot.paused
   const nothingToPlay = !snapshot && !view.current && view.queue.length === 0
+  // Spotify does not let apps control a restricted device; the queue can still start here.
+  const readOnly = view.target.kind === 'restricted'
   return (
     <div className="player-buttons">
       <button
         type="button"
         className="player-skip"
         aria-label="Previous"
-        disabled={!snapshot}
+        disabled={!snapshot || readOnly}
         onClick={controls.previous}
       >
         <SkipBack size={16} aria-hidden="true" />
@@ -213,7 +222,7 @@ function Transport({ view }: { view: PlaybackView }) {
         type="button"
         className="player-toggle"
         aria-label={starting ? 'Starting' : playing ? 'Pause' : 'Play'}
-        disabled={starting || nothingToPlay}
+        disabled={starting || nothingToPlay || readOnly}
         onClick={controls.toggle}
       >
         {starting ? (
@@ -232,7 +241,7 @@ function Transport({ view }: { view: PlaybackView }) {
         type="button"
         className="player-skip"
         aria-label="Next"
-        disabled={!snapshot && view.queue.length === 0}
+        disabled={(!snapshot || readOnly) && view.queue.length === 0}
         onClick={controls.next}
       >
         <SkipForward size={16} aria-hidden="true" />
@@ -408,8 +417,10 @@ function DeviceList({
     target.kind === 'remote' &&
     !view.devices.some((device) => device.id === target.device.id)
       ? [target.device, ...view.devices]
-      : view.devices
-  function choose(next: PlaybackTarget) {
+      : target.kind === 'restricted'
+        ? view.devices.filter((device) => device.name !== target.name)
+        : view.devices
+  function choose(next: SelectableTarget) {
     void controls.selectDevice(next)
     onChosen()
   }
@@ -427,6 +438,15 @@ function DeviceList({
             {target.kind === 'local' && <Check size={14} aria-hidden="true" />}
           </button>
         </li>
+        {target.kind === 'restricted' && (
+          <li>
+            <button type="button" aria-pressed disabled>
+              <DeviceIcon type={target.type} />
+              <span>{target.name}</span>
+              <Check size={14} aria-hidden="true" />
+            </button>
+          </li>
+        )}
         {listed.map((device) => {
           const chosen =
             target.kind === 'remote' && target.device.id === device.id
@@ -459,6 +479,12 @@ function DeviceList({
           >
             Retry
           </button>
+        </p>
+      )}
+      {target.kind === 'restricted' && (
+        <p className="quiet">
+          Spotify does not let apps control {target.name}. Choose a device to
+          play there instead.
         </p>
       )}
       <p className="quiet">Devices appear when Spotify is open on them.</p>
@@ -609,14 +635,17 @@ function NowPlayingSheet({
             <strong>{shown.title}</strong>
             <span>{shown.detail}</span>
           </div>
-          <Scrubber snapshot={view.snapshot} />
+          <Scrubber
+            snapshot={view.snapshot}
+            readOnly={view.target.kind === 'restricted'}
+          />
           <Transport view={view} />
           <div className="player-sheet-actions">
             <button
               type="button"
               className="player-tool"
               aria-expanded={devicesOpen}
-              data-highlighted={view.target.kind === 'remote'}
+              data-highlighted={view.target.kind !== 'local'}
               onClick={() => {
                 if (!devicesOpen) void controls.refreshDevices()
                 setDevicesOpen(!devicesOpen)
@@ -755,7 +784,10 @@ function Dock({ view }: { view: PlaybackView }) {
         </div>
         <div className="player-transport">
           <Transport view={view} />
-          <Scrubber snapshot={view.snapshot} />
+          <Scrubber
+            snapshot={view.snapshot}
+            readOnly={view.target.kind === 'restricted'}
+          />
         </div>
         <div className="player-tools">
           <DockPopover
@@ -786,7 +818,7 @@ function Dock({ view }: { view: PlaybackView }) {
           <DockPopover
             label={`Play on: ${targetLabel(view.target)}`}
             title="Play on"
-            highlighted={view.target.kind === 'remote'}
+            highlighted={view.target.kind !== 'local'}
             onOpen={() => void controls.refreshDevices()}
             trigger={
               <>

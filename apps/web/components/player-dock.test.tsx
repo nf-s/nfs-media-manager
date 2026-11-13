@@ -149,6 +149,28 @@ test('playback started elsewhere is shown without a library album', () => {
   assert.doesNotMatch(html, /aria-label="Open Fixture album"|<h3>Playing<\/h3>/)
 })
 
+test('a device apps cannot control is shown with its transport disabled', () => {
+  const view: PlaybackView = {
+    ...on,
+    active: true,
+    snapshot: { ...snapshot, paused: false },
+    target: { kind: 'restricted', name: 'Fixture hi-fi', type: 'speaker' },
+    volume: null,
+  }
+  const html = render(view)
+  assert.match(html, /<strong>Second track<\/strong>/)
+  assert.match(html, /aria-label="Play on: Fixture hi-fi"/)
+  assert.match(html, /aria-label="Previous" disabled=""/)
+  assert.match(html, /aria-label="Pause" disabled=""/)
+  assert.match(html, /aria-label="Next" disabled=""/)
+  assert.match(html, /aria-label="Seek"[^>]* disabled=""/)
+  assert.match(html, /Spotify does not let apps control Fixture hi-fi\./)
+  assert.doesNotMatch(html, /aria-label="Volume"/)
+  // The queue can still start here, so Next stays available for it.
+  const queued = render({ ...view, queue: [{ key: 'queued-1', item }] })
+  assert.doesNotMatch(queued, /aria-label="Next" disabled=""/)
+})
+
 test('a playback error keeps the controls and links to Spotify', () => {
   const html = render({
     ...on,

@@ -6,6 +6,7 @@ import {
   PlaybackApiError,
   type PlaybackDevice,
   type PlayerApi,
+  type RestrictedDevice,
 } from './spotify-player-api'
 import type { SpotifySdk, SpotifySdkPlayer } from './spotify-sdk'
 
@@ -93,10 +94,17 @@ function harness() {
   const local: { state: unknown } = { state: null }
   const remote: {
     device: PlaybackDevice | null
+    restricted: RestrictedDevice | null
     snapshot: PlaybackSnapshot | null
     devices: PlaybackDevice[]
     failures: Error[]
-  } = { device: null, snapshot: null, devices: [], failures: [] }
+  } = {
+    device: null,
+    restricted: null,
+    snapshot: null,
+    devices: [],
+    failures: [],
+  }
   class Player implements SpotifySdkPlayer {
     async connect() {
       calls.push('sdk connect')
@@ -146,6 +154,7 @@ function harness() {
       await command('state')
       return {
         device: remote.device,
+        restricted: remote.restricted,
         snapshot: remote.snapshot && { ...remote.snapshot, at: clock },
       }
     },
@@ -691,4 +700,63 @@ test('a failed background check stays silent unless access expired', async () =>
   const checks = setup.sent('state').length
   await advance(60_000)
   assert.equal(setup.sent('state').length, checks)
+})
+
+test('shows playback on a device Spotify does not let apps control', async () => {
+  const setup = harness()
+  const restricted = { name: 'Fixture hi-fi', type: 'speaker' }
+  setup.remote.restricted = restricted
+  setup.remote.snapshot = remoteSnapshot({ contextUri: 'spotify:playlist:x' })
+  setup.engine.watch()
+  await advance(100)
+  let state = setup.engine.getState()
+  assert.equal(state.active, true)
+  assert.deepEqual(state.target, { kind: 'restricted', ...restricted })
+  assert.equal(state.volume, null)
+  assert.equal(state.snapshot?.trackUri, 'spotify:track:one')
+
+  // No command is sent to a device that would refuse it.
+  setup.engine.toggle()
+  setup.engine.next()
+  setup.engine.previous()
+  setup.engine.seek(30_000)
+  setup.engine.setVolume(0.2)
+  await advance(5_000)
+  assert.deepEqual(
+    setup.calls.filter((call) => call !== 'state'),
+    [],
+  )
+  assert.equal(setup.engine.getState().snapshot?.paused, false)
+
+  // Playback that moves to a controllable device is followed there.
+  setup.remote.restricted = null
+  setup.remote.device = speaker
+  await advance(5_000)
+  state = setup.engine.getState()
+  assert.deepEqual(state.target, { kind: 'remote', device: speaker })
+  assert.equal(state.volume, 0.4)
+  setup.engine.toggle()
+  await settle()
+  assert.deepEqual(setup.sent('pause'), ['pause speaker'])
+})
+
+test('playing here takes over from a device apps cannot control', async () => {
+  const setup = harness()
+  setup.remote.restricted = { name: 'Fixture hi-fi', type: 'speaker' }
+  setup.remote.snapshot = remoteSnapshot({ contextUri: 'spotify:playlist:x' })
+  setup.engine.prepare()
+  setup.engine.watch()
+  await advance(100)
+  assert.equal(setup.engine.getState().target.kind, 'restricted')
+
+  setup.engine.play(album)
+  assert.deepEqual(setup.engine.getState().target, { kind: 'local' })
+  assert.equal(setup.engine.getState().volume, 0.8)
+  await settle()
+  assert.ok(setup.calls.includes('sdk activate'))
+  setup.emit('ready', { device_id: 'browser' })
+  await settle()
+  assert.deepEqual(setup.sent('play'), [
+    'play browser {"context_uri":"spotify:album:first"}',
+  ])
 })

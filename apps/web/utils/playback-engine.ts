@@ -30,6 +30,12 @@ import {
 export type PlaybackTarget =
   | { kind: 'local' }
   | { kind: 'remote'; device: PlaybackDevice }
+  /** A device Spotify does not let apps control: its playback is shown only. */
+  | { kind: 'restricted'; name: string; type: string }
+/** A target playback can be started on or moved to. */
+export type SelectableTarget = Exclude<PlaybackTarget, { kind: 'restricted' }>
+type FollowedTarget = Exclude<PlaybackTarget, { kind: 'local' }>
+type RemoteState = Awaited<ReturnType<PlayerApi['state']>>
 
 export type PlaybackState = {
   /**
@@ -46,7 +52,7 @@ export type PlaybackState = {
   /** Other Spotify devices; this browser is not listed. */
   devices: PlaybackDevice[]
   devicesStatus: 'idle' | 'loading' | 'error'
-  /** 0 to 1, or null when the target device has no adjustable volume. */
+  /** 0 to 1, or null when the target device's volume cannot be set from here. */
   volume: number | null
   starting: boolean
   failure: PlaybackFailure | null
@@ -91,12 +97,25 @@ const DEVICE_RETRIES = 2
 const VOLUME_DEBOUNCE_MS = 250
 const RESTART_AFTER_MS = 3_000
 const MISSING_STATES = 3
+const LOCAL: SelectableTarget = { kind: 'local' }
 const NOT_STARTED: PlaybackFailure = {
   status: 'error',
   message: 'Playback did not start. Try again or choose a device.',
 }
 
 type Waiter = { resolve: (id: string) => void; reject: (error: Error) => void }
+
+function sameDevice(a: PlaybackTarget, b: PlaybackTarget) {
+  if (a.kind === 'remote' && b.kind === 'remote')
+    return a.device.id === b.device.id
+  if (a.kind === 'restricted' && b.kind === 'restricted')
+    return a.name === b.name && a.type === b.type
+  return a.kind === b.kind && a.kind === 'local'
+}
+
+function targetVolume(target: FollowedTarget) {
+  return target.kind === 'remote' ? target.device.volume : null
+}
 
 function sameShown(shown: PlaybackSnapshot | null, after: PlaybackSnapshot) {
   return (
@@ -147,7 +166,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
   /** Something was played or queued here, so the player stays once playback stops. */
   let used = false
   /** The target to return to when a device this app only followed goes quiet. */
-  let fallback: PlaybackTarget | null = null
+  let fallback: SelectableTarget | null = null
 
   function set(patch: Partial<PlaybackState>) {
     if (disposed) return
@@ -307,6 +326,20 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     }
   }
 
+  /** Where new playback goes. A restricted device cannot take it, so the earlier target does. */
+  function playTarget(): SelectableTarget {
+    const target = state.target
+    if (target.kind !== 'restricted') return target
+    const next = fallback ?? LOCAL
+    fallback = null
+    if (next.kind === 'local') sawLocalState = false
+    set({
+      target: next,
+      volume: next.kind === 'local' ? localVolume : next.device.volume,
+    })
+    return next
+  }
+
   async function start(item: PlayableItem) {
     run += 1
     const started = run
@@ -324,7 +357,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       failure: null,
     })
     try {
-      const target = state.target
+      const target = playTarget()
       const deviceId =
         target.kind === 'local' ? await ensureLocal() : target.device.id
       if (started !== run || disposed) return
@@ -400,7 +433,8 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     if (ended && startNext()) return
     detach()
     latest = null
-    const restored = fallback
+    const restored =
+      fallback ?? (state.target.kind === 'restricted' ? LOCAL : null)
     fallback = null
     if (restored?.kind === 'local') sawLocalState = false
     set({
@@ -422,11 +456,42 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
    * Follows playback on a device that was not chosen here. The earlier target
    * comes back once that device goes quiet.
    */
-  function follow(device: PlaybackDevice, snapshot: PlaybackSnapshot) {
-    fallback ??= state.target
+  function follow(target: FollowedTarget, snapshot: PlaybackSnapshot) {
+    if (state.target.kind !== 'restricted') fallback ??= state.target
     missing = 0
-    set({ target: { kind: 'remote', device }, volume: device.volume })
+    set({ target, volume: targetVolume(target) })
     observe(snapshot)
+  }
+
+  /** The other device Spotify reports playback on, if any. */
+  function reported(remote: RemoteState): FollowedTarget | null {
+    if (remote.device)
+      return remote.device.id === localId
+        ? null
+        : { kind: 'remote', device: remote.device }
+    return remote.restricted
+      ? { kind: 'restricted', ...remote.restricted }
+      : null
+  }
+
+  /** Keeps the target in step with the device Spotify reports. */
+  function retarget(target: FollowedTarget, remote: RemoteState) {
+    const found = reported(remote)
+    if (!found) return
+    if (!sameDevice(target, found)) {
+      // Playback this app only follows is followed to whichever device has it.
+      if (target.kind === 'restricted' || fallback)
+        set({ target: found, volume: targetVolume(found) })
+      return
+    }
+    if (
+      target.kind === 'remote' &&
+      found.kind === 'remote' &&
+      !volumeTimer &&
+      (found.device.volume !== target.device.volume ||
+        found.device.name !== target.device.name)
+    )
+      set({ target: found, volume: found.device.volume })
   }
 
   /** This browser stopped reporting playback; it may have moved to another device. */
@@ -434,8 +499,8 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     try {
       const remote = await api.state()
       if (state.target.kind !== 'local') return
-      if (remote.device && remote.snapshot && remote.device.id !== localId)
-        follow(remote.device, remote.snapshot)
+      const found = reported(remote)
+      if (found && remote.snapshot) follow(found, remote.snapshot)
       else playbackStopped()
     } catch (error) {
       playbackStopped()
@@ -451,9 +516,9 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       return null
     })
     if (!remote || session || latest || disposed) return
-    const { device, snapshot } = remote
-    if (device && snapshot && !snapshot.paused && device.id !== localId)
-      follow(device, snapshot)
+    const found = reported(remote)
+    if (found && remote.snapshot && !remote.snapshot.paused)
+      follow(found, remote.snapshot)
   }
 
   function shouldPoll() {
@@ -494,14 +559,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
         if (state.target === target) {
           if (remote.snapshot) {
             missing = 0
-            const device = remote.device
-            if (
-              device?.id === target.device.id &&
-              !volumeTimer &&
-              (device.volume !== target.device.volume ||
-                device.name !== target.device.name)
-            )
-              set({ target: { kind: 'remote', device }, volume: device.volume })
+            retarget(target, remote)
             observe(remote.snapshot)
           } else {
             missing += 1
@@ -543,8 +601,8 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
   }
 
   function seek(positionMs: number) {
-    if (!latest) return
     const target = state.target
+    if (!latest || target.kind === 'restricted') return
     const position = Math.max(0, Math.min(positionMs, latest.durationMs))
     set({ failure: null })
     expect({ positionMs: position })
@@ -578,6 +636,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       if (state.failure) set({ failure: null })
     },
     play(item: PlayableItem) {
+      playTarget()
       activate()
       void start(item)
     },
@@ -593,6 +652,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     playFromQueue(key: string) {
       const entry = state.queue.find((candidate) => candidate.key === key)
       if (!entry) return
+      playTarget()
       activate()
       set({ queue: state.queue.filter((candidate) => candidate !== entry) })
       void start(entry.item)
@@ -626,6 +686,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
         return
       }
       const target = state.target
+      if (target.kind === 'restricted') return
       set({ failure: null })
       if (target.kind === 'local') guard(player?.togglePlay())
       else {
@@ -643,10 +704,11 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
         session.phase === 'starting' ||
         session.item.kind === 'track' ||
         latest?.hasNext === false
+      if (itemEnds && state.queue.length > 0) playTarget()
       activate()
       if (itemEnds && startNext()) return
-      if (!latest) return
       const target = state.target
+      if (!latest || target.kind === 'restricted') return
       skippedAt = now()
       set({ failure: null })
       if (target.kind === 'local') guard(player?.nextTrack())
@@ -654,8 +716,8 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       schedule(FOLLOW_UP_MS)
     },
     previous() {
-      if (!latest) return
       const target = state.target
+      if (!latest || target.kind === 'restricted') return
       if (positionAt(latest, now()) > RESTART_AFTER_MS) return seek(0)
       set({ failure: null })
       if (target.kind === 'local') guard(player?.previousTrack())
@@ -671,6 +733,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     setVolume(value: number) {
       const volume = Math.min(1, Math.max(0, value))
       const target = state.target
+      if (target.kind === 'restricted') return
       set({ volume })
       if (target.kind === 'local') {
         localVolume = volume
@@ -698,7 +761,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       }
     },
     /** Moves playback to this browser or another device and controls it there. */
-    async selectDevice(next: PlaybackTarget) {
+    async selectDevice(next: SelectableTarget) {
       const playing = latest !== null && !latest.paused
       const moving = latest !== null || session !== null
       if (next.kind === 'local')

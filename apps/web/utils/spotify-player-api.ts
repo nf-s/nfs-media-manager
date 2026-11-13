@@ -49,6 +49,9 @@ export type PlaybackDevice = {
   volume: number | null
 }
 
+/** A device Spotify reports but does not let apps control; it has no usable ID. */
+export type RestrictedDevice = { name: string; type: string }
+
 export class PlaybackApiError extends Error {
   constructor(
     readonly status: number,
@@ -89,11 +92,22 @@ function device(value: z.infer<typeof DeviceSchema>): PlaybackDevice | null {
 export function remotePlayback(
   value: unknown,
   at: number,
-): { device: PlaybackDevice | null; snapshot: PlaybackSnapshot | null } {
+): {
+  /** The device playback is on, when apps can control it. */
+  device: PlaybackDevice | null
+  /** The device playback is on, when apps can only observe it. */
+  restricted: RestrictedDevice | null
+  snapshot: PlaybackSnapshot | null
+} {
   const state = StateSchema.parse(value)
   const track = TrackSchema.safeParse(state.item)
+  const reported = device(state.device)
+  const controllable = reported !== null && !reported.restricted
   return {
-    device: device(state.device),
+    device: controllable ? reported : null,
+    restricted: controllable
+      ? null
+      : { name: state.device.name, type: state.device.type.toLowerCase() },
     snapshot: track.success
       ? {
           trackUri: track.data.uri,
@@ -174,7 +188,8 @@ export function createPlayerApi(
     async state() {
       const response = await send('GET', '')
       const at = Date.now()
-      if (response.status === 204) return { device: null, snapshot: null }
+      if (response.status === 204)
+        return { device: null, restricted: null, snapshot: null }
       return remotePlayback(await response.json(), at)
     },
     async play(deviceId: string, body: unknown) {
