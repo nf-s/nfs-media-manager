@@ -17,6 +17,11 @@ import {
 } from 'lucide-react'
 import { Button } from '@repo/ui/components/ui/button'
 import { SavedViewSchema } from '@repo/schemas/imports'
+import {
+  ListeningFilterParamSchema,
+  ListeningPeriodParamSchema,
+  defaultListeningPeriod,
+} from '@repo/schemas/listening'
 import { PaginatedDataSchema } from '@repo/schemas/common'
 import {
   AlbumListItemSchema,
@@ -47,6 +52,11 @@ import MediaArtwork from './media-artwork'
 import MediaDetail from './media-detail'
 import ManualMediaAdd from './manual-media-add'
 import { BrowseFilterChips, RangeEditor } from './browse-controls'
+import { ListeningControls } from './listening-controls'
+import {
+  formatListeningPeriod,
+  formatListeningRule,
+} from '@/utils/listening-filters'
 import ServiceLinks from './service-icon-links'
 import AlbumTitle from './album-title'
 import { albumSpotifyDestination } from '@/utils/album-links'
@@ -143,6 +153,21 @@ export default function MediaBrowser({
     searchParams.get('ranges'),
   )
   const ranges = rangesResult.success ? rangesResult.data : []
+  const listeningResult = ListeningFilterParamSchema.safeParse(
+    searchParams.get('listening'),
+  )
+  const listening =
+    mediaType === 'album' && listeningResult.success
+      ? listeningResult.data
+      : undefined
+  const listeningSortResult = ListeningPeriodParamSchema.safeParse(
+    searchParams.get('listeningSort'),
+  )
+  const listeningSort =
+    mediaType === 'album' && listeningSortResult.success
+      ? listeningSortResult.data
+      : undefined
+  const listeningPeriod = listeningSort ?? defaultListeningPeriod
   const q = searchParams.get('q') ?? ''
   const includeArchived = searchParams.get('includeArchived') === 'true'
   const limitResults = searchParams.get('limitResults')
@@ -176,14 +201,32 @@ export default function MediaBrowser({
         z.array(BrowseFieldSchema),
       ),
   })
-  const fields =
+  const baseFields =
     fieldsQuery.data ??
     (mediaType === 'album' ? albumBrowseFields : filmBrowseFields)
+  const fields: BrowseField[] =
+    mediaType === 'album'
+      ? [
+          ...baseFields,
+          {
+            key: 'listeningScrobbles',
+            label: `Scrobbles, ${formatListeningPeriod(listeningPeriod)}`,
+            type: 'number',
+            filterable: false,
+          },
+        ]
+      : baseFields
   const columnKeys =
     searchParams.get('columns')?.split(',').map(canonicalBrowseKey) ??
     (mediaType === 'album' ? defaultAlbumColumns : defaultFilmColumns)
   const columns = fields.filter((field) => columnKeys.includes(field.key))
   const sortField = fields.find((field) => field.key === sortBy)
+  const requestedListeningPeriod =
+    mediaType === 'album' &&
+    (sortBy === 'listeningScrobbles' ||
+      columnKeys.includes('listeningScrobbles'))
+      ? listeningPeriod
+      : undefined
   const queryKey = JSON.stringify({
     q,
     filters,
@@ -192,6 +235,8 @@ export default function MediaBrowser({
     direction,
     includeArchived,
     limitResults,
+    listening,
+    listeningSort: requestedListeningPeriod,
   })
   // With both overlays on, the sort value and links sit on the artwork.
   const tileExtraRow =
@@ -355,6 +400,9 @@ export default function MediaBrowser({
   })
   if (includeArchived) params.set('includeArchived', 'true')
   if (limitResults) params.set('limitResults', limitResults)
+  if (listening) params.set('listening', JSON.stringify(listening))
+  if (requestedListeningPeriod)
+    params.set('listeningSort', JSON.stringify(requestedListeningPeriod))
   const query = useVirtualBrowse({
     apiBaseUrl,
     collection,
@@ -368,6 +416,11 @@ export default function MediaBrowser({
     headerHeight: view === 'table' ? 34 : 0,
   })
   const { total, slots, padTop, padBottom } = query
+  const selectedItem = slots.find(({ item }) => item?.id === selectedId)?.item
+  const selectedListeningCount =
+    selectedItem?.mediaType === 'album'
+      ? selectedItem.listeningScrobbles
+      : undefined
   const facets = useBrowseFacets(apiBaseUrl, collection, draft, ready)
   const titleFilters = matchingTitleFilters(facets.data ?? [], facets.search)
   const titleMatches = useQuery({
@@ -560,7 +613,11 @@ export default function MediaBrowser({
     ))
   }
   const hasActiveFilters =
-    Boolean(q) || filters.length > 0 || ranges.length > 0 || limitResults
+    Boolean(q) ||
+    filters.length > 0 ||
+    ranges.length > 0 ||
+    Boolean(listening?.rules.length) ||
+    limitResults
   const activeFilters = hasActiveFilters ? (
     <div className="active-filters">
       {railSlot && <h2 className="rail-heading">Filters</h2>}
@@ -610,6 +667,24 @@ export default function MediaBrowser({
           </FilterButton>
         )
       })}
+      {listening?.rules.map((rule, index) => (
+        <FilterButton
+          key={`listening:${index}`}
+          className="filter-pill"
+          aria-label={`Remove listening rule: ${formatListeningRule(rule)}`}
+          onClick={() => {
+            const rules = listening.rules.filter((_, i) => i !== index)
+            setParams({
+              listening: rules.length
+                ? JSON.stringify({ ...listening, rules })
+                : null,
+            })
+          }}
+        >
+          {listening.match === 'all' ? 'Required' : 'Any'} ·{' '}
+          {formatListeningRule(rule)} <X size={12} />
+        </FilterButton>
+      ))}
       <button
         className="clear-filters"
         onClick={() =>
@@ -618,6 +693,7 @@ export default function MediaBrowser({
             filters: null,
             ranges: null,
             limitResults: null,
+            listening: null,
           })
         }
       >
@@ -771,6 +847,12 @@ export default function MediaBrowser({
                               ? String(view.limit)
                               : null,
                             q: null,
+                            listening: view.listening
+                              ? JSON.stringify(view.listening)
+                              : null,
+                            listeningSort: view.listeningSort
+                              ? JSON.stringify(view.listeningSort)
+                              : null,
                           })
                       }}
                     >
@@ -796,7 +878,7 @@ export default function MediaBrowser({
               </div>
             </details>
             <RangeEditor
-              fields={fields}
+              fields={fields.filter((field) => field.filterable)}
               ranges={ranges}
               onChange={(ranges) =>
                 setParams({
@@ -804,6 +886,24 @@ export default function MediaBrowser({
                 })
               }
             />
+            {mediaType === 'album' && (
+              <ListeningControls
+                filter={listening}
+                sortPeriod={listeningSort}
+                sorting={sortBy === 'listeningScrobbles'}
+                onFilterChange={(filter) =>
+                  setParams({
+                    listening: filter ? JSON.stringify(filter) : null,
+                  })
+                }
+                onSortChange={(period) =>
+                  setParams({
+                    sortBy: 'listeningScrobbles',
+                    listeningSort: JSON.stringify(period),
+                  })
+                }
+              />
+            )}
             {view === 'table' && (
               <details className="toolbar-popover columns-picker">
                 <summary>
@@ -1410,6 +1510,12 @@ export default function MediaBrowser({
                 onFilter={addFilter}
                 onFiltersChange={changeFilters}
                 highlightField={sortBy}
+                browseMetric={
+                  sortField?.key === 'listeningScrobbles' &&
+                  selectedListeningCount !== undefined
+                    ? { field: sortField, value: selectedListeningCount }
+                    : undefined
+                }
               />
             </div>
           </aside>

@@ -313,6 +313,7 @@ export function getBrowseValues(
           dateAdded: item.dateAdded ? Date.parse(item.dateAdded) : null,
           durationSec: item.durationSec,
           trackCount: item.trackCount,
+          listeningScrobbles: item.listeningScrobbles ?? null,
         }
       : {
           dateAdded: Date.parse(item.dateAdded ?? item.createdAt),

@@ -127,6 +127,24 @@ describe('keyword browse values', () => {
   })
 })
 
+describe('listening browse values', () => {
+  it('uses the requested period count and preserves zero independently of provider totals', () => {
+    for (const count of [0, 12]) {
+      const values = getBrowseValues({
+        ...baseAlbumDetail,
+        metadata: { browse: { scrobbles: 2000, listeningScrobbles: 999 } },
+        listeningScrobbles: count,
+      })
+      expect(values.listeningScrobbles).toBe(count)
+      expect(values.scrobbles).toBe(2000)
+    }
+  })
+
+  it('does not invent a period count when one was not requested', () => {
+    expect(getBrowseValues(baseAlbumDetail).listeningScrobbles).toBeNull()
+  })
+})
+
 describe('buildAlbumPatchInput', () => {
   it.each(['2024-01-01T00:00:00.000Z', null])(
     'does not save an effective listening date over the stored date %s',

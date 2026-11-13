@@ -3,9 +3,43 @@ import {
   FilmImportPreviewSchema,
   normalizeSavedView,
   StartImportSchema,
+  SavedViewSchema,
 } from '../src/imports'
 
 describe('local imports and saved views', () => {
+  it('retains multiple listening windows and their independent sort period', () => {
+    const view = {
+      name: 'Listening rules',
+      filters: [],
+      ranges: [],
+      sortBy: 'listeningScrobbles',
+      direction: 'asc',
+      listening: {
+        match: 'all',
+        rules: [
+          { period: { kind: 'all' }, min: 100 },
+          {
+            period: { kind: 'rolling', amount: 2, unit: 'years' },
+            max: 9,
+          },
+        ],
+      },
+      listeningSort: { kind: 'dates', from: '2020-01-01', to: '2020-12-31' },
+    }
+    expect(SavedViewSchema.parse(JSON.parse(JSON.stringify(view)))).toEqual(
+      view,
+    )
+    expect(
+      SavedViewSchema.safeParse({
+        ...view,
+        listening: {
+          match: 'all',
+          rules: [{ period: { kind: 'all' }, min: 10, max: 5 }],
+        },
+      }).success,
+    ).toBe(false)
+  })
+
   it('exposes unchanged rows and specific before/after changes in CSV previews', () => {
     const preview = FilmImportPreviewSchema.parse({
       id: 'preview',

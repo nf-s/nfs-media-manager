@@ -258,11 +258,8 @@ export async function listAlbums(
   query: AlbumQuery,
   options: BrowseQueryOptions = {},
 ): Promise<{ items: AlbumListItem[]; totalCount: number; pageCount: number }> {
-  const { ids, totalCount, pageCount } = await queryBrowseIds(
-    'album',
-    query,
-    options,
-  )
+  const { ids, totalCount, pageCount, listeningScrobbles } =
+    await queryBrowseIds('album', query, options)
   if (!ids.length) return { items: [], totalCount, pageCount }
 
   const records = await db.query.mediaItem.findMany({
@@ -306,6 +303,9 @@ export async function listAlbums(
         preferredTags.get(record.id),
       ),
       mediaType: 'album',
+      ...(listeningScrobbles
+        ? { listeningScrobbles: listeningScrobbles.get(record.id) ?? 0 }
+        : {}),
       dateAdded:
         addedDates.get(record.id)?.dateAdded ??
         toIsoString(record.album.dateAdded),

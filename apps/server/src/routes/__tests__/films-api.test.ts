@@ -117,6 +117,24 @@ describe('films api', () => {
     })
   })
 
+  it('rejects album listening filters and sorting', async () => {
+    mockAppSession(true)
+    const { default: app } = await import('@/app')
+    for (const query of [
+      new URLSearchParams({
+        listening: JSON.stringify({
+          match: 'all',
+          rules: [{ period: { kind: 'all' }, max: 0 }],
+        }),
+      }),
+      new URLSearchParams({ listeningSort: JSON.stringify({ kind: 'all' }) }),
+      new URLSearchParams({ sortBy: 'listeningScrobbles' }),
+    ]) {
+      expect((await app.request(`/api/v1/films?${query}`)).status).toBe(422)
+    }
+    expect(listFilms).not.toHaveBeenCalled()
+  })
+
   it('returns film filter options for an authenticated request', async () => {
     listFilmFilterOptions.mockResolvedValue([
       {

@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { JsonValueSchema } from './common'
 import { removeSpotifyAudioFeatures } from './audio-features'
+import { ListeningFilterSchema, ListeningPeriodSchema } from './listening'
 import {
   BrowseFilterSchema,
   BrowseKeySchema,
@@ -60,6 +61,8 @@ export const SavedViewSchema = z.object({
   sortBy: BrowseKeySchema,
   direction: z.enum(['asc', 'desc']),
   limit: z.number().int().positive().optional(),
+  listening: ListeningFilterSchema.optional(),
+  listeningSort: ListeningPeriodSchema.optional(),
 })
 export type ImportRun = z.infer<typeof ImportRunSchema>
 export type SavedView = z.infer<typeof SavedViewSchema>

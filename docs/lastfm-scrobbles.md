@@ -96,8 +96,24 @@ A summary gives the number of names and scrobbles for each outcome. The list fil
   - `Scrobbles, last year` and `Scrobbles, last 5 years`: linked scrobbles in a rolling window ending at the last sync.
 - `Scrobbles` is set to the linked scrobble count for albums that have linked scrobbles. Other albums keep the count reported by the Last.fm album provider. A later Last.fm album metadata job writes Last.fm's own album count again until the next sync.
 
-To find albums played often but not recently, filter `Scrobbles` with a minimum of 100 and `Last listened` with a maximum date five years ago, or `Scrobbles, last 5 years` with a maximum of 0.
+### Custom listening filters and sorting
+
+Open **Listening** in the album browse toolbar to filter linked, stored Last.fm scrobbles. Each rule has a period and an inclusive minimum and/or maximum count:
+
+- **In the last**: a chosen number of days, weeks, months or years, ending now. Months and years use calendar boundaries in UTC, clamping to the last valid day when necessary.
+- **Date range**: start and/or end dates, including the whole end date in UTC. Leave a bound blank to include everything before or after the other bound.
+- **All time**: all linked stored scrobbles.
+
+Add up to ten rules and choose to match **all** or **any** of them. Listening rules also respect the other active search, tag and range filters. **Apply rules** applies the draft rules together. Each applied rule appears among the active filters, where it can be removed; **Clear all** removes listening filters too.
+
+For fewer than ten scrobbles in the last two years, choose **In the last**, **2 years**, and a maximum of **9**. To require an established listening history as well, add an **All time** rule with a minimum of **100** and match **all** rules. Set both bounds to **10** for exactly ten scrobbles, or maximum **0** for no stored scrobbles in the period.
+
+The separate sort period in **Listening** orders albums by their scrobble count in that period, using the existing ascending/descending control. The selected period count is available as a table column and as the grid's sort value. Rules and sort period persist in the URL and saved browse preferences. Existing fixed-year fields and saved views remain supported; those fixed fields still reflect the last sync.
+
+These are **track scrobbles, not complete album plays**. Albums without linked history count as zero, and provider-reported album totals are never substituted. Results reflect only the history already synced and linked; a zero does not prove an album was never played. Browsing does not contact Last.fm or start a sync.
 
 ## Verification
+
+`integration/browse-listening.integration.ts` verifies custom periods, zero counts, all/any rules, date boundaries, sorting and pagination against synthetic scrobbles in a temporary database. Schema, API and UI helper tests cover invalid periods/counts, album-only controls and saved state.
 
 `integration/lastfm-scrobbles.integration.ts` runs the sync through the job dispatcher with mocked HTTP and a temporary database. It covers chained jobs, the fixed window, failure and resume from Jobs and from the page, cancellation, overlap without duplicates, the schedule, album linking, manual links, the link report, browse fields and the album listening report. It makes no Last.fm requests. `src/lib/lastfm-album-matching.test.ts` covers each linking rule with synthetic albums.

@@ -8,6 +8,7 @@
 - SEARCH-04: Every supported numeric metric and sortable text column appears in sorting. Ascending/descending is explicit. Missing values go last in both directions; ties resolve by canonical ID. Grid displays the selected metric when it is not already visible.
 - SEARCH-05: Persist text, numeric filters, sort and direction; preserve them through details, back navigation and reload. URL parameters are validated. Autocomplete supports arrows, Enter, Escape, clear and accessible names.
 - SEARCH-06: Numeric metrics supplied by local plugins use the same controls without hardcoded provider names in public code.
+- SEARCH-07: Album listening controls accept up to ten count rules over all stored history, rolling day/week/month/year periods or inclusive UTC date ranges. Match all or any rules, combined with other browse filters; allow zero and independently chosen count bounds. Sort by scrobbles in a configurable period, show that count in grid/table, and preserve rules and sort period through URL state, reload and details. Count only linked stored scrobbles, without substituting provider totals or starting a sync. Explain that counts are track plays and depend on synced history.
 
 ## Acceptance
 

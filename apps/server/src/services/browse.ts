@@ -10,6 +10,7 @@ import {
   type BrowseField,
 } from '@repo/schemas/browse'
 import type { AlbumQuery, FilmQuery } from '@repo/schemas/media'
+import { defaultListeningPeriod } from '@repo/schemas/listening'
 import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
 import { createDatabaseReadCache } from '@/lib/database-read-cache'
@@ -17,6 +18,7 @@ import { mediaItem, album, film } from '@/schemas/db'
 import { listLoadedScrapePlugins } from '@/plugins/registry'
 import { normalizedTagSql, normalizeTagName } from './tag-state'
 import { albumAddedDateExpression } from './album-added-dates'
+import { createBrowseListening } from './browse-listening'
 
 type MediaType = 'album' | 'film'
 
@@ -138,12 +140,43 @@ export async function queryBrowseIds(
   options: BrowseQueryOptions = {},
 ) {
   const fields = await listBrowseFields(mediaType)
+  const listeningFilter = 'listening' in query ? query.listening : undefined
+  const listeningPeriod =
+    'listeningSort' in query ? query.listeningSort : undefined
+  if (
+    mediaType !== 'album' &&
+    (listeningFilter ||
+      listeningPeriod ||
+      query.sortBy === 'listeningScrobbles')
+  )
+    throw new ServerError({
+      statusCode: 422,
+      message: 'Listening controls are only available for albums',
+    })
+  const listening =
+    mediaType === 'album'
+      ? createBrowseListening(
+          listeningFilter,
+          listeningPeriod ??
+            (query.sortBy === 'listeningScrobbles'
+              ? defaultListeningPeriod
+              : undefined),
+        )
+      : undefined
+  if (listening?.sort)
+    fields.push({
+      key: 'listeningScrobbles',
+      label: 'Scrobbles in period',
+      type: 'number',
+      filterable: false,
+    })
   if (options.sort) fields.push(options.sort.field)
   const byKey = new Map(fields.map((field) => [field.key, field]))
   const sortField = byKey.get(query.sortBy)
   if (!sortField)
     throw new ServerError({ statusCode: 422, message: 'Unknown sort field' })
   const conditions: SQL[] = [eq(mediaItem.mediaType, mediaType)]
+  if (listening?.condition) conditions.push(listening.condition)
   conditions.push(...(options.conditions ?? []))
   if (query.includeArchived !== 'true')
     conditions.push(
@@ -166,7 +199,7 @@ export async function queryBrowseIds(
   if (any.length) conditions.push(sql`(${sql.join(any, sql` or `)})`)
   for (const range of query.ranges) {
     const field = byKey.get(range.field)
-    if (!field || field.type === 'text')
+    if (!field || field.type === 'text' || range.field === 'listeningScrobbles')
       throw new ServerError({
         statusCode: 422,
         message: 'Unknown numeric filter',
@@ -194,11 +227,13 @@ export async function queryBrowseIds(
   }
   const where = and(...conditions)
   const sort =
-    options.sort?.field.key === sortField.key
-      ? options.sort.expression
-      : sortField.type === 'text'
-        ? sql`lower(${textExpression(sortField.key)})`
-        : numericExpression(sortField.key)
+    sortField.key === 'listeningScrobbles' && listening?.sort
+      ? listening.sort
+      : options.sort?.field.key === sortField.key
+        ? options.sort.expression
+        : sortField.type === 'text'
+          ? sql`lower(${textExpression(sortField.key)})`
+          : numericExpression(sortField.key)
   const missing =
     options.sort?.field.key === sortField.key && options.sort.missingFirst
       ? sql`nulls first`
@@ -207,23 +242,42 @@ export async function queryBrowseIds(
     query.direction === 'asc'
       ? sql`${sort} asc ${missing}`
       : sql`${sort} desc ${missing}`
-  const base = () =>
-    db
-      .select({ id: mediaItem.id })
+  const base = () => {
+    const query = db
+      .select({
+        id: mediaItem.id,
+        listeningScrobbles: listening?.sort ?? sql<null>`null`,
+      })
       .from(mediaItem)
       .leftJoin(album, eq(album.mediaItemId, mediaItem.id))
       .leftJoin(film, eq(film.mediaItemId, mediaItem.id))
+    return listening
+      ? query.leftJoin(
+          listening.source,
+          sql`listening_counts.album_media_item_id = ${mediaItem.id}`,
+        )
+      : query
+  }
   // Cache the raw count by the actual predicate, including caller SQL options.
   // Page, ordering and result caps do not change membership; IDs stay uncached.
   const total = await countCache(
-    JSON.stringify(dialect.sqlToQuery(sql`${where}`)),
+    JSON.stringify(
+      dialect.sqlToQuery(sql`${listening?.source ?? sql``} ${where}`),
+    ),
     async () => {
-      const rows = await db
+      const query = db
         .select({ value: sql<number>`count(*)::int` })
         .from(mediaItem)
         .leftJoin(album, eq(album.mediaItemId, mediaItem.id))
         .leftJoin(film, eq(film.mediaItemId, mediaItem.id))
-        .where(where)
+      const rows = await (
+        listening
+          ? query.leftJoin(
+              listening.source,
+              sql`listening_counts.album_media_item_id = ${mediaItem.id}`,
+            )
+          : query
+      ).where(where)
       return rows[0]?.value ?? 0
     },
   )
@@ -239,6 +293,9 @@ export async function queryBrowseIds(
     .offset(offset)
   return {
     ids: rows.map((row) => row.id),
+    listeningScrobbles: listening?.sort
+      ? new Map(rows.map((row) => [row.id, row.listeningScrobbles ?? 0]))
+      : undefined,
     totalCount,
     pageCount: Math.ceil(totalCount / query.size),
   }

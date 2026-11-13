@@ -2,6 +2,10 @@ import { z } from 'zod'
 import { SourceNavigationLinkSchema } from './tags'
 import { AlbumProviderDetailsSchema } from './album-provider-details'
 import {
+  ListeningFilterParamSchema,
+  ListeningPeriodParamSchema,
+} from './listening'
+import {
   BrowseFilterSchema,
   BrowseKeySchema,
   BrowseRangesParamSchema,
@@ -24,7 +28,10 @@ import {
 export { MediaTypeSchema } from './common'
 
 export const AlbumSortSchema = BrowseKeySchema
-export const FilmSortSchema = BrowseKeySchema
+export const FilmSortSchema = BrowseKeySchema.refine(
+  (key) => key !== 'listeningScrobbles',
+  'Listening controls are only available for albums',
+)
 export const AlbumBrowseFilterSchema = BrowseFilterSchema
 export const FilmBrowseFilterSchema = BrowseFilterSchema
 
@@ -67,6 +74,8 @@ export const AlbumQuerySchema = PaginationQuerySchema.extend({
   tag: z.string().optional(),
   filters: AlbumBrowseFiltersParamSchema,
   ranges: BrowseRangesParamSchema,
+  listening: ListeningFilterParamSchema,
+  listeningSort: ListeningPeriodParamSchema,
   sortBy: AlbumSortSchema.default('dateAdded'),
   direction: DirectionSchema.default('desc'),
 })
@@ -79,6 +88,14 @@ export const FilmQuerySchema = PaginationQuerySchema.extend({
   sourceKind: z.string().optional(),
   filters: FilmBrowseFiltersParamSchema,
   ranges: BrowseRangesParamSchema,
+  listening: ListeningFilterParamSchema.refine(
+    (value) => value === undefined,
+    'Listening controls are only available for albums',
+  ),
+  listeningSort: ListeningPeriodParamSchema.refine(
+    (value) => value === undefined,
+    'Listening controls are only available for albums',
+  ),
   sortBy: FilmSortSchema.default('releaseDate'),
   direction: DirectionSchema.default('desc'),
 })
@@ -112,6 +129,7 @@ export const TrackSchema = z.object({
 
 export const AlbumListItemSchema = MediaBaseSchema.extend({
   mediaType: z.literal('album'),
+  listeningScrobbles: z.number().int().nonnegative().optional(),
   dateAdded: z.string().nullable(),
   dateAddedSource: z.string().optional(),
   durationSec: z.number().int().nonnegative().nullable(),

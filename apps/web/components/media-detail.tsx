@@ -22,6 +22,7 @@ import {
   albumBrowseFields,
   filmBrowseFields,
   sameBrowseFilter,
+  type BrowseField,
   type BrowseFilter,
 } from '@repo/schemas/browse'
 import { ProviderSummarySchema } from '@repo/schemas/provider'
@@ -274,6 +275,7 @@ export default function MediaDetail({
   onFilter,
   onFiltersChange,
   highlightField,
+  browseMetric,
 }: {
   mediaType: 'album' | 'film'
   id: string
@@ -281,6 +283,8 @@ export default function MediaDetail({
   onFiltersChange?: (filters: BrowseFilter[]) => void
   /** Browse sort field, pinned first among the metrics. */
   highlightField?: string
+  /** Query-specific metric supplied by the browse result, including real zero. */
+  browseMetric?: { field: BrowseField; value: number }
 }) {
   const { apiBaseUrl } = useConfig()
   const searchParams = useSearchParams()
@@ -388,10 +392,19 @@ export default function MediaDetail({
       </p>
     )
   const item = detail.data
-  const values = getBrowseValues(item)
-  const browseFields =
+  const values = {
+    ...getBrowseValues(item),
+    ...(browseMetric ? { [browseMetric.field.key]: browseMetric.value } : {}),
+  }
+  const baseFields =
     fields.data ??
     (mediaType === 'album' ? albumBrowseFields : filmBrowseFields)
+  const browseFields = browseMetric
+    ? [
+        browseMetric.field,
+        ...baseFields.filter((field) => field.key !== browseMetric.field.key),
+      ]
+    : baseFields
   const creatorField = mediaType === 'album' ? 'artist' : 'director'
   const creators = values[creatorField]
   const trackScrobbles = listening.data?.total

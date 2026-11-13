@@ -116,6 +116,48 @@ describe('albums api', () => {
     })
   })
 
+  it('validates listening periods and forwards rules with zero bounds', async () => {
+    mockAppSession(true)
+    listAlbums.mockResolvedValue({ items: [], totalCount: 0, pageCount: 0 })
+    const { default: app } = await import('@/app')
+    for (const query of [
+      'listening=not-json',
+      'listeningSort=not-json',
+      new URLSearchParams({
+        listening: JSON.stringify({
+          match: 'all',
+          rules: [{ period: { kind: 'all' } }],
+        }),
+      }).toString(),
+      new URLSearchParams({
+        listeningSort: JSON.stringify({ kind: 'dates', from: '2025-02-29' }),
+      }).toString(),
+    ]) {
+      expect((await app.request(`/api/v1/albums?${query}`)).status).toBe(422)
+    }
+    expect(listAlbums).not.toHaveBeenCalled()
+    const listening = {
+      match: 'all',
+      rules: [
+        { period: { kind: 'rolling', amount: 2, unit: 'years' }, max: 0 },
+      ],
+    }
+    const listeningSort = { kind: 'all' }
+    const query = new URLSearchParams({
+      listening: JSON.stringify(listening),
+      listeningSort: JSON.stringify(listeningSort),
+      sortBy: 'listeningScrobbles',
+    })
+    expect((await app.request(`/api/v1/albums?${query}`)).status).toBe(200)
+    expect(listAlbums).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        listening,
+        listeningSort,
+        sortBy: 'listeningScrobbles',
+      }),
+    )
+  })
+
   it('returns album filter options for an authenticated request', async () => {
     listAlbumFilterOptions.mockResolvedValue([
       {
