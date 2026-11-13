@@ -91,11 +91,15 @@ const secretSchema = z.object({
   key: z.string(),
   lastUpdatedByUserId: z.string(),
 })
-const playbackScope =
-  'user-library-read streaming user-read-email user-read-private user-read-playback-state user-modify-playback-state'
+const playbackOnlyScope =
+  'streaming user-read-email user-read-private user-read-playback-state user-modify-playback-state'
+const playbackScope = `user-library-read ${playbackOnlyScope}`
+// Every authorization asks for saved albums and playlists.
+const requestedScope =
+  'user-library-read playlist-read-private playlist-read-collaborative'
 async function begin(
   browserOrigin = 'http://127.0.0.1:3001',
-  options: { playback?: boolean } = {},
+  options: { playback?: boolean; playlists?: boolean } = {},
 ) {
   const response = await authorizeSpotify(
     'user-1',
@@ -527,6 +531,33 @@ describe('Spotify owner/session-bound OAuth (mock database and gate)', () => {
     },
   )
 
+  it.each([
+    { scope: 'user-library-read', playlists: false },
+    { scope: 'user-library-read playlist-read-private', playlists: false },
+    { scope: requestedScope, playlists: true },
+  ])(
+    'reports playlists $playlists for stored scope "$scope"',
+    async ({ scope, playlists }) => {
+      mocks.database.select
+        .mockReturnValueOnce(query([]))
+        .mockReturnValueOnce(storedTokens({ scope }))
+      expect(await getSpotifyAccountStatus('user-1')).toMatchObject({
+        connected: true,
+        playlists,
+      })
+      expect(mocks.request).not.toHaveBeenCalled()
+    },
+  )
+
+  it('returns to the playlist import after a connection started there', async () => {
+    mocks.database.select
+      .mockReturnValueOnce(query([]))
+      .mockReturnValueOnce(query([]))
+    const started = await begin('http://127.0.0.1:3001', { playlists: true })
+    expect(started.scope).toBe(requestedScope)
+    expect(savedState(started.saved)).toMatchObject({ returnTo: 'playlists' })
+  })
+
   it('does not report playback for an account from another client', async () => {
     mocks.database.select
       .mockReturnValueOnce(query([]))
@@ -544,7 +575,7 @@ describe('Spotify owner/session-bound OAuth (mock database and gate)', () => {
       name: 'explicit playback',
       options: { playback: true },
       stored: undefined,
-      scope: playbackScope,
+      scope: `${requestedScope} ${playbackOnlyScope}`,
       playback: true,
       returnTo: 'providers',
     },
@@ -552,7 +583,7 @@ describe('Spotify owner/session-bound OAuth (mock database and gate)', () => {
       name: 'explicitly turning playback off',
       options: { playback: false },
       stored: playbackScope,
-      scope: 'user-library-read',
+      scope: requestedScope,
       playback: false,
       returnTo: 'providers',
     },
@@ -560,7 +591,7 @@ describe('Spotify owner/session-bound OAuth (mock database and gate)', () => {
       name: 'a reconnect of a playback account',
       options: {},
       stored: playbackScope,
-      scope: playbackScope,
+      scope: `${requestedScope} ${playbackOnlyScope}`,
       playback: true,
       returnTo: 'imports',
     },
@@ -568,7 +599,7 @@ describe('Spotify owner/session-bound OAuth (mock database and gate)', () => {
       name: 'a reconnect of a library-only account',
       options: {},
       stored: 'user-library-read',
-      scope: 'user-library-read',
+      scope: requestedScope,
       playback: false,
       returnTo: 'imports',
     },
@@ -576,7 +607,7 @@ describe('Spotify owner/session-bound OAuth (mock database and gate)', () => {
       name: 'a first connection from imports',
       options: {},
       stored: undefined,
-      scope: 'user-library-read',
+      scope: requestedScope,
       playback: false,
       returnTo: 'imports',
     },

@@ -3,6 +3,7 @@ import { nanoid } from 'nanoid'
 import { z } from 'zod'
 import { JsonValueSchema } from '@repo/schemas/common'
 import type { db } from '@/lib/db'
+import { scrapeMediaType } from '@/lib/scrape-media-type'
 import {
   mediaItem,
   providerSnapshot,
@@ -116,9 +117,10 @@ export async function splitJobHistory(
           `Active multi-item job ${job.id} (${job.status}); resolve separately.`,
         )
       const seen = new Set<string>()
-      for (const [index, { item, mediaType }] of (
+      for (const [index, { item, mediaType: storedType }] of (
         byJob.get(job.id) ?? []
       ).entries()) {
+        const mediaType = storedType ? scrapeMediaType(storedType) : null
         if (!item.mediaItemId || !mediaType) {
           blockers.push(
             `Item ${item.id} has no surviving media identity; resolve separately.`,

@@ -133,6 +133,19 @@ export const albumBrowseFields: BrowseField[] = [
   number('popularityLastFm', 'Last.fm listeners'),
   number('trackCount', 'Tracks'),
 ]
+export const trackBrowseFields: BrowseField[] = [
+  text('title', 'Title'),
+  text('artist', 'Artists'),
+  text('album', 'Album'),
+  text('playlist', 'Playlists'),
+  text('genre', 'Album tags'),
+  text('albumLink', 'Library album'),
+  date('releaseDate', 'Released'),
+  date('dateAdded', 'Added'),
+  number('durationSec', 'Duration', 'seconds'),
+  number('scrobbles', 'Scrobbles'),
+  date('lastListenedAt', 'Last listened'),
+]
 export const filmBrowseFields: BrowseField[] = [
   { ...text('summary', 'Description'), filterable: false },
   text('title', 'Title'),

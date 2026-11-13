@@ -7,6 +7,7 @@ Start with [getting started](getting-started.md) for installation or [applicatio
 - [Getting started](getting-started.md): installation, account setup, environment variables, provider API keys and troubleshooting.
 - [Importing a library](importing.md): CSV, NFO, Spotify and legacy JSON workflows.
 - [Spotify account setup](spotify-album-imports.md): callbacks, saved-album previews and read-only access.
+- [Tracks and Spotify playlists](tracks-and-playlists.md): importing playlists and Liked Songs, the Tracks library, and links to albums and scrobbles.
 - [Spotify playback](spotify-playback.md): optional in-app player, queue, devices and what the browser sends to Spotify.
 - [Last.fm scrobble history](lastfm-scrobbles.md): syncing scrobbles, album linking, listening charts and browse fields.
 - [YouTube subscriptions](youtube-subscriptions.md): Google sign-in setup, syncing subscribed channels and searching their videos.

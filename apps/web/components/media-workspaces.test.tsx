@@ -525,10 +525,24 @@ test('main navigation has one Browse destination and preserves current browse fi
     html,
     /aria-current="page" href="\/albums\?q=artist&amp;view=table&amp;filters=%5B%5D">Browse/,
   )
-  assert.equal((html.match(/<a /g) ?? []).length, 5)
+  assert.equal((html.match(/<a /g) ?? []).length, 6)
+  assert.match(html, /href="\/playlists\?mediaType=album">Playlists/)
   assert.doesNotMatch(html, />Albums<|>Films<|href="\/films/)
   const detail = render('/films/one', '', <AppNavigation />)
   assert.match(detail, /aria-current="page" href="\/films">Browse/)
+  assert.equal((detail.match(/<a /g) ?? []).length, 5)
+  assert.doesNotMatch(detail, />Playlists</)
+})
+
+test('main navigation browses tracks from the track and playlist pages', () => {
+  const tracks = render('/tracks', 'q=title', <AppNavigation />)
+  assert.match(tracks, /aria-current="page" href="\/tracks\?q=title">Browse/)
+  const playlists = render('/playlists', '', <AppNavigation />)
+  assert.match(playlists, /href="\/tracks">Browse/)
+  assert.match(
+    playlists,
+    /aria-current="page" href="\/playlists\?mediaType=album">Playlists/,
+  )
 })
 
 test('library selector reflects explicit and route-implied scope without duplicate workspace tabs', () => {

@@ -8,6 +8,7 @@ import { getCollectionSourceLinks } from './source-navigation'
 import { withStoredTrailerLinks } from './stored-trailers'
 import { getAlbumProviderDetails } from './album-provider-details'
 import { albumAddedDates } from './album-added-dates'
+import { albumTrackPlaylistNames } from './album-playlists'
 import { and, eq, inArray, ne, sql } from 'drizzle-orm'
 import type { JsonValue } from '@repo/media-plugin-sdk'
 import {
@@ -211,6 +212,28 @@ function mapPlaylists(items: CommonPlaylistItem[]): AlbumListItem['playlists'] {
     )
 }
 
+/** Adds the playlists an album is in only through its library tracks. */
+function withTrackPlaylists(
+  playlists: AlbumListItem['playlists'],
+  names: string[] = [],
+): AlbumListItem['playlists'] {
+  const listed = new Set(
+    playlists
+      .filter((item) => item.kind === 'playlist')
+      .map((item) => item.name),
+  )
+  return [
+    ...playlists,
+    ...names
+      .filter((name) => !listed.has(name))
+      .map((name): AlbumListItem['playlists'][number] => ({
+        name,
+        kind: 'playlist',
+        position: 0,
+      })),
+  ]
+}
+
 function buildCommonPayload<TMediaType extends 'album' | 'film'>(
   record: CommonRecord<TMediaType>,
   preferredTagIds?: Set<string>,
@@ -288,19 +311,25 @@ export async function listAlbums(
 
   const preferredTags = await rymTagIds(ids)
   const addedDates = await albumAddedDates(ids)
+  const trackPlaylists = await albumTrackPlaylistNames(ids)
   const items = reorderRecords(records, ids).flatMap((record) => {
     if (!record.album) {
       return []
     }
 
+    const common = buildCommonPayload(
+      {
+        ...record,
+        mediaType: 'album',
+        metadata: { ...record.album.metadata, ...record.metadata },
+      },
+      preferredTags.get(record.id),
+    )
     const item: AlbumListItem = {
-      ...buildCommonPayload(
-        {
-          ...record,
-          mediaType: 'album',
-          metadata: { ...record.album.metadata, ...record.metadata },
-        },
-        preferredTags.get(record.id),
+      ...common,
+      playlists: withTrackPlaylists(
+        common.playlists,
+        trackPlaylists.get(record.id),
       ),
       mediaType: 'album',
       ...(listeningScrobbles
@@ -422,19 +451,24 @@ export async function getAlbumDetail(id: string): Promise<AlbumDetail | null> {
   }
 
   const addedDate = (await albumAddedDates([id])).get(id)
+  const common = buildCommonPayload(
+    {
+      ...record,
+      mediaType: 'album',
+      metadata: { ...record.album.metadata, ...record.metadata },
+    },
+    (await rymTagIds([id])).get(id),
+  )
   const albumDetail: AlbumDetail = {
     providerDetails: await getAlbumProviderDetails(id),
     collectionSources: await getCollectionSourceLinks(id, {
       ...record.album.metadata,
       ...record.metadata,
     }),
-    ...buildCommonPayload(
-      {
-        ...record,
-        mediaType: 'album',
-        metadata: { ...record.album.metadata, ...record.metadata },
-      },
-      (await rymTagIds([id])).get(id),
+    ...common,
+    playlists: withTrackPlaylists(
+      common.playlists,
+      (await albumTrackPlaylistNames([id])).get(id),
     ),
     mediaType: 'album',
     dateAdded: addedDate?.dateAdded ?? toIsoString(record.album.dateAdded),

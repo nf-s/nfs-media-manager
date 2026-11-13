@@ -6,7 +6,7 @@ import { fetchApiData } from './api'
 
 export function browseFacetOptions(
   apiBaseUrl: string,
-  collection: 'albums' | 'films',
+  collection: 'albums' | 'films' | 'tracks',
   search: string,
 ) {
   // Bound suggestion requests, not the user's full-text filter draft.

@@ -65,12 +65,13 @@ test('empty or unavailable catalogs still expose the CSV loading/retry destinati
   )
 })
 
-test('album destinations list Spotify, Last.fm scrobbles and album CSV before legacy', () => {
+test('album destinations list Spotify albums and playlists, Last.fm scrobbles and album CSV before legacy', () => {
   assert.deepEqual(
     albumImportDestinations().map((item) => [item.href, item.label]),
     [
       ['/imports', 'Recent imports'],
       ['/imports/spotify', 'Spotify saved albums'],
+      ['/imports/spotify-playlists', 'Spotify playlists'],
       ['/imports/lastfm', 'Last.fm scrobbles'],
       ['/imports/albums', 'Album CSV'],
       ['/imports/legacy', 'Legacy JSON library'],

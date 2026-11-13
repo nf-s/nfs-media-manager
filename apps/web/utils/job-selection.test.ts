@@ -142,6 +142,25 @@ test('scrobble sync jobs have no items but keep retry, cancel and dismiss', () =
   assert.equal(isScrobbleSyncJob(failedJob), false)
   assert.equal(jobTaskTitle(failedJob), null)
   assert.equal(jobTaskTitle({ options: { task: 'other-task' } }), null)
+  const playlistImport = {
+    task: 'spotify-playlist-import',
+    source: 'spotify',
+    name: 'Morning',
+  }
+  assert.equal(
+    jobTaskTitle({ options: playlistImport }),
+    'Spotify playlist import · Morning',
+  )
+  assert.equal(
+    jobTaskTitle({
+      options: { task: 'spotify-playlist-import', source: 'spotify-liked' },
+    }),
+    'Spotify Liked Songs import',
+  )
+  assert.equal(
+    canRetryJob({ ...failedJob, options: playlistImport, items: [] }),
+    true,
+  )
   assert.equal(unfinishedJobItems(scrobbleSync), 0)
   assert.equal(canRetryJob(scrobbleSync), true)
   assert.equal(canDismissJob(scrobbleSync), true)

@@ -85,7 +85,7 @@ const ARTIST_SEPARATOR =
   /\s*(?:,|;|\/|&|\+|\s(?:and|with|x|vs\.?|feat\.?|ft\.?|featuring)\s)\s*/i
 
 /** The whole credit and each collaborator named in it. */
-function artistKeys(name: string) {
+export function artistKeys(name: string) {
   return [
     artistNameKey(name),
     ...name

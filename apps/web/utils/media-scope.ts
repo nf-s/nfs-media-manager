@@ -1,4 +1,16 @@
 export type MediaScope = 'album' | 'film'
+/**
+ * What the library selector shows. Tracks and playlists are a view of the
+ * album library: Tags, Imports, Jobs and Providers stay in the album scope.
+ * YouTube is a separate library with no media items.
+ */
+export type LibraryView = MediaScope | 'track' | 'youtube'
+
+const trackViewPaths = ['/tracks', '/playlists']
+
+function isUnder(path: string, root: string) {
+  return path === root || path.startsWith(`${root}/`)
+}
 
 export function mediaScope(value: string | null): MediaScope {
   return value === 'album' ? 'album' : 'film'
@@ -11,13 +23,25 @@ export function mediaScopeForPath(
   if (
     path === '/albums' ||
     path.startsWith('/albums/') ||
+    trackViewPaths.some((root) => isUnder(path, root)) ||
     path === '/imports/albums' ||
     path === '/imports/spotify' ||
+    path === '/imports/spotify-playlists' ||
     path === '/imports/lastfm'
   )
     return 'album'
   if (path === '/films' || path.startsWith('/films/')) return 'film'
   return mediaScope(value)
+}
+
+export function libraryViewForPath(
+  path: string,
+  value: string | null,
+): LibraryView {
+  if (isUnder(path, '/youtube')) return 'youtube'
+  return trackViewPaths.some((root) => isUnder(path, root))
+    ? 'track'
+    : mediaScopeForPath(path, value)
 }
 
 export function scopedHref(href: string, mediaType: MediaScope) {
@@ -59,27 +83,17 @@ export function switchMediaScopeHref(
   )
 }
 
-/** The library selector's choice: a media scope, or YouTube, which has no media items. */
-export type Library = MediaScope | 'youtube'
-
-export function isYoutubePath(path: string) {
-  return path === '/youtube' || path.startsWith('/youtube/')
-}
-
-export function libraryForPath(path: string, value: string | null): Library {
-  return isYoutubePath(path) ? 'youtube' : mediaScopeForPath(path, value)
-}
-
 export function switchLibraryHref(
   path: string,
   search: string,
-  library: Library,
+  view: LibraryView,
 ) {
-  if (library === 'youtube') {
-    if (!isYoutubePath(path)) return '/youtube'
-    const current = new URLSearchParams(search)
-    return `${path}${current.size ? `?${current}` : ''}`
-  }
-  if (isYoutubePath(path)) return library === 'album' ? '/albums' : '/films'
-  return switchMediaScopeHref(path, search, library)
+  const current = new URLSearchParams(search)
+  const shown = libraryViewForPath(path, current.get('mediaType'))
+  if (shown === view) return `${path}${current.size ? `?${current}` : ''}`
+  if (view === 'track') return '/tracks'
+  if (view === 'youtube') return '/youtube'
+  if (shown === 'track' || shown === 'youtube')
+    return view === 'album' ? '/albums' : '/films'
+  return switchMediaScopeHref(path, search, view)
 }

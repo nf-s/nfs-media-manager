@@ -536,7 +536,7 @@ test('reports player errors and a start that never happens', async () => {
     contextUri: 'spotify:playlist:other',
     positionMs: 80_000,
   })
-  await advance(11_000)
+  await advance(13_000)
   const state = setup.engine.getState()
   assert.equal(state.current, null)
   assert.equal(
@@ -587,7 +587,7 @@ test('shows and controls playback the account started on another device', async 
   assert.equal(state.snapshot?.trackUri, 'spotify:track:one')
   assert.equal(setup.sent('state').length, 1)
 
-  await advance(5_000)
+  await advance(3_000)
   assert.equal(setup.sent('state').length, 2)
   setup.engine.toggle()
   await settle()
@@ -597,8 +597,8 @@ test('shows and controls playback the account started on another device', async 
   await advance(700)
   const checks = setup.sent('state').length
 
-  // Paused playback is checked occasionally, so a resume elsewhere is noticed.
-  await advance(29_000)
+  // Paused playback is checked less often, and a resume elsewhere is noticed.
+  await advance(4_000)
   assert.equal(setup.sent('state').length, checks)
   setup.remote.snapshot = remoteSnapshot({ positionMs: 60_000 })
   await advance(1_000)
@@ -617,7 +617,7 @@ test('leaves the player hidden while nothing plays elsewhere', async () => {
   // Paused playback on another device is not picked up.
   setup.remote.device = speaker
   setup.remote.snapshot = remoteSnapshot({ paused: true })
-  await advance(30_000)
+  await advance(5_000)
   assert.equal(setup.sent('state').length, 2)
   assert.equal(setup.engine.getState().active, false)
   assert.deepEqual(setup.engine.getState().target, { kind: 'local' })
@@ -694,7 +694,7 @@ test('a failed background check stays silent unless access expired', async () =>
   setup.engine.watch()
   await advance(100)
   assert.equal(setup.engine.getState().failure, null)
-  await advance(30_000)
+  await advance(5_000)
   assert.equal(setup.engine.getState().failure?.status, 'expired')
   assert.equal(setup.engine.getState().active, false)
   const checks = setup.sent('state').length
@@ -759,4 +759,119 @@ test('playing here takes over from a device apps cannot control', async () => {
   assert.deepEqual(setup.sent('play'), [
     'play browser {"context_uri":"spotify:album:first"}',
   ])
+})
+
+test('a chosen device gives way to the device playback was moved to', async () => {
+  const setup = harness()
+  const { engine, remote } = setup
+  const restricted = { name: 'Fixture hi-fi', type: 'speaker' }
+  await engine.selectDevice({ kind: 'remote', device: speaker })
+  engine.play(album)
+  await settle()
+  engine.enqueue(track)
+  remote.device = { ...speaker, active: true }
+  remote.snapshot = remoteSnapshot({ positionMs: 1_000 })
+  await advance(700)
+  assert.equal(engine.getState().current, album)
+
+  // Another app moves the album to a device that takes no commands.
+  remote.device = null
+  remote.restricted = restricted
+  await advance(3_000)
+  assert.deepEqual(engine.getState().target, {
+    kind: 'restricted',
+    ...restricted,
+  })
+  assert.equal(engine.getState().volume, null)
+  assert.equal(engine.getState().current, album)
+  engine.toggle()
+  engine.seek(30_000)
+  await settle()
+  assert.deepEqual(setup.sent('pause'), [])
+  assert.deepEqual(setup.sent('seek'), [])
+
+  // The queue does not pull playback off that device when the album ends.
+  remote.snapshot = remoteSnapshot({
+    trackUri: 'spotify:track:two',
+    trackNumber: 2,
+    positionMs: 196_000,
+  })
+  await advance(3_000)
+  remote.snapshot = remoteSnapshot({
+    contextUri: 'spotify:playlist:x',
+    trackUri: 'spotify:track:other',
+  })
+  await advance(6_000)
+  assert.equal(engine.getState().current, null)
+  assert.equal(engine.getState().queue.length, 1)
+  assert.equal(setup.sent('play').length, 1)
+
+  // Once it goes quiet, the chosen device is the target again.
+  remote.restricted = null
+  remote.snapshot = null
+  await advance(16_000)
+  assert.deepEqual(engine.getState().target, {
+    kind: 'remote',
+    device: speaker,
+  })
+  engine.next()
+  await settle()
+  assert.deepEqual(
+    setup.sent('play').at(-1),
+    'play speaker {"uris":["spotify:track:single"]}',
+  )
+  engine.dispose()
+})
+
+test('playback moved to this browser is controlled here', async () => {
+  const setup = harness()
+  setup.remote.device = speaker
+  setup.remote.snapshot = remoteSnapshot({ contextUri: 'spotify:playlist:x' })
+  setup.engine.prepare()
+  setup.engine.watch()
+  await advance(100)
+  setup.emit('ready', { device_id: 'browser' })
+  assert.equal(setup.engine.getState().target.kind, 'remote')
+
+  setup.remote.device = { ...speaker, id: 'browser', name: 'Fixture player' }
+  setup.local.state = sdkState({
+    context: 'spotify:playlist:x',
+    track: 'spotify:track:one',
+    position: 9_000,
+  })
+  await advance(4_000)
+  const state = setup.engine.getState()
+  assert.deepEqual(state.target, { kind: 'local' })
+  assert.equal(state.volume, 0.8)
+  assert.equal(state.snapshot?.positionMs, 9_000)
+  setup.engine.toggle()
+  await settle()
+  assert.ok(setup.calls.includes('sdk toggle'))
+  assert.deepEqual(setup.sent('pause'), [])
+  setup.engine.dispose()
+})
+
+test('a transfer made here outlasts a report that still names the old device', async () => {
+  const setup = harness()
+  const other: PlaybackDevice = { ...speaker, id: 'other', name: 'Other' }
+  setup.remote.device = speaker
+  setup.remote.snapshot = remoteSnapshot({ contextUri: 'spotify:playlist:x' })
+  setup.engine.watch()
+  await advance(100)
+
+  await setup.engine.selectDevice({ kind: 'remote', device: other })
+  assert.deepEqual(setup.sent('transfer'), ['transfer other true'])
+  await advance(3_800)
+  assert.deepEqual(setup.engine.getState().target, {
+    kind: 'remote',
+    device: other,
+  })
+
+  // A report that keeps naming the old device means the transfer did not hold.
+  await advance(6_000)
+  assert.deepEqual(setup.engine.getState().target, {
+    kind: 'remote',
+    device: speaker,
+  })
+  setup.engine.dispose()
 })

@@ -36,6 +36,8 @@ import {
   AlbumListeningSchema,
 } from '@repo/schemas/lastfm'
 import { getAlbumListening } from '@/services/lastfm-scrobbles'
+import { AlbumPlaylistsSchema } from '@repo/schemas/tracks'
+import { getAlbumPlaylists } from '@/services/album-playlists'
 
 const app: OpenAPIHono<AppEnv> = createOpenAPIApp()
   .openapi(
@@ -205,6 +207,32 @@ const app: OpenAPIHono<AppEnv> = createOpenAPIApp()
           c.req.valid('param').id,
           c.req.valid('query').track,
         ),
+        200,
+      ),
+  )
+  .openapi(
+    createRoute({
+      method: 'get',
+      path: '/:id/playlists',
+      middleware: [authMiddleware()],
+      request: { params: z.object({ id: z.string().min(1) }) },
+      responses: {
+        200: {
+          description:
+            'Playlists the album is in, and its tracks in the track library',
+          content: {
+            'application/json': {
+              schema: createResponseSchema(AlbumPlaylistsSchema),
+            },
+          },
+        },
+        401: jsonErrorResponse('Unauthorized'),
+      },
+    }),
+    async (c) =>
+      generateJsonResponse(
+        c,
+        await getAlbumPlaylists(c.req.valid('param').id),
         200,
       ),
   )

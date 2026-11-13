@@ -11,6 +11,12 @@ import {
   SpotifySavedAlbumsInputSchema,
 } from '@repo/schemas/spotify'
 import { AlbumImportPreviewSchema } from '@repo/schemas/album-imports'
+import { EnrichmentResultSchema } from '@repo/schemas/job'
+import {
+  SpotifyPlaylistImportInputSchema,
+  SpotifyPlaylistImportsSchema,
+  SpotifyPlaylistListSchema,
+} from '@repo/schemas/tracks'
 import { env } from '@/env'
 import { ServerError } from '@/lib/error'
 import {
@@ -31,6 +37,11 @@ import {
   spotifyPlaybackToken,
 } from '@/services/spotify-oauth'
 import { previewSpotifyAlbums } from '@/services/spotify-imports'
+import {
+  getSpotifyPlaylistImports,
+  listSpotifyPlaylists,
+  queueSpotifyPlaylistImports,
+} from '@/services/spotify-playlists'
 
 function actor(c: Context<AppEnv>) {
   const user = c.get('user')
@@ -182,7 +193,7 @@ app.openapi(
     const current = actor(c)
     let connected = false
     let returnOrigin = env.APP_URL
-    let returnTo: 'imports' | 'providers' = 'imports'
+    let returnTo: 'imports' | 'playlists' | 'providers' = 'imports'
     try {
       const result = await finishSpotifyAuthorization(
         c.req.valid('query'),
@@ -199,7 +210,12 @@ app.openapi(
     const destination =
       returnTo === 'providers'
         ? new URL('/providers', returnOrigin)
-        : new URL('/imports/spotify', returnOrigin)
+        : new URL(
+            returnTo === 'playlists'
+              ? '/imports/spotify-playlists'
+              : '/imports/spotify',
+            returnOrigin,
+          )
     destination.search = new URLSearchParams(
       returnTo === 'providers'
         ? {
@@ -267,6 +283,85 @@ app.openapi(
     generateJsonResponse(
       c,
       await previewSpotifyAlbums(c.req.valid('json'), actor(c).userId),
+      200,
+    ),
+)
+
+app.openapi(
+  createRoute({
+    method: 'post',
+    path: '/playlists',
+    middleware: [authMiddleware(), sameOrigin],
+    responses: {
+      200: {
+        description:
+          "Explicit read of the account's playlists; no library writes or jobs",
+        content: {
+          'application/json': {
+            schema: createResponseSchema(SpotifyPlaylistListSchema),
+          },
+        },
+      },
+      401: jsonErrorResponse('Unauthorized'),
+      422: jsonErrorResponse('Spotify playlist access is not connected'),
+    },
+  }),
+  async (c) =>
+    generateJsonResponse(c, await listSpotifyPlaylists(actor(c).userId), 200),
+)
+
+app.openapi(
+  createRoute({
+    method: 'get',
+    path: '/playlists/imports',
+    middleware: [authMiddleware()],
+    responses: {
+      200: {
+        description:
+          'Stored playlist imports and their latest jobs; no Spotify requests',
+        content: {
+          'application/json': {
+            schema: createResponseSchema(SpotifyPlaylistImportsSchema),
+          },
+        },
+      },
+      401: jsonErrorResponse('Unauthorized'),
+    },
+  }),
+  async (c) => generateJsonResponse(c, await getSpotifyPlaylistImports(), 200),
+)
+
+app.openapi(
+  createRoute({
+    method: 'post',
+    path: '/playlists/import',
+    middleware: [authMiddleware(), sameOrigin],
+    request: {
+      body: {
+        required: true,
+        content: {
+          'application/json': { schema: SpotifyPlaylistImportInputSchema },
+        },
+      },
+    },
+    responses: {
+      200: {
+        description:
+          'Queue one import job per chosen playlist, and for Liked Songs',
+        content: {
+          'application/json': {
+            schema: createResponseSchema(EnrichmentResultSchema),
+          },
+        },
+      },
+      401: jsonErrorResponse('Unauthorized'),
+      422: validationErrorResponse,
+    },
+  }),
+  async (c) =>
+    generateJsonResponse(
+      c,
+      await queueSpotifyPlaylistImports(c.req.valid('json'), actor(c).userId),
       200,
     ),
 )

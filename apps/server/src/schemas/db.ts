@@ -18,7 +18,7 @@ import type { JsonValue } from '@repo/media-plugin-sdk'
 export * from './auth'
 import { user } from './auth'
 
-const mediaTypeEnum = pgEnum('media_type', ['album', 'film'])
+const mediaTypeEnum = pgEnum('media_type', ['album', 'film', 'track'])
 const playlistKindEnum = pgEnum('playlist_kind', ['playlist', 'collection'])
 const jobStatusEnum = pgEnum('job_status', [
   'queued',
@@ -115,6 +115,45 @@ export const track = pgTable(
       table.albumMediaItemId,
       table.position,
     ),
+  ],
+)
+
+// A track in the track library, imported from a playlist. It is separate from
+// an album's track list above: its album may not be in the library.
+export const libraryTrack = pgTable(
+  'library_track',
+  {
+    mediaItemId: text('media_item_id')
+      .primaryKey()
+      .references(() => mediaItem.id, { onDelete: 'cascade' }),
+    spotifyTrackId: text('spotify_track_id').notNull(),
+    isrc: text('isrc'),
+    durationSec: integer('duration_sec'),
+    // The earliest date the track was added to an imported playlist.
+    dateAdded: timestamp('date_added', {
+      mode: 'date',
+      withTimezone: false,
+    }),
+    spotifyUrl: text('spotify_url'),
+    albumName: text('album_name'),
+    spotifyAlbumId: text('spotify_album_id'),
+    albumMediaItemId: text('album_media_item_id').references(
+      () => album.mediaItemId,
+      { onDelete: 'set null' },
+    ),
+    // How the library album was found: spotify-album, spotify-track, album-title or artist-title.
+    albumLinkStrategy: text('album_link_strategy'),
+    scrobbleCount: integer('scrobble_count').default(0).notNull(),
+    lastListenedAt: timestamp('last_listened_at', {
+      mode: 'date',
+      withTimezone: false,
+    }),
+    ...timestampColumns,
+  },
+  (table) => [
+    uniqueIndex('library_track_spotify_track_uidx').on(table.spotifyTrackId),
+    index('library_track_album_idx').on(table.albumMediaItemId),
+    index('library_track_spotify_album_idx').on(table.spotifyAlbumId),
   ],
 )
 
@@ -269,10 +308,21 @@ export const playlist = pgTable(
     id: text('id').primaryKey(),
     name: text('name').notNull(),
     kind: playlistKindEnum('kind').notNull(),
+    // spotify or spotify-liked for an imported playlist; null otherwise.
+    source: text('source'),
+    spotifyId: text('spotify_id'),
+    ownerName: text('owner_name'),
+    description: text('description'),
+    artworkUrl: text('artwork_url'),
+    spotifyUrl: text('spotify_url'),
+    // Spotify's version of the playlist contents at the last import.
+    snapshotId: text('snapshot_id'),
+    importedAt: timestamp('imported_at'),
     ...timestampColumns,
   },
   (table) => [
     uniqueIndex('playlist_name_kind_uidx').on(table.name, table.kind),
+    uniqueIndex('playlist_spotify_id_uidx').on(table.spotifyId),
   ],
 )
 
@@ -286,6 +336,7 @@ export const playlistItem = pgTable(
       .notNull()
       .references(() => mediaItem.id, { onDelete: 'cascade' }),
     position: integer('position').default(0).notNull(),
+    addedAt: timestamp('added_at', { mode: 'date', withTimezone: false }),
   },
   (table) => [
     primaryKey({ columns: [table.playlistId, table.mediaItemId] }),
@@ -694,6 +745,7 @@ export const lastfmScrobble = pgTable(
     ),
     index('lastfm_scrobble_name_idx').on(table.albumKey, table.artistKey),
     index('lastfm_scrobble_user_time_idx').on(table.username, table.listenedAt),
+    index('lastfm_scrobble_track_idx').on(table.trackKey, table.artistKey),
   ],
 )
 
@@ -725,6 +777,33 @@ export const lastfmAlbumLink = pgTable(
       columns: [table.username, table.artistKey, table.albumKey],
     }),
     index('lastfm_album_link_album_idx').on(table.albumMediaItemId),
+  ],
+)
+
+// A scrobbled artist and track name counted towards a library track. One name
+// can count towards several tracks when Spotify lists the recording twice.
+// Rows are recomputed on every relink.
+export const lastfmTrackLink = pgTable(
+  'lastfm_track_link',
+  {
+    username: text('username').notNull(),
+    artistKey: text('artist_key').notNull(),
+    trackKey: text('track_key').notNull(),
+    trackMediaItemId: text('track_media_item_id')
+      .notNull()
+      .references(() => libraryTrack.mediaItemId, { onDelete: 'cascade' }),
+    strategy: text('strategy').notNull(),
+  },
+  (table) => [
+    primaryKey({
+      columns: [
+        table.username,
+        table.artistKey,
+        table.trackKey,
+        table.trackMediaItemId,
+      ],
+    }),
+    index('lastfm_track_link_track_idx').on(table.trackMediaItemId),
   ],
 )
 
@@ -850,6 +929,10 @@ export const mediaItemRelations = relations(mediaItem, ({ many, one }) => ({
     fields: [mediaItem.id],
     references: [film.mediaItemId],
   }),
+  libraryTrack: one(libraryTrack, {
+    fields: [mediaItem.id],
+    references: [libraryTrack.mediaItemId],
+  }),
   credits: many(mediaCredit),
   tags: many(mediaItemTag),
   playlistItems: many(playlistItem),
@@ -874,6 +957,17 @@ export const filmRelations = relations(film, ({ one }) => ({
   mediaItem: one(mediaItem, {
     fields: [film.mediaItemId],
     references: [mediaItem.id],
+  }),
+}))
+
+export const libraryTrackRelations = relations(libraryTrack, ({ one }) => ({
+  mediaItem: one(mediaItem, {
+    fields: [libraryTrack.mediaItemId],
+    references: [mediaItem.id],
+  }),
+  album: one(album, {
+    fields: [libraryTrack.albumMediaItemId],
+    references: [album.mediaItemId],
   }),
 }))
 

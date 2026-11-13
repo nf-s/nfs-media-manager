@@ -29,6 +29,7 @@ import {
 import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
 import { createDatabaseReadCache } from '@/lib/database-read-cache'
+import { scrapeMediaType } from '@/lib/scrape-media-type'
 import {
   mediaItem,
   mediaItemTag,
@@ -96,7 +97,8 @@ export async function getTagProvenance(
       statusCode: 404,
       message: 'Media item not found in this library',
     })
-  const mediaType = media?.mediaType ?? query.mediaType
+  const mediaType =
+    (media ? scrapeMediaType(media.mediaType) : null) ?? query.mediaType
   if (!mediaType)
     throw new ServerError({
       statusCode: 422,

@@ -46,6 +46,10 @@ Configure and connect Spotify as described in [getting started](getting-started.
 
 Previewing Spotify makes read-only API requests. It does not import until you confirm selected rows. No playlist writes or playback controls are used.
 
+## Spotify playlists
+
+**Imports → Spotify playlists** lists Liked Songs and the connected account's playlists. Importing one adds its tracks to the Tracks library as a Spotify job; it does not add albums. Only playlists the account owns or collaborates on can be imported. See [tracks and Spotify playlists](tracks-and-playlists.md).
+
 ## Limits and job behavior
 
 - CSV files are limited to 20 MB and fewer than 10,000 media rows.

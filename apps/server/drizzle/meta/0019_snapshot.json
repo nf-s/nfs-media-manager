@@ -1,5 +1,5 @@
 {
-  "id": "075f37cd-434e-400f-9ddf-d197d2781681",
+  "id": "e0ffbf81-5199-4193-8622-e0177d697a2e",
   "prevId": "5229de19-2f13-4d69-a562-f60a385aded9",
   "version": "7",
   "dialect": "postgresql",
@@ -665,6 +665,27 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
+        },
+        "lastfm_scrobble_track_idx": {
+          "name": "lastfm_scrobble_track_idx",
+          "columns": [
+            {
+              "expression": "track_key",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "artist_key",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
       "foreignKeys": {
@@ -822,6 +843,89 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
+    "public.lastfm_track_link": {
+      "name": "lastfm_track_link",
+      "schema": "",
+      "columns": {
+        "username": {
+          "name": "username",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "artist_key": {
+          "name": "artist_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "track_key": {
+          "name": "track_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "track_media_item_id": {
+          "name": "track_media_item_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "strategy": {
+          "name": "strategy",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "lastfm_track_link_track_idx": {
+          "name": "lastfm_track_link_track_idx",
+          "columns": [
+            {
+              "expression": "track_media_item_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "lastfm_track_link_track_media_item_id_library_track_media_item_id_fk": {
+          "name": "lastfm_track_link_track_media_item_id_library_track_media_item_id_fk",
+          "tableFrom": "lastfm_track_link",
+          "tableTo": "library_track",
+          "columnsFrom": [
+            "track_media_item_id"
+          ],
+          "columnsTo": [
+            "media_item_id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "lastfm_track_link_username_artist_key_track_key_track_media_item_id_pk": {
+          "name": "lastfm_track_link_username_artist_key_track_key_track_media_item_id_pk",
+          "columns": [
+            "username",
+            "artist_key",
+            "track_key",
+            "track_media_item_id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
     "public.library_import": {
       "name": "library_import",
       "schema": "",
@@ -909,6 +1013,179 @@
           ],
           "columnsTo": [
             "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.library_track": {
+      "name": "library_track",
+      "schema": "",
+      "columns": {
+        "media_item_id": {
+          "name": "media_item_id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "spotify_track_id": {
+          "name": "spotify_track_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "isrc": {
+          "name": "isrc",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "duration_sec": {
+          "name": "duration_sec",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "date_added": {
+          "name": "date_added",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "spotify_url": {
+          "name": "spotify_url",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "album_name": {
+          "name": "album_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "spotify_album_id": {
+          "name": "spotify_album_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "album_media_item_id": {
+          "name": "album_media_item_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "album_link_strategy": {
+          "name": "album_link_strategy",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "scrobble_count": {
+          "name": "scrobble_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "last_listened_at": {
+          "name": "last_listened_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "library_track_spotify_track_uidx": {
+          "name": "library_track_spotify_track_uidx",
+          "columns": [
+            {
+              "expression": "spotify_track_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "library_track_album_idx": {
+          "name": "library_track_album_idx",
+          "columns": [
+            {
+              "expression": "album_media_item_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "library_track_spotify_album_idx": {
+          "name": "library_track_spotify_album_idx",
+          "columns": [
+            {
+              "expression": "spotify_album_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "library_track_media_item_id_media_item_id_fk": {
+          "name": "library_track_media_item_id_media_item_id_fk",
+          "tableFrom": "library_track",
+          "tableTo": "media_item",
+          "columnsFrom": [
+            "media_item_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "library_track_album_media_item_id_album_media_item_id_fk": {
+          "name": "library_track_album_media_item_id_album_media_item_id_fk",
+          "tableFrom": "library_track",
+          "tableTo": "album",
+          "columnsFrom": [
+            "album_media_item_id"
+          ],
+          "columnsTo": [
+            "media_item_id"
           ],
           "onDelete": "set null",
           "onUpdate": "no action"
@@ -1366,6 +1643,54 @@
           "primaryKey": false,
           "notNull": true
         },
+        "source": {
+          "name": "source",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "spotify_id": {
+          "name": "spotify_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "owner_name": {
+          "name": "owner_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "description": {
+          "name": "description",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "artwork_url": {
+          "name": "artwork_url",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "spotify_url": {
+          "name": "spotify_url",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "snapshot_id": {
+          "name": "snapshot_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "imported_at": {
+          "name": "imported_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp",
@@ -1393,6 +1718,21 @@
             },
             {
               "expression": "kind",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "playlist_spotify_id_uidx": {
+          "name": "playlist_spotify_id_uidx",
+          "columns": [
+            {
+              "expression": "spotify_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -1433,6 +1773,12 @@
           "primaryKey": false,
           "notNull": true,
           "default": 0
+        },
+        "added_at": {
+          "name": "added_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false
         }
       },
       "indexes": {
@@ -3544,458 +3890,6 @@
           ],
           "columnsTo": [
             "media_item_id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.youtube_channel": {
-      "name": "youtube_channel",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "title": {
-          "name": "title",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "handle": {
-          "name": "handle",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "description": {
-          "name": "description",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "thumbnail_url": {
-          "name": "thumbnail_url",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "uploads_playlist_id": {
-          "name": "uploads_playlist_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "subscriber_count": {
-          "name": "subscriber_count",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "subscribed": {
-          "name": "subscribed",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": true
-        },
-        "seen_run_id": {
-          "name": "seen_run_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "history_complete": {
-          "name": "history_complete",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {
-        "youtube_channel_subscribed_idx": {
-          "name": "youtube_channel_subscribed_idx",
-          "columns": [
-            {
-              "expression": "subscribed",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.youtube_sync": {
-      "name": "youtube_sync",
-      "schema": "",
-      "columns": {
-        "user_id": {
-          "name": "user_id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "status": {
-          "name": "status",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "schedule": {
-          "name": "schedule",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'daily'"
-        },
-        "run_id": {
-          "name": "run_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "phase": {
-          "name": "phase",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'subscriptions'"
-        },
-        "page_token": {
-          "name": "page_token",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "channel_cursor": {
-          "name": "channel_cursor",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "channels_done": {
-          "name": "channels_done",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 0
-        },
-        "channels_total": {
-          "name": "channels_total",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 0
-        },
-        "new_videos": {
-          "name": "new_videos",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 0
-        },
-        "resume_after": {
-          "name": "resume_after",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "error_message": {
-          "name": "error_message",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "lease_token": {
-          "name": "lease_token",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "started_at": {
-          "name": "started_at",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "completed_at": {
-          "name": "completed_at",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "youtube_sync_user_id_user_id_fk": {
-          "name": "youtube_sync_user_id_user_id_fk",
-          "tableFrom": "youtube_sync",
-          "tableTo": "user",
-          "columnsFrom": [
-            "user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.youtube_video": {
-      "name": "youtube_video",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "channel_id": {
-          "name": "channel_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "title": {
-          "name": "title",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "description": {
-          "name": "description",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "''"
-        },
-        "tags": {
-          "name": "tags",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'[]'::jsonb"
-        },
-        "published_at": {
-          "name": "published_at",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "duration_sec": {
-          "name": "duration_sec",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 0
-        },
-        "view_count": {
-          "name": "view_count",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "like_count": {
-          "name": "like_count",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "comment_count": {
-          "name": "comment_count",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "live": {
-          "name": "live",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'none'"
-        },
-        "search": {
-          "name": "search",
-          "type": "tsvector",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {
-        "youtube_video_search_idx": {
-          "name": "youtube_video_search_idx",
-          "columns": [
-            {
-              "expression": "search",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "gin",
-          "with": {}
-        },
-        "youtube_video_channel_published_idx": {
-          "name": "youtube_video_channel_published_idx",
-          "columns": [
-            {
-              "expression": "channel_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "published_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "youtube_video_published_idx": {
-          "name": "youtube_video_published_idx",
-          "columns": [
-            {
-              "expression": "published_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "youtube_video_views_idx": {
-          "name": "youtube_video_views_idx",
-          "columns": [
-            {
-              "expression": "view_count",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "youtube_video_duration_idx": {
-          "name": "youtube_video_duration_idx",
-          "columns": [
-            {
-              "expression": "duration_sec",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "youtube_video_channel_id_youtube_channel_id_fk": {
-          "name": "youtube_video_channel_id_youtube_channel_id_fk",
-          "tableFrom": "youtube_video",
-          "tableTo": "youtube_channel",
-          "columnsFrom": [
-            "channel_id"
-          ],
-          "columnsTo": [
-            "id"
           ],
           "onDelete": "cascade",
           "onUpdate": "no action"

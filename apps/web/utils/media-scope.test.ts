@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { JobSchema } from '@repo/schemas/job'
 import {
-  libraryForPath,
+  libraryViewForPath,
   mediaScope,
   mediaScopeForPath,
   scopedHref,
@@ -133,19 +133,63 @@ test('selecting the current library is a no-op that retains deep links and filte
   )
 })
 
-test('YouTube pages form a third library without changing the media scope', () => {
+test('tracks and playlists are a view of the album library', () => {
+  for (const path of [
+    '/tracks',
+    '/tracks/first',
+    '/playlists',
+    '/imports/spotify-playlists',
+  ])
+    assert.equal(mediaScopeForPath(path, 'film'), 'album')
+  for (const path of ['/tracks', '/tracks/first', '/playlists'])
+    assert.equal(libraryViewForPath(path, 'film'), 'track')
+  assert.equal(libraryViewForPath('/albums', null), 'album')
+  assert.equal(libraryViewForPath('/imports/spotify-playlists', null), 'album')
+  assert.equal(libraryViewForPath('/tags', 'album'), 'album')
+  assert.equal(libraryViewForPath('/tags', null), 'film')
+  assert.equal(libraryViewForPath('/tracks-other', null), 'film')
+})
+
+test('the library selector moves between albums, tracks and films', () => {
+  assert.equal(
+    switchLibraryHref('/albums', 'q=artist&view=table', 'track'),
+    '/tracks',
+  )
+  assert.equal(switchLibraryHref('/tags', 'mediaType=film', 'track'), '/tracks')
+  assert.equal(switchLibraryHref('/tracks', 'q=title', 'album'), '/albums')
+  assert.equal(switchLibraryHref('/playlists', '', 'film'), '/films')
+  assert.equal(
+    switchLibraryHref('/tracks', 'q=title&sortBy=scrobbles', 'track'),
+    '/tracks?q=title&sortBy=scrobbles',
+  )
+  assert.equal(
+    switchLibraryHref('/jobs', 'mediaType=film&status=failed', 'album'),
+    '/jobs?status=failed&mediaType=album',
+  )
+  assert.equal(
+    switchLibraryHref('/imports/spotify-playlists', '', 'film'),
+    '/imports?mediaType=film',
+  )
+})
+
+test('YouTube pages form a separate library without changing the media scope', () => {
   for (const path of ['/youtube', '/youtube/subscriptions'])
-    assert.equal(libraryForPath(path, 'album'), 'youtube')
-  assert.equal(libraryForPath('/youtube-other', null), 'film')
-  assert.equal(libraryForPath('/albums', null), 'album')
-  assert.equal(libraryForPath('/jobs', 'album'), 'album')
-  assert.equal(libraryForPath('/providers', null), 'film')
+    assert.equal(libraryViewForPath(path, 'album'), 'youtube')
+  assert.equal(libraryViewForPath('/youtube-other', null), 'film')
+  assert.equal(libraryViewForPath('/jobs', 'album'), 'album')
+  assert.equal(libraryViewForPath('/providers', null), 'film')
   assert.equal(mediaScopeForPath('/youtube', 'album'), 'album')
   assert.equal(mediaScopeForPath('/youtube', null), 'film')
 })
 
 test('switching to and from YouTube lands on each library home', () => {
-  for (const path of ['/albums', '/films/one', '/jobs', '/providers'])
+  for (const path of [
+    '/albums',
+    '/films/one',
+    '/tracks',
+    '/jobs',
+    '/providers',
+  ])
     assert.equal(
       switchLibraryHref(path, 'mediaType=album&q=title', 'youtube'),
       '/youtube',
@@ -159,13 +203,10 @@ test('switching to and from YouTube lands on each library home', () => {
     '/youtube/subscriptions',
   )
   assert.equal(switchLibraryHref('/youtube', 'q=talk', 'album'), '/albums')
+  assert.equal(switchLibraryHref('/youtube', 'q=talk', 'track'), '/tracks')
   assert.equal(
     switchLibraryHref('/youtube/subscriptions', 'mediaType=album', 'film'),
     '/films',
-  )
-  assert.equal(
-    switchLibraryHref('/jobs', 'mediaType=film&status=failed', 'album'),
-    '/jobs?status=failed&mediaType=album',
   )
 })
 

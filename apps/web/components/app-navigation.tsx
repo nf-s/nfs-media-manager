@@ -6,15 +6,17 @@ import {
   Download,
   LayoutGrid,
   ListChecks,
+  ListMusic,
   SquarePlay,
   Tag,
   Users,
 } from 'lucide-react'
 import { scopedHref } from '@/utils/media-scope'
-import { useLibrary, useMediaScope } from './media-scope'
+import { useLibraryView, useMediaScope } from './media-scope'
 
 const items = [
   { href: '/browse', label: 'Browse', Icon: LayoutGrid },
+  { href: '/playlists', label: 'Playlists', Icon: ListMusic },
   { href: '/tags', label: 'Tags', Icon: Tag },
   { href: '/imports', label: 'Imports', Icon: Download },
   { href: '/jobs', label: 'Jobs', Icon: ListChecks },
@@ -28,8 +30,8 @@ export default function AppNavigation() {
   const path = usePathname()
   const params = useSearchParams()
   const scope = useMediaScope()
-  const library = useLibrary()
-  if (library === 'youtube')
+  const view = useLibraryView()
+  if (view === 'youtube')
     return (
       <nav className="app-navigation" aria-label="Main navigation">
         {youtubeItems.map((item) => (
@@ -51,11 +53,15 @@ export default function AppNavigation() {
   return (
     <nav className="app-navigation" aria-label="Main navigation">
       {items.map((item) => {
+        // Playlists hold tracks and albums; films have none.
+        if (item.href === '/playlists' && scope !== 'album') return null
         const destination =
           item.href === '/browse'
-            ? scope === 'album'
-              ? '/albums'
-              : '/films'
+            ? view === 'track'
+              ? '/tracks'
+              : scope === 'album'
+                ? '/albums'
+                : '/films'
             : item.href
         const active =
           path === destination || path.startsWith(`${destination}/`)

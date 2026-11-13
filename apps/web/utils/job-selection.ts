@@ -9,6 +9,7 @@ import {
   LASTFM_SCROBBLE_SYNC_TASK,
   LASTFM_SPOTIFY_SEARCH_TASK,
 } from '@repo/schemas/lastfm'
+import { SPOTIFY_PLAYLIST_IMPORT_TASK } from '@repo/schemas/tracks'
 import { YOUTUBE_SYNC_TASK } from '@repo/schemas/youtube'
 
 /** Scrobble sync jobs are account-level and have no media items. */
@@ -25,10 +26,21 @@ export function isScrobbleSpotifySearchJob(job: Pick<Job, 'options'>): boolean {
   return getJobTask(job.options) === LASTFM_SPOTIFY_SEARCH_TASK
 }
 
+export function isPlaylistImportJob(job: Pick<Job, 'options'>): boolean {
+  return getJobTask(job.options) === SPOTIFY_PLAYLIST_IMPORT_TASK
+}
+
 /** Title for a job without media items, or null for media jobs. */
 export function jobTaskTitle(job: Pick<Job, 'options'>): string | null {
   if (isScrobbleSyncJob(job)) return 'Scrobble sync'
   if (isYoutubeSyncJob(job)) return 'YouTube subscription sync'
+  if (isPlaylistImportJob(job)) {
+    const { source, name } = job.options
+    if (source === 'spotify-liked') return 'Spotify Liked Songs import'
+    return typeof name === 'string' && name.trim().length > 0
+      ? `Spotify playlist import · ${name}`
+      : 'Spotify playlist import'
+  }
   if (isScrobbleSpotifySearchJob(job)) {
     const { artistName, albumName } = job.options
     const target = [artistName, albumName].filter(
@@ -65,7 +77,8 @@ export function canRetryJob(job: Job): boolean {
     (unfinishedJobItems(job) > 0 ||
       isScrobbleSyncJob(job) ||
       isYoutubeSyncJob(job) ||
-      isScrobbleSpotifySearchJob(job))
+      isScrobbleSpotifySearchJob(job) ||
+      isPlaylistImportJob(job))
   )
 }
 

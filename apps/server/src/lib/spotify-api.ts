@@ -14,6 +14,11 @@ export const SPOTIFY_PLAYBACK_SCOPES: readonly string[] = [
   'user-read-playback-state',
   'user-modify-playback-state',
 ]
+// Reading the account's playlists; requested with every new connection.
+export const SPOTIFY_PLAYLIST_SCOPES: readonly string[] = [
+  'playlist-read-private',
+  'playlist-read-collaborative',
+]
 export const SpotifyIdSchema = z.string().regex(/^[A-Za-z0-9]{22}$/)
 export const UpcSchema = z.string().regex(/^\d{8,14}$/)
 const HttpsUrlSchema = z
@@ -86,6 +91,80 @@ export const SpotifySavedPageSchema = z.object({
   offset: z.number().int().nonnegative(),
   next: z.string().nullable(),
 })
+const LooseImagesSchema = z
+  .array(z.object({ url: z.string() }))
+  .nullable()
+  .optional()
+export const SpotifyProfileSchema = z.object({ id: z.string().min(1) })
+export const SpotifyPlaylistSchema = z.object({
+  id: SpotifyIdSchema,
+  name: z.string(),
+  description: z.string().nullable().optional(),
+  collaborative: z.boolean().optional(),
+  snapshot_id: z.string().optional(),
+  images: LooseImagesSchema,
+  owner: z
+    .object({
+      id: z.string(),
+      display_name: z.string().nullable().optional(),
+    })
+    .optional(),
+  // `tracks` is the name this object had before February 2026.
+  items: z.object({ total: z.number().int().nonnegative() }).optional(),
+  tracks: z.object({ total: z.number().int().nonnegative() }).optional(),
+})
+export const SpotifyPlaylistsPageSchema = z.object({
+  items: z.array(SpotifyPlaylistSchema.nullable()).max(50),
+  total: z.number().int().nonnegative(),
+  offset: z.number().int().nonnegative(),
+  next: z.string().nullable(),
+})
+/** One entry of a playlist or of the saved tracks. */
+const SpotifyTrackEntrySchema = z.object({
+  added_at: z.string().nullable().optional(),
+  is_local: z.boolean().optional(),
+  // Playlist entries carry `item`; saved tracks and older responses, `track`.
+  item: z.unknown().optional(),
+  track: z.unknown().optional(),
+})
+export const SpotifyTrackEntriesPageSchema = z.object({
+  items: z.array(SpotifyTrackEntrySchema).max(100),
+  total: z.number().int().nonnegative(),
+  offset: z.number().int().nonnegative(),
+  next: z.string().nullable(),
+})
+const SpotifyEntryKindSchema = z.object({
+  type: z.string().optional(),
+  id: z.string().nullable().optional(),
+  name: z.string().nullable().optional(),
+})
+const SpotifyLibraryTrackSchema = z.object({
+  id: SpotifyIdSchema,
+  name: z.string().min(1),
+  duration_ms: z.number().int().nonnegative(),
+  artists: z.array(ArtistSchema).min(1),
+  album: z
+    .object({
+      id: z.string().nullable().optional(),
+      name: z.string().nullable().optional(),
+      images: LooseImagesSchema,
+      release_date: z.string().nullable().optional(),
+    })
+    .optional(),
+  external_ids: z.object({ isrc: z.string().optional() }).optional(),
+})
+export type SpotifyLibraryTrack = {
+  spotifyTrackId: string
+  title: string
+  artists: string[]
+  durationSec: number
+  albumName: string | null
+  spotifyAlbumId: string | null
+  artworkUrl: string | null
+  releaseDate: string | null
+  isrc: string | null
+  addedAt: string | null
+}
 export const SpotifyTokenSchema = z.object({
   access_token: z.string().min(1),
   token_type: z.string().refine((value) => value.toLowerCase() === 'bearer'),
@@ -200,6 +279,64 @@ export async function spotifyJson(
   if (!response.ok)
     throw new Error(`Spotify request failed (HTTP ${response.status})`)
   return response.json()
+}
+
+export function spotifyArtworkUrl(
+  images: z.infer<typeof LooseImagesSchema>,
+): string | null {
+  const url = HttpsUrlSchema.safeParse(images?.[0]?.url)
+  return url.success ? url.data : null
+}
+
+/**
+ * Reads one playlist or saved-track entry. `skipped` is a local file, an
+ * episode or a track Spotify no longer has; `invalid` is a track in a form
+ * this application does not recognise.
+ */
+export function normalizeSpotifyTrackEntry(
+  entry: z.infer<typeof SpotifyTrackEntrySchema>,
+):
+  | { track: SpotifyLibraryTrack }
+  | { track: null; reason: 'skipped' | 'invalid' } {
+  const value = entry.item ?? entry.track
+  const kind = SpotifyEntryKindSchema.safeParse(value)
+  if (
+    entry.is_local ||
+    !kind.success ||
+    (kind.data.type !== undefined && kind.data.type !== 'track') ||
+    !kind.data.id ||
+    !kind.data.name
+  )
+    return { track: null, reason: 'skipped' }
+  const parsed = SpotifyLibraryTrackSchema.safeParse(value)
+  if (!parsed.success) return { track: null, reason: 'invalid' }
+  const data = parsed.data
+  const albumId = SpotifyIdSchema.safeParse(data.album?.id)
+  const releaseDate = ReleaseDateSchema.safeParse(data.album?.release_date)
+  const addedAt = z
+    .string()
+    .datetime({ offset: true })
+    .safeParse(entry.added_at)
+  return {
+    track: {
+      spotifyTrackId: data.id,
+      title: data.name,
+      artists: [...new Set(data.artists.map((artist) => artist.name))],
+      durationSec: Math.round(data.duration_ms / 1000),
+      albumName: data.album?.name || null,
+      spotifyAlbumId: albumId.success ? albumId.data : null,
+      artworkUrl: spotifyArtworkUrl(data.album?.images),
+      // Spotify reports year 0000 when it has no release date.
+      releaseDate:
+        releaseDate.success && !releaseDate.data.startsWith('0000')
+          ? releaseDate.data
+          : null,
+      isrc: data.external_ids?.isrc?.trim().toUpperCase() || null,
+      // Spotify reports the Unix epoch for entries older than the field.
+      addedAt:
+        addedAt.success && Date.parse(addedAt.data) > 0 ? addedAt.data : null,
+    },
+  }
 }
 
 export function normalizeSpotifyAlbum(value: unknown, addedAt?: string) {

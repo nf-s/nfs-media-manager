@@ -3,7 +3,7 @@
 import { Fragment, type ReactNode } from 'react'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import {
-  libraryForPath,
+  libraryViewForPath,
   mediaScopeForPath,
   switchLibraryHref,
 } from '@/utils/media-scope'
@@ -14,29 +14,36 @@ export function useMediaScope() {
   return mediaScopeForPath(path, params.get('mediaType'))
 }
 
-export function useLibrary() {
+export function useLibraryView() {
   const path = usePathname()
   const params = useSearchParams()
-  return libraryForPath(path, params.get('mediaType'))
+  return libraryViewForPath(path, params.get('mediaType'))
 }
 
 export function LibrarySelector() {
   const router = useRouter()
   const path = usePathname()
   const params = useSearchParams()
-  const library = useLibrary()
+  const view = useLibraryView()
   return (
     <select
       aria-label="Library"
       className="library-selector"
-      value={library}
+      value={view}
       onChange={(event) => {
         const next = event.target.value
-        if (next !== 'album' && next !== 'film' && next !== 'youtube') return
+        if (
+          next !== 'album' &&
+          next !== 'track' &&
+          next !== 'film' &&
+          next !== 'youtube'
+        )
+          return
         router.push(switchLibraryHref(path, params.toString(), next))
       }}
     >
       <option value="album">Albums</option>
+      <option value="track">Tracks</option>
       <option value="film">Films</option>
       <option value="youtube">YouTube</option>
     </select>
