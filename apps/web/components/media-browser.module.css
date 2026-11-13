@@ -2,6 +2,13 @@
   flex-wrap: wrap;
 }
 
+@media (max-width: 700px) {
+  .browser :global(.browse-controls > select) {
+    flex-shrink: 1;
+    min-width: 70px;
+  }
+}
+
 .grid :global(.tile-title) {
   /* Keep absolute screen-reader labels inside the clipped title, not the grid. */
   position: relative;

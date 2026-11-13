@@ -98,7 +98,7 @@ A summary gives the number of names and scrobbles for each outcome. The list fil
 
 ### Custom listening filters and sorting
 
-Open **Listening** in the album browse toolbar to filter linked, stored Last.fm scrobbles. Each rule has a period and an inclusive minimum and/or maximum count:
+Open **Filters** in the album browse toolbar, then expand **Listening** to filter linked, stored Last.fm scrobbles. Each rule has a period and an inclusive minimum and/or maximum count:
 
 - **In the last**: a chosen number of days, weeks, months or years, ending now. Months and years use calendar boundaries in UTC, clamping to the last valid day when necessary.
 - **Date range**: start and/or end dates, including the whole end date in UTC. Leave a bound blank to include everything before or after the other bound.

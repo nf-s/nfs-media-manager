@@ -10,6 +10,7 @@ import {
   type BrowseFilter,
 } from '@repo/schemas/browse'
 import { FilterButton } from './filter-affordance'
+import { FilterPanelSection } from './browse-filter-panel'
 
 export function filterModeClass(mode: BrowseFilter['mode']) {
   return mode === 'required'
@@ -78,9 +79,11 @@ export function RangeEditor({
   fields,
   ranges,
   onChange,
+  presentation = 'popover',
 }: {
   fields: BrowseField[]
   ranges: BrowseRange[]
+  presentation?: 'popover' | 'panel'
   onChange: (ranges: BrowseRange[]) => void
 }) {
   const [key, setKey] = useState(
@@ -90,95 +93,106 @@ export function RangeEditor({
   const field = fields.find((field) => field.key === key)
   const current = ranges.find((range) => range.field === key)
   const isDate = field?.type === 'date'
-  return (
+  const editor = (
+    <form
+      key={`${key}:${JSON.stringify(current)}`}
+      className={
+        presentation === 'panel' ? 'range-editor' : 'popover-panel range-editor'
+      }
+      onSubmit={(event) => {
+        event.preventDefault()
+        const data = new FormData(event.currentTarget)
+        const parse = (name: string) => {
+          const value = data.get(name)
+          return typeof value === 'string' && value !== ''
+            ? isDate
+              ? Date.parse(value) + (name === 'max' ? 86400000 - 1 : 0)
+              : Number(value)
+            : undefined
+        }
+        const next = BrowseRangeSchema.safeParse({
+          field: key,
+          min: parse('min'),
+          max: parse('max'),
+          includeMissing: data.get('missing') === 'on',
+        })
+        if (!next.success) {
+          setError('Check the range bounds.')
+          return
+        }
+        setError('')
+        onChange([...ranges.filter((range) => range.field !== key), next.data])
+      }}
+    >
+      <label>
+        Field
+        <select
+          aria-label="Range field"
+          value={key}
+          onChange={(event) => {
+            setKey(event.target.value)
+            setError('')
+          }}
+        >
+          {fields
+            .filter((field) => field.type !== 'text')
+            .map((field) => (
+              <option value={field.key} key={field.key}>
+                {field.label}
+              </option>
+            ))}
+        </select>
+      </label>
+      <div className="range-inputs">
+        {['min', 'max'].map((name) => {
+          const value = name === 'min' ? current?.min : current?.max
+          return (
+            <label key={name}>
+              {name === 'min' ? 'Minimum' : 'Maximum'}
+              <input
+                name={name}
+                type={isDate ? 'date' : 'number'}
+                step="any"
+                defaultValue={
+                  value === undefined
+                    ? ''
+                    : isDate
+                      ? new Date(value).toISOString().slice(0, 10)
+                      : value
+                }
+              />
+            </label>
+          )
+        })}
+      </div>
+      <label className="check-label">
+        <input
+          type="checkbox"
+          name="missing"
+          defaultChecked={current?.includeMissing ?? false}
+        />{' '}
+        Include missing values
+      </label>
+      {error && <p role="alert">{error}</p>}
+      <Button type="submit">Apply range</Button>
+    </form>
+  )
+  return presentation === 'panel' ? (
+    <FilterPanelSection
+      title="Ranges"
+      icon={<SlidersHorizontal size={16} />}
+      count={ranges.length}
+      defaultOpen
+    >
+      {editor}
+    </FilterPanelSection>
+  ) : (
     <details className="toolbar-popover">
       <summary>
         <SlidersHorizontal size={15} /> Ranges
         {ranges.length ? ` (${ranges.length})` : ''}
       </summary>
-      <form
-        key={`${key}:${JSON.stringify(current)}`}
-        className="popover-panel range-editor"
-        onSubmit={(event) => {
-          event.preventDefault()
-          const data = new FormData(event.currentTarget)
-          const parse = (name: string) => {
-            const value = data.get(name)
-            return typeof value === 'string' && value !== ''
-              ? isDate
-                ? Date.parse(value) + (name === 'max' ? 86400000 - 1 : 0)
-                : Number(value)
-              : undefined
-          }
-          const next = BrowseRangeSchema.safeParse({
-            field: key,
-            min: parse('min'),
-            max: parse('max'),
-            includeMissing: data.get('missing') === 'on',
-          })
-          if (!next.success) {
-            setError('Check the range bounds.')
-            return
-          }
-          setError('')
-          onChange([
-            ...ranges.filter((range) => range.field !== key),
-            next.data,
-          ])
-        }}
-      >
-        <label>
-          Field
-          <select
-            aria-label="Range field"
-            value={key}
-            onChange={(event) => {
-              setKey(event.target.value)
-              setError('')
-            }}
-          >
-            {fields
-              .filter((field) => field.type !== 'text')
-              .map((field) => (
-                <option value={field.key} key={field.key}>
-                  {field.label}
-                </option>
-              ))}
-          </select>
-        </label>
-        <div className="range-inputs">
-          {['min', 'max'].map((name) => {
-            const value = name === 'min' ? current?.min : current?.max
-            return (
-              <label key={name}>
-                {name === 'min' ? 'Minimum' : 'Maximum'}
-                <input
-                  name={name}
-                  type={isDate ? 'date' : 'number'}
-                  step="any"
-                  defaultValue={
-                    value === undefined
-                      ? ''
-                      : isDate
-                        ? new Date(value).toISOString().slice(0, 10)
-                        : value
-                  }
-                />
-              </label>
-            )
-          })}
-        </div>
-        <label className="check-label">
-          <input
-            type="checkbox"
-            name="missing"
-            defaultChecked={current?.includeMissing ?? false}
-          />{' '}
-          Include missing values
-        </label>
-        {error && <p role="alert">{error}</p>}
-        <Button type="submit">Apply range</Button>
-      </form>
+      {editor}
     </details>
   )
 }

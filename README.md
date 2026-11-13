@@ -53,7 +53,7 @@ Choose **Providers → Credentials** to configure a service, **Activity** to ins
 
 ## Working with your library
 
-Use the Films/Albums selector to switch libraries. Filters, sorting, visible table columns and grid density are saved separately. **Views** holds grid density and saved album views; **Ranges** narrows numeric and date fields.
+Use the Films/Albums selector to switch libraries. Filters, sorting, visible table columns and grid density are saved separately. **Filters** opens a panel from the right with collapsible **Views**, **Smart playlists** (albums), **Ranges**, **Listening** (albums) and **Columns** (table) sections. Search, sorting, the layout switcher and result count stay in the toolbar.
 
 Film and album details bring together ratings, credits, tags, provider links and history. Correct metadata in Edit; those overrides survive later imports and refreshes.
 

@@ -11,6 +11,8 @@ import {
   ArrowUp,
   Columns3,
   Grid2X2,
+  ListMusic,
+  Settings2,
   Rows3,
   Table2,
   X,
@@ -54,6 +56,7 @@ import MediaDetail from './media-detail'
 import ManualMediaAdd from './manual-media-add'
 import { BrowseFilterChips, RangeEditor } from './browse-controls'
 import { ListeningControls } from './listening-controls'
+import BrowseFilterPanel, { FilterPanelSection } from './browse-filter-panel'
 import {
   formatListeningPeriod,
   formatListeningRule,
@@ -613,15 +616,15 @@ export default function MediaBrowser({
       </FilterButton>
     ))
   }
-  const hasActiveFilters =
-    Boolean(q) ||
-    filters.length > 0 ||
-    ranges.length > 0 ||
-    Boolean(listening?.rules.length) ||
-    limitResults
+  const activeFilterCount =
+    Number(Boolean(q)) +
+    filters.length +
+    ranges.length +
+    (listening?.rules.length ?? 0) +
+    Number(Boolean(limitResults))
+  const hasActiveFilters = activeFilterCount > 0
   const activeFilters = hasActiveFilters ? (
     <div className="active-filters">
-      {railSlot && <h2 className="rail-heading">Filters</h2>}
       {limitResults && (
         <FilterButton
           className="filter-pill"
@@ -779,67 +782,86 @@ export default function MediaBrowser({
                 <ArrowUp size={16} />
               )}
             </Button>
-            <details className="toolbar-popover">
-              <summary>Views</summary>
-              <div className="popover-panel">
-                {view === 'grid' && (
-                  <label>
-                    Grid density
-                    <select
-                      aria-label="Grid density"
-                      value={density}
+            <BrowseFilterPanel count={activeFilterCount}>
+              {hasActiveFilters && (
+                <section
+                  className="filter-panel-active"
+                  aria-label="Active filters"
+                >
+                  <h3>Active filters</h3>
+                  {activeFilters}
+                </section>
+              )}
+              <FilterPanelSection
+                title="Views"
+                icon={<Settings2 size={16} />}
+                defaultOpen
+              >
+                <div className="filter-panel-fields">
+                  {view === 'grid' && (
+                    <label>
+                      Grid density
+                      <select
+                        aria-label="Grid density"
+                        value={density}
+                        onChange={(event) =>
+                          setParams({
+                            density: parseGridDensity(event.target.value),
+                          })
+                        }
+                      >
+                        <option value="compact">Compact</option>
+                        <option value="standard">Standard</option>
+                        <option value="roomy">Roomy</option>
+                      </select>
+                    </label>
+                  )}
+                  {view === 'grid' && (
+                    <fieldset className="overlay-options">
+                      <legend>On artwork</legend>
+                      {artworkOverlays.map((overlay) => (
+                        <label className="check-label" key={overlay}>
+                          <input
+                            type="checkbox"
+                            checked={overlays.includes(overlay)}
+                            onChange={(event) =>
+                              setParams({
+                                overlays: formatArtworkOverlays(
+                                  artworkOverlays.filter((key) =>
+                                    key === overlay
+                                      ? event.target.checked
+                                      : overlays.includes(key),
+                                  ),
+                                ),
+                              })
+                            }
+                          />
+                          {overlayLabels[overlay]}
+                        </label>
+                      ))}
+                    </fieldset>
+                  )}
+                  <label className="check-label">
+                    <input
+                      type="checkbox"
+                      checked={includeArchived}
                       onChange={(event) =>
                         setParams({
-                          density: parseGridDensity(event.target.value),
+                          includeArchived: event.target.checked ? 'true' : null,
                         })
                       }
-                    >
-                      <option value="compact">Compact</option>
-                      <option value="standard">Standard</option>
-                      <option value="roomy">Roomy</option>
-                    </select>
+                    />
+                    Include archived imports
                   </label>
-                )}
-                {view === 'grid' && (
-                  <fieldset className="overlay-options">
-                    <legend>On artwork</legend>
-                    {artworkOverlays.map((overlay) => (
-                      <label className="check-label" key={overlay}>
-                        <input
-                          type="checkbox"
-                          checked={overlays.includes(overlay)}
-                          onChange={(event) =>
-                            setParams({
-                              overlays: formatArtworkOverlays(
-                                artworkOverlays.filter((key) =>
-                                  key === overlay
-                                    ? event.target.checked
-                                    : overlays.includes(key),
-                                ),
-                              ),
-                            })
-                          }
-                        />
-                        {overlayLabels[overlay]}
-                      </label>
-                    ))}
-                  </fieldset>
-                )}
-                <label className="check-label">
-                  <input
-                    type="checkbox"
-                    checked={includeArchived}
-                    onChange={(event) =>
-                      setParams({
-                        includeArchived: event.target.checked ? 'true' : null,
-                      })
-                    }
-                  />
-                  Include archived imports
-                </label>
-                {mediaType === 'album' && (
+                </div>
+              </FilterPanelSection>
+              {mediaType === 'album' && (
+                <FilterPanelSection
+                  title="Smart playlists"
+                  icon={<ListMusic size={16} />}
+                >
                   <label>
-                    Smart playlists
+                    Saved view
                     <select
                       aria-label="Smart playlist"
                       value=""
@@ -878,71 +900,77 @@ export default function MediaBrowser({
                       ))}
                     </select>
                   </label>
-                )}
-                {savedViews.isError && (
-                  <p role="alert">
-                    Saved views unavailable.{' '}
-                    <button onClick={() => savedViews.refetch()}>Retry</button>
-                  </p>
-                )}
-              </div>
-            </details>
-            <RangeEditor
-              fields={fields.filter((field) => field.filterable)}
-              ranges={ranges}
-              onChange={(ranges) =>
-                setParams({
-                  ranges: ranges.length ? JSON.stringify(ranges) : null,
-                })
-              }
-            />
-            {mediaType === 'album' && (
-              <ListeningControls
-                filter={listening}
-                sortPeriod={listeningSort}
-                sorting={sortBy === 'listeningScrobbles'}
-                onFilterChange={(filter) =>
+                  {savedViews.isError && (
+                    <p role="alert">
+                      Saved views unavailable.{' '}
+                      <button onClick={() => savedViews.refetch()}>
+                        Retry
+                      </button>
+                    </p>
+                  )}
+                </FilterPanelSection>
+              )}
+              <RangeEditor
+                presentation="panel"
+                fields={fields.filter((field) => field.filterable)}
+                ranges={ranges}
+                onChange={(ranges) =>
                   setParams({
-                    listening: filter ? JSON.stringify(filter) : null,
-                  })
-                }
-                onSortChange={(period) =>
-                  setParams({
-                    sortBy: 'listeningScrobbles',
-                    listeningSort: JSON.stringify(period),
+                    ranges: ranges.length ? JSON.stringify(ranges) : null,
                   })
                 }
               />
-            )}
-            {view === 'table' && (
-              <details className="toolbar-popover columns-picker">
-                <summary>
-                  <Columns3 size={15} /> Columns
-                </summary>
-                <div className="popover-panel">
-                  {[...fields, { key: 'links', label: 'Links' }].map(
-                    (field) => (
-                      <label className="check-label" key={field.key}>
-                        <input
-                          type="checkbox"
-                          checked={columnKeys.includes(field.key)}
-                          disabled={field.key === 'title'}
-                          onChange={() =>
-                            setParams({
-                              columns: (columnKeys.includes(field.key)
-                                ? columnKeys.filter((key) => key !== field.key)
-                                : [...columnKeys, field.key]
-                              ).join(','),
-                            })
-                          }
-                        />
-                        {field.label}
-                      </label>
-                    ),
-                  )}
-                </div>
-              </details>
-            )}
+              {mediaType === 'album' && (
+                <ListeningControls
+                  presentation="panel"
+                  filter={listening}
+                  sortPeriod={listeningSort}
+                  sorting={sortBy === 'listeningScrobbles'}
+                  onFilterChange={(filter) =>
+                    setParams({
+                      listening: filter ? JSON.stringify(filter) : null,
+                    })
+                  }
+                  onSortChange={(period) =>
+                    setParams({
+                      sortBy: 'listeningScrobbles',
+                      listeningSort: JSON.stringify(period),
+                    })
+                  }
+                />
+              )}
+              {view === 'table' && (
+                <FilterPanelSection
+                  title="Columns"
+                  icon={<Columns3 size={16} />}
+                >
+                  <div className="filter-panel-columns">
+                    {[...fields, { key: 'links', label: 'Links' }].map(
+                      (field) => (
+                        <label className="check-label" key={field.key}>
+                          <input
+                            type="checkbox"
+                            checked={columnKeys.includes(field.key)}
+                            disabled={field.key === 'title'}
+                            onChange={() =>
+                              setParams({
+                                columns: (columnKeys.includes(field.key)
+                                  ? columnKeys.filter(
+                                      (key) => key !== field.key,
+                                    )
+                                  : [...columnKeys, field.key]
+                                ).join(','),
+                              })
+                            }
+                          />
+                          {field.label}
+                        </label>
+                      ),
+                    )}
+                  </div>
+                </FilterPanelSection>
+              )}
+            </BrowseFilterPanel>
             <div className="view-switch">
               <Button
                 variant={view === 'grid' ? 'default' : 'ghost'}
@@ -977,7 +1005,13 @@ export default function MediaBrowser({
           </div>
         </div>
         {railSlot && activeFilters
-          ? createPortal(activeFilters, railSlot)
+          ? createPortal(
+              <>
+                <h2 className="rail-heading">Filters</h2>
+                {activeFilters}
+              </>,
+              railSlot,
+            )
           : activeFilters}
         <div
           className="browse-scroll"

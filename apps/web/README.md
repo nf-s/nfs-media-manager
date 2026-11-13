@@ -14,7 +14,7 @@ The detail rating strip accepts an optional trailer URL and shows a local YouTub
 
 The table rating-strip width counts only compact-enabled fields. Default film rows avoid a duplicate IMDb column; explicitly selected individual rating columns and card sort metrics remain numeric data, without adding provider badges outside the shared strip.
 
-Public marks are vendored under `public/icons/ratings`, including the original Sonemic and Discogs images from the legacy app; plugin icons must be embedded raster data with a label fallback. No remote icon requests are made while browsing. Ratings are borderless icon-and-score pairs, with a single translucent strip on posters instead of wrapping boxed labels. Poster ratings always stack each icon above its score in a fixed-height translucent strip; absent scores use a dash. Grid density lives under Views. Metascore squares use movie/music thresholds: red below 40, yellow 40-60, green 61-100.
+Public marks are vendored under `public/icons/ratings`, including the original Sonemic and Discogs images from the legacy app; plugin icons must be embedded raster data with a label fallback. No remote icon requests are made while browsing. Ratings are borderless icon-and-score pairs, with a single translucent strip on posters instead of wrapping boxed labels. Poster ratings always stack each icon above its score in a fixed-height translucent strip; absent scores use a dash. Grid density lives under Filters > Views. Metascore squares use movie/music thresholds: red below 40, yellow 40-60, green 61-100.
 
 Run the dependency-free rating helper tests using the workspace's existing TypeScript runner:
 

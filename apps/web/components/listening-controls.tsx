@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { Headphones, Plus, X } from 'lucide-react'
 import { Button } from '@repo/ui/components/ui/button'
+import { FilterPanelSection } from './browse-filter-panel'
 import {
   defaultListeningPeriod,
   type ListeningFilter,
@@ -18,6 +19,7 @@ import {
 } from '@/utils/listening-filters'
 
 type ListeningControlsProps = {
+  presentation?: 'popover' | 'panel'
   filter: ListeningFilter | undefined
   sortPeriod: ListeningPeriod | undefined
   sorting: boolean
@@ -306,29 +308,47 @@ function ListeningSortEditor({
 }
 
 export function ListeningControls(props: ListeningControlsProps) {
-  return (
+  const editor = (
+    <div
+      className={
+        props.presentation === 'panel'
+          ? 'range-editor'
+          : 'popover-panel range-editor'
+      }
+    >
+      <p className="quiet text-xs">
+        Counts synced, linked Last.fm track scrobbles, not full album plays.
+        Bounds are inclusive; dates use UTC.
+      </p>
+      <ListeningFilterEditor
+        key={JSON.stringify(props.filter)}
+        filter={props.filter}
+        onFilterChange={props.onFilterChange}
+      />
+      <ListeningSortEditor
+        key={JSON.stringify(props.sortPeriod)}
+        sortPeriod={props.sortPeriod}
+        sorting={props.sorting}
+        onSortChange={props.onSortChange}
+      />
+    </div>
+  )
+  return props.presentation === 'panel' ? (
+    <FilterPanelSection
+      title="Listening"
+      icon={<Headphones size={16} />}
+      count={props.filter?.rules.length}
+      defaultOpen={Boolean(props.filter?.rules.length)}
+    >
+      {editor}
+    </FilterPanelSection>
+  ) : (
     <details className="toolbar-popover">
       <summary>
         <Headphones size={15} /> Listening
         {props.filter?.rules.length ? ` (${props.filter.rules.length})` : ''}
       </summary>
-      <div className="popover-panel range-editor">
-        <p className="quiet text-xs">
-          Counts synced, linked Last.fm track scrobbles, not full album plays.
-          Bounds are inclusive; dates use UTC.
-        </p>
-        <ListeningFilterEditor
-          key={JSON.stringify(props.filter)}
-          filter={props.filter}
-          onFilterChange={props.onFilterChange}
-        />
-        <ListeningSortEditor
-          key={JSON.stringify(props.sortPeriod)}
-          sortPeriod={props.sortPeriod}
-          sorting={props.sorting}
-          onSortChange={props.onSortChange}
-        />
-      </div>
+      {editor}
     </details>
   )
 }
