@@ -88,6 +88,7 @@ let clock = 0
 
 function harness() {
   const calls: string[] = []
+  const page = { visible: true }
   const listeners = new Map<string, Array<(payload: unknown) => void>>()
   const local: { state: unknown } = { state: null }
   const remote: {
@@ -164,10 +165,12 @@ function harness() {
     playerName: 'Fixture player',
     initialVolume: 0.8,
     now: () => clock,
+    visible: () => page.visible,
   })
   return {
     engine,
     calls,
+    page,
     local,
     remote,
     emit(event: string, payload: unknown = {}) {
@@ -559,4 +562,133 @@ test('one failed check keeps the session; repeated failures end it', async () =>
     'Spotify could not complete that request.',
   )
   engine.dispose()
+})
+
+test('shows and controls playback the account started on another device', async () => {
+  const setup = harness()
+  setup.remote.device = speaker
+  setup.remote.snapshot = remoteSnapshot({ contextUri: 'spotify:playlist:x' })
+  setup.engine.watch()
+  await advance(100)
+  let state = setup.engine.getState()
+  assert.equal(state.active, true)
+  assert.equal(state.current, null)
+  assert.deepEqual(state.target, { kind: 'remote', device: speaker })
+  assert.equal(state.volume, 0.4)
+  assert.equal(state.snapshot?.trackUri, 'spotify:track:one')
+  assert.equal(setup.sent('state').length, 1)
+
+  await advance(5_000)
+  assert.equal(setup.sent('state').length, 2)
+  setup.engine.toggle()
+  await settle()
+  assert.deepEqual(setup.sent('pause'), ['pause speaker'])
+  assert.equal(setup.engine.getState().snapshot?.paused, true)
+  setup.remote.snapshot = remoteSnapshot({ paused: true })
+  await advance(700)
+  const checks = setup.sent('state').length
+
+  // Paused playback is checked occasionally, so a resume elsewhere is noticed.
+  await advance(29_000)
+  assert.equal(setup.sent('state').length, checks)
+  setup.remote.snapshot = remoteSnapshot({ positionMs: 60_000 })
+  await advance(1_000)
+  state = setup.engine.getState()
+  assert.equal(state.snapshot?.paused, false)
+  assert.equal(state.snapshot?.positionMs, 60_000)
+})
+
+test('leaves the player hidden while nothing plays elsewhere', async () => {
+  const setup = harness()
+  setup.engine.watch()
+  await advance(100)
+  assert.equal(setup.engine.getState().active, false)
+  assert.equal(setup.sent('state').length, 1)
+
+  // Paused playback on another device is not picked up.
+  setup.remote.device = speaker
+  setup.remote.snapshot = remoteSnapshot({ paused: true })
+  await advance(30_000)
+  assert.equal(setup.sent('state').length, 2)
+  assert.equal(setup.engine.getState().active, false)
+  assert.deepEqual(setup.engine.getState().target, { kind: 'local' })
+
+  // A hidden page stops checking until it is shown again.
+  setup.page.visible = false
+  await advance(90_000)
+  assert.equal(setup.sent('state').length, 2)
+  setup.remote.snapshot = remoteSnapshot({})
+  setup.page.visible = true
+  setup.engine.refresh()
+  await advance(100)
+  assert.equal(setup.sent('state').length, 3)
+  assert.equal(setup.engine.getState().active, true)
+})
+
+test('playback found elsewhere hides again once it stops', async () => {
+  const setup = harness()
+  setup.remote.device = speaker
+  setup.remote.snapshot = remoteSnapshot({})
+  setup.engine.watch()
+  await advance(100)
+  assert.equal(setup.engine.getState().active, true)
+
+  setup.remote.device = null
+  setup.remote.snapshot = null
+  await advance(15_000)
+  const state = setup.engine.getState()
+  assert.equal(state.active, false)
+  assert.equal(state.snapshot, null)
+  assert.deepEqual(state.target, { kind: 'local' })
+  assert.equal(state.volume, 0.8)
+  assert.equal(state.failure, null)
+})
+
+test('the queue and play act on the device found playing elsewhere', async () => {
+  const setup = harness()
+  setup.remote.device = speaker
+  setup.remote.snapshot = remoteSnapshot({ contextUri: 'spotify:playlist:x' })
+  setup.engine.watch()
+  await advance(100)
+
+  // Queued items wait: playback this app did not start has no known end.
+  setup.engine.enqueue(track)
+  setup.remote.snapshot = remoteSnapshot({
+    contextUri: 'spotify:playlist:x',
+    paused: true,
+  })
+  await advance(5_000)
+  assert.equal(setup.sent('play').length, 0)
+  assert.equal(setup.engine.getState().queue.length, 1)
+
+  setup.engine.next()
+  await settle()
+  assert.deepEqual(setup.sent('play'), [
+    'play speaker {"uris":["spotify:track:single"]}',
+  ])
+  assert.equal(setup.engine.getState().current, track)
+
+  // Once something was played here, the player stays after playback stops.
+  setup.remote.device = null
+  setup.remote.snapshot = null
+  await advance(20_000)
+  assert.equal(setup.engine.getState().active, true)
+  assert.deepEqual(setup.engine.getState().target, { kind: 'local' })
+})
+
+test('a failed background check stays silent unless access expired', async () => {
+  const setup = harness()
+  setup.remote.failures.push(
+    new PlaybackApiError(429, null),
+    new PlaybackApiError(401, null),
+  )
+  setup.engine.watch()
+  await advance(100)
+  assert.equal(setup.engine.getState().failure, null)
+  await advance(30_000)
+  assert.equal(setup.engine.getState().failure?.status, 'expired')
+  assert.equal(setup.engine.getState().active, false)
+  const checks = setup.sent('state').length
+  await advance(60_000)
+  assert.equal(setup.sent('state').length, checks)
 })

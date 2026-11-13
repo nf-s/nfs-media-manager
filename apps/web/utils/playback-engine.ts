@@ -32,9 +32,12 @@ export type PlaybackTarget =
   | { kind: 'remote'; device: PlaybackDevice }
 
 export type PlaybackState = {
-  /** Something has been played or queued, so the player is shown. */
+  /**
+   * The account is playing something, or something was played or queued here,
+   * so the player is shown.
+   */
   active: boolean
-  /** The queue item this app started and is following. */
+  /** The queue item this app started and is following; null for other playback. */
   current: PlayableItem | null
   /** What the target device is playing. */
   snapshot: PlaybackSnapshot | null
@@ -79,6 +82,7 @@ export type PlaybackEngineOptions = {
 
 const LOCAL_POLL_MS = 1_000
 const REMOTE_POLL_MS = 5_000
+const IDLE_POLL_MS = 30_000
 const FOLLOW_UP_MS = 700
 const READY_TIMEOUT_MS = 15_000
 const START_TIMEOUT_MS = 15_000
@@ -109,7 +113,8 @@ function sameShown(shown: PlaybackSnapshot | null, after: PlaybackSnapshot) {
 
 /**
  * Plays queue items one at a time on this browser or another Spotify device,
- * and follows the device's playback to know when to start the next item.
+ * and follows the device's playback to know when to start the next item. It
+ * can also show and control playback the account started elsewhere.
  */
 export function createPlaybackEngine(options: PlaybackEngineOptions) {
   const now = options.now ?? Date.now
@@ -138,6 +143,11 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
   let volumeTimer: ReturnType<typeof setTimeout> | null = null
   let ticking = false
   let disposed = false
+  let watching = false
+  /** Something was played or queued here, so the player stays once playback stops. */
+  let used = false
+  /** The target to return to when a device this app only followed goes quiet. */
+  let fallback: PlaybackTarget | null = null
 
   function set(patch: Partial<PlaybackState>) {
     if (disposed) return
@@ -301,6 +311,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     run += 1
     const started = run
     session = startSession(item, now())
+    used = true
     latest = null
     skippedAt = null
     sawLocalState = false
@@ -342,7 +353,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     // playing before.
     if (session?.phase === 'starting') return
     if (sameShown(state.snapshot, after) && !state.starting) return
-    set({ snapshot: after, starting: false })
+    set({ active: true, snapshot: after, starting: false })
   }
 
   function observe(after: PlaybackSnapshot) {
@@ -389,7 +400,33 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     if (ended && startNext()) return
     detach()
     latest = null
-    set({ snapshot: null, current: null, starting: false })
+    const restored = fallback
+    fallback = null
+    if (restored?.kind === 'local') sawLocalState = false
+    set({
+      active: used || state.queue.length > 0,
+      snapshot: null,
+      current: null,
+      starting: false,
+      ...(restored
+        ? {
+            target: restored,
+            volume:
+              restored.kind === 'local' ? localVolume : restored.device.volume,
+          }
+        : {}),
+    })
+  }
+
+  /**
+   * Follows playback on a device that was not chosen here. The earlier target
+   * comes back once that device goes quiet.
+   */
+  function follow(device: PlaybackDevice, snapshot: PlaybackSnapshot) {
+    fallback ??= state.target
+    missing = 0
+    set({ target: { kind: 'remote', device }, volume: device.volume })
+    observe(snapshot)
   }
 
   /** This browser stopped reporting playback; it may have moved to another device. */
@@ -397,17 +434,26 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     try {
       const remote = await api.state()
       if (state.target.kind !== 'local') return
-      if (remote.device && remote.snapshot && remote.device.id !== localId) {
-        set({
-          target: { kind: 'remote', device: remote.device },
-          volume: remote.device.volume,
-        })
-        observe(remote.snapshot)
-      } else playbackStopped()
+      if (remote.device && remote.snapshot && remote.device.id !== localId)
+        follow(remote.device, remote.snapshot)
+      else playbackStopped()
     } catch (error) {
       playbackStopped()
       if (playbackFailure(error).status === 'expired') fail(error)
     }
+  }
+
+  /** Looks for playback the account started elsewhere, so it can be shown and controlled. */
+  async function findPlayback() {
+    const remote = await api.state().catch((error: unknown) => {
+      // A failed background check is simply repeated at the next one.
+      if (playbackFailure(error).status === 'expired') fail(error)
+      return null
+    })
+    if (!remote || session || latest || disposed) return
+    const { device, snapshot } = remote
+    if (device && snapshot && !snapshot.paused && device.id !== localId)
+      follow(device, snapshot)
   }
 
   function shouldPoll() {
@@ -416,18 +462,31 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     return latest !== null && !latest.paused && visible()
   }
 
+  /** Time to the next check: frequent while following playback, occasional while watching for it. */
+  function pollDelay(): number | null {
+    if (shouldPoll())
+      return state.target.kind === 'local' ? LOCAL_POLL_MS : REMOTE_POLL_MS
+    const idle = watching && visible() && state.failure?.status !== 'expired'
+    return idle ? IDLE_POLL_MS : null
+  }
+
   async function tick() {
     if (ticking || disposed) return
     ticking = true
     try {
       const target = state.target
-      if (target.kind === 'local') {
+      if (!session && !latest) {
+        if (watching && visible()) await findPlayback()
+      } else if (target.kind === 'local') {
         const found = player
           ? observeLocal(await player.getCurrentState())
           : false
         if (!found && sawLocalState) {
           missing += 1
-          if (missing === MISSING_STATES) await followElsewhere()
+          // A paused browser player that lost its playback has usually handed
+          // it to another device.
+          const handedOver = watching && !session && latest?.paused === true
+          if (missing === MISSING_STATES || handedOver) await followElsewhere()
         }
       } else {
         const remote = await api.state()
@@ -471,8 +530,8 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     } finally {
       ticking = false
     }
-    if (!timer && shouldPoll())
-      schedule(state.target.kind === 'local' ? LOCAL_POLL_MS : REMOTE_POLL_MS)
+    const delay = pollDelay()
+    if (!timer && delay !== null) schedule(delay)
   }
 
   /** Shows the expected result of a command before the device confirms it. */
@@ -506,9 +565,14 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     prepare() {
       loadPlayer().catch(() => undefined)
     },
+    /** Starts noticing playback on the account that this app did not start. */
+    watch() {
+      watching = true
+      schedule(0)
+    },
     /** Checks playback again, for example when the page becomes visible. */
     refresh() {
-      if (!timer && shouldPoll()) schedule(0)
+      if (pollDelay() !== null) schedule(0)
     },
     clearFailure() {
       if (state.failure) set({ failure: null })
@@ -519,6 +583,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     },
     enqueue(item: PlayableItem) {
       sequence += 1
+      used = true
       set({
         active: true,
         queue: [...state.queue, { key: `queue-${sequence}`, item }],
@@ -648,6 +713,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
           if (moving) await api.transfer(next.device.id, playing)
           set({ target: next, volume: next.device.volume })
         }
+        fallback = null
         sawLocalState = false
         missing = 0
         if (moving) schedule(FOLLOW_UP_MS)

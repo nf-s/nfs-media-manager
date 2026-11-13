@@ -19,9 +19,10 @@ Requirements:
 
 - **Grid tiles** show play and add-to-queue buttons over the artwork on hover or focus. Touch devices show the play button only. List and table views have no play controls.
 - **The album drawer** has **Play** and **Add to queue** in its heading. In **Tracks**, a track number plays the album from that track, and each row can queue the single track.
-- **The player dock** appears at the bottom once something is played or queued: current track, previous, play/pause, next, a seek bar, the queue, the device, volume and a link to the track in Spotify. Selecting the current track opens its album. On phones the dock is a mini-player above the tab bar that opens a player sheet.
+- **The player dock** appears at the bottom once something is played or queued, or while the account is already playing on another device: current track, previous, play/pause, next, a seek bar, the queue, the device, volume and a link to the track in Spotify. Selecting the current track opens its album. On phones the dock is a mini-player above the tab bar that opens a player sheet.
 - **Queue:** an album plays in full, then the next queued album or track starts. Entries can be played now, reordered, removed or cleared. The queue is kept in the open page only; reloading clears it. It is the app's own queue, separate from Spotify's.
 - **Play on:** **This browser** or any device Spotify lists for the account. Playback started here that moves to another device is followed there.
+- **Playback started elsewhere:** when the account is playing on another device, for example from the Spotify app on a phone, the dock shows that track and controls that device: play/pause, previous, next, seek and volume. Playing an album here then plays it on that device; choose **This browser** to move it. Queued items do not start on their own after playback the app did not start: press **Next** or play one from the queue. Paused playback on another device is not picked up, and the dock hides again when that playback stops unless something was played or queued here.
 
 Albums and tracks without a valid Spotify album URL or track ID have no play controls.
 
@@ -32,7 +33,7 @@ Albums and tracks without a valid Spotify album URL or track ID have no play con
 The browser then talks to Spotify directly:
 
 - The Web Playback SDK script loads from `sdk.scdn.co` only when playback is connected, and registers the browser as a Spotify device named **Media Manager**.
-- Player commands and device listings go to `api.spotify.com/v1/me/player`. These calls come from the browser, so they do **not** pass through the server's Spotify request gate and are not recorded as provider requests. While something plays on another device, the browser reads the player state every five seconds so the queue can advance; playing in the browser reads state from the SDK without Web API polling.
+- Player commands and device listings go to `api.spotify.com/v1/me/player`. These calls come from the browser, so they do **not** pass through the server's Spotify request gate and are not recorded as provider requests. While something plays on another device, the browser reads the player state every five seconds so the queue can advance; playing in the browser reads state from the SDK without Web API polling. While nothing is playing, or playback is paused, a visible page reads the player state every 30 seconds to notice playback started elsewhere; a hidden page does not, and checks once when it is shown again.
 
 [`apps/web/utils/playback-engine.ts`](../apps/web/utils/playback-engine.ts) owns the queue, the device target and the session rules in [`playback.ts`](../apps/web/utils/playback.ts); it takes the Spotify API, token source and SDK loader as arguments so it runs under test without a browser. [`playback-provider.tsx`](../apps/web/components/playback-provider.tsx) exposes it to the shell, [`player-dock.tsx`](../apps/web/components/player-dock.tsx) and [`play-controls.tsx`](../apps/web/components/play-controls.tsx).
 
@@ -40,12 +41,13 @@ The browser then talks to Spotify directly:
 
 - **Spotify disconnected:** the token endpoint or Spotify rejected the account. The dock offers **Reconnect**, which repeats the playback consent.
 - **Other errors** (Premium required, device unavailable, rate limited, playback did not start) appear above the dock with **Open in Spotify**. The queue is kept.
-- A command is not retried, except that a browser device Spotify has not registered yet is retried twice. Three failed state reads in a row end the session.
+- A command is not retried, except that a browser device Spotify has not registered yet is retried twice. Three failed state reads in a row end the session. A failed background check for playback elsewhere is not reported; the next check repeats it.
 
 ## Limits
 
 - The queue and the current session do not survive a reload, and two open tabs each have their own.
 - No shuffle or repeat controls.
+- Playback started elsewhere is shown as Spotify reports it. It is not matched to a library album, Spotify's own queue is not shown, and it can take up to 30 seconds to appear.
 - When another device jumps straight to the end of an album between two state reads, the album can go unnoticed as finished and the next queue entry does not start.
 - Tests use a fake SDK player and fake Spotify responses. Audio, the consent round trip and phone browsers are not covered by automated tests.
 

@@ -123,6 +123,32 @@ test('a queue with nothing playing keeps the dock and its queue', () => {
   assert.doesNotMatch(html, /open\.spotify\.com/)
 })
 
+test('playback started elsewhere is shown without a library album', () => {
+  const html = render({
+    ...on,
+    active: true,
+    snapshot: { ...snapshot, paused: false },
+    target: {
+      kind: 'remote',
+      device: {
+        id: 'speaker',
+        name: 'Fixture speaker',
+        type: 'speaker',
+        active: true,
+        restricted: false,
+        volume: 0.4,
+      },
+    },
+    queue: [{ key: 'queued-1', item }],
+    volume: 0.4,
+  })
+  assert.match(html, /<strong>Second track<\/strong>/)
+  assert.match(html, /aria-label="Pause"/)
+  assert.match(html, /aria-label="Play on: Fixture speaker"/)
+  assert.match(html, /Press Next to start the queue\./)
+  assert.doesNotMatch(html, /aria-label="Open Fixture album"|<h3>Playing<\/h3>/)
+})
+
 test('a playback error keeps the controls and links to Spotify', () => {
   const html = render({
     ...on,

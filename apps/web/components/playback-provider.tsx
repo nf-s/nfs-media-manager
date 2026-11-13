@@ -162,6 +162,7 @@ export default function PlaybackProvider({
     if (!enabled) return
     const created = createEngine(apiBaseUrl)
     created.prepare()
+    created.watch()
     setEngine(created)
     const refresh = () => {
       if (document.visibilityState === 'visible') created.refresh()

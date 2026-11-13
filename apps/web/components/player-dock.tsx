@@ -379,6 +379,9 @@ function QueueContents({ view }: { view: PlaybackView }) {
       )}
       <section>
         <h3>Next</h3>
+        {view.queue.length > 0 && !view.current && view.snapshot && (
+          <p className="quiet">Press Next to start the queue.</p>
+        )}
         {view.queue.length ? (
           <QueueList queue={view.queue} />
         ) : (
@@ -827,7 +830,7 @@ function Dock({ view }: { view: PlaybackView }) {
   )
 }
 
-/** The player bar; hidden until playback is connected and something is played or queued. */
+/** The player bar; hidden until playback is connected and the account plays or queues something. */
 export default function PlayerDock() {
   const view = usePlayback()
   if (!view.enabled || !view.active) return null
