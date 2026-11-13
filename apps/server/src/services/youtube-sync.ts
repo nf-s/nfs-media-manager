@@ -29,9 +29,9 @@ import {
 import { youtubePlugin } from '@/plugins/builtin/youtube'
 import {
   scrapeJob,
-  youtubeChannel,
-  youtubeSync,
-  youtubeVideo,
+  subscriptionItem,
+  subscriptionSource,
+  subscriptionSync,
 } from '@/schemas/db'
 import type {
   LastfmSyncJobContext,
@@ -53,7 +53,7 @@ const TOKEN_REUSE_MS = 60 * 1000
 // When a quota pause carries no reset time.
 const DEFAULT_PAUSE_MS = 60 * 60 * 1000
 
-type SyncRow = typeof youtubeSync.$inferSelect
+type SyncRow = typeof subscriptionSync.$inferSelect
 type VideoPage = z.infer<typeof YoutubeVideoListSchema>
 
 const SCHEDULE_MINUTES: Record<YoutubeSyncSchedule, number | null> = {
@@ -64,6 +64,15 @@ const SCHEDULE_MINUTES: Record<YoutubeSyncSchedule, number | null> = {
   daily: 24 * 60,
   weekly: 7 * 24 * 60,
 }
+
+// Sources, items and checkpoints of this provider; other providers' rows share
+// the tables and are never read or changed here.
+const YOUTUBE = 'youtube'
+const youtubeRun = (userId: string) =>
+  and(
+    eq(subscriptionSync.userId, userId),
+    eq(subscriptionSync.provider, YOUTUBE),
+  )
 
 // PostgreSQL text cannot hold a NUL character.
 const clean = (value: string) => value.replaceAll('\u0000', '')
@@ -133,17 +142,18 @@ export async function getYoutubeSyncStatus(
   const account = await getYoutubeAccountStatus(userId)
   const [row] = await db
     .select()
-    .from(youtubeSync)
-    .where(eq(youtubeSync.userId, userId))
+    .from(subscriptionSync)
+    .where(youtubeRun(userId))
   const job = await latestSyncJob()
   const counts = CountsSchema.parse(
     (
       await db.execute(sql`
         select
-          (select count(*) from youtube_channel where subscribed) as channels,
-          (select count(*) from youtube_video v
-            join youtube_channel c on c.id = v.channel_id
-            where c.subscribed) as videos`)
+          (select count(*) from subscription_source
+            where type = ${YOUTUBE} and subscribed) as channels,
+          (select count(*) from subscription_item i
+            join subscription_source s on s.id = i.source_id
+            where s.type = ${YOUTUBE} and s.subscribed) as videos`)
     ).rows,
   )
   const state = syncState(row, job)
@@ -165,13 +175,13 @@ export async function getYoutubeSyncStatus(
     schedule,
     nextScheduledAt: next?.toISOString() ?? null,
     phase: started
-      ? row.phase === 'videos'
+      ? row.phase === 'items'
         ? 'videos'
         : 'subscriptions'
       : null,
-    channelsDone: row?.channelsDone ?? 0,
-    channelsTotal: row?.channelsTotal ?? 0,
-    newVideos: row?.newVideos ?? 0,
+    channelsDone: row?.sourcesDone ?? 0,
+    channelsTotal: row?.sourcesTotal ?? 0,
+    newVideos: row?.newItems ?? 0,
     storedChannels: counts[0]?.channels ?? 0,
     storedVideos: counts[0]?.videos ?? 0,
     startedAt: started ? row.startedAt.toISOString() : null,
@@ -191,9 +201,18 @@ export async function setYoutubeSyncSchedule(
 ) {
   // The setting can be saved before the first sync creates a run.
   await db
-    .insert(youtubeSync)
-    .values({ userId, status: 'idle', schedule, startedAt: new Date() })
-    .onConflictDoUpdate({ target: youtubeSync.userId, set: { schedule } })
+    .insert(subscriptionSync)
+    .values({
+      userId,
+      provider: YOUTUBE,
+      status: 'idle',
+      schedule,
+      startedAt: new Date(),
+    })
+    .onConflictDoUpdate({
+      target: [subscriptionSync.userId, subscriptionSync.provider],
+      set: { schedule },
+    })
   return getYoutubeSyncStatus(userId)
 }
 
@@ -213,35 +232,35 @@ export async function prepareYoutubeSyncRun(userId: string | null) {
   const fresh = {
     status: 'running',
     runId: nanoid(),
-    phase: 'subscriptions',
+    phase: 'sources',
     pageToken: null,
-    channelCursor: null,
-    channelsDone: 0,
-    channelsTotal: 0,
-    newVideos: 0,
+    sourceCursor: null,
+    sourcesDone: 0,
+    sourcesTotal: 0,
+    newItems: 0,
     resumeAfter: null,
     errorMessage: null,
     startedAt: now,
   }
   await db.transaction(async (tx) => {
     await tx
-      .insert(youtubeSync)
-      .values({ userId, ...fresh })
+      .insert(subscriptionSync)
+      .values({ userId, provider: YOUTUBE, ...fresh })
       .onConflictDoNothing()
     const [row] = await tx
       .select()
-      .from(youtubeSync)
-      .where(eq(youtubeSync.userId, userId))
+      .from(subscriptionSync)
+      .where(youtubeRun(userId))
       .for('update')
     if (!row || row.status === 'running') return
     await tx
-      .update(youtubeSync)
+      .update(subscriptionSync)
       .set(
         row.status === 'complete' || row.status === 'idle'
           ? fresh
           : { status: 'running', resumeAfter: null, errorMessage: null },
       )
-      .where(eq(youtubeSync.userId, userId))
+      .where(youtubeRun(userId))
   })
 }
 
@@ -249,21 +268,21 @@ export async function prepareYoutubeSyncRun(userId: string | null) {
 // token fences a cancelled job that is still finishing a request.
 async function claim(token: string) {
   const [open] = await db
-    .select({ userId: youtubeSync.userId })
-    .from(youtubeSync)
-    .where(eq(youtubeSync.status, 'running'))
-    .orderBy(asc(youtubeSync.startedAt), asc(youtubeSync.userId))
+    .select({ userId: subscriptionSync.userId })
+    .from(subscriptionSync)
+    .where(
+      and(
+        eq(subscriptionSync.provider, YOUTUBE),
+        eq(subscriptionSync.status, 'running'),
+      ),
+    )
+    .orderBy(asc(subscriptionSync.startedAt), asc(subscriptionSync.userId))
     .limit(1)
   if (!open) return null
   const [row] = await db
-    .update(youtubeSync)
+    .update(subscriptionSync)
     .set({ leaseToken: token })
-    .where(
-      and(
-        eq(youtubeSync.userId, open.userId),
-        eq(youtubeSync.status, 'running'),
-      ),
-    )
+    .where(and(youtubeRun(open.userId), eq(subscriptionSync.status, 'running')))
     .returning()
   return row ?? null
 }
@@ -274,8 +293,8 @@ type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0]
 async function ownedRun(tx: Transaction, token: string, run: SyncRow) {
   const [current] = await tx
     .select()
-    .from(youtubeSync)
-    .where(eq(youtubeSync.userId, run.userId))
+    .from(subscriptionSync)
+    .where(youtubeRun(run.userId))
     .for('update')
   return current &&
     current.status === 'running' &&
@@ -283,7 +302,7 @@ async function ownedRun(tx: Transaction, token: string, run: SyncRow) {
     current.runId === run.runId &&
     current.phase === run.phase &&
     current.pageToken === run.pageToken &&
-    current.channelCursor === run.channelCursor
+    current.sourceCursor === run.sourceCursor
     ? current
     : null
 }
@@ -332,6 +351,7 @@ async function syncSubscriptionPage(
     return [
       {
         id,
+        type: YOUTUBE,
         title: clean(detail?.snippet.title ?? listed.snippet.title),
         handle: handle?.startsWith('@') ? clean(handle) : null,
         description:
@@ -356,18 +376,21 @@ async function syncSubscriptionPage(
     if (rows.length) {
       const renamed = (
         await tx
-          .select({ id: youtubeChannel.id, title: youtubeChannel.title })
-          .from(youtubeChannel)
-          .where(inArray(youtubeChannel.id, ids))
+          .select({
+            id: subscriptionSource.id,
+            title: subscriptionSource.title,
+          })
+          .from(subscriptionSource)
+          .where(inArray(subscriptionSource.id, ids))
       ).flatMap((existing) => {
         const next = rows.find((row) => row.id === existing.id)
         return next && next.title !== existing.title ? [next] : []
       })
       await tx
-        .insert(youtubeChannel)
+        .insert(subscriptionSource)
         .values(rows)
         .onConflictDoUpdate({
-          target: youtubeChannel.id,
+          target: subscriptionSource.id,
           set: {
             title: sql`excluded.title`,
             handle: sql`excluded.handle`,
@@ -383,48 +406,52 @@ async function syncSubscriptionPage(
       // The channel name is part of each video's search text.
       for (const channel of renamed)
         await tx
-          .update(youtubeVideo)
+          .update(subscriptionItem)
           .set({
             search: searchVector(
-              sql`${youtubeVideo.title}`,
+              sql`${subscriptionItem.title}`,
               sql`${channel.title}::text`,
               sql`(select coalesce(string_agg(tag, ' '), '')
-                from jsonb_array_elements_text(${youtubeVideo.tags}) tag)`,
-              sql`${youtubeVideo.description}`,
+                from jsonb_array_elements_text(${subscriptionItem.tags}) tag)`,
+              sql`${subscriptionItem.description}`,
             ),
           })
-          .where(eq(youtubeVideo.channelId, channel.id))
+          .where(eq(subscriptionItem.sourceId, channel.id))
     }
     if (page.nextPageToken) {
       await tx
-        .update(youtubeSync)
+        .update(subscriptionSync)
         .set({ pageToken: page.nextPageToken })
-        .where(eq(youtubeSync.userId, run.userId))
+        .where(youtubeRun(run.userId))
       return 'more'
     }
     await tx
-      .update(youtubeChannel)
+      .update(subscriptionSource)
       .set({ subscribed: false })
       .where(
         and(
-          eq(youtubeChannel.subscribed, true),
-          sql`${youtubeChannel.seenRunId} is distinct from ${run.runId}`,
+          eq(subscriptionSource.type, YOUTUBE),
+          eq(subscriptionSource.subscribed, true),
+          sql`${subscriptionSource.seenRunId} is distinct from ${run.runId}`,
         ),
       )
     const total = await tx.$count(
-      youtubeChannel,
-      eq(youtubeChannel.subscribed, true),
+      subscriptionSource,
+      and(
+        eq(subscriptionSource.type, YOUTUBE),
+        eq(subscriptionSource.subscribed, true),
+      ),
     )
     await tx
-      .update(youtubeSync)
+      .update(subscriptionSync)
       .set({
-        phase: 'videos',
+        phase: 'items',
         pageToken: null,
-        channelCursor: null,
-        channelsDone: 0,
-        channelsTotal: total,
+        sourceCursor: null,
+        sourcesDone: 0,
+        sourcesTotal: total,
       })
-      .where(eq(youtubeSync.userId, run.userId))
+      .where(youtubeRun(run.userId))
     return 'more'
   })
 }
@@ -439,7 +466,8 @@ function videoRows(
     const tags = video.snippet.tags.map(clean)
     return {
       id: video.id,
-      channelId: channel.id,
+      sourceId: channel.id,
+      type: YOUTUBE,
       title,
       description,
       tags,
@@ -473,21 +501,22 @@ async function syncUploadsPage(
 ) {
   const [channel] = await db
     .select({
-      id: youtubeChannel.id,
-      title: youtubeChannel.title,
-      uploadsPlaylistId: youtubeChannel.uploadsPlaylistId,
-      historyComplete: youtubeChannel.historyComplete,
+      id: subscriptionSource.id,
+      title: subscriptionSource.title,
+      uploadsPlaylistId: subscriptionSource.uploadsPlaylistId,
+      historyComplete: subscriptionSource.historyComplete,
     })
-    .from(youtubeChannel)
+    .from(subscriptionSource)
     .where(
       and(
-        eq(youtubeChannel.subscribed, true),
-        run.channelCursor === null
+        eq(subscriptionSource.type, YOUTUBE),
+        eq(subscriptionSource.subscribed, true),
+        run.sourceCursor === null
           ? undefined
-          : gt(youtubeChannel.id, run.channelCursor),
+          : gt(subscriptionSource.id, run.sourceCursor),
       ),
     )
-    .orderBy(asc(youtubeChannel.id))
+    .orderBy(asc(subscriptionSource.id))
     .limit(1)
   if (!channel) return 'fetched-all'
   let uploads: z.infer<typeof YoutubeUploadPageSchema>
@@ -532,16 +561,16 @@ async function syncUploadsPage(
     if (!current) return 'lost'
     const known = ids.length
       ? await tx
-          .select({ id: youtubeVideo.id })
-          .from(youtubeVideo)
-          .where(inArray(youtubeVideo.id, ids))
+          .select({ id: subscriptionItem.id })
+          .from(subscriptionItem)
+          .where(inArray(subscriptionItem.id, ids))
       : []
     if (rows.length)
       await tx
-        .insert(youtubeVideo)
+        .insert(subscriptionItem)
         .values(rows)
         .onConflictDoUpdate({
-          target: youtubeVideo.id,
+          target: subscriptionItem.id,
           set: {
             title: sql`excluded.title`,
             description: sql`excluded.description`,
@@ -562,25 +591,25 @@ async function syncUploadsPage(
     const next = uploads.nextPageToken
     if (next && (!channel.historyComplete || known.length === 0)) {
       await tx
-        .update(youtubeSync)
-        .set({ pageToken: next, newVideos: current.newVideos + added })
-        .where(eq(youtubeSync.userId, run.userId))
+        .update(subscriptionSync)
+        .set({ pageToken: next, newItems: current.newItems + added })
+        .where(youtubeRun(run.userId))
       return 'more'
     }
     if (!next && !channel.historyComplete)
       await tx
-        .update(youtubeChannel)
+        .update(subscriptionSource)
         .set({ historyComplete: true })
-        .where(eq(youtubeChannel.id, channel.id))
+        .where(eq(subscriptionSource.id, channel.id))
     await tx
-      .update(youtubeSync)
+      .update(subscriptionSync)
       .set({
         pageToken: null,
-        channelCursor: channel.id,
-        channelsDone: current.channelsDone + 1,
-        newVideos: current.newVideos + added,
+        sourceCursor: channel.id,
+        sourcesDone: current.sourcesDone + 1,
+        newItems: current.newItems + added,
       })
-      .where(eq(youtubeSync.userId, run.userId))
+      .where(youtubeRun(run.userId))
     return 'channel-done'
   })
 }
@@ -601,8 +630,9 @@ export async function runYoutubeSyncJob(
   const deadline = Date.now() + (options.budgetMs ?? CHUNK_BUDGET_MS)
   const token = randomUUID()
   const owned = and(
-    eq(youtubeSync.status, 'running'),
-    eq(youtubeSync.leaseToken, token),
+    eq(subscriptionSync.provider, YOUTUBE),
+    eq(subscriptionSync.status, 'running'),
+    eq(subscriptionSync.leaseToken, token),
   )
   let access: { userId: string; token: string; readAt: number } | null = null
   let steps = 0
@@ -623,7 +653,7 @@ export async function runYoutubeSyncJob(
           readAt: Date.now(),
         }
       const step =
-        run.phase === 'videos'
+        run.phase === 'items'
           ? await syncUploadsPage(request, access.token, token, run, context)
           : await syncSubscriptionPage(
               request,
@@ -635,7 +665,7 @@ export async function runYoutubeSyncJob(
       if (step === 'lost') return { outcome: 'stopped' }
       if (step === 'fetched-all') {
         await db
-          .update(youtubeSync)
+          .update(subscriptionSync)
           .set({
             status: 'complete',
             completedAt: new Date(),
@@ -651,19 +681,19 @@ export async function runYoutubeSyncJob(
         }
       }
       steps += 1
-      const done = run.channelsDone + 1
+      const done = run.sourcesDone + 1
       if (step === 'channel-done' && done % LOG_EVERY_CHANNELS === 0)
         await context.log(
           'info',
-          `Read ${done} of ${run.channelsTotal} channels.`,
+          `Read ${done} of ${run.sourcesTotal} channels.`,
         )
       if (steps >= maxSteps || Date.now() >= deadline) {
         await recordProviderSuccess('youtube')
         return {
           outcome: 'continue',
           message:
-            run.phase === 'videos'
-              ? `Read ${step === 'channel-done' ? done : run.channelsDone} of ${run.channelsTotal} channels. The next job continues.`
+            run.phase === 'items'
+              ? `Read ${step === 'channel-done' ? done : run.sourcesDone} of ${run.sourcesTotal} channels. The next job continues.`
               : 'Reading the subscription list. The next job continues.',
         }
       }
@@ -679,7 +709,7 @@ export async function runYoutubeSyncJob(
         error.retryAt ?? Date.now() + DEFAULT_PAUSE_MS,
       )
       await db
-        .update(youtubeSync)
+        .update(subscriptionSync)
         .set({ status: 'paused', resumeAfter, leaseToken: null })
         .where(owned)
       return {
@@ -691,7 +721,7 @@ export async function runYoutubeSyncJob(
     if (!(error instanceof ServerError))
       await recordProviderFailure(youtubePlugin, error)
     await db
-      .update(youtubeSync)
+      .update(subscriptionSync)
       .set({
         status: 'failed',
         errorMessage:
@@ -708,9 +738,14 @@ export async function runYoutubeSyncJob(
 /** Accounts whose schedule is due, or whose quota pause has passed. */
 export async function dueYoutubeSyncUsers(now: number): Promise<string[]> {
   const rows = await db
-    .select({ userId: youtubeSync.userId })
-    .from(youtubeSync)
-    .where(inArray(youtubeSync.status, ['complete', 'paused']))
+    .select({ userId: subscriptionSync.userId })
+    .from(subscriptionSync)
+    .where(
+      and(
+        eq(subscriptionSync.provider, YOUTUBE),
+        inArray(subscriptionSync.status, ['complete', 'paused']),
+      ),
+    )
   const due: string[] = []
   for (const row of rows) {
     const status = await getYoutubeSyncStatus(row.userId)

@@ -35,9 +35,9 @@ export async function listYoutubeChannels() {
         select c.id, c.title, c.handle, c.description, c.thumbnail_url,
           c.subscriber_count, c.history_complete, count(v.id) as stored,
           extract(epoch from max(v.published_at))::float8 as latest
-        from youtube_channel c
-        left join youtube_video v on v.channel_id = c.id
-        where c.subscribed
+        from subscription_source c
+        left join subscription_item v on v.source_id = c.id
+        where c.type = 'youtube' and c.subscribed
         group by c.id
         order by lower(c.title), c.id`)
     ).rows,
@@ -164,6 +164,7 @@ export async function searchYoutubeVideos(
   const pattern = `%${(text ?? '').replace(/[\\%_]/g, '\\$&')}%`
   const ranked = literal ? null : match
   const filters = [
+    sql`c.type = 'youtube'`,
     sql`c.subscribed`,
     ...(literal
       ? [sql`(v.title ilike ${pattern} or c.title ilike ${pattern})`]
@@ -179,7 +180,7 @@ export async function searchYoutubeVideos(
       : []),
     ...(query.channelId?.length
       ? [
-          sql`v.channel_id in (${sql.join(
+          sql`v.source_id in (${sql.join(
             query.channelId.map((id) => sql`${id}`),
             sql`, `,
           )})`,
@@ -207,13 +208,13 @@ export async function searchYoutubeVideos(
   const rows = VideoRowsSchema.parse(
     (
       await db.execute(sql`
-        select v.id, v.channel_id, c.title as channel_title,
+        select v.id, v.source_id as channel_id, c.title as channel_title,
           c.thumbnail_url as channel_thumbnail_url, v.title, v.description,
           extract(epoch from v.published_at)::float8 as published,
           v.duration_sec, v.view_count, v.like_count, v.comment_count, v.live,
           count(*) over () as total
-        from youtube_video v
-        join youtube_channel c on c.id = v.channel_id
+        from subscription_item v
+        join subscription_source c on c.id = v.source_id
         where ${sql.join(filters, sql` and `)}
         order by ${order[sortBy]}, v.id
         limit ${query.size} offset ${(query.page - 1) * query.size}`)

@@ -22,8 +22,8 @@ export async function listSubscribedYoutubeChannelNames() {
   return ChannelNameRowsSchema.parse(
     (
       await db.execute(sql`
-        select id, title, handle from youtube_channel
-        where subscribed
+        select id, title, handle from subscription_source
+        where type = 'youtube' and subscribed
         order by lower(title), id`)
     ).rows,
   )

@@ -857,91 +857,118 @@ const tsvector = customType<{ data: string }>({
   dataType: () => 'tsvector',
 })
 
-export const youtubeChannel = pgTable(
-  'youtube_channel',
+// Channels and podcasts one account follows: YouTube channels and Spotify
+// shows, keyed by the provider's own ID. The type is fixed by the provider.
+export const subscriptionSource = pgTable(
+  'subscription_source',
   {
     id: text('id').primaryKey(),
+    // youtube or spotify.
+    type: text('type').notNull(),
     title: text('title').notNull(),
     handle: text('handle'),
     description: text('description'),
     thumbnailUrl: text('thumbnail_url'),
     uploadsPlaylistId: text('uploads_playlist_id'),
     subscriberCount: bigint('subscriber_count', { mode: 'number' }),
-    // Cleared when a sync no longer lists the subscription; videos are kept.
+    // Spotify's episode total when the show was last listed.
+    itemTotal: integer('item_total'),
+    // Cleared when a sync no longer lists the subscription; items are kept.
     subscribed: boolean('subscribed').notNull().default(true),
     // The sync run that last listed the subscription.
     seenRunId: text('seen_run_id'),
-    // Every page of the uploads playlist has been read at least once.
+    // Every page of the source's items has been read at least once.
     historyComplete: boolean('history_complete').notNull().default(false),
     ...timestampColumns,
   },
   (table) => [
-    index('youtube_channel_subscribed_idx').on(table.subscribed, table.id),
+    index('subscription_source_type_subscribed_idx').on(
+      table.type,
+      table.subscribed,
+      table.id,
+    ),
+    check(
+      'subscription_source_type_check',
+      sql`${table.type} in ('youtube', 'spotify')`,
+    ),
   ],
 )
 
-export const youtubeVideo = pgTable(
-  'youtube_video',
+// YouTube videos and Spotify episodes; the type matches the source's.
+export const subscriptionItem = pgTable(
+  'subscription_item',
   {
     id: text('id').primaryKey(),
-    channelId: text('channel_id')
+    sourceId: text('source_id')
       .notNull()
-      .references(() => youtubeChannel.id, { onDelete: 'cascade' }),
+      .references(() => subscriptionSource.id, { onDelete: 'cascade' }),
+    type: text('type').notNull(),
     title: text('title').notNull(),
     description: text('description').notNull().default(''),
     tags: jsonb('tags').$type<string[]>().notNull().default([]),
-    // UTC, as reported by YouTube.
+    // UTC, as reported by the provider.
     publishedAt: timestamp('published_at', {
       mode: 'date',
       withTimezone: false,
     }).notNull(),
+    // time, day, month or year: how much of publishedAt the provider reported.
+    publishedPrecision: text('published_precision').notNull().default('time'),
     durationSec: integer('duration_sec').notNull().default(0),
     viewCount: bigint('view_count', { mode: 'number' }),
     likeCount: bigint('like_count', { mode: 'number' }),
     commentCount: bigint('comment_count', { mode: 'number' }),
     // none, live or upcoming.
     live: text('live').notNull().default('none'),
-    // Title (A), channel name and tags (B), description (D).
+    // Spotify episode artwork; YouTube thumbnails derive from the video ID.
+    artworkUrl: text('artwork_url'),
+    // Title (A), source title and tags (B), description (D).
     search: tsvector('search').notNull(),
     ...timestampColumns,
   },
   (table) => [
-    index('youtube_video_search_idx').using('gin', table.search),
-    index('youtube_video_channel_published_idx').on(
-      table.channelId,
+    index('subscription_item_search_idx').using('gin', table.search),
+    index('subscription_item_source_published_idx').on(
+      table.sourceId,
       table.publishedAt,
     ),
-    index('youtube_video_published_idx').on(table.publishedAt, table.id),
-    index('youtube_video_views_idx').on(table.viewCount),
-    index('youtube_video_duration_idx').on(table.durationSec),
+    index('subscription_item_published_idx').on(table.publishedAt, table.id),
+    index('subscription_item_views_idx').on(table.viewCount),
+    index('subscription_item_duration_idx').on(table.durationSec),
   ],
 )
 
-export const youtubeSync = pgTable('youtube_sync', {
-  userId: text('user_id')
-    .primaryKey()
-    .references(() => user.id, { onDelete: 'cascade' }),
-  // running, paused, failed, complete, or idle before the first run.
-  status: text('status').notNull(),
-  schedule: text('schedule').notNull().default('daily'),
-  runId: text('run_id'),
-  // subscriptions, then videos.
-  phase: text('phase').notNull().default('subscriptions'),
-  // Next page of the subscription list, or of the current channel's uploads.
-  pageToken: text('page_token'),
-  // The last channel whose uploads were read in this run.
-  channelCursor: text('channel_cursor'),
-  channelsDone: integer('channels_done').notNull().default(0),
-  channelsTotal: integer('channels_total').notNull().default(0),
-  newVideos: integer('new_videos').notNull().default(0),
-  // When a run paused by the daily quota may continue.
-  resumeAfter: timestamp('resume_after'),
-  errorMessage: text('error_message'),
-  leaseToken: text('lease_token'),
-  startedAt: timestamp('started_at').notNull(),
-  completedAt: timestamp('completed_at'),
-  ...timestampColumns,
-})
+// One checkpoint per account and provider.
+export const subscriptionSync = pgTable(
+  'subscription_sync',
+  {
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    // youtube or spotify.
+    provider: text('provider').notNull(),
+    // running, paused, failed, complete, or idle before the first run.
+    status: text('status').notNull(),
+    schedule: text('schedule').notNull().default('daily'),
+    runId: text('run_id'),
+    // sources, then items.
+    phase: text('phase').notNull().default('sources'),
+    // Next page of the source list, or of the current source's items.
+    pageToken: text('page_token'),
+    // The last source whose items were read in this run.
+    sourceCursor: text('source_cursor'),
+    sourcesDone: integer('sources_done').notNull().default(0),
+    sourcesTotal: integer('sources_total').notNull().default(0),
+    newItems: integer('new_items').notNull().default(0),
+    // When a run paused by the daily quota may continue.
+    resumeAfter: timestamp('resume_after'),
+    errorMessage: text('error_message'),
+    leaseToken: text('lease_token'),
+    startedAt: timestamp('started_at').notNull(),
+    completedAt: timestamp('completed_at'),
+    ...timestampColumns,
+  },
+  (table) => [primaryKey({ columns: [table.userId, table.provider] })],
+)
 
 export const mediaItemRelations = relations(mediaItem, ({ many, one }) => ({
   album: one(album, {

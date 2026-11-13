@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import pg from 'pg'
-import { eq } from 'drizzle-orm'
+import { eq, sql } from 'drizzle-orm'
+import { readMigrationFiles } from 'drizzle-orm/migrator'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { migrate } from 'drizzle-orm/node-postgres/migrator'
 import {
@@ -27,6 +28,8 @@ const connection = {
 const admin = new pg.Client({ ...connection, database: env.DATABASE_NAME })
 const pool = new pg.Pool({ ...connection, database })
 const databaseClient = drizzle(pool, { schema })
+// The migration case points the services at a database of its own.
+const active = { client: databaseClient }
 const request = vi.fn<typeof fetch>()
 const APP_ORIGIN = 'http://localhost:3000'
 const USER = 'owner-fixture'
@@ -46,7 +49,7 @@ vi.mock('@/env', async (importOriginal) => {
 })
 vi.mock('@/lib/db', () => ({
   get db() {
-    return databaseClient
+    return active.client
   },
 }))
 // No request spacing, so the fixture API answers immediately.
@@ -425,6 +428,27 @@ async function search(
   return { ...page, ids: page.items.map((item) => item.id) }
 }
 
+const searchMigration = () =>
+  readFile(
+    new URL('../drizzle/0021_youtube_search_prefix.sql', import.meta.url),
+    'utf8',
+  )
+
+/** Migration 0021 written against the tables as migration 0023 renamed them. */
+async function renamedSearchMigration() {
+  const renames: [string, string][] = [
+    ['"youtube_video"', '"subscription_item"'],
+    ['"youtube_channel"', '"subscription_source"'],
+    ['v.channel_id', 'v.source_id'],
+  ]
+  let text = await searchMigration()
+  for (const [from, to] of renames) {
+    expect(text).toContain(from)
+    text = text.replaceAll(from, to)
+  }
+  return text
+}
+
 let created = false
 beforeAll(async () => {
   vi.stubGlobal('fetch', request)
@@ -446,9 +470,9 @@ beforeEach(async () => {
   request.mockReset()
   request.mockImplementation(fakeYoutube)
   await databaseClient.delete(schema.scrapeJob)
-  await databaseClient.delete(schema.youtubeVideo)
-  await databaseClient.delete(schema.youtubeChannel)
-  await databaseClient.delete(schema.youtubeSync)
+  await databaseClient.delete(schema.subscriptionItem)
+  await databaseClient.delete(schema.subscriptionSource)
+  await databaseClient.delete(schema.subscriptionSync)
   await databaseClient.delete(schema.providerSecret)
   await databaseClient.delete(schema.providerRequestState)
   await databaseClient.delete(schema.providerRequestEvent)
@@ -727,8 +751,8 @@ describe('YouTube subscription sync jobs with offline HTTP and a temporary datab
     expect((await search({ q: 'sourdough' })).ids).toEqual([])
     expect(
       await databaseClient.$count(
-        schema.youtubeVideo,
-        eq(schema.youtubeVideo.channelId, COOKS),
+        schema.subscriptionItem,
+        eq(schema.subscriptionItem.sourceId, COOKS),
       ),
     ).toBe(3)
 
@@ -740,6 +764,70 @@ describe('YouTube subscription sync jobs with offline HTTP and a temporary datab
       3,
     )
     expect((await search({ q: 'sourdough' })).ids).toEqual([videoId('b1')])
+  })
+
+  it('leaves podcast sources and episodes out of the YouTube sync, counts and search', async () => {
+    const show = 'podcastshowfixture0001'
+    await databaseClient.insert(schema.subscriptionSource).values({
+      id: show,
+      type: 'spotify',
+      title: 'Orbit Talk Fixture',
+      itemTotal: 1,
+      seenRunId: 'podcast-run',
+    })
+    await databaseClient.insert(schema.subscriptionItem).values({
+      id: 'podcastepisodefixture1',
+      sourceId: show,
+      type: 'spotify',
+      title: 'Orbits for beginners',
+      publishedAt: new Date('2026-03-02T00:00:00Z'),
+      publishedPrecision: 'day',
+      durationSec: 1800,
+      search: sql`to_tsvector('simple', 'Orbits for beginners Orbit Talk Fixture')`,
+    })
+    await connect()
+    expect(await syncToEnd()).toMatchObject({
+      state: 'complete',
+      channelsTotal: 3,
+      storedChannels: 3,
+      storedVideos: 7,
+    })
+    channel(COOKS).subscribed = false
+    expect(await syncToEnd()).toMatchObject({
+      channelsTotal: 2,
+      storedChannels: 2,
+    })
+
+    const [source] = await databaseClient
+      .select()
+      .from(schema.subscriptionSource)
+      .where(eq(schema.subscriptionSource.id, show))
+    expect(source).toMatchObject({
+      type: 'spotify',
+      subscribed: true,
+      seenRunId: 'podcast-run',
+    })
+    expect(
+      await databaseClient.$count(
+        schema.subscriptionItem,
+        eq(schema.subscriptionItem.sourceId, show),
+      ),
+    ).toBe(1)
+    const { listYoutubeChannels } = await import('@/services/youtube-library')
+    expect((await listYoutubeChannels()).items.map((item) => item.id)).toEqual([
+      EMPTY,
+      ORBITAL,
+    ])
+    expect((await search({ q: 'orbits' })).ids).toEqual([
+      videoId('a1'),
+      videoId('a2'),
+    ])
+    expect((await search({ channelId: [ORBITAL] })).totalCount).toBe(4)
+    const { listSubscribedYoutubeChannelNames } =
+      await import('@/services/youtube-channel-names')
+    expect(
+      (await listSubscribedYoutubeChannelNames()).map((item) => item.id),
+    ).toEqual([EMPTY, ORBITAL])
   })
 
   it('returns the active job instead of queueing a second sync', async () => {
@@ -780,8 +868,8 @@ describe('YouTube subscription sync jobs with offline HTTP and a temporary datab
     expect((await listJobs({ status: 'attention' })).totalCount).toBe(0)
     const [channelRow] = await databaseClient
       .select()
-      .from(schema.youtubeChannel)
-      .where(eq(schema.youtubeChannel.id, ORBITAL))
+      .from(schema.subscriptionSource)
+      .where(eq(schema.subscriptionSource.id, ORBITAL))
     expect(channelRow?.historyComplete).toBe(false)
 
     // Not due yet, and still held while the provider cools down.
@@ -1118,7 +1206,7 @@ describe('YouTube video search over stored videos', () => {
     const vectors = async () =>
       (
         await pool.query<{ id: string; search: string }>(
-          'select id, search::text as search from youtube_video order by id',
+          'select id, search::text as search from subscription_item order by id',
         )
       ).rows
     const synced = await vectors()
@@ -1127,14 +1215,9 @@ describe('YouTube video search over stored videos', () => {
       "'depression':",
     )
     await pool.query(
-      "update youtube_video set search = to_tsvector('english', 'stale')",
+      "update subscription_item set search = to_tsvector('english', 'stale')",
     )
-    await pool.query(
-      await readFile(
-        new URL('../drizzle/0021_youtube_search_prefix.sql', import.meta.url),
-        'utf8',
-      ),
-    )
+    await pool.query(await renamedSearchMigration())
     expect(await vectors()).toEqual(synced)
   })
 
@@ -1179,5 +1262,225 @@ describe('YouTube video search over stored videos', () => {
     )
     // Relevance without a search is newest first.
     expect((await search({ sortBy: 'relevance' })).ids).toEqual(all)
+  })
+})
+
+describe('subscription library migration', () => {
+  it('moves stored channels, videos and a paused checkpoint into the subscription tables, then resumes the run', async () => {
+    const name = `${database}_migration`
+    await admin.query(`create database ${name}`)
+    const migrationPool = new pg.Pool({ ...connection, database: name })
+    const query = async (text: string) => (await migrationPool.query(text)).rows
+    try {
+      const migrations = readMigrationFiles({ migrationsFolder: './drizzle' })
+      const index = migrations.findIndex((migration) =>
+        migration.sql.some((statement) =>
+          statement.includes('ALTER TABLE "youtube_channel" RENAME TO'),
+        ),
+      )
+      const target = migrations[index]
+      if (!target) throw new Error('Missing subscription library migration')
+      const client = await migrationPool.connect()
+      try {
+        await client.query('begin')
+        for (const previous of migrations.slice(0, index))
+          for (const statement of previous.sql) await client.query(statement)
+        await client.query('commit')
+      } finally {
+        client.release()
+      }
+
+      // As a sync left them when the quota ran out on the second uploads page
+      // of the first channel in ID order.
+      await migrationPool.query(`
+        insert into "user" (id, name, email) values
+          ('${USER}', 'Owner Fixture', 'owner@example.test');
+        insert into youtube_channel
+          (id, title, handle, thumbnail_url, uploads_playlist_id, subscriber_count, seen_run_id) values
+          ('${ORBITAL}', 'Kepler Mechanics Lab', '@keplermechanicslab', 'https://yt3.example/${ORBITAL}.jpg', 'UU${ORBITAL.slice(2)}', 1200, 'run-before'),
+          ('${COOKS}', 'The Who Cooks', null, null, 'UU${COOKS.slice(2)}', 1200, 'run-before'),
+          ('${EMPTY}', 'Empty Channel Fixture', null, null, 'UU${EMPTY.slice(2)}', 1200, 'run-before');
+        insert into youtube_video
+          (id, channel_id, title, description, tags, published_at, duration_sec, view_count, like_count, live, search) values
+          ('${videoId('b1')}', '${COOKS}', 'Sourdough starter from scratch', 'Flour, water, patience.', '["baking"]', '2026-01-15T08:00:00', 480, 12000, 7, 'none', ''),
+          ('${videoId('b2')}', '${COOKS}', 'Knife sharpening basics', 'Whetstones explained for beginners.', '[]', '2024-06-10T08:00:00', 1320, 700, 7, 'none', '');
+        insert into youtube_sync
+          (user_id, status, schedule, run_id, phase, page_token, channel_cursor,
+           channels_done, channels_total, new_videos, resume_after, started_at) values
+          ('${USER}', 'paused', 'daily', 'run-before', 'videos', '2', null,
+           0, 3, 2, now() - interval '1 minute', now() - interval '1 hour');
+      `)
+      await migrationPool.query(await searchMigration())
+      const vectors = () =>
+        query(
+          'select id, search::text as search from youtube_video order by id',
+        )
+      const before = await vectors()
+      expect(before[0]?.search).toContain("'baking':")
+
+      const migrating = await migrationPool.connect()
+      try {
+        await migrating.query('begin')
+        for (const statement of target.sql) await migrating.query(statement)
+        await migrating.query('commit')
+      } finally {
+        migrating.release()
+      }
+
+      expect(
+        await query(
+          "select table_name from information_schema.tables where table_schema = 'public' and (table_name like 'youtube%' or table_name like 'subscription%') order by table_name",
+        ),
+      ).toEqual([
+        { table_name: 'subscription_item' },
+        { table_name: 'subscription_source' },
+        { table_name: 'subscription_sync' },
+      ])
+      expect(
+        await query(
+          'select id, type, item_total, subscribed from subscription_source order by id',
+        ),
+      ).toEqual(
+        [COOKS, EMPTY, ORBITAL].map((id) => ({
+          id,
+          type: 'youtube',
+          item_total: null,
+          subscribed: true,
+        })),
+      )
+      expect(
+        await query(
+          'select id, source_id, type, published_precision, artwork_url from subscription_item order by id',
+        ),
+      ).toEqual(
+        ['b1', 'b2'].map((key) => ({
+          id: videoId(key),
+          source_id: COOKS,
+          type: 'youtube',
+          published_precision: 'time',
+          artwork_url: null,
+        })),
+      )
+      expect(
+        await query(
+          'select id, search::text as search from subscription_item order by id',
+        ),
+      ).toEqual(before)
+      expect(
+        await query(
+          'select user_id, provider, status, phase, page_token, source_cursor, sources_done, sources_total, new_items from subscription_sync',
+        ),
+      ).toEqual([
+        {
+          user_id: USER,
+          provider: 'youtube',
+          status: 'paused',
+          phase: 'items',
+          page_token: '2',
+          source_cursor: null,
+          sources_done: 0,
+          sources_total: 3,
+          new_items: 2,
+        },
+      ])
+      expect(
+        await query(`
+          select conrelid::regclass::text as "table", conname as name,
+            pg_get_constraintdef(oid) as definition
+          from pg_constraint
+          where conrelid in ('subscription_source'::regclass,
+            'subscription_item'::regclass, 'subscription_sync'::regclass)
+          order by 1, 2`),
+      ).toEqual([
+        {
+          table: 'subscription_item',
+          name: 'subscription_item_pkey',
+          definition: 'PRIMARY KEY (id)',
+        },
+        {
+          table: 'subscription_item',
+          name: 'subscription_item_source_id_subscription_source_id_fk',
+          definition:
+            'FOREIGN KEY (source_id) REFERENCES subscription_source(id) ON DELETE CASCADE',
+        },
+        {
+          table: 'subscription_source',
+          name: 'subscription_source_pkey',
+          definition: 'PRIMARY KEY (id)',
+        },
+        {
+          table: 'subscription_source',
+          name: 'subscription_source_type_check',
+          definition: expect.stringContaining("'spotify'"),
+        },
+        {
+          table: 'subscription_sync',
+          name: 'subscription_sync_user_id_provider_pk',
+          definition: 'PRIMARY KEY (user_id, provider)',
+        },
+        {
+          table: 'subscription_sync',
+          name: 'subscription_sync_user_id_user_id_fk',
+          definition:
+            'FOREIGN KEY (user_id) REFERENCES "user"(id) ON DELETE CASCADE',
+        },
+      ])
+      expect(
+        (
+          await query(
+            "select indexname from pg_indexes where tablename like 'subscription%' order by indexname",
+          )
+        ).map((row) => row.indexname),
+      ).toEqual([
+        'subscription_item_duration_idx',
+        'subscription_item_pkey',
+        'subscription_item_published_idx',
+        'subscription_item_search_idx',
+        'subscription_item_source_published_idx',
+        'subscription_item_views_idx',
+        'subscription_source_pkey',
+        'subscription_source_type_subscribed_idx',
+        'subscription_sync_user_id_provider_pk',
+      ])
+      // Types are no longer defaulted: each writer states its own.
+      await expect(
+        migrationPool.query(
+          "insert into subscription_source (id, title) values ('podcastshowfixture0001', 'Missing type')",
+        ),
+      ).rejects.toThrow()
+      await expect(
+        migrationPool.query(
+          "insert into subscription_source (id, type, title) values ('podcastshowfixture0001', 'other', 'Unknown type')",
+        ),
+      ).rejects.toThrow()
+
+      // The migrated checkpoint resumes at the second uploads page.
+      active.client = drizzle(migrationPool, { schema })
+      await connect()
+      request.mockClear()
+      const { queueDueYoutubeSync } =
+        await import('@/services/youtube-sync-jobs')
+      expect(await queueDueYoutubeSync()).toBe(true)
+      expect(await drain()).toMatchObject({
+        state: 'complete',
+        phase: 'videos',
+        channelsDone: 3,
+        channelsTotal: 3,
+        newVideos: 7,
+        storedChannels: 3,
+        storedVideos: 7,
+      })
+      expect(apiPaths().slice(0, 2)).toEqual(['playlistItems', 'videos'])
+      expect(
+        new URL(String(request.mock.calls[0]?.[0])).searchParams.get(
+          'pageToken',
+        ),
+      ).toBe('2')
+      expect(apiPaths().includes('subscriptions')).toBe(false)
+    } finally {
+      active.client = databaseClient
+      await migrationPool.end()
+      await admin.query(`drop database ${name}`)
+    }
   })
 })
