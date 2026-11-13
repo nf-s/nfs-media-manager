@@ -2,11 +2,14 @@
 
 import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { browseFacetOptions } from '@/utils/browse-facets'
+import {
+  browseFacetOptions,
+  type BrowseFacetCollection,
+} from '@/utils/browse-facets'
 
 export function useBrowseFacets(
   apiBaseUrl: string,
-  collection: 'albums' | 'films' | 'tracks',
+  collection: BrowseFacetCollection,
   draft: string,
   enabled = true,
 ) {

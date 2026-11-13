@@ -1,0 +1,253 @@
+.browser :global(.browse-toolbar) {
+  flex-wrap: wrap;
+}
+
+@media (max-width: 700px) {
+  .browser :global(.browse-controls > select) {
+    flex-shrink: 1;
+    min-width: 70px;
+  }
+}
+
+/* Fixed row geometry for the virtual scroller: 35px cells plus a 1px divider. */
+.table {
+  table-layout: fixed;
+  min-width: 100%;
+}
+
+.table > tbody > tr > td {
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+.table :global(.virtual-browse-line) {
+  margin: 0;
+}
+
+.placeholderCell {
+  display: flex;
+  align-items: center;
+  height: 35px;
+}
+
+.rowThumb {
+  display: flex;
+  align-items: center;
+  height: 35px;
+}
+
+.rowThumb .thumb {
+  width: 50px;
+  border-radius: 4px;
+}
+
+.thumb {
+  position: relative;
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  border-radius: 6px;
+  background: #e2e6ec;
+}
+
+.fill {
+  width: 100%;
+  height: 100%;
+}
+
+.thumbImage {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* Square podcast artwork stays whole inside the 16:9 frame. */
+.thumbContain {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.badge,
+.typeLabel {
+  position: absolute;
+  bottom: 4px;
+  padding: 0 4px;
+  border-radius: 4px;
+  background: var(--glass-dark);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 17px;
+  font-variant-numeric: tabular-nums;
+}
+
+.badge {
+  right: 4px;
+}
+
+.typeLabel {
+  left: 4px;
+  font-weight: 500;
+}
+
+.card {
+  min-width: 0;
+}
+
+.cardThumb {
+  display: block;
+  width: 100%;
+}
+
+.cardThumb:hover :global(img) {
+  opacity: 0.92;
+}
+
+.card[data-selected='true'] .thumb {
+  box-shadow: 0 0 0 2px #334155;
+}
+
+/* Keep in step with subscriptionCardBodyHeight in utils/subscriptions.ts. */
+.cardBody {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 8px;
+  height: 72px;
+  padding-top: 6px;
+  overflow: hidden;
+}
+
+.placeholderBody {
+  height: 72px;
+  padding-top: 2px;
+}
+
+.avatar {
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  overflow: hidden;
+  border-radius: 50%;
+}
+
+.avatarLarge {
+  width: 32px;
+  height: 32px;
+}
+
+.avatarImage {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.title {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 18px;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+.title:hover,
+.channel:hover {
+  text-decoration: underline;
+}
+
+.channel {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--ink-2);
+  font-size: 12px;
+  line-height: 16px;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.channel:hover {
+  color: var(--ink);
+}
+
+.meta {
+  overflow: hidden;
+  color: #667080;
+  font-size: 11px;
+  line-height: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.openLink {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  color: var(--ink-2);
+}
+
+.openLink:hover {
+  background: var(--chip);
+  color: var(--ink);
+}
+
+.sourceCell {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.details :global(.detail-metrics) {
+  gap: 10px 16px;
+  margin-bottom: 14px;
+}
+
+.detailThumb {
+  display: block;
+  max-width: 480px;
+}
+
+.detailTitle {
+  margin: 12px 0 8px;
+  color: var(--ink);
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+.detailChannel {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+  font-size: 13px;
+}
+
+.detailTags {
+  margin-bottom: 14px;
+}
+
+.description {
+  max-width: 80ch;
+  padding-top: 12px;
+  border-top: 1px solid var(--line-soft);
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

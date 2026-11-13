@@ -1,15 +1,24 @@
 import type { z } from 'zod'
 import {
   AiSearchResponseSchema,
+  AiSubscriptionSearchResponseSchema,
   AiYoutubeSearchResponseSchema,
+  aiSubscriptionBrowseQuery,
   type AiMediaLibrary,
   type AiSearchLibrary,
   type AiSearchPlan,
+  type AiSubscriptionPlan,
   type AiYoutubePlan,
 } from '@repo/schemas/ai-search'
 import { formatBrowseValue, type BrowseField } from '@repo/schemas/browse'
+import { subscriptionTypeLabels } from '@repo/schemas/subscriptions'
 import { formatListeningPeriod, formatListeningRule } from './listening-filters'
-import { youtubeDurationLabels, youtubeSortLabels } from './youtube'
+import { subscriptionSortLabels } from './subscriptions'
+import {
+  formatVideoDuration,
+  youtubeDurationLabels,
+  youtubeSortLabels,
+} from './youtube'
 
 export type AiSearchResult<Plan> = {
   plan: Plan | null
@@ -40,6 +49,12 @@ export const youtubeAiSearchTarget: AiSearchTarget<AiYoutubePlan> = {
   mediaType: 'youtube',
   responseSchema: AiYoutubeSearchResponseSchema,
   describe: describeAiYoutubePlan,
+}
+
+export const subscriptionAiSearchTarget: AiSearchTarget<AiSubscriptionPlan> = {
+  mediaType: 'subscription',
+  responseSchema: AiSubscriptionSearchResponseSchema,
+  describe: describeAiSubscriptionPlan,
 }
 
 export function aiSearchParams(
@@ -146,6 +161,53 @@ export function describeAiYoutubePlan(plan: AiYoutubePlan): string[] {
     plan.sortBy === 'relevance'
       ? `Sort: ${youtubeSortLabels.relevance}`
       : `Sort: ${youtubeSortLabels[plan.sortBy]}, ${plan.sortDirection === 'asc' ? 'ascending' : 'descending'}`,
+  )
+  return descriptions
+}
+
+/** Subscriptions browse parameters for a plan; every search parameter is replaced and the drawer closes. */
+export function aiSubscriptionSearchParams(
+  plan: AiSubscriptionPlan,
+): Record<string, string | null> {
+  const query = aiSubscriptionBrowseQuery(plan)
+  return {
+    q: query.q || null,
+    fields: query.q && query.fields === 'title' ? 'title' : null,
+    filters: query.filters.length ? JSON.stringify(query.filters) : null,
+    ranges: query.ranges.length ? JSON.stringify(query.ranges) : null,
+    sortBy: query.sortBy,
+    direction: query.sortBy === 'relevance' ? null : query.direction,
+    item: null,
+  }
+}
+
+export function describeAiSubscriptionPlan(plan: AiSubscriptionPlan): string[] {
+  const descriptions: string[] = []
+  if (plan.q)
+    descriptions.push(
+      `Search: ${plan.q}${plan.fields === 'title' ? ' (titles only)' : ''}`,
+    )
+  if (plan.sources.length)
+    descriptions.push(
+      `Channels: ${plan.sources.map((source) => source.title).join(', ')}`,
+    )
+  const types = [...new Set(plan.types)]
+  if (types.length === 1)
+    descriptions.push(
+      `Type: ${types.map((type) => subscriptionTypeLabels[type]).join(', ')}`,
+    )
+  if (plan.publishedFrom || plan.publishedTo)
+    descriptions.push(
+      `Published: ${plan.publishedFrom ?? '*'} to ${plan.publishedTo ?? '*'}`,
+    )
+  if (plan.durationMinSec !== null || plan.durationMaxSec !== null)
+    descriptions.push(
+      `Duration: ${plan.durationMinSec === null ? '*' : formatVideoDuration(plan.durationMinSec)} to ${plan.durationMaxSec === null ? '*' : formatVideoDuration(plan.durationMaxSec)}`,
+    )
+  descriptions.push(
+    plan.sortBy === 'relevance'
+      ? `Sort: ${subscriptionSortLabels.relevance}`
+      : `Sort: ${subscriptionSortLabels[plan.sortBy]}, ${plan.direction === 'asc' ? 'ascending' : 'descending'}`,
   )
   return descriptions
 }

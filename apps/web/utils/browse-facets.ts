@@ -4,9 +4,16 @@ import { BrowseFacetQuerySchema } from '@repo/schemas/browse'
 import { FilmFilterOptionSchema } from '@repo/schemas/media'
 import { fetchApiData } from './api'
 
+/** Libraries with a `/facets` endpoint returning filter suggestions. */
+export type BrowseFacetCollection =
+  | 'albums'
+  | 'films'
+  | 'tracks'
+  | 'subscriptions'
+
 export function browseFacetOptions(
   apiBaseUrl: string,
-  collection: 'albums' | 'films' | 'tracks',
+  collection: BrowseFacetCollection,
   search: string,
 ) {
   // Bound suggestion requests, not the user's full-text filter draft.
