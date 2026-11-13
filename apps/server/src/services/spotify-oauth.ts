@@ -17,6 +17,7 @@ import { ServerError } from '@/lib/error'
 import { resolveProviderSecrets } from '@/lib/provider-secrets'
 import {
   SPOTIFY_PLAYBACK_SCOPES,
+  SPOTIFY_PLAYLIST_CHANGE_SCOPES,
   SPOTIFY_PLAYLIST_SCOPES,
   SPOTIFY_SCOPE,
   spotifyAuthorization,
@@ -42,6 +43,7 @@ const StateSchema = z.object({
   expiresAt: z.number(),
   consumed: z.boolean().default(false),
   playback: z.boolean().default(false),
+  playlistChanges: z.boolean().default(false),
   returnTo: z.enum(['imports', 'playlists', 'providers']).default('imports'),
 })
 const AccountSchema = z.object({
@@ -76,6 +78,14 @@ const PLAYLIST_ACCESS: AccountAccess = {
   changed:
     'Reconnect the Spotify account to allow playlist access. The current connection does not include it.',
   missing: 'Spotify playlist permission is missing',
+}
+const PLAYLIST_CHANGE_ACCESS: AccountAccess = {
+  scopes: [...PLAYLIST_ACCESS.scopes, ...SPOTIFY_PLAYLIST_CHANGE_SCOPES],
+  notConfigured: LIBRARY_ACCESS.notConfigured,
+  notConnected: 'Connect a Spotify account before changing playlists',
+  changed:
+    'Reconnect the Spotify account to allow playlist changes. The current connection does not include them.',
+  missing: 'Spotify playlist change permission is missing',
 }
 const PLAYBACK_ACCESS: AccountAccess = {
   scopes: [SPOTIFY_SCOPE, ...SPOTIFY_PLAYBACK_SCOPES],
@@ -201,6 +211,8 @@ export async function getSpotifyAccountStatus(userId: string) {
     redirectUri: configured?.redirectUri ?? null,
     playback: connected && hasScopes(account?.scope, SPOTIFY_PLAYBACK_SCOPES),
     playlists: connected && hasScopes(account?.scope, SPOTIFY_PLAYLIST_SCOPES),
+    playlistChanges:
+      connected && hasScopes(account?.scope, PLAYLIST_CHANGE_ACCESS.scopes),
   }
 }
 
@@ -220,14 +232,24 @@ export async function authorizeSpotify(
     throw unavailable('Start Spotify authorization from a trusted app origin.')
   }
   spotifyCompletionUrl()
-  // A reconnect without an explicit choice keeps the playback access already granted.
+  // A reconnect without an explicit choice keeps the optional access already granted.
+  const granted =
+    options.playback === undefined || options.playlistChanges === undefined
+      ? (await storedAccount(userId))?.scope
+      : undefined
   const playback =
-    options.playback ??
-    hasScopes((await storedAccount(userId))?.scope, SPOTIFY_PLAYBACK_SCOPES)
+    options.playback ?? hasScopes(granted, SPOTIFY_PLAYBACK_SCOPES)
+  const playlistChanges =
+    options.playlistChanges ??
+    hasScopes(granted, SPOTIFY_PLAYLIST_CHANGE_SCOPES)
   const authorization = spotifyAuthorization(
     config.clientId,
     config.redirectUri,
-    [...PLAYLIST_ACCESS.scopes, ...(playback ? SPOTIFY_PLAYBACK_SCOPES : [])],
+    [
+      ...PLAYLIST_ACCESS.scopes,
+      ...(playback ? SPOTIFY_PLAYBACK_SCOPES : []),
+      ...(playlistChanges ? SPOTIFY_PLAYLIST_CHANGE_SCOPES : []),
+    ],
   )
   const expiresAt = Date.now() + 10 * 60 * 1000
   await writeSecret(db, userId, 'state', {
@@ -238,6 +260,7 @@ export async function authorizeSpotify(
     returnOrigin: browser.origin,
     expiresAt,
     playback,
+    playlistChanges,
     returnTo:
       options.playback !== undefined
         ? 'providers'
@@ -364,6 +387,11 @@ export async function finishSpotifyAuthorization(
       throw new Error('Spotify did not grant saved album access')
     if (state.playback && !hasScopes(token.scope, SPOTIFY_PLAYBACK_SCOPES))
       throw new Error('Spotify did not grant playback access')
+    if (
+      state.playlistChanges &&
+      !hasScopes(token.scope, SPOTIFY_PLAYLIST_CHANGE_SCOPES)
+    )
+      throw new Error('Spotify did not grant playlist change access')
     await db.transaction(async (tx) => {
       const [pending] = await tx
         .select()
@@ -469,6 +497,19 @@ export async function spotifyPlaylistToken(
   request: SpotifyRequest,
 ) {
   const token = await lockedAccountToken(userId, request, PLAYLIST_ACCESS)
+  return token.accessToken
+}
+
+/** A token for adding items to the account's playlists, or a 422 saying what is missing. */
+export async function spotifyPlaylistChangeToken(
+  userId: string,
+  request: SpotifyRequest,
+) {
+  const token = await lockedAccountToken(
+    userId,
+    request,
+    PLAYLIST_CHANGE_ACCESS,
+  )
   return token.accessToken
 }
 

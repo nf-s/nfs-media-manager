@@ -6,24 +6,32 @@ Tracks are a separate library from albums. A track is in the library because it 
 
 The library selector has **Albums**, **Tracks** and **Films**. **Playlists** in the navigation lists imported playlists; Tags, Imports, Jobs and Providers stay with the album library.
 
-Playlist access is read-only. The app never creates, edits, follows or reorders a Spotify playlist and never changes Liked Songs. There is no per-track metadata scrape, genre lookup or audio-feature collection.
+The only change the app makes on Spotify is [adding a library album to a playlist](#adding-an-album-to-a-playlist) when the owner asks. It never creates, renames, follows, reorders or removes from a Spotify playlist and never changes Liked Songs. There is no per-track metadata scrape, genre lookup or audio-feature collection.
 
 ## Connecting
 
-Playlists need a connected Spotify account with the `playlist-read-private` and `playlist-read-collaborative` permissions, as well as `user-library-read` for Liked Songs. An account connected before playlist support does not have them: **Imports → Spotify playlists** shows a reconnect button, which returns to the same page afterwards. Account setup is described in [Spotify account setup](spotify-album-imports.md#account-setup).
+Playlists need a connected Spotify account with the `playlist-read-private` and `playlist-read-collaborative` permissions, as well as `user-library-read` for Liked Songs. An account connected before playlist support does not have them: **Imports → Spotify playlists** shows a reconnect button, which returns to the same page afterwards. Adding albums also needs `playlist-modify-private` and `playlist-modify-public`, which are requested only when asked for; see [adding an album](#adding-an-album-to-a-playlist). Account setup is described in [Spotify account setup](spotify-album-imports.md#account-setup).
 
 ## Importing
 
-**Imports → Spotify playlists** shows Liked Songs and, after **List playlists**, every playlist in the connected account. Reading the list takes one request per 50 playlists and is never repeated automatically. Choose rows and import, up to 100 at a time; each one becomes its own Spotify job in Jobs, where it can be cancelled or retried. One job per playlist runs at a time.
+**Imports → Spotify playlists** shows Liked Songs and the stored list of the account's playlists. **List playlists** queues a Spotify listing job, shown in Jobs with its progress, cancel and retry; it reads one page of 50 playlists per request and replaces the stored list. Opening the page reads only the stored list, with the time it was listed and the latest listing job. A second listing is not queued while one is queued or running, and the list is never re-read automatically.
 
-An import reads the whole playlist in pages of 50 through the Spotify request gate (one request at a time, at least 1500 ms apart), then stores it in a single transaction:
+Choose rows from the stored list and import, up to 100 at a time; each one becomes its own Spotify job in Jobs, where it can be cancelled or retried. One job per playlist runs at a time. A playlist missing from the stored list is skipped until the list is read again.
+
+An import of a playlist first reads the playlist's details: one request that gives its current version and, only for a playlist the account owns or collaborates on, its item count. A playlist the account can no longer read fails without requesting its tracks. Otherwise the import reads the whole playlist in pages of 50 through the Spotify request gate (one request at a time, at least 1500 ms apart), then stores it in a single transaction:
 
 - The playlist's tracks are replaced by what Spotify returned, in playlist order with each track's added date.
 - A track that is no longer in any imported playlist is removed from the library.
 - A track's **Added** date is the earliest date it was added to any imported playlist.
-- A playlist whose Spotify snapshot has not changed since the last import is not read again. Liked Songs has no snapshot and is always read.
+- A playlist whose Spotify snapshot has not changed since the last import is not read again; the import still counts as a completed check. Liked Songs has no snapshot and is always read.
 
-Importing the same playlist again updates it. Nothing is refreshed on a schedule.
+Importing the same playlist again updates it. While an import or listing runs, its job records the pages read and the pages expected (`options.progress`), updated after every page; the total for a playlist comes from its item count, and for Liked Songs from the first page.
+
+### Schedule
+
+Each imported playlist and Liked Songs has its own schedule: off (the default), every 1, 3 or 6 hours, daily or weekly, the same choices as the YouTube and Last.fm schedules. It is measured from the last completed import of that playlist, including one that found it unchanged. Both runtimes check every five minutes when scraping is enabled and queue the playlist's normal import job, using the account of the owner who set the schedule.
+
+The schedule queues nothing for a playlist whose import is queued or running, or while Spotify is cooling down or halted. After a failed or cancelled import it waits until the owner imports the playlist again. Legacy playlists without a Spotify source cannot be scheduled.
 
 | Limit                           | Behaviour                                                                                                                                                                                                             |
 | ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -35,6 +43,24 @@ Importing the same playlist again updates it. Nothing is refreshed on a schedule
 An imported playlist that shares its name with a playlist from the legacy album import becomes the same playlist, so its albums and tracks appear together. Otherwise a playlist whose name is already used is stored as "Name (owner)".
 
 **Remove** on the Playlists page removes an imported playlist and the tracks that were only in it. Album memberships from the legacy import are kept.
+
+A playlist's own page lists its tracks in playlist order with their added dates, then any album members from the legacy import, 100 entries a page by default.
+
+## Adding an album to a playlist
+
+An album's details can add the album to an imported Spotify playlist that the account owns or collaborates on. Liked Songs, legacy playlists and playlists owned by someone else are not offered. An album needs a Spotify album URL or Spotify album reference.
+
+The account must allow playlist changes. An account connected without them keeps importing and listing; connecting again with playlist changes requested adds them and keeps the access already granted.
+
+Each addition is a Spotify job in Jobs (one album into one playlist), and asking again while it is queued or running returns the same job. The job:
+
+1. Takes the album's Spotify track IDs from its stored track list when every track has one, otherwise reads the album's tracks from Spotify.
+2. Reads the playlist's details. When the account can no longer read the playlist, the job fails and the playlist stops being offered.
+3. Works out which tracks are already in the playlist: from the stored copy when its version is Spotify's current one, otherwise by reading the playlist from Spotify.
+4. Appends the missing tracks in album order, at most 100 per request. A cancelled job stops between requests.
+5. Queues the playlist's import, so the stored copy is read again from Spotify. Nothing is written to the stored playlist directly.
+
+A retried or repeated job reads the playlist's current contents again, so tracks added before a failure, including by a request whose answer was lost, are not added twice. An addition that would take the playlist past 10,000 items is refused before anything is added.
 
 ## Browsing tracks
 
@@ -87,11 +113,13 @@ Stored Last.fm scrobbles link to library tracks by artist and track name. A scro
 ## Data model
 
 - A track is a `media_item` with media type `track` and a `library_track` row holding its Spotify track and album IDs, album name, duration, linked album and listening totals. Scrape jobs, tags and imports do not operate on tracks.
-- `playlist` rows carry their source (`spotify` or `spotify-liked`), Spotify ID, owner, artwork, snapshot and import time. `playlist_item` holds track and album memberships with position and added date.
+- `playlist` rows carry their source (`spotify` or `spotify-liked`), Spotify ID, owner, artwork, snapshot, import time, last check time, schedule and whether the account can still change the playlist. `playlist_item` holds track and album memberships with position and added date.
+- `spotify_playlist_listing` holds the account's last playlist list as one JSON array per user, with its listing time.
 - `lastfm_track_link` records which scrobbled artist and track names count towards which library track, and by which rule.
-- Imports run as the `spotify-playlist-import` task job with provider `spotify`.
+- Imports run as the `spotify-playlist-import` task job, listings as `spotify-playlist-listing` and album additions as `spotify-playlist-add-album`, all with provider `spotify`.
 
 ## Verification
 
 - `apps/server/src/lib/track-matching.test.ts`: linking rules.
-- `apps/server/integration/spotify-playlists.integration.ts`: listing, import, re-import, removal, limits, filters, album membership and scrobble counts against a disposable database with mocked Spotify responses.
+- `apps/server/src/lib/playlist-sync.test.ts`: schedule times.
+- `apps/server/integration/spotify-playlists.integration.ts`: the listing job, import, progress, re-import, schedule, playlist pages, album additions with batches and a retried failure, refusals, removal, limits, filters, album membership and scrobble counts against a disposable database with mocked Spotify responses.

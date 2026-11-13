@@ -97,9 +97,14 @@ const playbackScope = `user-library-read ${playbackOnlyScope}`
 // Every authorization asks for saved albums and playlists.
 const requestedScope =
   'user-library-read playlist-read-private playlist-read-collaborative'
+const changeScope = 'playlist-modify-private playlist-modify-public'
 async function begin(
   browserOrigin = 'http://127.0.0.1:3001',
-  options: { playback?: boolean; playlists?: boolean } = {},
+  options: {
+    playback?: boolean
+    playlists?: boolean
+    playlistChanges?: boolean
+  } = {},
 ) {
   const response = await authorizeSpotify(
     'user-1',
@@ -611,24 +616,102 @@ describe('Spotify owner/session-bound OAuth (mock database and gate)', () => {
       playback: false,
       returnTo: 'imports',
     },
+    {
+      name: 'a reconnect of an account with playlist changes',
+      options: {},
+      stored: `${requestedScope} ${changeScope}`,
+      scope: `${requestedScope} ${changeScope}`,
+      playback: false,
+      returnTo: 'imports',
+    },
+    {
+      name: 'turning playback off on an account with playlist changes',
+      options: { playback: false },
+      stored: `${playbackScope} ${changeScope}`,
+      scope: `${requestedScope} ${changeScope}`,
+      playback: false,
+      returnTo: 'providers',
+    },
+    {
+      name: 'explicit playlist changes',
+      options: { playlistChanges: true, playlists: true },
+      stored: playbackScope,
+      scope: `${requestedScope} ${playbackOnlyScope} ${changeScope}`,
+      playback: true,
+      returnTo: 'playlists',
+    },
+    {
+      name: 'explicit playback and playlist changes',
+      options: { playback: true, playlistChanges: false },
+      stored: undefined,
+      scope: `${requestedScope} ${playbackOnlyScope}`,
+      playback: true,
+      returnTo: 'providers',
+    },
   ])(
     'requests the right scopes for $name',
     async ({ options, stored, scope, playback, returnTo }) => {
+      // Only a choice made for both optional accesses skips the stored account.
+      const explicit = 'playback' in options && 'playlistChanges' in options
       mocks.database.select.mockReturnValueOnce(query([]))
-      if (!('playback' in options))
+      if (!explicit)
         mocks.database.select.mockReturnValueOnce(
           stored ? storedTokens({ scope: stored }) : query([]),
         )
       const started = await begin('http://127.0.0.1:3001', options)
       expect(started.scope).toBe(scope)
-      expect(savedState(started.saved)).toMatchObject({ playback, returnTo })
-      // An explicit choice does not read the stored account.
-      expect(mocks.database.select).toHaveBeenCalledTimes(
-        'playback' in options ? 1 : 2,
-      )
+      expect(savedState(started.saved)).toMatchObject({
+        playback,
+        playlistChanges: scope.includes(changeScope),
+        returnTo,
+      })
+      expect(mocks.database.select).toHaveBeenCalledTimes(explicit ? 1 : 2)
       expect(mocks.request).not.toHaveBeenCalled()
     },
   )
+
+  it.each([
+    { scope: requestedScope, playlistChanges: false },
+    {
+      scope: `${requestedScope} playlist-modify-private`,
+      playlistChanges: false,
+    },
+    { scope: `${requestedScope} ${changeScope}`, playlistChanges: true },
+    { scope: `user-library-read ${changeScope}`, playlistChanges: false },
+  ])(
+    'reports playlist changes $playlistChanges for stored scope "$scope"',
+    async ({ scope, playlistChanges }) => {
+      mocks.database.select
+        .mockReturnValueOnce(query([]))
+        .mockReturnValueOnce(storedTokens({ scope }))
+      expect(await getSpotifyAccountStatus('user-1')).toMatchObject({
+        connected: true,
+        playlistChanges,
+      })
+      expect(mocks.request).not.toHaveBeenCalled()
+    },
+  )
+
+  it('rejects a playlist change completion without the change scopes and stores nothing', async () => {
+    mocks.database.select
+      .mockReturnValueOnce(query([]))
+      .mockReturnValueOnce(query([]))
+    const started = await begin('http://127.0.0.1:3001', {
+      playlistChanges: true,
+    })
+    mockCompletion(started.saved, false)
+    mocks.request.mockResolvedValue(
+      Response.json({ ...spotifyTokenFixture, scope: requestedScope }),
+    )
+    await expect(
+      finishSpotifyAuthorization(
+        { state: started.state, code: 'fixture-code' },
+        'user-1',
+        'session-1',
+      ),
+    ).rejects.toThrow('Spotify request failed')
+    expect(mocks.values).toHaveBeenCalledTimes(1)
+  })
 
   it('rejects a playback completion without every playback scope and stores nothing', async () => {
     const started = await begin('http://127.0.0.1:3001', { playback: true })

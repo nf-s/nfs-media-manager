@@ -10,6 +10,7 @@ import {
   getJobTask,
   isRetryableJobStatus,
   isUnfinishedJobItem,
+  JobProgressSchema,
   type CreateJobInput,
   type BulkRetryJobsInput,
   type BulkRetryJobsResult,
@@ -19,13 +20,18 @@ import {
   type BulkCancelJobsResult,
   type Job,
   type JobPage,
+  type JobProgress,
 } from '@repo/schemas/job'
 import type { JsonValue } from '@repo/schemas/common'
 import {
   LASTFM_SCROBBLE_SYNC_TASK,
   LASTFM_SPOTIFY_SEARCH_TASK,
 } from '@repo/schemas/lastfm'
-import { SPOTIFY_PLAYLIST_IMPORT_TASK } from '@repo/schemas/tracks'
+import {
+  SPOTIFY_PLAYLIST_ADD_ALBUM_TASK,
+  SPOTIFY_PLAYLIST_IMPORT_TASK,
+  SPOTIFY_PLAYLIST_LISTING_TASK,
+} from '@repo/schemas/tracks'
 import { YOUTUBE_SYNC_TASK } from '@repo/schemas/youtube'
 import { z } from 'zod'
 import {
@@ -90,6 +96,14 @@ import {
   prepareSpotifyPlaylistImport,
   runSpotifyPlaylistImport,
 } from '@/services/spotify-playlists'
+import {
+  prepareSpotifyPlaylistListing,
+  runSpotifyPlaylistListing,
+} from '@/services/spotify-playlist-listing'
+import {
+  prepareSpotifyPlaylistAddition,
+  runSpotifyPlaylistAddition,
+} from '@/services/spotify-playlist-additions'
 
 let workerRunning = false
 
@@ -857,6 +871,11 @@ export type TaskJobResult = LastfmSyncJobResult & {
   options?: Record<string, JsonValue>
 }
 
+export interface TaskJobContext extends LastfmSyncJobContext {
+  /** Records how far the job has read, in `options.progress`. */
+  progress(progress: JobProgress): Promise<void>
+}
+
 type TaskJobDefinition = {
   provider: string
   prepare(
@@ -864,7 +883,7 @@ type TaskJobDefinition = {
     options: Record<string, JsonValue>,
   ): Promise<Record<string, JsonValue>>
   run(
-    context: LastfmSyncJobContext,
+    context: TaskJobContext,
     options: Record<string, JsonValue>,
   ): Promise<TaskJobResult>
 }
@@ -895,6 +914,22 @@ const taskJobs = new Map<string, TaskJobDefinition>([
       provider: 'spotify',
       prepare: prepareSpotifyPlaylistImport,
       run: runSpotifyPlaylistImport,
+    },
+  ],
+  [
+    SPOTIFY_PLAYLIST_LISTING_TASK,
+    {
+      provider: 'spotify',
+      prepare: prepareSpotifyPlaylistListing,
+      run: runSpotifyPlaylistListing,
+    },
+  ],
+  [
+    SPOTIFY_PLAYLIST_ADD_ALBUM_TASK,
+    {
+      provider: 'spotify',
+      prepare: prepareSpotifyPlaylistAddition,
+      run: runSpotifyPlaylistAddition,
     },
   ],
   [
@@ -1154,6 +1189,20 @@ async function processTaskJob(
         await withRunningJob(nextJob.id, (tx) =>
           logJob(nextJob.id, level, message, {}, tx),
         )
+      },
+      progress: async (progress) => {
+        const value = JSON.stringify({
+          progress: JobProgressSchema.parse(progress),
+        })
+        await withRunningJob(nextJob.id, async (tx) => {
+          await tx
+            .update(scrapeJob)
+            .set({
+              options: sql`${scrapeJob.options} || ${value}::jsonb`,
+              updatedAt: new Date(),
+            })
+            .where(eq(scrapeJob.id, nextJob.id))
+        })
       },
     },
     nextJob.options,

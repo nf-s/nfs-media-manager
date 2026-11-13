@@ -317,7 +317,19 @@ export const playlist = pgTable(
     spotifyUrl: text('spotify_url'),
     // Spotify's version of the playlist contents at the last import.
     snapshotId: text('snapshot_id'),
+    // When the contents were last read and stored.
     importedAt: timestamp('imported_at'),
+    // When an import last completed, including one that found no change.
+    checkedAt: timestamp('checked_at'),
+    // off, 1h, 3h, 6h, daily or weekly, measured from checked_at.
+    syncSchedule: text('sync_schedule').notNull().default('off'),
+    // The owner who set the schedule; scheduled imports use their account.
+    syncUserId: text('sync_user_id').references(() => user.id, {
+      onDelete: 'set null',
+    }),
+    // Whether the account owns or collaborates on the Spotify playlist, as
+    // last seen by a listing, import or album addition.
+    spotifyEditable: boolean('spotify_editable').notNull().default(true),
     ...timestampColumns,
   },
   (table) => [
@@ -343,6 +355,17 @@ export const playlistItem = pgTable(
     index('playlist_item_media_item_idx').on(table.mediaItemId),
   ],
 )
+
+// The connected account's playlist list as the last listing job read it.
+export const spotifyPlaylistListing = pgTable('spotify_playlist_listing', {
+  userId: text('user_id')
+    .primaryKey()
+    .references(() => user.id, { onDelete: 'cascade' }),
+  // The listed playlists in Spotify's order; validated when read.
+  playlists: jsonb('playlists').$type<JsonValue[]>().notNull(),
+  listedAt: timestamp('listed_at').notNull(),
+  ...timestampColumns,
+})
 
 export const libraryImport = pgTable('library_import', {
   id: text('id').primaryKey(),

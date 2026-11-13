@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { shouldPollJobList, type Job } from '../src/job'
+import { getJobProgress, shouldPollJobList, type Job } from '../src/job'
 
 function createJob(status: Job['status']): Job {
   return {
@@ -38,5 +38,21 @@ describe('shouldPollJobList', () => {
       shouldPollJobList([createJob('succeeded'), createJob('queued')]),
     ).toBe(true)
     expect(shouldPollJobList([createJob('running')])).toBe(true)
+  })
+})
+
+describe('getJobProgress', () => {
+  it('reads the progress a task job records', () => {
+    expect(
+      getJobProgress({ progress: { pagesRead: 2, totalPages: 5 } }),
+    ).toEqual({ pagesRead: 2, totalPages: 5 })
+    expect(
+      getJobProgress({ progress: { pagesRead: 0, totalPages: null } }),
+    ).toEqual({ pagesRead: 0, totalPages: null })
+  })
+
+  it('is null for a job without valid progress', () => {
+    expect(getJobProgress({})).toBeNull()
+    expect(getJobProgress({ progress: { pagesRead: -1 } })).toBeNull()
   })
 })

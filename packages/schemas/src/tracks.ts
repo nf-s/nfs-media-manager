@@ -5,15 +5,60 @@ import {
   BrowseRangesParamSchema,
   type BrowseValues,
 } from './browse'
-import { DirectionSchema, PaginationQuerySchema } from './common'
-import { JobStatusSchema } from './job'
+import {
+  DirectionSchema,
+  PaginatedDataSchema,
+  PaginationQuerySchema,
+} from './common'
+import { JobProgressSchema, JobStatusSchema } from './job'
 import { ListeningMonthSchema } from './lastfm'
+import { YoutubeSyncScheduleSchema } from './youtube'
 
 /** `scrape_job.options.task` of the job that imports one Spotify playlist. */
 export const SPOTIFY_PLAYLIST_IMPORT_TASK = 'spotify-playlist-import'
 
+/** `scrape_job.options.task` of the job that reads the account's playlist list. */
+export const SPOTIFY_PLAYLIST_LISTING_TASK = 'spotify-playlist-listing'
+
+/** `scrape_job.options.task` of the job that adds one album to one Spotify playlist. */
+export const SPOTIFY_PLAYLIST_ADD_ALBUM_TASK = 'spotify-playlist-add-album'
+
 /** Spotify returns at most this many items for one playlist. */
 export const SPOTIFY_PLAYLIST_ITEM_LIMIT = 10000
+
+/** Entries per page when the playlist list or a playlist's tracks are read. */
+export const SPOTIFY_PLAYLIST_PAGE_SIZE = 50
+
+/** The YouTube and Last.fm schedule options; a playlist's schedule defaults to off. */
+export const PlaylistSyncScheduleSchema = YoutubeSyncScheduleSchema
+export type PlaylistSyncSchedule = z.infer<typeof PlaylistSyncScheduleSchema>
+export const PlaylistSyncSettingsSchema = z
+  .object({ schedule: PlaylistSyncScheduleSchema })
+  .strict()
+
+/** The latest job of a playlist task, with its progress while it reads. */
+export const SpotifyPlaylistJobSchema = z.object({
+  jobId: z.string(),
+  status: JobStatusSchema,
+  errorMessage: z.string().nullable(),
+  finishedAt: z.string().nullable(),
+  progress: JobProgressSchema.nullable().default(null),
+})
+export type SpotifyPlaylistJob = z.infer<typeof SpotifyPlaylistJobSchema>
+
+/** A playlist's scheduled import. */
+export const PlaylistSyncSchema = z.object({
+  /** Imported Spotify playlists and Liked Songs can be synced; legacy-only playlists cannot. */
+  syncable: z.boolean(),
+  schedule: PlaylistSyncScheduleSchema,
+  /** The last completed import, including one that found the playlist unchanged. */
+  lastCheckedAt: z.string().datetime().nullable(),
+  /** When the schedule will next queue an import; null when off, active, or after a failed or cancelled import. */
+  nextScheduledAt: z.string().datetime().nullable(),
+  /** The latest import job, whatever its status. */
+  job: SpotifyPlaylistJobSchema.nullable(),
+})
+export type PlaylistSync = z.infer<typeof PlaylistSyncSchema>
 
 /**
  * How a track was linked to a library album, strictest first.
@@ -160,6 +205,7 @@ export const PlaylistSummarySchema = z.object({
   description: z.string().nullable(),
   artworkUrl: z.string().url().nullable(),
   spotifyUrl: z.string().url().nullable(),
+  /** When the contents were last read from Spotify and stored. */
   importedAt: z.string().datetime().nullable(),
   trackCount: z.number().int().nonnegative(),
   /** Tracks linked to a library album. */
@@ -167,11 +213,77 @@ export const PlaylistSummarySchema = z.object({
   /** Library albums in the playlist, directly or through a linked track. */
   albumCount: z.number().int().nonnegative(),
   durationSec: z.number().int().nonnegative(),
+  /** An imported Spotify playlist the account owns or collaborates on; albums can be added to it. */
+  acceptsAdditions: z.boolean().default(false),
+  sync: PlaylistSyncSchema.default({
+    syncable: false,
+    schedule: 'off',
+    lastCheckedAt: null,
+    nextScheduledAt: null,
+    job: null,
+  }),
 })
 export type PlaylistSummary = z.infer<typeof PlaylistSummarySchema>
 
 export const PlaylistRemovalSchema = z.object({
   removedTracks: z.number().int().nonnegative(),
+})
+
+export const PlaylistDetailQuerySchema = PaginationQuerySchema.extend({
+  size: z.coerce.number().int().positive().max(100).default(100),
+})
+export type PlaylistDetailQuery = z.infer<typeof PlaylistDetailQuerySchema>
+
+/** An album member of a playlist from the legacy album import. */
+export const PlaylistAlbumSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  artists: z.array(z.string()),
+  artworkUrl: z.string().nullable(),
+  releaseDate: z.string().nullable(),
+  spotifyUrl: z.string().nullable(),
+})
+export type PlaylistAlbum = z.infer<typeof PlaylistAlbumSchema>
+
+/** One playlist entry: tracks in playlist order, then legacy album members. */
+export const PlaylistEntrySchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('track'),
+    position: z.number().int().nonnegative(),
+    addedAt: z.string().datetime().nullable(),
+    track: TrackListItemSchema,
+  }),
+  z.object({
+    kind: z.literal('album'),
+    position: z.number().int().nonnegative(),
+    addedAt: z.string().datetime().nullable(),
+    album: PlaylistAlbumSchema,
+  }),
+])
+export type PlaylistEntry = z.infer<typeof PlaylistEntrySchema>
+
+export const PlaylistDetailSchema = PlaylistSummarySchema.extend({
+  items: PaginatedDataSchema(PlaylistEntrySchema),
+})
+export type PlaylistDetail = z.infer<typeof PlaylistDetailSchema>
+
+export const PlaylistAlbumAdditionInputSchema = z
+  .object({ albumId: z.string().min(1).max(200) })
+  .strict()
+export const PlaylistAlbumAdditionsQuerySchema = z.object({
+  albumId: z.string().min(1).max(200),
+})
+
+/** The latest job adding an album to one playlist. */
+export const PlaylistAlbumAdditionSchema = z.object({
+  playlistId: z.string(),
+  albumId: z.string(),
+  job: SpotifyPlaylistJobSchema,
+})
+export type PlaylistAlbumAddition = z.infer<typeof PlaylistAlbumAdditionSchema>
+
+export const PlaylistAlbumAdditionsSchema = z.object({
+  additions: z.array(PlaylistAlbumAdditionSchema),
 })
 
 /** Playlists holding tracks of one album, and those tracks. */
@@ -195,12 +307,7 @@ export const AlbumPlaylistsSchema = z.object({
 })
 export type AlbumPlaylists = z.infer<typeof AlbumPlaylistsSchema>
 
-export const SpotifyPlaylistImportJobSchema = z.object({
-  jobId: z.string(),
-  status: JobStatusSchema,
-  errorMessage: z.string().nullable(),
-  finishedAt: z.string().nullable(),
-})
+export const SpotifyPlaylistImportJobSchema = SpotifyPlaylistJobSchema
 
 export const SpotifyPlaylistStoredSchema = z.object({
   playlistId: z.string(),
@@ -214,20 +321,30 @@ export const SpotifyPlaylistSchema = z.object({
   ownerName: z.string().nullable(),
   /** Spotify returns tracks only for playlists the account owns or collaborates on. */
   importable: z.boolean(),
+  /** Why the playlist cannot be imported: not owned or shared, or over the item limit. */
+  notImportableReason: z.string().nullable().default(null),
   trackTotal: z.number().int().nonnegative(),
   artworkUrl: z.string().url().nullable(),
+  spotifyUrl: z.string().url().nullable().default(null),
   /** The stored import, when the playlist has been imported. */
   stored: SpotifyPlaylistStoredSchema.nullable(),
-  /** False when Spotify reports a newer version than the stored import. */
+  /** False when the listing reports a newer version than the stored import. */
   current: z.boolean(),
+  /** The latest import job. */
   job: SpotifyPlaylistImportJobSchema.nullable(),
 })
 export type SpotifyPlaylist = z.infer<typeof SpotifyPlaylistSchema>
 
+/** The stored playlist list; read without contacting Spotify. */
 export const SpotifyPlaylistListSchema = z.object({
   playlists: z.array(SpotifyPlaylistSchema),
   total: z.number().int().nonnegative(),
+  /** When the listing job last completed; null before the first listing. */
+  listedAt: z.string().datetime().nullable().default(null),
+  /** The latest listing job, with its progress while it runs. */
+  job: SpotifyPlaylistJobSchema.nullable().default(null),
 })
+export type SpotifyPlaylistList = z.infer<typeof SpotifyPlaylistListSchema>
 
 /** Stored import state; read without contacting Spotify. */
 export const SpotifyPlaylistImportsSchema = z.object({

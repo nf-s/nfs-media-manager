@@ -9,10 +9,17 @@ export const SpotifyAccountStatusSchema = z.object({
   playback: z.boolean(),
   /** Whether the connection includes playlist read access. */
   playlists: z.boolean(),
+  /** Whether the connection may add items to the account's playlists. */
+  playlistChanges: z.boolean().default(false),
 })
 export const SpotifyAuthorizeInputSchema = z
   .object({
     playback: z.boolean().optional(),
+    /**
+     * Request (true) or drop (false) playlist change access. Omitted, a
+     * reconnect keeps whatever the current connection has.
+     */
+    playlistChanges: z.boolean().optional(),
     /** Return to the playlist import page once connected. */
     playlists: z.boolean().optional(),
   })

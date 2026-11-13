@@ -90,6 +90,23 @@ export function getJobTask(options: Record<string, unknown>) {
   return typeof options.task === 'string' ? options.task : null
 }
 
+/**
+ * How far a task job has read, kept in `options.progress` and updated after
+ * every page while it runs. `totalPages` is null until the total is known.
+ */
+export const JobProgressSchema = z.object({
+  pagesRead: z.number().int().nonnegative(),
+  totalPages: z.number().int().nonnegative().nullable(),
+})
+export type JobProgress = z.infer<typeof JobProgressSchema>
+
+export function getJobProgress(
+  options: Record<string, unknown>,
+): JobProgress | null {
+  const result = JobProgressSchema.safeParse(options.progress)
+  return result.success ? result.data : null
+}
+
 export const JobLogSchema = z.object({
   id: z.string(),
   level: z.enum(['info', 'warn', 'error']),

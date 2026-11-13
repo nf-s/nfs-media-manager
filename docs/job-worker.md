@@ -29,6 +29,10 @@ when ownership is unsafe. No distributed lock can retract a provider request
 already sent before connection loss; normal job-row write fences protect retained
 database results against later recovery/cancellation.
 
+## Schedules
+
+Every five minutes, between dispatches, the worker queues what the owner's schedules make due: the Last.fm scrobble sync, the YouTube subscription sync and each scheduled Spotify playlist import. The hosted runtime does the same from its scheduled handler when scraping is enabled. A cooldown, halt or disconnected account defers a schedule to a later check; any other error is fatal like a dispatch error.
+
 ## Interrupted Jobs
 
 Before scheduling any dispatch, the owner recovers jobs with status `running` in

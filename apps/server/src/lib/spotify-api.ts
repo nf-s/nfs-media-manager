@@ -19,6 +19,13 @@ export const SPOTIFY_PLAYLIST_SCOPES: readonly string[] = [
   'playlist-read-private',
   'playlist-read-collaborative',
 ]
+// Adding items to the account's playlists; requested only when asked for.
+export const SPOTIFY_PLAYLIST_CHANGE_SCOPES: readonly string[] = [
+  'playlist-modify-private',
+  'playlist-modify-public',
+]
+// POST /playlists/{id}/items accepts at most this many URIs per request.
+export const SPOTIFY_PLAYLIST_ADD_LIMIT = 100
 export const SpotifyIdSchema = z.string().regex(/^[A-Za-z0-9]{22}$/)
 export const UpcSchema = z.string().regex(/^\d{8,14}$/)
 const HttpsUrlSchema = z
@@ -279,6 +286,50 @@ export async function spotifyJson(
   if (!response.ok)
     throw new Error(`Spotify request failed (HTTP ${response.status})`)
   return response.json()
+}
+
+/** The response to a playlist change: the playlist's new version. */
+export const SpotifySnapshotSchema = z.object({
+  snapshot_id: z.string().min(1),
+})
+
+export async function spotifyPostJson(
+  request: SpotifyRequest,
+  token: string,
+  path: string,
+  body: Record<string, unknown>,
+): Promise<unknown> {
+  const response = await request(`https://api.spotify.com/v1/${path}`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  })
+  if (!response.ok)
+    throw new Error(`Spotify request failed (HTTP ${response.status})`)
+  return response.json()
+}
+
+/**
+ * The track URIs of an album that a playlist does not hold yet, in album
+ * order and without repeats, split into requests Spotify accepts.
+ */
+export function spotifyTrackAdditions(
+  albumTrackIds: readonly string[],
+  present: ReadonlySet<string>,
+  batchSize = SPOTIFY_PLAYLIST_ADD_LIMIT,
+): string[][] {
+  const missing = [...new Set(albumTrackIds)].filter((id) => !present.has(id))
+  const batches: string[][] = []
+  for (let start = 0; start < missing.length; start += batchSize)
+    batches.push(
+      missing
+        .slice(start, start + batchSize)
+        .map((id) => `spotify:track:${id}`),
+    )
+  return batches
 }
 
 export function spotifyArtworkUrl(

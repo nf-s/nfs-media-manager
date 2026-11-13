@@ -39,9 +39,12 @@ import {
 import { previewSpotifyAlbums } from '@/services/spotify-imports'
 import {
   getSpotifyPlaylistImports,
-  listSpotifyPlaylists,
   queueSpotifyPlaylistImports,
 } from '@/services/spotify-playlists'
+import {
+  getSpotifyPlaylists,
+  queueSpotifyPlaylistListing,
+} from '@/services/spotify-playlist-listing'
 
 function actor(c: Context<AppEnv>) {
   const user = c.get('user')
@@ -112,7 +115,7 @@ app.openapi(
     responses: {
       200: {
         description:
-          'Explicit OAuth authorization URL for saved album access, with optional playback access',
+          'Explicit OAuth authorization URL for saved album and playlist access, with optional playback and playlist change access',
         content: {
           'application/json': {
             schema: createResponseSchema(SpotifyAuthorizeResultSchema),
@@ -289,13 +292,35 @@ app.openapi(
 
 app.openapi(
   createRoute({
+    method: 'get',
+    path: '/playlists',
+    middleware: [authMiddleware()],
+    responses: {
+      200: {
+        description:
+          'The stored playlist list, when it was listed and the latest listing job; no Spotify requests',
+        content: {
+          'application/json': {
+            schema: createResponseSchema(SpotifyPlaylistListSchema),
+          },
+        },
+      },
+      401: jsonErrorResponse('Unauthorized'),
+    },
+  }),
+  async (c) =>
+    generateJsonResponse(c, await getSpotifyPlaylists(actor(c).userId), 200),
+)
+
+app.openapi(
+  createRoute({
     method: 'post',
     path: '/playlists',
     middleware: [authMiddleware(), sameOrigin],
     responses: {
       200: {
         description:
-          "Explicit read of the account's playlists; no library writes or jobs",
+          "Queue a job that reads the account's playlists, or keep the one queued or running; returns the stored list with that job",
         content: {
           'application/json': {
             schema: createResponseSchema(SpotifyPlaylistListSchema),
@@ -304,10 +329,15 @@ app.openapi(
       },
       401: jsonErrorResponse('Unauthorized'),
       422: jsonErrorResponse('Spotify playlist access is not connected'),
+      429: jsonErrorResponse('Spotify is cooling down or halted'),
     },
   }),
   async (c) =>
-    generateJsonResponse(c, await listSpotifyPlaylists(actor(c).userId), 200),
+    generateJsonResponse(
+      c,
+      await queueSpotifyPlaylistListing(actor(c).userId),
+      200,
+    ),
 )
 
 app.openapi(
@@ -356,6 +386,7 @@ app.openapi(
       },
       401: jsonErrorResponse('Unauthorized'),
       422: validationErrorResponse,
+      429: jsonErrorResponse('Spotify is cooling down or halted'),
     },
   }),
   async (c) =>

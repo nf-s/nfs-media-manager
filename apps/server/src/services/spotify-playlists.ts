@@ -1,18 +1,17 @@
-import { and, desc, eq, inArray, isNull, ne, sql } from 'drizzle-orm'
+import { and, eq, inArray, isNull, ne, sql } from 'drizzle-orm'
 import { nanoid } from 'nanoid'
 import { z } from 'zod'
 import { EnrichmentResultSchema } from '@repo/schemas/job'
 import {
   SPOTIFY_PLAYLIST_IMPORT_TASK,
   SPOTIFY_PLAYLIST_ITEM_LIMIT,
+  SPOTIFY_PLAYLIST_PAGE_SIZE,
   SpotifyPlaylistImportInputSchema,
-  SpotifyPlaylistImportJobSchema,
   SpotifyPlaylistImportsSchema,
-  SpotifyPlaylistListSchema,
   type SpotifyPlaylistImportInput,
+  type SpotifyPlaylistJob,
 } from '@repo/schemas/tracks'
 import { db } from '@/lib/db'
-import { ServerError } from '@/lib/error'
 import {
   createStableId,
   parseOptionalDate,
@@ -20,8 +19,7 @@ import {
 } from '@/lib/media-utils'
 import {
   SpotifyIdSchema,
-  SpotifyPlaylistsPageSchema,
-  SpotifyProfileSchema,
+  SpotifyPlaylistSchema,
   SpotifyTrackEntriesPageSchema,
   normalizeSpotifyTrackEntry,
   spotifyArtworkUrl,
@@ -36,27 +34,28 @@ import {
   mediaItem,
   playlist,
   playlistItem,
-  scrapeJob,
 } from '@/schemas/db'
-import { createTaskJob, type TaskJobResult } from './jobs'
-import { getLastfmAccount, type LastfmSyncJobContext } from './lastfm-scrobbles'
+import { createTaskJob, type TaskJobContext, type TaskJobResult } from './jobs'
+import { getLastfmAccount } from './lastfm-scrobbles'
+import { spotifyOperation, spotifyPlaylistToken } from './spotify-oauth'
 import {
-  getSpotifyAccountStatus,
-  spotifyOperation,
-  spotifyPlaylistToken,
-} from './spotify-oauth'
+  LIKED_SONGS_KEY,
+  LIKED_SONGS_NAME,
+  NOT_IMPORTABLE,
+  PLAYLIST_KEY_PREFIX,
+  latestSpotifyJobs,
+  playlistGroupKey,
+  playlistUrl,
+  readSpotifyPlaylistListing,
+  refused,
+  requirePlaylistAccess,
+  storedImports,
+  storedSummary,
+} from './spotify-playlist-state'
 import { refreshTrackLinks } from './track-links'
 
-const PAGE_SIZE = 50
-// The account's playlist list is read in full; this bounds a runaway listing.
-const MAX_LISTED_PLAYLISTS = 2000
 const WRITE_BATCH = 500
 const LOG_EVERY_PAGES = 40
-const LIKED_SONGS_KEY = 'spotify-liked'
-const PLAYLIST_KEY_PREFIX = 'spotify:'
-const LIKED_SONGS_NAME = 'Liked Songs'
-const NOT_IMPORTABLE =
-  'Spotify returns tracks only for playlists the account owns or collaborates on. Copy the playlist into the account to import it.'
 
 type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0]
 
@@ -79,203 +78,38 @@ const OptionsSchema = z.discriminatedUnion('source', [
   PlaylistTargetSchema.extend(Queued),
   LikedTargetSchema.extend(Queued),
 ])
-type Target = z.infer<typeof TargetSchema>
+export type PlaylistTarget = z.infer<typeof TargetSchema>
 
-const activeListings = new Set<string>()
+const groupKey = (target: PlaylistTarget) =>
+  playlistGroupKey(target.source === 'spotify' ? target.spotifyId : null)
 
-function refused(message: string) {
-  return new ServerError({ statusCode: 422, message })
-}
+/** Pages Spotify returns for a list of `total` entries; an empty list is one page. */
+export const pagesFor = (total: number) =>
+  Math.max(1, Math.ceil(total / SPOTIFY_PLAYLIST_PAGE_SIZE))
 
-const groupKey = (target: Target) =>
-  target.source === 'spotify'
-    ? `${PLAYLIST_KEY_PREFIX}${target.spotifyId}`
-    : LIKED_SONGS_KEY
-
-const playlistUrl = (spotifyId: string) =>
-  `https://open.spotify.com/playlist/${spotifyId}`
-
-async function requirePlaylistAccess(userId: string) {
-  const status = await getSpotifyAccountStatus(userId)
-  if (!status.configured)
-    throw refused(
-      'Spotify is not configured. Configure and connect the account first.',
-    )
-  if (!status.connected)
-    throw refused('Connect a Spotify account before reading playlists')
-  if (!status.playlists)
-    throw refused(
-      'Reconnect the Spotify account to allow playlist access. The current connection does not include it.',
-    )
-}
-
-async function listAccountPlaylists(request: SpotifyRequest, token: string) {
-  const profile = SpotifyProfileSchema.parse(
-    await spotifyJson(request, token, 'me'),
-  )
-  const listed = new Map<
-    string,
-    z.infer<typeof PlaylistTargetSchema> & {
-      importable: boolean
-      trackTotal: number
-    }
-  >()
-  let offset = 0
-  for (;;) {
-    const page = SpotifyPlaylistsPageSchema.parse(
-      await spotifyJson(request, token, 'me/playlists', {
-        limit: String(PAGE_SIZE),
-        offset: String(offset),
-      }),
-    )
-    if (page.offset !== offset)
-      throw refused('Invalid Spotify playlist pagination')
-    for (const item of page.items) {
-      if (!item) continue
-      listed.set(item.id, {
-        source: 'spotify',
-        spotifyId: item.id,
-        name: item.name.trim().slice(0, 500) || 'Untitled playlist',
-        ownerName: item.owner?.display_name?.trim() || null,
-        description: item.description?.trim() || null,
-        artworkUrl: spotifyArtworkUrl(item.images),
-        snapshotId: item.snapshot_id ?? null,
-        importable:
-          item.owner?.id === profile.id || item.collaborative === true,
-        trackTotal: item.items?.total ?? item.tracks?.total ?? 0,
-      })
-    }
-    offset += page.items.length
-    if (
-      page.next === null ||
-      !page.items.length ||
-      offset >= page.total ||
-      offset >= MAX_LISTED_PLAYLISTS
-    )
-      break
-  }
-  return [...listed.values()]
-}
-
-async function accountPlaylists(userId: string) {
-  if (activeListings.has(userId))
-    throw new ServerError({
-      statusCode: 409,
-      message:
-        'Spotify playlists are already being read. Wait for it to finish.',
-    })
-  activeListings.add(userId)
-  try {
-    return await spotifyOperation(async (request) =>
-      listAccountPlaylists(
-        request,
-        await spotifyPlaylistToken(userId, request),
-      ),
-    )
-  } finally {
-    activeListings.delete(userId)
-  }
-}
-
-async function latestImportJobs() {
-  const jobs = await db
-    .selectDistinctOn([sql`${scrapeJob.options}->>'groupKey'`], {
-      id: scrapeJob.id,
-      status: scrapeJob.status,
-      errorMessage: scrapeJob.errorMessage,
-      finishedAt: scrapeJob.finishedAt,
-      groupKey: sql<unknown>`${scrapeJob.options}->>'groupKey'`,
-    })
-    .from(scrapeJob)
-    .where(
-      and(
-        eq(scrapeJob.provider, 'spotify'),
-        sql`${scrapeJob.options}->>'task' = ${SPOTIFY_PLAYLIST_IMPORT_TASK}`,
-      ),
-    )
-    .orderBy(
-      sql`${scrapeJob.options}->>'groupKey'`,
-      desc(scrapeJob.createdAt),
-      desc(scrapeJob.id),
-    )
-  const latest = new Map<
-    string,
-    z.infer<typeof SpotifyPlaylistImportJobSchema>
-  >()
-  for (const job of jobs) {
-    const key = z.string().safeParse(job.groupKey)
-    if (key.success)
-      latest.set(
-        key.data,
-        SpotifyPlaylistImportJobSchema.parse({
-          jobId: job.id,
-          status: job.status,
-          errorMessage: job.errorMessage,
-          finishedAt: job.finishedAt?.toISOString() ?? null,
-        }),
-      )
-  }
-  return latest
-}
-
-const StoredRowsSchema = z.array(
-  z.object({
-    id: z.string(),
-    source: z.string(),
-    spotify_id: z.string().nullable(),
-    snapshot_id: z.string().nullable(),
-    imported_at: z.string().nullable(),
-    track_count: z.number().int().nonnegative(),
-  }),
-)
-
-async function storedImports() {
-  return StoredRowsSchema.parse(
-    (
-      await db.execute(sql`
-        select p.id, p.source, p.spotify_id, p.snapshot_id,
-          to_char(p.imported_at, 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as imported_at,
-          (select count(*)::int from playlist_item pi
-            join library_track lt on lt.media_item_id = pi.media_item_id
-            where pi.playlist_id = p.id) as track_count
-        from playlist p where p.source is not null`)
-    ).rows,
-  )
-}
-
-const storedSummary = (row: z.infer<typeof StoredRowsSchema>[number]) => ({
-  playlistId: row.id,
-  importedAt: row.imported_at,
-  trackCount: row.track_count,
-})
-
-/** Reads the account's playlists from Spotify and marks the imported ones. */
-export async function listSpotifyPlaylists(userId: string) {
-  await requirePlaylistAccess(userId)
-  const listed = await accountPlaylists(userId)
-  const stored = new Map<string, z.infer<typeof StoredRowsSchema>[number]>()
-  for (const row of await storedImports())
-    if (row.spotify_id) stored.set(row.spotify_id, row)
-  const jobs = await latestImportJobs()
-  return SpotifyPlaylistListSchema.parse({
-    total: listed.length,
-    playlists: listed.map((item) => {
-      const row = stored.get(item.spotifyId)
-      return {
-        spotifyId: item.spotifyId,
-        name: item.name,
-        ownerName: item.ownerName,
-        importable: item.importable,
-        trackTotal: item.trackTotal,
-        artworkUrl: item.artworkUrl,
-        stored: row ? storedSummary(row) : null,
-        current: Boolean(
-          row && item.snapshotId && row.snapshot_id === item.snapshotId,
-        ),
-        job: jobs.get(groupKey(item)) ?? null,
-      }
-    }),
+/**
+ * The import target of a stored playlist, for an import the app queues
+ * itself. It carries no snapshot, so the job asks Spotify for the current one.
+ */
+export function storedImportTarget(row: {
+  source: string | null
+  spotifyId: string | null
+  name: string
+  ownerName: string | null
+  description: string | null
+  artworkUrl: string | null
+}): PlaylistTarget | null {
+  if (row.source === LIKED_SONGS_KEY) return { source: 'spotify-liked' }
+  const target = PlaylistTargetSchema.safeParse({
+    source: row.source,
+    spotifyId: row.spotifyId,
+    name: row.name,
+    ownerName: row.ownerName,
+    description: row.description,
+    artworkUrl: row.artworkUrl,
+    snapshotId: null,
   })
+  return target.success ? target.data : null
 }
 
 /** Stored import state and the latest jobs; no Spotify requests. */
@@ -283,18 +117,15 @@ export async function getSpotifyPlaylistImports() {
   const liked = (await storedImports()).find(
     (row) => row.source === LIKED_SONGS_KEY,
   )
-  const jobs = await latestImportJobs()
-  const playlistJobs: Record<
-    string,
-    z.infer<typeof SpotifyPlaylistImportJobSchema>
-  > = {}
-  for (const [key, job] of jobs)
+  const jobs = await latestSpotifyJobs(SPOTIFY_PLAYLIST_IMPORT_TASK)
+  const playlistJobs: Record<string, SpotifyPlaylistJob> = {}
+  for (const [key, latest] of jobs)
     if (key.startsWith(PLAYLIST_KEY_PREFIX))
-      playlistJobs[key.slice(PLAYLIST_KEY_PREFIX.length)] = job
+      playlistJobs[key.slice(PLAYLIST_KEY_PREFIX.length)] = latest.job
   return SpotifyPlaylistImportsSchema.parse({
     likedSongs: {
       stored: liked ? storedSummary(liked) : null,
-      job: jobs.get(LIKED_SONGS_KEY) ?? null,
+      job: jobs.get(LIKED_SONGS_KEY)?.job ?? null,
     },
     jobs: playlistJobs,
   })
@@ -312,7 +143,7 @@ export async function prepareSpotifyPlaylistImport(
 
 /**
  * Queues one import job for Liked Songs and for each chosen playlist. The
- * playlists are checked against the account's own list first, because a
+ * playlists are checked against the stored playlist list first, because a
  * refused playlist request would halt every Spotify request.
  */
 export async function queueSpotifyPlaylistImports(
@@ -323,16 +154,18 @@ export async function queueSpotifyPlaylistImports(
   await requirePlaylistAccess(userId)
   const chosen = new Set(parsed.playlists.map((item) => item.spotifyId))
   const listed = chosen.size
-    ? (await accountPlaylists(userId)).filter((item) =>
-        chosen.has(item.spotifyId),
+    ? ((await readSpotifyPlaylistListing(userId))?.playlists ?? []).filter(
+        (item) => chosen.has(item.spotifyId),
       )
     : []
   const importable = listed.filter((item) => item.importable)
-  const targets: Target[] = [
+  const targets: PlaylistTarget[] = [
     ...(parsed.likedSongs
       ? [LikedTargetSchema.parse({ source: LIKED_SONGS_KEY })]
       : []),
-    ...importable.map((item) => PlaylistTargetSchema.parse(item)),
+    ...importable.map((item) =>
+      PlaylistTargetSchema.parse({ ...item, source: 'spotify' }),
+    ),
   ]
   const batchId = nanoid()
   for (const target of targets)
@@ -347,77 +180,190 @@ export async function queueSpotifyPlaylistImports(
     skipped: missing + refusedCount,
     warnings: [
       ...(missing
-        ? [`${missing} playlists are no longer in the Spotify account.`]
+        ? [
+            `${missing} playlists are not in the stored playlist list. List playlists again.`,
+          ]
         : []),
       ...(refusedCount ? [NOT_IMPORTABLE] : []),
     ],
   })
 }
 
+/** Marks a playlist the account can no longer change or read. */
+export async function markPlaylistNotEditable(spotifyId: string) {
+  await db
+    .update(playlist)
+    .set({ spotifyEditable: false })
+    .where(eq(playlist.spotifyId, spotifyId))
+}
+
+/**
+ * Reads a playlist's details. Spotify includes its items only for a playlist
+ * the account owns or collaborates on, so their absence means the contents
+ * must not be requested.
+ */
+export async function readSpotifyPlaylist(
+  request: SpotifyRequest,
+  token: string,
+  spotifyId: string,
+) {
+  const data = SpotifyPlaylistSchema.parse(
+    await spotifyJson(request, token, `playlists/${spotifyId}`),
+  )
+  if (data.id !== spotifyId) throw refused('Spotify returned another playlist.')
+  return {
+    name: data.name.trim().slice(0, 500) || 'Untitled playlist',
+    ownerName: data.owner?.display_name?.trim() || null,
+    description: data.description?.trim() || null,
+    artworkUrl: spotifyArtworkUrl(data.images),
+    snapshotId: data.snapshot_id ?? null,
+    readable: data.items !== undefined,
+    total: data.items?.total ?? 0,
+  }
+}
+
 type Fetched = { entries: SpotifyLibraryTrack[]; skipped: number }
 
-async function fetchTracks(
-  context: LastfmSyncJobContext,
-  options: z.infer<typeof OptionsSchema>,
+const overLimit = (action: string) =>
+  refused(
+    `The playlist has more than ${SPOTIFY_PLAYLIST_ITEM_LIMIT.toLocaleString('en')} tracks, which is more than one import reads. ${action}`,
+  )
+
+/**
+ * Reads every entry of a playlist or of the saved tracks in pages of 50,
+ * recording the pages read as job progress. Null when the job stopped.
+ */
+export async function readSpotifyTrackEntries(
+  context: TaskJobContext,
+  request: SpotifyRequest,
+  token: string,
+  path: string,
+  expectedTotal: number | null,
 ): Promise<Fetched | null> {
-  const path =
-    options.source === 'spotify'
-      ? `playlists/${options.spotifyId}/items`
-      : 'me/tracks'
+  const tracks = new Map<string, SpotifyLibraryTrack>()
+  let skipped = 0
+  let invalid = 0
+  let offset = 0
+  let total: number | null = null
+  await context.progress({
+    pagesRead: 0,
+    totalPages: expectedTotal === null ? null : pagesFor(expectedTotal),
+  })
+  for (let pages = 1; ; pages += 1) {
+    // Cancellation is a return value: a thrown error would count against Spotify.
+    if (!(await context.isActive())) return null
+    const page = SpotifyTrackEntriesPageSchema.parse(
+      await spotifyJson(request, token, path, {
+        limit: String(SPOTIFY_PLAYLIST_PAGE_SIZE),
+        offset: String(offset),
+      }),
+    )
+    if (
+      page.offset !== offset ||
+      page.items.length > SPOTIFY_PLAYLIST_PAGE_SIZE
+    )
+      throw refused('Invalid Spotify track pagination')
+    if (page.total > SPOTIFY_PLAYLIST_ITEM_LIMIT)
+      throw overLimit('Nothing was imported.')
+    if (total !== null && total !== page.total)
+      throw refused(
+        'The playlist changed while it was read. Nothing was imported; try again.',
+      )
+    total = page.total
+    for (const entry of page.items) {
+      const result = normalizeSpotifyTrackEntry(entry)
+      if (!result.track) {
+        if (result.reason === 'invalid') invalid += 1
+        else skipped += 1
+        continue
+      }
+      const seen = tracks.get(result.track.spotifyTrackId)
+      // A track listed twice keeps its first position and earliest date.
+      if (!seen) tracks.set(result.track.spotifyTrackId, result.track)
+      else if (
+        result.track.addedAt &&
+        (!seen.addedAt || result.track.addedAt < seen.addedAt)
+      )
+        seen.addedAt = result.track.addedAt
+    }
+    offset += page.items.length
+    const done =
+      page.next === null || !page.items.length || offset >= page.total
+    await context.progress({
+      pagesRead: pages,
+      totalPages: done ? pages : Math.max(pages, pagesFor(page.total)),
+    })
+    if (done) break
+    if (pages % LOG_EVERY_PAGES === 0)
+      await context.log('info', `Read ${offset} of ${page.total} tracks.`)
+  }
+  if (invalid > 0 && invalid >= tracks.size)
+    throw refused(
+      'Spotify returned tracks in a form this application does not recognise. Nothing was imported.',
+    )
+  return { entries: [...tracks.values()], skipped: skipped + invalid }
+}
+
+type Imported =
+  | { unchanged: true; spotifyId: string }
+  | ({ unchanged: false; target: PlaylistTarget } & Fetched)
+
+/**
+ * Asks Spotify for a playlist's current version first, so an unchanged
+ * playlist costs one request and a playlist the account can no longer read
+ * is never requested.
+ */
+async function fetchTracks(
+  context: TaskJobContext,
+  options: z.infer<typeof OptionsSchema>,
+): Promise<Imported | null> {
   return spotifyOperation(async (request) => {
     const token = await spotifyPlaylistToken(options.userId, request)
-    const tracks = new Map<string, SpotifyLibraryTrack>()
-    let skipped = 0
-    let invalid = 0
-    let offset = 0
-    let total: number | null = null
-    for (let pages = 1; ; pages += 1) {
-      // Cancellation is a return value: a thrown error would count against Spotify.
-      if (!(await context.isActive())) return null
-      const page = SpotifyTrackEntriesPageSchema.parse(
-        await spotifyJson(request, token, path, {
-          limit: String(PAGE_SIZE),
-          offset: String(offset),
-        }),
+    if (options.source === 'spotify-liked') {
+      const fetched = await readSpotifyTrackEntries(
+        context,
+        request,
+        token,
+        'me/tracks',
+        null,
       )
-      if (page.offset !== offset || page.items.length > PAGE_SIZE)
-        throw refused('Invalid Spotify track pagination')
-      if (page.total > SPOTIFY_PLAYLIST_ITEM_LIMIT)
-        throw refused(
-          `The playlist has more than ${SPOTIFY_PLAYLIST_ITEM_LIMIT.toLocaleString('en')} tracks, which is more than one import reads. Nothing was imported.`,
-        )
-      if (total !== null && total !== page.total)
-        throw refused(
-          'The playlist changed during the import. Nothing was imported; import it again.',
-        )
-      total = page.total
-      for (const entry of page.items) {
-        const result = normalizeSpotifyTrackEntry(entry)
-        if (!result.track) {
-          if (result.reason === 'invalid') invalid += 1
-          else skipped += 1
-          continue
-        }
-        const seen = tracks.get(result.track.spotifyTrackId)
-        // A track listed twice keeps its first position and earliest date.
-        if (!seen) tracks.set(result.track.spotifyTrackId, result.track)
-        else if (
-          result.track.addedAt &&
-          (!seen.addedAt || result.track.addedAt < seen.addedAt)
-        )
-          seen.addedAt = result.track.addedAt
-      }
-      offset += page.items.length
-      if (page.next === null || !page.items.length || offset >= page.total)
-        break
-      if (pages % LOG_EVERY_PAGES === 0)
-        await context.log('info', `Read ${offset} of ${page.total} tracks.`)
+      return fetched && { unchanged: false, target: options, ...fetched }
     }
-    if (invalid > 0 && invalid >= tracks.size)
-      throw refused(
-        'Spotify returned tracks in a form this application does not recognise. Nothing was imported.',
-      )
-    return { entries: [...tracks.values()], skipped: skipped + invalid }
+    const current = await readSpotifyPlaylist(request, token, options.spotifyId)
+    if (!current.readable) {
+      await markPlaylistNotEditable(options.spotifyId)
+      throw refused(NOT_IMPORTABLE)
+    }
+    const [stored] = await db
+      .select({ snapshotId: playlist.snapshotId })
+      .from(playlist)
+      .where(eq(playlist.spotifyId, options.spotifyId))
+    if (stored?.snapshotId && stored.snapshotId === current.snapshotId)
+      return { unchanged: true, spotifyId: options.spotifyId }
+    if (current.total > SPOTIFY_PLAYLIST_ITEM_LIMIT)
+      throw overLimit('Nothing was imported.')
+    const fetched = await readSpotifyTrackEntries(
+      context,
+      request,
+      token,
+      `playlists/${options.spotifyId}/items`,
+      current.total,
+    )
+    return (
+      fetched && {
+        unchanged: false,
+        target: {
+          source: 'spotify',
+          spotifyId: options.spotifyId,
+          name: current.name,
+          ownerName: current.ownerName,
+          description: current.description,
+          artworkUrl: current.artworkUrl,
+          snapshotId: current.snapshotId,
+        },
+        ...fetched,
+      }
+    )
   })
 }
 
@@ -442,7 +388,7 @@ async function uniquePlaylistName(
     if (!taken.has(`${name} (${suffix})`)) return `${name} (${suffix})`
 }
 
-async function resolvePlaylist(tx: Transaction, target: Target) {
+async function resolvePlaylist(tx: Transaction, target: PlaylistTarget) {
   const [stored] = await tx
     .select({ id: playlist.id })
     .from(playlist)
@@ -467,6 +413,7 @@ async function resolvePlaylist(tx: Transaction, target: Target) {
         )
   const id =
     stored?.id ?? legacy?.id ?? createStableId('playlist', groupKey(target))
+  const now = new Date()
   const values = {
     name: legacy
       ? name
@@ -484,7 +431,9 @@ async function resolvePlaylist(tx: Transaction, target: Target) {
     spotifyUrl:
       target.source === 'spotify' ? playlistUrl(target.spotifyId) : null,
     snapshotId: target.source === 'spotify' ? target.snapshotId : null,
-    importedAt: new Date(),
+    importedAt: now,
+    checkedAt: now,
+    spotifyEditable: true,
   }
   await tx
     .insert(playlist)
@@ -518,7 +467,10 @@ export async function refreshTrackAddedDates(tx: Transaction) {
       and lt.date_added is distinct from m.added`)
 }
 
-async function storeImport(target: Target, tracks: SpotifyLibraryTrack[]) {
+async function storeImport(
+  target: PlaylistTarget,
+  tracks: SpotifyLibraryTrack[],
+) {
   return db.transaction(async (tx) => {
     // One import writes at a time, so two cannot both judge a track orphaned.
     await tx.execute(sql`select pg_advisory_xact_lock(614105)`)
@@ -628,31 +580,34 @@ async function storeImport(target: Target, tracks: SpotifyLibraryTrack[]) {
 /**
  * One import job: reads every track of a playlist or of Liked Songs, replaces
  * the stored playlist with them, then relinks tracks to albums and scrobbles.
- * Nothing is stored unless every page was read.
+ * Nothing is stored unless every page was read. An unchanged playlist only
+ * records the check.
  */
 export async function runSpotifyPlaylistImport(
-  context: LastfmSyncJobContext,
+  context: TaskJobContext,
   input: Record<string, unknown>,
 ): Promise<TaskJobResult> {
   try {
     const options = OptionsSchema.parse(input)
     await context.assertActive()
-    if (options.source === 'spotify' && options.snapshotId) {
-      const [stored] = await db
-        .select({ snapshotId: playlist.snapshotId })
-        .from(playlist)
-        .where(eq(playlist.spotifyId, options.spotifyId))
-      if (stored?.snapshotId === options.snapshotId)
-        return {
-          outcome: 'complete',
-          message: 'The playlist has not changed since the last import.',
-        }
-    }
     const fetched = await fetchTracks(context, options)
     if (!fetched || !(await context.isActive())) return { outcome: 'stopped' }
-    const stored = await storeImport(options, fetched.entries)
+    if (fetched.unchanged) {
+      await db
+        .update(playlist)
+        .set({ checkedAt: new Date(), spotifyEditable: true })
+        .where(eq(playlist.spotifyId, fetched.spotifyId))
+      return {
+        outcome: 'complete',
+        message: 'The playlist has not changed since the last import.',
+      }
+    }
+    const stored = await storeImport(fetched.target, fetched.entries)
     await refreshTrackLinks(await getLastfmAccount())
-    const name = options.source === 'spotify' ? options.name : LIKED_SONGS_NAME
+    const name =
+      fetched.target.source === 'spotify'
+        ? fetched.target.name
+        : LIKED_SONGS_NAME
     return {
       outcome: 'complete',
       message: [

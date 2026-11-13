@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { normalizeSpotifyTrackEntry } from './spotify-api'
+import {
+  normalizeSpotifyTrackEntry,
+  spotifyTrackAdditions,
+} from './spotify-api'
 
 const TRACK_ID = 'T'.repeat(22)
 const ALBUM_ID = 'A'.repeat(22)
@@ -95,5 +98,34 @@ describe('normalizeSpotifyTrackEntry', () => {
       track: null,
       reason: 'invalid',
     })
+  })
+})
+
+describe('spotifyTrackAdditions', () => {
+  const [a, b, c, d, e] = ['a', 'b', 'c', 'd', 'e'].map((letter) =>
+    letter.repeat(22),
+  )
+  const uri = (id: string | undefined) => `spotify:track:${id}`
+
+  it('keeps album order, drops tracks already present and repeats, and splits requests', () => {
+    const album = [a, b, a, c, d, e].flatMap((id) => (id ? [id] : []))
+    expect(spotifyTrackAdditions(album, new Set(b ? [b] : []), 2)).toEqual([
+      [uri(a), uri(c)],
+      [uri(d), uri(e)],
+    ])
+  })
+
+  it('sends nothing when every track is present', () => {
+    const album = [a, b].flatMap((id) => (id ? [id] : []))
+    expect(spotifyTrackAdditions(album, new Set(album))).toEqual([])
+  })
+
+  it('uses requests of 100 by default', () => {
+    const many = Array.from({ length: 250 }, (_, index) =>
+      `t${String(index).padStart(3, '0')}`.padEnd(22, 'x'),
+    )
+    expect(
+      spotifyTrackAdditions(many, new Set()).map((batch) => batch.length),
+    ).toEqual([100, 100, 50])
   })
 })

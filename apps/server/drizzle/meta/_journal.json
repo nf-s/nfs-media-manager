@@ -155,6 +155,13 @@
       "when": 1794568473487,
       "tag": "0021_youtube_search_prefix",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1794569356268,
+      "tag": "0022_spotify_playlist_sync",
+      "breakpoints": true
     }
   ]
 }
