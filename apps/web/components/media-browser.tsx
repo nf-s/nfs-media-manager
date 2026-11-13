@@ -326,9 +326,8 @@ export default function MediaBrowser({
   ])
   useEffect(() => {
     if (selectedId) {
-      // The inspector covers the results below this width, so it takes focus.
-      if (window.matchMedia('(max-width: 1099px)').matches)
-        inspector.current?.focus({ preventScroll: true })
+      // The inspector covers the results, so it takes focus.
+      inspector.current?.focus({ preventScroll: true })
       scroller.current
         ?.querySelector('[data-selected="true"]')
         ?.scrollIntoView({ block: 'nearest' })

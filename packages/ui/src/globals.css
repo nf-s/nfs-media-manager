@@ -2323,20 +2323,49 @@
     color: #666;
   }
   .media-inspector {
-    flex: 0 0 420px;
+    position: fixed;
+    z-index: 40;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: min(600px, 100vw);
     display: flex;
     flex-direction: column;
     min-width: 0;
     overflow: hidden;
     border-left: 1px solid var(--line);
+    border-radius: 12px 0 0 12px;
+    box-shadow: -8px 0 30px #0f172a33;
     background: white;
     container-type: inline-size;
+    animation: inspector-in 0.16s ease-out;
   }
   .media-inspector:focus-visible {
     outline: none;
   }
   .inspector-backdrop {
-    display: none;
+    position: fixed;
+    z-index: 39;
+    inset: 0;
+    background: #0f172a47;
+    animation: inspector-fade 0.16s ease-out;
+  }
+  @keyframes inspector-in {
+    from {
+      transform: translateX(24px);
+      opacity: 0;
+    }
+  }
+  @keyframes inspector-fade {
+    from {
+      opacity: 0;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .media-inspector,
+    .inspector-backdrop {
+      animation: none;
+    }
   }
   .inspector-scroll {
     position: relative;
@@ -2366,9 +2395,9 @@
   .detail-topbar > button:hover {
     background: var(--chip);
   }
-  @container (max-width: 560px) {
+  @container (max-width: 640px) {
     .media-detail .detail-heading {
-      grid-template-columns: 96px minmax(0, 1fr);
+      grid-template-columns: clamp(96px, 24cqw, 140px) minmax(0, 1fr);
       gap: 12px;
       margin-bottom: 12px;
     }
@@ -2389,7 +2418,7 @@
       margin-bottom: 14px;
     }
     .media-detail .detail-metrics {
-      grid-template-columns: 1fr 1fr;
+      grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
       gap: 8px 14px;
       margin-bottom: 16px;
     }
@@ -2408,25 +2437,6 @@
       overflow-x: auto;
       justify-content: flex-start;
       scrollbar-width: none;
-    }
-  }
-  @media (max-width: 1099px) {
-    .media-inspector {
-      position: fixed;
-      z-index: 40;
-      top: 0;
-      right: 0;
-      bottom: 0;
-      width: min(440px, 100vw);
-      border-radius: 12px 0 0 12px;
-      box-shadow: -8px 0 30px #0f172a33;
-    }
-    .inspector-backdrop {
-      display: block;
-      position: fixed;
-      z-index: 39;
-      inset: 0;
-      background: #0f172a47;
     }
   }
   .detail-page {
@@ -2693,6 +2703,13 @@
       border-left: 0;
       border-radius: 14px 14px 0 0;
       box-shadow: 0 -8px 30px #0f172a33;
+      animation-name: inspector-up;
+    }
+    @keyframes inspector-up {
+      from {
+        transform: translateY(24px);
+        opacity: 0;
+      }
     }
     .detail-topbar {
       height: 42px;
