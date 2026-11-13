@@ -578,6 +578,8 @@ export default function MediaDetail({
                     'watched',
                     'provider',
                     'keyword',
+                    // Albums list their playlists below, with the add control.
+                    ...(item.mediaType === 'album' ? ['playlist'] : []),
                   ].includes(field.key),
               )
               .map((field) => {
@@ -616,6 +618,9 @@ export default function MediaDetail({
                 )
               })}
           </div>
+          {item.mediaType === 'album' && (
+            <AlbumPlaylists key={item.id} albumId={item.id} />
+          )}
           {item.mediaType === 'album' && (
             <AlbumProviderDetails details={item.providerDetails ?? []} />
           )}
@@ -667,7 +672,6 @@ export default function MediaDetail({
             {!item.tracks.length && (
               <p className="quiet">No imported tracks.</p>
             )}
-            <AlbumPlaylists key={item.id} albumId={item.id} />
           </TabsContent>
         )}
         {item.mediaType === 'album' && (
