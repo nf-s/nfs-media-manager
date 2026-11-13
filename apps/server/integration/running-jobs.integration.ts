@@ -497,9 +497,13 @@ describe('running job recovery and worker fencing', () => {
     })
     const first = await import('@/services/jobs')
     await seedJob('requesting', 'queued')
+    const transactions = vi.spyOn(databaseClient, 'transaction')
     const worker = first.processQueuedJobs()
     try {
       await entered.promise
+      // The request is sent before its start time is saved. That write is the
+      // last transaction begun when fetch is entered.
+      await transactions.mock.results.at(-1)?.value
       const safety = await databaseClient
         .select()
         .from(schema.providerRequestState)
