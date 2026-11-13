@@ -84,7 +84,7 @@ A summary gives the number of names and scrobbles for each outcome. The list fil
 
 ## In the app
 
-- **Album → Listening** shows total scrobbles, first and last listen, and scrobbles per year or month for the album or one of its tracks, as bars or a line. Pointing at or focusing the chart shows one period's count; the arrow keys move between periods. It lists the scrobbled names linked to the album, and unlinked names that resemble it: the same title under another artist, or a credited artist with a title that starts with the album's title or the reverse. Names can be added and removed there; see [manual links](#manual-links).
+- **Album → Listening** shows total scrobbles, first and last listen, and scrobbles per month or year for the album or one of its tracks, as a line or bars; it opens on the monthly line. Pointing at or focusing the chart shows one period's count; the arrow keys move between periods. It lists the scrobbled names linked to the album, and unlinked names that resemble it: the same title under another artist, or a credited artist with a title that starts with the album's title or the reverse. Names can be added and removed there; see [manual links](#manual-links).
 - **Album → Tracks** shows each track's scrobble count. Track counts match scrobbled track names to the album's track titles.
 - **Browse** gains three album fields, recomputed at the end of every sync:
   - `Last listened`: date of the most recent linked scrobble.

@@ -187,24 +187,41 @@ export function xLabelIndices(
   return indices
 }
 
-/** Centre of each period's slot, scaled against the top gridline. */
+/**
+ * One point per period, scaled against the top gridline. Bars sit at the
+ * centre of their slot; a line runs from the left edge of the plot to the right.
+ */
 export function chartPoints(
   counts: number[],
   yMax: number,
   plot: PlotArea,
+  style: ListeningChartStyle = 'bar',
 ): ChartPoint[] {
   const { slot } = barLayout(counts.length, plot.width)
+  const step = counts.length > 1 ? plot.width / (counts.length - 1) : 0
   return counts.map((count, index) => ({
-    x: plot.left + slot * (index + 0.5),
+    x:
+      style === 'line' && step
+        ? plot.left + step * index
+        : plot.left + slot * (index + 0.5),
     y: plot.top + plot.height * (1 - (yMax ? count / yMax : 0)),
   }))
 }
 
 /** Period under a horizontal position in the plot, clamped to the bars. */
-export function periodAt(x: number, count: number, plot: PlotArea) {
+export function periodAt(
+  x: number,
+  count: number,
+  plot: PlotArea,
+  style: ListeningChartStyle = 'bar',
+) {
   if (!count) return null
   const { slot } = barLayout(count, plot.width)
-  return Math.min(count - 1, Math.max(0, Math.floor((x - plot.left) / slot)))
+  const index =
+    style === 'line' && count > 1
+      ? Math.round((x - plot.left) / (plot.width / (count - 1)))
+      : Math.floor((x - plot.left) / slot)
+  return Math.min(count - 1, Math.max(0, index))
 }
 
 /** Next active period for an arrow, Home or End key; null for other keys. */

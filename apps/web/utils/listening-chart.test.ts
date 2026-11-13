@@ -204,6 +204,18 @@ test('points sit at slot centres scaled to the top tick', () => {
   assert.equal(periodAt(50, 0, plot), null)
 })
 
+test('line points run from the left edge of the plot to the right', () => {
+  const plot = { left: 10, top: 0, width: 120, height: 50 }
+  assert.deepEqual(
+    chartPoints([0, 5, 10], 10, plot, 'line').map((point) => point.x),
+    [10, 70, 130],
+  )
+  assert.deepEqual(chartPoints([5], 10, plot, 'line'), [{ x: 70, y: 25 }])
+  assert.equal(periodAt(35, 3, plot, 'line'), 0)
+  assert.equal(periodAt(45, 3, plot, 'line'), 1)
+  assert.equal(periodAt(500, 3, plot, 'line'), 2)
+})
+
 test('keyboard steps through periods and stays in range', () => {
   assert.equal(steppedPeriod(null, 'ArrowLeft', 4), 3)
   assert.equal(steppedPeriod(2, 'ArrowLeft', 4), 1)

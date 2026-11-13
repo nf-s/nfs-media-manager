@@ -322,15 +322,16 @@ test('listening tab summarises scrobbles with a year chart and track selector', 
   assert.match(html, /<dd>12<\/dd>/)
   assert.match(html, /<option value="" selected="">All tracks<\/option>/)
   assert.match(html, /<option value="opening">1\. Opening \(12\)<\/option>/)
-  assert.match(html, /aria-label="Scrobbles by year"/)
+  assert.match(html, /aria-label="Scrobbles by month"/)
   for (const label of [
-    '2019: 4 scrobbles',
-    '2020: 0 scrobbles',
-    '2021: 0 scrobbles',
-    '2022: 8 scrobbles',
+    '2019-11: 4 scrobbles',
+    '2019-12: 0 scrobbles',
+    '2021-12: 0 scrobbles',
+    '2022-01: 8 scrobbles',
   ])
     assert.ok(html.includes(label), label)
-  assert.match(html, /aria-pressed="true"[^>]*>Year</)
+  assert.match(html, /aria-pressed="true"[^>]*>Month</)
+  assert.match(html, /<polyline/)
   assert.match(html, /Linked scrobble names/)
   assert.match(
     html,
@@ -452,6 +453,6 @@ test('listening tab offers bar and line chart styles', () => {
     <AlbumListening albumId="one" />,
   )
   assert.match(html, /role="group" aria-label="Chart style"/)
-  assert.match(html, /aria-pressed="true"[^>]*>Bar</)
-  assert.match(html, /aria-pressed="false"[^>]*>Line</)
+  assert.match(html, /aria-pressed="false"[^>]*>Bar</)
+  assert.match(html, /aria-pressed="true"[^>]*>Line</)
 })

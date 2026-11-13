@@ -20,9 +20,8 @@ const DEFAULT_WIDTH = 640
 const HEIGHT = 192
 const TOP = 8
 const BOTTOM = 20
-const RIGHT = 18
-const MIN_LEFT = 18
 const MAX_MARKERS = 40
+const Y_LABEL_GAP = 6
 
 function useContainerWidth() {
   const container = useRef<HTMLDivElement>(null)
@@ -62,11 +61,11 @@ export function ListeningChart({
   const yLabelWidth =
     Math.max(...ticks.map((tick) => tick.toLocaleString().length)) *
     LABEL_CHAR_WIDTH
-  const left = Math.max(MIN_LEFT, Math.ceil(yLabelWidth) + 8)
+  const left = Math.ceil(yLabelWidth) + Y_LABEL_GAP
   const plot: PlotArea = {
     left,
     top: TOP,
-    width: Math.max(1, width - left - RIGHT),
+    width: Math.max(1, width - left),
     height: HEIGHT - TOP - BOTTOM,
   }
   const baseline = plot.top + plot.height
@@ -75,6 +74,7 @@ export function ListeningChart({
     bars.map((bar) => bar.count),
     yMax,
     plot,
+    style,
   )
   const labels = xLabelIndices(bars, period, plot.width)
   const activeBar = active === null ? undefined : bars[active]
@@ -91,7 +91,7 @@ export function ListeningChart({
     const rect = event.currentTarget.getBoundingClientRect()
     if (!rect.width) return
     const x = ((event.clientX - rect.left) * width) / rect.width
-    setActive(periodAt(x, bars.length, plot))
+    setActive(periodAt(x, bars.length, plot, style))
   }
 
   return (
@@ -122,7 +122,7 @@ export function ListeningChart({
         onPointerDown={pointTo}
         onPointerLeave={() => setActive(null)}
       >
-        {activePoint && (
+        {style === 'bar' && activePoint && (
           <rect
             x={activePoint.x - slot / 2}
             y={plot.top}
@@ -144,7 +144,7 @@ export function ListeningChart({
                 shapeRendering="crispEdges"
               />
               <text
-                x={plot.left - 6}
+                x={plot.left - Y_LABEL_GAP}
                 y={y}
                 textAnchor="end"
                 dominantBaseline="middle"
@@ -159,12 +159,20 @@ export function ListeningChart({
           const bar = bars[index]
           const point = points[index]
           if (!bar || !point) return null
+          // A label at either end of the line stays inside the plot.
+          const half = (bar.year.length * LABEL_CHAR_WIDTH) / 2
+          const anchor =
+            point.x - half < plot.left
+              ? 'start'
+              : point.x + half > width
+                ? 'end'
+                : 'middle'
           return (
             <text
               key={bar.period}
               x={point.x}
               y={baseline + 14}
-              textAnchor="middle"
+              textAnchor={anchor}
               className="fill-slate-600 text-[11px] tabular-nums"
             >
               {bar.year}

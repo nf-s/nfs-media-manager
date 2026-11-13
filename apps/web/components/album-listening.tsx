@@ -168,8 +168,8 @@ export function ListeningSources({
 
 export default function AlbumListening({ albumId }: { albumId: string }) {
   const [track, setTrack] = useState('')
-  const [period, setPeriod] = useState<ListeningPeriod>('year')
-  const [chartStyle, setChartStyle] = useState<ListeningChartStyle>('bar')
+  const [period, setPeriod] = useState<ListeningPeriod>('month')
+  const [chartStyle, setChartStyle] = useState<ListeningChartStyle>('line')
   const listening = useAlbumListening(albumId, track)
   if (listening.isPending) return <p>Loading listening history...</p>
   if (listening.isError)
