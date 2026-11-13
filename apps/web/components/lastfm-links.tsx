@@ -33,25 +33,21 @@ import {
   invalidateScrobbleLinks,
   useLastfmSyncStatus,
 } from './lastfm-sync'
-import { AlbumPicker, useLastfmLinkUpdate } from './lastfm-link-controls'
+import LastfmLinkPanel, { type LastfmLinkPanelMode } from './lastfm-link-panel'
 import { useConfig } from './providers'
 
-function LinkRow({ group }: { group: LastfmLinkGroup }) {
-  const update = useLastfmLinkUpdate()
-  const [picking, setPicking] = useState(false)
-  const albumName = group.albumName
+function LinkRow({
+  group,
+  onOpen,
+}: {
+  group: LastfmLinkGroup
+  onOpen: (mode: LastfmLinkPanelMode) => void
+}) {
   const linked = group.reason === 'linked' || group.reason === 'manual'
-  const link = (albumId: string) => {
-    if (albumName !== null)
-      update.mutate(
-        { action: 'link', artistName: group.artistName, albumName, albumId },
-        { onSuccess: () => setPicking(false) },
-      )
-  }
   return (
     <tr>
       <td>{group.artistName}</td>
-      <td>{albumName ?? '-'}</td>
+      <td>{group.albumName ?? '-'}</td>
       <td className="tabular-nums">{group.scrobbles.toLocaleString()}</td>
       <td className="whitespace-nowrap">
         <time dateTime={group.lastListenedAt}>
@@ -70,85 +66,31 @@ function LinkRow({ group }: { group: LastfmLinkGroup }) {
         {linked && group.album ? (
           <Link href={`/albums/${group.album.id}`}>{group.album.title}</Link>
         ) : group.candidates.length ? (
-          <ul>
-            {group.candidates.map((album) => (
-              <li key={album.id} className="flex items-center gap-2">
-                <Link href={`/albums/${album.id}`}>
-                  {album.title}
-                  {album.artists.length ? ` — ${album.artists.join(', ')}` : ''}
-                </Link>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={update.isPending}
-                  onClick={() => link(album.id)}
-                >
-                  Link
-                </Button>
-              </li>
-            ))}
-          </ul>
+          `${group.candidates.length} possible albums`
         ) : (
           '-'
         )}
       </td>
       <td>
-        {albumName !== null && (
-          <div className="grid gap-1">
-            <div className="flex flex-wrap gap-1">
+        {group.albumName !== null && (
+          <div className="flex flex-wrap gap-1">
+            <Button
+              size="sm"
+              variant="outline"
+              aria-haspopup="dialog"
+              onClick={() => onOpen('library')}
+            >
+              {linked ? 'Change' : 'Link'}
+            </Button>
+            {!linked && (
               <Button
                 size="sm"
                 variant="outline"
-                aria-expanded={picking}
-                disabled={update.isPending}
-                onClick={() => setPicking(!picking)}
+                aria-haspopup="dialog"
+                onClick={() => onOpen('new')}
               >
-                {linked ? 'Change' : 'Link'}
+                Add new album
               </Button>
-              {linked && (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={update.isPending}
-                  onClick={() =>
-                    update.mutate({
-                      action: 'unlink',
-                      artistName: group.artistName,
-                      albumName,
-                    })
-                  }
-                >
-                  Unlink
-                </Button>
-              )}
-              {(group.reason === 'manual' || group.reason === 'excluded') && (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={update.isPending}
-                  onClick={() =>
-                    update.mutate({
-                      action: 'auto',
-                      artistName: group.artistName,
-                      albumName,
-                    })
-                  }
-                >
-                  Automatic
-                </Button>
-              )}
-            </div>
-            {picking && (
-              <AlbumPicker
-                label={`Album for ${group.artistName} — ${albumName}`}
-                disabled={update.isPending}
-                onPick={link}
-              />
-            )}
-            {update.isError && (
-              <p role="alert">
-                {errorMessage(update.error, 'Could not update the link.')}
-              </p>
             )}
           </div>
         )}
@@ -164,6 +106,10 @@ export default function LastfmLinks() {
   const reason = lastfmLinkFilter(search.get('reason'))
   const [draft, setDraft] = useState('')
   const [query, setQuery] = useState('')
+  const [selected, setSelected] = useState<{
+    group: LastfmLinkGroup
+    mode: LastfmLinkPanelMode
+  } | null>(null)
   useEffect(() => {
     const timer = window.setTimeout(() => setQuery(draft.trim()), 250)
     return () => window.clearTimeout(timer)
@@ -349,6 +295,7 @@ export default function LastfmLinks() {
               <LinkRow
                 key={`${group.artistName}\u0000${group.albumName ?? ''}`}
                 group={group}
+                onOpen={(mode) => setSelected({ group, mode })}
               />
             ))}
           </tbody>
@@ -376,6 +323,14 @@ export default function LastfmLinks() {
           )}
         </div>
       </TableScroll>
+      {selected && (
+        <LastfmLinkPanel
+          key={`${selected.group.artistName}\u0000${selected.group.albumName ?? ''}`}
+          group={selected.group}
+          initialMode={selected.mode}
+          onClose={() => setSelected(null)}
+        />
+      )}
     </section>
   )
 }

@@ -16,6 +16,7 @@ import { createDatabaseReadCache } from '@/lib/database-read-cache'
 import { mediaItem, album, film } from '@/schemas/db'
 import { listLoadedScrapePlugins } from '@/plugins/registry'
 import { normalizedTagSql, normalizeTagName } from './tag-state'
+import { albumAddedDateExpression } from './album-added-dates'
 
 type MediaType = 'album' | 'film'
 
@@ -57,7 +58,7 @@ function valueExpression(key: string): SQL {
     case 'updatedAt':
       return sql`to_jsonb(extract(epoch from ${mediaItem.updatedAt}) * 1000)`
     case 'dateAdded':
-      return sql`to_jsonb(extract(epoch from case when ${mediaItem.mediaType} = 'film' then coalesce(${film.dateAdded}, ${mediaItem.createdAt}) else ${album.dateAdded} end) * 1000)`
+      return sql`to_jsonb(extract(epoch from case when ${mediaItem.mediaType} = 'film' then coalesce(${film.dateAdded}, ${mediaItem.createdAt}) else ${albumAddedDateExpression} end) * 1000)`
     case 'durationSec':
       return sql`to_jsonb(${album.durationSec})`
     case 'trackCount':

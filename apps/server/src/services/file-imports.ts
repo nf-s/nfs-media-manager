@@ -375,7 +375,11 @@ export async function matchFilmCandidates(
 
 export async function commitFilmImportRecord(
   candidate: FilmImportCandidate,
-  options: { newOnly?: boolean; allowCreate?: boolean } = {},
+  options: {
+    newOnly?: boolean
+    allowCreate?: boolean
+    snapshotSource?: 'manual-add'
+  } = {},
   transaction?: ImportTransaction,
 ): Promise<{
   id: string
@@ -430,7 +434,7 @@ export async function commitFilmImportRecord(
         mediaItemId: id,
         mediaType: 'film',
         provider,
-        source: 'file-import',
+        source: options.snapshotSource ?? 'file-import',
         payload: { file: source, data: result.payload },
         normalized: state
           ? existingFilmImportResult(candidate, id, state).normalized

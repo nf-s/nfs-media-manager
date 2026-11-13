@@ -7,6 +7,7 @@ import type { BrowseFacetQuery } from '@repo/schemas/browse'
 import { getCollectionSourceLinks } from './source-navigation'
 import { withStoredTrailerLinks } from './stored-trailers'
 import { getAlbumProviderDetails } from './album-provider-details'
+import { albumAddedDates } from './album-added-dates'
 import { and, eq, inArray, ne, sql } from 'drizzle-orm'
 import type { JsonValue } from '@repo/media-plugin-sdk'
 import {
@@ -289,6 +290,7 @@ export async function listAlbums(
   })
 
   const preferredTags = await rymTagIds(ids)
+  const addedDates = await albumAddedDates(ids)
   const items = reorderRecords(records, ids).flatMap((record) => {
     if (!record.album) {
       return []
@@ -304,7 +306,10 @@ export async function listAlbums(
         preferredTags.get(record.id),
       ),
       mediaType: 'album',
-      dateAdded: toIsoString(record.album.dateAdded),
+      dateAdded:
+        addedDates.get(record.id)?.dateAdded ??
+        toIsoString(record.album.dateAdded),
+      dateAddedSource: addedDates.get(record.id)?.dateAddedSource,
       durationSec: record.album.durationSec ?? null,
       spotifyUrl: record.album.spotifyUrl ?? null,
       trackCount: record.album.trackCount,
@@ -416,6 +421,7 @@ export async function getAlbumDetail(id: string): Promise<AlbumDetail | null> {
     return null
   }
 
+  const addedDate = (await albumAddedDates([id])).get(id)
   const albumDetail: AlbumDetail = {
     providerDetails: await getAlbumProviderDetails(id),
     collectionSources: await getCollectionSourceLinks(id, {
@@ -431,7 +437,9 @@ export async function getAlbumDetail(id: string): Promise<AlbumDetail | null> {
       (await rymTagIds([id])).get(id),
     ),
     mediaType: 'album',
-    dateAdded: toIsoString(record.album.dateAdded),
+    dateAdded: addedDate?.dateAdded ?? toIsoString(record.album.dateAdded),
+    dateAddedSource: addedDate?.dateAddedSource,
+    storedDateAdded: toIsoString(record.album.dateAdded),
     durationSec: record.album.durationSec ?? null,
     spotifyUrl: record.album.spotifyUrl ?? null,
     trackCount: record.album.trackCount,

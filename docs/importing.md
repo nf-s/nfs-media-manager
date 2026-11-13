@@ -2,6 +2,16 @@
 
 Select Films or Albums in the top-left menu, then open **Imports**. A preview lets you check rows before writing anything. Selecting no metadata providers keeps file imports offline. Source files remain unchanged.
 
+## Add one album or film
+
+In Browse, choose **Add album** or **Add film**. Search Spotify for an album or TMDb for a film, check the artwork, artist or original title and release date, then choose **Add**. Search requires the provider's credentials in Providers; Spotify account connection is not required. **Next** reads one more page only when selected.
+
+Adding fetches metadata for the selected provider ID and stores the item with its provider history. Spotify albums include their tracks. The app does not save the album to your Spotify account. Existing items stay unchanged, including dates and manual edits; repeated or concurrent additions resolve to the same library item. No other providers or background scrape jobs are started. Failed provider requests are not retried automatically, and the normal provider request limits and cooldowns apply.
+
+The original Added date for a new item is the time you add it. Existing Last.fm scrobbles can be linked to a new album through the scrobble-name link controls, or by the next sync or **Relink**. See [Last.fm scrobble history](lastfm-scrobbles.md).
+
+Provider search follows the [Spotify album search](https://developer.spotify.com/documentation/web-api/reference/search) and [TMDb movie search](https://developer.themoviedb.org/reference/search-movie) APIs. Results are limited to ten Spotify albums or twenty TMDb films per page, with at most fifty pages per search.
+
 ## Film CSVs
 
 Choose the matching IMDb ratings or watchlist format and drop the exported CSV. The preview shows new, changed and unchanged films, missing IDs and personal-state changes. Select the rows to import and any providers you want to enrich **new films**.

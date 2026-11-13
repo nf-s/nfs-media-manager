@@ -258,6 +258,7 @@ export async function prepareAlbumCsv(
 export async function commitAlbumImportRecord(
   candidate: z.infer<typeof StoredCandidateSchema>,
   transaction?: ImportTransaction,
+  options: { snapshotSource?: 'manual-add' } = {},
 ) {
   const commit = async (tx: ImportTransaction) => {
     await tx.execute(
@@ -298,7 +299,7 @@ export async function commitAlbumImportRecord(
         mediaItemId: id,
         mediaType: 'album',
         provider: candidate.provider,
-        source: 'file-import',
+        source: options.snapshotSource ?? 'file-import',
         payload: { source: candidate.source, data: candidate.result.payload },
         normalized: candidate.result.normalized,
       },

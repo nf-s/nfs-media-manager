@@ -128,6 +128,39 @@ describe('keyword browse values', () => {
 })
 
 describe('buildAlbumPatchInput', () => {
+  it.each(['2024-01-01T00:00:00.000Z', null])(
+    'does not save an effective listening date over the stored date %s',
+    (storedDateAdded) => {
+      const detail = {
+        ...baseAlbumDetail,
+        dateAdded: '2010-01-01T00:00:00.000Z',
+        storedDateAdded,
+      }
+      const values = {
+        title: detail.title,
+        originalTitle: '',
+        summary: '',
+        artworkUrl: '',
+        releaseDate: detail.releaseDate ?? '',
+        sourceLabel: '',
+        dateAdded: storedDateAdded ?? '',
+        durationSec: '',
+        spotifyUrl: '',
+        note: '',
+        referenceProvider: '',
+        referenceType: '',
+        referenceExternalId: '',
+      }
+      expect(buildAlbumPatchInput(detail, values)).toEqual({})
+      expect(
+        buildAlbumPatchInput(detail, {
+          ...values,
+          dateAdded: '2008-01-01T00:00:00.000Z',
+        }),
+      ).toEqual({ dateAdded: '2008-01-01T00:00:00.000Z' })
+    },
+  )
+
   it('omits unchanged album fields', () => {
     const patch = buildAlbumPatchInput(baseAlbumDetail, {
       title: 'Fearless',

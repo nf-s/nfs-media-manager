@@ -113,12 +113,14 @@ export const TrackSchema = z.object({
 export const AlbumListItemSchema = MediaBaseSchema.extend({
   mediaType: z.literal('album'),
   dateAdded: z.string().nullable(),
+  dateAddedSource: z.string().optional(),
   durationSec: z.number().int().nonnegative().nullable(),
   spotifyUrl: z.string().url().nullable(),
   trackCount: z.number().int().nonnegative(),
 })
 
 export const AlbumDetailSchema = AlbumListItemSchema.extend({
+  storedDateAdded: z.string().nullable().optional(),
   tracks: z.array(TrackSchema),
   collectionSources: z.array(SourceNavigationLinkSchema).optional(),
   providerDetails: z.array(AlbumProviderDetailsSchema).optional(),
@@ -408,7 +410,11 @@ export function buildAlbumPatchInput(
   }
 
   const normalizedDateAdded = normalizeNullableText(values.dateAdded)
-  if (normalizedDateAdded !== detail.dateAdded) {
+  const storedDateAdded =
+    detail.storedDateAdded === undefined
+      ? detail.dateAdded
+      : detail.storedDateAdded
+  if (normalizedDateAdded !== storedDateAdded) {
     patch.dateAdded = normalizedDateAdded
   }
 

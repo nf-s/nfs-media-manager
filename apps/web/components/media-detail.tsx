@@ -130,13 +130,19 @@ function EditMedia({
   const [error, setError] = useState('')
   const collection = item.mediaType === 'album' ? 'albums' : 'films'
   const baseline = Object.fromEntries(Object.entries(item))
+  if (item.mediaType === 'album' && item.storedDateAdded !== undefined)
+    baseline.dateAdded = item.storedDateAdded
   const fields = [
     { key: 'title', label: 'Title', type: 'text' },
     { key: 'originalTitle', label: 'Original title', type: 'text' },
     { key: 'artworkUrl', label: 'Artwork URL', type: 'url' },
     { key: 'sourceLabel', label: 'Source', type: 'text' },
     { key: 'releaseDate', label: 'Release date', type: 'date' },
-    { key: 'dateAdded', label: 'Date added', type: 'date' },
+    {
+      key: 'dateAdded',
+      label: item.mediaType === 'album' ? 'Stored date added' : 'Date added',
+      type: 'date',
+    },
     ...(item.mediaType === 'album'
       ? [
           { key: 'durationSec', label: 'Duration (seconds)', type: 'number' },
@@ -229,6 +235,12 @@ function EditMedia({
           )
         })}
       </div>
+      {item.mediaType === 'album' && (
+        <p className="quiet text-sm">
+          An earlier first Last.fm scrobble is used for Added in the library.
+          The stored date is kept.
+        </p>
+      )}
       <label>
         Summary
         <textarea name="summary" defaultValue={item.summary ?? ''} rows={3} />
@@ -523,12 +535,11 @@ export default function MediaDetail({
                     <dt>{field.label}</dt>
                     <dd>
                       {formatBrowseValue(field, value)}
-                      {field.key === 'dateAdded' &&
-                        item.mediaType === 'film' && (
-                          <small className="quiet block">
-                            {item.dateAddedSource}
-                          </small>
-                        )}
+                      {field.key === 'dateAdded' && item.dateAddedSource && (
+                        <small className="quiet block">
+                          {item.dateAddedSource}
+                        </small>
+                      )}
                     </dd>
                   </div>
                 )

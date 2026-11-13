@@ -15,6 +15,7 @@ import {
 import ImportsWorkspace from './imports-workspace'
 import LastfmSyncPageClient from './pages/lastfm-sync-page-client'
 import AlbumListening from './album-listening'
+import LastfmLinkPanel from './lastfm-link-panel'
 import { ListeningChart } from './listening-chart'
 import { ConfigContext } from './providers'
 import { monthBars, yearBars } from '@/utils/listening-chart'
@@ -257,27 +258,63 @@ test('scrobble links show reason totals and link library albums', () => {
   assert.match(html, /<option value="unlinked">Unlinked<\/option>/)
   assert.match(html, /href="\/albums\/album-1">Album fixture<\/a>/)
   assert.match(html, /<td>Several albums match<\/td>/)
-  assert.match(
-    html,
-    /href="\/albums\/album-2">Shared title — Artist fixture<\/a><button[^>]*>Link</,
-  )
-  assert.match(
-    html,
-    /href="\/albums\/album-3">Shared title — Artist fixture, Second artist<\/a>/,
-  )
+  assert.match(html, /<td>2 possible albums<\/td>/)
+  assert.doesNotMatch(html, /href="\/albums\/album-[23]"/)
   assert.match(html, /<td>-<\/td><td class="tabular-nums">2<\/td>/)
-  // Linked names can be changed or unlinked; a manual link can return to automatic.
+  // Editing actions open a panel; candidates and pickers stay out of table cells.
   assert.equal(html.match(/>Change</g)?.length, 2)
-  assert.equal(html.match(/>Unlink</g)?.length, 2)
-  assert.equal(html.match(/>Automatic</g)?.length, 1)
+  assert.doesNotMatch(html, />Unlink<|>Automatic<|Search library albums/)
   // The ambiguous name offers Link; the name without an album has no actions.
-  assert.match(html, /aria-expanded="false"[^>]*>Link</)
+  assert.match(html, /aria-haspopup="dialog"[^>]*>Link</)
+  assert.equal(html.match(/>Add new album</g)?.length, 1)
   assert.match(
     html,
     /<td>Scrobbled without an album<\/td><td>-<\/td><td><\/td>/,
   )
   assert.match(html, />Relink</)
   assert.doesNotMatch(html, /disabled=""[^>]*>Relink/)
+})
+
+test('scrobble link panel shows current album, library search and manual controls', () => {
+  const group = report.items.find((item) => item.reason === 'manual')
+  assert.ok(group)
+  const html = render([], <LastfmLinkPanel group={group} onClose={() => {}} />)
+  assert.match(html, /<dialog[^>]*class="tag-drawer"[^>]*aria-labelledby=/)
+  assert.match(html, /aria-label="Close scrobble link"/)
+  assert.match(html, />Chosen title<\/h1>/)
+  assert.match(html, /Library album:/)
+  assert.match(html, /href="\/albums\/album-1">Album fixture — Artist fixture/)
+  assert.match(html, />Unlink</)
+  assert.match(html, />Automatic</)
+  assert.match(html, /aria-label="Album for Second artist — Chosen title"/)
+  assert.match(html, /role="tab"[^>]*>Add new album</)
+})
+
+test('ambiguous scrobble matches are available in the panel', () => {
+  const group = report.items.find((item) => item.reason === 'ambiguous')
+  assert.ok(group)
+  const html = render([], <LastfmLinkPanel group={group} onClose={() => {}} />)
+  assert.match(html, /aria-label="Possible library albums"/)
+  assert.match(html, /href="\/albums\/album-2">Shared title — Artist fixture/)
+  assert.match(
+    html,
+    /href="\/albums\/album-3">Shared title — Artist fixture, Second artist/,
+  )
+  assert.equal(html.match(/>Link</g)?.length, 2)
+  assert.doesNotMatch(html, />Unlink<|>Automatic</)
+})
+
+test('new album panel prefills Spotify search without a provider request', () => {
+  const group = report.items.find((item) => item.reason === 'ambiguous')
+  assert.ok(group)
+  const html = render(
+    [],
+    <LastfmLinkPanel group={group} initialMode="new" onClose={() => {}} />,
+  )
+  assert.match(html, /value="Artist fixture Shared title"/)
+  assert.match(html, /Spotify/)
+  assert.doesNotMatch(html, /aria-label="Possible library albums"/)
+  assert.equal(network.mock.callCount(), 0)
 })
 
 test('scrobble link filter is read from the URL', () => {

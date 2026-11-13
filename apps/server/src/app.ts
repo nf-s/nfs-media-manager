@@ -23,6 +23,7 @@ import lastfm from '@/routes/lastfm'
 import media from '@/routes/media'
 import providers from '@/routes/providers'
 import tags from '@/routes/tags'
+import manualAdd from '@/routes/manual-add'
 import { z } from '@hono/zod-openapi'
 import { createRoute } from '@hono/zod-openapi'
 
@@ -87,6 +88,7 @@ v1ApiBase.route('/album-imports', albumImports)
 v1ApiBase.route('/spotify', spotify)
 v1ApiBase.route('/lastfm', lastfm)
 v1ApiBase.route('/tags', tags)
+v1ApiBase.route('/manual-add', manualAdd)
 
 const v1ApiRoutes = v1ApiBase
   .openapi(

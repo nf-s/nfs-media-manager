@@ -19,7 +19,7 @@ const nameKey = (value: string) =>
 const artistKey = (names: string[]) =>
   JSON.stringify([...new Set(names.map(nameKey))].sort())
 
-async function clientToken(
+export async function spotifyClientToken(
   secrets: Record<string, string>,
   request: SpotifyRequest,
 ) {
@@ -80,7 +80,7 @@ export const spotifyPlugin: MediaProviderPlugin = {
     ],
   },
   async testConnection({ secrets, request }) {
-    await clientToken(secrets, request)
+    await spotifyClientToken(secrets, request)
   },
   async scrapeMediaItem(context) {
     if (context.mediaType !== 'album')
@@ -110,7 +110,7 @@ export const spotifyPlugin: MediaProviderPlugin = {
         'Spotify market must be a two-letter uppercase country code',
       )
     const params: Record<string, string> = market ? { market } : {}
-    const token = await clientToken(context.secrets, context.request)
+    const token = await spotifyClientToken(context.secrets, context.request)
     if (!id) {
       const quote = (value: string) => `"${value.replace(/["\\]/g, ' ')}"`
       const q = upc

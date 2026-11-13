@@ -45,6 +45,7 @@ import { useBrowseFacets } from '@/hooks/useBrowseFacets'
 import BrowseFilterAutocomplete from './browse-filter-autocomplete'
 import MediaArtwork from './media-artwork'
 import MediaDetail from './media-detail'
+import ManualMediaAdd from './manual-media-add'
 import { BrowseFilterChips, RangeEditor } from './browse-controls'
 import ServiceLinks from './service-icon-links'
 import AlbumTitle from './album-title'
@@ -121,6 +122,7 @@ export default function MediaBrowser({
   const searchParams = useSearchParams()
   const [ready, setReady] = useState(false)
   const [draft, setDraft] = useState('')
+  const [adding, setAdding] = useState(false)
   const [scroll, setScroll] = useState({ identity: '', top: 0 })
   const [gridLayout, setGridLayout] = useState<{
     identity: string
@@ -508,11 +510,7 @@ export default function MediaBrowser({
     return (
       <span
         className={className}
-        title={
-          sortBy === 'dateAdded' && item.mediaType === 'film'
-            ? item.dateAddedSource
-            : sortField.label
-        }
+        title={sortBy === 'dateAdded' ? item.dateAddedSource : sortField.label}
       >
         {sortBy === 'dateAdded' ? 'Added ' : ''}
         {formatBrowseValue(sortField, getBrowseValues(item)[sortBy])}
@@ -636,6 +634,14 @@ export default function MediaBrowser({
     >
       <div className="browse-main">
         <div className="browse-toolbar">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => setAdding(true)}
+          >
+            Add {mediaType}
+          </Button>
           {mediaType === 'film' && (
             <Link className="browse-refresh" href="/jobs?refresh=films">
               Refresh
@@ -1243,8 +1249,7 @@ export default function MediaBrowser({
                           key={field.key}
                           className={field.type === 'text' ? '' : 'numeric'}
                           title={
-                            field.key === 'dateAdded' &&
-                            item.mediaType === 'film'
+                            field.key === 'dateAdded'
                               ? item.dateAddedSource
                               : formatBrowseValue(
                                   field,
@@ -1367,6 +1372,17 @@ export default function MediaBrowser({
           )}
         </div>
       </div>
+      {adding && (
+        <ManualMediaAdd
+          key={mediaType}
+          mediaType={mediaType}
+          onClose={() => setAdding(false)}
+          onAdded={(id) => {
+            setAdding(false)
+            openDetail(id)
+          }}
+        />
+      )}
       {selectedId && (
         <>
           <div className="inspector-backdrop" onClick={closeDetail} />

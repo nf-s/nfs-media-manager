@@ -63,7 +63,11 @@ The rules apply in this order; the first rule that any album satisfies decides.
 
 ### Manual links
 
-Each name on the page has **Link** or **Change**, which searches library albums, and linked names have **Unlink**. A name with several fitting albums lists them with **Link**. The album's Listening tab has **Remove** on each linked name, **Add** on each similar unlinked name, and **Add scrobbled name** to search every scrobbled name.
+Each name on the page has **Link** or **Change**, which opens a side panel with library search, possible matching albums, **Unlink** and **Automatic** where applicable. The table keeps its position while the panel is open. On phones the panel opens from the bottom.
+
+Unlinked names also have **Add new album**, which opens the panel's Spotify search with the scrobbled artist and album filled in. Search, choose the correct release and add it to the library; that scrobbled name is then linked to it. A result already in the library can be linked directly. If the album is added but linking fails, retrying the link uses the existing album instead of adding it again. Spotify provider credentials are required; the operation does not save albums to a Spotify account.
+
+The album's Listening tab has **Remove** on each linked name, **Add** on each similar unlinked name, and **Add scrobbled name** to search every scrobbled name.
 
 A manual link, and a name kept unlinked, are stored and survive every later sync and relink. **Automatic** on the page returns a name to automatic matching. A manual link is removed when its album is deleted.
 
@@ -84,6 +88,7 @@ A summary gives the number of names and scrobbles for each outcome. The list fil
 
 ## In the app
 
+- **Added** uses the earlier of the stored library date and the first linked Last.fm scrobble, including in album sorting and date ranges. If the stored date is unknown, the first linked scrobble is used. This is calculated from the current links when reading the library; it does not overwrite the stored date or provider history and does not require another sync. Unlinking or moving scrobbles updates Added immediately. Album details identify the date's source, and Edit keeps the original field under **Stored date added**.
 - **Album → Listening** shows total scrobbles, first and last listen, and scrobbles per month or year for the album or one of its tracks, as a line or bars; it opens on the monthly line. Pointing at or focusing the chart shows one period's count; the arrow keys move between periods. It lists the scrobbled names linked to the album, and unlinked names that resemble it: the same title under another artist, or a credited artist with a title that starts with the album's title or the reverse. Names can be added and removed there; see [manual links](#manual-links).
 - **Album → Tracks** shows each track's scrobble count. Track counts match scrobbled track names to the album's track titles.
 - **Browse** gains three album fields, recomputed at the end of every sync:
