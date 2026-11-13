@@ -31,7 +31,7 @@ database results against later recovery/cancellation.
 
 ## Schedules
 
-Every five minutes, between dispatches, the worker queues what the owner's schedules make due: the Last.fm scrobble sync, the YouTube subscription sync, the Spotify podcast sync and each scheduled Spotify playlist import. The hosted runtime does the same from its scheduled handler when scraping is enabled. A cooldown, halt or disconnected account defers a schedule to a later check; any other error is fatal like a dispatch error.
+Every five minutes, between dispatches, the worker queues what the owner's schedules make due: the Last.fm scrobble sync, the YouTube subscription sync, the Spotify podcast sync and each scheduled Spotify playlist import. The hosted runtime does the same from its scheduled handler when scraping is enabled. A cooldown, halt or disconnected account defers a schedule to a later check; any other error is fatal like a dispatch error. The hosted runtime delivers jobs on queues: a queue adds consumers only after a batch finishes, so Last.fm, Spotify and YouTube, whose sync jobs run for minutes, each have their own queue and never wait on one another; the other providers share one (`apps/server/src/cloudflare/job-queues.ts`).
 
 ## Interrupted Jobs
 

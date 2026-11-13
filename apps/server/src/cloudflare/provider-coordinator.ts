@@ -1,6 +1,7 @@
 import { DurableObject } from 'cloudflare:workers'
 import { env } from '@/env'
 import { withCloudDatabase } from '@/cloudflare/db'
+import { providerJobQueue } from '@/cloudflare/job-queues'
 import { CloudJobCoordinator } from '@/services/cloud-job-coordinator'
 import type {
   CloudJobMessage,
@@ -29,7 +30,7 @@ export class ProviderCoordinator extends DurableObject<CloudflareBindings> {
           }),
       },
       send: async (message) => {
-        await bindings.SCRAPE_QUEUE.send(message)
+        await providerJobQueue(bindings, message.provider).send(message)
       },
       policy: async (provider) => {
         const local = await bindings.LOCAL_WORKERS.getByName(provider).status()

@@ -20,10 +20,47 @@
     "SCRAPING_ENABLED": "true",
   },
   "queues": {
-    "producers": [{ "binding": "SCRAPE_QUEUE", "queue": "nfs-media-scrape" }],
+    // A queue adds consumers only between batches, so each provider with
+    // multi-minute sync jobs has its own queue; see src/cloudflare/job-queues.ts.
+    "producers": [
+      { "binding": "SCRAPE_QUEUE", "queue": "nfs-media-scrape" },
+      { "binding": "SCRAPE_QUEUE_LASTFM", "queue": "nfs-media-scrape-lastfm" },
+      {
+        "binding": "SCRAPE_QUEUE_SPOTIFY",
+        "queue": "nfs-media-scrape-spotify",
+      },
+      {
+        "binding": "SCRAPE_QUEUE_YOUTUBE",
+        "queue": "nfs-media-scrape-youtube",
+      },
+    ],
     "consumers": [
       {
         "queue": "nfs-media-scrape",
+        "max_batch_size": 1,
+        "max_batch_timeout": 1,
+        "max_concurrency": 16,
+        "max_retries": 3,
+        "dead_letter_queue": "nfs-media-scrape-dead",
+      },
+      {
+        "queue": "nfs-media-scrape-lastfm",
+        "max_batch_size": 1,
+        "max_batch_timeout": 1,
+        "max_concurrency": 16,
+        "max_retries": 3,
+        "dead_letter_queue": "nfs-media-scrape-dead",
+      },
+      {
+        "queue": "nfs-media-scrape-spotify",
+        "max_batch_size": 1,
+        "max_batch_timeout": 1,
+        "max_concurrency": 16,
+        "max_retries": 3,
+        "dead_letter_queue": "nfs-media-scrape-dead",
+      },
+      {
+        "queue": "nfs-media-scrape-youtube",
         "max_batch_size": 1,
         "max_batch_timeout": 1,
         "max_concurrency": 16,
