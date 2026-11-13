@@ -696,6 +696,37 @@ export const lastfmScrobble = pgTable(
   ],
 )
 
+// How one scrobbled artist and album name links to a library album. An
+// automatic row is recomputed on every relink; a manual row is kept, and a
+// manual row without an album keeps the name unlinked.
+export const lastfmAlbumLink = pgTable(
+  'lastfm_album_link',
+  {
+    username: text('username').notNull(),
+    artistKey: text('artist_key').notNull(),
+    albumKey: text('album_key').notNull(),
+    albumMediaItemId: text('album_media_item_id').references(
+      () => album.mediaItemId,
+      { onDelete: 'cascade' },
+    ),
+    // auto or manual.
+    source: text('source').notNull(),
+    strategy: text('strategy'),
+    // Equally fitting albums when automatic matching could not choose.
+    candidateIds: jsonb('candidate_ids')
+      .$type<string[]>()
+      .notNull()
+      .default([]),
+    ...timestampColumns,
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.username, table.artistKey, table.albumKey],
+    }),
+    index('lastfm_album_link_album_idx').on(table.albumMediaItemId),
+  ],
+)
+
 export const lastfmSync = pgTable('lastfm_sync', {
   username: text('username').primaryKey(),
   // running, failed, complete, or idle before the first run.

@@ -62,6 +62,8 @@ export const ListeningSourceSchema = z.object({
   artistName: z.string(),
   albumName: z.string(),
   count: z.number().int().positive(),
+  /** Linked by the owner, not by automatic matching. */
+  manual: z.boolean().default(false),
 })
 
 export const AlbumListeningSchema = z.object({
@@ -79,18 +81,35 @@ export const AlbumListeningSchema = z.object({
 })
 
 /**
- * Why a scrobbled artist and album name is or is not linked to a library album.
- * `pending`: exactly one album matches and it links at the next sync or relink.
- * `ambiguous`: several albums share the title and artist.
- * `artist-mismatch`: an album has the title but does not credit the artist.
+ * Whether a scrobbled artist and album name is linked to a library album.
+ * `manual`: linked by the owner. `excluded`: the owner keeps it unlinked.
+ * `ambiguous`: several albums fit equally well. `unmatched`: no album fits.
  */
 export const LastfmLinkReasonSchema = z.enum([
   'linked',
-  'pending',
+  'manual',
   'ambiguous',
-  'artist-mismatch',
-  'no-title-match',
+  'unmatched',
+  'excluded',
   'no-album',
+])
+
+/**
+ * The rule that linked a name automatically, strictest first.
+ * `exact`: same title and credited artist. `normalized`: ignoring accents,
+ * punctuation and a leading "The". `edition`: ignoring edition, disc and
+ * format qualifiers, or a collaborator credit. `title-tracks`: same title
+ * under another artist with shared tracks. `title-prefix`: one title starts
+ * with the other and tracks are shared. `tracks`: same artist and mostly
+ * shared tracks under another title.
+ */
+export const LastfmLinkStrategySchema = z.enum([
+  'exact',
+  'normalized',
+  'edition',
+  'title-tracks',
+  'title-prefix',
+  'tracks',
 ])
 
 export const LastfmLinkQuerySchema = z.object({
@@ -114,11 +133,35 @@ export const LastfmLinkGroupSchema = z.object({
   scrobbles: z.number().int().positive(),
   lastListenedAt: z.string().datetime(),
   reason: LastfmLinkReasonSchema,
-  /** The linked album, or the one a `pending` group will link to. */
+  /** The linked album, for `linked` and `manual`. */
   album: LastfmLinkAlbumSchema.nullable(),
-  /** Library albums with the same title, for `ambiguous` and `artist-mismatch`. */
+  /** The rule that linked it, for `linked`. */
+  strategy: LastfmLinkStrategySchema.nullable().default(null),
+  /** The equally fitting library albums, for `ambiguous`. */
   candidates: z.array(LastfmLinkAlbumSchema),
 })
+
+/**
+ * Sets how one scrobbled artist and album name is linked. `link` and `unlink`
+ * are kept across syncs; `auto` returns the name to automatic matching.
+ */
+export const LastfmLinkUpdateSchema = z.discriminatedUnion('action', [
+  z
+    .object({
+      action: z.literal('link'),
+      artistName: z.string().min(1).max(500),
+      albumName: z.string().min(1).max(500),
+      albumId: z.string().min(1),
+    })
+    .strict(),
+  z
+    .object({
+      action: z.enum(['unlink', 'auto']),
+      artistName: z.string().min(1).max(500),
+      albumName: z.string().min(1).max(500),
+    })
+    .strict(),
+])
 
 export const LastfmLinkSummarySchema = z.object({
   reason: LastfmLinkReasonSchema,
@@ -139,6 +182,8 @@ export type ListeningMonth = z.infer<typeof ListeningMonthSchema>
 export type ListeningTrack = z.infer<typeof ListeningTrackSchema>
 export type LastfmSyncSchedule = z.infer<typeof LastfmSyncScheduleSchema>
 export type LastfmLinkReason = z.infer<typeof LastfmLinkReasonSchema>
+export type LastfmLinkStrategy = z.infer<typeof LastfmLinkStrategySchema>
+export type LastfmLinkUpdate = z.infer<typeof LastfmLinkUpdateSchema>
 export type LastfmLinkGroup = z.infer<typeof LastfmLinkGroupSchema>
 export type LastfmLinkReport = z.infer<typeof LastfmLinkReportSchema>
 export type ListeningSource = z.infer<typeof ListeningSourceSchema>

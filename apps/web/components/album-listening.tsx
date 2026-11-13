@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { useEffect, useRef, useState } from 'react'
+import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
   AlbumListeningSchema,
@@ -10,11 +10,17 @@ import {
 } from '@repo/schemas/lastfm'
 import { Button } from '@repo/ui/components/ui/button'
 import { useConfig } from './providers'
+import {
+  ScrobbledNamePicker,
+  useLastfmLinkUpdate,
+} from './lastfm-link-controls'
+import { errorMessage } from './lastfm-sync'
+import { ListeningChart } from './listening-chart'
 import { fetchApiData } from '@/utils/api'
 import {
   albumListeningPath,
   listeningBars,
-  type ListeningBar,
+  type ListeningChartStyle,
   type ListeningPeriod,
 } from '@/utils/listening-chart'
 
@@ -43,26 +49,43 @@ function formatDate(value: string | null) {
   return value ? new Date(value).toLocaleDateString() : '-'
 }
 
-function scrobbleLabel(count: number) {
-  return `${count.toLocaleString()} ${count === 1 ? 'scrobble' : 'scrobbles'}`
-}
-
 function SourceList({
   label,
   sources,
+  action,
+  disabled,
+  onAction,
 }: {
   label: string
   sources: ListeningSource[]
+  action: string
+  disabled: boolean
+  onAction: (source: ListeningSource) => void
 }) {
   return (
     <section aria-label={label} className="text-sm">
       <h3 className="font-semibold">{label}</h3>
-      <ul>
+      <ul className="grid gap-1">
         {sources.map((source) => (
-          <li key={`${source.artistName}\u0000${source.albumName}`}>
-            {source.artistName} — {source.albumName} ·{' '}
-            <span className="tabular-nums">
-              {source.count.toLocaleString()}
+          <li
+            key={`${source.artistName}\u0000${source.albumName}`}
+            className="flex items-center gap-2"
+          >
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={disabled}
+              aria-label={`${action} ${source.artistName} — ${source.albumName}`}
+              onClick={() => onAction(source)}
+            >
+              {action}
+            </Button>
+            <span>
+              {source.artistName} — {source.albumName} ·{' '}
+              <span className="tabular-nums">
+                {source.count.toLocaleString()}
+              </span>
+              {source.manual ? ' · Linked manually' : ''}
             </span>
           </li>
         ))}
@@ -72,100 +95,73 @@ function SourceList({
 }
 
 export function ListeningSources({
+  albumId,
   data,
 }: {
+  albumId: string
   data: Pick<AlbumListeningData, 'sources' | 'similarUnlinked'>
 }) {
-  if (!data.sources.length && !data.similarUnlinked.length) return null
+  const update = useLastfmLinkUpdate()
+  const [adding, setAdding] = useState(false)
+  const add = (name: { artistName: string; albumName: string }) =>
+    update.mutate({
+      action: 'link',
+      artistName: name.artistName,
+      albumName: name.albumName,
+      albumId,
+    })
   return (
     <div className="mt-4 grid gap-3">
       {data.sources.length > 0 && (
-        <SourceList label="Linked scrobble names" sources={data.sources} />
+        <SourceList
+          label="Linked scrobble names"
+          sources={data.sources}
+          action="Remove"
+          disabled={update.isPending}
+          onAction={(source) =>
+            update.mutate({
+              action: 'unlink',
+              artistName: source.artistName,
+              albumName: source.albumName,
+            })
+          }
+        />
       )}
       {data.similarUnlinked.length > 0 && (
-        <div className="grid gap-1">
-          <SourceList
-            label="Similar unlinked names"
-            sources={data.similarUnlinked}
-          />
+        <SourceList
+          label="Similar unlinked names"
+          sources={data.similarUnlinked}
+          action="Add"
+          disabled={update.isPending}
+          onAction={add}
+        />
+      )}
+      <div className="grid gap-1 text-sm">
+        <div className="flex flex-wrap items-center gap-3">
+          <Button
+            size="sm"
+            variant="outline"
+            aria-expanded={adding}
+            onClick={() => setAdding(!adding)}
+          >
+            Add scrobbled name
+          </Button>
           <Link
-            className="text-sm underline underline-offset-2"
+            className="underline underline-offset-2"
             href="/imports/lastfm?mediaType=album&reason=unlinked"
           >
             Review scrobble links
           </Link>
         </div>
-      )}
-    </div>
-  )
-}
-
-export function ListeningChart({
-  bars,
-  period,
-}: {
-  bars: ListeningBar[]
-  period: ListeningPeriod
-}) {
-  const scroller = useRef<HTMLDivElement>(null)
-  const showCounts = period === 'year' || bars.length <= 24
-  useEffect(() => {
-    const element = scroller.current
-    if (element) element.scrollLeft = element.scrollWidth
-  }, [bars, period])
-  return (
-    <div
-      ref={scroller}
-      className="overflow-x-auto pb-1"
-      tabIndex={0}
-      aria-label={
-        period === 'year' ? 'Scrobbles by year' : 'Scrobbles by month'
-      }
-      role="group"
-    >
-      <ol className="flex h-48 items-end gap-0.5 border-b border-slate-300 pt-5">
-        {bars.map((bar, index) => {
-          const yearStart =
-            period === 'year' || index === 0 || bar.period.endsWith('-01')
-          return (
-            <li
-              key={bar.period}
-              title={`${bar.period}: ${scrobbleLabel(bar.count)}`}
-              className={`relative flex h-full flex-col justify-end ${
-                period === 'year' ? 'min-w-6 flex-1' : 'w-2.5 shrink-0'
-              }`}
-            >
-              <span className="sr-only">
-                {bar.period}: {scrobbleLabel(bar.count)}
-              </span>
-              {showCounts && bar.count > 0 && (
-                <span
-                  aria-hidden="true"
-                  className="text-center text-[11px] tabular-nums text-slate-600"
-                >
-                  {bar.count.toLocaleString()}
-                </span>
-              )}
-              <span
-                aria-hidden="true"
-                className="block bg-slate-500 hover:bg-slate-700"
-                style={{ height: `${bar.share}%` }}
-              />
-              {yearStart && (
-                <span
-                  aria-hidden="true"
-                  className={`absolute top-full mt-1 whitespace-nowrap text-[11px] tabular-nums text-slate-600 ${
-                    period === 'year' ? 'inset-x-0 text-center' : 'left-0'
-                  }`}
-                >
-                  {bar.year}
-                </span>
-              )}
-            </li>
-          )
-        })}
-      </ol>
-      <div className="h-5" aria-hidden="true" />
+        {adding && (
+          <ScrobbledNamePicker disabled={update.isPending} onPick={add} />
+        )}
+        {update.isError && (
+          <p role="alert">
+            {errorMessage(update.error, 'Could not update the link.')}
+          </p>
+        )}
+      </div>
     </div>
   )
 }
@@ -173,6 +169,7 @@ export function ListeningChart({
 export default function AlbumListening({ albumId }: { albumId: string }) {
   const [track, setTrack] = useState('')
   const [period, setPeriod] = useState<ListeningPeriod>('year')
+  const [chartStyle, setChartStyle] = useState<ListeningChartStyle>('bar')
   const listening = useAlbumListening(albumId, track)
   if (listening.isPending) return <p>Loading listening history...</p>
   if (listening.isError)
@@ -187,7 +184,7 @@ export default function AlbumListening({ albumId }: { albumId: string }) {
     return (
       <div>
         <p className="quiet">No scrobbles linked to this album.</p>
-        <ListeningSources data={data} />
+        <ListeningSources albumId={albumId} data={data} />
       </div>
     )
   const bars = listeningBars(data.months, period)
@@ -236,6 +233,19 @@ export default function AlbumListening({ albumId }: { albumId: string }) {
             </Button>
           ))}
         </div>
+        <div role="group" aria-label="Chart style" className="flex gap-1">
+          {(['bar', 'line'] satisfies ListeningChartStyle[]).map((value) => (
+            <Button
+              key={value}
+              size="sm"
+              variant={chartStyle === value ? 'default' : 'outline'}
+              aria-pressed={chartStyle === value}
+              onClick={() => setChartStyle(value)}
+            >
+              {value === 'bar' ? 'Bar' : 'Line'}
+            </Button>
+          ))}
+        </div>
         {listening.isPlaceholderData && (
           <span role="status" className="quiet">
             Loading...
@@ -243,11 +253,11 @@ export default function AlbumListening({ albumId }: { albumId: string }) {
         )}
       </div>
       {bars.length ? (
-        <ListeningChart bars={bars} period={period} />
+        <ListeningChart bars={bars} period={period} style={chartStyle} />
       ) : (
         <p className="quiet">No scrobbles for this track.</p>
       )}
-      <ListeningSources data={data} />
+      <ListeningSources albumId={albumId} data={data} />
     </div>
   )
 }

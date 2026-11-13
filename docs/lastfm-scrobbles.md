@@ -43,24 +43,48 @@ One row per scrobble: UTC timestamp, artist, album and track names as Last.fm re
 
 ## Linking scrobbles to albums
 
-After each sync, a scrobble is linked to a library album when the album title matches and the scrobble's artist is one of the album's credited artists. Matching ignores case and repeated spaces. Links are recomputed on every sync, so albums added later pick up their existing scrobbles. **Relink** on the page does the same from stored scrobbles without contacting Last.fm.
+After each sync, every scrobbled artist and album name is compared with the library's album titles, credited artists and track titles, and links to at most one album. Several scrobbled names can link to the same album, so a standard and a deluxe edition are counted together. Links are recomputed on every sync, so albums added later pick up their existing scrobbles. **Relink** on the page does the same from stored scrobbles without contacting Last.fm.
+
+The rules apply in this order; the first rule that any album satisfies decides.
+
+| Rule                                        | Links when                                                                                                                                                                                                                         |
+| ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Same title and artist                       | The title matches and the scrobbled artist is a credited artist, ignoring case and repeated spaces.                                                                                                                                |
+| Same title and artist, ignoring punctuation | As above, also ignoring accents, punctuation, apostrophes, `&` against "and", and a leading "The" on the artist.                                                                                                                   |
+| Another edition or artist credit            | The titles match once edition, disc and format qualifiers are removed, such as "(Deluxe Edition)", "[2011 Remaster]", "- Disc 1", "CD2" or "EP". The scrobbled artist is credited, or names a credited artist among collaborators. |
+| Same title and shared tracks                | The title matches under an artist the album does not credit, and at least half of the scrobbled tracks are on the album. A track named after the album does not count. This links compilation and mix tracks.                      |
+| Similar title and shared tracks             | One title starts with the other, the artist matches, and at least half of the scrobbled tracks are on the album.                                                                                                                   |
+| Same artist and shared tracks               | The artist matches, at least three scrobbled tracks are on the album, and they are at least three quarters of the scrobbled tracks. This links misspelled and translated titles.                                                   |
+
+- Between several fitting albums, the one sharing the most scrobbled tracks is chosen, then the one whose own title has no edition qualifier. If they still tie, nothing is linked and the name is listed under **Several albums match**.
+- The last two rules do not link a live, remix or compilation title to an album that is not one, or the reverse.
+- Track titles are compared without bracketed qualifiers or a "- Remastered" style suffix.
+- Scrobbles without an album name are not linked.
+
+### Manual links
+
+Each name on the page has **Link** or **Change**, which searches library albums, and linked names have **Unlink**. A name with several fitting albums lists them with **Link**. The album's Listening tab has **Remove** on each linked name, **Add** on each similar unlinked name, and **Add scrobbled name** to search every scrobbled name.
+
+A manual link, and a name kept unlinked, are stored and survive every later sync and relink. **Automatic** on the page returns a name to automatic matching. A manual link is removed when its album is deleted.
+
+### Link report
 
 The page lists every scrobbled artist and album name with its scrobble count, most played first, and one of these outcomes:
 
-| Outcome                       | Meaning                                                                                                                |
-| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| Linked                        | Shows the library album.                                                                                               |
-| Links at next sync            | Exactly one album matches but the link has not been applied yet, for example an album added since the last sync.       |
-| Several albums match          | More than one library album has this title and artist. The candidates are listed.                                      |
-| Title matches, artist differs | A library album has this title but does not credit the scrobbled artist. The candidates are listed with their artists. |
-| No album with this title      | Includes different edition titles, such as a deluxe edition.                                                           |
-| Scrobbled without an album    | Last.fm stored no album name.                                                                                          |
+| Outcome                    | Meaning                                                          |
+| -------------------------- | ---------------------------------------------------------------- |
+| Linked                     | Linked automatically. Shows the library album and the rule used. |
+| Linked manually            | Linked by the owner.                                             |
+| Several albums match       | The equally fitting albums are listed. Choose one with **Link**. |
+| No matching album          | No album fits. Most are albums that are not in the library.      |
+| Kept unlinked              | Unlinked by the owner; automatic matching skips it.              |
+| Scrobbled without an album | Last.fm stored no album name.                                    |
 
-A summary gives the number of names and scrobbles for each outcome. The list filters by outcome and searches artist and album names. Unlinked scrobbles remain stored. There is no manual link; to link a name, correct the library album's title or credited artists and relink.
+A summary gives the number of names and scrobbles for each outcome. The list filters by outcome and searches artist and album names. Unlinked scrobbles remain stored.
 
 ## In the app
 
-- **Album → Listening** shows total scrobbles, first and last listen, and scrobbles per year or month for the album or one of its tracks. It lists the scrobbled names linked to the album, and unlinked names that resemble it: the same title under another artist, or a credited artist with a title that starts with the album's title or the reverse.
+- **Album → Listening** shows total scrobbles, first and last listen, and scrobbles per year or month for the album or one of its tracks, as bars or a line. Pointing at or focusing the chart shows one period's count; the arrow keys move between periods. It lists the scrobbled names linked to the album, and unlinked names that resemble it: the same title under another artist, or a credited artist with a title that starts with the album's title or the reverse. Names can be added and removed there; see [manual links](#manual-links).
 - **Album → Tracks** shows each track's scrobble count. Track counts match scrobbled track names to the album's track titles.
 - **Browse** gains three album fields, recomputed at the end of every sync:
   - `Last listened`: date of the most recent linked scrobble.
@@ -71,4 +95,4 @@ To find albums played often but not recently, filter `Scrobbles` with a minimum 
 
 ## Verification
 
-`integration/lastfm-scrobbles.integration.ts` runs the sync through the job dispatcher with mocked HTTP and a temporary database. It covers chained jobs, the fixed window, failure and resume from Jobs and from the page, cancellation, overlap without duplicates, the schedule, album linking, the link report, browse fields and the album listening report. It makes no Last.fm requests.
+`integration/lastfm-scrobbles.integration.ts` runs the sync through the job dispatcher with mocked HTTP and a temporary database. It covers chained jobs, the fixed window, failure and resume from Jobs and from the page, cancellation, overlap without duplicates, the schedule, album linking, manual links, the link report, browse fields and the album listening report. It makes no Last.fm requests. `src/lib/lastfm-album-matching.test.ts` covers each linking rule with synthetic albums.

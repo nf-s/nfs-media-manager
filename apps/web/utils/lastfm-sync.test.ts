@@ -2,13 +2,16 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
   LastfmLinkReasonSchema,
+  LastfmLinkStrategySchema,
   type LastfmSyncStatus,
 } from '@repo/schemas/lastfm'
 import {
   LASTFM_SYNC_POLL_MS,
+  albumPickerPath,
   lastfmLinkFilter,
   lastfmLinkFilters,
   lastfmLinkReasonLabels,
+  lastfmLinkStrategyLabels,
   lastfmLinkSummaryRows,
   lastfmLinksPath,
   lastfmSyncPollInterval,
@@ -29,7 +32,7 @@ test('status is polled only while a sync job is queued or running', () => {
 
 test('link filter accepts reasons and unlinked, ignoring anything else', () => {
   assert.equal(lastfmLinkFilter('unlinked'), 'unlinked')
-  assert.equal(lastfmLinkFilter('artist-mismatch'), 'artist-mismatch')
+  assert.equal(lastfmLinkFilter('excluded'), 'excluded')
   assert.equal(lastfmLinkFilter('unknown'), '')
   assert.equal(lastfmLinkFilter(''), '')
   assert.equal(lastfmLinkFilter(null), '')
@@ -44,10 +47,10 @@ test('link filters list All, Unlinked, then every reason with its label', () => 
     lastfmLinkFilters.slice(2).map((option) => option.label),
     [
       'Linked',
-      'Links at next sync',
+      'Linked manually',
       'Several albums match',
-      'Title matches, artist differs',
-      'No album with this title',
+      'No matching album',
+      'Kept unlinked',
       'Scrobbled without an album',
     ],
   )
@@ -64,6 +67,21 @@ test('links path includes only the filters in use', () => {
   )
 })
 
+test('pickers request a short page of names or albums', () => {
+  assert.equal(
+    lastfmLinksPath({ reason: '', q: 'fixture', page: 1, size: 8 }),
+    '/api/v1/lastfm/links?page=1&size=8&q=fixture',
+  )
+  assert.equal(
+    albumPickerPath('Album & fixture', 8),
+    '/api/v1/albums?q=Album+%26+fixture&size=8',
+  )
+  assert.deepEqual(
+    Object.keys(lastfmLinkStrategyLabels),
+    LastfmLinkStrategySchema.options,
+  )
+})
+
 test('summary rows keep reason order and fill missing reasons with zero', () => {
   const rows = lastfmLinkSummaryRows([
     { reason: 'no-album', groups: 2, scrobbles: 9 },
@@ -74,7 +92,7 @@ test('summary rows keep reason order and fill missing reasons with zero', () => 
     LastfmLinkReasonSchema.options,
   )
   assert.deepEqual(rows[0], { reason: 'linked', groups: 5, scrobbles: 120 })
-  assert.deepEqual(rows[1], { reason: 'pending', groups: 0, scrobbles: 0 })
+  assert.deepEqual(rows[1], { reason: 'manual', groups: 0, scrobbles: 0 })
   assert.deepEqual(rows[5], { reason: 'no-album', groups: 2, scrobbles: 9 })
-  assert.equal(lastfmLinkReasonLabels.pending, 'Links at next sync')
+  assert.equal(lastfmLinkReasonLabels.excluded, 'Kept unlinked')
 })

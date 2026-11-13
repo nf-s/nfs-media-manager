@@ -3,6 +3,7 @@ import { createMiddleware } from 'hono/factory'
 import {
   LastfmLinkQuerySchema,
   LastfmLinkReportSchema,
+  LastfmLinkUpdateSchema,
   LastfmSyncInputSchema,
   LastfmSyncSettingsSchema,
   LastfmSyncStatusSchema,
@@ -22,6 +23,7 @@ import {
   getLastfmLinkReport,
   getLastfmSyncStatus,
   relinkLastfmScrobbles,
+  setLastfmAlbumLink,
   setLastfmSyncSchedule,
 } from '@/services/lastfm-scrobbles'
 import { queueLastfmSync } from '@/services/lastfm-sync-jobs'
@@ -136,6 +138,33 @@ const app: OpenAPIHono<AppEnv> = createOpenAPIApp()
       generateJsonResponse(
         c,
         await getLastfmLinkReport(c.req.valid('query')),
+        200,
+      ),
+  )
+  .openapi(
+    createRoute({
+      method: 'put',
+      path: '/links',
+      middleware: [authMiddleware(), sameOrigin],
+      request: {
+        body: {
+          required: true,
+          content: { 'application/json': { schema: LastfmLinkUpdateSchema } },
+        },
+      },
+      responses: {
+        200: statusResponse(
+          'Link one scrobbled artist and album name to an album, keep it unlinked, or return it to automatic matching',
+        ),
+        401: jsonErrorResponse('Unauthorized'),
+        404: jsonErrorResponse('Scrobbled name or album not found'),
+        422: validationErrorResponse,
+      },
+    }),
+    async (c) =>
+      generateJsonResponse(
+        c,
+        await setLastfmAlbumLink(c.req.valid('json')),
         200,
       ),
   )

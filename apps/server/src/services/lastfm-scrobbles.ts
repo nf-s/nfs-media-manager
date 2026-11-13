@@ -8,9 +8,11 @@ import {
   LastfmLinkQuerySchema,
   LastfmLinkReasonSchema,
   LastfmLinkReportSchema,
+  LastfmLinkStrategySchema,
   LastfmSyncScheduleSchema,
   type AlbumListening,
   type LastfmLinkReport,
+  type LastfmLinkUpdate,
   type LastfmSyncSchedule,
   type LastfmSyncStatus,
 } from '@repo/schemas/lastfm'
@@ -26,12 +28,15 @@ import {
 } from '@/plugins/builtin/album-provider-helpers'
 import { lastFmErrorCode, lastfmPlugin } from '@/plugins/builtin/lastfm'
 import {
+  album,
+  lastfmAlbumLink,
   lastfmScrobble,
   lastfmSync,
   providerSecret,
   scrapeJob,
   track,
 } from '@/schemas/db'
+import { linkScrobblesToAlbums } from './lastfm-album-links'
 import {
   createProviderRequest,
   recordProviderFailure,
@@ -50,7 +55,7 @@ const LOG_EVERY_PAGES = 50
 const RETRY_DELAYS_MS = [5000, 20000, 60000]
 // Operation failed, service offline and temporarily unavailable.
 const TEMPORARY_ERROR_CODES = [8, 11, 16]
-const MAX_LINK_CANDIDATES = 10
+const MAX_ALBUM_SOURCES = 50
 // Offline scrobbles can arrive later with older timestamps.
 const OVERLAP_SECONDS = 7 * 24 * 60 * 60
 // Earlier timestamps come from devices with an unset clock.
@@ -158,28 +163,6 @@ function scrobbleRows(
 // SQL form of `albumNameKey`.
 const nameKey = (value: ReturnType<typeof sql>) =>
   sql`lower(regexp_replace(trim(${value}), '[[:space:]]+', ' ', 'g'))`
-
-// One row per album and credited artist, keyed the way scrobbles are.
-const albumKeys = sql`
-  select mi.id, ${nameKey(sql`mi.title`)} as album_key,
-    ${nameKey(sql`a.name`)} as artist_key
-  from media_item mi
-  join media_credit c on c.media_item_id = mi.id and c.role = 'artist'
-  join artist a on a.id = c.artist_id
-  where mi.media_type = 'album'`
-
-/** Links scrobbles to the one album whose title and a credited artist match by name. */
-async function linkScrobblesToAlbums() {
-  await db.execute(sql`
-    with album_keys as (${albumKeys}), unambiguous as (
-      select album_key, artist_key, min(id) as id
-      from album_keys group by album_key, artist_key having count(distinct id) = 1
-    )
-    update lastfm_scrobble s set album_media_item_id = u.id
-    from unambiguous u
-    where s.album_key = u.album_key and s.artist_key = u.artist_key
-      and s.album_media_item_id is distinct from u.id`)
-}
 
 /** Recomputes the scrobble-derived album browse values, including the rolling windows. */
 async function refreshAlbumListeningFields() {
@@ -516,7 +499,7 @@ async function storePage(
 }
 
 async function completeRun(account: string, token: string, run: SyncRow) {
-  await linkScrobblesToAlbums()
+  await linkScrobblesToAlbums(account)
   await refreshAlbumListeningFields()
   await db
     .update(lastfmSync)
@@ -537,7 +520,86 @@ async function completeRun(account: string, token: string, run: SyncRow) {
 
 /** Recomputes links and browse fields from stored scrobbles; no Last.fm requests. */
 export async function relinkLastfmScrobbles() {
-  await linkScrobblesToAlbums()
+  const configured = await credentials()
+  if (configured) {
+    await linkScrobblesToAlbums(configured.account)
+    await refreshAlbumListeningFields()
+  }
+  return getLastfmSyncStatus()
+}
+
+/**
+ * Links one scrobbled artist and album name to an album, keeps it unlinked,
+ * or returns it to automatic matching. Manual choices survive later syncs.
+ */
+export async function setLastfmAlbumLink(input: LastfmLinkUpdate) {
+  const { account } = await requireCredentials()
+  const artistKey = albumNameKey(input.artistName)
+  const albumKey = albumNameKey(input.albumName)
+  const [scrobbled] = await db
+    .select({ id: lastfmScrobble.id })
+    .from(lastfmScrobble)
+    .where(
+      and(
+        eq(lastfmScrobble.username, account),
+        eq(lastfmScrobble.artistKey, artistKey),
+        eq(lastfmScrobble.albumKey, albumKey),
+      ),
+    )
+    .limit(1)
+  if (!scrobbled)
+    throw new ServerError({
+      statusCode: 404,
+      message: 'No scrobbles have this artist and album name.',
+    })
+  const group = and(
+    eq(lastfmAlbumLink.username, account),
+    eq(lastfmAlbumLink.artistKey, artistKey),
+    eq(lastfmAlbumLink.albumKey, albumKey),
+  )
+  if (input.action === 'auto') {
+    await db.delete(lastfmAlbumLink).where(group)
+    await linkScrobblesToAlbums(account)
+  } else {
+    const albumId = input.action === 'link' ? input.albumId : null
+    if (albumId !== null) {
+      const [found] = await db
+        .select({ id: album.mediaItemId })
+        .from(album)
+        .where(eq(album.mediaItemId, albumId))
+      if (!found)
+        throw new ServerError({ statusCode: 404, message: 'Album not found' })
+    }
+    const link = {
+      albumMediaItemId: albumId,
+      source: 'manual',
+      strategy: null,
+      candidateIds: [],
+    }
+    await db.transaction(async (tx) => {
+      await tx
+        .insert(lastfmAlbumLink)
+        .values({ username: account, artistKey, albumKey, ...link })
+        .onConflictDoUpdate({
+          target: [
+            lastfmAlbumLink.username,
+            lastfmAlbumLink.artistKey,
+            lastfmAlbumLink.albumKey,
+          ],
+          set: link,
+        })
+      await tx
+        .update(lastfmScrobble)
+        .set({ albumMediaItemId: albumId })
+        .where(
+          and(
+            eq(lastfmScrobble.username, account),
+            eq(lastfmScrobble.artistKey, artistKey),
+            eq(lastfmScrobble.albumKey, albumKey),
+          ),
+        )
+    })
+  }
   await refreshAlbumListeningFields()
   return getLastfmSyncStatus()
 }
@@ -656,7 +718,6 @@ const LinkAlbumRowsSchema = z.array(
     id: z.string(),
     slug: z.string(),
     title: z.string(),
-    album_key: z.string(),
     artists: z.array(z.string()),
   }),
 )
@@ -664,11 +725,12 @@ const LinkGroupRowsSchema = z.array(
   z.object({
     artist_name: z.string(),
     album_name: z.string().nullable(),
-    album_key: z.string().nullable(),
     scrobbles: z.coerce.number(),
     last: z.coerce.number(),
     reason: LastfmLinkReasonSchema,
     album_id: z.string().nullable(),
+    strategy: LastfmLinkStrategySchema.nullable().catch(null),
+    candidate_ids: z.array(z.string()).nullable(),
     total: z.coerce.number(),
   }),
 )
@@ -683,32 +745,24 @@ const LinkSummaryRowsSchema = z.array(
 /** Every scrobbled artist and album name for the account with its link outcome. */
 function classifiedGroups(account: string) {
   return sql`
-    with album_keys as (${albumKeys}),
-    pairs as (
-      select album_key, artist_key, count(distinct id) as n, min(id) as id
-      from album_keys group by album_key, artist_key
-    ), titles as (
-      select ${nameKey(sql`title`)} as album_key from media_item
-      where media_type = 'album' group by 1
-    ), groups as (
+    with groups as (
       select artist_key, album_key, max(artist_name) as artist_name,
         max(album_name) as album_name, count(*) as scrobbles,
-        extract(epoch from max(listened_at))::float8 as last,
-        max(album_media_item_id) as linked_id
+        extract(epoch from max(listened_at))::float8 as last
       from lastfm_scrobble where username = ${account}
       group by artist_key, album_key
     ), classified as (
       select g.*, case
           when g.album_key is null then 'no-album'
-          when g.linked_id is not null then 'linked'
-          when p.n > 1 then 'ambiguous'
-          when p.n = 1 then 'pending'
-          when t.album_key is not null then 'artist-mismatch'
-          else 'no-title-match' end as reason,
-        coalesce(g.linked_id, case when p.n = 1 then p.id end) as album_id
+          when l.source = 'manual' and l.album_media_item_id is not null then 'manual'
+          when l.source = 'manual' then 'excluded'
+          when l.album_media_item_id is not null then 'linked'
+          when jsonb_array_length(l.candidate_ids) > 0 then 'ambiguous'
+          else 'unmatched' end as reason,
+        l.album_media_item_id as album_id, l.strategy, l.candidate_ids
       from groups g
-      left join pairs p on p.album_key = g.album_key and p.artist_key = g.artist_key
-      left join titles t on t.album_key = g.album_key
+      left join lastfm_album_link l on l.username = ${account}
+        and l.artist_key = g.artist_key and l.album_key = g.album_key
     )`
 }
 
@@ -738,14 +792,14 @@ export async function getLastfmLinkReport(
   const rows = LinkGroupRowsSchema.parse(
     (
       await db.execute(sql`${groups}
-        select artist_name, album_name, album_key, scrobbles, last, reason,
-          album_id, count(*) over () as total
+        select artist_name, album_name, scrobbles, last, reason, album_id,
+          strategy, candidate_ids, count(*) over () as total
         from classified
         where ${
           query.reason === undefined
             ? sql`true`
             : query.reason === 'unlinked'
-              ? sql`reason <> 'linked'`
+              ? sql`reason not in ('linked', 'manual')`
               : sql`reason = ${query.reason}`
         } and ${
           query.q
@@ -756,68 +810,48 @@ export async function getLastfmLinkReport(
         limit ${query.size} offset ${(query.page - 1) * query.size}`)
     ).rows,
   )
-  const ids = rows.flatMap((row) => (row.album_id ? [row.album_id] : []))
-  const titleKeys = rows.flatMap((row) =>
-    row.album_key &&
-    (row.reason === 'ambiguous' || row.reason === 'artist-mismatch')
-      ? [row.album_key]
-      : [],
-  )
-  const list = (values: string[]) =>
-    sql.join(
-      values.map((value) => sql`${value}`),
-      sql`, `,
-    )
-  const albums =
-    ids.length || titleKeys.length
-      ? LinkAlbumRowsSchema.parse(
-          (
-            await db.execute(sql`
-              select mi.id, mi.slug, mi.title,
-                ${nameKey(sql`mi.title`)} as album_key,
-                coalesce(array_agg(a.name order by c.billing_order)
-                  filter (where a.id is not null), '{}') as artists
-              from media_item mi
-              left join media_credit c on c.media_item_id = mi.id and c.role = 'artist'
-              left join artist a on a.id = c.artist_id
-              where mi.media_type = 'album' and (
-                ${ids.length ? sql`mi.id in (${list(ids)})` : sql`false`}
-                or ${
-                  titleKeys.length
-                    ? sql`${nameKey(sql`mi.title`)} in (${list(titleKeys)})`
-                    : sql`false`
-                })
-              group by mi.id order by mi.title, mi.id`)
-          ).rows,
-        )
-      : []
-  const album = ({ id, slug, title, artists }: (typeof albums)[number]) => ({
-    id,
-    slug,
-    title,
-    artists,
-  })
+  const ids = [
+    ...new Set(
+      rows.flatMap((row) => [
+        ...(row.album_id ? [row.album_id] : []),
+        ...(row.reason === 'ambiguous' ? (row.candidate_ids ?? []) : []),
+      ]),
+    ),
+  ]
+  const albums = ids.length
+    ? LinkAlbumRowsSchema.parse(
+        (
+          await db.execute(sql`
+            select mi.id, mi.slug, mi.title,
+              coalesce(array_agg(a.name order by c.billing_order)
+                filter (where a.id is not null), '{}') as artists
+            from media_item mi
+            left join media_credit c on c.media_item_id = mi.id and c.role = 'artist'
+            left join artist a on a.id = c.artist_id
+            where mi.media_type = 'album' and mi.id in (${sql.join(
+              ids.map((id) => sql`${id}`),
+              sql`, `,
+            )})
+            group by mi.id order by mi.title, mi.id`)
+        ).rows,
+      )
+    : []
   const totalCount = rows[0]?.total ?? 0
   return LastfmLinkReportSchema.parse({
     summary,
-    items: rows.map((row) => {
-      const linked = albums.find((item) => item.id === row.album_id)
-      return {
-        artistName: row.artist_name,
-        albumName: row.album_name,
-        scrobbles: row.scrobbles,
-        lastListenedAt: isoSeconds(row.last),
-        reason: row.reason,
-        album: linked ? album(linked) : null,
-        candidates:
-          row.reason === 'ambiguous' || row.reason === 'artist-mismatch'
-            ? albums
-                .filter((item) => item.album_key === row.album_key)
-                .slice(0, MAX_LINK_CANDIDATES)
-                .map(album)
-            : [],
-      }
-    }),
+    items: rows.map((row) => ({
+      artistName: row.artist_name,
+      albumName: row.album_name,
+      scrobbles: row.scrobbles,
+      lastListenedAt: isoSeconds(row.last),
+      reason: row.reason,
+      album: albums.find((item) => item.id === row.album_id) ?? null,
+      strategy: row.reason === 'linked' ? row.strategy : null,
+      candidates:
+        row.reason === 'ambiguous'
+          ? albums.filter((item) => row.candidate_ids?.includes(item.id))
+          : [],
+    })),
     totalCount,
     page: query.page,
     size: query.size,
@@ -851,12 +885,14 @@ const SourceRowsSchema = z.array(
     artist_name: z.string(),
     album_name: z.string(),
     count: z.coerce.number(),
+    manual: z.boolean().default(false),
   }),
 )
 const source = (row: z.infer<typeof SourceRowsSchema>[number]) => ({
   artistName: row.artist_name,
   albumName: row.album_name,
   count: row.count,
+  manual: row.manual,
 })
 
 const isoSeconds = (value: number | null) =>
@@ -902,12 +938,16 @@ export async function getAlbumListening(
   const sources = SourceRowsSchema.parse(
     (
       await db.execute(sql`
-        select max(artist_name) as artist_name, max(album_name) as album_name,
-          count(*) as count
-        from lastfm_scrobble
-        where album_media_item_id = ${albumId} and album_name is not null
-        group by artist_key, album_key
-        order by count(*) desc, artist_key, album_key limit 20`)
+        select max(s.artist_name) as artist_name,
+          max(s.album_name) as album_name, count(*) as count,
+          coalesce(bool_or(l.source = 'manual'), false) as manual
+        from lastfm_scrobble s
+        left join lastfm_album_link l on l.username = s.username
+          and l.artist_key = s.artist_key and l.album_key = s.album_key
+        where s.album_media_item_id = ${albumId} and s.album_name is not null
+        group by s.artist_key, s.album_key
+        order by count(*) desc, s.artist_key, s.album_key
+        limit ${MAX_ALBUM_SOURCES}`)
     ).rows,
   )
   // Same title under another artist, or the same artist with a longer or

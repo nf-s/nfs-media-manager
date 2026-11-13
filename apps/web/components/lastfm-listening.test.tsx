@@ -14,9 +14,10 @@ import {
 } from '@repo/schemas/lastfm'
 import ImportsWorkspace from './imports-workspace'
 import LastfmSyncPageClient from './pages/lastfm-sync-page-client'
-import AlbumListening, { ListeningChart } from './album-listening'
+import AlbumListening from './album-listening'
+import { ListeningChart } from './listening-chart'
 import { ConfigContext } from './providers'
-import { yearBars } from '@/utils/listening-chart'
+import { monthBars, yearBars } from '@/utils/listening-chart'
 
 const network = mock.method(globalThis, 'fetch', async () => {
   throw new Error('Network forbidden in UI tests')
@@ -48,7 +49,7 @@ const fixtureAlbum = {
 const report = LastfmLinkReportSchema.parse({
   page: 1,
   size: 50,
-  totalCount: 4,
+  totalCount: 5,
   pageCount: 1,
   summary: [
     { reason: 'linked', groups: 1, scrobbles: 40 },
@@ -62,6 +63,16 @@ const report = LastfmLinkReportSchema.parse({
       scrobbles: 40,
       lastListenedAt: '2026-01-02T00:00:00Z',
       reason: 'linked',
+      album: fixtureAlbum,
+      strategy: 'edition',
+      candidates: [],
+    },
+    {
+      artistName: 'Second artist',
+      albumName: 'Chosen title',
+      scrobbles: 9,
+      lastListenedAt: '2026-01-01T12:00:00Z',
+      reason: 'manual',
       album: fixtureAlbum,
       candidates: [],
     },
@@ -232,25 +243,39 @@ test('failed and stopped syncs offer Resume sync with the stored error', () => {
 
 test('scrobble links show reason totals and link library albums', () => {
   const html = syncPage(idle)
-  assert.match(html, /credited artists, ignoring case and repeated\s+spaces/)
+  assert.match(html, /by title,\s+credited artist and shared track titles/)
   assert.match(html, /Links are recomputed after every sync/)
   assert.match(
     html,
     /aria-pressed="false">Linked<\/button><\/td><td>1<\/td><td>40<\/td>/,
   )
-  assert.match(html, /Links at next sync<\/button><\/td><td>0<\/td><td>0<\/td>/)
+  assert.match(html, /Kept unlinked<\/button><\/td><td>0<\/td><td>0<\/td>/)
+  assert.match(
+    html,
+    /<td>Linked<div class="muted">Another edition or artist credit<\/div><\/td>/,
+  )
   assert.match(html, /<option value="unlinked">Unlinked<\/option>/)
   assert.match(html, /href="\/albums\/album-1">Album fixture<\/a>/)
   assert.match(html, /<td>Several albums match<\/td>/)
   assert.match(
     html,
-    /href="\/albums\/album-2">Shared title — Artist fixture<\/a>/,
+    /href="\/albums\/album-2">Shared title — Artist fixture<\/a><button[^>]*>Link</,
   )
   assert.match(
     html,
     /href="\/albums\/album-3">Shared title — Artist fixture, Second artist<\/a>/,
   )
   assert.match(html, /<td>-<\/td><td class="tabular-nums">2<\/td>/)
+  // Linked names can be changed or unlinked; a manual link can return to automatic.
+  assert.equal(html.match(/>Change</g)?.length, 2)
+  assert.equal(html.match(/>Unlink</g)?.length, 2)
+  assert.equal(html.match(/>Automatic</g)?.length, 1)
+  // The ambiguous name offers Link; the name without an album has no actions.
+  assert.match(html, /aria-expanded="false"[^>]*>Link</)
+  assert.match(
+    html,
+    /<td>Scrobbled without an album<\/td><td>-<\/td><td><\/td>/,
+  )
   assert.match(html, />Relink</)
   assert.doesNotMatch(html, /disabled=""[^>]*>Relink/)
 })
@@ -281,7 +306,13 @@ test('listening tab summarises scrobbles with a year chart and track selector', 
       },
     ],
     sources: [
-      { artistName: 'Artist fixture', albumName: 'Album fixture', count: 12 },
+      { artistName: 'Artist fixture', albumName: 'Album fixture', count: 9 },
+      {
+        artistName: 'Second artist',
+        albumName: 'Other title',
+        count: 3,
+        manual: true,
+      },
     ],
   })
   const html = render(
@@ -301,8 +332,14 @@ test('listening tab summarises scrobbles with a year chart and track selector', 
     assert.ok(html.includes(label), label)
   assert.match(html, /aria-pressed="true"[^>]*>Year</)
   assert.match(html, /Linked scrobble names/)
+  assert.match(
+    html,
+    /aria-label="Remove Artist fixture — Album fixture"[^>]*>Remove</,
+  )
   assert.match(html, /Artist fixture — Album fixture ·/)
-  assert.doesNotMatch(html, /Similar unlinked names|Review scrobble links/)
+  assert.match(html, /Second artist — Other title ·.*Linked manually/)
+  assert.match(html, />Add scrobbled name</)
+  assert.doesNotMatch(html, /Similar unlinked names/)
   assert.doesNotMatch(html, /Loading/)
 })
 
@@ -355,18 +392,66 @@ test('albums without linked scrobbles list similar unlinked names', () => {
   assert.match(html, /Artist fixture — Album fixture \(Deluxe\) ·/)
   assert.match(
     html,
+    /aria-label="Add Artist fixture — Album fixture \(Deluxe\)"[^>]*>Add</,
+  )
+  assert.match(
+    html,
     /href="\/imports\/lastfm\?mediaType=album&amp;reason=unlinked">Review scrobble links/,
   )
 })
 
-test('chart bars carry accessible period and count text', () => {
+test('chart lists every period for assistive technology without count labels on bars', () => {
   const html = renderToStaticMarkup(
     <ListeningChart
       period="year"
+      style="bar"
       bars={yearBars([{ month: '2024-03', count: 1 }])}
     />,
   )
-  assert.match(html, /title="2024: 1 scrobble"/)
-  assert.match(html, /class="sr-only">2024: 1 scrobble</)
-  assert.match(html, /height:100%/)
+  assert.match(html, /aria-label="Scrobbles by year"/)
+  assert.match(html, /tabindex="0"/)
+  assert.match(html, /<li>2024: 1 scrobble<\/li>/)
+  assert.match(html, /<rect /)
+  assert.doesNotMatch(html, /<polyline/)
+  assert.doesNotMatch(html, />0\.5</)
+})
+
+test('line chart draws a polyline with markers and labels January years in month view', () => {
+  const html = renderToStaticMarkup(
+    <ListeningChart
+      period="month"
+      style="line"
+      bars={monthBars([
+        { month: '2019-11', count: 3 },
+        { month: '2020-02', count: 4 },
+      ])}
+    />,
+  )
+  assert.match(html, /aria-label="Scrobbles by month"/)
+  assert.match(html, /<polyline /)
+  assert.match(html, /<polygon /)
+  assert.equal(html.match(/<circle /g)?.length, 4)
+  assert.match(html, /<li>2019-12: 0 scrobbles<\/li>/)
+  assert.match(html, />2020<\/text>/)
+})
+
+test('listening tab offers bar and line chart styles', () => {
+  const html = render(
+    [
+      [
+        ['album-listening', 'one', ''],
+        AlbumListeningSchema.parse({
+          total: 2,
+          firstListenedAt: '2024-03-02T10:00:00Z',
+          lastListenedAt: '2024-03-05T10:00:00Z',
+          months: [{ month: '2024-03', count: 2 }],
+          tracks: [],
+        }),
+      ],
+    ],
+    <AlbumListening albumId="one" />,
+  )
+  assert.match(html, /role="group" aria-label="Chart style"/)
+  assert.match(html, /aria-pressed="true"[^>]*>Bar</)
+  assert.match(html, /aria-pressed="false"[^>]*>Line</)
 })

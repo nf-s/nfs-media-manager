@@ -4,6 +4,7 @@ import {
   LastfmLinkReasonSchema,
   type LastfmLinkReason,
   type LastfmLinkReport,
+  type LastfmLinkStrategy,
   type LastfmSyncSchedule,
   type LastfmSyncStatus,
 } from '@repo/schemas/lastfm'
@@ -31,11 +32,20 @@ export const lastfmScheduleLabels: Record<LastfmSyncSchedule, string> = {
 
 export const lastfmLinkReasonLabels: Record<LastfmLinkReason, string> = {
   linked: 'Linked',
-  pending: 'Links at next sync',
+  manual: 'Linked manually',
   ambiguous: 'Several albums match',
-  'artist-mismatch': 'Title matches, artist differs',
-  'no-title-match': 'No album with this title',
+  unmatched: 'No matching album',
+  excluded: 'Kept unlinked',
   'no-album': 'Scrobbled without an album',
+}
+
+export const lastfmLinkStrategyLabels: Record<LastfmLinkStrategy, string> = {
+  exact: 'Same title and artist',
+  normalized: 'Same title and artist, ignoring punctuation',
+  edition: 'Another edition or artist credit',
+  'title-tracks': 'Same title and shared tracks',
+  'title-prefix': 'Similar title and shared tracks',
+  tracks: 'Same artist and shared tracks',
 }
 
 export type LastfmLinkFilter = NonNullable<
@@ -66,18 +76,25 @@ export function lastfmLinksPath({
   reason,
   q,
   page,
+  size = LASTFM_LINKS_PAGE_SIZE,
 }: {
   reason: LastfmLinkFilter | ''
   q: string
   page: number
+  size?: number
 }) {
   const params = new URLSearchParams({
     page: String(page),
-    size: String(LASTFM_LINKS_PAGE_SIZE),
+    size: String(size),
   })
   if (reason) params.set('reason', reason)
   if (q) params.set('q', q)
   return `/api/v1/lastfm/links?${params}`
+}
+
+/** Library albums whose title or artist matches the search. */
+export function albumPickerPath(q: string, size: number) {
+  return `/api/v1/albums?${new URLSearchParams({ q, size: String(size) })}`
 }
 
 /** Every reason in display order, with zero totals for reasons the server omitted. */

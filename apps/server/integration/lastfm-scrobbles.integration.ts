@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import pg from 'pg'
+import { eq } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { migrate } from 'drizzle-orm/node-postgres/migrator'
 import {
@@ -149,6 +150,7 @@ beforeEach(async () => {
   })
   await databaseClient.delete(schema.scrapeJob)
   await databaseClient.delete(schema.lastfmScrobble)
+  await databaseClient.delete(schema.lastfmAlbumLink)
   await databaseClient.delete(schema.lastfmSync)
   await databaseClient.delete(schema.mediaItem)
   await databaseClient.delete(schema.artist)
@@ -527,6 +529,7 @@ describe('Last.fm scrobble sync jobs with offline HTTP and a temporary database'
         scrobble(recent - 60, 'Fourth', 'Late album'),
         scrobble(recent - 70, 'Fifth', 'Unknown album'),
         scrobble(recent - 80, 'Sixth', ''),
+        scrobble(recent - 90, 'Seventh', 'Album Fixture (Deluxe Edition)'),
       ]),
     )
     await syncToEnd()
@@ -539,17 +542,15 @@ describe('Last.fm scrobble sync jobs with offline HTTP and a temporary database'
       artists: ['Artist fixture'],
     }
     const report = await getLastfmLinkReport()
-    expect(report).toMatchObject({ totalCount: 6, page: 1, pageCount: 1 })
+    expect(report).toMatchObject({ totalCount: 7, page: 1, pageCount: 1 })
     expect(
       Object.fromEntries(
         report.summary.map((row) => [row.reason, [row.groups, row.scrobbles]]),
       ),
     ).toEqual({
-      linked: [1, 3],
-      'artist-mismatch': [1, 2],
+      linked: [2, 4],
+      unmatched: [3, 4],
       ambiguous: [1, 1],
-      pending: [1, 1],
-      'no-title-match': [1, 1],
       'no-album': [1, 1],
     })
     expect(report.items[0]).toEqual({
@@ -559,27 +560,31 @@ describe('Last.fm scrobble sync jobs with offline HTTP and a temporary database'
       lastListenedAt: new Date(recent * 1000).toISOString(),
       reason: 'linked',
       album: fixture,
+      strategy: 'exact',
       candidates: [],
     })
+    // The same title under an artist the album does not credit, with no shared track.
     expect(report.items[1]).toMatchObject({
       artistName: 'Other artist',
-      reason: 'artist-mismatch',
+      reason: 'unmatched',
       album: null,
-      candidates: [fixture],
+      strategy: null,
+      candidates: [],
     })
-    const byReason = (reason: string) =>
-      report.items.find((item) => item.reason === reason)
-    expect(byReason('ambiguous')?.candidates.map((album) => album.id)).toEqual([
+    const named = (albumName: string | null) =>
+      report.items.find((item) => item.albumName === albumName)
+    expect(named('Album Fixture (Deluxe Edition)')).toMatchObject({
+      reason: 'linked',
+      strategy: 'edition',
+      album: fixture,
+    })
+    expect(named('Twin album')).toMatchObject({ reason: 'ambiguous' })
+    expect(named('Twin album')?.candidates.map((album) => album.id)).toEqual([
       'twin-a',
       'twin-b',
     ])
-    expect(byReason('pending')?.album?.id).toBe('late-album')
-    expect(byReason('no-title-match')).toMatchObject({
-      albumName: 'Unknown album',
-      album: null,
-      candidates: [],
-    })
-    expect(byReason('no-album')?.albumName).toBeNull()
+    expect(named('Late album')).toMatchObject({ reason: 'unmatched' })
+    expect(named(null)?.reason).toBe('no-album')
 
     const unlinked = await getLastfmLinkReport({ reason: 'unlinked', size: 2 })
     expect(unlinked).toMatchObject({ totalCount: 5, pageCount: 3 })
@@ -592,10 +597,74 @@ describe('Last.fm scrobble sync jobs with offline HTTP and a temporary database'
 
     // Relinking applies the album added after the sync without any request.
     const relinked = await relinkLastfmScrobbles()
-    expect(relinked.matchedScrobbles).toBe(4)
+    expect(relinked.matchedScrobbles).toBe(5)
     expect(request).toHaveBeenCalledTimes(1)
-    const pending = await getLastfmLinkReport({ reason: 'pending' })
-    expect(pending.totalCount).toBe(0)
+    const late = await getLastfmLinkReport({ q: 'late album' })
+    expect(late.items[0]).toMatchObject({ reason: 'linked', strategy: 'exact' })
+  })
+
+  it('keeps manual links and exclusions across relinks until returned to automatic matching', async () => {
+    const {
+      getAlbumListening,
+      getLastfmLinkReport,
+      relinkLastfmScrobbles,
+      setLastfmAlbumLink,
+    } = await import('@/services/lastfm-scrobbles')
+    respond(
+      page(1, 1, [
+        scrobble(recent, 'First track'),
+        scrobble(recent - 10, 'First track'),
+        scrobble(recent - 20, 'Second', 'Another title', 'Other artist'),
+      ]),
+    )
+    expect((await syncToEnd()).matchedScrobbles).toBe(2)
+    const other = { artistName: 'Other artist', albumName: 'Another title' }
+    const own = { artistName: 'Artist fixture', albumName: 'Album fixture' }
+    const reason = async (q: string) =>
+      (await getLastfmLinkReport({ q })).items[0]?.reason
+
+    const linked = await setLastfmAlbumLink({
+      action: 'link',
+      ...other,
+      albumId: 'album-fixture',
+    })
+    expect(linked.matchedScrobbles).toBe(3)
+    expect(await reason('another title')).toBe('manual')
+    expect((await getAlbumListening('album-fixture')).sources).toEqual([
+      { ...own, count: 2, manual: false },
+      { ...other, count: 1, manual: true },
+    ])
+    const [item] = await databaseClient
+      .select({ metadata: schema.mediaItem.metadata })
+      .from(schema.mediaItem)
+      .where(eq(schema.mediaItem.id, 'album-fixture'))
+    expect(item?.metadata).toMatchObject({ browse: { scrobbles: 3 } })
+
+    const excluded = await setLastfmAlbumLink({ action: 'unlink', ...own })
+    expect(excluded.matchedScrobbles).toBe(1)
+    expect(await reason('album fixture')).toBe('excluded')
+
+    expect((await relinkLastfmScrobbles()).matchedScrobbles).toBe(1)
+    expect(await reason('another title')).toBe('manual')
+    expect(await reason('album fixture')).toBe('excluded')
+
+    await setLastfmAlbumLink({ action: 'auto', ...other })
+    const automatic = await setLastfmAlbumLink({ action: 'auto', ...own })
+    expect(automatic.matchedScrobbles).toBe(2)
+    expect(await reason('another title')).toBe('unmatched')
+    expect(await reason('album fixture')).toBe('linked')
+
+    await expect(
+      setLastfmAlbumLink({ action: 'link', ...other, albumId: 'missing' }),
+    ).rejects.toMatchObject({ response: { statusCode: 404 } })
+    await expect(
+      setLastfmAlbumLink({
+        action: 'unlink',
+        artistName: 'Nobody',
+        albumName: 'Nothing',
+      }),
+    ).rejects.toMatchObject({ response: { statusCode: 404 } })
+    expect(request).toHaveBeenCalledTimes(1)
   })
 
   it('reports album listening by month and by track with its scrobbled names', async () => {
@@ -605,9 +674,9 @@ describe('Last.fm scrobble sync jobs with offline HTTP and a temporary database'
         scrobble(recent, 'First track'),
         scrobble(old + 120, 'Bonus track'),
         scrobble(old, 'First track'),
-        scrobble(old - 60, 'First track', 'Album fixture (Edition)'),
-        scrobble(old - 120, 'First track', 'Album fixture', 'Other artist'),
-        scrobble(old - 180, 'First track', 'Unrelated'),
+        scrobble(old - 60, 'Elsewhere', 'Album fixture sessions'),
+        scrobble(old - 120, 'Elsewhere', 'Album fixture', 'Other artist'),
+        scrobble(old - 180, 'Elsewhere', 'Unrelated'),
       ]),
     )
     await syncToEnd()
@@ -635,12 +704,17 @@ describe('Last.fm scrobble sync jobs with offline HTTP and a temporary database'
       },
     ])
     expect(all.sources).toEqual([
-      { artistName: 'Artist fixture', albumName: 'Album fixture', count: 3 },
+      {
+        artistName: 'Artist fixture',
+        albumName: 'Album fixture',
+        count: 3,
+        manual: false,
+      },
     ])
     expect(
       all.similarUnlinked.map((item) => [item.artistName, item.albumName]),
     ).toEqual([
-      ['Artist fixture', 'Album fixture (Edition)'],
+      ['Artist fixture', 'Album fixture sessions'],
       ['Other artist', 'Album fixture'],
     ])
 

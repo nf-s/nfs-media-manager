@@ -23,6 +23,7 @@ import {
   lastfmLinkFilter,
   lastfmLinkFilters,
   lastfmLinkReasonLabels,
+  lastfmLinkStrategyLabels,
   lastfmLinkSummaryRows,
   lastfmLinksPath,
   type LastfmLinkFilter,
@@ -32,23 +33,127 @@ import {
   invalidateScrobbleLinks,
   useLastfmSyncStatus,
 } from './lastfm-sync'
+import { AlbumPicker, useLastfmLinkUpdate } from './lastfm-link-controls'
 import { useConfig } from './providers'
 
-function LibraryAlbums({ group }: { group: LastfmLinkGroup }) {
-  if ((group.reason === 'linked' || group.reason === 'pending') && group.album)
-    return <Link href={`/albums/${group.album.id}`}>{group.album.title}</Link>
-  if (!group.candidates.length) return '-'
+function LinkRow({ group }: { group: LastfmLinkGroup }) {
+  const update = useLastfmLinkUpdate()
+  const [picking, setPicking] = useState(false)
+  const albumName = group.albumName
+  const linked = group.reason === 'linked' || group.reason === 'manual'
+  const link = (albumId: string) => {
+    if (albumName !== null)
+      update.mutate(
+        { action: 'link', artistName: group.artistName, albumName, albumId },
+        { onSuccess: () => setPicking(false) },
+      )
+  }
   return (
-    <ul>
-      {group.candidates.map((album) => (
-        <li key={album.id}>
-          <Link href={`/albums/${album.id}`}>
-            {album.title}
-            {album.artists.length ? ` — ${album.artists.join(', ')}` : ''}
-          </Link>
-        </li>
-      ))}
-    </ul>
+    <tr>
+      <td>{group.artistName}</td>
+      <td>{albumName ?? '-'}</td>
+      <td className="tabular-nums">{group.scrobbles.toLocaleString()}</td>
+      <td className="whitespace-nowrap">
+        <time dateTime={group.lastListenedAt}>
+          {new Date(group.lastListenedAt).toLocaleDateString()}
+        </time>
+      </td>
+      <td>
+        {lastfmLinkReasonLabels[group.reason]}
+        {group.strategy && (
+          <div className="muted">
+            {lastfmLinkStrategyLabels[group.strategy]}
+          </div>
+        )}
+      </td>
+      <td>
+        {linked && group.album ? (
+          <Link href={`/albums/${group.album.id}`}>{group.album.title}</Link>
+        ) : group.candidates.length ? (
+          <ul>
+            {group.candidates.map((album) => (
+              <li key={album.id} className="flex items-center gap-2">
+                <Link href={`/albums/${album.id}`}>
+                  {album.title}
+                  {album.artists.length ? ` — ${album.artists.join(', ')}` : ''}
+                </Link>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={update.isPending}
+                  onClick={() => link(album.id)}
+                >
+                  Link
+                </Button>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          '-'
+        )}
+      </td>
+      <td>
+        {albumName !== null && (
+          <div className="grid gap-1">
+            <div className="flex flex-wrap gap-1">
+              <Button
+                size="sm"
+                variant="outline"
+                aria-expanded={picking}
+                disabled={update.isPending}
+                onClick={() => setPicking(!picking)}
+              >
+                {linked ? 'Change' : 'Link'}
+              </Button>
+              {linked && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={update.isPending}
+                  onClick={() =>
+                    update.mutate({
+                      action: 'unlink',
+                      artistName: group.artistName,
+                      albumName,
+                    })
+                  }
+                >
+                  Unlink
+                </Button>
+              )}
+              {(group.reason === 'manual' || group.reason === 'excluded') && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={update.isPending}
+                  onClick={() =>
+                    update.mutate({
+                      action: 'auto',
+                      artistName: group.artistName,
+                      albumName,
+                    })
+                  }
+                >
+                  Automatic
+                </Button>
+              )}
+            </div>
+            {picking && (
+              <AlbumPicker
+                label={`Album for ${group.artistName} — ${albumName}`}
+                disabled={update.isPending}
+                onPick={link}
+              />
+            )}
+            {update.isError && (
+              <p role="alert">
+                {errorMessage(update.error, 'Could not update the link.')}
+              </p>
+            )}
+          </div>
+        )}
+      </td>
+    </tr>
   )
 }
 
@@ -113,9 +218,10 @@ export default function LastfmLinks() {
     <section aria-labelledby="scrobble-links-heading">
       <h2 id="scrobble-links-heading">Scrobble links</h2>
       <p className="muted">
-        A scrobble links when the album title matches and the scrobbled artist
-        is one of the album&apos;s credited artists, ignoring case and repeated
-        spaces. Different edition titles do not match.
+        A scrobbled artist and album name links to one library album by title,
+        credited artist and shared track titles. Edition, disc and format
+        qualifiers are ignored. Link, Unlink and Change are kept across syncs;
+        Automatic returns a name to automatic matching.
       </p>
       {summary && (
         <table className="compact-table" aria-label="Scrobble link summary">
@@ -217,11 +323,12 @@ export default function LastfmLinks() {
               <th scope="col">Last listened</th>
               <th scope="col">Status</th>
               <th scope="col">Library album</th>
+              <th scope="col">Actions</th>
             </tr>
           </thead>
           <tbody>
             {!items.length && (
-              <TableState colSpan={6} error={links.isError}>
+              <TableState colSpan={7} error={links.isError}>
                 {links.isPending
                   ? 'Loading scrobble links...'
                   : links.isError
@@ -239,22 +346,10 @@ export default function LastfmLinks() {
               </TableState>
             )}
             {items.map((group) => (
-              <tr key={`${group.artistName}\u0000${group.albumName ?? ''}`}>
-                <td>{group.artistName}</td>
-                <td>{group.albumName ?? '-'}</td>
-                <td className="tabular-nums">
-                  {group.scrobbles.toLocaleString()}
-                </td>
-                <td className="whitespace-nowrap">
-                  <time dateTime={group.lastListenedAt}>
-                    {new Date(group.lastListenedAt).toLocaleDateString()}
-                  </time>
-                </td>
-                <td>{lastfmLinkReasonLabels[group.reason]}</td>
-                <td>
-                  <LibraryAlbums group={group} />
-                </td>
-              </tr>
+              <LinkRow
+                key={`${group.artistName}\u0000${group.albumName ?? ''}`}
+                group={group}
+              />
             ))}
           </tbody>
         </table>
