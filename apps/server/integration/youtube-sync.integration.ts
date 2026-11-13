@@ -14,6 +14,11 @@ import {
   it,
   vi,
 } from 'vitest'
+import type { BrowseFilter, BrowseRange } from '@repo/schemas/browse'
+import {
+  SubscriptionItemQuerySchema,
+  type SubscriptionItemQueryInput,
+} from '@repo/schemas/subscriptions'
 import { env } from '@/env'
 import * as schema from '@/schemas/db'
 import type { LastfmSyncJobContext } from '@/services/lastfm-scrobbles'
@@ -383,8 +388,9 @@ async function connect() {
 }
 
 async function status() {
-  const { getYoutubeSyncStatus } = await import('@/services/youtube-sync')
-  return getYoutubeSyncStatus(USER)
+  const { getYoutubeSubscriptionSyncStatus } =
+    await import('@/services/youtube-sync')
+  return getYoutubeSubscriptionSyncStatus(USER)
 }
 
 async function syncJobs() {
@@ -418,14 +424,63 @@ async function clearProviderState() {
   await databaseClient.delete(schema.providerRequestState)
 }
 
-async function search(
-  input: Parameters<
-    typeof import('@/services/youtube-library').searchYoutubeVideos
-  >[0],
-) {
-  const { searchYoutubeVideos } = await import('@/services/youtube-library')
-  const page = await searchYoutubeVideos(input)
+type Search = Omit<SubscriptionItemQueryInput, 'filters' | 'ranges'> & {
+  filters?: BrowseFilter[]
+  ranges?: BrowseRange[]
+}
+
+async function search({ filters, ranges, ...input }: Search) {
+  const { listSubscriptionItems } =
+    await import('@/services/subscription-library')
+  const page = await listSubscriptionItems(
+    SubscriptionItemQuerySchema.parse({
+      ...input,
+      filters: JSON.stringify(filters ?? []),
+      ranges: JSON.stringify(ranges ?? []),
+    }),
+  )
   return { ...page, ids: page.items.map((item) => item.id) }
+}
+
+/** Any of these fixture channels, by title as the library filters them. */
+function fromChannels(...ids: string[]): BrowseFilter[] {
+  return ids.map((id) => ({
+    field: 'source',
+    value: channel(id).title,
+    mode: 'any',
+  }))
+}
+
+const youtubeOnly: BrowseFilter = {
+  field: 'type',
+  value: 'YouTube',
+  mode: 'required',
+}
+
+/** Inclusive lengths in seconds. */
+function duration(min: number | null, max: number | null): BrowseRange {
+  return {
+    field: 'durationSec',
+    ...(min === null ? {} : { min }),
+    ...(max === null ? {} : { max }),
+    includeMissing: false,
+  }
+}
+
+/** Inclusive UTC days. */
+function published(from: string | null, to: string | null): BrowseRange {
+  return {
+    field: 'publishedAt',
+    ...(from === null ? {} : { min: Date.parse(`${from}T00:00:00.000Z`) }),
+    ...(to === null ? {} : { max: Date.parse(`${to}T23:59:59.999Z`) }),
+    includeMissing: false,
+  }
+}
+
+async function youtubeChannels() {
+  const { listSubscriptionSources } =
+    await import('@/services/subscription-library')
+  return (await listSubscriptionSources({ type: 'youtube' })).items
 }
 
 const searchMigration = () =>
@@ -595,12 +650,12 @@ describe('YouTube subscription sync jobs with offline HTTP and a temporary datab
 
     expect(done).toMatchObject({
       state: 'complete',
-      phase: 'videos',
-      channelsDone: 3,
-      channelsTotal: 3,
-      newVideos: 7,
-      storedChannels: 3,
-      storedVideos: 7,
+      phase: 'items',
+      sourcesDone: 3,
+      sourcesTotal: 3,
+      newItems: 7,
+      storedSources: 3,
+      storedItems: 7,
       resumeAfter: null,
       errorMessage: null,
     })
@@ -643,27 +698,11 @@ describe('YouTube subscription sync jobs with offline HTTP and a temporary datab
     )
     expect((await listJobs({ status: 'attention' })).totalCount).toBe(0)
 
-    // The Subscriptions endpoints report the same run in provider-neutral names.
+    // The Subscriptions endpoints report the same run.
     const { getSubscriptionSyncStatus, setSubscriptionSyncSchedule } =
       await import('@/services/subscription-sync')
-    expect(await getSubscriptionSyncStatus('youtube', USER)).toEqual({
-      provider: 'youtube',
-      account: done.account,
-      state: 'complete',
-      job: done.job,
-      schedule: 'daily',
-      nextScheduledAt: done.nextScheduledAt,
-      phase: 'items',
-      sourcesDone: 3,
-      sourcesTotal: 3,
-      newItems: 7,
-      storedSources: 3,
-      storedItems: 7,
-      startedAt: done.startedAt,
-      lastCompletedAt: done.lastCompletedAt,
-      resumeAfter: null,
-      errorMessage: null,
-    })
+    expect(done).toMatchObject({ provider: 'youtube', schedule: 'daily' })
+    expect(await getSubscriptionSyncStatus('youtube', USER)).toEqual(done)
     expect(
       await setSubscriptionSyncSchedule('youtube', USER, 'weekly'),
     ).toMatchObject({ schedule: 'weekly' })
@@ -676,43 +715,51 @@ describe('YouTube subscription sync jobs with offline HTTP and a temporary datab
       storedItems: 0,
     })
 
-    const { listYoutubeChannels } = await import('@/services/youtube-library')
-    expect((await listYoutubeChannels()).items).toEqual([
+    expect(await youtubeChannels()).toEqual([
       {
+        type: 'youtube',
         id: EMPTY,
         title: 'Empty Channel Fixture',
         handle: null,
         description: 'About Empty Channel Fixture',
         thumbnailUrl: `https://yt3.example/${EMPTY}.jpg`,
+        url: `https://www.youtube.com/channel/${EMPTY}`,
         subscriberCount: 1200,
-        storedVideos: 0,
-        latestVideoAt: null,
+        storedItems: 0,
+        latestItemAt: null,
         historyComplete: true,
       },
       expect.objectContaining({
         id: ORBITAL,
         handle: '@keplermechanicslab',
-        storedVideos: 4,
-        latestVideoAt: '2026-04-01T18:00:00.000Z',
+        storedItems: 4,
+        latestItemAt: '2026-04-01T18:00:00.000Z',
         historyComplete: true,
       }),
       expect.objectContaining({
         id: COOKS,
         title: 'The Who Cooks',
-        storedVideos: 3,
+        storedItems: 3,
         historyComplete: true,
       }),
     ])
-    const stored = await search({ channelId: ORBITAL, sortBy: 'publishedAt' })
+    const stored = await search({
+      filters: fromChannels(ORBITAL),
+      sortBy: 'publishedAt',
+    })
     expect(stored.items[1]).toEqual({
+      type: 'youtube',
       id: videoId('a1'),
-      channelId: ORBITAL,
-      channelTitle: 'Kepler Mechanics Lab',
-      channelThumbnailUrl: `https://yt3.example/${ORBITAL}.jpg`,
+      sourceId: ORBITAL,
+      sourceTitle: 'Kepler Mechanics Lab',
+      sourceThumbnailUrl: `https://yt3.example/${ORBITAL}.jpg`,
       title: 'Transfer orbits explained',
       description: 'Hohmann transfers and delta-v budgets.',
+      tags: ['spaceflight'],
       publishedAt: '2026-03-01T23:30:00.000Z',
+      publishedPrecision: 'time',
       durationSec: 750,
+      url: `https://www.youtube.com/watch?v=${videoId('a1')}`,
       viewCount: 5000,
       likeCount: 7,
       commentCount: null,
@@ -720,7 +767,7 @@ describe('YouTube subscription sync jobs with offline HTTP and a temporary datab
     })
     expect(stored.items[0]).toMatchObject({
       id: videoId('a3'),
-      durationSec: 0,
+      durationSec: null,
       viewCount: null,
       live: 'upcoming',
     })
@@ -749,11 +796,11 @@ describe('YouTube subscription sync jobs with offline HTTP and a temporary datab
     const second = await syncToEnd()
     expect(second).toMatchObject({
       state: 'complete',
-      channelsDone: 2,
-      channelsTotal: 2,
-      newVideos: 1,
-      storedChannels: 2,
-      storedVideos: 5,
+      sourcesDone: 2,
+      sourcesTotal: 2,
+      newItems: 1,
+      storedSources: 2,
+      storedItems: 5,
     })
     // One page per stored channel: its first page already holds a known video.
     expect(apiPaths()).toEqual([
@@ -776,8 +823,7 @@ describe('YouTube subscription sync jobs with offline HTTP and a temporary datab
     ])
     expect((await search({ q: 'mechanics' })).ids).toEqual([])
     // An unsubscribed channel leaves the list and the search; its videos are kept.
-    const { listYoutubeChannels } = await import('@/services/youtube-library')
-    expect((await listYoutubeChannels()).items.map((item) => item.id)).toEqual([
+    expect((await youtubeChannels()).map((item) => item.id)).toEqual([
       EMPTY,
       ORBITAL,
     ])
@@ -792,7 +838,7 @@ describe('YouTube subscription sync jobs with offline HTTP and a temporary datab
     request.mockClear()
     channel(COOKS).subscribed = true
     const third = await syncToEnd()
-    expect(third).toMatchObject({ newVideos: 0, storedVideos: 8 })
+    expect(third).toMatchObject({ newItems: 0, storedItems: 8 })
     expect(apiPaths().filter((path) => path === 'playlistItems')).toHaveLength(
       3,
     )
@@ -821,14 +867,14 @@ describe('YouTube subscription sync jobs with offline HTTP and a temporary datab
     await connect()
     expect(await syncToEnd()).toMatchObject({
       state: 'complete',
-      channelsTotal: 3,
-      storedChannels: 3,
-      storedVideos: 7,
+      sourcesTotal: 3,
+      storedSources: 3,
+      storedItems: 7,
     })
     channel(COOKS).subscribed = false
     expect(await syncToEnd()).toMatchObject({
-      channelsTotal: 2,
-      storedChannels: 2,
+      sourcesTotal: 2,
+      storedSources: 2,
     })
 
     const [source] = await databaseClient
@@ -846,24 +892,28 @@ describe('YouTube subscription sync jobs with offline HTTP and a temporary datab
         eq(schema.subscriptionItem.sourceId, show),
       ),
     ).toBe(1)
-    const { listYoutubeChannels } = await import('@/services/youtube-library')
-    expect((await listYoutubeChannels()).items.map((item) => item.id)).toEqual([
+    expect((await youtubeChannels()).map((item) => item.id)).toEqual([
       EMPTY,
       ORBITAL,
     ])
-    expect((await search({ q: 'orbits' })).ids).toEqual([
-      videoId('a1'),
-      videoId('a2'),
-    ])
-    expect((await search({ channelId: [ORBITAL] })).totalCount).toBe(4)
+    expect((await search({ q: 'orbits', filters: [youtubeOnly] })).ids).toEqual(
+      [videoId('a1'), videoId('a2')],
+    )
+    expect((await search({ q: 'orbits' })).ids).toContain(
+      'podcastepisodefixture1',
+    )
+    expect((await search({ filters: fromChannels(ORBITAL) })).totalCount).toBe(
+      4,
+    )
     const { listSubscribedSourceNames } =
       await import('@/services/subscription-source-names')
     expect(
-      (await listSubscribedSourceNames('youtube')).map((item) => item.id),
-    ).toEqual([EMPTY, ORBITAL])
-    expect(
-      (await listSubscribedSourceNames()).map((item) => item.type),
-    ).toEqual(['youtube', 'youtube', 'spotify'])
+      (await listSubscribedSourceNames()).map((item) => [item.type, item.id]),
+    ).toEqual([
+      ['youtube', EMPTY],
+      ['youtube', ORBITAL],
+      ['spotify', show],
+    ])
   })
 
   it('returns the active job instead of queueing a second sync', async () => {
@@ -886,10 +936,10 @@ describe('YouTube subscription sync jobs with offline HTTP and a temporary datab
 
     expect(paused).toMatchObject({
       state: 'paused',
-      phase: 'videos',
-      channelsDone: 0,
-      channelsTotal: 3,
-      storedVideos: 2,
+      phase: 'items',
+      sourcesDone: 0,
+      sourcesTotal: 3,
+      storedItems: 2,
       errorMessage: null,
     })
     const resumeAfter = Date.parse(paused.resumeAfter ?? '')
@@ -918,9 +968,9 @@ describe('YouTube subscription sync jobs with offline HTTP and a temporary datab
     const done = await drain()
     expect(done).toMatchObject({
       state: 'complete',
-      channelsDone: 3,
-      newVideos: 7,
-      storedVideos: 7,
+      sourcesDone: 3,
+      newItems: 7,
+      storedItems: 7,
       resumeAfter: null,
     })
     // The run continues at the second uploads page; nothing is read twice.
@@ -946,9 +996,9 @@ describe('YouTube subscription sync jobs with offline HTTP and a temporary datab
     const day = 24 * 60 * 60 * 1000
     expect(paused).toMatchObject({
       state: 'paused',
-      phase: 'videos',
-      storedChannels: 3,
-      storedVideos: 0,
+      phase: 'items',
+      storedSources: 3,
+      storedItems: 0,
       resumeAfter: new Date(Math.ceil(Date.now() / day) * day).toISOString(),
       nextScheduledAt: null,
     })
@@ -960,7 +1010,7 @@ describe('YouTube subscription sync jobs with offline HTTP and a temporary datab
       .where(eq(schema.providerRequestState.provider, 'youtube'))
     expect(await syncToEnd()).toMatchObject({
       state: 'complete',
-      storedVideos: 7,
+      storedItems: 7,
     })
   })
 
@@ -971,7 +1021,7 @@ describe('YouTube subscription sync jobs with offline HTTP and a temporary datab
     const failed = await syncToEnd()
     expect(failed).toMatchObject({
       state: 'failed',
-      storedVideos: 2,
+      storedItems: 2,
       errorMessage: 'Provider request failed (HTTP 500)',
       nextScheduledAt: null,
       job: { status: 'failed' },
@@ -984,7 +1034,7 @@ describe('YouTube subscription sync jobs with offline HTTP and a temporary datab
 
     api.failAt = 0
     const done = await syncToEnd()
-    expect(done).toMatchObject({ state: 'complete', storedVideos: 7 })
+    expect(done).toMatchObject({ state: 'complete', storedItems: 7 })
     const jobs = await syncJobs()
     const original = jobs.find((job) => job.status === 'failed')
     expect(original?.options['retryJobId']).toEqual(expect.any(String))
@@ -1005,15 +1055,15 @@ describe('YouTube subscription sync jobs with offline HTTP and a temporary datab
     const stopped = await syncToEnd()
     expect(stopped).toMatchObject({
       state: 'stopped',
-      phase: 'videos',
-      storedVideos: 0,
+      phase: 'items',
+      storedItems: 0,
       job: { status: 'cancelled' },
     })
 
     api.before = idle
     expect(await syncToEnd()).toMatchObject({
       state: 'complete',
-      storedVideos: 7,
+      storedItems: 7,
     })
   })
 
@@ -1115,9 +1165,7 @@ describe('YouTube video search over stored videos', () => {
       size: 2,
       pageCount: 4,
     })
-    expect((await search({ sortDirection: 'asc' })).ids).toEqual(
-      [...all].reverse(),
-    )
+    expect((await search({ direction: 'asc' })).ids).toEqual([...all].reverse())
     expect(request).not.toHaveBeenCalled()
   })
 
@@ -1150,7 +1198,7 @@ describe('YouTube video search over stored videos', () => {
         await search({
           q: 'orbit',
           sortBy: 'publishedAt',
-          sortDirection: 'asc',
+          direction: 'asc',
         })
       ).ids,
     ).toEqual([videoId('a2'), videoId('a1')])
@@ -1227,7 +1275,9 @@ describe('YouTube video search over stored videos', () => {
       ['b1', 'b2', 'b3'].map(videoId),
     )
     expect((await search({ q: 'the' })).totalCount).toBe(3)
-    expect((await search({ q: 'the', channelId: ORBITAL })).totalCount).toBe(0)
+    expect(
+      (await search({ q: 'the', filters: fromChannels(ORBITAL) })).totalCount,
+    ).toBe(0)
     // Stop words beside other words are ignored.
     expect((await search({ q: 'the orbit' })).ids).toEqual([
       videoId('a1'),
@@ -1257,31 +1307,39 @@ describe('YouTube video search over stored videos', () => {
     expect(await vectors()).toEqual(synced)
   })
 
-  it('filters by channel, duration and published day', async () => {
-    expect((await search({ channelId: COOKS })).ids).toEqual(
+  it('filters by channel, length and published day', async () => {
+    expect((await search({ filters: fromChannels(COOKS) })).ids).toEqual(
       ['b1', 'b2', 'b3'].map(videoId),
     )
-    expect((await search({ channelId: [COOKS, ORBITAL] })).totalCount).toBe(7)
-    expect((await search({ channelId: EMPTY })).totalCount).toBe(0)
-    // An unfinished live stream has no duration and is in no bucket.
-    expect((await search({ duration: 'short' })).ids).toEqual([videoId('a5')])
-    expect((await search({ duration: 'medium' })).ids).toEqual(
+    expect(
+      (await search({ filters: fromChannels(COOKS, ORBITAL) })).totalCount,
+    ).toBe(7)
+    expect((await search({ filters: fromChannels(EMPTY) })).totalCount).toBe(0)
+    // An unfinished live stream has no duration and is in no length range.
+    expect((await search({ ranges: [duration(null, 239)] })).ids).toEqual([
+      videoId('a5'),
+    ])
+    expect((await search({ ranges: [duration(240, 1200)] })).ids).toEqual(
       ['a1', 'b1'].map(videoId),
     )
-    expect((await search({ duration: 'long' })).ids).toEqual(
+    expect((await search({ ranges: [duration(1201, null)] })).ids).toEqual(
       ['a2', 'b2', 'b3'].map(videoId),
     )
     // Both days are inclusive in UTC.
     expect(
-      (await search({ publishedFrom: '2026-02-01', publishedTo: '2026-03-01' }))
-        .ids,
+      (await search({ ranges: [published('2026-02-01', '2026-03-01')] })).ids,
     ).toEqual(['a1', 'a2'].map(videoId))
-    expect((await search({ publishedTo: '2023-12-31' })).ids).toEqual([
-      videoId('b3'),
-    ])
     expect(
-      (await search({ q: 'explained', channelId: COOKS, duration: 'long' }))
-        .ids,
+      (await search({ ranges: [published(null, '2023-12-31')] })).ids,
+    ).toEqual([videoId('b3')])
+    expect(
+      (
+        await search({
+          q: 'explained',
+          filters: fromChannels(COOKS),
+          ranges: [duration(1201, null)],
+        })
+      ).ids,
     ).toEqual([videoId('b2')])
   })
 
@@ -1291,7 +1349,7 @@ describe('YouTube video search over stored videos', () => {
       ['a2', 'b1', 'a1', 'b2', 'a5', 'b3', 'a3'].map(videoId),
     )
     expect(
-      (await search({ sortBy: 'viewCount', sortDirection: 'asc' })).ids,
+      (await search({ sortBy: 'viewCount', direction: 'asc' })).ids,
     ).toEqual(['b3', 'a5', 'b2', 'a1', 'b1', 'a2', 'a3'].map(videoId))
     expect((await search({ sortBy: 'durationSec' })).ids).toEqual(
       ['b3', 'a2', 'b2', 'a1', 'b1', 'a5', 'a3'].map(videoId),
@@ -1499,12 +1557,12 @@ describe('subscription library migration', () => {
       expect(await queueDueYoutubeSync()).toBe(true)
       expect(await drain()).toMatchObject({
         state: 'complete',
-        phase: 'videos',
-        channelsDone: 3,
-        channelsTotal: 3,
-        newVideos: 7,
-        storedChannels: 3,
-        storedVideos: 7,
+        phase: 'items',
+        sourcesDone: 3,
+        sourcesTotal: 3,
+        newItems: 7,
+        storedSources: 3,
+        storedItems: 7,
       })
       expect(apiPaths().slice(0, 2)).toEqual(['playlistItems', 'videos'])
       expect(

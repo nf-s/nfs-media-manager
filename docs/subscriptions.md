@@ -92,6 +92,7 @@ Search runs against stored videos and episodes only and makes no provider reques
 - `"quoted phrases"` match adjacent whole words, `or` matches either side, and a leading `-` excludes a word. Other punctuation has no special meaning.
 - A search matches the title, tags, channel or podcast name and description. **Titles only** leaves out the description.
 - Common words such as "the" are ignored. A search made only of common words or punctuation, such as "the who", falls back to the literal text in the title or channel name.
+- In relevance order, title, tag and channel or podcast name matches rank above description matches.
 
 [AI search](ai-search.md#subscriptions) sets the search, filters and sort from a typed or dictated request.
 
@@ -131,7 +132,7 @@ Every endpoint requires the owner session and reads stored rows only.
 | `GET /api/v1/subscriptions/:id`                                                                            | One video or episode of a subscribed source.                                                                          |
 | `GET` and `POST /api/v1/subscriptions/sync/:provider`, `PUT /api/v1/subscriptions/sync/:provider/settings` | Sync status, start or resume a sync, and the schedule, for `youtube` or `spotify`.                                    |
 
-`/api/v1/youtube` keeps the YouTube account connection and, until they are removed, the endpoints of the retired YouTube pages.
+`/api/v1/youtube` holds only the YouTube account connection: `POST /authorize`, the public `GET /callback`, `GET /complete` and `DELETE /account`.
 
 ## What is stored
 
@@ -147,7 +148,7 @@ Migration 0023 renamed the YouTube tables to these and marked every stored row a
 
 ## Verification
 
-- `integration/youtube-sync.integration.ts` runs the connection, the sync through the job dispatcher and the YouTube search against a fake YouTube API and a temporary database. It covers chained jobs, incremental syncs, renamed and unsubscribed channels, a podcast source left untouched by the YouTube sync, both quota pauses, scheduled and manual resume, failure, cancellation, token renewal, a rejected sign-in, the schedule intervals, search syntax, filters, sorting and paging, migration 0021, and migration 0023 applied to a database holding a paused sync that then resumes.
+- `integration/youtube-sync.integration.ts` runs the connection, the sync through the job dispatcher and the library search over the synced videos against a fake YouTube API and a temporary database. It covers chained jobs, incremental syncs, renamed and unsubscribed channels, a podcast source left untouched by the YouTube sync, both quota pauses, scheduled and manual resume, failure, cancellation, token renewal, a rejected sign-in, the schedule intervals, search syntax, filters, sorting and paging, migration 0021, and migration 0023 applied to a database holding a paused sync that then resumes.
 - `integration/spotify-podcast-sync.integration.ts` runs the podcast sync through the job dispatcher and the Spotify request gate against a fake Spotify API and a temporary database. It covers chained jobs, an unchanged sync that makes only the saved-podcast requests, incremental and oldest-first reads, release-date precision, an unsaved podcast beside YouTube channels, a removed podcast, empty entries, a rate-limit pause and resume, a rejected token, failure, cancellation, a list that changes while it is read, the schedule intervals and podcast search and type filters.
 - `integration/subscriptions-library.integration.ts` browses synthetic YouTube and podcast rows: search across both types, every filter field and mode, inclusive ranges and missing values, every sort in both directions across pages, facets beyond the first page, sources and single items.
 - Unit tests cover the query and AI plan schemas, the API's authentication and validation, and the AI plans.

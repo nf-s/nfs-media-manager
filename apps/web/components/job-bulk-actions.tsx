@@ -19,7 +19,7 @@ import {
   canRetryJob,
   isScrobbleSyncJob,
   isScrobbleSpotifySearchJob,
-  isYoutubeSyncJob,
+  isSubscriptionSyncJob,
   jobTaskTitle,
   unfinishedJobItems,
 } from '@/utils/job-selection'
@@ -78,7 +78,7 @@ export default function JobBulkActions({
   )
   const syncRetries = retryJobs.filter(isScrobbleSyncJob).length
   const searchRetries = retryJobs.filter(isScrobbleSpotifySearchJob).length
-  const youtubeRetries = retryJobs.filter(isYoutubeSyncJob).length
+  const subscriptionRetries = retryJobs.filter(isSubscriptionSyncJob).length
   const selectionKey = JSON.stringify([
     selectedAction,
     selectedJobs.map((job) => [job.id, job.status, unfinishedJobItems(job)]),
@@ -89,7 +89,7 @@ export default function JobBulkActions({
   const confirmed =
     reviewing &&
     selectedAction === 'retry' &&
-    itemCount + syncRetries + searchRetries + youtubeRetries > 5
+    itemCount + syncRetries + searchRetries + subscriptionRetries > 5
   const actionLabel =
     selectedAction === 'retry'
       ? retriesRunning
@@ -264,11 +264,11 @@ export default function JobBulkActions({
                   {syncRetries === 1 ? 'sync' : 'syncs'}.
                 </p>
               )}
-              {selectedAction === 'retry' && youtubeRetries > 0 && (
+              {selectedAction === 'retry' && subscriptionRetries > 0 && (
                 <p>
-                  Resume {youtubeRetries} YouTube subscription{' '}
-                  {youtubeRetries === 1 ? 'sync' : 'syncs'}. The daily YouTube
-                  quota applies.
+                  Resume {subscriptionRetries} subscription{' '}
+                  {subscriptionRetries === 1 ? 'sync' : 'syncs'}. Provider
+                  quotas and cooldowns apply.
                 </p>
               )}
               {selectedAction === 'retry' && searchRetries > 0 && (

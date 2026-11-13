@@ -10,7 +10,7 @@ This project is a fork of [CSDR Cloud Spatial App](https://github.com/Sustainabl
 
 - **Browse your collection.** Search titles, people and tags; filter and sort metadata; switch between grid and table views. Open details without losing your place.
 - **Bring your own library.** Preview IMDb ratings/watchlist CSVs, album CSVs and local NFO files before importing. Spotify can import saved albums with your permission.
-- **Search your YouTube subscriptions.** Sync the channels you subscribe to and search only their videos by text, channel, length and date.
+- **Search your subscriptions.** Sync the YouTube channels you subscribe to and the Spotify podcasts you save, then search their videos and episodes by text, channel, type, length and date.
 - **Choose your metadata.** Configure providers independently and fetch only the films or albums you select. Ratings link back to their sources.
 - **Keep track of changes.** Inspect provider history, correct identifiers, manage tags and preserve personal ratings and manual edits.
 - **Control background work.** Review jobs before starting them, monitor progress, and retry unfinished work. Provider budgets and cooldowns stay in place.
@@ -71,7 +71,7 @@ Film and album details bring together ratings, credits, tags, provider links and
 - [Getting started, configuration and troubleshooting](docs/getting-started.md)
 - [Import formats and existing-library migration](docs/importing.md)
 - [Spotify saved albums and account setup](docs/spotify-album-imports.md)
-- [YouTube subscriptions](docs/youtube-subscriptions.md)
+- [Subscriptions: YouTube channels and Spotify podcasts](docs/subscriptions.md)
 - [Local provider plugins](docs/local-plugins.md)
 - [Local HTTP worker for cloud jobs](docs/local-worker.md)
 - [Development and verification](docs/development.md)

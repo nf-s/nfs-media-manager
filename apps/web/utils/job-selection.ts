@@ -15,7 +15,10 @@ import {
   SPOTIFY_PLAYLIST_IMPORT_TASK,
   SPOTIFY_PLAYLIST_LISTING_TASK,
 } from '@repo/schemas/tracks'
-import { SPOTIFY_PODCAST_SYNC_TASK } from '@repo/schemas/subscriptions'
+import {
+  SPOTIFY_PODCAST_SYNC_TASK,
+  SUBSCRIPTION_SYNC_TASKS,
+} from '@repo/schemas/subscriptions'
 import { YOUTUBE_SYNC_TASK } from '@repo/schemas/youtube'
 import { playlistJobProgress } from './playlist-sync'
 
@@ -32,6 +35,12 @@ export function isYoutubeSyncJob(job: Pick<Job, 'options'>): boolean {
 /** Spotify podcast sync jobs are account-level; retrying one resumes the sync. */
 export function isSpotifyPodcastSyncJob(job: Pick<Job, 'options'>): boolean {
   return getJobTask(job.options) === SPOTIFY_PODCAST_SYNC_TASK
+}
+
+/** YouTube and Spotify podcast syncs, which fill the Subscriptions library. */
+export function isSubscriptionSyncJob(job: Pick<Job, 'options'>): boolean {
+  const task = getJobTask(job.options)
+  return SUBSCRIPTION_SYNC_TASKS.some((name) => name === task)
 }
 
 export function isScrobbleSpotifySearchJob(job: Pick<Job, 'options'>): boolean {

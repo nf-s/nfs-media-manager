@@ -1,13 +1,8 @@
-import { getJobTask, type Job } from '@repo/schemas/job'
-import { SUBSCRIPTION_SYNC_TASKS } from '@repo/schemas/subscriptions'
+import type { Job } from '@repo/schemas/job'
+import { isSubscriptionSyncJob } from './job-selection'
 import type { WorkspaceScope } from './media-scope'
 
 /** Subscription syncs belong to Subscriptions, including ones stored with the album scope. */
-function isSubscriptionSyncJob(job: Pick<Job, 'options'>) {
-  const task = getJobTask(job.options)
-  return SUBSCRIPTION_SYNC_TASKS.some((name) => name === task)
-}
-
 export function jobMediaScope(job: Job): WorkspaceScope | null {
   if (isSubscriptionSyncJob(job)) return 'subscription'
   return (

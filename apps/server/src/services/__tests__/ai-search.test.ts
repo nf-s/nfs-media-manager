@@ -5,7 +5,6 @@ import {
   AiSearchPlanSchema,
   type AiSearchPlan,
   type AiSubscriptionInterpretedPlan,
-  type AiYoutubeInterpretedPlan,
 } from '@repo/schemas/ai-search'
 
 const mocks = vi.hoisted(() => ({
@@ -35,11 +34,9 @@ import {
   interpretAiSearch,
   parseAiInterpretation,
   parseAiSubscriptionInterpretation,
-  parseAiYoutubeInterpretation,
   transcribeAiAudio,
   validateAiPlan,
   validateAiSubscriptionPlan,
-  validateAiYoutubePlan,
 } from '../ai-search'
 import { matchSourceName } from '../subscription-source-names'
 
@@ -517,198 +514,6 @@ const channelRows = [
     handle: '@woodwork',
   },
 ]
-function youtubePlan(
-  overrides: Partial<AiYoutubeInterpretedPlan> = {},
-): AiYoutubeInterpretedPlan {
-  return {
-    q: '',
-    fields: 'all',
-    channelNames: [],
-    duration: null,
-    publishedFrom: null,
-    publishedTo: null,
-    sortBy: 'publishedAt',
-    sortDirection: 'desc',
-    ...overrides,
-  }
-}
-
-function youtubeInterpretation(search: AiYoutubeInterpretedPlan) {
-  return { ...interpretation(null), plan: search }
-}
-
-describe('AI YouTube search', () => {
-  beforeEach(() => {
-    mocks.database.mockResolvedValue({ rows: channelRows })
-  })
-
-  it('resolves named channels on the server and returns their ids', async () => {
-    mocks.text.mockResolvedValue(
-      completion(
-        youtubeInterpretation(
-          youtubePlan({
-            q: 'bread -sourdough',
-            channelNames: ['example cooking', '@WOODWORK', 'Example Cooking'],
-            duration: 'long',
-            publishedFrom: '2026-10-01',
-            publishedTo: '2026-10-31',
-            sortBy: 'relevance',
-          }),
-        ),
-      ),
-    )
-    const result = await interpretAiSearch(
-      {
-        mediaType: 'youtube',
-        text: 'Long bread videos without sourdough from Example Cooking and @woodwork last month',
-      },
-      now,
-    )
-    expect(result).toEqual({
-      plan: {
-        q: 'bread -sourdough',
-        fields: 'all',
-        channels: [
-          { id: channelId('c'), title: 'Example Cooking' },
-          { id: channelId('d'), title: 'Woodwork Example' },
-        ],
-        duration: 'long',
-        publishedFrom: '2026-10-01',
-        publishedTo: '2026-10-31',
-        sortBy: 'relevance',
-        sortDirection: 'desc',
-      },
-      explanation: 'Search the selected library.',
-      assumptions: [],
-      warnings: [],
-    })
-    expect(mocks.database).toHaveBeenCalledOnce()
-    expect(mocks.sync).not.toHaveBeenCalled()
-  })
-
-  it('never sends stored channel names to the model', async () => {
-    mocks.text.mockResolvedValue(
-      completion(
-        youtubeInterpretation(youtubePlan({ channelNames: ['woodwork'] })),
-      ),
-    )
-    await interpretAiSearch(
-      { mediaType: 'youtube', text: 'Videos from woodwork' },
-      now,
-    )
-    const sent = JSON.stringify(mocks.text.mock.calls)
-    expect(sent).toContain('read-only search of stored videos')
-    expect(sent).toContain('a bare word also matches')
-    for (const channel of channelRows) {
-      expect(sent).not.toContain(channel.title)
-      expect(sent).not.toContain(channel.id)
-    }
-  })
-
-  it('does not read channels when the request names none', async () => {
-    mocks.text.mockResolvedValue(
-      completion(youtubeInterpretation(youtubePlan({ duration: 'short' }))),
-    )
-    const result = await interpretAiSearch(
-      { mediaType: 'youtube', text: 'Short videos' },
-      now,
-    )
-    expect(result.plan).toMatchObject({ channels: [], duration: 'short' })
-    expect(mocks.database).not.toHaveBeenCalled()
-  })
-
-  it('returns ambiguous and missing channels as warnings without a partial filter', async () => {
-    mocks.text.mockResolvedValue(
-      completion(
-        youtubeInterpretation(
-          youtubePlan({
-            channelNames: ['Example Cooking', 'synthetic', 'Unknown Channel'],
-          }),
-        ),
-      ),
-    )
-    const result = await interpretAiSearch(
-      {
-        mediaType: 'youtube',
-        text: 'Videos from Example Cooking, Synthetic and Unknown Channel',
-      },
-      now,
-    )
-    expect(result.plan).toBeNull()
-    expect(result.explanation).toContain('subscribed channel')
-    expect(result.warnings).toEqual([
-      '"synthetic" matches several subscribed channels: Synthetic Science, Synthetic Science Shorts.',
-      'No subscribed channel matches "Unknown Channel".',
-    ])
-  })
-
-  it('passes a clarification through without reading channels', async () => {
-    mocks.text.mockResolvedValue(
-      completion({
-        plan: null,
-        explanation: 'Likes are not stored. Choose views instead?',
-        assumptions: [],
-      }),
-    )
-    expect(
-      await interpretAiSearch(
-        { mediaType: 'youtube', text: 'Most liked videos' },
-        now,
-      ),
-    ).toEqual({
-      plan: null,
-      explanation: 'Likes are not stored. Choose views instead?',
-      assumptions: [],
-      warnings: [],
-    })
-    expect(mocks.database).not.toHaveBeenCalled()
-  })
-
-  it.each([
-    youtubePlan({ sortBy: 'relevance' }),
-    youtubePlan({ q: 'bread', sortBy: 'relevance', sortDirection: 'asc' }),
-    youtubePlan({ fields: 'title' }),
-    youtubePlan({ publishedFrom: '2026-10-31', publishedTo: '2026-10-01' }),
-  ])('rejects YouTube plans the Videos page cannot apply', (search) => {
-    expect(() => validateAiYoutubePlan(search)).toThrow('unsupported search')
-  })
-
-  it.each([
-    { ...youtubePlan(), channelId: [channelId('a')] },
-    { ...youtubePlan(), sortBy: 'likeCount' },
-    { ...youtubePlan(), duration: 'feature' },
-    { ...youtubePlan(), publishedFrom: '2026-13-01' },
-    { ...youtubePlan(), filters: [] },
-  ])('rejects unsupported YouTube fields at the model boundary', (search) => {
-    expect(() =>
-      parseAiYoutubeInterpretation(
-        completion({ ...interpretation(), plan: search }),
-      ),
-    ).toThrow('unsupported search')
-  })
-
-  it('matches exact titles and handles before unique substrings', () => {
-    expect(matchSourceName('synthetic science', channelRows)).toEqual({
-      status: 'matched',
-      source: channelRows[0],
-    })
-    expect(matchSourceName('@SynthSci', channelRows)).toEqual({
-      status: 'matched',
-      source: channelRows[0],
-    })
-    expect(matchSourceName('kitchen', channelRows)).toEqual({
-      status: 'matched',
-      source: channelRows[2],
-    })
-    expect(matchSourceName('shorts', channelRows)).toEqual({
-      status: 'matched',
-      source: channelRows[1],
-    })
-    expect(matchSourceName('example', channelRows).status).toBe('ambiguous')
-    expect(matchSourceName('@', channelRows).status).toBe('missing')
-    expect(matchSourceName('missing', channelRows).status).toBe('missing')
-  })
-})
 
 const showId = (letter: string) => `Show${letter.repeat(18)}`
 const sourceRows = [
@@ -894,6 +699,28 @@ describe('AI Subscriptions search', () => {
       expect(() =>
         validateAiSubscriptionPlan(subscriptionPlan({ sortBy })),
       ).not.toThrow()
+  })
+
+  it('matches exact titles and handles before unique substrings', () => {
+    expect(matchSourceName('synthetic science', channelRows)).toEqual({
+      status: 'matched',
+      source: channelRows[0],
+    })
+    expect(matchSourceName('@SynthSci', channelRows)).toEqual({
+      status: 'matched',
+      source: channelRows[0],
+    })
+    expect(matchSourceName('kitchen', channelRows)).toEqual({
+      status: 'matched',
+      source: channelRows[2],
+    })
+    expect(matchSourceName('shorts', channelRows)).toEqual({
+      status: 'matched',
+      source: channelRows[1],
+    })
+    expect(matchSourceName('example', channelRows).status).toBe('ambiguous')
+    expect(matchSourceName('@', channelRows).status).toBe('missing')
+    expect(matchSourceName('missing', channelRows).status).toBe('missing')
   })
 })
 

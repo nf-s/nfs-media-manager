@@ -1,12 +1,20 @@
 import { aiSubscriptionBrowseQuery } from '@repo/schemas/ai-search'
-import { SubscriptionSearchFieldsSchema } from '@repo/schemas/subscriptions'
 import {
-  YoutubeVideoIdSchema,
-  YoutubeVideoQuerySchema,
-  YoutubeVideoSortSchema,
-} from '@repo/schemas/youtube'
+  SubscriptionDaySchema,
+  SubscriptionSearchFieldsSchema,
+  SubscriptionSortSchema,
+} from '@repo/schemas/subscriptions'
+import { YoutubeVideoIdSchema } from '@repo/schemas/youtube'
 
 type PageSearchParams = Record<string, string | string[] | undefined>
+
+/** The sorts the old Videos page offered. */
+const YoutubeSortSchema = SubscriptionSortSchema.extract([
+  'relevance',
+  'publishedAt',
+  'viewCount',
+  'durationSec',
+])
 
 function first(params: PageSearchParams, key: string) {
   const value = params[key]
@@ -14,10 +22,8 @@ function first(params: PageSearchParams, key: string) {
 }
 
 function day(params: PageSearchParams, key: 'publishedFrom' | 'publishedTo') {
-  const result = YoutubeVideoQuerySchema.shape[key].safeParse(
-    first(params, key) ?? undefined,
-  )
-  return result.success ? (result.data ?? null) : null
+  const result = SubscriptionDaySchema.safeParse(first(params, key))
+  return result.success ? result.data : null
 }
 
 /**
@@ -52,7 +58,7 @@ export function subscriptionsHrefFromYoutube(params: PageSearchParams) {
     })
     next.set('ranges', JSON.stringify(ranges))
   }
-  const sortBy = YoutubeVideoSortSchema.safeParse(first(params, 'sortBy'))
+  const sortBy = YoutubeSortSchema.safeParse(first(params, 'sortBy'))
   if (sortBy.success && (sortBy.data !== 'relevance' || q))
     next.set('sortBy', sortBy.data)
   const direction = first(params, 'sortDirection')

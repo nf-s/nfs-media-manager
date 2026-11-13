@@ -152,7 +152,7 @@ describe('AI API', () => {
     })
   })
 
-  it('forwards track and YouTube requests and returns their plans', async () => {
+  it('forwards track and Subscriptions requests and returns their plans', async () => {
     mockAppSession(true)
     const trackResult = {
       plan: {
@@ -169,16 +169,24 @@ describe('AI API', () => {
       assumptions: [],
       warnings: [],
     }
-    const youtubeResult = {
+    const subscriptionResult = {
       plan: {
         q: 'bread',
         fields: 'all',
-        channels: [{ id: `UC${'c'.repeat(22)}`, title: 'Example Cooking' }],
-        duration: null,
+        types: [],
         publishedFrom: null,
         publishedTo: null,
+        durationMinSec: null,
+        durationMaxSec: null,
         sortBy: 'relevance',
-        sortDirection: 'desc',
+        direction: 'desc',
+        sources: [
+          {
+            id: `UC${'c'.repeat(22)}`,
+            type: 'youtube',
+            title: 'Example Cooking',
+          },
+        ],
       },
       explanation: 'Bread videos from one channel.',
       assumptions: [],
@@ -186,7 +194,7 @@ describe('AI API', () => {
     }
     search
       .mockResolvedValueOnce(trackResult)
-      .mockResolvedValueOnce(youtubeResult)
+      .mockResolvedValueOnce(subscriptionResult)
     const { default: app } = await import('@/app')
     const tracks = await app.request(
       '/api/v1/ai/search',
@@ -195,22 +203,28 @@ describe('AI API', () => {
     const videos = await app.request(
       '/api/v1/ai/search',
       jsonRequest({
-        mediaType: 'youtube',
+        mediaType: 'subscription',
         text: 'Bread videos from Example Cooking',
       }),
     )
     expect(tracks.status).toBe(200)
     expect(await tracks.json()).toMatchObject({ data: trackResult })
     expect(videos.status).toBe(200)
-    expect(await videos.json()).toMatchObject({ data: youtubeResult })
+    expect(await videos.json()).toMatchObject({ data: subscriptionResult })
     expect(search.mock.calls).toEqual([
       [{ mediaType: 'track', text: 'Road trip tracks' }],
-      [{ mediaType: 'youtube', text: 'Bread videos from Example Cooking' }],
+      [
+        {
+          mediaType: 'subscription',
+          text: 'Bread videos from Example Cooking',
+        },
+      ],
     ])
   })
 
   it.each([
     { mediaType: 'book', text: 'Albums' },
+    { mediaType: 'youtube', text: 'Videos' },
     { mediaType: 'playlist', text: 'Playlists' },
     { mediaType: 'album', text: ' ' },
     { mediaType: 'album', text: 'x'.repeat(2001) },

@@ -3,27 +3,21 @@ import { test } from 'node:test'
 import {
   AiSearchPlanSchema,
   AiSubscriptionPlanSchema,
-  AiYoutubePlanSchema,
   type AiSubscriptionPlan,
-  type AiYoutubePlan,
 } from '@repo/schemas/ai-search'
 import { albumBrowseFields, trackBrowseFields } from '@repo/schemas/browse'
 import {
   aiSearchParams,
   aiSubscriptionSearchParams,
-  aiYoutubeSearchParams,
   describeAiSearchPlan,
   describeAiSubscriptionPlan,
-  describeAiYoutubePlan,
   mediaAiSearchTarget,
   subscriptionAiSearchTarget,
-  youtubeAiSearchTarget,
 } from './ai-search'
 import {
   parseSubscriptionBrowseState,
   updateSubscriptionSearch,
 } from './subscriptions'
-import { parseYoutubeVideoState, updateYoutubeSearch } from './youtube'
 
 const plan = AiSearchPlanSchema.parse({
   q: '',
@@ -113,97 +107,6 @@ test('track plans use the album URL parameters and clear album-only listening st
 })
 
 const channel = { id: `UC${'c'.repeat(22)}`, title: 'Example Cooking' }
-function youtubePlan(overrides: Partial<AiYoutubePlan> = {}) {
-  return AiYoutubePlanSchema.parse({
-    q: '',
-    fields: 'all',
-    channels: [],
-    duration: null,
-    publishedFrom: null,
-    publishedTo: null,
-    sortBy: 'publishedAt',
-    sortDirection: 'desc',
-    ...overrides,
-  })
-}
-
-test('YouTube plans replace every Videos search parameter and keep the view', () => {
-  const plan = youtubePlan({
-    q: 'bread -sourdough',
-    fields: 'title',
-    channels: [channel],
-    duration: 'long',
-    publishedFrom: '2026-10-01',
-    publishedTo: '2026-10-31',
-    sortBy: 'viewCount',
-    sortDirection: 'asc',
-  })
-  const search = updateYoutubeSearch(
-    `channelId=UC${'a'.repeat(22)}&duration=short&view=list&video=abcdefghijk`,
-    aiYoutubeSearchParams(plan),
-  )
-  assert.deepEqual(parseYoutubeVideoState(new URLSearchParams(search)), {
-    q: 'bread -sourdough',
-    fields: 'title',
-    channelIds: [channel.id],
-    duration: 'long',
-    publishedFrom: '2026-10-01',
-    publishedTo: '2026-10-31',
-    sortBy: 'viewCount',
-    sortDirection: 'asc',
-    view: 'list',
-  })
-  assert.doesNotMatch(search, /video=/)
-})
-
-test('an empty YouTube plan clears previous filters and uses default parameters', () => {
-  const search = updateYoutubeSearch(
-    `q=old&fields=title&channelId=UC${'a'.repeat(22)}&duration=short&publishedFrom=2026-01-01&sortDirection=asc`,
-    aiYoutubeSearchParams(youtubePlan({ fields: 'title' })),
-  )
-  assert.equal(search, 'sortBy=publishedAt')
-})
-
-test('YouTube plan review lists channel titles, buckets, dates and sort', () => {
-  assert.deepEqual(
-    describeAiYoutubePlan(
-      youtubePlan({
-        q: 'bread',
-        channels: [channel],
-        duration: 'medium',
-        publishedFrom: '2026-10-01',
-        sortBy: 'relevance',
-      }),
-    ),
-    [
-      'Search: bread',
-      'Channels: Example Cooking',
-      'Duration: 4–20 minutes',
-      'Published: 2026-10-01 to *',
-      'Sort: Relevance',
-    ],
-  )
-  assert.equal(youtubeAiSearchTarget.mediaType, 'youtube')
-  assert.equal(
-    youtubeAiSearchTarget.responseSchema.safeParse({
-      plan: youtubePlan({ channels: [channel] }),
-      explanation: 'Videos from one channel.',
-      assumptions: [],
-      warnings: [],
-    }).success,
-    true,
-  )
-  assert.equal(
-    youtubeAiSearchTarget.responseSchema.safeParse({
-      plan: { ...youtubePlan(), channelNames: ['Example Cooking'] },
-      explanation: 'Unresolved channel names are not a plan.',
-      assumptions: [],
-      warnings: [],
-    }).success,
-    false,
-  )
-})
-
 const podcast = {
   id: 'a'.repeat(22),
   type: 'spotify' as const,

@@ -9,6 +9,7 @@ import {
 import { DirectionSchema } from './common'
 import { ListeningFilterSchema, ListeningPeriodSchema } from './listening'
 import {
+  SubscriptionDaySchema,
   SubscriptionSearchFieldsSchema,
   SubscriptionSortSchema,
   SubscriptionSourceIdSchema,
@@ -16,19 +17,10 @@ import {
   subscriptionTypeLabels,
   type SubscriptionSort,
 } from './subscriptions'
-import {
-  YoutubeChannelIdSchema,
-  YoutubeDurationSchema,
-  YoutubeSearchFieldsSchema,
-  YoutubeVideoQuerySchema,
-  YoutubeVideoSortSchema,
-} from './youtube'
 
 export const AI_SEARCH_MAX_TEXT = 2000
 export const AI_AUDIO_MAX_BYTES = 5 * 1024 * 1024
 export const AI_AUDIO_MAX_SECONDS = 60
-/** The Videos page searches at most this many channels at once. */
-export const AI_YOUTUBE_MAX_CHANNELS = 50
 /** A subscription plan names at most this many channels and podcasts. */
 export const AI_SUBSCRIPTION_MAX_SOURCES = 50
 
@@ -36,13 +28,11 @@ export const AI_SUBSCRIPTION_MAX_SOURCES = 50
 export const AiMediaLibrarySchema = z.enum(['album', 'film', 'track'])
 export type AiMediaLibrary = z.infer<typeof AiMediaLibrarySchema>
 /**
- * `youtube` searches stored YouTube videos and returns an `AiYoutubeSearchResponse`.
  * `subscription` searches stored videos and podcast episodes and returns an
  * `AiSubscriptionSearchResponse`.
  */
 export const AiSearchLibrarySchema = z.enum([
   ...AiMediaLibrarySchema.options,
-  'youtube',
   'subscription',
 ])
 export type AiSearchLibrary = z.infer<typeof AiSearchLibrarySchema>
@@ -82,65 +72,13 @@ export const AiSearchResponseSchema = AiSearchInterpretationSchema.extend({
 })
 export type AiSearchResponse = z.infer<typeof AiSearchResponseSchema>
 
-const youtubeDay = YoutubeVideoQuerySchema.shape.publishedFrom.unwrap()
-const youtubePlanShape = {
-  q: z.string().max(200),
-  fields: YoutubeSearchFieldsSchema,
-  duration: YoutubeDurationSchema.nullable(),
-  publishedFrom: youtubeDay.nullable(),
-  publishedTo: youtubeDay.nullable(),
-  sortBy: YoutubeVideoSortSchema,
-  sortDirection: DirectionSchema,
-}
-
-/** The model's YouTube plan: channels are the names the request mentioned, resolved on the server. */
-export const AiYoutubeInterpretedPlanSchema = z
-  .object({
-    ...youtubePlanShape,
-    channelNames: z
-      .array(z.string().trim().min(1).max(100))
-      .max(AI_YOUTUBE_MAX_CHANNELS),
-  })
-  .strict()
-export type AiYoutubeInterpretedPlan = z.infer<
-  typeof AiYoutubeInterpretedPlanSchema
->
-
-export const AiYoutubeInterpretationSchema = z
-  .object({
-    plan: AiYoutubeInterpretedPlanSchema.nullable(),
-    explanation: AiSearchInterpretationSchema.shape.explanation,
-    assumptions: AiSearchInterpretationSchema.shape.assumptions,
-  })
-  .strict()
-
-/** A YouTube plan whose channel names matched stored subscribed channels. */
-export const AiYoutubePlanSchema = z
-  .object({
-    ...youtubePlanShape,
-    channels: z
-      .array(z.object({ id: YoutubeChannelIdSchema, title: z.string() }))
-      .max(AI_YOUTUBE_MAX_CHANNELS),
-  })
-  .strict()
-export type AiYoutubePlan = z.infer<typeof AiYoutubePlanSchema>
-
-export const AiYoutubeSearchResponseSchema =
-  AiYoutubeInterpretationSchema.extend({
-    plan: AiYoutubePlanSchema.nullable(),
-    warnings: AiSearchResponseSchema.shape.warnings,
-  })
-export type AiYoutubeSearchResponse = z.infer<
-  typeof AiYoutubeSearchResponseSchema
->
-
 const subscriptionPlanShape = {
   q: z.string().max(200),
   fields: SubscriptionSearchFieldsSchema,
   /** Empty for both types. */
   types: z.array(SubscriptionTypeSchema).max(2),
-  publishedFrom: youtubeDay.nullable(),
-  publishedTo: youtubeDay.nullable(),
+  publishedFrom: SubscriptionDaySchema.nullable(),
+  publishedTo: SubscriptionDaySchema.nullable(),
   /** Inclusive seconds. */
   durationMinSec: z.number().int().nonnegative().nullable(),
   durationMaxSec: z.number().int().nonnegative().nullable(),

@@ -64,11 +64,3 @@ test('the track browser offers AI search and dictation inside its search box', a
   assertAiSearchBox(html, 'Search titles, artists, albums, playlists...')
   assert.match(html, /Search: live/)
 })
-
-test('the YouTube Videos page offers AI search and dictation inside its search box', async () => {
-  const { default: YoutubeVideos } = await import('./youtube-videos')
-  const html = render('/youtube', 'q=bread&duration=long', <YoutubeVideos />)
-  assertAiSearchBox(html, 'Search videos')
-  assert.match(html, /value="bread"/)
-  assert.doesNotMatch(html, /No matching suggestions/)
-})

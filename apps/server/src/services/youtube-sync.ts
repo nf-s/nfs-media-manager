@@ -6,12 +6,7 @@ import {
   ProviderRequestError,
   isProviderItemNotFoundError,
 } from '@repo/media-plugin-sdk'
-import type { SubscriptionSyncStatus } from '@repo/schemas/subscriptions'
-import {
-  YoutubeSyncStatusSchema,
-  type YoutubeSyncSchedule,
-  type YoutubeSyncStatus,
-} from '@repo/schemas/youtube'
+import type { YoutubeSyncSchedule } from '@repo/schemas/youtube'
 import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
 import {
@@ -78,46 +73,12 @@ export async function getYoutubeSubscriptionSyncStatus(userId: string) {
   )
 }
 
-/** The YouTube sync state in the YouTube contract's names. */
-export function youtubeSyncStatus(
-  status: SubscriptionSyncStatus,
-): YoutubeSyncStatus {
-  return YoutubeSyncStatusSchema.parse({
-    account: status.account,
-    state: status.state,
-    job: status.job,
-    schedule: status.schedule,
-    nextScheduledAt: status.nextScheduledAt,
-    phase:
-      status.phase === 'items'
-        ? 'videos'
-        : status.phase === 'sources'
-          ? 'subscriptions'
-          : null,
-    channelsDone: status.sourcesDone,
-    channelsTotal: status.sourcesTotal,
-    newVideos: status.newItems,
-    storedChannels: status.storedSources,
-    storedVideos: status.storedItems,
-    startedAt: status.startedAt,
-    lastCompletedAt: status.lastCompletedAt,
-    resumeAfter: status.resumeAfter,
-    errorMessage: status.errorMessage,
-  })
-}
-
-export async function getYoutubeSyncStatus(
-  userId: string,
-): Promise<YoutubeSyncStatus> {
-  return youtubeSyncStatus(await getYoutubeSubscriptionSyncStatus(userId))
-}
-
 export async function setYoutubeSyncSchedule(
   userId: string,
   schedule: YoutubeSyncSchedule,
 ) {
   await saveSubscriptionSyncSchedule(YOUTUBE, userId, schedule)
-  return getYoutubeSyncStatus(userId)
+  return getYoutubeSubscriptionSyncStatus(userId)
 }
 
 /**
@@ -578,10 +539,10 @@ export async function runYoutubeSyncJob(
           })
           .where(owned)
         await recordProviderSuccess('youtube')
-        const status = await getYoutubeSyncStatus(run.userId)
+        const status = await getYoutubeSubscriptionSyncStatus(run.userId)
         return {
           outcome: 'complete',
-          message: `Sync complete. ${status.newVideos} new videos; ${status.storedVideos} videos from ${status.storedChannels} subscribed channels are stored.`,
+          message: `Sync complete. ${status.newItems} new videos; ${status.storedItems} videos from ${status.storedSources} subscribed channels are stored.`,
         }
       }
       steps += 1

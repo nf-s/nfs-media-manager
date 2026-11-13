@@ -19,6 +19,7 @@ import {
   isScrobbleSyncJob,
   isScrobbleSpotifySearchJob,
   isSpotifyPodcastSyncJob,
+  isSubscriptionSyncJob,
   isYoutubeSyncJob,
   jobTaskTitle,
   unfinishedJobItems,
@@ -191,8 +192,10 @@ test('YouTube subscription syncs are titled task jobs that resume on retry', () 
     options: { task: YOUTUBE_SYNC_TASK },
   }
   assert.equal(isYoutubeSyncJob(sync), true)
+  assert.equal(isSubscriptionSyncJob(sync), true)
   assert.equal(isScrobbleSyncJob(sync), false)
   assert.equal(isYoutubeSyncJob(scrobbleSync), false)
+  assert.equal(isSubscriptionSyncJob(scrobbleSync), false)
   assert.equal(jobTaskTitle(sync), 'YouTube subscription sync')
   assert.equal(unfinishedJobItems(sync), 0)
   assert.equal(canRetryJob(sync), true)
@@ -214,6 +217,7 @@ test('Spotify podcast syncs are titled task jobs that resume on retry', () => {
     options: { task: SPOTIFY_PODCAST_SYNC_TASK },
   }
   assert.equal(isSpotifyPodcastSyncJob(sync), true)
+  assert.equal(isSubscriptionSyncJob(sync), true)
   assert.equal(isYoutubeSyncJob(sync), false)
   assert.equal(jobTaskTitle(sync), 'Spotify podcast sync')
   assert.equal(canRetryJob(sync), true)

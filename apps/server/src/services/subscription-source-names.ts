@@ -3,7 +3,6 @@ import { z } from 'zod'
 import {
   SubscriptionSourceIdSchema,
   SubscriptionTypeSchema,
-  type SubscriptionType,
 } from '@repo/schemas/subscriptions'
 import { db } from '@/lib/db'
 
@@ -27,12 +26,12 @@ export type SourceNameMatch<Source extends NamedSource> =
   | { status: 'ambiguous'; candidates: Source[] }
 
 /** Titles and handles of subscribed channels and podcasts; read on the server only. */
-export async function listSubscribedSourceNames(type?: SubscriptionType) {
+export async function listSubscribedSourceNames() {
   return SourceNameRowsSchema.parse(
     (
       await db.execute(sql`
         select id, type, title, handle from subscription_source
-        where subscribed ${type ? sql`and type = ${type}` : sql``}
+        where subscribed
         order by lower(title), id`)
     ).rows,
   )

@@ -112,7 +112,7 @@ Open **Providers**, choose a service and select **Credentials**. Save its requir
 | Last.fm     | API key; optional username for personal scrobbles   | [Create a Last.fm API account](https://www.last.fm/api/account/create)                                                                        | `LASTFM_API_KEY`, `LASTFM_USERNAME`                                  |
 | Discogs     | Personal access token                               | [Discogs developer settings](https://www.discogs.com/settings/developers)                                                                     | `DISCOGS_TOKEN`                                                      |
 | Serply      | API key for Rate Your Music search metadata         | [Serply dashboard](https://app.serply.io/)                                                                                                    | `SERPLY_API_KEY`                                                     |
-| YouTube     | OAuth client ID, client secret and redirect URI     | [Google Cloud console](https://console.cloud.google.com/) and the [YouTube guide](youtube-subscriptions.md#setup)                             | `YOUTUBE_CLIENT_ID`, `YOUTUBE_CLIENT_SECRET`, `YOUTUBE_REDIRECT_URI` |
+| YouTube     | OAuth client ID, client secret and redirect URI     | [Google Cloud console](https://console.cloud.google.com/) and the [YouTube setup guide](subscriptions.md#youtube-setup)                       | `YOUTUBE_CLIENT_ID`, `YOUTUBE_CLIENT_SECRET`, `YOUTUBE_REDIRECT_URI` |
 
 Where supported, **Check credentials** makes a small real request. Saving credentials alone does not scrape your collection. Providers without a credential-check endpoint are checked when you explicitly run a lookup. **Settings** shows limits and configurable budgets; **Activity** shows requests and cooldowns. A higher app budget cannot increase a service's account quota.
 
@@ -128,9 +128,9 @@ Save the same URL as Spotify's **OAuth redirect URI**, or set `SPOTIFY_CLIENT_RE
 
 Open **Imports → Spotify**, connect your account and approve read-only saved-album access. Preview a small batch first. A full-library read requires explicit confirmation. The [Spotify guide](spotify-album-imports.md) explains the exact authorization flow and preview limits.
 
-### YouTube subscriptions
+### Subscriptions
 
-The optional YouTube library searches videos from the channels you subscribe to. It needs a Google OAuth client and a one-time sign-in; follow the [YouTube guide](youtube-subscriptions.md).
+The optional Subscriptions library searches videos from the YouTube channels you subscribe to and episodes of the Spotify podcasts you save. YouTube needs a Google OAuth client and a one-time sign-in; podcasts use the Spotify account connected for albums. Follow the [Subscriptions guide](subscriptions.md).
 
 ## Your first import and metadata refresh
 

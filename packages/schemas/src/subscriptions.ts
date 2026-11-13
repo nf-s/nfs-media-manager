@@ -237,6 +237,11 @@ export const SubscriptionSortSchema = z.enum([
 export type SubscriptionSort = z.infer<typeof SubscriptionSortSchema>
 /** `title`: item title, tags and channel name. `all`: also the description. */
 export const SubscriptionSearchFieldsSchema = z.enum(['title', 'all'])
+/** An inclusive UTC day, `YYYY-MM-DD`. */
+export const SubscriptionDaySchema = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/)
+  .refine((value) => Number.isFinite(Date.parse(`${value}T00:00:00.000Z`)))
 
 const textField = (field: string) =>
   SubscriptionTextFieldSchema.safeParse(field).success

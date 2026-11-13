@@ -22,17 +22,11 @@ Tracks have no listening rules. A track request uses the track's **Scrobbles** a
 
 Scores come from stored metadata. Searches do not fetch fresh ratings, and missing scores are excluded unless requested otherwise. AI search supports the public built-in fields; installation-specific plugin fields remain available through manual filters.
 
-## YouTube videos
-
-The `youtube` request is kept for the retired YouTube Videos page, which now redirects to Subscriptions; no page sends it. A request on that page set the page's own controls: the search text, **Titles only**, channels, duration bucket, published dates and sort. The search text uses the [Videos search syntax](youtube-subscriptions.md#searching). Lengths that do not fit one of the duration buckets, and data that is not stored, such as likes, ask for clarification.
-
-The model returns channel names as written in the request. The server matches each one to a subscribed channel, ignoring case: an exact title or @handle first, then a part of one title or handle. If a name matches no channel or several, nothing is applied and the review lists the name, with candidates for an ambiguous name.
-
 ## Subscriptions
 
 A Subscriptions request (`mediaType: subscription`) returns a plan over [the combined library](subscriptions.md#searching) of videos and podcast episodes: the search text, **Titles only**, channels and podcasts, type, published days, a duration range in seconds, and the sort. Plain-language lengths become ranges: under 4 minutes is at most 239 seconds, 4 to 20 minutes is 240 to 1,200, and over 20 minutes is at least 1,201. Views, likes and comments exist only for YouTube videos. Data that is not stored, such as watch history, asks for clarification. The Subscriptions browse page sends this request.
 
-Channel and podcast names are resolved on the server as for the YouTube plan, over subscribed sources of both types. The applied plan becomes the page's ordinary browse filters: one Any filter per channel or podcast, a Required type filter when one type is asked for, and inclusive UTC ranges.
+The model returns channel and podcast names as written in the request. The server matches each one to a subscribed channel or saved podcast, ignoring case: an exact title or @handle first, then a part of one title or handle. If a name matches no source or several, nothing is applied and the review lists the name, with candidates for an ambiguous name. The applied plan becomes the page's ordinary browse filters: one Any filter per channel or podcast, a Required type filter when one type is asked for, and inclusive UTC ranges.
 
 ## Models and configuration
 
@@ -53,4 +47,4 @@ The owner session and existing origin protection apply to every AI endpoint. Req
 
 ## Verification
 
-The AI service and API tests mock inference and use synthetic plans. They cover listening windows, ratings, track plans, YouTube and Subscriptions plans, channel and podcast matching, unsupported fields, incomplete history, malformed output, transcription errors, authentication and request limits. Recording tests cover stop/cancel, permission failures, size and duration limits, and releasing microphone tracks. No live library scraping is needed.
+The AI service and API tests mock inference and use synthetic plans. They cover listening windows, ratings, track plans, Subscriptions plans, channel and podcast matching, unsupported fields, incomplete history, malformed output, transcription errors, authentication and request limits. Recording tests cover stop/cancel, permission failures, size and duration limits, and releasing microphone tracks. No live library scraping is needed.

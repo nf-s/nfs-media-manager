@@ -140,10 +140,10 @@ const ItemRowsSchema = z.array(
     total: z.coerce.number(),
   }),
 )
-export type SubscriptionItemRow = z.infer<typeof ItemRowsSchema>[number]
+type SubscriptionItemRow = z.infer<typeof ItemRowsSchema>[number]
 
 /** A page of stored items from subscribed sources. */
-export type SubscriptionItemSearch = {
+type SubscriptionItemSearch = {
   /** Web-search syntax over the stored search text. */
   text?: string
   /** `title` leaves the description out of a ranked search. */
@@ -161,9 +161,7 @@ export type SubscriptionItemSearch = {
  * such as "The Who", or of punctuation has no lexemes to match; it falls back
  * to the literal text in the item or source title.
  */
-export async function searchSubscriptionItemRows(
-  search: SubscriptionItemSearch,
-) {
+async function searchSubscriptionItemRows(search: SubscriptionItemSearch) {
   const text = search.text || null
   const match = text === null ? null : searchQuery(text)
   const literal =

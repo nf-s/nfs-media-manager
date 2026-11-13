@@ -1,11 +1,14 @@
 import { YOUTUBE_SYNC_TASK } from '@repo/schemas/youtube'
 import { ServerError } from '@/lib/error'
 import { createTaskJob } from './jobs'
-import { dueYoutubeSyncUsers, getYoutubeSyncStatus } from './youtube-sync'
+import {
+  dueYoutubeSyncUsers,
+  getYoutubeSubscriptionSyncStatus,
+} from './youtube-sync'
 
 /** Queues a sync job, or resumes an unfinished or paused run from its checkpoint. */
 export async function queueYoutubeSync(userId: string) {
-  const { job } = await getYoutubeSyncStatus(userId)
+  const { job } = await getYoutubeSubscriptionSyncStatus(userId)
   // Linking the unresolved job clears it from the jobs needing attention.
   await createTaskJob(
     YOUTUBE_SYNC_TASK,
@@ -14,7 +17,7 @@ export async function queueYoutubeSync(userId: string) {
       ? { retryOf: job.id }
       : {},
   )
-  return getYoutubeSyncStatus(userId)
+  return getYoutubeSubscriptionSyncStatus(userId)
 }
 
 /**

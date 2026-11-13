@@ -163,7 +163,6 @@ app.openapi(
         'Account connection and stored sync status; no provider requests',
       ),
       401: jsonErrorResponse('Unauthorized'),
-      404: jsonErrorResponse('Sync is not available for this provider'),
       422: validationErrorResponse,
     },
   }),
@@ -192,7 +191,6 @@ app.openapi(
     responses: {
       200: statusResponse('Queue a sync job, or resume an unfinished run'),
       401: jsonErrorResponse('Unauthorized'),
-      404: jsonErrorResponse('Sync is not available for this provider'),
       422: validationErrorResponse,
       429: jsonErrorResponse('The provider is cooling down or halted'),
     },
@@ -222,7 +220,6 @@ app.openapi(
     responses: {
       200: statusResponse('Set how often a sync is queued automatically'),
       401: jsonErrorResponse('Unauthorized'),
-      404: jsonErrorResponse('Sync is not available for this provider'),
       422: validationErrorResponse,
     },
   }),

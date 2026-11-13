@@ -27,7 +27,7 @@ export default function ProvidersPageClient() {
   const { apiBaseUrl } = useConfig()
   const client = useQueryClient()
   const search = useSearchParams()
-  const mediaType = useWorkspaceScope()
+  const urlScope = useWorkspaceScope()
   const selected = search.get('provider') ?? ''
   const section = search.get('section') ?? 'activity'
   const [draft, setDraft] = useState<Record<string, string>>({})
@@ -42,6 +42,12 @@ export default function ProvidersPageClient() {
     refetchInterval: 10000,
     staleTime: 0,
   })
+  // A provider link without `mediaType` opens in that provider's library.
+  const target = providers.data?.find((item) => item.id === selected)
+  const targetScope =
+    target?.mediaTypes[0] ?? (target?.subscriptions ? 'subscription' : null)
+  const mediaType =
+    !search.has('mediaType') && targetScope ? targetScope : urlScope
   // Subscriptions lists its own providers. Other account-level providers
   // belong to neither media library and appear in both.
   const available =
@@ -54,15 +60,11 @@ export default function ProvidersPageClient() {
             (provider.mediaTypes.length === 0 && !provider.subscriptions)),
     ) ?? []
   useEffect(() => {
-    if (search.has('mediaType') || !selected) return
-    const target = providers.data?.find((item) => item.id === selected)
-    const scope =
-      target?.mediaTypes[0] ?? (target?.subscriptions ? 'subscription' : null)
-    if (!scope) return
+    if (search.has('mediaType') || !targetScope) return
     const params = new URLSearchParams(window.location.search)
-    params.set('mediaType', scope)
+    params.set('mediaType', targetScope)
     window.history.replaceState(null, '', `/providers?${params}`)
-  }, [search, selected, providers.data])
+  }, [search, targetScope])
   const provider =
     available.find((provider) => provider.id === selected) ?? available[0]
   const id = provider?.id ?? ''

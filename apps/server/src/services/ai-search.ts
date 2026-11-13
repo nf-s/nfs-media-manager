@@ -7,7 +7,6 @@ import {
   AiTranscriptionInputSchema,
   AiSubscriptionInterpretationSchema,
   AiTranscriptionSchema,
-  AiYoutubeInterpretationSchema,
   type AiMediaLibrary,
   type AiSearchInput,
   type AiSearchPlan,
@@ -15,8 +14,6 @@ import {
   type AiSubscriptionInterpretedPlan,
   type AiSubscriptionSearchResponse,
   type AiTranscriptionInput,
-  type AiYoutubeInterpretedPlan,
-  type AiYoutubeSearchResponse,
 } from '@repo/schemas/ai-search'
 import {
   albumBrowseFields,
@@ -153,12 +150,6 @@ export function parseAiInterpretation(value: unknown) {
   return parsed.data
 }
 
-export function parseAiYoutubeInterpretation(value: unknown) {
-  const parsed = AiYoutubeInterpretationSchema.safeParse(modelOutput(value))
-  if (!parsed.success) invalidPlan()
-  return parsed.data
-}
-
 export function parseAiSubscriptionInterpretation(value: unknown) {
   const parsed = AiSubscriptionInterpretationSchema.safeParse(
     modelOutput(value),
@@ -233,54 +224,11 @@ export function validateAiPlan(plan: AiSearchPlan, mediaType: AiMediaLibrary) {
   }
 }
 
-// Rules shared by the YouTube Videos and Subscriptions plans.
 const webSearchRule = (item: string, fields: string, excluded: string) =>
   `- q is a web-search query over each ${item}'s ${fields} and description. Every word must match; a bare word also matches other forms of the word and words it begins. "Quoted phrases" match adjacent words, or between two terms matches either, and a leading - excludes a word. Put only the topic words in q, never the whole request, ${excluded}.
 - fields:"title" leaves descriptions out of the search; use it only when the request asks for titles only, otherwise "all".`
 const publishedRule = `- publishedFrom and publishedTo are inclusive YYYY-MM-DD UTC days. Convert relative periods such as 'last month' to explicit days and state them in assumptions.`
 const uncappedRule = `Results cannot be capped. For 'top N' or 'most viewed' requests sort accordingly and state in assumptions that every match is listed.`
-
-export function aiYoutubeSearchPrompt(now: Date) {
-  return `Convert a request into a read-only search of stored videos from subscribed YouTube channels. Today is ${now.toISOString().slice(0, 10)} (UTC).
-Return ONLY one JSON object matching this schema:
-${JSON.stringify(z.toJSONSchema(AiYoutubeInterpretationSchema, { io: 'input' }))}
-Rules:
-${sharedRules}
-- Search only stored videos. If the request requires another library, discovery on YouTube, data that is not stored (likes, comments, subscriber counts, watch history), unsupported boolean grouping, or actions, return plan:null and explain the limitation or ask one concise clarification question. Never silently drop a requested condition.
-- A plan replaces the current search. Include every key; use q:"", fields:"all", channelNames:[], duration:null, publishedFrom:null, publishedTo:null when unused. Sort by relevance desc when q is set and publishedAt desc otherwise, unless the request asks for another order.
-${webSearchRule('video', 'title, tags, channel name', 'filler such as "videos", or channel names, lengths or dates')}
-- channelNames lists each channel the request names, as written (title or @handle), without guessing, completing or adding channels. They are matched to subscribed channels after this step; a video from any listed channel matches. Use [] when no channel is named.
-- duration buckets: short is under 4 minutes, medium 4 to 20 minutes, long over 20 minutes. A length that does not fit one bucket cannot be expressed: return plan:null and explain. State a bucket chosen for a vague length in assumptions.
-${publishedRule}
-- sortBy is relevance (only with a non-empty q, always desc), publishedAt, viewCount or durationSec; sortDirection is asc or desc. ${uncappedRule}
-${explanationRule}`
-}
-
-/** Checks what both the Videos page and the Subscriptions page can apply. */
-function validateSearchPlan(plan: {
-  q: string
-  fields: 'title' | 'all'
-  publishedFrom: string | null
-  publishedTo: string | null
-  sortBy: string
-  direction: 'asc' | 'desc'
-}) {
-  const searching = Boolean(plan.q.trim())
-  if (plan.sortBy === 'relevance' && (!searching || plan.direction !== 'desc'))
-    invalidPlan()
-  if (plan.fields === 'title' && !searching) invalidPlan()
-  if (
-    plan.publishedFrom &&
-    plan.publishedTo &&
-    plan.publishedFrom > plan.publishedTo
-  )
-    invalidPlan()
-}
-
-/** Checks a YouTube plan against what the Videos page can apply. */
-export function validateAiYoutubePlan(plan: AiYoutubeInterpretedPlan) {
-  validateSearchPlan({ ...plan, direction: plan.sortDirection })
-}
 
 export function aiSubscriptionSearchPrompt(now: Date) {
   return `Convert a request into a read-only search of stored YouTube videos from subscribed channels and episodes of saved Spotify podcasts. Today is ${now.toISOString().slice(0, 10)} (UTC).
@@ -303,7 +251,16 @@ ${explanationRule}`
 export function validateAiSubscriptionPlan(
   plan: AiSubscriptionInterpretedPlan,
 ) {
-  validateSearchPlan(plan)
+  const searching = Boolean(plan.q.trim())
+  if (plan.sortBy === 'relevance' && (!searching || plan.direction !== 'desc'))
+    invalidPlan()
+  if (plan.fields === 'title' && !searching) invalidPlan()
+  if (
+    plan.publishedFrom &&
+    plan.publishedTo &&
+    plan.publishedFrom > plan.publishedTo
+  )
+    invalidPlan()
   if (new Set(plan.types).size !== plan.types.length) invalidPlan()
   if (
     plan.durationMinSec !== null &&
@@ -346,44 +303,6 @@ async function resolveSourceNames<
     if (warning) warnings.push(warning)
   }
   return { sources: [...sources.values()], warnings }
-}
-
-async function interpretYoutubeSearch(
-  text: string,
-  now: Date,
-): Promise<AiYoutubeSearchResponse> {
-  const interpretation = parseAiYoutubeInterpretation(
-    await runAiText([
-      { role: 'system', content: aiYoutubeSearchPrompt(now) },
-      { role: 'user', content: text },
-    ]),
-  )
-  const { plan } = interpretation
-  if (!plan) return { ...interpretation, plan: null, warnings: [] }
-  validateAiYoutubePlan(plan)
-  const { channelNames, ...query } = plan
-  const resolved = await resolveSourceNames(
-    channelNames,
-    () => listSubscribedSourceNames('youtube'),
-    { one: 'subscribed channel', many: 'subscribed channels' },
-  )
-  // A partial channel filter would silently drop a requested channel.
-  if (resolved.warnings.length)
-    return {
-      plan: null,
-      explanation:
-        'Some channel names do not match exactly one subscribed channel. Use the name or @handle shown in Subscriptions.',
-      assumptions: [],
-      warnings: resolved.warnings.slice(0, 10),
-    }
-  return {
-    ...interpretation,
-    plan: {
-      ...query,
-      channels: resolved.sources.map(({ id, title }) => ({ id, title })),
-    },
-    warnings: [],
-  }
 }
 
 async function interpretSubscriptionSearch(
@@ -494,18 +413,14 @@ async function interpretMediaSearch(
 }
 
 /**
- * Album, film and track requests return a browse plan; `youtube` returns a
- * Videos plan and `subscription` a Subscriptions plan.
+ * Album, film and track requests return a browse plan; `subscription` returns
+ * a Subscriptions plan.
  */
 export async function interpretAiSearch(
   input: AiSearchInput,
   now = new Date(),
-): Promise<
-  AiSearchResponse | AiYoutubeSearchResponse | AiSubscriptionSearchResponse
-> {
+): Promise<AiSearchResponse | AiSubscriptionSearchResponse> {
   const request = AiSearchInputSchema.parse(input)
-  if (request.mediaType === 'youtube')
-    return interpretYoutubeSearch(request.text, now)
   if (request.mediaType === 'subscription')
     return interpretSubscriptionSearch(request.text, now)
   return interpretMediaSearch(request.mediaType, request.text, now)

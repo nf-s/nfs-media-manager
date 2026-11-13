@@ -5,13 +5,7 @@ import {
   YoutubeAuthorizeInputSchema,
   YoutubeAuthorizeResultSchema,
   YoutubeCallbackSchema,
-  YoutubeChannelListSchema,
   YoutubeDisconnectResultSchema,
-  YoutubeSyncInputSchema,
-  YoutubeSyncSettingsSchema,
-  YoutubeSyncStatusSchema,
-  YoutubeVideoPageSchema,
-  YoutubeVideoQuerySchema,
 } from '@repo/schemas/youtube'
 import { env } from '@/env'
 import { ServerError } from '@/lib/error'
@@ -25,20 +19,11 @@ import {
 import { generateJsonResponse } from '@/lib/response'
 import { authMiddleware } from '@/middlewares/auth'
 import {
-  listYoutubeChannels,
-  searchYoutubeVideos,
-} from '@/services/youtube-library'
-import {
   authorizeYoutube,
   disconnectYoutube,
   finishYoutubeAuthorization,
   youtubeCallbackDestination,
 } from '@/services/youtube-oauth'
-import {
-  getYoutubeSyncStatus,
-  setYoutubeSyncSchedule,
-} from '@/services/youtube-sync'
-import { queueYoutubeSync } from '@/services/youtube-sync-jobs'
 
 function actor(c: Context<AppEnv>) {
   const user = c.get('user')
@@ -62,137 +47,12 @@ const sameOrigin = createMiddleware<AppEnv>(async (c, next) => {
   await next()
 })
 
-const statusResponse = (description: string) => ({
-  description,
-  content: {
-    'application/json': {
-      schema: createResponseSchema(YoutubeSyncStatusSchema),
-    },
-  },
-})
-
 const app: OpenAPIHono<AppEnv> = createOpenAPIApp()
 app.use('*', async (c, next) => {
   c.header('Cache-Control', 'no-store')
   c.header('Referrer-Policy', 'no-referrer')
   await next()
 })
-
-app.openapi(
-  createRoute({
-    method: 'get',
-    path: '/sync',
-    middleware: [authMiddleware()],
-    responses: {
-      200: statusResponse(
-        'Account connection and stored sync status; no YouTube requests',
-      ),
-      401: jsonErrorResponse('Unauthorized'),
-    },
-  }),
-  async (c) =>
-    generateJsonResponse(c, await getYoutubeSyncStatus(actor(c).userId), 200),
-)
-
-app.openapi(
-  createRoute({
-    method: 'post',
-    path: '/sync',
-    middleware: [authMiddleware(), sameOrigin],
-    request: {
-      body: {
-        required: true,
-        content: { 'application/json': { schema: YoutubeSyncInputSchema } },
-      },
-    },
-    responses: {
-      200: statusResponse(
-        'Queue a subscription sync job, or resume an unfinished run',
-      ),
-      401: jsonErrorResponse('Unauthorized'),
-      422: validationErrorResponse,
-      429: jsonErrorResponse('YouTube is cooling down or halted'),
-    },
-  }),
-  async (c) =>
-    generateJsonResponse(c, await queueYoutubeSync(actor(c).userId), 200),
-)
-
-app.openapi(
-  createRoute({
-    method: 'put',
-    path: '/sync/settings',
-    middleware: [authMiddleware(), sameOrigin],
-    request: {
-      body: {
-        required: true,
-        content: { 'application/json': { schema: YoutubeSyncSettingsSchema } },
-      },
-    },
-    responses: {
-      200: statusResponse('Set how often a sync is queued automatically'),
-      401: jsonErrorResponse('Unauthorized'),
-      422: validationErrorResponse,
-    },
-  }),
-  async (c) =>
-    generateJsonResponse(
-      c,
-      await setYoutubeSyncSchedule(
-        actor(c).userId,
-        c.req.valid('json').schedule,
-      ),
-      200,
-    ),
-)
-
-app.openapi(
-  createRoute({
-    method: 'get',
-    path: '/channels',
-    middleware: [authMiddleware()],
-    responses: {
-      200: {
-        description: 'Subscribed channels with their stored video counts',
-        content: {
-          'application/json': {
-            schema: createResponseSchema(YoutubeChannelListSchema),
-          },
-        },
-      },
-      401: jsonErrorResponse('Unauthorized'),
-    },
-  }),
-  async (c) => generateJsonResponse(c, await listYoutubeChannels(), 200),
-)
-
-app.openapi(
-  createRoute({
-    method: 'get',
-    path: '/videos',
-    middleware: [authMiddleware()],
-    request: { query: YoutubeVideoQuerySchema },
-    responses: {
-      200: {
-        description:
-          'Search stored videos from subscribed channels; no YouTube requests',
-        content: {
-          'application/json': {
-            schema: createResponseSchema(YoutubeVideoPageSchema),
-          },
-        },
-      },
-      401: jsonErrorResponse('Unauthorized'),
-      422: validationErrorResponse,
-    },
-  }),
-  async (c) =>
-    generateJsonResponse(
-      c,
-      await searchYoutubeVideos(c.req.valid('query')),
-      200,
-    ),
-)
 
 app.openapi(
   createRoute({

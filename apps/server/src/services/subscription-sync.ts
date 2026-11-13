@@ -29,14 +29,8 @@ export type SubscriptionSyncProvider = {
 const providers: Record<SubscriptionType, SubscriptionSyncProvider> = {
   youtube: {
     status: getYoutubeSubscriptionSyncStatus,
-    queue: async (userId) => {
-      await queueYoutubeSync(userId)
-      return getYoutubeSubscriptionSyncStatus(userId)
-    },
-    setSchedule: async (userId, schedule) => {
-      await setYoutubeSyncSchedule(userId, schedule)
-      return getYoutubeSubscriptionSyncStatus(userId)
-    },
+    queue: queueYoutubeSync,
+    setSchedule: setYoutubeSyncSchedule,
   },
   spotify: {
     status: getSpotifyPodcastSyncStatus,

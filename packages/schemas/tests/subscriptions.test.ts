@@ -9,6 +9,7 @@ import {
 import {
   SPOTIFY_PODCAST_SYNC_TASK,
   SUBSCRIPTION_SYNC_TASKS,
+  SubscriptionDaySchema,
   SubscriptionItemParamsSchema,
   SubscriptionItemQuerySchema,
   SubscriptionItemSchema,
@@ -102,6 +103,12 @@ describe('subscription item query', () => {
       page: 1,
       size: 24,
     })
+  })
+
+  it('accepts UTC days only as YYYY-MM-DD', () => {
+    expect(SubscriptionDaySchema.safeParse('2026-02-28').success).toBe(true)
+    for (const value of ['2026-1-1', '2026-13-40', 'yesterday', ''])
+      expect(SubscriptionDaySchema.safeParse(value).success).toBe(false)
   })
 
   it('reads JSON filters and ranges from URL values', () => {

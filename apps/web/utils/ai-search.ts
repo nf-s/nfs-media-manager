@@ -2,23 +2,17 @@ import type { z } from 'zod'
 import {
   AiSearchResponseSchema,
   AiSubscriptionSearchResponseSchema,
-  AiYoutubeSearchResponseSchema,
   aiSubscriptionBrowseQuery,
   type AiMediaLibrary,
   type AiSearchLibrary,
   type AiSearchPlan,
   type AiSubscriptionPlan,
-  type AiYoutubePlan,
 } from '@repo/schemas/ai-search'
 import { formatBrowseValue, type BrowseField } from '@repo/schemas/browse'
 import { subscriptionTypeLabels } from '@repo/schemas/subscriptions'
 import { formatListeningPeriod, formatListeningRule } from './listening-filters'
 import { subscriptionSortLabels } from './subscriptions'
-import {
-  formatVideoDuration,
-  youtubeDurationLabels,
-  youtubeSortLabels,
-} from './youtube'
+import { formatVideoDuration } from './youtube'
 
 export type AiSearchResult<Plan> = {
   plan: Plan | null
@@ -43,12 +37,6 @@ export function mediaAiSearchTarget(
     responseSchema: AiSearchResponseSchema,
     describe: (plan) => describeAiSearchPlan(plan, fields),
   }
-}
-
-export const youtubeAiSearchTarget: AiSearchTarget<AiYoutubePlan> = {
-  mediaType: 'youtube',
-  responseSchema: AiYoutubeSearchResponseSchema,
-  describe: describeAiYoutubePlan,
 }
 
 export const subscriptionAiSearchTarget: AiSearchTarget<AiSubscriptionPlan> = {
@@ -121,47 +109,6 @@ export function describeAiSearchPlan(
   )
   if (plan.limitResults !== null)
     descriptions.push(`Limit: ${plan.limitResults} results`)
-  return descriptions
-}
-
-/** Videos page parameters for a YouTube plan; every search parameter is replaced. */
-export function aiYoutubeSearchParams(
-  plan: AiYoutubePlan,
-): Record<string, string | string[] | null> {
-  return {
-    q: plan.q || null,
-    fields: plan.q && plan.fields === 'title' ? 'title' : null,
-    channelId: plan.channels.map((channel) => channel.id),
-    duration: plan.duration,
-    publishedFrom: plan.publishedFrom,
-    publishedTo: plan.publishedTo,
-    sortBy: plan.sortBy,
-    sortDirection: plan.sortDirection === 'asc' ? 'asc' : null,
-    video: null,
-  }
-}
-
-export function describeAiYoutubePlan(plan: AiYoutubePlan): string[] {
-  const descriptions: string[] = []
-  if (plan.q)
-    descriptions.push(
-      `Search: ${plan.q}${plan.fields === 'title' ? ' (titles only)' : ''}`,
-    )
-  if (plan.channels.length)
-    descriptions.push(
-      `Channels: ${plan.channels.map((channel) => channel.title).join(', ')}`,
-    )
-  if (plan.duration)
-    descriptions.push(`Duration: ${youtubeDurationLabels[plan.duration]}`)
-  if (plan.publishedFrom || plan.publishedTo)
-    descriptions.push(
-      `Published: ${plan.publishedFrom ?? '*'} to ${plan.publishedTo ?? '*'}`,
-    )
-  descriptions.push(
-    plan.sortBy === 'relevance'
-      ? `Sort: ${youtubeSortLabels.relevance}`
-      : `Sort: ${youtubeSortLabels[plan.sortBy]}, ${plan.sortDirection === 'asc' ? 'ascending' : 'descending'}`,
-  )
   return descriptions
 }
 

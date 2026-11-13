@@ -9,7 +9,6 @@ import {
   AiSubscriptionSearchResponseSchema,
   AiTranscriptionInputSchema,
   AiTranscriptionSchema,
-  AiYoutubeSearchResponseSchema,
 } from '@repo/schemas/ai-search'
 import { authMiddleware } from '@/middlewares/auth'
 import {
@@ -67,13 +66,12 @@ app.openapi(
     responses: {
       200: {
         description:
-          'Validated search interpretation: a browse plan for album, film and track, a Videos plan for youtube and a Subscriptions plan for subscription',
+          'Validated search interpretation: a browse plan for album, film and track and a Subscriptions plan for subscription',
         content: {
           'application/json': {
             schema: createResponseSchema(
               z.union([
                 AiSearchResponseSchema,
-                AiYoutubeSearchResponseSchema,
                 AiSubscriptionSearchResponseSchema,
               ]),
             ),
