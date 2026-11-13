@@ -61,13 +61,7 @@ const TmdbSearchSchema = z.object({
     .max(20),
 })
 
-async function providerOperation<T>(
-  providerId: 'spotify' | 'tmdb',
-  execute: (
-    context: MediaPluginTestContext,
-    plugin: MediaProviderPlugin,
-  ) => Promise<T>,
-): Promise<T> {
+async function manualProvider(providerId: 'spotify' | 'tmdb') {
   const plugin = await getScrapePlugin(providerId)
   if (!plugin)
     throw new ServerError({
@@ -93,14 +87,33 @@ async function providerOperation<T>(
       message: `Configure ${plugin.manifest.displayName} credentials in Providers before searching or adding items.`,
     })
   }
+  return { plugin, secrets }
+}
+
+export async function prepareManualMediaSearch(mediaType: 'album' | 'film') {
+  await manualProvider(mediaType === 'album' ? 'spotify' : 'tmdb')
+}
+
+async function providerOperation<T>(
+  providerId: 'spotify' | 'tmdb',
+  execute: (
+    context: MediaPluginTestContext,
+    plugin: MediaProviderPlugin,
+  ) => Promise<T>,
+  assertActive?: () => Promise<void>,
+): Promise<T> {
+  const { plugin, secrets } = await manualProvider(providerId)
   try {
+    await assertActive?.()
     const result = await execute(
-      { secrets, request: createProviderRequest(plugin) },
+      { secrets, request: createProviderRequest(plugin, assertActive) },
       plugin,
     )
+    await assertActive?.()
     await recordProviderSuccess(providerId)
     return result
   } catch (error) {
+    await assertActive?.()
     if (error instanceof ServerError) throw error
     await recordProviderFailure(plugin, error)
     throw new ServerError({
@@ -143,7 +156,10 @@ function filmCandidate(
   }
 }
 
-export async function searchManualMedia(input: ManualMediaSearchInput) {
+export async function searchManualMedia(
+  input: ManualMediaSearchInput,
+  assertActive?: () => Promise<void>,
+) {
   const options = ManualMediaSearchInputSchema.parse(input)
   if (options.mediaType === 'album') {
     const page = await providerOperation(
@@ -169,6 +185,7 @@ export async function searchManualMedia(input: ManualMediaSearchInput) {
             }),
           ).albums
       },
+      assertActive,
     )
     if (page.offset !== (options.page - 1) * 10) {
       throw new ServerError({

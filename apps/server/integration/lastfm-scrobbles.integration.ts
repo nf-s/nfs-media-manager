@@ -473,45 +473,61 @@ describe('Last.fm scrobble sync jobs with offline HTTP and a temporary database'
     expect(requestedUrl(2).searchParams.get('page')).toBe('2')
   })
 
-  it('queues a sync only when the schedule is due after a completed sync', async () => {
-    const { getLastfmSyncStatus, setLastfmSyncSchedule } =
-      await import('@/services/lastfm-scrobbles')
-    const { queueDueLastfmSync } = await import('@/services/lastfm-sync-jobs')
-    const day = 24 * 60 * 60 * 1000
+  it.each([
+    { schedule: '10m', minutes: 10 },
+    { schedule: '30m', minutes: 30 },
+    { schedule: '1h', minutes: 60 },
+    { schedule: '3h', minutes: 180 },
+    { schedule: '6h', minutes: 360 },
+    { schedule: 'daily', minutes: 1440 },
+    { schedule: 'weekly', minutes: 10080 },
+  ])(
+    'queues a $schedule sync only when due after a completed sync',
+    async ({ schedule, minutes }) => {
+      const { LastfmSyncScheduleSchema } = await import('@repo/schemas/lastfm')
+      const { getLastfmSyncStatus, setLastfmSyncSchedule } =
+        await import('@/services/lastfm-scrobbles')
+      const { queueDueLastfmSync } = await import('@/services/lastfm-sync-jobs')
+      const day = 24 * 60 * 60 * 1000
 
-    // The setting can be saved first, but the schedule never starts the first sync.
-    expect(await setLastfmSyncSchedule('weekly')).toMatchObject({
-      state: 'never',
-      schedule: 'weekly',
-      nextScheduledAt: null,
-      startedAt: null,
-    })
-    expect(await queueDueLastfmSync(Date.now() + 365 * day)).toBe(false)
+      // The setting can be saved first, but the schedule never starts the first sync.
+      expect(await setLastfmSyncSchedule('weekly')).toMatchObject({
+        state: 'never',
+        schedule: 'weekly',
+        nextScheduledAt: null,
+        startedAt: null,
+      })
+      expect(await queueDueLastfmSync(Date.now() + 365 * day)).toBe(false)
 
-    respond(page(1, 1, [scrobble(recent, 'First track')]))
-    const complete = await syncToEnd()
-    const completedAt = Date.parse(complete.lastCompletedAt ?? '')
-    expect(complete.nextScheduledAt).toBe(
-      new Date(completedAt + 7 * day).toISOString(),
-    )
-    expect((await setLastfmSyncSchedule('off')).nextScheduledAt).toBeNull()
-    expect(await queueDueLastfmSync(completedAt + 365 * day)).toBe(false)
-    expect((await setLastfmSyncSchedule('6h')).nextScheduledAt).toBe(
-      new Date(completedAt + day / 4).toISOString(),
-    )
+      respond(page(1, 1, [scrobble(recent, 'First track')]))
+      const complete = await syncToEnd()
+      const completedAt = Date.parse(complete.lastCompletedAt ?? '')
+      expect(complete.nextScheduledAt).toBe(
+        new Date(completedAt + 7 * day).toISOString(),
+      )
+      expect((await setLastfmSyncSchedule('off')).nextScheduledAt).toBeNull()
+      expect(await queueDueLastfmSync(completedAt + 365 * day)).toBe(false)
+      const interval = minutes * 60 * 1000
+      expect(
+        (await setLastfmSyncSchedule(LastfmSyncScheduleSchema.parse(schedule)))
+          .nextScheduledAt,
+      ).toBe(new Date(completedAt + interval).toISOString())
 
-    expect(await queueDueLastfmSync(completedAt + day / 4 - 1000)).toBe(false)
-    expect(await queueDueLastfmSync(completedAt + day / 4)).toBe(true)
-    expect(await queueDueLastfmSync(completedAt + day)).toBe(false)
-    expect(await getLastfmSyncStatus()).toMatchObject({
-      state: 'running',
-      schedule: '6h',
-      nextScheduledAt: null,
-    })
-    respond(page(1, 0, []))
-    expect((await drain()).state).toBe('complete')
-    expect(await syncJobs()).toHaveLength(2)
-  })
+      expect(await queueDueLastfmSync(completedAt + interval - 1000)).toBe(
+        false,
+      )
+      expect(await queueDueLastfmSync(completedAt + interval)).toBe(true)
+      expect(await queueDueLastfmSync(completedAt + interval + day)).toBe(false)
+      expect(await getLastfmSyncStatus()).toMatchObject({
+        state: 'running',
+        schedule,
+        nextScheduledAt: null,
+      })
+      respond(page(1, 0, []))
+      expect((await drain()).state).toBe('complete')
+      expect(await syncJobs()).toHaveLength(2)
+    },
+  )
 
   it('reports how each scrobbled artist and album name is linked', async () => {
     const { getLastfmLinkReport, relinkLastfmScrobbles } =
@@ -554,6 +570,7 @@ describe('Last.fm scrobble sync jobs with offline HTTP and a temporary database'
       'no-album': [1, 1],
     })
     expect(report.items[0]).toEqual({
+      spotifySearch: null,
       artistName: 'Artist fixture',
       albumName: 'Album fixture',
       scrobbles: 3,

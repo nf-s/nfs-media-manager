@@ -7,7 +7,11 @@ import {
   LastfmSyncInputSchema,
   LastfmSyncSettingsSchema,
   LastfmSyncStatusSchema,
+  LastfmSpotifySearchInputSchema,
+  LastfmSpotifySearchGroupSchema,
+  LastfmSpotifySearchSchema,
 } from '@repo/schemas/lastfm'
+import { EnrichmentResultSchema } from '@repo/schemas/job'
 import { env } from '@/env'
 import { ServerError } from '@/lib/error'
 import {
@@ -27,6 +31,10 @@ import {
   setLastfmSyncSchedule,
 } from '@/services/lastfm-scrobbles'
 import { queueLastfmSync } from '@/services/lastfm-sync-jobs'
+import {
+  getLastfmSpotifySearch,
+  queueLastfmSpotifySearches,
+} from '@/services/lastfm-spotify-search'
 
 const sameOrigin = createMiddleware<AppEnv>(async (c, next) => {
   const origin = c.req.header('origin')
@@ -138,6 +146,70 @@ const app: OpenAPIHono<AppEnv> = createOpenAPIApp()
       generateJsonResponse(
         c,
         await getLastfmLinkReport(c.req.valid('query')),
+        200,
+      ),
+  )
+  .openapi(
+    createRoute({
+      method: 'get',
+      path: '/links/spotify-search',
+      middleware: [authMiddleware()],
+      request: { query: LastfmSpotifySearchGroupSchema },
+      responses: {
+        200: {
+          description: 'Stored Spotify album search; no provider requests',
+          content: {
+            'application/json': {
+              schema: createResponseSchema(LastfmSpotifySearchSchema),
+            },
+          },
+        },
+        401: jsonErrorResponse('Unauthorized'),
+        422: validationErrorResponse,
+      },
+    }),
+    async (c) =>
+      generateJsonResponse(
+        c,
+        await getLastfmSpotifySearch(c.req.valid('query')),
+        200,
+      ),
+  )
+  .openapi(
+    createRoute({
+      method: 'post',
+      path: '/links/spotify-search',
+      middleware: [authMiddleware(), sameOrigin],
+      request: {
+        body: {
+          required: true,
+          content: {
+            'application/json': { schema: LastfmSpotifySearchInputSchema },
+          },
+        },
+      },
+      responses: {
+        200: {
+          description:
+            'Queue one Spotify search job per selected unlinked album',
+          content: {
+            'application/json': {
+              schema: createResponseSchema(EnrichmentResultSchema),
+            },
+          },
+        },
+        401: jsonErrorResponse('Unauthorized'),
+        422: validationErrorResponse,
+        429: jsonErrorResponse('Spotify is cooling down or halted'),
+      },
+    }),
+    async (c) =>
+      generateJsonResponse(
+        c,
+        await queueLastfmSpotifySearches(
+          c.req.valid('json'),
+          c.get('user')?.id ?? null,
+        ),
         200,
       ),
   )

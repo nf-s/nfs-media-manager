@@ -18,6 +18,7 @@ import {
   canCancelJob,
   canRetryJob,
   isScrobbleSyncJob,
+  isScrobbleSpotifySearchJob,
   jobTaskTitle,
   unfinishedJobItems,
 } from '@/utils/job-selection'
@@ -75,6 +76,7 @@ export default function JobBulkActions({
     0,
   )
   const syncRetries = retryJobs.filter(isScrobbleSyncJob).length
+  const searchRetries = retryJobs.filter(isScrobbleSpotifySearchJob).length
   const selectionKey = JSON.stringify([
     selectedAction,
     selectedJobs.map((job) => [job.id, job.status, unfinishedJobItems(job)]),
@@ -82,7 +84,10 @@ export default function JobBulkActions({
   ])
   const reviewing = reviewedSelection === selectionKey && targetJobs.length > 0
   const runningConfirmed = reviewing && runningJobs.length > 0
-  const confirmed = reviewing && selectedAction === 'retry' && itemCount > 5
+  const confirmed =
+    reviewing &&
+    selectedAction === 'retry' &&
+    itemCount + syncRetries + searchRetries > 5
   const actionLabel =
     selectedAction === 'retry'
       ? retriesRunning
@@ -255,6 +260,13 @@ export default function JobBulkActions({
                 <p>
                   Queue {syncRetries} scrobble{' '}
                   {syncRetries === 1 ? 'sync' : 'syncs'}.
+                </p>
+              )}
+              {selectedAction === 'retry' && searchRetries > 0 && (
+                <p>
+                  Queue {searchRetries} Spotify album{' '}
+                  {searchRetries === 1 ? 'search' : 'searches'}. Provider limits
+                  and cooldowns apply.
                 </p>
               )}
               {selectedAction === 'retry' && itemCount > 0 && (

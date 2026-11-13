@@ -16,9 +16,11 @@ import ImportsWorkspace from './imports-workspace'
 import LastfmSyncPageClient from './pages/lastfm-sync-page-client'
 import AlbumListening from './album-listening'
 import LastfmLinkPanel from './lastfm-link-panel'
+import LastfmSearchActions from './lastfm-search-actions'
 import { ListeningChart } from './listening-chart'
 import { ConfigContext } from './providers'
 import { monthBars, yearBars } from '@/utils/listening-chart'
+import { lastfmLinkKey } from '@/utils/lastfm-sync'
 
 const network = mock.method(globalThis, 'fetch', async () => {
   throw new Error('Network forbidden in UI tests')
@@ -84,6 +86,12 @@ const report = LastfmLinkReportSchema.parse({
       lastListenedAt: '2026-01-01T00:00:00Z',
       reason: 'ambiguous',
       album: null,
+      spotifySearch: {
+        jobId: 'search-fixture',
+        status: 'succeeded',
+        resultCount: 2,
+        errorMessage: null,
+      },
       candidates: [
         { ...fixtureAlbum, id: 'album-2', title: 'Shared title' },
         {
@@ -144,7 +152,10 @@ function syncPage(status: unknown, search?: string, reason = '') {
   return render(
     [
       [['lastfm-sync'], status],
-      [['lastfm-links', reason, ''], { pages: [report], pageParams: [1] }],
+      [
+        ['lastfm-links', reason, '', 'scrobbles', 'desc'],
+        { pages: [report], pageParams: [1] },
+      ],
     ],
     <ImportsWorkspace>
       <LastfmSyncPageClient />
@@ -224,6 +235,10 @@ test('schedule shows the saved value and next scheduled sync', () => {
   })
   assert.match(html, /<option value="daily" selected="">Daily<\/option>/)
   assert.match(html, /<option value="6h">Every 6 hours<\/option>/)
+  assert.match(html, /<option value="10m">Every 10 minutes<\/option>/)
+  assert.match(html, /<option value="30m">Every 30 minutes<\/option>/)
+  assert.match(html, /<option value="1h">Every hour<\/option>/)
+  assert.match(html, /<option value="3h">Every 3 hours<\/option>/)
   assert.match(html, /Next sync /)
   assert.match(html, /does not start the first sync or resume a failed/)
   assert.match(html, />View last job</)
@@ -269,10 +284,59 @@ test('scrobble links show reason totals and link library albums', () => {
   assert.equal(html.match(/>Add new album</g)?.length, 1)
   assert.match(
     html,
-    /<td>Scrobbled without an album<\/td><td>-<\/td><td><\/td>/,
+    /<td>Scrobbled without an album<\/td><td>-<\/td><td><span class="muted">Not searched<\/span><\/td><td><\/td>/,
   )
   assert.match(html, />Relink</)
   assert.doesNotMatch(html, /disabled=""[^>]*>Relink/)
+  assert.match(html, /aria-label="Select all loaded unlinked albums"/)
+  assert.match(html, /aria-sort="descending"><button[^>]*>Scrobbles ↓/)
+  assert.match(html, /aria-sort="none"><button[^>]*>Scrobbled artist/)
+  assert.match(
+    html,
+    /aria-label="Select Artist fixture — Album fixture" disabled=""/,
+  )
+  assert.match(html, /aria-label="Select Artist fixture — Shared title"\/>/)
+  assert.match(
+    html,
+    /href="\/jobs\?jobId=search-fixture&amp;mediaType=album">2 matches/,
+  )
+  assert.match(html, /Shift-click to select a range/)
+})
+
+test('bulk Spotify search requires confirmation above five explicit unlinked albums', () => {
+  const source = report.items.find((item) => item.reason === 'ambiguous')
+  assert.ok(source)
+  const groups = Array.from({ length: 6 }, (_, index) => ({
+    ...source,
+    albumName: `Album fixture ${index}`,
+  }))
+  const html = render(
+    [],
+    <LastfmSearchActions
+      groups={groups}
+      selectedIds={groups.map(lastfmLinkKey)}
+      onSelect={() => {}}
+      onPending={() => {}}
+      disabled={false}
+    />,
+  )
+  assert.match(html, /6 selected/)
+  assert.match(html, /Confirm 6 Spotify album searches/)
+  assert.match(html, /disabled=""[^>]*>Search Spotify albums/)
+  const small = render(
+    [],
+    <LastfmSearchActions
+      groups={groups}
+      selectedIds={groups.slice(0, 5).map(lastfmLinkKey)}
+      onSelect={() => {}}
+      onPending={() => {}}
+      disabled={false}
+    />,
+  )
+  assert.doesNotMatch(
+    small,
+    /Confirm \d+ Spotify|disabled=""[^>]*>Search Spotify albums/,
+  )
 })
 
 test('scrobble link panel shows current album, library search and manual controls', () => {
@@ -287,6 +351,7 @@ test('scrobble link panel shows current album, library search and manual control
   assert.match(html, />Unlink</)
   assert.match(html, />Automatic</)
   assert.match(html, /aria-label="Album for Second artist — Chosen title"/)
+  assert.match(html, /value="Chosen title"/)
   assert.match(html, /role="tab"[^>]*>Add new album</)
 })
 
@@ -304,7 +369,7 @@ test('ambiguous scrobble matches are available in the panel', () => {
   assert.doesNotMatch(html, />Unlink<|>Automatic</)
 })
 
-test('new album panel prefills Spotify search without a provider request', () => {
+test('new album panel prefills Spotify search without requests during server rendering', () => {
   const group = report.items.find((item) => item.reason === 'ambiguous')
   assert.ok(group)
   const html = render(

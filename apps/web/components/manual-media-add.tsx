@@ -6,14 +6,17 @@ import { X } from 'lucide-react'
 import {
   ManualMediaSearchInputSchema,
   ManualMediaSearchResultSchema,
-  ManualMediaAddInputSchema,
-  ManualMediaAddResultSchema,
   type ManualMediaSearchInput,
   type ManualMediaSearchItem,
+  type ManualMediaSearchResult,
 } from '@repo/schemas/manual-add'
 import { Button } from '@repo/ui/components/ui/button'
 import { Input } from '@repo/ui/components/ui/input'
 import { fetchApiData } from '@/utils/api'
+import {
+  addManualMediaItem,
+  invalidateManualMediaAddition,
+} from '@/utils/manual-media-add'
 import { useConfig } from './providers'
 import { errorMessage } from './lastfm-sync'
 import MediaArtwork from './media-artwork'
@@ -25,6 +28,10 @@ export function ManualMediaSearch({
   existingActionLabel = 'Open',
   disabled = false,
   onPendingChange,
+  autoSearch = false,
+  initialResult,
+  onSearchResult,
+  onChoose,
 }: {
   mediaType: 'album' | 'film'
   initialQuery?: string
@@ -32,61 +39,77 @@ export function ManualMediaSearch({
   existingActionLabel?: string
   disabled?: boolean
   onPendingChange?: (pending: boolean) => void
+  autoSearch?: boolean
+  initialResult?: ManualMediaSearchResult
+  onSearchResult?: (query: string, result: ManualMediaSearchResult) => void
+  onChoose?: (item: ManualMediaSearchItem) => void
 }) {
   const { apiBaseUrl } = useConfig()
   const client = useQueryClient()
   const [query, setQuery] = useState(initialQuery.slice(0, 200))
   const addedIds = useRef(new Map<string, string>())
+  const automaticallySearched = useRef(false)
+  const [showInitialResult, setShowInitialResult] = useState(true)
   const provider = mediaType === 'album' ? 'Spotify' : 'TMDb'
   const inputId = useId()
   const search = useMutation({
     retry: false,
     mutationFn: (input: ManualMediaSearchInput) =>
-      fetchApiData(
-        apiBaseUrl,
-        '/api/v1/manual-add/search',
-        ManualMediaSearchResultSchema,
-        {
-          method: 'POST',
-          body: JSON.stringify(ManualMediaSearchInputSchema.parse(input)),
-        },
-      ),
+      client.fetchQuery({
+        queryKey: [
+          'manual-media-search',
+          input.mediaType,
+          input.q,
+          input.page ?? 1,
+        ],
+        staleTime: 0,
+        retry: false,
+        queryFn: () =>
+          fetchApiData(
+            apiBaseUrl,
+            '/api/v1/manual-add/search',
+            ManualMediaSearchResultSchema,
+            {
+              method: 'POST',
+              body: JSON.stringify(ManualMediaSearchInputSchema.parse(input)),
+            },
+          ),
+      }),
+    onSuccess: (result, input) => onSearchResult?.(input.q, result),
   })
   const add = useMutation({
     retry: false,
     mutationFn: async (item: ManualMediaSearchItem) => {
       let id = item.mediaItemId ?? addedIds.current.get(item.externalId)
       if (!id) {
-        const result = await fetchApiData(
-          apiBaseUrl,
-          '/api/v1/manual-add/add',
-          ManualMediaAddResultSchema,
-          {
-            method: 'POST',
-            body: JSON.stringify(
-              ManualMediaAddInputSchema.parse({
-                mediaType,
-                externalId: item.externalId,
-              }),
-            ),
-          },
-        )
-        id = result.mediaItemId
+        id = await addManualMediaItem(apiBaseUrl, mediaType, item)
         addedIds.current.set(item.externalId, id)
-        await Promise.all([
-          client.invalidateQueries({
-            queryKey: [mediaType === 'album' ? 'albums' : 'films'],
-          }),
-          client.invalidateQueries({ queryKey: ['imports'] }),
-          client.invalidateQueries({ queryKey: ['lastfm-links'] }),
-          client.invalidateQueries({ queryKey: ['album-picker'] }),
-          client.invalidateQueries({ queryKey: [`${mediaType}-selection`] }),
-          client.invalidateQueries({ queryKey: ['tags'] }),
-        ])
+        await invalidateManualMediaAddition(client, mediaType)
       }
       await onAdded(id)
     },
   })
+  const result = search.data ?? (showInitialResult ? initialResult : undefined)
+  const { mutate: searchMedia } = search
+  useEffect(() => {
+    if (
+      !autoSearch ||
+      disabled ||
+      initialResult ||
+      automaticallySearched.current ||
+      !initialQuery.trim()
+    )
+      return
+    automaticallySearched.current = true
+    searchMedia({ mediaType, q: initialQuery.trim().slice(0, 200), page: 1 })
+  }, [
+    autoSearch,
+    disabled,
+    initialQuery,
+    initialResult,
+    mediaType,
+    searchMedia,
+  ])
   const busy = disabled || search.isPending || add.isPending
   useEffect(() => {
     onPendingChange?.(add.isPending)
@@ -95,6 +118,7 @@ export function ManualMediaSearch({
   function find(page = 1) {
     if (busy || !query.trim()) return
     add.reset()
+    setShowInitialResult(false)
     search.mutate({ mediaType, q: query.trim(), page })
   }
 
@@ -118,6 +142,7 @@ export function ManualMediaSearch({
             disabled={busy}
             onChange={(event) => {
               setQuery(event.target.value)
+              setShowInitialResult(false)
               search.reset()
               add.reset()
             }}
@@ -138,9 +163,9 @@ export function ManualMediaSearch({
           {errorMessage(add.error, `Could not add ${mediaType}.`)}
         </p>
       )}
-      {search.data && !search.isPending && (
+      {result && !search.isPending && (
         <>
-          {search.data.items.length === 0 ? (
+          {result.items.length === 0 ? (
             <p role="status">
               No matching {mediaType === 'album' ? 'albums' : 'films'}.
             </p>
@@ -149,7 +174,7 @@ export function ManualMediaSearch({
               className="manual-add-results"
               aria-label={`${provider} results`}
             >
-              {search.data.items.map((item) => {
+              {result.items.map((item) => {
                 const inLibrary = Boolean(
                   item.mediaItemId || addedIds.current.has(item.externalId),
                 )
@@ -190,7 +215,9 @@ export function ManualMediaSearch({
                       size="sm"
                       disabled={busy}
                       aria-label={`${inLibrary ? existingActionLabel : 'Add'} ${item.title}`}
-                      onClick={() => add.mutate(item)}
+                      onClick={() =>
+                        onChoose ? onChoose(item) : add.mutate(item)
+                      }
                     >
                       {pending
                         ? 'Saving…'
@@ -203,26 +230,24 @@ export function ManualMediaSearch({
               })}
             </ul>
           )}
-          {(search.data.page > 1 || search.data.hasMore) && (
+          {(result.page > 1 || result.hasMore) && (
             <div className="manual-add-pagination">
               <Button
                 type="button"
                 variant="outline"
                 size="sm"
-                disabled={busy || search.data.page <= 1}
-                onClick={() => find((search.data?.page ?? 1) - 1)}
+                disabled={busy || result.page <= 1}
+                onClick={() => find(result.page - 1)}
               >
                 Previous
               </Button>
-              <span>Page {search.data.page}</span>
+              <span>Page {result.page}</span>
               <Button
                 type="button"
                 variant="outline"
                 size="sm"
-                disabled={
-                  busy || !search.data.hasMore || search.data.page >= 50
-                }
-                onClick={() => find((search.data?.page ?? 1) + 1)}
+                disabled={busy || !result.hasMore || result.page >= 50}
+                onClick={() => find(result.page + 1)}
               >
                 Next
               </Button>

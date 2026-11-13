@@ -1,12 +1,16 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import type { Job } from '@repo/schemas/job'
-import { LASTFM_SCROBBLE_SYNC_TASK } from '@repo/schemas/lastfm'
+import {
+  LASTFM_SCROBBLE_SYNC_TASK,
+  LASTFM_SPOTIFY_SEARCH_TASK,
+} from '@repo/schemas/lastfm'
 import {
   canDismissJob,
   canCancelJob,
   canRetryJob,
   isScrobbleSyncJob,
+  isScrobbleSpotifySearchJob,
   jobTaskTitle,
   unfinishedJobItems,
   updateJobSelection,
@@ -152,6 +156,41 @@ test('scrobble sync jobs have no items but keep retry, cancel and dismiss', () =
 })
 
 const rows = ['a', 'b', 'c', 'd', 'e']
+
+test('scrobble Spotify searches identify their target and keep task actions', () => {
+  const search: Job = {
+    ...scrobbleSync,
+    provider: 'spotify',
+    options: {
+      task: LASTFM_SPOTIFY_SEARCH_TASK,
+      artistName: 'Artist fixture',
+      albumName: 'Album fixture',
+    },
+  }
+  assert.equal(isScrobbleSpotifySearchJob(search), true)
+  assert.equal(isScrobbleSyncJob(search), false)
+  assert.equal(
+    jobTaskTitle(search),
+    'Spotify album search · Artist fixture — Album fixture',
+  )
+  assert.equal(
+    jobTaskTitle({
+      options: { task: LASTFM_SPOTIFY_SEARCH_TASK, albumName: {} },
+    }),
+    'Spotify album search',
+  )
+  assert.equal(canRetryJob(search), true)
+  assert.equal(canDismissJob(search), true)
+  assert.equal(canCancelJob({ ...search, status: 'running' }), true)
+  assert.equal(canRetryJob({ ...search, status: 'succeeded' }), false)
+  assert.equal(
+    canRetryJob({
+      ...search,
+      options: { ...search.options, retryJobId: 'retry' },
+    }),
+    false,
+  )
+})
 
 test('running jobs expose unfinished running and queued items for selected retry', () => {
   const running: Job = {

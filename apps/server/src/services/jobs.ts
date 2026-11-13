@@ -21,7 +21,10 @@ import {
   type JobPage,
 } from '@repo/schemas/job'
 import type { JsonValue } from '@repo/schemas/common'
-import { LASTFM_SCROBBLE_SYNC_TASK } from '@repo/schemas/lastfm'
+import {
+  LASTFM_SCROBBLE_SYNC_TASK,
+  LASTFM_SPOTIFY_SEARCH_TASK,
+} from '@repo/schemas/lastfm'
 import { z } from 'zod'
 import {
   PluginResultSchema,
@@ -63,6 +66,8 @@ import type { CloudJobOutcome } from '@/services/cloud-job-contract'
 import {
   prepareLastfmSyncRun,
   runLastfmSyncJob,
+  type LastfmSyncJobContext,
+  type LastfmSyncJobResult,
 } from '@/services/lastfm-scrobbles'
 import {
   createProviderRequest,
@@ -70,6 +75,10 @@ import {
   recordProviderFailure,
   recordProviderSuccess,
 } from '@/services/provider-requests'
+import {
+  prepareLastfmSpotifySearch,
+  runLastfmSpotifySearch,
+} from '@/services/lastfm-spotify-search'
 
 let workerRunning = false
 
@@ -822,13 +831,41 @@ async function processJob(
 
 // Account-level work has a provider and a task name instead of a media item.
 // It still runs through the provider's dispatcher, cooldowns and cancellation.
-const taskJobs = new Map([
+export type TaskJobResult = LastfmSyncJobResult & {
+  metadata?: Record<string, JsonValue>
+  options?: Record<string, JsonValue>
+}
+
+type TaskJobDefinition = {
+  provider: string
+  prepare(
+    userId: string | null,
+    options: Record<string, JsonValue>,
+  ): Promise<Record<string, JsonValue>>
+  run(
+    context: LastfmSyncJobContext,
+    options: Record<string, JsonValue>,
+  ): Promise<TaskJobResult>
+}
+
+const taskJobs = new Map<string, TaskJobDefinition>([
   [
     LASTFM_SCROBBLE_SYNC_TASK,
     {
       provider: 'lastfm',
-      prepare: prepareLastfmSyncRun,
-      run: runLastfmSyncJob,
+      prepare: async (userId) => {
+        await prepareLastfmSyncRun(userId)
+        return {}
+      },
+      run: (context) => runLastfmSyncJob(context),
+    },
+  ],
+  [
+    LASTFM_SPOTIFY_SEARCH_TASK,
+    {
+      provider: 'spotify',
+      prepare: prepareLastfmSpotifySearch,
+      run: runLastfmSpotifySearch,
     },
   ],
 ])
@@ -868,6 +905,8 @@ export async function createTaskJob(
     skipExistingRetry?: boolean
     confirmRunning?: boolean
     scheduled?: boolean
+    taskOptions?: Record<string, JsonValue>
+    skipActive?: boolean
   } = {},
 ): Promise<Job> {
   const definition = taskJobs.get(task)
@@ -881,7 +920,15 @@ export async function createTaskJob(
         ? 'Provider requests are halted after access denial'
         : `Provider is cooling down until ${safety.cooldownUntil}`,
     })
-  await definition.prepare(userId)
+  const prepared = await definition.prepare(
+    userId,
+    scheduling.taskOptions ?? {},
+  )
+  const batchId = scheduling.taskOptions?.batchId
+  const taskOptions = {
+    ...prepared,
+    ...(typeof batchId === 'string' ? { batchId } : {}),
+  }
 
   let created = false
   const jobId = await db.transaction(async (tx) => {
@@ -929,14 +976,39 @@ export async function createTaskJob(
           eq(scrapeJob.provider, definition.provider),
           inArray(scrapeJob.status, ['queued', 'running']),
           sql`${scrapeJob.options}->>'task' = ${task}`,
+          typeof prepared.groupKey === 'string'
+            ? sql`${scrapeJob.options}->>'groupKey' = ${prepared.groupKey}`
+            : undefined,
         ),
       )
       .limit(1)
-    if (active) return active.id
+    if (active) {
+      if (scheduling.skipActive)
+        throw new ServerError({
+          statusCode: 409,
+          message: 'Search is already queued or running.',
+        })
+      if (scheduling.retryOf && typeof prepared.groupKey === 'string') {
+        await tx
+          .update(scrapeJob)
+          .set({
+            options: sql`${scrapeJob.options} || ${JSON.stringify({ retryJobId: active.id })}::jsonb`,
+          })
+          .where(eq(scrapeJob.id, scheduling.retryOf))
+        await logJob(
+          scheduling.retryOf,
+          'info',
+          'A search for this album is already active.',
+          { retryJobId: active.id },
+          tx,
+        )
+      }
+      return active.id
+    }
     const id = await insertTaskJob(
       tx,
       definition.provider,
-      { task, ...retryOptions },
+      { task, ...taskOptions, ...retryOptions },
       userId,
       `Queued for ${definition.provider}`,
     )
@@ -950,7 +1022,7 @@ export async function createTaskJob(
       await logJob(
         scheduling.retryOf,
         'info',
-        'Queued again from the saved checkpoint.',
+        'Queued again as a new job.',
         { retryJobId: id },
         tx,
       )
@@ -1026,23 +1098,26 @@ async function processTaskJob(
     }
   }
 
-  const result = await definition.run({
-    assertActive,
-    isActive: async () => {
-      try {
-        await assertActive()
-        return true
-      } catch (error) {
-        if (error instanceof JobExecutionControlError) throw error
-        return false
-      }
+  const result = await definition.run(
+    {
+      assertActive,
+      isActive: async () => {
+        try {
+          await assertActive()
+          return true
+        } catch (error) {
+          if (error instanceof JobExecutionControlError) throw error
+          return false
+        }
+      },
+      log: async (level, message) => {
+        await withRunningJob(nextJob.id, (tx) =>
+          logJob(nextJob.id, level, message, {}, tx),
+        )
+      },
     },
-    log: async (level, message) => {
-      await withRunningJob(nextJob.id, (tx) =>
-        logJob(nextJob.id, level, message, {}, tx),
-      )
-    },
-  })
+    nextJob.options,
+  )
 
   if (result.outcome === 'stopped') {
     // A user cancellation has already closed the job; this covers a dispatcher stop.
@@ -1099,8 +1174,15 @@ async function processTaskJob(
     'succeeded',
     'info',
     result.message,
-    {},
+    result.metadata ?? {},
     async (tx) => {
+      if (result.options)
+        await tx
+          .update(scrapeJob)
+          .set({
+            options: sql`${scrapeJob.options} || ${JSON.stringify(result.options)}::jsonb`,
+          })
+          .where(eq(scrapeJob.id, nextJob.id))
       if (result.outcome !== 'continue') return
       const nextJobId = await insertTaskJob(
         tx,
@@ -1436,7 +1518,10 @@ export async function listJobs(
       ? sql`${scrapeJob.options}->>'batchId' = ${query.batchId}`
       : undefined,
     query.q
-      ? sql`(${scrapeJob.provider} ilike ${pattern} or ${scrapeJob.id} ilike ${pattern} or exists (
+      ? sql`(${scrapeJob.provider} ilike ${pattern} or ${scrapeJob.id} ilike ${pattern}
+        or ${scrapeJob.options}->>'artistName' ilike ${pattern}
+        or ${scrapeJob.options}->>'albumName' ilike ${pattern}
+        or exists (
       select 1 from scrape_job_item i join media_item m on m.id = i.media_item_id where i.job_id = ${scrapeJob.id} and m.title ilike ${pattern}
     ))`
       : undefined,
@@ -1835,6 +1920,7 @@ export async function retryJob(
       retryOf: original.id,
       skipExistingRetry,
       confirmRunning,
+      taskOptions: original.options,
     })
   if (
     !isRetryableJobStatus(original.status) ||
@@ -1915,11 +2001,13 @@ export async function bulkRetryJobs(
       (isRetryableJobStatus(job.status) &&
       (job.status !== 'running' || confirmRunning) &&
       typeof job.options.retryJobId !== 'string'
-        ? job.items.filter(
-            (item) =>
-              item.mediaItemId !== null &&
-              isUnfinishedJobItem(item.status, job.status),
-          ).length
+        ? getJobTask(job.options) !== null
+          ? 1
+          : job.items.filter(
+              (item) =>
+                item.mediaItemId !== null &&
+                isUnfinishedJobItem(item.status, job.status),
+            ).length
         : 0),
     0,
   )

@@ -26,7 +26,7 @@ Open Imports → Last.fm scrobbles and choose **Sync now**. Opening the page onl
 
 ### Schedule
 
-The page sets how often a sync is queued: off, every 6 hours, daily (the default) or weekly, measured from the last completed sync. The hosted deployment checks hourly and the Node server every five minutes, when scraping is enabled.
+The page sets how often a sync is queued: off, every 10 or 30 minutes, every 1, 3 or 6 hours, daily (the default), or weekly, measured from the last completed sync. Both runtimes check every five minutes when scraping is enabled, so a due sync may start up to five minutes later, plus any provider queue or cooldown delay.
 
 The schedule only follows a completed sync. It does not start the first sync, and it does not resume a failed or cancelled run: resolve that run first. It queues nothing while a sync job is queued or running, or while Last.fm is cooling down.
 
@@ -65,7 +65,9 @@ The rules apply in this order; the first rule that any album satisfies decides.
 
 Each name on the page has **Link** or **Change**, which opens a side panel with library search, possible matching albums, **Unlink** and **Automatic** where applicable. The table keeps its position while the panel is open. On phones the panel opens from the bottom.
 
-Unlinked names also have **Add new album**, which opens the panel's Spotify search with the scrobbled artist and album filled in. Search, choose the correct release and add it to the library; that scrobbled name is then linked to it. A result already in the library can be linked directly. If the album is added but linking fails, retrying the link uses the existing album instead of adding it again. Spotify provider credentials are required; the operation does not save albums to a Spotify account.
+Unlinked names also have **Add new album**, which opens the panel's Spotify search with the scrobbled artist and album filled in and starts the search. Saved bulk-search results are reused when available. The library tab starts with the album title filled in and searches only while that tab is open.
+
+Choose a release and add it to the library; that scrobbled name is then linked to it. The panel closes immediately while the add and link finish, with a progress indicator on the page. A failure restores the panel when it is free, or offers recovery without interrupting another open album. If the album is added but linking fails, retrying uses the existing album instead of adding it again. A result already in the library can be linked directly. Spotify provider credentials are required; the operation does not save albums to a Spotify account.
 
 The album's Listening tab has **Remove** on each linked name, **Add** on each similar unlinked name, and **Add scrobbled name** to search every scrobbled name.
 
@@ -85,6 +87,12 @@ The page lists every scrobbled artist and album name with its scrobble count, mo
 | Scrobbled without an album | Last.fm stored no album name.                                    |
 
 A summary gives the number of names and scrobbles for each outcome. The list filters by outcome and searches artist and album names. Unlinked scrobbles remain stored.
+
+The report uses the same table primitives and selection behavior as album metadata: sortable columns, individual checkboxes, inclusive Shift-click ranges and select-all-loaded with a mixed state. Filtering or sorting clears the selection. Nothing is selected initially, and selection alone makes no provider requests.
+
+Filter to **Unlinked**, select the albums to investigate, then choose **Search Spotify albums**. More than five searches require confirmation. Large selections are submitted in serial groups of at most 100. Each eligible group creates a separate Spotify album-search job with no library item; existing active searches and linked names are skipped. An uncertain submission error stops further groups and leaves the unconfirmed selection for review.
+
+Searches use the existing Spotify dispatcher, request spacing, cooldowns and access limits. Their status is shown in the report and Jobs, where they can be cancelled or explicitly retried. Each search saves its first page of candidates against the scrobbled artist/album group. Opening **Add new album** reads those candidates without repeating the search. No album is added or linked until you choose one.
 
 ## In the app
 
@@ -117,3 +125,5 @@ These are **track scrobbles, not complete album plays**. Albums without linked h
 `integration/browse-listening.integration.ts` verifies custom periods, zero counts, all/any rules, date boundaries, sorting and pagination against synthetic scrobbles in a temporary database. Schema, API and UI helper tests cover invalid periods/counts, album-only controls and saved state.
 
 `integration/lastfm-scrobbles.integration.ts` runs the sync through the job dispatcher with mocked HTTP and a temporary database. It covers chained jobs, the fixed window, failure and resume from Jobs and from the page, cancellation, overlap without duplicates, the schedule, album linking, manual links, the link report, browse fields and the album listening report. It makes no Last.fm requests. `src/lib/lastfm-album-matching.test.ts` covers each linking rule with synthetic albums.
+
+`integration/lastfm-spotify-search.integration.ts` verifies explicit selection, duplicate suppression, stored candidates, cancellation, retry, account isolation, stale library identities, provider cooldowns and sorting before pagination with mocked Spotify requests. UI tests cover selection, schedule options, cached results and background add/link recovery.

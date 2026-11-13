@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 import {
   keepPreviousData,
@@ -16,53 +16,98 @@ import {
 } from '@repo/schemas/lastfm'
 import { Button } from '@repo/ui/components/ui/button'
 import { Input } from '@repo/ui/components/ui/input'
-import { TableScroll, TableState } from '@repo/ui/components/ui/table'
+import {
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+  TableScroll,
+  TableState,
+} from '@repo/ui/components/ui/table'
 import { useInfiniteTableScroll } from '@/hooks/useInfiniteTableScroll'
 import { fetchApiData } from '@/utils/api'
 import {
   lastfmLinkFilter,
   lastfmLinkFilters,
+  lastfmLinkColumns,
+  lastfmLinkKey,
+  lastfmLinkSort,
+  lastfmLinkSortDirection,
   lastfmLinkReasonLabels,
   lastfmLinkStrategyLabels,
   lastfmLinkSummaryRows,
   lastfmLinksPath,
+  lastfmSpotifySearchLabel,
+  canSearchLastfmGroup,
+  LASTFM_SYNC_POLL_MS,
   type LastfmLinkFilter,
+  type LastfmLinkSort,
 } from '@/utils/lastfm-sync'
+import { updateJobSelection } from '@/utils/job-selection'
+import { scopedHref } from '@/utils/media-scope'
 import {
   errorMessage,
   invalidateScrobbleLinks,
   useLastfmSyncStatus,
 } from './lastfm-sync'
-import LastfmLinkPanel, { type LastfmLinkPanelMode } from './lastfm-link-panel'
+import {
+  LastfmLinkWorkflow,
+  type LastfmLinkPanelMode,
+} from './lastfm-link-panel'
+import LastfmSearchActions from './lastfm-search-actions'
 import { useConfig } from './providers'
 
 function LinkRow({
   group,
   onOpen,
+  checked,
+  disabled,
+  onSelect,
 }: {
   group: LastfmLinkGroup
   onOpen: (mode: LastfmLinkPanelMode) => void
+  checked: boolean
+  disabled: boolean
+  onSelect: (checked: boolean, shift: boolean) => void
 }) {
   const linked = group.reason === 'linked' || group.reason === 'manual'
   return (
-    <tr>
-      <td>{group.artistName}</td>
-      <td>{group.albumName ?? '-'}</td>
-      <td className="tabular-nums">{group.scrobbles.toLocaleString()}</td>
-      <td className="whitespace-nowrap">
+    <TableRow data-selected={checked || undefined}>
+      <TableCell className="table-selection-cell">
+        <input
+          type="checkbox"
+          aria-label={`Select ${group.artistName} — ${group.albumName ?? 'No album'}`}
+          checked={checked}
+          disabled={disabled || !canSearchLastfmGroup(group)}
+          onChange={(event) =>
+            onSelect(
+              event.target.checked,
+              'shiftKey' in event.nativeEvent &&
+                event.nativeEvent.shiftKey === true,
+            )
+          }
+        />
+      </TableCell>
+      <TableCell>{group.artistName}</TableCell>
+      <TableCell>{group.albumName ?? '-'}</TableCell>
+      <TableCell className="tabular-nums">
+        {group.scrobbles.toLocaleString()}
+      </TableCell>
+      <TableCell className="whitespace-nowrap">
         <time dateTime={group.lastListenedAt}>
           {new Date(group.lastListenedAt).toLocaleDateString()}
         </time>
-      </td>
-      <td>
+      </TableCell>
+      <TableCell>
         {lastfmLinkReasonLabels[group.reason]}
         {group.strategy && (
           <div className="muted">
             {lastfmLinkStrategyLabels[group.strategy]}
           </div>
         )}
-      </td>
-      <td>
+      </TableCell>
+      <TableCell>
         {linked && group.album ? (
           <Link href={`/albums/${group.album.id}`}>{group.album.title}</Link>
         ) : group.candidates.length ? (
@@ -70,8 +115,25 @@ function LinkRow({
         ) : (
           '-'
         )}
-      </td>
-      <td>
+      </TableCell>
+      <TableCell>
+        {group.spotifySearch ? (
+          <Link
+            className="job-status underline underline-offset-2"
+            data-status={group.spotifySearch.status}
+            href={scopedHref(
+              `/jobs?jobId=${encodeURIComponent(group.spotifySearch.jobId)}`,
+              'album',
+            )}
+            title={group.spotifySearch.errorMessage ?? undefined}
+          >
+            {lastfmSpotifySearchLabel(group.spotifySearch)}
+          </Link>
+        ) : (
+          <span className="muted">{lastfmSpotifySearchLabel(null)}</span>
+        )}
+      </TableCell>
+      <TableCell>
         {group.albumName !== null && (
           <div className="flex flex-wrap gap-1">
             <Button
@@ -94,8 +156,8 @@ function LinkRow({
             )}
           </div>
         )}
-      </td>
-    </tr>
+      </TableCell>
+    </TableRow>
   )
 }
 
@@ -104,30 +166,63 @@ export default function LastfmLinks() {
   const client = useQueryClient()
   const search = useSearchParams()
   const reason = lastfmLinkFilter(search.get('reason'))
-  const [draft, setDraft] = useState('')
-  const [query, setQuery] = useState('')
+  const sortBy = lastfmLinkSort(search.get('sortBy'))
+  const sortDirection = lastfmLinkSortDirection(search.get('sortDirection'))
+  const [draft, setDraft] = useState(search.get('q') ?? '')
+  const [query, setQuery] = useState(search.get('q') ?? '')
+  const [selectedIds, setSelectedIds] = useState<string[]>([])
+  const [anchor, setAnchor] = useState<string | null>(null)
+  const [queuePending, setQueuePending] = useState(false)
+  const all = useRef<HTMLInputElement>(null)
   const [selected, setSelected] = useState<{
     group: LastfmLinkGroup
     mode: LastfmLinkPanelMode
   } | null>(null)
   useEffect(() => {
-    const timer = window.setTimeout(() => setQuery(draft.trim()), 250)
+    const timer = window.setTimeout(() => {
+      const next = draft.trim()
+      setQuery(next)
+      const params = new URLSearchParams(window.location.search)
+      if (next) params.set('q', next)
+      else params.delete('q')
+      window.history.replaceState(
+        null,
+        '',
+        `${window.location.pathname}?${params}`,
+      )
+    }, 250)
     return () => window.clearTimeout(timer)
   }, [draft])
   const status = useLastfmSyncStatus()
   const links = useInfiniteQuery({
-    queryKey: ['lastfm-links', reason, query],
+    queryKey: ['lastfm-links', reason, query, sortBy, sortDirection],
     initialPageParam: 1,
     placeholderData: keepPreviousData,
     queryFn: ({ pageParam, signal }) =>
       fetchApiData(
         apiBaseUrl,
-        lastfmLinksPath({ reason, q: query, page: pageParam }),
+        lastfmLinksPath({
+          reason,
+          q: query,
+          page: pageParam,
+          sortBy,
+          sortDirection,
+        }),
         LastfmLinkReportSchema,
         { signal },
       ),
     getNextPageParam: (last) =>
       last.page < last.pageCount ? last.page + 1 : undefined,
+    refetchInterval: (result) =>
+      result.state.data?.pages.some((page) =>
+        page.items.some(
+          (group) =>
+            group.spotifySearch?.status === 'queued' ||
+            group.spotifySearch?.status === 'running',
+        ),
+      )
+        ? LASTFM_SYNC_POLL_MS
+        : false,
   })
   const relink = useMutation({
     mutationFn: () =>
@@ -143,11 +238,21 @@ export default function LastfmLinks() {
     },
   })
   const { scroller, sentinel } = useInfiniteTableScroll({
-    enabled: links.hasNextPage && !links.isFetching && !links.isError,
+    enabled:
+      links.hasNextPage && !links.isFetching && !links.isError && !queuePending,
     fetchNextPage: links.fetchNextPage,
-    resetKey: `${reason}:${query}`,
+    resetKey: JSON.stringify([reason, query, sortBy, sortDirection]),
   })
+  function clearSelection() {
+    setSelectedIds([])
+    setAnchor(null)
+  }
+  useEffect(() => {
+    setSelectedIds([])
+    setAnchor(null)
+  }, [reason, query, sortBy, sortDirection])
   function setReason(value: LastfmLinkFilter | '') {
+    clearSelection()
     const params = new URLSearchParams(window.location.search)
     if (value) params.set('reason', value)
     else params.delete('reason')
@@ -157,7 +262,34 @@ export default function LastfmLinks() {
       `${window.location.pathname}?${params}`,
     )
   }
+  function sort(key: LastfmLinkSort) {
+    clearSelection()
+    const params = new URLSearchParams(window.location.search)
+    params.set('sortBy', key)
+    params.set(
+      'sortDirection',
+      sortBy === key && sortDirection === 'asc' ? 'desc' : 'asc',
+    )
+    window.history.replaceState(
+      null,
+      '',
+      `${window.location.pathname}?${params}`,
+    )
+  }
   const items = links.data?.pages.flatMap((page) => page.items) ?? []
+  const ids = items.filter(canSearchLastfmGroup).map(lastfmLinkKey)
+  const allChecked =
+    ids.length > 0 && ids.every((id) => selectedIds.includes(id))
+  const selectionDisabled =
+    queuePending ||
+    links.isPlaceholderData ||
+    draft.trim() !== query ||
+    links.isError
+  useEffect(() => {
+    if (all.current)
+      all.current.indeterminate =
+        !allChecked && ids.some((id) => selectedIds.includes(id))
+  }, [allChecked, ids, selectedIds])
   const summary = links.data?.pages[0]?.summary
   const running = status.data?.state === 'running'
   return (
@@ -186,6 +318,7 @@ export default function LastfmLinks() {
                     type="button"
                     className="underline underline-offset-2"
                     aria-pressed={reason === row.reason}
+                    disabled={queuePending}
                     onClick={() => setReason(row.reason)}
                   >
                     {lastfmLinkReasonLabels[row.reason]}
@@ -202,7 +335,7 @@ export default function LastfmLinks() {
         <Button
           variant="outline"
           size="sm"
-          disabled={relink.isPending || running}
+          disabled={relink.isPending || running || queuePending}
           onClick={() => relink.mutate()}
         >
           {relink.isPending ? 'Relinking...' : 'Relink'}
@@ -221,6 +354,7 @@ export default function LastfmLinks() {
         <select
           aria-label="Link status"
           value={reason}
+          disabled={queuePending}
           onChange={(event) => setReason(lastfmLinkFilter(event.target.value))}
         >
           {lastfmLinkFilters.map((option) => (
@@ -234,11 +368,29 @@ export default function LastfmLinks() {
           aria-label="Search scrobbled names"
           placeholder="Search artists or albums"
           value={draft}
-          onChange={(event) => setDraft(event.target.value)}
+          disabled={queuePending}
+          maxLength={200}
+          onChange={(event) => {
+            setDraft(event.target.value)
+            clearSelection()
+          }}
         />
         <span className="muted">
           {links.data?.pages[0]?.totalCount.toLocaleString() ?? 0} names
         </span>
+        {ids.length > 100 && (
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={selectionDisabled}
+            onClick={() => {
+              setSelectedIds(ids.slice(0, 100))
+              setAnchor(null)
+            }}
+          >
+            Select first 100
+          </Button>
+        )}
         {(links.isPlaceholderData || draft.trim() !== query) && (
           <span role="status" className="muted">
             Loading...
@@ -253,6 +405,10 @@ export default function LastfmLinks() {
           </button>
         </p>
       )}
+      <LastfmLinkWorkflow
+        selection={selected}
+        onSelectionChange={setSelected}
+      />
       <TableScroll
         ref={scroller}
         className="table-scroll-bounded"
@@ -261,20 +417,58 @@ export default function LastfmLinks() {
         aria-busy={links.isFetching}
       >
         <table className="compact-table" aria-label="Scrobble links">
-          <thead>
-            <tr>
-              <th scope="col">Scrobbled artist</th>
-              <th scope="col">Scrobbled album</th>
-              <th scope="col">Scrobbles</th>
-              <th scope="col">Last listened</th>
-              <th scope="col">Status</th>
-              <th scope="col">Library album</th>
-              <th scope="col">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
+          <TableHeader>
+            <TableRow>
+              <TableHead className="table-selection-cell">
+                <input
+                  ref={all}
+                  type="checkbox"
+                  aria-label="Select all loaded unlinked albums"
+                  checked={allChecked}
+                  disabled={selectionDisabled || !ids.length}
+                  onChange={(event) => {
+                    setSelectedIds(
+                      event.target.checked
+                        ? [...new Set([...selectedIds, ...ids])]
+                        : selectedIds.filter((id) => !ids.includes(id)),
+                    )
+                    setAnchor(null)
+                  }}
+                />
+              </TableHead>
+              {lastfmLinkColumns.map((column) => (
+                <TableHead
+                  key={column.key}
+                  aria-sort={
+                    sortBy === column.key
+                      ? sortDirection === 'asc'
+                        ? 'ascending'
+                        : 'descending'
+                      : 'none'
+                  }
+                >
+                  <button
+                    type="button"
+                    disabled={queuePending}
+                    onClick={() => sort(column.key)}
+                  >
+                    {column.label}
+                    {sortBy === column.key
+                      ? sortDirection === 'asc'
+                        ? ' ↑'
+                        : ' ↓'
+                      : ''}
+                  </button>
+                </TableHead>
+              ))}
+              <TableHead>Library album</TableHead>
+              <TableHead>Spotify search</TableHead>
+              <TableHead>Actions</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {!items.length && (
-              <TableState colSpan={7} error={links.isError}>
+              <TableState colSpan={9} error={links.isError}>
                 {links.isPending
                   ? 'Loading scrobble links...'
                   : links.isError
@@ -293,12 +487,28 @@ export default function LastfmLinks() {
             )}
             {items.map((group) => (
               <LinkRow
-                key={`${group.artistName}\u0000${group.albumName ?? ''}`}
+                key={lastfmLinkKey(group)}
                 group={group}
+                checked={selectedIds.includes(lastfmLinkKey(group))}
+                disabled={selectionDisabled}
+                onSelect={(checked, shift) => {
+                  const id = lastfmLinkKey(group)
+                  setSelectedIds(
+                    updateJobSelection(
+                      selectedIds,
+                      ids,
+                      id,
+                      anchor,
+                      shift,
+                      checked,
+                    ),
+                  )
+                  setAnchor(id)
+                }}
                 onOpen={(mode) => setSelected({ group, mode })}
               />
             ))}
-          </tbody>
+          </TableBody>
         </table>
         <div ref={sentinel} className="py-2 text-center">
           {links.isFetchingNextPage && (
@@ -313,7 +523,7 @@ export default function LastfmLinks() {
             <Button
               type="button"
               variant="ghost"
-              disabled={links.isFetching}
+              disabled={links.isFetching || queuePending}
               onClick={() => links.fetchNextPage({ cancelRefetch: false })}
             >
               {links.isFetchNextPageError
@@ -323,14 +533,13 @@ export default function LastfmLinks() {
           )}
         </div>
       </TableScroll>
-      {selected && (
-        <LastfmLinkPanel
-          key={`${selected.group.artistName}\u0000${selected.group.albumName ?? ''}`}
-          group={selected.group}
-          initialMode={selected.mode}
-          onClose={() => setSelected(null)}
-        />
-      )}
+      <LastfmSearchActions
+        groups={items}
+        selectedIds={selectedIds}
+        onSelect={setSelectedIds}
+        onPending={setQueuePending}
+        disabled={selectionDisabled}
+      />
     </section>
   )
 }

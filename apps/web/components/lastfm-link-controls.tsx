@@ -54,17 +54,21 @@ export function AlbumPicker({
   label,
   disabled,
   onPick,
+  initialQuery = '',
+  enabled = true,
 }: {
   label: string
   disabled: boolean
   onPick: (albumId: string) => void
+  initialQuery?: string
+  enabled?: boolean
 }) {
   const { apiBaseUrl } = useConfig()
-  const [draft, setDraft] = useState('')
+  const [draft, setDraft] = useState(initialQuery.slice(0, 200))
   const query = useDebounced(draft)
   const albums = useQuery({
     queryKey: ['album-picker', query],
-    enabled: query.length > 1,
+    enabled: enabled && query.length > 1,
     queryFn: ({ signal }) =>
       fetchApiData(
         apiBaseUrl,
@@ -79,6 +83,7 @@ export function AlbumPicker({
         type="search"
         aria-label={label}
         placeholder="Search library albums"
+        maxLength={200}
         value={draft}
         onChange={(event) => setDraft(event.target.value)}
       />

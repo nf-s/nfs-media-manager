@@ -72,6 +72,18 @@ describe('manual provider search and library additions', () => {
   })
   afterEach(() => vi.unstubAllGlobals())
 
+  it('checks cancellation before searching without recording a provider failure', async () => {
+    const assertActive = vi.fn(async () => {
+      throw new Error('Cancelled')
+    })
+    await expect(
+      searchManualMedia({ mediaType: 'album', q: 'Example' }, assertActive),
+    ).rejects.toThrow('Cancelled')
+    expect(mocks.request).not.toHaveBeenCalled()
+    expect(mocks.success).not.toHaveBeenCalled()
+    expect(mocks.failure).not.toHaveBeenCalled()
+  })
+
   it('searches one bounded Spotify page and returns enough metadata to choose an edition', async () => {
     mocks.request
       .mockResolvedValueOnce(Response.json(spotifyTokenFixture))
@@ -113,7 +125,7 @@ describe('manual provider search and library additions', () => {
       market: 'AU',
     })
     expect(mocks.request).toHaveBeenCalledTimes(2)
-    expect(mocks.requestFactory).toHaveBeenCalledWith(spotifyPlugin)
+    expect(mocks.requestFactory).toHaveBeenCalledWith(spotifyPlugin, undefined)
     expect(mocks.addAlbum).not.toHaveBeenCalled()
     expect(fetch).not.toHaveBeenCalled()
   })
@@ -152,7 +164,7 @@ describe('manual provider search and library additions', () => {
     expect(url.pathname).toBe('/3/search/movie')
     expect(url.searchParams.get('query')).toBe('Example Film')
     expect(mocks.request).toHaveBeenCalledTimes(1)
-    expect(mocks.requestFactory).toHaveBeenCalledWith(tmdbPlugin)
+    expect(mocks.requestFactory).toHaveBeenCalledWith(tmdbPlugin, undefined)
     expect(mocks.addFilm).not.toHaveBeenCalled()
   })
 

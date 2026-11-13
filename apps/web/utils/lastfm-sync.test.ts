@@ -3,6 +3,7 @@ import { test } from 'node:test'
 import {
   LastfmLinkReasonSchema,
   LastfmLinkStrategySchema,
+  LastfmLinkGroupSchema,
   type LastfmSyncStatus,
 } from '@repo/schemas/lastfm'
 import {
@@ -10,6 +11,11 @@ import {
   albumPickerPath,
   lastfmLinkFilter,
   lastfmLinkFilters,
+  lastfmLinkKey,
+  lastfmLinkSort,
+  lastfmLinkSortDirection,
+  lastfmSpotifySearchLabel,
+  canSearchLastfmGroup,
   lastfmLinkReasonLabels,
   lastfmLinkStrategyLabels,
   lastfmLinkSummaryRows,
@@ -59,11 +65,112 @@ test('link filters list All, Unlinked, then every reason with its label', () => 
 test('links path includes only the filters in use', () => {
   assert.equal(
     lastfmLinksPath({ reason: '', q: '', page: 1 }),
-    '/api/v1/lastfm/links?page=1&size=50',
+    '/api/v1/lastfm/links?page=1&size=100',
   )
   assert.equal(
     lastfmLinksPath({ reason: 'unlinked', q: 'Artist fixture & co', page: 3 }),
-    '/api/v1/lastfm/links?page=3&size=50&reason=unlinked&q=Artist+fixture+%26+co',
+    '/api/v1/lastfm/links?page=3&size=100&reason=unlinked&q=Artist+fixture+%26+co',
+  )
+})
+
+test('link sorting validates URL state and sends sorting with every page', () => {
+  assert.equal(lastfmLinkSort('artistName'), 'artistName')
+  assert.equal(lastfmLinkSort('unknown'), 'scrobbles')
+  assert.equal(lastfmLinkSort(null), 'scrobbles')
+  assert.equal(lastfmLinkSortDirection('asc'), 'asc')
+  assert.equal(lastfmLinkSortDirection('unknown'), 'desc')
+  assert.equal(lastfmLinkSortDirection(null), 'desc')
+  const path = lastfmLinksPath({
+    reason: 'unlinked',
+    q: '',
+    page: 2,
+    sortBy: 'lastListenedAt',
+    sortDirection: 'asc',
+  })
+  assert.equal(
+    path,
+    '/api/v1/lastfm/links?page=2&size=100&reason=unlinked&sortBy=lastListenedAt&sortDirection=asc',
+  )
+})
+
+test('search selection excludes linked and unnamed groups without conflating group keys', () => {
+  const group = LastfmLinkGroupSchema.parse({
+    artistName: 'Artist fixture',
+    albumName: 'Album fixture',
+    scrobbles: 3,
+    lastListenedAt: '2026-01-01T00:00:00Z',
+    reason: 'unmatched',
+    album: null,
+    candidates: [],
+  })
+  assert.equal(canSearchLastfmGroup(group), true)
+  assert.equal(canSearchLastfmGroup({ ...group, reason: 'ambiguous' }), true)
+  assert.equal(canSearchLastfmGroup({ ...group, reason: 'excluded' }), true)
+  assert.equal(canSearchLastfmGroup({ ...group, reason: 'linked' }), false)
+  assert.equal(canSearchLastfmGroup({ ...group, reason: 'manual' }), false)
+  assert.equal(canSearchLastfmGroup({ ...group, albumName: null }), false)
+  const updated = { ...group, scrobbles: 7 }
+  assert.equal(lastfmLinkKey(group), lastfmLinkKey(updated))
+  assert.notEqual(
+    lastfmLinkKey({ artistName: 'A — B', albumName: 'C' }),
+    lastfmLinkKey({ artistName: 'A', albumName: 'B — C' }),
+  )
+  assert.notEqual(
+    lastfmLinkKey({ artistName: 'A', albumName: null }),
+    lastfmLinkKey({ artistName: 'A', albumName: '' }),
+  )
+})
+
+test('stored search status distinguishes missing, active, empty and failed searches', () => {
+  assert.equal(lastfmSpotifySearchLabel(null), 'Not searched')
+  const summary = {
+    jobId: 'job-fixture',
+    resultCount: null,
+    errorMessage: null,
+  }
+  assert.equal(
+    lastfmSpotifySearchLabel({ ...summary, status: 'queued' }),
+    'Queued',
+  )
+  assert.equal(
+    lastfmSpotifySearchLabel({ ...summary, status: 'running' }),
+    'Searching...',
+  )
+  assert.equal(
+    lastfmSpotifySearchLabel({ ...summary, status: 'failed' }),
+    'Failed',
+  )
+  assert.equal(
+    lastfmSpotifySearchLabel({ ...summary, status: 'cancelled' }),
+    'Cancelled',
+  )
+  assert.equal(
+    lastfmSpotifySearchLabel({ ...summary, status: 'succeeded' }),
+    'No stored results',
+  )
+  assert.equal(
+    lastfmSpotifySearchLabel({
+      ...summary,
+      status: 'succeeded',
+      resultCount: 0,
+    }),
+    '0 matches',
+  )
+  assert.equal(
+    lastfmSpotifySearchLabel({
+      ...summary,
+      status: 'succeeded',
+      resultCount: 1,
+    }),
+    '1 match',
+  )
+  assert.equal(
+    lastfmSpotifySearchLabel({
+      ...summary,
+      status: 'succeeded',
+      resultCount: 2,
+    }),
+    '2 matches',
   )
 })
 

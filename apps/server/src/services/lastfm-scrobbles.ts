@@ -38,6 +38,10 @@ import {
 } from '@/schemas/db'
 import { linkScrobblesToAlbums } from './lastfm-album-links'
 import {
+  getLastfmSpotifySearchJobs,
+  lastfmSpotifyGroupKey,
+} from './lastfm-spotify-search'
+import {
   createProviderRequest,
   recordProviderFailure,
   recordProviderSuccess,
@@ -119,6 +123,11 @@ async function requireCredentials() {
   return configured
 }
 
+/** The configured account identity stays server-side. */
+export async function getLastfmAccount() {
+  return (await credentials())?.account ?? null
+}
+
 function scrobbleRows(
   account: string,
   page: z.infer<typeof RecentTracksSchema>,
@@ -196,11 +205,15 @@ const CountsSchema = z
   .array(z.object({ stored: z.coerce.number(), matched: z.coerce.number() }))
   .length(1)
 
-const SCHEDULE_HOURS: Record<LastfmSyncSchedule, number | null> = {
+const SCHEDULE_MINUTES: Record<LastfmSyncSchedule, number | null> = {
   off: null,
-  '6h': 6,
-  daily: 24,
-  weekly: 7 * 24,
+  '10m': 10,
+  '30m': 30,
+  '1h': 60,
+  '3h': 3 * 60,
+  '6h': 6 * 60,
+  daily: 24 * 60,
+  weekly: 7 * 24 * 60,
 }
 
 async function latestSyncJob() {
@@ -270,16 +283,16 @@ export async function getLastfmSyncStatus(): Promise<LastfmSyncStatus> {
   )
   const state = syncState(row, job)
   const schedule = LastfmSyncScheduleSchema.catch('daily').parse(row?.schedule)
-  const hours = SCHEDULE_HOURS[schedule]
+  const minutes = SCHEDULE_MINUTES[schedule]
   return {
     configured: true,
     state,
     job: job ? { id: job.id, status: job.status } : null,
     schedule,
     nextScheduledAt:
-      state === 'complete' && row?.completedAt && hours !== null
+      state === 'complete' && row?.completedAt && minutes !== null
         ? new Date(
-            row.completedAt.getTime() + hours * 60 * 60 * 1000,
+            row.completedAt.getTime() + minutes * 60 * 1000,
           ).toISOString()
         : null,
     pagesFetched: row ? row.nextPage - 1 : 0,
@@ -789,6 +802,14 @@ export async function getLastfmLinkReport(
     ).rows,
   )
   const pattern = `%${(query.q ?? '').replace(/[\\%_]/g, '\\$&')}%`
+  const sortColumns = {
+    artistName: sql`artist_name`,
+    albumName: sql`album_name`,
+    scrobbles: sql`scrobbles`,
+    lastListenedAt: sql`last`,
+    reason: sql`reason`,
+  }
+  const direction = query.sortDirection === 'asc' ? sql`asc` : sql`desc`
   const rows = LinkGroupRowsSchema.parse(
     (
       await db.execute(sql`${groups}
@@ -806,7 +827,7 @@ export async function getLastfmLinkReport(
             ? sql`(artist_name ilike ${pattern} or album_name ilike ${pattern})`
             : sql`true`
         }
-        order by scrobbles desc, artist_key, album_key
+        order by ${sortColumns[query.sortBy]} ${direction} nulls last, artist_key, album_key
         limit ${query.size} offset ${(query.page - 1) * query.size}`)
     ).rows,
   )
@@ -836,10 +857,27 @@ export async function getLastfmLinkReport(
         ).rows,
       )
     : []
+  const searches = await getLastfmSpotifySearchJobs(
+    configured.account,
+    rows.flatMap((row) =>
+      row.album_name === null
+        ? []
+        : [{ artistName: row.artist_name, albumName: row.album_name }],
+    ),
+  )
   const totalCount = rows[0]?.total ?? 0
   return LastfmLinkReportSchema.parse({
     summary,
     items: rows.map((row) => ({
+      spotifySearch:
+        row.album_name === null
+          ? null
+          : (searches.get(
+              lastfmSpotifyGroupKey(configured.account, {
+                artistName: row.artist_name,
+                albumName: row.album_name,
+              }),
+            ) ?? null),
       artistName: row.artist_name,
       albumName: row.album_name,
       scrobbles: row.scrobbles,

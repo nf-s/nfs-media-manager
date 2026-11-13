@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { PaginatedDataSchema } from './common'
 import { JobStatusSchema } from './job'
+import { ManualMediaSearchResultSchema } from './manual-add'
 
 export const LastfmSyncStateSchema = z.enum([
   'never',
@@ -13,7 +14,16 @@ export const LastfmSyncStateSchema = z.enum([
 /** `scrape_job.options.task` of the account-level job that syncs scrobbles. */
 export const LASTFM_SCROBBLE_SYNC_TASK = 'lastfm-scrobble-sync'
 
-export const LastfmSyncScheduleSchema = z.enum(['off', '6h', 'daily', 'weekly'])
+export const LastfmSyncScheduleSchema = z.enum([
+  'off',
+  '10m',
+  '30m',
+  '1h',
+  '3h',
+  '6h',
+  'daily',
+  'weekly',
+])
 export const LastfmSyncSettingsSchema = z
   .object({ schedule: LastfmSyncScheduleSchema })
   .strict()
@@ -112,7 +122,45 @@ export const LastfmLinkStrategySchema = z.enum([
   'tracks',
 ])
 
+export const LASTFM_SPOTIFY_SEARCH_TASK = 'lastfm-spotify-search'
+
+export const LastfmSpotifySearchGroupSchema = z
+  .object({
+    artistName: z.string().trim().min(1).max(500),
+    albumName: z.string().trim().min(1).max(500),
+  })
+  .strict()
+
+export const LastfmSpotifySearchInputSchema = z
+  .object({
+    groups: z.array(LastfmSpotifySearchGroupSchema).min(1).max(100),
+    batchId: z.string().min(1).max(200).optional(),
+    confirmBroadRun: z.boolean().default(false),
+  })
+  .strict()
+  .refine((input) => input.groups.length <= 5 || input.confirmBroadRun, {
+    message: 'Confirm searching more than five albums',
+    path: ['confirmBroadRun'],
+  })
+
+export const LastfmSpotifySearchJobSchema = z.object({
+  jobId: z.string(),
+  status: JobStatusSchema,
+  resultCount: z.number().int().nonnegative().nullable(),
+  errorMessage: z.string().nullable(),
+})
+
+export const LastfmSpotifySearchSchema = z.object({
+  job: LastfmSpotifySearchJobSchema.nullable(),
+  query: z.string(),
+  result: ManualMediaSearchResultSchema.nullable(),
+})
+
 export const LastfmLinkQuerySchema = z.object({
+  sortBy: z
+    .enum(['artistName', 'albumName', 'scrobbles', 'lastListenedAt', 'reason'])
+    .default('scrobbles'),
+  sortDirection: z.enum(['asc', 'desc']).default('desc'),
   reason: z.union([LastfmLinkReasonSchema, z.literal('unlinked')]).optional(),
   q: z.string().max(200).optional(),
   page: z.coerce.number().int().positive().default(1),
@@ -127,6 +175,7 @@ export const LastfmLinkAlbumSchema = z.object({
 })
 
 export const LastfmLinkGroupSchema = z.object({
+  spotifySearch: LastfmSpotifySearchJobSchema.nullable().default(null),
   artistName: z.string(),
   /** Null for scrobbles Last.fm stored without an album. */
   albumName: z.string().nullable(),
@@ -187,3 +236,8 @@ export type LastfmLinkUpdate = z.infer<typeof LastfmLinkUpdateSchema>
 export type LastfmLinkGroup = z.infer<typeof LastfmLinkGroupSchema>
 export type LastfmLinkReport = z.infer<typeof LastfmLinkReportSchema>
 export type ListeningSource = z.infer<typeof ListeningSourceSchema>
+
+export type LastfmSpotifySearchInput = z.input<
+  typeof LastfmSpotifySearchInputSchema
+>
+export type LastfmSpotifySearch = z.infer<typeof LastfmSpotifySearchSchema>
