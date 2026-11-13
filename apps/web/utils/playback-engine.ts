@@ -87,9 +87,10 @@ export type PlaybackEngineOptions = {
 }
 
 const LOCAL_POLL_MS = 1_000
-const REMOTE_POLL_MS = 5_000
-const IDLE_POLL_MS = 30_000
+const REMOTE_POLL_MS = 3_000
+const IDLE_POLL_MS = 5_000
 const FOLLOW_UP_MS = 700
+const TRANSFER_SETTLE_MS = 5_000
 const READY_TIMEOUT_MS = 15_000
 const START_TIMEOUT_MS = 15_000
 const DEVICE_RETRY_MS = 700
@@ -165,8 +166,10 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
   let watching = false
   /** Something was played or queued here, so the player stays once playback stops. */
   let used = false
-  /** The target to return to when a device this app only followed goes quiet. */
+  /** The target to return to when a device playback was followed to goes quiet. */
   let fallback: SelectableTarget | null = null
+  /** Until then Spotify may still report the device playback was moved from. */
+  let settlesAt = 0
 
   function set(patch: Partial<PlaybackState>) {
     if (disposed) return
@@ -381,6 +384,14 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     return true
   }
 
+  /**
+   * Starting the next item would take playback off a device apps cannot
+   * control, so there the queue waits for Next.
+   */
+  function continueQueue(): boolean {
+    return state.target.kind !== 'restricted' && startNext()
+  }
+
   function publish(after: PlaybackSnapshot) {
     // Until the requested item starts, the device still reports what it was
     // playing before.
@@ -396,7 +407,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       const starting = session.phase === 'starting'
       const step = stepSession(session, before, after, skippedAt)
       session = step.session
-      if (step.event === 'finished' && startNext()) return
+      if (step.event === 'finished' && continueQueue()) return
       if (step.event !== 'none') {
         // The item ended with nothing queued, or other playback replaced it.
         detach()
@@ -430,7 +441,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       latest.durationMs > 0 &&
       positionAt(latest, now()) >= latest.durationMs
     // A device can go quiet instead of resetting when its last track runs out.
-    if (ended && startNext()) return
+    if (ended && continueQueue()) return
     detach()
     latest = null
     const restored =
@@ -463,35 +474,45 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     observe(snapshot)
   }
 
-  /** The other device Spotify reports playback on, if any. */
-  function reported(remote: RemoteState): FollowedTarget | null {
+  /** The device Spotify reports playback on, if any. */
+  function reported(remote: RemoteState): PlaybackTarget | null {
     if (remote.device)
       return remote.device.id === localId
-        ? null
+        ? LOCAL
         : { kind: 'remote', device: remote.device }
     return remote.restricted
       ? { kind: 'restricted', ...remote.restricted }
       : null
   }
 
-  /** Keeps the target in step with the device Spotify reports. */
+  /**
+   * Keeps the target in step with the device Spotify reports, so commands go
+   * to the device that has the playback even after another app moved it.
+   */
   function retarget(target: FollowedTarget, remote: RemoteState) {
     const found = reported(remote)
     if (!found) return
-    if (!sameDevice(target, found)) {
-      // Playback this app only follows is followed to whichever device has it.
-      if (target.kind === 'restricted' || fallback)
-        set({ target: found, volume: targetVolume(found) })
+    if (sameDevice(target, found)) {
+      if (
+        target.kind === 'remote' &&
+        found.kind === 'remote' &&
+        !volumeTimer &&
+        (found.device.volume !== target.device.volume ||
+          found.device.name !== target.device.name)
+      )
+        set({ target: found, volume: found.device.volume })
       return
     }
-    if (
-      target.kind === 'remote' &&
-      found.kind === 'remote' &&
-      !volumeTimer &&
-      (found.device.volume !== target.device.volume ||
-        found.device.name !== target.device.name)
-    )
-      set({ target: found, volume: found.device.volume })
+    // A start or transfer made here takes a moment to show in Spotify's report.
+    if (session?.phase === 'starting' || now() < settlesAt) return
+    if (found.kind === 'local') {
+      fallback = null
+      sawLocalState = true
+      set({ target: found, volume: localVolume })
+      return
+    }
+    if (target.kind === 'remote') fallback ??= target
+    set({ target: found, volume: targetVolume(found) })
   }
 
   /** This browser stopped reporting playback; it may have moved to another device. */
@@ -500,7 +521,8 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       const remote = await api.state()
       if (state.target.kind !== 'local') return
       const found = reported(remote)
-      if (found && remote.snapshot) follow(found, remote.snapshot)
+      if (found && found.kind !== 'local' && remote.snapshot)
+        follow(found, remote.snapshot)
       else playbackStopped()
     } catch (error) {
       playbackStopped()
@@ -517,7 +539,12 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     })
     if (!remote || session || latest || disposed) return
     const found = reported(remote)
-    if (found && remote.snapshot && !remote.snapshot.paused)
+    if (
+      found &&
+      found.kind !== 'local' &&
+      remote.snapshot &&
+      !remote.snapshot.paused
+    )
       follow(found, remote.snapshot)
   }
 
@@ -779,6 +806,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
         fallback = null
         sawLocalState = false
         missing = 0
+        settlesAt = moving ? now() + TRANSFER_SETTLE_MS : 0
         if (moving) schedule(FOLLOW_UP_MS)
       } catch (error) {
         fail(error)
