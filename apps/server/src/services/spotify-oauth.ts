@@ -33,6 +33,14 @@ import {
   recordProviderSuccess,
 } from './provider-requests'
 
+/** The page a connection returns to: saved albums, playlists, podcasts or Providers. */
+const SpotifyReturnToSchema = z.enum([
+  'imports',
+  'playlists',
+  'podcasts',
+  'providers',
+])
+export type SpotifyReturnTo = z.infer<typeof SpotifyReturnToSchema>
 const StateSchema = z.object({
   stateHash: z.string(),
   sessionHash: z.string(),
@@ -44,7 +52,7 @@ const StateSchema = z.object({
   consumed: z.boolean().default(false),
   playback: z.boolean().default(false),
   playlistChanges: z.boolean().default(false),
-  returnTo: z.enum(['imports', 'playlists', 'providers']).default('imports'),
+  returnTo: SpotifyReturnToSchema.default('imports'),
 })
 const AccountSchema = z.object({
   accessToken: z.string().min(1),
@@ -266,7 +274,9 @@ export async function authorizeSpotify(
         ? 'providers'
         : options.playlists
           ? 'playlists'
-          : 'imports',
+          : options.podcasts
+            ? 'podcasts'
+            : 'imports',
   })
   return {
     url: authorization.url,

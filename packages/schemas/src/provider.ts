@@ -64,6 +64,8 @@ export const ProviderSummarySchema = z.object({
   description: z.string(),
   surface: z.enum(['provider', 'import']),
   mediaTypes: z.array(z.enum(['album', 'film'])),
+  /** The provider fills the Subscriptions library and is listed in its Providers. */
+  subscriptions: z.boolean().default(false),
   rateLimit: z.object({
     maxConcurrent: z.number().int().positive(),
     concurrentRequests: z.boolean().optional(),

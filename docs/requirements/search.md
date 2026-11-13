@@ -9,6 +9,7 @@
 - SEARCH-05: Persist text, numeric filters, sort and direction; preserve them through details, back navigation and reload. URL parameters are validated. Autocomplete supports arrows, Enter, Escape, clear and accessible names.
 - SEARCH-06: Numeric metrics supplied by local plugins use the same controls without hardcoded provider names in public code.
 - SEARCH-07: Album listening controls accept up to ten count rules over all stored history, rolling day/week/month/year periods or inclusive UTC date ranges. Match all or any rules, combined with other browse filters; allow zero and independently chosen count bounds. Sort by scrobbles in a configurable period, show that count in grid/table, and preserve rules and sort period through URL state, reload and details. Count only linked stored scrobbles, without substituting provider totals or starting a sync. Explain that counts are track plays and depend on synced history.
+- SEARCH-08: Subscriptions use the same autocomplete, chips, ranges and AI search as the other libraries, over title, channel or podcast, type (`YouTube` or `Podcast`) and tags, with Published, Duration, Views, Likes and Comments ranges. Text applies on Enter or when an option is chosen. Sorting offers relevance while searching, then published date, title, channel, duration, views, likes and comments.
 
 ## Acceptance
 

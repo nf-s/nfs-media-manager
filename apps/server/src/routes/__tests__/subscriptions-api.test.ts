@@ -194,16 +194,44 @@ describe('subscriptions API', () => {
     ).toBe(200)
     expect(mocks.schedule).toHaveBeenCalledWith('youtube', 'user-1', 'weekly')
 
-    mocks.status.mockRejectedValue(
+    mocks.status.mockResolvedValue({ provider: 'spotify' })
+    mocks.queue.mockResolvedValue({ provider: 'spotify' })
+    mocks.schedule.mockResolvedValue({ provider: 'spotify' })
+    const spotify = await send('GET', '/sync/spotify')
+    expect(spotify.status).toBe(200)
+    expect(await spotify.json()).toMatchObject({
+      data: { provider: 'spotify' },
+    })
+    expect(mocks.status).toHaveBeenLastCalledWith('spotify', 'user-1')
+    expect((await send('POST', '/sync/spotify', {})).status).toBe(200)
+    expect(mocks.queue).toHaveBeenLastCalledWith('spotify', 'user-1')
+    expect(
+      (await send('PUT', '/sync/spotify/settings', { schedule: 'off' })).status,
+    ).toBe(200)
+    expect(mocks.schedule).toHaveBeenLastCalledWith('spotify', 'user-1', 'off')
+    expect(
+      (await send('POST', '/sync/spotify', {}, 'https://evil.invalid')).status,
+    ).toBe(403)
+  })
+
+  it('passes the refusal of a podcast sync through', async () => {
+    mocks.queue.mockRejectedValue(
       new ServerError({
-        statusCode: 404,
-        message: 'Podcast sync is not available yet.',
+        statusCode: 422,
+        message: 'Connect a Spotify account before syncing podcasts.',
       }),
     )
-    const spotify = await send('GET', '/sync/spotify')
-    expect(spotify.status).toBe(404)
-    expect(await spotify.json()).toMatchObject({
-      message: 'Podcast sync is not available yet.',
+    const refused = await send('POST', '/sync/spotify', {})
+    expect(refused.status).toBe(422)
+    expect(await refused.json()).toMatchObject({
+      message: 'Connect a Spotify account before syncing podcasts.',
     })
+    mocks.queue.mockRejectedValue(
+      new ServerError({
+        statusCode: 429,
+        message: 'Provider requests are halted after access denial',
+      }),
+    )
+    expect((await send('POST', '/sync/spotify', {})).status).toBe(429)
   })
 })

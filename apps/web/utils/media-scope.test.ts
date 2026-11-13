@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { JobSchema } from '@repo/schemas/job'
+import { SPOTIFY_PODCAST_SYNC_TASK } from '@repo/schemas/subscriptions'
+import { YOUTUBE_SYNC_TASK } from '@repo/schemas/youtube'
 import {
   libraryViewForPath,
   mediaScope,
@@ -8,6 +10,7 @@ import {
   scopedHref,
   switchLibraryHref,
   switchMediaScopeHref,
+  workspaceScopeForPath,
 } from './media-scope'
 import { jobMatchesScope, jobMediaScope } from './job-media-scope'
 
@@ -172,41 +175,111 @@ test('the library selector moves between albums, tracks and films', () => {
   )
 })
 
-test('YouTube pages form a separate library without changing the media scope', () => {
-  for (const path of ['/youtube', '/youtube/subscriptions'])
-    assert.equal(libraryViewForPath(path, 'album'), 'youtube')
-  assert.equal(libraryViewForPath('/youtube-other', null), 'film')
-  assert.equal(libraryViewForPath('/jobs', 'album'), 'album')
-  assert.equal(libraryViewForPath('/providers', null), 'film')
-  assert.equal(mediaScopeForPath('/youtube', 'album'), 'album')
-  assert.equal(mediaScopeForPath('/youtube', null), 'film')
+test('Subscriptions is a separate library scoped by path or mediaType', () => {
+  for (const path of [
+    '/subscriptions',
+    '/subscriptions/channels',
+    '/imports/youtube',
+    '/imports/spotify-podcasts',
+  ]) {
+    assert.equal(workspaceScopeForPath(path, 'album'), 'subscription')
+    assert.equal(libraryViewForPath(path, 'album'), 'subscription')
+  }
+  for (const path of ['/jobs', '/providers', '/imports'])
+    assert.equal(libraryViewForPath(path, 'subscription'), 'subscription')
+  // Paths that imply a media library win over the parameter.
+  assert.equal(
+    workspaceScopeForPath('/imports/spotify', 'subscription'),
+    'album',
+  )
+  assert.equal(workspaceScopeForPath('/films/one', 'subscription'), 'film')
+  assert.equal(libraryViewForPath('/tracks', 'subscription'), 'track')
+  assert.equal(libraryViewForPath('/subscriptions-other', null), 'film')
+  assert.equal(workspaceScopeForPath('/jobs', 'album'), 'album')
+  assert.equal(workspaceScopeForPath('/providers', null), 'film')
+  // Browse and tag code keeps a media scope.
+  assert.equal(mediaScopeForPath('/subscriptions', 'album'), 'album')
+  assert.equal(mediaScopeForPath('/jobs', 'subscription'), 'film')
+  assert.equal(
+    scopedHref('/jobs?status=failed', 'subscription'),
+    '/jobs?status=failed&mediaType=subscription',
+  )
 })
 
-test('switching to and from YouTube lands on each library home', () => {
+test('switching to Subscriptions keeps Imports, Jobs and Providers and otherwise browses', () => {
   for (const path of [
     '/albums',
     '/films/one',
     '/tracks',
-    '/jobs',
-    '/providers',
+    '/tags',
+    '/playlists',
   ])
     assert.equal(
-      switchLibraryHref(path, 'mediaType=album&q=title', 'youtube'),
-      '/youtube',
+      switchLibraryHref(path, 'mediaType=album&q=title', 'subscription'),
+      '/subscriptions',
     )
   assert.equal(
-    switchLibraryHref('/youtube', 'q=talk&channelId=one', 'youtube'),
-    '/youtube?q=talk&channelId=one',
+    switchLibraryHref('/imports/spotify', '', 'subscription'),
+    '/imports/youtube?mediaType=subscription',
   )
   assert.equal(
-    switchLibraryHref('/youtube/subscriptions', '', 'youtube'),
-    '/youtube/subscriptions',
+    switchLibraryHref('/imports/csv', 'format=ratings', 'subscription'),
+    '/imports/youtube?mediaType=subscription',
   )
-  assert.equal(switchLibraryHref('/youtube', 'q=talk', 'album'), '/albums')
-  assert.equal(switchLibraryHref('/youtube', 'q=talk', 'track'), '/tracks')
   assert.equal(
-    switchLibraryHref('/youtube/subscriptions', 'mediaType=album', 'film'),
+    switchLibraryHref(
+      '/jobs/metadata',
+      'mediaType=album&status=failed&jobId=one',
+      'subscription',
+    ),
+    '/jobs?status=failed&mediaType=subscription',
+  )
+  assert.equal(
+    switchLibraryHref(
+      '/providers',
+      'mediaType=film&provider=cinema',
+      'subscription',
+    ),
+    '/providers?mediaType=subscription',
+  )
+  assert.equal(
+    switchLibraryHref('/subscriptions', 'q=talk&view=list', 'subscription'),
+    '/subscriptions?q=talk&view=list',
+  )
+  assert.equal(
+    switchLibraryHref('/imports/spotify-podcasts', '', 'subscription'),
+    '/imports/spotify-podcasts',
+  )
+})
+
+test('switching from Subscriptions keeps Imports, Jobs and Providers and otherwise browses', () => {
+  assert.equal(
+    switchLibraryHref('/subscriptions', 'q=talk', 'album'),
+    '/albums',
+  )
+  assert.equal(
+    switchLibraryHref('/subscriptions/channels', '', 'film'),
     '/films',
+  )
+  assert.equal(
+    switchLibraryHref('/subscriptions/channels', '', 'track'),
+    '/tracks',
+  )
+  assert.equal(
+    switchLibraryHref('/imports/youtube', 'mediaType=subscription', 'album'),
+    '/imports?mediaType=album',
+  )
+  assert.equal(
+    switchLibraryHref('/jobs', 'mediaType=subscription&status=queued', 'film'),
+    '/jobs?status=queued&mediaType=film',
+  )
+  assert.equal(
+    switchLibraryHref(
+      '/providers',
+      'mediaType=subscription&provider=youtube',
+      'album',
+    ),
+    '/providers?mediaType=album',
   )
 })
 
@@ -246,4 +319,30 @@ test('job media filtering uses actual items, not provider capability or stale sc
   assert.equal(jobMediaScope(job('album')), 'album')
   assert.equal(jobMatchesScope(job(null), 'film'), true)
   assert.equal(jobMatchesScope(job(null), 'album'), false)
+})
+
+function taskJob(task: string, mediaType: 'album' | null) {
+  return JobSchema.parse({
+    ...job(null),
+    scope: { mediaType },
+    options: { task },
+    items: [],
+  })
+}
+
+test('subscription syncs belong to Subscriptions, including ones stored as album jobs', () => {
+  for (const sync of [
+    taskJob(YOUTUBE_SYNC_TASK, 'album'),
+    taskJob(SPOTIFY_PODCAST_SYNC_TASK, null),
+  ]) {
+    assert.equal(jobMediaScope(sync), 'subscription')
+    assert.equal(jobMatchesScope(sync, 'subscription'), true)
+    assert.equal(jobMatchesScope(sync, 'album'), false)
+    assert.equal(jobMatchesScope(sync, 'film'), false)
+  }
+  assert.equal(jobMatchesScope(job('album'), 'subscription'), false)
+  assert.equal(
+    jobMatchesScope(taskJob('lastfm-scrobble-sync', 'album'), 'album'),
+    true,
+  )
 })

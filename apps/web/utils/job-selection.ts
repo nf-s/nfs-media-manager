@@ -15,6 +15,7 @@ import {
   SPOTIFY_PLAYLIST_IMPORT_TASK,
   SPOTIFY_PLAYLIST_LISTING_TASK,
 } from '@repo/schemas/tracks'
+import { SPOTIFY_PODCAST_SYNC_TASK } from '@repo/schemas/subscriptions'
 import { YOUTUBE_SYNC_TASK } from '@repo/schemas/youtube'
 import { playlistJobProgress } from './playlist-sync'
 
@@ -26,6 +27,11 @@ export function isScrobbleSyncJob(job: Pick<Job, 'options'>): boolean {
 /** YouTube subscription sync jobs are account-level; retrying one resumes the sync. */
 export function isYoutubeSyncJob(job: Pick<Job, 'options'>): boolean {
   return getJobTask(job.options) === YOUTUBE_SYNC_TASK
+}
+
+/** Spotify podcast sync jobs are account-level; retrying one resumes the sync. */
+export function isSpotifyPodcastSyncJob(job: Pick<Job, 'options'>): boolean {
+  return getJobTask(job.options) === SPOTIFY_PODCAST_SYNC_TASK
 }
 
 export function isScrobbleSpotifySearchJob(job: Pick<Job, 'options'>): boolean {
@@ -52,6 +58,7 @@ function filledText(value: unknown): value is string {
 export function jobTaskTitle(job: Pick<Job, 'options'>): string | null {
   if (isScrobbleSyncJob(job)) return 'Scrobble sync'
   if (isYoutubeSyncJob(job)) return 'YouTube subscription sync'
+  if (isSpotifyPodcastSyncJob(job)) return 'Spotify podcast sync'
   if (isPlaylistImportJob(job)) {
     const { source, name } = job.options
     if (source === 'spotify-liked') return 'Spotify Liked Songs import'
@@ -102,6 +109,7 @@ export function canRetryJob(job: Job): boolean {
     (unfinishedJobItems(job) > 0 ||
       isScrobbleSyncJob(job) ||
       isYoutubeSyncJob(job) ||
+      isSpotifyPodcastSyncJob(job) ||
       isScrobbleSpotifySearchJob(job) ||
       isPlaylistImportJob(job) ||
       isPlaylistListingJob(job) ||

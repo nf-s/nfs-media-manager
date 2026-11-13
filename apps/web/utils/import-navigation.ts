@@ -69,3 +69,15 @@ export function albumImportDestinations() {
     },
   ]
 }
+
+/** The Subscriptions library has no import history; each page shows its own sync. */
+export function subscriptionImportDestinations() {
+  return [
+    { id: '/imports/youtube', href: '/imports/youtube', label: 'YouTube' },
+    {
+      id: '/imports/spotify-podcasts',
+      href: '/imports/spotify-podcasts',
+      label: 'Spotify podcasts',
+    },
+  ]
+}

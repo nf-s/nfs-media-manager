@@ -6,12 +6,20 @@ import {
   libraryViewForPath,
   mediaScopeForPath,
   switchLibraryHref,
+  workspaceScopeForPath,
 } from '@/utils/media-scope'
 
 export function useMediaScope() {
   const path = usePathname()
   const params = useSearchParams()
   return mediaScopeForPath(path, params.get('mediaType'))
+}
+
+/** The library Imports, Jobs and Providers show: albums, films or subscriptions. */
+export function useWorkspaceScope() {
+  const path = usePathname()
+  const params = useSearchParams()
+  return workspaceScopeForPath(path, params.get('mediaType'))
 }
 
 export function useLibraryView() {
@@ -36,7 +44,7 @@ export function LibrarySelector() {
           next !== 'album' &&
           next !== 'track' &&
           next !== 'film' &&
-          next !== 'youtube'
+          next !== 'subscription'
         )
           return
         router.push(switchLibraryHref(path, params.toString(), next))
@@ -45,12 +53,12 @@ export function LibrarySelector() {
       <option value="album">Albums</option>
       <option value="track">Tracks</option>
       <option value="film">Films</option>
-      <option value="youtube">YouTube</option>
+      <option value="subscription">Subscriptions</option>
     </select>
   )
 }
 
 export function MediaScopeContent({ children }: { children: ReactNode }) {
-  const mediaType = useMediaScope()
-  return <Fragment key={mediaType}>{children}</Fragment>
+  const scope = useWorkspaceScope()
+  return <Fragment key={scope}>{children}</Fragment>
 }

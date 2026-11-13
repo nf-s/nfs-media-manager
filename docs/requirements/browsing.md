@@ -13,7 +13,8 @@
 - BROWSE-08: Loading, errors, empty results and completed pagination are explicit. No blank infinite spinner. Show filtered total, not just currently loaded count.
 - BROWSE-10: Grid density is configurable and saved independently per library. Compact mobile cards prioritize artwork and legible title/artist information, with touch-accessible details and outbound links. Changing density recomputes virtual row geometry without unbounded loading, overlap or horizontal page overflow. Album titles linked to Spotify must not be accompanied by a duplicate Spotify action in the same card or detail heading.
 
-- BROWSE-11: One Library selector scopes Browse, Tags, Imports, Jobs and Providers. Switching libraries keeps the section where applicable, not stale previews, selections or item links. The activity control still shows both libraries and links to the correct scoped jobs or imports. See [workspace navigation](../import-navigation.md).
+- BROWSE-11: One Library selector (Albums, Tracks, Films, Subscriptions) scopes Browse, Tags, Imports, Jobs and Providers; Subscriptions has Browse, Channels, Imports, Jobs and Providers and no Tags. Switching libraries keeps the section where applicable, not stale previews, selections or item links. The activity control shows every library and links to the correct scoped jobs or imports. See [workspace navigation](../import-navigation.md).
+- BROWSE-12: Subscriptions (`/subscriptions`) browses YouTube videos and podcast episodes together with grid and list views, following BROWSE-02, 03, 04, 06, 08 and 09. The list uses the shared compact table; cards use 16:9 thumbnails with the type and length on the image. Persist view, columns, sort and filters as in BROWSE-07 under the Subscriptions library. An empty library links to Imports. See [Subscriptions](../subscriptions.md#browse-page).
 
 ## Acceptance
 

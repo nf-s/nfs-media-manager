@@ -601,6 +601,7 @@ describe('MDBList keyword provider', () => {
     expect(catalog).toEqual({
       ...mdblistPlugin.manifest,
       surface: 'provider',
+      subscriptions: false,
       supportsScrape: true,
       supportsLegacyImport: false,
       pluginPath: null,

@@ -12,6 +12,8 @@ import { youtubePlugin } from '@/plugins/builtin/youtube'
 
 export interface ProviderCatalogEntry extends MediaPluginManifest {
   surface: 'provider' | 'import'
+  /** Fills the Subscriptions library; listed in its Providers. */
+  subscriptions: boolean
   supportsScrape: boolean
   supportsLegacyImport: boolean
   pluginPath: string | null
@@ -21,6 +23,7 @@ const builtinProviders = [
   {
     ...serplyPlugin.manifest,
     surface: 'provider',
+    subscriptions: false,
     supportsScrape: true,
     supportsLegacyImport: false,
     pluginPath: null,
@@ -28,6 +31,7 @@ const builtinProviders = [
   {
     ...mdblistPlugin.manifest,
     surface: 'provider',
+    subscriptions: false,
     supportsScrape: true,
     supportsLegacyImport: false,
     pluginPath: null,
@@ -35,6 +39,7 @@ const builtinProviders = [
   {
     ...spotifyPlugin.manifest,
     surface: 'provider',
+    subscriptions: true,
     supportsScrape: true,
     supportsLegacyImport: true,
     pluginPath: null,
@@ -42,6 +47,7 @@ const builtinProviders = [
   {
     ...musicbrainzPlugin.manifest,
     surface: 'provider',
+    subscriptions: false,
     supportsScrape: true,
     supportsLegacyImport: true,
     pluginPath: null,
@@ -49,6 +55,7 @@ const builtinProviders = [
   {
     ...discogsPlugin.manifest,
     surface: 'provider',
+    subscriptions: false,
     supportsScrape: true,
     supportsLegacyImport: true,
     pluginPath: null,
@@ -56,6 +63,7 @@ const builtinProviders = [
   {
     ...lastfmPlugin.manifest,
     surface: 'provider',
+    subscriptions: false,
     supportsScrape: true,
     supportsLegacyImport: true,
     pluginPath: null,
@@ -63,6 +71,7 @@ const builtinProviders = [
   {
     ...youtubePlugin.manifest,
     surface: 'provider',
+    subscriptions: true,
     supportsScrape: false,
     supportsLegacyImport: false,
     pluginPath: null,
@@ -76,6 +85,7 @@ const builtinProviders = [
     mediaTypes: ['album'],
     rateLimit: { maxConcurrent: 1, minTimeMs: 0 },
     secrets: [],
+    subscriptions: false,
     supportsScrape: false,
     supportsLegacyImport: true,
     pluginPath: null,
@@ -89,6 +99,7 @@ const builtinProviders = [
     mediaTypes: ['film'],
     rateLimit: { maxConcurrent: 1, minTimeMs: 2000 },
     secrets: [{ key: 'apiKey', label: 'API Key', required: true }],
+    subscriptions: false,
     supportsScrape: true,
     supportsLegacyImport: true,
     pluginPath: null,
@@ -102,6 +113,7 @@ const builtinProviders = [
     mediaTypes: ['film'],
     rateLimit: { maxConcurrent: 5, minTimeMs: 200 },
     secrets: [{ key: 'apiKey', label: 'API Key', required: true }],
+    subscriptions: false,
     supportsScrape: true,
     supportsLegacyImport: true,
     pluginPath: null,
@@ -114,6 +126,7 @@ const builtinProviders = [
     mediaTypes: ['film'],
     rateLimit: { maxConcurrent: 1, minTimeMs: 0 },
     secrets: [],
+    subscriptions: false,
     supportsScrape: false,
     supportsLegacyImport: true,
     pluginPath: null,
@@ -126,6 +139,7 @@ const builtinProviders = [
     mediaTypes: ['film'],
     rateLimit: { maxConcurrent: 1, minTimeMs: 0 },
     secrets: [],
+    subscriptions: false,
     supportsScrape: false,
     supportsLegacyImport: true,
     pluginPath: null,
@@ -143,6 +157,7 @@ export function createCatalogEntryFromPlugin(
   return {
     ...plugin.manifest,
     surface: 'provider',
+    subscriptions: false,
     supportsScrape: typeof plugin.scrapeMediaItem === 'function',
     supportsLegacyImport: typeof plugin.importLegacyRecord === 'function',
     pluginPath,

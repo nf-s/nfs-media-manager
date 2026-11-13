@@ -9,18 +9,24 @@ import { Button } from '@repo/ui/components/ui/button'
 import type { z } from 'zod'
 import { useConfig } from './providers'
 import { fetchApiData } from '@/utils/api'
-import { scopedHref, type MediaScope } from '@/utils/media-scope'
+import { scopedHref, type WorkspaceScope } from '@/utils/media-scope'
 
 type ActivityCounts = z.infer<typeof JobActivitySchema>
+
+const libraryLabels: Record<WorkspaceScope, string> = {
+  album: 'Albums',
+  film: 'Films',
+  subscription: 'Subscriptions',
+}
 
 export function MediaJobActivity({
   mediaType,
   counts,
 }: {
-  mediaType: MediaScope
+  mediaType: WorkspaceScope
   counts?: Pick<ActivityCounts, 'queued' | 'running' | 'failed' | 'imports'>
 }) {
-  const label = mediaType === 'album' ? 'Albums' : 'Films'
+  const label = libraryLabels[mediaType]
   const statuses = counts
     ? [
         {
@@ -238,6 +244,12 @@ export default function JobActivity() {
         <MediaJobActivity
           mediaType="film"
           counts={libraries.find((library) => library.mediaType === 'film')}
+        />
+        <MediaJobActivity
+          mediaType="subscription"
+          counts={libraries.find(
+            (library) => library.mediaType === 'subscription',
+          )}
         />
         {sharedImports > 0 && (
           <Link className="job-activity-shared" href="/imports">

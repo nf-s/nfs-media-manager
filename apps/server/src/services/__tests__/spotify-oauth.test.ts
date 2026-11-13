@@ -103,6 +103,7 @@ async function begin(
   options: {
     playback?: boolean
     playlists?: boolean
+    podcasts?: boolean
     playlistChanges?: boolean
   } = {},
 ) {
@@ -639,6 +640,22 @@ describe('Spotify owner/session-bound OAuth (mock database and gate)', () => {
       scope: `${requestedScope} ${playbackOnlyScope} ${changeScope}`,
       playback: true,
       returnTo: 'playlists',
+    },
+    {
+      name: 'a first connection from podcasts',
+      options: { podcasts: true },
+      stored: undefined,
+      scope: requestedScope,
+      playback: false,
+      returnTo: 'podcasts',
+    },
+    {
+      name: 'a reconnect from podcasts keeping playback and playlist changes',
+      options: { podcasts: true },
+      stored: `${playbackScope} ${changeScope}`,
+      scope: `${requestedScope} ${playbackOnlyScope} ${changeScope}`,
+      playback: true,
+      returnTo: 'podcasts',
     },
     {
       name: 'explicit playback and playlist changes',

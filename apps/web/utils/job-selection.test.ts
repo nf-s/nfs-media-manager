@@ -9,6 +9,7 @@ import {
   SPOTIFY_PLAYLIST_ADD_ALBUM_TASK,
   SPOTIFY_PLAYLIST_LISTING_TASK,
 } from '@repo/schemas/tracks'
+import { SPOTIFY_PODCAST_SYNC_TASK } from '@repo/schemas/subscriptions'
 import { YOUTUBE_SYNC_TASK } from '@repo/schemas/youtube'
 import {
   activeJobProgressLabel,
@@ -17,6 +18,7 @@ import {
   canRetryJob,
   isScrobbleSyncJob,
   isScrobbleSpotifySearchJob,
+  isSpotifyPodcastSyncJob,
   isYoutubeSyncJob,
   jobTaskTitle,
   unfinishedJobItems,
@@ -202,6 +204,20 @@ test('YouTube subscription syncs are titled task jobs that resume on retry', () 
   )
   assert.equal(canDismissJob(sync), true)
   assert.equal(canCancelJob({ ...sync, status: 'running' }), true)
+})
+
+test('Spotify podcast syncs are titled task jobs that resume on retry', () => {
+  const sync: Job = {
+    ...scrobbleSync,
+    id: 'podcast-sync',
+    provider: 'spotify',
+    options: { task: SPOTIFY_PODCAST_SYNC_TASK },
+  }
+  assert.equal(isSpotifyPodcastSyncJob(sync), true)
+  assert.equal(isYoutubeSyncJob(sync), false)
+  assert.equal(jobTaskTitle(sync), 'Spotify podcast sync')
+  assert.equal(canRetryJob(sync), true)
+  assert.equal(canRetryJob({ ...sync, status: 'succeeded' }), false)
 })
 
 test('Spotify playlist listings and album additions are titled, retryable task jobs', () => {

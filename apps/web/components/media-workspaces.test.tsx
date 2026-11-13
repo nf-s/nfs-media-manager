@@ -33,6 +33,7 @@ import { LibrarySelector } from './media-scope'
 import FilmRefresh from './film-refresh'
 import FileImportPageClient from './pages/file-import-page-client'
 import ImportsPageClient from './pages/imports-page-client'
+import JobsPageClient from './pages/jobs-page-client'
 import { ConfigContext } from './providers'
 
 const network = mock.method(globalThis, 'fetch', async () => {
@@ -56,6 +57,27 @@ const filmProvider = ProviderSummarySchema.parse({
   id: 'cinema',
   displayName: 'Film metadata',
   mediaTypes: ['film'],
+})
+const youtubeProvider = ProviderSummarySchema.parse({
+  ...albumProvider,
+  id: 'youtube',
+  displayName: 'YouTube',
+  mediaTypes: [],
+  subscriptions: true,
+  supportsScrape: false,
+})
+const spotifyProvider = ProviderSummarySchema.parse({
+  ...albumProvider,
+  id: 'spotify',
+  displayName: 'Spotify',
+  subscriptions: true,
+  supportsScrape: false,
+})
+const accountProvider = ProviderSummarySchema.parse({
+  ...youtubeProvider,
+  id: 'scrobbles',
+  displayName: 'Scrobble history',
+  subscriptions: false,
 })
 const album = AlbumSelectionItemSchema.parse({
   id: 'album-1',
@@ -98,7 +120,16 @@ function render(
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
-  client.setQueryData(['providers'], [albumProvider, filmProvider])
+  client.setQueryData(
+    ['providers'],
+    [
+      albumProvider,
+      filmProvider,
+      youtubeProvider,
+      spotifyProvider,
+      accountProvider,
+    ],
+  )
   client.setQueryData(['imports'], { sources: [], runs })
   client.setQueryData(['imports', 'album'], { sources: [], runs })
   client.setQueryData(['imports', 'film'], { sources: [], runs })
@@ -746,4 +777,126 @@ test('Spotify configuration names exact API callback without switching the signe
     html,
     /localhost:3001\/api\/v1\/spotify\/callback|127\.0\.0\.1:3001\/api\/v1\/spotify\/callback/,
   )
+})
+
+test('Subscriptions navigation has Browse, Channels, Imports, Jobs and Providers', () => {
+  const html = render('/subscriptions', 'q=talk', <AppNavigation />)
+  assert.equal((html.match(/<a /g) ?? []).length, 5)
+  assert.match(
+    html,
+    /aria-current="page" href="\/subscriptions\?q=talk">Browse/,
+  )
+  assert.match(html, /href="\/subscriptions\/channels">Channels/)
+  assert.match(
+    html,
+    /href="\/imports\/youtube\?mediaType=subscription">Imports/,
+  )
+  assert.match(html, /href="\/jobs\?mediaType=subscription">Jobs/)
+  assert.match(html, /href="\/providers\?mediaType=subscription">Providers/)
+  assert.doesNotMatch(html, /Tags|Playlists|href="\/(albums|films|tags)/)
+  const channels = render('/subscriptions/channels', '', <AppNavigation />)
+  assert.match(
+    channels,
+    /aria-current="page" href="\/subscriptions\/channels">Channels/,
+  )
+  assert.doesNotMatch(channels, /aria-current="page" href="\/subscriptions">/)
+  const jobs = render(
+    '/jobs',
+    'mediaType=subscription&status=failed',
+    <AppNavigation />,
+  )
+  assert.match(
+    jobs,
+    /aria-current="page" href="\/jobs\?mediaType=subscription&amp;status=failed">Jobs/,
+  )
+  const podcasts = render('/imports/spotify-podcasts', '', <AppNavigation />)
+  assert.match(
+    podcasts,
+    /aria-current="page" href="\/imports\/youtube\?mediaType=subscription">Imports/,
+  )
+})
+
+test('library selector lists Subscriptions and selects it on its pages', () => {
+  function unexpectedNavigation() {
+    throw new Error('Navigation forbidden during rendering')
+  }
+  for (const { path, search } of [
+    { path: '/imports/youtube', search: '' },
+    { path: '/jobs', search: 'mediaType=subscription' },
+  ]) {
+    const html = render(
+      path,
+      search,
+      <AppRouterContext.Provider
+        value={{
+          back: unexpectedNavigation,
+          forward: unexpectedNavigation,
+          refresh: unexpectedNavigation,
+          push: unexpectedNavigation,
+          replace: unexpectedNavigation,
+          prefetch: unexpectedNavigation,
+        }}
+      >
+        <LibrarySelector />
+      </AppRouterContext.Provider>,
+    )
+    assert.match(
+      html,
+      /<option value="subscription" selected="">Subscriptions<\/option>/,
+    )
+    assert.doesNotMatch(html, /YouTube/)
+  }
+})
+
+test('Subscriptions imports list the YouTube and Spotify podcast syncs only', () => {
+  const html = render(
+    '/imports/spotify-podcasts',
+    'mediaType=subscription',
+    <ImportsWorkspace>
+      <span>Podcasts</span>
+    </ImportsWorkspace>,
+  )
+  assert.match(html, /href="\/imports\/youtube\?mediaType=subscription"/)
+  assert.match(
+    html,
+    /href="\/imports\/spotify-podcasts\?mediaType=subscription"/,
+  )
+  assert.doesNotMatch(html, /Recent imports|Spotify saved albums|Album CSV/)
+})
+
+test('Subscriptions jobs offer only job history under their own heading', () => {
+  const html = render(
+    '/jobs',
+    'mediaType=subscription',
+    <JobsWorkspace>
+      <JobsPageClient />
+    </JobsWorkspace>,
+  )
+  assert.match(html, /<h1>Subscription jobs<\/h1>/)
+  assert.match(html, /href="\/jobs\?mediaType=subscription"/)
+  assert.doesNotMatch(html, /href="\/jobs\/metadata/)
+})
+
+test('providers are listed by library: subscription providers leave albums and films', () => {
+  const subscriptions = render(
+    '/providers',
+    'mediaType=subscription',
+    <ProvidersPageClient />,
+  )
+  assert.match(subscriptions, /YouTube/)
+  assert.match(subscriptions, /Spotify/)
+  assert.doesNotMatch(subscriptions, /Music metadata|Film metadata|Scrobble/)
+  const albums = render(
+    '/providers',
+    'mediaType=album',
+    <ProvidersPageClient />,
+  )
+  assert.match(albums, /Music metadata/)
+  assert.match(albums, /Spotify/)
+  assert.match(albums, /Scrobble history/)
+  assert.doesNotMatch(albums, /YouTube|Film metadata/)
+  const films = render('/providers', 'mediaType=film', <ProvidersPageClient />)
+  assert.match(films, /Film metadata/)
+  assert.match(films, /Scrobble history/)
+  assert.doesNotMatch(films, /YouTube|Spotify|Music metadata/)
 })

@@ -22,6 +22,8 @@ export const SpotifyAuthorizeInputSchema = z
     playlistChanges: z.boolean().optional(),
     /** Return to the playlist import page once connected. */
     playlists: z.boolean().optional(),
+    /** Return to the podcast import page once connected. */
+    podcasts: z.boolean().optional(),
   })
   .strict()
 export const SpotifyAuthorizeResultSchema = z.object({

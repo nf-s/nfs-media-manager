@@ -99,6 +99,7 @@ describe('providers api', () => {
         description: 'Album metadata',
         surface: 'provider',
         mediaTypes: ['album'],
+        subscriptions: true,
         rateLimit: {
           maxConcurrent: 1,
           minTimeMs: 1500,
@@ -159,6 +160,7 @@ describe('providers api', () => {
         {
           id: 'spotify',
           displayName: 'Spotify',
+          subscriptions: true,
         },
       ],
     })
@@ -250,6 +252,21 @@ describe('providers api', () => {
       'fixture',
       expectedCooldownUntil,
       'user-1',
+    )
+  })
+
+  it('lists YouTube and Spotify in Subscriptions without giving YouTube a media type', async () => {
+    const { getBuiltinProviderCatalog } = await import('@/lib/provider-catalog')
+    const catalog = getBuiltinProviderCatalog()
+    expect(
+      catalog.filter((entry) => entry.subscriptions).map((entry) => entry.id),
+    ).toEqual(['spotify', 'youtube'])
+    // The hosted runtime starts an account-level dispatcher unpaused only without media types.
+    expect(catalog.find((entry) => entry.id === 'youtube')?.mediaTypes).toEqual(
+      [],
+    )
+    expect(catalog.find((entry) => entry.id === 'spotify')?.mediaTypes).toEqual(
+      ['album'],
     )
   })
 })

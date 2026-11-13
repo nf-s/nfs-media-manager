@@ -6,6 +6,7 @@ import {
   csvImportHref,
   importDestinations,
   resolveCsvFormat,
+  subscriptionImportDestinations,
 } from './import-navigation'
 
 const formats = FileImportFormatSchema.array().parse([
@@ -78,4 +79,15 @@ test('album destinations list Spotify albums and playlists, Last.fm scrobbles an
     ],
   )
   assert.ok(albumImportDestinations().every((item) => item.id === item.href))
+})
+
+test('subscription destinations are the YouTube and Spotify podcast syncs, without import history', () => {
+  assert.deepEqual(subscriptionImportDestinations(), [
+    { id: '/imports/youtube', href: '/imports/youtube', label: 'YouTube' },
+    {
+      id: '/imports/spotify-podcasts',
+      href: '/imports/spotify-podcasts',
+      label: 'Spotify podcasts',
+    },
+  ])
 })

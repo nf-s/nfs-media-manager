@@ -374,6 +374,21 @@ describe('Spotify and album import API security', () => {
     },
   )
 
+  it('returns a connection started on the podcast import page to that page', async () => {
+    mocks.callback.mockResolvedValue({
+      connected: true,
+      returnOrigin: 'http://localhost:3001',
+      returnTo: 'podcasts',
+    })
+    const response = await spotify.request(
+      `http://localhost:4001/complete?state=${'a'.repeat(43)}&code=secret-code`,
+    )
+    expect(response.status).toBe(302)
+    expect(response.headers.get('location')).toBe(
+      'http://localhost:3001/imports/spotify-podcasts?mediaType=subscription&spotify=connected',
+    )
+  })
+
   it('does not leak token/provider errors in responses or failure redirects', async () => {
     mocks.callback.mockRejectedValue(new Error('fake-sensitive-token'))
     const response = await spotify.request(

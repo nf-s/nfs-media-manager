@@ -257,7 +257,7 @@ app.openapi(
     responses: {
       302: {
         description:
-          'Return to YouTube subscriptions, without exposing tokens or authorization codes',
+          'Return to the YouTube import page, without exposing tokens or authorization codes',
       },
       401: jsonErrorResponse('Unauthorized'),
       422: validationErrorResponse,
@@ -278,8 +278,9 @@ app.openapi(
     } catch {
       /* Never expose token responses, codes or state in the redirect. */
     }
-    const destination = new URL('/youtube/subscriptions', returnOrigin)
+    const destination = new URL('/imports/youtube', returnOrigin)
     destination.search = new URLSearchParams({
+      mediaType: 'subscription',
       youtube: connected ? 'connected' : 'error',
     }).toString()
     return c.redirect(destination.toString(), 302)

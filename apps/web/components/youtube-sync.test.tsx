@@ -5,18 +5,19 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { SearchParamsContext } from 'next/dist/shared/lib/hooks-client-context.shared-runtime'
 import {
-  YoutubeSyncStatusSchema,
-  type YoutubeSyncStatus,
-} from '@repo/schemas/youtube'
+  SubscriptionSyncStatusSchema,
+  type SubscriptionSyncStatus,
+} from '@repo/schemas/subscriptions'
 import { ConfigContext } from './providers'
 import YoutubeSyncPanel from './youtube-sync'
 
-type StatusInput = Partial<Omit<YoutubeSyncStatus, 'account'>> & {
-  account?: Partial<YoutubeSyncStatus['account']>
+type StatusInput = Partial<Omit<SubscriptionSyncStatus, 'account'>> & {
+  account?: Partial<SubscriptionSyncStatus['account']>
 }
 
 function status({ account, ...overrides }: StatusInput = {}) {
-  return YoutubeSyncStatusSchema.parse({
+  return SubscriptionSyncStatusSchema.parse({
+    provider: 'youtube',
     account: {
       configured: true,
       connected: true,
@@ -27,12 +28,12 @@ function status({ account, ...overrides }: StatusInput = {}) {
     job: { id: 'job-1', status: 'succeeded' },
     schedule: 'daily',
     nextScheduledAt: '2026-11-14T02:00:00.000Z',
-    phase: 'videos',
-    channelsDone: 6,
-    channelsTotal: 6,
-    newVideos: 4,
-    storedChannels: 6,
-    storedVideos: 60,
+    phase: 'items',
+    sourcesDone: 6,
+    sourcesTotal: 6,
+    newItems: 4,
+    storedSources: 6,
+    storedItems: 60,
     startedAt: '2026-11-13T01:00:00.000Z',
     lastCompletedAt: '2026-11-13T01:05:00.000Z',
     resumeAfter: null,
@@ -41,11 +42,11 @@ function status({ account, ...overrides }: StatusInput = {}) {
   })
 }
 
-function render(data: YoutubeSyncStatus, search = '') {
+function render(data: SubscriptionSyncStatus, search = '') {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
-  client.setQueryData(['youtube-sync'], data)
+  client.setQueryData(['subscription-sync', 'youtube'], data)
   const network = mock.method(globalThis, 'fetch', async () => {
     throw new Error('Network forbidden')
   })
@@ -81,15 +82,15 @@ test('an unconfigured account links to the YouTube credentials and cannot sync',
       state: 'never',
       job: null,
       phase: null,
-      channelsDone: 0,
-      channelsTotal: 0,
+      sourcesDone: 0,
+      sourcesTotal: 0,
       lastCompletedAt: null,
       nextScheduledAt: null,
     }),
   )
   assert.match(
     html,
-    /href="\/providers\?provider=youtube&amp;section=credentials"/,
+    /href="\/providers\?provider=youtube&amp;section=credentials&amp;mediaType=subscription"/,
   )
   assert.doesNotMatch(html, /Connect YouTube|Reconnect|Disconnect/)
   assert.match(button(html, 'Sync now'), / disabled=""/)
@@ -114,8 +115,8 @@ test('a running sync shows channel progress, stop and the current job', () => {
     status({
       state: 'running',
       job: { id: 'job-2', status: 'running' },
-      channelsDone: 2,
-      channelsTotal: 6,
+      sourcesDone: 2,
+      sourcesTotal: 6,
     }),
   )
   assert.match(html, /<dd>Running<\/dd>/)
@@ -125,7 +126,7 @@ test('a running sync shows channel progress, stop and the current job', () => {
   assert.doesNotMatch(button(html, 'Stop'), / disabled=""/)
   assert.match(
     html,
-    /href="\/jobs\?jobId=job-2&amp;mediaType=album">View current job/,
+    /href="\/jobs\?jobId=job-2&amp;mediaType=subscription">View current job/,
   )
   assert.match(button(html, 'Reconnect'), /<button/)
   assert.match(button(html, 'Disconnect'), /<button/)
@@ -136,9 +137,9 @@ test('reading the subscription list is shown before channels are counted', () =>
     status({
       state: 'running',
       job: { id: 'job-2', status: 'queued' },
-      phase: 'subscriptions',
-      channelsDone: 0,
-      channelsTotal: 0,
+      phase: 'sources',
+      sourcesDone: 0,
+      sourcesTotal: 0,
     }),
   )
   assert.match(html, /<dd>Reading subscriptions<\/dd>/)
@@ -190,4 +191,31 @@ test('the OAuth return is confirmed or reported', () => {
     render(status({ account: { connected: false } }), 'youtube=error'),
     /<p role="alert">YouTube did not connect\. Try again\.<\/p>/,
   )
+})
+
+test('the channel list is on the Channels page, linked from the import page', async () => {
+  const { default: Page } =
+    await import('./pages/youtube-subscriptions-page-client')
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  client.setQueryData(['subscription-sync', 'youtube'], status())
+  const html = renderToStaticMarkup(
+    <QueryClientProvider client={client}>
+      <ConfigContext.Provider
+        value={{ apiBaseUrl: 'http://localhost', appUrl: 'http://localhost' }}
+      >
+        <SearchParamsContext.Provider value={new URLSearchParams()}>
+          <Page />
+        </SearchParamsContext.Provider>
+      </ConfigContext.Provider>
+    </QueryClientProvider>,
+  )
+  client.clear()
+  assert.match(html, /<h1>YouTube<\/h1>/)
+  assert.match(
+    html,
+    /href="\/subscriptions\/channels\?type=youtube">Subscribed channels/,
+  )
+  assert.match(html, /Channels read/)
 })

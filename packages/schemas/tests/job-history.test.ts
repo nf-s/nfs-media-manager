@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { JobListQuerySchema, getJobDismissal } from '../src/job'
+import {
+  JobActivitySchema,
+  JobListQuerySchema,
+  getJobDismissal,
+} from '../src/job'
 
 describe('job history contracts', () => {
   it('retains a media filter without implicitly selecting a status', () => {
@@ -11,6 +15,26 @@ describe('job history contracts', () => {
     expect(JobListQuerySchema.safeParse({ mediaItemId: '' }).success).toBe(
       false,
     )
+  })
+
+  it('scopes jobs to albums, films or the Subscriptions library', () => {
+    for (const mediaType of ['album', 'film', 'subscription'])
+      expect(JobListQuerySchema.parse({ mediaType }).mediaType).toBe(mediaType)
+    expect(JobListQuerySchema.safeParse({ mediaType: 'youtube' }).success).toBe(
+      false,
+    )
+    const counts = { queued: 1, running: 0, failed: 0, imports: 0 }
+    expect(
+      JobActivitySchema.parse({
+        queued: 1,
+        running: 0,
+        failed: 0,
+        imports: 0,
+        completed: 0,
+        completedImports: 0,
+        libraries: [{ mediaType: 'subscription', ...counts }],
+      }).libraries,
+    ).toEqual([{ mediaType: 'subscription', ...counts }])
   })
 
   it('reads dismissal metadata independently from benign error reviews', () => {

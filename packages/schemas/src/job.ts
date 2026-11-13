@@ -43,7 +43,8 @@ export const CreateJobSchema = z.object({
 })
 
 export const JobListQuerySchema = z.object({
-  mediaType: z.enum(['album', 'film']).optional(),
+  /** `subscription` lists the Subscriptions library's sync jobs; album and film leave them out. */
+  mediaType: z.enum(['album', 'film', 'subscription']).optional(),
   status: z
     .union([JobStatusSchema, z.enum(['active', 'attention'])])
     .optional(),
@@ -187,7 +188,7 @@ export const JobActivitySchema = z.object({
   libraries: z
     .array(
       z.object({
-        mediaType: z.enum(['album', 'film']),
+        mediaType: z.enum(['album', 'film', 'subscription']),
         queued: z.number(),
         running: z.number(),
         failed: z.number(),

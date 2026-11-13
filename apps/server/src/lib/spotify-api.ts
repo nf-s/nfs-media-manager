@@ -172,6 +172,65 @@ export type SpotifyLibraryTrack = {
   isrc: string | null
   addedAt: string | null
 }
+// GET /me/shows and GET /shows/{id}/episodes return at most 50 per request.
+export const SPOTIFY_PODCAST_PAGE_SIZE = 50
+const SpotifyShowSchema = z.object({
+  id: SpotifyIdSchema,
+  name: z.string(),
+  description: z.string().nullable().optional(),
+  images: LooseImagesSchema,
+  total_episodes: z.number().int().nonnegative(),
+})
+/** A page of the account's saved podcasts; Spotify may return null entries. */
+export const SpotifySavedShowsPageSchema = z.object({
+  items: z
+    .array(
+      z
+        .object({
+          added_at: z.string().nullable().optional(),
+          show: SpotifyShowSchema.nullable().optional(),
+        })
+        .nullable(),
+    )
+    .max(SPOTIFY_PODCAST_PAGE_SIZE),
+  total: z.number().int().nonnegative(),
+  offset: z.number().int().nonnegative(),
+  next: z.string().nullable(),
+})
+const SpotifyEpisodeSchema = z.object({
+  id: SpotifyIdSchema,
+  name: z.string(),
+  description: z.string().nullable().optional(),
+  duration_ms: z.number().int().nonnegative(),
+  release_date: ReleaseDateSchema,
+  release_date_precision: z.enum(['year', 'month', 'day']),
+  images: LooseImagesSchema,
+})
+/** A page of one show's episodes; Spotify may return null entries. */
+export const SpotifyEpisodesPageSchema = z.object({
+  items: z
+    .array(SpotifyEpisodeSchema.nullable())
+    .max(SPOTIFY_PODCAST_PAGE_SIZE),
+  total: z.number().int().nonnegative(),
+  offset: z.number().int().nonnegative(),
+  next: z.string().nullable(),
+})
+export type SpotifyShow = {
+  id: string
+  title: string
+  description: string | null
+  thumbnailUrl: string | null
+  itemTotal: number
+}
+export type SpotifyEpisode = {
+  id: string
+  title: string
+  description: string
+  durationSec: number
+  publishedAt: Date
+  publishedPrecision: 'year' | 'month' | 'day'
+  artworkUrl: string | null
+}
 export const SpotifyTokenSchema = z.object({
   access_token: z.string().min(1),
   token_type: z.string().refine((value) => value.toLowerCase() === 'bearer'),
@@ -277,12 +336,15 @@ export async function spotifyJson(
   token: string,
   path: string,
   params: Record<string, string> = {},
+  options?: { notFoundOn404?: boolean },
 ): Promise<unknown> {
   const url = new URL(`https://api.spotify.com/v1/${path}`)
   url.search = new URLSearchParams(params).toString()
-  const response = await request(url, {
-    headers: { Authorization: `Bearer ${token}` },
-  })
+  const response = await request(
+    url,
+    { headers: { Authorization: `Bearer ${token}` } },
+    options,
+  )
   if (!response.ok)
     throw new Error(`Spotify request failed (HTTP ${response.status})`)
   return response.json()
@@ -337,6 +399,62 @@ export function spotifyArtworkUrl(
 ): string | null {
   const url = HttpsUrlSchema.safeParse(images?.[0]?.url)
   return url.success ? url.data : null
+}
+
+// PostgreSQL text cannot hold a NUL character.
+const withoutNul = (value: string) => value.replaceAll('\u0000', '')
+
+/** A saved podcast as stored; null for an entry without a show. */
+export function normalizeSpotifyShow(
+  entry: z.infer<typeof SpotifySavedShowsPageSchema>['items'][number],
+): SpotifyShow | null {
+  const show = entry?.show
+  if (!show) return null
+  return {
+    id: show.id,
+    title: withoutNul(show.name).trim() || 'Untitled podcast',
+    description: withoutNul(show.description ?? '').trim() || null,
+    thumbnailUrl: spotifyArtworkUrl(show.images),
+    itemTotal: show.total_episodes,
+  }
+}
+
+type ReleasePrecision = SpotifyEpisode['publishedPrecision']
+const precisionRank: Record<ReleasePrecision, number> = {
+  year: 0,
+  month: 1,
+  day: 2,
+}
+
+/**
+ * An episode as stored. The release date becomes midnight UTC of its first
+ * day, with the precision Spotify reports; a date shorter than that precision
+ * keeps its own.
+ */
+export function normalizeSpotifyEpisode(
+  episode: z.infer<typeof SpotifyEpisodeSchema>,
+): SpotifyEpisode {
+  const date = episode.release_date
+  const written: ReleasePrecision =
+    date.length === 4 ? 'year' : date.length === 7 ? 'month' : 'day'
+  const declared = episode.release_date_precision
+  const publishedPrecision =
+    precisionRank[declared] <= precisionRank[written] ? declared : written
+  const day =
+    publishedPrecision === 'year'
+      ? `${date.slice(0, 4)}-01-01`
+      : publishedPrecision === 'month'
+        ? `${date.slice(0, 7)}-01`
+        : date
+  return {
+    id: episode.id,
+    title: withoutNul(episode.name).trim() || 'Untitled episode',
+    description: withoutNul(episode.description ?? '').trim(),
+    durationSec: Math.round(episode.duration_ms / 1000),
+    publishedAt: new Date(`${day}T00:00:00.000Z`),
+    publishedPrecision,
+    artworkUrl: spotifyArtworkUrl(episode.images),
+  }
 }
 
 /**

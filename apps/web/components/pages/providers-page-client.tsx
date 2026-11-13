@@ -21,13 +21,13 @@ import { fetchApiData } from '@/utils/api'
 import ProviderActivity from '../provider-activity'
 import ProviderConfiguration from '../provider-configuration'
 import { SectionSidebar, SectionWorkspace } from '../section-sidebar'
-import { useMediaScope } from '../media-scope'
+import { useWorkspaceScope } from '../media-scope'
 
 export default function ProvidersPageClient() {
   const { apiBaseUrl } = useConfig()
   const client = useQueryClient()
   const search = useSearchParams()
-  const mediaType = useMediaScope()
+  const mediaType = useWorkspaceScope()
   const selected = search.get('provider') ?? ''
   const section = search.get('section') ?? 'activity'
   const [draft, setDraft] = useState<Record<string, string>>({})
@@ -42,18 +42,22 @@ export default function ProvidersPageClient() {
     refetchInterval: 10000,
     staleTime: 0,
   })
-  // Account-level providers belong to neither library and appear in both.
+  // Subscriptions lists its own providers. Other account-level providers
+  // belong to neither media library and appear in both.
   const available =
     providers.data?.filter(
       (provider) =>
         provider.surface === 'provider' &&
-        (provider.mediaTypes.length === 0 ||
-          provider.mediaTypes.includes(mediaType)),
+        (mediaType === 'subscription'
+          ? provider.subscriptions
+          : provider.mediaTypes.includes(mediaType) ||
+            (provider.mediaTypes.length === 0 && !provider.subscriptions)),
     ) ?? []
   useEffect(() => {
     if (search.has('mediaType') || !selected) return
     const target = providers.data?.find((item) => item.id === selected)
-    const scope = target?.mediaTypes[0]
+    const scope =
+      target?.mediaTypes[0] ?? (target?.subscriptions ? 'subscription' : null)
     if (!scope) return
     const params = new URLSearchParams(window.location.search)
     params.set('mediaType', scope)

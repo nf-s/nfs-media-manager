@@ -4,7 +4,7 @@
 
 Tracks are a separate library from albums. A track is in the library because it is in an imported Spotify playlist or in Liked Songs, not because its album is. An album's own track list is unchanged, and most album tracks are not library tracks. The two are linked where they describe the same recording; see [linking tracks to albums](#linking-tracks-to-albums).
 
-The library selector has **Albums**, **Tracks** and **Films**. **Playlists** in the navigation lists imported playlists; Tags, Imports, Jobs and Providers stay with the album library.
+The library selector has **Albums**, **Tracks**, **Films** and **Subscriptions**. **Playlists** in the navigation lists imported playlists; Tags, Imports, Jobs and Providers stay with the album library.
 
 The only change the app makes on Spotify is [adding a library album to a playlist](#adding-an-album-to-a-playlist) when the owner asks. It never creates, renames, follows, reorders or removes from a Spotify playlist and never changes Liked Songs. There is no per-track metadata scrape, genre lookup or audio-feature collection.
 

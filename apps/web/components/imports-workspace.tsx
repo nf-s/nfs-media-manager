@@ -12,13 +12,14 @@ import {
 import { useConfig } from './providers'
 import { SectionSidebar, SectionWorkspace } from './section-sidebar'
 import { fetchApiData } from '@/utils/api'
-import { useMediaScope } from './media-scope'
+import { useMediaScope, useWorkspaceScope } from './media-scope'
 import { scopedHref } from '@/utils/media-scope'
 import {
   albumImportDestinations,
   csvImportHref,
   importDestinations,
   resolveCsvFormat,
+  subscriptionImportDestinations,
 } from '@/utils/import-navigation'
 
 function useImportsData() {
@@ -122,7 +123,7 @@ export default function ImportsWorkspace({
   const data = useImportsData()
   const path = usePathname()
   const params = useSearchParams()
-  const mediaType = useMediaScope()
+  const mediaType = useWorkspaceScope()
   const format = resolveCsvFormat(data.formats.data ?? [], params.get('format'))
   const activeId =
     path === '/imports/csv' && mediaType === 'album'
@@ -140,7 +141,9 @@ export default function ImportsWorkspace({
               label="Imports navigation"
               items={(mediaType === 'album'
                 ? albumImportDestinations()
-                : importDestinations(data.formats.data ?? [])
+                : mediaType === 'subscription'
+                  ? subscriptionImportDestinations()
+                  : importDestinations(data.formats.data ?? [])
               ).map((item) => ({
                 ...item,
                 href: scopedHref(item.href, mediaType),

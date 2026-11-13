@@ -131,3 +131,21 @@ test('idle activity remains accessible and does not invent shared imports', () =
     /Shared \/ unclassified imports|motion-safe:animate-spin/,
   )
 })
+
+test('subscription syncs have their own group linking to Subscriptions jobs', () => {
+  const html = renderActivity({
+    ...activity,
+    libraries: [
+      ...activity.libraries,
+      { ...empty, mediaType: 'subscription', running: 1, failed: 2 },
+    ],
+  })
+  assert.match(html, /aria-label="Subscriptions jobs and history"/)
+  assert.match(html, /href="\/jobs\?mediaType=subscription"/)
+  assert.match(
+    html,
+    /aria-label="Subscriptions: 1 running" href="\/jobs\?status=running&amp;mediaType=subscription"/,
+  )
+  assert.match(html, /aria-label="Subscriptions: 2 needs attention"/)
+  assert.doesNotMatch(html, /imports\?mediaType=subscription/)
+})

@@ -3,7 +3,11 @@ import type {
   SubscriptionSyncStatus,
   SubscriptionType,
 } from '@repo/schemas/subscriptions'
-import { ServerError } from '@/lib/error'
+import {
+  getSpotifyPodcastSyncStatus,
+  setSpotifyPodcastSyncSchedule,
+} from './spotify-podcast-sync'
+import { queueSpotifyPodcastSync } from './spotify-podcast-sync-jobs'
 import {
   getYoutubeSubscriptionSyncStatus,
   setYoutubeSyncSchedule,
@@ -22,7 +26,7 @@ export type SubscriptionSyncProvider = {
   ) => Promise<SubscriptionSyncStatus>
 }
 
-const providers: Partial<Record<SubscriptionType, SubscriptionSyncProvider>> = {
+const providers: Record<SubscriptionType, SubscriptionSyncProvider> = {
   youtube: {
     status: getYoutubeSubscriptionSyncStatus,
     queue: async (userId) => {
@@ -34,32 +38,25 @@ const providers: Partial<Record<SubscriptionType, SubscriptionSyncProvider>> = {
       return getYoutubeSubscriptionSyncStatus(userId)
     },
   },
-}
-
-const unavailable: Record<SubscriptionType, string> = {
-  youtube: 'YouTube sync is not available.',
-  spotify: 'Podcast sync is not available yet.',
-}
-
-function syncProvider(type: SubscriptionType) {
-  const provider = providers[type]
-  if (!provider)
-    throw new ServerError({ statusCode: 404, message: unavailable[type] })
-  return provider
+  spotify: {
+    status: getSpotifyPodcastSyncStatus,
+    queue: queueSpotifyPodcastSync,
+    setSchedule: setSpotifyPodcastSyncSchedule,
+  },
 }
 
 export async function getSubscriptionSyncStatus(
   type: SubscriptionType,
   userId: string,
 ) {
-  return syncProvider(type).status(userId)
+  return providers[type].status(userId)
 }
 
 export async function queueSubscriptionSync(
   type: SubscriptionType,
   userId: string,
 ) {
-  return syncProvider(type).queue(userId)
+  return providers[type].queue(userId)
 }
 
 export async function setSubscriptionSyncSchedule(
@@ -67,5 +64,5 @@ export async function setSubscriptionSyncSchedule(
   userId: string,
   schedule: SubscriptionSyncSchedule,
 ) {
-  return syncProvider(type).setSchedule(userId, schedule)
+  return providers[type].setSchedule(userId, schedule)
 }

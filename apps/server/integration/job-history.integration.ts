@@ -14,6 +14,9 @@ import {
 } from 'vitest'
 import type { MediaProviderPlugin } from '@repo/media-plugin-sdk'
 import { getJobDismissal, type Job } from '@repo/schemas/job'
+import { LASTFM_SCROBBLE_SYNC_TASK } from '@repo/schemas/lastfm'
+import { SPOTIFY_PODCAST_SYNC_TASK } from '@repo/schemas/subscriptions'
+import { YOUTUBE_SYNC_TASK } from '@repo/schemas/youtube'
 import { env } from '@/env'
 import * as schema from '@/schemas/db'
 
@@ -48,6 +51,11 @@ vi.mock('@/lib/db', () => ({
   },
 }))
 vi.mock('@/plugins/registry', () => ({ getScrapePlugin: async () => plugin }))
+// Queueing a sync needs no connected account here; the sync itself never runs.
+vi.mock('@/services/youtube-sync', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/services/youtube-sync')>()),
+  prepareYoutubeSyncRun: async () => {},
+}))
 
 let created = false
 beforeAll(async () => {
@@ -475,5 +483,70 @@ describe('media job history and dismissal', () => {
     const history = await listJobs({ mediaItemId: 'film-1' })
     expect(history.totalCount).toBe(1)
     expect(history.items[0]?.options.dismissal).toBeUndefined()
+  })
+
+  it('lists subscription syncs only in the Subscriptions library', async () => {
+    const { createTaskJob, getJobActivity, listJobs } =
+      await import('@/services/jobs')
+    await seedJob('film-job', 'failed')
+    const taskJob = (
+      id: string,
+      provider: string,
+      task: string,
+      status: Job['status'],
+      mediaType: 'album' | null,
+    ) => ({
+      id,
+      provider,
+      status,
+      scope: { mediaItemIds: [], mediaType, limit: 1 },
+      options: { task },
+    })
+    await databaseClient.insert(schema.scrapeJob).values([
+      taskJob(
+        'scrobbles',
+        'lastfm',
+        LASTFM_SCROBBLE_SYNC_TASK,
+        'running',
+        'album',
+      ),
+      // Queued before the Subscriptions library existed.
+      taskJob('old-youtube', 'youtube', YOUTUBE_SYNC_TASK, 'failed', 'album'),
+      taskJob(
+        'podcasts',
+        'spotify',
+        SPOTIFY_PODCAST_SYNC_TASK,
+        'running',
+        null,
+      ),
+    ])
+    const queued = await createTaskJob(YOUTUBE_SYNC_TASK, null)
+    expect(queued.scope.mediaType).toBeNull()
+
+    const ids = async (mediaType: 'album' | 'film' | 'subscription') =>
+      (await listJobs({ mediaType })).items.map((job) => job.id).sort()
+    expect(await ids('subscription')).toEqual(
+      [queued.id, 'old-youtube', 'podcasts'].sort(),
+    )
+    expect(await ids('album')).toEqual(['scrobbles'])
+    expect(await ids('film')).toEqual(['film-job'])
+    expect(
+      (
+        await listJobs({ mediaType: 'subscription', status: 'attention' })
+      ).items.map((job) => job.id),
+    ).toEqual(['old-youtube'])
+
+    const activity = await getJobActivity()
+    expect(activity.libraries).toEqual([
+      { mediaType: 'album', queued: 0, running: 1, failed: 0, imports: 0 },
+      { mediaType: 'film', queued: 0, running: 0, failed: 1, imports: 0 },
+      {
+        mediaType: 'subscription',
+        queued: 1,
+        running: 1,
+        failed: 1,
+        imports: 0,
+      },
+    ])
   })
 })

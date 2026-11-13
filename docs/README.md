@@ -11,7 +11,6 @@ Start with [getting started](getting-started.md) for installation or [applicatio
 - [Spotify playback](spotify-playback.md): optional in-app player, queue, devices and what the browser sends to Spotify.
 - [Last.fm scrobble history](lastfm-scrobbles.md): syncing scrobbles, album linking, listening charts and browse fields.
 - [Subscriptions](subscriptions.md): YouTube channels and Spotify podcasts in one library: setup, sync, search, filters and API.
-- [YouTube subscriptions](youtube-subscriptions.md): Google sign-in setup, syncing subscribed channels and searching their videos on the YouTube pages.
 - [AI search and voice input](ai-search.md): natural-language filters, voice search and Cloudflare configuration.
 - [Local provider plugins](local-plugins.md): optional integrations outside this repository.
 - [Album provider behavior](album-providers.md) and [film providers](film-keyword-providers.md): supported metadata and lookup limits.

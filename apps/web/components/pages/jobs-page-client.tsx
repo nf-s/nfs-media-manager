@@ -28,8 +28,8 @@ import { fetchApiData } from '@/utils/api'
 import JobBulkActions from '../job-bulk-actions'
 import JobDataViewer from '../job-data-viewer'
 import JsonTree from '../json-tree'
-import { useMediaScope } from '../media-scope'
-import { scopedHref } from '@/utils/media-scope'
+import { useWorkspaceScope } from '../media-scope'
+import { scopedHref, type WorkspaceScope } from '@/utils/media-scope'
 import { jobMatchesScope, jobMediaScope } from '@/utils/job-media-scope'
 import {
   activeJobProgressLabel,
@@ -40,6 +40,11 @@ import {
   updateJobSelection,
 } from '@/utils/job-selection'
 
+const jobsHeadings: Record<WorkspaceScope, string> = {
+  album: 'Album jobs',
+  film: 'Film jobs',
+  subscription: 'Subscription jobs',
+}
 const ErrorMetadataSchema = z.object({ error: JobErrorDetailsSchema })
 const DiagnosticMetadataSchema = z.object({ diagnostics: JsonValueSchema })
 const LegacyJobContextSchema = z.object({
@@ -163,7 +168,7 @@ export default function JobsPageClient() {
   const { apiBaseUrl } = useConfig()
   const client = useQueryClient()
   const search = useSearchParams()
-  const mediaType = useMediaScope()
+  const mediaType = useWorkspaceScope()
   const [query, setQuery] = useState('')
   const deferredQuery = useDeferredValue(query)
   const status = search.get('status') ?? ''
@@ -332,7 +337,7 @@ export default function JobsPageClient() {
   }, [completed, client])
   return (
     <section className="admin-page jobs-page">
-      <h1>{mediaType === 'album' ? 'Album' : 'Film'} jobs</h1>
+      <h1>{jobsHeadings[mediaType]}</h1>
       {selectedJob.data && !matchingSelectedJob && (
         <p className="muted">
           This job belongs to another library.{' '}

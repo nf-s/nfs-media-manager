@@ -35,6 +35,7 @@ import {
   getSpotifyAccountStatus,
   spotifyCallbackDestination,
   spotifyPlaybackToken,
+  type SpotifyReturnTo,
 } from '@/services/spotify-oauth'
 import { previewSpotifyAlbums } from '@/services/spotify-imports'
 import {
@@ -186,7 +187,7 @@ app.openapi(
     responses: {
       302: {
         description:
-          'Return to album imports or Providers, without exposing tokens or authorization codes',
+          'Return to album, playlist or podcast imports or Providers, without exposing tokens or authorization codes',
       },
       401: jsonErrorResponse('Unauthorized'),
       422: validationErrorResponse,
@@ -196,7 +197,7 @@ app.openapi(
     const current = actor(c)
     let connected = false
     let returnOrigin = env.APP_URL
-    let returnTo: 'imports' | 'playlists' | 'providers' = 'imports'
+    let returnTo: SpotifyReturnTo = 'imports'
     try {
       const result = await finishSpotifyAuthorization(
         c.req.valid('query'),
@@ -216,7 +217,9 @@ app.openapi(
         : new URL(
             returnTo === 'playlists'
               ? '/imports/spotify-playlists'
-              : '/imports/spotify',
+              : returnTo === 'podcasts'
+                ? '/imports/spotify-podcasts'
+                : '/imports/spotify',
             returnOrigin,
           )
     destination.search = new URLSearchParams(
@@ -227,7 +230,10 @@ app.openapi(
             section: 'settings',
             spotify: outcome,
           }
-        : { mediaType: 'album', spotify: outcome },
+        : {
+            mediaType: returnTo === 'podcasts' ? 'subscription' : 'album',
+            spotify: outcome,
+          },
     ).toString()
     return c.redirect(destination.toString(), 302)
   },

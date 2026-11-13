@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { ProviderRequestBudgetSchema } from '../src/provider'
+import {
+  ProviderRequestBudgetSchema,
+  ProviderSummarySchema,
+} from '../src/provider'
 
 describe('provider request budget', () => {
   it('accepts configurable hourly and UTC daily caps', () => {
@@ -18,5 +21,27 @@ describe('provider request budget', () => {
       })),
     ])
       expect(ProviderRequestBudgetSchema.safeParse(input).success).toBe(false)
+  })
+})
+
+describe('provider summary', () => {
+  const summary = {
+    id: 'fixture',
+    displayName: 'Fixture',
+    description: '',
+    surface: 'provider',
+    mediaTypes: [],
+    rateLimit: { maxConcurrent: 1, minTimeMs: 0 },
+    supportsScrape: false,
+    supportsLegacyImport: false,
+    secrets: [],
+    pluginPath: null,
+  }
+  it('marks Subscriptions providers and defaults to other libraries', () => {
+    expect(ProviderSummarySchema.parse(summary).subscriptions).toBe(false)
+    expect(
+      ProviderSummarySchema.parse({ ...summary, subscriptions: true })
+        .subscriptions,
+    ).toBe(true)
   })
 })

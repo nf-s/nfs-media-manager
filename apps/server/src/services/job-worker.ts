@@ -7,6 +7,7 @@ import { scrapeJob, scrapeJobItem, scrapeJobLog } from '@/schemas/db'
 import { processQueuedJobs } from '@/services/jobs'
 import { queueDueLastfmSync } from '@/services/lastfm-sync-jobs'
 import { queueDueYoutubeSync } from '@/services/youtube-sync-jobs'
+import { queueDueSpotifyPodcastSync } from '@/services/spotify-podcast-sync-jobs'
 import { queueDueSpotifyPlaylistSyncs } from '@/services/spotify-playlist-sync'
 
 const workerLock = 614105
@@ -181,6 +182,7 @@ export async function startJobWorker({
       nextScheduleCheck = Date.now() + scheduleCheckMs
       await queueDueLastfmSync()
       await queueDueYoutubeSync()
+      await queueDueSpotifyPodcastSync()
       await queueDueSpotifyPlaylistSyncs()
     }
     processing = processQueuedJobs(() => !stopping)

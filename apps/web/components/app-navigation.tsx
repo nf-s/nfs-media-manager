@@ -7,7 +7,6 @@ import {
   LayoutGrid,
   ListChecks,
   ListMusic,
-  SquarePlay,
   Tag,
   Users,
 } from 'lucide-react'
@@ -22,32 +21,76 @@ const items = [
   { href: '/jobs', label: 'Jobs', Icon: ListChecks },
   { href: '/providers', label: 'Providers', Icon: Cog },
 ]
-const youtubeItems = [
-  { href: '/youtube', label: 'Videos', Icon: SquarePlay },
-  { href: '/youtube/subscriptions', label: 'Subscriptions', Icon: Users },
+/** `section` is the path prefix that marks the link active; scoped links carry `mediaType`. */
+const subscriptionItems = [
+  {
+    href: '/subscriptions',
+    section: null,
+    scoped: false,
+    label: 'Browse',
+    Icon: LayoutGrid,
+  },
+  {
+    href: '/subscriptions/channels',
+    section: '/subscriptions/channels',
+    scoped: false,
+    label: 'Channels',
+    Icon: Users,
+  },
+  {
+    href: '/imports/youtube',
+    section: '/imports',
+    scoped: true,
+    label: 'Imports',
+    Icon: Download,
+  },
+  {
+    href: '/jobs',
+    section: '/jobs',
+    scoped: true,
+    label: 'Jobs',
+    Icon: ListChecks,
+  },
+  {
+    href: '/providers',
+    section: '/providers',
+    scoped: true,
+    label: 'Providers',
+    Icon: Cog,
+  },
 ]
+
+function isUnder(path: string, root: string) {
+  return path === root || path.startsWith(`${root}/`)
+}
+
 export default function AppNavigation() {
   const path = usePathname()
   const params = useSearchParams()
   const scope = useMediaScope()
   const view = useLibraryView()
-  if (view === 'youtube')
+  if (view === 'subscription')
     return (
       <nav className="app-navigation" aria-label="Main navigation">
-        {youtubeItems.map((item) => (
-          <Link
-            href={
-              path === item.href && params.size
-                ? `${item.href}?${params}`
-                : item.href
-            }
-            key={item.href}
-            aria-current={path === item.href ? 'page' : undefined}
-          >
-            {item.label}
-            <item.Icon size={16} aria-hidden="true" />
-          </Link>
-        ))}
+        {subscriptionItems.map((item) => {
+          const active = item.section
+            ? isUnder(path, item.section)
+            : path === item.href
+          const href =
+            path === item.href && params.size
+              ? `${item.href}?${params}`
+              : item.href
+          return (
+            <Link
+              href={item.scoped ? scopedHref(href, 'subscription') : href}
+              key={item.href}
+              aria-current={active ? 'page' : undefined}
+            >
+              {item.label}
+              <item.Icon size={16} aria-hidden="true" />
+            </Link>
+          )
+        })}
       </nav>
     )
   return (

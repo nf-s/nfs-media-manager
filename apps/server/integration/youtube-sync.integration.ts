@@ -668,11 +668,12 @@ describe('YouTube subscription sync jobs with offline HTTP and a temporary datab
       await setSubscriptionSyncSchedule('youtube', USER, 'weekly'),
     ).toMatchObject({ schedule: 'weekly' })
     expect((await status()).schedule).toBe('weekly')
-    await expect(
-      getSubscriptionSyncStatus('spotify', USER),
-    ).rejects.toMatchObject({
-      statusCode: 404,
-      message: 'Podcast sync is not available yet.',
+    // The podcast sync has its own checkpoint and counts.
+    expect(await getSubscriptionSyncStatus('spotify', USER)).toMatchObject({
+      provider: 'spotify',
+      state: 'never',
+      storedSources: 0,
+      storedItems: 0,
     })
 
     const { listYoutubeChannels } = await import('@/services/youtube-library')

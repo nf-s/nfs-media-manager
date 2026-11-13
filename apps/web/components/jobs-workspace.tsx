@@ -2,11 +2,12 @@
 
 import { usePathname } from 'next/navigation'
 import { SectionSidebar, SectionWorkspace } from './section-sidebar'
-import { useMediaScope } from './media-scope'
+import { useWorkspaceScope } from './media-scope'
 import { scopedHref } from '@/utils/media-scope'
 
+const history = { id: '/jobs', href: '/jobs', label: 'Jobs & history' }
 const destinations = [
-  { id: '/jobs', href: '/jobs', label: 'Jobs & history' },
+  history,
   {
     id: '/jobs/metadata',
     href: '/jobs/metadata',
@@ -20,7 +21,9 @@ export default function JobsWorkspace({
   children: React.ReactNode
 }) {
   const path = usePathname()
-  const mediaType = useMediaScope()
+  const mediaType = useWorkspaceScope()
+  // Subscriptions has no media items to scrape.
+  const items = mediaType === 'subscription' ? [history] : destinations
   return (
     <SectionWorkspace
       key={mediaType}
@@ -28,7 +31,7 @@ export default function JobsWorkspace({
         <div className="min-h-0 overflow-auto">
           <SectionSidebar
             label="Jobs navigation"
-            items={destinations.map((item) => ({
+            items={items.map((item) => ({
               ...item,
               href: scopedHref(item.href, mediaType),
             }))}
