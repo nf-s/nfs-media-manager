@@ -38,7 +38,7 @@ An imported playlist that shares its name with a playlist from the legacy album 
 
 ## Browsing tracks
 
-Tracks have their own table with search, filters, ranges, sorting and column choice, using the same URL parameters as albums.
+Tracks have their own table with search, [AI search](ai-search.md), filters, ranges, sorting and column choice, using the same URL parameters as albums.
 
 | Field                    | Source                                                                    |
 | ------------------------ | ------------------------------------------------------------------------- |

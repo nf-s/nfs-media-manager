@@ -50,7 +50,7 @@ import { fetchApiData } from '@/utils/api'
 import { useVirtualBrowse } from '@/hooks/useVirtualBrowse'
 import { useBrowseFacets } from '@/hooks/useBrowseFacets'
 import AiSearch from './ai-search'
-import { aiSearchParams } from '@/utils/ai-search'
+import { aiSearchParams, mediaAiSearchTarget } from '@/utils/ai-search'
 import MediaArtwork from './media-artwork'
 import MediaDetail from './media-detail'
 import { TilePlayControls } from './play-controls'
@@ -730,8 +730,7 @@ export default function MediaBrowser({
           )}
           <AiSearch
             key={mediaType}
-            mediaType={mediaType}
-            fields={fields}
+            target={mediaAiSearchTarget(mediaType, fields)}
             queryIdentity={queryKey}
             autocomplete={{
               items: titleItems,

@@ -152,8 +152,66 @@ describe('AI API', () => {
     })
   })
 
+  it('forwards track and YouTube requests and returns their plans', async () => {
+    mockAppSession(true)
+    const trackResult = {
+      plan: {
+        q: '',
+        filters: [{ field: 'playlist', value: 'Road trip', mode: 'required' }],
+        ranges: [],
+        sortBy: 'dateAdded',
+        direction: 'desc',
+        limitResults: null,
+        listening: null,
+        listeningSort: null,
+      },
+      explanation: 'Tracks in the Road trip playlist.',
+      assumptions: [],
+      warnings: [],
+    }
+    const youtubeResult = {
+      plan: {
+        q: 'bread',
+        fields: 'all',
+        channels: [{ id: `UC${'c'.repeat(22)}`, title: 'Example Cooking' }],
+        duration: null,
+        publishedFrom: null,
+        publishedTo: null,
+        sortBy: 'relevance',
+        sortDirection: 'desc',
+      },
+      explanation: 'Bread videos from one channel.',
+      assumptions: [],
+      warnings: [],
+    }
+    search
+      .mockResolvedValueOnce(trackResult)
+      .mockResolvedValueOnce(youtubeResult)
+    const { default: app } = await import('@/app')
+    const tracks = await app.request(
+      '/api/v1/ai/search',
+      jsonRequest({ mediaType: 'track', text: 'Road trip tracks' }),
+    )
+    const videos = await app.request(
+      '/api/v1/ai/search',
+      jsonRequest({
+        mediaType: 'youtube',
+        text: 'Bread videos from Example Cooking',
+      }),
+    )
+    expect(tracks.status).toBe(200)
+    expect(await tracks.json()).toMatchObject({ data: trackResult })
+    expect(videos.status).toBe(200)
+    expect(await videos.json()).toMatchObject({ data: youtubeResult })
+    expect(search.mock.calls).toEqual([
+      [{ mediaType: 'track', text: 'Road trip tracks' }],
+      [{ mediaType: 'youtube', text: 'Bread videos from Example Cooking' }],
+    ])
+  })
+
   it.each([
     { mediaType: 'book', text: 'Albums' },
+    { mediaType: 'playlist', text: 'Playlists' },
     { mediaType: 'album', text: ' ' },
     { mediaType: 'album', text: 'x'.repeat(2001) },
     { mediaType: 'album', text: 'Albums', sql: 'select 1' },

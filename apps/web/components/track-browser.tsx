@@ -37,7 +37,8 @@ import {
   trackTitleSuggestions,
   withTrackFilter,
 } from '@/utils/track-browse'
-import BrowseFilterAutocomplete from './browse-filter-autocomplete'
+import { aiSearchParams, mediaAiSearchTarget } from '@/utils/ai-search'
+import AiSearch from './ai-search'
 import { BrowseFilterChips, RangeEditor } from './browse-controls'
 import BrowseFilterPanel, { FilterPanelSection } from './browse-filter-panel'
 import { FilterButton } from './filter-affordance'
@@ -397,21 +398,28 @@ export default function TrackBrowser() {
     >
       <div className="browse-main">
         <div className="browse-toolbar">
-          <BrowseFilterAutocomplete
-            items={titleItems}
-            titlesLoading={titlesLoading}
-            titlesError={
-              facets.isError ||
-              (titleFilters.length > 0 && titleMatches.isError)
-            }
-            onOpenItem={openDetail}
-            options={options}
-            placeholder="Search titles, artists, albums, playlists..."
-            value={draft}
-            onValueChange={setDraft}
-            onAddFilter={addFilter}
-            onApplyText={(value) => {
-              setParams({ q: value || null })
+          <AiSearch
+            target={mediaAiSearchTarget('track', fields)}
+            queryIdentity={queryKey}
+            autocomplete={{
+              items: titleItems,
+              titlesLoading,
+              titlesError:
+                facets.isError ||
+                (titleFilters.length > 0 && titleMatches.isError),
+              onOpenItem: openDetail,
+              options,
+              placeholder: 'Search titles, artists, albums, playlists...',
+              value: draft,
+              onValueChange: setDraft,
+              onAddFilter: addFilter,
+              onApplyText: (value) => {
+                setParams({ q: value || null })
+                setDraft('')
+              },
+            }}
+            onApply={(plan) => {
+              setParams(aiSearchParams(plan))
               setDraft('')
             }}
           />

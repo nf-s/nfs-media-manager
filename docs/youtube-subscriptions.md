@@ -70,6 +70,8 @@ Search runs against the stored videos only and makes no YouTube requests.
 - A search matches the video title, tags, channel name and description. **Titles only**, in Filters, leaves out the description.
 - Common words such as "the" are ignored. A search made only of common words or punctuation, such as "the who", falls back to the literal text in the title or channel name.
 
+[AI search](ai-search.md#youtube-videos) in the search box sets the search, filters and sort from a typed or dictated request.
+
 Results sort by relevance while searching, with title, tag and channel-name matches above description matches, and otherwise newest first. They can also sort by published date, views or duration.
 
 Filters:

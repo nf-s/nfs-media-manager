@@ -1,12 +1,14 @@
 # AI search and voice input
 
-Type a request into the album or film search box, then choose **AI search** below **Filter by text** in the suggestions. Or use the microphone inside the search box and choose **Stop recording and search** when finished. Dictation transcribes the request and runs the search automatically. Successful searches immediately apply the resulting filters. Use the eye icon inside the search box to review the original request, interpretation, applied conditions and assumptions. The resulting filters use the normal browse controls and survive reloads and detail navigation.
+Type a request into the album, film, track or YouTube Videos search box, then choose **AI search** below **Filter by text** in the suggestions. Or use the microphone inside the search box and choose **Stop recording and search** when finished. Dictation transcribes the request and runs the search automatically. Successful searches immediately apply the resulting filters. Use the eye icon inside the search box to review the original request, interpretation, applied conditions and assumptions. The resulting filters use the normal browse controls and survive reloads and detail navigation.
 
 Examples:
 
 - “Show rock albums I've only listened to a little, with a high Rate Your Music score.”
 - “Show albums I used to listen to a lot, but haven't listened to much in the last five years.”
 - “Show unwatched films rated at least 8 on IMDb, newest first.”
+- “Tracks from my Road trip playlist I've never played.”
+- “Long woodworking videos from @examplechannel published this year, most viewed first.”
 
 Each request replaces the current search. It does not edit library records, start scrapes or discover media outside the library. A request that cannot be expressed with the available filters asks for clarification instead of applying a partial search. Review the generated conditions: a model can misinterpret a request even when its output passes validation.
 
@@ -16,7 +18,15 @@ Listening requests use the same [custom listening filters](lastfm-scrobbles.md) 
 
 Vague terms have visible defaults: “only a little” means 1–10 scrobbles, “not much” means 0–10, “a lot” means at least 100, and “high RYM score” means at least 3.5/5. Explicit numbers override these choices. Earlier and recent listening are separate conditions; an all-time count is not substituted for listening before a cutoff. Date periods include both boundary days in UTC. Adjust any condition using the regular controls after applying it.
 
+Tracks have no listening rules. A track request uses the track's **Scrobbles** and **Last listened** values, which count all-time linked scrobbles, so counts within a period ask for clarification. The track table has no result limit, so “top 10” sorts without capping.
+
 Scores come from stored metadata. Searches do not fetch fresh ratings, and missing scores are excluded unless requested otherwise. AI search supports the public built-in fields; installation-specific plugin fields remain available through manual filters.
+
+## YouTube videos
+
+A request on the Videos page sets the page's own controls: the search text, **Titles only**, channels, duration bucket, published dates and sort. The search text uses the [Videos search syntax](youtube-subscriptions.md#searching). Lengths that do not fit one of the duration buckets, and data that is not stored, such as likes, ask for clarification.
+
+The model returns channel names as written in the request. The server matches each one to a subscribed channel, ignoring case: an exact title or @handle first, then a part of one title or handle. If a name matches no channel or several, nothing is applied and the review lists the name, with candidates for an ambiguous name.
 
 ## Models and configuration
 
@@ -31,10 +41,10 @@ For the Node server, configure `CLOUDFLARE_AI_ACCOUNT_ID` and `CLOUDFLARE_AI_API
 
 Microphone recording requires HTTPS or localhost and a browser supporting MediaRecorder. The browser asks for microphone access when recording starts. Recordings stop at 60 seconds and are limited to 5 MB. Use the cancel icon to discard a recording or cancel a pending AI request. Leaving the library releases the microphone and cancels pending requests. Transcription automatically starts AI search; typing a new request while interpretation is pending cancels the older request. Failed or cancelled searches leave the current filters unchanged.
 
-Only the submitted text and public filter definitions go to the text model. Recorded audio goes to the transcription model. Library records, listening history, stored tag vocabularies, plugin definitions and provider secrets are not sent to either model. Audio and raw prompts are not saved by the application; only applied browse conditions are retained in the URL and the existing browse preferences. API logs contain paths/statuses/timing, not request bodies. Cloudflare's own processing is governed by its [Workers AI data usage policy](https://developers.cloudflare.com/workers-ai/platform/data-usage/).
+Only the submitted text and public filter definitions go to the text model. Recorded audio goes to the transcription model. Library records, listening history, stored tag vocabularies, subscribed channel names, plugin definitions and provider secrets are not sent to either model. Audio and raw prompts are not saved by the application; only applied browse conditions are retained in the URL and the existing browse preferences. API logs contain paths/statuses/timing, not request bodies. Cloudflare's own processing is governed by its [Workers AI data usage policy](https://developers.cloudflare.com/workers-ai/platform/data-usage/).
 
 The owner session and existing origin protection apply to every AI endpoint. Requests, recordings and model outputs are size-bounded and schema-validated. Generated fields and rating scales are checked before a plan can be applied. Each model call has a 60-second timeout and is not retried automatically.
 
 ## Verification
 
-The AI service and API tests mock inference and use synthetic plans. They cover listening windows, ratings, unsupported fields, incomplete history, malformed output, transcription errors, authentication and request limits. Recording tests cover stop/cancel, permission failures, size and duration limits, and releasing microphone tracks. No live library scraping is needed.
+The AI service and API tests mock inference and use synthetic plans. They cover listening windows, ratings, track plans, YouTube plans and channel matching, unsupported fields, incomplete history, malformed output, transcription errors, authentication and request limits. Recording tests cover stop/cancel, permission failures, size and duration limits, and releasing microphone tracks. No live library scraping is needed.

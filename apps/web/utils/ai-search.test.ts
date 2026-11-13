@@ -1,8 +1,20 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { AiSearchPlanSchema } from '@repo/schemas/ai-search'
-import { albumBrowseFields } from '@repo/schemas/browse'
-import { aiSearchParams, describeAiSearchPlan } from './ai-search'
+import {
+  AiSearchPlanSchema,
+  AiYoutubePlanSchema,
+  type AiYoutubePlan,
+} from '@repo/schemas/ai-search'
+import { albumBrowseFields, trackBrowseFields } from '@repo/schemas/browse'
+import {
+  aiSearchParams,
+  aiYoutubeSearchParams,
+  describeAiSearchPlan,
+  describeAiYoutubePlan,
+  mediaAiSearchTarget,
+  youtubeAiSearchTarget,
+} from './ai-search'
+import { parseYoutubeVideoState, updateYoutubeSearch } from './youtube'
 
 const plan = AiSearchPlanSchema.parse({
   q: '',
@@ -57,4 +69,128 @@ test('preview shows actual thresholds and listening logic independently of model
     /all rules: at most 10 scrobbles · last 5 years; at least 100 scrobbles · through 2020-12-31/,
   )
   assert.match(descriptions, /Sort: Scrobbles · last 5 years, ascending/)
+})
+
+test('track plans use the album URL parameters and clear album-only listening state', () => {
+  const trackPlan = AiSearchPlanSchema.parse({
+    q: 'live',
+    filters: [{ field: 'playlist', value: 'Road trip', mode: 'required' }],
+    ranges: [{ field: 'scrobbles', min: 1, max: 10, includeMissing: false }],
+    sortBy: 'scrobbles',
+    direction: 'desc',
+    limitResults: null,
+    listening: null,
+    listeningSort: null,
+  })
+  assert.deepEqual(aiSearchParams(trackPlan), {
+    q: 'live',
+    filters: JSON.stringify(trackPlan.filters),
+    ranges: JSON.stringify(trackPlan.ranges),
+    listening: null,
+    listeningSort: null,
+    sortBy: 'scrobbles',
+    direction: 'desc',
+    limitResults: null,
+    item: null,
+  })
+  const target = mediaAiSearchTarget('track', trackBrowseFields)
+  assert.equal(target.mediaType, 'track')
+  assert.deepEqual(target.describe(trackPlan), [
+    'Search: live',
+    'Required · Playlists: Road trip',
+    'Scrobbles: at least 1, at most 10',
+    'Sort: Scrobbles, descending',
+  ])
+})
+
+const channel = { id: `UC${'c'.repeat(22)}`, title: 'Example Cooking' }
+function youtubePlan(overrides: Partial<AiYoutubePlan> = {}) {
+  return AiYoutubePlanSchema.parse({
+    q: '',
+    fields: 'all',
+    channels: [],
+    duration: null,
+    publishedFrom: null,
+    publishedTo: null,
+    sortBy: 'publishedAt',
+    sortDirection: 'desc',
+    ...overrides,
+  })
+}
+
+test('YouTube plans replace every Videos search parameter and keep the view', () => {
+  const plan = youtubePlan({
+    q: 'bread -sourdough',
+    fields: 'title',
+    channels: [channel],
+    duration: 'long',
+    publishedFrom: '2026-10-01',
+    publishedTo: '2026-10-31',
+    sortBy: 'viewCount',
+    sortDirection: 'asc',
+  })
+  const search = updateYoutubeSearch(
+    `channelId=UC${'a'.repeat(22)}&duration=short&view=list&video=abcdefghijk`,
+    aiYoutubeSearchParams(plan),
+  )
+  assert.deepEqual(parseYoutubeVideoState(new URLSearchParams(search)), {
+    q: 'bread -sourdough',
+    fields: 'title',
+    channelIds: [channel.id],
+    duration: 'long',
+    publishedFrom: '2026-10-01',
+    publishedTo: '2026-10-31',
+    sortBy: 'viewCount',
+    sortDirection: 'asc',
+    view: 'list',
+  })
+  assert.doesNotMatch(search, /video=/)
+})
+
+test('an empty YouTube plan clears previous filters and uses default parameters', () => {
+  const search = updateYoutubeSearch(
+    `q=old&fields=title&channelId=UC${'a'.repeat(22)}&duration=short&publishedFrom=2026-01-01&sortDirection=asc`,
+    aiYoutubeSearchParams(youtubePlan({ fields: 'title' })),
+  )
+  assert.equal(search, 'sortBy=publishedAt')
+})
+
+test('YouTube plan review lists channel titles, buckets, dates and sort', () => {
+  assert.deepEqual(
+    describeAiYoutubePlan(
+      youtubePlan({
+        q: 'bread',
+        channels: [channel],
+        duration: 'medium',
+        publishedFrom: '2026-10-01',
+        sortBy: 'relevance',
+      }),
+    ),
+    [
+      'Search: bread',
+      'Channels: Example Cooking',
+      'Duration: 4–20 minutes',
+      'Published: 2026-10-01 to *',
+      'Sort: Relevance',
+    ],
+  )
+  assert.equal(youtubeAiSearchTarget.mediaType, 'youtube')
+  assert.equal(
+    youtubeAiSearchTarget.responseSchema.safeParse({
+      plan: youtubePlan({ channels: [channel] }),
+      explanation: 'Videos from one channel.',
+      assumptions: [],
+      warnings: [],
+    }).success,
+    true,
+  )
+  assert.equal(
+    youtubeAiSearchTarget.responseSchema.safeParse({
+      plan: { ...youtubePlan(), channelNames: ['Example Cooking'] },
+      explanation: 'Unresolved channel names are not a plan.',
+      assumptions: [],
+      warnings: [],
+    }).success,
+    false,
+  )
 })

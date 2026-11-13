@@ -1,5 +1,6 @@
 import { createRoute, type OpenAPIHono } from '@hono/zod-openapi'
 import { bodyLimit } from 'hono/body-limit'
+import { z } from 'zod'
 import {
   AI_AUDIO_MAX_BYTES,
   AiSearchInputSchema,
@@ -7,6 +8,7 @@ import {
   AiStatusSchema,
   AiTranscriptionInputSchema,
   AiTranscriptionSchema,
+  AiYoutubeSearchResponseSchema,
 } from '@repo/schemas/ai-search'
 import { authMiddleware } from '@/middlewares/auth'
 import {
@@ -63,10 +65,13 @@ app.openapi(
     },
     responses: {
       200: {
-        description: 'Validated search interpretation',
+        description:
+          'Validated search interpretation: a browse plan for album, film and track, a Videos plan for youtube',
         content: {
           'application/json': {
-            schema: createResponseSchema(AiSearchResponseSchema),
+            schema: createResponseSchema(
+              z.union([AiSearchResponseSchema, AiYoutubeSearchResponseSchema]),
+            ),
           },
         },
       },

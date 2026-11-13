@@ -29,11 +29,13 @@ import {
 import { Button } from '@repo/ui/components/ui/button'
 import { Input } from '@repo/ui/components/ui/input'
 import { useConfig } from './providers'
+import AiSearch from './ai-search'
 import BrowseFilterPanel, { FilterPanelSection } from './browse-filter-panel'
 import { FilterButton } from './filter-affordance'
 import { ChannelAvatar, useYoutubeChannels } from './youtube-channels'
 import { VideoThumbnail, YoutubeVideoDetails } from './youtube-video-details'
 import { fetchApiData } from '@/utils/api'
+import { aiYoutubeSearchParams, youtubeAiSearchTarget } from '@/utils/ai-search'
 import { useInfiniteTableScroll } from '@/hooks/useInfiniteTableScroll'
 import { useRailSlot } from '@/hooks/useRailSlot'
 import {
@@ -342,7 +344,8 @@ export default function YoutubeVideos() {
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
-      const next = draft.trim()
+      // A longer AI request stays in the box; the search keeps the first 200 characters.
+      const next = draft.trim().slice(0, 200)
       if (next === writtenQuery.current) return
       writtenQuery.current = next
       const params = updateYoutubeSearch(window.location.search, {
@@ -395,7 +398,19 @@ export default function YoutubeVideos() {
     : undefined
   const selectedVideoId = selectedVideo?.id
   const filtered = hasYoutubeVideoFilters(state)
-  const updating = videos.isPlaceholderData || draft.trim() !== state.q
+  const updating =
+    videos.isPlaceholderData || draft.trim().slice(0, 200) !== state.q
+  // Leaves out the search text, which is applied as it is typed: writing the
+  // typed request must not cancel the AI search it starts.
+  const aiQueryIdentity = JSON.stringify([
+    state.fields,
+    state.channelIds,
+    state.duration,
+    state.publishedFrom,
+    state.publishedTo,
+    state.sortBy,
+    state.sortDirection,
+  ])
 
   useEffect(() => {
     if (selectedVideoId) inspector.current?.focus({ preventScroll: true })
@@ -639,16 +654,31 @@ export default function YoutubeVideos() {
     >
       <div className="browse-main">
         <div className="browse-toolbar">
-          <div className="browse-search">
-            <Input
-              type="search"
-              aria-label="Search videos"
-              placeholder="Search videos"
-              maxLength={200}
-              value={draft}
-              onChange={(event) => setDraft(event.target.value)}
-            />
-          </div>
+          <AiSearch
+            target={youtubeAiSearchTarget}
+            queryIdentity={aiQueryIdentity}
+            autocomplete={{
+              items: [],
+              titlesLoading: false,
+              titlesError: false,
+              onOpenItem: () => undefined,
+              options: [],
+              textActionsOnly: true,
+              placeholder: 'Search videos',
+              value: draft,
+              onValueChange: setDraft,
+              onAddFilter: () => undefined,
+              onApplyText: (value) => {
+                writtenQuery.current = value.slice(0, 200)
+                setParams({ q: writtenQuery.current || null })
+              },
+            }}
+            onApply={(plan) => {
+              writtenQuery.current = plan.q
+              setDraft(plan.q)
+              setParams(aiYoutubeSearchParams(plan))
+            }}
+          />
           <div className="browse-controls">
             <ChannelPicker
               channels={channels}

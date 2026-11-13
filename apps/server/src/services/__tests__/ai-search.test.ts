@@ -4,6 +4,7 @@ import {
   AI_AUDIO_MAX_BYTES,
   AiSearchPlanSchema,
   type AiSearchPlan,
+  type AiYoutubeInterpretedPlan,
 } from '@repo/schemas/ai-search'
 
 const mocks = vi.hoisted(() => ({
@@ -28,12 +29,16 @@ vi.mock('@/plugins/registry', () => ({
 vi.mock('@/lib/db', () => ({ db: { execute: mocks.database } }))
 
 import {
+  aiSearchPrompt,
   aiSearchStatus,
   interpretAiSearch,
   parseAiInterpretation,
+  parseAiYoutubeInterpretation,
   transcribeAiAudio,
   validateAiPlan,
+  validateAiYoutubePlan,
 } from '../ai-search'
+import { matchYoutubeChannelName } from '../youtube-channel-names'
 
 const now = new Date('2026-11-13T08:00:00Z')
 function plan(overrides: Partial<AiSearchPlan> = {}): AiSearchPlan {
@@ -388,6 +393,301 @@ describe('AI search interpretation', () => {
         }),
       ).success,
     ).toBe(false)
+  })
+})
+
+describe('AI track search', () => {
+  it('states the track sort default and forbids listening rules and caps in the prompt', () => {
+    const prompt = aiSearchPrompt('track', now)
+    expect(prompt).toContain('read-only track library search')
+    expect(prompt).toContain('Use dateAdded desc by default')
+    expect(prompt).toContain(
+      'Track plans MUST have listening:null, listeningSort:null and limitResults:null',
+    )
+    expect(prompt).toContain('"key":"albumLink"')
+    expect(prompt).not.toContain('ratingRymValue')
+  })
+
+  it('accepts track filters and sorts by linked track scrobbles after a completed sync', async () => {
+    const expected = plan({
+      filters: [{ field: 'playlist', value: 'Road trip', mode: 'required' }],
+      ranges: [{ field: 'scrobbles', min: 1, max: 10, includeMissing: false }],
+      sortBy: 'scrobbles',
+    })
+    mocks.text.mockResolvedValue(completion(interpretation(expected)))
+    const result = await interpretAiSearch(
+      {
+        mediaType: 'track',
+        text: 'Road trip tracks I have only played a little, most played first',
+      },
+      now,
+    )
+    expect(result.plan).toEqual(expected)
+    expect(result.warnings).toContainEqual(
+      expect.stringContaining('linked to library tracks'),
+    )
+    expect(mocks.sync).toHaveBeenCalledOnce()
+    expect(mocks.text.mock.calls[0]?.[0]?.[0]?.content).toContain(
+      'read-only track library search',
+    )
+  })
+
+  it('does not read listening history for a track plan without listening fields', async () => {
+    const expected = plan({
+      filters: [{ field: 'albumLink', value: 'Not in library' }],
+    })
+    mocks.text.mockResolvedValue(completion(interpretation(expected)))
+    const result = await interpretAiSearch(
+      { mediaType: 'track', text: 'Tracks whose album is not in the library' },
+      now,
+    )
+    expect(result).toMatchObject({ plan: expected, warnings: [] })
+    expect(mocks.sync).not.toHaveBeenCalled()
+  })
+
+  it('does not apply a track scrobble plan without a completed history sync', async () => {
+    mocks.sync.mockResolvedValue({ state: 'running', lastCompletedAt: null })
+    mocks.text.mockResolvedValue(
+      completion(
+        interpretation(
+          plan({
+            ranges: [{ field: 'scrobbles', max: 0, includeMissing: false }],
+          }),
+        ),
+      ),
+    )
+    const result = await interpretAiSearch(
+      { mediaType: 'track', text: 'Tracks I have never played' },
+      now,
+    )
+    expect(result.plan).toBeNull()
+    expect(result.explanation).toContain('Complete the Last.fm history sync')
+  })
+
+  it.each([
+    plan({
+      listening: { match: 'all', rules: [{ period: { kind: 'all' }, max: 0 }] },
+    }),
+    plan({ listeningSort: { kind: 'all' } }),
+    plan({ sortBy: 'listeningScrobbles', listeningSort: { kind: 'all' } }),
+    plan({ limitResults: 10 }),
+    plan({ sortBy: 'scrobblesLast1y' }),
+    plan({ sortBy: 'ratingRymValue' }),
+    plan({ filters: [{ field: 'country', value: 'Japan' }] }),
+    plan({
+      ranges: [{ field: 'scrobblesLast5y', min: 1, includeMissing: false }],
+    }),
+  ])(
+    'rejects listening rules, caps and unsupported fields on tracks',
+    (search) => {
+      expect(() => validateAiPlan(search, 'track')).toThrow(
+        'unsupported search',
+      )
+    },
+  )
+})
+
+const channelId = (letter: string) => `UC${letter.repeat(22)}`
+const channelRows = [
+  { id: channelId('a'), title: 'Synthetic Science', handle: '@synthsci' },
+  { id: channelId('b'), title: 'Synthetic Science Shorts', handle: null },
+  { id: channelId('c'), title: 'Example Cooking', handle: '@examplekitchen' },
+  { id: channelId('d'), title: 'Woodwork Example', handle: '@woodwork' },
+]
+function youtubePlan(
+  overrides: Partial<AiYoutubeInterpretedPlan> = {},
+): AiYoutubeInterpretedPlan {
+  return {
+    q: '',
+    fields: 'all',
+    channelNames: [],
+    duration: null,
+    publishedFrom: null,
+    publishedTo: null,
+    sortBy: 'publishedAt',
+    sortDirection: 'desc',
+    ...overrides,
+  }
+}
+
+function youtubeInterpretation(search: AiYoutubeInterpretedPlan) {
+  return { ...interpretation(null), plan: search }
+}
+
+describe('AI YouTube search', () => {
+  beforeEach(() => {
+    mocks.database.mockResolvedValue({ rows: channelRows })
+  })
+
+  it('resolves named channels on the server and returns their ids', async () => {
+    mocks.text.mockResolvedValue(
+      completion(
+        youtubeInterpretation(
+          youtubePlan({
+            q: 'bread -sourdough',
+            channelNames: ['example cooking', '@WOODWORK', 'Example Cooking'],
+            duration: 'long',
+            publishedFrom: '2026-10-01',
+            publishedTo: '2026-10-31',
+            sortBy: 'relevance',
+          }),
+        ),
+      ),
+    )
+    const result = await interpretAiSearch(
+      {
+        mediaType: 'youtube',
+        text: 'Long bread videos without sourdough from Example Cooking and @woodwork last month',
+      },
+      now,
+    )
+    expect(result).toEqual({
+      plan: {
+        q: 'bread -sourdough',
+        fields: 'all',
+        channels: [
+          { id: channelId('c'), title: 'Example Cooking' },
+          { id: channelId('d'), title: 'Woodwork Example' },
+        ],
+        duration: 'long',
+        publishedFrom: '2026-10-01',
+        publishedTo: '2026-10-31',
+        sortBy: 'relevance',
+        sortDirection: 'desc',
+      },
+      explanation: 'Search the selected library.',
+      assumptions: [],
+      warnings: [],
+    })
+    expect(mocks.database).toHaveBeenCalledOnce()
+    expect(mocks.sync).not.toHaveBeenCalled()
+  })
+
+  it('never sends stored channel names to the model', async () => {
+    mocks.text.mockResolvedValue(
+      completion(
+        youtubeInterpretation(youtubePlan({ channelNames: ['woodwork'] })),
+      ),
+    )
+    await interpretAiSearch(
+      { mediaType: 'youtube', text: 'Videos from woodwork' },
+      now,
+    )
+    const sent = JSON.stringify(mocks.text.mock.calls)
+    expect(sent).toContain('read-only search of stored videos')
+    expect(sent).toContain('a bare word also matches')
+    for (const channel of channelRows) {
+      expect(sent).not.toContain(channel.title)
+      expect(sent).not.toContain(channel.id)
+    }
+  })
+
+  it('does not read channels when the request names none', async () => {
+    mocks.text.mockResolvedValue(
+      completion(youtubeInterpretation(youtubePlan({ duration: 'short' }))),
+    )
+    const result = await interpretAiSearch(
+      { mediaType: 'youtube', text: 'Short videos' },
+      now,
+    )
+    expect(result.plan).toMatchObject({ channels: [], duration: 'short' })
+    expect(mocks.database).not.toHaveBeenCalled()
+  })
+
+  it('returns ambiguous and missing channels as warnings without a partial filter', async () => {
+    mocks.text.mockResolvedValue(
+      completion(
+        youtubeInterpretation(
+          youtubePlan({
+            channelNames: ['Example Cooking', 'synthetic', 'Unknown Channel'],
+          }),
+        ),
+      ),
+    )
+    const result = await interpretAiSearch(
+      {
+        mediaType: 'youtube',
+        text: 'Videos from Example Cooking, Synthetic and Unknown Channel',
+      },
+      now,
+    )
+    expect(result.plan).toBeNull()
+    expect(result.explanation).toContain('subscribed channel')
+    expect(result.warnings).toEqual([
+      '"synthetic" matches several subscribed channels: Synthetic Science, Synthetic Science Shorts.',
+      'No subscribed channel matches "Unknown Channel".',
+    ])
+  })
+
+  it('passes a clarification through without reading channels', async () => {
+    mocks.text.mockResolvedValue(
+      completion({
+        plan: null,
+        explanation: 'Likes are not stored. Choose views instead?',
+        assumptions: [],
+      }),
+    )
+    expect(
+      await interpretAiSearch(
+        { mediaType: 'youtube', text: 'Most liked videos' },
+        now,
+      ),
+    ).toEqual({
+      plan: null,
+      explanation: 'Likes are not stored. Choose views instead?',
+      assumptions: [],
+      warnings: [],
+    })
+    expect(mocks.database).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    youtubePlan({ sortBy: 'relevance' }),
+    youtubePlan({ q: 'bread', sortBy: 'relevance', sortDirection: 'asc' }),
+    youtubePlan({ fields: 'title' }),
+    youtubePlan({ publishedFrom: '2026-10-31', publishedTo: '2026-10-01' }),
+  ])('rejects YouTube plans the Videos page cannot apply', (search) => {
+    expect(() => validateAiYoutubePlan(search)).toThrow('unsupported search')
+  })
+
+  it.each([
+    { ...youtubePlan(), channelId: [channelId('a')] },
+    { ...youtubePlan(), sortBy: 'likeCount' },
+    { ...youtubePlan(), duration: 'feature' },
+    { ...youtubePlan(), publishedFrom: '2026-13-01' },
+    { ...youtubePlan(), filters: [] },
+  ])('rejects unsupported YouTube fields at the model boundary', (search) => {
+    expect(() =>
+      parseAiYoutubeInterpretation(
+        completion({ ...interpretation(), plan: search }),
+      ),
+    ).toThrow('unsupported search')
+  })
+
+  it('matches exact titles and handles before unique substrings', () => {
+    expect(matchYoutubeChannelName('synthetic science', channelRows)).toEqual({
+      status: 'matched',
+      channel: channelRows[0],
+    })
+    expect(matchYoutubeChannelName('@SynthSci', channelRows)).toEqual({
+      status: 'matched',
+      channel: channelRows[0],
+    })
+    expect(matchYoutubeChannelName('kitchen', channelRows)).toEqual({
+      status: 'matched',
+      channel: channelRows[2],
+    })
+    expect(matchYoutubeChannelName('shorts', channelRows)).toEqual({
+      status: 'matched',
+      channel: channelRows[1],
+    })
+    expect(matchYoutubeChannelName('example', channelRows).status).toBe(
+      'ambiguous',
+    )
+    expect(matchYoutubeChannelName('@', channelRows).status).toBe('missing')
+    expect(matchYoutubeChannelName('missing', channelRows).status).toBe(
+      'missing',
+    )
   })
 })
 

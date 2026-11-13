@@ -31,6 +31,8 @@ export type BrowseFilterAutocompleteProps = {
   aiSearchDisabled?: boolean
   disabled?: boolean
   hideSuggestions?: boolean
+  /** No filter or title suggestions: the menu lists only the text and AI actions, while there is text. */
+  textActionsOnly?: boolean
   onFocus?: () => void
 }
 
@@ -88,6 +90,7 @@ export default function BrowseFilterAutocomplete({
   aiSearchDisabled = false,
   disabled = false,
   hideSuggestions = false,
+  textActionsOnly = false,
   onFocus,
 }: BrowseFilterAutocompleteProps) {
   const id = useId()
@@ -102,7 +105,11 @@ export default function BrowseFilterAutocomplete({
     aiSearchDisabled,
   )
   const active = menuOptions.findIndex((option) => option.key === activeKey)
-  const menuVisible = open && !hideSuggestions && !disabled
+  const menuVisible =
+    open &&
+    !hideSuggestions &&
+    !disabled &&
+    (!textActionsOnly || menuOptions.length > 0)
   function select(option: BrowseSuggestion) {
     if (option.kind === 'item') {
       setOpen(false)
@@ -236,9 +243,12 @@ export default function BrowseFilterAutocomplete({
                 Could not load suggestions. Try searching again.
               </p>
             )}
-            {!suggestions.length && !titlesLoading && !titlesError && (
-              <p className="quiet search-status">No matching suggestions.</p>
-            )}
+            {!textActionsOnly &&
+              !suggestions.length &&
+              !titlesLoading &&
+              !titlesError && (
+                <p className="quiet search-status">No matching suggestions.</p>
+              )}
             {menuOptions.map((option, index) => (
               <button
                 type="button"

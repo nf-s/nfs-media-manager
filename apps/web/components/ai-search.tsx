@@ -8,18 +8,14 @@ import {
   AI_AUDIO_MAX_SECONDS,
   AI_SEARCH_MAX_TEXT,
   AiSearchInputSchema,
-  AiSearchResponseSchema,
   AiStatusSchema,
   AiTranscriptionInputSchema,
   AiTranscriptionSchema,
   type AiSearchInput,
-  type AiSearchPlan,
-  type AiSearchResponse,
 } from '@repo/schemas/ai-search'
-import type { BrowseField } from '@repo/schemas/browse'
 import { fetchApiData } from '@/utils/api'
 import { encodeRecording } from '@/utils/ai-recording'
-import { describeAiSearchPlan } from '@/utils/ai-search'
+import type { AiSearchResult, AiSearchTarget } from '@/utils/ai-search'
 import { errorMessage } from './lastfm-sync'
 import { useConfig } from './providers'
 import { useAiMicrophone } from './use-ai-microphone'
@@ -28,26 +24,24 @@ import BrowseFilterAutocomplete, {
 } from './browse-filter-autocomplete'
 import styles from './ai-search.module.css'
 
-type Props = {
-  mediaType: 'album' | 'film'
-  fields: BrowseField[]
+type Props<Plan> = {
+  target: AiSearchTarget<Plan>
   queryIdentity: string
   autocomplete: BrowseFilterAutocompleteProps
-  onApply: (plan: AiSearchPlan) => void
+  onApply: (plan: Plan) => void
 }
 
-export default function AiSearch({
-  mediaType,
-  fields,
+export default function AiSearch<Plan>({
+  target,
   queryIdentity,
   autocomplete,
   onApply,
-}: Props) {
+}: Props<Plan>) {
   const { apiBaseUrl } = useConfig()
   const id = useId()
   const [open, setOpen] = useState(false)
   const [submittedText, setSubmittedText] = useState('')
-  const [result, setResult] = useState<AiSearchResponse | null>(null)
+  const [result, setResult] = useState<AiSearchResult<Plan> | null>(null)
   const [error, setError] = useState('')
   const sequence = useRef(0)
   const currentQuery = useRef(queryIdentity)
@@ -73,7 +67,7 @@ export default function AiSearch({
       input: AiSearchInput
       signal: AbortSignal
     }) =>
-      fetchApiData(apiBaseUrl, '/api/v1/ai/search', AiSearchResponseSchema, {
+      fetchApiData(apiBaseUrl, '/api/v1/ai/search', target.responseSchema, {
         method: 'POST',
         body: JSON.stringify(input),
         signal,
@@ -184,7 +178,10 @@ export default function AiSearch({
       setOpen(true)
       return
     }
-    const input = AiSearchInputSchema.safeParse({ mediaType, text })
+    const input = AiSearchInputSchema.safeParse({
+      mediaType: target.mediaType,
+      text,
+    })
     if (!input.success) {
       setError(`Enter a request of up to ${AI_SEARCH_MAX_TEXT} characters.`)
       setOpen(true)
@@ -225,9 +222,7 @@ export default function AiSearch({
   const recording = microphone.phase !== 'idle'
   const working = search.isPending || transcription.isPending
   const available = status.data?.available === true
-  const descriptions = result?.plan
-    ? describeAiSearchPlan(result.plan, fields)
-    : []
+  const descriptions = result?.plan ? target.describe(result.plan) : []
   const hasDetails = Boolean(
     result || error || microphone.error || (!status.isPending && !available),
   )
