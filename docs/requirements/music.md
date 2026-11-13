@@ -12,6 +12,7 @@ Spotify audio features are intentionally discontinued. Remove existing acousticn
 
 - MUSIC-01: Preserve every current cleaned album and all raw provider snapshots; match by provider references to canonical IDs. Keep non-Spotify provider references and support future services without changing IDs.
 - MUSIC-02: A clearly labelled Spotify outbound link is visible on cards, table/detail views when available. Other service links include MusicBrainz, Discogs, Last.fm, RYM/Sonemic and Metacritic. Do not fabricate broken URLs for missing IDs.
+- MUSIC-02a: Album genres list Rate Your Music genres first, then other tags alphabetically, then year and decade tags such as "2026" or "90s". Only tags recorded with a Rate Your Music source are recognised as such.
 - MUSIC-03: Overview shows art, title, artists, dates, duration, useful ratings and clickable genres/countries/playlists. Tracks are a separate tab, not an unexplained wall of default content. Preserve disc/track order, artists, duration and external IDs.
 - MUSIC-04: Preserve artist metadata used to derive genres/countries, blacklist/missing-match information, playlist memberships and playlist definitions. The old empty Playlist UI is not a working feature; imported playlists should instead be browseable through their memberships and saved views.
 - MUSIC-05: Smart playlist definitions retain name, filter modes/ranges, sort, limit and provider destination. Preview locally. Remote playlist access, publishing and synchronization are out of scope.

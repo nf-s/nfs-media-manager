@@ -10,6 +10,17 @@ import {
 } from './media-grid'
 import { browseWindow } from './virtual-browse'
 
+test('tiles are shorter when the sort value and links sit on the artwork', () => {
+  const tile = (extraRow: boolean) =>
+    mediaGridGeometry({
+      width: 1000,
+      mediaType: 'album',
+      density: 'standard',
+      extraRow,
+    }).cardHeight
+  assert.equal(tile(true) - tile(false), 20)
+})
+
 test('density accepts only known URL or persisted preference values', () => {
   for (const density of ['compact', 'standard', 'roomy']) {
     const saved = new URLSearchParams({ density, view: 'grid' }).toString()

@@ -37,5 +37,5 @@
 - Use shared buttons, inputs and other primitives. Do not wrap every group in a card.
 - Keep grids artwork-first and tables compact. Keep filters, sort and view controls together.
 - Open details without losing browse state or scroll: a persistent inspector beside the results from 1100px, a drawer below that and a bottom sheet on phones. Show useful information immediately; keep raw data in History and advanced controls in tabs/popovers.
-- Grid artwork carries the ratings strip, the active sort value and optional tag pills (Views > On artwork). Toolbar popovers open one at a time and close on Escape or an outside click.
+- Grid artwork carries the ratings strip, the active sort value and optional tag pills (Views > On artwork). The strip is a light panel with rating scores in the monospace face; service links sit at its right and it scrolls sideways. A tile keeps a row under the byline only when the sort value or the strip is off the artwork. Toolbar popovers open one at a time and close on Escape or an outside click.
 - Use consistent metadata pills for clickable filters in detail pages and the inspector, including creators, source and watched status. Keep table/grid values compact without repeated filter icons; their filtering behavior and keyboard access must remain intact.

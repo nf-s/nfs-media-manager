@@ -55,10 +55,13 @@ export function mediaGridGeometry({
   width,
   mediaType,
   density,
+  extraRow = true,
 }: {
   width: number
   mediaType: 'album' | 'film'
   density: GridDensity
+  /** Whether tiles keep a row under the byline for a sort value or links. */
+  extraRow?: boolean
 }) {
   const mobile = width <= 700
   const gap = mobile ? 8 : 12
@@ -71,6 +74,6 @@ export function mediaGridGeometry({
   const artworkWidth = Math.max(0, (width - (columns - 1) * gap) / columns)
   const artworkHeight = artworkWidth * (mediaType === 'album' ? 1 : 1.5)
   // Match the fixed metadata rows in media-browser.module.css and global tile styles.
-  const cardHeight = artworkHeight + 64
+  const cardHeight = artworkHeight + (extraRow ? 64 : 44)
   return { mobile, gap, columns, cardHeight, rowHeight: cardHeight + gap }
 }

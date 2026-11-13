@@ -1,6 +1,12 @@
 'use client'
 
-import React, { useEffect, useId, useRef, useState } from 'react'
+import React, {
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react'
 import {
   metascoreTone,
   isCompactRating,
@@ -183,17 +189,20 @@ export default function ProviderRatings({
   context,
   trailerUrl,
   highlightKey,
+  children,
 }: {
   ratings: ProviderRating[]
   context: 'poster' | 'table' | 'detail'
   trailerUrl?: string
   highlightKey?: string
+  /** Shown after the ratings, such as service links on a poster. */
+  children?: ReactNode
 }) {
   const visibleRatings =
     context === 'detail' ? ratings : ratings.filter(isCompactRating)
   const trailer =
     context === 'detail' ? youtubeTrailerUrl(trailerUrl) : undefined
-  if (!visibleRatings.length && !trailer) return null
+  if (!visibleRatings.length && !trailer && !children) return null
   const contextClasses = {
     poster: 'ratings-poster',
     table: 'ratings-table',
@@ -231,6 +240,7 @@ export default function ProviderRatings({
           <img src="/icons/ratings/youtube.svg" alt="" width={20} height={14} />
         </a>
       )}
+      {children}
     </div>
   )
 }

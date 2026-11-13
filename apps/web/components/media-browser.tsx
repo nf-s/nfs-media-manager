@@ -191,7 +191,15 @@ export default function MediaBrowser({
     includeArchived,
     limitResults,
   })
-  const grid = mediaGridGeometry({ width: viewport.width, mediaType, density })
+  // With both overlays on, the sort value and links sit on the artwork.
+  const tileExtraRow =
+    !overlays.includes('sort') || !overlays.includes('ratings')
+  const grid = mediaGridGeometry({
+    width: viewport.width,
+    mediaType,
+    density,
+    extraRow: tileExtraRow,
+  })
   const scrollIdentity = `${collection}:${queryKey}:${view}`
   const previousScrollTop = scroll.identity === scrollIdentity ? scroll.top : 0
   const scrollTop =
@@ -935,6 +943,15 @@ export default function MediaBrowser({
                   const values = getBrowseValues(item)
                   const provider = itemRatings(item)
                   const tags = Array.isArray(values.genre) ? values.genre : []
+                  const serviceLinks = (
+                    <ServiceLinks
+                      hideSpotify={
+                        item.mediaType === 'album' &&
+                        Boolean(albumSpotifyDestination(item))
+                      }
+                      item={{ ...item, links: provider.links }}
+                    />
+                  )
                   return (
                     <article
                       className="media-tile"
@@ -990,7 +1007,9 @@ export default function MediaBrowser({
                             highlightKey={
                               overlays.includes('sort') ? sortRating : undefined
                             }
-                          />
+                          >
+                            {serviceLinks}
+                          </ProviderRatings>
                         )}
                       </div>
                       {titleControl(item, 'tile-title')}
@@ -998,16 +1017,12 @@ export default function MediaBrowser({
                         <span>{creatorButtons(item)}</span>
                         <span>{item.releaseDate?.slice(0, 4)}</span>
                       </div>
-                      <div className="tile-extra">
-                        {!overlays.includes('sort') && sortValue(item)}
-                        <ServiceLinks
-                          hideSpotify={
-                            item.mediaType === 'album' &&
-                            Boolean(albumSpotifyDestination(item))
-                          }
-                          item={{ ...item, links: provider.links }}
-                        />
-                      </div>
+                      {tileExtraRow && (
+                        <div className="tile-extra">
+                          {!overlays.includes('sort') && sortValue(item)}
+                          {!overlays.includes('ratings') && serviceLinks}
+                        </div>
+                      )}
                     </article>
                   )
                 })}

@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   findMany: vi.fn(),
   findFirst: vi.fn(),
   queryBrowseIds: vi.fn(),
+  tagOccurrences: vi.fn(),
 }))
 
 vi.mock('@/lib/db', () => ({
@@ -12,6 +13,7 @@ vi.mock('@/lib/db', () => ({
     query: {
       mediaItem: { findMany: mocks.findMany, findFirst: mocks.findFirst },
     },
+    select: () => ({ from: () => ({ where: mocks.tagOccurrences }) }),
   },
 }))
 vi.mock('@/services/browse', () => ({
@@ -244,8 +246,9 @@ describe('RYM rating source links', () => {
 
 describe('album serializer RYM rating links', () => {
   it.each(['list', 'detail'])(
-    'pairs the fresh score with its source in the %s payload',
+    'pairs the fresh score with its source and orders tags in the %s payload',
     async (view) => {
+      const tag = { name: '', kind: 'genre', hidden: false }
       const record = {
         id: 'fixture-album',
         mediaType: 'album',
@@ -260,7 +263,12 @@ describe('album serializer RYM rating links', () => {
         createdAt: new Date('2026-01-01T00:00:00Z'),
         updatedAt: new Date('2026-01-02T00:00:00Z'),
         credits: [],
-        tags: [],
+        tags: [
+          { tagId: 'tag-year', tag: { ...tag, name: '2026' } },
+          { tagId: 'tag-ambient', tag: { ...tag, name: 'ambient' } },
+          { tagId: 'tag-house', tag: { ...tag, name: 'House' } },
+          { tagId: 'tag-hidden', tag: { ...tag, name: 'aaa', hidden: true } },
+        ],
         links: [ratingLink, legacyLink],
         providerReferences: [],
         playlistItems: [],
@@ -275,6 +283,9 @@ describe('album serializer RYM rating links', () => {
       }
       mocks.findMany.mockResolvedValue([record])
       mocks.findFirst.mockResolvedValue(record)
+      mocks.tagOccurrences.mockResolvedValue([
+        { mediaItemId: record.id, tagId: 'tag-house' },
+      ])
       mocks.queryBrowseIds.mockResolvedValue({
         ids: [record.id],
         totalCount: 1,
@@ -287,6 +298,12 @@ describe('album serializer RYM rating links', () => {
       expect(item?.metadata?.browse).toEqual(metadata.browse)
       expect(item?.links[0]).toEqual(ratingLink)
       expect(item?.links).toContainEqual(legacyLink)
+      // The Rate Your Music genre leads; the year tag comes last.
+      expect(item?.tags.map((entry) => entry.name)).toEqual([
+        'House',
+        'ambient',
+        '2026',
+      ])
       expect(globalThis.fetch).not.toHaveBeenCalled()
     },
   )

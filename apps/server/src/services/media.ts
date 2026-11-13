@@ -7,7 +7,7 @@ import type { BrowseFacetQuery } from '@repo/schemas/browse'
 import { getCollectionSourceLinks } from './source-navigation'
 import { withStoredTrailerLinks } from './stored-trailers'
 import { getAlbumProviderDetails } from './album-provider-details'
-import { and, eq, ne, sql } from 'drizzle-orm'
+import { and, eq, inArray, ne, sql } from 'drizzle-orm'
 import type { JsonValue } from '@repo/media-plugin-sdk'
 import {
   type AlbumDetail,
@@ -36,6 +36,7 @@ import {
   mediaOverride,
   providerReference,
   providerReferenceOverride,
+  tagOccurrence,
 } from '@/schemas/db'
 
 type CommonCredit = {
@@ -45,6 +46,7 @@ type CommonCredit = {
 }
 
 type CommonTag = {
+  tagId: string
   tag: { name: string; kind: string; hidden: boolean }
 }
 
@@ -121,11 +123,50 @@ function mapCredits(credits: CommonCredit[]): AlbumListItem['credits'] {
     )
 }
 
-function mapTags(items: CommonTag[]): AlbumListItem['tags'] {
+// A year or decade, such as "2026" or "90s", says nothing about the music.
+const YEAR_TAG = /^(?:\d{4}|\d{2})s?$/
+
+/** Tags sourced from Rate Your Music come first, then other tags, then years. */
+function mapTags(
+  items: CommonTag[],
+  preferredTagIds?: Set<string>,
+): AlbumListItem['tags'] {
+  const rank = (item: CommonTag) =>
+    preferredTagIds?.has(item.tagId)
+      ? 0
+      : YEAR_TAG.test(item.tag.name.trim())
+        ? 2
+        : 1
   return items
     .filter((item) => !item.tag.hidden)
+    .sort(
+      (left, right) =>
+        rank(left) - rank(right) || left.tag.name.localeCompare(right.tag.name),
+    )
     .map((item) => ({ name: item.tag.name, kind: item.tag.kind }))
-    .sort((left, right) => left.name.localeCompare(right.name))
+}
+
+/** The Rate Your Music tags of each album, by album ID. */
+async function rymTagIds(albumIds: string[]) {
+  const rows = await db
+    .select({
+      mediaItemId: tagOccurrence.mediaItemId,
+      tagId: tagOccurrence.tagId,
+    })
+    .from(tagOccurrence)
+    .where(
+      and(
+        inArray(tagOccurrence.mediaItemId, albumIds),
+        eq(tagOccurrence.source, 'rym'),
+      ),
+    )
+  const byAlbum = new Map<string, Set<string>>()
+  for (const row of rows) {
+    const tags = byAlbum.get(row.mediaItemId) ?? new Set<string>()
+    tags.add(row.tagId)
+    byAlbum.set(row.mediaItemId, tags)
+  }
+  return byAlbum
 }
 
 function mapLinks(items: CommonLink[]): AlbumListItem['links'] {
@@ -171,6 +212,7 @@ function mapPlaylists(items: CommonPlaylistItem[]): AlbumListItem['playlists'] {
 
 function buildCommonPayload<TMediaType extends 'album' | 'film'>(
   record: CommonRecord<TMediaType>,
+  preferredTagIds?: Set<string>,
 ): CommonPayload<TMediaType> {
   return {
     id: record.id,
@@ -183,7 +225,7 @@ function buildCommonPayload<TMediaType extends 'album' | 'film'>(
     releaseDate: toIsoString(record.releaseDate),
     sourceLabel: record.sourceLabel,
     metadata: record.metadata ?? null,
-    tags: mapTags(record.tags),
+    tags: mapTags(record.tags, preferredTagIds),
     credits: mapCredits(record.credits),
     links: withRymRatingSourceLink(mapLinks(record.links), record.metadata),
     providerReferences: mapReferences(record.providerReferences),
@@ -246,17 +288,21 @@ export async function listAlbums(
     },
   })
 
+  const preferredTags = await rymTagIds(ids)
   const items = reorderRecords(records, ids).flatMap((record) => {
     if (!record.album) {
       return []
     }
 
     const item: AlbumListItem = {
-      ...buildCommonPayload({
-        ...record,
-        mediaType: 'album',
-        metadata: { ...record.album.metadata, ...record.metadata },
-      }),
+      ...buildCommonPayload(
+        {
+          ...record,
+          mediaType: 'album',
+          metadata: { ...record.album.metadata, ...record.metadata },
+        },
+        preferredTags.get(record.id),
+      ),
       mediaType: 'album',
       dateAdded: toIsoString(record.album.dateAdded),
       durationSec: record.album.durationSec ?? null,
@@ -376,11 +422,14 @@ export async function getAlbumDetail(id: string): Promise<AlbumDetail | null> {
       ...record.album.metadata,
       ...record.metadata,
     }),
-    ...buildCommonPayload({
-      ...record,
-      mediaType: 'album',
-      metadata: { ...record.album.metadata, ...record.metadata },
-    }),
+    ...buildCommonPayload(
+      {
+        ...record,
+        mediaType: 'album',
+        metadata: { ...record.album.metadata, ...record.metadata },
+      },
+      (await rymTagIds([id])).get(id),
+    ),
     mediaType: 'album',
     dateAdded: toIsoString(record.album.dateAdded),
     durationSec: record.album.durationSec ?? null,
