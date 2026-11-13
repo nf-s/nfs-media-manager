@@ -1,4 +1,15 @@
 export type MediaScope = 'album' | 'film'
+/**
+ * What the library selector shows. Tracks and playlists are a view of the
+ * album library: Tags, Imports, Jobs and Providers stay in the album scope.
+ */
+export type LibraryView = MediaScope | 'track'
+
+const trackViewPaths = ['/tracks', '/playlists']
+
+function isUnder(path: string, root: string) {
+  return path === root || path.startsWith(`${root}/`)
+}
 
 export function mediaScope(value: string | null): MediaScope {
   return value === 'album' ? 'album' : 'film'
@@ -11,13 +22,24 @@ export function mediaScopeForPath(
   if (
     path === '/albums' ||
     path.startsWith('/albums/') ||
+    trackViewPaths.some((root) => isUnder(path, root)) ||
     path === '/imports/albums' ||
     path === '/imports/spotify' ||
+    path === '/imports/spotify-playlists' ||
     path === '/imports/lastfm'
   )
     return 'album'
   if (path === '/films' || path.startsWith('/films/')) return 'film'
   return mediaScope(value)
+}
+
+export function libraryViewForPath(
+  path: string,
+  value: string | null,
+): LibraryView {
+  return trackViewPaths.some((root) => isUnder(path, root))
+    ? 'track'
+    : mediaScopeForPath(path, value)
 }
 
 export function scopedHref(href: string, mediaType: MediaScope) {
@@ -57,4 +79,17 @@ export function switchMediaScopeHref(
     `${destination}${params.size ? `?${params}` : ''}`,
     mediaType,
   )
+}
+
+export function switchLibraryHref(
+  path: string,
+  search: string,
+  view: LibraryView,
+) {
+  const current = new URLSearchParams(search)
+  const shown = libraryViewForPath(path, current.get('mediaType'))
+  if (shown === view) return `${path}${current.size ? `?${current}` : ''}`
+  if (view === 'track') return '/tracks'
+  if (shown === 'track') return view === 'album' ? '/albums' : '/films'
+  return switchMediaScopeHref(path, search, view)
 }

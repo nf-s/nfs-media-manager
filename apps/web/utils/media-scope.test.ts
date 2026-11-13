@@ -2,9 +2,11 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { JobSchema } from '@repo/schemas/job'
 import {
+  libraryViewForPath,
   mediaScope,
   mediaScopeForPath,
   scopedHref,
+  switchLibraryHref,
   switchMediaScopeHref,
 } from './media-scope'
 import { jobMatchesScope, jobMediaScope } from './job-media-scope'
@@ -128,6 +130,45 @@ test('selecting the current library is a no-op that retains deep links and filte
   assert.equal(
     switchMediaScopeHref('/imports/spotify', '', 'album'),
     '/imports/spotify',
+  )
+})
+
+test('tracks and playlists are a view of the album library', () => {
+  for (const path of [
+    '/tracks',
+    '/tracks/first',
+    '/playlists',
+    '/imports/spotify-playlists',
+  ])
+    assert.equal(mediaScopeForPath(path, 'film'), 'album')
+  for (const path of ['/tracks', '/tracks/first', '/playlists'])
+    assert.equal(libraryViewForPath(path, 'film'), 'track')
+  assert.equal(libraryViewForPath('/albums', null), 'album')
+  assert.equal(libraryViewForPath('/imports/spotify-playlists', null), 'album')
+  assert.equal(libraryViewForPath('/tags', 'album'), 'album')
+  assert.equal(libraryViewForPath('/tags', null), 'film')
+  assert.equal(libraryViewForPath('/tracks-other', null), 'film')
+})
+
+test('the library selector moves between albums, tracks and films', () => {
+  assert.equal(
+    switchLibraryHref('/albums', 'q=artist&view=table', 'track'),
+    '/tracks',
+  )
+  assert.equal(switchLibraryHref('/tags', 'mediaType=film', 'track'), '/tracks')
+  assert.equal(switchLibraryHref('/tracks', 'q=title', 'album'), '/albums')
+  assert.equal(switchLibraryHref('/playlists', '', 'film'), '/films')
+  assert.equal(
+    switchLibraryHref('/tracks', 'q=title&sortBy=scrobbles', 'track'),
+    '/tracks?q=title&sortBy=scrobbles',
+  )
+  assert.equal(
+    switchLibraryHref('/jobs', 'mediaType=film&status=failed', 'album'),
+    '/jobs?status=failed&mediaType=album',
+  )
+  assert.equal(
+    switchLibraryHref('/imports/spotify-playlists', '', 'film'),
+    '/imports?mediaType=film',
   )
 })
 

@@ -25,6 +25,7 @@ import {
   LASTFM_SCROBBLE_SYNC_TASK,
   LASTFM_SPOTIFY_SEARCH_TASK,
 } from '@repo/schemas/lastfm'
+import { SPOTIFY_PLAYLIST_IMPORT_TASK } from '@repo/schemas/tracks'
 import { z } from 'zod'
 import {
   PluginResultSchema,
@@ -45,6 +46,7 @@ import {
 import { resolveProviderSecrets } from '@/lib/provider-secrets'
 import { createJobDiagnostics } from '@/lib/job-diagnostics'
 import { canIdentifyMedia } from '@/lib/provider-identification'
+import { scrapeMediaType } from '@/lib/scrape-media-type'
 import { sanitizeAlbumProviderResult } from '@/lib/spotify-audio-features'
 import { importMediaTypeExpression } from '@/lib/import-media-type'
 import { createDatabaseReadCache } from '@/lib/database-read-cache'
@@ -79,6 +81,10 @@ import {
   prepareLastfmSpotifySearch,
   runLastfmSpotifySearch,
 } from '@/services/lastfm-spotify-search'
+import {
+  prepareSpotifyPlaylistImport,
+  runSpotifyPlaylistImport,
+} from '@/services/spotify-playlists'
 
 let workerRunning = false
 
@@ -133,7 +139,7 @@ function mapJob(
     items: Array<{
       id: string
       mediaItemId: string | null
-      mediaItem: { title: string; mediaType: 'album' | 'film' } | null
+      mediaItem: { title: string; mediaType: string } | null
       provider: string
       status: Job['status']
       attemptCount: number
@@ -169,7 +175,9 @@ function mapJob(
       id: item.id,
       mediaItemId: item.mediaItemId ?? null,
       mediaTitle: item.mediaItem?.title ?? null,
-      mediaType: item.mediaItem?.mediaType ?? null,
+      mediaType: item.mediaItem
+        ? scrapeMediaType(item.mediaItem.mediaType)
+        : null,
       provider: item.provider,
       status: item.status,
       attemptCount: item.attemptCount,
@@ -519,10 +527,18 @@ async function processJob(
     if (!started) stopped = true
     if (!itemStarted) return
 
-    const mediaRecord = await db.query.mediaItem.findFirst({
+    const storedRecord = await db.query.mediaItem.findFirst({
       where: (table, operators) => operators.eq(table.id, mediaItemId),
       with: { credits: { with: { artist: true } } },
     })
+    // A library track is never queued for scraping; treat one as missing.
+    const storedType = storedRecord
+      ? scrapeMediaType(storedRecord.mediaType)
+      : null
+    const mediaRecord =
+      storedRecord && storedType
+        ? { ...storedRecord, mediaType: storedType }
+        : null
 
     if (!mediaRecord) {
       await withRunningJob(nextJob.id, async (tx) => {
@@ -868,6 +884,14 @@ const taskJobs = new Map<string, TaskJobDefinition>([
       run: runLastfmSpotifySearch,
     },
   ],
+  [
+    SPOTIFY_PLAYLIST_IMPORT_TASK,
+    {
+      provider: 'spotify',
+      prepare: prepareSpotifyPlaylistImport,
+      run: runSpotifyPlaylistImport,
+    },
+  ],
 ])
 
 async function insertTaskJob(
@@ -998,7 +1022,7 @@ export async function createTaskJob(
         await logJob(
           scheduling.retryOf,
           'info',
-          'A search for this album is already active.',
+          'The same job is already active.',
           { retryJobId: active.id },
           tx,
         )
@@ -1257,9 +1281,15 @@ export async function createJob(
     })
 
   const jobId = nanoid()
-  const selectedItems = await db.query.mediaItem.findMany({
-    where: (table, operators) => operators.inArray(table.id, mediaItemIds),
-    with: { providerReferences: true, credits: { with: { artist: true } } },
+  const selectedItems = (
+    await db.query.mediaItem.findMany({
+      where: (table, operators) => operators.inArray(table.id, mediaItemIds),
+      with: { providerReferences: true, credits: { with: { artist: true } } },
+    })
+  ).flatMap((item) => {
+    // Library tracks are not scraped; one fails the selection check below.
+    const mediaType = scrapeMediaType(item.mediaType)
+    return mediaType ? [{ ...item, mediaType }] : []
   })
   const identifierTypes = plugin.manifest.identifierTypes ?? []
   if (
@@ -1457,7 +1487,7 @@ export async function createRescrapeJob(
       provider: providerId,
       scope: {
         mediaItemIds: [mediaItemId],
-        mediaType: item.mediaType,
+        mediaType: scrapeMediaType(item.mediaType),
         limit: 1,
       },
       options: {},

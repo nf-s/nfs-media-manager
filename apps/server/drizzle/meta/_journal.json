@@ -134,6 +134,13 @@
       "when": 1794541312214,
       "tag": "0018_lastfm_album_links",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1794561109880,
+      "tag": "0019_spotify_tracks",
+      "breakpoints": true
     }
   ]
 }

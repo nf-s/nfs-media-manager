@@ -26,6 +26,9 @@ vi.mock('@/services/source-navigation', () => ({
 vi.mock('@/services/album-provider-details', () => ({
   getAlbumProviderDetails: vi.fn(async () => ({})),
 }))
+vi.mock('@/services/album-playlists', () => ({
+  albumTrackPlaylistNames: vi.fn(async () => new Map()),
+}))
 vi.mock('@/services/stored-trailers', () => ({
   withStoredTrailerLinks: vi.fn(),
 }))

@@ -56,6 +56,7 @@ import { albumSpotifyDestination } from '@/utils/album-links'
 import { scopedHref } from '@/utils/media-scope'
 import MetadataSourceControl from './metadata-source-control'
 import AlbumListening, { useAlbumListening } from './album-listening'
+import AlbumPlaylists from './album-playlists'
 import { scrobblesByPosition } from '@/utils/listening-chart'
 import type { SourceNavigationLink } from '@repo/schemas/tags'
 
@@ -666,6 +667,7 @@ export default function MediaDetail({
             {!item.tracks.length && (
               <p className="quiet">No imported tracks.</p>
             )}
+            <AlbumPlaylists key={item.id} albumId={item.id} />
           </TabsContent>
         )}
         {item.mediaType === 'album' && (

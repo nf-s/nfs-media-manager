@@ -1,12 +1,20 @@
 'use client'
 import Link from 'next/link'
 import { usePathname, useSearchParams } from 'next/navigation'
-import { Cog, Download, LayoutGrid, ListChecks, Tag } from 'lucide-react'
+import {
+  Cog,
+  Download,
+  LayoutGrid,
+  ListChecks,
+  ListMusic,
+  Tag,
+} from 'lucide-react'
 import { scopedHref } from '@/utils/media-scope'
-import { useMediaScope } from './media-scope'
+import { useLibraryView, useMediaScope } from './media-scope'
 
 const items = [
   { href: '/browse', label: 'Browse', Icon: LayoutGrid },
+  { href: '/playlists', label: 'Playlists', Icon: ListMusic },
   { href: '/tags', label: 'Tags', Icon: Tag },
   { href: '/imports', label: 'Imports', Icon: Download },
   { href: '/jobs', label: 'Jobs', Icon: ListChecks },
@@ -16,14 +24,19 @@ export default function AppNavigation() {
   const path = usePathname()
   const params = useSearchParams()
   const scope = useMediaScope()
+  const view = useLibraryView()
   return (
     <nav className="app-navigation" aria-label="Main navigation">
       {items.map((item) => {
+        // Playlists hold tracks and albums; films have none.
+        if (item.href === '/playlists' && scope !== 'album') return null
         const destination =
           item.href === '/browse'
-            ? scope === 'album'
-              ? '/albums'
-              : '/films'
+            ? view === 'track'
+              ? '/tracks'
+              : scope === 'album'
+                ? '/albums'
+                : '/films'
             : item.href
         const active =
           path === destination || path.startsWith(`${destination}/`)

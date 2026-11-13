@@ -17,6 +17,7 @@ import { ServerError } from '@/lib/error'
 import { resolveProviderSecrets } from '@/lib/provider-secrets'
 import {
   SPOTIFY_PLAYBACK_SCOPES,
+  SPOTIFY_PLAYLIST_SCOPES,
   SPOTIFY_SCOPE,
   spotifyAuthorization,
   spotifyRedirectUri,
@@ -41,7 +42,7 @@ const StateSchema = z.object({
   expiresAt: z.number(),
   consumed: z.boolean().default(false),
   playback: z.boolean().default(false),
-  returnTo: z.enum(['imports', 'providers']).default('imports'),
+  returnTo: z.enum(['imports', 'playlists', 'providers']).default('imports'),
 })
 const AccountSchema = z.object({
   accessToken: z.string().min(1),
@@ -67,6 +68,14 @@ const LIBRARY_ACCESS: AccountAccess = {
   notConnected: 'Connect a Spotify account before discovering saved albums',
   changed: 'Spotify account configuration changed. Connect again.',
   missing: 'Spotify saved album permission is missing',
+}
+const PLAYLIST_ACCESS: AccountAccess = {
+  scopes: [SPOTIFY_SCOPE, ...SPOTIFY_PLAYLIST_SCOPES],
+  notConfigured: LIBRARY_ACCESS.notConfigured,
+  notConnected: 'Connect a Spotify account before reading playlists',
+  changed:
+    'Reconnect the Spotify account to allow playlist access. The current connection does not include it.',
+  missing: 'Spotify playlist permission is missing',
 }
 const PLAYBACK_ACCESS: AccountAccess = {
   scopes: [SPOTIFY_SCOPE, ...SPOTIFY_PLAYBACK_SCOPES],
@@ -191,6 +200,7 @@ export async function getSpotifyAccountStatus(userId: string) {
     scope: connected ? SPOTIFY_SCOPE : null,
     redirectUri: configured?.redirectUri ?? null,
     playback: connected && hasScopes(account?.scope, SPOTIFY_PLAYBACK_SCOPES),
+    playlists: connected && hasScopes(account?.scope, SPOTIFY_PLAYLIST_SCOPES),
   }
 }
 
@@ -217,7 +227,7 @@ export async function authorizeSpotify(
   const authorization = spotifyAuthorization(
     config.clientId,
     config.redirectUri,
-    playback ? PLAYBACK_ACCESS.scopes : LIBRARY_ACCESS.scopes,
+    [...PLAYLIST_ACCESS.scopes, ...(playback ? SPOTIFY_PLAYBACK_SCOPES : [])],
   )
   const expiresAt = Date.now() + 10 * 60 * 1000
   await writeSecret(db, userId, 'state', {
@@ -228,7 +238,12 @@ export async function authorizeSpotify(
     returnOrigin: browser.origin,
     expiresAt,
     playback,
-    returnTo: options.playback === undefined ? 'imports' : 'providers',
+    returnTo:
+      options.playback !== undefined
+        ? 'providers'
+        : options.playlists
+          ? 'playlists'
+          : 'imports',
   })
   return {
     url: authorization.url,
@@ -445,6 +460,15 @@ export async function spotifyAccountToken(
   request: SpotifyRequest,
 ) {
   const token = await lockedAccountToken(userId, request, LIBRARY_ACCESS)
+  return token.accessToken
+}
+
+/** A token for reading the account's playlists, or a 422 saying what is missing. */
+export async function spotifyPlaylistToken(
+  userId: string,
+  request: SpotifyRequest,
+) {
+  const token = await lockedAccountToken(userId, request, PLAYLIST_ACCESS)
   return token.accessToken
 }
 

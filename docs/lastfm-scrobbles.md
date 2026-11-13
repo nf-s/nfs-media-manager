@@ -61,6 +61,8 @@ The rules apply in this order; the first rule that any album satisfies decides.
 - Track titles are compared without bracketed qualifiers or a "- Remastered" style suffix.
 - Scrobbles without an album name are not linked.
 
+Scrobbles also link to library tracks by artist and track name, with or without an album name. Those links are recomputed at the same times; see [tracks and Spotify playlists](tracks-and-playlists.md#scrobbles).
+
 ### Manual links
 
 Each name on the page has **Link** or **Change**, which opens a side panel with library search, possible matching albums, **Unlink** and **Automatic** where applicable. The table keeps its position while the panel is open. On phones the panel opens from the bottom.

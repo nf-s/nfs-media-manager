@@ -7,7 +7,7 @@ Optional in-app playback of library albums and tracks through a connected Spotif
 1. Configure Spotify and its redirect URI as described in [Spotify albums and CSV imports](spotify-album-imports.md#account-setup).
 2. Open **Providers → Spotify → Settings** and choose **Connect playback**. Spotify asks for consent, then returns to the same page.
 
-Connecting requests `user-library-read` plus the playback scopes `streaming`, `user-read-email`, `user-read-private`, `user-read-playback-state` and `user-modify-playback-state`. **Turn off playback** reconnects with `user-library-read` only. Connecting from **Imports → Spotify** keeps whichever access is already granted.
+Connecting requests the read-only [library and playlist scopes](spotify-album-imports.md#account-setup) plus the playback scopes `streaming`, `user-read-email`, `user-read-private`, `user-read-playback-state` and `user-modify-playback-state`. **Turn off playback** reconnects with the library and playlist scopes only. Connecting from **Imports → Spotify** keeps whichever access is already granted.
 
 Requirements:
 

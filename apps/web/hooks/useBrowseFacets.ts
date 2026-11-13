@@ -6,7 +6,7 @@ import { browseFacetOptions } from '@/utils/browse-facets'
 
 export function useBrowseFacets(
   apiBaseUrl: string,
-  collection: 'albums' | 'films',
+  collection: 'albums' | 'films' | 'tracks',
   draft: string,
   enabled = true,
 ) {

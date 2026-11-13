@@ -52,6 +52,11 @@ export function albumImportDestinations() {
       label: 'Spotify saved albums',
     },
     {
+      id: '/imports/spotify-playlists',
+      href: '/imports/spotify-playlists',
+      label: 'Spotify playlists',
+    },
+    {
       id: '/imports/lastfm',
       href: '/imports/lastfm',
       label: 'Last.fm scrobbles',

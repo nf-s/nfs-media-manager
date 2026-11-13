@@ -7,9 +7,15 @@ export const SpotifyAccountStatusSchema = z.object({
   scope: z.string().nullable(),
   redirectUri: z.string().nullable(),
   playback: z.boolean(),
+  /** Whether the connection includes playlist read access. */
+  playlists: z.boolean(),
 })
 export const SpotifyAuthorizeInputSchema = z
-  .object({ playback: z.boolean().optional() })
+  .object({
+    playback: z.boolean().optional(),
+    /** Return to the playlist import page once connected. */
+    playlists: z.boolean().optional(),
+  })
   .strict()
 export const SpotifyAuthorizeResultSchema = z.object({
   url: z.string().url(),

@@ -19,6 +19,7 @@ function render(
     ['spotify-account'],
     SpotifyAccountStatusSchema.parse({
       ...status,
+      playlists: false,
       expiresAt: null,
       scope: null,
       redirectUri: null,
