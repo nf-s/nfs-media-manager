@@ -23,6 +23,7 @@ import {
 import { youtubePlugin } from '@/plugins/builtin/youtube'
 import {
   subscriptionItem,
+  subscriptionShort,
   subscriptionSource,
   subscriptionSync,
 } from '@/schemas/db'
@@ -99,6 +100,7 @@ export async function prepareYoutubeSyncRun(userId: string | null) {
     runId: nanoid(),
     phase: 'sources',
     pageToken: null,
+    shortsPageToken: null,
     sourceCursor: null,
     sourcesDone: 0,
     sourcesTotal: 0,
@@ -167,6 +169,7 @@ async function ownedRun(tx: Transaction, token: string, run: SyncRow) {
     current.runId === run.runId &&
     current.phase === run.phase &&
     current.pageToken === run.pageToken &&
+    current.shortsPageToken === run.shortsPageToken &&
     current.sourceCursor === run.sourceCursor
     ? current
     : null
@@ -354,13 +357,126 @@ function videoRows(
   })
 }
 
+type Channel = {
+  id: string
+  title: string
+  uploadsPlaylistId: string | null
+  historyComplete: boolean
+  shortsRunId: string | null
+}
+
+// A channel's lists share its ID after the prefix: every upload under UU, and
+// the Shorts among them under UUSH. YouTube documents only the first.
+const uploadsPlaylistId = (channelId: string) => `UU${channelId.slice(2)}`
+const shortsPlaylistId = (channelId: string) => `UUSH${channelId.slice(2)}`
+
+/** One page of a playlist's video IDs, newest first; empty when the playlist does not exist. */
+async function playlistVideoIds(
+  request: YoutubeRequest,
+  accessToken: string,
+  playlistId: string,
+  pageToken: string | null,
+) {
+  let page: z.infer<typeof YoutubeUploadPageSchema>
+  try {
+    page = YoutubeUploadPageSchema.parse(
+      await youtubeJson(
+        request,
+        accessToken,
+        'playlistItems',
+        {
+          part: 'contentDetails',
+          playlistId,
+          maxResults: String(YOUTUBE_PAGE_SIZE),
+          ...(pageToken ? { pageToken } : {}),
+        },
+        { notFoundOn404: true },
+      ),
+    )
+  } catch (error) {
+    // A channel without public uploads, or without Shorts, has no such playlist.
+    if (!isProviderItemNotFoundError(error)) throw error
+    page = { items: [] }
+  }
+  return {
+    ids: [...new Set(page.items.map((item) => item.contentDetails.videoId))],
+    next: page.nextPageToken,
+  }
+}
+
+/** Records a channel's Shorts and removes any that were stored as videos. */
+async function recordShorts(
+  tx: Transaction,
+  channelId: string,
+  runId: string | null,
+  ids: string[],
+) {
+  if (!ids.length) return
+  await tx
+    .insert(subscriptionShort)
+    .values(ids.map((id) => ({ id, sourceId: channelId, runId })))
+    .onConflictDoNothing()
+  await tx
+    .delete(subscriptionItem)
+    .where(
+      and(
+        eq(subscriptionItem.sourceId, channelId),
+        inArray(subscriptionItem.id, ids),
+      ),
+    )
+}
+
+/**
+ * Records one page of a channel's Shorts list, newest first, stopping at the
+ * first page that holds a Short an earlier sync recorded. The channel's
+ * uploads are read afterwards.
+ */
+async function syncShortsPage(
+  request: YoutubeRequest,
+  accessToken: string,
+  token: string,
+  run: SyncRow,
+  context: LastfmSyncJobContext,
+  channel: Channel,
+) {
+  const shorts = await playlistVideoIds(
+    request,
+    accessToken,
+    shortsPlaylistId(channel.id),
+    run.shortsPageToken,
+  )
+  if (!(await context.isActive())) return 'lost'
+  return db.transaction(async (tx) => {
+    if (!(await ownedRun(tx, token, run))) return 'lost'
+    const known = shorts.ids.length
+      ? await tx.$count(
+          subscriptionShort,
+          inArray(subscriptionShort.id, shorts.ids),
+        )
+      : 0
+    await recordShorts(tx, channel.id, run.runId, shorts.ids)
+    const next = known === 0 ? (shorts.next ?? null) : null
+    if (next === null)
+      await tx
+        .update(subscriptionSource)
+        .set({ shortsRunId: run.runId })
+        .where(eq(subscriptionSource.id, channel.id))
+    await tx
+      .update(subscriptionSync)
+      .set({ shortsPageToken: next })
+      .where(youtubeRun(run.userId))
+    return 'more'
+  })
+}
+
 const UnchangedSchema = z.boolean()
 
 /**
  * The subscribed channels after the cursor, in ID order. A channel is
- * unchanged when its history is stored, its listed video count equals the
- * count at its last read, and no stored video was live or upcoming then: a
- * stream that ends changes its length and status but not the count.
+ * unchanged when its history is stored, a sync has recorded its Shorts, its
+ * listed video count equals the count at its last read, and no stored video
+ * was live or upcoming then: a stream that ends changes its length and status
+ * but not the count.
  */
 async function remainingChannels(run: SyncRow) {
   const rows = await db
@@ -369,12 +485,14 @@ async function remainingChannels(run: SyncRow) {
       title: subscriptionSource.title,
       uploadsPlaylistId: subscriptionSource.uploadsPlaylistId,
       historyComplete: subscriptionSource.historyComplete,
+      shortsRunId: subscriptionSource.shortsRunId,
       itemTotal: subscriptionSource.itemTotal,
       // The stored videos are searched only when the counts match. A
       // single-table select names columns without their table, so the
       // correlated subquery names both tables itself.
       unchanged: sql<unknown>`case
         when ${subscriptionSource.historyComplete}
+          and ${subscriptionSource.shortsRunId} is not null
           and ${subscriptionSource.itemTotal} = ${subscriptionSource.readItemTotal}
         then not exists (select 1 from subscription_item i
           where i.source_id = ${subscriptionSource}.id and i.live <> 'none')
@@ -398,10 +516,12 @@ async function remainingChannels(run: SyncRow) {
 }
 
 /**
- * Moves past every unchanged channel without a request, then reads one page
- * of the next channel's uploads, newest first, with each video's details. A
- * channel whose history is already stored stops at the first page that holds
- * a known video; otherwise every page is read.
+ * Moves past every unchanged channel without a request, then records one page
+ * of the next channel's Shorts or reads one page of its uploads, newest first,
+ * with each video's details. A channel whose history is already stored stops
+ * at the first page that holds a known video; otherwise every page is read.
+ * Shorts are left out: each run records a read channel's Shorts before its
+ * uploads.
  */
 async function syncUploadsPage(
   request: YoutubeRequest,
@@ -414,7 +534,7 @@ async function syncUploadsPage(
   const changed = channels.findIndex((item) => !item.unchanged)
   const skipped = changed === -1 ? channels.length : changed
   const last = channels[skipped - 1]
-  if (last && run.pageToken === null)
+  if (last && run.pageToken === null && run.shortsPageToken === null)
     return db.transaction(async (tx) => {
       const current = await ownedRun(tx, token, run)
       if (!current) return 'lost'
@@ -429,31 +549,25 @@ async function syncUploadsPage(
     })
   const channel = channels[0]
   if (!channel) return 'fetched-all'
-  let uploads: z.infer<typeof YoutubeUploadPageSchema>
-  try {
-    uploads = YoutubeUploadPageSchema.parse(
-      await youtubeJson(
-        request,
-        accessToken,
-        'playlistItems',
-        {
-          part: 'contentDetails',
-          // Every channel's uploads playlist shares its ID after the prefix.
-          playlistId: channel.uploadsPlaylistId ?? `UU${channel.id.slice(2)}`,
-          maxResults: String(YOUTUBE_PAGE_SIZE),
-          ...(run.pageToken ? { pageToken: run.pageToken } : {}),
-        },
-        { notFoundOn404: true },
-      ),
-    )
-  } catch (error) {
-    // A channel without public uploads has no uploads playlist.
-    if (!isProviderItemNotFoundError(error)) throw error
-    uploads = { items: [] }
-  }
-  const ids = [
-    ...new Set(uploads.items.map((item) => item.contentDetails.videoId)),
-  ]
+  // A run that resumes inside a channel's uploads finishes them first; that
+  // channel's Shorts are recorded by the next run.
+  if (channel.shortsRunId !== run.runId && run.pageToken === null)
+    return syncShortsPage(request, accessToken, token, run, context, channel)
+  const uploads = await playlistVideoIds(
+    request,
+    accessToken,
+    channel.uploadsPlaylistId ?? uploadsPlaylistId(channel.id),
+    run.pageToken,
+  )
+  const shorts = uploads.ids.length
+    ? await db
+        .select({ id: subscriptionShort.id, runId: subscriptionShort.runId })
+        .from(subscriptionShort)
+        .where(inArray(subscriptionShort.id, uploads.ids))
+    : []
+  const ids = uploads.ids.filter(
+    (id) => !shorts.some((short) => short.id === id),
+  )
   // Private and deleted videos are listed in the playlist but not returned here.
   const videos = ids.length
     ? YoutubeVideoListSchema.parse(
@@ -498,8 +612,12 @@ async function syncUploadsPage(
     const added = rows.filter(
       (row) => !known.some((item) => item.id === row.id),
     ).length
-    const next = uploads.nextPageToken
-    if (next && (!channel.historyComplete || known.length === 0)) {
+    const next = uploads.next
+    // A Short an earlier run recorded marks the part of the list that has been
+    // read, as a stored video does.
+    const reachedKnown =
+      known.length > 0 || shorts.some((short) => short.runId !== run.runId)
+    if (next && (!channel.historyComplete || !reachedKnown)) {
       await tx
         .update(subscriptionSync)
         .set({ pageToken: next, newItems: current.newItems + added })

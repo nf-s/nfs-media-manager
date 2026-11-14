@@ -455,7 +455,7 @@ export default function MediaBrowser({
       (titleFilters.length > 0 && titleMatches.isPending))
   const titleItems =
     !titlesLoading && draft.trim() && titleFilters.length > 0
-      ? titleSuggestions(titleMatches.data?.items ?? [], draft)
+      ? titleSuggestions(titleMatches.data?.items ?? [])
       : []
   const options = (facets.data ?? []).filter(
     (option) =>

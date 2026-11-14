@@ -248,15 +248,13 @@ export function subscriptionRangeLabel(
   return `${field?.label ?? range.field}: ${bound(range.min)} to ${bound(range.max)}${range.includeMissing ? ' + missing' : ''}`
 }
 
-/** Labels "Title · Channel · Year", sorted with exact title matches first. */
+/** Labels "Title · Channel · Year", with the ID when two labels are equal. */
 export function subscriptionTitleSuggestions(
   items: Pick<
     SubscriptionItem,
     'id' | 'title' | 'sourceTitle' | 'publishedAt'
   >[],
-  query: string,
 ): TitleSuggestion[] {
-  const exact = query.trim().toLowerCase()
   return items
     .map((item) => ({
       id: item.id,
@@ -273,13 +271,6 @@ export function subscriptionTitleSuggestions(
         ? `${item.label} · ${item.id}`
         : item.label,
     }))
-    .sort(
-      (a, b) =>
-        Number(b.title.toLowerCase() === exact) -
-          Number(a.title.toLowerCase() === exact) ||
-        a.label.localeCompare(b.label) ||
-        a.id.localeCompare(b.id),
-    )
 }
 
 /** Height of a grid card under the thumbnail; matches `.cardBody` in subscription-browser.module.css. */

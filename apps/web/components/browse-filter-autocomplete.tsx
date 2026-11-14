@@ -60,17 +60,12 @@ export function autocompleteOptions(
   return options
 }
 
+/** Enter selects only an option highlighted with the arrow keys; otherwise it searches the text. */
 export function autocompleteEnterOption(
   options: SearchMenuOption[],
   activeKey: string | null,
 ) {
-  return (
-    options.find((option) => option.key === activeKey) ??
-    options.find(
-      (option) =>
-        option.kind === 'suggestion' && option.suggestion.kind === 'item',
-    )
-  )
+  return options.find((option) => option.key === activeKey)
 }
 
 export default function BrowseFilterAutocomplete({
@@ -96,7 +91,6 @@ export default function BrowseFilterAutocomplete({
   const id = useId()
   const [open, setOpen] = useState(false)
   const [activeKey, setActiveKey] = useState<string | null>(null)
-  const [pendingEnter, setPendingEnter] = useState<string | null>(null)
   const suggestions = browseSuggestions(options, items, value)
   const menuOptions = autocompleteOptions(
     suggestions,
@@ -118,7 +112,6 @@ export default function BrowseFilterAutocomplete({
     } else
       onAddFilter({ field: option.filter.field, value: option.filter.value })
     setActiveKey(null)
-    setPendingEnter(null)
   }
   function selectMenuOption(option: SearchMenuOption) {
     if (option.kind === 'suggestion') {
@@ -126,26 +119,13 @@ export default function BrowseFilterAutocomplete({
       return
     }
     if (option.kind === 'ai' && option.disabled) return
-    setPendingEnter(null)
     setActiveKey(null)
     setOpen(false)
     if (option.kind === 'ai') onAiSearch?.(value.trim())
     else onApplyText(value.trim())
   }
   useEffect(() => {
-    if (hideSuggestions || disabled) {
-      if (pendingEnter !== null) setPendingEnter(null)
-      if (activeKey !== null) setActiveKey(null)
-      return
-    }
-    if (pendingEnter !== value || titlesLoading) return
-    setPendingEnter(null)
-    const option = autocompleteEnterOption(menuOptions, null)
-    if (option && !titlesError) selectMenuOption(option)
-    else if (!titlesError) {
-      onApplyText(value.trim())
-      setOpen(false)
-    }
+    if ((hideSuggestions || disabled) && activeKey !== null) setActiveKey(null)
   })
   function highlight(index: number) {
     const option = menuOptions[index]
@@ -160,7 +140,6 @@ export default function BrowseFilterAutocomplete({
       onBlur={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget)) {
           setOpen(false)
-          setPendingEnter(null)
           setActiveKey(null)
         }
       }}
@@ -187,13 +166,11 @@ export default function BrowseFilterAutocomplete({
             onValueChange(event.target.value)
             setOpen(true)
             setActiveKey(null)
-            setPendingEnter(null)
           }}
           onKeyDown={(event) => {
             if (event.key === 'Escape') {
               event.stopPropagation()
               setOpen(false)
-              setPendingEnter(null)
               setActiveKey(null)
             }
             if (hideSuggestions || disabled) {
@@ -204,24 +181,21 @@ export default function BrowseFilterAutocomplete({
             if (event.key === 'ArrowDown') {
               event.preventDefault()
               setOpen(true)
-              setPendingEnter(null)
               highlight(Math.min(active + 1, menuOptions.length - 1))
             }
             if (event.key === 'ArrowUp') {
               event.preventDefault()
               setOpen(true)
-              setPendingEnter(null)
               highlight(Math.max(-1, active - 1))
             }
             if (event.key === 'Enter') {
               event.preventDefault()
               const option = autocompleteEnterOption(menuOptions, activeKey)
               if (menuVisible && option) selectMenuOption(option)
-              else if (value.trim() && titlesLoading) setPendingEnter(value)
-              else if (titlesError) setOpen(true)
               else {
                 onApplyText(value.trim())
                 setOpen(false)
+                setActiveKey(null)
               }
             }
           }}

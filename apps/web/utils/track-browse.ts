@@ -65,22 +65,12 @@ export function formatTrackDuration(seconds: number | null) {
 
 export function trackTitleSuggestions(
   items: Pick<TrackListItem, 'id' | 'title' | 'artists'>[],
-  query: string,
 ): TitleSuggestion[] {
-  const exact = query.trim().toLowerCase()
-  return items
-    .map((item) => ({
-      id: item.id,
-      title: item.title,
-      label: item.artists.length
-        ? `${item.title} · ${item.artists.join(', ')}`
-        : item.title,
-    }))
-    .sort(
-      (a, b) =>
-        Number(b.title.toLowerCase() === exact) -
-          Number(a.title.toLowerCase() === exact) ||
-        a.label.localeCompare(b.label) ||
-        a.id.localeCompare(b.id),
-    )
+  return items.map((item) => ({
+    id: item.id,
+    title: item.title,
+    label: item.artists.length
+      ? `${item.title} · ${item.artists.join(', ')}`
+      : item.title,
+  }))
 }

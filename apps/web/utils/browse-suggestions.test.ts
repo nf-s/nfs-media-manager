@@ -2,11 +2,13 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
   browseSuggestions,
-  enterSuggestion,
   matchingTitleFilters,
+  matchTier,
+  matchTiers,
   suggestionKey,
   titleSuggestions,
   type FilterSuggestion,
+  type TitleSuggestion,
 } from './browse-suggestions'
 
 const facets: FilterSuggestion[] = [
@@ -40,29 +42,26 @@ test('multi-word title matching and exact-title priority are preserved', () => {
 })
 
 test('duplicate film titles navigate by distinct IDs with year and director context', () => {
-  const items = titleSuggestions(
-    [
-      {
-        id: 'film-1972',
-        mediaType: 'film',
-        title: 'Solaris',
-        releaseDate: '1972-01-01',
-        credits: [
-          { name: 'Andrei Tarkovsky', role: 'director', billingOrder: 0 },
-        ],
-      },
-      {
-        id: 'film-2002',
-        mediaType: 'film',
-        title: 'Solaris',
-        releaseDate: '2002-01-01',
-        credits: [
-          { name: 'Steven Soderbergh', role: 'director', billingOrder: 0 },
-        ],
-      },
-    ],
-    'solaris',
-  )
+  const items = titleSuggestions([
+    {
+      id: 'film-1972',
+      mediaType: 'film',
+      title: 'Solaris',
+      releaseDate: '1972-01-01',
+      credits: [
+        { name: 'Andrei Tarkovsky', role: 'director', billingOrder: 0 },
+      ],
+    },
+    {
+      id: 'film-2002',
+      mediaType: 'film',
+      title: 'Solaris',
+      releaseDate: '2002-01-01',
+      credits: [
+        { name: 'Steven Soderbergh', role: 'director', billingOrder: 0 },
+      ],
+    },
+  ])
   assert.match(items[0]?.label ?? '', /1972.*Andrei Tarkovsky/)
   assert.match(items[1]?.label ?? '', /2002.*Steven Soderbergh/)
   const options = browseSuggestions(facets, items, 'solaris')
@@ -70,14 +69,6 @@ test('duplicate film titles navigate by distinct IDs with year and director cont
     'item:film-1972',
     'item:film-2002',
   ])
-  assert.deepEqual(enterSuggestion(options, -1), {
-    kind: 'item',
-    item: items[0],
-  })
-  assert.deepEqual(enterSuggestion(options, 1), {
-    kind: 'item',
-    item: items[1],
-  })
 })
 
 test('album titles show artists, and otherwise identical results retain ID disambiguation', () => {
@@ -86,13 +77,10 @@ test('album titles show artists, and otherwise identical results retain ID disam
     releaseDate: null,
     credits: [{ name: 'Artist', role: 'artist', billingOrder: 0 }],
   }
-  const items = titleSuggestions(
-    [
-      { ...album, id: 'a', mediaType: 'album' },
-      { ...album, id: 'b', mediaType: 'album' },
-    ],
-    'same',
-  )
+  const items = titleSuggestions([
+    { ...album, id: 'a', mediaType: 'album' },
+    { ...album, id: 'b', mediaType: 'album' },
+  ])
   assert.deepEqual(
     items.map((item) => item.label),
     ['Same · Artist · a', 'Same · Artist · b'],
@@ -105,70 +93,184 @@ test('title facets never become filters, while metadata suggestions still do', (
     'filter:genre:Science fiction',
     'filter:provider:example',
   ])
-  assert.equal(enterSuggestion(options, -1), undefined)
-  assert.deepEqual(enterSuggestion(options, 0), {
-    kind: 'filter',
-    filter: facets[1],
-  })
-  assert.equal(enterSuggestion(options, 99), undefined)
 })
 
-test('highlight identity remains stable when async titles precede metadata suggestions', () => {
-  const before = browseSuggestions(facets, [], '')
+test('highlight identity remains stable when async titles join the list', () => {
+  const before = browseSuggestions(facets, [], 'exam')
   const highlighted = before[0]
   assert.ok(highlighted)
-  const key = suggestionKey(highlighted)
   const after = browseSuggestions(
     facets,
-    [{ id: 'a', title: 'Solaris', label: 'Solaris' }],
-    '',
+    [{ id: 'a', title: 'Exam', label: 'Exam' }],
+    'exam',
   )
-  const active = after.findIndex((option) => suggestionKey(option) === key)
+  assert.deepEqual(after.map(suggestionKey), [
+    'item:a',
+    'filter:provider:example',
+  ])
+  const active = after.findIndex(
+    (option) => suggestionKey(option) === suggestionKey(highlighted),
+  )
   assert.equal(active, 1)
-  assert.deepEqual(enterSuggestion(after, active), highlighted)
+  assert.deepEqual(after[active], highlighted)
 })
 
-test('async title reordering keeps Enter on the highlighted item rather than its old index', () => {
+test('titles at the same match tier keep a stable order whatever order they arrive in', () => {
   const first = { id: 'a', title: 'Solaris', label: 'Solaris 1972' }
   const second = { id: 'b', title: 'Solaris', label: 'Solaris 2002' }
-  const before = browseSuggestions(facets, [first, second], '')
-  const highlighted = before[1]
-  assert.ok(highlighted)
-  const after = browseSuggestions(facets, [second, first], '')
-  const active = after.findIndex(
-    (option) => suggestionKey(option) === suggestionKey(highlighted),
+  assert.deepEqual(
+    browseSuggestions(facets, [second, first], 'solaris').map(suggestionKey),
+    browseSuggestions(facets, [first, second], 'solaris').map(suggestionKey),
   )
-  assert.equal(active, 0)
-  assert.deepEqual(enterSuggestion(after, active), {
-    kind: 'item',
-    item: second,
-  })
+  assert.deepEqual(
+    browseSuggestions(facets, [second, first], 'solaris').map(suggestionKey),
+    ['item:a', 'item:b'],
+  )
 })
 
-test('removed async highlights do not select a metadata filter at the old index', () => {
-  const before = browseSuggestions(
-    facets,
-    [{ id: 'a', title: 'Solaris', label: 'Solaris' }],
-    '',
+test('match tiers: exact, whole-text prefix, word prefix, then substring', () => {
+  assert.equal(matchTier('Rock', 'ROCK'), matchTiers.exact)
+  assert.equal(matchTier('Rock and roll', 'rock'), matchTiers.prefix)
+  assert.equal(matchTier('Indie rock', 'rock'), matchTiers.wordPrefix)
+  assert.equal(matchTier('Post-rock', 'rock'), matchTiers.wordPrefix)
+  assert.equal(matchTier('Krautrock', 'rock'), matchTiers.substring)
+  assert.equal(
+    matchTier('Science fiction', 'science fiction'),
+    matchTiers.exact,
   )
-  const highlighted = before[0]
-  assert.ok(highlighted)
-  const after = browseSuggestions(facets, [], '')
-  const active = after.findIndex(
-    (option) => suggestionKey(option) === suggestionKey(highlighted),
+  assert.equal(
+    matchTier('Hard science fiction', 'fiction sci'),
+    matchTiers.wordPrefix,
   )
-  assert.equal(active, -1)
-  assert.equal(enterSuggestion(after, active), undefined)
+  assert.equal(matchTier('Science fiction', 'tags science'), matchTiers.prefix)
+  assert.equal(matchTier('Science fiction', 'tags'), matchTiers.substring)
 })
 
-test('item matches precede metadata filters and unhighlighted Enter only opens items', () => {
-  const item = { id: 'a', title: 'Science', label: 'Science' }
-  const suggestions = browseSuggestions(facets, [item], 'science')
-  assert.deepEqual(suggestions.map(suggestionKey), [
-    'item:a',
-    'filter:genre:Science fiction',
+const tags = (values: [string, number][]): FilterSuggestion[] =>
+  values.map(([value, count]) => ({
+    field: 'genre',
+    value,
+    label: `Tags: ${value}`,
+    count,
+  }))
+
+test('ranking mixes filters and titles by match tier, ignoring the order they arrive in', () => {
+  const options = tags([
+    ['Krautrock', 900],
+    ['Indie rock', 40],
+    ['Rock and roll', 5],
+    ['Rock', 30],
   ])
-  assert.deepEqual(enterSuggestion(suggestions, -1), { kind: 'item', item })
-  assert.equal(enterSuggestion(suggestions, 1)?.kind, 'filter')
-  assert.equal(enterSuggestion(suggestions, 2), undefined)
+  const items: TitleSuggestion[] = [
+    { id: 'bedrock', title: 'Bedrock', label: 'Bedrock' },
+    { id: 'rock-on', title: 'Rock On', label: 'Rock On' },
+  ]
+  assert.deepEqual(
+    browseSuggestions(options, items, 'rock').map(suggestionKey),
+    [
+      'filter:genre:Rock',
+      'filter:genre:Rock and roll',
+      'item:rock-on',
+      'filter:genre:Indie rock',
+      'filter:genre:Krautrock',
+      'item:bedrock',
+    ],
+  )
+})
+
+test('within a tier, broader filters rank first and a large substring match never beats an exact one', () => {
+  const options = tags([
+    ['Bluegrass', 1],
+    ['Blues rock', 300],
+    ['Blues', 2],
+    ['Delta blues', 20],
+    ['Bluesy', 80],
+    ['Nublues', 5000],
+  ])
+  assert.deepEqual(
+    browseSuggestions(options, [], 'blues').map(
+      (option) => option.kind === 'filter' && option.filter.value,
+    ),
+    ['Blues', 'Blues rock', 'Bluesy', 'Delta blues', 'Nublues'],
+  )
+})
+
+test('at equal match quality filters precede titles', () => {
+  const options = tags([['Jazz', 3]])
+  const items: TitleSuggestion[] = [
+    { id: 'jazz', title: 'Jazz', label: 'Jazz' },
+  ]
+  assert.deepEqual(
+    browseSuggestions(options, items, 'jazz').map(suggestionKey),
+    ['filter:genre:Jazz', 'item:jazz'],
+  )
+})
+
+test('neither kind fills the first screen while the other has a word-prefix match', () => {
+  const options = tags(
+    [
+      'Ambient',
+      'Ambient pop',
+      'Ambient techno',
+      'Ambient house',
+      'Ambient dub',
+    ].map((value, index): [string, number] => [value, 100 - index]),
+  )
+  const items: TitleSuggestion[] = [
+    { id: 'a', title: 'Ambient 1', label: 'Ambient 1' },
+    { id: 'b', title: 'Ambient 2', label: 'Ambient 2' },
+    { id: 'c', title: 'Dark ambient', label: 'Dark ambient' },
+  ]
+  assert.deepEqual(
+    browseSuggestions(options, items, 'ambient').map(suggestionKey),
+    [
+      'filter:genre:Ambient',
+      'filter:genre:Ambient pop',
+      'filter:genre:Ambient techno',
+      'item:a',
+      'filter:genre:Ambient house',
+      'filter:genre:Ambient dub',
+      'item:b',
+      'item:c',
+    ],
+  )
+  const exactTitles: TitleSuggestion[] = ['1', '2', '3', '4'].map((id) => ({
+    id,
+    title: 'Ambient',
+    label: `Ambient ${id}`,
+  }))
+  assert.deepEqual(
+    browseSuggestions(tags([['Dark ambient', 50]]), exactTitles, 'ambient').map(
+      suggestionKey,
+    ),
+    ['item:1', 'item:2', 'item:3', 'filter:genre:Dark ambient', 'item:4'],
+  )
+  assert.deepEqual(
+    browseSuggestions(tags([['Darkambient', 50]]), exactTitles, 'ambient').map(
+      suggestionKey,
+    ),
+    ['item:1', 'item:2', 'item:3', 'item:4', 'filter:genre:Darkambient'],
+  )
+})
+
+test('ranking is deterministic and keeps the 100-suggestion cap', () => {
+  const options = tags(
+    Array.from({ length: 120 }, (_, index): [string, number] => [
+      `Tag ${String(index).padStart(3, '0')}`,
+      (index % 3) + 1,
+    ]),
+  )
+  const items: TitleSuggestion[] = Array.from({ length: 30 }, (_, index) => ({
+    id: `item-${index}`,
+    title: `Tag title ${index}`,
+    label: `Tag title ${index}`,
+  }))
+  const ranked = browseSuggestions(options, items, 'tag').map(suggestionKey)
+  assert.equal(ranked.length, 100)
+  assert.deepEqual(
+    browseSuggestions([...options].reverse(), [...items].reverse(), 'tag').map(
+      suggestionKey,
+    ),
+    ranked,
+  )
 })

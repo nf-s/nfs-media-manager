@@ -882,6 +882,8 @@ export const subscriptionSource = pgTable(
     seenRunId: text('seen_run_id'),
     // Every page of the source's items has been read at least once.
     historyComplete: boolean('history_complete').notNull().default(false),
+    // The sync run that last recorded a YouTube channel's Shorts.
+    shortsRunId: text('shorts_run_id'),
     ...timestampColumns,
   },
   (table) => [
@@ -940,6 +942,16 @@ export const subscriptionItem = pgTable(
   ],
 )
 
+// YouTube Shorts by video ID, recorded so that no sync stores them as items.
+export const subscriptionShort = pgTable('subscription_short', {
+  id: text('id').primaryKey(),
+  sourceId: text('source_id')
+    .notNull()
+    .references(() => subscriptionSource.id, { onDelete: 'cascade' }),
+  // The sync run that first recorded the Short.
+  runId: text('run_id'),
+})
+
 // One checkpoint per account and provider.
 export const subscriptionSync = pgTable(
   'subscription_sync',
@@ -957,6 +969,8 @@ export const subscriptionSync = pgTable(
     phase: text('phase').notNull().default('sources'),
     // Next page of the source list, or of the current source's items.
     pageToken: text('page_token'),
+    // Next page of the current YouTube channel's Shorts, read before its items.
+    shortsPageToken: text('shorts_page_token'),
     // The last source whose items were read in this run.
     sourceCursor: text('source_cursor'),
     sourcesDone: integer('sources_done').notNull().default(0),

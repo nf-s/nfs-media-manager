@@ -105,6 +105,8 @@ type FakeVideo = {
   tags?: string[]
   private?: boolean
   live?: 'upcoming'
+  /** Also listed in the channel's Shorts playlist. */
+  short?: boolean
 }
 type FakeChannel = {
   id: string
@@ -326,19 +328,22 @@ async function fakeYoutube(
           })),
       })
     case '/youtube/v3/playlistItems': {
+      const playlistId = params.get('playlistId') ?? ''
+      const shorts = playlistId.startsWith('UUSH')
       const channel = api.channels.find(
-        (item) => `UU${item.id.slice(2)}` === params.get('playlistId'),
+        (item) => `${shorts ? 'UUSH' : 'UU'}${item.id.slice(2)}` === playlistId,
       )
-      if (!channel || channel.noUploads)
+      const listed =
+        channel?.videos.filter((video) => !shorts || video.short) ?? []
+      // A channel without Shorts has no Shorts playlist.
+      if (!channel || channel.noUploads || (shorts && !listed.length))
         return Response.json(
           { error: { code: 404, errors: [{ reason: 'playlistNotFound' }] } },
           { status: 404 },
         )
       return Response.json(
         paged(
-          channel.videos.map((video) => ({
-            contentDetails: { videoId: video.id },
-          })),
+          listed.map((video) => ({ contentDetails: { videoId: video.id } })),
           params.get('pageToken'),
         ),
       )
@@ -377,19 +382,34 @@ function channel(id: string) {
   return found
 }
 
-function apiPaths() {
+function apiUrls() {
   return request.mock.calls
     .map(([input]) => new URL(String(input)))
     .filter((url) => url.host === 'www.googleapis.com')
-    .map((url) => url.pathname.replace('/youtube/v3/', ''))
 }
 
-/** The channels whose uploads were requested, in request order. */
+function apiPaths() {
+  return apiUrls().map((url) => url.pathname.replace('/youtube/v3/', ''))
+}
+
+/** Shorts playlist requests as channel ID and page token, in order. */
+function shortsRequests() {
+  return apiUrls().flatMap((url) => {
+    const playlistId = url.searchParams.get('playlistId') ?? ''
+    return playlistId.startsWith('UUSH')
+      ? [`UC${playlistId.slice(4)}:${url.searchParams.get('pageToken') ?? ''}`]
+      : []
+  })
+}
+
+/** The channels whose uploads list was requested, in request order. */
 function uploadsRead() {
-  return request.mock.calls
-    .map(([input]) => new URL(String(input)))
-    .filter((url) => url.pathname === '/youtube/v3/playlistItems')
-    .map((url) => `UC${(url.searchParams.get('playlistId') ?? '').slice(2)}`)
+  return apiUrls().flatMap((url) => {
+    const playlistId = url.searchParams.get('playlistId') ?? ''
+    return playlistId.startsWith('UU') && !playlistId.startsWith('UUSH')
+      ? [`UC${playlistId.slice(2)}`]
+      : []
+  })
 }
 
 async function connect() {
@@ -677,16 +697,20 @@ describe('YouTube subscription sync jobs with offline HTTP and a temporary datab
       errorMessage: null,
     })
     // Two subscription pages with their channel details, then each channel's
-    // uploads in channel ID order; the channel without uploads answers 404.
+    // Shorts list and uploads in channel ID order; the channel without uploads
+    // answers 404.
     expect(apiPaths()).toEqual([
       'subscriptions',
       'channels',
       'subscriptions',
       'channels',
       'playlistItems',
+      'playlistItems',
       'videos',
       'playlistItems',
       'videos',
+      'playlistItems',
+      'playlistItems',
       'playlistItems',
       'playlistItems',
       'videos',
@@ -695,6 +719,7 @@ describe('YouTube subscription sync jobs with offline HTTP and a temporary datab
       'playlistItems',
       'videos',
     ])
+    expect(shortsRequests()).toEqual([`${COOKS}:`, `${EMPTY}:`, `${ORBITAL}:`])
     expect(
       new Headers(request.mock.calls[1]?.[1]?.headers).get('authorization'),
     ).toBe('Bearer fixture-access-token')
@@ -819,14 +844,17 @@ describe('YouTube subscription sync jobs with offline HTTP and a temporary datab
       storedSources: 2,
       storedItems: 5,
     })
-    // One page of the channel with a new video: its first page already holds
-    // a known video. The channel without uploads is unchanged and not read.
+    // The Shorts list and one page of uploads of the channel with a new
+    // video: its first page already holds a known video. The channel without
+    // uploads is unchanged and not read.
     expect(apiPaths()).toEqual([
       'subscriptions',
       'channels',
       'playlistItems',
+      'playlistItems',
       'videos',
     ])
+    expect(shortsRequests()).toEqual([`${ORBITAL}:`])
     expect(uploadsRead()).toEqual([ORBITAL])
     // The refreshed first page updates stored videos and the renamed channel is searchable.
     expect((await search({ q: 'replay' })).ids).toEqual([videoId('a3')])
@@ -908,7 +936,13 @@ describe('YouTube subscription sync jobs with offline HTTP and a temporary datab
       newItems: 0,
       storedItems: 7,
     })
-    expect(apiPaths()).toEqual([...listing, 'playlistItems', 'videos'])
+    expect(apiPaths()).toEqual([
+      ...listing,
+      'playlistItems',
+      'playlistItems',
+      'videos',
+    ])
+    expect(shortsRequests()).toEqual([`${ORBITAL}:`])
     expect(uploadsRead()).toEqual([ORBITAL])
     expect(
       (await search({ filters: fromChannels(ORBITAL), sortBy: 'publishedAt' }))
@@ -932,8 +966,16 @@ describe('YouTube subscription sync jobs with offline HTTP and a temporary datab
     expect(await views(videoId('a1'))).toBe(5000)
 
     // A channel with a new video and a channel without a listed count are
-    // read; the unchanged channel is not.
+    // read. An unchanged channel whose Shorts no sync has recorded has only
+    // its Shorts list read, which removes a stored Short.
     request.mockClear()
+    orbital.videos = orbital.videos.map((video) =>
+      video.id === videoId('a5') ? { ...video, short: true } : video,
+    )
+    await databaseClient
+      .update(schema.subscriptionSource)
+      .set({ shortsRunId: null })
+      .where(eq(schema.subscriptionSource.id, ORBITAL))
     channel(COOKS).videos.unshift({
       id: videoId('b4'),
       title: 'Proofing baskets',
@@ -947,15 +989,20 @@ describe('YouTube subscription sync jobs with offline HTTP and a temporary datab
       sourcesDone: 3,
       sourcesTotal: 3,
       newItems: 1,
-      storedItems: 8,
+      storedItems: 7,
     })
     expect(apiPaths()).toEqual([
       ...listing,
       'playlistItems',
+      'playlistItems',
       'videos',
       'playlistItems',
+      'playlistItems',
+      'playlistItems',
     ])
+    expect(shortsRequests()).toEqual([`${COOKS}:`, `${EMPTY}:`, `${ORBITAL}:`])
     expect(uploadsRead()).toEqual([COOKS, EMPTY])
+    expect((await search({ q: 'torque' })).ids).toEqual([])
     expect(await counts()).toEqual({
       [COOKS]: [4, 4],
       [EMPTY]: [null, null],
@@ -975,8 +1022,73 @@ describe('YouTube subscription sync jobs with offline HTTP and a temporary datab
       },
       ...cooks.videos.filter((video) => video.id !== videoId('b3')),
     ]
-    expect(await syncToEnd()).toMatchObject({ newItems: 0, storedItems: 8 })
+    expect(await syncToEnd()).toMatchObject({ newItems: 0, storedItems: 7 })
+    expect(shortsRequests()).toEqual([`${EMPTY}:`])
     expect(uploadsRead()).toEqual([EMPTY])
+  })
+
+  it('leaves Shorts out, removes stored ones, and reads the Shorts list only as far as a known Short', async () => {
+    await connect()
+    await syncToEnd()
+    expect((await search({ q: 'torque' })).ids).toEqual([videoId('a5')])
+
+    // Three stored uploads turn out to be Shorts, and a new Short is published.
+    const orbital = channel(ORBITAL)
+    const shorts = [videoId('a1'), videoId('a2'), videoId('a5')]
+    orbital.videos = orbital.videos.map((video) =>
+      shorts.includes(video.id) ? { ...video, short: true } : video,
+    )
+    orbital.videos.unshift({
+      id: videoId('s1'),
+      title: 'Thirty seconds of thrust',
+      publishedAt: '2026-05-02T12:00:00Z',
+      duration: 'PT30S',
+      short: true,
+    })
+    request.mockClear()
+    expect(await syncToEnd()).toMatchObject({
+      state: 'complete',
+      newItems: 0,
+      storedItems: 4,
+    })
+    // Nothing recorded yet, so every page of the changed channel's Shorts
+    // list is read; the unchanged channels are not requested.
+    expect(shortsRequests()).toEqual([`${ORBITAL}:`, `${ORBITAL}:2`])
+    expect(
+      await databaseClient
+        .select({ id: schema.subscriptionItem.id })
+        .from(schema.subscriptionItem)
+        .where(eq(schema.subscriptionItem.sourceId, ORBITAL)),
+    ).toEqual([{ id: videoId('a3') }])
+    expect((await search({ q: 'torque' })).ids).toEqual([])
+    expect(await databaseClient.$count(schema.subscriptionShort)).toBe(4)
+    const requested = () =>
+      apiUrls()
+        .filter((url) => url.pathname.endsWith('/videos'))
+        .flatMap((url) => (url.searchParams.get('id') ?? '').split(','))
+    expect(requested()).not.toContain(videoId('s1'))
+
+    // A later Short shares its page with a recorded one, which ends both lists.
+    orbital.videos.unshift({
+      id: videoId('s2'),
+      title: 'A minute of orbital decay',
+      publishedAt: '2026-05-03T12:00:00Z',
+      duration: 'PT1M',
+      short: true,
+    })
+    request.mockClear()
+    expect(await syncToEnd()).toMatchObject({ newItems: 0, storedItems: 4 })
+    expect(shortsRequests()).toEqual([`${ORBITAL}:`])
+    expect(apiPaths()).toEqual([
+      'subscriptions',
+      'channels',
+      'subscriptions',
+      'channels',
+      'playlistItems',
+      'playlistItems',
+    ])
+    expect(requested()).toEqual([])
+    expect(await databaseClient.$count(schema.subscriptionShort)).toBe(5)
   })
 
   it('leaves podcast sources and episodes out of the YouTube sync, counts and search', async () => {
@@ -1063,8 +1175,9 @@ describe('YouTube subscription sync jobs with offline HTTP and a temporary datab
   it('pauses on the YouTube quota and lets the schedule resume from the checkpoint', async () => {
     await connect()
     const { queueDueYoutubeSync } = await import('@/services/youtube-sync-jobs')
-    // The subscription list and the first uploads page fit; the next request does not.
-    api.quotaAfter = 6
+    // The subscription list, the first channel's Shorts list and its first
+    // uploads page fit; the next request does not.
+    api.quotaAfter = 7
     const before = Date.now()
     const paused = await syncToEnd()
 
@@ -1151,7 +1264,7 @@ describe('YouTube subscription sync jobs with offline HTTP and a temporary datab
   it('fails on a provider error without an automatic retry, then resumes on request', async () => {
     await connect()
     const { queueDueYoutubeSync } = await import('@/services/youtube-sync-jobs')
-    api.failAt = 7
+    api.failAt = 8
     const failed = await syncToEnd()
     expect(failed).toMatchObject({
       state: 'failed',
@@ -1179,7 +1292,7 @@ describe('YouTube subscription sync jobs with offline HTTP and a temporary datab
     await connect()
     const { bulkCancelJobs } = await import('@/services/jobs')
     api.before = async (count) => {
-      if (count !== 6) return
+      if (count !== 7) return
       const running = (await syncJobs()).find((job) => job.status === 'running')
       await bulkCancelJobs(
         { jobIds: [running?.id ?? ''], confirmRunning: true },
@@ -1682,10 +1795,19 @@ describe('subscription library migration', () => {
         ),
       ).rejects.toThrow()
 
-      // The migrated checkpoint resumes at the second uploads page, under
-      // the later migrations the sync now reads.
-      for (const later of migrations.slice(index + 1))
-        for (const statement of later.sql) await migrationPool.query(statement)
+      // Later migrations bring the tables to the shape the sync reads.
+      const finishing = await migrationPool.connect()
+      try {
+        await finishing.query('begin')
+        for (const later of migrations.slice(index + 1))
+          for (const statement of later.sql) await finishing.query(statement)
+        await finishing.query('commit')
+      } finally {
+        finishing.release()
+      }
+
+      // The migrated checkpoint resumes at the second uploads page; a channel
+      // resumed inside its uploads has its Shorts recorded by the next run.
       active.client = drizzle(migrationPool, { schema })
       await connect()
       request.mockClear()

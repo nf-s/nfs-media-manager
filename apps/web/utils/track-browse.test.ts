@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import type { BrowseFilter } from '@repo/schemas/browse'
+import { browseSuggestions } from './browse-suggestions'
 import {
   formatTrackDuration,
   parseTrackFilters,
@@ -56,17 +57,16 @@ test('durations use minutes and seconds', () => {
   assert.equal(formatTrackDuration(245), '4:05')
 })
 
-test('title suggestions name the artists and put exact titles first', () => {
-  const suggestions = trackTitleSuggestions(
-    [
-      { id: '2', title: 'Song B Extended', artists: ['Artist A'] },
-      { id: '1', title: 'Song B', artists: ['Artist A', 'Artist B'] },
-      { id: '3', title: 'Song B Live', artists: [] },
-    ],
-    'song b',
-  )
+test('title suggestions name the artists and rank exact titles first', () => {
+  const suggestions = trackTitleSuggestions([
+    { id: '2', title: 'Song B Extended', artists: ['Artist A'] },
+    { id: '1', title: 'Song B', artists: ['Artist A', 'Artist B'] },
+    { id: '3', title: 'Song B Live', artists: [] },
+  ])
   assert.deepEqual(
-    suggestions.map((item) => item.label),
+    browseSuggestions([], suggestions, 'song b').map(
+      (option) => option.kind === 'item' && option.item.label,
+    ),
     [
       'Song B · Artist A, Artist B',
       'Song B Extended · Artist A',
