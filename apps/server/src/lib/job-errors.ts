@@ -40,6 +40,9 @@ const ErrorLikeSchema = z.object({
   message: z.string(),
   stack: z.string().optional(),
   cause: z.unknown().optional(),
+  code: z.unknown().optional(),
+  retryAt: z.unknown().optional(),
+  diagnostics: z.unknown().optional(),
 })
 const credentialName =
   '(?:api[_-]?(?:key|user)|access[_-]?token|refresh[_-]?token|token|secret|client[_-]?secret|password|passkey|authorization|cookie|set-cookie)'
@@ -74,8 +77,30 @@ export function jobErrorDetails(
     const safe = redactJobText(value, secrets)
     return safe.length > 16000 ? `${safe.slice(0, 16000)}\n[truncated]` : safe
   }
+  function diagnosticField<T>(
+    schema: z.ZodType<T>,
+    value: unknown,
+  ): T | undefined {
+    const parsed = schema.safeParse(value)
+    if (!parsed.success || parsed.data === undefined) return undefined
+    const text = JSON.stringify(parsed.data)
+    if (text === undefined) return undefined
+    return redactJobText(text, secrets) === text ? parsed.data : undefined
+  }
   function entry(value: unknown) {
     const parsed = ErrorLikeSchema.safeParse(value)
+    const code = diagnosticField(
+      JobErrorDetailsSchema.shape.code,
+      parsed.success ? parsed.data.code : undefined,
+    )
+    const retryAt = diagnosticField(
+      JobErrorDetailsSchema.shape.retryAt,
+      parsed.success ? parsed.data.retryAt : undefined,
+    )
+    const diagnostics = diagnosticField(
+      JobErrorDetailsSchema.shape.diagnostics,
+      parsed.success ? parsed.data.diagnostics : undefined,
+    )
     return {
       name: redact(
         parsed.success ? (parsed.data.name ?? 'Error') : 'Thrown value',
@@ -89,6 +114,9 @@ export function jobErrorDetails(
       ),
       stack:
         parsed.success && parsed.data.stack ? redact(parsed.data.stack) : null,
+      ...(code !== undefined ? { code } : {}),
+      ...(retryAt !== undefined ? { retryAt } : {}),
+      ...(diagnostics !== undefined ? { diagnostics } : {}),
     }
   }
   const causes: JobErrorDetails['causes'] = []

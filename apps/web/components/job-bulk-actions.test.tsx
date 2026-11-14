@@ -206,3 +206,111 @@ test('job diagnostics are optional, collapsed and do not render payloads on page
     assert.doesNotMatch(html, /onerror|<img|Raw JSON/)
   }
 })
+
+function renderRequestError(error: unknown) {
+  const log = JobSchema.shape.logs.element.parse({
+    id: 'request-error',
+    level: 'error',
+    message: 'Request failed',
+    metadata: { error },
+    createdAt: '2026-01-01T00:00:00.000Z',
+  })
+  return renderControl(<JobLogEntry log={log} jobId="fixture-job" />)
+}
+
+test('request errors show actual response status, receipt time, retry policy and quota values', () => {
+  const html = renderRequestError({
+    name: 'ProviderRequestError',
+    message: 'Provider rate limit reached',
+    stack: null,
+    causes: [],
+    code: 'rate-limit',
+    retryAt: 1767225660000,
+    diagnostics: {
+      source: 'provider-response',
+      httpStatus: 429,
+      responseReceivedAt: '2026-01-01T00:00:00.000Z',
+      retryAfter: { seconds: 60 },
+      quotaHeaders: {
+        'x-discogs-ratelimit': 60,
+        'x-discogs-ratelimit-used': 60,
+        'x-discogs-ratelimit-remaining': 0,
+      },
+    },
+  })
+  assert.match(html, /Provider response · HTTP 429/)
+  assert.match(html, /Received/)
+  assert.match(html, /2026-01-01T00:00:00.000Z/)
+  assert.match(html, /Retry-After: 60 seconds/)
+  assert.match(html, /Request retry time/)
+  assert.match(
+    html,
+    /Provider cooldowns and dispatch pauses can delay execution/,
+  )
+  assert.match(html, /2026-01-01T00:01:00.000Z/)
+  assert.match(html, /<dt>Discogs limit:<\/dt><dd>60<\/dd>/)
+  assert.match(html, /<dt>Discogs used:<\/dt><dd>60<\/dd>/)
+  assert.match(html, /<dt>Discogs remaining:<\/dt><dd>0<\/dd>/)
+})
+
+test('local safety errors explicitly identify that no outgoing request occurred', () => {
+  for (const source of [
+    'local-cooldown',
+    'local-budget',
+    'local-access-halt',
+  ]) {
+    const html = renderRequestError({
+      name: 'ProviderRequestError',
+      message: 'Locally blocked',
+      stack: null,
+      causes: [],
+      retryAt: 1767225660000,
+      diagnostics: { source },
+    })
+    assert.match(html, /No outgoing request/)
+    assert.match(html, /Local retry time/)
+    assert.doesNotMatch(html, /Provider response|HTTP|Received/)
+    assert.doesNotMatch(html, /dispatch pauses can delay execution/)
+  }
+})
+
+test('HTTP success with a quota error remains distinct from HTTP 429 and cause evidence is shown once', () => {
+  const cause = {
+    name: 'ProviderRequestError',
+    message: 'Provider quota error',
+    stack: null,
+    diagnostics: {
+      source: 'provider-response',
+      httpStatus: 200,
+      responseReceivedAt: '2026-01-01T00:00:00.000Z',
+      quotaError: true,
+      retryAfter: { at: '2026-01-01T00:05:00.000Z' },
+    },
+  }
+  const html = renderRequestError({ ...cause, causes: [cause] })
+  assert.equal((html.match(/Provider response · HTTP 200/g) ?? []).length, 1)
+  assert.match(html, /Provider reported a quota error/)
+  assert.match(html, /2026-01-01T00:05:00.000Z/)
+  assert.doesNotMatch(html, /HTTP 429/)
+  const onlyCause = renderRequestError({
+    name: 'Error',
+    message: 'Failed to complete',
+    stack: null,
+    causes: [cause],
+  })
+  assert.match(onlyCause, /Provider response · HTTP 200/)
+})
+
+test('legacy error text does not invent response status or local request provenance', () => {
+  const html = renderRequestError({
+    name: 'ProviderRequestError',
+    message: 'Provider rate limit reached',
+    stack: null,
+    causes: [],
+  })
+  assert.match(html, /Provider rate limit reached/)
+  assert.doesNotMatch(
+    html,
+    /HTTP 429|No outgoing request|Request error details|Received/,
+  )
+})

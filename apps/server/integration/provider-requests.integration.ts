@@ -705,7 +705,7 @@ describe('structured HTTP quota handling', () => {
         startedAt + 7200000,
       )
       expect(state.consecutiveFailures).toBe(1)
-      expect(state.lastError).toBe('Provider rate limit reached')
+      expect(state.lastError).toBe('Provider quota error (HTTP 403)')
       await expect(
         createProviderRequest(plugin)('https://fixture.invalid'),
       ).rejects.toMatchObject({ code: 'cooldown', recorded: true })

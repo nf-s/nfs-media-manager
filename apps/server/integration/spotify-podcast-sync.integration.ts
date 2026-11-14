@@ -713,7 +713,7 @@ describe('Spotify podcast sync jobs with offline HTTP and a temporary database',
     expect(jobs.at(-1)?.status).toBe('succeeded')
     const { getJob, listJobs } = await import('@/services/jobs')
     expect((await getJob(jobs.at(-1)?.id ?? ''))?.logs.at(-1)?.message).toMatch(
-      /^Paused: Provider rate limit reached\. Stored episodes are kept;/,
+      /^Paused: Provider rate limit reached \(HTTP 429\)\. Stored episodes are kept;/,
     )
     expect((await listJobs({ status: 'attention' })).totalCount).toBe(0)
 

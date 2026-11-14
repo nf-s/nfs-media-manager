@@ -8,6 +8,104 @@ import {
 import { jobErrorDetails, jobErrorReview, redactJobText } from './job-errors'
 
 describe('job error diagnostics', () => {
+  it('retains validated provider response evidence on an error and its causes', () => {
+    const diagnostics = {
+      source: 'provider-response',
+      httpStatus: 429,
+      responseReceivedAt: '2026-01-01T00:00:00.000Z',
+      retryAfter: { seconds: 60 },
+      quotaHeaders: { 'x-ratelimit-limit': 100, 'x-ratelimit-remaining': 0 },
+    }
+    const error = {
+      name: 'ProviderRequestError',
+      message: 'Provider rate limit reached',
+      code: 'rate-limit',
+      retryAt: 1767225660000,
+      diagnostics,
+    }
+    const details = jobErrorDetails({ ...error, cause: error }, [])
+    const expected = {
+      code: 'rate-limit',
+      retryAt: 1767225660000,
+      diagnostics,
+    }
+    expect(details).toMatchObject(expected)
+    expect(details.causes[0]).toMatchObject(expected)
+  })
+  it('omits invalid diagnostic fields without losing the original error or valid evidence', () => {
+    const details = jobErrorDetails(
+      {
+        name: 'ProviderRequestError',
+        message: 'Local request blocked',
+        code: 'cooldown',
+        retryAt: 'invalid',
+        diagnostics: { source: 'local-cooldown' },
+        cause: {
+          message: 'Original failure',
+          code: 'unrecognized',
+          retryAt: Number.POSITIVE_INFINITY,
+          diagnostics: { source: 'provider-response', httpStatus: 999 },
+        },
+      },
+      [],
+    )
+    expect(details).toMatchObject({
+      message: 'Local request blocked',
+      code: 'cooldown',
+      diagnostics: { source: 'local-cooldown' },
+    })
+    expect(details).not.toHaveProperty('retryAt')
+    expect(details.causes).toEqual([
+      { name: 'Error', message: 'Original failure', stack: null },
+    ])
+  })
+  it('never retains arbitrary request data or credential values in structured evidence', () => {
+    const error = {
+      message: 'Provider response with fixture-token',
+      code: 'rate-limit',
+      retryAt: 1767225660000,
+    }
+    for (const unsafe of [
+      { url: 'https://fixture.invalid?token=fixture-token' },
+      { body: 'fixture-token' },
+      { headers: { authorization: 'Bearer fixture-token' } },
+      { quotaHeaders: { 'set-cookie': 'fixture-token' } },
+    ]) {
+      const details = jobErrorDetails(
+        {
+          ...error,
+          diagnostics: {
+            source: 'provider-response',
+            httpStatus: 429,
+            responseReceivedAt: '2026-01-01T00:00:00.000Z',
+            ...unsafe,
+          },
+        },
+        ['fixture-token'],
+      )
+      expect(details.code).toBe('rate-limit')
+      expect(details).not.toHaveProperty('diagnostics')
+      expect(JSON.stringify(details)).not.toContain('fixture-token')
+      expect(details.message).toContain('[REDACTED]')
+    }
+    const credentialNumber = '12345678'
+    const details = jobErrorDetails(
+      {
+        ...error,
+        retryAt: Number(credentialNumber),
+        diagnostics: {
+          source: 'provider-response',
+          httpStatus: 429,
+          responseReceivedAt: '2026-01-01T00:00:00.000Z',
+          quotaHeaders: { 'x-ratelimit-limit': Number(credentialNumber) },
+        },
+      },
+      ['fixture-token', credentialNumber],
+    )
+    expect(details).not.toHaveProperty('diagnostics')
+    expect(details).not.toHaveProperty('retryAt')
+    expect(JSON.stringify(details)).not.toContain(credentialNumber)
+  })
   it('only permits typed lookup misses or exact plugin-declared legacy errors to be reviewed', () => {
     const plugin: MediaProviderPlugin = {
       manifest: {

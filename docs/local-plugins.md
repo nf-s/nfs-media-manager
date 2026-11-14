@@ -4,7 +4,7 @@
 
 Keep private integrations under ignored `.local-plugins/<package>/` or outside the public checkout. Each package should contain a manifest, implementation, README and offline tests. Back up this directory independently or maintain it in a separate private repository. Git does not preserve ignored code when cloning or restoring a public checkout.
 
-Set `MEDIA_PLUGIN_PATHS` in the existing root environment to comma-separated absolute or workspace-relative **entry-file paths**. Build `@repo/media-plugin-sdk` first. Restart the API after changing the configured package list; the registry caches loaded plugins. Do not put private examples in the public environment template.
+Set `MEDIA_PLUGIN_PATHS` in the existing root environment to comma-separated absolute or workspace-relative **entry-file paths**. Build the SDK and its shared-schema dependency first with `corepack pnpm --filter @repo/media-plugin-sdk... build`. Restart the API after changing the configured package list; the registry caches loaded plugins. Do not put private examples in the public environment template.
 
 The registry accepts a default export or named `plugin` export conforming to `MediaProviderPlugin`. It validates the manifest and callable hooks, rejects conflicting provider IDs and skips missing optional entry files with a warning. An installed but invalid package fails explicitly rather than silently presenting an incomplete integration.
 

@@ -1196,7 +1196,7 @@ describe('YouTube subscription sync jobs with offline HTTP and a temporary datab
     expect(jobs.at(-1)?.status).toBe('succeeded')
     const { getJob, listJobs } = await import('@/services/jobs')
     expect((await getJob(jobs.at(-1)?.id ?? ''))?.logs.at(-1)?.message).toMatch(
-      /^Paused: Provider rate limit reached\. Stored videos are kept;/,
+      /^Paused: Provider quota error \(HTTP 403\)\. Stored videos are kept;/,
     )
     expect((await listJobs({ status: 'attention' })).totalCount).toBe(0)
     const [channelRow] = await databaseClient

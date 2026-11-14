@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { JsonValueSchema, PaginatedDataSchema } from './common'
+import { ProviderRequestDiagnosticsSchema } from './provider'
 
 export const JobStatusSchema = z.enum([
   'queued',
@@ -184,6 +185,17 @@ const ErrorEntrySchema = z.object({
   name: z.string(),
   message: z.string(),
   stack: z.string().nullable(),
+  code: z
+    .enum(['rate-limit', 'cooldown', 'request-failed', 'access-denied'])
+    .optional(),
+  retryAt: z
+    .number()
+    .int()
+    .nonnegative()
+    .max(8640000000000000)
+    .nullable()
+    .optional(),
+  diagnostics: ProviderRequestDiagnosticsSchema.optional(),
 })
 
 export const JobErrorDetailsSchema = ErrorEntrySchema.extend({

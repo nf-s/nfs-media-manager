@@ -105,6 +105,20 @@ polling. Failed jobs do not necessarily have snapshots: response diagnostics mus
 have been captured before the adapter threw. Old failed jobs without retained
 responses cannot be reconstructed; viewing their JSON must not trigger a retry.
 
+Provider request errors retain their classification and retry time in the job
+log, including nested causes. New HTTP failures also retain the response status,
+receipt time, normalized `Retry-After` and allowlisted numeric quota fields,
+including Discogs limit, used and remaining values. The expanded error shows
+these details. Local cooldown, budget and access-halt refusals are identified
+separately and do not imply that a request reached the provider. Request URLs,
+credentials, arbitrary headers and error bodies are excluded from this evidence.
+
+When diagnosing recently executed queued work, sort jobs by **Started** or
+**Finished**. **Created** shows when a job was queued, which can be much earlier
+than its latest execution. Zero running jobs does not establish that a provider
+quota has reset; inspect the failure's response evidence and retry time before
+resuming dispatch.
+
 Serply records each search query, HTTP status and response JSON before validating
 the result or reporting a lookup miss. These diagnostics are credential-redacted
 and bounded: each response entry is at most 48 KiB, and a job's diagnostic

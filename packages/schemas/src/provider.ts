@@ -1,5 +1,57 @@
 import { z } from 'zod'
 
+const QuotaHeaderValueSchema = z
+  .number()
+  .int()
+  .nonnegative()
+  .max(Number.MAX_SAFE_INTEGER)
+export const ProviderQuotaHeadersSchema = z
+  .object({
+    'x-ratelimit-limit': QuotaHeaderValueSchema.optional(),
+    'x-ratelimit-remaining': QuotaHeaderValueSchema.optional(),
+    'x-ratelimit-reset': QuotaHeaderValueSchema.optional(),
+    'x-discogs-ratelimit': QuotaHeaderValueSchema.optional(),
+    'x-discogs-ratelimit-used': QuotaHeaderValueSchema.optional(),
+    'x-discogs-ratelimit-remaining': QuotaHeaderValueSchema.optional(),
+  })
+  .strict()
+
+export const ProviderRequestDiagnosticsSchema = z
+  .object({
+    source: z.enum([
+      'provider-response',
+      'local-cooldown',
+      'local-budget',
+      'local-access-halt',
+    ]),
+    httpStatus: z.number().int().min(100).max(599).optional(),
+    responseReceivedAt: z.string().datetime().optional(),
+    quotaError: z.boolean().optional(),
+    retryAfter: z
+      .union([
+        z.object({ seconds: QuotaHeaderValueSchema }).strict(),
+        z.object({ at: z.string().datetime() }).strict(),
+      ])
+      .optional(),
+    quotaHeaders: ProviderQuotaHeadersSchema.optional(),
+  })
+  .strict()
+  .refine(
+    (value) =>
+      value.source === 'provider-response'
+        ? value.httpStatus !== undefined &&
+          value.responseReceivedAt !== undefined
+        : value.httpStatus === undefined &&
+          value.responseReceivedAt === undefined &&
+          value.quotaError === undefined &&
+          value.retryAfter === undefined &&
+          value.quotaHeaders === undefined,
+    { message: 'Response evidence requires a provider response source' },
+  )
+export type ProviderRequestDiagnostics = z.infer<
+  typeof ProviderRequestDiagnosticsSchema
+>
+
 export const ProviderRequestBudgetSchema = z.object({
   period: z.enum(['hour', 'day']),
   limit: z.number().int().positive().max(100000),

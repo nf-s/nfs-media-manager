@@ -61,7 +61,7 @@ export function requestBudgetWindow(period: 'hour' | 'day', now: number) {
     : { from: now - HOUR_MS, resetsAt: now + HOUR_MS }
 }
 
-function unsignedHeaderInteger(value: string | null): number | null {
+export function unsignedHeaderInteger(value: string | null): number | null {
   if (value === null || !/^\d+$/.test(value.trim())) return null
   const number = Number(value)
   return Number.isSafeInteger(number) ? number : null

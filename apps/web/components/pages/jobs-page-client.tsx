@@ -24,6 +24,7 @@ import {
   JobErrorDetailsSchema,
   getJobDismissal,
   type Job,
+  type JobErrorDetails,
 } from '@repo/schemas/job'
 import {
   SecondaryColumnFilter,
@@ -80,6 +81,90 @@ const LegacyJobContextSchema = z.object({
   jobHistorySplit: z.object({ context: z.literal('legacy-batch') }),
 })
 
+function JobRequestError({
+  error,
+}: {
+  error: JobErrorDetails['causes'][number]
+}) {
+  const { diagnostics, code, retryAt } = error
+  const quotaLabels: Record<string, string> = {
+    'x-ratelimit-limit': 'Limit',
+    'x-ratelimit-remaining': 'Remaining',
+    'x-ratelimit-reset': 'Reset',
+    'x-discogs-ratelimit': 'Discogs limit',
+    'x-discogs-ratelimit-used': 'Discogs used',
+    'x-discogs-ratelimit-remaining': 'Discogs remaining',
+  }
+  return (
+    <div className="grid gap-1" aria-label="Request error details">
+      <p>
+        <strong>
+          {diagnostics?.source === 'provider-response'
+            ? `Provider response${diagnostics.httpStatus !== undefined ? ` · HTTP ${diagnostics.httpStatus}` : ''}`
+            : diagnostics?.source === 'local-cooldown'
+              ? 'Local cooldown · No outgoing request'
+              : diagnostics?.source === 'local-budget'
+                ? 'Local request budget · No outgoing request'
+                : diagnostics?.source === 'local-access-halt'
+                  ? 'Local access block · No outgoing request'
+                  : 'Provider request error'}
+        </strong>
+      </p>
+      {code && <p>Code: {code}</p>}
+      {diagnostics?.quotaError && <p>Provider reported a quota error.</p>}
+      {diagnostics?.responseReceivedAt && (
+        <p>
+          Received{' '}
+          <time dateTime={diagnostics.responseReceivedAt}>
+            {new Date(diagnostics.responseReceivedAt).toLocaleString()}
+          </time>
+        </p>
+      )}
+      {diagnostics?.retryAfter && (
+        <p>
+          Retry-After:{' '}
+          {'seconds' in diagnostics.retryAfter ? (
+            `${diagnostics.retryAfter.seconds} seconds`
+          ) : (
+            <time dateTime={diagnostics.retryAfter.at}>
+              {new Date(diagnostics.retryAfter.at).toLocaleString()}
+            </time>
+          )}
+        </p>
+      )}
+      {retryAt !== undefined && retryAt !== null && (
+        <>
+          <p>
+            {diagnostics?.source === 'provider-response'
+              ? 'Request retry time'
+              : diagnostics
+                ? 'Local retry time'
+                : 'Recorded retry time'}{' '}
+            <time dateTime={new Date(retryAt).toISOString()}>
+              {new Date(retryAt).toLocaleString()}
+            </time>
+          </p>
+          {diagnostics?.source === 'provider-response' && (
+            <p className="muted">
+              Provider cooldowns and dispatch pauses can delay execution.
+            </p>
+          )}
+        </>
+      )}
+      {diagnostics?.quotaHeaders && (
+        <dl className="flex flex-wrap gap-x-4 gap-y-1">
+          {Object.entries(diagnostics.quotaHeaders).map(([name, value]) => (
+            <div key={name} className="flex gap-1" title={name}>
+              <dt>{quotaLabels[name] ?? name}:</dt>
+              <dd>{value?.toLocaleString()}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+    </div>
+  )
+}
+
 export function JobLogEntry({
   log,
   jobId,
@@ -110,6 +195,17 @@ export function JobLogEntry({
   })
   const parsed = ErrorMetadataSchema.safeParse(log.metadata)
   const error = parsed.success ? parsed.data.error : null
+  const requestErrors = new Map<string, JobErrorDetails['causes'][number]>()
+  for (const entry of error ? [error, ...error.causes] : []) {
+    if (entry.diagnostics || entry.code || entry.retryAt !== undefined) {
+      const identity = JSON.stringify({
+        code: entry.code,
+        retryAt: entry.retryAt,
+        diagnostics: entry.diagnostics,
+      })
+      if (!requestErrors.has(identity)) requestErrors.set(identity, entry)
+    }
+  }
   const diagnosticMetadata = DiagnosticMetadataSchema.safeParse(log.metadata)
   return (
     <li className="job-log" data-level={log.level}>
@@ -162,6 +258,9 @@ export function JobLogEntry({
             {review.isError && <p role="alert">{review.error.message}</p>}
           </div>
         ) : null}
+        {[...requestErrors].map(([identity, entry]) => (
+          <JobRequestError key={identity} error={entry} />
+        ))}
         {error ? (
           <pre className="job-error">
             {[

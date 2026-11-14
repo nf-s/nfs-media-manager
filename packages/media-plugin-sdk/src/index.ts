@@ -1,8 +1,17 @@
 import { z } from 'zod'
 import {
+  ProviderRequestDiagnosticsSchema,
+  type ProviderRequestDiagnostics,
+} from '@repo/schemas/provider'
+import {
   LocalWorkerPolicySchema,
   type LocalWorkerPolicy,
 } from './local-worker.js'
+
+export {
+  ProviderRequestDiagnosticsSchema,
+  type ProviderRequestDiagnostics,
+} from '@repo/schemas/provider'
 
 export const JsonValueSchema: z.ZodType<JsonValue> = z.lazy(() =>
   z.union([
@@ -320,6 +329,8 @@ export function isProviderItemNotFoundError(
 }
 
 export class ProviderRequestError extends Error {
+  readonly diagnostics?: ProviderRequestDiagnostics
+
   constructor(
     message: string,
     public readonly code:
@@ -329,10 +340,14 @@ export class ProviderRequestError extends Error {
       | 'access-denied',
     public readonly retryAt: number | null = null,
     public readonly recorded = false,
-    options?: ErrorOptions,
+    options?: ErrorOptions & { diagnostics?: ProviderRequestDiagnostics },
   ) {
     super(message, options)
     this.name = 'ProviderRequestError'
+    const diagnostics = ProviderRequestDiagnosticsSchema.safeParse(
+      options?.diagnostics,
+    )
+    if (diagnostics.success) this.diagnostics = diagnostics.data
   }
 }
 

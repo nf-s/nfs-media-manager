@@ -315,6 +315,9 @@ importers:
 
   packages/media-plugin-sdk:
     dependencies:
+      '@repo/schemas':
+        specifier: workspace:*
+        version: link:../schemas
       zod:
         specifier: 'catalog:'
         version: 4.6.7

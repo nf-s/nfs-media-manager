@@ -27,6 +27,7 @@
     "typescript": "catalog:"
   },
   "dependencies": {
+    "@repo/schemas": "workspace:*",
     "zod": "catalog:"
   }
 }

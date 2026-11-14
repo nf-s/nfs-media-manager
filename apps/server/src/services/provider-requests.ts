@@ -12,7 +12,9 @@ import { db } from '@/lib/db'
 import { getProviderTransport } from '@/services/provider-transport'
 import {
   ProviderRequestBudgetSchema,
+  ProviderQuotaHeadersSchema,
   type ProviderRequestBudget,
+  type ProviderRequestDiagnostics,
 } from '@repo/schemas/provider'
 import { providerRequestState, providerRequestEvent } from '@/schemas/db'
 import {
@@ -25,6 +27,7 @@ import {
   requestBudgetWindow,
   hasProviderQuotaError,
   fixedRequestWindow,
+  unsignedHeaderInteger,
 } from '@/lib/request-policy'
 
 export function effectiveRequestBudget(
@@ -95,12 +98,54 @@ type ReadyReservation = {
 type Reservation =
   | ReadyReservation
   | { kind: 'wait'; ms: number }
-  | { kind: 'blocked'; until: number | null; reason: string }
+  | {
+      kind: 'blocked'
+      until: number | null
+      reason: string
+      source: 'local-cooldown' | 'local-budget' | 'local-access-halt'
+    }
 const delay = (ms: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, ms))
 const LEASE_GRACE_MS = 5000
 const DISPATCH_WINDOW_MS = 4000
 const RequestTimeoutSchema = PluginRequestTimeoutSchema.default(15000)
+
+function responseDiagnostics(
+  response: Response,
+  receivedAt: number,
+  quotaError: boolean,
+): ProviderRequestDiagnostics {
+  const quotaHeaders = ProviderQuotaHeadersSchema.parse(
+    Object.fromEntries(
+      ProviderQuotaHeadersSchema.keyof().options.flatMap((name) => {
+        const value = unsignedHeaderInteger(response.headers.get(name))
+        return value === null ? [] : [[name, value]]
+      }),
+    ),
+  )
+  const retryAfter = response.headers.get('retry-after')?.trim()
+  const seconds = unsignedHeaderInteger(retryAfter ?? null)
+  const at =
+    retryAfter &&
+    retryAfter.length <= 128 &&
+    /^[A-Za-z]{3}, \d{2} [A-Za-z]{3} \d{4} \d{2}:\d{2}:\d{2} GMT$/.test(
+      retryAfter,
+    )
+      ? Date.parse(retryAfter)
+      : NaN
+  return {
+    source: 'provider-response',
+    httpStatus: response.status,
+    responseReceivedAt: new Date(receivedAt).toISOString(),
+    quotaError,
+    ...(seconds !== null
+      ? { retryAfter: { seconds } }
+      : Number.isFinite(at)
+        ? { retryAfter: { at: new Date(at).toISOString() } }
+        : {}),
+    ...(Object.keys(quotaHeaders).length ? { quotaHeaders } : {}),
+  }
+}
 
 async function readBoundedBody(
   response: Response,
@@ -168,6 +213,7 @@ async function reserve(
     if (state.halted)
       return {
         kind: 'blocked',
+        source: 'local-access-halt',
         until: null,
         reason:
           'Provider access was denied. Requests are halted; check access before explicitly updating credentials.',
@@ -175,8 +221,9 @@ async function reserve(
     if (state.cooldownUntil && state.cooldownUntil.getTime() > now)
       return {
         kind: 'blocked',
+        source: 'local-cooldown',
         until: state.cooldownUntil.getTime(),
-        reason: state.lastError ?? 'Provider cooldown',
+        reason: 'Provider cooldown is active',
       }
     const requestClass = method.toUpperCase() === 'GET' ? 'read' : 'write'
     const fixedWindow = plugin.manifest.rateLimit.fixedWindow
@@ -198,6 +245,7 @@ async function reserve(
       if ((usage?.used ?? 0) >= limit)
         return {
           kind: 'blocked',
+          source: 'local-budget',
           until: window.resetsAt,
           reason: `Fixed-window ${requestClass} request budget exhausted`,
         }
@@ -211,6 +259,7 @@ async function reserve(
       if (usage.used >= requestBudget.limit)
         return {
           kind: 'blocked',
+          source: 'local-budget',
           until: Date.parse(usage.resetsAt),
           reason:
             requestBudget.period === 'day'
@@ -234,6 +283,7 @@ async function reserve(
         .where(eq(providerRequestState.provider, provider))
       return {
         kind: 'blocked',
+        source: 'local-budget',
         until: budget.retryAt,
         reason: 'Hourly request budget exhausted',
       }
@@ -311,17 +361,19 @@ async function checkDispatch(provider: string, reservation: ReadyReservation) {
     .where(eq(providerRequestState.provider, provider))
   if (state?.halted)
     throw new ProviderRequestError(
-      state.lastError ?? 'Provider access is halted',
+      'Provider access is halted',
       'access-denied',
       null,
       true,
+      { diagnostics: { source: 'local-access-halt' } },
     )
   if (state?.cooldownUntil && state.cooldownUntil.getTime() > Date.now())
     throw new ProviderRequestError(
-      state.lastError ?? 'Provider cooldown',
+      `Provider cooldown is active. Retry after ${state.cooldownUntil.toISOString()}.`,
       'cooldown',
       state.cooldownUntil.getTime(),
       true,
+      { diagnostics: { source: 'local-cooldown' } },
     )
   if (state?.leaseId !== reservation.token) throw expiredReservation()
 }
@@ -610,6 +662,7 @@ export function createProviderRequest(
         reservation.until === null ? 'access-denied' : 'cooldown',
         reservation.until,
         true,
+        { diagnostics: { source: reservation.source } },
       )
     const token = reservation.token
     const reservedAt = reservation.reservedAt
@@ -627,12 +680,14 @@ export function createProviderRequest(
       // still fits inside the durable lease, with a margin for abort delivery.
       if (startedAt >= reservation.dispatchBefore) throw expiredReservation()
       requestStartedAt = startedAt
-      const responsePromise = transport
-        ? transport.execute(String(url), {
-            dispatchBefore: reservation.dispatchBefore,
-            expiresAt: reservation.dispatchBefore + timeoutMs,
-          })
-        : fetch(url, { ...init, redirect: 'manual', signal })
+      const responsePromise = (
+        transport
+          ? transport.execute(String(url), {
+              dispatchBefore: reservation.dispatchBefore,
+              expiresAt: reservation.dispatchBefore + timeoutMs,
+            })
+          : fetch(url, { ...init, redirect: 'manual', signal })
+      ).then((response) => ({ response, receivedAt: Date.now() }))
       const activeReservation = reservation
       const recordRemoteReceipt = async () => {
         requestStartedAt = Date.now()
@@ -649,7 +704,7 @@ export function createProviderRequest(
         dispatchPromise,
       ])
       if (responseResult.status === 'rejected') throw responseResult.reason
-      const response = responseResult.value
+      const { response, receivedAt: responseReceivedAt } = responseResult.value
       const quota = plugin.manifest.rateLimit.respectRateLimitHeaders
         ? responseQuota(response.headers, Date.now())
         : null
@@ -711,10 +766,20 @@ export function createProviderRequest(
             : null
         throw new ProviderRequestError(
           limited
-            ? 'Provider rate limit reached'
+            ? response.status === 429
+              ? 'Provider rate limit reached (HTTP 429)'
+              : `Provider quota error (HTTP ${response.status})`
             : `Provider request failed (HTTP ${response.status})`,
           limited ? 'rate-limit' : denied ? 'access-denied' : 'request-failed',
           until,
+          false,
+          {
+            diagnostics: responseDiagnostics(
+              response,
+              responseReceivedAt,
+              apiLimit,
+            ),
+          },
         )
       }
       // HTTP safety signals take precedence over dispatch bookkeeping errors.
@@ -747,7 +812,7 @@ export function createProviderRequest(
         safe.code,
         safe.retryAt,
         true,
-        { cause: safe },
+        { cause: safe, diagnostics: safe.diagnostics },
       )
     } finally {
       await db.transaction(async (tx) => {

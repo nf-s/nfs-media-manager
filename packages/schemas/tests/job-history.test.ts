@@ -1,11 +1,42 @@
 import { describe, expect, it } from 'vitest'
 import {
   JobActivitySchema,
+  JobErrorDetailsSchema,
   JobListQuerySchema,
   getJobDismissal,
 } from '../src/job'
 
 describe('job history contracts', () => {
+  it('accepts legacy errors and optional structured request evidence on causes', () => {
+    const legacy = {
+      name: 'Error',
+      message: 'Legacy failure',
+      stack: null,
+      causes: [],
+    }
+    expect(JobErrorDetailsSchema.parse(legacy)).toEqual(legacy)
+    const cause = {
+      name: 'ProviderRequestError',
+      message: 'Local cooldown',
+      stack: null,
+      code: 'cooldown',
+      retryAt: 1767225660000,
+      diagnostics: { source: 'local-cooldown' },
+    }
+    expect(
+      JobErrorDetailsSchema.parse({ ...legacy, causes: [cause] }).causes,
+    ).toEqual([cause])
+    for (const invalid of [
+      { code: 'unknown' },
+      { retryAt: -1 },
+      { retryAt: 8640000000000001 },
+      { diagnostics: { source: 'provider-response', httpStatus: '429' } },
+      { diagnostics: { source: 'local-cooldown', httpStatus: 429 } },
+    ])
+      expect(
+        JobErrorDetailsSchema.safeParse({ ...legacy, ...invalid }).success,
+      ).toBe(false)
+  })
   it('retains a media filter without implicitly selecting a status', () => {
     expect(JobListQuerySchema.parse({ mediaItemId: 'film-1' })).toEqual({
       mediaItemId: 'film-1',
