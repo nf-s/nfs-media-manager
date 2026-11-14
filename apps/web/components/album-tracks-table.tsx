@@ -1,9 +1,15 @@
 'use client'
 
 import type { AlbumDetail } from '@repo/schemas/media'
+import { useSearchParams } from 'next/navigation'
 import { SecondaryCell, SecondaryDataTable } from './secondary-table'
 import { TrackPlayButton, TrackQueueButton } from './play-controls'
 import ExternalLink from './external-link'
+import {
+  albumTrackView,
+  albumTrackViewHref,
+  createAlbumPlaybackSource,
+} from '@/utils/playback-source'
 
 export default function AlbumTracksTable({
   album,
@@ -12,6 +18,11 @@ export default function AlbumTracksTable({
   album: AlbumDetail
   scrobbles: Map<number, number> | null
 }) {
+  const searchParams = useSearchParams()
+  const view = albumTrackView(
+    searchParams?.get('albumTrackView') ?? null,
+    album.id,
+  )
   return (
     <SecondaryDataTable
       id="album-tracks"
@@ -20,11 +31,36 @@ export default function AlbumTracksTable({
       search={{
         label: 'Search album tracks',
         placeholder: 'Search tracks',
+        maxLength: 200,
         value: (track) => track.title,
       }}
       countLabel="tracks"
       rowKey={(track) => track.position}
       defaultSort={{ key: 'position', direction: 'asc' }}
+      view={{
+        sort: { key: view.sortBy, direction: view.direction },
+        query: view.q,
+        onChange: ({ sort, query }) => {
+          const next = albumTrackView(
+            JSON.stringify({
+              id: album.id,
+              q: query,
+              sortBy: sort.key,
+              direction: sort.direction,
+            }),
+            album.id,
+          )
+          window.history.replaceState(
+            null,
+            '',
+            albumTrackViewHref(
+              window.location.pathname,
+              new URLSearchParams(window.location.search),
+              next,
+            ),
+          )
+        },
+      }}
       empty="No imported tracks."
       columns={[
         {
@@ -32,7 +68,23 @@ export default function AlbumTracksTable({
           label: '#',
           className: 'numeric',
           value: (track) => track.position,
-          render: (track) => <TrackPlayButton album={album} track={track} />,
+          render: (track, ordered) => (
+            <TrackPlayButton
+              album={album}
+              track={track}
+              source={() =>
+                createAlbumPlaybackSource(
+                  album,
+                  albumTrackViewHref(
+                    window.location.pathname,
+                    new URLSearchParams(window.location.search),
+                    view,
+                  ),
+                  ordered,
+                )
+              }
+            />
+          ),
         },
         {
           key: 'title',

@@ -20,6 +20,11 @@ import PlaylistsWorkspace, {
 import { sortTableRows } from '@/utils/secondary-table'
 import { ConfigContext } from './providers'
 import { idlePlaybackState } from '@/utils/playback-engine'
+import {
+  playlistEntryView,
+  playlistEntryViewParam,
+} from '@/utils/playlist-links'
+import { indexedPlaylistEntries } from './playlist-detail'
 
 // The Tracks browser imports a CSS module, which Node cannot load; class names are not under test.
 require.extensions['.css'] = (module) => {
@@ -133,8 +138,20 @@ function render(
   })
   client.setQueryData(['playlists'], [summary])
   client.setQueryData(['playlist', playlist.id], playlist)
+  const view = playlistEntryView(
+    new URLSearchParams(search).get('playlistView'),
+    playlist.id,
+  )
   client.setQueryData(
-    ['playlist', playlist.id, 'entries', 'position', 'asc', '', []],
+    [
+      'playlist',
+      playlist.id,
+      'entries',
+      view.sortBy,
+      view.direction,
+      view.q ?? '',
+      view.kinds ?? [],
+    ],
     {
       pages: [playlist],
       pageParams: [1],
@@ -338,6 +355,49 @@ test('playlist entries expose sorting for every data column', () => {
   assert.ok(html.indexOf('aria-label="Filter Type"') > html.indexOf('<thead>'))
   assert.doesNotMatch(html, /<select[^>]*aria-label="Entry type"/)
   assert.match(html, /aria-label="Resize details panel"/)
+})
+
+test('a playback return URL restores the playlist table search and sorting', () => {
+  const params = new URLSearchParams({
+    playlist: 'playlist-1',
+    playlistView: playlistEntryViewParam('playlist-1', {
+      ...playlistEntryView(null, 'playlist-1'),
+      sortBy: 'title',
+      direction: 'desc',
+      q: 'Fixture',
+      kinds: ['track'],
+    }),
+  })
+  const html = drawerOf(render(params.toString()))
+  assert.match(html, /aria-label="Search playlist entries"[^>]*value="Fixture"/)
+  assert.match(html, /aria-sort="descending"><div[^>]*><button[^>]*>Title/)
+  assert.match(html, /matching entries/)
+})
+
+test('overlapping playlist pages keep playback offsets after removing duplicate rows', () => {
+  const page = detail()
+  const first = page.items.items[0]
+  const second = page.items.items[1]
+  const third = page.items.items[2]
+  assert.ok(first)
+  assert.ok(second)
+  assert.ok(third)
+  const pages = [
+    {
+      ...page,
+      items: { ...page.items, page: 1, size: 2, items: [first, second] },
+    },
+    {
+      ...page,
+      items: { ...page.items, page: 2, size: 2, items: [second, third] },
+    },
+  ]
+  const rows = indexedPlaylistEntries(pages)
+  assert.deepEqual(
+    rows.map(([, row]) => row.index),
+    [0, 1, 3],
+  )
+  assert.equal(rows[2]?.[1].entry, third)
 })
 
 test('playlist columns sort numeric counts and keep unknown dates last', () => {

@@ -123,6 +123,66 @@ test('a queue with nothing playing keeps the dock and its queue', () => {
   assert.doesNotMatch(html, /open\.spotify\.com/)
 })
 
+test('shuffle is unavailable without a source and exposes its selected state', () => {
+  const withoutSource = render({ ...on, active: true, current: item })
+  assert.match(
+    withoutSource,
+    /aria-label="Shuffle source" aria-pressed="false"[^>]*disabled=""/,
+  )
+  assert.doesNotMatch(withoutSource, /Back to source/)
+  const withSource = render({
+    ...on,
+    active: true,
+    current: item,
+    source: { label: 'Tracks', href: '/tracks?sortBy=title&direction=asc' },
+    shuffle: true,
+  })
+  assert.match(withSource, /aria-label="Shuffle source" aria-pressed="true"/)
+  assert.doesNotMatch(withSource, /aria-label="Shuffle source"[^>]*disabled=""/)
+})
+
+test('the queue links to the saved source and places ten upcoming tracks after queued items', () => {
+  const upcoming: PlayableItem[] = Array.from({ length: 12 }, (_, index) => ({
+    ...item,
+    kind: 'track',
+    uri: `spotify:track:fixture-${index}`,
+    title: `Source track ${index + 1}`,
+    trackCount: 1,
+  }))
+  const html = render({
+    ...on,
+    active: true,
+    current: item,
+    source: { label: 'Tracks', href: '/tracks?sortBy=title&direction=asc' },
+    queue: [{ key: 'queued-1', item: { ...item, title: 'Queued album' } }],
+    upcoming,
+  })
+  assert.match(html, /href="\/tracks\?sortBy=title&amp;direction=asc"/)
+  assert.match(html, /Back to source: Tracks/)
+  assert.match(html, /<h3>Queued<\/h3>/)
+  assert.match(html, /<h3>Next from Tracks<\/h3>/)
+  assert.ok(html.indexOf('Queued album') < html.indexOf('Next from Tracks'))
+  assert.match(html, /<strong>Source track 10<\/strong>/)
+  assert.doesNotMatch(html, /Source track 11|Source track 12/)
+  assert.match(html, /aria-label="Remove Queued album from queue"/)
+  assert.doesNotMatch(html, /aria-label="Remove Source track/)
+})
+
+test('the queue shows loading state and permits next when only the source has tracks', () => {
+  const html = render({
+    ...on,
+    active: true,
+    source: { label: 'Albums', href: '/albums' },
+    upcoming: [{ ...item, kind: 'track', title: 'Upcoming track' }],
+    sourceLoading: true,
+  })
+  assert.match(html, /role="status">Loading tracks…/)
+  assert.match(html, /aria-label="Queue: 0 queued, 1 upcoming"/)
+  assert.doesNotMatch(html, /aria-label="Next" disabled=""/)
+  assert.doesNotMatch(html, /aria-label="Play" disabled=""/)
+  assert.doesNotMatch(html, /No upcoming tracks/)
+})
+
 test('playback started elsewhere is shown without a library album', () => {
   const html = render({
     ...on,

@@ -47,6 +47,12 @@ import DetailProviderLinks from './detail-provider-links'
 import AlbumTitle from './album-title'
 import AlbumProviderDetails from './album-provider-details'
 import { AlbumPlayButtons } from './play-controls'
+import {
+  albumDetailTab,
+  albumTrackView,
+  albumTrackViewHref,
+  createAlbumPlaybackSource,
+} from '@/utils/playback-source'
 import AlbumTracksTable from './album-tracks-table'
 import { albumSpotifyDestination } from '@/utils/album-links'
 import { scopedHref } from '@/utils/media-scope'
@@ -296,7 +302,21 @@ export default function MediaDetail({
   const browseParams = new URLSearchParams(searchParams)
   browseParams.delete('item')
   const queryClient = useQueryClient()
-  const [tab, setTab] = useState('overview')
+  const [localTab, setLocalTab] = useState('overview')
+  const tab =
+    mediaType === 'album'
+      ? albumDetailTab(new URLSearchParams(searchParams), id)
+      : localTab
+  function setTab(next: string) {
+    if (mediaType !== 'album') return setLocalTab(next)
+    const params = new URLSearchParams(window.location.search)
+    const view = albumTrackView(params.get('albumTrackView'), id)
+    window.history.replaceState(
+      null,
+      '',
+      albumTrackViewHref(window.location.pathname, params, view, next),
+    )
+  }
   const [provider, setProvider] = useState('')
   const [saved, setSaved] = useState(false)
   const collection = mediaType === 'album' ? 'albums' : 'films'
@@ -494,7 +514,17 @@ export default function MediaDetail({
               item.mediaType === 'album' ? item.spotifyUrl : undefined
             }
           />
-          {item.mediaType === 'album' && <AlbumPlayButtons album={item} />}
+          {item.mediaType === 'album' && (
+            <AlbumPlayButtons
+              album={item}
+              source={() =>
+                createAlbumPlaybackSource(
+                  item,
+                  `${window.location.pathname}${window.location.search}`,
+                )
+              }
+            />
+          )}
         </div>
       </header>
       {selectedFilters.length > 0 && (

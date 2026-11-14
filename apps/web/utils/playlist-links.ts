@@ -1,5 +1,35 @@
 import { z } from 'zod'
 import type { BrowseFilter } from '@repo/schemas/browse'
+import {
+  PlaylistDetailQuerySchema,
+  type PlaylistDetailQuery,
+} from '@repo/schemas/tracks'
+
+const PlaylistEntryViewSchema = PlaylistDetailQuerySchema.extend({
+  id: z.string(),
+  q: z.string().max(200).optional(),
+})
+
+/** Playlist table settings travel with its drawer URL, including a playback return link. */
+export function playlistEntryView(value: string | null, id: string) {
+  try {
+    const parsed = PlaylistEntryViewSchema.safeParse(JSON.parse(value ?? '{}'))
+    if (parsed.success && parsed.data.id === id) return parsed.data
+  } catch {
+    // Malformed URL state falls back to the playlist's original order.
+  }
+  return PlaylistDetailQuerySchema.parse({})
+}
+
+export function playlistEntryViewParam(id: string, view: PlaylistDetailQuery) {
+  return JSON.stringify({
+    id,
+    sortBy: view.sortBy,
+    direction: view.direction,
+    q: view.q,
+    kinds: view.kinds,
+  })
+}
 
 /** The required filter for one playlist, as the playlist links apply it. */
 export function playlistFilter(name: string): BrowseFilter {

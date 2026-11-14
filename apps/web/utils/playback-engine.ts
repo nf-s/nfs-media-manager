@@ -5,6 +5,7 @@ import {
   startSession,
   stepSession,
   type PlayableItem,
+  type PlaybackSource,
   type PlaybackSession,
   type PlaybackSnapshot,
   type QueueEntry,
@@ -48,6 +49,11 @@ export type PlaybackState = {
   /** What the target device is playing. */
   snapshot: PlaybackSnapshot | null
   queue: QueueEntry[]
+  source: Pick<PlaybackSource, 'label' | 'href'> | null
+  /** The next source tracks, after the manual queue. */
+  upcoming: PlayableItem[]
+  shuffle: boolean
+  sourceLoading: boolean
   target: PlaybackTarget
   /** Other Spotify devices; this browser is not listed. */
   devices: PlaybackDevice[]
@@ -65,6 +71,10 @@ export const idlePlaybackState: PlaybackState = {
   current: null,
   snapshot: null,
   queue: [],
+  source: null,
+  upcoming: [],
+  shuffle: false,
+  sourceLoading: false,
   target: { kind: 'local' },
   devices: [],
   devicesStatus: 'idle',
@@ -82,6 +92,7 @@ export type PlaybackEngineOptions = {
   initialVolume: number
   onLocalVolume?: (volume: number) => void
   now?: () => number
+  random?: () => number
   /** Whether the page is visible; idle remote polling stops while hidden. */
   visible?: () => boolean
 }
@@ -105,6 +116,28 @@ const NOT_STARTED: PlaybackFailure = {
 }
 
 type Waiter = { resolve: (id: string) => void; reject: (error: Error) => void }
+
+type SourceTrack = { index: number; position: number; item: PlayableItem }
+type SourceSession = {
+  definition: PlaybackSource
+  tracks: Map<number, Promise<PlayableItem[]>>
+  remaining: number[]
+  played: Set<string>
+  skipped: Set<string>
+  exhausted: Set<number>
+  upcoming: SourceTrack[]
+  history: SourceTrack[]
+  initializing: boolean
+  revision: number
+  filling: Promise<void> | null
+}
+
+const SOURCE_PREVIEW_SIZE = 10
+const SOURCE_CACHE_SIZE = 20
+
+function sourceTrackKey(index: number, position: number) {
+  return `${index}:${position}`
+}
 
 function sameDevice(a: PlaybackTarget, b: PlaybackTarget) {
   if (a.kind === 'remote' && b.kind === 'remote')
@@ -139,6 +172,7 @@ function sameShown(shown: PlaybackSnapshot | null, after: PlaybackSnapshot) {
 export function createPlaybackEngine(options: PlaybackEngineOptions) {
   const now = options.now ?? Date.now
   const visible = options.visible ?? (() => true)
+  const random = options.random ?? Math.random
   const { api } = options
   const listeners = new Set<() => void>()
   const waiters = new Set<Waiter>()
@@ -152,6 +186,9 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
   let localId: string | null = null
   let localVolume = options.initialVolume
   let session: PlaybackSession | null = null
+  let source: SourceSession | null = null
+  let sourceStarting = false
+  let currentFromSource = false
   let latest: PlaybackSnapshot | null = null
   let skippedAt: number | null = null
   let sawLocalState = false
@@ -343,6 +380,248 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     return next
   }
 
+  function clearSource() {
+    source = null
+    sourceStarting = false
+    currentFromSource = false
+    set({ source: null, upcoming: [], sourceLoading: false })
+  }
+
+  function loadSourceEntry(active: SourceSession, index: number) {
+    const cached = active.tracks.get(index)
+    if (cached) {
+      active.tracks.delete(index)
+      active.tracks.set(index, cached)
+      return cached
+    }
+    const loading: Promise<PlayableItem[]> = active.definition
+      .load(index)
+      .catch((error: unknown) => {
+        if (active.tracks.get(index) === loading) active.tracks.delete(index)
+        throw error
+      })
+    active.tracks.set(index, loading)
+    if (active.tracks.size > SOURCE_CACHE_SIZE) {
+      const oldest = active.tracks.keys().next().value
+      if (oldest !== undefined) active.tracks.delete(oldest)
+    }
+    return loading
+  }
+
+  /** Builds only the small preview; source pages are retained by their loader. */
+  function fillSource(active: SourceSession): Promise<void> {
+    if (active.filling) return active.filling
+    const revision = active.revision
+    const shuffled = state.shuffle
+    const upcoming = [...active.upcoming]
+    set({ sourceLoading: true })
+    const filling = (async () => {
+      const used = new Set([...active.played, ...active.skipped])
+      for (const entry of upcoming)
+        used.add(sourceTrackKey(entry.index, entry.position))
+      let candidates = [...active.remaining]
+      while (upcoming.length < SOURCE_PREVIEW_SIZE && candidates.length) {
+        const index =
+          candidates[shuffled ? Math.floor(random() * candidates.length) : 0]
+        if (index === undefined) break
+        const tracks = await loadSourceEntry(active, index)
+        if (source !== active || revision !== active.revision || disposed)
+          return
+        const available = tracks
+          .map((item, position) => ({ index, position, item }))
+          .filter((entry) => !used.has(sourceTrackKey(index, entry.position)))
+        const entry =
+          available[shuffled ? Math.floor(random() * available.length) : 0]
+        if (!entry) {
+          candidates = candidates.filter((candidate) => candidate !== index)
+          if (
+            tracks.every((_, position) => {
+              const key = sourceTrackKey(index, position)
+              return active.played.has(key) || active.skipped.has(key)
+            })
+          ) {
+            if (
+              tracks.every((_, position) =>
+                active.played.has(sourceTrackKey(index, position)),
+              )
+            )
+              active.exhausted.add(index)
+            active.remaining = active.remaining.filter(
+              (candidate) => candidate !== index,
+            )
+          }
+          continue
+        }
+        upcoming.push(entry)
+        used.add(sourceTrackKey(index, entry.position))
+      }
+      if (source !== active || revision !== active.revision || disposed) return
+      active.upcoming = upcoming
+      set({ upcoming: upcoming.map((entry) => entry.item) })
+    })()
+      .catch((error: unknown) => {
+        if (source === active && revision === active.revision && !disposed) {
+          // A failed later page must not hold back tracks already resolved.
+          active.upcoming = upcoming
+          set({ upcoming: upcoming.map((entry) => entry.item) })
+          throw error
+        }
+      })
+      .finally(() => {
+        if (source === active && revision === active.revision) {
+          active.filling = null
+          set({ sourceLoading: false })
+        }
+      })
+    active.filling = filling
+    return filling
+  }
+
+  function previewSource(active: SourceSession) {
+    void fillSource(active).catch((error: unknown) => {
+      if (source === active) fail(error)
+    })
+  }
+
+  function consumeSource(active: SourceSession, entry: SourceTrack) {
+    active.played.add(sourceTrackKey(entry.index, entry.position))
+    active.history.push(entry)
+    active.revision += 1
+    active.filling = null
+    sourceStarting = false
+    currentFromSource = true
+    set({ upcoming: active.upcoming.map((next) => next.item) })
+    void start(entry.item)
+    previewSource(active)
+  }
+
+  function startSourceNext(): boolean {
+    const active = source
+    if (!active || (!active.remaining.length && !active.upcoming.length))
+      return false
+    const next = active.upcoming.shift()
+    if (next) {
+      consumeSource(active, next)
+      return true
+    }
+    if (sourceStarting) return true
+    sourceStarting = true
+    run += 1
+    const requested = run
+    detach()
+    set({ starting: true })
+    const prepare = async () => {
+      while (source === active && !disposed) {
+        const revision = active.revision
+        await fillSource(active)
+        if (revision === active.revision) return
+      }
+    }
+    void prepare().then(
+      () => {
+        if (source !== active || requested !== run || disposed) return
+        sourceStarting = false
+        if (state.queue.length && startNext()) return
+        const entry = active.upcoming.shift()
+        if (entry) consumeSource(active, entry)
+        else set({ current: null, starting: false })
+      },
+      (error: unknown) => {
+        if (source !== active || requested !== run || disposed) return
+        sourceStarting = false
+        if (state.queue.length || active.upcoming.length) startNext()
+        fail(error)
+      },
+    )
+    return true
+  }
+
+  async function startSource(item: PlayableItem, definition: PlaybackSource) {
+    const active: SourceSession = {
+      definition: { ...definition },
+      tracks: new Map(),
+      remaining: Array.from(
+        { length: Math.max(0, definition.length - definition.startIndex) },
+        (_, offset) => definition.startIndex + offset,
+      ),
+      played: new Set(),
+      skipped: new Set(),
+      exhausted: new Set(),
+      upcoming: [],
+      history: [],
+      initializing: true,
+      revision: 0,
+      filling: null,
+    }
+    const captured = active.definition
+    source = active
+    sourceStarting = true
+    currentFromSource = true
+    run += 1
+    const requested = run
+    detach()
+    latest = null
+    used = true
+    set({
+      active: true,
+      current: item,
+      snapshot: null,
+      starting: true,
+      failure: null,
+      source: { label: definition.label, href: definition.href },
+      upcoming: [],
+      sourceLoading: true,
+    })
+    try {
+      const tracks = await loadSourceEntry(active, captured.startIndex)
+      if (source !== active || disposed) return
+      const position = Math.max(
+        0,
+        item.startUri
+          ? tracks.findIndex((entry) => entry.uri === item.startUri)
+          : 0,
+      )
+      if (!state.shuffle)
+        for (let before = 0; before < position; before += 1)
+          active.skipped.add(sourceTrackKey(captured.startIndex, before))
+      sourceStarting = false
+      active.initializing = false
+      if (state.shuffle)
+        active.remaining = Array.from(
+          { length: captured.length },
+          (_, index) => index,
+        )
+      const first = tracks[position]
+      if (first) {
+        const entry = {
+          index: captured.startIndex,
+          position,
+          item:
+            first.kind === 'album' && item.startUri
+              ? { ...first, startUri: item.startUri }
+              : first,
+        }
+        if (requested === run) consumeSource(active, entry)
+        else {
+          active.upcoming = [entry]
+          previewSource(active)
+        }
+      } else {
+        active.remaining = active.remaining.filter(
+          (index) => index !== captured.startIndex,
+        )
+        if (requested !== run) previewSource(active)
+        else if (!startSourceNext())
+          set({ current: null, starting: false, sourceLoading: false })
+      }
+    } catch (error) {
+      if (source !== active || requested !== run || disposed) return
+      sourceStarting = false
+      set({ sourceLoading: false })
+      fail(error)
+    }
+  }
+
   async function start(item: PlayableItem) {
     run += 1
     const started = run
@@ -378,7 +657,9 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
 
   function startNext(): boolean {
     const [next, ...rest] = state.queue
-    if (!next) return false
+    if (!next) return startSourceNext()
+    sourceStarting = false
+    currentFromSource = false
     set({ queue: rest })
     void start(next.item)
     return true
@@ -395,7 +676,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
   function publish(after: PlaybackSnapshot) {
     // Until the requested item starts, the device still reports what it was
     // playing before.
-    if (session?.phase === 'starting') return
+    if (session?.phase === 'starting' || sourceStarting) return
     if (sameShown(state.snapshot, after) && !state.starting) return
     set({ active: true, snapshot: after, starting: false })
   }
@@ -411,6 +692,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       if (step.event !== 'none') {
         // The item ended with nothing queued, or other playback replaced it.
         detach()
+        if (step.event === 'left' && !starting) clearSource()
         set({
           current: null,
           failure: starting ? NOT_STARTED : state.failure,
@@ -434,6 +716,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
 
   /** The device no longer reports playback. */
   function playbackStopped() {
+    if (sourceStarting) return
     const ended =
       session?.phase === 'playing' &&
       latest !== null &&
@@ -662,10 +945,31 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     clearFailure() {
       if (state.failure) set({ failure: null })
     },
-    play(item: PlayableItem) {
+    play(item: PlayableItem, definition?: PlaybackSource) {
       playTarget()
       activate()
-      void start(item)
+      if (definition) void startSource(item, definition)
+      else {
+        clearSource()
+        void start(item)
+      }
+    },
+    toggleShuffle() {
+      const active = source
+      if (!active) return
+      const shuffle = !state.shuffle
+      if (shuffle) active.skipped.clear()
+      active.revision += 1
+      active.filling = null
+      active.upcoming = []
+      active.remaining = shuffle
+        ? Array.from(
+            { length: active.definition.length },
+            (_, index) => index,
+          ).filter((index) => !active.exhausted.has(index))
+        : [...active.remaining].sort((a, b) => a - b)
+      set({ shuffle, upcoming: [] })
+      if (!active.initializing) previewSource(active)
     },
     enqueue(item: PlayableItem) {
       sequence += 1
@@ -681,6 +985,8 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       if (!entry) return
       playTarget()
       activate()
+      sourceStarting = false
+      currentFromSource = false
       set({ queue: state.queue.filter((candidate) => candidate !== entry) })
       void start(entry.item)
     },
@@ -704,8 +1010,12 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       if (state.queue.length) set({ queue: [], announcement: 'Queue cleared' })
     },
     toggle() {
-      if (session?.phase === 'starting') return
+      if (session?.phase === 'starting' || sourceStarting) return
       activate()
+      if (currentFromSource && source?.initializing && state.current) {
+        void startSource(state.current, source.definition)
+        return
+      }
       if (!latest) {
         // Nothing is loaded on the device: retry the item, or start the queue.
         if (state.current) void start(state.current)
@@ -731,7 +1041,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
         session.phase === 'starting' ||
         session.item.kind === 'track' ||
         latest?.hasNext === false
-      if (itemEnds && state.queue.length > 0) playTarget()
+      if (itemEnds && (state.queue.length > 0 || source)) playTarget()
       activate()
       if (itemEnds && startNext()) return
       const target = state.target
@@ -746,6 +1056,22 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       const target = state.target
       if (!latest || target.kind === 'restricted') return
       if (positionAt(latest, now()) > RESTART_AFTER_MS) return seek(0)
+      if (currentFromSource && source && source.history.length > 1) {
+        const previous = source.history.at(-2)
+        const current = source.history.pop()
+        if (previous && current) {
+          source.upcoming = [current, ...source.upcoming].slice(
+            0,
+            SOURCE_PREVIEW_SIZE,
+          )
+          source.revision += 1
+          source.filling = null
+          set({ upcoming: source.upcoming.map((entry) => entry.item) })
+          void start(previous.item)
+          previewSource(source)
+          return
+        }
+      }
       set({ failure: null })
       if (target.kind === 'local') guard(player?.previousTrack())
       else

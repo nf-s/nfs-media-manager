@@ -2,7 +2,12 @@
 
 import { AudioLines, ListPlus, Pause, Play } from 'lucide-react'
 import { Button } from '@repo/ui/components/ui/button'
-import { usePlayback, usePlaybackControls } from './playback-provider'
+import {
+  usePlayback,
+  usePlaybackControls,
+  type PlaybackControls,
+  type PlaybackView,
+} from './playback-provider'
 import { spotifyTrackUri } from '@/utils/album-links'
 import {
   albumPlayable,
@@ -10,9 +15,27 @@ import {
   trackPlayable,
   type AlbumSource,
   type LibraryTrackSource,
+  type PlaybackSource,
+  type PlayableItem,
 } from '@/utils/playback'
 
 type Track = { position: number; externalId: string | null; title: string }
+
+function playFromView(
+  controls: PlaybackControls,
+  view: PlaybackView,
+  item: PlayableItem,
+  current: boolean,
+  source?: () => PlaybackSource,
+) {
+  if (current && view.snapshot && !view.snapshot.paused) {
+    controls.toggle()
+    return
+  }
+  const next = source?.()
+  if (current && (!next || view.source?.href === next.href)) controls.toggle()
+  else controls.play(item, next)
+}
 
 /** The album's playable form and whether the player is on it. Null while playback is off. */
 function useAlbumPlayback(album: AlbumSource) {
@@ -26,20 +49,28 @@ function useAlbumPlayback(album: AlbumSource) {
     current,
     playing: current && view.snapshot !== null && !view.snapshot.paused,
     controls,
+    play: (source?: () => PlaybackSource) =>
+      playFromView(controls, view, item, current, source),
   }
 }
 
 /** Play and queue buttons over a grid tile's artwork. */
-export function TilePlayControls({ album }: { album: AlbumSource }) {
+export function TilePlayControls({
+  album,
+  source,
+}: {
+  album: AlbumSource
+  source?: () => PlaybackSource
+}) {
   const playback = useAlbumPlayback(album)
   if (!playback) return null
-  const { item, current, playing, controls } = playback
+  const { item, current, playing, controls, play } = playback
   return (
     <div className="tile-play" data-current={current}>
       <button
         type="button"
         aria-label={`${playing ? 'Pause' : 'Play'} ${album.title}`}
-        onClick={() => (current ? controls.toggle() : controls.play(item))}
+        onClick={() => play(source)}
       >
         {playing ? (
           <>
@@ -66,17 +97,19 @@ export function TilePlayControls({ album }: { album: AlbumSource }) {
 }
 
 /** Play and queue buttons in the album drawer's heading. */
-export function AlbumPlayButtons({ album }: { album: AlbumSource }) {
+export function AlbumPlayButtons({
+  album,
+  source,
+}: {
+  album: AlbumSource
+  source?: () => PlaybackSource
+}) {
   const playback = useAlbumPlayback(album)
   if (!playback) return null
-  const { item, current, playing, controls } = playback
+  const { item, playing, controls, play } = playback
   return (
     <div className="detail-play">
-      <Button
-        type="button"
-        size="sm"
-        onClick={() => (current ? controls.toggle() : controls.play(item))}
-      >
+      <Button type="button" size="sm" onClick={() => play(source)}>
         {playing ? (
           <Pause size={14} aria-hidden="true" />
         ) : (
@@ -101,9 +134,11 @@ export function AlbumPlayButtons({ album }: { album: AlbumSource }) {
 export function TrackPlayButton({
   album,
   track,
+  source,
 }: {
   album: AlbumSource
   track: Track
+  source?: () => PlaybackSource
 }) {
   const view = usePlayback()
   const controls = usePlaybackControls()
@@ -121,7 +156,7 @@ export function TrackPlayButton({
       className="track-play"
       data-current={current}
       aria-label={`${playing ? 'Pause' : 'Play'} ${track.title}`}
-      onClick={() => (current ? controls.toggle() : controls.play(item))}
+      onClick={() => playFromView(controls, view, item, current, source)}
     >
       <span className="track-number">{track.position}</span>
       {playing ? (
@@ -171,6 +206,8 @@ function useLibraryTrackPlayback(track: LibraryTrackSource) {
     current,
     playing: current && !snapshot.paused,
     controls,
+    play: (source?: () => PlaybackSource) =>
+      playFromView(controls, view, item, current, source),
   }
 }
 
@@ -182,16 +219,18 @@ function useLibraryTrackPlayback(track: LibraryTrackSource) {
 export function LibraryTrackPlayButton({
   track,
   position,
+  source,
 }: {
   track: LibraryTrackSource
   position?: number
+  source?: () => PlaybackSource
 }) {
   const playback = useLibraryTrackPlayback(track)
   if (!playback) return position === undefined ? null : <>{position}</>
-  const { item, current, playing, controls } = playback
+  const { current, playing, play } = playback
   const Icon = playing ? Pause : Play
   const label = `${playing ? 'Pause' : 'Play'} ${track.title}`
-  const onClick = () => (current ? controls.toggle() : controls.play(item))
+  const onClick = () => play(source)
   if (position === undefined)
     return (
       <button

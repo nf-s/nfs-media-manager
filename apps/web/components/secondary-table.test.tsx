@@ -101,6 +101,49 @@ test('three-column tables keep every data column visible without a chooser', () 
   assert.doesNotMatch(html, /class="secondary-table-toolbar"/)
 })
 
+test('a controlled table passes its filtered and ordered rows to playback renderers', () => {
+  const captured: string[][] = []
+  const html = renderToStaticMarkup(
+    <SecondaryDataTable
+      id="controlled"
+      label="Controlled rows"
+      rows={[
+        { title: 'Song A' },
+        { title: 'Instrumental' },
+        { title: 'Song Z' },
+      ]}
+      rowKey={(row) => row.title}
+      defaultSort={{ key: 'title', direction: 'asc' }}
+      search={{ label: 'Search rows', value: (row) => row.title }}
+      view={{
+        sort: { key: 'title', direction: 'desc' },
+        query: 'Song ',
+        onChange: () => {
+          throw new Error('Unexpected change during render')
+        },
+      }}
+      columns={[
+        {
+          key: 'title',
+          label: 'Title',
+          value: (row) => row.title,
+          render: (row, ordered) => {
+            captured.push(ordered.map((item) => item.title))
+            return row.title
+          },
+        },
+      ]}
+    />,
+  )
+  assert.deepEqual(captured, [
+    ['Song Z', 'Song A'],
+    ['Song Z', 'Song A'],
+  ])
+  assert.match(html, /value="Song "/)
+  assert.match(html, /aria-sort="descending"/)
+  assert.doesNotMatch(html, /Instrumental/)
+})
+
 test('bounded cells retain full text and rich details behind a labelled disclosure', () => {
   const html = renderToStaticMarkup(
     <SecondaryCell

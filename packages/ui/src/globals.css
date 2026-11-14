@@ -3503,6 +3503,11 @@ button.player-track:hover strong {
   background: var(--chip);
   color: var(--ink);
 }
+.player-skip[aria-pressed='true'] {
+  background: var(--chip);
+  color: #334155;
+  box-shadow: inset 0 -2px #334155;
+}
 .player-skip:disabled,
 .player-toggle:disabled {
   opacity: 0.45;
@@ -3738,6 +3743,35 @@ button.player-track:hover strong {
   font-weight: 500;
   letter-spacing: 0.02em;
   color: #667080;
+}
+.player-source {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 6px;
+  border-radius: 7px;
+  color: var(--ink-2);
+  font-size: 12px;
+}
+.player-source:hover {
+  background: var(--chip);
+  color: var(--ink);
+}
+.player-source svg {
+  flex-shrink: 0;
+}
+.player-source span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.queue-position {
+  flex-shrink: 0;
+  width: 20px;
+  color: #667080;
+  font-size: 11px;
+  text-align: center;
 }
 .queue-list {
   display: grid;

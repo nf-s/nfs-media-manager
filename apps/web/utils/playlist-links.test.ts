@@ -9,9 +9,29 @@ import {
   playlistHref,
   playlistTracksHref,
   trackHref,
+  playlistEntryView,
+  playlistEntryViewParam,
 } from './playlist-links'
 
 const name = 'Evening mix & "favourites" #2'
+
+test('playlist playback links restore search, sort and type filters only for their playlist', () => {
+  const value = playlistEntryViewParam('playlist-1', {
+    ...playlistEntryView(null, 'playlist-1'),
+    sortBy: 'artists',
+    direction: 'desc',
+    q: 'Example ',
+    kinds: ['track'],
+  })
+  const restored = playlistEntryView(value, 'playlist-1')
+  assert.equal(restored.sortBy, 'artists')
+  assert.equal(restored.direction, 'desc')
+  assert.equal(restored.q, 'Example ')
+  assert.deepEqual(restored.kinds, ['track'])
+  for (const invalid of [null, '{', '{"id":"playlist-1","sortBy":"invalid"}'])
+    assert.equal(playlistEntryView(invalid, 'playlist-1').sortBy, 'position')
+  assert.equal(playlistEntryView(value, 'playlist-2').sortBy, 'position')
+})
 
 test('playlist links filter tracks and albums by the required playlist name', () => {
   for (const { href, path } of [

@@ -19,6 +19,16 @@ export type PlayableItem = {
 
 export type QueueEntry = { key: string; item: PlayableItem }
 
+/** A captured view whose entries can still be read after navigating away. */
+export type PlaybackSource = {
+  label: string
+  href: string
+  length: number
+  startIndex: number
+  /** One track row, or an album expanded to its playable tracks. */
+  load: (index: number) => Promise<PlayableItem[]>
+}
+
 /** A track from the track library, with a Spotify ID only when matched. */
 export type LibraryTrackSource = Pick<
   TrackListItem,

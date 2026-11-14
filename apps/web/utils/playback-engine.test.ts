@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { afterEach, beforeEach, mock, test } from 'node:test'
 import { createPlaybackEngine } from './playback-engine'
-import type { PlayableItem, PlaybackSnapshot } from './playback'
+import type { PlayableItem, PlaybackSnapshot, PlaybackSource } from './playback'
 import {
   PlaybackApiError,
   type PlaybackDevice,
@@ -87,7 +87,7 @@ function remoteSnapshot(values: Partial<PlaybackSnapshot>): PlaybackSnapshot {
 
 let clock = 0
 
-function harness() {
+function harness(random?: () => number) {
   const calls: string[] = []
   const page = { visible: true }
   const listeners = new Map<string, Array<(payload: unknown) => void>>()
@@ -175,6 +175,7 @@ function harness() {
     initialVolume: 0.8,
     now: () => clock,
     visible: () => page.visible,
+    random,
   })
   return {
     engine,
@@ -873,5 +874,516 @@ test('a transfer made here outlasts a report that still names the old device', a
     kind: 'remote',
     device: speaker,
   })
+  setup.engine.dispose()
+})
+
+function sourceTrack(index: number): PlayableItem {
+  return {
+    ...track,
+    uri: `spotify:track:source-${index}`,
+    title: `Track ${index}`,
+  }
+}
+
+function fixtureSource(length: number, startIndex = 0): PlaybackSource {
+  return {
+    label: 'Tracks',
+    href: '/tracks?sortBy=title&direction=asc',
+    length,
+    startIndex,
+    load: async (index) => [sourceTrack(index)],
+  }
+}
+
+async function playSource(
+  setup: ReturnType<typeof harness>,
+  source: PlaybackSource,
+  item = sourceTrack(source.startIndex),
+) {
+  await setup.engine.selectDevice({ kind: 'remote', device: speaker })
+  setup.engine.play(item, source)
+  await settle()
+  setup.remote.device = speaker
+}
+
+test('captures a source and loads only the next ten tracks until playback advances', async () => {
+  const setup = harness()
+  const loaded: number[] = []
+  const definition = fixtureSource(100)
+  definition.load = async (index) => {
+    loaded.push(index)
+    return [sourceTrack(index)]
+  }
+  await playSource(setup, definition)
+  assert.equal(setup.engine.getState().current?.uri, sourceTrack(0).uri)
+  assert.deepEqual(setup.engine.getState().source, {
+    label: 'Tracks',
+    href: '/tracks?sortBy=title&direction=asc',
+  })
+  assert.equal(setup.engine.getState().upcoming.length, 10)
+  assert.equal(Math.max(...loaded), 10)
+  // The captured view keeps working after the caller navigates or changes its settings.
+  definition.label = 'Another view'
+  definition.load = async () => []
+  for (let index = 1; index <= 15; index += 1) {
+    setup.engine.next()
+    await settle()
+    assert.equal(setup.engine.getState().current?.uri, sourceTrack(index).uri)
+  }
+  assert.equal(setup.engine.getState().source?.label, 'Tracks')
+  assert.equal(setup.engine.getState().upcoming[0]?.uri, sourceTrack(16).uri)
+  setup.engine.dispose()
+})
+
+test('a source advances automatically when its current song finishes', async () => {
+  const setup = harness()
+  await playSource(setup, fixtureSource(2))
+  setup.remote.snapshot = remoteSnapshot({
+    trackUri: sourceTrack(0).uri,
+    contextUri: null,
+    positionMs: 198_000,
+  })
+  await advance(700)
+  setup.remote.snapshot = remoteSnapshot({
+    trackUri: sourceTrack(0).uri,
+    contextUri: null,
+    paused: true,
+    positionMs: 0,
+  })
+  await advance(3_000)
+  assert.equal(setup.engine.getState().current?.uri, sourceTrack(1).uri)
+  setup.engine.dispose()
+})
+
+test('manual queue order takes priority and source resumes after the last queued item', async () => {
+  const setup = harness()
+  await playSource(setup, fixtureSource(4))
+  const queued = { ...track, uri: 'spotify:track:second-queued' }
+  setup.engine.enqueue(track)
+  setup.engine.enqueue(queued)
+  setup.engine.next()
+  await settle()
+  assert.equal(setup.engine.getState().current, track)
+  assert.equal(setup.engine.getState().upcoming[0]?.uri, sourceTrack(1).uri)
+  setup.engine.next()
+  await settle()
+  assert.equal(setup.engine.getState().current, queued)
+  setup.engine.next()
+  await settle()
+  assert.equal(setup.engine.getState().current?.uri, sourceTrack(1).uri)
+  assert.equal(setup.engine.getState().queue.length, 0)
+  setup.engine.dispose()
+})
+
+test('albums expand to songs so a queued song plays before the rest of the source album', async () => {
+  const setup = harness()
+  const source: PlaybackSource = {
+    ...fixtureSource(2),
+    load: async (index) => [
+      sourceTrack(index * 3),
+      sourceTrack(index * 3 + 1),
+      sourceTrack(index * 3 + 2),
+    ],
+  }
+  await playSource(setup, source, { ...album, startUri: sourceTrack(1).uri })
+  assert.equal(setup.engine.getState().current?.uri, sourceTrack(1).uri)
+  setup.engine.enqueue(track)
+  setup.engine.next()
+  await settle()
+  assert.equal(setup.engine.getState().current, track)
+  setup.engine.next()
+  await settle()
+  assert.equal(setup.engine.getState().current?.uri, sourceTrack(2).uri)
+  setup.engine.next()
+  await settle()
+  assert.equal(setup.engine.getState().current?.uri, sourceTrack(3).uri)
+  setup.engine.dispose()
+})
+
+test('shuffle includes earlier unplayed rows without changing current playback or manual queue', async () => {
+  const setup = harness(() => 0)
+  await playSource(setup, fixtureSource(6, 3))
+  setup.engine.enqueue(track)
+  setup.engine.enqueue(album)
+  const queued = setup.engine.getState().queue
+  const plays = setup.sent('play').length
+  setup.engine.toggleShuffle()
+  await settle()
+  assert.equal(setup.engine.getState().shuffle, true)
+  assert.equal(setup.sent('play').length, plays)
+  assert.deepEqual(setup.engine.getState().queue, queued)
+  assert.deepEqual(
+    setup.engine.getState().upcoming.map((item) => item.uri),
+    [0, 1, 2, 4, 5].map((index) => sourceTrack(index).uri),
+  )
+  setup.engine.clearQueue()
+  setup.engine.next()
+  await settle()
+  assert.equal(setup.engine.getState().current?.uri, sourceTrack(0).uri)
+  setup.engine.toggleShuffle()
+  await settle()
+  assert.deepEqual(
+    setup.engine.getState().upcoming.map((item) => item.uri),
+    [1, 2, 4, 5].map((index) => sourceTrack(index).uri),
+  )
+  setup.engine.dispose()
+})
+
+test('shuffled songs span source albums and do not repeat after toggling shuffle off', async () => {
+  const setup = harness(() => 0.99)
+  const source: PlaybackSource = {
+    ...fixtureSource(3),
+    load: async (index) => [sourceTrack(index * 2), sourceTrack(index * 2 + 1)],
+  }
+  await playSource(setup, source, album)
+  setup.engine.toggleShuffle()
+  await settle()
+  assert.equal(setup.engine.getState().upcoming[0]?.uri, sourceTrack(5).uri)
+  setup.engine.next()
+  await settle()
+  setup.engine.toggleShuffle()
+  await settle()
+  assert.deepEqual(
+    setup.engine.getState().upcoming.map((item) => item.uri),
+    [1, 2, 3, 4].map((index) => sourceTrack(index).uri),
+  )
+  setup.engine.dispose()
+})
+
+test('an obsolete source load cannot replace newer playback', async () => {
+  const setup = harness()
+  let release: (items: PlayableItem[]) => void = () => undefined
+  const pending = new Promise<PlayableItem[]>((resolve) => {
+    release = resolve
+  })
+  await playSource(setup, { ...fixtureSource(2), load: () => pending })
+  setup.engine.play(track)
+  await settle()
+  release([sourceTrack(0)])
+  await settle()
+  assert.equal(setup.engine.getState().current, track)
+  assert.equal(setup.engine.getState().source, null)
+  assert.equal(setup.sent('play').length, 1)
+  setup.engine.dispose()
+})
+
+test('a failed source lookup keeps the manual queue and can be retried', async () => {
+  const setup = harness()
+  let fail = true
+  const source: PlaybackSource = {
+    ...fixtureSource(2),
+    load: async (index) => {
+      if (fail) throw new Error('Fixture unavailable')
+      return [sourceTrack(index)]
+    },
+  }
+  setup.engine.enqueue(track)
+  await playSource(setup, source)
+  assert.equal(setup.engine.getState().failure?.status, 'error')
+  assert.equal(setup.engine.getState().queue.length, 1)
+  assert.equal(setup.engine.getState().source?.label, 'Tracks')
+  assert.equal(setup.sent('play').length, 0)
+  fail = false
+  setup.engine.toggle()
+  await settle()
+  assert.equal(setup.engine.getState().current?.uri, sourceTrack(0).uri)
+  assert.equal(setup.engine.getState().queue.length, 1)
+  setup.engine.dispose()
+})
+
+test('previous returns to the preceding source song and next resumes without losing a song', async () => {
+  const setup = harness()
+  await playSource(setup, fixtureSource(4))
+  setup.engine.next()
+  await settle()
+  setup.remote.snapshot = remoteSnapshot({
+    trackUri: sourceTrack(1).uri,
+    contextUri: null,
+  })
+  await advance(700)
+  setup.engine.previous()
+  await settle()
+  assert.equal(setup.engine.getState().current?.uri, sourceTrack(0).uri)
+  setup.engine.next()
+  await settle()
+  assert.equal(setup.engine.getState().current?.uri, sourceTrack(1).uri)
+  assert.equal(setup.engine.getState().upcoming[0]?.uri, sourceTrack(2).uri)
+  setup.engine.dispose()
+})
+
+test('playing a queued item during the initial source lookup preserves the selected source song', async () => {
+  const setup = harness()
+  let release: (items: PlayableItem[]) => void = () => undefined
+  const pending = new Promise<PlayableItem[]>((resolve) => {
+    release = resolve
+  })
+  const source: PlaybackSource = {
+    ...fixtureSource(2),
+    load: async (index) => (index === 0 ? pending : [sourceTrack(index)]),
+  }
+  await playSource(setup, source)
+  setup.engine.enqueue(track)
+  const entry = setup.engine.getState().queue[0]
+  assert.ok(entry)
+  setup.engine.playFromQueue(entry.key)
+  await settle()
+  release([sourceTrack(0)])
+  await settle()
+  assert.equal(setup.engine.getState().current, track)
+  assert.equal(setup.engine.getState().upcoming[0]?.uri, sourceTrack(0).uri)
+  setup.engine.next()
+  await settle()
+  assert.equal(setup.engine.getState().current?.uri, sourceTrack(0).uri)
+  setup.engine.dispose()
+})
+
+test('shuffle changes during a pending next track use the latest source order', async () => {
+  const setup = harness(() => 0.99)
+  let release: (items: PlayableItem[]) => void = () => undefined
+  const pending = new Promise<PlayableItem[]>((resolve) => {
+    release = resolve
+  })
+  const source: PlaybackSource = {
+    ...fixtureSource(3),
+    load: async (index) => (index === 1 ? pending : [sourceTrack(index)]),
+  }
+  await playSource(setup, source)
+  setup.engine.next()
+  setup.engine.toggleShuffle()
+  setup.engine.toggleShuffle()
+  release([sourceTrack(1)])
+  await settle()
+  assert.equal(setup.engine.getState().current?.uri, sourceTrack(1).uri)
+  assert.equal(setup.engine.getState().starting, true)
+  assert.equal(setup.engine.getState().upcoming[0]?.uri, sourceTrack(2).uri)
+  setup.engine.dispose()
+})
+
+test('turning shuffle on during the initial lookup does not repeat the selected track', async () => {
+  const setup = harness(() => 0)
+  let release: (items: PlayableItem[]) => void = () => undefined
+  const pending = new Promise<PlayableItem[]>((resolve) => {
+    release = resolve
+  })
+  const source: PlaybackSource = {
+    ...fixtureSource(3),
+    load: async (index) => (index === 0 ? pending : [sourceTrack(index)]),
+  }
+  await playSource(setup, source)
+  setup.engine.toggleShuffle()
+  release([sourceTrack(0)])
+  await settle()
+  assert.equal(setup.engine.getState().current?.uri, sourceTrack(0).uri)
+  assert.deepEqual(
+    setup.engine.getState().upcoming.map((item) => item.uri),
+    [sourceTrack(1).uri, sourceTrack(2).uri],
+  )
+  setup.engine.dispose()
+})
+
+test('unrelated playback detaches the source without draining the manual queue', async () => {
+  const setup = harness()
+  await playSource(setup, fixtureSource(3))
+  setup.engine.enqueue(track)
+  setup.remote.snapshot = remoteSnapshot({
+    trackUri: sourceTrack(0).uri,
+    contextUri: null,
+    positionMs: 5_000,
+  })
+  await advance(700)
+  setup.remote.snapshot = remoteSnapshot({
+    trackUri: 'spotify:track:elsewhere',
+    contextUri: null,
+    positionMs: 20_000,
+  })
+  await advance(3_000)
+  assert.equal(setup.engine.getState().source, null)
+  assert.equal(setup.engine.getState().queue.length, 1)
+  assert.equal(setup.sent('play').length, 1)
+  setup.engine.dispose()
+})
+
+test('natural source completion stops without wrapping or dropping its return link', async () => {
+  const setup = harness()
+  await playSource(setup, fixtureSource(3, 2))
+  setup.remote.snapshot = remoteSnapshot({
+    trackUri: sourceTrack(2).uri,
+    contextUri: null,
+    positionMs: 198_000,
+  })
+  await advance(700)
+  setup.remote.snapshot = remoteSnapshot({
+    trackUri: sourceTrack(2).uri,
+    contextUri: null,
+    paused: true,
+  })
+  await advance(3_000)
+  assert.equal(setup.engine.getState().current, null)
+  assert.deepEqual(setup.engine.getState().upcoming, [])
+  assert.equal(setup.engine.getState().source?.label, 'Tracks')
+  assert.equal(setup.sent('play').length, 1)
+  setup.engine.dispose()
+})
+
+test('a rejected Spotify start retains the source song for retry and leaves the manual queue intact', async () => {
+  const setup = harness()
+  setup.engine.enqueue(track)
+  setup.remote.failures.push(new PlaybackApiError(500, null))
+  await playSource(setup, fixtureSource(3))
+  assert.equal(setup.engine.getState().failure?.status, 'error')
+  assert.equal(setup.engine.getState().current?.uri, sourceTrack(0).uri)
+  assert.equal(setup.engine.getState().queue.length, 1)
+  setup.engine.toggle()
+  await settle()
+  assert.equal(setup.engine.getState().failure, null)
+  assert.deepEqual(setup.sent('play'), [
+    'play speaker {"uris":["spotify:track:source-0"]}',
+    'play speaker {"uris":["spotify:track:source-0"]}',
+  ])
+  assert.equal(setup.engine.getState().upcoming[0]?.uri, sourceTrack(1).uri)
+  setup.engine.dispose()
+})
+
+test('previous follows the actual shuffled history and next restores the skipped song', async () => {
+  const setup = harness(() => 0.99)
+  await playSource(setup, fixtureSource(5))
+  setup.engine.toggleShuffle()
+  await settle()
+  setup.engine.next()
+  await settle()
+  assert.equal(setup.engine.getState().current?.uri, sourceTrack(4).uri)
+  setup.remote.snapshot = remoteSnapshot({
+    trackUri: sourceTrack(4).uri,
+    contextUri: null,
+  })
+  await advance(700)
+  setup.engine.previous()
+  await settle()
+  assert.equal(setup.engine.getState().current?.uri, sourceTrack(0).uri)
+  setup.engine.next()
+  await settle()
+  assert.equal(setup.engine.getState().current?.uri, sourceTrack(4).uri)
+  assert.equal(setup.engine.getState().upcoming[0]?.uri, sourceTrack(3).uri)
+  setup.engine.dispose()
+})
+
+test('shuffle includes earlier unplayed songs within the selected album', async () => {
+  const setup = harness(() => 0)
+  const source: PlaybackSource = {
+    ...fixtureSource(1),
+    load: async () => [sourceTrack(0), sourceTrack(1), sourceTrack(2)],
+  }
+  await playSource(setup, source, { ...album, startUri: sourceTrack(2).uri })
+  assert.deepEqual(setup.engine.getState().upcoming, [])
+  setup.engine.toggleShuffle()
+  await settle()
+  assert.deepEqual(
+    setup.engine.getState().upcoming.map((item) => item.uri),
+    [sourceTrack(0).uri, sourceTrack(1).uri],
+  )
+  setup.engine.next()
+  await settle()
+  setup.engine.toggleShuffle()
+  await settle()
+  assert.deepEqual(
+    setup.engine.getState().upcoming.map((item) => item.uri),
+    [sourceTrack(1).uri],
+  )
+  setup.engine.dispose()
+})
+
+test('a later preview failure preserves earlier songs and retries from the failed entry', async () => {
+  const setup = harness()
+  let unavailable = true
+  const source: PlaybackSource = {
+    ...fixtureSource(12),
+    load: async (index) => {
+      if (index === 9 && unavailable)
+        throw new Error('Later fixture page unavailable')
+      return [sourceTrack(index)]
+    },
+  }
+  await playSource(setup, source)
+  assert.equal(setup.engine.getState().failure?.status, 'error')
+  assert.deepEqual(
+    setup.engine.getState().upcoming.map((item) => item.uri),
+    Array.from({ length: 8 }, (_, index) => sourceTrack(index + 1).uri),
+  )
+  for (let index = 1; index <= 8; index += 1) {
+    setup.engine.next()
+    await settle()
+    assert.equal(setup.engine.getState().current?.uri, sourceTrack(index).uri)
+  }
+  setup.engine.next()
+  await settle()
+  assert.equal(setup.engine.getState().current?.uri, sourceTrack(8).uri)
+  assert.equal(setup.engine.getState().failure?.status, 'error')
+  assert.deepEqual(setup.engine.getState().upcoming, [])
+  unavailable = false
+  setup.engine.next()
+  await settle()
+  assert.equal(setup.engine.getState().current?.uri, sourceTrack(9).uri)
+  assert.equal(setup.engine.getState().failure, null)
+  assert.equal(setup.engine.getState().upcoming[0]?.uri, sourceTrack(10).uri)
+  setup.engine.dispose()
+})
+
+test('a pending Next uses the resolved prefix even when a later preview entry fails', async () => {
+  const setup = harness()
+  let release: (items: PlayableItem[]) => void = () => undefined
+  const pending = new Promise<PlayableItem[]>((resolve) => {
+    release = resolve
+  })
+  const source: PlaybackSource = {
+    ...fixtureSource(4),
+    load: async (index) => {
+      if (index === 1) return pending
+      if (index === 3) throw new Error('Later fixture page unavailable')
+      return [sourceTrack(index)]
+    },
+  }
+  await playSource(setup, source)
+  setup.engine.next()
+  release([sourceTrack(1)])
+  await settle()
+  assert.equal(setup.engine.getState().current?.uri, sourceTrack(1).uri)
+  assert.equal(setup.engine.getState().upcoming[0]?.uri, sourceTrack(2).uri)
+  assert.equal(setup.engine.getState().failure?.status, 'error')
+  setup.engine.dispose()
+})
+
+test('retrying a failed source lookup ignores old playback reported while it was loading', async () => {
+  const setup = harness()
+  let reject: (error: Error) => void = () => undefined
+  let requests = 0
+  const pending = new Promise<PlayableItem[]>((_, rejectLoad) => {
+    reject = rejectLoad
+  })
+  const source: PlaybackSource = {
+    ...fixtureSource(2),
+    load: async (index) => {
+      requests += 1
+      return requests === 1 ? pending : [sourceTrack(index)]
+    },
+  }
+  setup.engine.watch()
+  await playSource(setup, source)
+  setup.remote.snapshot = remoteSnapshot({
+    trackUri: track.uri,
+    contextUri: null,
+    positionMs: 30_000,
+  })
+  await advance(100)
+  reject(new Error('Fixture lookup failed'))
+  await settle()
+  assert.equal(setup.engine.getState().failure?.status, 'error')
+  assert.equal(setup.engine.getState().snapshot, null)
+  setup.engine.toggle()
+  await settle()
+  assert.ok(requests > 1)
+  assert.deepEqual(setup.sent('pause'), [])
+  assert.deepEqual(setup.sent('play'), [
+    'play speaker {"uris":["spotify:track:source-0"]}',
+  ])
   setup.engine.dispose()
 })

@@ -51,6 +51,7 @@ import {
   LibraryTrackQueueButton,
 } from './play-controls'
 import { usePlayback } from './playback-provider'
+import { createBrowsePlaybackSource } from '@/utils/playback-source'
 import { PlaylistDrawer } from './playlist-detail'
 import TrackDetailView from './track-detail'
 import ServiceIconLinks from './service-icon-links'
@@ -730,7 +731,21 @@ export default function TrackBrowser() {
                     {playable && (
                       <td>
                         <div className="browse-cell">
-                          <LibraryTrackPlayButton track={item} />
+                          <LibraryTrackPlayButton
+                            track={item}
+                            source={() =>
+                              createBrowsePlaybackSource({
+                                apiBaseUrl,
+                                collection: 'tracks',
+                                params,
+                                href: `/tracks?${searchParams.size ? searchParams : params}`,
+                                label: 'Tracks',
+                                total,
+                                startIndex: index,
+                                initialItem: item,
+                              })
+                            }
+                          />
                           <LibraryTrackQueueButton track={item} />
                         </div>
                       </td>

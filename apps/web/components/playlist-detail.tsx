@@ -1,13 +1,8 @@
 'use client'
 
 import Link from 'next/link'
-import {
-  useDeferredValue,
-  useEffect,
-  useRef,
-  useState,
-  type ReactNode,
-} from 'react'
+import { useSearchParams } from 'next/navigation'
+import { useDeferredValue, useEffect, useRef, type ReactNode } from 'react'
 import {
   useInfiniteQuery,
   useMutation,
@@ -51,6 +46,8 @@ import {
   playlistTracksHref,
   playlistAlbumsHref,
   trackHref,
+  playlistEntryView,
+  playlistEntryViewParam,
   type PlaylistTab,
 } from '@/utils/playlist-links'
 import {
@@ -65,6 +62,7 @@ import {
   playlistSourceLabel,
 } from '@/utils/playlist-sync'
 import { albumHref, formatTrackDuration } from '@/utils/track-browse'
+import { createPlaylistPlaybackSource } from '@/utils/playback-source'
 import { youtubeScheduleLabels } from '@/utils/youtube'
 import { errorMessage } from './lastfm-sync'
 import MediaArtwork from './media-artwork'
@@ -131,6 +129,21 @@ function entryKey(entry: PlaylistEntry) {
     : `album:${entry.position}:${entry.album.id}`
 }
 
+/** Keep server offsets when a sync causes the same entry to straddle two pages. */
+export function indexedPlaylistEntries(pages: readonly PlaylistDetail[]) {
+  const byKey = new Map<string, { entry: PlaylistEntry; index: number }>()
+  for (const page of pages)
+    page.items.items.forEach((entry, offset) => {
+      const key = entryKey(entry)
+      if (!byKey.has(key))
+        byKey.set(key, {
+          entry,
+          index: (page.items.page - 1) * page.items.size + offset,
+        })
+    })
+  return [...byKey.entries()]
+}
+
 const entryColumns: Array<{
   key: PlaylistEntrySort
   label: string
@@ -158,20 +171,30 @@ export function PlaylistEntries({
   onOpenTrack?: (trackId: string, trigger: HTMLElement) => void
 }) {
   const { apiBaseUrl } = useConfig()
-  const [sortBy, setSortBy] = useState<PlaylistEntrySort>('position')
-  const [direction, setDirection] = useState<'asc' | 'desc'>('asc')
-  const [search, setSearch] = useState('')
+  const searchParams = useSearchParams()
+  const view = playlistEntryView(searchParams?.get('playlistView') ?? null, id)
+  const { sortBy, direction } = view
+  const search = view.q ?? ''
   const q = useDeferredValue(search.trim())
-  const [kinds, setKinds] = useState<NonNullable<PlaylistDetailQuery['kinds']>>(
-    [],
-  )
+  const kinds = view.kinds ?? []
+  function changeView(patch: Partial<PlaylistDetailQuery>) {
+    const params = new URLSearchParams(window.location.search)
+    params.set(
+      'playlistView',
+      playlistEntryViewParam(id, { ...view, ...patch }),
+    )
+    window.history.replaceState(
+      null,
+      '',
+      `${window.location.pathname}?${params}`,
+    )
+  }
   const columns = useTableColumns('playlist-entries', entryColumns)
   function onSort(key: PlaylistEntrySort) {
-    if (key === sortBy) setDirection(direction === 'asc' ? 'desc' : 'asc')
-    else {
-      setSortBy(key)
-      setDirection('asc')
-    }
+    changeView({
+      sortBy: key,
+      direction: key === sortBy && direction === 'asc' ? 'desc' : 'asc',
+    })
   }
   const sorting = { sortBy, direction, onSort }
   const entries = useInfiniteQuery({
@@ -200,14 +223,7 @@ export function PlaylistEntries({
     fetchNextPage: entries.fetchNextPage,
     resetKey: `${id}:${sortBy}:${direction}:${q}:${kinds.join(',')}`,
   })
-  // A sync between page requests can move entries across page boundaries.
-  const byKey = new Map<string, PlaylistEntry>()
-  for (const page of entries.data?.pages ?? [])
-    for (const entry of page.items.items) {
-      const key = entryKey(entry)
-      if (!byKey.has(key)) byKey.set(key, entry)
-    }
-  const items = [...byKey.entries()]
+  const items = indexedPlaylistEntries(entries.data?.pages ?? [])
   const total = entries.data?.pages[0]?.items.totalCount ?? 0
   return (
     <>
@@ -219,7 +235,7 @@ export function PlaylistEntries({
             placeholder="Search titles, artists or albums"
             value={search}
             maxLength={200}
-            onChange={(event) => setSearch(event.target.value)}
+            onChange={(event) => changeView({ q: event.target.value })}
           />
         }
         count={
@@ -260,7 +276,7 @@ export function PlaylistEntries({
                             { value: 'album', label: 'Albums' },
                           ]}
                           value={kinds}
-                          onChange={setKinds}
+                          onChange={(kinds) => changeView({ kinds })}
                         />
                       ) : undefined
                     }
@@ -292,7 +308,7 @@ export function PlaylistEntries({
                 )}
               </TableState>
             )}
-            {items.map(([key, entry]) =>
+            {items.map(([key, { entry, index }]) =>
               entry.kind === 'track' ? (
                 <TableRow key={key} className="group">
                   {columns.visible('position') && (
@@ -300,6 +316,31 @@ export function PlaylistEntries({
                       <LibraryTrackPlayButton
                         track={entry.track}
                         position={entry.position}
+                        source={() => {
+                          const params = new URLSearchParams({
+                            sortBy,
+                            direction,
+                            q,
+                            kinds: JSON.stringify(kinds),
+                          })
+                          const href = new URLSearchParams(
+                            window.location.search,
+                          )
+                          href.set(
+                            'playlistView',
+                            playlistEntryViewParam(id, { ...view, q }),
+                          )
+                          return createPlaylistPlaybackSource({
+                            apiBaseUrl,
+                            id,
+                            params,
+                            href: `${window.location.pathname}?${href}`,
+                            label: entries.data?.pages[0]?.name ?? 'Playlist',
+                            total,
+                            startIndex: index,
+                            initialEntry: entry,
+                          })
+                        }}
                       />
                     </TableCell>
                   )}

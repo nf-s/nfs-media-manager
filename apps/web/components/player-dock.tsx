@@ -1,5 +1,6 @@
 'use client'
 
+import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import {
   useEffect,
@@ -14,6 +15,7 @@ import {
   Check,
   ChevronDown,
   ChevronUp,
+  CornerUpLeft,
   GripVertical,
   Laptop,
   ListMusic,
@@ -21,6 +23,7 @@ import {
   MonitorSpeaker,
   Pause,
   Play,
+  Shuffle,
   SkipBack,
   SkipForward,
   Smartphone,
@@ -204,11 +207,23 @@ function Transport({ view }: { view: PlaybackView }) {
   const controls = usePlaybackControls()
   const { snapshot, starting } = view
   const playing = snapshot !== null && !snapshot.paused
-  const nothingToPlay = !snapshot && !view.current && view.queue.length === 0
+  const hasNext = view.queue.length > 0 || view.upcoming.length > 0
+  const nothingToPlay = !snapshot && !view.current && !hasNext
   // Spotify does not let apps control a restricted device; the queue can still start here.
   const readOnly = view.target.kind === 'restricted'
   return (
     <div className="player-buttons">
+      <button
+        type="button"
+        className="player-skip"
+        aria-label="Shuffle source"
+        aria-pressed={view.shuffle}
+        title="Shuffle source"
+        disabled={!view.source}
+        onClick={controls.toggleShuffle}
+      >
+        <Shuffle size={16} aria-hidden="true" />
+      </button>
       <button
         type="button"
         className="player-skip"
@@ -241,7 +256,7 @@ function Transport({ view }: { view: PlaybackView }) {
         type="button"
         className="player-skip"
         aria-label="Next"
-        disabled={(!snapshot || readOnly) && view.queue.length === 0}
+        disabled={(!snapshot || readOnly) && !hasNext}
         onClick={controls.next}
       >
         <SkipForward size={16} aria-hidden="true" />
@@ -372,9 +387,26 @@ function QueueList({ queue }: { queue: QueueEntry[] }) {
   )
 }
 
-function QueueContents({ view }: { view: PlaybackView }) {
+function QueueContents({
+  view,
+  onNavigate,
+}: {
+  view: PlaybackView
+  onNavigate: () => void
+}) {
   return (
     <div className="queue-contents">
+      {view.source && (
+        <Link
+          href={view.source.href}
+          className="player-source"
+          onClick={onNavigate}
+          title={`Back to source: ${view.source.label}`}
+        >
+          <CornerUpLeft size={14} aria-hidden="true" />
+          <span>Back to source: {view.source.label}</span>
+        </Link>
+      )}
       {view.current && (
         <section>
           <h3>Playing</h3>
@@ -387,7 +419,7 @@ function QueueContents({ view }: { view: PlaybackView }) {
         </section>
       )}
       <section>
-        <h3>Next</h3>
+        <h3>Queued</h3>
         {view.queue.length > 0 && !view.current && view.snapshot && (
           <p className="quiet">Press Next to start the queue.</p>
         )}
@@ -399,6 +431,31 @@ function QueueContents({ view }: { view: PlaybackView }) {
       </section>
       {view.queue.length > 0 && (
         <p className="queue-summary">{queueSummary(view.queue)}</p>
+      )}
+      {view.source && (
+        <section>
+          <h3>Next from {view.source.label}</h3>
+          {view.upcoming.length > 0 && (
+            <ol className="queue-list">
+              {view.upcoming.slice(0, 10).map((item, index) => (
+                <li key={`${item.uri}:${index}`} className="queue-row">
+                  <span className="queue-position">{index + 1}</span>
+                  <span className="queue-item">
+                    <Artwork src={item.artworkUrl} className="queue-art" />
+                    <ItemText item={item} />
+                  </span>
+                </li>
+              ))}
+            </ol>
+          )}
+          {view.sourceLoading ? (
+            <p className="quiet" role="status">
+              Loading tracks…
+            </p>
+          ) : view.upcoming.length === 0 ? (
+            <p className="quiet">No upcoming tracks.</p>
+          ) : null}
+        </section>
       )}
     </div>
   )
@@ -676,7 +733,7 @@ function NowPlayingSheet({
             <DeviceList view={view} onChosen={() => setDevicesOpen(false)} />
           )}
           <VolumeControl volume={view.volume} />
-          <QueueContents view={view} />
+          <QueueContents view={view} onNavigate={onClose} />
         </div>
       </div>
     </dialog>
@@ -792,7 +849,11 @@ function Dock({ view }: { view: PlaybackView }) {
         </div>
         <div className="player-tools">
           <DockPopover
-            label={`Queue: ${view.queue.length} next`}
+            label={
+              view.source
+                ? `Queue: ${view.queue.length} queued, ${view.upcoming.length} upcoming`
+                : `Queue: ${view.queue.length} next`
+            }
             title="Queue"
             trigger={
               <>
@@ -814,7 +875,7 @@ function Dock({ view }: { view: PlaybackView }) {
               </Button>
             }
           >
-            {() => <QueueContents view={view} />}
+            {(close) => <QueueContents view={view} onNavigate={close} />}
           </DockPopover>
           <DockPopover
             label={`Play on: ${targetLabel(view.target)}`}

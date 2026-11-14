@@ -18,9 +18,11 @@ Requirements:
 ## Using it
 
 - **Grid tiles** show play and add-to-queue buttons over the artwork on hover or focus. Touch devices show the play button only. Album list and table views have no play controls; the Tracks table, the track drawer and the playlist drawer have play and add-to-queue controls on each track.
-- **The album drawer** has **Play** and **Add to queue** in its heading. In **Tracks**, a track number plays the album from that track, and each row can queue the single track.
-- **The player dock** appears at the bottom once something is played or queued, or while the account is already playing on another device: current track, previous, play/pause, next, a seek bar, the queue, the device, volume and a link to the track in Spotify. Selecting the current track opens its album. On phones the dock is a mini-player above the tab bar that opens a player sheet.
-- **Queue:** an album plays in full, then the next queued album or track starts. Entries can be played now, reordered, removed or cleared. The queue is kept in the open page only; reloading clears it. It is the app's own queue, separate from Spotify's.
+- **The album drawer** has **Play** and **Add to queue** in its heading. In **Tracks**, a track number starts playback from that row using the table's search and sort order, and each row can queue the single track. Returning to this source reopens Tracks with those settings.
+- **Playing from a view:** starting playback from a browse view or playlist keeps that view as the playback source, with its filters and sort order. Playback continues through the source even after navigating away or changing the visible view. Starting from another view replaces the source. Unmatched tracks are skipped.
+- **The player dock** appears at the bottom once something is played or queued, or while the account is already playing on another device: current track, shuffle, previous, play/pause, next, a seek bar, the queue, the device, volume and a link to the track in Spotify. Selecting the current track opens its album. On phones the dock is a mini-player above the tab bar that opens a player sheet.
+- **Queue:** manually queued items play in their listed order after the current source track, then playback resumes from the source. A queued album plays in full. Entries can be played now, reordered, removed or cleared. **Back to source** returns to the saved view, and the queue shows up to ten upcoming source tracks below the manual queue. The queue is kept in the open page only; reloading clears it. It is the app's own queue, separate from Spotify's.
+- **Shuffle source:** shuffles the remaining source without changing the current track or manually queued items. Turning it off restores the remaining source order. Shuffle is available when playback has a source.
 - **Play on:** **This browser** or any device Spotify lists for the account. Playback that another app moves to a different device is followed there, whichever device was chosen here, so controls always go to the device that has the playback. When that device goes quiet, the device chosen here is the target again.
 - **Playback started elsewhere:** when the account is playing on another device, for example from the Spotify app on a phone, the dock shows that track and controls that device: play/pause, previous, next, seek and volume. Playing an album here then plays it on that device; choose **This browser** to move it. Queued items do not start on their own after playback the app did not start: press **Next** or play one from the queue. Paused playback on another device is not picked up, and the dock hides again when that playback stops unless something was played or queued here.
 - **Devices apps cannot control:** Spotify marks some speakers, TVs and receivers as restricted and accepts no commands for them. Playback there is shown with the transport, seek bar and volume disabled; playing something here starts it in this browser (or the device chosen before), and **Play on** can move playback to another device. Queued items do not start on their own while playback is on such a device, because starting one would take the sound off it: press **Next**. A speaker that a Spotify app plays to over Spotify Connect is typically restricted. To keep control, play in the Spotify app on a computer (or in this browser) and send the computer's sound to the speaker, for example over AirPlay, so Spotify sees the computer as the device.
@@ -38,6 +40,8 @@ The browser then talks to Spotify directly:
 
 [`apps/web/utils/playback-engine.ts`](../apps/web/utils/playback-engine.ts) owns the queue, the device target and the session rules in [`playback.ts`](../apps/web/utils/playback.ts); it takes the Spotify API, token source and SDK loader as arguments so it runs under test without a browser. [`playback-provider.tsx`](../apps/web/components/playback-provider.tsx) exposes it to the shell, [`player-dock.tsx`](../apps/web/components/player-dock.tsx) and [`play-controls.tsx`](../apps/web/components/play-controls.tsx).
 
+The source belongs to the shared player, so leaving its page does not dispose it. The source captures the view's query and ordering when playback starts; stored library pages and album tracks are loaded as needed for playback and the upcoming list. This reads existing metadata and does not trigger scraping or playlist imports.
+
 ## Failures
 
 - **Spotify disconnected:** the token endpoint or Spotify rejected the account. The dock offers **Reconnect**, which repeats the playback consent.
@@ -46,8 +50,9 @@ The browser then talks to Spotify directly:
 
 ## Limits
 
-- The queue and the current session do not survive a reload, and two open tabs each have their own.
-- No shuffle or repeat controls.
+- The queue, source and current session do not survive a reload, and two open tabs each have their own.
+- No repeat control.
+- When an album has no stored playable tracks, it plays through Spotify's album context instead; the manual queue resumes after that album and individual upcoming songs cannot be shown.
 - Playback started elsewhere is shown as Spotify reports it. Whether a device is restricted is Spotify's decision and cannot be changed here. It is not matched to a library album, Spotify's own queue is not shown, and it can take up to five seconds to appear. A change made on another device or in another open copy of the app shows within three to five seconds.
 - When another device jumps straight to the end of an album between two state reads, the album can go unnoticed as finished and the next queue entry does not start.
 - Tests use a fake SDK player and fake Spotify responses. Audio, the consent round trip and phone browsers are not covered by automated tests.
@@ -55,7 +60,7 @@ The browser then talks to Spotify directly:
 ## Verification
 
 ```bash
-apps/server/node_modules/.bin/tsx --tsconfig apps/web/tsconfig.test.json --test apps/web/utils/playback.test.ts apps/web/utils/playback-engine.test.ts apps/web/utils/spotify-player-api.test.ts apps/web/utils/album-links.test.ts apps/web/components/play-controls.test.tsx apps/web/components/player-dock.test.tsx apps/web/components/spotify-playback-setting.test.tsx
+apps/server/node_modules/.bin/tsx --tsconfig apps/web/tsconfig.test.json --test apps/web/utils/playback.test.ts apps/web/utils/playback-source.test.ts apps/web/utils/playback-engine.test.ts apps/web/utils/spotify-player-api.test.ts apps/web/utils/album-links.test.ts apps/web/components/play-controls.test.tsx apps/web/components/player-dock.test.tsx apps/web/components/spotify-playback-setting.test.tsx
 pnpm --filter @repo/server exec vitest run src/services/__tests__/spotify-oauth.test.ts src/routes/__tests__/spotify-imports-api.test.ts
 ```
 

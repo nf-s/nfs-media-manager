@@ -56,6 +56,7 @@ import { aiSearchParams, mediaAiSearchTarget } from '@/utils/ai-search'
 import MediaArtwork from './media-artwork'
 import MediaDetail from './media-detail'
 import { TilePlayControls } from './play-controls'
+import { createBrowsePlaybackSource } from '@/utils/playback-source'
 import ManualMediaAdd from './manual-media-add'
 import { BrowseFilterChips, RangeEditor } from './browse-controls'
 import { ListeningControls } from './listening-controls'
@@ -1163,7 +1164,21 @@ export default function MediaBrowser({
                           </ProviderRatings>
                         )}
                         {item.mediaType === 'album' && (
-                          <TilePlayControls album={item} />
+                          <TilePlayControls
+                            album={item}
+                            source={() =>
+                              createBrowsePlaybackSource({
+                                apiBaseUrl,
+                                collection: 'albums',
+                                params,
+                                href: `/albums?${searchParams.size ? searchParams : params}`,
+                                label: 'Albums',
+                                total,
+                                startIndex: index,
+                                initialItem: item,
+                              })
+                            }
+                          />
                         )}
                       </div>
                       {titleControl(item, 'tile-title')}

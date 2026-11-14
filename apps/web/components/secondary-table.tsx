@@ -26,7 +26,7 @@ import {
 
 export type DataColumn<T> = TableColumn & {
   value: (row: T) => TableValue
-  render?: (row: T) => ReactNode
+  render?: (row: T, orderedRows: readonly T[]) => ReactNode
   className?: string
   filter?: ReactNode
 }
@@ -441,6 +441,7 @@ export function SecondaryDataTable<T>({
   filters,
   countLabel,
   totalCount,
+  view,
 }: {
   id: string
   label: string
@@ -452,14 +453,35 @@ export function SecondaryDataTable<T>({
   error?: boolean
   busy?: boolean
   className?: string
-  search?: { label: string; placeholder?: string; value: (row: T) => string }
+  search?: {
+    label: string
+    placeholder?: string
+    maxLength?: number
+    value: (row: T) => string
+  }
   filters?: ReactNode
   countLabel?: string
   totalCount?: number
+  /** Optional URL-owned search and sort state. Other tables keep their local state. */
+  view?: {
+    sort: TableSort
+    query: string
+    onChange: (next: { sort: TableSort; query: string }) => void
+  }
 }) {
   const visibility = useTableColumns(id, columns)
-  const [sort, setSort] = useState(defaultSort)
-  const [query, setQuery] = useState('')
+  const [localSort, setLocalSort] = useState(defaultSort)
+  const [localQuery, setLocalQuery] = useState('')
+  const sort = view?.sort ?? localSort
+  const query = view?.query ?? localQuery
+  function setSort(next: TableSort) {
+    if (view) view.onChange({ sort: next, query })
+    else setLocalSort(next)
+  }
+  function setQuery(next: string) {
+    if (view) view.onChange({ sort, query: next })
+    else setLocalQuery(next)
+  }
   const term = query.trim().toLocaleLowerCase()
   const matching =
     search && term
@@ -480,6 +502,7 @@ export function SecondaryDataTable<T>({
               type="search"
               aria-label={search.label}
               placeholder={search.placeholder ?? search.label}
+              maxLength={search.maxLength}
               value={query}
               onChange={(event) => setQuery(event.target.value)}
             />
@@ -535,7 +558,7 @@ export function SecondaryDataTable<T>({
                 {shown.map((column) => (
                   <td key={column.key} className={column.className}>
                     {column.render ? (
-                      column.render(row)
+                      column.render(row, ordered)
                     ) : (
                       <SecondaryCell>
                         {String(column.value(row) ?? '-')}
