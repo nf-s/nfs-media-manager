@@ -11,7 +11,12 @@ import {
   type BrowseField,
 } from '@repo/schemas/browse'
 import type { AlbumQuery, FilmQuery } from '@repo/schemas/media'
-import { trackAlbumLinkLabels, type TrackQuery } from '@repo/schemas/tracks'
+import {
+  trackAlbumLinkLabels,
+  trackSourceLabels,
+  trackSpotifyMatchLabels,
+  type TrackQuery,
+} from '@repo/schemas/tracks'
 import { defaultListeningPeriod } from '@repo/schemas/listening'
 import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
@@ -24,6 +29,7 @@ import { createBrowseListening } from './browse-listening'
 import {
   linkedTrackFieldExpression,
   trackSourcesExpression,
+  trackSpotifyIdExpression,
   trackSpotifyMatchExpression,
 } from './track-values'
 
@@ -146,6 +152,8 @@ function valueExpression(key: string, mediaType: MediaType): SQL {
 }
 
 function textExpression(key: string, mediaType: MediaType): SQL {
+  if (key === 'title') return sql`${mediaItem.title}`
+  if (key === 'summary') return sql`${mediaItem.summary}`
   const value = valueExpression(key, mediaType)
   return sql`case when jsonb_typeof(${value}) = 'array' then ${value}->>0 else ${value} #>> '{}' end`
 }
@@ -279,10 +287,13 @@ export async function queryBrowseIds(
   for (const word of new Set(query.q?.split(/\s+/).filter(Boolean))) {
     const search = `%${word.replace(/[\\%_]/g, '\\$&')}%`
     const expressions = textFields.map(
-      (field) =>
-        sql`(${valueExpression(field.key, mediaType)} #>> '{}') ilike ${search}`,
+      (field) => sql`select id from (
+      ${textRows(field.key, mediaType, { includeArchived: true })}
+    ) searchable_values where value ilike ${search}`,
     )
-    conditions.push(sql`(${sql.join(expressions, sql` or `)})`)
+    conditions.push(
+      sql`${mediaItem.id} in (${sql.join(expressions, sql` union all `)})`,
+    )
   }
   const where = and(...conditions)
   const sort =
@@ -290,9 +301,10 @@ export async function queryBrowseIds(
       ? listening.sort
       : options.sort?.field.key === sortField.key
         ? options.sort.expression
-        : sortField.type === 'text'
-          ? sql`lower(${textExpression(sortField.key, mediaType)})`
-          : numericExpression(sortField.key, mediaType)
+        : (directSortExpression(sortField.key, mediaType) ??
+          (sortField.type === 'text'
+            ? sql`lower(${textExpression(sortField.key, mediaType)})`
+            : numericExpression(sortField.key, mediaType)))
   const missing =
     options.sort?.field.key === sortField.key && options.sort.missingFirst
       ? sql`nulls first`
@@ -301,7 +313,9 @@ export async function queryBrowseIds(
     query.direction === 'asc'
       ? sql`${sort} asc ${missing}`
       : sql`${sort} desc ${missing}`
-  // Only a track query reads track columns; the others join nothing.
+  // Library tracks always have a subtype row, also required by loadTracks.
+  // The inner join lets their date ordering use an index before pagination.
+  // Other libraries do not read track columns.
   const trackJoin =
     mediaType === 'track'
       ? eq(libraryTrack.mediaItemId, mediaItem.id)
@@ -315,13 +329,16 @@ export async function queryBrowseIds(
       .from(mediaItem)
       .leftJoin(album, eq(album.mediaItemId, mediaItem.id))
       .leftJoin(film, eq(film.mediaItemId, mediaItem.id))
-      .leftJoin(libraryTrack, trackJoin)
+    const tracks =
+      mediaType === 'track'
+        ? query.innerJoin(libraryTrack, trackJoin)
+        : query.leftJoin(libraryTrack, trackJoin)
     return listening
-      ? query.leftJoin(
+      ? tracks.leftJoin(
           listening.source,
           sql`listening_counts.album_media_item_id = ${mediaItem.id}`,
         )
-      : query
+      : tracks
   }
   // Cache the raw count by the actual predicate, including caller SQL options.
   // Page, ordering and result caps do not change membership; IDs stay uncached.
@@ -335,14 +352,17 @@ export async function queryBrowseIds(
         .from(mediaItem)
         .leftJoin(album, eq(album.mediaItemId, mediaItem.id))
         .leftJoin(film, eq(film.mediaItemId, mediaItem.id))
-        .leftJoin(libraryTrack, trackJoin)
+      const tracks =
+        mediaType === 'track'
+          ? query.innerJoin(libraryTrack, trackJoin)
+          : query.leftJoin(libraryTrack, trackJoin)
       const rows = await (
         listening
-          ? query.leftJoin(
+          ? tracks.leftJoin(
               listening.source,
               sql`listening_counts.album_media_item_id = ${mediaItem.id}`,
             )
-          : query
+          : tracks
       ).where(where)
       return rows[0]?.value ?? 0
     },
@@ -365,6 +385,89 @@ export async function queryBrowseIds(
     totalCount,
     pageCount: Math.ceil(totalCount / query.size),
   }
+}
+
+function directSortExpression(key: string, mediaType: MediaType): SQL | null {
+  if (key === 'releaseDate' && mediaType !== 'track')
+    return sql`${mediaItem.releaseDate}`
+  if (mediaType === 'track') {
+    if (key === 'dateAdded') return sql`${libraryTrack.dateAdded}`
+    if (key === 'scrobbles') return sql`${libraryTrack.scrobbleCount}`
+    if (key === 'lastListenedAt') return sql`${libraryTrack.lastListenedAt}`
+  }
+  return null
+}
+
+/** Search and facets read values before aggregation so PostgreSQL can index them. */
+function textRows(
+  key: string,
+  mediaType: MediaType,
+  options: { includeArchived?: boolean; normalizeTags?: boolean } = {},
+): SQL {
+  const visible = options.includeArchived
+    ? sql`media_item.media_type = ${mediaType}`
+    : sql`media_item.media_type = ${mediaType} and media_item.metadata->>'legacyHidden' is distinct from 'true'`
+  if (key === 'title')
+    return sql`select media_item.id, media_item.title as value from media_item where ${visible}`
+  if (key === 'summary')
+    return sql`select media_item.id, media_item.summary as value from media_item where ${visible}`
+  if (['artist', 'director', 'actor', 'writer'].includes(key))
+    return sql`select media_item.id, a.name as value from media_item join media_credit c on c.media_item_id = media_item.id join artist a on a.id = c.artist_id where ${visible} and c.role = ${key}`
+  if (mediaType === 'track' && key === 'album')
+    return sql`select media_item.id, lt.album_name as value from media_item join library_track lt on lt.media_item_id = media_item.id where ${visible} and lt.album_name is not null
+      union all
+      select media_item.id, am.title as value from media_item join library_track lt on lt.media_item_id = media_item.id join media_item am on am.id = lt.album_media_item_id where ${visible} and lt.album_name is null`
+  if (mediaType === 'track' && key === 'source')
+    return sql`select media_item.id, ${trackSourceLabels.spotify}::text as value from media_item join playlist_item pi on pi.media_item_id = media_item.id join playlist p on p.id = pi.playlist_id where ${visible} and p.source = 'spotify'
+      union all
+      select media_item.id, ${trackSourceLabels['spotify-liked']}::text as value from media_item join playlist_item pi on pi.media_item_id = media_item.id join playlist p on p.id = pi.playlist_id where ${visible} and p.source = 'spotify-liked'
+      union all
+      select media_item.id, ${trackSourceLabels.lastfm}::text as value from media_item join lastfm_track_source s on s.track_media_item_id = media_item.id where ${visible}`
+  if (mediaType === 'track' && key === 'albumLink')
+    return sql`select media_item.id, ${trackAlbumLinkLabels.linked}::text as value from media_item join library_track lt on lt.media_item_id = media_item.id where ${visible} and lt.album_media_item_id is not null
+      union all
+      select media_item.id, ${trackAlbumLinkLabels.unlinked}::text as value from media_item left join library_track lt on lt.media_item_id = media_item.id where ${visible} and lt.album_media_item_id is null`
+  if (mediaType === 'track' && key === 'spotifyMatch') {
+    const linkedId = trackSpotifyIdExpression(
+      sql`lt.spotify_track_id`,
+      sql`lt.album_media_item_id`,
+      sql`media_item.title`,
+    )
+    return sql`select media_item.id, ${trackSpotifyMatchLabels['spotify-import']}::text as value from media_item join library_track lt on lt.media_item_id = media_item.id where ${visible} and lt.spotify_track_id is not null
+      union all
+      select media_item.id, ${trackSpotifyMatchLabels['album-track-list']}::text as value from media_item join library_track lt on lt.media_item_id = media_item.id where ${visible} and lt.spotify_track_id is null and ${linkedId} is not null
+      union all
+      select media_item.id, ${trackSpotifyMatchLabels.unmatched}::text as value from media_item left join library_track lt on lt.media_item_id = media_item.id where ${visible} and lt.spotify_track_id is null and ${linkedId} is null`
+  }
+  const tagName = options.normalizeTags
+    ? normalizedTagSql(sql`t.name`)
+    : sql`t.name`
+  if (mediaType === 'track' && key === 'genre')
+    return sql`select media_item.id, ${tagName} as value from media_item join library_track lt on lt.media_item_id = media_item.id join media_item_tag mt on mt.media_item_id = lt.album_media_item_id join tag t on t.id = mt.tag_id where ${visible} and t.media_type = 'album' and not t.hidden`
+  if (mediaType === 'album' && key === 'playlist')
+    return sql`select media_item.id, p.name as value from media_item join (
+      select pi.media_item_id as id, pi.playlist_id from playlist_item pi
+      union
+      select lt.album_media_item_id, pi.playlist_id from library_track lt
+      join playlist_item pi on pi.media_item_id = lt.media_item_id
+      where lt.album_media_item_id is not null
+    ) member on member.id = media_item.id join playlist p on p.id = member.playlist_id where ${visible} and p.kind = 'playlist'`
+  if (key === 'genre' || key === 'keyword')
+    return sql`select media_item.id, ${tagName} as value from media_item join media_item_tag mt on mt.media_item_id = media_item.id join tag t on t.id = mt.tag_id where ${visible} and t.media_type = media_item.media_type and not t.hidden`
+  if (key === 'playlist' || key === 'collection')
+    return sql`select media_item.id, p.name as value from media_item join playlist_item pi on pi.media_item_id = media_item.id join playlist p on p.id = pi.playlist_id where ${visible} and p.kind = ${key}`
+  if (key === 'provider')
+    return sql`select media_item.id, r.provider as value from media_item join provider_reference r on r.media_item_id = media_item.id where ${visible}`
+  if (key === 'source')
+    return sql`select media_item.id, coalesce(media_item.source_label, film.source_kind) as value from media_item left join film on film.media_item_id = media_item.id where ${visible}`
+  const value = valueExpression(key, mediaType)
+  const trackColumns =
+    mediaType === 'track'
+      ? sql`left join library_track on library_track.media_item_id = media_item.id`
+      : sql``
+  return sql`select media_item.id, v.value from media_item left join film on film.media_item_id = media_item.id ${trackColumns}
+    cross join lateral jsonb_array_elements_text(case when jsonb_typeof(${value}) = 'array' then ${value} else jsonb_build_array(${value}) end) v(value)
+    where ${visible}`
 }
 
 const FacetRowSchema = z.object({
@@ -405,34 +508,7 @@ async function queryBrowseFacets(
   )
   const words = (query.q ?? '').toLowerCase().split(/\s+/).filter(Boolean)
   const queries = fields.map((field) => {
-    const value = valueExpression(field.key, mediaType)
-    const trackColumns =
-      mediaType === 'track'
-        ? sql`left join library_track on library_track.media_item_id = media_item.id`
-        : sql``
-    let source: SQL = sql`select media_item.id, v.value from media_item left join film on film.media_item_id = media_item.id ${trackColumns}
-      cross join lateral jsonb_array_elements_text(case when jsonb_typeof(${value}) = 'array' then ${value} else jsonb_build_array(${value}) end) v(value)
-      where media_item.media_type = ${mediaType} and media_item.metadata->>'legacyHidden' is distinct from 'true'`
-    const visible = sql`media_item.media_type = ${mediaType} and media_item.metadata->>'legacyHidden' is distinct from 'true'`
-    if (['artist', 'director', 'actor', 'writer'].includes(field.key)) {
-      source = sql`select media_item.id, a.name as value from media_item join media_credit c on c.media_item_id = media_item.id join artist a on a.id = c.artist_id where ${visible} and c.role = ${field.key}`
-    } else if (mediaType === 'track' && field.key === 'genre') {
-      source = sql`select media_item.id, ${normalizedTagSql(sql`t.name`)} as value from media_item join library_track lt on lt.media_item_id = media_item.id join media_item_tag mt on mt.media_item_id = lt.album_media_item_id join tag t on t.id = mt.tag_id where ${visible} and t.media_type = 'album' and not t.hidden`
-    } else if (mediaType === 'album' && field.key === 'playlist') {
-      source = sql`select media_item.id, p.name as value from media_item join (
-        select pi.media_item_id as id, pi.playlist_id from playlist_item pi
-        union
-        select lt.album_media_item_id, pi.playlist_id from library_track lt
-        join playlist_item pi on pi.media_item_id = lt.media_item_id
-        where lt.album_media_item_id is not null
-      ) member on member.id = media_item.id join playlist p on p.id = member.playlist_id where ${visible} and p.kind = 'playlist'`
-    } else if (field.key === 'genre' || field.key === 'keyword') {
-      source = sql`select media_item.id, ${normalizedTagSql(sql`t.name`)} as value from media_item join media_item_tag mt on mt.media_item_id = media_item.id join tag t on t.id = mt.tag_id where ${visible} and t.media_type = media_item.media_type and not t.hidden`
-    } else if (field.key === 'playlist' || field.key === 'collection') {
-      source = sql`select media_item.id, p.name as value from media_item join playlist_item pi on pi.media_item_id = media_item.id join playlist p on p.id = pi.playlist_id where ${visible} and p.kind = ${field.key}`
-    } else if (field.key === 'provider') {
-      source = sql`select media_item.id, r.provider as value from media_item join provider_reference r on r.media_item_id = media_item.id where ${visible}`
-    }
+    const source = textRows(field.key, mediaType, { normalizeTags: true })
     const matches = words
       .filter(
         (word) =>

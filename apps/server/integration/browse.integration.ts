@@ -610,7 +610,12 @@ describe('free-text browse search', () => {
       { id: 'q-album-1', title: 'Harbour Lights', artists: ['Marlow Fenwick'] },
       { id: 'q-album-2', title: 'Harbour Sessions', artists: ['Odile Brack'] },
     ]
-    const ids = [...albums.map((item) => item.id), 'q-film', 'q-track']
+    const ids = [
+      ...albums.map((item) => item.id),
+      'q-film',
+      'q-hidden-film',
+      'q-track',
+    ]
     try {
       for (const fixture of albums) {
         await databaseClient.insert(schema.mediaItem).values({
@@ -638,9 +643,18 @@ describe('free-text browse search', () => {
         title: 'Northern Crossing',
         slug: 'q-film',
         mediaType: 'film',
-        metadata: { browse: { country: ['Iceland'] } },
+        metadata: {
+          browse: { country: ['Iceland', '50%_\\literal', 'Second Country'] },
+        },
       })
       await databaseClient.insert(schema.film).values({ mediaItemId: 'q-film' })
+      await databaseClient.insert(schema.mediaItem).values({
+        id: 'q-hidden-film',
+        title: 'Archived Crossing',
+        slug: 'q-hidden-film',
+        mediaType: 'film',
+        metadata: { legacyHidden: true, browse: { country: ['Iceland'] } },
+      })
       await databaseClient.insert(schema.mediaItem).values({
         id: 'q-track',
         title: 'Night Ferry',
@@ -671,6 +685,20 @@ describe('free-text browse search', () => {
       expect(await filmIds('icel')).toEqual(['q-film'])
       expect(await filmIds('iceland crossing')).toEqual(['q-film'])
       expect(await filmIds('iceland harbour')).toEqual([])
+      expect(await filmIds('iceland second')).toEqual(['q-film'])
+      expect(await filmIds('crossing 50%_\\literal')).toEqual(['q-film'])
+      expect(await filmIds('crossing 50%X')).toEqual([])
+      expect(
+        (
+          await queryBrowseIds(
+            'film',
+            FilmQuerySchema.parse({
+              q: 'iceland crossing',
+              includeArchived: 'true',
+            }),
+          )
+        ).ids.sort(),
+      ).toEqual(['q-film', 'q-hidden-film'])
       expect(await trackIds('ferry coastal')).toEqual(['q-track'])
       expect(await trackIds('coastal night')).toEqual(['q-track'])
       expect(await trackIds('ferry harbour')).toEqual([])

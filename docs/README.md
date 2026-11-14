@@ -30,6 +30,7 @@ Back up the database and encryption key before migrations or repair commands.
 ## Development
 
 - [Development commands and checks](development.md)
+- [Library query performance and indexes](query-performance.md)
 - [UI guidelines](dev-guidelines-ui.md) and [backend guidelines](dev-guidelines-backend.md)
 - [Secondary tables](secondary-tables.md): shared sorting, column controls, styling and verification.
 - [Job worker](job-worker.md)

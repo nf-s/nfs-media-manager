@@ -17,6 +17,7 @@ import {
 import type { JsonValue } from '@repo/media-plugin-sdk'
 export * from './auth'
 import { user } from './auth'
+import { normalizedTagSql } from '../lib/tag-sql'
 
 const mediaTypeEnum = pgEnum('media_type', ['album', 'film', 'track'])
 const playlistKindEnum = pgEnum('playlist_kind', ['playlist', 'collection'])
@@ -58,6 +59,19 @@ export const mediaItem = pgTable(
     uniqueIndex('media_item_slug_uidx').on(table.slug),
     index('media_item_type_idx').on(table.mediaType),
     index('media_item_title_idx').on(table.title),
+    index('media_item_title_search_idx').using(
+      'gin',
+      table.title.op('gin_trgm_ops'),
+    ),
+    index('media_item_summary_search_idx').using(
+      'gin',
+      table.summary.op('gin_trgm_ops'),
+    ),
+    index('media_item_type_release_id_idx').on(
+      table.mediaType,
+      table.releaseDate.desc().nullsLast(),
+      table.id,
+    ),
     index('media_item_type_title_id_idx').on(
       table.mediaType,
       sql`lower(${table.title})`,
@@ -111,6 +125,10 @@ export const track = pgTable(
     ...timestampColumns,
   },
   (table) => [
+    index('track_album_title_idx').on(
+      table.albumMediaItemId,
+      sql`lower(regexp_replace(trim(${table.title}), '[[:space:]]+', ' ', 'g'))`,
+    ),
     uniqueIndex('track_album_position_uidx').on(
       table.albumMediaItemId,
       table.position,
@@ -154,6 +172,14 @@ export const libraryTrack = pgTable(
     uniqueIndex('library_track_spotify_track_uidx').on(table.spotifyTrackId),
     index('library_track_album_idx').on(table.albumMediaItemId),
     index('library_track_spotify_album_idx').on(table.spotifyAlbumId),
+    index('library_track_album_name_search_idx').using(
+      'gin',
+      table.albumName.op('gin_trgm_ops'),
+    ),
+    index('library_track_added_id_idx').on(
+      table.dateAdded.desc().nullsLast(),
+      table.mediaItemId,
+    ),
   ],
 )
 
@@ -165,7 +191,10 @@ export const artist = pgTable(
     sortName: text('sort_name'),
     ...timestampColumns,
   },
-  (table) => [uniqueIndex('artist_name_uidx').on(table.name)],
+  (table) => [
+    uniqueIndex('artist_name_uidx').on(table.name),
+    index('artist_name_search_idx').using('gin', table.name.op('gin_trgm_ops')),
+  ],
 )
 
 export const mediaCredit = pgTable(
@@ -184,6 +213,11 @@ export const mediaCredit = pgTable(
     primaryKey({
       columns: [table.mediaItemId, table.artistId, table.role],
     }),
+    index('media_credit_artist_role_media_idx').on(
+      table.artistId,
+      table.role,
+      table.mediaItemId,
+    ),
   ],
 )
 
@@ -198,6 +232,11 @@ export const tag = pgTable(
     ...timestampColumns,
   },
   (table) => [
+    index('tag_name_search_idx').using('gin', table.name.op('gin_trgm_ops')),
+    index('tag_normalized_name_search_idx').using(
+      'gin',
+      sql`(${normalizedTagSql(sql`${table.name}`).inlineParams()}) gin_trgm_ops`,
+    ),
     uniqueIndex('tag_media_type_name_kind_uidx').on(
       table.mediaType,
       table.name,
@@ -237,6 +276,10 @@ export const tagIdentity = pgTable(
       columns: [table.mediaType, table.normalizedName, table.kind],
     }),
     index('tag_identity_tag_idx').on(table.tagId),
+    index('tag_identity_name_search_idx').using(
+      'gin',
+      table.normalizedName.op('gin_trgm_ops'),
+    ),
   ],
 )
 
@@ -279,6 +322,10 @@ export const tagOccurrence = pgTable(
   },
   (table) => [
     index('tag_occurrence_tag_idx').on(table.tagId),
+    index('tag_occurrence_raw_name_search_idx').using(
+      'gin',
+      table.rawName.op('gin_trgm_ops'),
+    ),
     index('tag_occurrence_media_idx').on(table.mediaItemId),
     index('tag_occurrence_tag_media_kind_idx').on(
       table.tagId,
@@ -335,6 +382,10 @@ export const playlist = pgTable(
   (table) => [
     uniqueIndex('playlist_name_kind_uidx').on(table.name, table.kind),
     uniqueIndex('playlist_spotify_id_uidx').on(table.spotifyId),
+    index('playlist_name_search_idx').using(
+      'gin',
+      table.name.op('gin_trgm_ops'),
+    ),
   ],
 )
 
@@ -534,6 +585,11 @@ export const scrapeJob = pgTable(
     ...timestampColumns,
   },
   (table) => [
+    index('scrape_job_created_id_idx').on(
+      table.createdAt.desc().nullsLast(),
+      table.id.desc(),
+    ),
+    index('scrape_job_batch_idx').on(sql`(${table.options}->>'batchId')`),
     index('scrape_job_status_idx').on(table.status),
     index('scrape_job_provider_idx').on(table.provider),
     index('scrape_job_dispatch_idx').on(
@@ -769,6 +825,9 @@ export const lastfmScrobble = pgTable(
     index('lastfm_scrobble_name_idx').on(table.albumKey, table.artistKey),
     index('lastfm_scrobble_user_time_idx').on(table.username, table.listenedAt),
     index('lastfm_scrobble_track_idx').on(table.trackKey, table.artistKey),
+    index('lastfm_scrobble_time_album_idx')
+      .on(table.listenedAt, table.albumMediaItemId)
+      .where(sql`${table.albumMediaItemId} is not null`),
   ],
 )
 
@@ -907,6 +966,10 @@ export const subscriptionSource = pgTable(
     ...timestampColumns,
   },
   (table) => [
+    index('subscription_source_title_search_idx').using(
+      'gin',
+      table.title.op('gin_trgm_ops'),
+    ),
     index('subscription_source_type_subscribed_idx').on(
       table.type,
       table.subscribed,
@@ -952,13 +1015,19 @@ export const subscriptionItem = pgTable(
   },
   (table) => [
     index('subscription_item_search_idx').using('gin', table.search),
+    index('subscription_item_title_search_idx').using(
+      'gin',
+      table.title.op('gin_trgm_ops'),
+    ),
     index('subscription_item_source_published_idx').on(
       table.sourceId,
       table.publishedAt,
     ),
     index('subscription_item_published_idx').on(table.publishedAt, table.id),
     index('subscription_item_views_idx').on(table.viewCount),
-    index('subscription_item_duration_idx').on(table.durationSec),
+    index('subscription_item_duration_value_idx').on(
+      sql`nullif(${table.durationSec}, 0)`,
+    ),
   ],
 )
 

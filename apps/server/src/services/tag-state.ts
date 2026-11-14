@@ -1,4 +1,4 @@
-import { and, asc, eq, sql, type SQL } from 'drizzle-orm'
+import { and, asc, eq, sql } from 'drizzle-orm'
 import type { PluginNormalizedResult } from '@repo/media-plugin-sdk'
 import { db } from '@/lib/db'
 import { createStableId } from '@/lib/media-utils'
@@ -14,9 +14,7 @@ export function tagDisplayName(name: string): string {
   return name.normalize('NFC').replace(/\s+/gu, ' ').trim()
 }
 
-export function normalizedTagSql(value: SQL): SQL {
-  return sql`lower(btrim(regexp_replace(normalize(${value}, NFC), ${'[\\s\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+'}, ' ', 'g')))`
-}
+export { normalizedTagSql } from '@/lib/tag-sql'
 
 export async function lockTagWrites(database: TagDatabase): Promise<void> {
   // Acquire before media row locks so merges and provider updates cannot deadlock.

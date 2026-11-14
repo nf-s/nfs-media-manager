@@ -18,6 +18,7 @@ vi.mock('@/lib/db', () => ({
       const builder = {
         from: () => builder,
         leftJoin: () => builder,
+        innerJoin: () => builder,
         where: (where: SQL) =>
           'value' in selection ? mocks.count(where) : builder,
         orderBy: (...order: unknown[]) => {
