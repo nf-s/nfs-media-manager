@@ -572,13 +572,13 @@ test('main navigation has one Browse destination and preserves current browse fi
 test('main navigation browses tracks from the track and playlist pages', () => {
   const tracks = render('/tracks', 'q=title', <AppNavigation />)
   assert.match(tracks, /aria-current="page" href="\/tracks\?q=title">Browse/)
-  assert.match(tracks, /href="\/playlists\?mediaType=album">Playlists/)
+  assert.match(tracks, /href="\/playlists\?mediaType=track">Playlists/)
   assert.doesNotMatch(tracks, />Collections<|href="\/collections/)
   const playlists = render('/playlists', '', <AppNavigation />)
   assert.match(playlists, /href="\/tracks">Browse/)
   assert.match(
     playlists,
-    /aria-current="page" href="\/playlists\?mediaType=album">Playlists/,
+    /aria-current="page" href="\/playlists\?mediaType=track">Playlists/,
   )
   assert.doesNotMatch(playlists, />Collections<|href="\/collections/)
 })

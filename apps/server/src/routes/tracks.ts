@@ -6,6 +6,8 @@ import {
   TrackDetailSchema,
   TrackFilterOptionSchema,
   TrackListItemSchema,
+  TrackMergeInputSchema,
+  TrackMergeResultSchema,
   TrackQuerySchema,
 } from '@repo/schemas/tracks'
 import { ServerError } from '@/lib/error'
@@ -17,13 +19,14 @@ import {
   validationErrorResponse,
 } from '@/lib/openapi'
 import { generateJsonResponse } from '@/lib/response'
-import { authMiddleware } from '@/middlewares/auth'
+import { authMiddleware, mutationOriginMiddleware } from '@/middlewares/auth'
 import { listBrowseFields } from '@/services/browse'
 import {
   getTrackDetail,
   listTrackFilterOptions,
   listTracks,
 } from '@/services/tracks'
+import { mergeLastfmTrack } from '@/services/track-merges'
 
 const app: OpenAPIHono<AppEnv> = createOpenAPIApp()
   .openapi(
@@ -99,6 +102,41 @@ const app: OpenAPIHono<AppEnv> = createOpenAPIApp()
       generateJsonResponse(
         c,
         await listTrackFilterOptions(c.req.valid('query')),
+        200,
+      ),
+  )
+  .openapi(
+    createRoute({
+      method: 'post',
+      path: '/:id/merge',
+      middleware: [authMiddleware(), mutationOriginMiddleware()],
+      request: {
+        params: z.object({ id: z.string().min(1) }),
+        body: {
+          content: { 'application/json': { schema: TrackMergeInputSchema } },
+          required: true,
+        },
+      },
+      responses: {
+        200: {
+          description: 'Last.fm track merged into the selected Spotify track',
+          content: {
+            'application/json': {
+              schema: createResponseSchema(TrackMergeResultSchema),
+            },
+          },
+        },
+        401: jsonErrorResponse('Unauthorized'),
+        403: jsonErrorResponse('Forbidden'),
+        404: jsonErrorResponse('Track not found'),
+        409: jsonErrorResponse('Tracks cannot be merged'),
+        422: validationErrorResponse,
+      },
+    }),
+    async (c) =>
+      generateJsonResponse(
+        c,
+        await mergeLastfmTrack(c.req.valid('param').id, c.req.valid('json')),
         200,
       ),
   )

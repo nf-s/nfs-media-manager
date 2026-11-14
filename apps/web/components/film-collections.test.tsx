@@ -136,7 +136,12 @@ test('collection deep links open members in source order without renumbering gap
 test('album and track navigation retain Playlists', () => {
   for (const path of ['/albums', '/tracks']) {
     const html = render('', path)
-    assert.match(html, /href="\/playlists\?mediaType=album">Playlists/)
+    assert.match(
+      html,
+      path === '/tracks'
+        ? /href="\/playlists\?mediaType=track">Playlists/
+        : /href="\/playlists\?mediaType=album">Playlists/,
+    )
     assert.doesNotMatch(html, /href="\/collections/)
   }
 })

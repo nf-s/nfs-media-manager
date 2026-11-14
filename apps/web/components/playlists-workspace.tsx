@@ -50,7 +50,7 @@ export { formatPlaylistDuration, invalidatePlaylists }
 
 type Direction = 'asc' | 'desc'
 
-const importHref = scopedHref('/imports/spotify-playlists', 'album')
+const importHref = scopedHref('/imports/spotify-playlists', 'track')
 
 function formatShortDateTime(value: string) {
   return new Date(value).toLocaleString(undefined, {

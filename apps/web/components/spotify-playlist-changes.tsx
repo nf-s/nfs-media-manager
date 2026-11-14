@@ -7,13 +7,18 @@ import { errorMessage } from './lastfm-sync'
 import { spotifyAuthorizationUrl } from '@/utils/spotify-authorize'
 
 /** Reconnects Spotify with playlist change access, keeping the access already granted. */
-export default function AllowPlaylistChanges() {
+export default function AllowPlaylistChanges({
+  playlistLibrary = 'album',
+}: {
+  playlistLibrary?: 'album' | 'track'
+}) {
   const { apiBaseUrl } = useConfig()
   const authorize = useMutation({
     mutationFn: () =>
       spotifyAuthorizationUrl(apiBaseUrl, {
         playlistChanges: true,
         playlists: true,
+        playlistLibrary,
       }),
     onSuccess: (url) => window.location.assign(url),
   })

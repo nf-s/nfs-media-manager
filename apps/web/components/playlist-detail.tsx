@@ -590,7 +590,7 @@ export function PlaylistSyncPanel({ playlist }: { playlist: PlaylistSummary }) {
                 'album',
               )}
             >
-              View job
+              View job in Albums
             </Link>
           </div>
           {active && (

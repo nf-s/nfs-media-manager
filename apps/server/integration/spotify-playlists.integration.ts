@@ -97,6 +97,7 @@ import {
 import { getAlbumPlaylists } from '@/services/album-playlists'
 import { listAlbumFilterOptions, listAlbums } from '@/services/media'
 import { relinkLastfmScrobbles } from '@/services/lastfm-scrobbles'
+import { mergeLastfmTrack } from '@/services/track-merges'
 
 const USER_ID = 'playlist-user'
 const listener = 'fixture-listener'
@@ -748,6 +749,77 @@ describe('Spotify playlist imports', () => {
       (await listTracks(trackQuery({ filters, q: 'Closing' }))).items[0]
         ?.scrobbles,
     ).toBe(2)
+  })
+
+  it('keeps a manual Last.fm merge through changed playlist imports and final playlist removal', async () => {
+    await addScrobbles('The Examples', 'Opening', 2)
+    await databaseClient.update(schema.lastfmScrobble).set({
+      albumName: 'Recorded Release',
+      albumKey: albumNameKey('Recorded Release'),
+    })
+    await importAll({
+      playlists: [chosen(OWNED, 'Morning')],
+      likedSongs: false,
+    })
+    const opening = (await listTracks(trackQuery())).items.filter(
+      (item) => item.title === 'Opening',
+    )
+    expect(opening).toHaveLength(2)
+    const source = opening.find((item) => item.spotifyMatch === 'unmatched')
+    const target = opening.find(
+      (item) => item.spotifyMatch === 'spotify-import',
+    )
+    if (!source || !target)
+      throw new Error('Expected duplicate fixture identities')
+    request.mockClear()
+    await mergeLastfmTrack(source.id, { targetId: target.id })
+    expect(request).not.toHaveBeenCalled()
+
+    playlists[0] = { ...playlists[0], snapshot_id: 'manual-merge-change' }
+    entries[OWNED] = [
+      track('opening', {
+        title: 'Opening - Remastered',
+        album: 'Changed Edition',
+      }),
+    ]
+    await importAll({
+      playlists: [chosen(OWNED, 'Morning')],
+      likedSongs: false,
+    })
+    expect((await listTracks(trackQuery())).items).toMatchObject([
+      {
+        id: target.id,
+        title: 'Opening - Remastered',
+        spotifyTrackId: target.spotifyTrackId,
+        scrobbles: 2,
+      },
+    ])
+    expect((await getTrackDetail(target.id))?.lastfmSources).toEqual([
+      {
+        artistName: 'The Examples',
+        trackName: 'Opening',
+        albumNames: ['Recorded Release'],
+        count: 2,
+        manuallyMatched: true,
+      },
+    ])
+
+    playlists[0] = { ...playlists[0], snapshot_id: 'manual-merge-empty' }
+    entries[OWNED] = []
+    await importAll({
+      playlists: [chosen(OWNED, 'Morning')],
+      likedSongs: false,
+    })
+    await relinkLastfmScrobbles()
+    expect((await listTracks(trackQuery())).items).toMatchObject([
+      {
+        id: target.id,
+        sources: ['lastfm'],
+        playlists: [],
+        scrobbles: 2,
+      },
+    ])
+    expect(await getTrackDetail(source.id)).toBeNull()
   })
 
   it('skips an unchanged playlist and replaces a changed one, dropping tracks left in no playlist', async () => {

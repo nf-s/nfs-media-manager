@@ -12,7 +12,7 @@ import {
 import { useConfig } from './providers'
 import { SectionSidebar, SectionWorkspace } from './section-sidebar'
 import { fetchApiData } from '@/utils/api'
-import { useMediaScope, useWorkspaceScope } from './media-scope'
+import { useLibraryView, useMediaScope } from './media-scope'
 import { scopedHref } from '@/utils/media-scope'
 import {
   albumImportDestinations,
@@ -20,13 +20,15 @@ import {
   importDestinations,
   resolveCsvFormat,
   subscriptionImportDestinations,
+  trackImportDestinations,
 } from '@/utils/import-navigation'
 
-function useImportsData() {
+function useImportsData(enabled = true) {
   const { apiBaseUrl } = useConfig()
   const client = useQueryClient()
   const status = useQuery({
     queryKey: ['imports'],
+    enabled,
     queryFn: () =>
       fetchApiData(apiBaseUrl, '/api/v1/imports', ImportStatusSchema),
     staleTime: 0,
@@ -34,6 +36,7 @@ function useImportsData() {
   })
   const formats = useQuery({
     queryKey: ['import-formats'],
+    enabled,
     queryFn: () =>
       fetchApiData(
         apiBaseUrl,
@@ -52,7 +55,7 @@ function useImportsData() {
       .map((run) => `${run.id}:${run.status}`)
       .join(',') ?? ''
   useEffect(() => {
-    if (completed)
+    if (enabled && completed)
       void client.invalidateQueries({
         predicate: (query) =>
           [
@@ -65,7 +68,7 @@ function useImportsData() {
             'job-activity',
           ].includes(String(query.queryKey[0])),
       })
-  }, [completed, client])
+  }, [enabled, completed, client])
   return { status, formats, running }
 }
 
@@ -82,9 +85,11 @@ export function useImportsWorkspace() {
 export function ImportStatusNotice() {
   const { status, running } = useImportsWorkspace()
   const mediaType = useMediaScope()
+  const view = useLibraryView()
   const activeRun = status.data?.runs.find(
     (run) => run.status === 'running' || run.status === 'queued',
   )
+  if (view === 'track') return null
   if (status.isError)
     return (
       <p role="alert">
@@ -120,10 +125,10 @@ export default function ImportsWorkspace({
 }: {
   children: ReactNode
 }) {
-  const data = useImportsData()
+  const mediaType = useLibraryView()
+  const data = useImportsData(mediaType !== 'track')
   const path = usePathname()
   const params = useSearchParams()
-  const mediaType = useWorkspaceScope()
   const format = resolveCsvFormat(data.formats.data ?? [], params.get('format'))
   const activeId =
     path === '/imports/csv' && mediaType === 'album'
@@ -141,9 +146,11 @@ export default function ImportsWorkspace({
               label="Imports navigation"
               items={(mediaType === 'album'
                 ? albumImportDestinations()
-                : mediaType === 'subscription'
-                  ? subscriptionImportDestinations()
-                  : importDestinations(data.formats.data ?? [])
+                : mediaType === 'track'
+                  ? trackImportDestinations()
+                  : mediaType === 'subscription'
+                    ? subscriptionImportDestinations()
+                    : importDestinations(data.formats.data ?? [])
               ).map((item) => ({
                 ...item,
                 href: scopedHref(item.href, mediaType),

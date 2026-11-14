@@ -838,6 +838,8 @@ export const lastfmTrackSource = pgTable(
     username: text('username').notNull(),
     artistKey: text('artist_key').notNull(),
     trackKey: text('track_key').notNull(),
+    // Explicit identity choices survive automatic Last.fm refreshes.
+    manuallyMatched: boolean('manually_matched').notNull().default(false),
     trackMediaItemId: text('track_media_item_id')
       .notNull()
       .references(() => libraryTrack.mediaItemId, { onDelete: 'cascade' }),

@@ -91,7 +91,7 @@ test('playlists table links tracks and albums filtered by playlist and labels so
     html,
     /aria-sort="ascending"><button[^>]*title="Sort by Playlist"[^>]*>Playlist<span aria-hidden="true"> ↑<\/span>/,
   )
-  assert.match(html, /href="\/imports\/spotify-playlists\?mediaType=album"/)
+  assert.match(html, /href="\/imports\/spotify-playlists\?mediaType=track"/)
 })
 
 test('playlist rows open the drawer and show the sync schedule and last check', () => {
@@ -181,7 +181,7 @@ test('playlist toolbar orders search, filters, count and columns before actions'
   const count = html.indexOf('1 playlists')
   const columns = html.indexOf('aria-label="Visible columns"')
   const actions = html.indexOf(
-    'href="/imports/spotify-playlists?mediaType=album"',
+    'href="/imports/spotify-playlists?mediaType=track"',
   )
   assert.ok(
     search > 0 &&

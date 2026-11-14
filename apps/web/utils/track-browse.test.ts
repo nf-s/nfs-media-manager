@@ -13,6 +13,7 @@ import {
 
 test('source is visible by default and can be included or excluded in saved filters', () => {
   assert.ok(defaultTrackColumns.includes('source'))
+  assert.ok(defaultTrackColumns.includes('spotifyMatch'))
   const included = withTrackFilter([], { field: 'source', value: 'Last.fm' })
   const filters = withTrackFilter(included, {
     field: 'source',

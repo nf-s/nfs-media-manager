@@ -12,7 +12,7 @@ import {
   it,
   vi,
 } from 'vitest'
-import { TrackQuerySchema } from '@repo/schemas/tracks'
+import { TrackQuerySchema, getTrackBrowseValues } from '@repo/schemas/tracks'
 import { env } from '@/env'
 import { albumNameKey } from '@/lib/album-import-candidates'
 import { createStableId } from '@/lib/media-utils'
@@ -39,6 +39,7 @@ vi.mock('@/plugins/registry', () => ({
 }))
 
 import { refreshTrackLinks } from '@/services/track-links'
+import { mergeLastfmTrack } from '@/services/track-merges'
 import {
   getTrackDetail,
   listTrackFilterOptions,
@@ -225,6 +226,7 @@ describe('Last.fm tracks library', () => {
       releaseDate: null,
       durationSec: null,
       spotifyTrackId: null,
+      spotifyMatch: 'unmatched',
       spotifyUrl: null,
       isrc: null,
       albumTags: [],
@@ -245,6 +247,15 @@ describe('Last.fm tracks library', () => {
         ],
       },
     )
+    expect((await getTrackDetail(items[0]?.id ?? ''))?.lastfmSources).toEqual([
+      {
+        artistName: ARTIST,
+        trackName: 'Uncatalogued Song',
+        albumNames: ['Uncatalogued Album'],
+        count: 2,
+        manuallyMatched: false,
+      },
+    ])
     await refreshTrackLinks(LISTENER)
     expect(await allTracks()).toEqual(items)
     expect(request).not.toHaveBeenCalled()
@@ -298,6 +309,7 @@ describe('Last.fm tracks library', () => {
     expect(items[0]).toMatchObject({
       id: 'shared',
       spotifyTrackId: spotifyId('shared'),
+      spotifyMatch: 'spotify-import',
       dateAdded: FIRST_LISTEN,
       scrobbles: 1,
     })
@@ -324,6 +336,21 @@ describe('Last.fm tracks library', () => {
       'Different Song',
     ])
     expect(unmatched.every((item) => item.scrobbles === 1)).toBe(true)
+    const edition = await getTrackDetail('editiona')
+    expect(edition?.listening.total).toBe(1)
+    expect(edition?.lastfmSources).toEqual([])
+    const standalone = unmatched.find((item) => item.title === 'Ambiguous Song')
+    expect((await getTrackDetail(standalone?.id ?? ''))?.lastfmSources).toEqual(
+      [
+        {
+          artistName: ARTIST,
+          trackName: 'Ambiguous Song',
+          albumNames: ['Shared Album'],
+          count: 1,
+          manuallyMatched: false,
+        },
+      ],
+    )
   })
 
   it('keeps mixed linked and unlinked album evidence separate from a Spotify edition', async () => {
@@ -404,6 +431,7 @@ describe('Last.fm tracks library', () => {
       artworkUrl: 'https://example.com/album-artwork.jpg',
       releaseDate: '2019-04-05T00:00:00.000Z',
       spotifyTrackId: spotifyId('known'),
+      spotifyMatch: 'album-track-list',
       spotifyUrl: `https://open.spotify.com/track/${spotifyId('known')}`,
       durationSec: 205,
       isrc: null,
@@ -443,9 +471,125 @@ describe('Last.fm tracks library', () => {
     await refreshTrackLinks(LISTENER)
     expect((await allTracks())[0]).toMatchObject({
       spotifyTrackId: null,
+      spotifyMatch: 'unmatched',
       spotifyUrl: null,
       album: { id: 'otherprovider' },
     })
+  })
+
+  it('uses the effective Spotify identity for match filters, facets and pagination', async () => {
+    await album('matchalbum', 'Match Album', [
+      { title: 'Derived Song', spotifyId: spotifyId('derived') },
+      { title: 'Imported Song', spotifyId: spotifyId('alternative') },
+      { title: 'Ambiguous Song', spotifyId: spotifyId('first') },
+      { title: 'Ambiguous Song', spotifyId: spotifyId('second') },
+      { title: 'Invalid ID', spotifyId: 'invalid-provider-id' },
+    ])
+    await spotifyTrack('imported', 'Imported Song', { album: 'Match Album' })
+    await playlist('match-playlist', ['imported'])
+    for (const title of [
+      'Derived Song',
+      'Imported Song',
+      'Ambiguous Song',
+      'Invalid ID',
+    ])
+      await scrobble(title, { album: 'Match Album', albumId: 'matchalbum' })
+    await scrobble('Unknown Song')
+    await refreshTrackLinks(LISTENER)
+
+    const items = await allTracks()
+    expect(items.map((item) => [item.title, item.spotifyMatch])).toEqual([
+      ['Ambiguous Song', 'unmatched'],
+      ['Derived Song', 'album-track-list'],
+      ['Imported Song', 'spotify-import'],
+      ['Invalid ID', 'unmatched'],
+      ['Unknown Song', 'unmatched'],
+    ])
+    expect(items.find((item) => item.id === 'imported')?.spotifyTrackId).toBe(
+      spotifyId('imported'),
+    )
+    const derived = items.find((item) => item.title === 'Derived Song')
+    expect(derived?.spotifyTrackId).toBe(spotifyId('derived'))
+    if (!derived) throw new Error('Expected derived fixture track')
+    expect(getTrackBrowseValues(derived).spotifyMatch).toBe('Album track list')
+
+    const requiredSource = {
+      field: 'source',
+      value: 'Last.fm',
+      mode: 'required',
+    }
+    const unmatched = await listTracks(
+      query({
+        size: 1,
+        page: 2,
+        filters: JSON.stringify([
+          requiredSource,
+          { field: 'spotifyMatch', value: 'Unmatched', mode: 'required' },
+        ]),
+      }),
+    )
+    expect(unmatched).toMatchObject({ totalCount: 3, pageCount: 3 })
+    expect(unmatched.items.map((item) => item.title)).toEqual(['Invalid ID'])
+    const matched = await listTracks(
+      query({
+        size: 1,
+        page: 2,
+        filters: JSON.stringify([
+          requiredSource,
+          { field: 'spotifyMatch', value: 'Unmatched', mode: 'exclude' },
+        ]),
+      }),
+    )
+    expect(matched).toMatchObject({ totalCount: 2, pageCount: 2 })
+    expect(matched.items.map((item) => item.id)).toEqual(['imported'])
+    const albumMatches = await listTracks(
+      query({
+        filters: JSON.stringify([
+          { field: 'spotifyMatch', value: 'Album track list', mode: 'any' },
+        ]),
+      }),
+    )
+    expect(albumMatches.totalCount).toBe(1)
+    expect(albumMatches.items.map((item) => item.spotifyTrackId)).toEqual([
+      spotifyId('derived'),
+    ])
+    const facets = await listTrackFilterOptions({ q: 'Spotify match' })
+    expect(
+      facets
+        .filter((facet) => facet.field === 'spotifyMatch')
+        .map((facet) => [facet.value, facet.count]),
+    ).toEqual([
+      ['Unmatched', 3],
+      ['Album track list', 1],
+      ['Spotify import', 1],
+    ])
+  })
+
+  it('preserves recorded Last.fm name variants without mixing in broader listening matches', async () => {
+    await scrobble('Recorded Song', { album: 'Original Album' })
+    await scrobble('Recorded Song', { album: 'Another Album', at: LAST_LISTEN })
+    await scrobble(' RECORDED SONG ', { artist: ' example artist ' })
+    await refreshTrackLinks(LISTENER)
+    const [item] = await allTracks()
+    const detail = await getTrackDetail(item?.id ?? '')
+    expect(detail?.lastfmSources).toEqual([
+      {
+        artistName: ARTIST,
+        trackName: 'Recorded Song',
+        albumNames: ['Another Album', 'Original Album'],
+        count: 2,
+        manuallyMatched: false,
+      },
+      {
+        artistName: ' example artist ',
+        trackName: ' RECORDED SONG ',
+        albumNames: [],
+        count: 1,
+        manuallyMatched: false,
+      },
+    ])
+    expect(JSON.stringify(detail?.lastfmSources)).not.toContain(LISTENER)
+    expect(request).not.toHaveBeenCalled()
   })
 
   it('offers additive source facets and filters sources in or out', async () => {
@@ -488,6 +632,167 @@ describe('Last.fm tracks library', () => {
     ])
   })
 
+  it('merges differing album evidence without double-counting history and preserves the manual choice', async () => {
+    await spotifyTrack('merge-target', 'Shared Recording', {
+      album: 'Spotify Album',
+    })
+    await playlist('original-playlist', ['merge-target'])
+    await scrobble('Shared Recording', { album: 'Scrobbled Release' })
+    await scrobble('Shared Recording', {
+      album: 'Another Release',
+      at: LAST_LISTEN,
+    })
+    await refreshTrackLinks(LISTENER)
+    const before = await allTracks()
+    expect(before).toHaveLength(2)
+    const source = before.find((item) => item.spotifyMatch === 'unmatched')
+    if (!source) throw new Error('Expected duplicate Last.fm fixture')
+    expect(before.find((item) => item.id === 'merge-target')?.scrobbles).toBe(2)
+    await playlist('source-playlist', [source.id])
+    await databaseClient.insert(schema.playlistItem).values({
+      playlistId: 'original-playlist',
+      mediaItemId: source.id,
+      position: 5,
+      addedAt: new Date('2019-01-01T00:00:00.000Z'),
+    })
+
+    expect(
+      await mergeLastfmTrack(source.id, { targetId: 'merge-target' }),
+    ).toEqual({
+      targetId: 'merge-target',
+    })
+    expect(await getTrackDetail(source.id)).toBeNull()
+    const merged = await getTrackDetail('merge-target')
+    expect(merged).toMatchObject({
+      id: 'merge-target',
+      title: 'Shared Recording',
+      albumName: 'Spotify Album',
+      spotifyTrackId: spotifyId('merge-target'),
+      spotifyMatch: 'spotify-import',
+      durationSec: 180,
+      scrobbles: 2,
+      dateAdded: '2019-01-01T00:00:00.000Z',
+      listening: { total: 2, sources: [{ strategy: 'manual', count: 2 }] },
+      lastfmSources: [
+        {
+          artistName: ARTIST,
+          trackName: 'Shared Recording',
+          albumNames: ['Another Release', 'Scrobbled Release'],
+          count: 2,
+          manuallyMatched: true,
+        },
+      ],
+    })
+    expect(merged?.playlists.map((item) => item.id)).toEqual([
+      'original-playlist',
+      'source-playlist',
+    ])
+    expect(
+      await databaseClient
+        .select({
+          position: schema.playlistItem.position,
+          addedAt: schema.playlistItem.addedAt,
+        })
+        .from(schema.playlistItem)
+        .where(eq(schema.playlistItem.playlistId, 'original-playlist')),
+    ).toEqual([{ position: 0, addedAt: new Date('2019-01-01T00:00:00.000Z') }])
+    for (let pass = 0; pass < 2; pass++) await refreshTrackLinks(LISTENER)
+    expect(await allTracks()).toHaveLength(1)
+    expect(await getTrackDetail('merge-target')).toEqual(merged)
+    expect(request).not.toHaveBeenCalled()
+  })
+
+  it('honors manual choices when recorded names differ and removes overlapping automatic attribution', async () => {
+    await spotifyTrack('chosen', 'Chosen Recording', { album: 'Chosen Album' })
+    await spotifyTrack('other-edition', 'Recorded Title', {
+      album: 'Other Album',
+    })
+    await playlist('choices', ['chosen', 'other-edition'])
+    await scrobble('Chosen Recording')
+    await scrobble('Recorded Title', {
+      album: 'Recorded Album',
+      at: LAST_LISTEN,
+    })
+    await refreshTrackLinks(LISTENER)
+    const source = (await allTracks()).find(
+      (item) => item.spotifyMatch === 'unmatched',
+    )
+    if (!source) throw new Error('Expected unmatched recorded name')
+    await Promise.all([
+      refreshTrackLinks(LISTENER),
+      mergeLastfmTrack(source.id, { targetId: 'chosen' }),
+    ])
+    await refreshTrackLinks(LISTENER)
+    const items = await allTracks()
+    expect(items).toHaveLength(2)
+    expect(items.find((item) => item.id === 'chosen')?.scrobbles).toBe(2)
+    expect(items.find((item) => item.id === 'other-edition')?.scrobbles).toBe(0)
+    const detail = await getTrackDetail('chosen')
+    expect(detail?.lastfmSources).toEqual([
+      {
+        artistName: ARTIST,
+        trackName: 'Chosen Recording',
+        albumNames: [],
+        count: 1,
+        manuallyMatched: false,
+      },
+      {
+        artistName: ARTIST,
+        trackName: 'Recorded Title',
+        albumNames: ['Recorded Album'],
+        count: 1,
+        manuallyMatched: true,
+      },
+    ])
+    expect(detail?.listening.total).toBe(2)
+    expect(
+      detail?.listening.sources.map((source) => source.strategy).sort(),
+    ).toEqual(['exact', 'manual'])
+    expect(request).not.toHaveBeenCalled()
+  })
+
+  it('rejects invalid merge identities without changing stored memberships', async () => {
+    await spotifyTrack('target', 'Target')
+    await spotifyTrack('other-target', 'Other Target')
+    await playlist('valid-targets', ['target', 'other-target'])
+    await scrobble('Unmatched One')
+    await scrobble('Unmatched Two')
+    await refreshTrackLinks(LISTENER)
+    const sources = (await allTracks()).filter(
+      (item) => item.spotifyMatch === 'unmatched',
+    )
+    const source = sources[0]
+    const other = sources[1]
+    if (!source || !other) throw new Error('Expected unmatched fixtures')
+    await databaseClient.insert(schema.mediaItem).values({
+      id: 'no-source',
+      slug: 'no-source',
+      title: 'No Source',
+      mediaType: 'track',
+    })
+    await databaseClient
+      .insert(schema.libraryTrack)
+      .values({ mediaItemId: 'no-source' })
+    const before = await allTracks()
+    const cases: Array<[string, string, number]> = [
+      [source.id, source.id, 409],
+      ['missing', 'target', 404],
+      [source.id, 'missing', 404],
+      [source.id, other.id, 409],
+      ['target', 'other-target', 409],
+      ['no-source', 'target', 409],
+    ]
+    for (const [sourceId, targetId, statusCode] of cases) {
+      await expect(
+        mergeLastfmTrack(sourceId, { targetId }),
+      ).rejects.toMatchObject({
+        response: { statusCode },
+      })
+    }
+    expect(await allTracks()).toEqual(before)
+    expect(request).not.toHaveBeenCalled()
+  })
+
   it('retains Last.fm history when its last playlist is removed', async () => {
     await spotifyTrack('retained', 'Retained')
     await spotifyTrack('removed', 'Removed')
@@ -502,6 +807,7 @@ describe('Last.fm tracks library', () => {
     expect(items[0]).toMatchObject({
       id: 'retained',
       sources: ['lastfm'],
+      spotifyMatch: 'spotify-import',
       dateAdded: FIRST_LISTEN,
       scrobbles: 1,
       playlists: [],

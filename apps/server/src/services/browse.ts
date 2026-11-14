@@ -24,6 +24,7 @@ import { createBrowseListening } from './browse-listening'
 import {
   linkedTrackFieldExpression,
   trackSourcesExpression,
+  trackSpotifyMatchExpression,
 } from './track-values'
 
 type MediaType = 'album' | 'film' | 'track'
@@ -70,6 +71,8 @@ function trackValueExpression(key: string): SQL | null {
   switch (key) {
     case 'source':
       return trackSourcesExpression(sql`${mediaItem.id}`, true)
+    case 'spotifyMatch':
+      return sql`to_jsonb(${trackSpotifyMatchExpression(sql`${libraryTrack.spotifyTrackId}`, sql`${libraryTrack.albumMediaItemId}`, sql`${mediaItem.title}`, true)})`
     case 'releaseDate':
       return sql`to_jsonb(extract(epoch from coalesce(${mediaItem.releaseDate}, (select am.release_date from media_item am where am.id = ${libraryTrack.albumMediaItemId}))) * 1000)`
     case 'album':

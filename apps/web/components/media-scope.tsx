@@ -1,11 +1,12 @@
 'use client'
 
-import { Fragment, type ReactNode } from 'react'
+import { Fragment, useEffect, type ReactNode } from 'react'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import {
   libraryViewForPath,
   mediaScopeForPath,
   switchLibraryHref,
+  trackScopeRedirect,
   workspaceScopeForPath,
 } from '@/utils/media-scope'
 
@@ -59,6 +60,14 @@ export function LibrarySelector() {
 }
 
 export function MediaScopeContent({ children }: { children: ReactNode }) {
-  const scope = useWorkspaceScope()
+  const path = usePathname()
+  const params = useSearchParams()
+  const router = useRouter()
+  const scope = useLibraryView()
+  const destination = trackScopeRedirect(path, params.get('mediaType'))
+  useEffect(() => {
+    if (destination) router.replace(destination)
+  }, [destination, router])
+  if (destination) return null
   return <Fragment key={scope}>{children}</Fragment>
 }

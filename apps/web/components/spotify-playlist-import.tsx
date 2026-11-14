@@ -34,6 +34,7 @@ import {
   TableState,
 } from '@repo/ui/components/ui/table'
 import { useConfig } from './providers'
+import { useLibraryView } from './media-scope'
 import {
   SecondaryCell,
   SecondaryTableHead,
@@ -272,12 +273,20 @@ function JobStatus({
   job: SpotifyPlaylistJob
   labels: JobLabels
 }) {
+  const trackLibrary = useLibraryView() === 'track'
   return (
     <Link
       className="job-status underline underline-offset-2"
       data-status={job.status}
       href={jobHref(job)}
-      title={job.errorMessage ?? undefined}
+      title={
+        trackLibrary
+          ? [job.errorMessage, 'Open job in Albums'].filter(Boolean).join(' · ')
+          : (job.errorMessage ?? undefined)
+      }
+      aria-label={
+        trackLibrary ? `${labels[job.status]}: open job in Albums` : undefined
+      }
     >
       {labels[job.status]}
     </Link>
@@ -398,6 +407,7 @@ function selectable(playlist: SpotifyPlaylist) {
 export default function SpotifyPlaylistImport() {
   const { apiBaseUrl, appUrl } = useConfig()
   const client = useQueryClient()
+  const trackLibrary = useLibraryView() === 'track'
   const outcome = useSearchParams().get('spotify')
   const [search, setSearch] = useState('')
   const [importStatus, setImportStatus] = useState<ImportPlaylistFilter>('all')
@@ -463,7 +473,11 @@ export default function SpotifyPlaylistImport() {
       ),
   })
   const authorize = useMutation({
-    mutationFn: () => spotifyAuthorizationUrl(apiBaseUrl, { playlists: true }),
+    mutationFn: () =>
+      spotifyAuthorizationUrl(apiBaseUrl, {
+        playlists: true,
+        playlistLibrary: trackLibrary ? 'track' : 'album',
+      }),
     onSuccess: (url) => window.location.assign(url),
   })
   const list = useMutation({
@@ -574,7 +588,7 @@ export default function SpotifyPlaylistImport() {
           'album',
         )}
       >
-        View import jobs
+        {trackLibrary ? 'View import jobs in Albums' : 'View import jobs'}
       </Link>
       {queue.data.warnings.map((warning) => (
         <p key={warning}>{warning}</p>
@@ -612,7 +626,9 @@ export default function SpotifyPlaylistImport() {
         <p role="alert">
           Configure Client ID and Redirect URI in{' '}
           <Link href="/providers?provider=spotify&mediaType=album">
-            Spotify provider settings
+            {trackLibrary
+              ? 'Spotify provider settings in Albums'
+              : 'Spotify provider settings'}
           </Link>
           .
         </p>
@@ -671,7 +687,9 @@ export default function SpotifyPlaylistImport() {
           <span className="muted">
             Adding albums to playlists needs playlist change access.
           </span>
-          <AllowPlaylistChanges />
+          <AllowPlaylistChanges
+            playlistLibrary={trackLibrary ? 'track' : 'album'}
+          />
         </div>
       )}
       {ready && (
@@ -741,7 +759,9 @@ export default function SpotifyPlaylistImport() {
                 {listingJob.errorMessage
                   ? `: ${listingJob.errorMessage}`
                   : '.'}{' '}
-                <Link href={jobHref(listingJob)}>View job</Link>
+                <Link href={jobHref(listingJob)}>
+                  {trackLibrary ? 'View job in Albums' : 'View job'}
+                </Link>
               </p>
             )}
           <SecondaryTableToolbar

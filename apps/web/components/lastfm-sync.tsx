@@ -39,10 +39,28 @@ function formatDateTime(value: string | null) {
   return value ? new Date(value).toLocaleString() : '-'
 }
 
-/** Refreshes everything derived from scrobble links. */
-export function invalidateScrobbleLinks(client: QueryClient) {
+/** Refreshes derived data without refetching a track just removed by a merge. */
+export async function invalidateScrobbleLinks(
+  client: QueryClient,
+  deletedTrackId?: string,
+) {
+  if (deletedTrackId !== undefined) {
+    const queryKey = ['track', deletedTrackId]
+    await client.cancelQueries({ queryKey, exact: true })
+    await client.invalidateQueries({
+      queryKey,
+      exact: true,
+      refetchType: 'none',
+    })
+  }
   return client.invalidateQueries({
     predicate: (query) =>
+      !(
+        deletedTrackId !== undefined &&
+        query.queryKey.length === 2 &&
+        query.queryKey[0] === 'track' &&
+        query.queryKey[1] === deletedTrackId
+      ) &&
       [
         'albums',
         'album',
@@ -85,7 +103,11 @@ export function useLastfmSyncStatus() {
   })
 }
 
-export default function LastfmSync() {
+export default function LastfmSync({
+  trackLibrary = false,
+}: {
+  trackLibrary?: boolean
+}) {
   const { apiBaseUrl } = useConfig()
   const client = useQueryClient()
   const [confirmingStop, setConfirmingStop] = useState(false)
@@ -170,7 +192,9 @@ export default function LastfmSync() {
         <p role="alert">
           Add the Last.fm API key and username in{' '}
           <Link href="/providers?provider=lastfm&mediaType=album">
-            Last.fm provider settings
+            {trackLibrary
+              ? 'shared Last.fm settings in Albums'
+              : 'Last.fm provider settings'}
           </Link>
           .
         </p>
@@ -197,13 +221,15 @@ export default function LastfmSync() {
           <dt>Stored scrobbles</dt>
           <dd>{data.storedScrobbles.toLocaleString()}</dd>
         </div>
-        <div>
-          <dt>Linked scrobbles</dt>
-          <dd>
-            {data.matchedScrobbles.toLocaleString()} of{' '}
-            {data.storedScrobbles.toLocaleString()}
-          </dd>
-        </div>
+        {!trackLibrary && (
+          <div>
+            <dt>Album-linked scrobbles</dt>
+            <dd>
+              {data.matchedScrobbles.toLocaleString()} of{' '}
+              {data.storedScrobbles.toLocaleString()}
+            </dd>
+          </div>
+        )}
         <div>
           <dt>Last completed</dt>
           <dd>{formatDateTime(data.lastCompletedAt)}</dd>
@@ -271,7 +297,13 @@ export default function LastfmSync() {
               'album',
             )}
           >
-            {running ? 'View current job' : 'View last job'}
+            {trackLibrary
+              ? running
+                ? 'View current sync job in Albums'
+                : 'View last sync job in Albums'
+              : running
+                ? 'View current job'
+                : 'View last job'}
           </Link>
         )}
       </div>

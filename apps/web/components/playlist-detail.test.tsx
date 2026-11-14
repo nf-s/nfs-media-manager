@@ -74,6 +74,7 @@ function track(id: string, title: string, spotifyTrackId: string) {
     durationSec: 200,
     dateAdded: null,
     spotifyTrackId,
+    spotifyMatch: spotifyTrackId ? 'spotify-import' : 'unmatched',
     spotifyUrl: null,
     isrc: null,
     scrobbles: 0,

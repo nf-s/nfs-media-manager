@@ -137,7 +137,7 @@ const stored = PlaylistSummarySchema.parse({
   },
 })
 
-function render(data: Array<[unknown[], unknown]>) {
+function render(data: Array<[unknown[], unknown]>, search = '') {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
@@ -152,7 +152,7 @@ function render(data: Array<[unknown[], unknown]>) {
           }}
         >
           <PathnameContext.Provider value="/imports/spotify-playlists">
-            <SearchParamsContext.Provider value={new URLSearchParams()}>
+            <SearchParamsContext.Provider value={new URLSearchParams(search)}>
               <SpotifyPlaylistImport />
             </SearchParamsContext.Provider>
           </PathnameContext.Provider>
@@ -349,6 +349,40 @@ test('a failed listing shows its message and keeps the stored list', () => {
   )
   assert.doesNotMatch(html, /disabled=""[^>]*>List again/)
   assert.match(html, /aria-label="Select Stored"/)
+})
+
+test('track imports label shared album jobs and settings before leaving the library', () => {
+  const configured = render(
+    [
+      [['spotify-account'], account],
+      [['spotify-playlist-imports'], imports],
+      [
+        ['spotify-playlists'],
+        {
+          ...listing,
+          job: {
+            jobId: 'listing-fixture',
+            status: 'failed',
+            errorMessage: 'Fixture failure',
+            finishedAt: null,
+            progress: null,
+          },
+        },
+      ],
+    ],
+    'mediaType=track',
+  )
+  assert.match(configured, /View job in Albums/)
+  assert.match(configured, /aria-label="Failed: open job in Albums"/)
+  assert.match(
+    configured,
+    /href="\/jobs\?jobId=listing-fixture&amp;mediaType=album"/,
+  )
+  const unconfigured = render(
+    [[['spotify-account'], { ...account, configured: false }]],
+    'mediaType=track',
+  )
+  assert.match(unconfigured, /Spotify provider settings in Albums/)
 })
 
 test('a connection without playlist changes offers to allow them', () => {

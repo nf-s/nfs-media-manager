@@ -351,6 +351,49 @@ describe('Spotify and album import API security', () => {
     expect(mocks.destination).not.toHaveBeenCalled()
   })
 
+  it('keeps the Tracks playlist import context through authorization and completion', async () => {
+    mocks.authorize.mockResolvedValue({
+      url: 'https://accounts.spotify.com/authorize',
+      expiresAt: '2030-01-01T00:00:00.000Z',
+    })
+    const options = { playlists: true, playlistLibrary: 'track' }
+    expect((await spotify.request(post('/authorize', options))).status).toBe(
+      200,
+    )
+    expect(mocks.authorize).toHaveBeenCalledWith(
+      'user-1',
+      'session-1',
+      'http://localhost:3001',
+      options,
+    )
+    for (const connected of [true, false]) {
+      mocks.callback.mockResolvedValue({
+        connected,
+        returnOrigin: 'http://localhost:3001',
+        returnTo: 'track-playlists',
+      })
+      const response = await spotify.request(
+        `http://localhost:4001/complete?state=${'a'.repeat(43)}&code=fixture-code`,
+      )
+      expect(response.status).toBe(302)
+      expect(response.headers.get('location')).toBe(
+        `http://localhost:3001/imports/spotify-playlists?mediaType=track&spotify=${connected ? 'connected' : 'error'}`,
+      )
+    }
+  })
+
+  it('rejects invalid playlist return libraries', async () => {
+    for (const input of [
+      { playlists: true, playlistLibrary: 'film' },
+      { playlists: true, playlistLibrary: 'https://example.test' },
+      { playlistLibrary: 'track' },
+    ])
+      expect((await spotify.request(post('/authorize', input))).status).toBe(
+        422,
+      )
+    expect(mocks.authorize).not.toHaveBeenCalled()
+  })
+
   it.each([
     { connected: true, outcome: 'connected' },
     { connected: false, outcome: 'error' },

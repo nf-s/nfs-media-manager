@@ -1,0 +1,1 @@
+ALTER TABLE "lastfm_track_source" ADD COLUMN "manually_matched" boolean DEFAULT false NOT NULL;

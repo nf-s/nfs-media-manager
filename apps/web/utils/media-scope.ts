@@ -1,16 +1,22 @@
 export type MediaScope = 'album' | 'film'
 /**
- * The library that Imports, Jobs and Providers are scoped to. Subscriptions
+ * The library that metadata Jobs and Providers are scoped to. Subscriptions
  * (YouTube channels and Spotify podcasts) has no media items or tags.
  */
 export type WorkspaceScope = MediaScope | 'subscription'
 /**
- * What the library selector shows. Tracks and playlists are a view of the
- * album library: Tags, Imports, Jobs and Providers stay in the album scope.
+ * What the library selector shows. Tracks has its own browse, playlists and
+ * imports navigation; it has no tag management or per-track metadata jobs.
  */
 export type LibraryView = MediaScope | 'track' | 'subscription'
 
 const trackViewPaths = ['/tracks', '/playlists']
+const trackImportPaths = [
+  '/imports',
+  '/imports/spotify-playlists',
+  '/imports/lastfm',
+]
+const trackUnsupportedPaths = ['/tags', '/jobs', '/providers']
 const subscriptionPaths = [
   '/subscriptions',
   '/imports/youtube',
@@ -63,12 +69,25 @@ export function libraryViewForPath(
   path: string,
   value: string | null,
 ): LibraryView {
-  return trackViewPaths.some((root) => isUnder(path, root))
+  return trackViewPaths.some((root) => isUnder(path, root)) ||
+    (value === 'track' &&
+      (isUnder(path, '/imports') ||
+        trackUnsupportedPaths.some((root) => isUnder(path, root))))
     ? 'track'
     : workspaceScopeForPath(path, value)
 }
 
-export function scopedHref(href: string, mediaType: WorkspaceScope) {
+/** Invalid track-scoped links must not render another library's workspace. */
+export function trackScopeRedirect(path: string, value: string | null) {
+  if (value !== 'track') return null
+  if (trackUnsupportedPaths.some((root) => isUnder(path, root)))
+    return '/tracks'
+  if (isUnder(path, '/imports') && !trackImportPaths.includes(path))
+    return scopedHref('/imports/spotify-playlists', 'track')
+  return null
+}
+
+export function scopedHref(href: string, mediaType: LibraryView) {
   const hashIndex = href.indexOf('#')
   const hash = hashIndex < 0 ? '' : href.slice(hashIndex)
   const destination = hashIndex < 0 ? href : href.slice(0, hashIndex)
@@ -128,7 +147,23 @@ export function switchLibraryHref(
   const current = new URLSearchParams(search)
   const shown = libraryViewForPath(path, current.get('mediaType'))
   if (shown === view) return `${path}${current.size ? `?${current}` : ''}`
-  if (view === 'track') return '/tracks'
-  if (shown === 'track') return libraryHome(view)
+  if (
+    path !== '/imports' &&
+    trackImportPaths.includes(path) &&
+    ((shown === 'album' && view === 'track') ||
+      (shown === 'track' && view === 'album'))
+  )
+    return scopedHref(path, view)
+  if (view === 'track')
+    return isUnder(path, '/imports')
+      ? scopedHref('/imports/spotify-playlists', 'track')
+      : '/tracks'
+  if (shown === 'track')
+    return isUnder(path, '/imports')
+      ? scopedHref(
+          view === 'subscription' ? '/imports/youtube' : '/imports',
+          view,
+        )
+      : libraryHome(view)
   return switchMediaScopeHref(path, search, view)
 }

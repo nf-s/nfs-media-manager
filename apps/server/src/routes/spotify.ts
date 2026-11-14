@@ -215,7 +215,7 @@ app.openapi(
       returnTo === 'providers'
         ? new URL('/providers', returnOrigin)
         : new URL(
-            returnTo === 'playlists'
+            returnTo === 'playlists' || returnTo === 'track-playlists'
               ? '/imports/spotify-playlists'
               : returnTo === 'podcasts'
                 ? '/imports/spotify-podcasts'
@@ -231,7 +231,12 @@ app.openapi(
             spotify: outcome,
           }
         : {
-            mediaType: returnTo === 'podcasts' ? 'subscription' : 'album',
+            mediaType:
+              returnTo === 'podcasts'
+                ? 'subscription'
+                : returnTo === 'track-playlists'
+                  ? 'track'
+                  : 'album',
             spotify: outcome,
           },
     ).toString()

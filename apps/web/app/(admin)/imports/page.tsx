@@ -9,5 +9,7 @@ export default async function ImportsPage({
   const params = await searchParams
   if (params.mediaType === 'subscription')
     redirect('/imports/youtube?mediaType=subscription')
+  if (params.mediaType === 'track')
+    redirect('/imports/spotify-playlists?mediaType=track')
   return <ImportsPageClient />
 }

@@ -84,9 +84,11 @@ export type TrackAlbumLinkStrategy = z.infer<
  * `exact`: same title and credited artist. `normalized`: ignoring accents,
  * punctuation and a leading "The". `version`: ignoring featured credits,
  * remaster notes and "Original Mix". `album`: the scrobble's linked album is
- * the track's album and the titles match without qualifiers.
+ * the track's album and the titles match without qualifiers. `manual`: an
+ * explicit identity choice overrides automatic attribution for those names.
  */
 export const TrackScrobbleLinkStrategySchema = z.enum([
+  'manual',
   'exact',
   'normalized',
   'version',
@@ -109,6 +111,19 @@ export const trackSourceLabels: Record<TrackSource, string> = {
   'spotify-liked': 'Liked Songs',
 }
 
+/** Where the current Spotify identity comes from, independent of membership. */
+export const TrackSpotifyMatchSchema = z.enum([
+  'spotify-import',
+  'album-track-list',
+  'unmatched',
+])
+export type TrackSpotifyMatch = z.infer<typeof TrackSpotifyMatchSchema>
+export const trackSpotifyMatchLabels: Record<TrackSpotifyMatch, string> = {
+  'spotify-import': 'Spotify import',
+  'album-track-list': 'Album track list',
+  unmatched: 'Unmatched',
+}
+
 export const TrackListItemSchema = z.object({
   id: z.string(),
   mediaType: z.literal('track'),
@@ -128,6 +143,8 @@ export const TrackListItemSchema = z.object({
   durationSec: z.number().int().nonnegative().nullable(),
   dateAdded: z.string().nullable(),
   spotifyTrackId: z.string().nullable(),
+  /** Required evidence for the effective ID; never inferred from listening links. */
+  spotifyMatch: TrackSpotifyMatchSchema,
   spotifyUrl: z.string().url().nullable(),
   isrc: z.string().nullable(),
   scrobbles: z.number().int().nonnegative(),
@@ -142,7 +159,26 @@ export const TrackScrobbleSourceSchema = z.object({
   strategy: TrackScrobbleLinkStrategySchema,
 })
 
+export const TrackLastfmSourceSchema = z.object({
+  artistName: z.string(),
+  trackName: z.string(),
+  /** Distinct recorded album names; empty when no album name was supplied. */
+  albumNames: z.array(z.string()),
+  count: z.number().int().positive(),
+  /** Includes an explicit owner choice for this library identity. */
+  manuallyMatched: z.boolean(),
+})
+
+export const TrackMergeInputSchema = z
+  .object({ targetId: z.string().min(1) })
+  .strict()
+export type TrackMergeInput = z.infer<typeof TrackMergeInputSchema>
+export const TrackMergeResultSchema = z.object({ targetId: z.string().min(1) })
+export type TrackMergeResult = z.infer<typeof TrackMergeResultSchema>
+
 export const TrackDetailSchema = TrackListItemSchema.extend({
+  /** Recorded names with strict Last.fm membership, most played first, up to 50. */
+  lastfmSources: z.array(TrackLastfmSourceSchema),
   listening: z.object({
     total: z.number().int().nonnegative(),
     firstListenedAt: z.string().datetime().nullable(),
@@ -191,6 +227,7 @@ export function getTrackBrowseValues(item: TrackListItem): BrowseValues {
     album: item.albumName,
     playlist: item.playlists.map((playlist) => playlist.name),
     source: item.sources.map((source) => trackSourceLabels[source]),
+    spotifyMatch: trackSpotifyMatchLabels[item.spotifyMatch],
     genre: item.albumTags,
     albumLink: item.album
       ? trackAlbumLinkLabels.linked

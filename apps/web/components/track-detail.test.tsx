@@ -30,10 +30,20 @@ const scrobbled = TrackDetailSchema.parse({
   durationSec: null,
   dateAdded: '2026-01-02T00:00:00.000Z',
   spotifyTrackId: null,
+  spotifyMatch: 'unmatched',
   spotifyUrl: null,
   isrc: null,
   scrobbles: 3,
   lastListenedAt: '2026-01-04T00:00:00.000Z',
+  lastfmSources: [
+    {
+      artistName: 'Example artist',
+      trackName: 'Synthetic track',
+      albumNames: ['Recorded album'],
+      count: 3,
+      manuallyMatched: false,
+    },
+  ],
   listening: {
     total: 3,
     firstListenedAt: '2026-01-02T00:00:00.000Z',
@@ -87,6 +97,8 @@ test('unmatched Last.fm tracks show recorded metadata, listening and an actionab
   assert.match(html, /Recorded album/)
   assert.match(html, /<dt>Duration<\/dt><dd>-<\/dd>/)
   assert.match(html, /No Spotify match for playback\./)
+  assert.match(html, /Recorded by Last.fm/)
+  assert.match(html, /Spotify has not been searched for this track/)
   assert.doesNotMatch(html, />Play<\/button>|>Add to queue<\/button>/)
   assert.match(html, /<h2>Listening<\/h2>/)
   assert.match(html, /<dt>Scrobbles<\/dt><dd>3<\/dd>/)
@@ -107,6 +119,7 @@ test('tracks with a Spotify match keep album metadata, playback and every source
     releaseDate: '2020-01-01T00:00:00.000Z',
     sources: ['lastfm', 'spotify', 'spotify-liked'],
     spotifyTrackId: '1234567890ABCDEFGHIJKL',
+    spotifyMatch: 'spotify-import',
     spotifyUrl: 'https://open.spotify.com/track/1234567890ABCDEFGHIJKL',
   })
   const html = render(matched)
@@ -119,6 +132,41 @@ test('tracks with a Spotify match keep album metadata, playback and every source
   assert.match(html, />Spotify playlists<\/a>/)
   assert.match(html, />Liked Songs<\/a>/)
   assert.doesNotMatch(html, /No Spotify match/)
+  assert.match(html, /Spotify ID came from a playlist or Liked Songs import/)
+  assert.match(html, /unique artist and title match/)
+})
+
+test('album-derived Spotify IDs explain the exact fallback without claiming verification', () => {
+  const html = render(
+    TrackDetailSchema.parse({
+      ...scrobbled,
+      album: { id: 'album-1', title: 'Library album' },
+      spotifyTrackId: '1234567890ABCDEFGHIJKL',
+      spotifyUrl: 'https://open.spotify.com/track/1234567890ABCDEFGHIJKL',
+      spotifyMatch: 'album-track-list',
+    }),
+  )
+  assert.match(html, /exactly one track has the same title/)
+  assert.match(html, /has not been checked against Spotify/)
+  assert.doesNotMatch(html, /Spotify ID came from a playlist/)
+})
+
+test('manual source choices are identified separately from automatic matches', () => {
+  const html = render(
+    TrackDetailSchema.parse({
+      ...scrobbled,
+      spotifyTrackId: '1234567890ABCDEFGHIJKL',
+      spotifyUrl: 'https://open.spotify.com/track/1234567890ABCDEFGHIJKL',
+      spotifyMatch: 'spotify-import',
+      lastfmSources: scrobbled.lastfmSources.map((source) => ({
+        ...source,
+        manuallyMatched: true,
+      })),
+    }),
+  )
+  assert.match(html, /chosen manually/)
+  assert.match(html, /Manually matched/)
+  assert.doesNotMatch(html, /unique artist and title match/)
 })
 
 test('source metadata reflects an active exclusion filter', () => {

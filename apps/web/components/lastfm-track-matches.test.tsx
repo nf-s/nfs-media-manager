@@ -4,7 +4,9 @@ import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { LastfmSyncStatusSchema } from '@repo/schemas/lastfm'
-import LastfmTracksImport from './lastfm-tracks-import'
+import LastfmTrackMatches, {
+  loadLastfmTrackMatchCounts,
+} from './lastfm-track-matches'
 import { refreshScrobbleLinks } from './lastfm-sync'
 import { ConfigContext } from './providers'
 
@@ -28,6 +30,10 @@ function render(status = stored) {
     defaultOptions: { queries: { retry: false } },
   })
   client.setQueryData(['lastfm-sync'], status)
+  client.setQueryData(['tracks', 'lastfm-match-counts'], {
+    total: 3,
+    withoutSpotify: 2,
+  })
   try {
     return renderToStaticMarkup(
       <QueryClientProvider client={client}>
@@ -37,7 +43,7 @@ function render(status = stored) {
             apiBaseUrl: 'http://localhost:4001',
           }}
         >
-          <LastfmTracksImport />
+          <LastfmTrackMatches />
         </ConfigContext.Provider>
       </QueryClientProvider>,
     )
@@ -46,16 +52,62 @@ function render(status = stored) {
   }
 }
 
-test('stored history offers an explicit import without provider requests', () => {
+test('track imports explain stored-history matching and link to unmatched tracks', () => {
   const html = render()
-  assert.match(html, />Import Last.fm tracks<\/button>/)
-  assert.match(html, /title="Use stored scrobbles; no Last.fm requests\."/)
+  assert.match(html, />Refresh matches<\/button>/)
+  assert.match(html, /This makes no Last.fm or Spotify requests/)
+  assert.match(html, /No Spotify match/)
+  const links = [...html.matchAll(/href="([^\"]+)"/g)].map(
+    (match) => new URL(match[1] ?? '', 'http://localhost'),
+  )
+  assert.ok(
+    links.some((url) =>
+      JSON.parse(url.searchParams.get('filters') ?? '[]').some(
+        (filter: { field: string; value: string }) =>
+          filter.field === 'spotifyMatch' && filter.value === 'Unmatched',
+      ),
+    ),
+  )
+  assert.doesNotMatch(html, /Import Last.fm tracks/)
   assert.doesNotMatch(html, /disabled=""/)
-  assert.equal(render({ ...stored, storedScrobbles: 0 }), '')
-  assert.equal(render({ ...stored, configured: false }), '')
+  assert.match(render({ ...stored, storedScrobbles: 0 }), /disabled=""/)
+  assert.match(render({ ...stored, configured: false }), /disabled=""/)
+  assert.match(render({ ...stored, state: 'running' }), /disabled=""/)
 })
 
-test('import posts only the stored relink action and invalidates affected library data', async (t) => {
+test('match counts use source membership and effective Spotify matching filters', async (t) => {
+  const queries: URLSearchParams[] = []
+  t.mock.method(globalThis, 'fetch', async (url: RequestInfo | URL) => {
+    const params = new URL(String(url)).searchParams
+    queries.push(params)
+    return Response.json({
+      statusCode: 200,
+      message: 'OK',
+      data: {
+        items: [],
+        totalCount: params.get('filters')?.includes('spotifyMatch') ? 2 : 3,
+        page: 1,
+        size: 1,
+        pageCount: 3,
+      },
+    })
+  })
+  assert.deepEqual(await loadLastfmTrackMatchCounts('http://localhost:4001'), {
+    total: 3,
+    withoutSpotify: 2,
+  })
+  assert.equal(queries.length, 2)
+  for (const params of queries) {
+    assert.equal(params.get('size'), '1')
+    assert.deepEqual(JSON.parse(params.get('filters') ?? '[]')[0], {
+      field: 'source',
+      value: 'Last.fm',
+      mode: 'required',
+    })
+  }
+})
+
+test('refresh posts only the stored relink action and invalidates affected library data', async (t) => {
   const client = new QueryClient()
   const keys = [
     ['tracks', 'browse'],

@@ -70,6 +70,22 @@ export function albumImportDestinations() {
   ]
 }
 
+/** Tracks are imported from stored Last.fm history or Spotify playlists. */
+export function trackImportDestinations() {
+  return [
+    {
+      id: '/imports/spotify-playlists',
+      href: '/imports/spotify-playlists',
+      label: 'Spotify playlists',
+    },
+    {
+      id: '/imports/lastfm',
+      href: '/imports/lastfm',
+      label: 'Last.fm tracks',
+    },
+  ]
+}
+
 /** The Subscriptions library has no import history; each page shows its own sync. */
 export function subscriptionImportDestinations() {
   return [

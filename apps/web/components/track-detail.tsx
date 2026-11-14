@@ -8,6 +8,7 @@ import { sameBrowseFilter, type BrowseFilter } from '@repo/schemas/browse'
 import {
   TrackDetailSchema,
   trackSourceLabels,
+  trackSpotifyMatchLabels,
   type TrackDetail,
 } from '@repo/schemas/tracks'
 import { useConfig } from './providers'
@@ -28,6 +29,7 @@ import { ListeningChart } from './listening-chart'
 import MediaArtwork from './media-artwork'
 import { LibraryTrackPlayButtons } from './play-controls'
 import ServiceIconLinks from './service-icon-links'
+import TrackMerge from './track-merge'
 
 type OnFilter = (filter: BrowseFilter, keepOpen?: boolean) => void
 
@@ -182,12 +184,15 @@ export default function TrackDetailView({
   id,
   onFilter,
   onOpenPlaylist,
+  onMerged,
 }: {
   id: string
   /** Applies a filter in the surrounding browser; without it values link to /tracks. */
   onFilter?: OnFilter
   /** Opens a playlist's drawer in the surrounding browser; without it playlists link to the Playlists page. */
   onOpenPlaylist?: OnOpenPlaylist
+  /** Replaces the discarded track with the retained Spotify track after merging. */
+  onMerged?: (targetId: string) => void
 }) {
   const { apiBaseUrl } = useConfig()
   const detail = useQuery({
@@ -268,6 +273,35 @@ export default function TrackDetailView({
         </div>
       </dl>
       <div className="detail-metadata">
+        <section>
+          <h2>Spotify match</h2>
+          <FilterValues
+            field="spotifyMatch"
+            values={[trackSpotifyMatchLabels[item.spotifyMatch]]}
+            onFilter={onFilter}
+          />
+          <p className="quiet text-sm">
+            {item.spotifyMatch === 'spotify-import'
+              ? item.lastfmSources.some((source) => source.manuallyMatched)
+                ? 'The Spotify ID came from a playlist or Liked Songs import. This recording was chosen manually for the Last.fm names marked below.'
+                : item.sources.includes('lastfm')
+                  ? 'The Spotify ID came from a playlist or Liked Songs import. Last.fm was matched to this track by a unique artist and title match, with compatible album information.'
+                  : 'The Spotify ID came directly from a playlist or Liked Songs import.'
+              : item.spotifyMatch === 'album-track-list'
+                ? 'The Spotify ID comes from the linked album’s stored track list, where exactly one track has the same title. This automatic match has not been checked against Spotify.'
+                : 'No imported Spotify ID or unique match in the linked album’s track list is available. Spotify has not been searched for this track.'}
+          </p>
+          <TrackMerge
+            track={item}
+            onMerged={(targetId) => {
+              if (onMerged) onMerged(targetId)
+              else
+                window.location.assign(
+                  `/tracks/${encodeURIComponent(targetId)}`,
+                )
+            }}
+          />
+        </section>
         {item.sources.length > 0 && (
           <section>
             <h2>Source</h2>
@@ -295,6 +329,32 @@ export default function TrackDetailView({
               values={item.albumTags}
               onFilter={onFilter}
             />
+          </section>
+        )}
+        {item.lastfmSources.length > 0 && (
+          <section>
+            <h2>Recorded by Last.fm</h2>
+            <ul className="text-sm">
+              {item.lastfmSources.map((source) => (
+                <li key={JSON.stringify([source.artistName, source.trackName])}>
+                  <strong>{source.trackName}</strong> — {source.artistName}
+                  {source.manuallyMatched && (
+                    <span className="quiet"> · Manually matched</span>
+                  )}
+                  <p className="quiet">
+                    Album:{' '}
+                    {source.albumNames.length
+                      ? source.albumNames.join(' · ')
+                      : 'Not supplied'}{' '}
+                    · {source.count.toLocaleString()} scrobbles
+                  </p>
+                </li>
+              ))}
+            </ul>
+            <p className="quiet text-sm">
+              These stored names give this track its Last.fm source. Listening
+              totals below can also include broader name matches.
+            </p>
           </section>
         )}
         <section>

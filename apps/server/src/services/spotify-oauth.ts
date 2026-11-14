@@ -37,6 +37,7 @@ import {
 const SpotifyReturnToSchema = z.enum([
   'imports',
   'playlists',
+  'track-playlists',
   'podcasts',
   'providers',
 ])
@@ -273,7 +274,9 @@ export async function authorizeSpotify(
       options.playback !== undefined
         ? 'providers'
         : options.playlists
-          ? 'playlists'
+          ? options.playlistLibrary === 'track'
+            ? 'track-playlists'
+            : 'playlists'
           : options.podcasts
             ? 'podcasts'
             : 'imports',

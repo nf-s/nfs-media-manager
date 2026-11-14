@@ -51,7 +51,6 @@ import {
 import { usePlayback } from './playback-provider'
 import { PlaylistDrawer } from './playlist-detail'
 import TrackDetailView from './track-detail'
-import LastfmTracksImport from './lastfm-tracks-import'
 import styles from './media-browser.module.css'
 
 const collection = 'tracks'
@@ -464,7 +463,6 @@ export default function TrackBrowser() {
             }}
           />
           <div className="browse-controls">
-            <LastfmTracksImport />
             <select
               aria-label="Sort by"
               value={sortBy}
@@ -538,7 +536,7 @@ export default function TrackBrowser() {
             <span className="browse-count" aria-live="polite">
               {query.isPending
                 ? 'Loading...'
-                : `${total.toLocaleString()} ${collection}`}
+                : `${total.toLocaleString()} ${total === 1 ? 'track' : 'tracks'}`}
             </span>
           </div>
         </div>
@@ -799,6 +797,7 @@ export default function TrackBrowser() {
                 id={selectedId}
                 onFilter={addFilter}
                 onOpenPlaylist={playlistDrawer.open}
+                onMerged={(targetId) => setParams({ item: targetId })}
               />
             </div>
           </aside>

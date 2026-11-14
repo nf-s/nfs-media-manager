@@ -11,6 +11,7 @@ export const defaultTrackColumns = [
   'artist',
   'album',
   'source',
+  'spotifyMatch',
   'playlist',
   'durationSec',
   'dateAdded',
@@ -26,6 +27,7 @@ export const trackScrobbleRuleLabels: Record<
   normalized: 'Ignoring accents and punctuation',
   version: 'Ignoring version notes',
   album: 'Same album',
+  manual: 'Manually matched',
 }
 
 export function parseTrackFilters(value: string | null): BrowseFilter[] {

@@ -1,5 +1,8 @@
 import { sql, type SQL } from 'drizzle-orm'
-import { trackSourceLabels } from '@repo/schemas/tracks'
+import {
+  trackSourceLabels,
+  trackSpotifyMatchLabels,
+} from '@repo/schemas/tracks'
 
 /** Current library membership, independent of a recording's listening matches. */
 export function trackSourcesExpression(id: SQL, labels = false) {
@@ -28,4 +31,31 @@ export function linkedTrackFieldExpression(
     from track t where t.album_media_item_id = ${albumId}
       and lower(regexp_replace(trim(t.title), '[[:space:]]+', ' ', 'g')) =
         lower(regexp_replace(trim(${title}), '[[:space:]]+', ' ', 'g')))`
+}
+
+function linkedTrackSpotifyIdExpression(albumId: SQL, title: SQL) {
+  const candidate = linkedTrackFieldExpression('external_id', albumId, title)
+  return sql`(select case when candidate.id ~ '^[A-Za-z0-9]{22}$' then candidate.id end
+    from (select ${candidate} as id) candidate)`
+}
+
+/** The same effective identity is used by playback, provenance and browse filters. */
+export function trackSpotifyIdExpression(
+  storedId: SQL,
+  albumId: SQL,
+  title: SQL,
+) {
+  return sql`coalesce(${storedId}, ${linkedTrackSpotifyIdExpression(albumId, title)})`
+}
+
+export function trackSpotifyMatchExpression(
+  storedId: SQL,
+  albumId: SQL,
+  title: SQL,
+  labels = false,
+) {
+  return sql`case
+    when ${storedId} is not null then ${labels ? trackSpotifyMatchLabels['spotify-import'] : 'spotify-import'}::text
+    when ${trackSpotifyIdExpression(storedId, albumId, title)} is not null then ${labels ? trackSpotifyMatchLabels['album-track-list'] : 'album-track-list'}::text
+    else ${labels ? trackSpotifyMatchLabels.unmatched : 'unmatched'}::text end`
 }

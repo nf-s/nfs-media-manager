@@ -32,6 +32,13 @@ const CandidateRowsSchema = z.array(
     album_id: z.string().nullable(),
   }),
 )
+const ManualRowsSchema = z.array(
+  z.object({
+    artist_key: z.string(),
+    track_key: z.string(),
+    track_id: z.string(),
+  }),
+)
 
 /** Imports stored history only; uncertain recording identities remain separate. */
 export async function importLastfmLibraryTracks(account: string) {
@@ -64,6 +71,19 @@ export async function importLastfmLibraryTracks(account: string) {
       where lt.spotify_track_id is not null`)
       ).rows,
     )
+    const manual = new Map(
+      ManualRowsSchema.parse(
+        (
+          await tx.execute(sql`
+            select artist_key, track_key, track_media_item_id as track_id
+            from lastfm_track_source
+            where username = ${account} and manually_matched`)
+        ).rows,
+      ).map((row) => [
+        JSON.stringify([row.artist_key, row.track_key]),
+        row.track_id,
+      ]),
+    )
     const byName = new Map<string, typeof candidates>()
     const key = (artistName: string, title: string) =>
       JSON.stringify([albumNameKey(artistName), albumNameKey(title)])
@@ -89,14 +109,18 @@ export async function importLastfmLibraryTracks(account: string) {
           ),
       )
       const matched = matches.length === 1 ? matches[0] : undefined
+      const manualId = manual.get(
+        JSON.stringify([group.artist_key, group.track_key]),
+      )
       return {
         group,
         albumId:
           !group.has_unlinked_album && group.album_ids.length === 1
             ? group.album_ids[0]
             : null,
-        matched: matched !== undefined,
+        matched: manualId !== undefined || matched !== undefined,
         id:
+          manualId ??
           matched?.id ??
           createStableId(
             'library-track',

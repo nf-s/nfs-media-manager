@@ -10,6 +10,7 @@ import {
   scopedHref,
   switchLibraryHref,
   switchMediaScopeHref,
+  trackScopeRedirect,
   workspaceScopeForPath,
 } from './media-scope'
 import { jobMatchesScope, jobMediaScope } from './job-media-scope'
@@ -136,7 +137,7 @@ test('selecting the current library is a no-op that retains deep links and filte
   )
 })
 
-test('tracks and playlists are a view of the album library', () => {
+test('tracks have their own library view while album metadata retains its scope', () => {
   for (const path of [
     '/tracks',
     '/tracks/first',
@@ -151,6 +152,86 @@ test('tracks and playlists are a view of the album library', () => {
   assert.equal(libraryViewForPath('/tags', 'album'), 'album')
   assert.equal(libraryViewForPath('/tags', null), 'film')
   assert.equal(libraryViewForPath('/tracks-other', null), 'film')
+})
+
+test('track imports retain their library across shared music import routes', () => {
+  for (const path of [
+    '/imports',
+    '/imports/spotify-playlists',
+    '/imports/lastfm',
+  ])
+    assert.equal(libraryViewForPath(path, 'track'), 'track')
+  assert.equal(libraryViewForPath('/albums/linked-album', 'track'), 'album')
+  assert.equal(
+    switchLibraryHref('/imports/lastfm', 'mediaType=track', 'track'),
+    '/imports/lastfm?mediaType=track',
+  )
+  assert.equal(
+    switchLibraryHref('/imports/albums', 'mediaType=album', 'track'),
+    '/imports/spotify-playlists?mediaType=track',
+  )
+  assert.equal(
+    switchLibraryHref('/imports/lastfm', 'mediaType=track', 'album'),
+    '/imports/lastfm?mediaType=album',
+  )
+  assert.equal(
+    scopedHref('/imports/lastfm?tab=history', 'track'),
+    '/imports/lastfm?tab=history&mediaType=track',
+  )
+})
+
+test('switching between Albums and Tracks keeps the shared import source', () => {
+  for (const path of ['/imports/lastfm', '/imports/spotify-playlists']) {
+    assert.equal(
+      switchLibraryHref(path, 'mediaType=album&q=fixture', 'track'),
+      `${path}?mediaType=track`,
+    )
+    assert.equal(
+      switchLibraryHref(path, 'mediaType=track&q=fixture', 'album'),
+      `${path}?mediaType=album`,
+    )
+    assert.equal(
+      switchLibraryHref(path, 'mediaType=track&q=fixture', 'film'),
+      '/imports?mediaType=film',
+    )
+  }
+  for (const path of [
+    '/imports',
+    '/imports/spotify',
+    '/imports/albums',
+    '/imports/csv',
+  ])
+    assert.equal(
+      switchLibraryHref(path, 'mediaType=album', 'track'),
+      '/imports/spotify-playlists?mediaType=track',
+    )
+})
+
+test('unsupported track links return to Tracks without rendering another library', () => {
+  for (const path of [
+    '/tags',
+    '/tags/hidden',
+    '/jobs',
+    '/jobs/metadata',
+    '/providers',
+  ]) {
+    assert.equal(libraryViewForPath(path, 'track'), 'track')
+    assert.equal(trackScopeRedirect(path, 'track'), '/tracks')
+    assert.equal(trackScopeRedirect(path, 'album'), null)
+  }
+  for (const path of ['/imports/csv', '/imports/legacy', '/imports/albums'])
+    assert.equal(
+      trackScopeRedirect(path, 'track'),
+      '/imports/spotify-playlists?mediaType=track',
+    )
+  for (const path of [
+    '/tracks',
+    '/playlists',
+    '/imports/lastfm',
+    '/imports/spotify-playlists',
+    '/albums/linked-album',
+  ])
+    assert.equal(trackScopeRedirect(path, 'track'), null)
 })
 
 test('collections stay in Films and switching libraries leaves collection detail state', () => {

@@ -22,10 +22,19 @@ export const SpotifyAuthorizeInputSchema = z
     playlistChanges: z.boolean().optional(),
     /** Return to the playlist import page once connected. */
     playlists: z.boolean().optional(),
+    /** Keep the originating library when returning to playlist imports. */
+    playlistLibrary: z.enum(['album', 'track']).optional(),
     /** Return to the podcast import page once connected. */
     podcasts: z.boolean().optional(),
   })
   .strict()
+  .refine(
+    (input) => input.playlistLibrary === undefined || input.playlists === true,
+    {
+      message: 'A playlist library requires a playlist connection',
+      path: ['playlistLibrary'],
+    },
+  )
 export const SpotifyAuthorizeResultSchema = z.object({
   url: z.string().url(),
   expiresAt: z.string().datetime(),

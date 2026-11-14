@@ -7,6 +7,7 @@ import {
   importDestinations,
   resolveCsvFormat,
   subscriptionImportDestinations,
+  trackImportDestinations,
 } from './import-navigation'
 
 const formats = FileImportFormatSchema.array().parse([
@@ -88,6 +89,21 @@ test('subscription destinations are the YouTube and Spotify podcast syncs, witho
       id: '/imports/spotify-podcasts',
       href: '/imports/spotify-podcasts',
       label: 'Spotify podcasts',
+    },
+  ])
+})
+
+test('track imports offer only Spotify playlists and Last.fm tracks', () => {
+  assert.deepEqual(trackImportDestinations(), [
+    {
+      id: '/imports/spotify-playlists',
+      href: '/imports/spotify-playlists',
+      label: 'Spotify playlists',
+    },
+    {
+      id: '/imports/lastfm',
+      href: '/imports/lastfm',
+      label: 'Last.fm tracks',
     },
   ])
 })

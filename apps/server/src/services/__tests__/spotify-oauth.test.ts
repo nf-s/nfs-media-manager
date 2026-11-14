@@ -103,6 +103,7 @@ async function begin(
   options: {
     playback?: boolean
     playlists?: boolean
+    playlistLibrary?: 'album' | 'track'
     podcasts?: boolean
     playlistChanges?: boolean
   } = {},
@@ -562,6 +563,21 @@ describe('Spotify owner/session-bound OAuth (mock database and gate)', () => {
     const started = await begin('http://127.0.0.1:3001', { playlists: true })
     expect(started.scope).toBe(requestedScope)
     expect(savedState(started.saved)).toMatchObject({ returnTo: 'playlists' })
+  })
+
+  it('persists the Tracks playlist destination without requesting extra access', async () => {
+    mocks.database.select
+      .mockReturnValueOnce(query([]))
+      .mockReturnValueOnce(query([]))
+    const started = await begin('http://127.0.0.1:3001', {
+      playlists: true,
+      playlistLibrary: 'track',
+    })
+    expect(started.scope).toBe(requestedScope)
+    expect(savedState(started.saved)).toMatchObject({
+      returnTo: 'track-playlists',
+    })
+    expect(mocks.request).not.toHaveBeenCalled()
   })
 
   it('does not report playback for an account from another client', async () => {
