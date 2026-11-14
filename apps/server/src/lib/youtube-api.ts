@@ -57,6 +57,7 @@ export const YoutubeChannelPageSchema = z.object({
           .object({
             subscriberCount: CountSchema.optional(),
             hiddenSubscriberCount: z.boolean().optional(),
+            videoCount: CountSchema.optional(),
           })
           .optional(),
         contentDetails: z

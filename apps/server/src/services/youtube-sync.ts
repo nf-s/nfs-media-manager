@@ -231,6 +231,7 @@ async function syncSubscriptionPage(
         subscriberCount: detail?.statistics?.hiddenSubscriberCount
           ? null
           : (detail?.statistics?.subscriberCount ?? null),
+        itemTotal: detail?.statistics?.videoCount ?? null,
         subscribed: true,
         seenRunId: run.runId,
       },
@@ -263,6 +264,7 @@ async function syncSubscriptionPage(
             thumbnailUrl: sql`excluded.thumbnail_url`,
             uploadsPlaylistId: sql`excluded.uploads_playlist_id`,
             subscriberCount: sql`excluded.subscriber_count`,
+            itemTotal: sql`excluded.item_total`,
             subscribed: true,
             seenRunId: run.runId,
             updatedAt: new Date(),
@@ -352,24 +354,31 @@ function videoRows(
   })
 }
 
+const UnchangedSchema = z.boolean()
+
 /**
- * Reads one page of the next channel's uploads, newest first, with each
- * video's details. A channel whose history is already stored stops at the
- * first page that holds a known video; otherwise every page is read.
+ * The subscribed channels after the cursor, in ID order. A channel is
+ * unchanged when its history is stored, its listed video count equals the
+ * count at its last read, and no stored video was live or upcoming then: a
+ * stream that ends changes its length and status but not the count.
  */
-async function syncUploadsPage(
-  request: YoutubeRequest,
-  accessToken: string,
-  token: string,
-  run: SyncRow,
-  context: LastfmSyncJobContext,
-) {
-  const [channel] = await db
+async function remainingChannels(run: SyncRow) {
+  const rows = await db
     .select({
       id: subscriptionSource.id,
       title: subscriptionSource.title,
       uploadsPlaylistId: subscriptionSource.uploadsPlaylistId,
       historyComplete: subscriptionSource.historyComplete,
+      itemTotal: subscriptionSource.itemTotal,
+      // The stored videos are searched only when the counts match. A
+      // single-table select names columns without their table, so the
+      // correlated subquery names both tables itself.
+      unchanged: sql<unknown>`case
+        when ${subscriptionSource.historyComplete}
+          and ${subscriptionSource.itemTotal} = ${subscriptionSource.readItemTotal}
+        then not exists (select 1 from subscription_item i
+          where i.source_id = ${subscriptionSource}.id and i.live <> 'none')
+        else false end`,
     })
     .from(subscriptionSource)
     .where(
@@ -382,7 +391,43 @@ async function syncUploadsPage(
       ),
     )
     .orderBy(asc(subscriptionSource.id))
-    .limit(1)
+  return rows.map((row) => ({
+    ...row,
+    unchanged: UnchangedSchema.parse(row.unchanged),
+  }))
+}
+
+/**
+ * Moves past every unchanged channel without a request, then reads one page
+ * of the next channel's uploads, newest first, with each video's details. A
+ * channel whose history is already stored stops at the first page that holds
+ * a known video; otherwise every page is read.
+ */
+async function syncUploadsPage(
+  request: YoutubeRequest,
+  accessToken: string,
+  token: string,
+  run: SyncRow,
+  context: LastfmSyncJobContext,
+) {
+  const channels = await remainingChannels(run)
+  const changed = channels.findIndex((item) => !item.unchanged)
+  const skipped = changed === -1 ? channels.length : changed
+  const last = channels[skipped - 1]
+  if (last && run.pageToken === null)
+    return db.transaction(async (tx) => {
+      const current = await ownedRun(tx, token, run)
+      if (!current) return 'lost'
+      await tx
+        .update(subscriptionSync)
+        .set({
+          sourceCursor: last.id,
+          sourcesDone: current.sourcesDone + skipped,
+        })
+        .where(youtubeRun(run.userId))
+      return 'skipped'
+    })
+  const channel = channels[0]
   if (!channel) return 'fetched-all'
   let uploads: z.infer<typeof YoutubeUploadPageSchema>
   try {
@@ -461,11 +506,15 @@ async function syncUploadsPage(
         .where(youtubeRun(run.userId))
       return 'more'
     }
-    if (!next && !channel.historyComplete)
-      await tx
-        .update(subscriptionSource)
-        .set({ historyComplete: true })
-        .where(eq(subscriptionSource.id, channel.id))
+    // The count was listed before this read, so a video published since
+    // then changes the next listing's count and the channel is read again.
+    await tx
+      .update(subscriptionSource)
+      .set({
+        historyComplete: channel.historyComplete || !next,
+        readItemTotal: channel.itemTotal,
+      })
+      .where(eq(subscriptionSource.id, channel.id))
     await tx
       .update(subscriptionSync)
       .set({

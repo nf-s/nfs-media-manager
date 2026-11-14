@@ -1,0 +1,1 @@
+ALTER TABLE "subscription_source" ADD COLUMN "read_item_total" integer;

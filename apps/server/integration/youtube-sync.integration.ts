@@ -112,6 +112,8 @@ type FakeChannel = {
   handle?: string
   subscribed: boolean
   noUploads?: boolean
+  /** Leaves the video count out of the channel's statistics. */
+  noVideoCount?: boolean
   /** Newest first, as the uploads playlist lists them. */
   videos: FakeVideo[]
 }
@@ -310,6 +312,13 @@ async function fakeYoutube(
             statistics: {
               subscriberCount: '1200',
               hiddenSubscriberCount: false,
+              ...(channel.noVideoCount
+                ? {}
+                : {
+                    videoCount: String(
+                      channel.videos.filter((video) => !video.private).length,
+                    ),
+                  }),
             },
             contentDetails: {
               relatedPlaylists: { uploads: `UU${channel.id.slice(2)}` },
@@ -373,6 +382,14 @@ function apiPaths() {
     .map(([input]) => new URL(String(input)))
     .filter((url) => url.host === 'www.googleapis.com')
     .map((url) => url.pathname.replace('/youtube/v3/', ''))
+}
+
+/** The channels whose uploads were requested, in request order. */
+function uploadsRead() {
+  return request.mock.calls
+    .map(([input]) => new URL(String(input)))
+    .filter((url) => url.pathname === '/youtube/v3/playlistItems')
+    .map((url) => `UC${(url.searchParams.get('playlistId') ?? '').slice(2)}`)
 }
 
 async function connect() {
@@ -802,14 +819,15 @@ describe('YouTube subscription sync jobs with offline HTTP and a temporary datab
       storedSources: 2,
       storedItems: 5,
     })
-    // One page per stored channel: its first page already holds a known video.
+    // One page of the channel with a new video: its first page already holds
+    // a known video. The channel without uploads is unchanged and not read.
     expect(apiPaths()).toEqual([
       'subscriptions',
       'channels',
       'playlistItems',
-      'playlistItems',
       'videos',
     ])
+    expect(uploadsRead()).toEqual([ORBITAL])
     // The refreshed first page updates stored videos and the renamed channel is searchable.
     expect((await search({ q: 'replay' })).ids).toEqual([videoId('a3')])
     expect(
@@ -838,11 +856,127 @@ describe('YouTube subscription sync jobs with offline HTTP and a temporary datab
     request.mockClear()
     channel(COOKS).subscribed = true
     const third = await syncToEnd()
-    expect(third).toMatchObject({ newItems: 0, storedItems: 8 })
-    expect(apiPaths().filter((path) => path === 'playlistItems')).toHaveLength(
-      3,
-    )
+    expect(third).toMatchObject({
+      sourcesDone: 3,
+      sourcesTotal: 3,
+      newItems: 0,
+      storedItems: 8,
+    })
+    // The channel subscribed again has the video count of its last read, so
+    // only the channel with an upcoming stream is read.
+    expect(uploadsRead()).toEqual([ORBITAL])
     expect((await search({ q: 'sourdough' })).ids).toEqual([videoId('b1')])
+  })
+
+  it('skips channels whose video count is unchanged since their last read', async () => {
+    const counts = async () =>
+      Object.fromEntries(
+        (
+          await databaseClient
+            .select()
+            .from(schema.subscriptionSource)
+            .orderBy(schema.subscriptionSource.id)
+        ).map((row) => [row.id, [row.itemTotal, row.readItemTotal]]),
+      )
+    const views = async (id: string) =>
+      (await search({ filters: fromChannels(ORBITAL, COOKS) })).items.find(
+        (item) => item.id === id,
+      )?.viewCount
+    const listing = ['subscriptions', 'channels', 'subscriptions', 'channels']
+    await connect()
+    await syncToEnd()
+    // Private videos are not counted; each read records the listed count.
+    expect(await counts()).toEqual({
+      [COOKS]: [3, 3],
+      [EMPTY]: [0, 0],
+      [ORBITAL]: [4, 4],
+    })
+
+    // Nothing was published. A channel with a stored upcoming stream is still
+    // read, which stores the finished stream's length and status.
+    request.mockClear()
+    const orbital = channel(ORBITAL)
+    orbital.videos = orbital.videos.map((video) =>
+      video.id === videoId('a3')
+        ? { ...video, duration: 'PT1H', live: undefined, views: 800 }
+        : video,
+    )
+    expect(await syncToEnd()).toMatchObject({
+      state: 'complete',
+      sourcesDone: 3,
+      sourcesTotal: 3,
+      newItems: 0,
+      storedItems: 7,
+    })
+    expect(apiPaths()).toEqual([...listing, 'playlistItems', 'videos'])
+    expect(uploadsRead()).toEqual([ORBITAL])
+    expect(
+      (await search({ filters: fromChannels(ORBITAL), sortBy: 'publishedAt' }))
+        .items[0],
+    ).toMatchObject({ id: videoId('a3'), durationSec: 3600, live: 'none' })
+
+    // Every channel is unchanged: only the subscription list is requested, and
+    // the stored counts of a skipped channel's videos are not refreshed.
+    request.mockClear()
+    orbital.videos = orbital.videos.map((video) =>
+      video.id === videoId('a1') ? { ...video, views: 6000 } : video,
+    )
+    expect(await syncToEnd()).toMatchObject({
+      state: 'complete',
+      sourcesDone: 3,
+      sourcesTotal: 3,
+      newItems: 0,
+      storedItems: 7,
+    })
+    expect(apiPaths()).toEqual(listing)
+    expect(await views(videoId('a1'))).toBe(5000)
+
+    // A channel with a new video and a channel without a listed count are
+    // read; the unchanged channel is not.
+    request.mockClear()
+    channel(COOKS).videos.unshift({
+      id: videoId('b4'),
+      title: 'Proofing baskets',
+      publishedAt: '2026-05-02T08:00:00Z',
+      duration: 'PT6M',
+      views: 20,
+    })
+    channel(EMPTY).noVideoCount = true
+    expect(await syncToEnd()).toMatchObject({
+      state: 'complete',
+      sourcesDone: 3,
+      sourcesTotal: 3,
+      newItems: 1,
+      storedItems: 8,
+    })
+    expect(apiPaths()).toEqual([
+      ...listing,
+      'playlistItems',
+      'videos',
+      'playlistItems',
+    ])
+    expect(uploadsRead()).toEqual([COOKS, EMPTY])
+    expect(await counts()).toEqual({
+      [COOKS]: [4, 4],
+      [EMPTY]: [null, null],
+      [ORBITAL]: [4, 4],
+    })
+    expect(await views(videoId('a1'))).toBe(5000)
+
+    // One video removed and one published leaves the count unchanged, so the
+    // channel is not read until its count changes.
+    request.mockClear()
+    const cooks = channel(COOKS)
+    cooks.videos = [
+      {
+        id: videoId('b5'),
+        title: 'Cast iron care',
+        publishedAt: '2026-05-03T08:00:00Z',
+      },
+      ...cooks.videos.filter((video) => video.id !== videoId('b3')),
+    ]
+    expect(await syncToEnd()).toMatchObject({ newItems: 0, storedItems: 8 })
+    expect(uploadsRead()).toEqual([EMPTY])
   })
 
   it('leaves podcast sources and episodes out of the YouTube sync, counts and search', async () => {
@@ -1548,7 +1682,10 @@ describe('subscription library migration', () => {
         ),
       ).rejects.toThrow()
 
-      // The migrated checkpoint resumes at the second uploads page.
+      // The migrated checkpoint resumes at the second uploads page, under
+      // the later migrations the sync now reads.
+      for (const later of migrations.slice(index + 1))
+        for (const statement of later.sql) await migrationPool.query(statement)
       active.client = drizzle(migrationPool, { schema })
       await connect()
       request.mockClear()

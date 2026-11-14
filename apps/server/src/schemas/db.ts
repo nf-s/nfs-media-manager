@@ -871,8 +871,11 @@ export const subscriptionSource = pgTable(
     thumbnailUrl: text('thumbnail_url'),
     uploadsPlaylistId: text('uploads_playlist_id'),
     subscriberCount: bigint('subscriber_count', { mode: 'number' }),
-    // Spotify's episode total when the show was last listed.
+    // The provider's total when the source was last listed: Spotify's episode
+    // total or YouTube's public video count.
     itemTotal: integer('item_total'),
+    // YouTube only: the listed total when the channel's uploads were last read.
+    readItemTotal: integer('read_item_total'),
     // Cleared when a sync no longer lists the subscription; items are kept.
     subscribed: boolean('subscribed').notNull().default(true),
     // The sync run that last listed the subscription.
