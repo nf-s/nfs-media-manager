@@ -116,7 +116,31 @@ describe('media job history api', () => {
       mediaItemId: 'film-1',
       page: 2,
       size: 25,
+      sortBy: 'createdAt',
+      direction: 'desc',
     })
+  })
+
+  it('forwards explicit job sorting and rejects unsupported sort input', async () => {
+    mockAppSession(true)
+    listJobs.mockResolvedValue({ items: [], totalCount: 0, pageCount: 0 })
+    const { default: app } = await import('@/app')
+    expect(
+      (await app.request('/api/v1/scrape/jobs?sortBy=provider&direction=asc'))
+        .status,
+    ).toBe(200)
+    expect(listJobs).toHaveBeenCalledExactlyOnceWith({
+      page: 1,
+      size: 25,
+      sortBy: 'provider',
+      direction: 'asc',
+    })
+    listJobs.mockClear()
+    for (const query of ['sortBy=unknown', 'direction=reverse'])
+      expect((await app.request(`/api/v1/scrape/jobs?${query}`)).status).toBe(
+        422,
+      )
+    expect(listJobs).not.toHaveBeenCalled()
   })
 
   it('requires authentication before dismissing a job', async () => {

@@ -24,7 +24,11 @@ export async function listFilmCollections() {
     .innerJoin(mediaItem, eq(mediaItem.id, playlistItem.mediaItemId))
     .innerJoin(film, eq(film.mediaItemId, mediaItem.id))
     .where(
-      and(eq(playlist.kind, 'collection'), eq(mediaItem.mediaType, 'film')),
+      and(
+        eq(playlist.kind, 'collection'),
+        eq(mediaItem.mediaType, 'film'),
+        sql`${mediaItem.metadata}->>'legacyHidden' is distinct from 'true'`,
+      ),
     )
     .groupBy(playlist.id)
     .orderBy(sql`lower(${playlist.name})`, asc(playlist.id))
@@ -51,6 +55,7 @@ export async function getFilmCollection(
         eq(playlist.id, id),
         eq(playlist.kind, 'collection'),
         eq(mediaItem.mediaType, 'film'),
+        sql`${mediaItem.metadata}->>'legacyHidden' is distinct from 'true'`,
       ),
     )
     .groupBy(playlist.id)
@@ -87,7 +92,11 @@ export async function getFilmCollection(
     .innerJoin(mediaItem, eq(mediaItem.id, playlistItem.mediaItemId))
     .innerJoin(film, eq(film.mediaItemId, mediaItem.id))
     .where(
-      and(eq(playlistItem.playlistId, id), eq(mediaItem.mediaType, 'film')),
+      and(
+        eq(playlistItem.playlistId, id),
+        eq(mediaItem.mediaType, 'film'),
+        sql`${mediaItem.metadata}->>'legacyHidden' is distinct from 'true'`,
+      ),
     )
     .orderBy(
       sql`${sortColumns[query.sortBy]} ${direction} nulls last`,

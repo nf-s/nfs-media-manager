@@ -138,6 +138,8 @@ describe('tag administration API', () => {
       visibility: 'visible',
       page: 1,
       size: 25,
+      sortBy: 'name',
+      direction: 'asc',
     })
     listTags.mockClear()
     for (const query of [
@@ -146,10 +148,33 @@ describe('tag administration API', () => {
       'page=0',
       'size=bad',
       'visibility=invalid',
+      'sortBy=unknown',
+      'direction=reverse',
       `q=${'x'.repeat(201)}`,
     ])
       expect((await app.request(`/api/v1/tags?${query}`)).status).toBe(422)
     expect(listTags).not.toHaveBeenCalled()
+  })
+
+  it('forwards explicit tag sorting alongside scope and pagination', async () => {
+    mockAppSession(true)
+    const app = await loadApp()
+    listTags.mockResolvedValue({ items: [], totalCount: 0, pageCount: 0 })
+    expect(
+      (
+        await app.request(
+          '/api/v1/tags?mediaType=album&page=2&size=10&sortBy=mediaCount&direction=desc',
+        )
+      ).status,
+    ).toBe(200)
+    expect(listTags).toHaveBeenCalledExactlyOnceWith({
+      mediaType: 'album',
+      page: 2,
+      size: 10,
+      visibility: 'visible',
+      sortBy: 'mediaCount',
+      direction: 'desc',
+    })
   })
 
   it('forwards hidden lists, ID detail pagination and validated reversible visibility changes', async () => {
@@ -170,6 +195,8 @@ describe('tag administration API', () => {
       page: 1,
       size: 25,
       visibility: 'hidden',
+      sortBy: 'name',
+      direction: 'asc',
     })
     getTagDetail.mockResolvedValue({
       tag: { id: 'a', hidden: true },

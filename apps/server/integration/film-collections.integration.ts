@@ -51,6 +51,7 @@ beforeAll(async () => {
     { id: 'music-only', name: 'Music collection', kind: 'collection' },
     { id: 'playlist', name: 'Music playlist', kind: 'playlist' },
     { id: 'empty', name: 'Empty collection', kind: 'collection' },
+    { id: 'hidden-only', name: 'Hidden collection', kind: 'collection' },
   ]
   await databaseClient.insert(schema.playlist).values(collectionRows)
   await databaseClient.insert(schema.mediaItem).values([
@@ -79,6 +80,13 @@ beforeAll(async () => {
       sourceLabel: null,
     },
     { id: 'album', slug: 'album', title: 'Album', mediaType: 'album' },
+    {
+      id: 'hidden',
+      slug: 'hidden',
+      title: 'Hidden film',
+      mediaType: 'film',
+      metadata: { legacyHidden: true },
+    },
   ])
   await databaseClient.insert(schema.film).values([
     {
@@ -99,6 +107,7 @@ beforeAll(async () => {
       watched: false,
       dateAdded: new Date('2022-01-01'),
     },
+    { mediaItemId: 'hidden' },
   ])
   await databaseClient.insert(schema.album).values({ mediaItemId: 'album' })
   await databaseClient.insert(schema.playlistItem).values([
@@ -108,6 +117,8 @@ beforeAll(async () => {
     { playlistId: 'collection', mediaItemId: 'album', position: 0 },
     { playlistId: 'music-only', mediaItemId: 'album', position: 0 },
     { playlistId: 'playlist', mediaItemId: 'alpha', position: 1 },
+    { playlistId: 'collection', mediaItemId: 'hidden', position: 1 },
+    { playlistId: 'hidden-only', mediaItemId: 'hidden', position: 1 },
   ])
 })
 afterAll(async () => {
@@ -119,6 +130,26 @@ afterAll(async () => {
 })
 
 describe('film collections', () => {
+  it('excludes legacy-hidden films from collection counts, members and discovery', async () => {
+    const detail = await getFilmCollection(
+      'collection',
+      FilmCollectionQuerySchema.parse({}),
+    )
+    expect(detail.filmCount).toBe(3)
+    expect(detail.items.totalCount).toBe(3)
+    expect(detail.items.items.map((row) => row.id)).toEqual([
+      'beta',
+      'alpha',
+      'gamma',
+    ])
+    expect((await listFilmCollections()).map((row) => row.id)).toEqual([
+      'collection',
+    ])
+    await expect(
+      getFilmCollection('hidden-only', FilmCollectionQuerySchema.parse({})),
+    ).rejects.toMatchObject({ response: { statusCode: 404 } })
+  })
+
   it('lists only collections containing films and counts only their films', async () => {
     const rows = await listFilmCollections()
     expect(rows).toHaveLength(1)

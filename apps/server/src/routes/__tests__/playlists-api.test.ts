@@ -100,6 +100,8 @@ describe('playlist API', () => {
       expect((await send('POST', '/p/additions', body)).status).toBe(422)
     expect((await send('GET', '/additions')).status).toBe(422)
     expect((await send('GET', '/p?size=101')).status).toBe(422)
+    for (const query of ['sortBy=unknown', 'direction=reverse'])
+      expect((await send('GET', `/p?${query}`)).status).toBe(422)
     expect(
       (
         await send(
@@ -129,9 +131,19 @@ describe('playlist API', () => {
   it('passes the playlist, page, schedule and album to the services', async () => {
     mocks.detail.mockResolvedValue({ id: 'p' })
     expect((await send('GET', '/p?page=2&size=50')).status).toBe(200)
-    expect(mocks.detail).toHaveBeenCalledWith('p', { page: 2, size: 50 })
+    expect(mocks.detail).toHaveBeenCalledWith('p', {
+      page: 2,
+      size: 50,
+      sortBy: 'position',
+      direction: 'asc',
+    })
     expect((await send('GET', '/p')).status).toBe(200)
-    expect(mocks.detail).toHaveBeenLastCalledWith('p', { page: 1, size: 100 })
+    expect(mocks.detail).toHaveBeenLastCalledWith('p', {
+      page: 1,
+      size: 100,
+      sortBy: 'position',
+      direction: 'asc',
+    })
 
     mocks.schedule.mockResolvedValue({ id: 'p' })
     expect(
@@ -150,6 +162,20 @@ describe('playlist API', () => {
     expect((await send('GET', '/additions?albumId=a')).status).toBe(200)
     expect(mocks.additions).toHaveBeenCalledWith('a')
     expect(mocks.detail).toHaveBeenCalledTimes(2)
+  })
+
+  it('forwards explicit playlist entry sorting alongside pagination', async () => {
+    mocks.detail.mockResolvedValue({ id: 'p' })
+    expect(
+      (await send('GET', '/p?page=2&size=50&sortBy=title&direction=desc'))
+        .status,
+    ).toBe(200)
+    expect(mocks.detail).toHaveBeenCalledExactlyOnceWith('p', {
+      page: 2,
+      size: 50,
+      sortBy: 'title',
+      direction: 'desc',
+    })
   })
 
   it('returns service refusals with their status', async () => {
