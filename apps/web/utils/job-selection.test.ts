@@ -1,3 +1,4 @@
+import { SPOTIFY_PLAYLIST_ADD_TRACK_TASK } from '@repo/schemas/track-playlist-additions'
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import type { Job } from '@repo/schemas/job'
@@ -249,7 +250,23 @@ test('Spotify playlist listings and album additions are titled, retryable task j
     jobTaskTitle({ options: { task: SPOTIFY_PLAYLIST_ADD_ALBUM_TASK } }),
     'Add album to Spotify playlist',
   )
-  for (const job of [listing, addition]) {
+  const trackAddition: Job = {
+    ...addition,
+    options: {
+      task: SPOTIFY_PLAYLIST_ADD_TRACK_TASK,
+      trackTitle: 'Track fixture',
+      playlistName: 'Synthetic mix',
+    },
+  }
+  assert.equal(
+    jobTaskTitle(trackAddition),
+    'Add track to Spotify playlist · Track fixture to Synthetic mix',
+  )
+  assert.equal(
+    jobTaskTitle({ options: { task: SPOTIFY_PLAYLIST_ADD_TRACK_TASK } }),
+    'Add track to Spotify playlist',
+  )
+  for (const job of [listing, addition, trackAddition]) {
     assert.equal(canRetryJob(job), true)
     assert.equal(canRetryJob({ ...job, status: 'succeeded' }), false)
     assert.equal(canDismissJob(job), true)

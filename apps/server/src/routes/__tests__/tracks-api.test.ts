@@ -1,7 +1,12 @@
 import { Hono } from 'hono'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const mocks = vi.hoisted(() => ({ session: vi.fn(), merge: vi.fn() }))
+const mocks = vi.hoisted(() => ({
+  session: vi.fn(),
+  merge: vi.fn(),
+  addTrack: vi.fn(),
+  additions: vi.fn(),
+}))
 vi.mock('@/env', () => ({
   env: {
     TRUSTED_ORIGINS: ['http://localhost:3001'],
@@ -18,6 +23,10 @@ vi.mock('@/services/tracks', () => ({
 }))
 vi.mock('@/services/browse', () => ({ listBrowseFields: vi.fn() }))
 vi.mock('@/services/track-merges', () => ({ mergeLastfmTrack: mocks.merge }))
+vi.mock('@/services/spotify-track-playlist-additions', () => ({
+  queueSpotifyTrackPlaylistAddition: mocks.addTrack,
+  listSpotifyTrackPlaylistAdditions: mocks.additions,
+}))
 import { ServerError } from '@/lib/error'
 import tracks from '../tracks'
 
@@ -29,15 +38,19 @@ app.onError((error, c) =>
     : c.json({ message: 'Failed' }, 500),
 )
 
-function send(body: unknown, origin = 'http://localhost:3001') {
-  return app.request('http://localhost:4001/source/merge', {
+function send(
+  body: unknown,
+  origin = 'http://localhost:3001',
+  path = '/source/merge',
+) {
+  return app.request(`http://localhost:4001${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', origin },
     body: JSON.stringify(body),
   })
 }
 
-describe('track merge API', () => {
+describe('tracks API', () => {
   beforeEach(() => {
     vi.resetAllMocks()
     vi.stubGlobal(
@@ -92,5 +105,65 @@ describe('track merge API', () => {
       new ServerError({ statusCode: 409, message: 'Tracks cannot be merged' }),
     )
     expect((await send({ targetId: 'target' })).status).toBe(409)
+  })
+
+  it('authorizes and validates track playlist additions before queueing', async () => {
+    const path = '/source/playlist-additions'
+    for (const body of [
+      {},
+      { playlistId: '' },
+      { playlistId: 'p', trackId: 'other' },
+    ])
+      expect((await send(body, 'http://localhost:3001', path)).status).toBe(422)
+    expect(
+      (await send({ playlistId: 'p' }, 'https://evil.invalid', path)).status,
+    ).toBe(403)
+    mocks.session.mockResolvedValue(null)
+    expect(
+      (await send({ playlistId: 'p' }, 'http://localhost:3001', path)).status,
+    ).toBe(401)
+    expect(
+      (await app.request('http://localhost:4001/source/playlist-additions'))
+        .status,
+    ).toBe(401)
+    expect(mocks.addTrack).not.toHaveBeenCalled()
+    expect(mocks.additions).not.toHaveBeenCalled()
+  })
+
+  it('returns queued track additions and their stored statuses', async () => {
+    const addition = {
+      trackId: 'source',
+      resolvedTrackId: 'source',
+      playlistId: 'p',
+      job: {
+        jobId: 'job',
+        status: 'queued',
+        errorMessage: null,
+        finishedAt: null,
+        progress: null,
+      },
+    }
+    mocks.addTrack.mockResolvedValue(addition)
+    mocks.additions.mockResolvedValue({ additions: [addition] })
+    const queued = await send(
+      { playlistId: 'p' },
+      'http://localhost:3001',
+      '/source/playlist-additions',
+    )
+    expect(queued.status).toBe(200)
+    expect(await queued.json()).toMatchObject({ data: addition })
+    expect(mocks.addTrack).toHaveBeenCalledExactlyOnceWith(
+      'source',
+      { playlistId: 'p' },
+      'user-1',
+    )
+    const listed = await app.request(
+      'http://localhost:4001/source/playlist-additions',
+    )
+    expect(listed.status).toBe(200)
+    expect(await listed.json()).toMatchObject({
+      data: { additions: [addition] },
+    })
+    expect(mocks.additions).toHaveBeenCalledExactlyOnceWith('source')
   })
 })

@@ -12,7 +12,7 @@ import TrackMerge, {
   canMergeLastfmTrack,
   loadTrackMergeCandidates,
   mergeLibraryTrack,
-  TrackMergeDialog,
+  TrackMergePanel,
   TrackMergeReview,
 } from './track-merge'
 import { errorMessage, invalidateScrobbleLinks } from './lastfm-sync'
@@ -116,23 +116,38 @@ test('merge is offered only for Last.fm records without a native Spotify identit
   assert.equal(network.mock.callCount(), 0)
 })
 
-test('the picker shows stored Spotify candidates with no default choice or mutation', (t) => {
+test('the side panel starts with the recorded track and stored Spotify choices without a default merge', (t) => {
   const network = t.mock.method(globalThis, 'fetch', async () => {
     throw new Error('Network forbidden during server rendering')
   })
   const html = render(
-    <TrackMergeDialog
+    <TrackMergePanel
       track={source}
       onClose={unexpectedAction}
       onMerged={unexpectedAction}
     />,
     [target, source, albumMatched],
   )
+  assert.match(html, /<dialog[^>]*class="tag-drawer"/)
+  assert.match(html, /class="tag-drawer-body"/)
+  assert.match(html, />Track match<\/span>/)
+  assert.match(html, /<h1>Fixture Song<\/h1>/)
+  assert.match(html, /Recorded Album · 3 scrobbles/)
   assert.match(html, /Search Spotify library tracks/)
+  assert.match(
+    html,
+    /placeholder="Search library tracks"[^>]*value="Fixture Song"/,
+  )
   assert.match(html, /Fixture Song - Album Version/)
   assert.match(html, /Featured Fixture/)
   assert.match(html, /Spotify Album/)
-  assert.equal((html.match(/>Review<\/button>/g) ?? []).length, 1)
+  assert.equal((html.match(/>Merge<\/button>/g) ?? []).length, 1)
+  assert.match(
+    html,
+    /aria-label="Merge with Fixture Song - Album Version by Fixture Artist, Featured Fixture"/,
+  )
+  assert.match(html, /aria-label="Open Last.fm \(opens in a new tab\)"/)
+  assert.match(html, /aria-label="Open Spotify \(opens in a new tab\)"/)
   assert.doesNotMatch(html, /Album-derived Fixture|Confirm merge/)
   assert.equal(network.mock.callCount(), 0)
 })
@@ -151,6 +166,11 @@ test('review identifies both records and explains what is retained before confir
   assert.match(html, /Spotify track to keep/)
   assert.match(html, /Recorded Album/)
   assert.match(html, /Spotify Album/)
+  assert.match(html, /3 scrobbles/)
+  assert.match(
+    html,
+    /href="https:\/\/www.last.fm\/music\/Fixture%20Artist\/_\/Fixture%20Song"/,
+  )
   assert.match(
     html,
     /href="https:\/\/open.spotify.com\/track\/1234567890ABCDEFGHIJKL"/,

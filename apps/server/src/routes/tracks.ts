@@ -10,6 +10,11 @@ import {
   TrackMergeResultSchema,
   TrackQuerySchema,
 } from '@repo/schemas/tracks'
+import {
+  TrackPlaylistAdditionInputSchema,
+  TrackPlaylistAdditionSchema,
+  TrackPlaylistAdditionsSchema,
+} from '@repo/schemas/track-playlist-additions'
 import { ServerError } from '@/lib/error'
 import {
   createOpenAPIApp,
@@ -27,6 +32,10 @@ import {
   listTracks,
 } from '@/services/tracks'
 import { mergeLastfmTrack } from '@/services/track-merges'
+import {
+  listSpotifyTrackPlaylistAdditions,
+  queueSpotifyTrackPlaylistAddition,
+} from '@/services/spotify-track-playlist-additions'
 
 const app: OpenAPIHono<AppEnv> = createOpenAPIApp()
   .openapi(
@@ -104,6 +113,77 @@ const app: OpenAPIHono<AppEnv> = createOpenAPIApp()
         await listTrackFilterOptions(c.req.valid('query')),
         200,
       ),
+  )
+  .openapi(
+    createRoute({
+      method: 'get',
+      path: '/:id/playlist-additions',
+      middleware: [authMiddleware()],
+      request: { params: z.object({ id: z.string().min(1).max(200) }) },
+      responses: {
+        200: {
+          description: 'Latest jobs adding this track to Spotify playlists',
+          content: {
+            'application/json': {
+              schema: createResponseSchema(TrackPlaylistAdditionsSchema),
+            },
+          },
+        },
+        401: jsonErrorResponse('Unauthorized'),
+        422: validationErrorResponse,
+      },
+    }),
+    async (c) =>
+      generateJsonResponse(
+        c,
+        await listSpotifyTrackPlaylistAdditions(c.req.valid('param').id),
+        200,
+      ),
+  )
+  .openapi(
+    createRoute({
+      method: 'post',
+      path: '/:id/playlist-additions',
+      middleware: [authMiddleware(), mutationOriginMiddleware()],
+      request: {
+        params: z.object({ id: z.string().min(1).max(200) }),
+        body: {
+          required: true,
+          content: {
+            'application/json': { schema: TrackPlaylistAdditionInputSchema },
+          },
+        },
+      },
+      responses: {
+        200: {
+          description: 'Queue the track addition, or return its active job',
+          content: {
+            'application/json': {
+              schema: createResponseSchema(TrackPlaylistAdditionSchema),
+            },
+          },
+        },
+        401: jsonErrorResponse('Unauthorized'),
+        403: jsonErrorResponse('Forbidden'),
+        404: jsonErrorResponse('Track or playlist not found'),
+        422: validationErrorResponse,
+        429: jsonErrorResponse('Spotify is cooling down or halted'),
+      },
+    }),
+    async (c) => {
+      const user = c.get('user')
+      if (!user)
+        throw new ServerError({ statusCode: 401, message: 'Unauthorized' })
+      return generateJsonResponse(
+        c,
+        await queueSpotifyTrackPlaylistAddition(
+          c.req.valid('param').id,
+          c.req.valid('json'),
+          user.id,
+        ),
+        200,
+      )
+    },
   )
   .openapi(
     createRoute({

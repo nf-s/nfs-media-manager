@@ -19,6 +19,7 @@ import {
   SPOTIFY_PODCAST_SYNC_TASK,
   SUBSCRIPTION_SYNC_TASKS,
 } from '@repo/schemas/subscriptions'
+import { SPOTIFY_PLAYLIST_ADD_TRACK_TASK } from '@repo/schemas/track-playlist-additions'
 import { YOUTUBE_SYNC_TASK } from '@repo/schemas/youtube'
 import { playlistJobProgress } from './playlist-sync'
 
@@ -56,7 +57,11 @@ export function isPlaylistListingJob(job: Pick<Job, 'options'>): boolean {
 }
 
 export function isPlaylistAdditionJob(job: Pick<Job, 'options'>): boolean {
-  return getJobTask(job.options) === SPOTIFY_PLAYLIST_ADD_ALBUM_TASK
+  const task = getJobTask(job.options)
+  return (
+    task === SPOTIFY_PLAYLIST_ADD_ALBUM_TASK ||
+    task === SPOTIFY_PLAYLIST_ADD_TRACK_TASK
+  )
 }
 
 function filledText(value: unknown): value is string {
@@ -77,10 +82,13 @@ export function jobTaskTitle(job: Pick<Job, 'options'>): string | null {
   }
   if (isPlaylistListingJob(job)) return 'Spotify playlist list'
   if (isPlaylistAdditionJob(job)) {
-    const { albumTitle, playlistName } = job.options
-    if (filledText(albumTitle) && filledText(playlistName))
-      return `Add album to Spotify playlist · ${albumTitle} to ${playlistName}`
-    return 'Add album to Spotify playlist'
+    const track = getJobTask(job.options) === SPOTIFY_PLAYLIST_ADD_TRACK_TASK
+    const title = track ? job.options.trackTitle : job.options.albumTitle
+    const { playlistName } = job.options
+    const label = `Add ${track ? 'track' : 'album'} to Spotify playlist`
+    if (filledText(title) && filledText(playlistName))
+      return `${label} · ${title} to ${playlistName}`
+    return label
   }
   if (isScrobbleSpotifySearchJob(job)) {
     const { artistName, albumName } = job.options

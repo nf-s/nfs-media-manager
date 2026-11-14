@@ -53,6 +53,8 @@ import {
 import { usePlayback } from './playback-provider'
 import { PlaylistDrawer } from './playlist-detail'
 import TrackDetailView from './track-detail'
+import ServiceIconLinks from './service-icon-links'
+import { trackServiceLinks } from '@/utils/track-links'
 import styles from './media-browser.module.css'
 
 const collection = 'tracks'
@@ -315,12 +317,17 @@ export default function TrackBrowser() {
   function renderValue(item: TrackListItem, field: BrowseField) {
     if (field.key === 'title')
       return (
-        <button
-          className="table-title"
-          onClick={(event) => openDetail(item.id, event.currentTarget)}
-        >
-          {item.title}
-        </button>
+        <div className="flex h-full min-w-0 items-center gap-2">
+          <button
+            className="table-title min-w-0 flex-1 truncate"
+            onClick={(event) => openDetail(item.id, event.currentTarget)}
+          >
+            {item.title}
+          </button>
+          <span className="flex shrink-0">
+            <ServiceIconLinks links={trackServiceLinks(item)} />
+          </span>
+        </div>
       )
     if (field.key === 'album') {
       if (!item.albumName) return '-'

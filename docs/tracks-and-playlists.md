@@ -6,11 +6,11 @@ Tracks are a separate library from albums. A track enters the library through an
 
 The library selector has **Albums**, **Tracks**, **Films** and **Subscriptions**. Tracks has **Browse**, **Playlists** and **Imports**. Its import sidebar offers Spotify playlists and Last.fm scrobbles, and keeps Tracks selected. Tracks inherit their linked album's tags and do not have an independent tag editor or metadata jobs. Shared music account settings and sync job links explicitly identify their destination in Albums.
 
-The only change the app makes on Spotify is [adding a library album to a playlist](#adding-an-album-to-a-playlist) when the owner asks. It never creates, renames, follows, reorders or removes from a Spotify playlist and never changes Liked Songs. There is no per-track metadata scrape, genre lookup or audio-feature collection.
+The app can [add a library album](#adding-an-album-to-a-playlist) or [one track](#adding-a-track-to-a-playlist) to a Spotify playlist when the owner asks. It never creates, renames, follows, reorders or removes from a Spotify playlist and never changes Liked Songs. There is no per-track metadata scrape, genre lookup or audio-feature collection.
 
 ## Connecting
 
-Playlists need a connected Spotify account with the `playlist-read-private` and `playlist-read-collaborative` permissions, as well as `user-library-read` for Liked Songs. An account connected before playlist support does not have them: **Imports → Spotify playlists** shows a reconnect button, which returns to the same page afterwards. Adding albums also needs `playlist-modify-private` and `playlist-modify-public`, which are requested only when asked for; see [adding an album](#adding-an-album-to-a-playlist). Account setup is described in [Spotify account setup](spotify-album-imports.md#account-setup).
+Playlists need a connected Spotify account with the `playlist-read-private` and `playlist-read-collaborative` permissions, as well as `user-library-read` for Liked Songs. An account connected before playlist support does not have them: **Imports → Spotify playlists** shows a reconnect button, which returns to the same page afterwards. Adding albums or tracks also needs `playlist-modify-private` and `playlist-modify-public`, which are requested only when asked for; see [adding an album](#adding-an-album-to-a-playlist). Account setup is described in [Spotify account setup](spotify-album-imports.md#account-setup).
 
 ## Importing
 
@@ -48,7 +48,7 @@ An imported playlist that shares its name with a playlist from the legacy album 
 
 ### Last.fm tracks
 
-Use **Tracks → Imports → Last.fm scrobbles**. **Sync now** reads the configured account's listening history and adds or updates its library tracks when the sync completes. Albums and Tracks show the same shared sync; there is no separate track-import step. The Tracks page shows how many Last.fm tracks are in the library and how many have no Spotify match, with links to those filtered lists.
+Use **Tracks → Imports → Last.fm scrobbles**. **Sync now** reads the configured account's listening history and adds or updates its library tracks when the sync completes. Albums and Tracks show the same shared sync; there is no separate track-import step. The Tracks page shows how many Last.fm tracks are in the library and how many have no Spotify match, with links to those filtered lists. Its matching table starts with **Needs match**, including tracks with an unconfirmed album-track-list match. Search, sort or change the match-status filter to work through stored tracks. **Match** opens the same side-panel pattern as album linking, with library search prefilled from the track title. Choose a result, review both recordings, then confirm the merge; the table stays open for the next track.
 
 **Refresh matches** is a secondary action for recomputing links after library metadata changes, or using history stored before track import was available. It reads stored history without requesting Last.fm or searching Spotify. The Albums page's **Relink** uses the same refresh.
 
@@ -57,6 +57,10 @@ Each distinct scrobbled artist and track name is represented in the library. A u
 A track can have more than one source. Reusing a Spotify track adds **Last.fm** alongside **Spotify playlists** or **Liked Songs**. Repeating the import refreshes the existing tracks rather than adding another copy.
 
 Existing installations must apply the database migration that allows `library_track.spotify_track_id` to be null before running the updated application. **Refresh matches** on Tracks Imports can populate the library from already-stored history without another provider sync.
+
+## Track details
+
+Track details use **Overview**, **Listening** and **Sources** tabs. Overview contains counts, library metadata, playlist memberships and **Add to playlist**. Listening contains the chart and attributed names; Sources explains the Spotify identity and retains the original Last.fm names, recorded albums and manual choices. Spotify and Last.fm icon links appear beside tracks and in details. Last.fm links use recorded names where available, including after a merge.
 
 ## Playlist drawer
 
@@ -82,6 +86,16 @@ Each addition is a Spotify job in Jobs (one album into one playlist), and asking
 5. Queues the playlist's import, so the stored copy is read again from Spotify. Nothing is written to the stored playlist directly.
 
 A retried or repeated job reads the playlist's current contents again, so tracks added before a failure, including by a request whose answer was lost, are not added twice. An addition that would take the playlist past 10,000 items is refused before anything is added.
+
+## Adding a track to a playlist
+
+A track's details can add that recording to an imported Spotify playlist the account owns or collaborates on. It uses the same playlist-change permission, request limits and job controls as album additions. Liked Songs and legacy playlists are not targets.
+
+The track needs the same Spotify identity used for playback: an imported track ID or an exact, unique match in its linked album's stored track list. Unmatched tracks cannot be added. This action does not search Spotify. The job checks that the selected recording's identity has not changed before sending it.
+
+Each addition queues one job per track and playlist. Repeating the request while that job is active returns the same job. The job checks the playlist's current version, skips a recording already present, appends only the missing track and queues the normal playlist import. A retry reads changed playlist contents before appending, so a lost response does not add the recording twice; it also refreshes the stored playlist when that earlier write is recovered.
+
+The subsequent import can consolidate an album-derived Last.fm row into the imported Spotify track. Addition status includes the retained library identity so the details panel can follow it. `POST /api/v1/tracks/:id/playlist-additions` accepts `{ "playlistId": "..." }`; `GET` at the same path reads the latest addition jobs without contacting Spotify.
 
 ## Browsing tracks
 
@@ -161,7 +175,7 @@ Stored Last.fm scrobbles link to library tracks by artist and track name. A scro
 - `spotify_playlist_listing` holds the account's last playlist list as one JSON array per user, with its listing time.
 - `lastfm_track_source` maps each imported account, artist name and track name to one library track. It supplies Last.fm source membership, retention after playlist removal and the scrobble contribution to Added. Its `manually_matched` flag preserves confirmed recording choices; migration `0027_manual_track_matches` is required before deploying this merge workflow.
 - `lastfm_track_link` separately records which scrobbled artist and track names count towards which library tracks, and by which listening-attribution rule. A name can contribute listening counts to several Spotify editions without giving them all Last.fm membership.
-- Imports run as the `spotify-playlist-import` task job, listings as `spotify-playlist-listing` and album additions as `spotify-playlist-add-album`, all with provider `spotify`.
+- Imports run as the `spotify-playlist-import` task job, listings as `spotify-playlist-listing`, album additions as `spotify-playlist-add-album` and track additions as `spotify-playlist-add-track`, all with provider `spotify`.
 
 ## Verification
 

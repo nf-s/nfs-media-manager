@@ -5,7 +5,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { SearchParamsContext } from 'next/dist/shared/lib/hooks-client-context.shared-runtime'
 import { TrackDetailSchema, type TrackDetail } from '@repo/schemas/tracks'
-import TrackDetailView from './track-detail'
+import TrackDetailView, { TrackSources, TrackListening } from './track-detail'
 import { ConfigContext } from './providers'
 import { PlaybackViewContext } from './playback-provider'
 import { idlePlaybackState } from '@/utils/playback-engine'
@@ -60,7 +60,11 @@ const scrobbled = TrackDetailSchema.parse({
   },
 })
 
-function render(item: TrackDetail, filters = '') {
+function render(
+  item: TrackDetail,
+  filters = '',
+  view: 'detail' | 'sources' | 'listening' = 'detail',
+) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
@@ -78,7 +82,13 @@ function render(item: TrackDetail, filters = '') {
             <PlaybackViewContext.Provider
               value={{ ...idlePlaybackState, enabled: true }}
             >
-              <TrackDetailView id={item.id} />
+              {view === 'sources' ? (
+                <TrackSources item={item} />
+              ) : view === 'listening' ? (
+                <TrackListening listening={item.listening} />
+              ) : (
+                <TrackDetailView id={item.id} />
+              )}
             </PlaybackViewContext.Provider>
           </SearchParamsContext.Provider>
         </ConfigContext.Provider>
@@ -95,14 +105,18 @@ test('unmatched Last.fm tracks show recorded metadata, listening and an actionab
   assert.match(html, /Synthetic track/)
   assert.match(html, /Example artist/)
   assert.match(html, /Recorded album/)
-  assert.match(html, /<dt>Duration<\/dt><dd>-<\/dd>/)
-  assert.match(html, /No Spotify match for playback\./)
-  assert.match(html, /Recorded by Last.fm/)
-  assert.match(html, /Spotify has not been searched for this track/)
+  assert.match(html, /role="tab"[^>]*>Overview/)
+  assert.match(html, /role="tab"[^>]*>Listening/)
+  assert.match(html, /role="tab"[^>]*>Sources/)
+  assert.match(
+    html,
+    /href="https:\/\/www.last.fm\/music\/Example%20artist\/_\/Synthetic%20track"/,
+  )
+  assert.match(html, /Match this track to Spotify to add it to a playlist/)
+  assert.doesNotMatch(html, /Recorded by Last.fm|Spotify has not been searched/)
   assert.doesNotMatch(html, />Play<\/button>|>Add to queue<\/button>/)
-  assert.match(html, /<h2>Listening<\/h2>/)
   assert.match(html, /<dt>Scrobbles<\/dt><dd>3<\/dd>/)
-  const sourceLink = html.match(/href="([^\"]+)">Last.fm<\/a>/)?.[1]
+  const sourceLink = html.match(/href="([^"]+)">Last.fm<\/a>/)?.[1]
   assert.ok(sourceLink)
   const params = new URL(sourceLink, 'http://localhost').searchParams
   assert.deepEqual(JSON.parse(params.get('filters') ?? '[]'), [
@@ -123,17 +137,20 @@ test('tracks with a Spotify match keep album metadata, playback and every source
     spotifyUrl: 'https://open.spotify.com/track/1234567890ABCDEFGHIJKL',
   })
   const html = render(matched)
-  assert.match(html, /href="\/albums\/album-1">Open album<\/a>/)
+  assert.match(html, /href="\/albums\/album-1">Library album<\/a>/)
   assert.match(html, /Electronic/)
-  assert.match(html, /<dt>Duration<\/dt><dd>4:03<\/dd>/)
+  assert.match(html, /4:03/)
   assert.match(html, />Play<\/button>/)
   assert.match(html, />Add to queue<\/button>/)
   assert.match(html, />Last.fm<\/a>/)
   assert.match(html, />Spotify playlists<\/a>/)
   assert.match(html, />Liked Songs<\/a>/)
   assert.doesNotMatch(html, /No Spotify match/)
-  assert.match(html, /Spotify ID came from a playlist or Liked Songs import/)
-  assert.match(html, /unique artist and title match/)
+  assert.match(
+    html,
+    /href="https:\/\/open.spotify.com\/track\/1234567890ABCDEFGHIJKL"/,
+  )
+  assert.match(render(matched, '', 'sources'), /unique artist and title match/)
 })
 
 test('album-derived Spotify IDs explain the exact fallback without claiming verification', () => {
@@ -145,8 +162,10 @@ test('album-derived Spotify IDs explain the exact fallback without claiming veri
       spotifyUrl: 'https://open.spotify.com/track/1234567890ABCDEFGHIJKL',
       spotifyMatch: 'album-track-list',
     }),
+    '',
+    'sources',
   )
-  assert.match(html, /exactly one track has the same title/)
+  assert.match(html, /exactly one track with the same title/)
   assert.match(html, /has not been checked against Spotify/)
   assert.doesNotMatch(html, /Spotify ID came from a playlist/)
 })
@@ -163,6 +182,8 @@ test('manual source choices are identified separately from automatic matches', (
         manuallyMatched: true,
       })),
     }),
+    '',
+    'sources',
   )
   assert.match(html, /chosen manually/)
   assert.match(html, /Manually matched/)
@@ -177,6 +198,16 @@ test('source metadata reflects an active exclusion filter', () => {
   })
   assert.match(
     render(scrobbled, filters.toString()),
-    /class="metadata-tag[^\"]*exclude[^\"]*"[^>]*>Last.fm<\/a>/,
+    /class="metadata-tag[^"]*exclude[^"]*"[^>]*>Last.fm<\/a>/,
+  )
+})
+
+test('listening keeps totals and provides the recorded Last.fm names as links', () => {
+  const html = render(scrobbled, '', 'listening')
+  assert.match(html, /<dt>Scrobbles<\/dt><dd>3<\/dd>/)
+  assert.match(html, /Scrobbled names/)
+  assert.match(
+    html,
+    /https:\/\/www.last.fm\/music\/Example%20artist\/_\/Synthetic%20track/,
   )
 })

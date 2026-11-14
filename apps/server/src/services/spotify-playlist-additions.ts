@@ -93,16 +93,16 @@ async function albumSpotifyReference(albumId: string) {
 }
 
 /**
- * Checks the account, the target playlist and the album before an addition
- * is queued. Only an imported Spotify playlist the account owns or
+ * Checks account permission and the target before an addition is queued.
+ * Only an imported Spotify playlist the account owns or
  * collaborates on is a target; Liked Songs and legacy playlists are not.
  */
-export async function prepareSpotifyPlaylistAddition(
+export async function prepareSpotifyPlaylistWrite(
   userId: string | null,
-  input: Record<string, unknown>,
+  playlistId: string,
+  kind: 'album' | 'track',
 ) {
   if (!userId) throw refused('Sign in to change Spotify playlists.')
-  const { playlistId, albumId } = RequestSchema.parse(input)
   const status = await getSpotifyAccountStatus(userId)
   if (!status.configured || !status.connected)
     throw refused('Connect a Spotify account before changing playlists.')
@@ -122,18 +122,31 @@ export async function prepareSpotifyPlaylistAddition(
   if (!target)
     throw new ServerError({ statusCode: 404, message: 'Playlist not found' })
   if (target.source === 'spotify-liked')
-    throw refused('Albums cannot be added to Liked Songs.')
+    throw refused(
+      `${kind === 'album' ? 'Albums' : 'Tracks'} cannot be added to Liked Songs.`,
+    )
   if (target.source !== 'spotify' || !target.spotifyId)
-    throw refused('Only imported Spotify playlists accept albums.')
+    throw refused(`Only imported Spotify playlists accept ${kind}s.`)
   if (!target.spotifyEditable) throw refused(NOT_WRITABLE)
-  const album = await albumSpotifyReference(albumId)
   return {
     playlistId,
-    albumId,
     userId,
-    groupKey: `spotify-add:${playlistId}:${albumId}`,
     spotifyPlaylistId: target.spotifyId,
     playlistName: target.name,
+  }
+}
+
+export async function prepareSpotifyPlaylistAddition(
+  userId: string | null,
+  input: Record<string, unknown>,
+) {
+  const { playlistId, albumId } = RequestSchema.parse(input)
+  const target = await prepareSpotifyPlaylistWrite(userId, playlistId, 'album')
+  const album = await albumSpotifyReference(albumId)
+  return {
+    ...target,
+    albumId,
+    groupKey: `spotify-add:${playlistId}:${albumId}`,
     spotifyAlbumId: album.spotifyId,
     albumTitle: album.title,
   }
@@ -202,7 +215,7 @@ async function presentTrackIds(
   context: TaskJobContext,
   request: SpotifyRequest,
   token: string,
-  options: Options,
+  options: Pick<Options, 'playlistId' | 'spotifyPlaylistId'>,
   current: { snapshotId: string | null; total: number },
 ) {
   const [stored] = await db
@@ -218,7 +231,10 @@ async function presentTrackIds(
             where pi.playlist_id = ${options.playlistId}`)
       ).rows,
     )
-    return new Set(rows.map((row) => row.spotify_track_id))
+    return {
+      ids: new Set(rows.map((row) => row.spotify_track_id)),
+      refreshNeeded: false,
+    }
   }
   const fetched = await readSpotifyTrackEntries(
     context,
@@ -228,12 +244,18 @@ async function presentTrackIds(
     current.total,
   )
   return fetched
-    ? new Set(fetched.entries.map((entry) => entry.spotifyTrackId))
+    ? {
+        ids: new Set(fetched.entries.map((entry) => entry.spotifyTrackId)),
+        refreshNeeded: true,
+      }
     : null
 }
 
 /** Queues the playlist's import so the stored copy is read again from Spotify. */
-async function queueFollowOnImport(context: TaskJobContext, options: Options) {
+export async function queuePlaylistImportAfterAddition(
+  context: TaskJobContext,
+  options: Pick<Options, 'playlistId' | 'userId'>,
+) {
   const [row] = await db
     .select()
     .from(playlist)
@@ -257,6 +279,59 @@ async function queueFollowOnImport(context: TaskJobContext, options: Options) {
   }
 }
 
+/** Shared guarded append, including snapshot checks and retry deduplication. */
+export async function appendSpotifyPlaylistTracks(
+  context: TaskJobContext,
+  options: Pick<Options, 'playlistId' | 'spotifyPlaylistId' | 'userId'>,
+  trackIds: (request: SpotifyRequest, token: string) => Promise<string[]>,
+) {
+  return spotifyOperation(async (request) => {
+    const token = await spotifyPlaylistChangeToken(options.userId, request)
+    const ids = await trackIds(request, token)
+    const current = await readSpotifyPlaylist(
+      request,
+      token,
+      options.spotifyPlaylistId,
+    )
+    if (!current.readable) {
+      await markPlaylistNotEditable(options.spotifyPlaylistId)
+      throw refused(NOT_WRITABLE)
+    }
+    const present = await presentTrackIds(
+      context,
+      request,
+      token,
+      options,
+      current,
+    )
+    if (!present) return null
+    const batches = spotifyTrackAdditions(ids, present.ids)
+    const adding = batches.reduce((sum, batch) => sum + batch.length, 0)
+    if (current.total + adding > SPOTIFY_PLAYLIST_ITEM_LIMIT)
+      throw refused(
+        `Spotify playlists hold at most ${SPOTIFY_PLAYLIST_ITEM_LIMIT.toLocaleString('en')} items. Nothing was added.`,
+      )
+    let added = 0
+    for (const uris of batches) {
+      if (!(await context.isActive())) return null
+      SpotifySnapshotSchema.parse(
+        await spotifyPostJson(
+          request,
+          token,
+          `playlists/${options.spotifyPlaylistId}/items`,
+          { uris },
+        ),
+      )
+      added += uris.length
+    }
+    return {
+      added,
+      alreadyPresent: new Set(ids).size - adding,
+      refreshNeeded: present.refreshNeeded || added > 0,
+    }
+  })
+}
+
 /**
  * One addition job: appends the album's tracks that the playlist does not
  * hold yet, in album order and in requests of at most 100, then queues the
@@ -269,55 +344,21 @@ export async function runSpotifyPlaylistAddition(
   try {
     const options = OptionsSchema.parse(input)
     await context.assertActive()
-    const result = await spotifyOperation(async (request) => {
-      const token = await spotifyPlaylistChangeToken(options.userId, request)
-      const albumTracks = await albumTrackIds(request, token, options)
-      if (!albumTracks.length)
-        throw refused(
-          'Spotify lists no tracks for the album. Nothing was added.',
-        )
-      const current = await readSpotifyPlaylist(
-        request,
-        token,
-        options.spotifyPlaylistId,
-      )
-      if (!current.readable) {
-        await markPlaylistNotEditable(options.spotifyPlaylistId)
-        throw refused(NOT_WRITABLE)
-      }
-      const present = await presentTrackIds(
-        context,
-        request,
-        token,
-        options,
-        current,
-      )
-      if (!present) return null
-      const batches = spotifyTrackAdditions(albumTracks, present)
-      const adding = batches.reduce((sum, batch) => sum + batch.length, 0)
-      if (current.total + adding > SPOTIFY_PLAYLIST_ITEM_LIMIT)
-        throw refused(
-          `Spotify playlists hold at most ${SPOTIFY_PLAYLIST_ITEM_LIMIT.toLocaleString('en')} items. Nothing was added.`,
-        )
-      let added = 0
-      for (const uris of batches) {
-        // Stop only between requests, so no request is left half-recorded.
-        if (!(await context.isActive())) return null
-        SpotifySnapshotSchema.parse(
-          await spotifyPostJson(
-            request,
-            token,
-            `playlists/${options.spotifyPlaylistId}/items`,
-            { uris },
-          ),
-        )
-        added += uris.length
-      }
-      return { added, alreadyPresent: new Set(albumTracks).size - adding }
-    })
+    const result = await appendSpotifyPlaylistTracks(
+      context,
+      options,
+      async (request, token) => {
+        const albumTracks = await albumTrackIds(request, token, options)
+        if (!albumTracks.length)
+          throw refused(
+            'Spotify lists no tracks for the album. Nothing was added.',
+          )
+        return albumTracks
+      },
+    )
     if (!result || !(await context.isActive())) return { outcome: 'stopped' }
-    const importJobId = result.added
-      ? await queueFollowOnImport(context, options)
+    const importJobId = result.refreshNeeded
+      ? await queuePlaylistImportAfterAddition(context, options)
       : null
     return {
       outcome: 'complete',
@@ -329,7 +370,7 @@ export async function runSpotifyPlaylistAddition(
               : []),
             ...(importJobId ? ['Queued an import of the playlist.'] : []),
           ].join(' ')
-        : `Every track of ${options.albumTitle} is already in ${options.playlistName}.`,
+        : `Every track of ${options.albumTitle} is already in ${options.playlistName}.${importJobId ? ' Queued an import of the playlist.' : ''}`,
       options: {
         added: result.added,
         alreadyPresent: result.alreadyPresent,

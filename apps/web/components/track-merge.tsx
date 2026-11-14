@@ -14,8 +14,10 @@ import {
 import { Button } from '@repo/ui/components/ui/button'
 import { Input } from '@repo/ui/components/ui/input'
 import { fetchApiData } from '@/utils/api'
+import { trackServiceLinks } from '@/utils/track-links'
 import { errorMessage, invalidateScrobbleLinks } from './lastfm-sync'
 import { useConfig } from './providers'
+import ServiceIconLinks from './service-icon-links'
 
 const TrackPageSchema = PaginatedDataSchema(TrackListItemSchema)
 const SEARCH_RESULTS = 20
@@ -78,7 +80,10 @@ export async function mergeLibraryTrack(
 function TrackIdentity({ track }: { track: TrackListItem }) {
   return (
     <div className="min-w-0 break-words">
-      <strong>{track.title}</strong>
+      <div className="flex flex-wrap items-center gap-x-2">
+        <strong>{track.title}</strong>
+        <ServiceIconLinks links={trackServiceLinks(track)} />
+      </div>
       <p>{track.artists.join(', ') || 'Unknown artist'}</p>
       <p className="quiet">{track.albumName ?? 'Album unknown'}</p>
     </div>
@@ -107,20 +112,11 @@ export function TrackMergeReview({
       <section aria-label="Last.fm record to merge">
         <h3 className="mb-1 font-medium">Last.fm record to merge</h3>
         <TrackIdentity track={source} />
+        <p className="quiet">{source.scrobbles.toLocaleString()} scrobbles</p>
       </section>
       <section aria-label="Spotify track to keep">
         <h3 className="mb-1 font-medium">Spotify track to keep</h3>
         <TrackIdentity track={target} />
-        {target.spotifyUrl && (
-          <a
-            className="underline"
-            href={target.spotifyUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Open in Spotify
-          </a>
-        )}
       </section>
       <p>
         The Spotify track keeps its Spotify ID and playlists. The separate
@@ -139,7 +135,7 @@ export function TrackMergeReview({
   )
 }
 
-export function TrackMergeDialog({
+export function TrackMergePanel({
   track,
   onClose,
   onMerged,
@@ -205,7 +201,7 @@ export function TrackMergeDialog({
     >
       <div className="tag-drawer-inner">
         <div className="detail-topbar">
-          <span id={titleId}>Merge with Spotify track</span>
+          <span id={titleId}>Track match</span>
           <button
             type="button"
             aria-label="Close track merge"
@@ -215,7 +211,7 @@ export function TrackMergeDialog({
             <X size={18} />
           </button>
         </div>
-        <div className="min-h-0 space-y-4 overflow-auto p-4">
+        <div className="tag-drawer-body">
           {target ? (
             <TrackMergeReview
               source={track}
@@ -229,13 +225,24 @@ export function TrackMergeDialog({
             />
           ) : (
             <>
-              <p className="text-sm">
-                Choose the existing Spotify library track to keep.
+              <div className="flex flex-wrap items-center gap-x-2">
+                <h1>{track.title}</h1>
+                <ServiceIconLinks links={trackServiceLinks(track)} />
+              </div>
+              <p className="break-words">
+                {track.artists.join(', ') || 'Unknown artist'}
               </p>
+              <p className="quiet text-xs">
+                {track.albumName ?? 'Album unknown'} ·{' '}
+                {track.scrobbles.toLocaleString()} scrobbles
+              </p>
+              <h2 className="mt-2 text-sm font-medium">
+                Spotify library track
+              </h2>
               <Input
                 type="search"
                 aria-label="Search Spotify library tracks"
-                placeholder="Search title or artist"
+                placeholder="Search library tracks"
                 maxLength={200}
                 value={draft}
                 onChange={(event) => {
@@ -262,21 +269,22 @@ export function TrackMergeDialog({
                 <p className="quiet">No imported Spotify tracks found.</p>
               )}
               {items.length > 0 && (
-                <ul className="space-y-3" aria-label="Spotify library tracks">
+                <ul className="grid gap-2" aria-label="Spotify library tracks">
                   {items.map((item) => (
                     <li
                       key={item.id}
-                      className="flex items-start justify-between gap-3 text-sm"
+                      className="flex items-start gap-2 text-sm"
                     >
-                      <TrackIdentity track={item} />
                       <Button
                         size="sm"
                         variant="outline"
-                        aria-label={`Review ${item.title} by ${item.artists.join(', ')}`}
+                        className="shrink-0"
+                        aria-label={`Merge with ${item.title} by ${item.artists.join(', ')}`}
                         onClick={() => setTarget(item)}
                       >
-                        Review
+                        Merge
                       </Button>
+                      <TrackIdentity track={item} />
                     </li>
                   ))}
                 </ul>
@@ -334,7 +342,7 @@ export default function TrackMerge({
         Merge with Spotify track
       </Button>
       {open && (
-        <TrackMergeDialog
+        <TrackMergePanel
           key={track.id}
           track={track}
           onClose={() => setOpen(false)}

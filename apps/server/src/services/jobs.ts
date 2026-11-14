@@ -32,6 +32,7 @@ import {
   SPOTIFY_PLAYLIST_IMPORT_TASK,
   SPOTIFY_PLAYLIST_LISTING_TASK,
 } from '@repo/schemas/tracks'
+import { SPOTIFY_PLAYLIST_ADD_TRACK_TASK } from '@repo/schemas/track-playlist-additions'
 import { YOUTUBE_SYNC_TASK } from '@repo/schemas/youtube'
 import {
   SPOTIFY_PODCAST_SYNC_TASK,
@@ -112,6 +113,10 @@ import {
   prepareSpotifyPodcastSyncRun,
   runSpotifyPodcastSyncJob,
 } from '@/services/spotify-podcast-sync'
+import {
+  prepareSpotifyTrackPlaylistAddition,
+  runSpotifyTrackPlaylistAddition,
+} from '@/services/spotify-track-playlist-additions'
 
 let workerRunning = false
 
@@ -933,6 +938,14 @@ const taskJobs = new Map<string, TaskJobDefinition>([
     },
   ],
   [
+    SPOTIFY_PLAYLIST_ADD_TRACK_TASK,
+    {
+      provider: 'spotify',
+      prepare: prepareSpotifyTrackPlaylistAddition,
+      run: runSpotifyTrackPlaylistAddition,
+    },
+  ],
+  [
     SPOTIFY_PLAYLIST_ADD_ALBUM_TASK,
     {
       provider: 'spotify',
@@ -1683,6 +1696,9 @@ export async function listJobs(
         when ${SPOTIFY_PLAYLIST_IMPORT_TASK} then
           case when ${table.options}->>'source' = 'spotify-liked' then 'Spotify Liked Songs import'
           else concat('Spotify playlist import', case when nullif(btrim(${table.options}->>'name'), '') is not null then concat(' · ', ${table.options}->>'name') else '' end) end
+        when ${SPOTIFY_PLAYLIST_ADD_TRACK_TASK} then concat('Add track to Spotify playlist',
+          case when nullif(btrim(${table.options}->>'trackTitle'), '') is not null and nullif(btrim(${table.options}->>'playlistName'), '') is not null
+            then concat(' · ', ${table.options}->>'trackTitle', ' to ', ${table.options}->>'playlistName') else '' end)
         when ${SPOTIFY_PLAYLIST_ADD_ALBUM_TASK} then concat('Add album to Spotify playlist',
           case when nullif(btrim(${table.options}->>'albumTitle'), '') is not null and nullif(btrim(${table.options}->>'playlistName'), '') is not null
             then concat(' · ', ${table.options}->>'albumTitle', ' to ', ${table.options}->>'playlistName') else '' end)

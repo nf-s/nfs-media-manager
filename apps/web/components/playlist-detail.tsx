@@ -83,6 +83,7 @@ import {
   useTableColumns,
 } from './secondary-table'
 import ServiceIconLinks from './service-icon-links'
+import { trackServiceLinks } from '@/utils/track-links'
 
 const ENTRY_PAGE_SIZE = 100
 
@@ -325,6 +326,9 @@ export function PlaylistEntries({
                             </Link>
                           )}
                         </SecondaryCell>
+                        <ServiceIconLinks
+                          links={trackServiceLinks(entry.track)}
+                        />
                         <span title={`Add ${entry.track.title} to queue`}>
                           <LibraryTrackQueueButton track={entry.track} />
                         </span>

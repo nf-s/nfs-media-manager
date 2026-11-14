@@ -98,6 +98,11 @@ import { getAlbumPlaylists } from '@/services/album-playlists'
 import { listAlbumFilterOptions, listAlbums } from '@/services/media'
 import { relinkLastfmScrobbles } from '@/services/lastfm-scrobbles'
 import { mergeLastfmTrack } from '@/services/track-merges'
+import { SPOTIFY_PLAYLIST_ADD_TRACK_TASK } from '@repo/schemas/track-playlist-additions'
+import {
+  listSpotifyTrackPlaylistAdditions,
+  queueSpotifyTrackPlaylistAddition,
+} from '@/services/spotify-track-playlist-additions'
 
 const USER_ID = 'playlist-user'
 const listener = 'fixture-listener'
@@ -1181,6 +1186,214 @@ describe('Spotify playlist imports', () => {
     await expect(
       getPlaylistDetail('missing', detailQuery()),
     ).rejects.toMatchObject({ response: { statusCode: 404 } })
+  })
+
+  it('adds an imported track once, stores job status and refreshes playlist membership', async () => {
+    await importAll({
+      playlists: [chosen(OWNED, 'Morning'), chosen(SHARED, 'Shared')],
+      likedSongs: false,
+    })
+    const morning = await playlistId('Morning')
+    const item = (await listTracks(trackQuery())).items.find(
+      (item) => item.title === 'Elsewhere',
+    )
+    if (!item) throw new Error('Expected imported fixture track')
+    catalog.set(
+      spotifyId('other'),
+      track('other', { title: 'Elsewhere', artists: ['Someone Else'] }),
+    )
+    request.mockClear()
+    const queued = await queueSpotifyTrackPlaylistAddition(
+      item.id,
+      { playlistId: morning },
+      USER_ID,
+    )
+    expect(
+      (
+        await queueSpotifyTrackPlaylistAddition(
+          item.id,
+          { playlistId: morning },
+          USER_ID,
+        )
+      ).job.jobId,
+    ).toBe(queued.job.jobId)
+    expect(request).not.toHaveBeenCalled()
+    await processQueuedJobs()
+    expect(addedUris()).toEqual([[`spotify:track:${spotifyId('other')}`]])
+    expect(await getJob(queued.job.jobId)).toMatchObject({
+      status: 'succeeded',
+      options: { added: 1, alreadyPresent: 0, importJobId: expect.any(String) },
+    })
+    expect(
+      (await getTrackDetail(item.id))?.playlists.map((item) => item.name),
+    ).toEqual(['Morning', 'Shared'])
+    expect(await listSpotifyTrackPlaylistAdditions(item.id)).toMatchObject({
+      additions: [
+        { trackId: item.id, playlistId: morning, job: { status: 'succeeded' } },
+      ],
+    })
+    request.mockClear()
+    await queueSpotifyTrackPlaylistAddition(
+      item.id,
+      { playlistId: morning },
+      USER_ID,
+    )
+    await processQueuedJobs()
+    expect(addedUris()).toEqual([])
+    expect(requestedPaths()).toEqual([`/v1/playlists/${OWNED}`])
+  })
+
+  it('adds an album-derived Last.fm Spotify identity without searching Spotify', async () => {
+    await importAll({
+      playlists: [chosen(OWNED, 'Morning')],
+      likedSongs: false,
+    })
+    const morning = await playlistId('Morning')
+    const derivedId = spotifyId('derived')
+    await addAlbum('derived-album', 'Derived Album', {
+      tracks: ['Derived Recording'],
+      trackIds: [derivedId],
+    })
+    await addScrobbles('The Examples', 'Derived Recording')
+    await databaseClient.update(schema.lastfmScrobble).set({
+      albumName: 'Derived Album',
+      albumKey: albumNameKey('Derived Album'),
+      albumMediaItemId: 'derived-album',
+    })
+    await relinkLastfmScrobbles()
+    const item = (await listTracks(trackQuery())).items.find(
+      (item) => item.title === 'Derived Recording',
+    )
+    if (!item) throw new Error('Expected derived fixture track')
+    expect(item.spotifyMatch).toBe('album-track-list')
+    catalog.set(
+      derivedId,
+      track('derived', { title: 'Derived Recording', album: 'Derived Album' }),
+    )
+    request.mockClear()
+    const queued = await queueSpotifyTrackPlaylistAddition(
+      item.id,
+      { playlistId: morning },
+      USER_ID,
+    )
+    expect(queued.resolvedTrackId).toBe(item.id)
+    await processQueuedJobs()
+    expect(addedUris()).toEqual([[`spotify:track:${derivedId}`]])
+    expect(
+      requestedPaths().some(
+        (path) => path.includes('/search') || path.includes('/albums/'),
+      ),
+    ).toBe(false)
+    expect(await getJob(queued.job.jobId)).toMatchObject({
+      status: 'succeeded',
+    })
+    expect(
+      (await getPlaylistDetail(morning, detailQuery())).items.items.some(
+        (entry) =>
+          entry.kind === 'track' && entry.track.spotifyTrackId === derivedId,
+      ),
+    ).toBe(true)
+    const retained = (await listTracks(trackQuery())).items.find(
+      (track) => track.spotifyTrackId === derivedId,
+    )
+    expect(retained?.id).not.toBe(item.id)
+    expect(await getTrackDetail(item.id)).toBeNull()
+    expect(await listSpotifyTrackPlaylistAdditions(item.id)).toMatchObject({
+      additions: [
+        { resolvedTrackId: retained?.id, job: { status: 'succeeded' } },
+      ],
+    })
+  })
+
+  it('does not duplicate a single track after a lost write response and imports the recovered playlist', async () => {
+    await importAll({
+      playlists: [chosen(OWNED, 'Morning'), chosen(SHARED, 'Shared')],
+      likedSongs: false,
+    })
+    const morning = await playlistId('Morning')
+    const item = (await listTracks(trackQuery())).items.find(
+      (item) => item.title === 'Elsewhere',
+    )
+    if (!item) throw new Error('Expected imported fixture track')
+    catalog.set(
+      spotifyId('other'),
+      track('other', { title: 'Elsewhere', artists: ['Someone Else'] }),
+    )
+    additionFailure = () => ({ status: 500, applied: true })
+    const queued = await queueSpotifyTrackPlaylistAddition(
+      item.id,
+      { playlistId: morning },
+      USER_ID,
+    )
+    await processQueuedJobs()
+    expect(await getJob(queued.job.jobId)).toMatchObject({ status: 'failed' })
+    request.mockClear()
+    const retry = await retryJob(queued.job.jobId, USER_ID, false)
+    await processQueuedJobs()
+    expect(addedUris()).toEqual([])
+    expect(await getJob(retry.id)).toMatchObject({
+      status: 'succeeded',
+      options: { added: 0, alreadyPresent: 1, importJobId: expect.any(String) },
+    })
+    expect(
+      entryIds(entries[OWNED] ?? []).filter((id) => id === spotifyId('other')),
+    ).toHaveLength(1)
+    expect(
+      (await getTrackDetail(item.id))?.playlists.map((item) => item.name),
+    ).toEqual(['Morning', 'Shared'])
+  })
+
+  it('refuses unmatched tracks, unwritable playlists and stale queued identities before writing', async () => {
+    await importAll({ playlists: [chosen(OWNED, 'Morning')], likedSongs: true })
+    const morning = await playlistId('Morning')
+    const liked = await playlistId('Liked Songs')
+    await addScrobbles('Unknown Artist', 'Unmatched Recording')
+    await relinkLastfmScrobbles()
+    const items = (await listTracks(trackQuery())).items
+    const unmatched = items.find((item) => item.title === 'Unmatched Recording')
+    const imported = items.find((item) => item.title === 'Opening')
+    if (!unmatched || !imported) throw new Error('Expected fixture identities')
+    request.mockClear()
+    await expect(
+      queueSpotifyTrackPlaylistAddition(
+        unmatched.id,
+        { playlistId: morning },
+        USER_ID,
+      ),
+    ).rejects.toMatchObject({ response: { statusCode: 422 } })
+    await expect(
+      queueSpotifyTrackPlaylistAddition(
+        imported.id,
+        { playlistId: liked },
+        USER_ID,
+      ),
+    ).rejects.toMatchObject({ response: { statusCode: 422 } })
+    account.playlistChanges = false
+    await expect(
+      queueSpotifyTrackPlaylistAddition(
+        imported.id,
+        { playlistId: morning },
+        USER_ID,
+      ),
+    ).rejects.toMatchObject({ response: { statusCode: 422 } })
+    account.playlistChanges = true
+    expect(await tasks(SPOTIFY_PLAYLIST_ADD_TRACK_TASK)).toHaveLength(0)
+    expect(request).not.toHaveBeenCalled()
+    const queued = await queueSpotifyTrackPlaylistAddition(
+      imported.id,
+      { playlistId: morning },
+      USER_ID,
+    )
+    await databaseClient
+      .update(schema.libraryTrack)
+      .set({ spotifyTrackId: spotifyId('different') })
+      .where(eq(schema.libraryTrack.mediaItemId, imported.id))
+    await processQueuedJobs()
+    expect(await getJob(queued.job.jobId)).toMatchObject({
+      status: 'failed',
+      errorMessage: expect.stringContaining('identity changed'),
+    })
+    expect(request).not.toHaveBeenCalled()
   })
 
   it('adds the missing tracks of an album to a Spotify playlist, then imports the playlist again', async () => {
