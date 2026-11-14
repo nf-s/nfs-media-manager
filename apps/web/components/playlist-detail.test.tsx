@@ -13,7 +13,11 @@ import {
   type PlaylistDetail,
 } from '@repo/schemas/tracks'
 import { PlaybackViewContext, type PlaybackView } from './playback-provider'
-import PlaylistsWorkspace from './playlists-workspace'
+import PlaylistsWorkspace, {
+  playlistSortValue,
+  type PlaylistSortKey,
+} from './playlists-workspace'
+import { sortTableRows } from '@/utils/secondary-table'
 import { ConfigContext } from './providers'
 import { idlePlaybackState } from '@/utils/playback-engine'
 
@@ -128,7 +132,7 @@ function render(
   })
   client.setQueryData(['playlists'], [summary])
   client.setQueryData(['playlist', playlist.id], playlist)
-  client.setQueryData(['playlist', playlist.id, 'entries'], {
+  client.setQueryData(['playlist', playlist.id, 'entries', 'position', 'asc'], {
     pages: [playlist],
     pageParams: [1],
   })
@@ -298,4 +302,83 @@ test('the Tracks browser opens the same drawer and filters itself by the playlis
     /<button type="button" class="table-title">Opening track<\/button>/,
   )
   assert.doesNotMatch(html, /aria-label="Track details"/)
+})
+
+test('playlist data columns share sortable headers and column controls', () => {
+  const html = render('')
+  for (const label of [
+    'Playlist',
+    'Source',
+    'Owner',
+    'Tracks',
+    'In album library',
+    'Albums',
+    'Duration',
+    'Imported',
+    'Schedule',
+    'Last checked',
+  ])
+    assert.match(html, new RegExp(`<button[^>]*>[^<]*${label}`))
+  assert.match(html, /> Columns</)
+})
+
+test('playlist entries expose sorting for every data column', () => {
+  const html = drawerOf(render('playlist=playlist-1'))
+  for (const label of ['Title', 'Artists', 'Album', 'Duration', 'Added'])
+    assert.match(html, new RegExp(`<button[^>]*>[^<]*${label}`))
+  assert.match(html, /> Columns</)
+})
+
+test('playlist columns sort numeric counts and keep unknown dates last', () => {
+  const rows = [
+    {
+      ...summary,
+      id: 'ten',
+      trackCount: 10,
+      linkedTrackCount: 8,
+      ownerName: 'Zed',
+      createdAt: null,
+    },
+    {
+      ...summary,
+      id: 'two',
+      trackCount: 2,
+      linkedTrackCount: 1,
+      ownerName: 'Ada',
+      createdAt: '2026-01-01T00:00:00.000Z',
+    },
+  ]
+  const sorted = (key: PlaylistSortKey, direction: 'asc' | 'desc') =>
+    sortTableRows(rows, { key, direction }, playlistSortValue).map(
+      (row) => row.id,
+    )
+  assert.deepEqual(sorted('tracks', 'asc'), ['two', 'ten'])
+  assert.deepEqual(sorted('linkedTracks', 'desc'), ['ten', 'two'])
+  assert.deepEqual(sorted('owner', 'asc'), ['two', 'ten'])
+  assert.deepEqual(sorted('added', 'desc'), ['two', 'ten'])
+})
+
+test('playlist date sorting compares instants across timestamp offsets', () => {
+  const rows = [
+    { ...summary, id: 'later', createdAt: '2026-01-01T00:00:00Z' },
+    { ...summary, id: 'earlier', createdAt: '2026-01-01T01:00:00+02:00' },
+  ]
+  assert.deepEqual(
+    sortTableRows(
+      rows,
+      { key: 'added', direction: 'asc' },
+      playlistSortValue,
+    ).map((row) => row.id),
+    ['earlier', 'later'],
+  )
+  const date = '2026-01-01T01:00:00+02:00'
+  const dated = {
+    ...summary,
+    createdAt: date,
+    importedAt: date,
+    sync: { ...summary.sync, lastCheckedAt: date, nextScheduledAt: date },
+  }
+  const keys: PlaylistSortKey[] = ['added', 'imported', 'checked', 'nextSync']
+  for (const key of keys)
+    assert.equal(playlistSortValue(dated, key), Date.parse(date))
 })

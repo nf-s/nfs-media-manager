@@ -16,6 +16,7 @@ import {
   type PlaylistDetail,
   type PlaylistDetailQuery,
   type PlaylistEntry,
+  type PlaylistEntrySort,
   type PlaylistSummary,
   type PlaylistSyncSchedule,
   type TrackDetail,
@@ -239,6 +240,7 @@ const PlaylistRowsSchema = z.array(
     artwork_url: z.string().nullable(),
     spotify_url: z.string().nullable(),
     imported_at: z.string().nullable(),
+    created_at: z.string().nullable(),
     checked_at: z.string().nullable(),
     sync_schedule: z.string(),
     spotify_editable: z.boolean(),
@@ -259,6 +261,7 @@ async function loadPlaylists(id?: string): Promise<PlaylistSummary[]> {
         select p.id, p.name, p.source, p.spotify_id, p.owner_name, p.description,
           p.artwork_url, p.spotify_url,
           ${isoTimestamp(sql`p.imported_at`)} as imported_at,
+          ${isoTimestamp(sql`p.created_at`)} as created_at,
           ${isoTimestamp(sql`p.checked_at`)} as checked_at,
           p.sync_schedule, p.spotify_editable,
           coalesce(t.track_count, 0) as track_count,
@@ -303,6 +306,7 @@ async function loadPlaylists(id?: string): Promise<PlaylistSummary[]> {
         artworkUrl: row.artwork_url,
         spotifyUrl: row.spotify_url,
         importedAt: row.imported_at,
+        createdAt: row.created_at,
         trackCount: row.track_count,
         linkedTrackCount: row.linked_track_count,
         albumCount: row.album_count,
@@ -389,6 +393,33 @@ async function loadPlaylistAlbums(ids: string[]) {
   )
 }
 
+function playlistEntrySortExpression(key: PlaylistEntrySort): SQL {
+  switch (key) {
+    case 'position':
+      return sql`pi.position`
+    case 'title':
+      return sql`lower(mi.title)`
+    case 'artists':
+      return sql`(select lower(string_agg(artist.name, ', ' order by c.billing_order, artist.name))
+      from media_credit c join artist on artist.id = c.artist_id
+      where c.media_item_id = mi.id and c.role = 'artist')`
+    case 'album':
+      return sql`lower(coalesce(lt.album_name, am.title))`
+    case 'duration':
+      return sql`coalesce(lt.duration_sec, ${linkedTrackFieldExpression('duration_sec', sql`lt.album_media_item_id`, sql`mi.title`)})`
+    case 'added':
+      return sql`pi.added_at`
+    case 'releaseDate':
+      return sql`coalesce(mi.release_date, am.release_date)`
+    case 'scrobbles':
+      return sql`lt.scrobble_count`
+    case 'lastListened':
+      return sql`lt.last_listened_at`
+    case 'kind':
+      return sql`case when lt.media_item_id is null then 'album' else 'track' end`
+  }
+}
+
 /**
  * One playlist with its sync state and a page of its entries: tracks in
  * playlist order, then album members from the legacy import.
@@ -399,14 +430,22 @@ export async function getPlaylistDetail(
 ): Promise<PlaylistDetail> {
   const summary = await getPlaylistSummary(id)
   const members = sql`from playlist_item pi
+    join media_item mi on mi.id = pi.media_item_id
     left join library_track lt on lt.media_item_id = pi.media_item_id
     left join album a on a.media_item_id = pi.media_item_id
+    left join media_item am on am.id = lt.album_media_item_id
     where pi.playlist_id = ${id}
       and (lt.media_item_id is not null or a.media_item_id is not null)`
   const [count] = CountRowsSchema.parse(
     (await db.execute(sql`select count(*) as count ${members}`)).rows,
   )
   const totalCount = count?.count ?? 0
+  const direction = query.direction === 'asc' ? sql`asc` : sql`desc`
+  const sort = playlistEntrySortExpression(query.sortBy)
+  const entryOrder =
+    query.sortBy === 'position'
+      ? sql`lt.media_item_id is null, ${sort} ${direction}`
+      : sql`${sort} ${direction} nulls last`
   const entries = EntryRowsSchema.parse(
     (
       await db.execute(sql`
@@ -414,7 +453,7 @@ export async function getPlaylistDetail(
           case when lt.media_item_id is null then 'album' else 'track' end as kind,
           ${isoTimestamp(sql`pi.added_at`)} as added_at
         ${members}
-        order by lt.media_item_id is null, pi.position, pi.media_item_id
+        order by ${entryOrder}, lt.media_item_id is null, pi.position, pi.media_item_id
         limit ${query.size} offset ${(query.page - 1) * query.size}`)
     ).rows,
   )

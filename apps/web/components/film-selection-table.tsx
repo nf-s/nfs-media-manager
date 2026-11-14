@@ -25,8 +25,13 @@ import type { AlbumSelectionItem } from '@repo/schemas/album-selection'
 import { EnrichmentResultSchema } from '@repo/schemas/job'
 import type { ProviderSummary } from '@repo/schemas/provider'
 import { Button } from '@repo/ui/components/ui/button'
-import { TableScroll, TableState } from '@repo/ui/components/ui/table'
+import { TableState } from '@repo/ui/components/ui/table'
 import { useConfig } from './providers'
+import {
+  SecondaryTableScroll,
+  SecondaryTableHead,
+  useTableColumns,
+} from './secondary-table'
 import { FilmProviderSelection } from './film-provider-selection'
 import { BrowseFilterChips, RangeEditor } from './browse-controls'
 import BrowseFilterAutocomplete from './browse-filter-autocomplete'
@@ -81,11 +86,6 @@ function SelectionTable({ providers, mediaType = 'film' }: Props) {
   const [ranges, setRanges] = useState<BrowseRange[]>([])
   const [sortBy, setSortBy] = useState('dateAdded')
   const [direction, setDirection] = useState<'asc' | 'desc'>('desc')
-  const [columns, setColumns] = useState([
-    'title',
-    ...(mediaType === 'album' ? ['artist'] : []),
-    'dateAdded',
-  ])
   const [selected, setSelected] = useState<string[]>([])
   const [anchor, setAnchor] = useState<string | null>(null)
   const [confirmed, setConfirmed] = useState(false)
@@ -109,8 +109,26 @@ function SelectionTable({ providers, mediaType = 'film' }: Props) {
   const available =
     fields.data ??
     (mediaType === 'album' ? albumBrowseFields : filmBrowseFields)
-  const visible = columns.flatMap((key) =>
-    available.filter((field) => field.key === key),
+  const columns = useTableColumns(`${mediaType}-metadata-selection`, [
+    ...available.map((field) => ({
+      key: field.key,
+      label: field.label,
+      defaultVisible: [
+        'title',
+        'dateAdded',
+        ...(mediaType === 'album' ? ['artist'] : []),
+      ].includes(field.key),
+      required: field.key === 'title',
+    })),
+    { key: 'legacyImport', label: 'Legacy import' },
+    ...providers.map((item) => ({
+      key: `provider-${item.id}`,
+      label: `${item.displayName} · Last scraped`,
+    })),
+  ])
+  const visible = available.filter((field) => columns.visible(field.key))
+  const visibleProviders = providers.filter((item) =>
+    columns.visible(`provider-${item.id}`),
   )
   const columnWidths = visible.map((field) =>
     field.key === 'title' ? 160 : field.type === 'text' ? 120 : 88,
@@ -118,8 +136,8 @@ function SelectionTable({ providers, mediaType = 'film' }: Props) {
   const tableWidth =
     28 +
     columnWidths.reduce((total, width) => total + width, 0) +
-    110 +
-    providers.length * 110
+    (columns.visible('legacyImport') ? 110 : 0) +
+    visibleProviders.length * 110
   const items =
     films.data?.pages.flatMap<FilmSelectionItem | AlbumSelectionItem>(
       (page) => page.items,
@@ -261,31 +279,7 @@ function SelectionTable({ providers, mediaType = 'film' }: Props) {
               clear()
             }}
           />
-          <details className="toolbar-popover">
-            <summary>Columns</summary>
-            <div className="popover-panel max-h-80 overflow-auto">
-              {available.map((field) => (
-                <label className="check-label" key={field.key}>
-                  <input
-                    type="checkbox"
-                    checked={columns.includes(field.key)}
-                    disabled={
-                      field.key === 'title' ||
-                      (mediaType === 'album' && field.key === 'artist')
-                    }
-                    onChange={(event) =>
-                      setColumns(
-                        event.target.checked
-                          ? [...columns, field.key]
-                          : columns.filter((key) => key !== field.key),
-                      )
-                    }
-                  />
-                  {field.label}
-                </label>
-              ))}
-            </div>
-          </details>
+          {columns.controls}
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {q && (
@@ -348,7 +342,7 @@ function SelectionTable({ providers, mediaType = 'film' }: Props) {
           </button>
         </p>
       )}
-      <TableScroll
+      <SecondaryTableScroll
         ref={scroller}
         className="film-selection-scroll"
         aria-label={`${mediaType === 'album' ? 'Album' : 'Film'} selection`}
@@ -365,8 +359,8 @@ function SelectionTable({ providers, mediaType = 'film' }: Props) {
             {visible.map((field, index) => (
               <col key={field.key} style={{ width: columnWidths[index] }} />
             ))}
-            <col style={{ width: 110 }} />
-            {providers.map((item) => (
+            {columns.visible('legacyImport') && <col style={{ width: 110 }} />}
+            {visibleProviders.map((item) => (
               <col key={`scraped-${item.id}`} style={{ width: 110 }} />
             ))}
           </colgroup>
@@ -390,81 +384,65 @@ function SelectionTable({ providers, mediaType = 'film' }: Props) {
                 />
               </th>
               {visible.map((field) => (
-                <th
-                  scope="col"
+                <SecondaryTableHead
                   key={field.key}
-                  aria-sort={
-                    sortBy === field.key
-                      ? direction === 'asc'
-                        ? 'ascending'
-                        : 'descending'
-                      : 'none'
-                  }
-                >
-                  <button
-                    type="button"
-                    disabled={queue.isPending}
-                    onClick={() => sort(field.key)}
-                  >
-                    {field.label}
-                    {sortBy === field.key
-                      ? direction === 'asc'
-                        ? ' ↑'
-                        : ' ↓'
-                      : ''}
-                  </button>
-                </th>
+                  sortKey={field.key}
+                  label={field.label}
+                  sortBy={sortBy}
+                  direction={direction}
+                  onSort={sort}
+                  disabled={queue.isPending}
+                />
               ))}
-              <th scope="col">
-                <div className="grid min-w-0 gap-1">
-                  <span>Legacy import</span>
-                  <select
-                    className="w-full min-w-0 text-xs font-normal"
-                    aria-label="Legacy import"
-                    disabled={queue.isPending}
-                    value={legacyImport}
-                    onChange={(event) => {
-                      setLegacyImport(
-                        LegacyImportFilterSchema.parse(event.target.value),
-                      )
-                      clear()
-                    }}
-                  >
-                    <option value="all">All</option>
-                    <option value="yes">Yes</option>
-                    <option value="no">No</option>
-                  </select>
-                </div>
-              </th>
-              {providers.map((item) => {
+              {columns.visible('legacyImport') && (
+                <SecondaryTableHead
+                  sortKey="legacyImport"
+                  label="Legacy import"
+                  sortBy={sortBy}
+                  direction={direction}
+                  onSort={sort}
+                  disabled={queue.isPending}
+                >
+                  <div className="grid min-w-0 gap-1">
+                    <select
+                      className="w-full min-w-0 text-xs font-normal"
+                      aria-label="Legacy import"
+                      disabled={queue.isPending}
+                      value={legacyImport}
+                      onChange={(event) => {
+                        setLegacyImport(
+                          LegacyImportFilterSchema.parse(event.target.value),
+                        )
+                        clear()
+                      }}
+                    >
+                      <option value="all">All</option>
+                      <option value="yes">Yes</option>
+                      <option value="no">No</option>
+                    </select>
+                  </div>
+                </SecondaryTableHead>
+              )}
+              {visibleProviders.map((item) => {
                 const filter = freshness.find(
                   (entry) => entry.provider === item.id,
                 )
-                const sorted =
-                  sortBy === 'lastScrapedAt' && provider === item.id
+                const key = `provider-${item.id}`
                 return (
-                  <th
-                    scope="col"
-                    key={`scraped-${item.id}`}
-                    aria-sort={
-                      sorted
-                        ? direction === 'asc'
-                          ? 'ascending'
-                          : 'descending'
-                        : 'none'
+                  <SecondaryTableHead
+                    key={key}
+                    sortKey={key}
+                    label={`${item.displayName} · Last scraped`}
+                    sortBy={
+                      sortBy === 'lastScrapedAt'
+                        ? `provider-${provider}`
+                        : sortBy
                     }
+                    direction={direction}
+                    onSort={() => sort('lastScrapedAt', item.id)}
+                    disabled={queue.isPending}
                   >
                     <div className="grid min-w-0 gap-1">
-                      <button
-                        className="truncate text-left"
-                        title={`${item.displayName} - Last successful scrape`}
-                        type="button"
-                        disabled={queue.isPending}
-                        onClick={() => sort('lastScrapedAt', item.id)}
-                      >
-                        {item.displayName} · Last scraped
-                        {sorted ? (direction === 'asc' ? ' ↑' : ' ↓') : ''}
-                      </button>
                       <select
                         className="w-full min-w-0 text-xs font-normal"
                         aria-label={`${item.displayName} freshness`}
@@ -503,7 +481,7 @@ function SelectionTable({ providers, mediaType = 'film' }: Props) {
                         </option>
                       </select>
                     </div>
-                  </th>
+                  </SecondaryTableHead>
                 )
               })}
             </tr>
@@ -550,8 +528,10 @@ function SelectionTable({ providers, mediaType = 'film' }: Props) {
                       )}
                     </td>
                   ))}
-                  <td>{item.hasLegacyImport ? 'Yes' : 'No'}</td>
-                  {providers.map((source) => {
+                  {columns.visible('legacyImport') && (
+                    <td>{item.hasLegacyImport ? 'Yes' : 'No'}</td>
+                  )}
+                  {visibleProviders.map((source) => {
                     const state = item.providerFreshness[source.id]
                     const date = state?.lastScrapedAt
                     const attempt = state?.lastAttempt
@@ -616,10 +596,7 @@ function SelectionTable({ providers, mediaType = 'film' }: Props) {
               )
             })}
             {!items.length && (
-              <TableState
-                colSpan={visible.length + providers.length + 2}
-                error={films.isError}
-              >
+              <TableState colSpan={columns.count + 1} error={films.isError}>
                 {films.isPending
                   ? `Loading ${plural}...`
                   : films.isError
@@ -755,7 +732,7 @@ function SelectionTable({ providers, mediaType = 'film' }: Props) {
             </p>
           </details>
         </div>
-      </TableScroll>
+      </SecondaryTableScroll>
       {queue.isError && (
         <p role="alert">
           Could not queue selection. Check progress before retrying.

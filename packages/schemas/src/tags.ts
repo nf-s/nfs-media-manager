@@ -55,7 +55,17 @@ export const TagSchema = z.object({
   sourceCount: z.number().int().nonnegative(),
 })
 
+export const TagSortKeySchema = z.enum([
+  'name',
+  'mediaCount',
+  'sourceCount',
+  'mergedNames',
+])
+export type TagSortKey = z.infer<typeof TagSortKeySchema>
+
 export const TagListQuerySchema = z.object({
+  sortBy: TagSortKeySchema.default('name'),
+  direction: z.enum(['asc', 'desc']).default('asc'),
   mediaType: MediaTypeSchema.default('film'),
   q: z.string().max(200).optional(),
   visibility: z.enum(['visible', 'hidden', 'all']).default('visible'),

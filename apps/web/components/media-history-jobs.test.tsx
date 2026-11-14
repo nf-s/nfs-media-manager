@@ -36,10 +36,13 @@ function renderHistory(pages?: JobPage[]) {
     defaultOptions: { queries: { retry: false } },
   })
   if (pages)
-    client.setQueryData(['jobs', 'media-history', 'infinite', 'film-1'], {
-      pages,
-      pageParams: pages.map((entry) => entry.page),
-    })
+    client.setQueryData(
+      ['jobs', 'media-history', 'infinite', 'film-1', 'createdAt', 'desc'],
+      {
+        pages,
+        pageParams: pages.map((entry) => entry.page),
+      },
+    )
   try {
     return renderToStaticMarkup(
       <QueryClientProvider client={client}>
@@ -53,7 +56,10 @@ function renderHistory(pages?: JobPage[]) {
 
 test('job history starts with an accessible loading row inside a bounded scroll region', () => {
   const html = renderHistory()
-  assert.match(html, /class="table-scroll table-scroll-bounded"/)
+  assert.match(
+    html,
+    /class="table-scroll table-scroll-bounded secondary-table-scroll"/,
+  )
   assert.match(html, /role="region" aria-label="Job history" aria-busy="true"/)
   assert.match(
     html,
@@ -116,10 +122,22 @@ test('empty history retains its header and uses the common empty row', () => {
       items: [],
     }),
   ])
-  assert.match(html, /<th scope="col">Provider/)
+  assert.match(
+    html,
+    /<th scope="col" aria-sort="none"><button[^>]*title="Sort by Provider">Provider/,
+  )
   assert.match(
     html,
     /colSpan="4" class="table-state"><div role="status">No jobs yet/,
   )
   assert.doesNotMatch(html, /Load more jobs|Previous|>Next</)
+})
+
+test('job history exposes a column chooser and a sort control for every data column', () => {
+  const html = renderHistory([page(1, 1, 'Example')])
+  assert.match(html, /aria-label="Visible columns"/)
+  for (const name of ['Provider', 'Job', 'Created', 'Result'])
+    assert.ok(html.includes(`title="Sort by ${name}"`))
+  assert.match(html, /type="checkbox"\/>Started/)
+  assert.match(html, /type="checkbox"\/>Finished/)
 })

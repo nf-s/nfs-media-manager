@@ -153,6 +153,28 @@ test('tracks and playlists are a view of the album library', () => {
   assert.equal(libraryViewForPath('/tracks-other', null), 'film')
 })
 
+test('collections stay in Films and switching libraries leaves collection detail state', () => {
+  assert.equal(mediaScopeForPath('/collections', 'album'), 'film')
+  assert.equal(libraryViewForPath('/collections', 'album'), 'film')
+  assert.equal(workspaceScopeForPath('/collections', 'subscription'), 'film')
+  assert.equal(
+    switchLibraryHref('/collections', 'collection=example', 'album'),
+    '/albums',
+  )
+  assert.equal(
+    switchLibraryHref('/collections', 'collection=example', 'track'),
+    '/tracks',
+  )
+  assert.equal(
+    switchLibraryHref('/collections', 'collection=example', 'subscription'),
+    '/subscriptions',
+  )
+  assert.equal(
+    switchLibraryHref('/collections', 'collection=example', 'film'),
+    '/collections?collection=example',
+  )
+})
+
 test('the library selector moves between albums, tracks and films', () => {
   assert.equal(
     switchLibraryHref('/albums', 'q=artist&view=table', 'track'),

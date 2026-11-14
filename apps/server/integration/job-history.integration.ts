@@ -50,7 +50,10 @@ vi.mock('@/lib/db', () => ({
     return databaseClient
   },
 }))
-vi.mock('@/plugins/registry', () => ({ getScrapePlugin: async () => plugin }))
+vi.mock('@/plugins/registry', () => ({
+  getScrapePlugin: async () => plugin,
+  listLoadedScrapePlugins: async () => [plugin],
+}))
 // Queueing a sync needs no connected account here; the sync itself never runs.
 vi.mock('@/services/youtube-sync', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/services/youtube-sync')>()),
@@ -549,4 +552,67 @@ describe('media job history and dismissal', () => {
       },
     ])
   })
+})
+
+it('sorts every job column before pagination and uses the visible result for each view', async () => {
+  const { listJobs } = await import('@/services/jobs')
+  await seedJob('sort-a', 'failed', 'film-1')
+  await seedJob('sort-z', 'succeeded', 'film-2')
+  await databaseClient
+    .update(schema.scrapeJob)
+    .set({
+      provider: 'z-provider',
+      createdAt: new Date('2026-02-01'),
+      startedAt: new Date('2026-02-02'),
+      finishedAt: new Date('2026-02-03'),
+      errorMessage: 'Zulu job error',
+    })
+    .where(eq(schema.scrapeJob.id, 'sort-a'))
+  await databaseClient
+    .update(schema.scrapeJob)
+    .set({
+      provider: 'a-provider',
+      createdAt: new Date('2026-01-01'),
+      startedAt: new Date('2026-01-02'),
+      finishedAt: new Date('2026-01-03'),
+      errorMessage: 'Alpha job error',
+    })
+    .where(eq(schema.scrapeJob.id, 'sort-z'))
+  await databaseClient
+    .update(schema.scrapeJobItem)
+    .set({ message: 'Alpha item result' })
+    .where(eq(schema.scrapeJobItem.jobId, 'sort-a'))
+  await databaseClient
+    .update(schema.scrapeJobItem)
+    .set({ message: 'Zulu item result' })
+    .where(eq(schema.scrapeJobItem.jobId, 'sort-z'))
+  const expected = {
+    provider: 'sort-z',
+    title: 'sort-a',
+    status: 'sort-a',
+    createdAt: 'sort-z',
+    startedAt: 'sort-z',
+    finishedAt: 'sort-z',
+    result: 'sort-z',
+  }
+  const { JobSortKeySchema } = await import('@repo/schemas/job')
+  for (const sortBy of JobSortKeySchema.options) {
+    const first = await listJobs({ sortBy, direction: 'asc', size: 1 })
+    const second = await listJobs({
+      sortBy,
+      direction: 'asc',
+      size: 1,
+      page: 2,
+    })
+    expect(first.items[0]?.id).toBe(expected[sortBy])
+    expect(second.items[0]?.id).not.toBe(first.items[0]?.id)
+    expect(first.totalCount).toBe(2)
+  }
+  const history = await listJobs({
+    sortBy: 'result',
+    direction: 'asc',
+    mediaItemId: 'film-1',
+  })
+  expect(history.items[0]?.items[0]?.message).toBe('Alpha item result')
+  expect(network).not.toHaveBeenCalled()
 })

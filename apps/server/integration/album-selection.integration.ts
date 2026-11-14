@@ -811,6 +811,13 @@ describe('album selection and safe scheduling', () => {
     expect(activity.libraries).toEqual([
       { mediaType: 'album', queued: 1, running: 0, failed: 0, imports: 0 },
       { mediaType: 'film', queued: 1, running: 0, failed: 0, imports: 0 },
+      {
+        mediaType: 'subscription',
+        queued: 0,
+        running: 0,
+        failed: 0,
+        imports: 0,
+      },
     ])
   })
   it('uses successful scrape dates only and keeps freshness provider-specific', async () => {
@@ -959,4 +966,29 @@ describe('album selection and safe scheduling', () => {
       ).rejects.toThrow()
     expect(await databaseClient.select().from(schema.scrapeJob)).toHaveLength(0)
   })
+})
+
+it('sorts legacy import membership before metadata-selection pagination', async () => {
+  const { listAlbumSelection } = await import('@/services/album-selection')
+  await databaseClient
+    .update(schema.mediaItem)
+    .set({ metadata: { legacyImport: 'music' } })
+    .where(eq(schema.mediaItem.id, 'album-7'))
+  const imported = await listAlbumSelection(
+    AlbumSelectionQuerySchema.parse({
+      sortBy: 'legacyImport',
+      direction: 'desc',
+      size: 1,
+    }),
+  )
+  expect(imported.items[0]?.id).toBe('album-7')
+  expect(imported.items[0]?.hasLegacyImport).toBe(true)
+  const ordinary = await listAlbumSelection(
+    AlbumSelectionQuerySchema.parse({
+      sortBy: 'legacyImport',
+      direction: 'asc',
+      size: 1,
+    }),
+  )
+  expect(ordinary.items[0]?.hasLegacyImport).toBe(false)
 })

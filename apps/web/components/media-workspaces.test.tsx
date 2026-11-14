@@ -558,22 +558,29 @@ test('main navigation has one Browse destination and preserves current browse fi
   )
   assert.equal((html.match(/<a /g) ?? []).length, 6)
   assert.match(html, /href="\/playlists\?mediaType=album">Playlists/)
-  assert.doesNotMatch(html, />Albums<|>Films<|href="\/films/)
+  assert.doesNotMatch(
+    html,
+    />Albums<|>Films<|>Collections<|href="\/(films|collections)/,
+  )
   const detail = render('/films/one', '', <AppNavigation />)
   assert.match(detail, /aria-current="page" href="\/films">Browse/)
-  assert.equal((detail.match(/<a /g) ?? []).length, 5)
+  assert.equal((detail.match(/<a /g) ?? []).length, 6)
+  assert.match(detail, /href="\/collections\?mediaType=film">Collections/)
   assert.doesNotMatch(detail, />Playlists</)
 })
 
 test('main navigation browses tracks from the track and playlist pages', () => {
   const tracks = render('/tracks', 'q=title', <AppNavigation />)
   assert.match(tracks, /aria-current="page" href="\/tracks\?q=title">Browse/)
+  assert.match(tracks, /href="\/playlists\?mediaType=album">Playlists/)
+  assert.doesNotMatch(tracks, />Collections<|href="\/collections/)
   const playlists = render('/playlists', '', <AppNavigation />)
   assert.match(playlists, /href="\/tracks">Browse/)
   assert.match(
     playlists,
     /aria-current="page" href="\/playlists\?mediaType=album">Playlists/,
   )
+  assert.doesNotMatch(playlists, />Collections<|href="\/collections/)
 })
 
 test('library selector reflects explicit and route-implied scope without duplicate workspace tabs', () => {
@@ -793,7 +800,10 @@ test('Subscriptions navigation has Browse, Channels, Imports, Jobs and Providers
   )
   assert.match(html, /href="\/jobs\?mediaType=subscription">Jobs/)
   assert.match(html, /href="\/providers\?mediaType=subscription">Providers/)
-  assert.doesNotMatch(html, /Tags|Playlists|href="\/(albums|films|tags)/)
+  assert.doesNotMatch(
+    html,
+    /Tags|Playlists|Collections|href="\/(albums|films|tags|collections)/,
+  )
   const channels = render('/subscriptions/channels', '', <AppNavigation />)
   assert.match(
     channels,

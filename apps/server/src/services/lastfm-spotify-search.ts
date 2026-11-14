@@ -202,20 +202,25 @@ export async function queueLastfmSpotifySearches(
 
 export async function getLastfmSpotifySearchJobs(
   account: string,
-  groups: SearchGroup[],
+  groups?: SearchGroup[],
 ) {
-  const keys = groups.map((group) => lastfmSpotifyGroupKey(account, group))
+  const keys = groups?.map((group) => lastfmSpotifyGroupKey(account, group))
   const summaries = new Map<
     string,
-    z.infer<typeof LastfmSpotifySearchJobSchema>
+    z.infer<typeof LastfmSpotifySearchJobSchema> & {
+      artistKey: string
+      albumKey: string
+    }
   >()
-  if (!keys.length) return summaries
+  if (keys?.length === 0) return summaries
   const jobs = await db
     .selectDistinctOn([sql`${scrapeJob.options}->>'groupKey'`], {
       id: scrapeJob.id,
       status: scrapeJob.status,
       errorMessage: scrapeJob.errorMessage,
       groupKey: sql<unknown>`${scrapeJob.options}->>'groupKey'`,
+      artistName: sql<unknown>`${scrapeJob.options}->>'artistName'`,
+      albumName: sql<unknown>`${scrapeJob.options}->>'albumName'`,
       resultCount: sql<unknown>`${scrapeJob.options}->'resultCount'`,
     })
     .from(scrapeJob)
@@ -223,7 +228,9 @@ export async function getLastfmSpotifySearchJobs(
       and(
         eq(scrapeJob.provider, 'spotify'),
         sql`${scrapeJob.options}->>'task' = ${LASTFM_SPOTIFY_SEARCH_TASK}`,
-        inArray(sql`${scrapeJob.options}->>'groupKey'`, keys),
+        keys
+          ? inArray(sql`${scrapeJob.options}->>'groupKey'`, keys)
+          : undefined,
       ),
     )
     .orderBy(
@@ -233,15 +240,22 @@ export async function getLastfmSpotifySearchJobs(
     )
   for (const job of jobs) {
     const key = z.string().parse(job.groupKey)
-    summaries.set(
-      key,
-      LastfmSpotifySearchJobSchema.parse({
+    const group = LastfmSpotifySearchGroupSchema.safeParse({
+      artistName: job.artistName,
+      albumName: job.albumName,
+    })
+    if (!group.success || lastfmSpotifyGroupKey(account, group.data) !== key)
+      continue
+    summaries.set(key, {
+      ...LastfmSpotifySearchJobSchema.parse({
         jobId: job.id,
         status: job.status,
         errorMessage: job.errorMessage,
         resultCount: job.resultCount,
       }),
-    )
+      artistKey: albumNameKey(group.data.artistName),
+      albumKey: albumNameKey(group.data.albumName),
+    })
   }
   return summaries
 }

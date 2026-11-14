@@ -10,9 +10,15 @@ import {
   type ProviderSummary,
 } from '@repo/schemas/provider'
 import { Button } from '@repo/ui/components/ui/button'
-import { TableScroll, TableState } from '@repo/ui/components/ui/table'
+import { TableState } from '@repo/ui/components/ui/table'
 import { useConfig } from './providers'
 import { fetchApiData } from '@/utils/api'
+import {
+  SecondaryTableScroll,
+  SecondaryTableHead,
+  useTableColumns,
+} from './secondary-table'
+import { sortTableRows } from '@/utils/secondary-table'
 
 const ranges: Array<{ value: ProviderActivityRange; label: string }> = [
   { value: '1h', label: '1 hour' },
@@ -27,6 +33,16 @@ export default function ProviderActivity({
 }) {
   const { apiBaseUrl } = useConfig()
   const client = useQueryClient()
+  const columns = useTableColumns('provider-request-counts', [
+    { key: 'start', label: 'Interval start' },
+    { key: 'count', label: 'Requests' },
+  ])
+  const [sortBy, setSortBy] = useState('start')
+  const [direction, setDirection] = useState<'asc' | 'desc'>('asc')
+  function sort(key: string) {
+    setSortBy(key)
+    setDirection(sortBy === key && direction === 'asc' ? 'desc' : 'asc')
+  }
   const [range, setRange] = useState<ProviderActivityRange>('24h')
   const [confirming, setConfirming] = useState<string | null>(null)
   const activity = useQuery({
@@ -206,7 +222,8 @@ export default function ProviderActivity({
             </p>
             <details className="import-notes">
               <summary>Request counts</summary>
-              <TableScroll
+              {columns.controls}
+              <SecondaryTableScroll
                 className="table-scroll-bounded"
                 role="region"
                 aria-label="Request counts"
@@ -214,25 +231,53 @@ export default function ProviderActivity({
                 <table className="compact-table" aria-label="Request counts">
                   <thead>
                     <tr>
-                      <th scope="col">Interval start</th>
-                      <th scope="col">Requests</th>
+                      {columns.visible('start') && (
+                        <SecondaryTableHead
+                          sortKey="start"
+                          label="Interval start"
+                          sortBy={sortBy}
+                          direction={direction}
+                          onSort={sort}
+                        />
+                      )}
+                      {columns.visible('count') && (
+                        <SecondaryTableHead
+                          sortKey="count"
+                          label="Requests"
+                          sortBy={sortBy}
+                          direction={direction}
+                          onSort={sort}
+                          className="numeric"
+                        />
+                      )}
                     </tr>
                   </thead>
                   <tbody>
                     {!data.buckets.length && (
-                      <TableState colSpan={2}>
+                      <TableState colSpan={columns.count}>
                         No recorded requests in this period.
                       </TableState>
                     )}
-                    {data.buckets.map((bucket) => (
+                    {sortTableRows(
+                      data.buckets,
+                      { key: sortBy, direction },
+                      (bucket, key) =>
+                        key === 'count'
+                          ? bucket.count
+                          : Date.parse(bucket.start),
+                    ).map((bucket) => (
                       <tr key={bucket.start}>
-                        <td>{new Date(bucket.start).toLocaleString()}</td>
-                        <td>{bucket.count}</td>
+                        {columns.visible('start') && (
+                          <td>{new Date(bucket.start).toLocaleString()}</td>
+                        )}
+                        {columns.visible('count') && (
+                          <td className="numeric">{bucket.count}</td>
+                        )}
                       </tr>
                     ))}
                   </tbody>
                 </table>
-              </TableScroll>
+              </SecondaryTableScroll>
             </details>
           </>
         )}

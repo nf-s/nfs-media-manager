@@ -31,16 +31,23 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-  TableScroll,
   TableState,
 } from '@repo/ui/components/ui/table'
 import { useConfig } from './providers'
+import {
+  SecondaryTableHead,
+  SecondaryTableScroll,
+  useTableColumns,
+  type TableColumn,
+} from './secondary-table'
+import { sortTableRows } from '@/utils/secondary-table'
 import MediaArtwork from './media-artwork'
 import { errorMessage } from './lastfm-sync'
 import AllowPlaylistChanges from './spotify-playlist-changes'
 import { fetchApiData } from '@/utils/api'
 import { scopedHref } from '@/utils/media-scope'
 import {
+  formatPlaylistDuration,
   invalidatePlaylists,
   playlistJobActive,
   playlistJobLabels,
@@ -60,7 +67,140 @@ const listingLabels: JobLabels = {
   cancelled: 'Cancelled',
 }
 
-const columnCount = 8
+export type ImportPlaylistSortKey =
+  | 'name'
+  | 'owner'
+  | 'tracks'
+  | 'status'
+  | 'schedule'
+  | 'checked'
+  | 'added'
+  | 'imported'
+  | 'storedTracks'
+  | 'linkedTracks'
+  | 'albums'
+  | 'duration'
+  | 'current'
+  | 'importable'
+  | 'nextSync'
+  | 'description'
+
+type ImportColumn = TableColumn &
+  (
+    | { key: ImportPlaylistSortKey; sortable: true }
+    | { key: 'selection' | 'artwork'; sortable: false }
+  )
+
+const importColumns: readonly ImportColumn[] = [
+  { key: 'selection', sortable: false, label: 'Selection', required: true },
+  { key: 'artwork', sortable: false, label: 'Artwork' },
+  { key: 'name', sortable: true, label: 'Playlist', required: true },
+  { key: 'owner', sortable: true, label: 'Owner' },
+  { key: 'tracks', sortable: true, label: 'Tracks' },
+  { key: 'status', sortable: true, label: 'Import' },
+  { key: 'schedule', sortable: true, label: 'Schedule' },
+  { key: 'checked', sortable: true, label: 'Last checked' },
+  { key: 'added', sortable: true, label: 'Added to library' },
+  {
+    key: 'imported',
+    sortable: true,
+    label: 'Last imported',
+    defaultVisible: false,
+  },
+  {
+    key: 'storedTracks',
+    sortable: true,
+    label: 'Imported tracks',
+    defaultVisible: false,
+  },
+  {
+    key: 'linkedTracks',
+    sortable: true,
+    label: 'In album library',
+    defaultVisible: false,
+  },
+  { key: 'albums', sortable: true, label: 'Albums', defaultVisible: false },
+  { key: 'duration', sortable: true, label: 'Duration', defaultVisible: false },
+  {
+    key: 'current',
+    sortable: true,
+    label: 'Up to date',
+    defaultVisible: false,
+  },
+  {
+    key: 'importable',
+    sortable: true,
+    label: 'Importable',
+    defaultVisible: false,
+  },
+  {
+    key: 'nextSync',
+    sortable: true,
+    label: 'Next import',
+    defaultVisible: false,
+  },
+  {
+    key: 'description',
+    sortable: true,
+    label: 'Description',
+    defaultVisible: false,
+  },
+]
+
+export function importPlaylistSortValue(
+  playlist: SpotifyPlaylist,
+  summary: PlaylistSummary | undefined,
+  key: ImportPlaylistSortKey,
+) {
+  switch (key) {
+    case 'name':
+      return playlist.name
+    case 'owner':
+      return playlist.ownerName
+    case 'tracks':
+      return playlist.trackTotal
+    case 'status':
+      return playlist.job && playlist.job.status !== 'succeeded'
+        ? playlistJobLabels[playlist.job.status]
+        : playlist.stored
+          ? 'Imported'
+          : 'Not imported'
+    case 'schedule':
+      return summary?.sync.syncable
+        ? youtubeScheduleLabels[summary.sync.schedule]
+        : null
+    case 'checked':
+      return summary?.sync.lastCheckedAt
+        ? Date.parse(summary?.sync.lastCheckedAt)
+        : null
+    case 'added':
+      return summary?.createdAt ? Date.parse(summary?.createdAt) : null
+    case 'imported':
+      return playlist.stored?.importedAt
+        ? Date.parse(playlist.stored?.importedAt)
+        : null
+    case 'storedTracks':
+      return playlist.stored?.trackCount
+    case 'linkedTracks':
+      return summary?.linkedTrackCount
+    case 'albums':
+      return summary?.albumCount
+    case 'duration':
+      return summary?.durationSec
+    case 'current':
+      return playlist.stored ? playlist.current : null
+    case 'importable':
+      return playlist.importable && cannotImportReason(playlist) === null
+    case 'nextSync':
+      return summary?.sync.nextScheduledAt
+        ? Date.parse(summary?.sync.nextScheduledAt)
+        : null
+    case 'description':
+      return summary?.description
+    default:
+      return null
+  }
+}
 
 function formatDateTime(value: string | null) {
   return value ? new Date(value).toLocaleString() : '-'
@@ -209,6 +349,17 @@ export default function SpotifyPlaylistImport() {
   const client = useQueryClient()
   const outcome = useSearchParams().get('spotify')
   const [search, setSearch] = useState('')
+  const [sortBy, setSortBy] = useState<ImportPlaylistSortKey>('name')
+  const [direction, setDirection] = useState<'asc' | 'desc'>('asc')
+  const columns = useTableColumns('spotify-playlist-import', importColumns)
+  function onSort(key: ImportPlaylistSortKey) {
+    if (key === sortBy) setDirection(direction === 'asc' ? 'desc' : 'asc')
+    else {
+      setSortBy(key)
+      setDirection('asc')
+    }
+  }
+  const sorting = { sortBy, direction, onSort }
   const [selected, setSelected] = useState<string[]>([])
   const [confirmedKey, setConfirmedKey] = useState('')
   const account = useQuery({
@@ -339,11 +490,21 @@ export default function SpotifyPlaylistImport() {
     job: imports.data?.jobs[playlist.spotifyId] ?? playlist.job,
   }))
   const term = search.trim().toLocaleLowerCase()
-  const visible = term
+  const filtered = term
     ? playlists.filter((playlist) =>
         playlist.name.toLocaleLowerCase().includes(term),
       )
     : playlists
+  const visible = sortTableRows(
+    filtered,
+    { key: sortBy, direction },
+    (playlist, key) =>
+      importPlaylistSortValue(
+        playlist,
+        summaryOf(playlist.stored?.playlistId),
+        key,
+      ),
+  )
   const targets = playlists.filter(
     (playlist) => selected.includes(playlist.spotifyId) && selectable(playlist),
   )
@@ -564,6 +725,7 @@ export default function SpotifyPlaylistImport() {
               </p>
             )}
           <div className="job-selection-toolbar">
+            {columns.controls}
             <Input
               aria-label="Filter playlists"
               placeholder="Filter playlists..."
@@ -646,7 +808,7 @@ export default function SpotifyPlaylistImport() {
           </div>
           {!likedResult && result}
           {!likedResult && queueError}
-          <TableScroll
+          <SecondaryTableScroll
             className="tags-scroll"
             role="region"
             aria-label="Spotify playlists"
@@ -655,23 +817,45 @@ export default function SpotifyPlaylistImport() {
             <table className="compact-table" aria-label="Spotify playlists">
               <TableHeader>
                 <TableRow>
-                  <TableHead className="table-selection-cell">
-                    <span className="sr-only">Select</span>
-                  </TableHead>
-                  <TableHead>
-                    <span className="sr-only">Artwork</span>
-                  </TableHead>
-                  <TableHead>Playlist</TableHead>
-                  <TableHead>Owner</TableHead>
-                  <TableHead className="numeric">Tracks</TableHead>
-                  <TableHead>Import</TableHead>
-                  <TableHead>Schedule</TableHead>
-                  <TableHead>Last checked</TableHead>
+                  {importColumns
+                    .filter((column) => columns.visible(column.key))
+                    .map((column) =>
+                      !column.sortable ? (
+                        <TableHead
+                          key={column.key}
+                          className={
+                            column.key === 'selection'
+                              ? 'table-selection-cell'
+                              : undefined
+                          }
+                        >
+                          <span className="sr-only">{column.label}</span>
+                        </TableHead>
+                      ) : (
+                        <SecondaryTableHead
+                          key={column.key}
+                          sortKey={column.key}
+                          label={column.label}
+                          className={
+                            [
+                              'tracks',
+                              'storedTracks',
+                              'linkedTracks',
+                              'albums',
+                              'duration',
+                            ].includes(column.key)
+                              ? 'numeric'
+                              : undefined
+                          }
+                          {...sorting}
+                        />
+                      ),
+                    )}
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {!visible.length && (
-                  <TableState colSpan={columnCount} error={listing.isError}>
+                  <TableState colSpan={columns.count} error={listing.isError}>
                     {listing.isPending ? (
                       'Loading playlists...'
                     ) : listing.isError ? (
@@ -706,74 +890,152 @@ export default function SpotifyPlaylistImport() {
                       key={playlist.spotifyId}
                       data-selected={checked || undefined}
                     >
-                      <TableCell className="table-selection-cell">
-                        <input
-                          type="checkbox"
-                          aria-label={`Select ${playlist.name}`}
-                          checked={checked}
-                          disabled={queue.isPending || !selectable(playlist)}
-                          onChange={(event) =>
-                            setSelected(
-                              event.target.checked
-                                ? [...selected, playlist.spotifyId]
-                                : selected.filter(
-                                    (id) => id !== playlist.spotifyId,
-                                  ),
-                            )
-                          }
-                        />
-                      </TableCell>
-                      <TableCell className="w-10">
-                        {playlist.artworkUrl && (
-                          <MediaArtwork
-                            src={playlist.artworkUrl}
-                            alt=""
-                            fallbackLabel=""
-                            containerClassName="size-6 rounded"
-                            imageClassName="size-6 object-cover"
-                            fallbackClassName="size-6"
+                      {columns.visible('selection') && (
+                        <TableCell className="table-selection-cell">
+                          <input
+                            type="checkbox"
+                            aria-label={`Select ${playlist.name}`}
+                            checked={checked}
+                            disabled={queue.isPending || !selectable(playlist)}
+                            onChange={(event) =>
+                              setSelected(
+                                event.target.checked
+                                  ? [...selected, playlist.spotifyId]
+                                  : selected.filter(
+                                      (id) => id !== playlist.spotifyId,
+                                    ),
+                              )
+                            }
                           />
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        {playlist.stored ? (
-                          <Link
-                            className="font-medium hover:underline"
-                            href={playlistDrawerHref(
-                              playlist.stored.playlistId,
-                            )}
-                          >
-                            {playlist.name}
-                          </Link>
-                        ) : (
-                          playlist.name
-                        )}
-                      </TableCell>
-                      <TableCell>{playlist.ownerName ?? '-'}</TableCell>
-                      <TableCell className="numeric">
-                        {playlist.trackTotal.toLocaleString()}
-                      </TableCell>
-                      <TableCell className="max-w-sm">
-                        <ImportState playlist={playlist} />
-                      </TableCell>
-                      <TableCell className="whitespace-nowrap">
-                        <ScheduleCell summary={summary} />
-                      </TableCell>
-                      <TableCell className="whitespace-nowrap">
-                        {summary?.sync.lastCheckedAt ? (
-                          <time dateTime={summary.sync.lastCheckedAt}>
-                            {formatDateTime(summary.sync.lastCheckedAt)}
-                          </time>
-                        ) : (
-                          '-'
-                        )}
-                      </TableCell>
+                        </TableCell>
+                      )}
+                      {columns.visible('artwork') && (
+                        <TableCell className="w-10">
+                          {playlist.artworkUrl && (
+                            <MediaArtwork
+                              src={playlist.artworkUrl}
+                              alt=""
+                              fallbackLabel=""
+                              containerClassName="size-6 rounded"
+                              imageClassName="size-6 object-cover"
+                              fallbackClassName="size-6"
+                            />
+                          )}
+                        </TableCell>
+                      )}
+                      {columns.visible('name') && (
+                        <TableCell>
+                          {playlist.stored ? (
+                            <Link
+                              className="font-medium hover:underline"
+                              href={playlistDrawerHref(
+                                playlist.stored.playlistId,
+                              )}
+                            >
+                              {playlist.name}
+                            </Link>
+                          ) : (
+                            playlist.name
+                          )}
+                        </TableCell>
+                      )}
+                      {columns.visible('owner') && (
+                        <TableCell>{playlist.ownerName ?? '-'}</TableCell>
+                      )}
+                      {columns.visible('tracks') && (
+                        <TableCell className="numeric">
+                          {playlist.trackTotal.toLocaleString()}
+                        </TableCell>
+                      )}
+                      {columns.visible('status') && (
+                        <TableCell className="max-w-sm">
+                          <ImportState playlist={playlist} />
+                        </TableCell>
+                      )}
+                      {columns.visible('schedule') && (
+                        <TableCell className="whitespace-nowrap">
+                          <ScheduleCell summary={summary} />
+                        </TableCell>
+                      )}
+                      {columns.visible('checked') && (
+                        <TableCell className="whitespace-nowrap">
+                          {summary?.sync.lastCheckedAt ? (
+                            <time dateTime={summary.sync.lastCheckedAt}>
+                              {formatDateTime(summary.sync.lastCheckedAt)}
+                            </time>
+                          ) : (
+                            '-'
+                          )}
+                        </TableCell>
+                      )}
+                      {columns.visible('added') && (
+                        <TableCell
+                          className="whitespace-nowrap"
+                          title="When the playlist was added to this library. Spotify does not provide the date a playlist was saved."
+                        >
+                          {formatDateTime(summary?.createdAt ?? null)}
+                        </TableCell>
+                      )}
+                      {columns.visible('imported') && (
+                        <TableCell className="whitespace-nowrap">
+                          {formatDateTime(playlist.stored?.importedAt ?? null)}
+                        </TableCell>
+                      )}
+                      {columns.visible('storedTracks') && (
+                        <TableCell className="numeric">
+                          {playlist.stored?.trackCount.toLocaleString() ?? '-'}
+                        </TableCell>
+                      )}
+                      {columns.visible('linkedTracks') && (
+                        <TableCell className="numeric">
+                          {summary?.linkedTrackCount.toLocaleString() ?? '-'}
+                        </TableCell>
+                      )}
+                      {columns.visible('albums') && (
+                        <TableCell className="numeric">
+                          {summary?.albumCount.toLocaleString() ?? '-'}
+                        </TableCell>
+                      )}
+                      {columns.visible('duration') && (
+                        <TableCell className="numeric">
+                          {summary
+                            ? formatPlaylistDuration(summary.durationSec)
+                            : '-'}
+                        </TableCell>
+                      )}
+                      {columns.visible('current') && (
+                        <TableCell>
+                          {playlist.stored
+                            ? playlist.current
+                              ? 'Yes'
+                              : 'No'
+                            : '-'}
+                        </TableCell>
+                      )}
+                      {columns.visible('importable') && (
+                        <TableCell>
+                          {playlist.importable &&
+                          cannotImportReason(playlist) === null
+                            ? 'Yes'
+                            : 'No'}
+                        </TableCell>
+                      )}
+                      {columns.visible('nextSync') && (
+                        <TableCell className="whitespace-nowrap">
+                          {formatDateTime(
+                            summary?.sync.nextScheduledAt ?? null,
+                          )}
+                        </TableCell>
+                      )}
+                      {columns.visible('description') && (
+                        <TableCell>{summary?.description ?? '-'}</TableCell>
+                      )}
                     </TableRow>
                   )
                 })}
               </TableBody>
             </table>
-          </TableScroll>
+          </SecondaryTableScroll>
         </>
       )}
     </section>

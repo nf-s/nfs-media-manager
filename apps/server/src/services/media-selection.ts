@@ -4,6 +4,7 @@ import {
   QueueFilmSelectionSchema,
   ProviderScrapeAttemptSchema,
   lastScrapedField,
+  legacyImportField,
   type LegacyImportFilter,
   type ProviderFreshnessFilter,
 } from '@repo/schemas/film-selection'
@@ -118,6 +119,7 @@ async function latestAttempts(
 export function selectionBrowseOptions(
   query: SelectionFreshnessQuery & {
     direction: 'asc' | 'desc'
+    sortBy?: string
     legacyImport: LegacyImportFilter
   },
 ) {
@@ -161,13 +163,20 @@ export function selectionBrowseOptions(
       sql`${legacyImportExpression()} = ${query.legacyImport === 'yes'}`,
     )
   return {
-    sort: query.provider
-      ? {
-          field: lastScrapedField,
-          expression: freshnessExpression(query.provider),
-          missingFirst: query.direction === 'asc',
-        }
-      : undefined,
+    sort:
+      query.sortBy === 'legacyImport'
+        ? {
+            field: legacyImportField,
+            expression: sql`(${legacyImportExpression()})::integer`,
+            missingFirst: false,
+          }
+        : query.provider
+          ? {
+              field: lastScrapedField,
+              expression: freshnessExpression(query.provider),
+              missingFirst: query.direction === 'asc',
+            }
+          : undefined,
     conditions,
   }
 }

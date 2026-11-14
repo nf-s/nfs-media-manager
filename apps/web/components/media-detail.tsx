@@ -40,18 +40,14 @@ import { fetchApiData } from '@/utils/api'
 import MediaArtwork from './media-artwork'
 import MediaHistoryList from './media-history-list'
 import ProviderIdentifiers from './provider-identifiers'
-import ExternalLink from './external-link'
 import { FilterButton, FilterIndicator } from './filter-affordance'
 import { BrowseFilterChips, filterModeClass } from './browse-controls'
 import { parseAlbumBrowseFiltersParam } from '@repo/schemas/media'
 import DetailProviderLinks from './detail-provider-links'
 import AlbumTitle from './album-title'
 import AlbumProviderDetails from './album-provider-details'
-import {
-  AlbumPlayButtons,
-  TrackPlayButton,
-  TrackQueueButton,
-} from './play-controls'
+import { AlbumPlayButtons } from './play-controls'
+import AlbumTracksTable from './album-tracks-table'
 import { albumSpotifyDestination } from '@/utils/album-links'
 import { scopedHref } from '@/utils/media-scope'
 import MetadataSourceControl from './metadata-source-control'
@@ -627,51 +623,7 @@ export default function MediaDetail({
         </TabsContent>
         {item.mediaType === 'album' && (
           <TabsContent value="tracks">
-            <table className="track-table">
-              <thead>
-                <tr>
-                  <th>#</th>
-                  <th>Track</th>
-                  <th className="text-right">Duration</th>
-                  {trackScrobbles && <th>Scrobbles</th>}
-                </tr>
-              </thead>
-              <tbody>
-                {item.tracks.map((track) => (
-                  <tr key={track.position}>
-                    <td>
-                      <TrackPlayButton album={item} track={track} />
-                    </td>
-                    <td>
-                      {track.externalId ? (
-                        <ExternalLink
-                          href={`https://open.spotify.com/track/${encodeURIComponent(track.externalId)}`}
-                        >
-                          {track.title}
-                        </ExternalLink>
-                      ) : (
-                        track.title
-                      )}
-                      <TrackQueueButton album={item} track={track} />
-                    </td>
-                    <td className="text-right tabular-nums">
-                      {track.durationSec === null
-                        ? '-'
-                        : `${Math.floor(track.durationSec / 60)}:${String(track.durationSec % 60).padStart(2, '0')}`}
-                    </td>
-                    {trackScrobbles && (
-                      <td>
-                        {trackScrobbles.get(track.position)?.toLocaleString() ??
-                          '-'}
-                      </td>
-                    )}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            {!item.tracks.length && (
-              <p className="quiet">No imported tracks.</p>
-            )}
+            <AlbumTracksTable album={item} scrobbles={trackScrobbles} />
           </TabsContent>
         )}
         {item.mediaType === 'album' && (

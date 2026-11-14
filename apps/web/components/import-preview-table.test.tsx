@@ -20,13 +20,13 @@ test('shared preview starts unselected, disables unchanged rows and never calls 
       }}
       disabled={false}
       actionable={(item) => item.action === 'new'}
-      headings={<th scope="col">Album</th>}
-      cells={(item) => <td>{item.title}</td>}
+      storageKey="test-preview"
+      columns={[{ key: 'title', label: 'Title', value: (item) => item.title }]}
     />,
   )
   assert.match(html, /aria-label="Import New album"/)
   assert.match(html, /aria-label="Import Existing album" disabled=""/)
-  assert.doesNotMatch(html, /checked=""/)
+  assert.doesNotMatch(html, /aria-label="Import [^"]+"[^>]*checked=""/)
   assert.equal(changed, false)
 })
 
@@ -43,11 +43,14 @@ test('shared preview preserves selected rows, bounded scrolling and escapes impo
       }}
       disabled={true}
       actionable={(item) => item.action === 'new'}
-      headings={<th scope="col">Film</th>}
-      cells={(item) => <td>{item.title}</td>}
+      storageKey="test-preview"
+      columns={[{ key: 'title', label: 'Title', value: (item) => item.title }]}
     />,
   )
-  assert.match(html, /class="table-scroll import-preview-scroll"/)
+  assert.match(
+    html,
+    /class="table-scroll import-preview-scroll secondary-table-scroll"/,
+  )
   assert.match(html, /aria-label="Import New album" disabled="" checked=""/)
   assert.match(html, /&lt;script&gt;title&lt;\/script&gt;/)
   assert.doesNotMatch(html, /<script>/)
@@ -64,8 +67,8 @@ test('large previews initially render fifty rows and expose manual load more', (
       onChange={() => {}}
       disabled={false}
       actionable={() => true}
-      headings={<th>Album</th>}
-      cells={(item) => <td>{item.title}</td>}
+      storageKey="test-preview"
+      columns={[{ key: 'title', label: 'Title', value: (item) => item.title }]}
     />,
   )
   assert.equal((html.match(/aria-label="Import Album/g) ?? []).length, 50)

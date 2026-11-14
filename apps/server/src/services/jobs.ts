@@ -61,7 +61,7 @@ import { scrapeMediaType } from '@/lib/scrape-media-type'
 import { sanitizeAlbumProviderResult } from '@/lib/spotify-audio-features'
 import { importMediaTypeExpression } from '@/lib/import-media-type'
 import { createDatabaseReadCache } from '@/lib/database-read-cache'
-import { getScrapePlugin } from '@/plugins/registry'
+import { getScrapePlugin, listLoadedScrapePlugins } from '@/plugins/registry'
 import {
   libraryImport,
   providerCurrentState,
@@ -1652,19 +1652,63 @@ export async function listJobs(
     .select({ count: sql<number>`count(*)::int` })
     .from(scrapeJob)
     .where(where)
+  const providerNames =
+    query.sortBy === 'provider' && !query.mediaItemId
+      ? await listLoadedScrapePlugins()
+      : []
   const jobs = await db.query.scrapeJob.findMany({
     where,
     limit: query.size,
     offset: (query.page - 1) * query.size,
-    orderBy: (table, operators) => [
-      operators.desc(table.createdAt),
-      operators.desc(table.id),
-    ],
+    orderBy: (table, operators) => {
+      const title = sql`case ${table.options}->>'task'
+        when ${LASTFM_SCROBBLE_SYNC_TASK} then 'Scrobble sync'
+        when ${YOUTUBE_SYNC_TASK} then 'YouTube subscription sync'
+        when ${SPOTIFY_PODCAST_SYNC_TASK} then 'Spotify podcast sync'
+        when ${SPOTIFY_PLAYLIST_LISTING_TASK} then 'Spotify playlist list'
+        when ${SPOTIFY_PLAYLIST_IMPORT_TASK} then
+          case when ${table.options}->>'source' = 'spotify-liked' then 'Spotify Liked Songs import'
+          else concat('Spotify playlist import', case when nullif(btrim(${table.options}->>'name'), '') is not null then concat(' · ', ${table.options}->>'name') else '' end) end
+        when ${SPOTIFY_PLAYLIST_ADD_ALBUM_TASK} then concat('Add album to Spotify playlist',
+          case when nullif(btrim(${table.options}->>'albumTitle'), '') is not null and nullif(btrim(${table.options}->>'playlistName'), '') is not null
+            then concat(' · ', ${table.options}->>'albumTitle', ' to ', ${table.options}->>'playlistName') else '' end)
+        when ${LASTFM_SPOTIFY_SEARCH_TASK} then concat('Spotify album search',
+          case when nullif(btrim(concat_ws('', ${table.options}->>'artistName', ${table.options}->>'albumName')), '') is not null
+            then concat(' · ', concat_ws(' — ', nullif(btrim(${table.options}->>'artistName'), ''), nullif(btrim(${table.options}->>'albumName'), ''))) else '' end)
+        else (select m.title from scrape_job_item i join media_item m on m.id = i.media_item_id
+          where i.job_id = ${table.id} order by i.created_at, i.id limit 1) end`
+      const result = query.mediaItemId
+        ? sql`coalesce((select i.message from scrape_job_item i where i.job_id = ${table.id} and i.media_item_id = ${query.mediaItemId} order by i.created_at, i.id limit 1), ${table.errorMessage})`
+        : sql`coalesce(${table.errorMessage}, (select string_agg(nullif(i.message, ''), ' · ' order by i.created_at, i.id) from scrape_job_item i where i.job_id = ${table.id}))`
+      const fields = {
+        provider: sql`lower(case ${table.provider}
+          when 'google-custom-search' then 'Google Custom Search (legacy)'
+          ${sql.join(
+            providerNames.map(
+              (plugin) =>
+                sql`when ${plugin.manifest.id} then ${plugin.manifest.displayName}`,
+            ),
+            sql` `,
+          )}
+          else ${table.provider} end)`,
+        title: sql`lower(${title})`,
+        status: sql`${table.status}::text`,
+        createdAt: table.createdAt,
+        startedAt: table.startedAt,
+        finishedAt: table.finishedAt,
+        result: sql`lower(${result})`,
+      }
+      const order = query.direction === 'asc' ? operators.asc : operators.desc
+      return [sql`${order(fields[query.sortBy])} nulls last`, order(table.id)]
+    },
     with: {
       items: {
         columns: { payload: false },
         with: { mediaItem: { columns: { title: true, mediaType: true } } },
-        orderBy: (table, operators) => [operators.asc(table.createdAt)],
+        orderBy: (table, operators) => [
+          operators.asc(table.createdAt),
+          operators.asc(table.id),
+        ],
       },
       logs: {
         columns: { metadata: false },

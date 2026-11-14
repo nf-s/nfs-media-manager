@@ -16,6 +16,7 @@ import {
 import { AlbumQuerySchema } from '@repo/schemas/media'
 import {
   PlaylistDetailQuerySchema,
+  PlaylistEntrySortSchema,
   SPOTIFY_PLAYLIST_ADD_ALBUM_TASK,
   SPOTIFY_PLAYLIST_IMPORT_TASK,
   SPOTIFY_PLAYLIST_ITEM_LIMIT,
@@ -1016,6 +1017,38 @@ describe('Spotify playlist imports', () => {
     expect(second.items.items[1]).toMatchObject({
       album: { id: 'legacy-album', artists: ['The Examples'] },
     })
+    expect(first.createdAt).toMatch(/^\d{4}-\d{2}-\d{2}T/)
+    const ascending = await getPlaylistDetail(
+      'legacy-morning',
+      detailQuery({ size: 1, sortBy: 'title', direction: 'asc' }),
+    )
+    expect(summarize(ascending)).toEqual([
+      ['track', 3, 'Closing', '2024-03-01T10:00:00.000Z'],
+    ])
+    const nextTitle = await getPlaylistDetail(
+      'legacy-morning',
+      detailQuery({ size: 1, page: 2, sortBy: 'title', direction: 'asc' }),
+    )
+    expect(summarize(nextTitle)).toEqual([['album', 1, 'Legacy Album', null]])
+    const descending = await getPlaylistDetail(
+      'legacy-morning',
+      detailQuery({ size: 1, sortBy: 'title', direction: 'desc' }),
+    )
+    expect(summarize(descending)).toEqual([
+      ['track', 1, 'Opening', '2023-01-01T00:00:00.000Z'],
+    ])
+    for (const sortBy of PlaylistEntrySortSchema.options) {
+      for (const direction of ['asc', 'desc']) {
+        const sorted = await getPlaylistDetail(
+          'legacy-morning',
+          detailQuery({ sortBy, direction }),
+        )
+        expect(sorted.items.totalCount).toBe(4)
+        expect(sorted.items.items).toHaveLength(4)
+        if (sortBy === 'added')
+          expect(sorted.items.items.at(-1)?.addedAt).toBeNull()
+      }
+    }
     await expect(
       getPlaylistDetail('missing', detailQuery()),
     ).rejects.toMatchObject({ response: { statusCode: 404 } })

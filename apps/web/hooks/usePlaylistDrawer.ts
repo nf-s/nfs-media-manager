@@ -28,12 +28,14 @@ function updateUrl(updates: Updates, push: boolean) {
  */
 export function usePlaylistDrawer({
   replaces = [],
+  parameter = 'playlist',
 }: {
   /** Parameters of another drawer that opening this one closes. */
   replaces?: string[]
+  parameter?: 'playlist' | 'collection'
 } = {}) {
   const searchParams = useSearchParams()
-  const playlistId = searchParams.get('playlist')
+  const playlistId = searchParams.get(parameter)
   const tab = parsePlaylistTab(searchParams.get('tab'))
   const openedHere = useRef(false)
   const trigger = useRef<HTMLElement | null>(null)
@@ -51,13 +53,21 @@ export function usePlaylistDrawer({
       openedHere.current = true
       const closed: Updates = {}
       for (const key of replaces) closed[key] = null
-      updateUrl({ ...closed, ...playlistDrawerParams(id) }, true)
+      updateUrl(
+        {
+          ...closed,
+          ...(parameter === 'playlist'
+            ? playlistDrawerParams(id)
+            : { [parameter]: id, tab: null }),
+        },
+        true,
+      )
     },
     close() {
       if (openedHere.current) {
         openedHere.current = false
         window.history.back()
-      } else updateUrl({ playlist: null, tab: null }, false)
+      } else updateUrl({ [parameter]: null, tab: null }, false)
     },
     setTab(next: PlaylistTab) {
       updateUrl({ tab: next === 'tracks' ? null : next }, false)

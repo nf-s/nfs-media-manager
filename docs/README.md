@@ -8,6 +8,7 @@ Start with [getting started](getting-started.md) for installation or [applicatio
 - [Importing a library](importing.md): CSV, NFO, Spotify and legacy JSON workflows.
 - [Spotify account setup](spotify-album-imports.md): callbacks, saved-album previews and read-only access.
 - [Tracks and Spotify playlists](tracks-and-playlists.md): importing playlists, Liked Songs and stored Last.fm tracks, source filters, album links and playback matching.
+- [Film collections](film-collections.md): browsing stored collections and their ordered film memberships.
 - [Spotify playback](spotify-playback.md): optional in-app player, queue, devices and what the browser sends to Spotify.
 - [Last.fm scrobble history](lastfm-scrobbles.md): syncing scrobbles, album linking, listening charts and browse fields.
 - [Subscriptions](subscriptions.md): YouTube channels and Spotify podcasts in one library: setup, sync, search, filters and API.
@@ -30,6 +31,7 @@ Back up the database and encryption key before migrations or repair commands.
 
 - [Development commands and checks](development.md)
 - [UI guidelines](dev-guidelines-ui.md) and [backend guidelines](dev-guidelines-backend.md)
+- [Secondary tables](secondary-tables.md): shared sorting, column controls, styling and verification.
 - [Job worker](job-worker.md)
 - [Feature requirements](requirements/README.md) and [verification checklist](requirements/verification.md)
 

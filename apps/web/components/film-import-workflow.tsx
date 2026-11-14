@@ -287,26 +287,38 @@ export default function FilmImportWorkflow({
                 }}
                 disabled={busy || start.isSuccess}
                 actionable={(item) => item.action !== 'unchanged'}
-                headings={
-                  <>
-                    <th scope="col">Film</th>
-                    <th scope="col">Identifiers</th>
-                    <th scope="col">Changes</th>
-                  </>
-                }
-                cells={(item) => (
-                  <>
-                    {' '}
-                    <td>{item.title}</td>
-                    <td>
-                      {item.needsIdentification ? (
+                storageKey={`film-${kind}-import-preview`}
+                columns={[
+                  { key: 'title', label: 'Film', value: (item) => item.title },
+                  {
+                    key: 'identifiers',
+                    label: 'Identifiers',
+                    value: (item) =>
+                      item.needsIdentification
+                        ? 'Needs ID'
+                        : item.identifiers.join(', '),
+                    render: (item) =>
+                      item.needsIdentification ? (
                         <span className="needs-id">Needs ID</span>
                       ) : (
                         item.identifiers.join(', ')
-                      )}
-                    </td>
-                    <td>
-                      {item.action === 'new' ? (
+                      ),
+                  },
+                  {
+                    key: 'changes',
+                    label: 'Changes',
+                    value: (item) =>
+                      item.action === 'new'
+                        ? 'New film'
+                        : item.action === 'unchanged'
+                          ? 'No changes'
+                          : [
+                              ...new Set(
+                                item.changes.map((change) => change.label),
+                              ),
+                            ].join(', '),
+                    render: (item) =>
+                      item.action === 'new' ? (
                         'New film'
                       ) : item.action === 'unchanged' ? (
                         'No changes'
@@ -331,10 +343,16 @@ export default function FilmImportWorkflow({
                             ))}
                           </dl>
                         </details>
-                      )}
-                    </td>
-                  </>
-                )}
+                      ),
+                  },
+                  {
+                    key: 'row',
+                    label: 'Row',
+                    defaultVisible: false,
+                    value: (item) => item.row,
+                    render: (item) => item.row + 1,
+                  },
+                ]}
               />
               <div className="import-confirmation">
                 <FilmProviderSelection

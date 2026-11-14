@@ -15,10 +15,14 @@ describe('tag contracts', () => {
       page: 1,
       size: 25,
       visibility: 'visible',
+      sortBy: 'name',
+      direction: 'asc',
     })
     for (const query of [
       { mediaType: 'music' },
       { page: 0 },
+      { sortBy: 'unknown' },
+      { direction: 'sideways' },
       { size: 101 },
       { size: 1.5 },
       { q: 'x'.repeat(201) },

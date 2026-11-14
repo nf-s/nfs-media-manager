@@ -71,6 +71,8 @@ export const lastfmLinkColumns: Array<{
   { key: 'scrobbles', label: 'Scrobbles' },
   { key: 'lastListenedAt', label: 'Last listened' },
   { key: 'reason', label: 'Status' },
+  { key: 'libraryAlbum', label: 'Library album' },
+  { key: 'spotifySearch', label: 'Spotify search' },
 ]
 
 export function lastfmLinkSort(value: string | null): LastfmLinkSort {

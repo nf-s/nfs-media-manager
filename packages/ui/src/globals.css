@@ -4059,3 +4059,38 @@ button.player-track:hover strong {
     left: 8px;
   }
 }
+
+.secondary-table-scroll {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: white;
+}
+.table-column-controls {
+  display: inline-flex;
+  flex-shrink: 0;
+  margin-bottom: 6px;
+}
+.table-columns-panel {
+  position: fixed;
+  margin: 0;
+  padding: 8px;
+  min-width: 180px;
+  max-width: calc(100vw - 16px);
+  max-height: min(440px, calc(100dvh - 16px));
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: white;
+  color: var(--ink);
+  box-shadow: 0 8px 24px #0f172a1a;
+  font-size: 12px;
+}
+.table-columns-panel label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 6px;
+}
+.table-columns-panel input {
+  accent-color: #334155;
+}

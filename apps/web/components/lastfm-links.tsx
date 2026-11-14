@@ -21,7 +21,6 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-  TableScroll,
   TableState,
 } from '@repo/ui/components/ui/table'
 import { useInfiniteTableScroll } from '@/hooks/useInfiniteTableScroll'
@@ -56,6 +55,12 @@ import {
 } from './lastfm-link-panel'
 import LastfmSearchActions from './lastfm-search-actions'
 import { useConfig } from './providers'
+import {
+  SecondaryDataTable,
+  SecondaryTableScroll,
+  SecondaryTableHead,
+  useTableColumns,
+} from './secondary-table'
 
 function LinkRow({
   group,
@@ -63,8 +68,10 @@ function LinkRow({
   checked,
   disabled,
   onSelect,
+  visible,
 }: {
   group: LastfmLinkGroup
+  visible: (key: string) => boolean
   onOpen: (mode: LastfmLinkPanelMode) => void
   checked: boolean
   disabled: boolean
@@ -88,79 +95,95 @@ function LinkRow({
           }
         />
       </TableCell>
-      <TableCell>{group.artistName}</TableCell>
-      <TableCell>{group.albumName ?? '-'}</TableCell>
-      <TableCell className="tabular-nums">
-        {group.scrobbles.toLocaleString()}
-      </TableCell>
-      <TableCell className="whitespace-nowrap">
-        <time dateTime={group.lastListenedAt}>
-          {new Date(group.lastListenedAt).toLocaleDateString()}
-        </time>
-      </TableCell>
-      <TableCell>
-        {lastfmLinkReasonLabels[group.reason]}
-        {group.strategy && (
-          <div className="muted">
-            {lastfmLinkStrategyLabels[group.strategy]}
-          </div>
-        )}
-      </TableCell>
-      <TableCell>
-        {linked && group.album ? (
-          <Link href={`/albums/${group.album.id}`}>{group.album.title}</Link>
-        ) : group.candidates.length ? (
-          `${group.candidates.length} possible albums`
-        ) : (
-          '-'
-        )}
-      </TableCell>
-      <TableCell>
-        {group.spotifySearch ? (
-          <Link
-            className="job-status underline underline-offset-2"
-            data-status={group.spotifySearch.status}
-            href={scopedHref(
-              `/jobs?jobId=${encodeURIComponent(group.spotifySearch.jobId)}`,
-              'album',
-            )}
-            title={group.spotifySearch.errorMessage ?? undefined}
-          >
-            {lastfmSpotifySearchLabel(group.spotifySearch)}
-          </Link>
-        ) : (
-          <span className="muted">{lastfmSpotifySearchLabel(null)}</span>
-        )}
-      </TableCell>
-      <TableCell>
-        {group.albumName !== null && (
-          <div className="flex flex-wrap gap-1">
-            <Button
-              size="sm"
-              variant="outline"
-              aria-haspopup="dialog"
-              onClick={() => onOpen('library')}
+      {visible('artistName') && <TableCell>{group.artistName}</TableCell>}
+      {visible('albumName') && <TableCell>{group.albumName ?? '-'}</TableCell>}
+      {visible('scrobbles') && (
+        <TableCell className="tabular-nums">
+          {group.scrobbles.toLocaleString()}
+        </TableCell>
+      )}
+      {visible('lastListenedAt') && (
+        <TableCell className="whitespace-nowrap">
+          <time dateTime={group.lastListenedAt}>
+            {new Date(group.lastListenedAt).toLocaleDateString()}
+          </time>
+        </TableCell>
+      )}
+      {visible('reason') && (
+        <TableCell>
+          {lastfmLinkReasonLabels[group.reason]}
+          {group.strategy && (
+            <div className="muted">
+              {lastfmLinkStrategyLabels[group.strategy]}
+            </div>
+          )}
+        </TableCell>
+      )}
+      {visible('libraryAlbum') && (
+        <TableCell>
+          {linked && group.album ? (
+            <Link href={`/albums/${group.album.id}`}>{group.album.title}</Link>
+          ) : group.candidates.length ? (
+            `${group.candidates.length} possible albums`
+          ) : (
+            '-'
+          )}
+        </TableCell>
+      )}
+      {visible('spotifySearch') && (
+        <TableCell>
+          {group.spotifySearch ? (
+            <Link
+              className="job-status underline underline-offset-2"
+              data-status={group.spotifySearch.status}
+              href={scopedHref(
+                `/jobs?jobId=${encodeURIComponent(group.spotifySearch.jobId)}`,
+                'album',
+              )}
+              title={group.spotifySearch.errorMessage ?? undefined}
             >
-              {linked ? 'Change' : 'Link'}
-            </Button>
-            {!linked && (
+              {lastfmSpotifySearchLabel(group.spotifySearch)}
+            </Link>
+          ) : (
+            <span className="muted">{lastfmSpotifySearchLabel(null)}</span>
+          )}
+        </TableCell>
+      )}
+      {visible('actions') && (
+        <TableCell>
+          {group.albumName !== null && (
+            <div className="flex flex-wrap gap-1">
               <Button
                 size="sm"
                 variant="outline"
                 aria-haspopup="dialog"
-                onClick={() => onOpen('new')}
+                onClick={() => onOpen('library')}
               >
-                Add new album
+                {linked ? 'Change' : 'Link'}
               </Button>
-            )}
-          </div>
-        )}
-      </TableCell>
+              {!linked && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  aria-haspopup="dialog"
+                  onClick={() => onOpen('new')}
+                >
+                  Add new album
+                </Button>
+              )}
+            </div>
+          )}
+        </TableCell>
+      )}
     </TableRow>
   )
 }
 
 export default function LastfmLinks() {
+  const columns = useTableColumns('lastfm-links', [
+    ...lastfmLinkColumns,
+    { key: 'actions', label: 'Actions' },
+  ])
   const { apiBaseUrl } = useConfig()
   const client = useQueryClient()
   const search = useSearchParams()
@@ -291,34 +314,45 @@ export default function LastfmLinks() {
         Automatic returns a name to automatic matching.
       </p>
       {summary && (
-        <table className="compact-table" aria-label="Scrobble link summary">
-          <thead>
-            <tr>
-              <th scope="col">Status</th>
-              <th scope="col">Scrobbled names</th>
-              <th scope="col">Scrobbles</th>
-            </tr>
-          </thead>
-          <tbody>
-            {lastfmLinkSummaryRows(summary).map((row) => (
-              <tr key={row.reason}>
-                <td>
-                  <button
-                    type="button"
-                    className="underline underline-offset-2"
-                    aria-pressed={reason === row.reason}
-                    disabled={queuePending}
-                    onClick={() => setReason(row.reason)}
-                  >
-                    {lastfmLinkReasonLabels[row.reason]}
-                  </button>
-                </td>
-                <td>{row.groups.toLocaleString()}</td>
-                <td>{row.scrobbles.toLocaleString()}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <SecondaryDataTable
+          id="lastfm-link-summary"
+          label="Scrobble link summary"
+          rows={lastfmLinkSummaryRows(summary)}
+          rowKey={(row) => row.reason}
+          defaultSort={{ key: 'reason', direction: 'asc' }}
+          columns={[
+            {
+              key: 'reason',
+              label: 'Status',
+              value: (row) => lastfmLinkReasonLabels[row.reason],
+              render: (row) => (
+                <button
+                  type="button"
+                  className="underline underline-offset-2"
+                  aria-pressed={reason === row.reason}
+                  disabled={queuePending}
+                  onClick={() => setReason(row.reason)}
+                >
+                  {lastfmLinkReasonLabels[row.reason]}
+                </button>
+              ),
+            },
+            {
+              key: 'groups',
+              label: 'Scrobbled names',
+              value: (row) => row.groups,
+              render: (row) => row.groups.toLocaleString(),
+              className: 'numeric',
+            },
+            {
+              key: 'scrobbles',
+              label: 'Scrobbles',
+              value: (row) => row.scrobbles,
+              render: (row) => row.scrobbles.toLocaleString(),
+              className: 'numeric',
+            },
+          ]}
+        />
       )}
       <div className="form-actions my-3">
         <Button
@@ -398,7 +432,8 @@ export default function LastfmLinks() {
         selection={selected}
         onSelectionChange={setSelected}
       />
-      <TableScroll
+      {columns.controls}
+      <SecondaryTableScroll
         ref={scroller}
         className="table-scroll-bounded"
         role="region"
@@ -425,39 +460,25 @@ export default function LastfmLinks() {
                   }}
                 />
               </TableHead>
-              {lastfmLinkColumns.map((column) => (
-                <TableHead
-                  key={column.key}
-                  aria-sort={
-                    sortBy === column.key
-                      ? sortDirection === 'asc'
-                        ? 'ascending'
-                        : 'descending'
-                      : 'none'
-                  }
-                >
-                  <button
-                    type="button"
+              {lastfmLinkColumns
+                .filter((column) => columns.visible(column.key))
+                .map((column) => (
+                  <SecondaryTableHead
+                    key={column.key}
+                    sortKey={column.key}
+                    label={column.label}
+                    sortBy={sortBy}
+                    direction={sortDirection}
+                    onSort={sort}
                     disabled={queuePending}
-                    onClick={() => sort(column.key)}
-                  >
-                    {column.label}
-                    {sortBy === column.key
-                      ? sortDirection === 'asc'
-                        ? ' ↑'
-                        : ' ↓'
-                      : ''}
-                  </button>
-                </TableHead>
-              ))}
-              <TableHead>Library album</TableHead>
-              <TableHead>Spotify search</TableHead>
-              <TableHead>Actions</TableHead>
+                  />
+                ))}
+              {columns.visible('actions') && <TableHead>Actions</TableHead>}
             </TableRow>
           </TableHeader>
           <TableBody>
             {!items.length && (
-              <TableState colSpan={9} error={links.isError}>
+              <TableState colSpan={columns.count + 1} error={links.isError}>
                 {links.isPending
                   ? 'Loading scrobble links...'
                   : links.isError
@@ -478,6 +499,7 @@ export default function LastfmLinks() {
               <LinkRow
                 key={lastfmLinkKey(group)}
                 group={group}
+                visible={columns.visible}
                 checked={selectedIds.includes(lastfmLinkKey(group))}
                 disabled={selectionDisabled}
                 onSelect={(checked, shift) => {
@@ -521,7 +543,7 @@ export default function LastfmLinks() {
             </Button>
           )}
         </div>
-      </TableScroll>
+      </SecondaryTableScroll>
       <LastfmSearchActions
         groups={items}
         selectedIds={selectedIds}

@@ -229,9 +229,15 @@ test('the channels list shows YouTube channels and podcasts in the shared table,
     '',
     '/subscriptions/channels',
   )
-  assert.match(html, /class="table-scroll tags-scroll min-h-0 flex-1"/)
+  assert.match(
+    html,
+    /class="table-scroll tags-scroll min-h-0 flex-1 secondary-table-scroll"/,
+  )
   assert.match(html, /<table class="compact-table"/)
-  assert.match(html, /aria-sort="ascending"><button type="button">Name ↑/)
+  assert.match(
+    html,
+    /aria-sort="ascending"><button[^>]*title="Sort by Name">Name<span aria-hidden="true"> ↑/,
+  )
   assert.match(html, /<td>YouTube<\/td>/)
   assert.match(html, /<td>Podcast<\/td>/)
   assert.match(html, /12,000 subscribers/)

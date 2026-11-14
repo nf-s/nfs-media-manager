@@ -3,6 +3,13 @@ import { FilmListItemSchema, FilmQuerySchema } from './media'
 import { PaginatedDataSchema } from './common'
 import type { BrowseField } from './browse'
 
+export const legacyImportField: BrowseField = {
+  key: 'legacyImport',
+  label: 'Legacy import',
+  type: 'number',
+  filterable: false,
+}
+
 export const lastScrapedField: BrowseField = {
   key: 'lastScrapedAt',
   label: 'Last scraped',

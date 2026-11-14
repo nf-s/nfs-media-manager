@@ -9,12 +9,26 @@ describe('job history contracts', () => {
   it('retains a media filter without implicitly selecting a status', () => {
     expect(JobListQuerySchema.parse({ mediaItemId: 'film-1' })).toEqual({
       mediaItemId: 'film-1',
+      sortBy: 'createdAt',
+      direction: 'desc',
       page: 1,
       size: 25,
     })
     expect(JobListQuerySchema.safeParse({ mediaItemId: '' }).success).toBe(
       false,
     )
+  })
+
+  it('accepts supported sorts and rejects invalid sort controls', () => {
+    expect(
+      JobListQuerySchema.parse({ sortBy: 'result', direction: 'asc' }).sortBy,
+    ).toBe('result')
+    expect(JobListQuerySchema.safeParse({ sortBy: 'unknown' }).success).toBe(
+      false,
+    )
+    expect(
+      JobListQuerySchema.safeParse({ direction: 'sideways' }).success,
+    ).toBe(false)
   })
 
   it('scopes jobs to albums, films or the Subscriptions library', () => {

@@ -96,8 +96,6 @@ export default function AppNavigation() {
   return (
     <nav className="app-navigation" aria-label="Main navigation">
       {items.map((item) => {
-        // Playlists hold tracks and albums; films have none.
-        if (item.href === '/playlists' && scope !== 'album') return null
         const destination =
           item.href === '/browse'
             ? view === 'track'
@@ -105,7 +103,9 @@ export default function AppNavigation() {
               : scope === 'album'
                 ? '/albums'
                 : '/films'
-            : item.href
+            : item.href === '/playlists' && scope === 'film'
+              ? '/collections'
+              : item.href
         const active =
           path === destination || path.startsWith(`${destination}/`)
         const href =
@@ -118,7 +118,9 @@ export default function AppNavigation() {
             key={item.href}
             aria-current={active ? 'page' : undefined}
           >
-            {item.label}
+            {item.href === '/playlists' && scope === 'film'
+              ? 'Collections'
+              : item.label}
             <item.Icon size={16} aria-hidden="true" />
           </Link>
         )

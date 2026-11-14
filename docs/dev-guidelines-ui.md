@@ -39,3 +39,7 @@
 - Open details without losing browse state or scroll: a drawer over the results from the right, and a bottom sheet on phones. Show useful information immediately; keep raw data in History and advanced controls in tabs/popovers.
 - Grid artwork carries the ratings strip, the active sort value and optional tag pills (Filters > Views > On artwork). The strip is a light panel with rating scores in the monospace face; service links sit at its right and it scrolls sideways. A tile keeps a row under the byline only when the sort value or the strip is off the artwork. The filter drawer closes on Escape or an outside click and restores focus to its trigger. Remaining toolbar popovers open one at a time and close on Escape or an outside click.
 - Use consistent metadata pills for clickable filters in detail pages and the inspector, including creators, source and watched status. Keep table/grid values compact without repeated filter icons; their filtering behavior and keyboard access must remain intact.
+
+## Secondary tables
+
+All tables outside Browse use the [secondary table pattern](secondary-tables.md): shared sortable data headers, a persistent Columns control and a rounded neutral scroll container. Sort raw values across the complete result set before pagination; only selection, artwork and action columns are exempt. Keep chosen columns accessible through horizontal scrolling on phones. The guide lists covered views, component responsibilities, date semantics and verification requirements. Browse tables retain their existing controls and layout.

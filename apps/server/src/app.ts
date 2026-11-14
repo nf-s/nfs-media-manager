@@ -17,6 +17,7 @@ import albums from '@/routes/albums'
 import films from '@/routes/films'
 import tracks from '@/routes/tracks'
 import playlists from '@/routes/playlists'
+import filmCollections from '@/routes/film-collections'
 import jobs from '@/routes/jobs'
 import imports from '@/routes/imports'
 import albumImports from '@/routes/album-imports'
@@ -89,6 +90,7 @@ v1ApiBase.route('/albums', albums)
 v1ApiBase.route('/films', films)
 v1ApiBase.route('/tracks', tracks)
 v1ApiBase.route('/playlists', playlists)
+v1ApiBase.route('/collections', filmCollections)
 v1ApiBase.route('/media', media)
 v1ApiBase.route('/providers', providers)
 v1ApiBase.route('/scrape/jobs', jobs)

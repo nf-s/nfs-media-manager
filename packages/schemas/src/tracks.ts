@@ -209,6 +209,8 @@ export const PlaylistSourceSchema = z.enum(['spotify', 'spotify-liked'])
 export type PlaylistSource = z.infer<typeof PlaylistSourceSchema>
 
 export const PlaylistSummarySchema = z.object({
+  /** When this playlist was first added to this library, not saved on Spotify. */
+  createdAt: z.string().datetime().nullable().default(null),
   id: z.string(),
   name: z.string(),
   /** Null for a playlist that was not imported from Spotify. */
@@ -241,7 +243,23 @@ export const PlaylistRemovalSchema = z.object({
   removedTracks: z.number().int().nonnegative(),
 })
 
+export const PlaylistEntrySortSchema = z.enum([
+  'position',
+  'title',
+  'artists',
+  'album',
+  'duration',
+  'added',
+  'releaseDate',
+  'scrobbles',
+  'lastListened',
+  'kind',
+])
+export type PlaylistEntrySort = z.infer<typeof PlaylistEntrySortSchema>
+
 export const PlaylistDetailQuerySchema = PaginationQuerySchema.extend({
+  sortBy: PlaylistEntrySortSchema.default('position'),
+  direction: DirectionSchema.default('asc'),
   size: z.coerce.number().int().positive().max(100).default(100),
 })
 export type PlaylistDetailQuery = z.infer<typeof PlaylistDetailQuerySchema>

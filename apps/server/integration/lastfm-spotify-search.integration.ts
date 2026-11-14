@@ -456,3 +456,34 @@ describe('scrobbled album Spotify searches through persistent jobs', () => {
     expect(request).not.toHaveBeenCalled()
   })
 })
+
+it('sorts library albums and stored Spotify results across the full report without provider requests', async () => {
+  const linked = await addGroup('Z linked')
+  const queued = await addGroup('A queued')
+  await addGroup('B not searched')
+  await addLibraryAlbum()
+  await setLastfmAlbumLink({
+    ...linked,
+    action: 'link',
+    albumId: 'library-album',
+  })
+  await queueLastfmSpotifySearches(
+    { groups: [queued], confirmBroadRun: false },
+    null,
+  )
+  const albumPage = await getLastfmLinkReport({
+    sortBy: 'libraryAlbum',
+    sortDirection: 'asc',
+    size: 1,
+  })
+  expect(albumPage.items[0]?.albumName).toBe('Z linked')
+  const searchPage = await getLastfmLinkReport({
+    sortBy: 'spotifySearch',
+    sortDirection: 'desc',
+    size: 1,
+  })
+  expect(searchPage.items[0]?.albumName).toBe('A queued')
+  expect(searchPage.items[0]?.spotifySearch?.status).toBe('queued')
+  expect(searchPage.totalCount).toBe(3)
+  expect(request).not.toHaveBeenCalled()
+})

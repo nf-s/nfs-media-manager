@@ -158,7 +158,15 @@ export const LastfmSpotifySearchSchema = z.object({
 
 export const LastfmLinkQuerySchema = z.object({
   sortBy: z
-    .enum(['artistName', 'albumName', 'scrobbles', 'lastListenedAt', 'reason'])
+    .enum([
+      'artistName',
+      'albumName',
+      'scrobbles',
+      'lastListenedAt',
+      'reason',
+      'libraryAlbum',
+      'spotifySearch',
+    ])
     .default('scrobbles'),
   sortDirection: z.enum(['asc', 'desc']).default('desc'),
   reason: z.union([LastfmLinkReasonSchema, z.literal('unlinked')]).optional(),

@@ -431,21 +431,21 @@ export default function AlbumImportWorkflow({
             }}
             disabled={busy || commit.isSuccess}
             actionable={(item) => item.action === 'new'}
-            headings={
-              <>
-                <th scope="col">Album</th>
-                <th scope="col">Artists</th>
-                <th scope="col">Added</th>
-                <th scope="col">Identifiers</th>
-                <th scope="col">Changes</th>
-              </>
-            }
-            cells={(item) => (
-              <>
-                <td>{item.title}</td>
-                <td>{item.artists.join(', ')}</td>
-                <td>
-                  {item.dateAdded && addedDateField ? (
+            storageKey="album-import-preview"
+            columns={[
+              { key: 'title', label: 'Album', value: (item) => item.title },
+              {
+                key: 'artists',
+                label: 'Artists',
+                value: (item) => item.artists.join(', '),
+              },
+              {
+                key: 'added',
+                label: 'Added',
+                value: (item) =>
+                  item.dateAdded ? Date.parse(item.dateAdded) : null,
+                render: (item) =>
+                  item.dateAdded && addedDateField ? (
                     <time dateTime={item.dateAdded} title={item.dateAdded}>
                       {formatBrowseValue(
                         addedDateField,
@@ -454,16 +454,30 @@ export default function AlbumImportWorkflow({
                     </time>
                   ) : (
                     '-'
-                  )}
-                </td>
-                <td>
-                  {item.needsIdentification
+                  ),
+              },
+              {
+                key: 'identifiers',
+                label: 'Identifiers',
+                value: (item) =>
+                  item.needsIdentification
                     ? 'Needs ID'
-                    : item.identifiers.join(', ')}
-                </td>
-                <td>{item.action === 'new' ? 'New album' : 'Unchanged'}</td>
-              </>
-            )}
+                    : item.identifiers.join(', '),
+              },
+              {
+                key: 'changes',
+                label: 'Changes',
+                value: (item) =>
+                  item.action === 'new' ? 'New album' : 'Unchanged',
+              },
+              {
+                key: 'row',
+                label: 'Row',
+                defaultVisible: false,
+                value: (item) => item.row,
+                render: (item) => item.row + 1,
+              },
+            ]}
           />
           {!preview.data.items.length && (
             <p className="muted">No albums to import.</p>

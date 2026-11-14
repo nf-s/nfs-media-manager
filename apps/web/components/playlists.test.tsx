@@ -85,7 +85,10 @@ test('playlists table links tracks and albums filtered by playlist and labels so
   assert.match(html, />Spotify</)
   assert.match(html, />Library</)
   assert.equal((html.match(/>Remove</g) ?? []).length, 1)
-  assert.match(html, /aria-sort="ascending"><button[^>]*>Playlist ↑/)
+  assert.match(
+    html,
+    /aria-sort="ascending"><button[^>]*title="Sort by Playlist"[^>]*>Playlist<span aria-hidden="true"> ↑<\/span>/,
+  )
   assert.match(html, /href="\/imports\/spotify-playlists\?mediaType=album"/)
 })
 
@@ -103,8 +106,11 @@ test('playlist rows open the drawer and show the sync schedule and last check', 
   const html = render(<PlaylistsWorkspace />, [
     [['playlists'], [synced, { ...playlist, id: 'legacy', name: 'Old list' }]],
   ])
-  assert.match(html, />Schedule</)
-  assert.match(html, />Last checked</)
+  assert.match(html, /<button[^>]*title="Sort by Schedule"[^>]*>Schedule<span/)
+  assert.match(
+    html,
+    /<button[^>]*title="Sort by Last checked"[^>]*>Last checked<span/,
+  )
   assert.match(html, />Every 6 hours</)
   assert.match(html, /<time dateTime="2026-01-03T00:00:00.000Z">/)
   assert.match(

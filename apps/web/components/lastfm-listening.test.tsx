@@ -263,9 +263,12 @@ test('scrobble links show reason totals and link library albums', () => {
   assert.match(html, /Links are recomputed after every sync/)
   assert.match(
     html,
-    /aria-pressed="false">Linked<\/button><\/td><td>1<\/td><td>40<\/td>/,
+    /aria-pressed="false">Linked<\/button><\/td><td class="numeric">1<\/td><td class="numeric">40<\/td>/,
   )
-  assert.match(html, /Kept unlinked<\/button><\/td><td>0<\/td><td>0<\/td>/)
+  assert.match(
+    html,
+    /Kept unlinked<\/button><\/td><td class="numeric">0<\/td><td class="numeric">0<\/td>/,
+  )
   assert.match(
     html,
     /<td>Linked<div class="muted">Another edition or artist credit<\/div><\/td>/,
@@ -289,7 +292,10 @@ test('scrobble links show reason totals and link library albums', () => {
   assert.match(html, />Relink</)
   assert.doesNotMatch(html, /disabled=""[^>]*>Relink/)
   assert.match(html, /aria-label="Select all loaded unlinked albums"/)
-  assert.match(html, /aria-sort="descending"><button[^>]*>Scrobbles ↓/)
+  assert.match(
+    html,
+    /aria-sort="descending"><button[^>]*>Scrobbles<span aria-hidden="true"> ↓/,
+  )
   assert.match(html, /aria-sort="none"><button[^>]*>Scrobbled artist/)
   assert.match(
     html,

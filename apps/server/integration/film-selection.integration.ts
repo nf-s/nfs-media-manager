@@ -803,3 +803,28 @@ describe('film selection and safe scheduling', () => {
     expect(await databaseClient.select().from(schema.scrapeJob)).toHaveLength(0)
   })
 })
+
+it('sorts legacy import membership before metadata-selection pagination', async () => {
+  const { listFilmSelection } = await import('@/services/film-selection')
+  await databaseClient
+    .update(schema.mediaItem)
+    .set({ metadata: { legacyImport: 'film' } })
+    .where(eq(schema.mediaItem.id, 'film-7'))
+  const imported = await listFilmSelection(
+    FilmSelectionQuerySchema.parse({
+      sortBy: 'legacyImport',
+      direction: 'desc',
+      size: 1,
+    }),
+  )
+  expect(imported.items[0]?.id).toBe('film-7')
+  expect(imported.items[0]?.hasLegacyImport).toBe(true)
+  const ordinary = await listFilmSelection(
+    FilmSelectionQuerySchema.parse({
+      sortBy: 'legacyImport',
+      direction: 'asc',
+      size: 1,
+    }),
+  )
+  expect(ordinary.items[0]?.hasLegacyImport).toBe(false)
+})

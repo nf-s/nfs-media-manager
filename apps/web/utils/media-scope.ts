@@ -36,7 +36,7 @@ function pathMediaScope(path: string): MediaScope | null {
     path === '/imports/lastfm'
   )
     return 'album'
-  if (isUnder(path, '/films')) return 'film'
+  if (isUnder(path, '/films') || isUnder(path, '/collections')) return 'film'
   return null
 }
 
@@ -96,7 +96,9 @@ export function switchMediaScopeHref(
     return `${path}${current.size ? `?${current}` : ''}`
 
   if (
-    ['/albums', '/films', '/subscriptions'].some((root) => isUnder(path, root))
+    ['/albums', '/films', '/collections', '/subscriptions'].some((root) =>
+      isUnder(path, root),
+    )
   )
     return libraryHome(mediaType)
 

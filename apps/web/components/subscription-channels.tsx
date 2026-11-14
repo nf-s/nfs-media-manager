@@ -14,10 +14,8 @@ import { Input } from '@repo/ui/components/ui/input'
 import {
   TableBody,
   TableCell,
-  TableHead,
   TableHeader,
   TableRow,
-  TableScroll,
   TableState,
 } from '@repo/ui/components/ui/table'
 import { useConfig } from './providers'
@@ -34,6 +32,11 @@ import {
   type SubscriptionSourceSort,
 } from '@/utils/subscriptions'
 import styles from './subscription-browser.module.css'
+import {
+  SecondaryTableScroll,
+  SecondaryTableHead,
+  useTableColumns,
+} from './secondary-table'
 
 export function useSubscriptionSources() {
   const { apiBaseUrl } = useConfig()
@@ -62,44 +65,77 @@ function replaceParams(updates: Record<string, string | null>) {
   )
 }
 
-function SourceRow({ source }: { source: SubscriptionSource }) {
+function SourceRow({
+  source,
+  visible,
+}: {
+  source: SubscriptionSource
+  visible: (key: string) => boolean
+}) {
   return (
     <TableRow>
-      <TableCell>
-        <span className={styles.sourceCell}>
-          <SourceAvatar src={source.thumbnailUrl} />
-          <Link
-            href={subscriptionSourceHref(source.title)}
-            title={`Browse ${source.title}`}
-          >
-            {source.title}
-          </Link>
-        </span>
-      </TableCell>
-      <TableCell>{subscriptionTypeLabels[source.type]}</TableCell>
-      <TableCell className="numeric">
-        {source.storedItems.toLocaleString()}
-        {!source.historyComplete && (
-          <div className="muted">Reading history</div>
-        )}
-      </TableCell>
-      <TableCell className="whitespace-nowrap">
-        {source.latestItemAt ? (
-          <time dateTime={source.latestItemAt}>
-            {new Date(source.latestItemAt).toLocaleDateString()}
-          </time>
-        ) : (
-          '-'
-        )}
-      </TableCell>
-      <TableCell className="numeric whitespace-nowrap">
-        {formatSubscriptionSourceSize(source)}
-      </TableCell>
+      {visible('title') && (
+        <TableCell>
+          <span className={styles.sourceCell}>
+            <SourceAvatar src={source.thumbnailUrl} />
+            <Link
+              href={subscriptionSourceHref(source.title)}
+              title={`Browse ${source.title}`}
+            >
+              {source.title}
+            </Link>
+          </span>
+        </TableCell>
+      )}
+      {visible('type') && (
+        <TableCell>{subscriptionTypeLabels[source.type]}</TableCell>
+      )}
+      {visible('storedItems') && (
+        <TableCell className="numeric">
+          {source.storedItems.toLocaleString()}
+          {!source.historyComplete && (
+            <div className="muted">Reading history</div>
+          )}
+        </TableCell>
+      )}
+      {visible('latestItemAt') && (
+        <TableCell className="whitespace-nowrap">
+          {source.latestItemAt ? (
+            <time dateTime={source.latestItemAt}>
+              {new Date(source.latestItemAt).toLocaleDateString()}
+            </time>
+          ) : (
+            '-'
+          )}
+        </TableCell>
+      )}
+      {visible('size') && (
+        <TableCell className="numeric whitespace-nowrap">
+          {formatSubscriptionSourceSize(source)}
+        </TableCell>
+      )}
+      {visible('description') && (
+        <TableCell>{source.description ?? '-'}</TableCell>
+      )}
+      {visible('handle') && (
+        <TableCell>
+          {source.type === 'youtube' ? (source.handle ?? '-') : '-'}
+        </TableCell>
+      )}
+      {visible('historyComplete') && (
+        <TableCell>
+          {source.historyComplete ? 'Complete' : 'Reading history'}
+        </TableCell>
+      )}
     </TableRow>
   )
 }
 
 export default function SubscriptionChannels() {
+  const columns = useTableColumns(
+    'subscription-channels',
+    subscriptionSourceColumns,
+  )
   const search = useSearchParams()
   const sources = useSubscriptionSources()
   const sortBy = subscriptionSourceSort(search.get('sortBy'))
@@ -133,6 +169,7 @@ export default function SubscriptionChannels() {
         <h1 id="subscription-channels">Channels</h1>
       </div>
       <div className="job-toolbar">
+        {columns.controls}
         <Input
           type="search"
           aria-label="Filter by name"
@@ -164,7 +201,7 @@ export default function SubscriptionChannels() {
         </span>
       </div>
       {/* The table is the only scroller and takes the height the toolbar leaves. */}
-      <TableScroll
+      <SecondaryTableScroll
         className="tags-scroll min-h-0 flex-1"
         role="region"
         aria-label="Channels and podcasts"
@@ -173,36 +210,24 @@ export default function SubscriptionChannels() {
         <table className="compact-table" aria-label="Channels and podcasts">
           <TableHeader>
             <TableRow>
-              {subscriptionSourceColumns.map((column) => (
-                <TableHead
-                  key={column.key}
-                  className={column.numeric ? 'numeric' : undefined}
-                  aria-sort={
-                    sortBy === column.key
-                      ? direction === 'asc'
-                        ? 'ascending'
-                        : 'descending'
-                      : 'none'
-                  }
-                >
-                  <button type="button" onClick={() => sort(column.key)}>
-                    {column.label}
-                    {sortBy === column.key
-                      ? direction === 'asc'
-                        ? ' ↑'
-                        : ' ↓'
-                      : ''}
-                  </button>
-                </TableHead>
-              ))}
+              {subscriptionSourceColumns
+                .filter((column) => columns.visible(column.key))
+                .map((column) => (
+                  <SecondaryTableHead
+                    key={column.key}
+                    sortKey={column.key}
+                    label={column.label}
+                    sortBy={sortBy}
+                    direction={direction}
+                    onSort={sort}
+                    className={column.numeric ? 'numeric' : undefined}
+                  />
+                ))}
             </TableRow>
           </TableHeader>
           <TableBody>
             {!items.length && (
-              <TableState
-                colSpan={subscriptionSourceColumns.length}
-                error={sources.isError}
-              >
+              <TableState colSpan={columns.count} error={sources.isError}>
                 {sources.isPending ? (
                   'Loading channels...'
                 ) : sources.isError ? (
@@ -227,11 +252,15 @@ export default function SubscriptionChannels() {
               </TableState>
             )}
             {items.map((source) => (
-              <SourceRow key={source.id} source={source} />
+              <SourceRow
+                key={source.id}
+                source={source}
+                visible={columns.visible}
+              />
             ))}
           </TableBody>
         </table>
-      </TableScroll>
+      </SecondaryTableScroll>
     </section>
   )
 }

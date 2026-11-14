@@ -3,7 +3,7 @@
 import { useDeferredValue, useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { useInfiniteQuery } from '@tanstack/react-query'
-import { TagPageSchema } from '@repo/schemas/tags'
+import { TagPageSchema, type TagSortKey } from '@repo/schemas/tags'
 import { Button } from '@repo/ui/components/ui/button'
 import { Input } from '@repo/ui/components/ui/input'
 import { useConfig } from '@/components/providers'
@@ -13,12 +13,30 @@ import MetadataSourceControl from '@/components/metadata-source-control'
 import TagDetailModal from '@/components/tag-detail-modal'
 import TagActions from '@/components/tag-actions'
 import { useMediaScope } from '@/components/media-scope'
+import {
+  SecondaryTableScroll,
+  SecondaryTableHead,
+  useTableColumns,
+} from '@/components/secondary-table'
 
 export default function TagsPageClient({
   hidden = false,
 }: {
   hidden?: boolean
 }) {
+  const columns = useTableColumns('tags', [
+    { key: 'name', label: 'Tag' },
+    { key: 'mediaCount', label: 'Items' },
+    { key: 'sourceCount', label: 'Sources' },
+    { key: 'mergedNames', label: 'Merged names', defaultVisible: false },
+    { key: 'actions', label: 'Actions' },
+  ])
+  const [sortBy, setSortBy] = useState<TagSortKey>('name')
+  const [direction, setDirection] = useState<'asc' | 'desc'>('asc')
+  function sort(key: TagSortKey) {
+    setSortBy(key)
+    setDirection(sortBy === key && direction === 'asc' ? 'desc' : 'asc')
+  }
   const { apiBaseUrl } = useConfig()
   const params = useSearchParams()
   const mediaType = useMediaScope()
@@ -37,12 +55,12 @@ export default function TagsPageClient({
   const selectAll = useRef<HTMLInputElement>(null)
   const shift = useRef(false)
   const tags = useInfiniteQuery({
-    queryKey: ['tags', 'infinite', mediaType, hidden, query],
+    queryKey: ['tags', 'infinite', mediaType, hidden, query, sortBy, direction],
     initialPageParam: 1,
     queryFn: ({ pageParam, signal }) =>
       fetchApiData(
         apiBaseUrl,
-        `/api/v1/tags?${new URLSearchParams({ mediaType, q: query, visibility: hidden ? 'hidden' : 'visible', page: String(pageParam), size: '100' })}`,
+        `/api/v1/tags?${new URLSearchParams({ mediaType, q: query, sortBy, direction, visibility: hidden ? 'hidden' : 'visible', page: String(pageParam), size: '100' })}`,
         TagPageSchema,
         { signal },
       ),
@@ -85,7 +103,7 @@ export default function TagsPageClient({
     setAnchor(null)
     setOutcome(null)
     scroller.current?.scrollTo({ top: 0 })
-  }, [mediaType, hidden, query])
+  }, [mediaType, hidden, query, sortBy, direction])
   useEffect(() => {
     if (selectAll.current)
       selectAll.current.indeterminate = selectedTags.length > 0 && !allSelected
@@ -106,6 +124,7 @@ export default function TagsPageClient({
     <section className="admin-page tags-page table-workspace">
       <div className="tags-toolbar">
         <h1>{hidden ? 'Hidden tags' : 'Tags'}</h1>
+        {columns.controls}
         <Input
           aria-label="Search tags"
           placeholder="Search tags or original names..."
@@ -162,9 +181,10 @@ export default function TagsPageClient({
           {outcome.message}
         </p>
       )}
-      <div
+      <SecondaryTableScroll
         ref={scroller}
-        className="table-scroll tags-scroll"
+        className="tags-scroll"
+        role="region"
         aria-label="Tags table"
       >
         <table className="compact-table w-full">
@@ -184,16 +204,53 @@ export default function TagsPageClient({
                   }}
                 />
               </th>
-              <th scope="col">Tag</th>
-              <th scope="col" className="numeric">
-                Items
-              </th>
-              <th scope="col" className="numeric">
-                Sources
-              </th>
-              <th scope="col">
-                <span className="sr-only">Actions</span>
-              </th>
+              {columns.visible('name') && (
+                <SecondaryTableHead
+                  sortKey="name"
+                  label="Tag"
+                  sortBy={sortBy}
+                  direction={direction}
+                  onSort={sort}
+                  disabled={pending}
+                />
+              )}
+              {columns.visible('mediaCount') && (
+                <SecondaryTableHead
+                  sortKey="mediaCount"
+                  label="Items"
+                  sortBy={sortBy}
+                  direction={direction}
+                  onSort={sort}
+                  className="numeric"
+                  disabled={pending}
+                />
+              )}
+              {columns.visible('sourceCount') && (
+                <SecondaryTableHead
+                  sortKey="sourceCount"
+                  label="Sources"
+                  sortBy={sortBy}
+                  direction={direction}
+                  onSort={sort}
+                  className="numeric"
+                  disabled={pending}
+                />
+              )}
+              {columns.visible('mergedNames') && (
+                <SecondaryTableHead
+                  sortKey="mergedNames"
+                  label="Merged names"
+                  sortBy={sortBy}
+                  direction={direction}
+                  onSort={sort}
+                  disabled={pending}
+                />
+              )}
+              {columns.visible('actions') && (
+                <th scope="col">
+                  <span className="sr-only">Actions</span>
+                </th>
+              )}
             </tr>
           </thead>
           <tbody>
@@ -230,38 +287,49 @@ export default function TagsPageClient({
                     }}
                   />
                 </td>
-                <td>
-                  <button
-                    type="button"
-                    className="tag-name"
-                    onClick={() => updateParams('tag', tag.id)}
-                  >
-                    {tag.name}
-                  </button>
-                </td>
-                <td className="numeric">{tag.mediaCount.toLocaleString()}</td>
-                <td className="numeric">
-                  <span className="inline-flex items-center gap-1">
-                    {tag.sourceCount.toLocaleString()}
-                    <MetadataSourceControl
-                      field="genre"
-                      name={tag.name}
-                      tagId={tag.id}
-                      mediaType={mediaType}
-                      onManage={() => updateParams('tag', tag.id)}
-                    />
-                  </span>
-                </td>
-                <td className="text-right">
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => updateParams('tag', tag.id)}
-                    aria-label={`Manage tag ${tag.name}`}
-                  >
-                    Manage tag
-                  </Button>
-                </td>
+                {columns.visible('name') && (
+                  <td>
+                    <button
+                      type="button"
+                      className="tag-name"
+                      onClick={() => updateParams('tag', tag.id)}
+                    >
+                      {tag.name}
+                    </button>
+                  </td>
+                )}
+                {columns.visible('mediaCount') && (
+                  <td className="numeric">{tag.mediaCount.toLocaleString()}</td>
+                )}
+                {columns.visible('sourceCount') && (
+                  <td className="numeric">
+                    <span className="inline-flex items-center gap-1">
+                      {tag.sourceCount.toLocaleString()}
+                      <MetadataSourceControl
+                        field="genre"
+                        name={tag.name}
+                        tagId={tag.id}
+                        mediaType={mediaType}
+                        onManage={() => updateParams('tag', tag.id)}
+                      />
+                    </span>
+                  </td>
+                )}
+                {columns.visible('mergedNames') && (
+                  <td>{tag.mergedNames.join(', ') || '-'}</td>
+                )}
+                {columns.visible('actions') && (
+                  <td className="text-right">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => updateParams('tag', tag.id)}
+                      aria-label={`Manage tag ${tag.name}`}
+                    >
+                      Manage tag
+                    </Button>
+                  </td>
+                )}
               </tr>
             ))}
           </tbody>
@@ -298,7 +366,7 @@ export default function TagsPageClient({
               ? 'Scroll for more tags'
               : `${items.length.toLocaleString()} tags loaded`}
         </div>
-      </div>
+      </SecondaryTableScroll>
       {selectedTagId && (
         <TagDetailModal
           id={selectedTagId}

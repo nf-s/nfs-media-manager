@@ -13,7 +13,11 @@ import {
   SpotifyPlaylistImportsSchema,
   SpotifyPlaylistListSchema,
 } from '@repo/schemas/tracks'
-import SpotifyPlaylistImport from './spotify-playlist-import'
+import SpotifyPlaylistImport, {
+  importPlaylistSortValue,
+  type ImportPlaylistSortKey,
+} from './spotify-playlist-import'
+import { sortTableRows } from '@/utils/secondary-table'
 import { ConfigContext } from './providers'
 
 const network = mock.method(globalThis, 'fetch', async () => {
@@ -176,7 +180,7 @@ test('the stored list renders in the shared table without a listing request', ()
   ])
   assert.match(
     html,
-    /class="table-scroll tags-scroll" role="region" aria-label="Spotify playlists"/,
+    /class="table-scroll tags-scroll secondary-table-scroll" role="region" aria-label="Spotify playlists"/,
   )
   assert.match(
     html,
@@ -322,4 +326,64 @@ test('a connection without playlist changes offers to allow them', () => {
     /Adding albums to playlists needs playlist change access\./,
   )
   assert.match(html, />Allow playlist changes</)
+})
+
+test('playlist import has sortable data columns and a column picker', () => {
+  const html = render([
+    [['spotify-account'], account],
+    [['spotify-playlist-imports'], imports],
+    [['spotify-playlists'], listing],
+    [['playlists'], [stored]],
+  ])
+  for (const label of [
+    'Playlist',
+    'Owner',
+    'Tracks',
+    'Import',
+    'Schedule',
+    'Last checked',
+    'Added to library',
+  ])
+    assert.match(html, new RegExp(`<button[^>]*>[^<]*${label}`))
+  assert.match(html, /> Columns</)
+})
+
+test('import sorting uses counts and stored library dates with missing dates last', () => {
+  const values = (key: ImportPlaylistSortKey, direction: 'asc' | 'desc') =>
+    sortTableRows(listing.playlists, { key, direction }, (playlist, column) =>
+      importPlaylistSortValue(
+        playlist,
+        playlist.stored
+          ? { ...stored, createdAt: '2026-01-01T00:00:00.000Z' }
+          : undefined,
+        column,
+      ),
+    ).map((playlist) => playlist.name)
+  assert.equal(values('tracks', 'desc')[0], 'Huge')
+  assert.equal(values('added', 'asc')[0], 'Stored')
+  assert.equal(values('added', 'desc')[0], 'Stored')
+  assert.equal(values('owner', 'asc').length, 5)
+})
+
+test('import dates sort by timestamp rather than displayed text', () => {
+  const base = listing.playlists.find((playlist) => playlist.stored)
+  assert.ok(base?.stored)
+  const date = '2026-01-01T01:00:00+02:00'
+  const playlist = { ...base, stored: { ...base.stored, importedAt: date } }
+  const summary = {
+    ...stored,
+    createdAt: date,
+    sync: { ...stored.sync, lastCheckedAt: date, nextScheduledAt: date },
+  }
+  const keys: ImportPlaylistSortKey[] = [
+    'added',
+    'imported',
+    'checked',
+    'nextSync',
+  ]
+  for (const key of keys)
+    assert.equal(
+      importPlaylistSortValue(playlist, summary, key),
+      Date.parse(date),
+    )
 })

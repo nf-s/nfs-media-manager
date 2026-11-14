@@ -1332,3 +1332,57 @@ describe('temporary Postgres tag provenance and media-scoped merges', () => {
     expect(fetch).not.toHaveBeenCalled()
   })
 })
+
+it('orders tag counts and merged names before taking each page', async () => {
+  const { listTags } = await import('@/services/tags')
+  await addMedia('secondary-sort-film-1')
+  await addMedia('secondary-sort-film-2')
+  await applyTags('secondary-sort-film-1', [
+    { name: 'Secondary sorting A', kind: 'keyword' },
+    { name: 'Secondary sorting Z', kind: 'keyword' },
+  ])
+  await applyTags(
+    'secondary-sort-film-2',
+    [{ name: 'Secondary sorting Z', kind: 'keyword' }],
+    'imdb',
+  )
+  for (const sortBy of ['mediaCount', 'sourceCount']) {
+    const first = await listTags(
+      TagListQuerySchema.parse({
+        q: 'Secondary sorting',
+        sortBy,
+        direction: 'desc',
+        size: 1,
+      }),
+    )
+    const second = await listTags(
+      TagListQuerySchema.parse({
+        q: 'Secondary sorting',
+        sortBy,
+        direction: 'desc',
+        size: 1,
+        page: 2,
+      }),
+    )
+    expect(first.items[0]?.name).toBe('Secondary sorting Z')
+    expect(second.items[0]?.name).toBe('Secondary sorting A')
+    expect(first.totalCount).toBe(2)
+  }
+  const names = await listTags(
+    TagListQuerySchema.parse({
+      q: 'Secondary sorting',
+      sortBy: 'name',
+      direction: 'desc',
+      size: 1,
+    }),
+  )
+  expect(names.items[0]?.name).toBe('Secondary sorting Z')
+  const aliases = await listTags(
+    TagListQuerySchema.parse({
+      q: 'Secondary sorting',
+      sortBy: 'mergedNames',
+      size: 1,
+    }),
+  )
+  expect(aliases.items[0]?.name).toBe('Secondary sorting A')
+})

@@ -292,17 +292,24 @@ export type SubscriptionSourceSort =
   | 'storedItems'
   | 'latestItemAt'
   | 'size'
+  | 'description'
+  | 'handle'
+  | 'historyComplete'
 
 export const subscriptionSourceColumns: Array<{
   key: SubscriptionSourceSort
   label: string
   numeric?: boolean
+  defaultVisible?: boolean
 }> = [
   { key: 'title', label: 'Name' },
   { key: 'type', label: 'Type' },
   { key: 'storedItems', label: 'Stored items', numeric: true },
   { key: 'latestItemAt', label: 'Latest item' },
   { key: 'size', label: 'Subscribers / episodes', numeric: true },
+  { key: 'description', label: 'Description', defaultVisible: false },
+  { key: 'handle', label: 'Handle', defaultVisible: false },
+  { key: 'historyComplete', label: 'History', defaultVisible: false },
 ]
 
 export function subscriptionSourceSort(
@@ -346,6 +353,9 @@ function sourceSortValue(
 ): string | number | null {
   if (key === 'type') return subscriptionTypeLabels[source.type]
   if (key === 'size') return subscriptionSourceSize(source)
+  if (key === 'handle') return source.type === 'youtube' ? source.handle : null
+  if (key === 'historyComplete')
+    return source.historyComplete ? 'Complete' : 'Reading history'
   return source[key]
 }
 

@@ -2,6 +2,7 @@ import {
   and,
   asc,
   count,
+  desc,
   eq,
   inArray,
   notExists,
@@ -418,11 +419,20 @@ async function readTagPage(
       : eq(groups.hidden, query.visibility === 'hidden'),
     tagId ? sql`${tagId} = any(${groups.ids})` : undefined,
   )
-  // Apply OFFSET before correlated detail reads, not after computing them for
-  // every preceding row. The window total still covers all matching groups.
+  const sortFields = {
+    name: sql`lower(${groups.name})`,
+    mediaCount: sql`(select count(distinct m.media_item_id) from media_item_tag m where m.tag_id = any(${groups.ids}))`,
+    sourceCount: sql`(select count(distinct (o.provider, o.source, o.raw_name, o.source_id, o.kind)) from tag_occurrence o where o.tag_id = any(${groups.ids}) and ${visibleTagOccurrenceSql(sql`o`)})`,
+    mergedNames: sql`(select lower(string_agg(distinct original.name, ', ' order by original.name)) from tag_alias a join tag original on original.id = a.source_tag_id where a.target_tag_id = any(${groups.ids}))`,
+  }
+  const sortValue = sortFields[query.sortBy]
+  const order = query.direction === 'asc' ? asc : desc
+  // Compute only the selected sort aggregate before pagination. Other details
+  // still read only the selected page.
   const pageGroups = db
     .select({
       totalCount: sql<number>`count(*) over()::integer`.as('total_count'),
+      sortValue: sortValue.as('sort_value'),
       id: groups.id,
       name: groups.name,
       hidden: groups.hidden,
@@ -430,7 +440,11 @@ async function readTagPage(
     })
     .from(groups)
     .where(groupWhere)
-    .orderBy(asc(groups.name), asc(groups.id))
+    .orderBy(
+      sql`${order(sortValue)} nulls last`,
+      asc(groups.name),
+      asc(groups.id),
+    )
     .limit(query.size)
     .offset((query.page - 1) * query.size)
     .as('page_groups')
@@ -457,7 +471,11 @@ async function readTagPage(
       >`coalesce((select jsonb_agg(s) from (select distinct o.provider, o.source, o.raw_name as "rawName", o.source_id as "sourceId", o.kind from tag_occurrence o where o.tag_id = any(${pageGroups.ids}) and ${visibleTagOccurrenceSql(sql`o`)} order by o.provider, o.source, o.raw_name, o.source_id, o.kind limit 20) s), '[]'::jsonb)`,
     })
     .from(pageGroups)
-    .orderBy(asc(pageGroups.name), asc(pageGroups.id))
+    .orderBy(
+      sql`${order(pageGroups.sortValue)} nulls last`,
+      asc(pageGroups.name),
+      asc(pageGroups.id),
+    )
   // Window counts share the grouping work with the page; an out-of-range page
   // still needs its total even though there is no row carrying the window value.
   const totalCount =

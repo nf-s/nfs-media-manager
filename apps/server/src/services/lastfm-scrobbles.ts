@@ -806,12 +806,29 @@ export async function getLastfmLinkReport(
     ).rows,
   )
   const pattern = `%${(query.q ?? '').replace(/[\\%_]/g, '\\$&')}%`
+  const searchSortRows =
+    query.sortBy === 'spotifySearch'
+      ? [
+          ...(await getLastfmSpotifySearchJobs(configured.account)).values(),
+        ].map((search) => ({
+          artist_key: search.artistKey,
+          album_key: search.albumKey,
+          status: search.status,
+          result_count: search.resultCount,
+        }))
+      : []
   const sortColumns = {
-    artistName: sql`artist_name`,
-    albumName: sql`album_name`,
+    libraryAlbum: sql`case when classified.album_id is not null then (select lower(title) from media_item where id = classified.album_id) when jsonb_array_length(classified.candidate_ids) > 0 then concat(lpad(jsonb_array_length(classified.candidate_ids)::text, 12, '0'), ' possible albums') end`,
+    spotifySearch: sql`(select lower(case s.status
+      when 'succeeded' then case when s.result_count is null then 'No stored results' else concat(lpad(s.result_count::text, 12, '0'), ' matches') end
+      when 'queued' then 'Queued' when 'running' then 'Searching...' when 'failed' then 'Failed' when 'cancelled' then 'Cancelled' end)
+      from jsonb_to_recordset(${JSON.stringify(searchSortRows)}::jsonb) as s(artist_key text, album_key text, status text, result_count integer)
+      where s.artist_key = classified.artist_key and s.album_key = classified.album_key)`,
+    artistName: sql`lower(artist_name)`,
+    albumName: sql`lower(album_name)`,
     scrobbles: sql`scrobbles`,
     lastListenedAt: sql`last`,
-    reason: sql`reason`,
+    reason: sql`case reason when 'linked' then 'linked' when 'manual' then 'linked manually' when 'ambiguous' then 'several albums match' when 'unmatched' then 'no matching album' when 'excluded' then 'kept unlinked' else 'scrobbled without an album' end`,
   }
   const direction = query.sortDirection === 'asc' ? sql`asc` : sql`desc`
   const rows = LinkGroupRowsSchema.parse(

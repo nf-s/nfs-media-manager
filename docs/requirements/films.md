@@ -16,6 +16,7 @@ Preserve title, source, poster, synopsis, awards, directors, actors, writers, co
 - FILM-07a: Film tags list genres first, then keywords alphabetically, then year and decade tags, so cards and details lead with the genres. A tag is a genre when it is stored as one or any provider reported it as one.
 
 - FILM-08: Keep audience scores separate from critic and personal ratings. Show each source’s native scale and vote count, distinguishing zero from unknown. Grid, table and detail rating links open independently of item details. Prefer a verified film URL; label a source-homepage fallback rather than guessing a slug. See [audience rating scales and links](../film-keyword-providers.md#audience-ratings).
+- FILM-09: Films has a [Collections](../film-collections.md) tab listing stored collections with library-film counts. Opening one shows its films in stored position order and preserves gaps; ties have stable ordering. Do not invent source ranks for older records that did not store them. Collection and member tables support sorting and column visibility, with member sorting applied before pagination. Opening collections only reads stored data.
 
 ## Acceptance
 

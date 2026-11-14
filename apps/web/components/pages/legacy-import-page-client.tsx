@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { ImportRunSchema } from '@repo/schemas/imports'
 import { Button } from '@repo/ui/components/ui/button'
-import { TableScroll, TableState } from '@repo/ui/components/ui/table'
+import { SecondaryDataTable } from '../secondary-table'
 import { useConfig } from '@/components/providers'
 import {
   ImportStatusNotice,
@@ -42,48 +42,53 @@ export default function LegacyImportPageClient() {
         Mixed album and film library import, shared between both scopes. Imports
         local library data only. No metadata scraping.
       </p>
-      <TableScroll
+      <SecondaryDataTable
+        id="legacy-import-sources"
+        label="Legacy import sources"
         className="my-4"
-        role="region"
-        aria-label="Legacy import sources"
-        aria-busy={query.isFetching}
-      >
-        <table className="compact-table" aria-label="Legacy import sources">
-          <thead>
-            <tr>
-              <th scope="col">Source</th>
-              <th scope="col">Updated</th>
-              <th scope="col">Size</th>
-            </tr>
-          </thead>
-          <tbody>
-            {!query.data?.sources.length && (
-              <TableState colSpan={3} error={query.isError}>
-                {query.isPending
-                  ? 'Loading sources...'
-                  : query.isError
-                    ? 'Sources unavailable.'
-                    : 'No import sources.'}
-              </TableState>
-            )}
-            {query.data?.sources.map((source) => (
-              <tr key={source.name}>
-                <td>{source.name}</td>
-                <td>
-                  {source.available
-                    ? source.updatedAt?.slice(0, 10)
-                    : 'Missing'}
-                </td>
-                <td>
-                  {source.bytes
-                    ? `${(source.bytes / 1024 / 1024).toFixed(1)} MB`
-                    : '-'}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </TableScroll>
+        rows={query.data?.sources ?? []}
+        rowKey={(source) => source.name}
+        defaultSort={{ key: 'name', direction: 'asc' }}
+        error={query.isError}
+        busy={query.isFetching}
+        empty={
+          query.isPending
+            ? 'Loading sources...'
+            : query.isError
+              ? 'Sources unavailable.'
+              : 'No import sources.'
+        }
+        columns={[
+          { key: 'name', label: 'Source', value: (source) => source.name },
+          {
+            key: 'updated',
+            label: 'Updated',
+            value: (source) =>
+              source.updatedAt ? Date.parse(source.updatedAt) : null,
+            render: (source) =>
+              source.available
+                ? (source.updatedAt?.slice(0, 10) ?? '-')
+                : 'Missing',
+          },
+          {
+            key: 'bytes',
+            label: 'Size',
+            className: 'numeric',
+            value: (source) => source.bytes,
+            render: (source) =>
+              source.bytes === null
+                ? '-'
+                : `${(source.bytes / 1024 / 1024).toFixed(1)} MB`,
+          },
+          {
+            key: 'available',
+            label: 'Available',
+            defaultVisible: false,
+            value: (source) => source.available,
+            render: (source) => (source.available ? 'Yes' : 'No'),
+          },
+        ]}
+      />
       <div className="import-actions">
         <Button
           disabled={

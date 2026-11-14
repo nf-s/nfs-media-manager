@@ -42,7 +42,20 @@ export const CreateJobSchema = z.object({
   confirmBroadRun: z.boolean().default(false),
 })
 
+export const JobSortKeySchema = z.enum([
+  'provider',
+  'title',
+  'status',
+  'createdAt',
+  'startedAt',
+  'finishedAt',
+  'result',
+])
+export type JobSortKey = z.infer<typeof JobSortKeySchema>
+
 export const JobListQuerySchema = z.object({
+  sortBy: JobSortKeySchema.default('createdAt'),
+  direction: z.enum(['asc', 'desc']).default('desc'),
   /** `subscription` lists the Subscriptions library's sync jobs; album and film leave them out. */
   mediaType: z.enum(['album', 'film', 'subscription']).optional(),
   status: z
