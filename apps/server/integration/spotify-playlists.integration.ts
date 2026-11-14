@@ -711,8 +711,13 @@ describe('Spotify playlist imports', () => {
       likedSongs: false,
     })
 
+    const filters = JSON.stringify([
+      { field: 'source', value: 'Spotify playlists', mode: 'required' },
+    ])
     const items = (
-      await listTracks(trackQuery({ sortBy: 'scrobbles', direction: 'desc' }))
+      await listTracks(
+        trackQuery({ filters, sortBy: 'scrobbles', direction: 'desc' }),
+      )
     ).items
     expect(items.map((item) => [item.title, item.scrobbles])).toEqual([
       ['Opening', 3],
@@ -739,7 +744,8 @@ describe('Spotify playlist imports', () => {
     await addScrobbles('The Examples', 'Closing', 2)
     await relinkLastfmScrobbles()
     expect(
-      (await listTracks(trackQuery({ q: 'Closing' }))).items[0]?.scrobbles,
+      (await listTracks(trackQuery({ filters, q: 'Closing' }))).items[0]
+        ?.scrobbles,
     ).toBe(2)
   })
 

@@ -617,6 +617,7 @@ export async function setLastfmAlbumLink(input: LastfmLinkUpdate) {
     })
   }
   await refreshAlbumListeningFields()
+  await refreshTrackLinks(account)
   return getLastfmSyncStatus()
 }
 

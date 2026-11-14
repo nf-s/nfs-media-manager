@@ -12,7 +12,11 @@ import {
   TrackQueueButton,
 } from './play-controls'
 import { PlaybackViewContext, type PlaybackView } from './playback-provider'
-import { albumPlayable, type PlaybackSnapshot } from '@/utils/playback'
+import {
+  albumPlayable,
+  type LibraryTrackSource,
+  type PlaybackSnapshot,
+} from '@/utils/playback'
 import { idlePlaybackState } from '@/utils/playback-engine'
 
 const trackId = 'ABCDEFGHIJKL1234567890'
@@ -131,7 +135,7 @@ const libraryTrack = {
   artworkUrl: null,
 }
 
-function libraryControls(track = libraryTrack) {
+function libraryControls(track: LibraryTrackSource = libraryTrack) {
   return (
     <>
       <LibraryTrackPlayButton track={track} />
@@ -175,6 +179,10 @@ test('the playing library track offers pause', () => {
 test('library tracks without a Spotify track ID have no play controls', () => {
   assert.equal(
     render(libraryControls({ ...libraryTrack, spotifyTrackId: 'local' }), on),
+    '7',
+  )
+  assert.equal(
+    render(libraryControls({ ...libraryTrack, spotifyTrackId: null }), on),
     '7',
   )
 })

@@ -3,12 +3,28 @@ import { test } from 'node:test'
 import type { BrowseFilter } from '@repo/schemas/browse'
 import { browseSuggestions } from './browse-suggestions'
 import {
+  defaultTrackColumns,
   formatTrackDuration,
   parseTrackFilters,
   trackTitleSuggestions,
   tracksHref,
   withTrackFilter,
 } from './track-browse'
+
+test('source is visible by default and can be included or excluded in saved filters', () => {
+  assert.ok(defaultTrackColumns.includes('source'))
+  const included = withTrackFilter([], { field: 'source', value: 'Last.fm' })
+  const filters = withTrackFilter(included, {
+    field: 'source',
+    value: 'Spotify playlists',
+    mode: 'exclude',
+  })
+  const params = new URLSearchParams(tracksHref(filters).split('?')[1])
+  assert.deepEqual(parseTrackFilters(params.get('filters')), [
+    { field: 'source', value: 'Last.fm' },
+    { field: 'source', value: 'Spotify playlists', mode: 'exclude' },
+  ])
+})
 
 test('playlist filters added from the table intersect', () => {
   const first = withTrackFilter([], { field: 'playlist', value: 'Morning' })

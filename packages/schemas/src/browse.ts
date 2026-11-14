@@ -135,6 +135,7 @@ export const albumBrowseFields: BrowseField[] = [
 ]
 export const trackBrowseFields: BrowseField[] = [
   text('title', 'Title'),
+  text('source', 'Source'),
   text('artist', 'Artists'),
   text('album', 'Album'),
   text('playlist', 'Playlists'),

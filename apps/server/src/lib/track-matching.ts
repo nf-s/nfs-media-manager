@@ -157,7 +157,7 @@ export type MatchTrackAlbum = {
 }
 
 export type TrackToLink = {
-  spotifyTrackId: string
+  spotifyTrackId: string | null
   spotifyAlbumId: string | null
   title: string
   albumName: string | null
@@ -250,7 +250,11 @@ export function createTrackAlbumMatcher(albums: MatchTrackAlbum[]) {
         'spotify-album',
       ) ??
       link(
-        first(bySpotifyTrack.get(track.spotifyTrackId) ?? []),
+        first(
+          track.spotifyTrackId
+            ? (bySpotifyTrack.get(track.spotifyTrackId) ?? [])
+            : [],
+        ),
         'spotify-track',
       ) ??
       (albumName

@@ -51,6 +51,7 @@ import {
 import { usePlayback } from './playback-provider'
 import { PlaylistDrawer } from './playlist-detail'
 import TrackDetailView from './track-detail'
+import LastfmTracksImport from './lastfm-tracks-import'
 import styles from './media-browser.module.css'
 
 const collection = 'tracks'
@@ -463,6 +464,7 @@ export default function TrackBrowser() {
             }}
           />
           <div className="browse-controls">
+            <LastfmTracksImport />
             <select
               aria-label="Sort by"
               value={sortBy}

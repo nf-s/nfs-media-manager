@@ -11,7 +11,6 @@ import {
 } from '@tanstack/react-query'
 import {
   LastfmLinkReportSchema,
-  LastfmSyncStatusSchema,
   type LastfmLinkGroup,
 } from '@repo/schemas/lastfm'
 import { Button } from '@repo/ui/components/ui/button'
@@ -48,7 +47,7 @@ import { updateJobSelection } from '@/utils/job-selection'
 import { scopedHref } from '@/utils/media-scope'
 import {
   errorMessage,
-  invalidateScrobbleLinks,
+  refreshScrobbleLinks,
   useLastfmSyncStatus,
 } from './lastfm-sync'
 import {
@@ -225,17 +224,7 @@ export default function LastfmLinks() {
         : false,
   })
   const relink = useMutation({
-    mutationFn: () =>
-      fetchApiData(
-        apiBaseUrl,
-        '/api/v1/lastfm/links/refresh',
-        LastfmSyncStatusSchema,
-        { method: 'POST', body: '{}' },
-      ),
-    onSuccess: async (next) => {
-      client.setQueryData(['lastfm-sync'], next)
-      await invalidateScrobbleLinks(client)
-    },
+    mutationFn: () => refreshScrobbleLinks(apiBaseUrl, client),
   })
   const { scroller, sentinel } = useInfiniteTableScroll({
     enabled:

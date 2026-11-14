@@ -1,6 +1,6 @@
 # Last.fm scrobble history
 
-The app can store every scrobble from one Last.fm account and use it for album listening charts, per-track counts and browse filters. This is separate from the [Last.fm album metadata provider](album-providers.md), which looks up one album per job.
+The app can store every scrobble from one Last.fm account and use it for album listening charts, per-track counts, browse filters and the [Tracks library](tracks-and-playlists.md#lastfm-tracks). This is separate from the [Last.fm album metadata provider](album-providers.md), which looks up one album per job.
 
 ## Setup
 
@@ -61,7 +61,7 @@ The rules apply in this order; the first rule that any album satisfies decides.
 - Track titles are compared without bracketed qualifiers or a "- Remastered" style suffix.
 - Scrobbles without an album name are not linked.
 
-Scrobbles also link to library tracks by artist and track name, with or without an album name. Those links are recomputed at the same times; see [tracks and Spotify playlists](tracks-and-playlists.md#scrobbles).
+Scrobbles also link to library tracks by artist and track name, with or without an album name. Those links are recomputed at the same times. Tracks not already represented by an unambiguous Spotify library match become Last.fm tracks, with unknown metadata left empty. In **Tracks**, **Import Last.fm tracks** brings already-stored history into the library without another Last.fm request. A completed sync or **Relink** also refreshes these tracks. Use the **Source** filter to include or exclude Last.fm alongside Spotify playlists and Liked Songs; a track can belong to several sources. See [Last.fm tracks](tracks-and-playlists.md#lastfm-tracks) and the separate [listening-attribution rules](tracks-and-playlists.md#scrobbles).
 
 ### Manual links
 

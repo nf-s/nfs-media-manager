@@ -21,6 +21,10 @@ import { listLoadedScrapePlugins } from '@/plugins/registry'
 import { normalizedTagSql, normalizeTagName } from './tag-state'
 import { albumAddedDateExpression } from './album-added-dates'
 import { createBrowseListening } from './browse-listening'
+import {
+  linkedTrackFieldExpression,
+  trackSourcesExpression,
+} from './track-values'
 
 type MediaType = 'album' | 'film' | 'track'
 
@@ -64,14 +68,18 @@ const albumPlaylistIds = sql`(
 
 function trackValueExpression(key: string): SQL | null {
   switch (key) {
+    case 'source':
+      return trackSourcesExpression(sql`${mediaItem.id}`, true)
+    case 'releaseDate':
+      return sql`to_jsonb(extract(epoch from coalesce(${mediaItem.releaseDate}, (select am.release_date from media_item am where am.id = ${libraryTrack.albumMediaItemId}))) * 1000)`
     case 'album':
-      return sql`to_jsonb(${libraryTrack.albumName})`
+      return sql`to_jsonb(coalesce(${libraryTrack.albumName}, (select am.title from media_item am where am.id = ${libraryTrack.albumMediaItemId})))`
     case 'albumLink':
       return sql`to_jsonb(case when ${libraryTrack.albumMediaItemId} is null then ${trackAlbumLinkLabels.unlinked}::text else ${trackAlbumLinkLabels.linked}::text end)`
     case 'dateAdded':
       return sql`to_jsonb(extract(epoch from ${libraryTrack.dateAdded}) * 1000)`
     case 'durationSec':
-      return sql`to_jsonb(${libraryTrack.durationSec})`
+      return sql`to_jsonb(coalesce(${libraryTrack.durationSec}, ${linkedTrackFieldExpression('duration_sec', sql`${libraryTrack.albumMediaItemId}`, sql`${mediaItem.title}`)}))`
     case 'scrobbles':
       return sql`to_jsonb(${libraryTrack.scrobbleCount})`
     case 'lastListenedAt':

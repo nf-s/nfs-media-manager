@@ -43,10 +43,34 @@ function formatDateTime(value: string | null) {
 export function invalidateScrobbleLinks(client: QueryClient) {
   return client.invalidateQueries({
     predicate: (query) =>
-      ['albums', 'album', 'album-listening', 'lastfm-links'].includes(
-        String(query.queryKey[0]),
-      ),
+      [
+        'albums',
+        'album',
+        'album-listening',
+        'lastfm-links',
+        'tracks',
+        'track',
+        'playlists',
+        'playlist',
+        'album-playlists',
+      ].includes(String(query.queryKey[0])),
   })
+}
+
+/** Relinks stored scrobbles and imports their tracks without provider requests. */
+export async function refreshScrobbleLinks(
+  apiBaseUrl: string,
+  client: QueryClient,
+) {
+  const next = await fetchApiData(
+    apiBaseUrl,
+    '/api/v1/lastfm/links/refresh',
+    LastfmSyncStatusSchema,
+    { method: 'POST', body: '{}' },
+  )
+  client.setQueryData(['lastfm-sync'], next)
+  await invalidateScrobbleLinks(client)
+  return next
 }
 
 export function useLastfmSyncStatus() {

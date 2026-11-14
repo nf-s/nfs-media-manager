@@ -445,23 +445,29 @@ async function resolvePlaylist(tx: Transaction, target: PlaylistTarget) {
 const trackItemId = (spotifyTrackId: string) =>
   createStableId('library-track', `spotify:${spotifyTrackId}`)
 
-/** Deletes tracks that are in no playlist. */
+/** Deletes tracks with neither playlist membership nor imported Last.fm history. */
 export async function removeOrphanTracks(tx: Transaction) {
   const removed = await tx.execute(sql`
     delete from media_item mi
     where mi.media_type = 'track' and not exists (
-      select 1 from playlist_item pi where pi.media_item_id = mi.id)`)
+      select 1 from playlist_item pi where pi.media_item_id = mi.id)
+      and not exists (select 1 from lastfm_track_source s where s.track_media_item_id = mi.id)`)
   return removed.rowCount ?? 0
 }
 
-/** A track's added date is the earliest date it joined an imported playlist. */
+/** The earliest playlist-added date or first imported scrobble. */
 export async function refreshTrackAddedDates(tx: Transaction) {
   await tx.execute(sql`
     update library_track lt set date_added = m.added
     from library_track base
     left join (
-      select media_item_id, min(added_at) as added
-      from playlist_item group by media_item_id
+      select media_item_id, min(added_at) as added from (
+        select media_item_id, added_at from playlist_item
+        union all
+        select l.track_media_item_id, s.listened_at
+        from lastfm_track_source l join lastfm_scrobble s
+          on s.username = l.username and s.artist_key = l.artist_key and s.track_key = l.track_key
+      ) dates group by media_item_id
     ) m on m.media_item_id = base.media_item_id
     where lt.media_item_id = base.media_item_id
       and lt.date_added is distinct from m.added`)

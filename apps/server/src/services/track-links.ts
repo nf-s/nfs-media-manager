@@ -5,6 +5,7 @@ import {
   TrackScrobbleLinkStrategySchema,
 } from '@repo/schemas/tracks'
 import { db } from '@/lib/db'
+import { importLastfmLibraryTracks } from './lastfm-library-tracks'
 import { spotifyAlbumId } from '@/lib/spotify-api'
 import {
   createScrobbleTrackMatcher,
@@ -30,7 +31,8 @@ const TrackRowsSchema = z.array(
   z.object({
     id: z.string(),
     title: z.string(),
-    spotify_track_id: z.string(),
+    spotify_track_id: z.string().nullable(),
+    source_label: z.string().nullable(),
     spotify_album_id: z.string().nullable(),
     album_name: z.string().nullable(),
     album_id: z.string().nullable(),
@@ -60,7 +62,7 @@ async function libraryTracks() {
   return TrackRowsSchema.parse(
     (
       await db.execute(sql`
-        select lt.media_item_id as id, mi.title, lt.spotify_track_id,
+        select lt.media_item_id as id, mi.title, mi.source_label, lt.spotify_track_id,
           lt.spotify_album_id, lt.album_name,
           lt.album_media_item_id as album_id,
           lt.album_link_strategy as strategy,
@@ -122,20 +124,22 @@ export async function linkTracksToAlbums() {
       }
     }),
   )
-  const changes = tracks.flatMap((track) => {
-    const result = match({
-      spotifyTrackId: track.spotify_track_id,
-      spotifyAlbumId: track.spotify_album_id,
-      title: track.title,
-      albumName: track.album_name,
-      artists: track.artists,
+  const changes = tracks
+    .filter((track) => track.source_label !== 'lastfm')
+    .flatMap((track) => {
+      const result = match({
+        spotifyTrackId: track.spotify_track_id,
+        spotifyAlbumId: track.spotify_album_id,
+        title: track.title,
+        albumName: track.album_name,
+        artists: track.artists,
+      })
+      const albumId = result?.albumId ?? null
+      const strategy = result?.strategy ?? null
+      return albumId === track.album_id && strategy === track.strategy
+        ? []
+        : [{ id: track.id, album_id: albumId, strategy }]
     })
-    const albumId = result?.albumId ?? null
-    const strategy = result?.strategy ?? null
-    return albumId === track.album_id && strategy === track.strategy
-      ? []
-      : [{ id: track.id, album_id: albumId, strategy }]
-  })
   for (let start = 0; start < changes.length; start += WRITE_BATCH) {
     // An album deleted since it was read is skipped; the next relink unlinks it.
     await db.execute(sql`
@@ -178,12 +182,14 @@ export async function linkScrobblesToTracks(account: string) {
       )
     : []
   const match = createScrobbleTrackMatcher(
-    tracks.map((track) => ({
-      id: track.id,
-      title: track.title,
-      artists: track.artists,
-      albumId: track.album_id,
-    })),
+    tracks
+      .filter((track) => track.source_label !== 'lastfm')
+      .map((track) => ({
+        id: track.id,
+        title: track.title,
+        artists: track.artists,
+        albumId: track.album_id,
+      })),
   )
   const wanted = new Map(
     scrobbled.flatMap((row) => {
@@ -203,6 +209,16 @@ export async function linkScrobblesToTracks(account: string) {
       })
     }),
   )
+  // Imported Last.fm identities always retain their own history, even when
+  // broader listening rules also count that name towards Spotify editions.
+  const sources = LinkRowsSchema.parse(
+    (
+      await db.execute(sql`
+    select artist_key, track_key, track_media_item_id as track_id, 'exact' as strategy
+    from lastfm_track_source where username = ${account}`)
+    ).rows,
+  )
+  for (const source of sources) wanted.set(linkKey(source), source)
   const stored = LinkRowsSchema.parse(
     (
       await db.execute(sql`
@@ -249,7 +265,6 @@ export async function linkScrobblesToTracks(account: string) {
         from lastfm_track_link l
         join lastfm_scrobble s on s.username = l.username
           and s.artist_key = l.artist_key and s.track_key = l.track_key
-        where l.username = ${account}
         group by l.track_media_item_id
       ) c on c.id = base.media_item_id
       where lt.media_item_id = base.media_item_id
@@ -264,5 +279,8 @@ export async function linkScrobblesToTracks(account: string) {
  */
 export async function refreshTrackLinks(account: string | null) {
   await linkTracksToAlbums()
-  if (account) await linkScrobblesToTracks(account)
+  if (account) {
+    await importLastfmLibraryTracks(account)
+    await linkScrobblesToTracks(account)
+  }
 }

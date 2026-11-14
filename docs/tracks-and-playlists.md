@@ -2,7 +2,7 @@
 
 ## Scope
 
-Tracks are a separate library from albums. A track is in the library because it is in an imported Spotify playlist or in Liked Songs, not because its album is. An album's own track list is unchanged, and most album tracks are not library tracks. The two are linked where they describe the same recording; see [linking tracks to albums](#linking-tracks-to-albums).
+Tracks are a separate library from albums. A track enters the library through an imported Spotify playlist, Liked Songs or stored Last.fm listening history. An album's own track list does not add library tracks. The two are linked where they describe the same recording; see [linking tracks to albums](#linking-tracks-to-albums).
 
 The library selector has **Albums**, **Tracks**, **Films** and **Subscriptions**. **Playlists** in the navigation lists imported playlists; Tags, Imports, Jobs and Providers stay with the album library.
 
@@ -21,8 +21,8 @@ Choose rows from the stored list and import, up to 100 at a time; each one becom
 An import of a playlist first reads the playlist's details: one request that gives its current version and, only for a playlist the account owns or collaborates on, its item count. A playlist the account can no longer read fails without requesting its tracks. Otherwise the import reads the whole playlist in pages of 50 through the Spotify request gate (one request at a time, at least 1500 ms apart), then stores it in a single transaction:
 
 - The playlist's tracks are replaced by what Spotify returned, in playlist order with each track's added date.
-- A track that is no longer in any imported playlist is removed from the library.
-- A track's **Added** date is the earliest date it was added to any imported playlist.
+- A track that is no longer in any imported playlist is removed only when it has no imported Last.fm membership.
+- A track's **Added** date is the earliest known playlist-added date or first scrobble represented by its imported Last.fm membership.
 - A playlist whose Spotify snapshot has not changed since the last import is not read again; the import still counts as a completed check. Liked Songs has no snapshot and is always read.
 
 Importing the same playlist again updates it. While an import or listing runs, its job records the pages read and the pages expected (`options.progress`), updated after every page; the total for a playlist comes from its item count, and for Liked Songs from the first page.
@@ -44,7 +44,17 @@ The schedule is set on the [playlist drawer's](#playlist-drawer) **Sync** tab. T
 
 An imported playlist that shares its name with a playlist from the legacy album import becomes the same playlist, so its albums and tracks appear together. Otherwise a playlist whose name is already used is stored as "Name (owner)".
 
-**Remove** on the Playlists page removes an imported playlist and the tracks that were only in it. Album memberships from the legacy import are kept.
+**Remove** on the Playlists page removes an imported playlist and tracks with no remaining playlist or Last.fm membership. Album memberships from the legacy import are kept.
+
+### Last.fm tracks
+
+In **Tracks**, choose **Import Last.fm tracks** to bring the configured account's already-stored listening history into the library. This refreshes track links from the database; it does not request history again or search Spotify. Completing a Last.fm sync and using **Relink** on the Last.fm page also refresh these tracks.
+
+Each distinct scrobbled artist and track name is represented in the library. A unique matching Spotify library track is reused when its artist and title match, ignoring case and repeated spaces. Any supplied album names must also match, either by name or by all resolving to the same library album. Otherwise the name gets a Last.fm track with its listening history and known album name. Unknown metadata stays empty. Ambiguous matches and different live, remix or edit titles are not combined to choose a Spotify recording.
+
+A track can have more than one source. Reusing a Spotify track adds **Last.fm** alongside **Spotify playlists** or **Liked Songs**. Repeating the import refreshes the existing tracks rather than adding another copy.
+
+Existing installations must apply the database migration that allows `library_track.spotify_track_id` to be null before running the updated application. Then use **Import Last.fm tracks** to populate the library from stored history without another provider sync.
 
 ## Playlist drawer
 
@@ -77,19 +87,32 @@ Tracks have their own table with search, [AI search](ai-search.md), filters, ran
 
 | Field                    | Source                                                                    |
 | ------------------------ | ------------------------------------------------------------------------- |
-| Title, Artists, Album    | Spotify, as returned with the playlist.                                   |
-| Released, Duration       | Spotify.                                                                  |
+| Title, Artists, Album    | Spotify playlist metadata or stored Last.fm names.                        |
+| Released, Duration       | Spotify or a matched library album/track; empty when unknown.             |
+| Source                   | Last.fm, Spotify playlists and/or Liked Songs.                            |
 | Playlists                | Imported playlists containing the track, including Liked Songs.           |
-| Added                    | Earliest added date across those playlists.                               |
+| Added                    | Earliest playlist-added date or scrobble from its Last.fm membership.     |
 | Library album            | "In library" or "Not in library".                                         |
 | Album tags               | Tags of the linked library album. Empty when the album is not in library. |
 | Scrobbles, Last listened | Linked Last.fm scrobbles; see [scrobbles](#scrobbles).                    |
 
 Setting two or more playlists to **required** shows the tracks in all of them. A playlist in the **Playlists** column opens the [playlist drawer](#playlist-drawer), whose **Filter tracks** applies the filter.
 
-A track's detail shows its playlists (each opens the playlist drawer), Spotify link, listening history and, when its album is in the library, a link to the album and the album's tags, labelled as coming from the album.
+Use **Source** to include or exclude **Last.fm**, **Spotify playlists** and **Liked Songs**, with the normal **Any**, **Required** and **Excluded** filter modes. Requiring both Last.fm and Spotify playlists shows their overlap; excluding Last.fm hides tracks with imported Last.fm membership. Source filters stay in the URL with the other browse filters.
+
+Listening counts use broader matching rules than source membership. A Spotify track can therefore show scrobbles without having a Last.fm source. Those listening matches alone do not retain a track after its final playlist is removed or change its Added date.
+
+A track's detail shows its sources, playlists (each opens the playlist drawer), Spotify link when available, listening history and, when its album is in the library, a link to the album and the album's tags, labelled as coming from the album. Last.fm tracks can inherit artwork and release date from their linked library album.
 
 With [Spotify playback](spotify-playback.md) connected, each row of the Tracks table has a play button and, on hover, an add-to-queue button; the track drawer has **Play** and **Add to queue**; and in the playlist drawer a row's number plays the track on hover, as in an album's track list. A track plays on its own, not as part of its album or playlist. Tracks without a Spotify track ID have no play controls, and none appear while playback is off. The player dock opens the track's library album only when it has one.
+
+### Spotify matching and playback
+
+A Last.fm track can play immediately when it reuses a matched Spotify library track. A unique exact title match in its linked library album's stored Spotify track list can also supply a Spotify ID and duration. Neither path contacts Spotify. A standalone Last.fm track inherits a library album only when every supplied album name resolves to that album. A linked album alone is not enough to choose a playable track, and ambiguous titles are left without an ID.
+
+Last.fm's [`user.getRecentTracks`](https://www.last.fm/api/show/user.getRecentTracks) supplies names and optional MusicBrainz IDs, not Spotify IDs, ISRCs or track durations. Some recordings can therefore be identified from existing library metadata, but the stored history cannot guarantee a Spotify match for every track.
+
+For the remainder, a future **Search Spotify** action could search selected tracks by artist, title and album, retain candidates and let the owner choose the recording. Spotify's [search endpoint](https://developer.spotify.com/documentation/web-api/reference/search) supports those fields and ISRC, but no MusicBrainz ID filter. That would need the same request limits, stored search results and explicit selection used by the existing Last.fm album-search workflow; automatic whole-history searches are not implemented. Once a track ID is linked, the existing player can use it. Spotify [playback requires Premium](https://developer.spotify.com/documentation/web-api/reference/start-a-users-playback) and the playback connection described above.
 
 ## Albums and playlists
 
@@ -97,7 +120,7 @@ An album is in a playlist when it is a member itself (legacy import) or when a l
 
 ## Linking tracks to albums
 
-Each track links to at most one library album. Links are recomputed after every playlist import, after every scrobble sync and by **Relink** on the Last.fm page, so an album added later picks up its tracks. The first rule that finds an album decides:
+Each track links to at most one library album. Links are recomputed after every playlist import, after every scrobble sync and by **Relink** on the Last.fm page, so an album added later picks up its tracks. Standalone Last.fm tracks use the album links of their scrobbles when all supplied album names resolve to one album. For Spotify library tracks, the first rule that finds an album decides:
 
 | Rule             | Links when                                                                                                                                                   |
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -110,7 +133,7 @@ Track titles are compared without featured credits, remaster notes and "original
 
 ## Scrobbles
 
-Stored Last.fm scrobbles link to library tracks by artist and track name. A scrobbled name counts towards every track the first fitting rule finds, so two Spotify listings of one recording share its scrobbles.
+Stored Last.fm scrobbles link to library tracks by artist and track name. A scrobbled name counts towards every track the first fitting rule finds, so two Spotify listings of one recording share its scrobbles. These listening-attribution rules are broader than the strict matching used to choose a Spotify identity for an imported Last.fm track.
 
 | Rule                  | Links when                                                                                                               |
 | --------------------- | ------------------------------------------------------------------------------------------------------------------------ |
@@ -123,10 +146,11 @@ Stored Last.fm scrobbles link to library tracks by artist and track name. A scro
 
 ## Data model
 
-- A track is a `media_item` with media type `track` and a `library_track` row holding its Spotify track and album IDs, album name, duration, linked album and listening totals. Scrape jobs, tags and imports do not operate on tracks.
+- A track is a `media_item` with media type `track` and a `library_track` row holding its optional Spotify track and album IDs, album name, duration, linked album and listening totals. The Spotify track ID is nullable for Last.fm tracks without a verified match. Per-item scrape jobs, tags and file imports do not operate on tracks.
 - `playlist` rows carry their source (`spotify` or `spotify-liked`), Spotify ID, owner, artwork, snapshot, import time, last check time, schedule and whether the account can still change the playlist. `playlist_item` holds track and album memberships with position and added date.
 - `spotify_playlist_listing` holds the account's last playlist list as one JSON array per user, with its listing time.
-- `lastfm_track_link` records which scrobbled artist and track names count towards which library track, and by which rule.
+- `lastfm_track_source` maps each imported account, artist name and track name to one library track. It supplies Last.fm source membership, retention after playlist removal and the scrobble contribution to Added.
+- `lastfm_track_link` separately records which scrobbled artist and track names count towards which library tracks, and by which listening-attribution rule. A name can contribute listening counts to several Spotify editions without giving them all Last.fm membership.
 - Imports run as the `spotify-playlist-import` task job, listings as `spotify-playlist-listing` and album additions as `spotify-playlist-add-album`, all with provider `spotify`.
 
 ## Verification
@@ -134,4 +158,5 @@ Stored Last.fm scrobbles link to library tracks by artist and track name. A scro
 - `apps/server/src/lib/track-matching.test.ts`: linking rules.
 - `apps/server/src/lib/playlist-sync.test.ts`: schedule times.
 - `apps/server/integration/spotify-playlists.integration.ts`: the listing job, import, progress, re-import, schedule, playlist pages, album additions with batches and a retried failure, refusals, removal, limits, filters, album membership and scrobble counts against a disposable database with mocked Spotify responses.
+- `apps/server/integration/lastfm-tracks.integration.ts`: stored-history import, identity ambiguity, source filters, playlist removal, account history and playback metadata against a disposable database without provider requests.
 - `apps/web/components/playlist-detail.test.tsx`, `apps/web/components/playlists.test.tsx`, `apps/web/components/play-controls.test.tsx`, `apps/web/utils/playlist-sync.test.ts` and `apps/web/utils/playlist-links.test.ts`: the playlist drawer, its deep link, sync labels and the track play controls.

@@ -119,6 +119,7 @@ test('library tracks play alone, with their linked album when there is one', () 
     libraryTrackPlayable({ ...track, spotifyTrackId: 'local-file' }),
     null,
   )
+  assert.equal(libraryTrackPlayable({ ...track, spotifyTrackId: null }), null)
 })
 
 test('requests an album context, an album from a track, or a single track', () => {

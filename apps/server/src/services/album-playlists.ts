@@ -10,7 +10,7 @@ const AlbumTrackRowsSchema = z.array(
   z.object({
     id: z.string(),
     title: z.string(),
-    spotify_track_id: z.string(),
+    spotify_track_id: z.string().nullable(),
     playlists: z.array(z.string()),
   }),
 )

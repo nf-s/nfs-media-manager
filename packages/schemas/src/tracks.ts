@@ -66,8 +66,10 @@ export type PlaylistSync = z.infer<typeof PlaylistSyncSchema>
  * `spotify-track`: the album's track list has the track's Spotify ID.
  * `album-title`: same album title and a credited artist.
  * `artist-title`: a credited artist's album lists a track with the same title.
+ * `lastfm`: the scrobbled album names consistently link to this library album.
  */
 export const TrackAlbumLinkStrategySchema = z.enum([
+  'lastfm',
   'spotify-album',
   'spotify-track',
   'album-title',
@@ -99,6 +101,14 @@ export const TrackPlaylistSchema = z.object({
   name: z.string(),
 })
 
+export const TrackSourceSchema = z.enum(['lastfm', 'spotify', 'spotify-liked'])
+export type TrackSource = z.infer<typeof TrackSourceSchema>
+export const trackSourceLabels: Record<TrackSource, string> = {
+  lastfm: 'Last.fm',
+  spotify: 'Spotify playlists',
+  'spotify-liked': 'Liked Songs',
+}
+
 export const TrackListItemSchema = z.object({
   id: z.string(),
   mediaType: z.literal('track'),
@@ -106,7 +116,7 @@ export const TrackListItemSchema = z.object({
   artworkUrl: z.string().url().nullable(),
   releaseDate: z.string().nullable(),
   artists: z.array(z.string()),
-  /** The album name Spotify reported, whether or not it is in the library. */
+  /** The reported album name, whether or not it is in the library. */
   albumName: z.string().nullable(),
   /** The linked library album. */
   album: z.object({ id: z.string(), title: z.string() }).nullable(),
@@ -114,9 +124,10 @@ export const TrackListItemSchema = z.object({
   /** Tags of the linked library album. */
   albumTags: z.array(z.string()),
   playlists: z.array(TrackPlaylistSchema),
+  sources: z.array(TrackSourceSchema).default([]),
   durationSec: z.number().int().nonnegative().nullable(),
   dateAdded: z.string().nullable(),
-  spotifyTrackId: z.string(),
+  spotifyTrackId: z.string().nullable(),
   spotifyUrl: z.string().url().nullable(),
   isrc: z.string().nullable(),
   scrobbles: z.number().int().nonnegative(),
@@ -179,6 +190,7 @@ export function getTrackBrowseValues(item: TrackListItem): BrowseValues {
     artist: item.artists,
     album: item.albumName,
     playlist: item.playlists.map((playlist) => playlist.name),
+    source: item.sources.map((source) => trackSourceLabels[source]),
     genre: item.albumTags,
     albumLink: item.album
       ? trackAlbumLinkLabels.linked
@@ -300,7 +312,7 @@ export const AlbumPlaylistsSchema = z.object({
     z.object({
       id: z.string(),
       title: z.string(),
-      spotifyTrackId: z.string(),
+      spotifyTrackId: z.string().nullable(),
       playlists: z.array(z.string()),
     }),
   ),

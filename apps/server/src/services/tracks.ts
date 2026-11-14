@@ -11,6 +11,7 @@ import {
   TrackDetailSchema,
   TrackListItemSchema,
   TrackScrobbleLinkStrategySchema,
+  TrackSourceSchema,
   type PlaylistAlbum,
   type PlaylistDetail,
   type PlaylistDetailQuery,
@@ -23,6 +24,11 @@ import {
 } from '@repo/schemas/tracks'
 import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
+import { SpotifyIdSchema } from '@/lib/spotify-api'
+import {
+  linkedTrackFieldExpression,
+  trackSourcesExpression,
+} from './track-values'
 import { playlist } from '@/schemas/db'
 import { listBrowseFacets, queryBrowseIds } from './browse'
 import { refreshTrackAddedDates, removeOrphanTracks } from './spotify-playlists'
@@ -49,9 +55,11 @@ const TrackRowsSchema = z.array(
     album_link_strategy: TrackAlbumLinkStrategySchema.nullable(),
     album_tags: z.array(z.string()),
     playlists: z.array(z.object({ id: z.string(), name: z.string() })),
+    sources: z.array(TrackSourceSchema),
     duration_sec: z.number().int().nullable(),
     date_added: z.string().nullable(),
-    spotify_track_id: z.string(),
+    spotify_track_id: z.string().nullable(),
+    album_track_id: z.string().nullable(),
     spotify_url: z.string().nullable(),
     isrc: z.string().nullable(),
     scrobble_count: z.number().int(),
@@ -64,13 +72,13 @@ async function loadTracks(ids: string[]): Promise<TrackListItem[]> {
   const rows = TrackRowsSchema.parse(
     (
       await db.execute(sql`
-        select mi.id, mi.title, mi.artwork_url,
-          ${isoTimestamp(sql`mi.release_date`)} as release_date,
+        select mi.id, mi.title, coalesce(mi.artwork_url, am.artwork_url) as artwork_url,
+          ${isoTimestamp(sql`coalesce(mi.release_date, am.release_date)`)} as release_date,
           coalesce((
             select array_agg(a.name order by c.billing_order, a.name)
             from media_credit c join artist a on a.id = c.artist_id
             where c.media_item_id = mi.id and c.role = 'artist'), '{}') as artists,
-          lt.album_name, lt.album_media_item_id as album_id,
+          coalesce(lt.album_name, am.title) as album_name, lt.album_media_item_id as album_id,
           am.title as album_title, lt.album_link_strategy,
           coalesce((
             select array_agg(distinct t.name order by t.name)
@@ -82,7 +90,10 @@ async function loadTracks(ids: string[]): Promise<TrackListItem[]> {
               order by p.name)
             from playlist_item pi join playlist p on p.id = pi.playlist_id
             where pi.media_item_id = mi.id), '[]'::jsonb) as playlists,
-          lt.duration_sec, ${isoTimestamp(sql`lt.date_added`)} as date_added,
+          ${trackSourcesExpression(sql`mi.id`)} as sources,
+          coalesce(lt.duration_sec, ${linkedTrackFieldExpression('duration_sec', sql`lt.album_media_item_id`, sql`mi.title`)}) as duration_sec,
+          ${linkedTrackFieldExpression('external_id', sql`lt.album_media_item_id`, sql`mi.title`)} as album_track_id,
+          ${isoTimestamp(sql`lt.date_added`)} as date_added,
           lt.spotify_track_id, lt.spotify_url, lt.isrc, lt.scrobble_count,
           ${isoTimestamp(sql`lt.last_listened_at`)} as last_listened_at
         from library_track lt
@@ -98,6 +109,9 @@ async function loadTracks(ids: string[]): Promise<TrackListItem[]> {
   return ids.flatMap((id) => {
     const row = byId.get(id)
     if (!row) return []
+    const albumTrackId = SpotifyIdSchema.safeParse(row.album_track_id)
+    const spotifyTrackId =
+      row.spotify_track_id ?? (albumTrackId.success ? albumTrackId.data : null)
     return [
       TrackListItemSchema.parse({
         id: row.id,
@@ -114,10 +128,15 @@ async function loadTracks(ids: string[]): Promise<TrackListItem[]> {
         albumLinkStrategy: row.album_link_strategy,
         albumTags: row.album_tags,
         playlists: row.playlists,
+        sources: row.sources,
         durationSec: row.duration_sec,
         dateAdded: row.date_added,
-        spotifyTrackId: row.spotify_track_id,
-        spotifyUrl: row.spotify_url,
+        spotifyTrackId,
+        spotifyUrl:
+          row.spotify_url ??
+          (spotifyTrackId
+            ? `https://open.spotify.com/track/${spotifyTrackId}`
+            : null),
         isrc: row.isrc,
         scrobbles: row.scrobble_count,
         lastListenedAt: row.last_listened_at,
@@ -440,12 +459,12 @@ export async function updatePlaylistSyncSchedule(
 }
 
 /**
- * Removes an imported playlist and the tracks that are in no other playlist.
+ * Removes an imported playlist and tracks with no remaining source.
  * A playlist that also holds albums from the legacy library keeps those.
  */
 export async function removeImportedPlaylist(id: string) {
   return db.transaction(async (tx) => {
-    // The same lock as an import, which also deletes tracks left in no playlist.
+    // The same lock as imports, which also delete tracks with no remaining source.
     await tx.execute(sql`select pg_advisory_xact_lock(614105)`)
     const [stored] = await tx
       .select({ source: playlist.source })

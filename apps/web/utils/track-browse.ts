@@ -10,6 +10,7 @@ export const defaultTrackColumns = [
   'title',
   'artist',
   'album',
+  'source',
   'playlist',
   'durationSec',
   'dateAdded',

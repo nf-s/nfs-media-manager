@@ -5,7 +5,11 @@ import { useSearchParams } from 'next/navigation'
 import { useQuery } from '@tanstack/react-query'
 import { Button } from '@repo/ui/components/ui/button'
 import { sameBrowseFilter, type BrowseFilter } from '@repo/schemas/browse'
-import { TrackDetailSchema, type TrackDetail } from '@repo/schemas/tracks'
+import {
+  TrackDetailSchema,
+  trackSourceLabels,
+  type TrackDetail,
+} from '@repo/schemas/tracks'
 import { useConfig } from './providers'
 import { fetchApiData } from '@/utils/api'
 import { monthBars } from '@/utils/listening-chart'
@@ -240,6 +244,9 @@ export default function TrackDetailView({
             />
           )}
           <LibraryTrackPlayButtons track={item} />
+          {!item.spotifyTrackId && (
+            <p className="quiet text-sm">No Spotify match for playback.</p>
+          )}
         </div>
       </header>
       <dl className="detail-metrics">
@@ -261,6 +268,16 @@ export default function TrackDetailView({
         </div>
       </dl>
       <div className="detail-metadata">
+        {item.sources.length > 0 && (
+          <section>
+            <h2>Source</h2>
+            <FilterValues
+              field="source"
+              values={item.sources.map((source) => trackSourceLabels[source])}
+              onFilter={onFilter}
+            />
+          </section>
+        )}
         {item.playlists.length > 0 && (
           <section>
             <h2>Playlists</h2>

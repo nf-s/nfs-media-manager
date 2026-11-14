@@ -19,7 +19,7 @@ export type PlayableItem = {
 
 export type QueueEntry = { key: string; item: PlayableItem }
 
-/** A track from the track library (playlists and Liked Songs). */
+/** A track from the track library, with a Spotify ID only when matched. */
 export type LibraryTrackSource = Pick<
   TrackListItem,
   'spotifyTrackId' | 'title' | 'artists' | 'album' | 'albumName' | 'artworkUrl'

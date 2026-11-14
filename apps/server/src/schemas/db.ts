@@ -118,7 +118,7 @@ export const track = pgTable(
   ],
 )
 
-// A track in the track library, imported from a playlist. It is separate from
+// A track imported from a playlist or stored Last.fm history. It is separate from
 // an album's track list above: its album may not be in the library.
 export const libraryTrack = pgTable(
   'library_track',
@@ -126,10 +126,10 @@ export const libraryTrack = pgTable(
     mediaItemId: text('media_item_id')
       .primaryKey()
       .references(() => mediaItem.id, { onDelete: 'cascade' }),
-    spotifyTrackId: text('spotify_track_id').notNull(),
+    spotifyTrackId: text('spotify_track_id'),
     isrc: text('isrc'),
     durationSec: integer('duration_sec'),
-    // The earliest date the track was added to an imported playlist.
+    // The earliest playlist-added date or first imported scrobble.
     dateAdded: timestamp('date_added', {
       mode: 'date',
       withTimezone: false,
@@ -827,6 +827,24 @@ export const lastfmTrackLink = pgTable(
       ],
     }),
     index('lastfm_track_link_track_idx').on(table.trackMediaItemId),
+  ],
+)
+
+// Library membership is stricter than listening attribution: one scrobbled
+// name has one library identity, even when several Spotify editions match.
+export const lastfmTrackSource = pgTable(
+  'lastfm_track_source',
+  {
+    username: text('username').notNull(),
+    artistKey: text('artist_key').notNull(),
+    trackKey: text('track_key').notNull(),
+    trackMediaItemId: text('track_media_item_id')
+      .notNull()
+      .references(() => libraryTrack.mediaItemId, { onDelete: 'cascade' }),
+  },
+  (table) => [
+    primaryKey({ columns: [table.username, table.artistKey, table.trackKey] }),
+    index('lastfm_track_source_track_idx').on(table.trackMediaItemId),
   ],
 )
 
