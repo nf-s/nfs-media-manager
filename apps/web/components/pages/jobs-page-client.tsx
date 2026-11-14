@@ -16,6 +16,8 @@ import { JsonValueSchema } from '@repo/schemas/common'
 import {
   JobSchema,
   JobSortKeySchema,
+  JobListQuerySchema,
+  jobStatusFilters,
   type JobSortKey,
   JobPageSchema,
   EnrichmentResultSchema,
@@ -24,6 +26,9 @@ import {
   type Job,
 } from '@repo/schemas/job'
 import {
+  SecondaryColumnFilter,
+  SecondaryTableFrame,
+  SecondaryTableFooter,
   SecondaryCell,
   SecondaryTableScroll,
   SecondaryTableToolbar,
@@ -194,8 +199,29 @@ export default function JobsPageClient() {
   const mediaType = useWorkspaceScope()
   const [query, setQuery] = useState('')
   const deferredQuery = useDeferredValue(query)
-  const status = search.get('status') ?? ''
-  const provider = search.get('provider') ?? ''
+  const parsedStatuses = JobListQuerySchema.shape.statuses.safeParse(
+    search.get('statuses') ?? undefined,
+  )
+  const parsedStatus = JobListQuerySchema.shape.status.safeParse(
+    search.get('status') ?? undefined,
+  )
+  const statuses =
+    parsedStatuses.success && parsedStatuses.data.length
+      ? parsedStatuses.data
+      : parsedStatus.success && parsedStatus.data
+        ? [parsedStatus.data]
+        : []
+  const parsedProviders = JobListQuerySchema.shape.providers.safeParse(
+    search.get('providers') ?? undefined,
+  )
+  const selectedProviders =
+    parsedProviders.success && parsedProviders.data.length
+      ? parsedProviders.data
+      : search.get('provider')
+        ? [search.get('provider') ?? '']
+        : []
+  const statusesKey = JSON.stringify(statuses)
+  const providersKey = JSON.stringify(selectedProviders)
   const batchId = search.get('batchId') ?? ''
   const parsedSort = JobSortKeySchema.safeParse(search.get('sortBy'))
   const sortBy = parsedSort.success ? parsedSort.data : 'createdAt'
@@ -204,6 +230,7 @@ export default function JobsPageClient() {
   const shownColumns = jobColumns.filter((column) =>
     columns.visible(column.key),
   )
+  const selectAll = useRef<HTMLInputElement>(null)
   const sentinel = useRef<HTMLDivElement>(null)
   const scroller = useRef<HTMLDivElement>(null)
   const [retryConfirmed, setRetryConfirmed] = useState(false)
@@ -238,10 +265,10 @@ export default function JobsPageClient() {
       'jobs',
       'infinite',
       mediaType,
-      status,
+      statusesKey,
       batchId,
       deferredQuery,
-      provider,
+      providersKey,
       sortBy,
       direction,
     ],
@@ -249,7 +276,7 @@ export default function JobsPageClient() {
     queryFn: ({ pageParam, signal }) =>
       fetchApiData(
         apiBaseUrl,
-        `/api/v1/scrape/jobs?${new URLSearchParams({ mediaType, sortBy, direction, page: String(pageParam), size: '25', ...(status ? { status } : {}), ...(provider ? { provider } : {}), ...(batchId ? { batchId } : {}), ...(deferredQuery ? { q: deferredQuery } : {}) })}`,
+        `/api/v1/scrape/jobs?${new URLSearchParams({ mediaType, sortBy, direction, page: String(pageParam), size: '25', statuses: statusesKey, providers: providersKey, ...(batchId ? { batchId } : {}), ...(deferredQuery ? { q: deferredQuery } : {}) })}`,
         JobPageSchema,
         { signal },
       ),
@@ -285,7 +312,15 @@ export default function JobsPageClient() {
     setCheckedJobIds([])
     setSelectionAnchor(null)
     setRetryConfirmed(false)
-  }, [mediaType, status, batchId, deferredQuery, provider, sortBy, direction])
+  }, [
+    mediaType,
+    statusesKey,
+    batchId,
+    deferredQuery,
+    providersKey,
+    sortBy,
+    direction,
+  ])
   const selectedJobId = search.get('jobId')
   const selectedJob = useQuery({
     queryKey: ['jobs', 'detail', selectedJobId],
@@ -350,6 +385,13 @@ export default function JobsPageClient() {
   )
   const actionableIds = actionableJobs.map((job) => job.id)
   const selectedIds = checkedJobIds.filter((id) => actionableIds.includes(id))
+  const allChecked =
+    actionableIds.length > 0 &&
+    actionableIds.every((id) => selectedIds.includes(id))
+  useEffect(() => {
+    if (selectAll.current)
+      selectAll.current.indeterminate = selectedIds.length > 0 && !allChecked
+  }, [selectedIds.length, allChecked])
   function selectJobs(ids: string[]) {
     setCheckedJobIds(ids)
     setSelectionAnchor(null)
@@ -477,353 +519,385 @@ export default function JobsPageClient() {
             }}
           />
         }
-        filters={
-          <>
-            <select
-              aria-label="Job status"
-              value={status}
-              disabled={bulkPending}
-              onChange={(event) =>
-                setParams({ status: event.target.value, page: '', jobId: '' })
-              }
-            >
-              <option value="">All statuses</option>
-              <option value="active">Active</option>
-              <option value="attention">Needs attention</option>
-              {['queued', 'running', 'succeeded', 'failed', 'cancelled'].map(
-                (value) => (
-                  <option key={value} value={value}>
-                    {value}
-                  </option>
-                ),
-              )}
-            </select>
-            <select
-              aria-label="Job provider"
-              value={provider}
-              disabled={bulkPending}
-              onChange={(event) =>
-                setParams({ provider: event.target.value, page: '', jobId: '' })
-              }
-            >
-              <option value="">All providers</option>
-              {provider &&
-                !providerOptions.some((item) => item.id === provider) && (
-                  <option value={provider}>{provider}</option>
-                )}
-              {providerOptions.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.displayName}
-                </option>
-              ))}
-            </select>
-          </>
-        }
         count={`${jobs.data?.pages[0]?.totalCount ?? 0} jobs`}
         columns={columns.controls}
       />
-      <div className="secondary-table-actions">
-        <JobBulkActions
-          jobs={actionableJobs}
-          selectedIds={selectedIds}
-          onSelect={selectJobs}
-          onPending={setBulkPending}
-          disabled={bulkPending || retryBatch.isPending}
-        />
-      </div>
-      <SecondaryTableScroll
-        className="jobs-scroll"
-        ref={scroller}
-        role="region"
-        aria-label="Jobs"
-        aria-busy={jobs.isFetching}
-      >
-        <table className="compact-table" aria-label="Jobs">
-          <thead>
-            <tr>
-              <th scope="col" className="table-selection-cell">
-                <span className="sr-only">Selection</span>
-              </th>
-              <th scope="col">
-                <span className="sr-only">Details</span>
-              </th>
-              {shownColumns.map((column) => (
-                <SecondaryTableHead
-                  key={column.key}
-                  sortKey={column.key}
-                  label={column.label}
-                  sortBy={sortBy}
-                  direction={direction}
-                  disabled={bulkPending || retryBatch.isPending}
-                  onSort={(key) =>
-                    setParams({
-                      sortBy: key,
-                      direction:
-                        key === sortBy && direction === 'asc' ? 'desc' : 'asc',
-                      jobId: '',
-                    })
-                  }
-                />
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {!visibleJobs.length && (
-              <TableState colSpan={columns.count + 2} error={jobs.isError}>
-                {jobs.isPending
-                  ? 'Loading jobs...'
-                  : jobs.isError
-                    ? 'Jobs unavailable.'
-                    : 'No matching jobs.'}
-              </TableState>
-            )}
-            {visibleJobs.map((job) => {
-              const dismissal = getJobDismissal(job.options)
-              const taskTitle = jobTaskTitle(job)
-              const progress = activeJobProgressLabel(job)
-              const title =
-                taskTitle ??
-                job.items
-                  .map((item) => item.mediaTitle ?? 'Unavailable item')
-                  .join(', ')
-              const result =
-                job.errorMessage ??
-                (job.items
-                  .map((item) => item.message)
-                  .filter(Boolean)
-                  .join(' · ') ||
-                  '-')
-              const expanded =
-                expandedJobIds.includes(job.id) || selectedJobId === job.id
-              return (
-                <Fragment key={job.id}>
-                  <tr data-selected={selectedIds.includes(job.id) || undefined}>
-                    <td className="table-selection-cell">
-                      {actionableIds.includes(job.id) ? (
-                        <input
-                          type="checkbox"
-                          className="job-select"
-                          aria-label={`Select ${providerName(job.provider)} job for ${taskTitle ?? job.items[0]?.mediaTitle ?? 'unavailable item'}`}
-                          title="Shift-click to select a range"
-                          disabled={bulkPending || retryBatch.isPending}
-                          checked={selectedIds.includes(job.id)}
-                          onClick={(event) => event.stopPropagation()}
-                          onChange={(event) =>
-                            toggleJob(
-                              job.id,
-                              event.target.checked,
-                              'shiftKey' in event.nativeEvent &&
-                                event.nativeEvent.shiftKey === true,
-                            )
+      <SecondaryTableFrame>
+        <SecondaryTableScroll
+          className="jobs-scroll"
+          ref={scroller}
+          role="region"
+          aria-label="Jobs"
+          aria-busy={jobs.isFetching}
+        >
+          <table className="compact-table" aria-label="Jobs">
+            <thead>
+              <tr>
+                <th scope="col" className="table-selection-cell">
+                  <input
+                    ref={selectAll}
+                    type="checkbox"
+                    aria-label="Select all loaded eligible jobs"
+                    checked={allChecked}
+                    disabled={
+                      bulkPending ||
+                      retryBatch.isPending ||
+                      !actionableIds.length
+                    }
+                    onChange={(event) =>
+                      selectJobs(event.target.checked ? actionableIds : [])
+                    }
+                  />
+                </th>
+                <th scope="col">
+                  <span className="sr-only">Details</span>
+                </th>
+                {shownColumns.map((column) => (
+                  <SecondaryTableHead
+                    key={column.key}
+                    sortKey={column.key}
+                    label={column.label}
+                    filter={
+                      column.key === 'status' ? (
+                        <SecondaryColumnFilter
+                          label="Job status"
+                          options={jobStatusFilters}
+                          value={statuses}
+                          disabled={bulkPending}
+                          onChange={(next) =>
+                            setParams({
+                              statuses: next.length ? JSON.stringify(next) : '',
+                              status: '',
+                              page: '',
+                              jobId: '',
+                            })
                           }
                         />
-                      ) : (
-                        <span aria-hidden="true" />
-                      )}
-                    </td>
-                    <td>
-                      <button
-                        type="button"
-                        className="flex items-center"
-                        aria-label={`${expanded ? 'Collapse' : 'Expand'} ${providerName(job.provider)} job`}
-                        aria-expanded={expanded}
-                        aria-controls={`job-details-${job.id}`}
-                        onClick={() => {
-                          if (selectedJobId === job.id) setParams({ jobId: '' })
-                          setExpandedJobIds((ids) =>
-                            expanded
-                              ? ids.filter((id) => id !== job.id)
-                              : [...ids, job.id],
-                          )
-                        }}
-                      >
-                        <ChevronRight
-                          size={14}
-                          aria-hidden="true"
-                          className={expanded ? 'rotate-90' : ''}
-                        />
-                      </button>
-                    </td>
-                    {columns.visible('provider') && (
-                      <td>
-                        <SecondaryCell text={providerName(job.provider)}>
-                          {providerName(job.provider)}
-                        </SecondaryCell>
-                      </td>
-                    )}
-                    {columns.visible('title') && (
-                      <td>
-                        <SecondaryCell
-                          text={`${title}${progress ? ` · ${progress}` : ''}`}
-                        >
-                          {taskTitle ??
-                            job.items
-                              .slice(0, 2)
-                              .map(
-                                (item) => item.mediaTitle ?? 'Unavailable item',
+                      ) : column.key === 'provider' ? (
+                        <SecondaryColumnFilter
+                          label="Job provider"
+                          options={[
+                            ...providerOptions.map((item) => ({
+                              value: item.id,
+                              label: item.displayName,
+                            })),
+                            ...selectedProviders
+                              .filter(
+                                (id) =>
+                                  !providerOptions.some(
+                                    (item) => item.id === id,
+                                  ),
                               )
-                              .join(', ')}
-                          {job.items.length > 2
-                            ? ` +${job.items.length - 2}`
-                            : ''}
-                          {progress && (
-                            <span className="quiet"> · {progress}</span>
-                          )}
-                        </SecondaryCell>
-                      </td>
-                    )}
-                    {columns.visible('status') && (
-                      <td>
-                        <SecondaryCell
-                          text={`${job.status}${dismissal ? ' · dismissed' : ''}`}
-                        >
-                          <span className="job-status" data-status={job.status}>
-                            {job.status}
-                            {dismissal ? ' · dismissed' : ''}
-                          </span>
-                        </SecondaryCell>
-                      </td>
-                    )}
-                    {columns.visible('createdAt') && (
-                      <td className="whitespace-nowrap">
-                        <SecondaryCell
-                          text={new Date(job.createdAt).toLocaleString()}
-                        >
-                          <time dateTime={job.createdAt}>
-                            {new Date(job.createdAt).toLocaleString()}
-                          </time>
-                        </SecondaryCell>
-                      </td>
-                    )}
-                    {columns.visible('startedAt') && (
-                      <td className="whitespace-nowrap">
-                        <SecondaryCell>
-                          {job.startedAt
-                            ? new Date(job.startedAt).toLocaleString()
-                            : '-'}
-                        </SecondaryCell>
-                      </td>
-                    )}
-                    {columns.visible('finishedAt') && (
-                      <td className="whitespace-nowrap">
-                        <SecondaryCell>
-                          {job.finishedAt
-                            ? new Date(job.finishedAt).toLocaleString()
-                            : '-'}
-                        </SecondaryCell>
-                      </td>
-                    )}
-                    {columns.visible('result') && (
-                      <td>
-                        <SecondaryCell text={result}>{result}</SecondaryCell>
-                      </td>
-                    )}
-                  </tr>
-                  {expanded && (
+                              .map((id) => ({ value: id, label: id })),
+                          ]}
+                          value={selectedProviders}
+                          disabled={bulkPending}
+                          onChange={(next) =>
+                            setParams({
+                              providers: next.length
+                                ? JSON.stringify(next)
+                                : '',
+                              provider: '',
+                              page: '',
+                              jobId: '',
+                            })
+                          }
+                        />
+                      ) : undefined
+                    }
+                    sortBy={sortBy}
+                    direction={direction}
+                    disabled={bulkPending || retryBatch.isPending}
+                    onSort={(key) =>
+                      setParams({
+                        sortBy: key,
+                        direction:
+                          key === sortBy && direction === 'asc'
+                            ? 'desc'
+                            : 'asc',
+                        jobId: '',
+                      })
+                    }
+                  />
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {!visibleJobs.length && (
+                <TableState colSpan={columns.count + 2} error={jobs.isError}>
+                  {jobs.isPending
+                    ? 'Loading jobs...'
+                    : jobs.isError
+                      ? 'Jobs unavailable.'
+                      : 'No matching jobs.'}
+                </TableState>
+              )}
+              {visibleJobs.map((job) => {
+                const dismissal = getJobDismissal(job.options)
+                const taskTitle = jobTaskTitle(job)
+                const progress = activeJobProgressLabel(job)
+                const title =
+                  taskTitle ??
+                  job.items
+                    .map((item) => item.mediaTitle ?? 'Unavailable item')
+                    .join(', ')
+                const result =
+                  job.errorMessage ??
+                  (job.items
+                    .map((item) => item.message)
+                    .filter(Boolean)
+                    .join(' · ') ||
+                    '-')
+                const expanded =
+                  expandedJobIds.includes(job.id) || selectedJobId === job.id
+                return (
+                  <Fragment key={job.id}>
                     <tr
-                      id={`job-details-${job.id}`}
-                      className="secondary-table-detail-row"
+                      data-selected={selectedIds.includes(job.id) || undefined}
                     >
-                      <td colSpan={columns.count + 2}>
-                        <div className="job-content">
-                          {job.errorMessage && (
-                            <p role="alert">{job.errorMessage}</p>
-                          )}
-                          <JobBulkActions
-                            jobs={[job]}
-                            selectedIds={[job.id]}
-                            single
+                      <td className="table-selection-cell">
+                        {actionableIds.includes(job.id) ? (
+                          <input
+                            type="checkbox"
+                            className="job-select"
+                            aria-label={`Select ${providerName(job.provider)} job for ${taskTitle ?? job.items[0]?.mediaTitle ?? 'unavailable item'}`}
+                            title="Shift-click to select a range"
                             disabled={bulkPending || retryBatch.isPending}
-                            onSelect={() => {}}
-                            onPending={setBulkPending}
+                            checked={selectedIds.includes(job.id)}
+                            onClick={(event) => event.stopPropagation()}
+                            onChange={(event) =>
+                              toggleJob(
+                                job.id,
+                                event.target.checked,
+                                'shiftKey' in event.nativeEvent &&
+                                  event.nativeEvent.shiftKey === true,
+                              )
+                            }
                           />
-                          {dismissal && (
-                            <p className="muted">
-                              Dismissed{' '}
-                              {new Date(dismissal.dismissedAt).toLocaleString()}
-                              . Errors retained.
-                            </p>
-                          )}
-                          {typeof job.options.retryJobId === 'string' && (
-                            <Link
-                              href={scopedHref(
-                                `/jobs?jobId=${job.options.retryJobId}`,
-                                jobMediaScope(job) ?? mediaType,
-                              )}
-                            >
-                              View retry
-                            </Link>
-                          )}
-                          <JobDataViewer job={job} visible={expanded} />
-                          {job.items.map((item) => (
-                            <p
-                              key={item.id}
-                              className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm"
-                            >
-                              {item.mediaItemId && item.mediaType ? (
-                                <Link
-                                  href={`/${item.mediaType === 'album' ? 'albums' : 'films'}/${item.mediaItemId}`}
-                                >
-                                  {item.mediaTitle ?? 'Untitled item'}
-                                </Link>
-                              ) : (
-                                'Unavailable item'
-                              )}
-                              <span className="muted">
-                                {item.attemptCount}{' '}
-                                {item.attemptCount === 1
-                                  ? 'attempt'
-                                  : 'attempts'}
-                              </span>
-                              {item.message &&
-                                item.message !== job.errorMessage && (
-                                  <span>{item.message}</span>
-                                )}
-                            </p>
-                          ))}
-                          <details
-                            className="job-logs"
-                            open={job.status === 'failed' ? true : undefined}
-                          >
-                            <summary>Log ({job.logs.length})</summary>
-                            <ol>
-                              {job.logs.map((log) => (
-                                <JobLogEntry
-                                  key={log.id}
-                                  log={log}
-                                  jobId={job.id}
-                                />
-                              ))}
-                            </ol>
-                          </details>
-                        </div>
+                        ) : (
+                          <span aria-hidden="true" />
+                        )}
                       </td>
+                      <td>
+                        <button
+                          type="button"
+                          className="flex items-center"
+                          aria-label={`${expanded ? 'Collapse' : 'Expand'} ${providerName(job.provider)} job`}
+                          aria-expanded={expanded}
+                          aria-controls={`job-details-${job.id}`}
+                          onClick={() => {
+                            if (selectedJobId === job.id)
+                              setParams({ jobId: '' })
+                            setExpandedJobIds((ids) =>
+                              expanded
+                                ? ids.filter((id) => id !== job.id)
+                                : [...ids, job.id],
+                            )
+                          }}
+                        >
+                          <ChevronRight
+                            size={14}
+                            aria-hidden="true"
+                            className={expanded ? 'rotate-90' : ''}
+                          />
+                        </button>
+                      </td>
+                      {columns.visible('provider') && (
+                        <td>
+                          <SecondaryCell text={providerName(job.provider)}>
+                            {providerName(job.provider)}
+                          </SecondaryCell>
+                        </td>
+                      )}
+                      {columns.visible('title') && (
+                        <td>
+                          <SecondaryCell
+                            text={`${title}${progress ? ` · ${progress}` : ''}`}
+                          >
+                            {taskTitle ??
+                              job.items
+                                .slice(0, 2)
+                                .map(
+                                  (item) =>
+                                    item.mediaTitle ?? 'Unavailable item',
+                                )
+                                .join(', ')}
+                            {job.items.length > 2
+                              ? ` +${job.items.length - 2}`
+                              : ''}
+                            {progress && (
+                              <span className="quiet"> · {progress}</span>
+                            )}
+                          </SecondaryCell>
+                        </td>
+                      )}
+                      {columns.visible('status') && (
+                        <td>
+                          <SecondaryCell
+                            text={`${job.status}${dismissal ? ' · dismissed' : ''}`}
+                          >
+                            <span
+                              className="job-status"
+                              data-status={job.status}
+                            >
+                              {job.status}
+                              {dismissal ? ' · dismissed' : ''}
+                            </span>
+                          </SecondaryCell>
+                        </td>
+                      )}
+                      {columns.visible('createdAt') && (
+                        <td className="whitespace-nowrap">
+                          <SecondaryCell
+                            text={new Date(job.createdAt).toLocaleString()}
+                          >
+                            <time dateTime={job.createdAt}>
+                              {new Date(job.createdAt).toLocaleString()}
+                            </time>
+                          </SecondaryCell>
+                        </td>
+                      )}
+                      {columns.visible('startedAt') && (
+                        <td className="whitespace-nowrap">
+                          <SecondaryCell>
+                            {job.startedAt
+                              ? new Date(job.startedAt).toLocaleString()
+                              : '-'}
+                          </SecondaryCell>
+                        </td>
+                      )}
+                      {columns.visible('finishedAt') && (
+                        <td className="whitespace-nowrap">
+                          <SecondaryCell>
+                            {job.finishedAt
+                              ? new Date(job.finishedAt).toLocaleString()
+                              : '-'}
+                          </SecondaryCell>
+                        </td>
+                      )}
+                      {columns.visible('result') && (
+                        <td>
+                          <SecondaryCell text={result}>{result}</SecondaryCell>
+                        </td>
+                      )}
                     </tr>
-                  )}
-                </Fragment>
-              )
-            })}
-          </tbody>
-        </table>
-        <div
-          ref={sentinel}
-          className="py-3 text-center text-sm text-muted-foreground"
-        >
-          {jobs.isFetchingNextPage && (
-            <span role="status">Loading more jobs...</span>
-          )}
-          {jobs.isFetchNextPageError && (
-            <p role="alert">
-              Could not load more jobs.{' '}
-              <button
-                onClick={() => jobs.fetchNextPage({ cancelRefetch: false })}
-              >
-                Retry
-              </button>
-            </p>
-          )}
-        </div>
-      </SecondaryTableScroll>
+                    {expanded && (
+                      <tr
+                        id={`job-details-${job.id}`}
+                        className="secondary-table-detail-row"
+                      >
+                        <td colSpan={columns.count + 2}>
+                          <div className="job-content">
+                            {job.errorMessage && (
+                              <p role="alert">{job.errorMessage}</p>
+                            )}
+                            <JobBulkActions
+                              jobs={[job]}
+                              selectedIds={[job.id]}
+                              single
+                              disabled={bulkPending || retryBatch.isPending}
+                              onSelect={() => {}}
+                              onPending={setBulkPending}
+                            />
+                            {dismissal && (
+                              <p className="muted">
+                                Dismissed{' '}
+                                {new Date(
+                                  dismissal.dismissedAt,
+                                ).toLocaleString()}
+                                . Errors retained.
+                              </p>
+                            )}
+                            {typeof job.options.retryJobId === 'string' && (
+                              <Link
+                                href={scopedHref(
+                                  `/jobs?jobId=${job.options.retryJobId}`,
+                                  jobMediaScope(job) ?? mediaType,
+                                )}
+                              >
+                                View retry
+                              </Link>
+                            )}
+                            <JobDataViewer job={job} visible={expanded} />
+                            {job.items.map((item) => (
+                              <p
+                                key={item.id}
+                                className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm"
+                              >
+                                {item.mediaItemId && item.mediaType ? (
+                                  <Link
+                                    href={`/${item.mediaType === 'album' ? 'albums' : 'films'}/${item.mediaItemId}`}
+                                  >
+                                    {item.mediaTitle ?? 'Untitled item'}
+                                  </Link>
+                                ) : (
+                                  'Unavailable item'
+                                )}
+                                <span className="muted">
+                                  {item.attemptCount}{' '}
+                                  {item.attemptCount === 1
+                                    ? 'attempt'
+                                    : 'attempts'}
+                                </span>
+                                {item.message &&
+                                  item.message !== job.errorMessage && (
+                                    <span>{item.message}</span>
+                                  )}
+                              </p>
+                            ))}
+                            <details
+                              className="job-logs"
+                              open={job.status === 'failed' ? true : undefined}
+                            >
+                              <summary>Log ({job.logs.length})</summary>
+                              <ol>
+                                {job.logs.map((log) => (
+                                  <JobLogEntry
+                                    key={log.id}
+                                    log={log}
+                                    jobId={job.id}
+                                  />
+                                ))}
+                              </ol>
+                            </details>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
+                )
+              })}
+            </tbody>
+          </table>
+          <div
+            ref={sentinel}
+            className="py-3 text-center text-sm text-muted-foreground"
+          >
+            {jobs.isFetchingNextPage && (
+              <span role="status">Loading more jobs...</span>
+            )}
+            {jobs.isFetchNextPageError && (
+              <p role="alert">
+                Could not load more jobs.{' '}
+                <button
+                  onClick={() => jobs.fetchNextPage({ cancelRefetch: false })}
+                >
+                  Retry
+                </button>
+              </p>
+            )}
+          </div>
+        </SecondaryTableScroll>
+        <SecondaryTableFooter selectedCount={selectedIds.length}>
+          <JobBulkActions
+            jobs={actionableJobs}
+            selectedIds={selectedIds}
+            onSelect={selectJobs}
+            onPending={setBulkPending}
+            disabled={bulkPending || retryBatch.isPending}
+          />
+        </SecondaryTableFooter>
+      </SecondaryTableFrame>
     </section>
   )
 }

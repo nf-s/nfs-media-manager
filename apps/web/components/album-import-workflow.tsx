@@ -436,6 +436,57 @@ export default function AlbumImportWorkflow({
             searchValue={(item) =>
               [item.title, ...item.artists, ...item.identifiers].join(' ')
             }
+            filterColumn="changes"
+            footer={
+              <div className="import-confirmation">
+                <FilmProviderSelection
+                  providers={providers.providers}
+                  selected={providers.selected}
+                  onChange={(value) => {
+                    providers.setSelected(value)
+                    setConfirmed(false)
+                  }}
+                  disabled={busy || commit.isSuccess}
+                />
+                {providers.isError && (
+                  <p role="alert">
+                    Could not load metadata providers. Reload before importing.
+                  </p>
+                )}
+                <p className="muted">
+                  {jobs
+                    ? `Up to ${jobs} metadata jobs for selected new albums only.`
+                    : 'Import only. No metadata provider requests.'}{' '}
+                  Existing albums are never updated or queued by imports.
+                </p>
+                {jobs > 5 && (
+                  <label className="check-label">
+                    <input
+                      type="checkbox"
+                      checked={confirmed}
+                      disabled={busy || commit.isSuccess}
+                      onChange={(event) => setConfirmed(event.target.checked)}
+                    />
+                    Confirm up to {jobs} album/provider jobs
+                  </label>
+                )}
+                <Button
+                  disabled={
+                    busy ||
+                    commit.isSuccess ||
+                    !rows.length ||
+                    providers.isPending ||
+                    providers.isError ||
+                    (jobs > 5 && !confirmed)
+                  }
+                  onClick={() => commit.mutate()}
+                >
+                  {commit.isPending
+                    ? 'Starting...'
+                    : `Import ${rows.length} albums`}
+                </Button>
+              </div>
+            }
             filters={[
               {
                 key: 'new',
@@ -501,54 +552,6 @@ export default function AlbumImportWorkflow({
           {!preview.data.items.length && (
             <p className="muted">No albums to import.</p>
           )}
-          <div className="import-confirmation">
-            <FilmProviderSelection
-              providers={providers.providers}
-              selected={providers.selected}
-              onChange={(value) => {
-                providers.setSelected(value)
-                setConfirmed(false)
-              }}
-              disabled={busy || commit.isSuccess}
-            />
-            {providers.isError && (
-              <p role="alert">
-                Could not load metadata providers. Reload before importing.
-              </p>
-            )}
-            <p className="muted">
-              {jobs
-                ? `Up to ${jobs} metadata jobs for selected new albums only.`
-                : 'Import only. No metadata provider requests.'}{' '}
-              Existing albums are never updated or queued by imports.
-            </p>
-            {jobs > 5 && (
-              <label className="check-label">
-                <input
-                  type="checkbox"
-                  checked={confirmed}
-                  disabled={busy || commit.isSuccess}
-                  onChange={(event) => setConfirmed(event.target.checked)}
-                />
-                Confirm up to {jobs} album/provider jobs
-              </label>
-            )}
-            <Button
-              disabled={
-                busy ||
-                commit.isSuccess ||
-                !rows.length ||
-                providers.isPending ||
-                providers.isError ||
-                (jobs > 5 && !confirmed)
-              }
-              onClick={() => commit.mutate()}
-            >
-              {commit.isPending
-                ? 'Starting...'
-                : `Import ${rows.length} albums`}
-            </Button>
-          </div>
           {!!preview.data.warnings.length && (
             <details>
               <summary>{preview.data.warnings.length} import warnings</summary>

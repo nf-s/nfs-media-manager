@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
   parsePlaylistTab,
+  collectionFilmsHref,
   playlistAlbumsHref,
   playlistDrawerParams,
   playlistFilter,
@@ -60,4 +61,12 @@ test('the playlist filter is required, as the playlist links apply it', () => {
     value: name,
     mode: 'required',
   })
+})
+
+test('collection film links apply the required collection filter', () => {
+  const url = new URL(collectionFilmsHref(name), 'https://example.test')
+  assert.equal(url.pathname, '/films')
+  assert.deepEqual(JSON.parse(url.searchParams.get('filters') ?? ''), [
+    { field: 'collection', value: name, mode: 'required' },
+  ])
 })

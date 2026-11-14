@@ -20,6 +20,14 @@ const collection = FilmCollectionDetailSchema.parse({
   name: 'Synthetic collection',
   createdAt: '2026-01-01T00:00:00.000Z',
   filmCount: 2,
+  sourceLinks: [
+    {
+      provider: 'fixture',
+      providerLabel: 'Fixture',
+      name: 'Synthetic collection',
+      url: 'https://example.test/collections/17',
+    },
+  ],
   items: {
     page: 1,
     size: 100,
@@ -58,7 +66,7 @@ function render(search: string, path = '/collections') {
   })
   client.setQueryData(['film-collections'], [collection])
   client.setQueryData(
-    ['film-collection', collection.id, 'position', 'asc', '', undefined],
+    ['film-collection', collection.id, 'position', 'asc', '', []],
     {
       pages: [collection],
       pageParams: [1],
@@ -98,9 +106,11 @@ test('Films navigation exposes Collections and its shared sortable table control
   assert.match(html, /secondary-table-scroll/)
   assert.match(html, /title="Sort by Collection"/)
   assert.match(html, /title="Sort by Films"/)
-  assert.doesNotMatch(html, /aria-label="Visible columns"/)
-  assert.match(html, /title="Sort by Added"/)
+  assert.match(html, /aria-label="Visible columns"/)
+  assert.match(html, />Added<\/label>/)
   assert.doesNotMatch(html, /aria-label="Collection details"/)
+  assert.match(html, /href="https:\/\/example.test\/collections\/17"/)
+  assert.match(html, /title="Filter films by Synthetic collection"/)
 })
 
 test('collection deep links open members in source order without renumbering gaps', () => {
@@ -110,15 +120,21 @@ test('collection deep links open members in source order without renumbering gap
   assert.match(drawer, /aria-label="Collection films"/)
   assert.ok(
     drawer.indexOf('aria-label="Search collection films"') <
-      drawer.indexOf('aria-label="Watched status"'),
+      drawer.indexOf('<thead>'),
   )
   assert.ok(
-    drawer.indexOf('aria-label="Watched status"') <
-      drawer.indexOf('aria-label="Visible columns"'),
+    drawer.indexOf('aria-label="Filter Watched"') > drawer.indexOf('<thead>'),
   )
+  assert.match(drawer, /aria-label="Resize details panel"/)
+  assert.match(drawer, /href="https:\/\/example.test\/collections\/17"/)
   assert.match(
     drawer,
-    /aria-sort="ascending"><button[^>]*title="Sort by Stored position"/,
+    /href="\/films\?filters=[^"]*Synthetic\+collection[^"]*">Filter films</,
+  )
+
+  assert.match(
+    drawer,
+    /aria-sort="ascending"><div[^>]*><button[^>]*title="Sort by Stored position"/,
   )
   assert.match(drawer, /<td class="numeric">2<\/td>/)
   assert.match(drawer, /<td class="numeric">8<\/td>/)

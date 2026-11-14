@@ -25,7 +25,10 @@ import {
 import { useConfig } from './providers'
 import {
   SecondaryCell,
+  SecondaryColumnFilter,
   SecondaryTableHead,
+  SecondaryTableFrame,
+  SecondaryTableFooter,
   SecondaryTableScroll,
   SecondaryTableToolbar,
   useTableColumns,
@@ -37,6 +40,7 @@ import { errorMessage } from './lastfm-sync'
 import { PlaylistDrawer } from './playlist-detail'
 import { usePlaylistDrawer } from '@/hooks/usePlaylistDrawer'
 import { fetchApiData } from '@/utils/api'
+import { useLibraryView } from './media-scope'
 import { scopedHref } from '@/utils/media-scope'
 import { playlistAlbumsHref, playlistTracksHref } from '@/utils/playlist-links'
 import {
@@ -49,8 +53,6 @@ import { youtubeScheduleLabels } from '@/utils/youtube'
 export { formatPlaylistDuration, invalidatePlaylists }
 
 type Direction = 'asc' | 'desc'
-
-const importHref = scopedHref('/imports/spotify-playlists', 'track')
 
 function formatShortDateTime(value: string) {
   return new Date(value).toLocaleString(undefined, {
@@ -153,13 +155,12 @@ export function playlistSortValue(
 export function filterPlaylists(
   rows: readonly PlaylistSummary[],
   search: string,
-  source: PlaylistSource | 'library' | '',
+  sources: readonly (PlaylistSource | 'library')[],
 ) {
   const text = search.trim().toLocaleLowerCase()
   return rows.filter(
     (row) =>
-      (!source ||
-        (source === 'library' ? row.source === null : row.source === source)) &&
+      (!sources.length || sources.includes(row.source ?? 'library')) &&
       [row.name, row.ownerName, row.description].some((value) =>
         value?.toLocaleLowerCase().includes(text),
       ),
@@ -172,7 +173,12 @@ export default function PlaylistsWorkspace() {
   const [sortBy, setSortBy] = useState<PlaylistSortKey>('name')
   const [direction, setDirection] = useState<Direction>('asc')
   const [search, setSearch] = useState('')
-  const [source, setSource] = useState<PlaylistSource | 'library' | ''>('')
+  const [sources, setSources] = useState<Array<PlaylistSource | 'library'>>([])
+  const view = useLibraryView()
+  const importHref = scopedHref(
+    '/imports/spotify-playlists',
+    view === 'album' ? 'album' : 'track',
+  )
   const [confirmingId, setConfirmingId] = useState<string | null>(null)
   const [outcome, setOutcome] = useState('')
   const drawer = usePlaylistDrawer()
@@ -212,7 +218,7 @@ export default function PlaylistsWorkspace() {
   }
   const sorting = { sortBy, direction, onSort: sort }
   const playlists = sortTableRows(
-    filterPlaylists(query.data ?? [], search, source),
+    filterPlaylists(query.data ?? [], search, sources),
     { key: sortBy, direction },
     playlistSortValue,
   )
@@ -220,6 +226,11 @@ export default function PlaylistsWorkspace() {
   return (
     <section className="admin-page table-workspace">
       <h1>Playlists</h1>
+      <div className="tags-bulk">
+        <Button asChild size="sm" variant="outline">
+          <Link href={importHref}>Import playlists</Link>
+        </Button>
+      </div>
       <SecondaryTableToolbar
         search={
           <Input
@@ -230,32 +241,10 @@ export default function PlaylistsWorkspace() {
             onChange={(event) => setSearch(event.target.value)}
           />
         }
-        filters={
-          <select
-            aria-label="Playlist source"
-            value={source}
-            onChange={(event) => {
-              const value = event.target.value
-              if (value === '' || value === 'library') setSource(value)
-              else {
-                const parsed = PlaylistSourceSchema.safeParse(value)
-                if (parsed.success) setSource(parsed.data)
-              }
-            }}
-          >
-            <option value="">All sources</option>
-            <option value="library">Library</option>
-            {PlaylistSourceSchema.options.map((value) => (
-              <option key={value} value={value}>
-                {playlistSourceLabel(value)}
-              </option>
-            ))}
-          </select>
-        }
         count={
           <span aria-live="polite">
             {query.data
-              ? search.trim() || source
+              ? search.trim() || sources.length
                 ? `${playlists.length.toLocaleString()} of ${query.data.length.toLocaleString()} playlists`
                 : `${query.data.length.toLocaleString()} playlists`
               : ''}
@@ -263,40 +252,286 @@ export default function PlaylistsWorkspace() {
         }
         columns={columns.controls}
       />
-      <div className="tags-bulk">
-        <Button asChild size="sm" variant="outline">
-          <Link href={importHref}>Import playlists</Link>
-        </Button>
-      </div>
-      {confirming && (
-        <div
-          className="tags-bulk"
-          data-active
-          role="group"
-          aria-label="Confirm playlist removal"
+      <SecondaryTableFrame>
+        <SecondaryTableScroll
+          className="tags-scroll"
+          role="region"
+          aria-label="Playlists"
+          aria-busy={query.isFetching}
         >
-          <span>
-            Remove <strong>{confirming.name}</strong> and its tracks that are in
-            no other playlist? Albums stay in the library.
-          </span>
-          <Button
-            size="sm"
-            variant="destructive"
-            disabled={remove.isPending}
-            onClick={() => remove.mutate(confirming)}
-          >
-            {remove.isPending ? 'Removing...' : 'Confirm removal'}
-          </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={remove.isPending}
-            onClick={() => setConfirmingId(null)}
-          >
-            Cancel
-          </Button>
-        </div>
-      )}
+          <table className="compact-table" aria-label="Playlists">
+            <TableHeader>
+              <TableRow>
+                {playlistColumns
+                  .filter((column) => columns.visible(column.key))
+                  .map((column) =>
+                    !column.sortable ? (
+                      <TableHead key={column.key}>
+                        <span className="sr-only">{column.label}</span>
+                      </TableHead>
+                    ) : (
+                      <SecondaryTableHead
+                        key={column.key}
+                        sortKey={column.key}
+                        label={column.label}
+                        className={
+                          [
+                            'tracks',
+                            'linkedTracks',
+                            'albums',
+                            'duration',
+                          ].includes(column.key)
+                            ? 'numeric'
+                            : undefined
+                        }
+                        filter={
+                          column.key === 'source' ? (
+                            <SecondaryColumnFilter
+                              label="Source"
+                              options={[
+                                { value: 'library', label: 'Library' },
+                                ...PlaylistSourceSchema.options.map(
+                                  (value) => ({
+                                    value,
+                                    label: playlistSourceLabel(value),
+                                  }),
+                                ),
+                              ]}
+                              value={sources}
+                              onChange={setSources}
+                            />
+                          ) : undefined
+                        }
+                        {...sorting}
+                      />
+                    ),
+                  )}
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {!playlists.length && (
+                <TableState colSpan={columns.count} error={query.isError}>
+                  {query.isPending ? (
+                    'Loading playlists...'
+                  ) : query.isError ? (
+                    <>
+                      Could not load playlists.{' '}
+                      <button
+                        type="button"
+                        className="underline"
+                        onClick={() => query.refetch()}
+                      >
+                        Retry
+                      </button>
+                    </>
+                  ) : search.trim() || sources.length ? (
+                    'No matching playlists.'
+                  ) : (
+                    <>
+                      No playlists.{' '}
+                      <Link href={importHref}>Import playlists</Link>
+                    </>
+                  )}
+                </TableState>
+              )}
+              {playlists.map((playlist) => (
+                <TableRow
+                  key={playlist.id}
+                  className="cursor-pointer"
+                  data-selected={
+                    playlist.id === confirmingId ||
+                    playlist.id === drawer.playlistId ||
+                    undefined
+                  }
+                  onClick={(event) => {
+                    if (
+                      event.target instanceof Element &&
+                      event.target.closest('a, button, input, select, textarea')
+                    )
+                      return
+                    drawer.open(
+                      playlist.id,
+                      event.currentTarget.querySelector<HTMLElement>(
+                        '.table-title',
+                      ) ?? undefined,
+                    )
+                  }}
+                >
+                  {columns.visible('artwork') && (
+                    <TableCell className="w-10">
+                      {playlist.artworkUrl && (
+                        <MediaArtwork
+                          src={playlist.artworkUrl}
+                          alt=""
+                          fallbackLabel=""
+                          containerClassName="size-6 rounded"
+                          imageClassName="size-6 object-cover"
+                          fallbackClassName="size-6"
+                        />
+                      )}
+                    </TableCell>
+                  )}
+                  {columns.visible('name') && (
+                    <TableCell>
+                      <SecondaryCell text={playlist.name}>
+                        <button
+                          type="button"
+                          className="table-title hover:underline"
+                          onClick={(event) =>
+                            drawer.open(playlist.id, event.currentTarget)
+                          }
+                        >
+                          {playlist.name}
+                        </button>
+                      </SecondaryCell>
+                    </TableCell>
+                  )}
+                  {columns.visible('source') && (
+                    <TableCell>
+                      {playlistSourceLabel(playlist.source)}
+                    </TableCell>
+                  )}
+                  {columns.visible('owner') && (
+                    <TableCell>
+                      <SecondaryCell text={playlist.ownerName ?? undefined}>
+                        {playlist.ownerName ?? '-'}
+                      </SecondaryCell>
+                    </TableCell>
+                  )}
+                  {columns.visible('tracks') && (
+                    <TableCell className="numeric">
+                      <Link href={playlistTracksHref(playlist.name)}>
+                        {playlist.trackCount.toLocaleString()}
+                      </Link>
+                    </TableCell>
+                  )}
+                  {columns.visible('linkedTracks') && (
+                    <TableCell className="whitespace-nowrap">
+                      {playlist.trackCount > 0
+                        ? `${playlist.linkedTrackCount.toLocaleString()} of ${playlist.trackCount.toLocaleString()}`
+                        : '-'}
+                    </TableCell>
+                  )}
+                  {columns.visible('albums') && (
+                    <TableCell className="numeric">
+                      <Link href={playlistAlbumsHref(playlist.name)}>
+                        {playlist.albumCount.toLocaleString()}
+                      </Link>
+                    </TableCell>
+                  )}
+                  {columns.visible('duration') && (
+                    <TableCell className="numeric whitespace-nowrap">
+                      {formatPlaylistDuration(playlist.durationSec)}
+                    </TableCell>
+                  )}
+                  {columns.visible('imported') && (
+                    <TableCell className="whitespace-nowrap">
+                      {playlist.importedAt ? (
+                        <time dateTime={playlist.importedAt}>
+                          {new Date(playlist.importedAt).toLocaleDateString()}
+                        </time>
+                      ) : (
+                        '-'
+                      )}
+                    </TableCell>
+                  )}
+                  {columns.visible('schedule') && (
+                    <TableCell className="whitespace-nowrap">
+                      {playlist.sync.syncable
+                        ? youtubeScheduleLabels[playlist.sync.schedule]
+                        : '-'}
+                    </TableCell>
+                  )}
+                  {columns.visible('checked') && (
+                    <TableCell className="whitespace-nowrap">
+                      {playlist.sync.lastCheckedAt ? (
+                        <time dateTime={playlist.sync.lastCheckedAt}>
+                          {formatShortDateTime(playlist.sync.lastCheckedAt)}
+                        </time>
+                      ) : (
+                        '-'
+                      )}
+                    </TableCell>
+                  )}
+                  {columns.visible('added') && (
+                    <TableCell className="whitespace-nowrap">
+                      <time dateTime={playlist.createdAt ?? undefined}>
+                        {playlist.createdAt
+                          ? formatShortDateTime(playlist.createdAt)
+                          : '-'}
+                      </time>
+                    </TableCell>
+                  )}
+                  {columns.visible('description') && (
+                    <TableCell>
+                      <SecondaryCell
+                        text={playlist.description ?? undefined}
+                        details={playlist.description || undefined}
+                        label={`Description of ${playlist.name}`}
+                      >
+                        {playlist.description ?? '-'}
+                      </SecondaryCell>
+                    </TableCell>
+                  )}
+                  {columns.visible('nextSync') && (
+                    <TableCell className="whitespace-nowrap">
+                      {playlist.sync.nextScheduledAt
+                        ? formatShortDateTime(playlist.sync.nextScheduledAt)
+                        : '-'}
+                    </TableCell>
+                  )}
+                  {columns.visible('actions') && (
+                    <TableCell className="text-right">
+                      {playlist.source && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="size-6 p-0"
+                          disabled={remove.isPending}
+                          aria-label={`Remove ${playlist.name}`}
+                          title={`Remove ${playlist.name}`}
+                          onClick={() => {
+                            setConfirmingId(playlist.id)
+                            setOutcome('')
+                            remove.reset()
+                          }}
+                        >
+                          <Trash2 size={14} aria-hidden="true" />
+                        </Button>
+                      )}
+                    </TableCell>
+                  )}
+                </TableRow>
+              ))}
+            </TableBody>
+          </table>
+        </SecondaryTableScroll>
+        {confirming && (
+          <SecondaryTableFooter>
+            <span className="sr-only">Confirm playlist removal</span>
+            <span>
+              Remove <strong>{confirming.name}</strong> and its tracks that are
+              in no other playlist? Albums stay in the library.
+            </span>
+            <Button
+              size="sm"
+              variant="destructive"
+              disabled={remove.isPending}
+              onClick={() => remove.mutate(confirming)}
+            >
+              {remove.isPending ? 'Removing...' : 'Confirm removal'}
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={remove.isPending}
+              onClick={() => setConfirmingId(null)}
+            >
+              Cancel
+            </Button>
+          </SecondaryTableFooter>
+        )}
+      </SecondaryTableFrame>
       {remove.isError && (
         <p className="tags-outcome" role="alert">
           {errorMessage(remove.error, 'Could not remove the playlist.')}
@@ -307,239 +542,6 @@ export default function PlaylistsWorkspace() {
           {outcome}
         </p>
       )}
-      <SecondaryTableScroll
-        className="tags-scroll"
-        role="region"
-        aria-label="Playlists"
-        aria-busy={query.isFetching}
-      >
-        <table className="compact-table" aria-label="Playlists">
-          <TableHeader>
-            <TableRow>
-              {playlistColumns
-                .filter((column) => columns.visible(column.key))
-                .map((column) =>
-                  !column.sortable ? (
-                    <TableHead key={column.key}>
-                      <span className="sr-only">{column.label}</span>
-                    </TableHead>
-                  ) : (
-                    <SecondaryTableHead
-                      key={column.key}
-                      sortKey={column.key}
-                      label={column.label}
-                      className={
-                        [
-                          'tracks',
-                          'linkedTracks',
-                          'albums',
-                          'duration',
-                        ].includes(column.key)
-                          ? 'numeric'
-                          : undefined
-                      }
-                      {...sorting}
-                    />
-                  ),
-                )}
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {!playlists.length && (
-              <TableState colSpan={columns.count} error={query.isError}>
-                {query.isPending ? (
-                  'Loading playlists...'
-                ) : query.isError ? (
-                  <>
-                    Could not load playlists.{' '}
-                    <button
-                      type="button"
-                      className="underline"
-                      onClick={() => query.refetch()}
-                    >
-                      Retry
-                    </button>
-                  </>
-                ) : search.trim() || source ? (
-                  'No matching playlists.'
-                ) : (
-                  <>
-                    No playlists.{' '}
-                    <Link href={importHref}>Import playlists</Link>
-                  </>
-                )}
-              </TableState>
-            )}
-            {playlists.map((playlist) => (
-              <TableRow
-                key={playlist.id}
-                className="cursor-pointer"
-                data-selected={
-                  playlist.id === confirmingId ||
-                  playlist.id === drawer.playlistId ||
-                  undefined
-                }
-                onClick={(event) => {
-                  if (
-                    event.target instanceof Element &&
-                    event.target.closest('a, button, input, select, textarea')
-                  )
-                    return
-                  drawer.open(
-                    playlist.id,
-                    event.currentTarget.querySelector<HTMLElement>(
-                      '.table-title',
-                    ) ?? undefined,
-                  )
-                }}
-              >
-                {columns.visible('artwork') && (
-                  <TableCell className="w-10">
-                    {playlist.artworkUrl && (
-                      <MediaArtwork
-                        src={playlist.artworkUrl}
-                        alt=""
-                        fallbackLabel=""
-                        containerClassName="size-6 rounded"
-                        imageClassName="size-6 object-cover"
-                        fallbackClassName="size-6"
-                      />
-                    )}
-                  </TableCell>
-                )}
-                {columns.visible('name') && (
-                  <TableCell>
-                    <SecondaryCell text={playlist.name}>
-                      <button
-                        type="button"
-                        className="table-title hover:underline"
-                        onClick={(event) =>
-                          drawer.open(playlist.id, event.currentTarget)
-                        }
-                      >
-                        {playlist.name}
-                      </button>
-                    </SecondaryCell>
-                  </TableCell>
-                )}
-                {columns.visible('source') && (
-                  <TableCell>{playlistSourceLabel(playlist.source)}</TableCell>
-                )}
-                {columns.visible('owner') && (
-                  <TableCell>
-                    <SecondaryCell text={playlist.ownerName ?? undefined}>
-                      {playlist.ownerName ?? '-'}
-                    </SecondaryCell>
-                  </TableCell>
-                )}
-                {columns.visible('tracks') && (
-                  <TableCell className="numeric">
-                    <Link href={playlistTracksHref(playlist.name)}>
-                      {playlist.trackCount.toLocaleString()}
-                    </Link>
-                  </TableCell>
-                )}
-                {columns.visible('linkedTracks') && (
-                  <TableCell className="whitespace-nowrap">
-                    {playlist.trackCount > 0
-                      ? `${playlist.linkedTrackCount.toLocaleString()} of ${playlist.trackCount.toLocaleString()}`
-                      : '-'}
-                  </TableCell>
-                )}
-                {columns.visible('albums') && (
-                  <TableCell className="numeric">
-                    <Link href={playlistAlbumsHref(playlist.name)}>
-                      {playlist.albumCount.toLocaleString()}
-                    </Link>
-                  </TableCell>
-                )}
-                {columns.visible('duration') && (
-                  <TableCell className="numeric whitespace-nowrap">
-                    {formatPlaylistDuration(playlist.durationSec)}
-                  </TableCell>
-                )}
-                {columns.visible('imported') && (
-                  <TableCell className="whitespace-nowrap">
-                    {playlist.importedAt ? (
-                      <time dateTime={playlist.importedAt}>
-                        {new Date(playlist.importedAt).toLocaleDateString()}
-                      </time>
-                    ) : (
-                      '-'
-                    )}
-                  </TableCell>
-                )}
-                {columns.visible('schedule') && (
-                  <TableCell className="whitespace-nowrap">
-                    {playlist.sync.syncable
-                      ? youtubeScheduleLabels[playlist.sync.schedule]
-                      : '-'}
-                  </TableCell>
-                )}
-                {columns.visible('checked') && (
-                  <TableCell className="whitespace-nowrap">
-                    {playlist.sync.lastCheckedAt ? (
-                      <time dateTime={playlist.sync.lastCheckedAt}>
-                        {formatShortDateTime(playlist.sync.lastCheckedAt)}
-                      </time>
-                    ) : (
-                      '-'
-                    )}
-                  </TableCell>
-                )}
-                {columns.visible('added') && (
-                  <TableCell className="whitespace-nowrap">
-                    <time dateTime={playlist.createdAt ?? undefined}>
-                      {playlist.createdAt
-                        ? formatShortDateTime(playlist.createdAt)
-                        : '-'}
-                    </time>
-                  </TableCell>
-                )}
-                {columns.visible('description') && (
-                  <TableCell>
-                    <SecondaryCell
-                      text={playlist.description ?? undefined}
-                      details={playlist.description || undefined}
-                      label={`Description of ${playlist.name}`}
-                    >
-                      {playlist.description ?? '-'}
-                    </SecondaryCell>
-                  </TableCell>
-                )}
-                {columns.visible('nextSync') && (
-                  <TableCell className="whitespace-nowrap">
-                    {playlist.sync.nextScheduledAt
-                      ? formatShortDateTime(playlist.sync.nextScheduledAt)
-                      : '-'}
-                  </TableCell>
-                )}
-                {columns.visible('actions') && (
-                  <TableCell className="text-right">
-                    {playlist.source && (
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="size-6 p-0"
-                        disabled={remove.isPending}
-                        aria-label={`Remove ${playlist.name}`}
-                        title={`Remove ${playlist.name}`}
-                        onClick={() => {
-                          setConfirmingId(playlist.id)
-                          setOutcome('')
-                          remove.reset()
-                        }}
-                      >
-                        <Trash2 size={14} aria-hidden="true" />
-                      </Button>
-                    )}
-                  </TableCell>
-                )}
-              </TableRow>
-            ))}
-          </TableBody>
-        </table>
-      </SecondaryTableScroll>
       {drawer.playlistId && (
         <PlaylistDrawer
           id={drawer.playlistId}

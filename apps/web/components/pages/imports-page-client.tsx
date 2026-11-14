@@ -10,7 +10,11 @@ import {
 } from '@repo/schemas/imports'
 import { fetchApiData } from '@/utils/api'
 import { useConfig } from '@/components/providers'
-import { SecondaryCell, SecondaryDataTable } from '../secondary-table'
+import {
+  SecondaryCell,
+  SecondaryColumnFilter,
+  SecondaryDataTable,
+} from '../secondary-table'
 import { useMediaScope } from '@/components/media-scope'
 import { scopedHref } from '@/utils/media-scope'
 import { ImportStatusNotice } from '@/components/imports-workspace'
@@ -22,7 +26,7 @@ function resultSummary(run: ImportRun) {
 }
 
 export default function ImportsPageClient() {
-  const [status, setStatus] = useState<ImportRun['status'] | ''>('')
+  const [status, setStatus] = useState<ImportRun['status'][]>([])
   const { apiBaseUrl } = useConfig()
   const mediaType = useMediaScope()
   const query = useQuery({
@@ -55,7 +59,9 @@ export default function ImportsPageClient() {
           id={`import-history-${mediaType}`}
           label={`Recent ${mediaType} imports`}
           className="import-preview-scroll"
-          rows={runs.filter((run) => !status || run.status === status)}
+          rows={runs.filter(
+            (run) => !status.length || status.includes(run.status),
+          )}
           totalCount={runs.length}
           countLabel="imports"
           search={{
@@ -63,25 +69,6 @@ export default function ImportsPageClient() {
             placeholder: 'Search stage or error',
             value: (run) => `${run.stage} ${run.errorMessage ?? ''}`,
           }}
-          filters={
-            <select
-              aria-label="Import status"
-              value={status}
-              onChange={(event) => {
-                const next = ImportRunSchema.shape.status.safeParse(
-                  event.target.value,
-                )
-                setStatus(next.success ? next.data : '')
-              }}
-            >
-              <option value="">All statuses</option>
-              {ImportRunSchema.shape.status.options.map((value) => (
-                <option key={value} value={value}>
-                  {value}
-                </option>
-              ))}
-            </select>
-          }
           rowKey={(run) => run.id}
           defaultSort={{ key: 'createdAt', direction: 'desc' }}
           busy={query.isFetching}
@@ -91,7 +78,7 @@ export default function ImportsPageClient() {
               ? 'Loading imports...'
               : query.isError
                 ? 'Imports unavailable.'
-                : status
+                : status.length
                   ? 'No matching imports.'
                   : 'No imports yet.'
           }
@@ -104,6 +91,7 @@ export default function ImportsPageClient() {
                 <SecondaryCell
                   text={new Date(run.createdAt).toLocaleString()}
                   label="Import scope details"
+                  tone={run.mediaType === null ? 'warning' : undefined}
                   details={
                     run.mediaType === null
                       ? 'Mixed / legacy scope unknown'
@@ -117,6 +105,16 @@ export default function ImportsPageClient() {
             {
               key: 'status',
               label: 'Status',
+              filter: (
+                <SecondaryColumnFilter
+                  label="Import status"
+                  options={ImportRunSchema.shape.status.options.map(
+                    (value) => ({ value, label: value }),
+                  )}
+                  value={status}
+                  onChange={setStatus}
+                />
+              ),
               value: (run) => run.status,
               render: (run) => (
                 <SecondaryCell text={run.status}>
@@ -152,7 +150,9 @@ export default function ImportsPageClient() {
                   text={resultSummary(run)}
                   label="Import result details"
                   details={
-                    run.result || run.errorMessage ? (
+                    (run.result && run.errorMessage) ||
+                    run.result?.jobBatchId ||
+                    run.result?.warnings?.length ? (
                       <>
                         <p>{resultSummary(run)}</p>
                         {run.result && run.errorMessage && (

@@ -33,11 +33,13 @@ export type ProviderFreshnessFilter = z.infer<
 >
 export const ProviderFreshnessFiltersSchema = z
   .array(ProviderFreshnessFilterSchema)
-  .max(20)
+  .max(160)
   .refine(
     (filters) =>
-      new Set(filters.map((filter) => filter.provider)).size === filters.length,
-    'Only one freshness filter is allowed per provider',
+      new Set(filters.map((filter) => JSON.stringify(filter))).size ===
+        filters.length &&
+      new Set(filters.map((filter) => filter.provider)).size <= 20,
+    'Choose unique freshness modes for at most 20 providers',
   )
 const FreshnessParamSchema = z.preprocess((value) => {
   if (value === undefined) return []

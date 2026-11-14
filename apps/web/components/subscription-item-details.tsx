@@ -1,5 +1,7 @@
 'use client'
 
+import { MediaInspector } from './media-inspector'
+
 import { forwardRef } from 'react'
 import { X } from 'lucide-react'
 import type { BrowseFilter } from '@repo/schemas/browse'
@@ -91,13 +93,12 @@ export const SubscriptionItemDetails = forwardRef<HTMLElement, DetailsProps>(
     return (
       <>
         <div className="inspector-backdrop" onClick={onClose} />
-        <aside
+        <MediaInspector
           ref={ref}
           tabIndex={-1}
           aria-label={
             item?.type === 'spotify' ? 'Episode details' : 'Video details'
           }
-          className="media-inspector"
         >
           <div className="detail-topbar">
             {item ? (
@@ -127,7 +128,7 @@ export const SubscriptionItemDetails = forwardRef<HTMLElement, DetailsProps>(
               </p>
             )}
           </div>
-        </aside>
+        </MediaInspector>
       </>
     )
   },

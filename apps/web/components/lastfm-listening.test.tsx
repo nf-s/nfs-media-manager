@@ -153,7 +153,13 @@ function syncPage(status: unknown, search?: string, reason = '') {
     [
       [['lastfm-sync'], status],
       [
-        ['lastfm-links', reason, '', 'scrobbles', 'desc'],
+        [
+          'lastfm-links',
+          JSON.stringify(reason ? [reason] : []),
+          '',
+          'scrobbles',
+          'desc',
+        ],
         { pages: [report], pageParams: [1] },
       ],
     ],
@@ -278,7 +284,7 @@ test('scrobble links show reason totals and link library albums', () => {
     /aria-label="Link status for Artist fixture — Album fixture"/,
   )
   assert.match(html, /Another edition or artist credit/)
-  assert.match(html, /<option value="unlinked">Unlinked<\/option>/)
+  assert.match(html, /type="checkbox"\/><span>Unlinked<\/span>/)
   assert.match(html, /href="\/albums\/album-1">Album fixture<\/a>/)
   assert.match(html, />Several albums match</)
   assert.match(html, />2 possible albums</)
@@ -306,9 +312,9 @@ test('scrobble links show reason totals and link library albums', () => {
   assert.match(html, /aria-label="Select all loaded unlinked albums"/)
   assert.match(
     html,
-    /aria-sort="descending"><button[^>]*>Scrobbles<span aria-hidden="true"> ↓/,
+    /aria-sort="descending"><div[^>]*><button[^>]*>Scrobbles<span aria-hidden="true"> ↓/,
   )
-  assert.match(html, /aria-sort="none"><button[^>]*>Scrobbled artist/)
+  assert.match(html, /aria-sort="none"><div[^>]*><button[^>]*>Scrobbled artist/)
   assert.match(
     html,
     /aria-label="Select Artist fixture — Album fixture" disabled=""/,
@@ -345,19 +351,23 @@ test('scrobble matching explanations are in a detail popup rather than a second 
 test('scrobble links use one ordered toolbar and keep the three-column summary simple', () => {
   const html = syncPage(idle)
   const search = html.indexOf('aria-label="Search scrobbled names"')
-  const filter = html.indexOf('aria-label="Link status"')
+  const filter = html.indexOf('aria-label="Filter Link status"')
   const count = html.indexOf('5 names')
   const columns = html.indexOf('class="table-column-controls"')
   const actions = html.indexOf('class="job-selection-toolbar"')
   assert.ok(search > -1)
-  assert.ok(search < filter && filter < count && count < columns)
-  assert.ok(columns < actions)
+  assert.ok(search < count && count < columns && columns < filter)
+  assert.ok(filter < actions)
+  assert.ok(html.lastIndexOf('</table>') < actions)
   assert.equal(html.match(/class="table-column-controls"/g)?.length, 1)
   assert.equal(html.match(/class="secondary-table-toolbar"/g)?.length, 1)
   const summary = html.slice(0, search)
-  assert.match(summary, /aria-sort="ascending"><button[^>]*>Status/)
-  assert.match(summary, /aria-sort="none"><button[^>]*>Scrobbled names/)
-  assert.match(summary, /aria-sort="none"><button[^>]*>Scrobbles/)
+  assert.match(summary, /aria-sort="ascending"><div[^>]*><button[^>]*>Status/)
+  assert.match(
+    summary,
+    /aria-sort="none"><div[^>]*><button[^>]*>Scrobbled names/,
+  )
+  assert.match(summary, /aria-sort="none"><div[^>]*><button[^>]*>Scrobbles/)
 })
 
 test('bulk Spotify search requires confirmation above five explicit unlinked albums', () => {
@@ -377,7 +387,7 @@ test('bulk Spotify search requires confirmation above five explicit unlinked alb
       disabled={false}
     />,
   )
-  assert.match(html, /6 selected/)
+  assert.doesNotMatch(html, />Clear</)
   assert.match(html, /Confirm 6 Spotify album searches/)
   assert.match(html, /disabled=""[^>]*>Search Spotify albums/)
   const small = render(
@@ -441,9 +451,9 @@ test('new album panel prefills Spotify search without requests during server ren
 
 test('scrobble link filter is read from the URL', () => {
   const html = syncPage(idle, 'mediaType=album&reason=unlinked', 'unlinked')
-  assert.match(html, /<option value="unlinked" selected="">Unlinked<\/option>/)
+  assert.match(html, /type="checkbox" checked=""\/><span>Unlinked<\/span>/)
   const unknown = syncPage(idle, 'mediaType=album&reason=unknown')
-  assert.match(unknown, /<option value="" selected="">All<\/option>/)
+  assert.match(unknown, /disabled="">All values<\/button>/)
 })
 
 test('listening tab summarises scrobbles with a year chart and track selector', () => {

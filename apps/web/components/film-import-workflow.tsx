@@ -292,6 +292,54 @@ export default function FilmImportWorkflow({
                 searchValue={(item) =>
                   [item.title, ...item.identifiers].join(' ')
                 }
+                filterColumn="changes"
+                footer={
+                  <div className="import-confirmation">
+                    <FilmProviderSelection
+                      providers={selection.providers}
+                      selected={selection.selected}
+                      onChange={(value) => {
+                        selection.setSelected(value)
+                        setConfirmed(false)
+                      }}
+                      disabled={busy || start.isSuccess}
+                    />
+                    <p className="muted">
+                      {selection.selected.length
+                        ? `Up to ${jobs} metadata jobs for ${selectedNewCount} new films only. Existing films never queue metadata from CSV imports; provider pacing and cooldowns apply.`
+                        : 'Import only. No provider requests.'}{' '}
+                      Films without IDs stay in the library for identification.
+                    </p>
+                    {jobs > 5 && (
+                      <label className="check-label">
+                        <input
+                          type="checkbox"
+                          checked={confirmed}
+                          onChange={(event) =>
+                            setConfirmed(event.target.checked)
+                          }
+                          disabled={busy || start.isSuccess}
+                        />
+                        Queue metadata for these new films
+                      </label>
+                    )}
+                    <Button
+                      disabled={
+                        busy ||
+                        start.isSuccess ||
+                        !rows.length ||
+                        selection.isPending ||
+                        selection.isError ||
+                        (jobs > 5 && !confirmed)
+                      }
+                      onClick={() => start.mutate()}
+                    >
+                      {start.isPending
+                        ? 'Starting...'
+                        : `Import ${rows.length} films`}
+                    </Button>
+                  </div>
+                }
                 filters={
                   kind === 'csv'
                     ? [
@@ -398,49 +446,6 @@ export default function FilmImportWorkflow({
                   },
                 ]}
               />
-              <div className="import-confirmation">
-                <FilmProviderSelection
-                  providers={selection.providers}
-                  selected={selection.selected}
-                  onChange={(value) => {
-                    selection.setSelected(value)
-                    setConfirmed(false)
-                  }}
-                  disabled={busy || start.isSuccess}
-                />
-                <p className="muted">
-                  {selection.selected.length
-                    ? `Up to ${jobs} metadata jobs for ${selectedNewCount} new films only. Existing films never queue metadata from CSV imports; provider pacing and cooldowns apply.`
-                    : 'Import only. No provider requests.'}{' '}
-                  Films without IDs stay in the library for identification.
-                </p>
-                {jobs > 5 && (
-                  <label className="check-label">
-                    <input
-                      type="checkbox"
-                      checked={confirmed}
-                      onChange={(event) => setConfirmed(event.target.checked)}
-                      disabled={busy || start.isSuccess}
-                    />
-                    Queue metadata for these new films
-                  </label>
-                )}
-                <Button
-                  disabled={
-                    busy ||
-                    start.isSuccess ||
-                    !rows.length ||
-                    selection.isPending ||
-                    selection.isError ||
-                    (jobs > 5 && !confirmed)
-                  }
-                  onClick={() => start.mutate()}
-                >
-                  {start.isPending
-                    ? 'Starting...'
-                    : `Import ${rows.length} films`}
-                </Button>
-              </div>
             </>
           )}
           {preview.data.items.length === 0 && (

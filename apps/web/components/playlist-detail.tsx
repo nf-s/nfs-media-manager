@@ -49,6 +49,7 @@ import { scopedHref } from '@/utils/media-scope'
 import {
   PlaylistTabSchema,
   playlistTracksHref,
+  playlistAlbumsHref,
   trackHref,
   type PlaylistTab,
 } from '@/utils/playlist-links'
@@ -67,6 +68,7 @@ import { albumHref, formatTrackDuration } from '@/utils/track-browse'
 import { youtubeScheduleLabels } from '@/utils/youtube'
 import { errorMessage } from './lastfm-sync'
 import MediaArtwork from './media-artwork'
+import { MediaInspector } from './media-inspector'
 import {
   LibraryTrackPlayButton,
   LibraryTrackQueueButton,
@@ -74,6 +76,7 @@ import {
 import { useConfig } from './providers'
 import {
   SecondaryCell,
+  SecondaryColumnFilter,
   SecondaryTableHead,
   SecondaryTableScroll,
   SecondaryTableToolbar,
@@ -94,7 +97,7 @@ function playlistPath(
   sortBy: PlaylistEntrySort = 'position',
   direction: 'asc' | 'desc' = 'asc',
   q = '',
-  kind: PlaylistDetailQuery['kind'] = undefined,
+  kinds: NonNullable<PlaylistDetailQuery['kinds']> = [],
 ) {
   return `/api/v1/playlists/${encodeURIComponent(id)}?${new URLSearchParams({
     page: String(page),
@@ -102,7 +105,7 @@ function playlistPath(
     sortBy,
     direction,
     ...(q ? { q } : {}),
-    ...(kind ? { kind } : {}),
+    ...(kinds.length ? { kinds: JSON.stringify(kinds) } : {}),
   })}`
 }
 
@@ -142,7 +145,7 @@ const entryColumns: Array<{
   { key: 'releaseDate', label: 'Released', defaultVisible: false },
   { key: 'scrobbles', label: 'Scrobbles', defaultVisible: false },
   { key: 'lastListened', label: 'Last listened', defaultVisible: false },
-  { key: 'kind', label: 'Type', defaultVisible: false },
+  { key: 'kind', label: 'Type' },
 ]
 
 export function PlaylistEntries({
@@ -158,7 +161,9 @@ export function PlaylistEntries({
   const [direction, setDirection] = useState<'asc' | 'desc'>('asc')
   const [search, setSearch] = useState('')
   const q = useDeferredValue(search.trim())
-  const [kind, setKind] = useState<PlaylistDetailQuery['kind']>()
+  const [kinds, setKinds] = useState<NonNullable<PlaylistDetailQuery['kinds']>>(
+    [],
+  )
   const columns = useTableColumns('playlist-entries', entryColumns)
   function onSort(key: PlaylistEntrySort) {
     if (key === sortBy) setDirection(direction === 'asc' ? 'desc' : 'asc')
@@ -169,7 +174,7 @@ export function PlaylistEntries({
   }
   const sorting = { sortBy, direction, onSort }
   const entries = useInfiniteQuery({
-    queryKey: ['playlist', id, 'entries', sortBy, direction, q, kind],
+    queryKey: ['playlist', id, 'entries', sortBy, direction, q, kinds],
     initialPageParam: 1,
     queryFn: ({ pageParam, signal }) =>
       fetchApiData(
@@ -181,7 +186,7 @@ export function PlaylistEntries({
           sortBy,
           direction,
           q,
-          kind,
+          kinds,
         ),
         PlaylistDetailSchema,
         { signal },
@@ -192,7 +197,7 @@ export function PlaylistEntries({
   const { scroller, sentinel } = useInfiniteTableScroll({
     enabled: entries.hasNextPage && !entries.isFetching && !entries.isError,
     fetchNextPage: entries.fetchNextPage,
-    resetKey: `${id}:${sortBy}:${direction}:${q}:${kind ?? ''}`,
+    resetKey: `${id}:${sortBy}:${direction}:${q}:${kinds.join(',')}`,
   })
   // A sync between page requests can move entries across page boundaries.
   const byKey = new Map<string, PlaylistEntry>()
@@ -216,24 +221,9 @@ export function PlaylistEntries({
             onChange={(event) => setSearch(event.target.value)}
           />
         }
-        filters={
-          <select
-            aria-label="Entry type"
-            value={kind ?? ''}
-            onChange={(event) => {
-              const value = event.target.value
-              if (value === 'track' || value === 'album') setKind(value)
-              else setKind(undefined)
-            }}
-          >
-            <option value="">All types</option>
-            <option value="track">Tracks</option>
-            <option value="album">Albums</option>
-          </select>
-        }
         count={
           entries.data
-            ? `${total.toLocaleString()} ${q || kind ? 'matching ' : ''}entries`
+            ? `${total.toLocaleString()} ${q || kinds.length ? 'matching ' : ''}entries`
             : undefined
         }
         columns={columns.controls}
@@ -260,6 +250,19 @@ export function PlaylistEntries({
                         ? 'numeric'
                         : undefined
                     }
+                    filter={
+                      column.key === 'kind' ? (
+                        <SecondaryColumnFilter
+                          label="Type"
+                          options={[
+                            { value: 'track', label: 'Tracks' },
+                            { value: 'album', label: 'Albums' },
+                          ]}
+                          value={kinds}
+                          onChange={setKinds}
+                        />
+                      ) : undefined
+                    }
                     {...sorting}
                   />
                 ))}
@@ -281,7 +284,7 @@ export function PlaylistEntries({
                       Retry
                     </button>
                   </>
-                ) : q || kind ? (
+                ) : q || kinds.length ? (
                   'No matching entries.'
                 ) : (
                   'No tracks.'
@@ -690,6 +693,13 @@ export default function PlaylistDetailView({
                 </Link>
               </Button>
             )}
+            {playlist.albumCount > 0 && (
+              <Button asChild size="sm" variant="outline">
+                <Link href={playlistAlbumsHref(playlist.name)}>
+                  Filter albums
+                </Link>
+              </Button>
+            )}
             {playlist.spotifyUrl && (
               <ServiceIconLinks
                 links={[
@@ -771,11 +781,10 @@ export function PlaylistDrawer({
   return (
     <>
       <div className="inspector-backdrop" onClick={onClose} />
-      <aside
+      <MediaInspector
         ref={inspector}
         tabIndex={-1}
         aria-label="Playlist details"
-        className="media-inspector"
       >
         <div className="detail-topbar">
           {topbar}
@@ -793,7 +802,7 @@ export function PlaylistDrawer({
             filterTracks={filterTracks}
           />
         </div>
-      </aside>
+      </MediaInspector>
     </>
   )
 }

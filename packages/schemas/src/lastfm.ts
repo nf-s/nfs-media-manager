@@ -170,6 +170,20 @@ export const LastfmLinkQuerySchema = z.object({
     .default('scrobbles'),
   sortDirection: z.enum(['asc', 'desc']).default('desc'),
   reason: z.union([LastfmLinkReasonSchema, z.literal('unlinked')]).optional(),
+  reasons: z
+    .preprocess(
+      (value) => {
+        if (value === undefined) return []
+        if (typeof value !== 'string') return value
+        try {
+          return JSON.parse(value)
+        } catch {
+          return value
+        }
+      },
+      z.array(z.union([LastfmLinkReasonSchema, z.literal('unlinked')])).max(7),
+    )
+    .default([]),
   q: z.string().max(200).optional(),
   page: z.coerce.number().int().positive().default(1),
   size: z.coerce.number().int().positive().max(100).default(50),

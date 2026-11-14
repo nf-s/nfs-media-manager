@@ -69,6 +69,7 @@ export function libraryViewForPath(
   path: string,
   value: string | null,
 ): LibraryView {
+  if (isUnder(path, '/playlists') && value === 'album') return 'album'
   return trackViewPaths.some((root) => isUnder(path, root)) ||
     (value === 'track' &&
       (isUnder(path, '/imports') ||
@@ -147,6 +148,10 @@ export function switchLibraryHref(
   const current = new URLSearchParams(search)
   const shown = libraryViewForPath(path, current.get('mediaType'))
   if (shown === view) return `${path}${current.size ? `?${current}` : ''}`
+  if (isUnder(path, '/playlists'))
+    return view === 'album' || view === 'track'
+      ? scopedHref(`${path}${current.size ? `?${current}` : ''}`, view)
+      : libraryHome(view)
   if (
     path !== '/imports' &&
     trackImportPaths.includes(path) &&

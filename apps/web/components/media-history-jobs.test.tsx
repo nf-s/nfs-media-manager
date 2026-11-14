@@ -45,7 +45,7 @@ function renderHistory(pages?: JobPage[]) {
         'createdAt',
         'desc',
         '',
-        '',
+        [],
       ],
       {
         pages,
@@ -133,7 +133,7 @@ test('empty history retains its header and uses the common empty row', () => {
   ])
   assert.match(
     html,
-    /<th scope="col" aria-sort="none"><button[^>]*title="Sort by Provider">Provider/,
+    /<th scope="col" aria-sort="none"><div[^>]*><button[^>]*title="Sort by Provider">Provider/,
   )
   assert.match(
     html,
@@ -151,26 +151,29 @@ test('job history exposes a column chooser and a sort control for every data col
   assert.match(html, /type="checkbox"\/>Finished/)
 })
 
-test('job history puts search, status, result count and columns in one ordered toolbar', () => {
+test('job history keeps search, count and columns above its header status filter', () => {
   const html = renderHistory([page(1, 1, 'Example')])
   const search = html.indexOf('aria-label="Search job history"')
-  const status = html.indexOf('aria-label="Job history status"')
+  const status = html.indexOf('aria-label="Filter Job history status"')
   const count = html.indexOf('1 jobs')
   const columns = html.indexOf('class="table-column-controls"')
   assert.ok(search > -1, 'history has a search field')
-  assert.ok(search < status && status < count && count < columns)
+  assert.ok(search < count && count < columns && columns < status)
   assert.match(html, /class="secondary-table-toolbar"/)
 })
 
-test('long history results stay available through labelled details', () => {
+test('unclipped history results avoid redundant detail controls', () => {
   const history = page(1, 1, 'Example provider')
   const job = history.items[0]
   assert.ok(job)
   job.errorMessage =
     'A detailed provider failure that must remain available in full.'
   const html = renderHistory([history])
-  assert.match(html, /aria-label="Job result details"/)
-  assert.match(html, /popover="auto" role="dialog"/)
+  assert.doesNotMatch(html, /aria-label="Job result details"/)
+  assert.match(
+    html,
+    /title="A detailed provider failure that must remain available in full\."/,
+  )
   assert.match(
     html,
     /A detailed provider failure that must remain available in full\./,

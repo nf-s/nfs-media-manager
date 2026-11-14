@@ -10,7 +10,7 @@ import {
   type ReactNode,
 } from 'react'
 import { z } from 'zod'
-import { Columns3, Eye } from 'lucide-react'
+import { Columns3, Filter, Info, TriangleAlert } from 'lucide-react'
 import { Button } from '@repo/ui/components/ui/button'
 import { Input } from '@repo/ui/components/ui/input'
 import {
@@ -28,6 +28,7 @@ export type DataColumn<T> = TableColumn & {
   value: (row: T) => TableValue
   render?: (row: T) => ReactNode
   className?: string
+  filter?: ReactNode
 }
 
 /** A compact value with a full-text reveal when it is clipped. */
@@ -37,12 +38,14 @@ export function SecondaryCell({
   details,
   label = 'Show cell details',
   lines = 1,
+  tone = 'info',
 }: {
   children: ReactNode
   text?: string
   details?: ReactNode
   label?: string
   lines?: 1 | 2
+  tone?: 'info' | 'warning'
 }) {
   const content = useRef<HTMLDivElement>(null)
   const [clipped, setClipped] = useState(false)
@@ -51,6 +54,9 @@ export function SecondaryCell({
     (typeof children === 'string' || typeof children === 'number'
       ? String(children)
       : undefined)
+  const additionalDetails =
+    details != null &&
+    (typeof details !== 'string' || details.trim() !== fullText?.trim())
   useEffect(() => {
     const element = content.current
     if (!element) return
@@ -71,8 +77,8 @@ export function SecondaryCell({
       <div className="secondary-cell-text" ref={content} title={fullText}>
         {children}
       </div>
-      {(details != null || (clipped && fullText)) && (
-        <SecondaryCellDetails label={label}>
+      {(additionalDetails || (clipped && fullText)) && (
+        <SecondaryCellDetails label={label} tone={tone}>
           {details ?? fullText}
         </SecondaryCellDetails>
       )}
@@ -84,9 +90,11 @@ export function SecondaryCell({
 export function SecondaryCellDetails({
   children,
   label,
+  tone = 'info',
 }: {
   children: ReactNode
   label: string
+  tone?: 'info' | 'warning'
 }) {
   const id = useId()
   const trigger = useRef<HTMLButtonElement>(null)
@@ -153,6 +161,7 @@ export function SecondaryCellDetails({
       <button
         type="button"
         className="secondary-cell-action"
+        data-tone={tone}
         ref={trigger}
         title={label}
         aria-label={label}
@@ -170,7 +179,11 @@ export function SecondaryCellDetails({
           }
         }}
       >
-        <Eye size={14} aria-hidden="true" />
+        {tone === 'warning' ? (
+          <TriangleAlert size={14} aria-hidden="true" />
+        ) : (
+          <Info size={14} aria-hidden="true" />
+        )}
       </button>
       <div
         id={id}
@@ -188,6 +201,161 @@ export function SecondaryCellDetails({
         {children}
       </div>
     </div>
+  )
+}
+
+/** An attached footer stays visible outside the table's scrolling rows. */
+export function SecondaryTableFrame({ children }: { children: ReactNode }) {
+  return <div className="secondary-table-frame">{children}</div>
+}
+
+export function SecondaryTableFooter({
+  children,
+  selectedCount,
+}: {
+  children: ReactNode
+  selectedCount?: number
+}) {
+  return (
+    <div className="secondary-table-footer">
+      {selectedCount !== undefined && (
+        <span className="secondary-table-selected" role="status">
+          {selectedCount.toLocaleString()} selected
+        </span>
+      )}
+      {children}
+    </div>
+  )
+}
+
+/** Top-layer filters stay usable inside scrolling tables and sticky headers. */
+export function SecondaryHeaderFilter({
+  label,
+  active = false,
+  disabled = false,
+  children,
+}: {
+  label: string
+  active?: boolean
+  disabled?: boolean
+  children: ReactNode
+}) {
+  const id = useId()
+  const trigger = useRef<HTMLButtonElement>(null)
+  const panel = useRef<HTMLDivElement>(null)
+  const [open, setOpen] = useState(false)
+  useEffect(() => {
+    if (!open) return
+    function position() {
+      if (!trigger.current || !panel.current) return
+      const rect = trigger.current.getBoundingClientRect()
+      const box = panel.current.getBoundingClientRect()
+      panel.current.style.left = `${Math.max(8, Math.min(rect.right - box.width, window.innerWidth - box.width - 8))}px`
+      panel.current.style.top = `${Math.max(8, Math.min(rect.bottom + 4, window.innerHeight - box.height - 8))}px`
+    }
+    function onEscape(event: KeyboardEvent) {
+      if (event.key !== 'Escape' || event.defaultPrevented) return
+      event.preventDefault()
+      event.stopPropagation()
+      panel.current?.hidePopover()
+      trigger.current?.focus()
+    }
+    position()
+    panel.current
+      ?.querySelector<HTMLElement>(
+        'input:not(:disabled), button:not(:disabled), select:not(:disabled)',
+      )
+      ?.focus()
+    const observer = new ResizeObserver(position)
+    if (panel.current) observer.observe(panel.current)
+    window.addEventListener('resize', position)
+    window.addEventListener('scroll', position, true)
+    document.addEventListener('keydown', onEscape, true)
+    return () => {
+      observer.disconnect()
+      window.removeEventListener('resize', position)
+      window.removeEventListener('scroll', position, true)
+      document.removeEventListener('keydown', onEscape, true)
+    }
+  }, [open])
+  return (
+    <span className="secondary-header-filter">
+      <button
+        ref={trigger}
+        type="button"
+        className="secondary-cell-action"
+        data-active={active || undefined}
+        disabled={disabled}
+        aria-label={`Filter ${label}`}
+        title={`Filter ${label}`}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        aria-controls={id}
+        onClick={() => panel.current?.togglePopover()}
+      >
+        <Filter size={13} aria-hidden="true" />
+      </button>
+      <div
+        ref={panel}
+        id={id}
+        popover="auto"
+        role="dialog"
+        aria-label={`Filter ${label}`}
+        className="secondary-header-filter-popover"
+        onToggle={(event) => setOpen(event.newState === 'open')}
+      >
+        {children}
+      </div>
+    </span>
+  )
+}
+
+export function SecondaryColumnFilter<Value extends string>({
+  label,
+  options,
+  value,
+  onChange,
+  disabled,
+}: {
+  label: string
+  options: readonly { value: Value; label: string }[]
+  value: readonly Value[]
+  onChange: (next: Value[]) => void
+  disabled?: boolean
+}) {
+  return (
+    <SecondaryHeaderFilter
+      label={label}
+      active={value.length > 0}
+      disabled={disabled}
+    >
+      <fieldset className="secondary-filter-options">
+        <legend>{label}</legend>
+        <button
+          type="button"
+          disabled={!value.length}
+          onClick={() => onChange([])}
+        >
+          All values
+        </button>
+        {options.map((option) => (
+          <label key={option.value}>
+            <input
+              type="checkbox"
+              checked={value.includes(option.value)}
+              onChange={(event) =>
+                onChange(
+                  event.target.checked
+                    ? [...value, option.value]
+                    : value.filter((item) => item !== option.value),
+                )
+              }
+            />
+            <span>{option.label}</span>
+          </label>
+        ))}
+      </fieldset>
+    </SecondaryHeaderFilter>
   )
 }
 
@@ -342,6 +510,7 @@ export function SecondaryDataTable<T>({
                   sortBy={sort.key}
                   direction={sort.direction}
                   className={column.className}
+                  filter={column.filter}
                   onSort={(key) =>
                     setSort({
                       key,
@@ -404,6 +573,7 @@ export function SecondaryTableHead<Key extends string>({
   className,
   disabled,
   children,
+  filter,
 }: {
   sortKey: Key
   label: string
@@ -413,6 +583,7 @@ export function SecondaryTableHead<Key extends string>({
   className?: string
   disabled?: boolean
   children?: ReactNode
+  filter?: ReactNode
 }) {
   const active = sortKey === sortBy
   return (
@@ -422,18 +593,21 @@ export function SecondaryTableHead<Key extends string>({
         active ? (direction === 'asc' ? 'ascending' : 'descending') : 'none'
       }
     >
-      <button
-        type="button"
-        className="max-w-full truncate"
-        disabled={disabled}
-        onClick={() => onSort(sortKey)}
-        title={`Sort by ${label}`}
-      >
-        {label}
-        <span aria-hidden="true">
-          {active ? (direction === 'asc' ? ' ↑' : ' ↓') : ' ↕'}
-        </span>
-      </button>
+      <div className="secondary-table-heading">
+        <button
+          type="button"
+          className="max-w-full truncate"
+          disabled={disabled}
+          onClick={() => onSort(sortKey)}
+          title={`Sort by ${label}`}
+        >
+          {label}
+          <span aria-hidden="true">
+            {active ? (direction === 'asc' ? ' ↑' : ' ↓') : ' ↕'}
+          </span>
+        </button>
+        {filter}
+      </div>
       {children}
     </TableHead>
   )

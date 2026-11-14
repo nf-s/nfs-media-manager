@@ -22,6 +22,11 @@ export function playlistAlbumsHref(name: string) {
   return `/albums?${playlistFilterParams(name)}`
 }
 
+/** The Films view filtered to members of one stored collection. */
+export function collectionFilmsHref(name: string) {
+  return `/films?${new URLSearchParams({ filters: JSON.stringify([{ field: 'collection', value: name, mode: 'required' } satisfies BrowseFilter]) })}`
+}
+
 export function trackHref(id: string) {
   return `/tracks/${encodeURIComponent(id)}`
 }

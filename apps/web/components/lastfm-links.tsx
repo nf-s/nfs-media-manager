@@ -27,7 +27,7 @@ import {
 import { useInfiniteTableScroll } from '@/hooks/useInfiniteTableScroll'
 import { fetchApiData } from '@/utils/api'
 import {
-  lastfmLinkFilter,
+  lastfmLinkFilterValues,
   lastfmLinkFilters,
   lastfmLinkColumns,
   lastfmLinkKey,
@@ -57,6 +57,9 @@ import {
 import LastfmSearchActions from './lastfm-search-actions'
 import { useConfig } from './providers'
 import {
+  SecondaryColumnFilter,
+  SecondaryTableFrame,
+  SecondaryTableFooter,
   SecondaryCell,
   SecondaryDataTable,
   SecondaryTableToolbar,
@@ -139,12 +142,7 @@ function LinkRow({
           <SecondaryCell
             text={reason}
             label={`Link status for ${group.artistName} — ${group.albumName ?? 'No album'}`}
-            details={
-              <>
-                <p>{reason}</p>
-                {strategy && <p>{strategy}</p>}
-              </>
-            }
+            details={strategy}
           >
             {reason}
           </SecondaryCell>
@@ -231,7 +229,11 @@ export default function LastfmLinks() {
   const { apiBaseUrl } = useConfig()
   const client = useQueryClient()
   const search = useSearchParams()
-  const reason = lastfmLinkFilter(search.get('reason'))
+  const reasons = lastfmLinkFilterValues(
+    search.get('reasons'),
+    search.get('reason'),
+  )
+  const reasonsKey = JSON.stringify(reasons)
   const sortBy = lastfmLinkSort(search.get('sortBy'))
   const sortDirection = lastfmLinkSortDirection(search.get('sortDirection'))
   const [draft, setDraft] = useState(search.get('q') ?? '')
@@ -261,14 +263,14 @@ export default function LastfmLinks() {
   }, [draft])
   const status = useLastfmSyncStatus()
   const links = useInfiniteQuery({
-    queryKey: ['lastfm-links', reason, query, sortBy, sortDirection],
+    queryKey: ['lastfm-links', reasonsKey, query, sortBy, sortDirection],
     initialPageParam: 1,
     placeholderData: keepPreviousData,
     queryFn: ({ pageParam, signal }) =>
       fetchApiData(
         apiBaseUrl,
         lastfmLinksPath({
-          reason,
+          reasons,
           q: query,
           page: pageParam,
           sortBy,
@@ -297,7 +299,7 @@ export default function LastfmLinks() {
     enabled:
       links.hasNextPage && !links.isFetching && !links.isError && !queuePending,
     fetchNextPage: links.fetchNextPage,
-    resetKey: JSON.stringify([reason, query, sortBy, sortDirection]),
+    resetKey: JSON.stringify([reasonsKey, query, sortBy, sortDirection]),
   })
   function clearSelection() {
     setSelectedIds([])
@@ -306,12 +308,13 @@ export default function LastfmLinks() {
   useEffect(() => {
     setSelectedIds([])
     setAnchor(null)
-  }, [reason, query, sortBy, sortDirection])
-  function setReason(value: LastfmLinkFilter | '') {
+  }, [reasonsKey, query, sortBy, sortDirection])
+  function setReasons(value: LastfmLinkFilter[]) {
     clearSelection()
     const params = new URLSearchParams(window.location.search)
-    if (value) params.set('reason', value)
-    else params.delete('reason')
+    if (value.length) params.set('reasons', JSON.stringify(value))
+    else params.delete('reasons')
+    params.delete('reason')
     window.history.replaceState(
       null,
       '',
@@ -373,9 +376,15 @@ export default function LastfmLinks() {
                 <button
                   type="button"
                   className="underline underline-offset-2"
-                  aria-pressed={reason === row.reason}
+                  aria-pressed={reasons.includes(row.reason)}
                   disabled={queuePending}
-                  onClick={() => setReason(row.reason)}
+                  onClick={() =>
+                    setReasons(
+                      reasons.includes(row.reason)
+                        ? reasons.filter((reason) => reason !== row.reason)
+                        : [...reasons, row.reason],
+                    )
+                  }
                 >
                   {lastfmLinkReasonLabels[row.reason]}
                 </button>
@@ -417,6 +426,18 @@ export default function LastfmLinks() {
           </p>
         )}
       </div>
+      {links.isError && items.length > 0 && !links.isFetchNextPageError && (
+        <p role="alert">
+          Could not load scrobble links.{' '}
+          <button type="button" onClick={() => links.refetch()}>
+            Retry
+          </button>
+        </p>
+      )}
+      <LastfmLinkWorkflow
+        selection={selected}
+        onSelectionChange={setSelected}
+      />
       <SecondaryTableToolbar
         search={
           <Input
@@ -432,22 +453,6 @@ export default function LastfmLinks() {
             }}
           />
         }
-        filters={
-          <select
-            aria-label="Link status"
-            value={reason}
-            disabled={queuePending}
-            onChange={(event) =>
-              setReason(lastfmLinkFilter(event.target.value))
-            }
-          >
-            {lastfmLinkFilters.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-        }
         count={
           <>
             {links.data?.pages[0]?.totalCount.toLocaleString() ?? 0} names
@@ -458,151 +463,146 @@ export default function LastfmLinks() {
         }
         columns={columns.controls}
       />
-      {ids.length > 100 && (
-        <div className="secondary-table-actions">
-          <Button
-            variant="ghost"
-            size="sm"
-            disabled={selectionDisabled}
-            onClick={() => {
-              setSelectedIds(ids.slice(0, 100))
-              setAnchor(null)
-            }}
-          >
-            Select first 100
-          </Button>
-        </div>
-      )}
-      {links.isError && items.length > 0 && !links.isFetchNextPageError && (
-        <p role="alert">
-          Could not load scrobble links.{' '}
-          <button type="button" onClick={() => links.refetch()}>
-            Retry
-          </button>
-        </p>
-      )}
-      <LastfmLinkWorkflow
-        selection={selected}
-        onSelectionChange={setSelected}
-      />
-      <LastfmSearchActions
-        groups={items}
-        selectedIds={selectedIds}
-        onSelect={setSelectedIds}
-        onPending={setQueuePending}
-        disabled={selectionDisabled}
-      />
-      <SecondaryTableScroll
-        ref={scroller}
-        className="table-scroll-bounded"
-        role="region"
-        aria-label="Scrobble links"
-        aria-busy={links.isFetching}
-      >
-        <table className="compact-table" aria-label="Scrobble links">
-          <TableHeader>
-            <TableRow>
-              <TableHead className="table-selection-cell">
-                <input
-                  ref={all}
-                  type="checkbox"
-                  aria-label="Select all loaded unlinked albums"
-                  checked={allChecked}
-                  disabled={selectionDisabled || !ids.length}
-                  onChange={(event) => {
-                    setSelectedIds(
-                      event.target.checked
-                        ? [...new Set([...selectedIds, ...ids])]
-                        : selectedIds.filter((id) => !ids.includes(id)),
-                    )
-                    setAnchor(null)
-                  }}
-                />
-              </TableHead>
-              {lastfmLinkColumns
-                .filter((column) => columns.visible(column.key))
-                .map((column) => (
-                  <SecondaryTableHead
-                    key={column.key}
-                    sortKey={column.key}
-                    label={column.label}
-                    sortBy={sortBy}
-                    direction={sortDirection}
-                    onSort={sort}
-                    disabled={queuePending}
+      <SecondaryTableFrame>
+        <SecondaryTableScroll
+          ref={scroller}
+          className="table-scroll-bounded"
+          role="region"
+          aria-label="Scrobble links"
+          aria-busy={links.isFetching}
+        >
+          <table className="compact-table" aria-label="Scrobble links">
+            <TableHeader>
+              <TableRow>
+                <TableHead className="table-selection-cell">
+                  <input
+                    ref={all}
+                    type="checkbox"
+                    aria-label="Select all loaded unlinked albums"
+                    checked={allChecked}
+                    disabled={selectionDisabled || !ids.length}
+                    onChange={(event) => {
+                      setSelectedIds(
+                        event.target.checked
+                          ? [...new Set([...selectedIds, ...ids])]
+                          : [],
+                      )
+                      setAnchor(null)
+                    }}
                   />
-                ))}
-              {columns.visible('actions') && <TableHead>Actions</TableHead>}
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {!items.length && (
-              <TableState colSpan={columns.count + 1} error={links.isError}>
-                {links.isPending
-                  ? 'Loading scrobble links...'
-                  : links.isError
-                    ? 'Could not load scrobble links.'
-                    : 'No matching scrobbled names.'}
-                {links.isError && (
-                  <button
-                    type="button"
-                    className="ml-1 underline"
-                    onClick={() => links.refetch()}
-                  >
-                    Retry
-                  </button>
-                )}
-              </TableState>
+                </TableHead>
+                {lastfmLinkColumns
+                  .filter((column) => columns.visible(column.key))
+                  .map((column) => (
+                    <SecondaryTableHead
+                      key={column.key}
+                      sortKey={column.key}
+                      label={column.label}
+                      filter={
+                        column.key === 'reason' ? (
+                          <SecondaryColumnFilter
+                            label="Link status"
+                            options={lastfmLinkFilters.filter(
+                              (
+                                option,
+                              ): option is {
+                                value: LastfmLinkFilter
+                                label: string
+                              } => option.value !== '',
+                            )}
+                            value={reasons}
+                            onChange={setReasons}
+                            disabled={queuePending}
+                          />
+                        ) : undefined
+                      }
+                      sortBy={sortBy}
+                      direction={sortDirection}
+                      onSort={sort}
+                      disabled={queuePending}
+                    />
+                  ))}
+                {columns.visible('actions') && <TableHead>Actions</TableHead>}
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {!items.length && (
+                <TableState colSpan={columns.count + 1} error={links.isError}>
+                  {links.isPending
+                    ? 'Loading scrobble links...'
+                    : links.isError
+                      ? 'Could not load scrobble links.'
+                      : 'No matching scrobbled names.'}
+                  {links.isError && (
+                    <button
+                      type="button"
+                      className="ml-1 underline"
+                      onClick={() => links.refetch()}
+                    >
+                      Retry
+                    </button>
+                  )}
+                </TableState>
+              )}
+              {items.map((group) => (
+                <LinkRow
+                  key={lastfmLinkKey(group)}
+                  group={group}
+                  visible={columns.visible}
+                  checked={selectedIds.includes(lastfmLinkKey(group))}
+                  disabled={selectionDisabled}
+                  onSelect={(checked, shift) => {
+                    const id = lastfmLinkKey(group)
+                    setSelectedIds(
+                      updateJobSelection(
+                        selectedIds,
+                        ids,
+                        id,
+                        anchor,
+                        shift,
+                        checked,
+                      ),
+                    )
+                    setAnchor(id)
+                  }}
+                  onOpen={(mode) => setSelected({ group, mode })}
+                />
+              ))}
+            </TableBody>
+          </table>
+          <div ref={sentinel} className="py-2 text-center">
+            {links.isFetchingNextPage && (
+              <p role="status" className="muted">
+                Loading more scrobble links...
+              </p>
             )}
-            {items.map((group) => (
-              <LinkRow
-                key={lastfmLinkKey(group)}
-                group={group}
-                visible={columns.visible}
-                checked={selectedIds.includes(lastfmLinkKey(group))}
-                disabled={selectionDisabled}
-                onSelect={(checked, shift) => {
-                  const id = lastfmLinkKey(group)
-                  setSelectedIds(
-                    updateJobSelection(
-                      selectedIds,
-                      ids,
-                      id,
-                      anchor,
-                      shift,
-                      checked,
-                    ),
-                  )
-                  setAnchor(id)
-                }}
-                onOpen={(mode) => setSelected({ group, mode })}
-              />
-            ))}
-          </TableBody>
-        </table>
-        <div ref={sentinel} className="py-2 text-center">
-          {links.isFetchingNextPage && (
-            <p role="status" className="muted">
-              Loading more scrobble links...
-            </p>
-          )}
-          {links.isFetchNextPageError && (
-            <p role="alert">Could not load more scrobble links.</p>
-          )}
-          {links.hasNextPage && !links.isFetchingNextPage && (
-            <Button
-              type="button"
-              variant="ghost"
-              disabled={links.isFetching || queuePending}
-              onClick={() => links.fetchNextPage({ cancelRefetch: false })}
-            >
-              {links.isFetchNextPageError
-                ? 'Retry loading scrobble links'
-                : 'Load more scrobble links'}
-            </Button>
-          )}
-        </div>
-      </SecondaryTableScroll>
+            {links.isFetchNextPageError && (
+              <p role="alert">Could not load more scrobble links.</p>
+            )}
+            {links.hasNextPage && !links.isFetchingNextPage && (
+              <Button
+                type="button"
+                variant="ghost"
+                disabled={links.isFetching || queuePending}
+                onClick={() => links.fetchNextPage({ cancelRefetch: false })}
+              >
+                {links.isFetchNextPageError
+                  ? 'Retry loading scrobble links'
+                  : 'Load more scrobble links'}
+              </Button>
+            )}
+          </div>
+        </SecondaryTableScroll>
+        <SecondaryTableFooter selectedCount={selectedIds.length}>
+          <LastfmSearchActions
+            groups={items}
+            selectedIds={selectedIds}
+            onSelect={setSelectedIds}
+            onPending={setQueuePending}
+            disabled={selectionDisabled}
+          />
+        </SecondaryTableFooter>
+      </SecondaryTableFrame>
     </section>
   )
 }

@@ -180,6 +180,37 @@ test('track imports retain their library across shared music import routes', () 
   )
 })
 
+test('playlists retain the Albums or Tracks context that opened them', () => {
+  assert.equal(libraryViewForPath('/playlists', 'album'), 'album')
+  assert.equal(libraryViewForPath('/playlists', 'track'), 'track')
+  assert.equal(libraryViewForPath('/playlists', null), 'track')
+  assert.equal(libraryViewForPath('/playlists/example', 'album'), 'album')
+  assert.equal(
+    switchLibraryHref(
+      '/playlists',
+      'mediaType=album&playlist=example',
+      'track',
+    ),
+    '/playlists?mediaType=track&playlist=example',
+  )
+  assert.equal(
+    switchLibraryHref(
+      '/playlists',
+      'mediaType=track&playlist=example',
+      'album',
+    ),
+    '/playlists?mediaType=album&playlist=example',
+  )
+  assert.equal(
+    switchLibraryHref('/playlists', 'mediaType=album', 'film'),
+    '/films',
+  )
+  assert.equal(
+    switchLibraryHref('/playlists', 'mediaType=album', 'subscription'),
+    '/subscriptions',
+  )
+})
+
 test('switching between Albums and Tracks keeps the shared import source', () => {
   for (const path of ['/imports/lastfm', '/imports/spotify-playlists']) {
     assert.equal(

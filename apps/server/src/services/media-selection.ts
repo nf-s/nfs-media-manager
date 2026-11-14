@@ -1,4 +1,4 @@
-import { and, eq, inArray, sql } from 'drizzle-orm'
+import { and, eq, inArray, or, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import {
   QueueFilmSelectionSchema,
@@ -116,6 +116,15 @@ async function latestAttempts(
   )
 }
 
+function groupProviderFreshness(filters: ProviderFreshnessFilter[]) {
+  const grouped = new Map<string, ProviderFreshnessFilter[]>()
+  for (const filter of filters) {
+    const existing = grouped.get(filter.provider) ?? []
+    grouped.set(filter.provider, [...existing, filter])
+  }
+  return grouped
+}
+
 export function selectionBrowseOptions(
   query: SelectionFreshnessQuery & {
     direction: 'asc' | 'desc'
@@ -130,12 +139,16 @@ export function selectionBrowseOptions(
       mode: 'older',
       olderThanDays: query.olderThanDays,
     })
-  const conditions = filters.flatMap((filter) => {
-    if (filter.mode === 'all') return []
-    const freshness = freshnessExpression(filter.provider)
-    if (filter.mode === 'failed')
-      return [
-        sql`(
+  const grouped = groupProviderFreshness(filters)
+  const conditions = [...grouped.values()].flatMap((providerFilters) => {
+    if (providerFilters.some((filter) => filter.mode === 'all')) return []
+    const condition = or(
+      ...providerFilters.flatMap((filter) => {
+        if (filter.mode === 'all') return []
+        const freshness = freshnessExpression(filter.provider)
+        if (filter.mode === 'failed')
+          return [
+            sql`(
           select i.status
           from scrape_job_item i
           where i.media_item_id = ${mediaItem.id} and i.provider = ${filter.provider}
@@ -143,20 +156,23 @@ export function selectionBrowseOptions(
           order by i.started_at desc nulls last, i.created_at desc nulls last, i.id desc nulls last
           limit 1
         ) = 'failed'`,
-      ]
-    if (filter.mode === 'never')
-      return [
-        sql`${freshness} is null and not exists (
+          ]
+        if (filter.mode === 'never')
+          return [
+            sql`${freshness} is null and not exists (
         select 1 from scrape_job_item i
         where i.media_item_id = ${mediaItem.id} and i.provider = ${filter.provider}
           and i.started_at is not null and i.status <> 'queued'
       )`,
-      ]
-    return [
-      filter.mode === 'unscraped'
-        ? sql`${freshness} is null`
-        : sql`(${freshness} is null or ${freshness} < ${new Date(Date.now() - filter.olderThanDays * 86400000).toISOString()}::timestamp)`,
-    ]
+          ]
+        return [
+          filter.mode === 'unscraped'
+            ? sql`${freshness} is null`
+            : sql`(${freshness} is null or ${freshness} < ${new Date(Date.now() - filter.olderThanDays * 86400000).toISOString()}::timestamp)`,
+        ]
+      }),
+    )
+    return condition ? [condition] : []
   })
   if (query.legacyImport !== 'all')
     conditions.push(
@@ -322,8 +338,10 @@ export async function queueMediaSelection(
             provider: provider.provider,
           })),
         )
-  const freshness = (options.freshness ?? []).filter(
-    (filter) => filter.mode !== 'all',
+  const freshness = [
+    ...groupProviderFreshness(options.freshness ?? []).values(),
+  ].flatMap((filters) =>
+    filters.some((filter) => filter.mode === 'all') ? [] : filters,
   )
   if (freshness.length) {
     if (freshness.some((filter) => !providers.includes(filter.provider)))
@@ -353,29 +371,30 @@ export async function queueMediaSelection(
         state.date,
       ]),
     )
-    const byProvider = new Map(
-      freshness.map((filter) => [filter.provider, filter]),
-    )
+    const byProvider = groupProviderFreshness(freshness)
     const attempts = await latestAttempts(
       ids,
       freshness.map((filter) => filter.provider),
     )
     const now = Date.now()
     pairs = pairs.filter((pair) => {
-      const filter = byProvider.get(pair.provider)
+      const providerFilters = byProvider.get(pair.provider)
       const date = dates.get(JSON.stringify([pair.mediaItemId, pair.provider]))
       const attempt = attempts.get(
         JSON.stringify([pair.mediaItemId, pair.provider]),
       )
-      if (!filter) return true
-      if (filter.mode === 'failed') return attempt?.status === 'failed'
-      if (filter.mode === 'never') return !date && !attempt
-      if (filter.mode === 'unscraped') return !date
-      if (!date) return true
-      return (
-        filter.mode === 'older' &&
-        date.getTime() < now - filter.olderThanDays * 86400000
-      )
+      if (!providerFilters) return true
+      return providerFilters.some((filter) => {
+        if (filter.mode === 'all') return true
+        if (filter.mode === 'failed') return attempt?.status === 'failed'
+        if (filter.mode === 'never') return !date && !attempt
+        if (filter.mode === 'unscraped') return !date
+        if (!date) return true
+        return (
+          filter.mode === 'older' &&
+          date.getTime() < now - filter.olderThanDays * 86400000
+        )
+      })
     })
   }
   if (!pairs.length)

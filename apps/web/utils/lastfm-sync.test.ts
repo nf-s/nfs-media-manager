@@ -10,6 +10,7 @@ import {
   LASTFM_SYNC_POLL_MS,
   albumPickerPath,
   lastfmLinkFilter,
+  lastfmLinkFilterValues,
   lastfmLinkFilters,
   lastfmLinkKey,
   lastfmLinkSort,
@@ -71,6 +72,20 @@ test('links path includes only the filters in use', () => {
     lastfmLinksPath({ reason: 'unlinked', q: 'Artist fixture & co', page: 3 }),
     '/api/v1/lastfm/links?page=3&size=100&reason=unlinked&q=Artist+fixture+%26+co',
   )
+})
+
+test('multiple link statuses round trip through the URL and retain legacy links', () => {
+  const reasons = lastfmLinkFilterValues('["ambiguous","unmatched"]', 'linked')
+  assert.deepEqual(reasons, ['ambiguous', 'unmatched'])
+  assert.deepEqual(lastfmLinkFilterValues(null, 'unlinked'), ['unlinked'])
+  assert.deepEqual(lastfmLinkFilterValues('["invalid"]', null), [])
+  const url = new URL(
+    lastfmLinksPath({ reasons, q: '', page: 2 }),
+    'http://localhost',
+  )
+  assert.equal(url.searchParams.get('reasons'), JSON.stringify(reasons))
+  assert.equal(url.searchParams.get('reason'), null)
+  assert.equal(url.searchParams.get('page'), '2')
 })
 
 test('link sorting validates URL state and sends sorting with every page', () => {

@@ -130,6 +130,23 @@ test('bounded cells retain full text and rich details behind a labelled disclosu
   assert.match(html, /href="\/jobs\?jobId=fixture">View job/)
 })
 
+test('unclipped cells omit duplicate details and use warning icons for extra warning information', () => {
+  const plain = renderToStaticMarkup(
+    <SecondaryCell details="Not imported">Not imported</SecondaryCell>,
+  )
+  assert.doesNotMatch(plain, /aria-haspopup|lucide-info|lucide-eye/)
+  const warning = renderToStaticMarkup(
+    <SecondaryCell
+      tone="warning"
+      details="The historical report does not identify its library scope."
+    >
+      Scope unknown
+    </SecondaryCell>,
+  )
+  assert.match(warning, /lucide-triangle-alert/)
+  assert.doesNotMatch(warning, /lucide-eye/)
+})
+
 test('secondary toolbars order search, filters, count and a separate columns slot', () => {
   const html = renderToStaticMarkup(
     <SecondaryTableToolbar

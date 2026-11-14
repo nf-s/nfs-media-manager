@@ -353,6 +353,8 @@
   min-height: 0;
   min-width: 0;
   overflow: hidden;
+  width: 100%;
+  max-width: none;
 }
 .table-workspace > .table-scroll {
   flex: 1;
@@ -2390,7 +2392,7 @@
     top: 0;
     right: 0;
     bottom: 0;
-    width: min(600px, 100vw);
+    width: min(var(--inspector-width, 600px), 100vw);
     display: flex;
     flex-direction: column;
     min-width: 0;
@@ -4297,4 +4299,192 @@ button.player-track:hover strong {
   gap: 6px 8px;
   margin-bottom: 6px;
   flex-shrink: 0;
+}
+
+.secondary-table-frame {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: white;
+}
+.admin-page:has(.secondary-table-scroll) {
+  width: 100%;
+  max-width: none;
+}
+.table-workspace > .secondary-table-frame,
+.jobs-page > .secondary-table-frame,
+.film-selection-workspace > .secondary-table-frame,
+.imports-page > .secondary-table-frame,
+.import-review > .secondary-table-frame,
+.film-import-workflow > .secondary-table-frame {
+  flex: 1 1 0%;
+  min-height: 0;
+}
+.secondary-table-frame > .secondary-table-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
+}
+.secondary-table-footer {
+  display: flex;
+  flex-wrap: wrap;
+  flex: none;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 10px 12px;
+  background: #334155;
+  color: #fff;
+  font-size: 12px;
+  max-height: 45dvh;
+  overflow: auto;
+}
+.secondary-table-footer
+  :is(
+    .quiet,
+    .muted,
+    .text-muted-foreground,
+    .text-slate-500,
+    .text-slate-600,
+    legend
+  ) {
+  color: #e2e8f0;
+}
+.secondary-table-footer :is(button, select, input:not([type='checkbox'])) {
+  max-width: 100%;
+  min-height: 28px;
+  border: 1px solid #94a3b8;
+  border-radius: 6px;
+  background: #334155;
+  color: #fff;
+}
+.secondary-table-footer button:hover:not(:disabled) {
+  background: #475569;
+  color: #fff;
+}
+.secondary-table-footer :is(button, select, input):focus-visible {
+  outline: 2px solid white;
+  outline-offset: 2px;
+}
+.secondary-table-footer option {
+  background: #334155;
+  color: #fff;
+}
+.secondary-table-footer a {
+  color: inherit;
+  text-decoration: underline;
+}
+.secondary-table-footer input[type='checkbox'] {
+  accent-color: #cbd5e1;
+}
+.secondary-table-footer
+  :is(.job-bulk-actions, .secondary-table-actions, .import-actions) {
+  margin: 0;
+}
+.secondary-table-selected {
+  white-space: nowrap;
+}
+.secondary-table-footer :is(.film-selection-footer, .import-confirmation) {
+  position: static;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+.secondary-table-heading {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.numeric .secondary-table-heading {
+  justify-content: flex-end;
+}
+.secondary-header-filter {
+  display: inline-flex;
+  flex: none;
+}
+.secondary-header-filter .secondary-cell-action[data-active] {
+  background: #334155;
+  color: white;
+}
+.secondary-header-filter-popover {
+  position: fixed;
+  margin: 0;
+  min-width: 180px;
+  max-width: min(420px, calc(100vw - 16px));
+  max-height: min(440px, calc(100dvh - 16px));
+  overflow: auto;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: white;
+  color: var(--ink);
+  box-shadow: 0 8px 24px #0f172a1a;
+  font-size: 12px;
+  font-weight: normal;
+  text-align: left;
+  white-space: normal;
+}
+.secondary-filter-options {
+  display: grid;
+  gap: 4px;
+}
+.secondary-filter-options legend {
+  margin-bottom: 6px;
+  font-weight: 600;
+}
+.secondary-filter-options > button {
+  text-align: left;
+  padding: 4px 6px;
+  text-decoration: underline;
+}
+.secondary-filter-options > button:disabled {
+  color: var(--ink-2);
+  text-decoration: none;
+}
+.secondary-filter-options label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+}
+.secondary-filter-options input[type='checkbox'] {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  accent-color: #334155;
+}
+.secondary-cell-action[data-tone='warning'] {
+  color: #92400e;
+}
+.inspector-resize-handle {
+  position: absolute;
+  z-index: 2;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 8px;
+  cursor: ew-resize;
+  touch-action: none;
+}
+.inspector-resize-handle:hover,
+.inspector-resize-handle:focus-visible,
+.inspector-resize-handle[data-resizing] {
+  background: #64748b40;
+  outline: none;
+  box-shadow: inset 2px 0 #64748b;
+}
+@media (max-width: 700px) {
+  .inspector-resize-handle {
+    display: none;
+  }
 }

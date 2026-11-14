@@ -1105,6 +1105,22 @@ describe('Spotify playlist imports', () => {
       expect(albums.items.totalCount).toBe(1)
       expect(summarize(albums)).toEqual([['album', 1, 'Legacy Album', null]])
     }
+    const bothKinds = await getPlaylistDetail(
+      'legacy-morning',
+      detailQuery({
+        kinds: JSON.stringify(['track', 'album']),
+        size: 1,
+        page: 4,
+      }),
+    )
+    expect(bothKinds.items).toMatchObject({ totalCount: 4, pageCount: 4 })
+    expect(summarize(bothKinds)).toEqual([['album', 1, 'Legacy Album', null]])
+    const onlyAlbums = await getPlaylistDetail(
+      'legacy-morning',
+      detailQuery({ kinds: ['album'], size: 1 }),
+    )
+    expect(onlyAlbums.items.totalCount).toBe(1)
+    expect(summarize(onlyAlbums)).toEqual([['album', 1, 'Legacy Album', null]])
     const albumSearch = await getPlaylistDetail(
       'legacy-morning',
       detailQuery({ q: 'Second Album', kind: 'track' }),

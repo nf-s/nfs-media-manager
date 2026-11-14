@@ -35,10 +35,10 @@ function render(search = 'mediaType=film') {
       'jobs',
       'infinite',
       'film',
+      '[]',
       '',
       '',
-      '',
-      params.get('provider') ?? '',
+      JSON.stringify(params.get('provider') ? [params.get('provider')] : []),
       params.get('sortBy') ?? 'createdAt',
       params.get('direction') === 'asc' ? 'asc' : 'desc',
     ],
@@ -86,27 +86,30 @@ test('job monitor has shared sortable columns, selection and explicit detail con
   assert.doesNotMatch(html, /title="Sort by Finished"|job-content/)
 })
 
-test('job filters retain a deep-linked provider and precede counts and column controls', () => {
+test('job filters retain a deep-linked provider in the header and actions follow the table', () => {
   const html = render('mediaType=film&provider=unavailable-provider')
-  assert.match(
-    html,
-    /<option value="unavailable-provider" selected="">unavailable-provider<\/option>/,
-  )
+  assert.match(html, /unavailable-provider/)
+  assert.match(html, /type="checkbox" checked=""/)
   const search = html.indexOf('aria-label="Search jobs"')
-  const status = html.indexOf('aria-label="Job status"')
-  const provider = html.indexOf('aria-label="Job provider"')
+  const status = html.indexOf('aria-label="Filter Job status"')
+  const provider = html.indexOf('aria-label="Filter Job provider"')
   const count = html.indexOf('>1 jobs<')
   const columns = html.indexOf('table-columns-trigger')
-  const actions = html.indexOf('secondary-table-actions')
-  assert.ok(search < status && status < provider && provider < count)
-  assert.ok(count < columns && columns < actions)
+  const actions = html.indexOf('secondary-table-footer')
+  assert.ok(search < count && count < columns)
+  assert.ok(columns < provider && provider < status && status < actions)
+  assert.ok(html.indexOf('</table>') < actions)
+  assert.doesNotMatch(html, /Select loaded|>Clear</)
 })
 
 test('job sort state follows the URL and deep-linked details span the visible columns', () => {
   const html = render(
     'mediaType=film&sortBy=status&direction=asc&jobId=example-job',
   )
-  assert.match(html, /aria-sort="ascending"><button[^>]+title="Sort by Status"/)
+  assert.match(
+    html,
+    /aria-sort="ascending"><div[^>]*><button[^>]+title="Sort by Status"/,
+  )
   assert.match(
     html,
     /aria-label="Collapse example-provider job" aria-expanded="true"/,

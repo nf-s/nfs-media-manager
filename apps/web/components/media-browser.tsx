@@ -1,5 +1,7 @@
 'use client'
 
+import { MediaInspector } from './media-inspector'
+
 import Link from 'next/link'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
@@ -1533,11 +1535,10 @@ export default function MediaBrowser({
       {selectedId && (
         <>
           <div className="inspector-backdrop" onClick={closeDetail} />
-          <aside
+          <MediaInspector
             ref={inspector}
             tabIndex={-1}
             aria-label="Media details"
-            className="media-inspector"
           >
             <div className="detail-topbar">
               <a
@@ -1565,7 +1566,7 @@ export default function MediaBrowser({
                 }
               />
             </div>
-          </aside>
+          </MediaInspector>
         </>
       )}
     </section>

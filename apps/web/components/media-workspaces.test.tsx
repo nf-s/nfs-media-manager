@@ -215,7 +215,7 @@ test('album selection renders artists and provider freshness with no initial sel
   )
 })
 
-test('both metadata tables distinguish legacy imports and offer an All, Yes or No filter', () => {
+test('both metadata tables distinguish legacy imports and offer a multiselect header filter', () => {
   const film = FilmSelectionItemSchema.parse({
     ...album,
     id: 'film-1',
@@ -245,10 +245,9 @@ test('both metadata tables distinguish legacy imports and offer an All, Yes or N
         { ...item, id: `${item.id}-new`, title: 'New item' },
       ],
     )
-    assert.match(
-      html,
-      /aria-label="Legacy import"><option value="all" selected="">All<\/option><option value="yes">Yes<\/option><option value="no">No<\/option><\/select>/,
-    )
+    assert.match(html, /aria-label="Filter Legacy import"/)
+    assert.match(html, /type="checkbox"[^>]*\/><span>Yes/)
+    assert.match(html, /type="checkbox"[^>]*\/><span>No/)
     const rows = html.match(/<tr[^>]*>.*?<\/tr>/g) ?? []
     assert.equal(rows.length, 3)
     assert.match(rows[1] ?? '', /<td>Yes<\/td>/)
@@ -340,22 +339,16 @@ test('both libraries reserve Never for no attempt and no success, and offer dist
     lastAttempt: null,
   })) {
     assert.match(html, /<td title="No successful scrape">Never<\/td>/)
-    assert.match(
-      html,
-      /<option value="all" selected="">All scrape statuses<\/option>/,
-    )
-    assert.match(html, /<option value="never">Never attempted<\/option>/)
-    assert.match(html, /<option value="failed">Latest attempt failed<\/option>/)
-    assert.match(
-      html,
-      /<option value="unscraped">No successful scrape<\/option>/,
-    )
-    for (const days of [30, 90, 180, 365])
-      assert.ok(
-        html.includes(
-          `<option value="${days}">No success or older than ${days} days</option>`,
-        ),
-      )
+    assert.match(html, /disabled="">All values<\/button>/)
+    for (const label of [
+      'Never attempted',
+      'Latest attempt failed',
+      'No successful scrape',
+      ...[30, 90, 180, 365].map(
+        (days) => `No success or older than ${days} days`,
+      ),
+    ])
+      assert.ok(html.includes(`<span>${label}</span>`))
     assert.doesNotMatch(html, /Never scraped|Never or older/)
   }
 })
@@ -944,7 +937,7 @@ test('providers are listed by library: subscription providers leave albums and f
   assert.doesNotMatch(films, /YouTube|Spotify|Music metadata/)
 })
 
-test('metadata table places search, filters, count and columns in its shared toolbar', () => {
+test('metadata table keeps search, count and columns above header filters and footer actions', () => {
   const html = render(
     '/jobs/metadata',
     'mediaType=album',
@@ -952,20 +945,18 @@ test('metadata table places search, filters, count and columns in its shared too
   )
   const toolbar = html.indexOf('class="secondary-table-toolbar"')
   const search = html.indexOf('Search albums or add a filter')
-  const filters = html.indexOf('aria-label="Metadata filters"')
+  const filters = html.indexOf('aria-label="Filter Legacy import"')
   const count = html.indexOf('1 albums')
   const columns = html.indexOf('class="table-column-controls"')
   assert.ok(toolbar > -1)
   assert.ok(
-    toolbar < search && search < filters && filters < count && count < columns,
+    toolbar < search && search < count && count < columns && columns < filters,
   )
   const header = html.match(/<thead>(.*?)<\/thead>/s)?.[1]
   assert.ok(header)
-  assert.doesNotMatch(header, /<select/)
-  assert.match(html.slice(filters, count), /aria-label="Legacy import"/)
-  assert.match(
-    html.slice(filters, count),
-    /aria-label="Music metadata freshness"/,
-  )
-  assert.match(html.slice(filters, count), /Ranges/)
+  assert.match(header, /aria-label="Filter Legacy import"/)
+  assert.match(header, /aria-label="Filter Music metadata freshness"/)
+  assert.match(header, /range/)
+  assert.ok(html.indexOf('</table>') < html.indexOf('secondary-table-footer'))
+  assert.doesNotMatch(html, /Clear selection/)
 })

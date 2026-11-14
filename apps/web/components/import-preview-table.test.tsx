@@ -115,14 +115,14 @@ test('preview filtering applies to the complete dataset before rendering a batch
     filterImportPreviewItems(
       rows,
       ' TARGET ARTIST ',
-      'new',
+      ['new'],
       filters,
       searchValue,
     ).map((item) => item.row),
     [75],
   )
   assert.equal(
-    filterImportPreviewItems(rows, '', 'unchanged', filters, searchValue)
+    filterImportPreviewItems(rows, '', ['unchanged'], filters, searchValue)
       .length,
     100,
   )
@@ -130,16 +130,30 @@ test('preview filtering applies to the complete dataset before rendering a batch
     filterImportPreviewItems(
       rows,
       'Target Artist',
-      'unchanged',
+      ['unchanged'],
       filters,
       searchValue,
     ).length,
     0,
   )
+  assert.equal(
+    filterImportPreviewItems(
+      rows,
+      '',
+      ['new', 'unchanged'],
+      filters,
+      searchValue,
+    ).length,
+    101,
+  )
+  assert.equal(
+    filterImportPreviewItems(rows, '', [], filters, searchValue).length,
+    101,
+  )
   assert.equal(rows.length, 101)
 })
 
-test('preview toolbar provides supplied status choices before its row count', () => {
+test('preview status choices live in the column header and row actions follow the table', () => {
   const html = renderToStaticMarkup(
     <ImportPreviewTable
       items={items}
@@ -149,6 +163,8 @@ test('preview toolbar provides supplied status choices before its row count', ()
       actionable={(item) => item.action === 'new'}
       storageKey="test-preview"
       columns={[{ key: 'title', label: 'Title', value: (item) => item.title }]}
+      filterColumn="title"
+      footer={<button type="button">Import selected</button>}
       filters={[
         { key: 'new', label: 'New', matches: (item) => item.action === 'new' },
         {
@@ -159,13 +175,23 @@ test('preview toolbar provides supplied status choices before its row count', ()
       ]}
     />,
   )
-  assert.match(html, /aria-label="Import status"/)
-  assert.match(html, /Already imported<\/option>/)
+  assert.match(html, /aria-label="Filter Import status"/)
+  assert.match(html, /Already imported<\/span>/)
   assert.ok(
-    html.indexOf('aria-label="Search preview"') <
-      html.indexOf('aria-label="Import status"'),
+    html.indexOf('</table>') < html.indexOf('class="secondary-table-footer"'),
   )
   assert.ok(
-    html.indexOf('aria-label="Import status"') < html.indexOf('2 of 2 items'),
+    html.indexOf('class="secondary-table-footer"') <
+      html.indexOf('Import selected</button>'),
+  )
+  assert.match(html, /0 selected/)
+  assert.doesNotMatch(html, /<select/)
+  assert.ok(
+    html.indexOf('aria-label="Search preview"') <
+      html.indexOf('aria-label="Filter Import status"'),
+  )
+  assert.ok(
+    html.indexOf('2 of 2 items') <
+      html.indexOf('aria-label="Filter Import status"'),
   )
 })

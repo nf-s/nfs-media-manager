@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { useEffect, useRef, useState } from 'react'
+import { useState } from 'react'
 import { z } from 'zod'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import {
@@ -52,7 +52,6 @@ export default function JobBulkActions({
 }) {
   const { apiBaseUrl } = useConfig()
   const client = useQueryClient()
-  const selectAll = useRef<HTMLInputElement>(null)
   const [kind, setKind] = useState('')
   const [reviewedSelection, setReviewedSelection] = useState('')
   const [progress, setProgress] = useState(0)
@@ -98,11 +97,6 @@ export default function JobBulkActions({
       : selectedAction === 'cancel'
         ? 'Cancel jobs'
         : 'Dismiss'
-  useEffect(() => {
-    if (selectAll.current)
-      selectAll.current.indeterminate =
-        selectedIds.length > 0 && selectedIds.length < jobs.length
-  }, [selectedIds.length, jobs.length])
   const action = useMutation({
     mutationFn: (kind: 'retry' | 'dismiss' | 'cancel') => {
       if (!reviewing) throw new Error('Review this action before continuing.')
@@ -177,38 +171,6 @@ export default function JobBulkActions({
     return null
   return (
     <div className="job-selection-toolbar">
-      {!single && jobs.length > 0 && (
-        <label className="check-label">
-          <input
-            ref={selectAll}
-            type="checkbox"
-            aria-label="Select all loaded jobs"
-            checked={selectedIds.length === jobs.length}
-            disabled={disabled || action.isPending}
-            onChange={(event) => {
-              onSelect(event.target.checked ? jobs.map((job) => job.id) : [])
-              setReviewedSelection('')
-            }}
-          />
-          Select loaded
-        </label>
-      )}
-      {!single && selectedIds.length > 0 && (
-        <>
-          <span>{selectedIds.length} selected</span>
-          <Button
-            size="sm"
-            variant="ghost"
-            disabled={disabled || action.isPending}
-            onClick={() => {
-              onSelect([])
-              setReviewedSelection('')
-            }}
-          >
-            Clear
-          </Button>
-        </>
-      )}
       {selectedIds.length > 0 ? (
         <>
           <select

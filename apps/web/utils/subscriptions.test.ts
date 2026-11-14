@@ -14,6 +14,7 @@ import {
   formatSubscriptionSourceSize,
   hasSubscriptionFilters,
   parseSubscriptionBrowseState,
+  parseSubscriptionTypes,
   savedSubscriptionSearch,
   subscriptionArtworkUrl,
   subscriptionBrowseQuery,
@@ -384,5 +385,38 @@ test('sources filter by name, handle and type and sort missing values last', () 
       }),
     ),
     '1 subscriber',
+  )
+})
+
+test('channel column filters union types and intersect history before sorting', () => {
+  const sources = [youtubeSource, spotifySource]
+  assert.deepEqual(parseSubscriptionTypes('["youtube","spotify"]'), [
+    'youtube',
+    'spotify',
+  ])
+  assert.deepEqual(parseSubscriptionTypes('["unrecognized"]'), [])
+  assert.deepEqual(parseSubscriptionTypes('invalid JSON'), [])
+  const result = filterSubscriptionSources(sources, {
+    q: '',
+    type: null,
+    types: ['youtube', 'spotify'],
+    history: ['reading'],
+    sortBy: 'title',
+    direction: 'asc',
+  })
+  assert.deepEqual(
+    result.map((source) => source.id),
+    [showId],
+  )
+  assert.equal(
+    filterSubscriptionSources(sources, {
+      q: '',
+      type: null,
+      types: ['youtube', 'spotify'],
+      history: ['reading', 'complete'],
+      sortBy: 'title',
+      direction: 'asc',
+    }).length,
+    2,
   )
 })

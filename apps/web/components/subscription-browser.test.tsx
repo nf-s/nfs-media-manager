@@ -236,7 +236,7 @@ test('the channels list shows YouTube channels and podcasts in the shared table,
   assert.match(html, /<table class="compact-table"/)
   assert.match(
     html,
-    /aria-sort="ascending"><button[^>]*title="Sort by Name">Name<span aria-hidden="true"> ↑/,
+    /aria-sort="ascending"><div class="secondary-table-heading"><button[^>]*title="Sort by Name">Name<span aria-hidden="true"> ↑/,
   )
   assert.match(html, /<td>YouTube<\/td>/)
   assert.match(html, /<td>Podcast<\/td>/)

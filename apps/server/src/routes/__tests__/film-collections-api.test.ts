@@ -46,6 +46,8 @@ describe('film collections API', () => {
       'page=0',
       'size=101',
       'watched=unknown',
+      'watchedStates=invalid',
+      'watchedStates=%5B%22unknown%22%5D',
       `q=${'x'.repeat(201)}`,
     ])
       expect((await app.request(`/example?${query}`)).status).toBe(422)
@@ -75,6 +77,17 @@ describe('film collections API', () => {
       sortBy: 'releaseDate',
       direction: 'desc',
     })
+  })
+  it('validates multiple watched states', async () => {
+    mocks.detail.mockResolvedValue({ id: 'example' })
+    const params = new URLSearchParams({
+      watchedStates: JSON.stringify(['watched', 'unwatched']),
+    })
+    expect((await app.request(`/example?${params}`)).status).toBe(200)
+    expect(mocks.detail).toHaveBeenCalledWith(
+      'example',
+      expect.objectContaining({ watchedStates: ['watched', 'unwatched'] }),
+    )
   })
   it('keeps missing collection responses as 404', async () => {
     mocks.detail.mockRejectedValue(

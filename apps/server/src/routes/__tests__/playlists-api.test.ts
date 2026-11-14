@@ -104,6 +104,8 @@ describe('playlist API', () => {
       'sortBy=unknown',
       'direction=reverse',
       'kind=unknown',
+      'kinds=invalid',
+      'kinds=%5B%22unknown%22%5D',
       `q=${'x'.repeat(201)}`,
     ])
       expect((await send('GET', `/p?${query}`)).status).toBe(422)
@@ -205,5 +207,16 @@ describe('playlist API', () => {
       sortBy: 'position',
       direction: 'asc',
     })
+  })
+  it('passes multiple entry types to the service', async () => {
+    mocks.detail.mockResolvedValue({ id: 'p' })
+    const params = new URLSearchParams({
+      kinds: JSON.stringify(['track', 'album']),
+    })
+    expect((await send('GET', `/p?${params}`)).status).toBe(200)
+    expect(mocks.detail).toHaveBeenCalledWith(
+      'p',
+      expect.objectContaining({ kinds: ['track', 'album'] }),
+    )
   })
 })

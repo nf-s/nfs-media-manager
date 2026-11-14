@@ -89,7 +89,7 @@ test('playlists table links tracks and albums filtered by playlist and labels so
   assert.doesNotMatch(html, />Remove<\/button>/)
   assert.match(
     html,
-    /aria-sort="ascending"><button[^>]*title="Sort by Playlist"[^>]*>Playlist<span aria-hidden="true"> ↑<\/span>/,
+    /aria-sort="ascending"><div[^>]*><button[^>]*title="Sort by Playlist"[^>]*>Playlist<span aria-hidden="true"> ↑<\/span>/,
   )
   assert.match(html, /href="\/imports\/spotify-playlists\?mediaType=track"/)
 })
@@ -159,25 +159,27 @@ test('playlist filters combine name, owner and description search with source', 
     }),
   ]
   assert.deepEqual(
-    filterPlaylists(rows, '  EXAMPLE OWNER  ', 'spotify').map((row) => row.id),
+    filterPlaylists(rows, '  EXAMPLE OWNER  ', ['spotify']).map(
+      (row) => row.id,
+    ),
     ['playlist-1'],
   )
   assert.deepEqual(
-    filterPlaylists(rows, 'evening', 'library').map((row) => row.id),
+    filterPlaylists(rows, 'evening', ['library']).map((row) => row.id),
     ['library'],
   )
   assert.deepEqual(
-    filterPlaylists(rows, 'Synthetic', 'spotify-liked').map((row) => row.id),
+    filterPlaylists(rows, 'Synthetic', ['spotify-liked']).map((row) => row.id),
     ['liked'],
   )
-  assert.deepEqual(filterPlaylists(rows, 'missing', ''), [])
-  assert.equal(filterPlaylists(rows, '', '').length, 3)
+  assert.deepEqual(filterPlaylists(rows, 'missing', []), [])
+  assert.equal(filterPlaylists(rows, '', []).length, 3)
 })
 
-test('playlist toolbar orders search, filters, count and columns before actions', () => {
+test('playlist toolbar follows actions and source filtering stays in the header', () => {
   const html = render(<PlaylistsWorkspace />, [[['playlists'], [playlist]]])
   const search = html.indexOf('aria-label="Search playlists"')
-  const source = html.indexOf('aria-label="Playlist source"')
+  const source = html.indexOf('aria-label="Filter Source"')
   const count = html.indexOf('1 playlists')
   const columns = html.indexOf('aria-label="Visible columns"')
   const actions = html.indexOf(
@@ -185,9 +187,33 @@ test('playlist toolbar orders search, filters, count and columns before actions'
   )
   assert.ok(
     search > 0 &&
-      source > search &&
-      count > source &&
+      actions < search &&
+      count > search &&
       columns > count &&
-      actions > columns,
+      source > html.indexOf('<thead>'),
   )
+})
+
+test('playlist sources can include several values and imports preserve Albums', () => {
+  const rows = [
+    playlist,
+    PlaylistSummarySchema.parse({
+      ...playlist,
+      id: 'liked',
+      source: 'spotify-liked',
+    }),
+    { ...playlist, id: 'library', source: null },
+  ]
+  assert.deepEqual(
+    filterPlaylists(rows, '', ['spotify', 'spotify-liked']).map(
+      (row) => row.id,
+    ),
+    ['playlist-1', 'liked'],
+  )
+  const html = render(
+    <PlaylistsWorkspace />,
+    [[['playlists'], rows]],
+    'mediaType=album',
+  )
+  assert.match(html, /href="\/imports\/spotify-playlists\?mediaType=album"/)
 })

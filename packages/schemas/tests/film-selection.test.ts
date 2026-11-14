@@ -32,9 +32,10 @@ describe('film selection contracts', () => {
     expect(QueueFilmSelectionSchema.safeParse({}).success).toBe(false)
     expect(FilmSelectionQuerySchema.parse({}).sortBy).toBe('dateAdded')
   })
-  it('accepts independent per-provider freshness and rejects ambiguous or malformed filters', () => {
+  it('accepts several freshness modes per provider and rejects duplicate or malformed filters', () => {
     const freshness = [
       { provider: 'one', mode: 'never' },
+      { provider: 'one', mode: 'failed' },
       { provider: 'two', mode: 'older', olderThanDays: 90 },
     ]
     expect(

@@ -14,11 +14,9 @@ import {
 } from '@repo/schemas/browse'
 import {
   lastScrapedField,
-  LegacyImportFilterSchema,
   ProviderFreshnessFilterSchema,
   QueueFilmSelectionSchema,
   type FilmSelectionItem,
-  type LegacyImportFilter,
   type ProviderFreshnessFilter,
 } from '@repo/schemas/film-selection'
 import type { AlbumSelectionItem } from '@repo/schemas/album-selection'
@@ -28,6 +26,10 @@ import { Button } from '@repo/ui/components/ui/button'
 import { TableState } from '@repo/ui/components/ui/table'
 import { useConfig } from './providers'
 import {
+  SecondaryColumnFilter,
+  SecondaryHeaderFilter,
+  SecondaryTableFrame,
+  SecondaryTableFooter,
   SecondaryTableToolbar,
   SecondaryTableScroll,
   SecondaryTableHead,
@@ -51,16 +53,20 @@ type Props = {
 export function updateProviderFreshness(
   filters: ProviderFreshnessFilter[],
   provider: string,
-  value: string,
+  value: string | readonly string[],
 ): ProviderFreshnessFilter[] {
   const remaining = filters.filter((filter) => filter.provider !== provider)
-  if (value === 'all') return remaining
-  const filter = ProviderFreshnessFilterSchema.parse(
-    value === 'never' || value === 'failed' || value === 'unscraped'
-      ? { provider, mode: value }
-      : { provider, mode: 'older', olderThanDays: Number(value) },
-  )
-  return [...remaining, filter]
+  const values = typeof value === 'string' ? [value] : value
+  const next = values
+    .filter((mode) => mode !== 'all')
+    .map((mode) =>
+      ProviderFreshnessFilterSchema.parse(
+        mode === 'never' || mode === 'failed' || mode === 'unscraped'
+          ? { provider, mode }
+          : { provider, mode: 'older', olderThanDays: Number(mode) },
+      ),
+    )
+  return [...remaining, ...next]
 }
 
 export default function FilmSelectionTable(props: Props) {
@@ -79,7 +85,9 @@ function SelectionTable({ providers, mediaType = 'film' }: Props) {
   const client = useQueryClient()
   const [provider, setProvider] = useState('')
   const [freshness, setFreshness] = useState<ProviderFreshnessFilter[]>([])
-  const [legacyImport, setLegacyImport] = useState<LegacyImportFilter>('all')
+  const [legacyImports, setLegacyImports] = useState<string[]>([])
+  const legacyImport =
+    legacyImports.length === 1 ? (legacyImports[0] ?? 'all') : 'all'
   const [selectedProviders, setSelectedProviders] = useState<string[]>([])
   const [q, setQ] = useState('')
   const [draft, setDraft] = useState('')
@@ -244,125 +252,30 @@ function SelectionTable({ providers, mediaType = 'film' }: Props) {
     )
     clear()
   }
-  const filterCount =
-    freshness.length + ranges.length + (legacyImport === 'all' ? 0 : 1)
   return (
     <div className="film-selection-workspace">
+      {freshness.length > 0 && (
+        <p className="muted">
+          Match any selected status per provider, and every filtered provider.
+        </p>
+      )}
+      {films.isError && items.length > 0 && !films.isFetchNextPageError && (
+        <p role="alert">
+          Could not load {plural}.{' '}
+          <button type="button" onClick={() => films.refetch()}>
+            Retry
+          </button>
+        </p>
+      )}
+      {facets.isError && (
+        <p role="alert">
+          Filter suggestions unavailable.{' '}
+          <button type="button" onClick={() => facets.refetch()}>
+            Retry
+          </button>
+        </p>
+      )}
       <fieldset disabled={queue.isPending} className="film-selection-controls">
-        <SecondaryTableToolbar
-          search={
-            <BrowseFilterAutocomplete
-              options={facets.data ?? []}
-              items={[]}
-              titlesLoading={facets.isDebouncing || facets.isPending}
-              titlesError={facets.isError}
-              placeholder={`Search ${plural} or add a filter`}
-              value={draft}
-              onValueChange={setDraft}
-              onAddFilter={(filter) => {
-                setFilters([
-                  ...filters.filter(
-                    (f) => f.field !== filter.field || f.value !== filter.value,
-                  ),
-                  filter,
-                ])
-                setDraft('')
-                clear()
-              }}
-              onApplyText={(value) => {
-                setQ(value)
-                clear()
-              }}
-              onOpenItem={() => {}}
-            />
-          }
-          filters={
-            <details className="toolbar-popover">
-              <summary>
-                Filters{filterCount > 0 ? ` (${filterCount})` : ''}
-              </summary>
-              <div className="popover-panel" aria-label="Metadata filters">
-                <label>
-                  Legacy import
-                  <select
-                    className="w-full min-w-0 text-xs font-normal"
-                    aria-label="Legacy import"
-                    disabled={queue.isPending}
-                    value={legacyImport}
-                    onChange={(event) => {
-                      setLegacyImport(
-                        LegacyImportFilterSchema.parse(event.target.value),
-                      )
-                      clear()
-                    }}
-                  >
-                    <option value="all">All</option>
-                    <option value="yes">Yes</option>
-                    <option value="no">No</option>
-                  </select>
-                </label>
-                {providers.map((item) => {
-                  const filter = freshness.find(
-                    (entry) => entry.provider === item.id,
-                  )
-                  return (
-                    <label key={item.id}>
-                      {item.displayName}
-                      <select
-                        className="w-full min-w-0 text-xs font-normal"
-                        aria-label={`${item.displayName} freshness`}
-                        disabled={queue.isPending}
-                        value={
-                          filter?.mode === 'older'
-                            ? String(filter.olderThanDays)
-                            : (filter?.mode ?? 'all')
-                        }
-                        onChange={(event) => {
-                          setFreshness(
-                            updateProviderFreshness(
-                              freshness,
-                              item.id,
-                              event.target.value,
-                            ),
-                          )
-                          clear()
-                        }}
-                      >
-                        <option value="all">All scrape statuses</option>
-                        <option value="never">Never attempted</option>
-                        <option value="failed">Latest attempt failed</option>
-                        <option value="unscraped">No successful scrape</option>
-                        <option value="30">
-                          No success or older than 30 days
-                        </option>
-                        <option value="90">
-                          No success or older than 90 days
-                        </option>
-                        <option value="180">
-                          No success or older than 180 days
-                        </option>
-                        <option value="365">
-                          No success or older than 365 days
-                        </option>
-                      </select>
-                    </label>
-                  )
-                })}
-                <RangeEditor
-                  presentation="panel"
-                  fields={available}
-                  ranges={ranges}
-                  onChange={(next) => {
-                    setRanges(next)
-                    clear()
-                  }}
-                />
-              </div>
-            </details>
-          }
-          count={`${films.data?.pages[0]?.totalCount.toLocaleString() ?? '…'} ${plural}`}
-          columns={columns.controls}
-        />
         <div className="flex flex-wrap items-center gap-2">
           {q && (
             <Button
@@ -398,355 +311,456 @@ function SelectionTable({ providers, mediaType = 'film' }: Props) {
             </Button>
           )}
         </div>
+        <SecondaryTableToolbar
+          search={
+            <BrowseFilterAutocomplete
+              options={facets.data ?? []}
+              items={[]}
+              titlesLoading={facets.isDebouncing || facets.isPending}
+              titlesError={facets.isError}
+              placeholder={`Search ${plural} or add a filter`}
+              value={draft}
+              onValueChange={setDraft}
+              onAddFilter={(filter) => {
+                setFilters([
+                  ...filters.filter(
+                    (f) => f.field !== filter.field || f.value !== filter.value,
+                  ),
+                  filter,
+                ])
+                setDraft('')
+                clear()
+              }}
+              onApplyText={(value) => {
+                setQ(value)
+                clear()
+              }}
+              onOpenItem={() => {}}
+            />
+          }
+          count={`${films.data?.pages[0]?.totalCount.toLocaleString() ?? '…'} ${plural}`}
+          columns={columns.controls}
+        />
       </fieldset>
-      <p className="muted">
-        {selected.length} selected. Shift-click for a range.
-      </p>
-      {freshness.length > 0 && (
-        <p className="muted">
-          Match all provider filters. Older-than includes no successful scrape.
-        </p>
-      )}
-      {films.isError && items.length > 0 && !films.isFetchNextPageError && (
-        <p role="alert">
-          Could not load {plural}.{' '}
-          <button type="button" onClick={() => films.refetch()}>
-            Retry
-          </button>
-        </p>
-      )}
-      {facets.isError && (
-        <p role="alert">
-          Filter suggestions unavailable.{' '}
-          <button type="button" onClick={() => facets.refetch()}>
-            Retry
-          </button>
-        </p>
-      )}
-      <SecondaryTableScroll
-        ref={scroller}
-        className="film-selection-scroll"
-        aria-label={`${mediaType === 'album' ? 'Album' : 'Film'} selection`}
-        role="region"
-        aria-busy={films.isFetching}
-      >
-        <table
-          className="compact-table film-selection-table"
-          style={{ tableLayout: 'fixed', width: '100%', minWidth: tableWidth }}
-          aria-label={`${mediaType === 'album' ? 'Albums' : 'Films'} to scrape`}
+      <SecondaryTableFrame>
+        <SecondaryTableScroll
+          ref={scroller}
+          className="film-selection-scroll"
+          aria-label={`${mediaType === 'album' ? 'Album' : 'Film'} selection`}
+          role="region"
+          aria-busy={films.isFetching}
         >
-          <colgroup>
-            <col style={{ width: 28 }} />
-            {visible.map((field, index) => (
-              <col key={field.key} style={{ width: columnWidths[index] }} />
-            ))}
-            {columns.visible('legacyImport') && <col style={{ width: 110 }} />}
-            {visibleProviders.map((item) => (
-              <col key={`scraped-${item.id}`} style={{ width: 110 }} />
-            ))}
-          </colgroup>
-          <thead>
-            <tr>
-              <th className="table-selection-cell" scope="col">
-                <input
-                  ref={all}
-                  type="checkbox"
-                  aria-label={`Select all loaded ${plural}`}
-                  checked={allChecked}
-                  disabled={queue.isPending || !ids.length}
-                  onChange={(event) => {
-                    changeSelection(
-                      event.target.checked
-                        ? [...new Set([...selected, ...ids])]
-                        : selected.filter((id) => !ids.includes(id)),
-                    )
-                    setAnchor(null)
-                  }}
-                />
-              </th>
-              {visible.map((field) => (
-                <SecondaryTableHead
-                  key={field.key}
-                  sortKey={field.key}
-                  label={field.label}
-                  sortBy={sortBy}
-                  direction={direction}
-                  onSort={sort}
-                  disabled={queue.isPending}
-                />
+          <table
+            className="compact-table film-selection-table"
+            style={{
+              tableLayout: 'fixed',
+              width: '100%',
+              minWidth: tableWidth,
+            }}
+            aria-label={`${mediaType === 'album' ? 'Albums' : 'Films'} to scrape`}
+          >
+            <colgroup>
+              <col style={{ width: 28 }} />
+              {visible.map((field, index) => (
+                <col key={field.key} style={{ width: columnWidths[index] }} />
               ))}
               {columns.visible('legacyImport') && (
-                <SecondaryTableHead
-                  sortKey="legacyImport"
-                  label="Legacy import"
-                  sortBy={sortBy}
-                  direction={direction}
-                  onSort={sort}
-                  disabled={queue.isPending}
-                />
+                <col style={{ width: 110 }} />
               )}
               {visibleProviders.map((item) => (
-                <SecondaryTableHead
-                  key={item.id}
-                  sortKey={`provider-${item.id}`}
-                  label={`${item.displayName} · Last scraped`}
-                  sortBy={
-                    sortBy === 'lastScrapedAt' ? `provider-${provider}` : sortBy
-                  }
-                  direction={direction}
-                  onSort={() => sort('lastScrapedAt', item.id)}
-                  disabled={queue.isPending}
-                />
+                <col key={`scraped-${item.id}`} style={{ width: 110 }} />
               ))}
-            </tr>
-          </thead>
-          <tbody>
-            {items.map((item) => {
-              const values: BrowseValues = getBrowseValues(item)
-              return (
-                <tr
-                  key={item.id}
-                  data-selected={selected.includes(item.id) || undefined}
-                >
-                  <td className="table-selection-cell">
-                    <input
-                      type="checkbox"
-                      aria-label={`Select ${item.title}`}
-                      checked={selected.includes(item.id)}
-                      disabled={queue.isPending}
-                      onChange={(event) => {
-                        changeSelection(
-                          updateJobSelection(
-                            selected,
-                            ids,
-                            item.id,
-                            anchor,
-                            'shiftKey' in event.nativeEvent &&
-                              event.nativeEvent.shiftKey === true,
-                            event.target.checked,
-                          ),
-                        )
-                        setAnchor(item.id)
-                      }}
-                    />
-                  </td>
-                  {visible.map((field) => (
-                    <td
-                      key={field.key}
-                      title={formatBrowseValue(field, values[field.key])}
-                    >
-                      {field.key === 'title' ? (
-                        <Link href={`/${plural}/${item.id}`}>{item.title}</Link>
-                      ) : (
-                        formatBrowseValue(field, values[field.key])
-                      )}
-                    </td>
-                  ))}
-                  {columns.visible('legacyImport') && (
-                    <td>{item.hasLegacyImport ? 'Yes' : 'No'}</td>
-                  )}
-                  {visibleProviders.map((source) => {
-                    const state = item.providerFreshness[source.id]
-                    const date = state?.lastScrapedAt
-                    const attempt = state?.lastAttempt
-                    const successTitle = date
-                      ? `Last successful scrape: ${date}`
-                      : 'No successful scrape'
-                    return (
-                      <td key={`scraped-${source.id}`} title={successTitle}>
-                        {attempt && attempt.status !== 'succeeded' ? (
-                          <span className="flex w-full min-w-0 max-w-full items-center gap-1 overflow-hidden">
-                            <Link
-                              className="job-status shrink-0 underline underline-offset-2"
-                              data-status={attempt.status}
-                              href={scopedHref(
-                                `/jobs?jobId=${encodeURIComponent(attempt.jobId)}`,
-                                mediaType,
-                              )}
-                              title={`${source.displayName} attempt started: ${attempt.startedAt}${attempt.finishedAt ? `; finished: ${attempt.finishedAt}` : ''}. ${successTitle}`}
+            </colgroup>
+            <thead>
+              <tr>
+                <th className="table-selection-cell" scope="col">
+                  <input
+                    ref={all}
+                    type="checkbox"
+                    aria-label={`Select all loaded ${plural}`}
+                    checked={allChecked}
+                    disabled={queue.isPending || !ids.length}
+                    onChange={(event) => {
+                      changeSelection(
+                        event.target.checked
+                          ? [...new Set([...selected, ...ids])]
+                          : [],
+                      )
+                      setAnchor(null)
+                    }}
+                  />
+                </th>
+                {visible.map((field) => (
+                  <SecondaryTableHead
+                    key={field.key}
+                    sortKey={field.key}
+                    label={field.label}
+                    sortBy={sortBy}
+                    direction={direction}
+                    onSort={sort}
+                    disabled={queue.isPending}
+                    filter={
+                      field.type !== 'text' ? (
+                        <SecondaryHeaderFilter
+                          label={`${field.label} range`}
+                          disabled={queue.isPending}
+                          active={ranges.some(
+                            (range) => range.field === field.key,
+                          )}
+                        >
+                          <RangeEditor
+                            presentation="panel"
+                            fields={[field]}
+                            ranges={ranges.filter(
+                              (range) => range.field === field.key,
+                            )}
+                            onChange={(next) => {
+                              setRanges([
+                                ...ranges.filter(
+                                  (range) => range.field !== field.key,
+                                ),
+                                ...next,
+                              ])
+                              clear()
+                            }}
+                          />
+                          {ranges.some(
+                            (range) => range.field === field.key,
+                          ) && (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              onClick={() => {
+                                setRanges(
+                                  ranges.filter(
+                                    (range) => range.field !== field.key,
+                                  ),
+                                )
+                                clear()
+                              }}
                             >
-                              {attempt.status === 'failed'
-                                ? 'Failed'
-                                : attempt.status === 'running'
-                                  ? 'Running'
-                                  : 'Cancelled'}
-                            </Link>
-                            {attempt.status === 'failed' && attempt.error && (
-                              <span
-                                className="min-w-0 truncate"
-                                title={attempt.error}
-                              >
-                                {attempt.error}
-                              </span>
-                            )}
-                          </span>
-                        ) : date ? (
-                          <time
-                            dateTime={date}
-                            aria-label={`Last successful ${source.displayName} scrape: ${date}`}
-                          >
-                            {formatBrowseValue(
-                              lastScrapedField,
-                              Date.parse(date),
-                            )}
-                          </time>
-                        ) : attempt ? (
-                          'Succeeded'
+                              Clear range
+                            </Button>
+                          )}
+                        </SecondaryHeaderFilter>
+                      ) : undefined
+                    }
+                  />
+                ))}
+                {columns.visible('legacyImport') && (
+                  <SecondaryTableHead
+                    sortKey="legacyImport"
+                    label="Legacy import"
+                    filter={
+                      <SecondaryColumnFilter
+                        label="Legacy import"
+                        options={[
+                          { value: 'yes', label: 'Yes' },
+                          { value: 'no', label: 'No' },
+                        ]}
+                        value={legacyImports}
+                        disabled={queue.isPending}
+                        onChange={(next) => {
+                          setLegacyImports(next)
+                          clear()
+                        }}
+                      />
+                    }
+                    sortBy={sortBy}
+                    direction={direction}
+                    onSort={sort}
+                    disabled={queue.isPending}
+                  />
+                )}
+                {visibleProviders.map((item) => (
+                  <SecondaryTableHead
+                    key={item.id}
+                    sortKey={`provider-${item.id}`}
+                    label={`${item.displayName} · Last scraped`}
+                    filter={
+                      <SecondaryColumnFilter
+                        label={`${item.displayName} freshness`}
+                        disabled={queue.isPending}
+                        options={[
+                          { value: 'never', label: 'Never attempted' },
+                          { value: 'failed', label: 'Latest attempt failed' },
+                          { value: 'unscraped', label: 'No successful scrape' },
+                          ...[30, 90, 180, 365].map((days) => ({
+                            value: String(days),
+                            label: `No success or older than ${days} days`,
+                          })),
+                        ]}
+                        value={freshness
+                          .filter((filter) => filter.provider === item.id)
+                          .map((filter) =>
+                            filter.mode === 'older'
+                              ? String(filter.olderThanDays)
+                              : filter.mode,
+                          )}
+                        onChange={(next) => {
+                          setFreshness(
+                            updateProviderFreshness(freshness, item.id, next),
+                          )
+                          clear()
+                        }}
+                      />
+                    }
+                    sortBy={
+                      sortBy === 'lastScrapedAt'
+                        ? `provider-${provider}`
+                        : sortBy
+                    }
+                    direction={direction}
+                    onSort={() => sort('lastScrapedAt', item.id)}
+                    disabled={queue.isPending}
+                  />
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((item) => {
+                const values: BrowseValues = getBrowseValues(item)
+                return (
+                  <tr
+                    key={item.id}
+                    data-selected={selected.includes(item.id) || undefined}
+                  >
+                    <td className="table-selection-cell">
+                      <input
+                        type="checkbox"
+                        aria-label={`Select ${item.title}`}
+                        checked={selected.includes(item.id)}
+                        disabled={queue.isPending}
+                        onChange={(event) => {
+                          changeSelection(
+                            updateJobSelection(
+                              selected,
+                              ids,
+                              item.id,
+                              anchor,
+                              'shiftKey' in event.nativeEvent &&
+                                event.nativeEvent.shiftKey === true,
+                              event.target.checked,
+                            ),
+                          )
+                          setAnchor(item.id)
+                        }}
+                      />
+                    </td>
+                    {visible.map((field) => (
+                      <td
+                        key={field.key}
+                        title={formatBrowseValue(field, values[field.key])}
+                      >
+                        {field.key === 'title' ? (
+                          <Link href={`/${plural}/${item.id}`}>
+                            {item.title}
+                          </Link>
                         ) : (
-                          'Never'
-                        )}
-                        {state && !state.hasProviderIdentifier && (
-                          <span
-                            className="needs-id ml-2"
-                            title={`Needs ID for ${source.displayName}`}
-                          >
-                            Needs ID
-                          </span>
+                          formatBrowseValue(field, values[field.key])
                         )}
                       </td>
-                    )
-                  })}
-                </tr>
-              )
-            })}
-            {!items.length && (
-              <TableState colSpan={columns.count + 1} error={films.isError}>
-                {films.isPending
-                  ? `Loading ${plural}...`
-                  : films.isError
-                    ? `${plural} unavailable.`
-                    : `No matching ${plural}.`}
-                {films.isError && (
-                  <button
-                    type="button"
-                    className="ml-1 underline"
-                    onClick={() => films.refetch()}
-                  >
-                    Retry
-                  </button>
-                )}
-              </TableState>
+                    ))}
+                    {columns.visible('legacyImport') && (
+                      <td>{item.hasLegacyImport ? 'Yes' : 'No'}</td>
+                    )}
+                    {visibleProviders.map((source) => {
+                      const state = item.providerFreshness[source.id]
+                      const date = state?.lastScrapedAt
+                      const attempt = state?.lastAttempt
+                      const successTitle = date
+                        ? `Last successful scrape: ${date}`
+                        : 'No successful scrape'
+                      return (
+                        <td key={`scraped-${source.id}`} title={successTitle}>
+                          {attempt && attempt.status !== 'succeeded' ? (
+                            <span className="flex w-full min-w-0 max-w-full items-center gap-1 overflow-hidden">
+                              <Link
+                                className="job-status shrink-0 underline underline-offset-2"
+                                data-status={attempt.status}
+                                href={scopedHref(
+                                  `/jobs?jobId=${encodeURIComponent(attempt.jobId)}`,
+                                  mediaType,
+                                )}
+                                title={`${source.displayName} attempt started: ${attempt.startedAt}${attempt.finishedAt ? `; finished: ${attempt.finishedAt}` : ''}. ${successTitle}`}
+                              >
+                                {attempt.status === 'failed'
+                                  ? 'Failed'
+                                  : attempt.status === 'running'
+                                    ? 'Running'
+                                    : 'Cancelled'}
+                              </Link>
+                              {attempt.status === 'failed' && attempt.error && (
+                                <span
+                                  className="min-w-0 truncate"
+                                  title={attempt.error}
+                                >
+                                  {attempt.error}
+                                </span>
+                              )}
+                            </span>
+                          ) : date ? (
+                            <time
+                              dateTime={date}
+                              aria-label={`Last successful ${source.displayName} scrape: ${date}`}
+                            >
+                              {formatBrowseValue(
+                                lastScrapedField,
+                                Date.parse(date),
+                              )}
+                            </time>
+                          ) : attempt ? (
+                            'Succeeded'
+                          ) : (
+                            'Never'
+                          )}
+                          {state && !state.hasProviderIdentifier && (
+                            <span
+                              className="needs-id ml-2"
+                              title={`Needs ID for ${source.displayName}`}
+                            >
+                              Needs ID
+                            </span>
+                          )}
+                        </td>
+                      )
+                    })}
+                  </tr>
+                )
+              })}
+              {!items.length && (
+                <TableState colSpan={columns.count + 1} error={films.isError}>
+                  {films.isPending
+                    ? `Loading ${plural}...`
+                    : films.isError
+                      ? `${plural} unavailable.`
+                      : `No matching ${plural}.`}
+                  {films.isError && (
+                    <button
+                      type="button"
+                      className="ml-1 underline"
+                      onClick={() => films.refetch()}
+                    >
+                      Retry
+                    </button>
+                  )}
+                </TableState>
+              )}
+            </tbody>
+          </table>
+          <div ref={sentinel} className="py-2 text-center">
+            {films.isFetchNextPageError && (
+              <p role="alert">Could not load more {plural}.</p>
             )}
-          </tbody>
-        </table>
-        <div ref={sentinel} className="py-2 text-center">
-          {films.isFetchNextPageError && (
-            <p role="alert">Could not load more {plural}.</p>
-          )}
-          {films.isFetchingNextPage && (
-            <p role="status" className="muted">
-              Loading more {plural}...
-            </p>
-          )}
-          {films.hasNextPage && !films.isFetchingNextPage && (
-            <Button
-              type="button"
-              variant="ghost"
-              disabled={films.isFetching || queue.isPending}
-              onClick={() => films.fetchNextPage({ cancelRefetch: false })}
-            >
-              {films.isFetchNextPageError
-                ? `Retry loading ${plural}`
-                : `Load more ${plural}`}
-            </Button>
-          )}
-          {!films.hasNextPage && items.length > 0 && (
-            <p className="muted">
-              All {items.length.toLocaleString()} matching {plural} loaded.
-            </p>
-          )}
-        </div>
-        <div className="film-selection-footer">
-          <FilmProviderSelection
-            providers={providers}
-            selected={launchProviders}
-            disabled={queue.isPending}
-            onChange={(next) => {
-              setSelectedProviders(next)
-              setConfirmed(false)
-            }}
-          />
-          <div className="job-selection-toolbar">
-            {selected.length > 0 && (
+            {films.isFetchingNextPage && (
+              <p role="status" className="muted">
+                Loading more {plural}...
+              </p>
+            )}
+            {films.hasNextPage && !films.isFetchingNextPage && (
               <Button
                 type="button"
-                size="sm"
                 variant="ghost"
-                disabled={queue.isPending}
-                onClick={clear}
+                disabled={films.isFetching || queue.isPending}
+                onClick={() => films.fetchNextPage({ cancelRefetch: false })}
               >
-                Clear selection
+                {films.isFetchNextPageError
+                  ? `Retry loading ${plural}`
+                  : `Load more ${plural}`}
               </Button>
             )}
-            {!broadConfirmed && (
-              <Button
-                type="button"
-                size="sm"
-                disabled={
-                  queue.isPending || !selected.length || !launchProviders.length
-                }
-                onClick={() => {
-                  setConfirmed(true)
-                  setConfirmedKey(confirmationKey)
-                }}
-              >
-                {selected.length > 0
-                  ? `Review ${operations} metadata jobs`
-                  : `Launch metadata jobs for 0 selected ${plural}`}
-              </Button>
-            )}
-            {broadConfirmed && (
-              <div
-                className="job-action-review"
-                role="region"
-                aria-label="Review metadata jobs"
-              >
-                <p>
-                  <strong>Queue up to {operations} metadata jobs</strong> ·{' '}
-                  {selected.length} {plural} × {launchProviders.length}{' '}
-                  {launchProviders.length === 1 ? 'provider' : 'providers'}
-                </p>
-                <p>
-                  Only selected {plural} are queued. Missing IDs and active jobs
-                  are skipped; provider limits and cooldowns apply.
-                </p>
-                <div className="flex items-center gap-2">
-                  <Button
-                    type="button"
-                    size="sm"
-                    disabled={queue.isPending}
-                    onClick={() => queue.mutate()}
-                  >
-                    {queue.isPending
-                      ? `Queueing ${progress}/${selected.length} ${plural}...`
-                      : `Confirm ${operations} metadata jobs`}
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="ghost"
-                    disabled={queue.isPending}
-                    onClick={() => setConfirmed(false)}
-                  >
-                    Back
-                  </Button>
-                </div>
-              </div>
+            {!films.hasNextPage && items.length > 0 && (
+              <p className="muted">
+                All {items.length.toLocaleString()} matching {plural} loaded.
+              </p>
             )}
           </div>
-          <details className="scrape-rules muted text-xs">
-            <summary>Scrape rules</summary>
-            <p>
-              Dates show successful scrapes, not imports. Failed, running and
-              cancelled show the latest actual attempt. Never means no attempt
-              or successful scrape; No successful scrape also includes failures.
-              Only checked {plural} are queued, at provider limits. Missing IDs
-              and active jobs are skipped. Freshness filters are rechecked
-              before queueing; All scrape statuses allows rescraping.
-            </p>
-          </details>
-        </div>
-      </SecondaryTableScroll>
+        </SecondaryTableScroll>
+        <SecondaryTableFooter selectedCount={selected.length}>
+          <div className="film-selection-footer">
+            <FilmProviderSelection
+              providers={providers}
+              selected={launchProviders}
+              disabled={queue.isPending}
+              onChange={(next) => {
+                setSelectedProviders(next)
+                setConfirmed(false)
+              }}
+            />
+            <div className="job-selection-toolbar">
+              {!broadConfirmed && (
+                <Button
+                  type="button"
+                  size="sm"
+                  disabled={
+                    queue.isPending ||
+                    !selected.length ||
+                    !launchProviders.length
+                  }
+                  onClick={() => {
+                    setConfirmed(true)
+                    setConfirmedKey(confirmationKey)
+                  }}
+                >
+                  {selected.length > 0
+                    ? `Review ${operations} metadata jobs`
+                    : `Launch metadata jobs for 0 selected ${plural}`}
+                </Button>
+              )}
+              {broadConfirmed && (
+                <div
+                  className="job-action-review"
+                  role="region"
+                  aria-label="Review metadata jobs"
+                >
+                  <p>
+                    <strong>Queue up to {operations} metadata jobs</strong> ·{' '}
+                    {selected.length} {plural} × {launchProviders.length}{' '}
+                    {launchProviders.length === 1 ? 'provider' : 'providers'}
+                  </p>
+                  <p>
+                    Only selected {plural} are queued. Missing IDs and active
+                    jobs are skipped; provider limits and cooldowns apply.
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      disabled={queue.isPending}
+                      onClick={() => queue.mutate()}
+                    >
+                      {queue.isPending
+                        ? `Queueing ${progress}/${selected.length} ${plural}...`
+                        : `Confirm ${operations} metadata jobs`}
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      disabled={queue.isPending}
+                      onClick={() => setConfirmed(false)}
+                    >
+                      Back
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </div>
+            <details className="scrape-rules muted text-xs">
+              <summary>Scrape rules</summary>
+              <p>
+                Dates show successful scrapes, not imports. Failed, running and
+                cancelled show the latest actual attempt. Never means no attempt
+                or successful scrape; No successful scrape also includes
+                failures. Only checked {plural} are queued, at provider limits.
+                Missing IDs and active jobs are skipped. Freshness filters are
+                rechecked before queueing; no freshness filter allows
+                rescraping.
+              </p>
+            </details>
+          </div>
+        </SecondaryTableFooter>
+      </SecondaryTableFrame>
       {queue.isError && (
         <p role="alert">
           Could not queue selection. Check progress before retrying.

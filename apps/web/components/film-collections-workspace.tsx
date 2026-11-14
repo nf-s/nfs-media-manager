@@ -1,5 +1,6 @@
 'use client'
 
+import Link from 'next/link'
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { z } from 'zod'
@@ -18,14 +19,17 @@ import { sortTableRows } from '@/utils/secondary-table'
 import { useConfig } from './providers'
 import {
   SecondaryCell,
+  SecondaryColumnFilter,
   SecondaryTableHead,
   SecondaryTableScroll,
   SecondaryTableToolbar,
   useTableColumns,
 } from './secondary-table'
 import FilmCollectionDrawer from './film-collection-detail'
+import ServiceIconLinks from './service-icon-links'
+import { collectionFilmsHref } from '@/utils/playlist-links'
 
-type CollectionSort = 'name' | 'filmCount' | 'createdAt'
+type CollectionSort = 'name' | 'filmCount' | 'createdAt' | 'source'
 const columns: Array<{
   key: CollectionSort
   label: string
@@ -34,12 +38,14 @@ const columns: Array<{
 }> = [
   { key: 'name', label: 'Collection', required: true },
   { key: 'filmCount', label: 'Films' },
+  { key: 'source', label: 'Source' },
   { key: 'createdAt', label: 'Added', defaultVisible: false },
 ]
 
 export default function FilmCollectionsWorkspace() {
   const { apiBaseUrl } = useConfig()
   const [search, setSearch] = useState('')
+  const [sources, setSources] = useState<string[]>([])
   const [sortBy, setSortBy] = useState<CollectionSort>('name')
   const [direction, setDirection] = useState<'asc' | 'desc'>('asc')
   const table = useTableColumns('film-collections', columns)
@@ -55,9 +61,26 @@ export default function FilmCollectionsWorkspace() {
         { signal },
       ),
   })
+  const sourceOptions = [
+    ...new Map(
+      (query.data ?? []).flatMap((row) =>
+        row.sourceLinks.map(
+          (link) =>
+            [link.provider, link.providerLabel] satisfies [string, string],
+        ),
+      ),
+    ).entries(),
+  ]
+    .map(([value, label]) => ({ value, label }))
+    .sort((left, right) => left.label.localeCompare(right.label))
   const rows = sortTableRows(
-    (query.data ?? []).filter((row) =>
-      row.name.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()),
+    (query.data ?? []).filter(
+      (row) =>
+        row.name
+          .toLocaleLowerCase()
+          .includes(search.trim().toLocaleLowerCase()) &&
+        (!sources.length ||
+          row.sourceLinks.some((link) => sources.includes(link.provider))),
     ),
     { key: sortBy, direction },
     (row, key) =>
@@ -65,7 +88,9 @@ export default function FilmCollectionsWorkspace() {
         ? row.filmCount
         : key === 'createdAt'
           ? Date.parse(row.createdAt)
-          : row.name,
+          : key === 'source'
+            ? row.sourceLinks.map((link) => link.providerLabel).join(', ')
+            : row.name,
   )
   function onSort(key: CollectionSort) {
     setDirection(sortBy === key && direction === 'asc' ? 'desc' : 'asc')
@@ -88,7 +113,7 @@ export default function FilmCollectionsWorkspace() {
         count={
           <span aria-live="polite">
             {query.data
-              ? search.trim()
+              ? search.trim() || sources.length
                 ? `${rows.length.toLocaleString()} of ${query.data.length.toLocaleString()} collections`
                 : `${rows.length.toLocaleString()} ${rows.length === 1 ? 'collection' : 'collections'}`
               : ''}
@@ -115,6 +140,16 @@ export default function FilmCollectionsWorkspace() {
                     sortBy={sortBy}
                     direction={direction}
                     onSort={onSort}
+                    filter={
+                      column.key === 'source' && sourceOptions.length > 1 ? (
+                        <SecondaryColumnFilter
+                          label="Source"
+                          options={sourceOptions}
+                          value={sources}
+                          onChange={setSources}
+                        />
+                      ) : undefined
+                    }
                     className={
                       column.key === 'filmCount' ? 'numeric' : undefined
                     }
@@ -138,7 +173,7 @@ export default function FilmCollectionsWorkspace() {
                       Retry
                     </button>
                   </>
-                ) : search ? (
+                ) : search || sources.length ? (
                   'No matching collections.'
                 ) : (
                   'No stored film collections.'
@@ -167,7 +202,40 @@ export default function FilmCollectionsWorkspace() {
                 )}
                 {table.visible('filmCount') && (
                   <TableCell className="numeric">
-                    {row.filmCount.toLocaleString()}
+                    <Link
+                      href={collectionFilmsHref(row.name)}
+                      title={`Filter films by ${row.name}`}
+                    >
+                      {row.filmCount.toLocaleString()}
+                    </Link>
+                  </TableCell>
+                )}
+                {table.visible('source') && (
+                  <TableCell>
+                    <div className="flex min-w-0 items-center gap-1.5">
+                      <SecondaryCell
+                        text={row.sourceLinks
+                          .map((link) => link.providerLabel)
+                          .join(', ')}
+                      >
+                        {row.sourceLinks.length
+                          ? [
+                              ...new Set(
+                                row.sourceLinks.map(
+                                  (link) => link.providerLabel,
+                                ),
+                              ),
+                            ].join(', ')
+                          : '-'}
+                      </SecondaryCell>
+                      <ServiceIconLinks
+                        links={row.sourceLinks.map((link) => ({
+                          provider: link.provider,
+                          label: link.providerLabel,
+                          url: link.url,
+                        }))}
+                      />
+                    </div>
                   </TableCell>
                 )}
                 {table.visible('createdAt') && (

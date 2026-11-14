@@ -97,18 +97,6 @@ export default function LastfmSearchActions({
     <div className="job-selection-toolbar">
       {selectedIds.length ? (
         <>
-          <span>{selectedIds.length} selected</span>
-          <Button
-            size="sm"
-            variant="ghost"
-            disabled={disabled || queue.isPending}
-            onClick={() => {
-              onSelect([])
-              setConfirmedKey('')
-            }}
-          >
-            Clear
-          </Button>
           {ids.length > 5 && (
             <label className="check-label">
               <input

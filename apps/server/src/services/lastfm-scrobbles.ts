@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { and, desc, eq, sql } from 'drizzle-orm'
+import { and, desc, eq, or, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import { ProviderRequestError } from '@repo/media-plugin-sdk'
 import {
@@ -797,6 +797,11 @@ export async function getLastfmLinkReport(
       size: query.size,
       pageCount: 0,
     }
+  const reasons = query.reasons.length
+    ? query.reasons
+    : query.reason
+      ? [query.reason]
+      : []
   const groups = classifiedGroups(configured.account)
   const summary = LinkSummaryRowsSchema.parse(
     (
@@ -838,11 +843,15 @@ export async function getLastfmLinkReport(
           strategy, candidate_ids, count(*) over () as total
         from classified
         where ${
-          query.reason === undefined
-            ? sql`true`
-            : query.reason === 'unlinked'
-              ? sql`reason not in ('linked', 'manual')`
-              : sql`reason = ${query.reason}`
+          reasons.length
+            ? or(
+                ...reasons.map((reason) =>
+                  reason === 'unlinked'
+                    ? sql`reason not in ('linked', 'manual')`
+                    : sql`reason = ${reason}`,
+                ),
+              )
+            : sql`true`
         } and ${
           query.q
             ? sql`(artist_name ilike ${pattern} or album_name ilike ${pattern})`

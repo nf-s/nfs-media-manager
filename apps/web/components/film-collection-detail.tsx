@@ -21,11 +21,15 @@ import {
   TableState,
 } from '@repo/ui/components/ui/table'
 import { useInfiniteTableScroll } from '@/hooks/useInfiniteTableScroll'
+import { collectionFilmsHref } from '@/utils/playlist-links'
+import ServiceIconLinks from './service-icon-links'
 import { fetchApiData } from '@/utils/api'
 import { useConfig } from './providers'
 import MediaArtwork from './media-artwork'
+import { MediaInspector } from './media-inspector'
 import {
   SecondaryCell,
+  SecondaryColumnFilter,
   SecondaryTableHead,
   SecondaryTableScroll,
   SecondaryTableToolbar,
@@ -66,16 +70,18 @@ export function FilmCollectionEntries({ id }: { id: string }) {
   const [direction, setDirection] = useState<'asc' | 'desc'>('asc')
   const [search, setSearch] = useState('')
   const q = useDeferredValue(search.trim())
-  const [watched, setWatched] = useState<FilmCollectionQuery['watched']>()
+  const [watchedStates, setWatchedStates] = useState<
+    NonNullable<FilmCollectionQuery['watchedStates']>
+  >([])
   const table = useTableColumns('film-collection-items', columns)
   const query = useInfiniteQuery({
-    queryKey: ['film-collection', id, sortBy, direction, q, watched],
+    queryKey: ['film-collection', id, sortBy, direction, q, watchedStates],
     staleTime: 0,
     initialPageParam: 1,
     queryFn: ({ pageParam, signal }) =>
       fetchApiData(
         apiBaseUrl,
-        `/api/v1/collections/${encodeURIComponent(id)}?${new URLSearchParams({ page: String(pageParam), size: '100', sortBy, direction, ...(q ? { q } : {}), ...(watched ? { watched } : {}) })}`,
+        `/api/v1/collections/${encodeURIComponent(id)}?${new URLSearchParams({ page: String(pageParam), size: '100', sortBy, direction, ...(q ? { q } : {}), ...(watchedStates.length ? { watchedStates: JSON.stringify(watchedStates) } : {}) })}`,
         FilmCollectionDetailSchema,
         { signal },
       ),
@@ -85,7 +91,7 @@ export function FilmCollectionEntries({ id }: { id: string }) {
   const { scroller, sentinel } = useInfiniteTableScroll({
     enabled: query.hasNextPage && !query.isFetching && !query.isError,
     fetchNextPage: query.fetchNextPage,
-    resetKey: `${id}:${sortBy}:${direction}:${q}:${watched ?? ''}`,
+    resetKey: `${id}:${sortBy}:${direction}:${q}:${watchedStates.join(',')}`,
   })
   const byId = new Map<string, FilmCollectionItem>()
   for (const page of query.data?.pages ?? [])
@@ -108,6 +114,20 @@ export function FilmCollectionEntries({ id }: { id: string }) {
         Stored positions are preserved, including gaps. Older imports may not
         contain the source's film order.
       </p>
+      {summary && (
+        <div className="form-actions">
+          <Button asChild size="sm" variant="outline">
+            <Link href={collectionFilmsHref(summary.name)}>Filter films</Link>
+          </Button>
+          <ServiceIconLinks
+            links={summary.sourceLinks.map((link) => ({
+              provider: link.provider,
+              label: link.providerLabel,
+              url: link.url,
+            }))}
+          />
+        </div>
+      )}
       <SecondaryTableToolbar
         search={
           <Input
@@ -119,25 +139,9 @@ export function FilmCollectionEntries({ id }: { id: string }) {
             onChange={(event) => setSearch(event.target.value)}
           />
         }
-        filters={
-          <select
-            aria-label="Watched status"
-            value={watched ?? ''}
-            onChange={(event) => {
-              const value = event.target.value
-              if (value === 'watched' || value === 'unwatched')
-                setWatched(value)
-              else setWatched(undefined)
-            }}
-          >
-            <option value="">All watched statuses</option>
-            <option value="unwatched">Unwatched</option>
-            <option value="watched">Watched</option>
-          </select>
-        }
         count={
           summary
-            ? q || watched
+            ? q || watchedStates.length
               ? `${summary.items.totalCount.toLocaleString()} of ${summary.filmCount.toLocaleString()} films`
               : `${summary.filmCount.toLocaleString()} films`
             : undefined
@@ -169,6 +173,19 @@ export function FilmCollectionEntries({ id }: { id: string }) {
                     sortBy={sortBy}
                     direction={direction}
                     onSort={onSort}
+                    filter={
+                      column.key === 'watched' ? (
+                        <SecondaryColumnFilter
+                          label="Watched"
+                          options={[
+                            { value: 'unwatched', label: 'Unwatched' },
+                            { value: 'watched', label: 'Watched' },
+                          ]}
+                          value={watchedStates}
+                          onChange={setWatchedStates}
+                        />
+                      ) : undefined
+                    }
                     className={column.className}
                   />
                 ))}
@@ -190,7 +207,7 @@ export function FilmCollectionEntries({ id }: { id: string }) {
                       Retry
                     </button>
                   </>
-                ) : q || watched ? (
+                ) : q || watchedStates.length ? (
                   'No matching films.'
                 ) : (
                   'No films in this collection.'
@@ -320,11 +337,10 @@ export default function FilmCollectionDrawer({
   return (
     <>
       <div className="inspector-backdrop" onClick={onClose} />
-      <aside
+      <MediaInspector
         ref={inspector}
         tabIndex={-1}
         aria-label="Collection details"
-        className="media-inspector"
       >
         <div className="detail-topbar">
           <span>Collection</span>
@@ -335,7 +351,7 @@ export default function FilmCollectionDrawer({
         <div className="flex min-h-0 flex-1 flex-col gap-3 px-3.5 pb-3.5 pt-3">
           <FilmCollectionEntries key={id} id={id} />
         </div>
-      </aside>
+      </MediaInspector>
     </>
   )
 }

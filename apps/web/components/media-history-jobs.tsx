@@ -5,12 +5,12 @@ import React, { useDeferredValue, useState } from 'react'
 import { useInfiniteQuery } from '@tanstack/react-query'
 import {
   JobPageSchema,
-  JobListQuerySchema,
+  jobStatusFilters,
+  type JobStatusFilter,
   getJobDismissal,
   type Job,
   type JobSortKey,
 } from '@repo/schemas/job'
-import type { z } from 'zod'
 import { Input } from '@repo/ui/components/ui/input'
 import { Button } from '@repo/ui/components/ui/button'
 import { TableState } from '@repo/ui/components/ui/table'
@@ -18,6 +18,7 @@ import { useInfiniteTableScroll } from '@/hooks/useInfiniteTableScroll'
 import { fetchApiData } from '@/utils/api'
 import { useConfig } from './providers'
 import {
+  SecondaryColumnFilter,
   SecondaryCell,
   SecondaryTableToolbar,
   SecondaryTableScroll,
@@ -40,8 +41,7 @@ export default function MediaHistoryJobs({
   ])
   const [search, setSearch] = useState('')
   const query = useDeferredValue(search.trim())
-  const [status, setStatus] =
-    useState<z.infer<typeof JobListQuerySchema>['status']>(undefined)
+  const [statuses, setStatuses] = useState<JobStatusFilter[]>([])
   const [sortBy, setSortBy] = useState<JobSortKey>('createdAt')
   const [direction, setDirection] = useState<'asc' | 'desc'>('desc')
   function sort(key: JobSortKey) {
@@ -58,13 +58,13 @@ export default function MediaHistoryJobs({
       sortBy,
       direction,
       query,
-      status ?? '',
+      statuses,
     ],
     initialPageParam: 1,
     queryFn: ({ pageParam, signal }) =>
       fetchApiData(
         apiBaseUrl,
-        `/api/v1/scrape/jobs?${new URLSearchParams({ mediaItemId, sortBy, direction, page: String(pageParam), size: '25', ...(query ? { q: query } : {}), ...(status ? { status } : {}) })}`,
+        `/api/v1/scrape/jobs?${new URLSearchParams({ mediaItemId, sortBy, direction, page: String(pageParam), size: '25', ...(query ? { q: query } : {}), statuses: JSON.stringify(statuses) })}`,
         JobPageSchema,
         { signal },
       ),
@@ -76,7 +76,7 @@ export default function MediaHistoryJobs({
   const { scroller, sentinel } = useInfiniteTableScroll({
     enabled: jobs.hasNextPage && !jobs.isFetching && !jobs.isError,
     fetchNextPage: jobs.fetchNextPage,
-    resetKey: JSON.stringify([mediaItemId, sortBy, direction, query, status]),
+    resetKey: JSON.stringify([mediaItemId, sortBy, direction, query, statuses]),
   })
   // New jobs can move offset boundaries between requests. Keep each job once.
   const jobsById = new Map<string, Job>()
@@ -106,28 +106,6 @@ export default function MediaHistoryJobs({
             onChange={(event) => setSearch(event.target.value)}
           />
         }
-        filters={
-          <select
-            aria-label="Job history status"
-            value={status ?? ''}
-            onChange={(event) =>
-              setStatus(
-                JobListQuerySchema.shape.status.parse(
-                  event.target.value || undefined,
-                ),
-              )
-            }
-          >
-            <option value="">All statuses</option>
-            <option value="active">Active</option>
-            <option value="attention">Needs attention</option>
-            <option value="queued">Queued</option>
-            <option value="running">Running</option>
-            <option value="succeeded">Succeeded</option>
-            <option value="failed">Failed</option>
-            <option value="cancelled">Cancelled</option>
-          </select>
-        }
         count={`${jobs.data?.pages[0]?.totalCount.toLocaleString() ?? 0} jobs`}
         columns={columns.controls}
       />
@@ -154,6 +132,14 @@ export default function MediaHistoryJobs({
                 <SecondaryTableHead
                   sortKey="status"
                   label="Job"
+                  filter={
+                    <SecondaryColumnFilter
+                      label="Job history status"
+                      options={jobStatusFilters}
+                      value={statuses}
+                      onChange={setStatuses}
+                    />
+                  }
                   sortBy={sortBy}
                   direction={direction}
                   onSort={sort}
@@ -204,7 +190,7 @@ export default function MediaHistoryJobs({
                   ? 'Loading jobs...'
                   : jobs.isError
                     ? 'Could not load jobs.'
-                    : query || status
+                    : query || statuses.length
                       ? 'No matching jobs.'
                       : 'No jobs yet.'}
                 {jobs.isError && (
@@ -281,14 +267,6 @@ export default function MediaHistoryJobs({
                       <SecondaryCell
                         text={[itemStatus, result].filter(Boolean).join(' · ')}
                         label="Job result details"
-                        details={
-                          result !== '-' || itemStatus ? (
-                            <>
-                              {itemStatus && <p>{itemStatus}</p>}
-                              <p>{result}</p>
-                            </>
-                          ) : undefined
-                        }
                       >
                         {itemStatus ? `${itemStatus} · ` : ''}
                         {result}

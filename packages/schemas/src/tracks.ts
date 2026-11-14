@@ -294,9 +294,26 @@ export const PlaylistEntrySortSchema = z.enum([
 ])
 export type PlaylistEntrySort = z.infer<typeof PlaylistEntrySortSchema>
 
+const PlaylistKindsParamSchema = z.preprocess(
+  (value) => {
+    if (typeof value !== 'string') return value
+    try {
+      return JSON.parse(value)
+    } catch {
+      return value
+    }
+  },
+  z
+    .array(z.enum(['track', 'album']))
+    .max(2)
+    .transform((values) => [...new Set(values)])
+    .optional(),
+)
+
 export const PlaylistDetailQuerySchema = PaginationQuerySchema.extend({
   q: z.string().trim().max(200).optional(),
   kind: z.enum(['track', 'album']).optional(),
+  kinds: PlaylistKindsParamSchema,
   sortBy: PlaylistEntrySortSchema.default('position'),
   direction: DirectionSchema.default('asc'),
   size: z.coerce.number().int().positive().max(100).default(100),

@@ -11,12 +11,29 @@ describe('job history contracts', () => {
       mediaItemId: 'film-1',
       sortBy: 'createdAt',
       direction: 'desc',
+      statuses: [],
+      providers: [],
       page: 1,
       size: 25,
     })
     expect(JobListQuerySchema.safeParse({ mediaItemId: '' }).success).toBe(
       false,
     )
+  })
+
+  it('accepts multiple status and provider values and validates serialized filters', () => {
+    const input = {
+      statuses: ['queued', 'failed'],
+      providers: ['fixture-one', 'fixture-two'],
+    }
+    const parsed = JobListQuerySchema.parse({
+      statuses: JSON.stringify(input.statuses),
+      providers: JSON.stringify(input.providers),
+    })
+    expect(parsed.statuses).toEqual(input.statuses)
+    expect(parsed.providers).toEqual(input.providers)
+    for (const statuses of ['invalid', '["invalid"]', '[1]', '{}'])
+      expect(JobListQuerySchema.safeParse({ statuses }).success).toBe(false)
   })
 
   it('accepts supported sorts and rejects invalid sort controls', () => {

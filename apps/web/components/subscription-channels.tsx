@@ -25,6 +25,7 @@ import {
   filterSubscriptionSources,
   formatSubscriptionSourceSize,
   parseSubscriptionType,
+  parseSubscriptionTypes,
   subscriptionImportsHref,
   subscriptionSourceColumns,
   subscriptionSourceHref,
@@ -33,6 +34,7 @@ import {
 } from '@/utils/subscriptions'
 import {
   SecondaryCell,
+  SecondaryColumnFilter,
   SecondaryTableScroll,
   SecondaryTableHead,
   SecondaryTableToolbar,
@@ -162,6 +164,14 @@ export default function SubscriptionChannels() {
   const sortBy = subscriptionSourceSort(search.get('sortBy'))
   const direction = search.get('direction') === 'desc' ? 'desc' : 'asc'
   const type = parseSubscriptionType(search.get('type'))
+  const types = search.has('types')
+    ? parseSubscriptionTypes(search.get('types'))
+    : type
+      ? [type]
+      : []
+  const history = search
+    .getAll('history')
+    .filter((value) => value === 'complete' || value === 'reading')
   const [draft, setDraft] = useState(search.get('q') ?? '')
   const [q, setQ] = useState(search.get('q') ?? '')
   useEffect(() => {
@@ -179,8 +189,15 @@ export default function SubscriptionChannels() {
     })
   }
   const all = sources.data?.items ?? []
-  const items = filterSubscriptionSources(all, { q, type, sortBy, direction })
-  const narrowed = Boolean(q || type)
+  const items = filterSubscriptionSources(all, {
+    q,
+    type: null,
+    types,
+    history,
+    sortBy,
+    direction,
+  })
+  const narrowed = Boolean(q || types.length || history.length)
   return (
     <section
       className="admin-page table-workspace"
@@ -197,22 +214,6 @@ export default function SubscriptionChannels() {
             maxLength={200}
             onChange={(event) => setDraft(event.target.value)}
           />
-        }
-        filters={
-          <select
-            aria-label="Type"
-            value={type ?? ''}
-            onChange={(event) =>
-              replaceParams({ type: event.target.value || null })
-            }
-          >
-            <option value="">All types</option>
-            {SubscriptionTypeSchema.options.map((option) => (
-              <option key={option} value={option}>
-                {subscriptionTypeLabels[option]}
-              </option>
-            ))}
-          </select>
         }
         count={
           <span aria-live="polite">
@@ -246,6 +247,48 @@ export default function SubscriptionChannels() {
                     direction={direction}
                     onSort={sort}
                     className={column.numeric ? 'numeric' : undefined}
+                    filter={
+                      column.key === 'type' ? (
+                        <SecondaryColumnFilter
+                          label="Type"
+                          options={SubscriptionTypeSchema.options.map(
+                            (value) => ({
+                              value,
+                              label: subscriptionTypeLabels[value],
+                            }),
+                          )}
+                          value={types}
+                          onChange={(next) =>
+                            replaceParams({
+                              type: null,
+                              types: next.length ? JSON.stringify(next) : null,
+                            })
+                          }
+                        />
+                      ) : column.key === 'historyComplete' ? (
+                        <SecondaryColumnFilter
+                          label="History"
+                          options={[
+                            { value: 'complete', label: 'Complete' },
+                            { value: 'reading', label: 'Reading history' },
+                          ]}
+                          value={history}
+                          onChange={(next) => {
+                            const params = new URLSearchParams(
+                              window.location.search,
+                            )
+                            params.delete('history')
+                            for (const value of next)
+                              params.append('history', value)
+                            window.history.replaceState(
+                              null,
+                              '',
+                              `${window.location.pathname}?${params}`,
+                            )
+                          }}
+                        />
+                      ) : undefined
+                    }
                   />
                 ))}
             </TableRow>

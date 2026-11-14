@@ -282,6 +282,66 @@ describe('unified metadata selection', () => {
     ).toEqual([])
   })
 
+  it('unions statuses within a provider and intersects provider columns', () => {
+    const options = selectionBrowseOptions(
+      FilmSelectionQuerySchema.parse({
+        freshness: [
+          { provider: 'one', mode: 'never' },
+          { provider: 'one', mode: 'failed' },
+          { provider: 'two', mode: 'unscraped' },
+        ],
+      }),
+    )
+    expect(options.conditions).toHaveLength(2)
+    const first = options.conditions[0]
+    const second = options.conditions[1]
+    if (!first || !second) throw new Error('Expected provider predicates')
+    const dialect = new PgDialect()
+    expect(dialect.sqlToQuery(first).sql).toContain(' or ')
+    expect(
+      dialect.sqlToQuery(first).params.every((value) => value === 'one'),
+    ).toBe(true)
+    expect(dialect.sqlToQuery(second).params).toEqual(['two'])
+  })
+
+  it('rechecks a union of never attempted and failed pairs before queueing', async () => {
+    mocks.rows
+      .mockResolvedValueOnce([{ id: 'film-1' }, { id: 'film-2' }])
+      .mockResolvedValueOnce([])
+    mocks.attempts.mockResolvedValue([
+      {
+        id: 'film-1',
+        provider: 'one',
+        status: 'failed',
+        startedAt: new Date('2026-02-01'),
+        finishedAt: new Date('2026-02-01T00:00:01Z'),
+        message: 'Lookup failed',
+        jobId: 'failed-job',
+      },
+    ])
+    mocks.queue.mockResolvedValue({ queued: 2, skipped: 0, warnings: [] })
+    await queueMediaSelection(
+      {
+        ...request,
+        providers: ['one'],
+        freshness: [
+          { provider: 'one', mode: 'never' },
+          { provider: 'one', mode: 'failed' },
+        ],
+      },
+      'film',
+      null,
+    )
+    expect(mocks.queue).toHaveBeenCalledWith(
+      [
+        { mediaItemId: 'film-1', provider: 'one' },
+        { mediaItemId: 'film-2', provider: 'one' },
+      ],
+      null,
+      expect.any(Object),
+    )
+  })
+
   it('includes the latest failed attempt without replacing the last successful date', async () => {
     mocks.rows.mockResolvedValue([
       { id: film.id, provider: 'one', date: new Date('2026-01-01') },

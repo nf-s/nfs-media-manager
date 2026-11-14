@@ -463,10 +463,11 @@ export async function getPlaylistDetail(
 ): Promise<PlaylistDetail> {
   const summary = await getPlaylistSummary(id)
   const pattern = `%${(query.q ?? '').replace(/[\\%_]/g, '\\$&')}%`
+  const kinds = query.kinds ?? (query.kind ? [query.kind] : [])
   const kindFilter =
-    query.kind === 'track'
+    kinds.length === 1 && kinds.includes('track')
       ? sql`and lt.media_item_id is not null`
-      : query.kind === 'album'
+      : kinds.length === 1 && kinds.includes('album')
         ? sql`and lt.media_item_id is null and a.media_item_id is not null`
         : sql``
   const searchFilter = query.q

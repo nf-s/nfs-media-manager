@@ -44,7 +44,7 @@ import {
   isProviderItemNotFoundError,
   type MediaProviderPlugin,
 } from '@repo/media-plugin-sdk'
-import { and, eq, inArray, sql } from 'drizzle-orm'
+import { and, eq, inArray, or, sql } from 'drizzle-orm'
 import { nanoid } from 'nanoid'
 import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
@@ -1619,15 +1619,29 @@ export async function listJobs(
 ): Promise<JobPage> {
   const query = JobListQuerySchema.parse(input)
   const pattern = `%${(query.q ?? '').replace(/[\\%_]/g, '\\$&')}%`
+  const statuses = query.statuses.length
+    ? query.statuses
+    : query.status
+      ? [query.status]
+      : []
+  const providers = query.providers.length
+    ? query.providers
+    : query.provider
+      ? [query.provider]
+      : []
   const where = and(
-    query.status === 'active'
-      ? inArray(scrapeJob.status, ['queued', 'running'])
-      : query.status === 'attention'
-        ? jobsNeedingAttention()
-        : query.status
-          ? eq(scrapeJob.status, query.status)
-          : undefined,
-    query.provider ? eq(scrapeJob.provider, query.provider) : undefined,
+    statuses.length
+      ? or(
+          ...statuses.map((status) =>
+            status === 'active'
+              ? inArray(scrapeJob.status, ['queued', 'running'])
+              : status === 'attention'
+                ? jobsNeedingAttention()
+                : eq(scrapeJob.status, status),
+          ),
+        )
+      : undefined,
+    providers.length ? inArray(scrapeJob.provider, providers) : undefined,
     query.mediaType ? jobsInMediaScope(query.mediaType) : undefined,
     query.mediaItemId
       ? sql`(exists (

@@ -3,6 +3,9 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import {
   SecondaryCell,
+  SecondaryColumnFilter,
+  SecondaryTableFrame,
+  SecondaryTableFooter,
   SecondaryTableScroll,
   SecondaryTableHead,
   SecondaryTableToolbar,
@@ -28,16 +31,19 @@ export type ImportPreviewFilter<Item> = {
 export function filterImportPreviewItems<Item>(
   items: readonly Item[],
   search: string,
-  filter: string,
+  filter: readonly string[],
   filters: readonly ImportPreviewFilter<Item>[],
   searchValue: (item: Item) => string,
 ): Item[] {
   const term = search.trim().toLocaleLowerCase()
-  const selectedFilter = filters.find((option) => option.key === filter)
+  const selectedFilters = filters.filter((option) =>
+    filter.includes(option.key),
+  )
   return items.filter(
     (item) =>
       (!term || searchValue(item).toLocaleLowerCase().includes(term)) &&
-      (!selectedFilter || selectedFilter.matches(item)),
+      (!selectedFilters.length ||
+        selectedFilters.some((option) => option.matches(item))),
   )
 }
 
@@ -52,6 +58,8 @@ export default function ImportPreviewTable<
   columns,
   storageKey,
   filters = [],
+  filterColumn,
+  footer,
   searchValue,
 }: {
   items: Item[]
@@ -61,6 +69,8 @@ export default function ImportPreviewTable<
   actionable: (item: Item) => boolean
   storageKey: string
   filters?: readonly ImportPreviewFilter<Item>[]
+  filterColumn?: string
+  footer?: ReactNode
   searchValue?: (item: Item) => string
   columns: {
     key: string
@@ -72,7 +82,7 @@ export default function ImportPreviewTable<
 }) {
   const visibility = useTableColumns(storageKey, columns)
   const [search, setSearch] = useState('')
-  const [filter, setFilter] = useState('')
+  const [filter, setFilter] = useState<string[]>([])
   const [sort, setSort] = useState<TableSort>({ key: 'row', direction: 'asc' })
   const filtered = filterImportPreviewItems(
     items,
@@ -126,142 +136,146 @@ export default function ImportPreviewTable<
             }}
           />
         }
-        filters={
-          filters.length ? (
-            <select
-              aria-label="Import status"
-              value={filter}
-              disabled={disabled}
-              onChange={(event) => {
-                setFilter(event.target.value)
-                clearSelection()
-              }}
-            >
-              <option value="">All rows</option>
-              {filters.map((option) => (
-                <option key={option.key} value={option.key}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          ) : undefined
-        }
         count={`${filtered.length.toLocaleString()} of ${items.length.toLocaleString()} items`}
         columns={visibility.controls}
       />
-      <SecondaryTableScroll
-        ref={scroller}
-        className="import-preview-scroll"
-        role="region"
-        aria-label="Import preview"
-      >
-        <table className="compact-table" aria-label="Import preview">
-          <thead>
-            <tr>
-              <th scope="col" className="table-selection-cell">
-                <input
-                  ref={all}
-                  type="checkbox"
-                  aria-label="Select all preview items"
-                  checked={checked}
-                  disabled={disabled || !ids.length}
-                  onChange={(event) => {
-                    onChange(event.target.checked ? ids.map(Number) : [])
-                    setAnchor(null)
-                  }}
-                />
-              </th>
-              {columns
-                .filter((column) => visibility.visible(column.key))
-                .map((column) => (
-                  <SecondaryTableHead
-                    key={column.key}
-                    sortKey={column.key}
-                    label={column.label}
-                    sortBy={sort.key}
-                    direction={sort.direction}
-                    onSort={(key) => {
-                      setSort({
-                        key,
-                        direction:
-                          key === sort.key && sort.direction === 'asc'
-                            ? 'desc'
-                            : 'asc',
-                      })
-                      setAnchor(null)
-                      setCount(50)
-                    }}
-                  />
-                ))}
-            </tr>
-          </thead>
-          <tbody>
-            {!ordered.length && (
-              <TableState colSpan={visibility.count + 1}>
-                {items.length ? 'No matching items.' : 'No items to import.'}
-              </TableState>
-            )}
-            {ordered.slice(0, count).map((item) => (
-              <tr
-                key={item.row}
-                data-selected={selected.includes(item.row) || undefined}
-              >
-                <td className="table-selection-cell">
+      <SecondaryTableFrame>
+        <SecondaryTableScroll
+          ref={scroller}
+          className="import-preview-scroll"
+          role="region"
+          aria-label="Import preview"
+        >
+          <table className="compact-table" aria-label="Import preview">
+            <thead>
+              <tr>
+                <th scope="col" className="table-selection-cell">
                   <input
+                    ref={all}
                     type="checkbox"
-                    aria-label={`Import ${item.title}`}
-                    checked={selected.includes(item.row)}
-                    disabled={disabled || !actionable(item)}
+                    aria-label="Select all preview items"
+                    checked={checked}
+                    disabled={disabled || !ids.length}
                     onChange={(event) => {
-                      onChange(
-                        updateJobSelection(
-                          selection,
-                          ids,
-                          String(item.row),
-                          anchor,
-                          'shiftKey' in event.nativeEvent &&
-                            event.nativeEvent.shiftKey === true,
-                          event.target.checked,
-                        ).map(Number),
-                      )
-                      setAnchor(String(item.row))
+                      onChange(event.target.checked ? ids.map(Number) : [])
+                      setAnchor(null)
                     }}
                   />
-                </td>
+                </th>
                 {columns
                   .filter((column) => visibility.visible(column.key))
                   .map((column) => (
-                    <td key={column.key}>
-                      {column.render ? (
-                        column.render(item)
-                      ) : (
-                        <SecondaryCell text={String(column.value(item) ?? '-')}>
-                          {String(column.value(item) ?? '-')}
-                        </SecondaryCell>
-                      )}
-                    </td>
+                    <SecondaryTableHead
+                      key={column.key}
+                      sortKey={column.key}
+                      label={column.label}
+                      filter={
+                        column.key === filterColumn && filters.length ? (
+                          <SecondaryColumnFilter
+                            label="Import status"
+                            options={filters.map((option) => ({
+                              value: option.key,
+                              label: option.label,
+                            }))}
+                            value={filter}
+                            disabled={disabled}
+                            onChange={(value) => {
+                              setFilter(value)
+                              clearSelection()
+                            }}
+                          />
+                        ) : undefined
+                      }
+                      sortBy={sort.key}
+                      direction={sort.direction}
+                      onSort={(key) => {
+                        setSort({
+                          key,
+                          direction:
+                            key === sort.key && sort.direction === 'asc'
+                              ? 'desc'
+                              : 'asc',
+                        })
+                        setAnchor(null)
+                        setCount(50)
+                      }}
+                    />
                   ))}
               </tr>
-            ))}
-          </tbody>
-        </table>
-        <div
-          ref={sentinel}
-          className="py-2 text-center text-sm text-muted-foreground"
-          role="status"
-        >
-          {Math.min(count, ordered.length)} of {ordered.length} items loaded
-        </div>
-        {count < ordered.length && (
-          <Button
-            type="button"
-            variant="ghost"
-            onClick={() => setCount((value) => value + 50)}
+            </thead>
+            <tbody>
+              {!ordered.length && (
+                <TableState colSpan={visibility.count + 1}>
+                  {items.length ? 'No matching items.' : 'No items to import.'}
+                </TableState>
+              )}
+              {ordered.slice(0, count).map((item) => (
+                <tr
+                  key={item.row}
+                  data-selected={selected.includes(item.row) || undefined}
+                >
+                  <td className="table-selection-cell">
+                    <input
+                      type="checkbox"
+                      aria-label={`Import ${item.title}`}
+                      checked={selected.includes(item.row)}
+                      disabled={disabled || !actionable(item)}
+                      onChange={(event) => {
+                        onChange(
+                          updateJobSelection(
+                            selection,
+                            ids,
+                            String(item.row),
+                            anchor,
+                            'shiftKey' in event.nativeEvent &&
+                              event.nativeEvent.shiftKey === true,
+                            event.target.checked,
+                          ).map(Number),
+                        )
+                        setAnchor(String(item.row))
+                      }}
+                    />
+                  </td>
+                  {columns
+                    .filter((column) => visibility.visible(column.key))
+                    .map((column) => (
+                      <td key={column.key}>
+                        {column.render ? (
+                          column.render(item)
+                        ) : (
+                          <SecondaryCell
+                            text={String(column.value(item) ?? '-')}
+                          >
+                            {String(column.value(item) ?? '-')}
+                          </SecondaryCell>
+                        )}
+                      </td>
+                    ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div
+            ref={sentinel}
+            className="py-2 text-center text-sm text-muted-foreground"
+            role="status"
           >
-            Load more
-          </Button>
-        )}
-      </SecondaryTableScroll>
+            {Math.min(count, ordered.length)} of {ordered.length} items loaded
+          </div>
+          {count < ordered.length && (
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => setCount((value) => value + 50)}
+            >
+              Load more
+            </Button>
+          )}
+        </SecondaryTableScroll>
+        <SecondaryTableFooter selectedCount={selected.length}>
+          {footer}
+        </SecondaryTableFooter>
+      </SecondaryTableFrame>
     </>
   )
 }

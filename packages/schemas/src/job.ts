@@ -53,14 +53,44 @@ export const JobSortKeySchema = z.enum([
 ])
 export type JobSortKey = z.infer<typeof JobSortKeySchema>
 
+export const JobStatusFilterSchema = z.union([
+  JobStatusSchema,
+  z.enum(['active', 'attention']),
+])
+export type JobStatusFilter = z.infer<typeof JobStatusFilterSchema>
+
+export const jobStatusFilters: { value: JobStatusFilter; label: string }[] = [
+  { value: 'active', label: 'Active' },
+  { value: 'attention', label: 'Needs attention' },
+  { value: 'queued', label: 'Queued' },
+  { value: 'running', label: 'Running' },
+  { value: 'succeeded', label: 'Succeeded' },
+  { value: 'failed', label: 'Failed' },
+  { value: 'cancelled', label: 'Cancelled' },
+]
+
+function parseFilterValues(value: unknown) {
+  if (value === undefined) return []
+  if (typeof value !== 'string') return value
+  try {
+    return JSON.parse(value)
+  } catch {
+    return value
+  }
+}
+
 export const JobListQuerySchema = z.object({
   sortBy: JobSortKeySchema.default('createdAt'),
   direction: z.enum(['asc', 'desc']).default('desc'),
   /** `subscription` lists the Subscriptions library's sync jobs; album and film leave them out. */
   mediaType: z.enum(['album', 'film', 'subscription']).optional(),
-  status: z
-    .union([JobStatusSchema, z.enum(['active', 'attention'])])
-    .optional(),
+  status: JobStatusFilterSchema.optional(),
+  statuses: z
+    .preprocess(parseFilterValues, z.array(JobStatusFilterSchema).max(7))
+    .default([]),
+  providers: z
+    .preprocess(parseFilterValues, z.array(z.string().min(1)).max(100))
+    .default([]),
   provider: z.string().optional(),
   mediaItemId: z.string().min(1).optional(),
   batchId: z.string().min(1).optional(),

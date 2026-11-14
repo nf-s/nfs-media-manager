@@ -362,6 +362,25 @@ describe('media job history and dismissal', () => {
       ),
     ).toEqual(['failed-job'])
     expect((await listJobs({ mediaItemId: 'missing-film' })).totalCount).toBe(0)
+    const filtered = {
+      mediaItemId: 'film-1',
+      statuses: ['failed', 'cancelled'],
+      providers: ['fixture-provider', 'unused-provider'],
+      size: 1,
+    }
+    const firstFiltered = await listJobs(filtered)
+    const secondFiltered = await listJobs({ ...filtered, page: 2 })
+    expect(firstFiltered.totalCount).toBe(2)
+    expect(firstFiltered.pageCount).toBe(2)
+    expect(
+      [...firstFiltered.items, ...secondFiltered.items]
+        .map((job) => job.id)
+        .sort(),
+    ).toEqual(['cancelled-job', 'failed-job'])
+    expect(
+      (await listJobs({ ...filtered, providers: ['unused-provider'] }))
+        .totalCount,
+    ).toBe(0)
     expect(execute).not.toHaveBeenCalled()
     expect(network).not.toHaveBeenCalled()
   })

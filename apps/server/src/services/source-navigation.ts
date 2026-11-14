@@ -1,5 +1,6 @@
-import { and, eq, inArray, sql, type SQL } from 'drizzle-orm'
+import { and, inArray, sql, type SQL } from 'drizzle-orm'
 import { z } from 'zod'
+import type { SourceNavigationLink } from '@repo/schemas/tags'
 import { db } from '@/lib/db'
 import { providerCurrentState, providerSnapshot } from '@/schemas/db'
 import { listLoadedScrapePlugins } from '@/plugins/registry'
@@ -58,69 +59,96 @@ export async function getStoredDiscogsTagPayloads(mediaIds: string[]) {
   return [...history, ...current]
 }
 
-export async function getCollectionSourceLinks(
-  mediaId: string,
-  metadata: Record<string, unknown>,
+const COLLECTION_PAYLOAD_BATCH = 100
+
+/** Resolve collection provenance with bounded reads of supported legacy payloads. */
+export async function getCollectionSourceLinksForItems(
+  items: readonly { id: string; metadata: Record<string, unknown> }[],
 ) {
+  const linksByItem = new Map<string, SourceNavigationLink[]>()
+  if (!items.length) return linksByItem
   const plugins = await listLoadedScrapePlugins()
-  const links = collectionSourceLinks(
-    metadata,
-    plugins.map((plugin) => plugin.manifest),
-  )
+  const manifests = plugins.map((plugin) => plugin.manifest)
+  for (const item of items)
+    linksByItem.set(item.id, collectionSourceLinks(item.metadata, manifests))
   const readers = plugins.filter((plugin) => plugin.readStoredCollections)
   if (readers.length) {
     // Read existing payloads only. Do not normalize/write media or request a scrape.
-    const states = await db
-      .select({
-        provider: providerCurrentState.provider,
-        payload: providerCurrentState.payload,
-      })
-      .from(providerCurrentState)
-      .where(
-        and(
-          eq(providerCurrentState.mediaItemId, mediaId),
-          inArray(providerCurrentState.provider, [
-            'legacy-record',
-            ...readers.map((plugin) => plugin.manifest.id),
-          ]),
-        ),
-      )
-    for (const plugin of readers) {
-      for (const state of states.filter(
-        (state) =>
-          state.provider === 'legacy-record' ||
-          state.provider === plugin.manifest.id,
-      )) {
-        let stored: unknown
-        try {
-          stored = plugin.readStoredCollections?.(state.payload)
-        } catch {
-          // Optional legacy enrichment must not make an otherwise valid detail unavailable.
-          continue
-        }
-        const collections = StoredCollectionsSchema.safeParse(stored)
-        if (!collections.success) continue
-        for (const collection of collections.data) {
-          const link = sourceLink(
-            plugin.manifest.id,
-            plugin.manifest.displayName,
-            collection.name,
-            expandSourceTemplate(
-              plugin.manifest.sourceNavigation?.collectionUrlTemplate,
-              collection,
+    const ids = [...linksByItem.keys()]
+    for (
+      let offset = 0;
+      offset < ids.length;
+      offset += COLLECTION_PAYLOAD_BATCH
+    ) {
+      const states = await db
+        .select({
+          mediaItemId: providerCurrentState.mediaItemId,
+          provider: providerCurrentState.provider,
+          payload: providerCurrentState.payload,
+        })
+        .from(providerCurrentState)
+        .where(
+          and(
+            inArray(
+              providerCurrentState.mediaItemId,
+              ids.slice(offset, offset + COLLECTION_PAYLOAD_BATCH),
             ),
-          )
+            inArray(providerCurrentState.provider, [
+              'legacy-record',
+              ...readers.map((plugin) => plugin.manifest.id),
+            ]),
+          ),
+        )
+      for (const state of states) {
+        const links = linksByItem.get(state.mediaItemId)
+        if (!links) continue
+        for (const plugin of readers) {
           if (
-            link &&
-            !links.some(
-              (existing) =>
-                existing.name === link.name && existing.url === link.url,
-            )
+            state.provider !== 'legacy-record' &&
+            state.provider !== plugin.manifest.id
           )
-            links.push(link)
+            continue
+          let stored: unknown
+          try {
+            stored = plugin.readStoredCollections?.(state.payload)
+          } catch {
+            // Optional legacy enrichment must not make an otherwise valid detail unavailable.
+            continue
+          }
+          const collections = StoredCollectionsSchema.safeParse(stored)
+          if (!collections.success) continue
+          for (const collection of collections.data) {
+            const link = sourceLink(
+              plugin.manifest.id,
+              plugin.manifest.displayName,
+              collection.name,
+              expandSourceTemplate(
+                plugin.manifest.sourceNavigation?.collectionUrlTemplate,
+                collection,
+              ),
+            )
+            if (
+              link &&
+              !links.some(
+                (existing) =>
+                  existing.name === link.name && existing.url === link.url,
+              )
+            )
+              links.push(link)
+          }
         }
       }
     }
   }
-  return links
+  return linksByItem
+}
+
+export async function getCollectionSourceLinks(
+  mediaId: string,
+  metadata: Record<string, unknown>,
+) {
+  const links = await getCollectionSourceLinksForItems([
+    { id: mediaId, metadata },
+  ])
+  return links.get(mediaId) ?? []
 }

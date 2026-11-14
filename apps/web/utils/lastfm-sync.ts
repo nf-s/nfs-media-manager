@@ -144,15 +144,29 @@ export function lastfmLinkFilter(value: string | null): LastfmLinkFilter | '' {
   return parsed.success && parsed.data ? parsed.data : ''
 }
 
+export function lastfmLinkFilterValues(
+  values: string | null,
+  legacy: string | null,
+): LastfmLinkFilter[] {
+  const parsed = LastfmLinkQuerySchema.shape.reasons.safeParse(
+    values ?? undefined,
+  )
+  if (parsed.success && parsed.data.length) return parsed.data
+  const reason = lastfmLinkFilter(legacy)
+  return reason ? [reason] : []
+}
+
 export function lastfmLinksPath({
   reason,
+  reasons,
   q,
   page,
   size = LASTFM_LINKS_PAGE_SIZE,
   sortBy,
   sortDirection,
 }: {
-  reason: LastfmLinkFilter | ''
+  reason?: LastfmLinkFilter | ''
+  reasons?: LastfmLinkFilter[]
   q: string
   page: number
   size?: number
@@ -163,7 +177,8 @@ export function lastfmLinksPath({
     page: String(page),
     size: String(size),
   })
-  if (reason) params.set('reason', reason)
+  if (reasons?.length) params.set('reasons', JSON.stringify(reasons))
+  else if (reason) params.set('reason', reason)
   if (q) params.set('q', q)
   if (sortBy) params.set('sortBy', sortBy)
   if (sortDirection) params.set('sortDirection', sortDirection)

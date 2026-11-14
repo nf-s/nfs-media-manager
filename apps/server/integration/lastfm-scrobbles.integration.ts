@@ -607,6 +607,15 @@ describe('Last.fm scrobble sync jobs with offline HTTP and a temporary database'
     expect(unlinked).toMatchObject({ totalCount: 5, pageCount: 3 })
     expect(unlinked.items).toHaveLength(2)
     expect(unlinked.summary).toEqual(report.summary)
+    const statuses = { reasons: ['ambiguous', 'no-album'], size: 1 }
+    const firstStatus = await getLastfmLinkReport(statuses)
+    const secondStatus = await getLastfmLinkReport({ ...statuses, page: 2 })
+    expect(firstStatus).toMatchObject({ totalCount: 2, pageCount: 2 })
+    expect(
+      [...firstStatus.items, ...secondStatus.items]
+        .map((item) => item.reason)
+        .sort(),
+    ).toEqual(['ambiguous', 'no-album'])
     const searched = await getLastfmLinkReport({ q: 'other art' })
     expect(searched.items.map((item) => item.artistName)).toEqual([
       'Other artist',

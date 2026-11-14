@@ -1,5 +1,7 @@
 'use client'
 
+import { MediaInspector } from './media-inspector'
+
 import Link from 'next/link'
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
@@ -775,11 +777,10 @@ export default function TrackBrowser() {
       {selectedId && (
         <>
           <div className="inspector-backdrop" onClick={closeDetail} />
-          <aside
+          <MediaInspector
             ref={inspector}
             tabIndex={-1}
             aria-label="Track details"
-            className="media-inspector"
           >
             <div className="detail-topbar">
               <a
@@ -800,7 +801,7 @@ export default function TrackBrowser() {
                 onMerged={(targetId) => setParams({ item: targetId })}
               />
             </div>
-          </aside>
+          </MediaInspector>
         </>
       )}
       {playlistDrawer.playlistId && (

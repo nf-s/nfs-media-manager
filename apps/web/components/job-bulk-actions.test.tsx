@@ -68,9 +68,9 @@ function button(html: string, text: string) {
   return value
 }
 
-test('selection keeps select-all and a range hint without showing unused actions', () => {
+test('empty selection keeps a range hint without duplicating the header checkbox', () => {
   const html = render([job('running', 'running')], [])
-  assert.match(html, /aria-label="Select all loaded jobs"/)
+  assert.doesNotMatch(html, /Select all loaded|Select loaded|>Clear</)
   assert.doesNotMatch(html, /disabled/)
   assert.match(html, /Shift-click to select a range/)
   assert.doesNotMatch(html, /Choose action|Review action|Confirm/)

@@ -328,6 +328,19 @@ export function parseSubscriptionType(
   return result.success ? result.data : null
 }
 
+export function parseSubscriptionTypes(
+  value: string | null,
+): SubscriptionType[] {
+  try {
+    const result = SubscriptionTypeSchema.array().safeParse(
+      value ? JSON.parse(value) : [],
+    )
+    return result.success ? result.data : []
+  } catch {
+    return []
+  }
+}
+
 /** A channel's subscribers or a podcast's episode total; null when hidden or unknown. */
 export function subscriptionSourceSize(source: SubscriptionSource) {
   return source.type === 'youtube' ? source.subscriberCount : source.itemTotal
@@ -365,11 +378,15 @@ export function filterSubscriptionSources(
   {
     q,
     type,
+    types = [],
+    history = [],
     sortBy,
     direction,
   }: {
     q: string
     type: SubscriptionType | null
+    types?: readonly SubscriptionType[]
+    history?: readonly ('complete' | 'reading')[]
     sortBy: SubscriptionSourceSort
     direction: 'asc' | 'desc'
   },
@@ -378,6 +395,9 @@ export function filterSubscriptionSources(
   const matching = sources.filter(
     (source) =>
       (!type || source.type === type) &&
+      (!types.length || types.includes(source.type)) &&
+      (!history.length ||
+        history.includes(source.historyComplete ? 'complete' : 'reading')) &&
       (!needle ||
         [source.title, source.type === 'youtube' ? (source.handle ?? '') : '']
           .join(' ')

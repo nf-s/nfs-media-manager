@@ -118,6 +118,8 @@ describe('media job history api', () => {
       size: 25,
       sortBy: 'createdAt',
       direction: 'desc',
+      statuses: [],
+      providers: [],
     })
   })
 
@@ -134,6 +136,8 @@ describe('media job history api', () => {
       size: 25,
       sortBy: 'provider',
       direction: 'asc',
+      statuses: [],
+      providers: [],
     })
     listJobs.mockClear()
     for (const query of ['sortBy=unknown', 'direction=reverse'])

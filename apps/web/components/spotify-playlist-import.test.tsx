@@ -458,24 +458,50 @@ test('import dates sort by timestamp rather than displayed text', () => {
     )
 })
 
-test('playlist import has an import-status filter separate from bulk actions', () => {
+test('import status sorting uses the same changed state shown in the cell', () => {
+  const playlist = listing.playlists.find((item) => item.stored)
+  assert.ok(playlist)
+  assert.equal(
+    importPlaylistSortValue(playlist, undefined, 'status'),
+    'Needs update',
+  )
+  assert.equal(
+    importPlaylistSortValue(
+      { ...playlist, current: true },
+      undefined,
+      'status',
+    ),
+    'Imported',
+  )
+})
+
+test('playlist import places filters in headers and selected actions in the attached footer', () => {
   const html = render([
     [['spotify-account'], account],
     [['spotify-playlist-imports'], imports],
     [['spotify-playlists'], listing],
     [['playlists'], [stored]],
   ])
-  assert.match(html, /aria-label="Import status"/)
-  assert.match(html, /Not imported<\/option>/)
-  assert.match(html, /Needs update<\/option>/)
+  assert.match(html, /aria-label="Filter Import status"/)
+  assert.match(html, /Not imported<\/span>/)
+  assert.match(html, /Needs update<\/span>/)
+  assert.match(html, /aria-label="Select all importable playlists"/)
+  assert.match(html, /aria-label="Filter Owner"/)
+  assert.doesNotMatch(
+    html,
+    /<select|>Select all importable<|>Clear<|secondary-table-toolbar-filters/,
+  )
   const positions = [
-    'aria-label="Search playlists"',
-    'aria-label="Import status"',
-    '5 of 5 playlists',
-    '> Columns',
     'class="secondary-table-actions"',
     '>List again<',
-    '>Select all importable<',
+    'aria-label="Search playlists"',
+    '5 of 5 playlists',
+    '> Columns',
+    'aria-label="Select all importable playlists"',
+    'aria-label="Filter Import status"',
+    '</table>',
+    'class="secondary-table-footer"',
+    '>Import selected<',
   ].map((text) => html.indexOf(text))
   assert.ok(positions.every((position) => position >= 0))
   assert.deepEqual(
@@ -487,19 +513,19 @@ test('playlist import has an import-status filter separate from bulk actions', (
 test('playlist import filters can hide imported rows and find changed imports', () => {
   const playlists = listing.playlists
   assert.deepEqual(
-    filterImportPlaylists(playlists, '', 'not-imported').map(
+    filterImportPlaylists(playlists, '', ['not-imported']).map(
       (playlist) => playlist.name,
     ),
     ['Running', 'Followed', 'Huge', 'Broken'],
   )
   assert.deepEqual(
-    filterImportPlaylists(playlists, '', 'imported').map(
+    filterImportPlaylists(playlists, '', ['imported']).map(
       (playlist) => playlist.name,
     ),
     ['Stored'],
   )
   assert.deepEqual(
-    filterImportPlaylists(playlists, '', 'needs-update').map(
+    filterImportPlaylists(playlists, '', ['needs-update']).map(
       (playlist) => playlist.name,
     ),
     ['Stored'],
@@ -508,7 +534,7 @@ test('playlist import filters can hide imported rows and find changed imports', 
     filterImportPlaylists(
       playlists.map((playlist) => ({ ...playlist, current: true })),
       '',
-      'needs-update',
+      ['needs-update'],
     ).length,
     0,
   )
@@ -517,21 +543,65 @@ test('playlist import filters can hide imported rows and find changed imports', 
 
 test('playlist import search matches owners and combines with import status', () => {
   assert.equal(
-    filterImportPlaylists(
-      listing.playlists,
-      '  EXAMPLE OWNER  ',
+    filterImportPlaylists(listing.playlists, '  EXAMPLE OWNER  ', [
       'not-imported',
-    ).length,
+    ]).length,
     4,
   )
   assert.deepEqual(
-    filterImportPlaylists(listing.playlists, 'stored', 'imported').map(
+    filterImportPlaylists(listing.playlists, 'stored', ['imported']).map(
       (playlist) => playlist.name,
     ),
     ['Stored'],
   )
   assert.equal(
-    filterImportPlaylists(listing.playlists, 'Stored', 'not-imported').length,
+    filterImportPlaylists(listing.playlists, 'Stored', ['not-imported']).length,
     0,
   )
+})
+
+test('playlist filters combine multiple statuses and owners over the complete listing', () => {
+  const playlists = listing.playlists.map((playlist, index) => ({
+    ...playlist,
+    ownerName: index % 2 ? 'Another owner' : 'Example owner',
+  }))
+  assert.equal(
+    filterImportPlaylists(playlists, '', ['not-imported', 'needs-update'])
+      .length,
+    5,
+  )
+  assert.deepEqual(
+    filterImportPlaylists(
+      playlists,
+      '',
+      ['not-imported', 'needs-update'],
+      ['Another owner'],
+    ).map((playlist) => playlist.name),
+    ['Followed', 'Stored'],
+  )
+  assert.equal(
+    filterImportPlaylists(playlists, '', [], ['Another owner', 'Example owner'])
+      .length,
+    5,
+  )
+})
+
+test('plain import statuses omit redundant details and unavailable playlists disable the header checkbox', () => {
+  const html = render([
+    [['spotify-account'], account],
+    [['spotify-playlist-imports'], imports],
+    [
+      ['spotify-playlists'],
+      {
+        ...listing,
+        playlists: [
+          { ...listing.playlists[0], ...row, name: 'Plain', importable: false },
+        ],
+      },
+    ],
+    [['playlists'], []],
+  ])
+  assert.match(html, />Not imported</)
+  assert.doesNotMatch(html, /Import details for Plain/)
+  assert.match(html, /aria-label="Select all importable playlists" disabled=""/)
 })

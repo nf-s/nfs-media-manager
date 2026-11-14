@@ -134,7 +134,7 @@ function render(
   client.setQueryData(['playlists'], [summary])
   client.setQueryData(['playlist', playlist.id], playlist)
   client.setQueryData(
-    ['playlist', playlist.id, 'entries', 'position', 'asc', '', undefined],
+    ['playlist', playlist.id, 'entries', 'position', 'asc', '', []],
     {
       pages: [playlist],
       pageParams: [1],
@@ -333,12 +333,11 @@ test('playlist entries expose sorting for every data column', () => {
   assert.match(html, /> Columns</)
   assert.ok(
     html.indexOf('aria-label="Search playlist entries"') <
-      html.indexOf('aria-label="Entry type"'),
+      html.indexOf('<thead>'),
   )
-  assert.ok(
-    html.indexOf('aria-label="Entry type"') <
-      html.indexOf('aria-label="Visible columns"'),
-  )
+  assert.ok(html.indexOf('aria-label="Filter Type"') > html.indexOf('<thead>'))
+  assert.doesNotMatch(html, /<select[^>]*aria-label="Entry type"/)
+  assert.match(html, /aria-label="Resize details panel"/)
 })
 
 test('playlist columns sort numeric counts and keep unknown dates last', () => {

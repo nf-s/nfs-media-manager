@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { SourceNavigationLinkSchema } from './tags'
 import {
   DirectionSchema,
   PaginatedDataSchema,
@@ -8,6 +9,7 @@ import {
 export const FilmCollectionSummarySchema = z.object({
   id: z.string(),
   name: z.string(),
+  sourceLinks: z.array(SourceNavigationLinkSchema).default([]),
   filmCount: z.number().int().nonnegative(),
   createdAt: z.string().datetime(),
 })
@@ -24,9 +26,26 @@ export const FilmCollectionSortSchema = z.enum([
 ])
 export type FilmCollectionSort = z.infer<typeof FilmCollectionSortSchema>
 
+const WatchedStatesParamSchema = z.preprocess(
+  (value) => {
+    if (typeof value !== 'string') return value
+    try {
+      return JSON.parse(value)
+    } catch {
+      return value
+    }
+  },
+  z
+    .array(z.enum(['watched', 'unwatched']))
+    .max(2)
+    .transform((values) => [...new Set(values)])
+    .optional(),
+)
+
 export const FilmCollectionQuerySchema = PaginationQuerySchema.extend({
   q: z.string().trim().max(200).optional(),
   watched: z.enum(['watched', 'unwatched']).optional(),
+  watchedStates: WatchedStatesParamSchema,
   size: PaginationQuerySchema.shape.size.default(100),
   sortBy: FilmCollectionSortSchema.default('position'),
   direction: DirectionSchema.default('asc'),
