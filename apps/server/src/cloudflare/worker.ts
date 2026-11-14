@@ -2,9 +2,13 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 import { z } from 'zod'
 // App initialization installs OpenAPI extensions before shared schemas are created.
 import app from '@/app'
-import { CloudDispatchControlSchema } from '@repo/schemas/job'
+import {
+  CloudDispatchControlSchema,
+  CloudDispatchStatusSchema,
+} from '@repo/schemas/job'
 import { env } from '@/env'
 import { authMiddleware } from '@/middlewares/auth'
+import { generateJsonResponse } from '@/lib/response'
 import { getScrapePlugin, listLoadedScrapePlugins } from '@/plugins/registry'
 import { consumeCloudJobMessage } from '@/services/cloud-job-queue'
 import { withJobDispatchWakeup } from '@/services/job-dispatch-context'
@@ -135,7 +139,11 @@ app.get(
       await bindings.PROVIDER_COORDINATORS.getByName(provider).getStatus(
         provider,
       )
-    return c.json({ statusCode: 200, data })
+    return generateJsonResponse(
+      c,
+      CloudDispatchStatusSchema.nullable().parse(data),
+      200,
+    )
   },
 )
 

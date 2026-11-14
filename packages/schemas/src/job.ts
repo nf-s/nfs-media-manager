@@ -24,6 +24,25 @@ export const CloudDispatchControlSchema = z
   })
   .strict()
 
+export const CloudDispatchStatusSchema = z.object({
+  provider: z.string().min(1).max(200),
+  paused: z.boolean(),
+  allowedJobIds: CloudDispatchJobIdsSchema.default(null),
+  stopped: z.boolean(),
+  failures: z.number().int().nonnegative(),
+  infrastructureFailures: z.number().int().nonnegative(),
+  slots: z
+    .array(
+      z.object({
+        jobId: z.string().min(1).max(200),
+        phase: z.enum(['offered', 'running']),
+        expiresAt: z.number().int().nonnegative(),
+      }),
+    )
+    .max(32),
+})
+export type CloudDispatchStatus = z.infer<typeof CloudDispatchStatusSchema>
+
 export const JobScopeSchema = z.object({
   mediaItemIds: z.array(z.string()).default([]),
   mediaType: z.enum(['album', 'film']).nullable().default(null),

@@ -2,11 +2,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const listProviders = vi.fn()
 const getProviderActivity = vi.fn()
+const getProviderJobSummary = vi.fn()
 const clearProviderCooldown = vi.fn()
 const updateProviderBudget = vi.fn()
 
 vi.mock('@/services/provider-activity', () => ({
   getProviderActivity: (...args: unknown[]) => getProviderActivity(...args),
+  getProviderJobSummary: (...args: unknown[]) => getProviderJobSummary(...args),
   clearProviderCooldown: (...args: unknown[]) => clearProviderCooldown(...args),
 }))
 
@@ -16,6 +18,7 @@ describe('providers api', () => {
     vi.clearAllMocks()
     listProviders.mockReset()
     getProviderActivity.mockReset()
+    getProviderJobSummary.mockReset()
     clearProviderCooldown.mockReset()
     updateProviderBudget.mockReset()
   })
@@ -59,6 +62,14 @@ describe('providers api', () => {
       message: 'Unauthorized',
     })
     expect(listProviders).not.toHaveBeenCalled()
+    expect(
+      (
+        await app.request(
+          'http://localhost/api/v1/providers/fixture/jobs/summary',
+        )
+      ).status,
+    ).toBe(401)
+    expect(getProviderJobSummary).not.toHaveBeenCalled()
     expect(
       (await app.request('http://localhost/api/v1/providers/fixture/activity'))
         .status,
@@ -105,6 +116,7 @@ describe('providers api', () => {
           minTimeMs: 1500,
         },
         supportsScrape: false,
+        supportsJobDispatchControl: true,
         supportsLegacyImport: true,
         secrets: [],
         pluginPath: null,
@@ -161,10 +173,27 @@ describe('providers api', () => {
           id: 'spotify',
           displayName: 'Spotify',
           subscriptions: true,
+          supportsJobDispatchControl: true,
         },
       ],
     })
     expect(listProviders).toHaveBeenCalledTimes(1)
+    const summary = {
+      provider: 'fixture',
+      total: 12,
+      queued: 3,
+      running: 1,
+      succeeded: 5,
+      failed: 2,
+      cancelled: 1,
+    }
+    getProviderJobSummary.mockResolvedValue(summary)
+    const jobs = await app.request(
+      'http://localhost/api/v1/providers/fixture/jobs/summary',
+    )
+    expect(jobs.status).toBe(200)
+    expect(await jobs.json()).toMatchObject({ data: summary })
+    expect(getProviderJobSummary).toHaveBeenCalledWith('fixture')
     for (const input of [
       { period: 'week', limit: 1000 },
       { period: 'day', limit: 0 },

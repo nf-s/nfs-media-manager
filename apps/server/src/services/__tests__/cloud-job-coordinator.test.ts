@@ -472,6 +472,7 @@ describe('durable provider dispatch', () => {
     const message = f.message()
     await f.coordinator.begin(message)
     await f.coordinator.recordOutcome(message, 'stopped')
+    expect(f.state()).toMatchObject({ stopped: true, failures: 0 })
 
     await f.coordinator.resume('fixture')
     expect(f.state()?.stopped).toBe(true)
@@ -607,5 +608,55 @@ describe('durable provider dispatch', () => {
     await expect(f.coordinator.wake('another-provider')).rejects.toThrow(
       'identity mismatch',
     )
+  })
+
+  it('resumes an infrastructure pause without replacing queued jobs or bypassing cooldowns', async () => {
+    const f = fixture(1)
+    await f.coordinator.setPaused('fixture', false, ['job-30'])
+    await f.coordinator.alarm()
+    const original = f.message()
+    f.advance(60000)
+    f.dependencies.recover = vi.fn(async () => {
+      throw new Error('Database unavailable')
+    })
+    for (let attempt = 0; attempt < 8; attempt++)
+      await expect(f.coordinator.alarm()).rejects.toThrow(
+        'Database unavailable',
+      )
+
+    await f.coordinator.wake('fixture')
+    expect(f.state()).toMatchObject({ paused: true, infrastructureFailures: 8 })
+    expect(f.alarmAt()).toBeNull()
+    expect(f.records.get('job-30')).toBe('queued')
+
+    f.dependencies.recover = vi.fn(async () => undefined)
+    f.dependencies.policy = vi.fn(async () => ({
+      maxConcurrent: 1,
+      blocked: true,
+      wakeAt: 120000,
+    }))
+    expect(await f.recreate().setPaused('fixture', false)).toBe(true)
+    await f.recreate().alarm()
+    expect(f.state()).toMatchObject({
+      paused: false,
+      infrastructureFailures: 0,
+      allowedJobIds: ['job-30'],
+      slots: [],
+    })
+    expect(f.alarmAt()).toBe(120000)
+    expect(f.sent).toHaveLength(1)
+
+    f.advance(60000)
+    f.dependencies.policy = vi.fn(async () => ({
+      maxConcurrent: 1,
+      blocked: false,
+      wakeAt: null,
+    }))
+    await f.recreate().alarm()
+    expect(f.sent.map((message) => message.jobId)).toEqual(['job-30', 'job-30'])
+    expect(await f.coordinator.begin(original)).toBe(false)
+    expect(await f.coordinator.begin(f.message(1))).toBe(true)
+    expect(f.records.size).toBe(40)
+    expect(f.records.get('job-0')).toBe('queued')
   })
 })

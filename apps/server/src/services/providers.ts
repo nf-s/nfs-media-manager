@@ -9,6 +9,7 @@ import { encryptSecretValue } from '@/lib/crypto'
 import { createStableId } from '@/lib/media-utils'
 import { listProviderCatalog, getScrapePlugin } from '@/plugins/registry'
 import { db } from '@/lib/db'
+import { env } from '@/env'
 import {
   isProviderSecretConfigured,
   resolveProviderSecrets,
@@ -115,6 +116,8 @@ export async function listProviders(): Promise<ProviderSummary[]> {
           envVars: field.envVars ?? [],
         })),
         supportsTestConnection: !!plugin?.testConnection,
+        supportsJobDispatchControl:
+          env.RUNTIME_KIND === 'cloudflare' && plugin !== null,
         maxItemsPerJob: provider.maxItemsPerJob,
         requireExplicitSelection: provider.requireExplicitSelection,
         identifierTypes: provider.identifierTypes ?? [],

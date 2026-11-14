@@ -8,7 +8,7 @@ import {
   SearchParamsContext,
 } from 'next/dist/shared/lib/hooks-client-context.shared-runtime'
 import { JobPageSchema, JobSchema } from '@repo/schemas/job'
-import JobsPageClient from './pages/jobs-page-client'
+import JobsPageClient, { JobsTable } from './pages/jobs-page-client'
 
 const job = JobSchema.parse({
   id: 'example-job',
@@ -25,20 +25,27 @@ const job = JobSchema.parse({
   logs: [],
 })
 
-function render(search = 'mediaType=film') {
+function render(search = 'mediaType=film', provider?: string) {
   const client = new QueryClient({
     defaultOptions: { queries: { enabled: false, retry: false } },
   })
   const params = new URLSearchParams(search)
+  const items = !provider || provider === job.provider ? [job] : []
   client.setQueryData(
     [
       'jobs',
       'infinite',
-      'film',
+      provider ? null : 'film',
       '[]',
       '',
       '',
-      JSON.stringify(params.get('provider') ? [params.get('provider')] : []),
+      JSON.stringify(
+        provider
+          ? [provider]
+          : params.get('provider')
+            ? [params.get('provider')]
+            : [],
+      ),
       params.get('sortBy') ?? 'createdAt',
       params.get('direction') === 'asc' ? 'asc' : 'desc',
     ],
@@ -47,9 +54,9 @@ function render(search = 'mediaType=film') {
         JobPageSchema.parse({
           page: 1,
           size: 25,
-          totalCount: 1,
+          totalCount: items.length,
           pageCount: 1,
-          items: [job],
+          items,
         }),
       ],
       pageParams: [1],
@@ -61,7 +68,7 @@ function render(search = 'mediaType=film') {
       <QueryClientProvider client={client}>
         <PathnameContext.Provider value="/jobs">
           <SearchParamsContext.Provider value={params}>
-            <JobsPageClient />
+            {provider ? <JobsTable provider={provider} /> : <JobsPageClient />}
           </SearchParamsContext.Provider>
         </PathnameContext.Provider>
       </QueryClientProvider>,
@@ -120,4 +127,30 @@ test('job sort state follows the URL and deep-linked details span the visible co
   )
   assert.match(html, /Example failure/)
   assert.match(html, /Stored JSON/)
+})
+
+test('provider jobs reuse the full table across libraries and pin the provider', () => {
+  const html = render(
+    'mediaType=album&provider=example-provider&providers=["other-provider"]&jobId=example-job&batchId=unrelated-batch',
+    'example-provider',
+  )
+  assert.match(html, />1 jobs</)
+  assert.match(html, /aria-label="Filter Job status"/)
+  assert.match(html, /aria-label="Collapse example-provider job"/)
+  assert.match(html, /Example failure/)
+  assert.match(html, /Stored JSON/)
+  assert.match(html, /secondary-table-footer/)
+  assert.doesNotMatch(
+    html,
+    /Album jobs|Film jobs|Filter Job provider|Review batch retry|another library/,
+  )
+})
+
+test('provider jobs do not include a deep-linked job from another provider', () => {
+  const html = render(
+    'mediaType=film&provider=another-provider&jobId=example-job',
+    'another-provider',
+  )
+  assert.match(html, /This job belongs to another provider/)
+  assert.doesNotMatch(html, /id="job-details-example-job"/)
 })

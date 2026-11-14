@@ -193,6 +193,10 @@ export function JobLogEntry({
 }
 
 export default function JobsPageClient() {
+  return <JobsTable />
+}
+
+export function JobsTable({ provider }: { provider?: string }) {
   const { apiBaseUrl } = useConfig()
   const client = useQueryClient()
   const search = useSearchParams()
@@ -214,19 +218,23 @@ export default function JobsPageClient() {
   const parsedProviders = JobListQuerySchema.shape.providers.safeParse(
     search.get('providers') ?? undefined,
   )
-  const selectedProviders =
-    parsedProviders.success && parsedProviders.data.length
+  const selectedProviders = provider
+    ? [provider]
+    : parsedProviders.success && parsedProviders.data.length
       ? parsedProviders.data
       : search.get('provider')
         ? [search.get('provider') ?? '']
         : []
   const statusesKey = JSON.stringify(statuses)
   const providersKey = JSON.stringify(selectedProviders)
-  const batchId = search.get('batchId') ?? ''
+  const batchId = provider ? '' : (search.get('batchId') ?? '')
   const parsedSort = JobSortKeySchema.safeParse(search.get('sortBy'))
   const sortBy = parsedSort.success ? parsedSort.data : 'createdAt'
   const direction = search.get('direction') === 'asc' ? 'asc' : 'desc'
-  const columns = useTableColumns(`jobs-${mediaType}`, jobColumns)
+  const columns = useTableColumns(
+    provider ? `provider-jobs-${provider}` : `jobs-${mediaType}`,
+    jobColumns,
+  )
   const shownColumns = jobColumns.filter((column) =>
     columns.visible(column.key),
   )
@@ -244,7 +252,11 @@ export default function JobsPageClient() {
       if (value) params.set(key, value)
       else params.delete(key)
     }
-    window.history.replaceState(null, '', `/jobs?${params}`)
+    window.history.replaceState(
+      null,
+      '',
+      `${window.location.pathname}?${params}`,
+    )
   }
   const providers = useQuery({
     queryKey: ['providers'],
@@ -264,7 +276,7 @@ export default function JobsPageClient() {
     queryKey: [
       'jobs',
       'infinite',
-      mediaType,
+      provider ? null : mediaType,
       statusesKey,
       batchId,
       deferredQuery,
@@ -276,7 +288,7 @@ export default function JobsPageClient() {
     queryFn: ({ pageParam, signal }) =>
       fetchApiData(
         apiBaseUrl,
-        `/api/v1/scrape/jobs?${new URLSearchParams({ mediaType, sortBy, direction, page: String(pageParam), size: '25', statuses: statusesKey, providers: providersKey, ...(batchId ? { batchId } : {}), ...(deferredQuery ? { q: deferredQuery } : {}) })}`,
+        `/api/v1/scrape/jobs?${new URLSearchParams({ ...(!provider ? { mediaType } : {}), sortBy, direction, page: String(pageParam), size: '25', statuses: statusesKey, providers: providersKey, ...(batchId ? { batchId } : {}), ...(deferredQuery ? { q: deferredQuery } : {}) })}`,
         JobPageSchema,
         { signal },
       ),
@@ -354,14 +366,14 @@ export default function JobsPageClient() {
     },
   })
   useEffect(() => {
-    if (search.has('mediaType') || !selectedJob.data) return
+    if (provider || search.has('mediaType') || !selectedJob.data) return
     const scope = jobMediaScope(selectedJob.data)
     if (scope) {
       const params = new URLSearchParams(window.location.search)
       params.set('mediaType', scope)
       window.history.replaceState(null, '', `/jobs?${params}`)
     }
-  }, [search, selectedJob.data])
+  }, [provider, search, selectedJob.data])
   const providerName = (id: string) =>
     providers.data?.find((item) => item.id === id)?.displayName ?? id
   // New jobs can move offset boundaries between requests. Keep each job once.
@@ -371,7 +383,10 @@ export default function JobsPageClient() {
       if (!jobsById.has(job.id)) jobsById.set(job.id, job)
   const loadedJobs = [...jobsById.values()]
   const matchingSelectedJob =
-    selectedJob.data && jobMatchesScope(selectedJob.data, mediaType)
+    selectedJob.data &&
+    (provider
+      ? selectedJob.data.provider === provider
+      : jobMatchesScope(selectedJob.data, mediaType))
       ? selectedJob.data
       : undefined
   const visibleJobs = matchingSelectedJob
@@ -425,10 +440,10 @@ export default function JobsPageClient() {
   }, [completed, client])
   return (
     <section className="admin-page jobs-page">
-      <h1>{jobsHeadings[mediaType]}</h1>
+      {!provider && <h1>{jobsHeadings[mediaType]}</h1>}
       {selectedJob.data && !matchingSelectedJob && (
         <p className="muted">
-          This job belongs to another library.{' '}
+          This job belongs to another {provider ? 'provider' : 'library'}.{' '}
           <Link
             href={scopedHref(
               `/jobs?jobId=${selectedJob.data.id}`,
@@ -573,7 +588,7 @@ export default function JobsPageClient() {
                             })
                           }
                         />
-                      ) : column.key === 'provider' ? (
+                      ) : column.key === 'provider' && !provider ? (
                         <SecondaryColumnFilter
                           label="Job provider"
                           options={[

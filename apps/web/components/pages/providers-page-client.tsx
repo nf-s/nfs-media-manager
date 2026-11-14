@@ -7,6 +7,7 @@ import { z } from 'zod'
 import {
   ProviderSecretsSchema,
   ProviderSummarySchema,
+  ProviderJobSummarySchema,
 } from '@repo/schemas/provider'
 import { Button } from '@repo/ui/components/ui/button'
 import { Input } from '@repo/ui/components/ui/input'
@@ -20,6 +21,9 @@ import { useConfig } from '@/components/providers'
 import { fetchApiData } from '@/utils/api'
 import ProviderActivity from '../provider-activity'
 import ProviderConfiguration from '../provider-configuration'
+import ProviderJobSummary from '../provider-job-summary'
+import ProviderJobDispatch from '../provider-job-dispatch'
+import { JobsTable } from './jobs-page-client'
 import { SectionSidebar, SectionWorkspace } from '../section-sidebar'
 import { useWorkspaceScope } from '../media-scope'
 
@@ -68,6 +72,30 @@ export default function ProvidersPageClient() {
   const provider =
     available.find((provider) => provider.id === selected) ?? available[0]
   const id = provider?.id ?? ''
+  const jobs = useQuery({
+    queryKey: ['jobs', 'provider-summary', id],
+    enabled: !!id,
+    queryFn: () =>
+      fetchApiData(
+        apiBaseUrl,
+        `/api/v1/providers/${encodeURIComponent(id)}/jobs/summary`,
+        ProviderJobSummarySchema,
+      ),
+    staleTime: 0,
+    refetchInterval: 10000,
+  })
+  const hasJobs = (jobs.data?.total ?? 0) > 0
+  const activeSection =
+    ['activity', 'credentials', 'settings'].includes(section) ||
+    (section === 'jobs' && hasJobs)
+      ? section
+      : 'activity'
+  function openSection(value: string) {
+    const params = new URLSearchParams(window.location.search)
+    params.set('provider', id)
+    params.set('section', value)
+    window.history.replaceState(null, '', `/providers?${params}`)
+  }
   const secrets = useQuery({
     queryKey: ['provider-secrets', id],
     enabled: !!id,
@@ -146,6 +174,8 @@ export default function ProvidersPageClient() {
                 const params = new URLSearchParams(window.location.search)
                 params.set('provider', item.id)
                 params.set('mediaType', mediaType)
+                params.delete('jobId')
+                params.delete('batchId')
                 window.history.replaceState(null, '', `/providers?${params}`)
                 setDraft({})
                 save.reset()
@@ -156,7 +186,9 @@ export default function ProvidersPageClient() {
         </div>
       }
     >
-      <section className="admin-page">
+      <section
+        className={`admin-page${activeSection === 'jobs' ? ' jobs-page' : ''}`}
+      >
         {providers.isPending && <p className="muted">Loading providers...</p>}
         {providers.isError && (
           <p role="alert">
@@ -165,7 +197,20 @@ export default function ProvidersPageClient() {
           </p>
         )}
         {provider && (
-          <div className="provider-editor">
+          <div
+            className="provider-editor"
+            style={
+              activeSection === 'jobs'
+                ? {
+                    display: 'flex',
+                    flexDirection: 'column',
+                    flex: '1 1 0%',
+                    minHeight: 0,
+                    maxWidth: 'none',
+                  }
+                : undefined
+            }
+          >
             <header className="provider-header">
               <h1>{provider.displayName}</h1>
               <p className="muted">{provider.description}</p>
@@ -177,28 +222,54 @@ export default function ProvidersPageClient() {
               )}
             </header>
             <Tabs
-              value={
-                ['activity', 'credentials', 'settings'].includes(section)
-                  ? section
-                  : 'activity'
+              value={activeSection}
+              onValueChange={openSection}
+              className={
+                activeSection === 'jobs'
+                  ? 'flex min-h-0 flex-1 flex-col'
+                  : undefined
               }
-              onValueChange={(value) => {
-                const params = new URLSearchParams(window.location.search)
-                params.set('section', value)
-                window.history.replaceState(null, '', `/providers?${params}`)
-              }}
             >
               <TabsList
                 aria-label="Provider sections"
                 className="provider-tabs"
               >
                 <TabsTrigger value="activity">Activity</TabsTrigger>
+                {hasJobs && <TabsTrigger value="jobs">Jobs</TabsTrigger>}
                 <TabsTrigger value="credentials">Credentials</TabsTrigger>
                 <TabsTrigger value="settings">Settings</TabsTrigger>
               </TabsList>
               <TabsContent value="activity" className="provider-panel">
+                {jobs.isPending && <p role="status">Loading jobs...</p>}
+                {jobs.isError && (
+                  <p role="alert">
+                    Could not load job summary.{' '}
+                    <button onClick={() => jobs.refetch()}>Retry</button>
+                  </p>
+                )}
+                {jobs.data && (
+                  <ProviderJobSummary
+                    summary={jobs.data}
+                    onOpenJobs={() => openSection('jobs')}
+                  />
+                )}
+                <ProviderJobDispatch
+                  key={`dispatch-${provider.id}`}
+                  provider={provider}
+                />
                 <ProviderActivity key={provider.id} provider={provider} />
               </TabsContent>
+              {hasJobs && (
+                <TabsContent
+                  value="jobs"
+                  className="provider-panel min-h-0 flex-1 overflow-hidden data-[state=active]:flex data-[state=active]:flex-col"
+                >
+                  <ProviderJobDispatch key={provider.id} provider={provider} />
+                  <div className="min-h-0 flex-1">
+                    <JobsTable key={provider.id} provider={provider.id} />
+                  </div>
+                </TabsContent>
+              )}
               <TabsContent value="credentials" className="provider-panel">
                 <form
                   className="provider-credentials"

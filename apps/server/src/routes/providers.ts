@@ -6,6 +6,7 @@ import {
   ProviderSummarySchema,
   ProviderActivityQuerySchema,
   ProviderActivitySchema,
+  ProviderJobSummarySchema,
   ClearProviderCooldownSchema,
   ProviderSafetySchema,
   ProviderRequestBudgetSchema,
@@ -29,6 +30,7 @@ import {
 } from '@/services/providers'
 import {
   getProviderActivity,
+  getProviderJobSummary,
   clearProviderCooldown,
 } from '@/services/provider-activity'
 
@@ -155,6 +157,36 @@ const app: OpenAPIHono<AppEnv> = createOpenAPIApp()
       return generateJsonResponse(c, result, 200, 'Provider test completed')
     },
   )
+
+app.openapi(
+  createRoute({
+    method: 'get',
+    path: '/:provider/jobs/summary',
+    middleware: [authMiddleware()],
+    request: {
+      params: z.object({ provider: z.string().min(1) }),
+    },
+    responses: {
+      200: {
+        description: 'Job counts for this provider across all libraries',
+        content: {
+          'application/json': {
+            schema: createResponseSchema(ProviderJobSummarySchema),
+          },
+        },
+      },
+      401: jsonErrorResponse('Unauthorized'),
+      404: jsonErrorResponse('Provider not found'),
+      422: validationErrorResponse,
+    },
+  }),
+  async (c) =>
+    generateJsonResponse(
+      c,
+      await getProviderJobSummary(c.req.valid('param').provider),
+      200,
+    ),
+)
 
 app.openapi(
   createRoute({

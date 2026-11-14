@@ -4,6 +4,7 @@ import { z } from 'zod'
 import type {
   ProviderActivity,
   ProviderActivityRange,
+  ProviderJobSummary,
 } from '@repo/schemas/provider'
 import { JobErrorReviewSchema } from '@repo/schemas/job'
 import { db } from '@/lib/db'
@@ -21,6 +22,32 @@ import { getProviderSafety } from './provider-requests'
 async function requireProvider(provider: string) {
   if (!(await listProviderCatalog()).some((item) => item.id === provider))
     throw new ServerError({ statusCode: 404, message: 'Provider not found' })
+}
+
+export async function getProviderJobSummary(
+  provider: string,
+): Promise<ProviderJobSummary> {
+  await requireProvider(provider)
+  const [counts] = await db
+    .select({
+      total: sql<number>`count(*)::integer`,
+      queued: sql<number>`count(*) filter (where ${scrapeJob.status} = 'queued')::integer`,
+      running: sql<number>`count(*) filter (where ${scrapeJob.status} = 'running')::integer`,
+      succeeded: sql<number>`count(*) filter (where ${scrapeJob.status} = 'succeeded')::integer`,
+      failed: sql<number>`count(*) filter (where ${scrapeJob.status} = 'failed')::integer`,
+      cancelled: sql<number>`count(*) filter (where ${scrapeJob.status} = 'cancelled')::integer`,
+    })
+    .from(scrapeJob)
+    .where(eq(scrapeJob.provider, provider))
+  return {
+    provider,
+    total: counts?.total ?? 0,
+    queued: counts?.queued ?? 0,
+    running: counts?.running ?? 0,
+    succeeded: counts?.succeeded ?? 0,
+    failed: counts?.failed ?? 0,
+    cancelled: counts?.cancelled ?? 0,
+  }
 }
 
 const ReviewMetadataSchema = z.object({ benignReview: JobErrorReviewSchema })

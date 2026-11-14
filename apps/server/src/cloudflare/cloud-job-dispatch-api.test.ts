@@ -86,7 +86,11 @@ describe('Cloudflare dispatch owner API', () => {
     mocks.env.SCRAPING_ENABLED = false
     const response = await app.request(path)
     expect(response.status).toBe(200)
-    expect(await response.json()).toEqual({ statusCode: 200, data: status })
+    expect(await response.json()).toEqual({
+      statusCode: 200,
+      message: 'OK',
+      data: status,
+    })
     expect(response.headers.get('cache-control')).toContain('no-store')
     expect(response.headers.get('cdn-cache-control')).toBe('no-store')
     expect(mocks.getByName).toHaveBeenCalledExactlyOnceWith('fixture')
@@ -109,6 +113,34 @@ describe('Cloudflare dispatch owner API', () => {
       expect(mocks.getByName).not.toHaveBeenCalled()
     },
   )
+
+  it('returns only the dispatch fields needed to inspect queued work', async () => {
+    mocks.getStatus.mockResolvedValue({
+      ...status,
+      slots: [
+        {
+          version: 1,
+          provider: 'fixture',
+          jobId: 'job-30',
+          token: 'internal-delivery-token',
+          phase: 'offered',
+          expiresAt: 60000,
+          outcomeRecorded: false,
+        },
+      ],
+    })
+    const response = await app.request(path)
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({
+      statusCode: 200,
+      message: 'OK',
+      data: {
+        ...status,
+        slots: [{ jobId: 'job-30', phase: 'offered', expiresAt: 60000 }],
+      },
+    })
+    expect(mocks.setPaused).not.toHaveBeenCalled()
+  })
 
   it('denies untrusted mutation origins', async () => {
     expect(

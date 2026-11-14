@@ -32,6 +32,15 @@ export const ProviderSafetySchema = z.object({
 export const ProviderActivityQuerySchema = z.object({
   range: z.enum(['1h', '24h', '7d']).default('24h'),
 })
+export const ProviderJobSummarySchema = z.object({
+  provider: z.string(),
+  total: z.number().int().nonnegative(),
+  queued: z.number().int().nonnegative(),
+  running: z.number().int().nonnegative(),
+  succeeded: z.number().int().nonnegative(),
+  failed: z.number().int().nonnegative(),
+  cancelled: z.number().int().nonnegative(),
+})
 export const ProviderActivitySchema = z.object({
   provider: z.string(),
   from: z.string(),
@@ -87,6 +96,7 @@ export const ProviderSummarySchema = z.object({
     failureCooldownMs: z.number().int().nonnegative().optional(),
   }),
   supportsScrape: z.boolean(),
+  supportsJobDispatchControl: z.boolean().default(false),
   maxItemsPerJob: z.number().int().positive().optional(),
   requireExplicitSelection: z.boolean().optional(),
   identifierTypes: z.array(z.string()).default([]),
@@ -139,6 +149,7 @@ export const ProviderSecretsSchema = z.object({
 export type ProviderSummary = z.infer<typeof ProviderSummarySchema>
 export type ProviderSecrets = z.infer<typeof ProviderSecretsSchema>
 export type ProviderActivity = z.infer<typeof ProviderActivitySchema>
+export type ProviderJobSummary = z.infer<typeof ProviderJobSummarySchema>
 export type ProviderActivityRange = z.infer<
   typeof ProviderActivityQuerySchema
 >['range']
