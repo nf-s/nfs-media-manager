@@ -321,7 +321,7 @@ export default function SubscriptionBrowser() {
       (titleFilters.length > 0 && titleMatches.isPending))
   const titleItems =
     !titlesLoading && draft.trim() && titleFilters.length > 0
-      ? subscriptionTitleSuggestions(titleMatches.data?.items ?? [], draft)
+      ? subscriptionTitleSuggestions(titleMatches.data?.items ?? [])
       : []
   const options = (facets.data ?? []).filter(
     (option) =>

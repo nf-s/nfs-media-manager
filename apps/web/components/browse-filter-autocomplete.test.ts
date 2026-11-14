@@ -36,23 +36,25 @@ test('keyboard options retain suggestions, followed by text and explicit AI acti
   )
 })
 
-test('plain Enter preserves title selection and never implicitly runs AI', () => {
+test('Enter with nothing highlighted selects no option, so the typed text is searched', () => {
   const options = autocompleteOptions(suggestions, 'rock', true)
-  assert.equal(autocompleteEnterOption(options, null)?.key, 'item:album-1')
+  assert.equal(autocompleteEnterOption(options, null), undefined)
   assert.equal(
     autocompleteEnterOption(autocompleteOptions([], 'rock', true), null),
     undefined,
   )
   assert.equal(
-    autocompleteEnterOption(
-      autocompleteOptions(
-        suggestions.filter((item) => item.kind === 'filter'),
-        'rock',
-        true,
-      ),
-      null,
-    ),
+    autocompleteEnterOption(autocompleteOptions([], '', true), null),
     undefined,
+  )
+})
+
+test('Enter selects the option highlighted with the arrow keys', () => {
+  const options = autocompleteOptions(suggestions, 'rock', true)
+  assert.deepEqual(autocompleteEnterOption(options, 'item:album-1'), options[0])
+  assert.deepEqual(
+    autocompleteEnterOption(options, 'filter:genre:Rock'),
+    options[1],
   )
 })
 
@@ -78,10 +80,7 @@ test('active suggestion remains attached to its identity when results change ord
     autocompleteEnterOption(options, 'item:album-1')?.key,
     'item:album-1',
   )
-  assert.equal(
-    autocompleteEnterOption(options, 'item:removed')?.key,
-    'item:album-1',
-  )
+  assert.equal(autocompleteEnterOption(options, 'item:removed'), undefined)
 })
 
 test('input actions and interpretation content share the search root without opening suggestions', () => {

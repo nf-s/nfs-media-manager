@@ -6,6 +6,7 @@ import {
   YoutubeSubscriptionItemSchema,
   subscriptionBrowseFields,
 } from '@repo/schemas/subscriptions'
+import { browseSuggestions } from './browse-suggestions'
 import {
   filterSubscriptionSources,
   formatSubscriptionDuration,
@@ -266,15 +267,15 @@ test('durations show live state, length or a dash; artwork falls back to the sho
   )
 })
 
-test('title suggestions name the channel and year, exact titles first', () => {
+test('title suggestions name the channel and year, and rank exact titles first', () => {
+  const suggestions = subscriptionTitleSuggestions([
+    { ...episode, title: 'Orbits explained' },
+    episode,
+    { ...episode, id: 'f'.repeat(22) },
+  ])
   assert.deepEqual(
-    subscriptionTitleSuggestions(
-      [
-        { ...episode, title: 'Orbits explained' },
-        episode,
-        { ...episode, id: 'f'.repeat(22) },
-      ],
-      'orbits',
+    browseSuggestions([], suggestions, 'orbits').map((option) =>
+      option.kind === 'item' ? option.item : undefined,
     ),
     [
       {

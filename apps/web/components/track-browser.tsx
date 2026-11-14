@@ -260,7 +260,7 @@ export default function TrackBrowser() {
       (titleFilters.length > 0 && titleMatches.isPending))
   const titleItems =
     !titlesLoading && draft.trim() && titleFilters.length > 0
-      ? trackTitleSuggestions(titleMatches.data?.items ?? [], draft)
+      ? trackTitleSuggestions(titleMatches.data?.items ?? [])
       : []
   const options = (facets.data ?? []).filter(
     (option) =>
