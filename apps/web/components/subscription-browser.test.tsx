@@ -243,6 +243,8 @@ test('the channels list shows YouTube channels and podcasts in the shared table,
   assert.match(html, /12,000 subscribers/)
   assert.match(html, /240 episodes/)
   assert.match(html, /Reading history/)
+  assert.match(html, /History for Example Science Hour/)
+  assert.doesNotMatch(html, /<div class="muted">Reading history<\/div>/)
   const filters = (title: string) =>
     new URLSearchParams({
       filters: JSON.stringify([{ field: 'source', value: title }]),

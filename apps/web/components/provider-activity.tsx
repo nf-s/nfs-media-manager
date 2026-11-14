@@ -14,6 +14,7 @@ import { TableState } from '@repo/ui/components/ui/table'
 import { useConfig } from './providers'
 import { fetchApiData } from '@/utils/api'
 import {
+  SecondaryCell,
   SecondaryTableScroll,
   SecondaryTableHead,
   useTableColumns,
@@ -267,10 +268,16 @@ export default function ProviderActivity({
                     ).map((bucket) => (
                       <tr key={bucket.start}>
                         {columns.visible('start') && (
-                          <td>{new Date(bucket.start).toLocaleString()}</td>
+                          <td>
+                            <SecondaryCell>
+                              {new Date(bucket.start).toLocaleString()}
+                            </SecondaryCell>
+                          </td>
                         )}
                         {columns.visible('count') && (
-                          <td className="numeric">{bucket.count}</td>
+                          <td className="numeric">
+                            <SecondaryCell>{bucket.count}</SecondaryCell>
+                          </td>
                         )}
                       </tr>
                     ))}

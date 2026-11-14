@@ -24,6 +24,7 @@ import {
   type Job,
 } from '@repo/schemas/job'
 import {
+  SecondaryCell,
   SecondaryTableScroll,
   SecondaryTableToolbar,
   SecondaryTableHead,
@@ -580,6 +581,18 @@ export default function JobsPageClient() {
               const dismissal = getJobDismissal(job.options)
               const taskTitle = jobTaskTitle(job)
               const progress = activeJobProgressLabel(job)
+              const title =
+                taskTitle ??
+                job.items
+                  .map((item) => item.mediaTitle ?? 'Unavailable item')
+                  .join(', ')
+              const result =
+                job.errorMessage ??
+                (job.items
+                  .map((item) => item.message)
+                  .filter(Boolean)
+                  .join(' · ') ||
+                  '-')
               const expanded =
                 expandedJobIds.includes(job.id) || selectedJobId === job.id
               return (
@@ -632,11 +645,17 @@ export default function JobsPageClient() {
                       </button>
                     </td>
                     {columns.visible('provider') && (
-                      <td>{providerName(job.provider)}</td>
+                      <td>
+                        <SecondaryCell text={providerName(job.provider)}>
+                          {providerName(job.provider)}
+                        </SecondaryCell>
+                      </td>
                     )}
                     {columns.visible('title') && (
                       <td>
-                        <span className="job-titles">
+                        <SecondaryCell
+                          text={`${title}${progress ? ` · ${progress}` : ''}`}
+                        >
                           {taskTitle ??
                             job.items
                               .slice(0, 2)
@@ -650,51 +669,61 @@ export default function JobsPageClient() {
                           {progress && (
                             <span className="quiet"> · {progress}</span>
                           )}
-                        </span>
+                        </SecondaryCell>
                       </td>
                     )}
                     {columns.visible('status') && (
                       <td>
-                        <span className="job-status" data-status={job.status}>
-                          {job.status}
-                          {dismissal ? ' · dismissed' : ''}
-                        </span>
+                        <SecondaryCell
+                          text={`${job.status}${dismissal ? ' · dismissed' : ''}`}
+                        >
+                          <span className="job-status" data-status={job.status}>
+                            {job.status}
+                            {dismissal ? ' · dismissed' : ''}
+                          </span>
+                        </SecondaryCell>
                       </td>
                     )}
                     {columns.visible('createdAt') && (
                       <td className="whitespace-nowrap">
-                        <time dateTime={job.createdAt}>
-                          {new Date(job.createdAt).toLocaleString()}
-                        </time>
+                        <SecondaryCell
+                          text={new Date(job.createdAt).toLocaleString()}
+                        >
+                          <time dateTime={job.createdAt}>
+                            {new Date(job.createdAt).toLocaleString()}
+                          </time>
+                        </SecondaryCell>
                       </td>
                     )}
                     {columns.visible('startedAt') && (
                       <td className="whitespace-nowrap">
-                        {job.startedAt
-                          ? new Date(job.startedAt).toLocaleString()
-                          : '-'}
+                        <SecondaryCell>
+                          {job.startedAt
+                            ? new Date(job.startedAt).toLocaleString()
+                            : '-'}
+                        </SecondaryCell>
                       </td>
                     )}
                     {columns.visible('finishedAt') && (
                       <td className="whitespace-nowrap">
-                        {job.finishedAt
-                          ? new Date(job.finishedAt).toLocaleString()
-                          : '-'}
+                        <SecondaryCell>
+                          {job.finishedAt
+                            ? new Date(job.finishedAt).toLocaleString()
+                            : '-'}
+                        </SecondaryCell>
                       </td>
                     )}
                     {columns.visible('result') && (
                       <td>
-                        {job.errorMessage ??
-                          (job.items
-                            .map((item) => item.message)
-                            .filter(Boolean)
-                            .join(' · ') ||
-                            '-')}
+                        <SecondaryCell text={result}>{result}</SecondaryCell>
                       </td>
                     )}
                   </tr>
                   {expanded && (
-                    <tr id={`job-details-${job.id}`}>
+                    <tr
+                      id={`job-details-${job.id}`}
+                      className="secondary-table-detail-row"
+                    >
                       <td colSpan={columns.count + 2}>
                         <div className="job-content">
                           {job.errorMessage && (

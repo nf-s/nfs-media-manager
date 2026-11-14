@@ -31,8 +31,8 @@ import {
   subscriptionSourceSort,
   type SubscriptionSourceSort,
 } from '@/utils/subscriptions'
-import styles from './subscription-browser.module.css'
 import {
+  SecondaryCell,
   SecondaryTableScroll,
   SecondaryTableHead,
   SecondaryTableToolbar,
@@ -77,15 +77,17 @@ function SourceRow({
     <TableRow>
       {visible('title') && (
         <TableCell>
-          <span className={styles.sourceCell}>
+          <div className="secondary-cell-actions">
             <SourceAvatar src={source.thumbnailUrl} />
-            <Link
-              href={subscriptionSourceHref(source.title)}
-              title={`Browse ${source.title}`}
-            >
-              {source.title}
-            </Link>
-          </span>
+            <SecondaryCell text={source.title}>
+              <Link
+                href={subscriptionSourceHref(source.title)}
+                title={`Browse ${source.title}`}
+              >
+                {source.title}
+              </Link>
+            </SecondaryCell>
+          </div>
         </TableCell>
       )}
       {visible('type') && (
@@ -93,10 +95,12 @@ function SourceRow({
       )}
       {visible('storedItems') && (
         <TableCell className="numeric">
-          {source.storedItems.toLocaleString()}
-          {!source.historyComplete && (
-            <div className="muted">Reading history</div>
-          )}
+          <SecondaryCell
+            details={!source.historyComplete ? 'Reading history' : undefined}
+            label={`History for ${source.title}`}
+          >
+            {source.storedItems.toLocaleString()}
+          </SecondaryCell>
         </TableCell>
       )}
       {visible('latestItemAt') && (
@@ -116,11 +120,27 @@ function SourceRow({
         </TableCell>
       )}
       {visible('description') && (
-        <TableCell>{source.description ?? '-'}</TableCell>
+        <TableCell>
+          <SecondaryCell
+            text={source.description ?? undefined}
+            details={source.description || undefined}
+            label={`Description of ${source.title}`}
+          >
+            {source.description ?? '-'}
+          </SecondaryCell>
+        </TableCell>
       )}
       {visible('handle') && (
         <TableCell>
-          {source.type === 'youtube' ? (source.handle ?? '-') : '-'}
+          <SecondaryCell
+            text={
+              source.type === 'youtube'
+                ? (source.handle ?? undefined)
+                : undefined
+            }
+          >
+            {source.type === 'youtube' ? (source.handle ?? '-') : '-'}
+          </SecondaryCell>
         </TableCell>
       )}
       {visible('historyComplete') && (

@@ -14,6 +14,7 @@ import {
 } from '@repo/schemas/imports'
 import { Button } from '@repo/ui/components/ui/button'
 import ImportPreviewTable from './import-preview-table'
+import { SecondaryCell } from './secondary-table'
 import { scopedHref } from '@/utils/media-scope'
 import { useConfig } from './providers'
 import { fetchApiData } from '@/utils/api'
@@ -326,12 +327,21 @@ export default function FilmImportWorkflow({
                       item.needsIdentification
                         ? 'Needs ID'
                         : item.identifiers.join(', '),
-                    render: (item) =>
-                      item.needsIdentification ? (
-                        <span className="needs-id">Needs ID</span>
-                      ) : (
-                        item.identifiers.join(', ')
-                      ),
+                    render: (item) => (
+                      <SecondaryCell
+                        text={
+                          item.needsIdentification
+                            ? 'Needs ID'
+                            : item.identifiers.join(', ')
+                        }
+                      >
+                        {item.needsIdentification ? (
+                          <span className="needs-id">Needs ID</span>
+                        ) : (
+                          item.identifiers.join(', ')
+                        )}
+                      </SecondaryCell>
+                    ),
                   },
                   {
                     key: 'changes',
@@ -346,33 +356,45 @@ export default function FilmImportWorkflow({
                                 item.changes.map((change) => change.label),
                               ),
                             ].join(', '),
-                    render: (item) =>
-                      item.action === 'new' ? (
-                        'New film'
-                      ) : item.action === 'unchanged' ? (
-                        'No changes'
-                      ) : (
-                        <details>
-                          <summary>
-                            {[
-                              ...new Set(
-                                item.changes.map((change) => change.label),
-                              ),
-                            ].join(', ')}
-                          </summary>
-                          <dl className="text-xs">
-                            {item.changes.map((change, index) => (
-                              <div key={`${change.field}:${index}`}>
-                                <dt>{change.label}</dt>
-                                <dd className="break-all">
-                                  {changeValue(change.before, change.field)} →{' '}
-                                  {changeValue(change.after, change.field)}
-                                </dd>
-                              </div>
-                            ))}
-                          </dl>
-                        </details>
-                      ),
+                    render: (item) => (
+                      <SecondaryCell
+                        text={
+                          item.action === 'update'
+                            ? [
+                                ...new Set(
+                                  item.changes.map((change) => change.label),
+                                ),
+                              ].join(', ')
+                            : undefined
+                        }
+                        label={`Changes to ${item.title}`}
+                        details={
+                          item.action === 'update' ? (
+                            <dl>
+                              {item.changes.map((change, index) => (
+                                <div key={`${change.field}:${index}`}>
+                                  <dt>{change.label}</dt>
+                                  <dd className="break-all">
+                                    {changeValue(change.before, change.field)} →{' '}
+                                    {changeValue(change.after, change.field)}
+                                  </dd>
+                                </div>
+                              ))}
+                            </dl>
+                          ) : undefined
+                        }
+                      >
+                        {item.action === 'new'
+                          ? 'New film'
+                          : item.action === 'unchanged'
+                            ? 'No changes'
+                            : [
+                                ...new Set(
+                                  item.changes.map((change) => change.label),
+                                ),
+                              ].join(', ')}
+                      </SecondaryCell>
+                    ),
                   },
                 ]}
               />

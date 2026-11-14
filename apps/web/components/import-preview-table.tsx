@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import {
+  SecondaryCell,
   SecondaryTableScroll,
   SecondaryTableHead,
   SecondaryTableToolbar,
@@ -231,9 +232,13 @@ export default function ImportPreviewTable<
                   .filter((column) => visibility.visible(column.key))
                   .map((column) => (
                     <td key={column.key}>
-                      {column.render
-                        ? column.render(item)
-                        : String(column.value(item) ?? '-')}
+                      {column.render ? (
+                        column.render(item)
+                      ) : (
+                        <SecondaryCell text={String(column.value(item) ?? '-')}>
+                          {String(column.value(item) ?? '-')}
+                        </SecondaryCell>
+                      )}
                     </td>
                   ))}
               </tr>

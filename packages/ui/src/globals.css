@@ -4065,6 +4065,111 @@ button.player-track:hover strong {
   border-radius: 10px;
   background: white;
 }
+.secondary-table-scroll
+  > table
+  > tbody
+  > tr:not(.secondary-table-detail-row)
+  > td:not(.table-state) {
+  height: 32px;
+  max-width: 320px;
+  padding-top: 3px;
+  padding-bottom: 3px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+.secondary-cell {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  max-width: 320px;
+  height: 24px;
+}
+.secondary-cell-text {
+  display: block;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 24px;
+  max-height: 24px;
+}
+.secondary-cell[data-lines='2'] {
+  height: 40px;
+}
+.secondary-cell[data-lines='2'] > .secondary-cell-text {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  white-space: normal;
+  line-height: 20px;
+  max-height: 40px;
+}
+.secondary-cell-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 4px;
+  height: 24px;
+}
+.secondary-cell-actions > .secondary-cell {
+  flex: 1 1 auto;
+}
+.secondary-cell-actions > :not(.secondary-cell) {
+  flex: none;
+}
+.numeric .secondary-cell-text {
+  text-align: right;
+}
+.secondary-cell-details,
+.secondary-cell-action {
+  flex: none;
+}
+.secondary-cell-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  min-width: 24px;
+  padding: 0;
+  border-radius: 5px;
+  color: #475569;
+}
+.secondary-cell-action:hover {
+  background: #e8edf3;
+  color: #0f172a;
+}
+.secondary-cell-action:focus-visible {
+  outline: 2px solid #64748b;
+  outline-offset: -2px;
+}
+.secondary-cell-action > svg {
+  width: 14px;
+  height: 14px;
+}
+.secondary-cell-popover {
+  position: fixed;
+  margin: 0;
+  width: max-content;
+  max-width: min(420px, calc(100vw - 16px));
+  max-height: min(400px, calc(100dvh - 16px));
+  overflow: auto;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: white;
+  color: var(--ink);
+  box-shadow: 0 8px 24px #0f172a1a;
+  font-size: 13px;
+  line-height: 1.5;
+  text-align: left;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
 .table-column-controls {
   display: inline-flex;
   flex-shrink: 0;

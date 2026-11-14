@@ -2,7 +2,11 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { SecondaryDataTable, SecondaryTableToolbar } from './secondary-table'
+import {
+  SecondaryCell,
+  SecondaryDataTable,
+  SecondaryTableToolbar,
+} from './secondary-table'
 
 test('secondary tables share a labelled scroll region, sortable data headers and optional columns', () => {
   const html = renderToStaticMarkup(
@@ -91,9 +95,39 @@ test('three-column tables keep every data column visible without a chooser', () 
     />,
   )
   assert.match(html, /title="Sort by Plays"/)
-  assert.match(html, /<td>Linked<\/td><td>2<\/td><td>7<\/td>/)
+  for (const value of ['Linked', '2', '7'])
+    assert.ok(html.includes(`title="${value}">${value}</div>`))
   assert.doesNotMatch(html, /Visible columns|Reset columns/)
   assert.doesNotMatch(html, /class="secondary-table-toolbar"/)
+})
+
+test('bounded cells retain full text and rich details behind a labelled disclosure', () => {
+  const html = renderToStaticMarkup(
+    <SecondaryCell
+      text="Full result title"
+      label="Import result details"
+      lines={2}
+      details={
+        <p>
+          Complete diagnostic message <a href="/jobs?jobId=fixture">View job</a>
+        </p>
+      }
+    >
+      Failed
+    </SecondaryCell>,
+  )
+  assert.match(html, /data-lines="2"/)
+  assert.match(html, /title="Full result title">Failed/)
+  assert.match(
+    html,
+    /<button[^>]+aria-label="Import result details"[^>]+aria-haspopup="dialog"/,
+  )
+  assert.match(
+    html,
+    /popover="auto" role="dialog" aria-label="Import result details"/,
+  )
+  assert.match(html, /Complete diagnostic message/)
+  assert.match(html, /href="\/jobs\?jobId=fixture">View job/)
 })
 
 test('secondary toolbars order search, filters, count and a separate columns slot', () => {

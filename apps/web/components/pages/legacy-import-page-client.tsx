@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { ImportRunSchema } from '@repo/schemas/imports'
 import { Button } from '@repo/ui/components/ui/button'
-import { SecondaryDataTable } from '../secondary-table'
+import { SecondaryCell, SecondaryDataTable } from '../secondary-table'
 import { useConfig } from '@/components/providers'
 import {
   ImportStatusNotice,
@@ -65,20 +65,26 @@ export default function LegacyImportPageClient() {
             label: 'Updated',
             value: (source) =>
               source.updatedAt ? Date.parse(source.updatedAt) : null,
-            render: (source) =>
-              source.available
-                ? (source.updatedAt?.slice(0, 10) ?? '-')
-                : 'Missing',
+            render: (source) => (
+              <SecondaryCell text={source.updatedAt ?? undefined}>
+                {source.available
+                  ? (source.updatedAt?.slice(0, 10) ?? '-')
+                  : 'Missing'}
+              </SecondaryCell>
+            ),
           },
           {
             key: 'bytes',
             label: 'Size',
             className: 'numeric',
             value: (source) => source.bytes,
-            render: (source) =>
-              source.bytes === null
-                ? '-'
-                : `${(source.bytes / 1024 / 1024).toFixed(1)} MB`,
+            render: (source) => (
+              <SecondaryCell>
+                {source.bytes === null
+                  ? '-'
+                  : `${(source.bytes / 1024 / 1024).toFixed(1)} MB`}
+              </SecondaryCell>
+            ),
           },
         ]}
       />

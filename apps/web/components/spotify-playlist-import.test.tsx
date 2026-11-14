@@ -199,7 +199,7 @@ test('the stored list renders in the shared table without a listing request', ()
   assert.doesNotMatch(html, /Allow playlist changes/)
 })
 
-test('rows show import state, progress, reasons, schedule and drawer links', () => {
+test('compact import states preserve progress, reasons, schedules and drawer links in details', () => {
   const html = render([
     [['spotify-account'], account],
     [['spotify-playlist-imports'], imports],
@@ -223,6 +223,9 @@ test('rows show import state, progress, reasons, schedule and drawer links', () 
   assert.match(html, /href="\/playlists\?playlist=p4&amp;tab=sync"[^>]*>Daily</)
   assert.match(html, /<time dateTime="2026-01-04T00:00:00.000Z">/)
   assert.match(html, />Not imported</)
+  assert.match(html, />Needs update</)
+  for (const name of ['Running', 'Followed', 'Huge', 'Stored', 'Broken'])
+    assert.match(html, new RegExp(`aria-label="Import details for ${name}"`))
   for (const name of ['Running', 'Followed', 'Huge'])
     assert.match(html, new RegExp(`aria-label="Select ${name}" disabled=""`))
   for (const name of ['Stored', 'Broken'])
@@ -231,6 +234,37 @@ test('rows show import state, progress, reasons, schedule and drawer links', () 
       new RegExp(`aria-label="Select ${name}" disabled=""`),
     )
   assert.match(html, /disabled=""[^>]*>Import selected/)
+})
+
+test('playlist import reasons and progress stay in detail popups instead of growing rows', () => {
+  const html = render([
+    [['spotify-account'], account],
+    [['spotify-playlist-imports'], imports],
+    [['spotify-playlists'], listing],
+    [['playlists'], [stored]],
+  ])
+  const popovers =
+    html.match(/<div[^>]*popover="auto"[^>]*>[\s\S]*?<\/div>/g) ?? []
+  assert.ok(popovers.some((popover) => popover.includes('2 of 5 pages')))
+  assert.ok(
+    popovers.some((popover) =>
+      popover.includes('Owned by someone else fixture reason.'),
+    ),
+  )
+  assert.ok(
+    popovers.some((popover) =>
+      popover.includes('Spotify refused the fixture request.'),
+    ),
+  )
+  const inline = html
+    .replace(/<div[^>]*popover="auto"[^>]*>[\s\S]*?<\/div>/g, '')
+    .replace(/ title="[^"]*"/g, '')
+  assert.doesNotMatch(
+    inline,
+    /2 of 5 pages|Owned by someone else fixture reason\.|Spotify refused the fixture request\.|Changed on Spotify/,
+  )
+  assert.match(inline, />Not imported</)
+  assert.match(inline, />Needs update</)
 })
 
 test('an unlisted account offers List playlists and an empty table state', () => {

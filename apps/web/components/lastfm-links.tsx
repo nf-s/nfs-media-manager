@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
+import { Link2, Plus } from 'lucide-react'
 import {
   keepPreviousData,
   useInfiniteQuery,
@@ -56,6 +57,7 @@ import {
 import LastfmSearchActions from './lastfm-search-actions'
 import { useConfig } from './providers'
 import {
+  SecondaryCell,
   SecondaryDataTable,
   SecondaryTableToolbar,
   SecondaryTableScroll,
@@ -79,6 +81,16 @@ function LinkRow({
   onSelect: (checked: boolean, shift: boolean) => void
 }) {
   const linked = group.reason === 'linked' || group.reason === 'manual'
+  const reason = lastfmLinkReasonLabels[group.reason]
+  const strategy = group.strategy
+    ? lastfmLinkStrategyLabels[group.strategy]
+    : undefined
+  const libraryAlbum =
+    linked && group.album
+      ? group.album.title
+      : group.candidates.length
+        ? `${group.candidates.length} possible albums`
+        : '-'
   return (
     <TableRow data-selected={checked || undefined}>
       <TableCell className="table-selection-cell">
@@ -96,8 +108,20 @@ function LinkRow({
           }
         />
       </TableCell>
-      {visible('artistName') && <TableCell>{group.artistName}</TableCell>}
-      {visible('albumName') && <TableCell>{group.albumName ?? '-'}</TableCell>}
+      {visible('artistName') && (
+        <TableCell>
+          <SecondaryCell text={group.artistName}>
+            {group.artistName}
+          </SecondaryCell>
+        </TableCell>
+      )}
+      {visible('albumName') && (
+        <TableCell>
+          <SecondaryCell text={group.albumName ?? '-'}>
+            {group.albumName ?? '-'}
+          </SecondaryCell>
+        </TableCell>
+      )}
       {visible('scrobbles') && (
         <TableCell className="tabular-nums">
           {group.scrobbles.toLocaleString()}
@@ -112,64 +136,83 @@ function LinkRow({
       )}
       {visible('reason') && (
         <TableCell>
-          {lastfmLinkReasonLabels[group.reason]}
-          {group.strategy && (
-            <div className="muted">
-              {lastfmLinkStrategyLabels[group.strategy]}
-            </div>
-          )}
+          <SecondaryCell
+            text={reason}
+            label={`Link status for ${group.artistName} — ${group.albumName ?? 'No album'}`}
+            details={
+              <>
+                <p>{reason}</p>
+                {strategy && <p>{strategy}</p>}
+              </>
+            }
+          >
+            {reason}
+          </SecondaryCell>
         </TableCell>
       )}
       {visible('libraryAlbum') && (
         <TableCell>
-          {linked && group.album ? (
-            <Link href={`/albums/${group.album.id}`}>{group.album.title}</Link>
-          ) : group.candidates.length ? (
-            `${group.candidates.length} possible albums`
-          ) : (
-            '-'
-          )}
+          <SecondaryCell text={libraryAlbum}>
+            {linked && group.album ? (
+              <Link href={`/albums/${group.album.id}`}>
+                {group.album.title}
+              </Link>
+            ) : (
+              libraryAlbum
+            )}
+          </SecondaryCell>
         </TableCell>
       )}
       {visible('spotifySearch') && (
         <TableCell>
-          {group.spotifySearch ? (
-            <Link
-              className="job-status underline underline-offset-2"
-              data-status={group.spotifySearch.status}
-              href={scopedHref(
-                `/jobs?jobId=${encodeURIComponent(group.spotifySearch.jobId)}`,
-                'album',
-              )}
-              title={group.spotifySearch.errorMessage ?? undefined}
-            >
-              {lastfmSpotifySearchLabel(group.spotifySearch)}
-            </Link>
-          ) : (
-            <span className="muted">{lastfmSpotifySearchLabel(null)}</span>
-          )}
+          <SecondaryCell
+            text={lastfmSpotifySearchLabel(group.spotifySearch)}
+            label={`Spotify search details for ${group.artistName} — ${group.albumName ?? 'No album'}`}
+            details={group.spotifySearch?.errorMessage}
+          >
+            {group.spotifySearch ? (
+              <Link
+                className="job-status underline underline-offset-2"
+                data-status={group.spotifySearch.status}
+                href={scopedHref(
+                  `/jobs?jobId=${encodeURIComponent(group.spotifySearch.jobId)}`,
+                  'album',
+                )}
+              >
+                {lastfmSpotifySearchLabel(group.spotifySearch)}
+              </Link>
+            ) : (
+              <span className="muted">{lastfmSpotifySearchLabel(null)}</span>
+            )}
+          </SecondaryCell>
         </TableCell>
       )}
       {visible('actions') && (
         <TableCell>
           {group.albumName !== null && (
-            <div className="flex flex-wrap gap-1">
+            <div className="flex items-center gap-1 whitespace-nowrap">
               <Button
                 size="sm"
                 variant="outline"
+                className="secondary-cell-action"
+                aria-label={linked ? 'Change album link' : 'Link album'}
+                title={linked ? 'Change album link' : 'Link album'}
                 aria-haspopup="dialog"
                 onClick={() => onOpen('library')}
               >
-                {linked ? 'Change' : 'Link'}
+                <Link2 size={14} aria-hidden="true" />
               </Button>
               {!linked && (
                 <Button
                   size="sm"
                   variant="outline"
+                  className="secondary-cell-action"
+                  aria-label="Add new album"
+                  title="Add new album"
                   aria-haspopup="dialog"
                   onClick={() => onOpen('new')}
                 >
-                  Add new album
+                  <Plus size={14} aria-hidden="true" />
                 </Button>
               )}
             </div>

@@ -1,7 +1,7 @@
 'use client'
 
 import type { AlbumDetail } from '@repo/schemas/media'
-import { SecondaryDataTable } from './secondary-table'
+import { SecondaryCell, SecondaryDataTable } from './secondary-table'
 import { TrackPlayButton, TrackQueueButton } from './play-controls'
 import ExternalLink from './external-link'
 
@@ -39,18 +39,22 @@ export default function AlbumTracksTable({
           label: 'Track',
           value: (track) => track.title,
           render: (track) => (
-            <>
-              {track.externalId ? (
-                <ExternalLink
-                  href={`https://open.spotify.com/track/${encodeURIComponent(track.externalId)}`}
-                >
-                  {track.title}
-                </ExternalLink>
-              ) : (
-                track.title
-              )}
-              <TrackQueueButton album={album} track={track} />
-            </>
+            <div className="secondary-cell-actions">
+              <SecondaryCell text={track.title}>
+                {track.externalId ? (
+                  <ExternalLink
+                    href={`https://open.spotify.com/track/${encodeURIComponent(track.externalId)}`}
+                  >
+                    {track.title}
+                  </ExternalLink>
+                ) : (
+                  track.title
+                )}
+              </SecondaryCell>
+              <span title={`Add ${track.title} to queue`}>
+                <TrackQueueButton album={album} track={track} />
+              </span>
+            </div>
           ),
         },
         {

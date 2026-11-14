@@ -261,33 +261,45 @@ test('scrobble links show reason totals and link library albums', () => {
   const html = syncPage(idle)
   assert.match(html, /by title,\s+credited artist and shared track titles/)
   assert.match(html, /Links are recomputed after every sync/)
+  const rows = html.match(/<tr[^>]*>[\s\S]*?<\/tr>/g) ?? []
+  const linkedSummary = rows.find((row) =>
+    row.includes('aria-pressed="false">Linked</button>'),
+  )
+  assert.ok(linkedSummary)
+  assert.match(linkedSummary, />1</)
+  assert.match(linkedSummary, />40</)
+  const unlinkedSummary = rows.find((row) =>
+    row.includes('Kept unlinked</button>'),
+  )
+  assert.ok(unlinkedSummary)
+  assert.equal(unlinkedSummary.match(/>0</g)?.length, 2)
   assert.match(
     html,
-    /aria-pressed="false">Linked<\/button><\/td><td class="numeric">1<\/td><td class="numeric">40<\/td>/,
+    /aria-label="Link status for Artist fixture — Album fixture"/,
   )
-  assert.match(
-    html,
-    /Kept unlinked<\/button><\/td><td class="numeric">0<\/td><td class="numeric">0<\/td>/,
-  )
-  assert.match(
-    html,
-    /<td>Linked<div class="muted">Another edition or artist credit<\/div><\/td>/,
-  )
+  assert.match(html, /Another edition or artist credit/)
   assert.match(html, /<option value="unlinked">Unlinked<\/option>/)
   assert.match(html, /href="\/albums\/album-1">Album fixture<\/a>/)
-  assert.match(html, /<td>Several albums match<\/td>/)
-  assert.match(html, /<td>2 possible albums<\/td>/)
+  assert.match(html, />Several albums match</)
+  assert.match(html, />2 possible albums</)
   assert.doesNotMatch(html, /href="\/albums\/album-[23]"/)
-  assert.match(html, /<td>-<\/td><td class="tabular-nums">2<\/td>/)
-  // Editing actions open a panel; candidates and pickers stay out of table cells.
-  assert.equal(html.match(/>Change</g)?.length, 2)
+  // Labelled icons retain the editing actions while keeping the row compact.
+  assert.equal(html.match(/aria-label="Change album link"/g)?.length, 2)
   assert.doesNotMatch(html, />Unlink<|>Automatic<|Search library albums/)
-  // The ambiguous name offers Link; the name without an album has no actions.
-  assert.match(html, /aria-haspopup="dialog"[^>]*>Link</)
-  assert.equal(html.match(/>Add new album</g)?.length, 1)
   assert.match(
     html,
-    /<td>Scrobbled without an album<\/td><td>-<\/td><td><span class="muted">Not searched<\/span><\/td><td><\/td>/,
+    /aria-label="Link album" title="Link album" aria-haspopup="dialog"/,
+  )
+  assert.equal(html.match(/aria-label="Add new album"/g)?.length, 1)
+  const withoutAlbum = rows.find((row) =>
+    row.includes('Select Other artist — No album'),
+  )
+  assert.ok(withoutAlbum)
+  assert.match(withoutAlbum, /Scrobbled without an album/)
+  assert.match(withoutAlbum, /Not searched/)
+  assert.doesNotMatch(
+    withoutAlbum,
+    /aria-label="Change album link"|aria-label="Link album"|aria-label="Add new album"/,
   )
   assert.match(html, />Relink</)
   assert.doesNotMatch(html, /disabled=""[^>]*>Relink/)
@@ -307,6 +319,27 @@ test('scrobble links show reason totals and link library albums', () => {
     /href="\/jobs\?jobId=search-fixture&amp;mediaType=album">2 matches/,
   )
   assert.match(html, /Shift-click to select a range/)
+})
+
+test('scrobble matching explanations are in a detail popup rather than a second row line', () => {
+  const html = syncPage(idle)
+  const popovers =
+    html.match(/<div[^>]*popover="auto"[^>]*>[\s\S]*?<\/div>/g) ?? []
+  assert.ok(
+    popovers.some(
+      (popover) =>
+        popover.includes('Another edition or artist credit') &&
+        popover.includes(
+          'aria-label="Link status for Artist fixture — Album fixture"',
+        ),
+    ),
+  )
+  const inline = html.replace(
+    /<div[^>]*popover="auto"[^>]*>[\s\S]*?<\/div>/g,
+    '',
+  )
+  assert.doesNotMatch(inline, /Another edition or artist credit/)
+  assert.match(inline, />Linked</)
 })
 
 test('scrobble links use one ordered toolbar and keep the three-column summary simple', () => {

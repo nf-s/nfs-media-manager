@@ -84,7 +84,9 @@ test('playlists table links tracks and albums filtered by playlist and labels so
   assert.match(html, /1 h 5 min/)
   assert.match(html, />Spotify</)
   assert.match(html, />Library</)
-  assert.equal((html.match(/>Remove</g) ?? []).length, 1)
+  assert.equal((html.match(/aria-label="Remove /g) ?? []).length, 1)
+  assert.match(html, /title="Remove Synthetic mix"/)
+  assert.doesNotMatch(html, />Remove<\/button>/)
   assert.match(
     html,
     /aria-sort="ascending"><button[^>]*title="Sort by Playlist"[^>]*>Playlist<span aria-hidden="true"> ↑<\/span>/,
@@ -124,6 +126,19 @@ test('an empty playlist table links to the import page', () => {
   const html = render(<PlaylistsWorkspace />, [[['playlists'], []]])
   assert.match(html, /No playlists\./)
   assert.match(html, /Import playlists/)
+})
+
+test('compact playlist names and owners retain their complete text', () => {
+  const name =
+    'A long playlist title with several words that must remain available'
+  const owner = 'A long example owner name that must remain available'
+  const html = render(<PlaylistsWorkspace />, [
+    [['playlists'], [{ ...playlist, name, ownerName: owner }]],
+  ])
+  assert.ok(html.includes(`title="${name}"`))
+  assert.ok(html.includes(`title="${owner}"`))
+  assert.ok(html.includes(`aria-label="Remove ${name}"`))
+  assert.ok(html.includes(`>${name}</button>`))
 })
 
 test('playlist filters combine name, owner and description search with source', () => {

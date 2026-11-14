@@ -2,6 +2,7 @@
 
 import Link from 'next/link'
 import { useState } from 'react'
+import { Trash2 } from 'lucide-react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { z } from 'zod'
 import {
@@ -23,6 +24,7 @@ import {
 } from '@repo/ui/components/ui/table'
 import { useConfig } from './providers'
 import {
+  SecondaryCell,
   SecondaryTableHead,
   SecondaryTableScroll,
   SecondaryTableToolbar,
@@ -407,22 +409,28 @@ export default function PlaylistsWorkspace() {
                 )}
                 {columns.visible('name') && (
                   <TableCell>
-                    <button
-                      type="button"
-                      className="table-title hover:underline"
-                      onClick={(event) =>
-                        drawer.open(playlist.id, event.currentTarget)
-                      }
-                    >
-                      {playlist.name}
-                    </button>
+                    <SecondaryCell text={playlist.name}>
+                      <button
+                        type="button"
+                        className="table-title hover:underline"
+                        onClick={(event) =>
+                          drawer.open(playlist.id, event.currentTarget)
+                        }
+                      >
+                        {playlist.name}
+                      </button>
+                    </SecondaryCell>
                   </TableCell>
                 )}
                 {columns.visible('source') && (
                   <TableCell>{playlistSourceLabel(playlist.source)}</TableCell>
                 )}
                 {columns.visible('owner') && (
-                  <TableCell>{playlist.ownerName ?? '-'}</TableCell>
+                  <TableCell>
+                    <SecondaryCell text={playlist.ownerName ?? undefined}>
+                      {playlist.ownerName ?? '-'}
+                    </SecondaryCell>
+                  </TableCell>
                 )}
                 {columns.visible('tracks') && (
                   <TableCell className="numeric">
@@ -489,7 +497,15 @@ export default function PlaylistsWorkspace() {
                   </TableCell>
                 )}
                 {columns.visible('description') && (
-                  <TableCell>{playlist.description ?? '-'}</TableCell>
+                  <TableCell>
+                    <SecondaryCell
+                      text={playlist.description ?? undefined}
+                      details={playlist.description || undefined}
+                      label={`Description of ${playlist.name}`}
+                    >
+                      {playlist.description ?? '-'}
+                    </SecondaryCell>
+                  </TableCell>
                 )}
                 {columns.visible('nextSync') && (
                   <TableCell className="whitespace-nowrap">
@@ -504,15 +520,17 @@ export default function PlaylistsWorkspace() {
                       <Button
                         size="sm"
                         variant="ghost"
+                        className="size-6 p-0"
                         disabled={remove.isPending}
                         aria-label={`Remove ${playlist.name}`}
+                        title={`Remove ${playlist.name}`}
                         onClick={() => {
                           setConfirmingId(playlist.id)
                           setOutcome('')
                           remove.reset()
                         }}
                       >
-                        Remove
+                        <Trash2 size={14} aria-hidden="true" />
                       </Button>
                     )}
                   </TableCell>

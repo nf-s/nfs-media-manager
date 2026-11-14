@@ -3,6 +3,7 @@
 import { useDeferredValue, useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { useInfiniteQuery } from '@tanstack/react-query'
+import { Settings2 } from 'lucide-react'
 import { TagPageSchema, type TagSortKey } from '@repo/schemas/tags'
 import { Button } from '@repo/ui/components/ui/button'
 import { Input } from '@repo/ui/components/ui/input'
@@ -14,6 +15,7 @@ import TagDetailModal from '@/components/tag-detail-modal'
 import TagActions from '@/components/tag-actions'
 import { useMediaScope } from '@/components/media-scope'
 import {
+  SecondaryCell,
   SecondaryTableToolbar,
   SecondaryTableScroll,
   SecondaryTableHead,
@@ -296,13 +298,15 @@ export default function TagsPageClient({
                 </td>
                 {columns.visible('name') && (
                   <td>
-                    <button
-                      type="button"
-                      className="tag-name"
-                      onClick={() => updateParams('tag', tag.id)}
-                    >
-                      {tag.name}
-                    </button>
+                    <SecondaryCell text={tag.name}>
+                      <button
+                        type="button"
+                        className="tag-name"
+                        onClick={() => updateParams('tag', tag.id)}
+                      >
+                        {tag.name}
+                      </button>
+                    </SecondaryCell>
                   </td>
                 )}
                 {columns.visible('mediaCount') && (
@@ -323,17 +327,31 @@ export default function TagsPageClient({
                   </td>
                 )}
                 {columns.visible('mergedNames') && (
-                  <td>{tag.mergedNames.join(', ') || '-'}</td>
+                  <td>
+                    <SecondaryCell
+                      text={tag.mergedNames.join(', ')}
+                      details={
+                        tag.mergedNames.length
+                          ? tag.mergedNames.join(', ')
+                          : undefined
+                      }
+                      label={`Merged names for ${tag.name}`}
+                    >
+                      {tag.mergedNames.join(', ') || '-'}
+                    </SecondaryCell>
+                  </td>
                 )}
                 {columns.visible('actions') && (
                   <td className="text-right">
                     <Button
                       size="sm"
                       variant="ghost"
+                      className="size-6 p-0"
                       onClick={() => updateParams('tag', tag.id)}
                       aria-label={`Manage tag ${tag.name}`}
+                      title={`Manage tag ${tag.name}`}
                     >
-                      Manage tag
+                      <Settings2 size={14} aria-hidden="true" />
                     </Button>
                   </td>
                 )}

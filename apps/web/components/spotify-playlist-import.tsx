@@ -35,6 +35,7 @@ import {
 } from '@repo/ui/components/ui/table'
 import { useConfig } from './providers'
 import {
+  SecondaryCell,
   SecondaryTableHead,
   SecondaryTableScroll,
   SecondaryTableToolbar,
@@ -313,22 +314,37 @@ function ImportState({ playlist }: { playlist: SpotifyPlaylist }) {
   const { job, stored } = playlist
   const showJob = job && job.status !== 'succeeded'
   const reason = cannotImportReason(playlist)
+  const label = showJob
+    ? playlistJobLabels[job.status]
+    : stored
+      ? playlist.current
+        ? 'Imported'
+        : 'Needs update'
+      : 'Not imported'
   return (
-    <>
-      {showJob && <JobState job={job} labels={playlistJobLabels} />}
-      {!playlistJobActive(job) &&
-        (stored ? (
-          <span className={showJob ? 'muted block' : undefined}>
-            {storedLabel(stored)}
-            {!playlist.current && ' · Changed on Spotify'}
-          </span>
-        ) : (
-          !showJob && 'Not imported'
-        ))}
-      {reason && (
-        <span className="muted block whitespace-normal">{reason}</span>
-      )}
-    </>
+    <SecondaryCell
+      text={label}
+      label={`Import details for ${playlist.name}`}
+      details={
+        <>
+          {showJob && (
+            <p>
+              <JobState job={job} labels={playlistJobLabels} />
+            </p>
+          )}
+          {stored && (
+            <p>
+              {storedLabel(stored)}
+              {!playlist.current && ' · Changed on Spotify'}
+            </p>
+          )}
+          {reason && <p>{reason}</p>}
+          {!showJob && !stored && !reason && <p>Not imported</p>}
+        </>
+      }
+    >
+      {showJob ? <JobStatus job={job} labels={playlistJobLabels} /> : label}
+    </SecondaryCell>
   )
 }
 
@@ -979,22 +995,28 @@ export default function SpotifyPlaylistImport() {
                       )}
                       {columns.visible('name') && (
                         <TableCell>
-                          {playlist.stored ? (
-                            <Link
-                              className="font-medium hover:underline"
-                              href={playlistDrawerHref(
-                                playlist.stored.playlistId,
-                              )}
-                            >
-                              {playlist.name}
-                            </Link>
-                          ) : (
-                            playlist.name
-                          )}
+                          <SecondaryCell text={playlist.name}>
+                            {playlist.stored ? (
+                              <Link
+                                className="font-medium hover:underline"
+                                href={playlistDrawerHref(
+                                  playlist.stored.playlistId,
+                                )}
+                              >
+                                {playlist.name}
+                              </Link>
+                            ) : (
+                              playlist.name
+                            )}
+                          </SecondaryCell>
                         </TableCell>
                       )}
                       {columns.visible('owner') && (
-                        <TableCell>{playlist.ownerName ?? '-'}</TableCell>
+                        <TableCell>
+                          <SecondaryCell text={playlist.ownerName ?? '-'}>
+                            {playlist.ownerName ?? '-'}
+                          </SecondaryCell>
+                        </TableCell>
                       )}
                       {columns.visible('tracks') && (
                         <TableCell className="numeric">
@@ -1082,7 +1104,11 @@ export default function SpotifyPlaylistImport() {
                         </TableCell>
                       )}
                       {columns.visible('description') && (
-                        <TableCell>{summary?.description ?? '-'}</TableCell>
+                        <TableCell>
+                          <SecondaryCell text={summary?.description ?? '-'}>
+                            {summary?.description ?? '-'}
+                          </SecondaryCell>
+                        </TableCell>
                       )}
                     </TableRow>
                   )

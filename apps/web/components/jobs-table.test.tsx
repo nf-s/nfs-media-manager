@@ -111,7 +111,10 @@ test('job sort state follows the URL and deep-linked details span the visible co
     html,
     /aria-label="Collapse example-provider job" aria-expanded="true"/,
   )
-  assert.match(html, /id="job-details-example-job"><td colSpan="6"/)
+  assert.match(
+    html,
+    /id="job-details-example-job" class="secondary-table-detail-row"><td colSpan="6"/,
+  )
   assert.match(html, /Example failure/)
   assert.match(html, /Stored JSON/)
 })

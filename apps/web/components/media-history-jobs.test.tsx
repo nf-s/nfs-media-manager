@@ -161,3 +161,19 @@ test('job history puts search, status, result count and columns in one ordered t
   assert.ok(search < status && status < count && count < columns)
   assert.match(html, /class="secondary-table-toolbar"/)
 })
+
+test('long history results stay available through labelled details', () => {
+  const history = page(1, 1, 'Example provider')
+  const job = history.items[0]
+  assert.ok(job)
+  job.errorMessage =
+    'A detailed provider failure that must remain available in full.'
+  const html = renderHistory([history])
+  assert.match(html, /aria-label="Job result details"/)
+  assert.match(html, /popover="auto" role="dialog"/)
+  assert.match(
+    html,
+    /A detailed provider failure that must remain available in full\./,
+  )
+  assert.doesNotMatch(html, /class="max-w-sm break-words"/)
+})

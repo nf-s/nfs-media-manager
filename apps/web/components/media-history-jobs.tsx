@@ -18,6 +18,7 @@ import { useInfiniteTableScroll } from '@/hooks/useInfiniteTableScroll'
 import { fetchApiData } from '@/utils/api'
 import { useConfig } from './providers'
 import {
+  SecondaryCell,
   SecondaryTableToolbar,
   SecondaryTableScroll,
   SecondaryTableHead,
@@ -226,61 +227,90 @@ export default function MediaHistoryJobs({
                 (candidate) => candidate.mediaItemId === mediaItemId,
               )
               const dismissal = getJobDismissal(job.options)
+              const result = item?.message ?? job.errorMessage ?? '-'
+              const itemStatus =
+                item && item.status !== job.status
+                  ? `This item: ${item.status}`
+                  : undefined
               return (
                 <tr key={job.id}>
                   {columns.visible('provider') && (
                     <td>
-                      <Link
-                        className="underline underline-offset-2"
-                        href={`/jobs?jobId=${encodeURIComponent(job.id)}`}
-                        aria-label={`View ${providerLabel} job from ${new Date(job.createdAt).toLocaleString()}`}
-                      >
-                        {providerLabel}
-                      </Link>
+                      <SecondaryCell text={providerLabel}>
+                        <Link
+                          className="underline underline-offset-2"
+                          href={`/jobs?jobId=${encodeURIComponent(job.id)}`}
+                          aria-label={`View ${providerLabel} job from ${new Date(job.createdAt).toLocaleString()}`}
+                        >
+                          {providerLabel}
+                        </Link>
+                      </SecondaryCell>
                     </td>
                   )}
                   {columns.visible('status') && (
                     <td>
-                      <span className="job-status" data-status={job.status}>
-                        {job.status}
-                      </span>
-                      {dismissal && (
-                        <span
-                          className="muted block"
-                          title={`Dismissed ${new Date(dismissal.dismissedAt).toLocaleString()}`}
-                        >
-                          Dismissed
+                      <SecondaryCell
+                        text={`${job.status}${dismissal ? ' · dismissed' : ''}`}
+                        details={
+                          dismissal
+                            ? `Dismissed ${new Date(dismissal.dismissedAt).toLocaleString()}. Errors retained.`
+                            : undefined
+                        }
+                        label="Dismissal details"
+                      >
+                        <span className="job-status" data-status={job.status}>
+                          {job.status}
+                          {dismissal ? ' · dismissed' : ''}
                         </span>
-                      )}
+                      </SecondaryCell>
                     </td>
                   )}
                   {columns.visible('createdAt') && (
                     <td className="whitespace-nowrap">
-                      <time dateTime={job.createdAt}>
-                        {new Date(job.createdAt).toLocaleString()}
-                      </time>
+                      <SecondaryCell
+                        text={new Date(job.createdAt).toLocaleString()}
+                      >
+                        <time dateTime={job.createdAt}>
+                          {new Date(job.createdAt).toLocaleString()}
+                        </time>
+                      </SecondaryCell>
                     </td>
                   )}
                   {columns.visible('result') && (
-                    <td className="max-w-sm break-words">
-                      {item && item.status !== job.status && (
-                        <span className="block">This item: {item.status}</span>
-                      )}
-                      {item?.message ?? job.errorMessage ?? '-'}
+                    <td>
+                      <SecondaryCell
+                        text={[itemStatus, result].filter(Boolean).join(' · ')}
+                        label="Job result details"
+                        details={
+                          result !== '-' || itemStatus ? (
+                            <>
+                              {itemStatus && <p>{itemStatus}</p>}
+                              <p>{result}</p>
+                            </>
+                          ) : undefined
+                        }
+                      >
+                        {itemStatus ? `${itemStatus} · ` : ''}
+                        {result}
+                      </SecondaryCell>
                     </td>
                   )}
                   {columns.visible('startedAt') && (
                     <td className="whitespace-nowrap">
-                      {job.startedAt
-                        ? new Date(job.startedAt).toLocaleString()
-                        : '-'}
+                      <SecondaryCell>
+                        {job.startedAt
+                          ? new Date(job.startedAt).toLocaleString()
+                          : '-'}
+                      </SecondaryCell>
                     </td>
                   )}
                   {columns.visible('finishedAt') && (
                     <td className="whitespace-nowrap">
-                      {job.finishedAt
-                        ? new Date(job.finishedAt).toLocaleString()
-                        : '-'}
+                      <SecondaryCell>
+                        {job.finishedAt
+                          ? new Date(job.finishedAt).toLocaleString()
+                          : '-'}
+                      </SecondaryCell>
                     </td>
                   )}
                 </tr>

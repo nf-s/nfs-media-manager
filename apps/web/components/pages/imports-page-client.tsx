@@ -10,10 +10,16 @@ import {
 } from '@repo/schemas/imports'
 import { fetchApiData } from '@/utils/api'
 import { useConfig } from '@/components/providers'
-import { SecondaryDataTable } from '../secondary-table'
+import { SecondaryCell, SecondaryDataTable } from '../secondary-table'
 import { useMediaScope } from '@/components/media-scope'
 import { scopedHref } from '@/utils/media-scope'
 import { ImportStatusNotice } from '@/components/imports-workspace'
+
+function resultSummary(run: ImportRun) {
+  return run.result
+    ? `${run.result.created !== undefined ? `${run.result.created} new items, ${run.result.updated ?? 0} changed, ${run.result.unchanged ?? 0} unchanged` : `${run.result.albums} albums, ${run.result.films} film rows`}${run.result.skipped ? `, ${run.result.skipped} skipped` : ''}${run.result.failed ? `, ${run.result.failed} failed` : ''}`
+    : (run.errorMessage ?? '-')
+}
 
 export default function ImportsPageClient() {
   const [status, setStatus] = useState<ImportRun['status'] | ''>('')
@@ -95,14 +101,17 @@ export default function ImportsPageClient() {
               label: 'Started',
               value: (run) => Date.parse(run.createdAt),
               render: (run) => (
-                <>
+                <SecondaryCell
+                  text={new Date(run.createdAt).toLocaleString()}
+                  label="Import scope details"
+                  details={
+                    run.mediaType === null
+                      ? 'Mixed / legacy scope unknown'
+                      : undefined
+                  }
+                >
                   {new Date(run.createdAt).toLocaleString()}
-                  {run.mediaType === null && (
-                    <span className="block text-xs text-muted-foreground">
-                      Mixed / legacy scope unknown
-                    </span>
-                  )}
-                </>
+                </SecondaryCell>
               ),
             },
             {
@@ -110,9 +119,11 @@ export default function ImportsPageClient() {
               label: 'Status',
               value: (run) => run.status,
               render: (run) => (
-                <span className="job-status" data-status={run.status}>
-                  {run.status}
-                </span>
+                <SecondaryCell text={run.status}>
+                  <span className="job-status" data-status={run.status}>
+                    {run.status}
+                  </span>
+                </SecondaryCell>
               ),
             },
             { key: 'stage', label: 'Stage', value: (run) => run.stage },
@@ -137,33 +148,44 @@ export default function ImportsPageClient() {
                   ? `${run.result.created ?? run.result.albums} new, ${run.result.updated ?? run.result.films} changed`
                   : null),
               render: (run) => (
-                <>
-                  {run.result
-                    ? `${run.result.created !== undefined ? `${run.result.created} new items, ${run.result.updated ?? 0} changed, ${run.result.unchanged ?? 0} unchanged` : `${run.result.albums} albums, ${run.result.films} film rows`}${run.result.skipped ? `, ${run.result.skipped} skipped` : ''}${run.result.failed ? `, ${run.result.failed} failed` : ''}`
-                    : run.errorMessage}
-                  {run.result?.jobBatchId && (
-                    <p>
-                      <Link
-                        href={scopedHref(
-                          `/jobs?batchId=${run.result.jobBatchId}`,
-                          run.mediaType ?? mediaType,
+                <SecondaryCell
+                  text={resultSummary(run)}
+                  label="Import result details"
+                  details={
+                    run.result || run.errorMessage ? (
+                      <>
+                        <p>{resultSummary(run)}</p>
+                        {run.result && run.errorMessage && (
+                          <p>{run.errorMessage}</p>
                         )}
-                      >
-                        {run.result.queuedJobs ?? 0} metadata jobs
-                      </Link>
-                      {!!run.result.skippedJobs &&
-                        ` · ${run.result.skippedJobs} already scraped, queued or awaiting IDs/credentials`}
-                    </p>
-                  )}
-                  {!!run.result?.warnings?.length && (
-                    <details>
-                      <summary>Warnings ({run.result.warnings.length})</summary>
-                      {run.result.warnings.map((warning, index) => (
-                        <p key={index}>{warning}</p>
-                      ))}
-                    </details>
-                  )}
-                </>
+                        {run.result?.jobBatchId && (
+                          <p>
+                            <Link
+                              href={scopedHref(
+                                `/jobs?batchId=${run.result.jobBatchId}`,
+                                run.mediaType ?? mediaType,
+                              )}
+                            >
+                              {run.result.queuedJobs ?? 0} metadata jobs
+                            </Link>
+                            {!!run.result.skippedJobs &&
+                              ` · ${run.result.skippedJobs} already scraped, queued or awaiting IDs/credentials`}
+                          </p>
+                        )}
+                        {!!run.result?.warnings?.length && (
+                          <div>
+                            <p>Warnings ({run.result.warnings.length})</p>
+                            {run.result.warnings.map((warning, index) => (
+                              <p key={index}>{warning}</p>
+                            ))}
+                          </div>
+                        )}
+                      </>
+                    ) : undefined
+                  }
+                >
+                  {resultSummary(run)}
+                </SecondaryCell>
               ),
             },
             {
@@ -172,10 +194,13 @@ export default function ImportsPageClient() {
               defaultVisible: false,
               value: (run) =>
                 run.finishedAt ? Date.parse(run.finishedAt) : null,
-              render: (run) =>
-                run.finishedAt
-                  ? new Date(run.finishedAt).toLocaleString()
-                  : '-',
+              render: (run) => (
+                <SecondaryCell>
+                  {run.finishedAt
+                    ? new Date(run.finishedAt).toLocaleString()
+                    : '-'}
+                </SecondaryCell>
+              ),
             },
             {
               key: 'created',

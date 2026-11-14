@@ -73,6 +73,7 @@ import {
 } from './play-controls'
 import { useConfig } from './providers'
 import {
+  SecondaryCell,
   SecondaryTableHead,
   SecondaryTableScroll,
   SecondaryTableToolbar,
@@ -300,41 +301,53 @@ export function PlaylistEntries({
                   )}
                   {columns.visible('title') && (
                     <TableCell>
-                      {onOpenTrack ? (
-                        <button
-                          type="button"
-                          className="table-title"
-                          onClick={(event) =>
-                            onOpenTrack(entry.track.id, event.currentTarget)
-                          }
-                        >
-                          {entry.track.title}
-                        </button>
-                      ) : (
-                        <Link
-                          className="table-title"
-                          href={trackHref(entry.track.id)}
-                        >
-                          {entry.track.title}
-                        </Link>
-                      )}
-                      <LibraryTrackQueueButton track={entry.track} />
+                      <div className="secondary-cell-actions">
+                        <SecondaryCell text={entry.track.title}>
+                          {onOpenTrack ? (
+                            <button
+                              type="button"
+                              className="table-title"
+                              onClick={(event) =>
+                                onOpenTrack(entry.track.id, event.currentTarget)
+                              }
+                            >
+                              {entry.track.title}
+                            </button>
+                          ) : (
+                            <Link
+                              className="table-title"
+                              href={trackHref(entry.track.id)}
+                            >
+                              {entry.track.title}
+                            </Link>
+                          )}
+                        </SecondaryCell>
+                        <span title={`Add ${entry.track.title} to queue`}>
+                          <LibraryTrackQueueButton track={entry.track} />
+                        </span>
+                      </div>
                     </TableCell>
                   )}
                   {columns.visible('artists') && (
                     <TableCell>
-                      {entry.track.artists.join(', ') || '-'}
+                      <SecondaryCell text={entry.track.artists.join(', ')}>
+                        {entry.track.artists.join(', ') || '-'}
+                      </SecondaryCell>
                     </TableCell>
                   )}
                   {columns.visible('album') && (
                     <TableCell>
-                      {entry.track.album ? (
-                        <Link href={albumHref(entry.track.album.id)}>
-                          {entry.track.albumName ?? entry.track.album.title}
-                        </Link>
-                      ) : (
-                        (entry.track.albumName ?? '-')
-                      )}
+                      <SecondaryCell
+                        text={entry.track.albumName ?? entry.track.album?.title}
+                      >
+                        {entry.track.album ? (
+                          <Link href={albumHref(entry.track.album.id)}>
+                            {entry.track.albumName ?? entry.track.album.title}
+                          </Link>
+                        ) : (
+                          (entry.track.albumName ?? '-')
+                        )}
+                      </SecondaryCell>
                     </TableCell>
                   )}
                   {columns.visible('duration') && (
@@ -371,18 +384,22 @@ export function PlaylistEntries({
                   )}
                   {columns.visible('title') && (
                     <TableCell>
-                      <Link
-                        className="table-title"
-                        href={albumHref(entry.album.id)}
-                      >
-                        {entry.album.title}
-                      </Link>{' '}
-                      <span className="quiet">Album</span>
+                      <SecondaryCell text={`${entry.album.title} · Album`}>
+                        <Link
+                          className="table-title"
+                          href={albumHref(entry.album.id)}
+                        >
+                          {entry.album.title}
+                        </Link>{' '}
+                        <span className="quiet">Album</span>
+                      </SecondaryCell>
                     </TableCell>
                   )}
                   {columns.visible('artists') && (
                     <TableCell>
-                      {entry.album.artists.join(', ') || '-'}
+                      <SecondaryCell text={entry.album.artists.join(', ')}>
+                        {entry.album.artists.join(', ') || '-'}
+                      </SecondaryCell>
                     </TableCell>
                   )}
                   {columns.visible('album') && <TableCell>-</TableCell>}

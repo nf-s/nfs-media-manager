@@ -17,6 +17,7 @@ import { fetchApiData } from '@/utils/api'
 import { sortTableRows } from '@/utils/secondary-table'
 import { useConfig } from './providers'
 import {
+  SecondaryCell,
   SecondaryTableHead,
   SecondaryTableScroll,
   SecondaryTableToolbar,
@@ -151,15 +152,17 @@ export default function FilmCollectionsWorkspace() {
               >
                 {table.visible('name') && (
                   <TableCell>
-                    <button
-                      type="button"
-                      className="table-title hover:underline"
-                      onClick={(event) =>
-                        drawer.open(row.id, event.currentTarget)
-                      }
-                    >
-                      {row.name}
-                    </button>
+                    <SecondaryCell text={row.name}>
+                      <button
+                        type="button"
+                        className="table-title hover:underline"
+                        onClick={(event) =>
+                          drawer.open(row.id, event.currentTarget)
+                        }
+                      >
+                        {row.name}
+                      </button>
+                    </SecondaryCell>
                   </TableCell>
                 )}
                 {table.visible('filmCount') && (

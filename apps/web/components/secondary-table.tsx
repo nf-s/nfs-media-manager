@@ -10,7 +10,7 @@ import {
   type ReactNode,
 } from 'react'
 import { z } from 'zod'
-import { Columns3 } from 'lucide-react'
+import { Columns3, Eye } from 'lucide-react'
 import { Button } from '@repo/ui/components/ui/button'
 import { Input } from '@repo/ui/components/ui/input'
 import {
@@ -28,6 +28,167 @@ export type DataColumn<T> = TableColumn & {
   value: (row: T) => TableValue
   render?: (row: T) => ReactNode
   className?: string
+}
+
+/** A compact value with a full-text reveal when it is clipped. */
+export function SecondaryCell({
+  children,
+  text,
+  details,
+  label = 'Show cell details',
+  lines = 1,
+}: {
+  children: ReactNode
+  text?: string
+  details?: ReactNode
+  label?: string
+  lines?: 1 | 2
+}) {
+  const content = useRef<HTMLDivElement>(null)
+  const [clipped, setClipped] = useState(false)
+  const fullText =
+    text ??
+    (typeof children === 'string' || typeof children === 'number'
+      ? String(children)
+      : undefined)
+  useEffect(() => {
+    const element = content.current
+    if (!element) return
+    function measure() {
+      if (!element) return
+      setClipped(
+        element.scrollWidth > element.clientWidth ||
+          element.scrollHeight > element.clientHeight,
+      )
+    }
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [children, fullText, lines])
+  return (
+    <div className="secondary-cell" data-lines={lines}>
+      <div className="secondary-cell-text" ref={content} title={fullText}>
+        {children}
+      </div>
+      {(details != null || (clipped && fullText)) && (
+        <SecondaryCellDetails label={label}>
+          {details ?? fullText}
+        </SecondaryCellDetails>
+      )}
+    </div>
+  )
+}
+
+/** Native top-layer detail surface, usable by mouse, keyboard and touch. */
+export function SecondaryCellDetails({
+  children,
+  label,
+}: {
+  children: ReactNode
+  label: string
+}) {
+  const id = useId()
+  const trigger = useRef<HTMLButtonElement>(null)
+  const panel = useRef<HTMLDivElement>(null)
+  const anchor = useRef<HTMLDivElement>(null)
+  const pinned = useRef(false)
+  const closing = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [open, setOpen] = useState(false)
+  function cancelClose() {
+    if (closing.current !== null) clearTimeout(closing.current)
+    closing.current = null
+  }
+  function show() {
+    cancelClose()
+    panel.current?.showPopover()
+  }
+  function scheduleClose() {
+    cancelClose()
+    closing.current = setTimeout(() => {
+      if (!pinned.current && !anchor.current?.contains(document.activeElement))
+        panel.current?.hidePopover()
+    }, 150)
+  }
+  useEffect(() => () => cancelClose(), [])
+  useEffect(() => {
+    if (!open) return
+    function onEscape(event: KeyboardEvent) {
+      if (event.defaultPrevented || event.key !== 'Escape') return
+      event.preventDefault()
+      event.stopPropagation()
+      pinned.current = false
+      trigger.current?.focus()
+      panel.current?.hidePopover()
+    }
+    function position() {
+      if (!trigger.current || !panel.current) return
+      const rect = trigger.current.getBoundingClientRect()
+      const box = panel.current.getBoundingClientRect()
+      panel.current.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - box.width - 8))}px`
+      panel.current.style.top = `${Math.max(8, Math.min(rect.bottom + 4, window.innerHeight - box.height - 8))}px`
+    }
+    position()
+    const observer = new ResizeObserver(position)
+    if (panel.current) observer.observe(panel.current)
+    document.addEventListener('keydown', onEscape, true)
+    window.addEventListener('scroll', position, true)
+    window.addEventListener('resize', position)
+    return () => {
+      observer.disconnect()
+      document.removeEventListener('keydown', onEscape, true)
+      window.removeEventListener('scroll', position, true)
+      window.removeEventListener('resize', position)
+    }
+  }, [open])
+  return (
+    <div
+      className="secondary-cell-details"
+      ref={anchor}
+      onMouseEnter={show}
+      onMouseLeave={scheduleClose}
+      onBlur={scheduleClose}
+      onClick={(event) => event.stopPropagation()}
+    >
+      <button
+        type="button"
+        className="secondary-cell-action"
+        ref={trigger}
+        title={label}
+        aria-label={label}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        aria-controls={id}
+        onFocus={show}
+        onClick={() => {
+          if (pinned.current) {
+            pinned.current = false
+            panel.current?.hidePopover()
+          } else {
+            pinned.current = true
+            show()
+          }
+        }}
+      >
+        <Eye size={14} aria-hidden="true" />
+      </button>
+      <div
+        id={id}
+        ref={panel}
+        popover="auto"
+        role="dialog"
+        aria-label={label}
+        className="secondary-cell-popover"
+        onToggle={(event) => {
+          const visible = event.newState === 'open'
+          setOpen(visible)
+          if (!visible) pinned.current = false
+        }}
+      >
+        {children}
+      </div>
+    </div>
+  )
 }
 
 export function SecondaryTableToolbar({
@@ -204,9 +365,13 @@ export function SecondaryDataTable<T>({
               <tr key={rowKey(row)}>
                 {shown.map((column) => (
                   <td key={column.key} className={column.className}>
-                    {column.render
-                      ? column.render(row)
-                      : String(column.value(row) ?? '-')}
+                    {column.render ? (
+                      column.render(row)
+                    ) : (
+                      <SecondaryCell>
+                        {String(column.value(row) ?? '-')}
+                      </SecondaryCell>
+                    )}
                   </td>
                 ))}
               </tr>

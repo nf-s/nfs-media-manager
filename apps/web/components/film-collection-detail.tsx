@@ -25,6 +25,7 @@ import { fetchApiData } from '@/utils/api'
 import { useConfig } from './providers'
 import MediaArtwork from './media-artwork'
 import {
+  SecondaryCell,
   SecondaryTableHead,
   SecondaryTableScroll,
   SecondaryTableToolbar,
@@ -204,9 +205,9 @@ export function FilmCollectionEntries({ id }: { id: string }) {
                       src={row.artworkUrl}
                       alt=""
                       fallbackLabel=""
-                      containerClassName="h-9 w-6 rounded"
-                      imageClassName="h-9 w-6 object-cover"
-                      fallbackClassName="h-9 w-6"
+                      containerClassName="h-7 w-5 rounded"
+                      imageClassName="h-7 w-5 object-cover"
+                      fallbackClassName="h-7 w-5"
                     />
                   </TableCell>
                 )}
@@ -217,12 +218,14 @@ export function FilmCollectionEntries({ id }: { id: string }) {
                 )}
                 {table.visible('title') && (
                   <TableCell>
-                    <Link
-                      className="table-title"
-                      href={`/films?item=${encodeURIComponent(row.id)}`}
-                    >
-                      {row.title}
-                    </Link>
+                    <SecondaryCell text={row.title}>
+                      <Link
+                        className="table-title"
+                        href={`/films?item=${encodeURIComponent(row.id)}`}
+                      >
+                        {row.title}
+                      </Link>
+                    </SecondaryCell>
                   </TableCell>
                 )}
                 {table.visible('releaseDate') && (
@@ -241,7 +244,11 @@ export function FilmCollectionEntries({ id }: { id: string }) {
                   <TableCell>{row.watched ? 'Yes' : 'No'}</TableCell>
                 )}
                 {table.visible('source') && (
-                  <TableCell>{row.source ?? '-'}</TableCell>
+                  <TableCell>
+                    <SecondaryCell text={row.source ?? undefined}>
+                      {row.source ?? '-'}
+                    </SecondaryCell>
+                  </TableCell>
                 )}
                 {table.visible('dateAdded') && (
                   <TableCell className="whitespace-nowrap">

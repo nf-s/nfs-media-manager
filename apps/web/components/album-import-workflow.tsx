@@ -27,6 +27,7 @@ import {
   useMediaProviders,
 } from './film-provider-selection'
 import ImportPreviewTable from './import-preview-table'
+import { SecondaryCell } from './secondary-table'
 import { fetchApiData } from '@/utils/api'
 import { scopedHref } from '@/utils/media-scope'
 import { spotifyCallbackSetup } from '@/utils/spotify-setup'
@@ -459,17 +460,20 @@ export default function AlbumImportWorkflow({
                 label: 'Added',
                 value: (item) =>
                   item.dateAdded ? Date.parse(item.dateAdded) : null,
-                render: (item) =>
-                  item.dateAdded && addedDateField ? (
-                    <time dateTime={item.dateAdded} title={item.dateAdded}>
-                      {formatBrowseValue(
-                        addedDateField,
-                        Date.parse(item.dateAdded),
-                      )}
-                    </time>
-                  ) : (
-                    '-'
-                  ),
+                render: (item) => (
+                  <SecondaryCell text={item.dateAdded ?? undefined}>
+                    {item.dateAdded && addedDateField ? (
+                      <time dateTime={item.dateAdded}>
+                        {formatBrowseValue(
+                          addedDateField,
+                          Date.parse(item.dateAdded),
+                        )}
+                      </time>
+                    ) : (
+                      '-'
+                    )}
+                  </SecondaryCell>
+                ),
               },
               {
                 key: 'identifiers',
@@ -490,7 +494,7 @@ export default function AlbumImportWorkflow({
                 label: 'Row',
                 defaultVisible: false,
                 value: (item) => item.row,
-                render: (item) => item.row + 1,
+                render: (item) => <SecondaryCell>{item.row + 1}</SecondaryCell>,
               },
             ]}
           />

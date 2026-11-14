@@ -726,6 +726,39 @@ test('history uses declared run scope for metadata links even with zero result c
   assert.match(html, /href="\/jobs\?batchId=album-batch&amp;mediaType=album"/)
 })
 
+test('import results retain warnings, errors and job links in a labelled cell disclosure', () => {
+  const run = importRun('album', 'succeeded')
+  run.errorMessage = 'An additional retained diagnostic.'
+  run.result = {
+    albums: 3,
+    films: 0,
+    created: 3,
+    updated: 2,
+    warnings: [
+      'A long synthetic warning that stays available.',
+      'Second warning.',
+    ],
+    jobBatchId: 'album-batch',
+    queuedJobs: 3,
+    skippedJobs: 2,
+  }
+  const html = render(
+    '/imports',
+    'mediaType=album',
+    <ImportsWorkspace>
+      <ImportsPageClient />
+    </ImportsWorkspace>,
+    [run],
+  )
+  assert.match(html, /aria-label="Import result details"/)
+  assert.match(html, /popover="auto" role="dialog"/)
+  assert.match(html, /Warnings \(2\)/)
+  assert.match(html, /A long synthetic warning that stays available\./)
+  assert.match(html, /An additional retained diagnostic\./)
+  assert.match(html, /href="\/jobs\?batchId=album-batch&amp;mediaType=album"/)
+  assert.doesNotMatch(html, /<summary>Warnings/)
+})
+
 test('global import guard links to the other library without leaking its history rows', () => {
   const html = render(
     '/imports',
