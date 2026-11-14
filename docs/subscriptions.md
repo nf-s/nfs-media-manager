@@ -37,7 +37,8 @@ Choose **Sync now** on **Subscriptions → Imports → YouTube**. Opening a page
 
 The sync is a YouTube job with no media item. It appears in the Subscriptions library's Jobs as **YouTube subscription sync**, with its progress log, cancel and retry. No page needs to stay open.
 
-- A sync first reads the subscription list, then each subscribed channel's uploads, 50 per request.
+- A sync first reads the subscription list, then each subscribed channel's Shorts list and uploads, 50 per request.
+- Shorts are not stored. Each sync reads a channel's Shorts list from the newest and stops at the first page that contains a Short it has already recorded. A video on that list is left out of the uploads, and one stored by an earlier sync is deleted. The Data API has no field that marks a Short; the list is the playlist `UUSH` followed by the channel ID without its `UC` prefix, which YouTube does not document. If YouTube stops serving it, Shorts are stored as videos again.
 - The first sync reads every channel's full upload history. Later syncs read each channel from its newest upload and stop at the first page that contains a video already stored, usually one page.
 - One job runs at most 300 steps or eight minutes, then succeeds and queues a follow-on job. A long sync is a chain of jobs.
 - A page of videos and its checkpoint are saved together. A paused, failed or cancelled run resumes at the next unread page.
@@ -50,7 +51,7 @@ The sync is a YouTube job with no media item. It appears in the Subscriptions li
 
 The [YouTube Data API](https://developers.google.com/youtube/v3/determine_quota_cost) allows 10,000 units a day by default, and every request the sync makes costs one unit. The app's own limit is 9,000 requests a day, adjustable in **Providers → YouTube → Settings**; raising it cannot raise the Google quota.
 
-Each 50 uploads cost two requests. A first sync of 300 channels with 500 uploads each is about 6,000 requests; channels with long histories can take the first sync past one day. Later syncs cost about two requests per channel.
+Each 50 uploads cost two requests, and each 50 Shorts on a channel's Shorts list cost one. A first sync of 300 channels with 500 uploads each is about 6,000 requests; channels with long histories can take the first sync past one day. Later syncs cost about three requests per channel.
 
 When the daily limit or the Google quota is reached, the sync **pauses** instead of failing. Stored videos are kept and searchable. The schedule resumes a paused sync after the time shown on the page; with the schedule off, choose **Resume sync** after that time. The app's daily count resets at midnight UTC and Google's quota at midnight Pacific time.
 
@@ -140,6 +141,7 @@ Every endpoint requires the owner session and reads stored rows only.
 | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `subscription_source` | One per channel or podcast: provider ID, type, title, handle, description, avatar URL, subscriber count, the podcast's episode total, whether it is still subscribed, and whether its history has been read. |
 | `subscription_item`   | One per video or episode: provider ID, source, type, title, description, tags, publish time and its precision, duration, live status, the three counts, episode artwork URL and the search text.             |
+| `subscription_short`  | One per YouTube Short a sync has seen: video ID, channel and the run that first recorded it.                                                                                                                 |
 | `subscription_sync`   | One sync checkpoint per account and provider.                                                                                                                                                                |
 
 Video thumbnails are loaded from YouTube by the browser and are not stored. Watch history, playlists and comments are not read.
@@ -148,7 +150,7 @@ Migration 0023 renamed the YouTube tables to these and marked every stored row a
 
 ## Verification
 
-- `integration/youtube-sync.integration.ts` runs the connection, the sync through the job dispatcher and the library search over the synced videos against a fake YouTube API and a temporary database. It covers chained jobs, incremental syncs, renamed and unsubscribed channels, a podcast source left untouched by the YouTube sync, both quota pauses, scheduled and manual resume, failure, cancellation, token renewal, a rejected sign-in, the schedule intervals, search syntax, filters, sorting and paging, migration 0021, and migration 0023 applied to a database holding a paused sync that then resumes.
+- `integration/youtube-sync.integration.ts` runs the connection, the sync through the job dispatcher and the library search over the synced videos against a fake YouTube API and a temporary database. It covers chained jobs, incremental syncs, Shorts left out and removed, renamed and unsubscribed channels, a podcast source left untouched by the YouTube sync, both quota pauses, scheduled and manual resume, failure, cancellation, token renewal, a rejected sign-in, the schedule intervals, search syntax, filters, sorting and paging, migration 0021, and migration 0023 applied to a database holding a paused sync that then resumes.
 - `integration/spotify-podcast-sync.integration.ts` runs the podcast sync through the job dispatcher and the Spotify request gate against a fake Spotify API and a temporary database. It covers chained jobs, an unchanged sync that makes only the saved-podcast requests, incremental and oldest-first reads, release-date precision, an unsaved podcast beside YouTube channels, a removed podcast, empty entries, a rate-limit pause and resume, a rejected token, failure, cancellation, a list that changes while it is read, the schedule intervals and podcast search and type filters.
 - `integration/subscriptions-library.integration.ts` browses synthetic YouTube and podcast rows: search across both types, every filter field and mode, inclusive ranges and missing values, every sort in both directions across pages, facets beyond the first page, sources and single items.
 - Unit tests cover the query and AI plan schemas, the API's authentication and validation, and the AI plans.
