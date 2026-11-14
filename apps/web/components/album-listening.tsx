@@ -172,7 +172,7 @@ export default function AlbumListening({ albumId }: { albumId: string }) {
   const [chartStyle, setChartStyle] = useState<ListeningChartStyle>('line')
   const listening = useAlbumListening(albumId, track)
   if (listening.isPending) return <p>Loading listening history...</p>
-  if (listening.isError)
+  if (!listening.data)
     return (
       <p role="alert">
         Listening history unavailable.{' '}

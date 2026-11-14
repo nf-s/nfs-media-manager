@@ -94,7 +94,6 @@ export function useSubscriptionSyncStatus(provider: SubscriptionType) {
   const { apiBaseUrl } = useConfig()
   return useQuery({
     queryKey: subscriptionSyncQueryKey(provider),
-    staleTime: 0,
     refetchInterval: (query) =>
       youtubeSyncPollInterval(query.state.data?.state ?? null),
     queryFn: async (): Promise<SubscriptionSyncStatus | null> => {
@@ -123,8 +122,13 @@ export function SubscriptionSync({
   const wording = subscriptionSyncWording[data.provider]
   const queryKey = subscriptionSyncQueryKey(data.provider)
   const path = `/api/v1/subscriptions/sync/${data.provider}`
-  const update = (next: SubscriptionSyncStatus) =>
+  const update = async (next: SubscriptionSyncStatus) => {
     client.setQueryData(queryKey, next)
+    await Promise.all([
+      client.invalidateQueries({ queryKey: ['jobs'] }),
+      client.invalidateQueries({ queryKey: ['job-activity'] }),
+    ])
+  }
   const sync = useMutation({
     mutationFn: () =>
       fetchApiData(apiBaseUrl, path, SubscriptionSyncStatusSchema, {
@@ -352,7 +356,7 @@ export default function SubscriptionSyncPanel({
         Loading {wording.name} sync...
       </p>
     )
-  if (status.isError)
+  if (status.data === undefined)
     return (
       <p role="alert">
         Could not load {wording.name} sync.{' '}

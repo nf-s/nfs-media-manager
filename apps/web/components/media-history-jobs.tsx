@@ -16,6 +16,7 @@ import { Button } from '@repo/ui/components/ui/button'
 import { TableState } from '@repo/ui/components/ui/table'
 import { useInfiniteTableScroll } from '@/hooks/useInfiniteTableScroll'
 import { fetchApiData } from '@/utils/api'
+import { jobPagesPollInterval } from '@/utils/job-cache'
 import { useConfig } from './providers'
 import {
   SecondaryColumnFilter,
@@ -70,8 +71,7 @@ export default function MediaHistoryJobs({
       ),
     getNextPageParam: (last) =>
       last.page < last.pageCount ? last.page + 1 : undefined,
-    staleTime: 0,
-    refetchInterval: 3000,
+    refetchInterval: (query) => jobPagesPollInterval(query.state.data?.pages),
   })
   const { scroller, sentinel } = useInfiniteTableScroll({
     enabled: jobs.hasNextPage && !jobs.isFetching && !jobs.isError,

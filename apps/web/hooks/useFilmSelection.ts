@@ -25,7 +25,6 @@ export function useFilmSelection(
         `/api/v1/${resource}/fields`,
         z.array(BrowseFieldSchema),
       ),
-    staleTime: 60000,
   })
   const facets = useBrowseFacets(apiBaseUrl, resource, draft)
   const films = useInfiniteQuery({
@@ -42,7 +41,6 @@ export function useFilmSelection(
       ),
     getNextPageParam: (last) =>
       last.page < last.pageCount ? last.page + 1 : undefined,
-    staleTime: 10000,
   })
   return { fields, facets, films }
 }

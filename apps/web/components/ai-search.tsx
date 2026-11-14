@@ -52,7 +52,6 @@ export default function AiSearch<Plan>({
   } | null>(null)
   const status = useQuery({
     queryKey: ['ai-status'],
-    staleTime: 30000,
     retry: false,
     queryFn: ({ signal }) =>
       fetchApiData(apiBaseUrl, '/api/v1/ai/status', AiStatusSchema, { signal }),

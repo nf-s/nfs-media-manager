@@ -71,7 +71,6 @@ function ScrobbleSpotifySearch({
     queryKey: ['lastfm-spotify-search', group.artistName, group.albumName],
     retry: false,
     enabled: active,
-    staleTime: 0,
     refetchOnWindowFocus: false,
     queryFn: ({ signal }) =>
       fetchApiData(

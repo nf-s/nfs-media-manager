@@ -1,6 +1,8 @@
 import { queryOptions } from '@tanstack/react-query'
 import { JobDataSchema, type Job } from '@repo/schemas/job'
 import { fetchApiData } from './api'
+import { canCancelJob } from './job-selection'
+import { clientCacheStaleTime } from './query-cache'
 
 export function jobDataOptions(
   apiBaseUrl: string,
@@ -16,12 +18,11 @@ export function jobDataOptions(
         JobDataSchema,
         { signal },
       ),
-    staleTime: 0,
+    staleTime: canCancelJob(job) ? 0 : clientCacheStaleTime,
     retry: false,
     retryOnMount: false,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
-    refetchInterval:
-      job.status === 'queued' || job.status === 'running' ? 3000 : false,
+    refetchInterval: canCancelJob(job) ? 3000 : false,
   })
 }

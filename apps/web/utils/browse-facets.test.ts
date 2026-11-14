@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { QueryClient, QueryObserver } from '@tanstack/react-query'
 import { browseFacetOptions } from './browse-facets'
+import { clientQueryDefaults } from './query-cache'
 
 test('facet searches use their own query keys and cancel superseded requests', async (t) => {
   const client = new QueryClient()
@@ -29,7 +30,7 @@ test('facet searches use their own query keys and cancel superseded requests', a
     )
     assert.equal(observer.getCurrentResult().data, undefined)
     await new Promise((resolve) => setTimeout(resolve, 10))
-    assert.equal(client.getQueryCache().getAll().length, 1)
+    assert.equal(client.getQueryData(['films', 'facets', 'first']), undefined)
     close()
     assert.equal(requests[1]?.init?.signal?.aborted, true)
   } finally {
@@ -43,7 +44,7 @@ test('facet query identities separate libraries and encode literal search text',
   const albums = browseFacetOptions('', 'albums', '50%_ rare')
   assert.deepEqual(films.queryKey, ['films', 'facets', '50%_ rare'])
   assert.deepEqual(albums.queryKey, ['albums', 'facets', '50%_ rare'])
-  assert.equal(films.gcTime, 0)
+  assert.equal(films.gcTime, clientQueryDefaults.gcTime)
   const draft = 'x'.repeat(250)
   assert.deepEqual(browseFacetOptions('', 'films', draft).queryKey, [
     'films',

@@ -40,6 +40,7 @@ import { Button } from '@repo/ui/components/ui/button'
 import { Input } from '@repo/ui/components/ui/input'
 import { useConfig } from '@/components/providers'
 import { fetchApiData } from '@/utils/api'
+import { jobPagesPollInterval } from '@/utils/job-cache'
 import JobBulkActions from '../job-bulk-actions'
 import JobDataViewer from '../job-data-viewer'
 import JsonTree from '../json-tree'
@@ -294,10 +295,7 @@ export function JobsTable({ provider }: { provider?: string }) {
       ),
     getNextPageParam: (last) =>
       last.page < last.pageCount ? last.page + 1 : undefined,
-    staleTime: 0,
-    refetchOnMount: 'always',
-    refetchOnWindowFocus: 'always',
-    refetchInterval: 3000,
+    refetchInterval: (query) => jobPagesPollInterval(query.state.data?.pages),
   })
   const { hasNextPage, isFetching, isError, fetchNextPage } = jobs
   useEffect(() => {
@@ -343,10 +341,8 @@ export function JobsTable({ provider }: { provider?: string }) {
         `/api/v1/scrape/jobs/${selectedJobId}`,
         JobSchema,
       ),
-    staleTime: 0,
-    refetchOnMount: 'always',
-    refetchOnWindowFocus: 'always',
-    refetchInterval: 3000,
+    refetchInterval: (query) =>
+      query.state.data && canCancelJob(query.state.data) ? 3000 : false,
   })
   const retryBatch = useMutation({
     mutationFn: () =>
@@ -424,20 +420,6 @@ export function JobsTable({ provider }: { provider?: string }) {
     if (!shift || !selectionAnchor || !actionableIds.includes(selectionAnchor))
       setSelectionAnchor(id)
   }
-  const completed =
-    loadedJobs
-      .filter((job) => job.finishedAt)
-      .map((job) => `${job.id}:${job.status}`)
-      .join(',') ?? ''
-  useEffect(() => {
-    if (completed)
-      void client.invalidateQueries({
-        predicate: (query) =>
-          ['albums', 'films', 'album', 'film', 'history', 'providers'].includes(
-            String(query.queryKey[0]),
-          ),
-      })
-  }, [completed, client])
   return (
     <section className="admin-page jobs-page">
       {!provider && <h1>{jobsHeadings[mediaType]}</h1>}

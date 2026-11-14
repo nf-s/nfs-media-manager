@@ -405,7 +405,7 @@ export default function LastfmTrackMatches() {
       <h2>Track matches</h2>
       {counts.isPending ? (
         <p role="status">Loading track matches...</p>
-      ) : counts.isError ? (
+      ) : !counts.data ? (
         <p role="alert">
           Could not load track matches.{' '}
           <Button variant="ghost" size="sm" onClick={() => counts.refetch()}>

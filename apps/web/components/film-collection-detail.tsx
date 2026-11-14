@@ -76,7 +76,6 @@ export function FilmCollectionEntries({ id }: { id: string }) {
   const table = useTableColumns('film-collection-items', columns)
   const query = useInfiniteQuery({
     queryKey: ['film-collection', id, sortBy, direction, q, watchedStates],
-    staleTime: 0,
     initialPageParam: 1,
     queryFn: ({ pageParam, signal }) =>
       fetchApiData(

@@ -95,7 +95,6 @@ export function useLastfmSyncStatus() {
   const { apiBaseUrl } = useConfig()
   return useQuery({
     queryKey: ['lastfm-sync'],
-    staleTime: 0,
     refetchInterval: (query) =>
       lastfmSyncPollInterval(query.state.data?.state ?? null),
     queryFn: () =>
@@ -112,8 +111,13 @@ export default function LastfmSync({
   const client = useQueryClient()
   const [confirmingStop, setConfirmingStop] = useState(false)
   const status = useLastfmSyncStatus()
-  const update = (next: LastfmSyncStatus) =>
+  const update = async (next: LastfmSyncStatus) => {
     client.setQueryData(['lastfm-sync'], next)
+    await Promise.all([
+      client.invalidateQueries({ queryKey: ['jobs'] }),
+      client.invalidateQueries({ queryKey: ['job-activity'] }),
+    ])
+  }
   const sync = useMutation({
     mutationFn: () =>
       fetchApiData(apiBaseUrl, '/api/v1/lastfm/sync', LastfmSyncStatusSchema, {
@@ -173,7 +177,7 @@ export default function LastfmSync({
         Loading Last.fm sync...
       </p>
     )
-  if (status.isError)
+  if (!status.data)
     return (
       <p role="alert">
         Could not load Last.fm sync.{' '}

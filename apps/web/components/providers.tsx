@@ -8,6 +8,7 @@ import {
   QueryClientProvider,
 } from '@tanstack/react-query'
 import { createContext, useContext } from 'react'
+import { clientQueryDefaults } from '@/utils/query-cache'
 
 type ServerErrorLike = {
   statusCode: number
@@ -84,9 +85,7 @@ function handleError(data: unknown): void {
 
 export const queryClient = new QueryClient({
   defaultOptions: {
-    queries: {
-      staleTime: 24 * 60 * 60 * 1000, // stale time 24 hours
-    },
+    queries: clientQueryDefaults,
   },
   queryCache: new QueryCache({
     onError: handleError,

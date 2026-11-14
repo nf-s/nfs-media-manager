@@ -29,6 +29,7 @@ export async function invalidateTags(client: QueryClient) {
     'album',
     'film-facets',
     'film-selection',
+    'album-selection',
   ])
     await client.invalidateQueries({ queryKey: [key] })
 }

@@ -113,7 +113,6 @@ export function usePlaylistSummary(id: string) {
   const { apiBaseUrl } = useConfig()
   return useQuery({
     queryKey: ['playlist', id],
-    staleTime: 0,
     refetchInterval: (query) =>
       playlistJobActive(query.state.data?.sync.job)
         ? PLAYLIST_SYNC_POLL_MS

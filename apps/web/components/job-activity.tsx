@@ -9,6 +9,10 @@ import { Button } from '@repo/ui/components/ui/button'
 import type { z } from 'zod'
 import { useConfig } from './providers'
 import { fetchApiData } from '@/utils/api'
+import {
+  invalidateChangedJobActivity,
+  jobActivityPollInterval,
+} from '@/utils/job-cache'
 import { scopedHref, type WorkspaceScope } from '@/utils/media-scope'
 
 type ActivityCounts = z.infer<typeof JobActivitySchema>
@@ -92,24 +96,15 @@ export default function JobActivity() {
         '/api/v1/scrape/jobs/activity',
         JobActivitySchema,
       ),
-    refetchInterval: 4000,
+    refetchInterval: (query) => jobActivityPollInterval(query.state.data),
     staleTime: 0,
   })
+  const previousActivity = useRef(activity.data)
   useEffect(() => {
     if (!activity.data) return
-    void client.invalidateQueries({
-      predicate: (query) =>
-        [
-          'jobs',
-          'providers',
-          'imports',
-          'albums',
-          'films',
-          'album',
-          'film',
-          'history',
-        ].includes(String(query.queryKey[0])),
-    })
+    const previous = previousActivity.current
+    previousActivity.current = activity.data
+    void invalidateChangedJobActivity(client, previous, activity.data)
   }, [activity.data, client])
   useEffect(() => {
     if (!open) return
@@ -180,10 +175,18 @@ export default function JobActivity() {
         ) : (
           <Activity size={14} aria-hidden="true" />
         )}
-        <span aria-live="polite" aria-atomic="true">
+        <span
+          className="max-[420px]:sr-only"
+          aria-live="polite"
+          aria-atomic="true"
+        >
           {summary}
         </span>
-        <ChevronDown size={12} aria-hidden="true" />
+        <ChevronDown
+          size={12}
+          aria-hidden="true"
+          className="max-[420px]:hidden"
+        />
       </Button>
       <div
         id={id}

@@ -1,12 +1,44 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
+import { QueryClient } from '@tanstack/react-query'
 import type { TagProvenancePage } from '@repo/schemas/tags'
 import {
   dispatchTagVisibility,
+  invalidateTags,
   relevantTagSources,
   tagSelectionMediaType,
 } from './tag-actions'
 import { updateJobSelection } from './job-selection'
+
+test('tag changes invalidate both library selections and retain unrelated cached data', async () => {
+  const client = new QueryClient()
+  const affected = [
+    ['album-selection', 'tag filter'],
+    ['film-selection', 'tag filter'],
+    ['albums', 'facets', 'tag'],
+    ['films', 'facets', 'tag'],
+    ['tag-detail', 'album', 'tag-1'],
+  ]
+  try {
+    for (const key of [...affected, ['subscriptions', 'sources']])
+      client.setQueryData(key, { fixture: true })
+    await invalidateTags(client)
+    for (const key of affected) {
+      assert.equal(
+        client.getQueryState(key)?.isInvalidated,
+        true,
+        key.join('/'),
+      )
+      assert.deepEqual(client.getQueryData(key), { fixture: true })
+    }
+    assert.equal(
+      client.getQueryState(['subscriptions', 'sources'])?.isInvalidated,
+      false,
+    )
+  } finally {
+    client.clear()
+  }
+})
 
 test('tag actions reject empty and mixed-media selections', () => {
   assert.equal(

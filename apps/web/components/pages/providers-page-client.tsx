@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { z } from 'zod'
+import type { JobActivitySchema } from '@repo/schemas/job'
 import {
   ProviderSecretsSchema,
   ProviderSummarySchema,
@@ -43,8 +44,19 @@ export default function ProvidersPageClient() {
         '/api/v1/providers',
         z.array(ProviderSummarySchema),
       ),
-    refetchInterval: 10000,
-    staleTime: 0,
+    refetchInterval: (query) => {
+      const jobs = client.getQueryData<z.infer<typeof JobActivitySchema>>([
+        'job-activity',
+      ])
+      const coolingDown = query.state.data?.some(
+        (provider) =>
+          provider.safety?.cooldownUntil &&
+          Date.parse(provider.safety.cooldownUntil) > Date.now(),
+      )
+      return (jobs && jobs.queued + jobs.running > 0) || coolingDown
+        ? 10000
+        : false
+    },
   })
   // A provider link without `mediaType` opens in that provider's library.
   const target = providers.data?.find((item) => item.id === selected)

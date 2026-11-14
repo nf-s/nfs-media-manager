@@ -96,7 +96,6 @@ export function usePlaylistAdditions(
       mediaType === 'album' ? 'playlist-additions' : 'track-playlist-additions',
       id,
     ],
-    staleTime: 0,
     refetchInterval: (query) =>
       query.state.data?.additions.some((addition) =>
         playlistJobActive(addition.job),
@@ -127,7 +126,6 @@ export function usePlaylistAdditions(
   )
   const playlists = useQuery({
     queryKey: ['playlists'],
-    staleTime: 0,
     refetchInterval: (query) =>
       adding || followOnImports(additionList, query.state.data) ? 2000 : false,
     queryFn: () =>

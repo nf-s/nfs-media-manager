@@ -37,6 +37,7 @@ import {
 import { Input } from '@repo/ui/components/ui/input'
 import { useConfig } from './providers'
 import { fetchApiData } from '@/utils/api'
+import { invalidateMediaItem } from '@/utils/query-cache'
 import MediaArtwork from './media-artwork'
 import MediaHistoryList from './media-history-list'
 import ProviderIdentifiers from './provider-identifiers'
@@ -365,11 +366,15 @@ export default function MediaDetail({
         method: 'POST',
         body: JSON.stringify({ provider }),
       }),
+    onSuccess: () =>
+      Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['jobs'] }),
+        queryClient.invalidateQueries({ queryKey: ['job-activity'] }),
+        queryClient.invalidateQueries({ queryKey: [`${mediaType}-selection`] }),
+      ]),
   })
   async function onSaved() {
-    await queryClient.invalidateQueries({ queryKey: [mediaType, id] })
-    await queryClient.invalidateQueries({ queryKey: [collection] })
-    await queryClient.invalidateQueries({ queryKey: ['history', id] })
+    await invalidateMediaItem(queryClient, mediaType, id)
     setSaved(true)
   }
   function filter(value: BrowseFilter, keepOpen = false) {

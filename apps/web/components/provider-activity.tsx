@@ -3,6 +3,8 @@
 import Link from 'next/link'
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import type { z } from 'zod'
+import type { JobActivitySchema } from '@repo/schemas/job'
 import {
   ProviderActivitySchema,
   ProviderSafetySchema,
@@ -54,8 +56,12 @@ export default function ProviderActivity({
         `/api/v1/providers/${provider.id}/activity?range=${range}`,
         ProviderActivitySchema,
       ),
-    staleTime: 0,
-    refetchInterval: 10000,
+    refetchInterval: () => {
+      const jobs = client.getQueryData<z.infer<typeof JobActivitySchema>>([
+        'job-activity',
+      ])
+      return jobs && jobs.queued + jobs.running > 0 ? 10000 : false
+    },
   })
   const clear = useMutation({
     mutationFn: () =>

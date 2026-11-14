@@ -52,7 +52,6 @@ export default function FilmCollectionsWorkspace() {
   const drawer = usePlaylistDrawer({ parameter: 'collection' })
   const query = useQuery({
     queryKey: ['film-collections'],
-    staleTime: 0,
     queryFn: ({ signal }) =>
       fetchApiData(
         apiBaseUrl,

@@ -456,7 +456,6 @@ export default function SpotifyPlaylistImport() {
   const ready = Boolean(status?.connected && status.playlists)
   const imports = useQuery({
     queryKey: ['spotify-playlist-imports'],
-    staleTime: 0,
     refetchInterval: (query) =>
       importsActive(query.state.data) ? 2000 : false,
     queryFn: () =>
@@ -470,7 +469,6 @@ export default function SpotifyPlaylistImport() {
   const listing = useQuery({
     queryKey: ['spotify-playlists'],
     enabled: ready,
-    staleTime: 0,
     refetchInterval: (query) =>
       playlistJobActive(query.state.data?.job) ? 2000 : false,
     queryFn: () =>

@@ -9,6 +9,7 @@ import {
   type ImportRun,
 } from '@repo/schemas/imports'
 import { fetchApiData } from '@/utils/api'
+import { importIdlePollMs, importPollInterval } from '@/utils/import-cache'
 import { useConfig } from '@/components/providers'
 import {
   SecondaryCell,
@@ -37,8 +38,8 @@ export default function ImportsPageClient() {
         `/api/v1/imports?${new URLSearchParams({ mediaType })}`,
         ImportStatusSchema,
       ),
-    staleTime: 0,
-    refetchInterval: 2000,
+    staleTime: importIdlePollMs,
+    refetchInterval: (query) => importPollInterval(query.state.data?.runs),
   })
   const runs =
     query.data?.runs.filter(

@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { BrowseFacetQuerySchema } from '@repo/schemas/browse'
 import { FilmFilterOptionSchema } from '@repo/schemas/media'
 import { fetchApiData } from './api'
+import { clientQueryDefaults } from './query-cache'
 
 /** Libraries with a `/facets` endpoint returning filter suggestions. */
 export type BrowseFacetCollection =
@@ -31,8 +32,6 @@ export function browseFacetOptions(
         z.array(FilmFilterOptionSchema),
         { signal },
       ),
-    staleTime: 60_000,
-    // Search terms must not accumulate a full set of cached suggestion pages.
-    gcTime: 0,
+    ...clientQueryDefaults,
   })
 }

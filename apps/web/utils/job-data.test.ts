@@ -82,7 +82,7 @@ test('only active jobs poll and each status transition triggers a fresh stored-d
   }
 })
 
-test('opening again refreshes cached data; changing job cannot reuse another job response', async (t) => {
+test('reopening terminal data uses the cache; invalidation refreshes it without clearing the saved response', async (t) => {
   const client = new QueryClient()
   const fetch = t.mock.method(globalThis, 'fetch', async () => response())
   const options = jobDataOptions('', { id: 'job/1', status: 'failed' })
@@ -94,6 +94,11 @@ test('opening again refreshes cached data; changing job cannot reuse another job
   const closeAgain = reopened.subscribe(() => {})
   try {
     await settle()
+    assert.equal(fetch.mock.callCount(), 1)
+    assert.deepEqual(reopened.getCurrentResult().data, empty)
+    const refresh = client.invalidateQueries({ queryKey: ['jobs'] })
+    assert.deepEqual(reopened.getCurrentResult().data, empty)
+    await refresh
     assert.equal(fetch.mock.callCount(), 2)
     reopened.setOptions(
       jobDataOptions('', { id: 'another-job', status: 'failed' }),

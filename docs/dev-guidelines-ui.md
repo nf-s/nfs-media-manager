@@ -19,6 +19,8 @@
 
 - Fetch server data through [`apps/web/utils/api.ts`](../apps/web/utils/api.ts) and validate responses with shared Zod schemas.
 - Keep mutations in client components or dedicated hooks. Invalidate affected query keys after success.
+- Use the shared four-hour freshness and 24-hour inactive retention defaults for stored data, including browse pages and filter suggestions. Render cached data during background refreshes and retain it on refresh errors. Do not reset or remove queries merely to refresh them.
+- The shell's Refresh control invalidates cached reads, refetches mounted queries and leaves inactive queries to reload when opened. Cache contents stay in memory; reloading the page or signing out clears them. Active jobs and imports keep short polling intervals; the activity monitor checks every 30 seconds when idle and invalidates affected views when work changes.
 - Do not store provider secrets in client state beyond transient form input.
 
 ## Interaction

@@ -118,6 +118,7 @@ function render(
   seed: Array<[unknown[], unknown]>,
   children: ReactNode,
   search = 'mediaType=album',
+  failedKeys: unknown[][] = [],
 ) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -125,6 +126,15 @@ function render(
   client.setQueryData(['imports'], { sources: [], runs: [] })
   client.setQueryData(['import-formats'], [])
   for (const [key, value] of seed) client.setQueryData(key, value)
+  for (const queryKey of failedKeys)
+    client
+      .getQueryCache()
+      .build(client, { queryKey })
+      .setState({
+        status: 'error',
+        error: new Error('Offline'),
+        fetchStatus: 'idle',
+      })
   try {
     return renderToStaticMarkup(
       <QueryClientProvider client={client}>
@@ -185,6 +195,41 @@ test('Last.fm page is an album import destination and only shows stored status',
     /<progress|>Stop<|Resume sync|View (current|last) job/,
   )
   assert.doesNotMatch(html, /provider settings/)
+})
+
+test('Last.fm sync retains cached status after a failed background refresh', () => {
+  const html = render(
+    [[['lastfm-sync'], idle]],
+    <ImportsWorkspace>
+      <LastfmSyncPageClient />
+    </ImportsWorkspace>,
+    'mediaType=album',
+    [['lastfm-sync']],
+  )
+  assert.match(html, /Not synced/)
+  assert.match(html, />Sync now</)
+})
+
+test('album listening retains cached scrobbles after a failed background refresh', () => {
+  const html = render(
+    [
+      [
+        ['album-listening', 'one', ''],
+        AlbumListeningSchema.parse({
+          total: 12,
+          firstListenedAt: '2026-01-01T00:00:00Z',
+          lastListenedAt: '2026-01-02T00:00:00Z',
+          months: [{ month: '2026-01', count: 12 }],
+          tracks: [],
+        }),
+      ],
+    ],
+    <AlbumListening albumId="one" />,
+    'mediaType=album',
+    [['album-listening', 'one', '']],
+  )
+  assert.match(html, /<dd>12<\/dd>/)
+  assert.match(html, /aria-label="Scrobbles by month"/)
 })
 
 test('unconfigured Last.fm links to provider settings and disables sync and schedule', () => {

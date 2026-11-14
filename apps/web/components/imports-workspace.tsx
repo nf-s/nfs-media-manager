@@ -1,6 +1,12 @@
 'use client'
 
-import { createContext, useContext, useEffect, type ReactNode } from 'react'
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useRef,
+  type ReactNode,
+} from 'react'
 import Link from 'next/link'
 import { usePathname, useSearchParams } from 'next/navigation'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -8,10 +14,17 @@ import { z } from 'zod'
 import {
   FileImportFormatSchema,
   ImportStatusSchema,
+  type ImportRun,
 } from '@repo/schemas/imports'
 import { useConfig } from './providers'
 import { SectionSidebar, SectionWorkspace } from './section-sidebar'
 import { fetchApiData } from '@/utils/api'
+import {
+  hasNewlyCompletedImports,
+  importIdlePollMs,
+  importPollInterval,
+  invalidateImportedLibrary,
+} from '@/utils/import-cache'
 import { useLibraryView, useMediaScope } from './media-scope'
 import { scopedHref } from '@/utils/media-scope'
 import {
@@ -26,13 +39,17 @@ import {
 function useImportsData(enabled = true) {
   const { apiBaseUrl } = useConfig()
   const client = useQueryClient()
+  const previousRuns = useRef<ImportRun[]>(
+    client.getQueryData<z.infer<typeof ImportStatusSchema>>(['imports'])
+      ?.runs ?? [],
+  )
   const status = useQuery({
     queryKey: ['imports'],
     enabled,
     queryFn: () =>
       fetchApiData(apiBaseUrl, '/api/v1/imports', ImportStatusSchema),
-    staleTime: 0,
-    refetchInterval: 2000,
+    staleTime: importIdlePollMs,
+    refetchInterval: (query) => importPollInterval(query.state.data?.runs),
   })
   const formats = useQuery({
     queryKey: ['import-formats'],
@@ -43,32 +60,20 @@ function useImportsData(enabled = true) {
         '/api/v1/imports/formats',
         z.array(FileImportFormatSchema),
       ),
-    staleTime: 0,
   })
   const running =
     status.data?.runs.some(
       (run) => run.status === 'running' || run.status === 'queued',
     ) ?? false
-  const completed =
-    status.data?.runs
-      .filter((run) => run.finishedAt)
-      .map((run) => `${run.id}:${run.status}`)
-      .join(',') ?? ''
   useEffect(() => {
-    if (enabled && completed)
-      void client.invalidateQueries({
-        predicate: (query) =>
-          [
-            'albums',
-            'films',
-            'album',
-            'film',
-            'history',
-            'jobs',
-            'job-activity',
-          ].includes(String(query.queryKey[0])),
-      })
-  }, [enabled, completed, client])
+    if (!enabled || !status.data) return
+    const changed = hasNewlyCompletedImports(
+      previousRuns.current,
+      status.data.runs,
+    )
+    previousRuns.current = status.data.runs
+    if (changed) void invalidateImportedLibrary(client)
+  }, [enabled, status.data, client])
   return { status, formats, running }
 }
 
@@ -90,7 +95,7 @@ export function ImportStatusNotice() {
     (run) => run.status === 'running' || run.status === 'queued',
   )
   if (view === 'track') return null
-  if (status.isError)
+  if (status.isError && !status.data)
     return (
       <p role="alert">
         Could not load imports.{' '}

@@ -1,3 +1,5 @@
+import { clientQueryDefaults } from './query-cache'
+
 export const browsePageSize = 100
 
 export function browseWindow({
@@ -45,8 +47,8 @@ export function browseWindow({
   }
 }
 
-// Each page has its own cancellable query. Removing an observer discards distant
-// pages immediately, rather than accumulating the whole library during a visit.
+// Each page has its own cancellable query. Retain visited pages so scrolling
+// back or returning to a filter can show cached rows immediately.
 export function browsePageOptions<T>(
   collection: string,
   identity: string,
@@ -56,9 +58,7 @@ export function browsePageOptions<T>(
   return {
     queryKey: [collection, 'browse', identity, page],
     queryFn: ({ signal }: { signal: AbortSignal }) => load(page, signal),
-    staleTime: Infinity,
-    gcTime: 0,
+    ...clientQueryDefaults,
     retry: false,
-    refetchOnWindowFocus: false,
   }
 }

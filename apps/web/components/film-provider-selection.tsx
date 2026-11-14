@@ -16,7 +16,6 @@ export function useMediaProviders(mediaType: MediaScope = 'film') {
   const [selection, setSelected] = useState<string[] | null>(null)
   const query = useQuery({
     queryKey: ['providers'],
-    staleTime: 30000,
     queryFn: () =>
       fetchApiData(
         apiBaseUrl,

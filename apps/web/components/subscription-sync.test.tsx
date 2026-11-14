@@ -48,12 +48,24 @@ function render(
   status: SubscriptionSyncStatus | null,
   spotify = account(true, true),
   search = '',
+  failedRefresh = false,
 ) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
   client.setQueryData(['subscription-sync', 'spotify'], status)
   client.setQueryData(['spotify-account'], spotify)
+  if (failedRefresh)
+    client
+      .getQueryCache()
+      .build(client, {
+        queryKey: ['subscription-sync', 'spotify'],
+      })
+      .setState({
+        status: 'error',
+        error: new Error('Offline'),
+        fetchStatus: 'idle',
+      })
   const network = mock.method(globalThis, 'fetch', async () => {
     throw new Error('Network forbidden')
   })
@@ -90,6 +102,17 @@ test('podcast sync names podcasts and episodes and links to its job', () => {
   assert.match(html, />Reconnect Spotify</)
   assert.match(html, /href="\/subscriptions\/channels\?type=spotify"/)
   assert.doesNotMatch(html, /channels read|videos/i)
+})
+
+test('podcast sync retains cached progress after a failed background refresh', () => {
+  const html = render(sync, account(true, true), '', true)
+  assert.match(html, /<dt>Podcasts read<\/dt><dd>3 of 8<\/dd>/)
+  assert.match(html, /<dt>Stored episodes<\/dt><dd>240<\/dd>/)
+})
+
+test('a cached unavailable sync remains unavailable after a refresh failure', () => {
+  const html = render(null, account(true, true), '', true)
+  assert.match(html, /Podcast sync is not available on this server\./)
 })
 
 test('reading the saved podcast list is shown before podcasts are counted', () => {

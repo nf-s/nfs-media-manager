@@ -111,14 +111,19 @@ test('rapid scroll cancels distant requests, stale responses cannot replace new 
   finish[1]?.('stale page90')
   await settle()
   assert.equal(observer.getCurrentResult().data, 'new-filter')
-  assert.equal(client.getQueryCache().getAll().length, 1)
+  assert.equal(client.getQueryData(['films', 'browse', 'old', 2]), undefined)
+  assert.equal(client.getQueryData(['films', 'browse', 'old', 90]), undefined)
   stop()
   client.clear()
 })
 
-test('visiting many pages keeps only the first page and current window cached', async () => {
+test('visited pages stay cached and scrolling back reuses them without a request', async () => {
   const client = new QueryClient()
-  const load = async (page: number) => page
+  let calls = 0
+  const load = async (page: number) => {
+    calls++
+    return page
+  }
   const first = new QueryObserver(
     client,
     browsePageOptions('films', 'sort', 1, load),
@@ -132,13 +137,19 @@ test('visiting many pages keeps only the first page and current window cached', 
   for (const page of [2, 30, 60, 100, 70, 5]) {
     window.setOptions(browsePageOptions('films', 'sort', page, load))
     await settle()
-    assert.ok(client.getQueryCache().getAll().length <= 2)
     assert.equal(window.getCurrentResult().data, page)
   }
+  const requests = calls
+  window.setOptions(browsePageOptions('films', 'sort', 30, load))
+  assert.equal(window.getCurrentResult().data, 30)
+  assert.equal(window.getCurrentResult().isFetching, false)
+  await settle()
+  assert.equal(calls, requests)
   stopFirst()
   stopWindow()
   await settle()
-  assert.equal(client.getQueryCache().getAll().length, 0)
+  assert.equal(client.getQueryCache().getAll().length, 7)
+  assert.equal(client.getQueryData(['films', 'browse', 'sort', 30]), 30)
   client.clear()
 })
 
