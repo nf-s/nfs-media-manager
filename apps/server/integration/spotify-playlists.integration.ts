@@ -1017,6 +1017,47 @@ describe('Spotify playlist imports', () => {
     expect(second.items.items[1]).toMatchObject({
       album: { id: 'legacy-album', artists: ['The Examples'] },
     })
+    const filtered = await getPlaylistDetail(
+      'legacy-morning',
+      detailQuery({ q: 'THE EXAMPLES', kind: 'track', size: 1, page: 3 }),
+    )
+    expect(filtered.items).toMatchObject({ totalCount: 3, pageCount: 3 })
+    expect(summarize(filtered)).toEqual([
+      ['track', 3, 'Closing', '2024-03-01T10:00:00.000Z'],
+    ])
+    for (const q of ['LEGACY', 'the examples']) {
+      const albums = await getPlaylistDetail(
+        'legacy-morning',
+        detailQuery({ q, kind: 'album', size: 1 }),
+      )
+      expect(albums.items.totalCount).toBe(1)
+      expect(summarize(albums)).toEqual([['album', 1, 'Legacy Album', null]])
+    }
+    const albumSearch = await getPlaylistDetail(
+      'legacy-morning',
+      detailQuery({ q: 'Second Album', kind: 'track' }),
+    )
+    expect(albumSearch.items.items).toHaveLength(1)
+    expect(albumSearch.items.items[0]).toMatchObject({
+      track: { title: 'Closing' },
+    })
+    const titleSearch = await getPlaylistDetail(
+      'legacy-morning',
+      detailQuery({ q: 'CLOSING', size: 1 }),
+    )
+    expect(titleSearch.items).toMatchObject({ totalCount: 1, pageCount: 1 })
+    expect(summarize(titleSearch)).toEqual([
+      ['track', 3, 'Closing', '2024-03-01T10:00:00.000Z'],
+    ])
+    const literal = await getPlaylistDetail(
+      'legacy-morning',
+      detailQuery({ q: '%' }),
+    )
+    expect(literal.items).toMatchObject({
+      totalCount: 0,
+      pageCount: 0,
+      items: [],
+    })
     expect(first.createdAt).toMatch(/^\d{4}-\d{2}-\d{2}T/)
     const ascending = await getPlaylistDetail(
       'legacy-morning',

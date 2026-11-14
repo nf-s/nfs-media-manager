@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { SecondaryDataTable } from './secondary-table'
+import { SecondaryDataTable, SecondaryTableToolbar } from './secondary-table'
 
 test('secondary tables share a labelled scroll region, sortable data headers and optional columns', () => {
   const html = renderToStaticMarkup(
@@ -24,6 +24,12 @@ test('secondary tables share a labelled scroll region, sortable data headers and
           defaultVisible: false,
           value: (row) => row.id,
         },
+        {
+          key: 'source',
+          label: 'Source',
+          defaultVisible: false,
+          value: () => 'Fixture',
+        },
       ]}
     />,
   )
@@ -37,7 +43,7 @@ test('secondary tables share a labelled scroll region, sortable data headers and
   assert.ok(html.indexOf('&lt;Item 2&gt;') < html.indexOf('Item 12'))
 })
 
-test('empty tables use the visible data column count', () => {
+test('empty small tables show all columns and use their full column count', () => {
   const html = renderToStaticMarkup(
     <SecondaryDataTable
       id="test"
@@ -57,6 +63,68 @@ test('empty tables use the visible data column count', () => {
       ]}
     />,
   )
-  assert.match(html, /colSpan="1" class="table-state"/)
+  assert.match(html, /colSpan="2" class="table-state"/)
+  assert.match(html, /title="Sort by Optional"/)
+  assert.doesNotMatch(html, /Visible columns|Reset columns/)
+  assert.doesNotMatch(html, /class="secondary-table-toolbar"/)
   assert.match(html, /role="status">No items/)
+})
+
+test('three-column tables keep every data column visible without a chooser', () => {
+  const html = renderToStaticMarkup(
+    <SecondaryDataTable
+      id="summary"
+      label="Example summary"
+      rows={[{ status: 'Linked', names: 2, plays: 7 }]}
+      rowKey={(row) => row.status}
+      defaultSort={{ key: 'status', direction: 'asc' }}
+      columns={[
+        { key: 'status', label: 'Status', value: (row) => row.status },
+        { key: 'names', label: 'Names', value: (row) => row.names },
+        {
+          key: 'plays',
+          label: 'Plays',
+          defaultVisible: false,
+          value: (row) => row.plays,
+        },
+      ]}
+    />,
+  )
+  assert.match(html, /title="Sort by Plays"/)
+  assert.match(html, /<td>Linked<\/td><td>2<\/td><td>7<\/td>/)
+  assert.doesNotMatch(html, /Visible columns|Reset columns/)
+  assert.doesNotMatch(html, /class="secondary-table-toolbar"/)
+})
+
+test('secondary toolbars order search, filters, count and a separate columns slot', () => {
+  const html = renderToStaticMarkup(
+    <SecondaryTableToolbar
+      search={<input aria-label="Search example" />}
+      filters={
+        <select aria-label="Example status">
+          <option>All statuses</option>
+        </select>
+      }
+      count="12 items"
+      columns={<button>Columns</button>}
+    />,
+  )
+  const search = html.indexOf('aria-label="Search example"')
+  const filters = html.indexOf('aria-label="Example status"')
+  const count = html.indexOf('12 items')
+  const columns = html.indexOf('class="secondary-table-toolbar-columns"')
+  assert.ok(search > -1)
+  assert.ok(search < filters && filters < count && count < columns)
+  assert.match(html, /<\/div><div class="secondary-table-toolbar-columns">/)
+  assert.match(html, /role="status">12 items<\/span>/)
+})
+
+test('secondary toolbars omit empty controls and retain a zero result count', () => {
+  assert.equal(renderToStaticMarkup(<SecondaryTableToolbar />), '')
+  const html = renderToStaticMarkup(<SecondaryTableToolbar count={0} />)
+  assert.match(html, /role="status">0<\/span>/)
+  assert.doesNotMatch(
+    html,
+    /secondary-table-toolbar-search|secondary-table-toolbar-filters|secondary-table-toolbar-columns/,
+  )
 })

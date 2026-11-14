@@ -28,6 +28,7 @@ import { Button } from '@repo/ui/components/ui/button'
 import { TableState } from '@repo/ui/components/ui/table'
 import { useConfig } from './providers'
 import {
+  SecondaryTableToolbar,
   SecondaryTableScroll,
   SecondaryTableHead,
   useTableColumns,
@@ -243,44 +244,125 @@ function SelectionTable({ providers, mediaType = 'film' }: Props) {
     )
     clear()
   }
+  const filterCount =
+    freshness.length + ranges.length + (legacyImport === 'all' ? 0 : 1)
   return (
     <div className="film-selection-workspace">
       <fieldset disabled={queue.isPending} className="film-selection-controls">
-        <div className="flex flex-wrap items-end gap-3">
-          <BrowseFilterAutocomplete
-            options={facets.data ?? []}
-            items={[]}
-            titlesLoading={facets.isDebouncing || facets.isPending}
-            titlesError={facets.isError}
-            placeholder={`Search ${plural} or add a filter`}
-            value={draft}
-            onValueChange={setDraft}
-            onAddFilter={(filter) => {
-              setFilters([
-                ...filters.filter(
-                  (f) => f.field !== filter.field || f.value !== filter.value,
-                ),
-                filter,
-              ])
-              setDraft('')
-              clear()
-            }}
-            onApplyText={(value) => {
-              setQ(value)
-              clear()
-            }}
-            onOpenItem={() => {}}
-          />
-          <RangeEditor
-            fields={available}
-            ranges={ranges}
-            onChange={(next) => {
-              setRanges(next)
-              clear()
-            }}
-          />
-          {columns.controls}
-        </div>
+        <SecondaryTableToolbar
+          search={
+            <BrowseFilterAutocomplete
+              options={facets.data ?? []}
+              items={[]}
+              titlesLoading={facets.isDebouncing || facets.isPending}
+              titlesError={facets.isError}
+              placeholder={`Search ${plural} or add a filter`}
+              value={draft}
+              onValueChange={setDraft}
+              onAddFilter={(filter) => {
+                setFilters([
+                  ...filters.filter(
+                    (f) => f.field !== filter.field || f.value !== filter.value,
+                  ),
+                  filter,
+                ])
+                setDraft('')
+                clear()
+              }}
+              onApplyText={(value) => {
+                setQ(value)
+                clear()
+              }}
+              onOpenItem={() => {}}
+            />
+          }
+          filters={
+            <details className="toolbar-popover">
+              <summary>
+                Filters{filterCount > 0 ? ` (${filterCount})` : ''}
+              </summary>
+              <div className="popover-panel" aria-label="Metadata filters">
+                <label>
+                  Legacy import
+                  <select
+                    className="w-full min-w-0 text-xs font-normal"
+                    aria-label="Legacy import"
+                    disabled={queue.isPending}
+                    value={legacyImport}
+                    onChange={(event) => {
+                      setLegacyImport(
+                        LegacyImportFilterSchema.parse(event.target.value),
+                      )
+                      clear()
+                    }}
+                  >
+                    <option value="all">All</option>
+                    <option value="yes">Yes</option>
+                    <option value="no">No</option>
+                  </select>
+                </label>
+                {providers.map((item) => {
+                  const filter = freshness.find(
+                    (entry) => entry.provider === item.id,
+                  )
+                  return (
+                    <label key={item.id}>
+                      {item.displayName}
+                      <select
+                        className="w-full min-w-0 text-xs font-normal"
+                        aria-label={`${item.displayName} freshness`}
+                        disabled={queue.isPending}
+                        value={
+                          filter?.mode === 'older'
+                            ? String(filter.olderThanDays)
+                            : (filter?.mode ?? 'all')
+                        }
+                        onChange={(event) => {
+                          setFreshness(
+                            updateProviderFreshness(
+                              freshness,
+                              item.id,
+                              event.target.value,
+                            ),
+                          )
+                          clear()
+                        }}
+                      >
+                        <option value="all">All scrape statuses</option>
+                        <option value="never">Never attempted</option>
+                        <option value="failed">Latest attempt failed</option>
+                        <option value="unscraped">No successful scrape</option>
+                        <option value="30">
+                          No success or older than 30 days
+                        </option>
+                        <option value="90">
+                          No success or older than 90 days
+                        </option>
+                        <option value="180">
+                          No success or older than 180 days
+                        </option>
+                        <option value="365">
+                          No success or older than 365 days
+                        </option>
+                      </select>
+                    </label>
+                  )
+                })}
+                <RangeEditor
+                  presentation="panel"
+                  fields={available}
+                  ranges={ranges}
+                  onChange={(next) => {
+                    setRanges(next)
+                    clear()
+                  }}
+                />
+              </div>
+            </details>
+          }
+          count={`${films.data?.pages[0]?.totalCount.toLocaleString() ?? '…'} ${plural}`}
+          columns={columns.controls}
+        />
         <div className="flex flex-wrap items-center gap-2">
           {q && (
             <Button
@@ -318,7 +400,6 @@ function SelectionTable({ providers, mediaType = 'film' }: Props) {
         </div>
       </fieldset>
       <p className="muted">
-        {films.data?.pages[0]?.totalCount.toLocaleString() ?? '…'} {plural} ·{' '}
         {selected.length} selected. Shift-click for a range.
       </p>
       {freshness.length > 0 && (
@@ -402,88 +483,21 @@ function SelectionTable({ providers, mediaType = 'film' }: Props) {
                   direction={direction}
                   onSort={sort}
                   disabled={queue.isPending}
-                >
-                  <div className="grid min-w-0 gap-1">
-                    <select
-                      className="w-full min-w-0 text-xs font-normal"
-                      aria-label="Legacy import"
-                      disabled={queue.isPending}
-                      value={legacyImport}
-                      onChange={(event) => {
-                        setLegacyImport(
-                          LegacyImportFilterSchema.parse(event.target.value),
-                        )
-                        clear()
-                      }}
-                    >
-                      <option value="all">All</option>
-                      <option value="yes">Yes</option>
-                      <option value="no">No</option>
-                    </select>
-                  </div>
-                </SecondaryTableHead>
+                />
               )}
-              {visibleProviders.map((item) => {
-                const filter = freshness.find(
-                  (entry) => entry.provider === item.id,
-                )
-                const key = `provider-${item.id}`
-                return (
-                  <SecondaryTableHead
-                    key={key}
-                    sortKey={key}
-                    label={`${item.displayName} · Last scraped`}
-                    sortBy={
-                      sortBy === 'lastScrapedAt'
-                        ? `provider-${provider}`
-                        : sortBy
-                    }
-                    direction={direction}
-                    onSort={() => sort('lastScrapedAt', item.id)}
-                    disabled={queue.isPending}
-                  >
-                    <div className="grid min-w-0 gap-1">
-                      <select
-                        className="w-full min-w-0 text-xs font-normal"
-                        aria-label={`${item.displayName} freshness`}
-                        disabled={queue.isPending}
-                        value={
-                          filter?.mode === 'older'
-                            ? String(filter.olderThanDays)
-                            : (filter?.mode ?? 'all')
-                        }
-                        onChange={(event) => {
-                          setFreshness(
-                            updateProviderFreshness(
-                              freshness,
-                              item.id,
-                              event.target.value,
-                            ),
-                          )
-                          clear()
-                        }}
-                      >
-                        <option value="all">All scrape statuses</option>
-                        <option value="never">Never attempted</option>
-                        <option value="failed">Latest attempt failed</option>
-                        <option value="unscraped">No successful scrape</option>
-                        <option value="30">
-                          No success or older than 30 days
-                        </option>
-                        <option value="90">
-                          No success or older than 90 days
-                        </option>
-                        <option value="180">
-                          No success or older than 180 days
-                        </option>
-                        <option value="365">
-                          No success or older than 365 days
-                        </option>
-                      </select>
-                    </div>
-                  </SecondaryTableHead>
-                )
-              })}
+              {visibleProviders.map((item) => (
+                <SecondaryTableHead
+                  key={item.id}
+                  sortKey={`provider-${item.id}`}
+                  label={`${item.displayName} · Last scraped`}
+                  sortBy={
+                    sortBy === 'lastScrapedAt' ? `provider-${provider}` : sortBy
+                  }
+                  direction={direction}
+                  onSort={() => sort('lastScrapedAt', item.id)}
+                  disabled={queue.isPending}
+                />
+              ))}
             </tr>
           </thead>
           <tbody>

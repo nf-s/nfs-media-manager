@@ -130,6 +130,37 @@ afterAll(async () => {
 })
 
 describe('film collections', () => {
+  it('filters title and watched status before pagination while preserving stored positions', async () => {
+    const filtered = await getFilmCollection(
+      'collection',
+      FilmCollectionQuerySchema.parse({
+        q: 'FILM',
+        watched: 'unwatched',
+        size: 1,
+        page: 2,
+      }),
+    )
+    expect(filtered.filmCount).toBe(3)
+    expect(filtered.items).toMatchObject({ totalCount: 2, pageCount: 2 })
+    expect(filtered.items.items.map((row) => [row.id, row.position])).toEqual([
+      ['gamma', 8],
+    ])
+    const watched = await getFilmCollection(
+      'collection',
+      FilmCollectionQuerySchema.parse({ watched: 'watched' }),
+    )
+    expect(watched.items.items.map((row) => row.id)).toEqual(['beta'])
+    const literal = await getFilmCollection(
+      'collection',
+      FilmCollectionQuerySchema.parse({ q: '%' }),
+    )
+    expect(literal.items).toMatchObject({
+      totalCount: 0,
+      pageCount: 0,
+      items: [],
+    })
+  })
+
   it('excludes legacy-hidden films from collection counts, members and discovery', async () => {
     const detail = await getFilmCollection(
       'collection',

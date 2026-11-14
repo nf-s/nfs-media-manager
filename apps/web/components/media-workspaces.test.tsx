@@ -910,3 +910,29 @@ test('providers are listed by library: subscription providers leave albums and f
   assert.match(films, /Scrobble history/)
   assert.doesNotMatch(films, /YouTube|Spotify|Music metadata/)
 })
+
+test('metadata table places search, filters, count and columns in its shared toolbar', () => {
+  const html = render(
+    '/jobs/metadata',
+    'mediaType=album',
+    <FilmSelectionTable mediaType="album" providers={[albumProvider]} />,
+  )
+  const toolbar = html.indexOf('class="secondary-table-toolbar"')
+  const search = html.indexOf('Search albums or add a filter')
+  const filters = html.indexOf('aria-label="Metadata filters"')
+  const count = html.indexOf('1 albums')
+  const columns = html.indexOf('class="table-column-controls"')
+  assert.ok(toolbar > -1)
+  assert.ok(
+    toolbar < search && search < filters && filters < count && count < columns,
+  )
+  const header = html.match(/<thead>(.*?)<\/thead>/s)?.[1]
+  assert.ok(header)
+  assert.doesNotMatch(header, /<select/)
+  assert.match(html.slice(filters, count), /aria-label="Legacy import"/)
+  assert.match(
+    html.slice(filters, count),
+    /aria-label="Music metadata freshness"/,
+  )
+  assert.match(html.slice(filters, count), /Ranges/)
+})

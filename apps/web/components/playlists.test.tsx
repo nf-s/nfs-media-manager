@@ -8,7 +8,7 @@ import {
   SearchParamsContext,
 } from 'next/dist/shared/lib/hooks-client-context.shared-runtime'
 import { PlaylistSummarySchema } from '@repo/schemas/tracks'
-import PlaylistsWorkspace from './playlists-workspace'
+import PlaylistsWorkspace, { filterPlaylists } from './playlists-workspace'
 import { ConfigContext } from './providers'
 
 const network = mock.method(globalThis, 'fetch', async () => {
@@ -124,4 +124,55 @@ test('an empty playlist table links to the import page', () => {
   const html = render(<PlaylistsWorkspace />, [[['playlists'], []]])
   assert.match(html, /No playlists\./)
   assert.match(html, /Import playlists/)
+})
+
+test('playlist filters combine name, owner and description search with source', () => {
+  const rows = [
+    playlist,
+    {
+      ...playlist,
+      id: 'library',
+      name: 'Library collection',
+      source: null,
+      ownerName: null,
+      description: 'Evening albums',
+    },
+    PlaylistSummarySchema.parse({
+      ...playlist,
+      id: 'liked',
+      source: 'spotify-liked',
+    }),
+  ]
+  assert.deepEqual(
+    filterPlaylists(rows, '  EXAMPLE OWNER  ', 'spotify').map((row) => row.id),
+    ['playlist-1'],
+  )
+  assert.deepEqual(
+    filterPlaylists(rows, 'evening', 'library').map((row) => row.id),
+    ['library'],
+  )
+  assert.deepEqual(
+    filterPlaylists(rows, 'Synthetic', 'spotify-liked').map((row) => row.id),
+    ['liked'],
+  )
+  assert.deepEqual(filterPlaylists(rows, 'missing', ''), [])
+  assert.equal(filterPlaylists(rows, '', '').length, 3)
+})
+
+test('playlist toolbar orders search, filters, count and columns before actions', () => {
+  const html = render(<PlaylistsWorkspace />, [[['playlists'], [playlist]]])
+  const search = html.indexOf('aria-label="Search playlists"')
+  const source = html.indexOf('aria-label="Playlist source"')
+  const count = html.indexOf('1 playlists')
+  const columns = html.indexOf('aria-label="Visible columns"')
+  const actions = html.indexOf(
+    'href="/imports/spotify-playlists?mediaType=album"',
+  )
+  assert.ok(
+    search > 0 &&
+      source > search &&
+      count > source &&
+      columns > count &&
+      actions > columns,
+  )
 })

@@ -12,6 +12,7 @@ import {
 import { z } from 'zod'
 import { Columns3 } from 'lucide-react'
 import { Button } from '@repo/ui/components/ui/button'
+import { Input } from '@repo/ui/components/ui/input'
 import {
   TableHead,
   TableScroll,
@@ -29,6 +30,72 @@ export type DataColumn<T> = TableColumn & {
   className?: string
 }
 
+export function SecondaryTableToolbar({
+  search,
+  filters,
+  count,
+  columns,
+}: {
+  search?: ReactNode
+  filters?: ReactNode
+  count?: ReactNode
+  columns?: ReactNode
+}) {
+  const toolbar = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    function openPopovers() {
+      return [
+        ...(toolbar.current?.querySelectorAll<HTMLDetailsElement>(
+          'details.toolbar-popover[open]',
+        ) ?? []),
+      ]
+    }
+    function onPointerDown(event: PointerEvent) {
+      for (const popover of openPopovers())
+        if (!(event.target instanceof Node && popover.contains(event.target)))
+          popover.open = false
+    }
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.defaultPrevented || event.key !== 'Escape') return
+      const popovers = openPopovers()
+      if (!popovers.length) return
+      const focused =
+        popovers.find((popover) => popover.contains(document.activeElement)) ??
+        popovers[0]
+      for (const popover of popovers) popover.open = false
+      event.preventDefault()
+      focused?.querySelector('summary')?.focus()
+    }
+    document.addEventListener('pointerdown', onPointerDown)
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown)
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [])
+  if (!search && !filters && count == null && !columns) return null
+  return (
+    <div className="secondary-table-toolbar" ref={toolbar}>
+      <div className="secondary-table-toolbar-main">
+        {search && (
+          <div className="secondary-table-toolbar-search">{search}</div>
+        )}
+        {filters && (
+          <div className="secondary-table-toolbar-filters">{filters}</div>
+        )}
+        {count != null && (
+          <span className="secondary-table-toolbar-count" role="status">
+            {count}
+          </span>
+        )}
+      </div>
+      {columns && (
+        <div className="secondary-table-toolbar-columns">{columns}</div>
+      )}
+    </div>
+  )
+}
+
 /** For complete in-memory datasets. Paged tables must order in their API. */
 export function SecondaryDataTable<T>({
   id,
@@ -41,6 +108,10 @@ export function SecondaryDataTable<T>({
   error = false,
   busy = false,
   className,
+  search,
+  filters,
+  countLabel,
+  totalCount,
 }: {
   id: string
   label: string
@@ -52,16 +123,47 @@ export function SecondaryDataTable<T>({
   error?: boolean
   busy?: boolean
   className?: string
+  search?: { label: string; placeholder?: string; value: (row: T) => string }
+  filters?: ReactNode
+  countLabel?: string
+  totalCount?: number
 }) {
   const visibility = useTableColumns(id, columns)
   const [sort, setSort] = useState(defaultSort)
+  const [query, setQuery] = useState('')
+  const term = query.trim().toLocaleLowerCase()
+  const matching =
+    search && term
+      ? rows.filter((row) =>
+          search.value(row).toLocaleLowerCase().includes(term),
+        )
+      : rows
   const shown = columns.filter((column) => visibility.visible(column.key))
-  const ordered = sortTableRows(rows, sort, (row, key) =>
+  const ordered = sortTableRows(matching, sort, (row, key) =>
     columns.find((column) => column.key === key)?.value(row),
   )
   return (
     <>
-      {visibility.controls}
+      <SecondaryTableToolbar
+        search={
+          search && (
+            <Input
+              type="search"
+              aria-label={search.label}
+              placeholder={search.placeholder ?? search.label}
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+            />
+          )
+        }
+        filters={filters}
+        count={
+          countLabel
+            ? `${matching.length.toLocaleString()}${matching.length !== (totalCount ?? rows.length) ? ` of ${(totalCount ?? rows.length).toLocaleString()}` : ''} ${countLabel}`
+            : undefined
+        }
+        columns={visibility.controls}
+      />
       <SecondaryTableScroll
         className={className}
         role="region"
@@ -95,7 +197,7 @@ export function SecondaryDataTable<T>({
           <tbody>
             {!ordered.length && (
               <TableState colSpan={visibility.count} error={error}>
-                {empty}
+                {term && rows.length > 0 ? 'No matching results.' : empty}
               </TableState>
             )}
             {ordered.map((row) => (
@@ -185,6 +287,7 @@ export function useTableColumns(
   storageKey: string,
   columns: readonly TableColumn[],
 ) {
+  const configurable = columns.length > 3
   const key = `secondary-table:${storageKey}:hidden`
   const [saved, setSaved] = useState<{ key: string; hidden: string[] } | null>(
     null,
@@ -211,7 +314,7 @@ export function useTableColumns(
     columns.some(
       (column) =>
         column.key === columnKey &&
-        (column.required || !hidden.includes(columnKey)),
+        (!configurable || column.required || !hidden.includes(columnKey)),
     )
   const count = columns.filter((column) => visible(column.key)).length
   function save(next: string[]) {
@@ -225,7 +328,7 @@ export function useTableColumns(
   return {
     visible,
     count,
-    controls: (
+    controls: configurable ? (
       <TableColumns
         columns={columns}
         visible={visible}
@@ -239,7 +342,7 @@ export function useTableColumns(
         }
         onReset={() => save(defaults)}
       />
-    ),
+    ) : null,
   }
 }
 
@@ -283,6 +386,7 @@ function TableColumns({
         type="button"
         variant="outline"
         size="sm"
+        className="table-columns-trigger"
         ref={trigger}
         popoverTarget={id}
         aria-expanded={open}

@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import {
   SecondaryTableScroll,
   SecondaryTableHead,
+  SecondaryTableToolbar,
   useTableColumns,
 } from './secondary-table'
 import {
@@ -12,8 +13,32 @@ import {
   type TableValue,
 } from '@/utils/secondary-table'
 import { Button } from '@repo/ui/components/ui/button'
+import { Input } from '@repo/ui/components/ui/input'
+import { TableState } from '@repo/ui/components/ui/table'
 import { useInfiniteTableScroll } from '@/hooks/useInfiniteTableScroll'
 import { updateJobSelection } from '@/utils/job-selection'
+
+export type ImportPreviewFilter<Item> = {
+  key: string
+  label: string
+  matches: (item: Item) => boolean
+}
+
+export function filterImportPreviewItems<Item>(
+  items: readonly Item[],
+  search: string,
+  filter: string,
+  filters: readonly ImportPreviewFilter<Item>[],
+  searchValue: (item: Item) => string,
+): Item[] {
+  const term = search.trim().toLocaleLowerCase()
+  const selectedFilter = filters.find((option) => option.key === filter)
+  return items.filter(
+    (item) =>
+      (!term || searchValue(item).toLocaleLowerCase().includes(term)) &&
+      (!selectedFilter || selectedFilter.matches(item)),
+  )
+}
 
 export default function ImportPreviewTable<
   Item extends { row: number; title: string },
@@ -25,6 +50,8 @@ export default function ImportPreviewTable<
   actionable,
   columns,
   storageKey,
+  filters = [],
+  searchValue,
 }: {
   items: Item[]
   selected: number[]
@@ -32,6 +59,8 @@ export default function ImportPreviewTable<
   disabled: boolean
   actionable: (item: Item) => boolean
   storageKey: string
+  filters?: readonly ImportPreviewFilter<Item>[]
+  searchValue?: (item: Item) => string
   columns: {
     key: string
     label: string
@@ -41,8 +70,18 @@ export default function ImportPreviewTable<
   }[]
 }) {
   const visibility = useTableColumns(storageKey, columns)
+  const [search, setSearch] = useState('')
+  const [filter, setFilter] = useState('')
   const [sort, setSort] = useState<TableSort>({ key: 'row', direction: 'asc' })
-  const ordered = sortTableRows(items, sort, (item, key) =>
+  const filtered = filterImportPreviewItems(
+    items,
+    search,
+    filter,
+    filters,
+    searchValue ??
+      ((item) => columns.map((column) => column.value(item)).join(' ')),
+  )
+  const ordered = sortTableRows(filtered, sort, (item, key) =>
     key === 'row'
       ? item.row
       : columns.find((column) => column.key === key)?.value(item),
@@ -54,20 +93,61 @@ export default function ImportPreviewTable<
   const selection = selected.map(String)
   const checked = ids.length > 0 && ids.every((id) => selection.includes(id))
   const { scroller, sentinel } = useInfiniteTableScroll({
-    enabled: count < items.length,
+    enabled: count < ordered.length,
     fetchNextPage: async () => {
-      setCount((value) => Math.min(value + 50, items.length))
+      setCount((value) => Math.min(value + 50, ordered.length))
     },
-    resetKey: `${sort.key}:${sort.direction}`,
+    resetKey: JSON.stringify([sort.key, sort.direction, search, filter]),
   })
   useEffect(() => {
     if (all.current)
       all.current.indeterminate =
         !checked && ids.some((id) => selection.includes(id))
   }, [checked, ids, selection])
+  function clearSelection() {
+    onChange([])
+    setAnchor(null)
+    setCount(50)
+  }
   return (
     <>
-      {visibility.controls}
+      <SecondaryTableToolbar
+        search={
+          <Input
+            type="search"
+            aria-label="Search preview"
+            placeholder="Search preview"
+            value={search}
+            disabled={disabled}
+            onChange={(event) => {
+              setSearch(event.target.value)
+              clearSelection()
+            }}
+          />
+        }
+        filters={
+          filters.length ? (
+            <select
+              aria-label="Import status"
+              value={filter}
+              disabled={disabled}
+              onChange={(event) => {
+                setFilter(event.target.value)
+                clearSelection()
+              }}
+            >
+              <option value="">All rows</option>
+              {filters.map((option) => (
+                <option key={option.key} value={option.key}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          ) : undefined
+        }
+        count={`${filtered.length.toLocaleString()} of ${items.length.toLocaleString()} items`}
+        columns={visibility.controls}
+      />
       <SecondaryTableScroll
         ref={scroller}
         className="import-preview-scroll"
@@ -115,6 +195,11 @@ export default function ImportPreviewTable<
             </tr>
           </thead>
           <tbody>
+            {!ordered.length && (
+              <TableState colSpan={visibility.count + 1}>
+                {items.length ? 'No matching items.' : 'No items to import.'}
+              </TableState>
+            )}
             {ordered.slice(0, count).map((item) => (
               <tr
                 key={item.row}
@@ -160,9 +245,9 @@ export default function ImportPreviewTable<
           className="py-2 text-center text-sm text-muted-foreground"
           role="status"
         >
-          {Math.min(count, items.length)} of {items.length} items
+          {Math.min(count, ordered.length)} of {ordered.length} items loaded
         </div>
-        {count < items.length && (
+        {count < ordered.length && (
           <Button
             type="button"
             variant="ghost"

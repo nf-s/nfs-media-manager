@@ -7,9 +7,12 @@ import { z } from 'zod'
 import {
   PlaylistRemovalSchema,
   PlaylistSummarySchema,
+  PlaylistSourceSchema,
+  type PlaylistSource,
   type PlaylistSummary,
 } from '@repo/schemas/tracks'
 import { Button } from '@repo/ui/components/ui/button'
+import { Input } from '@repo/ui/components/ui/input'
 import {
   TableBody,
   TableCell,
@@ -22,6 +25,7 @@ import { useConfig } from './providers'
 import {
   SecondaryTableHead,
   SecondaryTableScroll,
+  SecondaryTableToolbar,
   useTableColumns,
   type TableColumn,
 } from './secondary-table'
@@ -144,11 +148,29 @@ export function playlistSortValue(
   }
 }
 
+export function filterPlaylists(
+  rows: readonly PlaylistSummary[],
+  search: string,
+  source: PlaylistSource | 'library' | '',
+) {
+  const text = search.trim().toLocaleLowerCase()
+  return rows.filter(
+    (row) =>
+      (!source ||
+        (source === 'library' ? row.source === null : row.source === source)) &&
+      [row.name, row.ownerName, row.description].some((value) =>
+        value?.toLocaleLowerCase().includes(text),
+      ),
+  )
+}
+
 export default function PlaylistsWorkspace() {
   const { apiBaseUrl } = useConfig()
   const client = useQueryClient()
   const [sortBy, setSortBy] = useState<PlaylistSortKey>('name')
   const [direction, setDirection] = useState<Direction>('asc')
+  const [search, setSearch] = useState('')
+  const [source, setSource] = useState<PlaylistSource | 'library' | ''>('')
   const [confirmingId, setConfirmingId] = useState<string | null>(null)
   const [outcome, setOutcome] = useState('')
   const drawer = usePlaylistDrawer()
@@ -188,20 +210,59 @@ export default function PlaylistsWorkspace() {
   }
   const sorting = { sortBy, direction, onSort: sort }
   const playlists = sortTableRows(
-    query.data ?? [],
+    filterPlaylists(query.data ?? [], search, source),
     { key: sortBy, direction },
     playlistSortValue,
   )
   const confirming = playlists.find((playlist) => playlist.id === confirmingId)
   return (
     <section className="admin-page table-workspace">
-      <div className="tags-toolbar">
-        <h1>Playlists</h1>
-        <span className="quiet text-xs" aria-live="polite">
-          {query.data ? `${query.data.length.toLocaleString()} playlists` : ''}
-        </span>
-        {columns.controls}
-        <Button asChild size="sm" variant="outline" className="ml-auto">
+      <h1>Playlists</h1>
+      <SecondaryTableToolbar
+        search={
+          <Input
+            type="search"
+            aria-label="Search playlists"
+            placeholder="Search playlists"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+          />
+        }
+        filters={
+          <select
+            aria-label="Playlist source"
+            value={source}
+            onChange={(event) => {
+              const value = event.target.value
+              if (value === '' || value === 'library') setSource(value)
+              else {
+                const parsed = PlaylistSourceSchema.safeParse(value)
+                if (parsed.success) setSource(parsed.data)
+              }
+            }}
+          >
+            <option value="">All sources</option>
+            <option value="library">Library</option>
+            {PlaylistSourceSchema.options.map((value) => (
+              <option key={value} value={value}>
+                {playlistSourceLabel(value)}
+              </option>
+            ))}
+          </select>
+        }
+        count={
+          <span aria-live="polite">
+            {query.data
+              ? search.trim() || source
+                ? `${playlists.length.toLocaleString()} of ${query.data.length.toLocaleString()} playlists`
+                : `${query.data.length.toLocaleString()} playlists`
+              : ''}
+          </span>
+        }
+        columns={columns.controls}
+      />
+      <div className="tags-bulk">
+        <Button asChild size="sm" variant="outline">
           <Link href={importHref}>Import playlists</Link>
         </Button>
       </div>
@@ -297,6 +358,8 @@ export default function PlaylistsWorkspace() {
                       Retry
                     </button>
                   </>
+                ) : search.trim() || source ? (
+                  'No matching playlists.'
                 ) : (
                   <>
                     No playlists.{' '}

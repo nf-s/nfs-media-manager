@@ -42,7 +42,7 @@
 .film-selection-controls .check-label {
   display: flex;
 }
-.film-selection-controls > div {
+.film-selection-controls > div:not(.secondary-table-toolbar) {
   gap: 6px;
 }
 .film-selection-controls > div:empty {
@@ -4093,4 +4093,103 @@ button.player-track:hover strong {
 }
 .table-columns-panel input {
   accent-color: #334155;
+}
+
+.secondary-table-toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 6px 8px;
+  width: 100%;
+  min-width: 0;
+  flex-shrink: 0;
+  margin: 0 0 6px;
+}
+.secondary-table-toolbar-main,
+.secondary-table-toolbar-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  min-width: 0;
+}
+.secondary-table-toolbar-search {
+  flex: 1 1 200px;
+  min-width: min(140px, 100%);
+  max-width: 360px;
+}
+.secondary-table-toolbar-search input:not([type='checkbox']) {
+  width: 100%;
+  max-width: none;
+  height: 28px;
+  border-radius: 7px;
+  background: white;
+  box-shadow: inset 0 0 0 1px hsl(var(--input));
+  font-size: 13px;
+}
+.secondary-table-toolbar-search input:focus-visible {
+  outline: 2px solid #64748b;
+  outline-offset: 1px;
+}
+.secondary-table-toolbar-filters select,
+.secondary-table-toolbar-filters > .toolbar-popover > summary {
+  max-width: 100%;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: white;
+  color: var(--ink);
+  font-size: 12px;
+}
+.secondary-table-toolbar-filters > .toolbar-popover > summary {
+  display: flex;
+  align-items: center;
+}
+.secondary-table-toolbar-count {
+  color: var(--ink-2);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.secondary-table-toolbar-columns {
+  justify-self: end;
+  align-self: start;
+}
+.secondary-table-toolbar .table-column-controls {
+  width: max-content;
+  margin: 0;
+}
+.table-column-controls > .table-columns-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  gap: 6px;
+  width: max-content;
+  height: 28px;
+  padding: 0 8px;
+  font-size: 12px;
+  line-height: 1;
+  white-space: nowrap;
+}
+.table-columns-trigger > svg {
+  flex: none;
+  width: 14px;
+  height: 14px;
+}
+.table-columns-panel input[type='checkbox'] {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  min-width: 14px;
+  max-width: 14px;
+  margin: 0;
+}
+.secondary-table-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  margin-bottom: 6px;
+  flex-shrink: 0;
 }

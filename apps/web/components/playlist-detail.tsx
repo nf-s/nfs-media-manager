@@ -1,7 +1,13 @@
 'use client'
 
 import Link from 'next/link'
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import {
+  useDeferredValue,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react'
 import {
   useInfiniteQuery,
   useMutation,
@@ -15,6 +21,7 @@ import {
   PlaylistSummarySchema,
   PlaylistSyncScheduleSchema,
   type PlaylistDetail,
+  type PlaylistDetailQuery,
   type PlaylistEntry,
   type PlaylistEntrySort,
   type PlaylistSummary,
@@ -22,6 +29,7 @@ import {
   type SpotifyPlaylistImportInput,
 } from '@repo/schemas/tracks'
 import { Button } from '@repo/ui/components/ui/button'
+import { Input } from '@repo/ui/components/ui/input'
 import {
   TableBody,
   TableCell,
@@ -67,6 +75,7 @@ import { useConfig } from './providers'
 import {
   SecondaryTableHead,
   SecondaryTableScroll,
+  SecondaryTableToolbar,
   useTableColumns,
 } from './secondary-table'
 import ServiceIconLinks from './service-icon-links'
@@ -83,12 +92,16 @@ function playlistPath(
   size: number,
   sortBy: PlaylistEntrySort = 'position',
   direction: 'asc' | 'desc' = 'asc',
+  q = '',
+  kind: PlaylistDetailQuery['kind'] = undefined,
 ) {
   return `/api/v1/playlists/${encodeURIComponent(id)}?${new URLSearchParams({
     page: String(page),
     size: String(size),
     sortBy,
     direction,
+    ...(q ? { q } : {}),
+    ...(kind ? { kind } : {}),
   })}`
 }
 
@@ -142,6 +155,9 @@ export function PlaylistEntries({
   const { apiBaseUrl } = useConfig()
   const [sortBy, setSortBy] = useState<PlaylistEntrySort>('position')
   const [direction, setDirection] = useState<'asc' | 'desc'>('asc')
+  const [search, setSearch] = useState('')
+  const q = useDeferredValue(search.trim())
+  const [kind, setKind] = useState<PlaylistDetailQuery['kind']>()
   const columns = useTableColumns('playlist-entries', entryColumns)
   function onSort(key: PlaylistEntrySort) {
     if (key === sortBy) setDirection(direction === 'asc' ? 'desc' : 'asc')
@@ -152,12 +168,20 @@ export function PlaylistEntries({
   }
   const sorting = { sortBy, direction, onSort }
   const entries = useInfiniteQuery({
-    queryKey: ['playlist', id, 'entries', sortBy, direction],
+    queryKey: ['playlist', id, 'entries', sortBy, direction, q, kind],
     initialPageParam: 1,
     queryFn: ({ pageParam, signal }) =>
       fetchApiData(
         apiBaseUrl,
-        playlistPath(id, pageParam, ENTRY_PAGE_SIZE, sortBy, direction),
+        playlistPath(
+          id,
+          pageParam,
+          ENTRY_PAGE_SIZE,
+          sortBy,
+          direction,
+          q,
+          kind,
+        ),
         PlaylistDetailSchema,
         { signal },
       ),
@@ -167,7 +191,7 @@ export function PlaylistEntries({
   const { scroller, sentinel } = useInfiniteTableScroll({
     enabled: entries.hasNextPage && !entries.isFetching && !entries.isError,
     fetchNextPage: entries.fetchNextPage,
-    resetKey: `${id}:${sortBy}:${direction}`,
+    resetKey: `${id}:${sortBy}:${direction}:${q}:${kind ?? ''}`,
   })
   // A sync between page requests can move entries across page boundaries.
   const byKey = new Map<string, PlaylistEntry>()
@@ -180,7 +204,39 @@ export function PlaylistEntries({
   const total = entries.data?.pages[0]?.items.totalCount ?? 0
   return (
     <>
-      <div className="flex justify-end">{columns.controls}</div>
+      <SecondaryTableToolbar
+        search={
+          <Input
+            type="search"
+            aria-label="Search playlist entries"
+            placeholder="Search titles, artists or albums"
+            value={search}
+            maxLength={200}
+            onChange={(event) => setSearch(event.target.value)}
+          />
+        }
+        filters={
+          <select
+            aria-label="Entry type"
+            value={kind ?? ''}
+            onChange={(event) => {
+              const value = event.target.value
+              if (value === 'track' || value === 'album') setKind(value)
+              else setKind(undefined)
+            }}
+          >
+            <option value="">All types</option>
+            <option value="track">Tracks</option>
+            <option value="album">Albums</option>
+          </select>
+        }
+        count={
+          entries.data
+            ? `${total.toLocaleString()} ${q || kind ? 'matching ' : ''}entries`
+            : undefined
+        }
+        columns={columns.controls}
+      />
       <SecondaryTableScroll
         ref={scroller}
         className="min-h-0 flex-1"
@@ -224,6 +280,8 @@ export function PlaylistEntries({
                       Retry
                     </button>
                   </>
+                ) : q || kind ? (
+                  'No matching entries.'
                 ) : (
                   'No tracks.'
                 )}

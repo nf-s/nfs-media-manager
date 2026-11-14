@@ -80,13 +80,6 @@ export default function LegacyImportPageClient() {
                 ? '-'
                 : `${(source.bytes / 1024 / 1024).toFixed(1)} MB`,
           },
-          {
-            key: 'available',
-            label: 'Available',
-            defaultVisible: false,
-            value: (source) => source.available,
-            render: (source) => (source.available ? 'Yes' : 'No'),
-          },
         ]}
       />
       <div className="import-actions">

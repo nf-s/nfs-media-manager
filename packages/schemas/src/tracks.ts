@@ -258,6 +258,8 @@ export const PlaylistEntrySortSchema = z.enum([
 export type PlaylistEntrySort = z.infer<typeof PlaylistEntrySortSchema>
 
 export const PlaylistDetailQuerySchema = PaginationQuerySchema.extend({
+  q: z.string().trim().max(200).optional(),
+  kind: z.enum(['track', 'album']).optional(),
   sortBy: PlaylistEntrySortSchema.default('position'),
   direction: DirectionSchema.default('asc'),
   size: z.coerce.number().int().positive().max(100).default(100),

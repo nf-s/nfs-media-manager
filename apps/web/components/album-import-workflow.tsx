@@ -432,6 +432,21 @@ export default function AlbumImportWorkflow({
             disabled={busy || commit.isSuccess}
             actionable={(item) => item.action === 'new'}
             storageKey="album-import-preview"
+            searchValue={(item) =>
+              [item.title, ...item.artists, ...item.identifiers].join(' ')
+            }
+            filters={[
+              {
+                key: 'new',
+                label: 'New',
+                matches: (item) => item.action === 'new',
+              },
+              {
+                key: 'imported',
+                label: 'Already imported',
+                matches: (item) => item.action === 'unchanged',
+              },
+            ]}
             columns={[
               { key: 'title', label: 'Album', value: (item) => item.title },
               {

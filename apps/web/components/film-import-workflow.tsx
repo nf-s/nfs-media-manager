@@ -288,6 +288,35 @@ export default function FilmImportWorkflow({
                 disabled={busy || start.isSuccess}
                 actionable={(item) => item.action !== 'unchanged'}
                 storageKey={`film-${kind}-import-preview`}
+                searchValue={(item) =>
+                  [item.title, ...item.identifiers].join(' ')
+                }
+                filters={
+                  kind === 'csv'
+                    ? [
+                        {
+                          key: 'pending',
+                          label: 'New or changed',
+                          matches: (item) => item.action !== 'unchanged',
+                        },
+                        {
+                          key: 'new',
+                          label: 'New',
+                          matches: (item) => item.action === 'new',
+                        },
+                        {
+                          key: 'changed',
+                          label: 'Changed',
+                          matches: (item) => item.action === 'update',
+                        },
+                        {
+                          key: 'unchanged',
+                          label: 'Unchanged',
+                          matches: (item) => item.action === 'unchanged',
+                        },
+                      ]
+                    : []
+                }
                 columns={[
                   { key: 'title', label: 'Film', value: (item) => item.title },
                   {
@@ -344,13 +373,6 @@ export default function FilmImportWorkflow({
                           </dl>
                         </details>
                       ),
-                  },
-                  {
-                    key: 'row',
-                    label: 'Row',
-                    defaultVisible: false,
-                    value: (item) => item.row,
-                    render: (item) => item.row + 1,
                   },
                 ]}
               />

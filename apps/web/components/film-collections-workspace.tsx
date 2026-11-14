@@ -19,6 +19,7 @@ import { useConfig } from './providers'
 import {
   SecondaryTableHead,
   SecondaryTableScroll,
+  SecondaryTableToolbar,
   useTableColumns,
 } from './secondary-table'
 import FilmCollectionDrawer from './film-collection-detail'
@@ -71,22 +72,29 @@ export default function FilmCollectionsWorkspace() {
   }
   return (
     <section className="admin-page table-workspace">
-      <div className="tags-toolbar">
-        <h1>Collections</h1>
-        <Input
-          aria-label="Search collections"
-          placeholder="Search collections"
-          value={search}
-          onChange={(event) => setSearch(event.target.value)}
-          className="max-w-xs"
-        />
-        <span className="quiet text-xs" aria-live="polite">
-          {query.data
-            ? `${rows.length.toLocaleString()} ${rows.length === 1 ? 'collection' : 'collections'}`
-            : ''}
-        </span>
-        {table.controls}
-      </div>
+      <h1>Collections</h1>
+      <SecondaryTableToolbar
+        search={
+          <Input
+            type="search"
+            aria-label="Search collections"
+            placeholder="Search collections"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            className="max-w-xs"
+          />
+        }
+        count={
+          <span aria-live="polite">
+            {query.data
+              ? search.trim()
+                ? `${rows.length.toLocaleString()} of ${query.data.length.toLocaleString()} collections`
+                : `${rows.length.toLocaleString()} ${rows.length === 1 ? 'collection' : 'collections'}`
+              : ''}
+          </span>
+        }
+        columns={table.controls}
+      />
       <SecondaryTableScroll
         className="tags-scroll"
         role="region"

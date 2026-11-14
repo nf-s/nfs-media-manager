@@ -429,13 +429,27 @@ export async function getPlaylistDetail(
   query: PlaylistDetailQuery,
 ): Promise<PlaylistDetail> {
   const summary = await getPlaylistSummary(id)
+  const pattern = `%${(query.q ?? '').replace(/[\\%_]/g, '\\$&')}%`
+  const kindFilter =
+    query.kind === 'track'
+      ? sql`and lt.media_item_id is not null`
+      : query.kind === 'album'
+        ? sql`and lt.media_item_id is null and a.media_item_id is not null`
+        : sql``
+  const searchFilter = query.q
+    ? sql`and (mi.title ilike ${pattern}
+        or coalesce(lt.album_name, am.title) ilike ${pattern}
+        or exists (select 1 from media_credit c join artist on artist.id = c.artist_id
+          where c.media_item_id = mi.id and c.role = 'artist' and artist.name ilike ${pattern}))`
+    : sql``
   const members = sql`from playlist_item pi
     join media_item mi on mi.id = pi.media_item_id
     left join library_track lt on lt.media_item_id = pi.media_item_id
     left join album a on a.media_item_id = pi.media_item_id
     left join media_item am on am.id = lt.album_media_item_id
     where pi.playlist_id = ${id}
-      and (lt.media_item_id is not null or a.media_item_id is not null)`
+      and (lt.media_item_id is not null or a.media_item_id is not null)
+      ${kindFilter} ${searchFilter}`
   const [count] = CountRowsSchema.parse(
     (await db.execute(sql`select count(*) as count ${members}`)).rows,
   )

@@ -25,6 +25,8 @@ export const FilmCollectionSortSchema = z.enum([
 export type FilmCollectionSort = z.infer<typeof FilmCollectionSortSchema>
 
 export const FilmCollectionQuerySchema = PaginationQuerySchema.extend({
+  q: z.string().trim().max(200).optional(),
+  watched: z.enum(['watched', 'unwatched']).optional(),
   size: PaginationQuerySchema.shape.size.default(100),
   sortBy: FilmCollectionSortSchema.default('position'),
   direction: DirectionSchema.default('asc'),

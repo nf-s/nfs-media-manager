@@ -1,8 +1,13 @@
 'use client'
 
 import Link from 'next/link'
+import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { ImportStatusSchema } from '@repo/schemas/imports'
+import {
+  ImportStatusSchema,
+  ImportRunSchema,
+  type ImportRun,
+} from '@repo/schemas/imports'
 import { fetchApiData } from '@/utils/api'
 import { useConfig } from '@/components/providers'
 import { SecondaryDataTable } from '../secondary-table'
@@ -11,6 +16,7 @@ import { scopedHref } from '@/utils/media-scope'
 import { ImportStatusNotice } from '@/components/imports-workspace'
 
 export default function ImportsPageClient() {
+  const [status, setStatus] = useState<ImportRun['status'] | ''>('')
   const { apiBaseUrl } = useConfig()
   const mediaType = useMediaScope()
   const query = useQuery({
@@ -43,7 +49,33 @@ export default function ImportsPageClient() {
           id={`import-history-${mediaType}`}
           label={`Recent ${mediaType} imports`}
           className="import-preview-scroll"
-          rows={runs}
+          rows={runs.filter((run) => !status || run.status === status)}
+          totalCount={runs.length}
+          countLabel="imports"
+          search={{
+            label: 'Search imports',
+            placeholder: 'Search stage or error',
+            value: (run) => `${run.stage} ${run.errorMessage ?? ''}`,
+          }}
+          filters={
+            <select
+              aria-label="Import status"
+              value={status}
+              onChange={(event) => {
+                const next = ImportRunSchema.shape.status.safeParse(
+                  event.target.value,
+                )
+                setStatus(next.success ? next.data : '')
+              }}
+            >
+              <option value="">All statuses</option>
+              {ImportRunSchema.shape.status.options.map((value) => (
+                <option key={value} value={value}>
+                  {value}
+                </option>
+              ))}
+            </select>
+          }
           rowKey={(run) => run.id}
           defaultSort={{ key: 'createdAt', direction: 'desc' }}
           busy={query.isFetching}
@@ -53,7 +85,9 @@ export default function ImportsPageClient() {
               ? 'Loading imports...'
               : query.isError
                 ? 'Imports unavailable.'
-                : 'No imports yet.'
+                : status
+                  ? 'No matching imports.'
+                  : 'No imports yet.'
           }
           columns={[
             {

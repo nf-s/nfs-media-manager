@@ -57,10 +57,13 @@ function render(search: string, path = '/collections') {
     defaultOptions: { queries: { retry: false } },
   })
   client.setQueryData(['film-collections'], [collection])
-  client.setQueryData(['film-collection', collection.id, 'position', 'asc'], {
-    pages: [collection],
-    pageParams: [1],
-  })
+  client.setQueryData(
+    ['film-collection', collection.id, 'position', 'asc', '', undefined],
+    {
+      pages: [collection],
+      pageParams: [1],
+    },
+  )
   try {
     return renderToStaticMarkup(
       <QueryClientProvider client={client}>
@@ -95,7 +98,8 @@ test('Films navigation exposes Collections and its shared sortable table control
   assert.match(html, /secondary-table-scroll/)
   assert.match(html, /title="Sort by Collection"/)
   assert.match(html, /title="Sort by Films"/)
-  assert.match(html, /aria-label="Visible columns"/)
+  assert.doesNotMatch(html, /aria-label="Visible columns"/)
+  assert.match(html, /title="Sort by Added"/)
   assert.doesNotMatch(html, /aria-label="Collection details"/)
 })
 
@@ -104,6 +108,14 @@ test('collection deep links open members in source order without renumbering gap
   const drawer = html.slice(html.indexOf('aria-label="Collection details"'))
   assert.match(drawer, /Synthetic collection/)
   assert.match(drawer, /aria-label="Collection films"/)
+  assert.ok(
+    drawer.indexOf('aria-label="Search collection films"') <
+      drawer.indexOf('aria-label="Watched status"'),
+  )
+  assert.ok(
+    drawer.indexOf('aria-label="Watched status"') <
+      drawer.indexOf('aria-label="Visible columns"'),
+  )
   assert.match(
     drawer,
     /aria-sort="ascending"><button[^>]*title="Sort by Stored position"/,

@@ -2,7 +2,10 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import ImportPreviewTable from './import-preview-table'
+import ImportPreviewTable, {
+  filterImportPreviewItems,
+  type ImportPreviewFilter,
+} from './import-preview-table'
 
 const items = [
   { row: 0, title: 'New album', action: 'new' },
@@ -74,4 +77,95 @@ test('large previews initially render fifty rows and expose manual load more', (
   assert.equal((html.match(/aria-label="Import Album/g) ?? []).length, 50)
   assert.match(html, /50 of 101 items/)
   assert.match(html, /Load more/)
+})
+
+test('import preview exposes search above the table', () => {
+  const html = renderToStaticMarkup(
+    <ImportPreviewTable
+      items={items}
+      selected={[]}
+      onChange={() => {}}
+      disabled={false}
+      actionable={(item) => item.action === 'new'}
+      storageKey="test-preview"
+      columns={[{ key: 'title', label: 'Title', value: (item) => item.title }]}
+    />,
+  )
+  assert.match(html, /aria-label="Search preview"/)
+})
+
+test('preview filtering applies to the complete dataset before rendering a batch', () => {
+  const rows = Array.from({ length: 101 }, (_, row) => ({
+    row,
+    title: `Album ${row}`,
+    action: row === 75 ? 'new' : 'unchanged',
+    artist: row === 75 ? 'Target Artist' : 'Other Artist',
+  }))
+  const filters: ImportPreviewFilter<(typeof rows)[number]>[] = [
+    { key: 'new', label: 'New', matches: (item) => item.action === 'new' },
+    {
+      key: 'unchanged',
+      label: 'Already imported',
+      matches: (item) => item.action === 'unchanged',
+    },
+  ]
+  const searchValue = (item: (typeof rows)[number]) =>
+    `${item.title} ${item.artist}`
+  assert.deepEqual(
+    filterImportPreviewItems(
+      rows,
+      ' TARGET ARTIST ',
+      'new',
+      filters,
+      searchValue,
+    ).map((item) => item.row),
+    [75],
+  )
+  assert.equal(
+    filterImportPreviewItems(rows, '', 'unchanged', filters, searchValue)
+      .length,
+    100,
+  )
+  assert.equal(
+    filterImportPreviewItems(
+      rows,
+      'Target Artist',
+      'unchanged',
+      filters,
+      searchValue,
+    ).length,
+    0,
+  )
+  assert.equal(rows.length, 101)
+})
+
+test('preview toolbar provides supplied status choices before its row count', () => {
+  const html = renderToStaticMarkup(
+    <ImportPreviewTable
+      items={items}
+      selected={[]}
+      onChange={() => {}}
+      disabled={false}
+      actionable={(item) => item.action === 'new'}
+      storageKey="test-preview"
+      columns={[{ key: 'title', label: 'Title', value: (item) => item.title }]}
+      filters={[
+        { key: 'new', label: 'New', matches: (item) => item.action === 'new' },
+        {
+          key: 'unchanged',
+          label: 'Already imported',
+          matches: (item) => item.action === 'unchanged',
+        },
+      ]}
+    />,
+  )
+  assert.match(html, /aria-label="Import status"/)
+  assert.match(html, /Already imported<\/option>/)
+  assert.ok(
+    html.indexOf('aria-label="Search preview"') <
+      html.indexOf('aria-label="Import status"'),
+  )
+  assert.ok(
+    html.indexOf('aria-label="Import status"') < html.indexOf('2 of 2 items'),
+  )
 })

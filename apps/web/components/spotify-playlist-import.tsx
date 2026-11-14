@@ -37,6 +37,7 @@ import { useConfig } from './providers'
 import {
   SecondaryTableHead,
   SecondaryTableScroll,
+  SecondaryTableToolbar,
   useTableColumns,
   type TableColumn,
 } from './secondary-table'
@@ -146,6 +147,40 @@ const importColumns: readonly ImportColumn[] = [
     defaultVisible: false,
   },
 ]
+
+type ImportPlaylistFilter = 'all' | 'not-imported' | 'imported' | 'needs-update'
+const importStatusOptions: readonly {
+  value: ImportPlaylistFilter
+  label: string
+}[] = [
+  { value: 'all', label: 'All playlists' },
+  { value: 'not-imported', label: 'Not imported' },
+  { value: 'imported', label: 'Imported' },
+  { value: 'needs-update', label: 'Needs update' },
+]
+
+export function filterImportPlaylists(
+  playlists: readonly SpotifyPlaylist[],
+  search: string,
+  status: ImportPlaylistFilter,
+): SpotifyPlaylist[] {
+  const term = search.trim().toLocaleLowerCase()
+  return playlists.filter((playlist) => {
+    if (
+      term &&
+      ![playlist.name, playlist.ownerName]
+        .join(' ')
+        .toLocaleLowerCase()
+        .includes(term)
+    )
+      return false
+    if (status === 'not-imported') return playlist.stored === null
+    if (status === 'imported') return playlist.stored !== null
+    if (status === 'needs-update')
+      return playlist.stored !== null && !playlist.current
+    return true
+  })
+}
 
 export function importPlaylistSortValue(
   playlist: SpotifyPlaylist,
@@ -349,6 +384,7 @@ export default function SpotifyPlaylistImport() {
   const client = useQueryClient()
   const outcome = useSearchParams().get('spotify')
   const [search, setSearch] = useState('')
+  const [importStatus, setImportStatus] = useState<ImportPlaylistFilter>('all')
   const [sortBy, setSortBy] = useState<ImportPlaylistSortKey>('name')
   const [direction, setDirection] = useState<'asc' | 'desc'>('asc')
   const columns = useTableColumns('spotify-playlist-import', importColumns)
@@ -489,12 +525,7 @@ export default function SpotifyPlaylistImport() {
     ...playlist,
     job: imports.data?.jobs[playlist.spotifyId] ?? playlist.job,
   }))
-  const term = search.trim().toLocaleLowerCase()
-  const filtered = term
-    ? playlists.filter((playlist) =>
-        playlist.name.toLocaleLowerCase().includes(term),
-      )
-    : playlists
+  const filtered = filterImportPlaylists(playlists, search, importStatus)
   const visible = sortTableRows(
     filtered,
     { key: sortBy, direction },
@@ -505,7 +536,7 @@ export default function SpotifyPlaylistImport() {
         key,
       ),
   )
-  const targets = playlists.filter(
+  const targets = visible.filter(
     (playlist) => selected.includes(playlist.spotifyId) && selectable(playlist),
   )
   const confirmationKey = JSON.stringify(
@@ -680,7 +711,64 @@ export default function SpotifyPlaylistImport() {
       {ready && (
         <>
           <h2>Playlists</h2>
-          <div className="form-actions">
+          {list.isError && (
+            <p role="alert">
+              {errorMessage(list.error, 'Could not list playlists.')}
+            </p>
+          )}
+          {listingJob &&
+            (listingJob.status === 'failed' ||
+              listingJob.status === 'cancelled') && (
+              <p role="alert">
+                The last listing{' '}
+                {listingJob.status === 'failed' ? 'failed' : 'was cancelled'}
+                {listingJob.errorMessage
+                  ? `: ${listingJob.errorMessage}`
+                  : '.'}{' '}
+                <Link href={jobHref(listingJob)}>View job</Link>
+              </p>
+            )}
+          <SecondaryTableToolbar
+            search={
+              <Input
+                type="search"
+                aria-label="Search playlists"
+                placeholder="Search playlists or owners"
+                value={search}
+                disabled={queue.isPending}
+                onChange={(event) => {
+                  setSearch(event.target.value)
+                  setSelected([])
+                  setConfirmedKey('')
+                }}
+              />
+            }
+            filters={
+              <select
+                aria-label="Import status"
+                value={importStatus}
+                disabled={queue.isPending}
+                onChange={(event) => {
+                  const option = importStatusOptions.find(
+                    (option) => option.value === event.target.value,
+                  )
+                  if (!option) return
+                  setImportStatus(option.value)
+                  setSelected([])
+                  setConfirmedKey('')
+                }}
+              >
+                {importStatusOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            }
+            count={`${visible.length.toLocaleString()} of ${playlists.length.toLocaleString()} playlists`}
+            columns={columns.controls}
+          />
+          <div className="secondary-table-actions">
             <Button
               size="sm"
               variant={listedAt ? 'outline' : 'default'}
@@ -706,51 +794,17 @@ export default function SpotifyPlaylistImport() {
                 </span>
               )
             )}
-          </div>
-          {list.isError && (
-            <p role="alert">
-              {errorMessage(list.error, 'Could not list playlists.')}
-            </p>
-          )}
-          {listingJob &&
-            (listingJob.status === 'failed' ||
-              listingJob.status === 'cancelled') && (
-              <p role="alert">
-                The last listing{' '}
-                {listingJob.status === 'failed' ? 'failed' : 'was cancelled'}
-                {listingJob.errorMessage
-                  ? `: ${listingJob.errorMessage}`
-                  : '.'}{' '}
-                <Link href={jobHref(listingJob)}>View job</Link>
-              </p>
-            )}
-          <div className="job-selection-toolbar">
-            {columns.controls}
-            <Input
-              aria-label="Filter playlists"
-              placeholder="Filter playlists..."
-              className="h-7 w-56 text-xs"
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-            />
-            <span>
-              {visible.length.toLocaleString()} of{' '}
-              {playlists.length.toLocaleString()} playlists · {targets.length}{' '}
-              selected
-            </span>
+            <span>{targets.length} selected</span>
             <Button
               size="sm"
               variant="ghost"
               disabled={queue.isPending || !visible.some(selectable)}
               onClick={() =>
-                setSelected([
-                  ...new Set([
-                    ...selected,
-                    ...visible
-                      .filter(selectable)
-                      .map((playlist) => playlist.spotifyId),
-                  ]),
-                ])
+                setSelected(
+                  visible
+                    .filter(selectable)
+                    .map((playlist) => playlist.spotifyId),
+                )
               }
             >
               Select all importable

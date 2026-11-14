@@ -25,6 +25,7 @@ import {
 } from '@repo/schemas/job'
 import {
   SecondaryTableScroll,
+  SecondaryTableToolbar,
   SecondaryTableHead,
   useTableColumns,
 } from '../secondary-table'
@@ -193,6 +194,7 @@ export default function JobsPageClient() {
   const [query, setQuery] = useState('')
   const deferredQuery = useDeferredValue(query)
   const status = search.get('status') ?? ''
+  const provider = search.get('provider') ?? ''
   const batchId = search.get('batchId') ?? ''
   const parsedSort = JobSortKeySchema.safeParse(search.get('sortBy'))
   const sortBy = parsedSort.success ? parsedSort.data : 'createdAt'
@@ -225,6 +227,11 @@ export default function JobsPageClient() {
         z.array(ProviderSummarySchema),
       ),
   })
+  const providerOptions = (providers.data ?? []).filter((item) =>
+    mediaType === 'subscription'
+      ? item.subscriptions
+      : item.mediaTypes.some((kind) => kind === mediaType),
+  )
   const jobs = useInfiniteQuery({
     queryKey: [
       'jobs',
@@ -233,6 +240,7 @@ export default function JobsPageClient() {
       status,
       batchId,
       deferredQuery,
+      provider,
       sortBy,
       direction,
     ],
@@ -240,7 +248,7 @@ export default function JobsPageClient() {
     queryFn: ({ pageParam, signal }) =>
       fetchApiData(
         apiBaseUrl,
-        `/api/v1/scrape/jobs?${new URLSearchParams({ mediaType, sortBy, direction, page: String(pageParam), size: '25', ...(status ? { status } : {}), ...(batchId ? { batchId } : {}), ...(deferredQuery ? { q: deferredQuery } : {}) })}`,
+        `/api/v1/scrape/jobs?${new URLSearchParams({ mediaType, sortBy, direction, page: String(pageParam), size: '25', ...(status ? { status } : {}), ...(provider ? { provider } : {}), ...(batchId ? { batchId } : {}), ...(deferredQuery ? { q: deferredQuery } : {}) })}`,
         JobPageSchema,
         { signal },
       ),
@@ -276,7 +284,7 @@ export default function JobsPageClient() {
     setCheckedJobIds([])
     setSelectionAnchor(null)
     setRetryConfirmed(false)
-  }, [mediaType, status, batchId, deferredQuery, sortBy, direction])
+  }, [mediaType, status, batchId, deferredQuery, provider, sortBy, direction])
   const selectedJobId = search.get('jobId')
   const selectedJob = useQuery({
     queryKey: ['jobs', 'detail', selectedJobId],
@@ -454,8 +462,8 @@ export default function JobsPageClient() {
       {selectedJob.isError && (
         <p role="alert">Could not load the selected job.</p>
       )}
-      <div className="jobs-controls">
-        <div className="job-toolbar">
+      <SecondaryTableToolbar
+        search={
           <Input
             type="search"
             aria-label="Search jobs"
@@ -467,30 +475,53 @@ export default function JobsPageClient() {
               setParams({ page: '' })
             }}
           />
-          <select
-            aria-label="Job status"
-            value={status}
-            disabled={bulkPending}
-            onChange={(event) =>
-              setParams({ status: event.target.value, page: '', jobId: '' })
-            }
-          >
-            <option value="">All statuses</option>
-            <option value="active">Active</option>
-            <option value="attention">Needs attention</option>
-            {['queued', 'running', 'succeeded', 'failed', 'cancelled'].map(
-              (value) => (
-                <option key={value} value={value}>
-                  {value}
+        }
+        filters={
+          <>
+            <select
+              aria-label="Job status"
+              value={status}
+              disabled={bulkPending}
+              onChange={(event) =>
+                setParams({ status: event.target.value, page: '', jobId: '' })
+              }
+            >
+              <option value="">All statuses</option>
+              <option value="active">Active</option>
+              <option value="attention">Needs attention</option>
+              {['queued', 'running', 'succeeded', 'failed', 'cancelled'].map(
+                (value) => (
+                  <option key={value} value={value}>
+                    {value}
+                  </option>
+                ),
+              )}
+            </select>
+            <select
+              aria-label="Job provider"
+              value={provider}
+              disabled={bulkPending}
+              onChange={(event) =>
+                setParams({ provider: event.target.value, page: '', jobId: '' })
+              }
+            >
+              <option value="">All providers</option>
+              {provider &&
+                !providerOptions.some((item) => item.id === provider) && (
+                  <option value={provider}>{provider}</option>
+                )}
+              {providerOptions.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.displayName}
                 </option>
-              ),
-            )}
-          </select>
-          {columns.controls}
-          <span className="muted">
-            {jobs.data?.pages[0]?.totalCount ?? 0} jobs
-          </span>
-        </div>
+              ))}
+            </select>
+          </>
+        }
+        count={`${jobs.data?.pages[0]?.totalCount ?? 0} jobs`}
+        columns={columns.controls}
+      />
+      <div className="secondary-table-actions">
         <JobBulkActions
           jobs={actionableJobs}
           selectedIds={selectedIds}

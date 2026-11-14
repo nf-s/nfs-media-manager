@@ -14,6 +14,7 @@ import TagDetailModal from '@/components/tag-detail-modal'
 import TagActions from '@/components/tag-actions'
 import { useMediaScope } from '@/components/media-scope'
 import {
+  SecondaryTableToolbar,
   SecondaryTableScroll,
   SecondaryTableHead,
   useTableColumns,
@@ -122,21 +123,27 @@ export default function TagsPageClient({
   }
   return (
     <section className="admin-page tags-page table-workspace">
-      <div className="tags-toolbar">
-        <h1>{hidden ? 'Hidden tags' : 'Tags'}</h1>
-        {columns.controls}
-        <Input
-          aria-label="Search tags"
-          placeholder="Search tags or original names..."
-          maxLength={200}
-          value={search}
-          disabled={pending}
-          onChange={(event) => updateParams('q', event.target.value)}
-        />
-        <span className="quiet text-xs" aria-live="polite">
-          {tags.data?.pages[0]?.totalCount.toLocaleString() ?? '...'} tags
-        </span>
-      </div>
+      <h1>{hidden ? 'Hidden tags' : 'Tags'}</h1>
+      <SecondaryTableToolbar
+        search={
+          <Input
+            type="search"
+            aria-label="Search tags"
+            placeholder="Search tags or original names..."
+            maxLength={200}
+            value={search}
+            disabled={pending}
+            onChange={(event) => {
+              setSelected([])
+              setAnchor(null)
+              setOutcome(null)
+              updateParams('q', event.target.value)
+            }}
+          />
+        }
+        count={`${tags.data?.pages[0]?.totalCount.toLocaleString() ?? '...'} tags`}
+        columns={columns.controls}
+      />
       <div
         className="tags-bulk"
         data-active={selectedTags.length > 0 || undefined}

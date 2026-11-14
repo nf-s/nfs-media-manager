@@ -17,6 +17,12 @@ export default function AlbumTracksTable({
       id="album-tracks"
       label="Album tracks"
       rows={album.tracks}
+      search={{
+        label: 'Search album tracks',
+        placeholder: 'Search tracks',
+        value: (track) => track.title,
+      }}
+      countLabel="tracks"
       rowKey={(track) => track.position}
       defaultSort={{ key: 'position', direction: 'asc' }}
       empty="No imported tracks."

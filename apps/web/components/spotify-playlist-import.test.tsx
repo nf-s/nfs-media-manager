@@ -15,6 +15,7 @@ import {
 } from '@repo/schemas/tracks'
 import SpotifyPlaylistImport, {
   importPlaylistSortValue,
+  filterImportPlaylists,
   type ImportPlaylistSortKey,
 } from './spotify-playlist-import'
 import { sortTableRows } from '@/utils/secondary-table'
@@ -193,7 +194,8 @@ test('the stored list renders in the shared table without a listing request', ()
   assert.match(html, /Listed /)
   assert.match(html, /40 tracks/)
   assert.match(html, />Import again</)
-  assert.match(html, /5 of 5 playlists · 0 selected/)
+  assert.match(html, /5 of 5 playlists/)
+  assert.match(html, /0 selected/)
   assert.doesNotMatch(html, /Allow playlist changes/)
 })
 
@@ -386,4 +388,82 @@ test('import dates sort by timestamp rather than displayed text', () => {
       importPlaylistSortValue(playlist, summary, key),
       Date.parse(date),
     )
+})
+
+test('playlist import has an import-status filter separate from bulk actions', () => {
+  const html = render([
+    [['spotify-account'], account],
+    [['spotify-playlist-imports'], imports],
+    [['spotify-playlists'], listing],
+    [['playlists'], [stored]],
+  ])
+  assert.match(html, /aria-label="Import status"/)
+  assert.match(html, /Not imported<\/option>/)
+  assert.match(html, /Needs update<\/option>/)
+  const positions = [
+    'aria-label="Search playlists"',
+    'aria-label="Import status"',
+    '5 of 5 playlists',
+    '> Columns',
+    'class="secondary-table-actions"',
+    '>List again<',
+    '>Select all importable<',
+  ].map((text) => html.indexOf(text))
+  assert.ok(positions.every((position) => position >= 0))
+  assert.deepEqual(
+    positions,
+    [...positions].sort((a, b) => a - b),
+  )
+})
+
+test('playlist import filters can hide imported rows and find changed imports', () => {
+  const playlists = listing.playlists
+  assert.deepEqual(
+    filterImportPlaylists(playlists, '', 'not-imported').map(
+      (playlist) => playlist.name,
+    ),
+    ['Running', 'Followed', 'Huge', 'Broken'],
+  )
+  assert.deepEqual(
+    filterImportPlaylists(playlists, '', 'imported').map(
+      (playlist) => playlist.name,
+    ),
+    ['Stored'],
+  )
+  assert.deepEqual(
+    filterImportPlaylists(playlists, '', 'needs-update').map(
+      (playlist) => playlist.name,
+    ),
+    ['Stored'],
+  )
+  assert.equal(
+    filterImportPlaylists(
+      playlists.map((playlist) => ({ ...playlist, current: true })),
+      '',
+      'needs-update',
+    ).length,
+    0,
+  )
+  assert.equal(playlists.length, 5)
+})
+
+test('playlist import search matches owners and combines with import status', () => {
+  assert.equal(
+    filterImportPlaylists(
+      listing.playlists,
+      '  EXAMPLE OWNER  ',
+      'not-imported',
+    ).length,
+    4,
+  )
+  assert.deepEqual(
+    filterImportPlaylists(listing.playlists, 'stored', 'imported').map(
+      (playlist) => playlist.name,
+    ),
+    ['Stored'],
+  )
+  assert.equal(
+    filterImportPlaylists(listing.playlists, 'Stored', 'not-imported').length,
+    0,
+  )
 })

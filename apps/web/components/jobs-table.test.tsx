@@ -38,6 +38,7 @@ function render(search = 'mediaType=film') {
       '',
       '',
       '',
+      params.get('provider') ?? '',
       params.get('sortBy') ?? 'createdAt',
       params.get('direction') === 'asc' ? 'asc' : 'desc',
     ],
@@ -83,6 +84,22 @@ test('job monitor has shared sortable columns, selection and explicit detail con
   )
   assert.match(html, /aria-sort="descending"/)
   assert.doesNotMatch(html, /title="Sort by Finished"|job-content/)
+})
+
+test('job filters retain a deep-linked provider and precede counts and column controls', () => {
+  const html = render('mediaType=film&provider=unavailable-provider')
+  assert.match(
+    html,
+    /<option value="unavailable-provider" selected="">unavailable-provider<\/option>/,
+  )
+  const search = html.indexOf('aria-label="Search jobs"')
+  const status = html.indexOf('aria-label="Job status"')
+  const provider = html.indexOf('aria-label="Job provider"')
+  const count = html.indexOf('>1 jobs<')
+  const columns = html.indexOf('table-columns-trigger')
+  const actions = html.indexOf('secondary-table-actions')
+  assert.ok(search < status && status < provider && provider < count)
+  assert.ok(count < columns && columns < actions)
 })
 
 test('job sort state follows the URL and deep-linked details span the visible columns', () => {

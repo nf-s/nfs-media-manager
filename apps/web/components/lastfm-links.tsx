@@ -57,6 +57,7 @@ import LastfmSearchActions from './lastfm-search-actions'
 import { useConfig } from './providers'
 import {
   SecondaryDataTable,
+  SecondaryTableToolbar,
   SecondaryTableScroll,
   SecondaryTableHead,
   useTableColumns,
@@ -373,35 +374,49 @@ export default function LastfmLinks() {
           </p>
         )}
       </div>
-      <div className="job-toolbar">
-        <select
-          aria-label="Link status"
-          value={reason}
-          disabled={queuePending}
-          onChange={(event) => setReason(lastfmLinkFilter(event.target.value))}
-        >
-          {lastfmLinkFilters.map((option) => (
-            <option key={option.value} value={option.value}>
-              {option.label}
-            </option>
-          ))}
-        </select>
-        <Input
-          type="search"
-          aria-label="Search scrobbled names"
-          placeholder="Search artists or albums"
-          value={draft}
-          disabled={queuePending}
-          maxLength={200}
-          onChange={(event) => {
-            setDraft(event.target.value)
-            clearSelection()
-          }}
-        />
-        <span className="muted">
-          {links.data?.pages[0]?.totalCount.toLocaleString() ?? 0} names
-        </span>
-        {ids.length > 100 && (
+      <SecondaryTableToolbar
+        search={
+          <Input
+            type="search"
+            aria-label="Search scrobbled names"
+            placeholder="Search artists or albums"
+            value={draft}
+            disabled={queuePending}
+            maxLength={200}
+            onChange={(event) => {
+              setDraft(event.target.value)
+              clearSelection()
+            }}
+          />
+        }
+        filters={
+          <select
+            aria-label="Link status"
+            value={reason}
+            disabled={queuePending}
+            onChange={(event) =>
+              setReason(lastfmLinkFilter(event.target.value))
+            }
+          >
+            {lastfmLinkFilters.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        }
+        count={
+          <>
+            {links.data?.pages[0]?.totalCount.toLocaleString() ?? 0} names
+            {(links.isPlaceholderData || draft.trim() !== query) && (
+              <span role="status"> · Loading...</span>
+            )}
+          </>
+        }
+        columns={columns.controls}
+      />
+      {ids.length > 100 && (
+        <div className="secondary-table-actions">
           <Button
             variant="ghost"
             size="sm"
@@ -413,13 +428,8 @@ export default function LastfmLinks() {
           >
             Select first 100
           </Button>
-        )}
-        {(links.isPlaceholderData || draft.trim() !== query) && (
-          <span role="status" className="muted">
-            Loading...
-          </span>
-        )}
-      </div>
+        </div>
+      )}
       {links.isError && items.length > 0 && !links.isFetchNextPageError && (
         <p role="alert">
           Could not load scrobble links.{' '}
@@ -432,7 +442,13 @@ export default function LastfmLinks() {
         selection={selected}
         onSelectionChange={setSelected}
       />
-      {columns.controls}
+      <LastfmSearchActions
+        groups={items}
+        selectedIds={selectedIds}
+        onSelect={setSelectedIds}
+        onPending={setQueuePending}
+        disabled={selectionDisabled}
+      />
       <SecondaryTableScroll
         ref={scroller}
         className="table-scroll-bounded"
@@ -544,13 +560,6 @@ export default function LastfmLinks() {
           )}
         </div>
       </SecondaryTableScroll>
-      <LastfmSearchActions
-        groups={items}
-        selectedIds={selectedIds}
-        onSelect={setSelectedIds}
-        onPending={setQueuePending}
-        disabled={selectionDisabled}
-      />
     </section>
   )
 }

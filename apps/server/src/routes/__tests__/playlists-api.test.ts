@@ -100,7 +100,12 @@ describe('playlist API', () => {
       expect((await send('POST', '/p/additions', body)).status).toBe(422)
     expect((await send('GET', '/additions')).status).toBe(422)
     expect((await send('GET', '/p?size=101')).status).toBe(422)
-    for (const query of ['sortBy=unknown', 'direction=reverse'])
+    for (const query of [
+      'sortBy=unknown',
+      'direction=reverse',
+      'kind=unknown',
+      `q=${'x'.repeat(201)}`,
+    ])
       expect((await send('GET', `/p?${query}`)).status).toBe(422)
     expect(
       (
@@ -186,5 +191,19 @@ describe('playlist API', () => {
     expect(refused.status).toBe(422)
     expect(await refused.text()).toContain('Albums cannot be added')
     expect(fetch).not.toHaveBeenCalled()
+  })
+  it('forwards playlist search and entry type before pagination', async () => {
+    mocks.detail.mockResolvedValue({ id: 'p' })
+    expect(
+      (await send('GET', '/p?q=Album&kind=album&page=2&size=1')).status,
+    ).toBe(200)
+    expect(mocks.detail).toHaveBeenCalledExactlyOnceWith('p', {
+      q: 'Album',
+      kind: 'album',
+      page: 2,
+      size: 1,
+      sortBy: 'position',
+      direction: 'asc',
+    })
   })
 })

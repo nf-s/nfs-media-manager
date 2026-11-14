@@ -1,15 +1,17 @@
 'use client'
 
 import Link from 'next/link'
-import { useEffect, useRef, useState } from 'react'
+import { useDeferredValue, useEffect, useRef, useState } from 'react'
 import { useInfiniteQuery } from '@tanstack/react-query'
 import { X } from 'lucide-react'
 import {
   FilmCollectionDetailSchema,
   type FilmCollectionItem,
   type FilmCollectionSort,
+  type FilmCollectionQuery,
 } from '@repo/schemas/film-collections'
 import { Button } from '@repo/ui/components/ui/button'
+import { Input } from '@repo/ui/components/ui/input'
 import {
   TableBody,
   TableCell,
@@ -25,6 +27,7 @@ import MediaArtwork from './media-artwork'
 import {
   SecondaryTableHead,
   SecondaryTableScroll,
+  SecondaryTableToolbar,
   useTableColumns,
 } from './secondary-table'
 
@@ -60,15 +63,18 @@ export function FilmCollectionEntries({ id }: { id: string }) {
   const { apiBaseUrl } = useConfig()
   const [sortBy, setSortBy] = useState<FilmCollectionSort>('position')
   const [direction, setDirection] = useState<'asc' | 'desc'>('asc')
+  const [search, setSearch] = useState('')
+  const q = useDeferredValue(search.trim())
+  const [watched, setWatched] = useState<FilmCollectionQuery['watched']>()
   const table = useTableColumns('film-collection-items', columns)
   const query = useInfiniteQuery({
-    queryKey: ['film-collection', id, sortBy, direction],
+    queryKey: ['film-collection', id, sortBy, direction, q, watched],
     staleTime: 0,
     initialPageParam: 1,
     queryFn: ({ pageParam, signal }) =>
       fetchApiData(
         apiBaseUrl,
-        `/api/v1/collections/${encodeURIComponent(id)}?${new URLSearchParams({ page: String(pageParam), size: '100', sortBy, direction })}`,
+        `/api/v1/collections/${encodeURIComponent(id)}?${new URLSearchParams({ page: String(pageParam), size: '100', sortBy, direction, ...(q ? { q } : {}), ...(watched ? { watched } : {}) })}`,
         FilmCollectionDetailSchema,
         { signal },
       ),
@@ -78,7 +84,7 @@ export function FilmCollectionEntries({ id }: { id: string }) {
   const { scroller, sentinel } = useInfiniteTableScroll({
     enabled: query.hasNextPage && !query.isFetching && !query.isError,
     fetchNextPage: query.fetchNextPage,
-    resetKey: `${id}:${sortBy}:${direction}`,
+    resetKey: `${id}:${sortBy}:${direction}:${q}:${watched ?? ''}`,
   })
   const byId = new Map<string, FilmCollectionItem>()
   for (const page of query.data?.pages ?? [])
@@ -96,17 +102,47 @@ export function FilmCollectionEntries({ id }: { id: string }) {
         <h1 className="text-lg font-semibold">
           {summary?.name ?? 'Collection'}
         </h1>
-        {summary && (
-          <span className="quiet text-xs">
-            {summary.filmCount.toLocaleString()} films in library
-          </span>
-        )}
-        {table.controls}
       </header>
       <p className="quiet text-xs">
         Stored positions are preserved, including gaps. Older imports may not
         contain the source's film order.
       </p>
+      <SecondaryTableToolbar
+        search={
+          <Input
+            type="search"
+            aria-label="Search collection films"
+            placeholder="Search films"
+            value={search}
+            maxLength={200}
+            onChange={(event) => setSearch(event.target.value)}
+          />
+        }
+        filters={
+          <select
+            aria-label="Watched status"
+            value={watched ?? ''}
+            onChange={(event) => {
+              const value = event.target.value
+              if (value === 'watched' || value === 'unwatched')
+                setWatched(value)
+              else setWatched(undefined)
+            }}
+          >
+            <option value="">All watched statuses</option>
+            <option value="unwatched">Unwatched</option>
+            <option value="watched">Watched</option>
+          </select>
+        }
+        count={
+          summary
+            ? q || watched
+              ? `${summary.items.totalCount.toLocaleString()} of ${summary.filmCount.toLocaleString()} films`
+              : `${summary.filmCount.toLocaleString()} films`
+            : undefined
+        }
+        columns={table.controls}
+      />
       <SecondaryTableScroll
         ref={scroller}
         className="min-h-0 flex-1"
@@ -153,6 +189,8 @@ export function FilmCollectionEntries({ id }: { id: string }) {
                       Retry
                     </button>
                   </>
+                ) : q || watched ? (
+                  'No matching films.'
                 ) : (
                   'No films in this collection.'
                 )}
@@ -238,7 +276,7 @@ export function FilmCollectionEntries({ id }: { id: string }) {
           {!query.hasNextPage && rows.length > 0 && (
             <p className="muted">
               {rows.length.toLocaleString()} of{' '}
-              {summary?.filmCount.toLocaleString()} loaded.
+              {summary?.items.totalCount.toLocaleString()} loaded.
             </p>
           )}
         </div>

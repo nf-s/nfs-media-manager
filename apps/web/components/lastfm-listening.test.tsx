@@ -309,6 +309,24 @@ test('scrobble links show reason totals and link library albums', () => {
   assert.match(html, /Shift-click to select a range/)
 })
 
+test('scrobble links use one ordered toolbar and keep the three-column summary simple', () => {
+  const html = syncPage(idle)
+  const search = html.indexOf('aria-label="Search scrobbled names"')
+  const filter = html.indexOf('aria-label="Link status"')
+  const count = html.indexOf('5 names')
+  const columns = html.indexOf('class="table-column-controls"')
+  const actions = html.indexOf('class="job-selection-toolbar"')
+  assert.ok(search > -1)
+  assert.ok(search < filter && filter < count && count < columns)
+  assert.ok(columns < actions)
+  assert.equal(html.match(/class="table-column-controls"/g)?.length, 1)
+  assert.equal(html.match(/class="secondary-table-toolbar"/g)?.length, 1)
+  const summary = html.slice(0, search)
+  assert.match(summary, /aria-sort="ascending"><button[^>]*>Status/)
+  assert.match(summary, /aria-sort="none"><button[^>]*>Scrobbled names/)
+  assert.match(summary, /aria-sort="none"><button[^>]*>Scrobbles/)
+})
+
 test('bulk Spotify search requires confirmation above five explicit unlinked albums', () => {
   const source = report.items.find((item) => item.reason === 'ambiguous')
   assert.ok(source)

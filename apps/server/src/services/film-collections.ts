@@ -76,6 +76,21 @@ export async function getFilmCollection(
     dateAdded,
   }
   const direction = query.direction === 'asc' ? sql`asc` : sql`desc`
+  const pattern = `%${(query.q ?? '').replace(/[\\%_]/g, '\\$&')}%`
+  const members = and(
+    eq(playlistItem.playlistId, id),
+    eq(mediaItem.mediaType, 'film'),
+    sql`${mediaItem.metadata}->>'legacyHidden' is distinct from 'true'`,
+    query.q ? sql`${mediaItem.title} ilike ${pattern}` : undefined,
+    query.watched ? eq(film.watched, query.watched === 'watched') : undefined,
+  )
+  const [matching] = await db
+    .select({ count: count() })
+    .from(playlistItem)
+    .innerJoin(mediaItem, eq(mediaItem.id, playlistItem.mediaItemId))
+    .innerJoin(film, eq(film.mediaItemId, mediaItem.id))
+    .where(members)
+  const totalCount = matching?.count ?? 0
   const rows = await db
     .select({
       id: mediaItem.id,
@@ -91,13 +106,7 @@ export async function getFilmCollection(
     .from(playlistItem)
     .innerJoin(mediaItem, eq(mediaItem.id, playlistItem.mediaItemId))
     .innerJoin(film, eq(film.mediaItemId, mediaItem.id))
-    .where(
-      and(
-        eq(playlistItem.playlistId, id),
-        eq(mediaItem.mediaType, 'film'),
-        sql`${mediaItem.metadata}->>'legacyHidden' is distinct from 'true'`,
-      ),
-    )
+    .where(members)
     .orderBy(
       sql`${sortColumns[query.sortBy]} ${direction} nulls last`,
       sql`lower(${mediaItem.title})`,
@@ -112,8 +121,8 @@ export async function getFilmCollection(
     items: {
       page: query.page,
       size: query.size,
-      totalCount: summary.filmCount,
-      pageCount: Math.ceil(summary.filmCount / query.size),
+      totalCount,
+      pageCount: Math.ceil(totalCount / query.size),
       items: rows.map((row) => ({
         ...row,
         releaseDate: row.releaseDate?.toISOString() ?? null,

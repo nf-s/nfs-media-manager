@@ -35,6 +35,7 @@ import styles from './subscription-browser.module.css'
 import {
   SecondaryTableScroll,
   SecondaryTableHead,
+  SecondaryTableToolbar,
   useTableColumns,
 } from './secondary-table'
 
@@ -165,41 +166,45 @@ export default function SubscriptionChannels() {
       className="admin-page table-workspace"
       aria-labelledby="subscription-channels"
     >
-      <div className="tags-toolbar">
-        <h1 id="subscription-channels">Channels</h1>
-      </div>
-      <div className="job-toolbar">
-        {columns.controls}
-        <Input
-          type="search"
-          aria-label="Filter by name"
-          placeholder="Filter by name"
-          value={draft}
-          maxLength={200}
-          onChange={(event) => setDraft(event.target.value)}
-        />
-        <select
-          aria-label="Type"
-          value={type ?? ''}
-          onChange={(event) =>
-            replaceParams({ type: event.target.value || null })
-          }
-        >
-          <option value="">All types</option>
-          {SubscriptionTypeSchema.options.map((option) => (
-            <option key={option} value={option}>
-              {subscriptionTypeLabels[option]}
-            </option>
-          ))}
-        </select>
-        <span className="muted" aria-live="polite">
-          {sources.data
-            ? narrowed
-              ? `${items.length.toLocaleString()} of ${all.length.toLocaleString()}`
-              : `${all.length.toLocaleString()} ${all.length === 1 ? 'source' : 'sources'}`
-            : ''}
-        </span>
-      </div>
+      <h1 id="subscription-channels">Channels</h1>
+      <SecondaryTableToolbar
+        search={
+          <Input
+            type="search"
+            aria-label="Filter by name"
+            placeholder="Filter by name"
+            value={draft}
+            maxLength={200}
+            onChange={(event) => setDraft(event.target.value)}
+          />
+        }
+        filters={
+          <select
+            aria-label="Type"
+            value={type ?? ''}
+            onChange={(event) =>
+              replaceParams({ type: event.target.value || null })
+            }
+          >
+            <option value="">All types</option>
+            {SubscriptionTypeSchema.options.map((option) => (
+              <option key={option} value={option}>
+                {subscriptionTypeLabels[option]}
+              </option>
+            ))}
+          </select>
+        }
+        count={
+          <span aria-live="polite">
+            {sources.data
+              ? narrowed
+                ? `${items.length.toLocaleString()} of ${all.length.toLocaleString()}`
+                : `${all.length.toLocaleString()} ${all.length === 1 ? 'source' : 'sources'}`
+              : ''}
+          </span>
+        }
+        columns={columns.controls}
+      />
       {/* The table is the only scroller and takes the height the toolbar leaves. */}
       <SecondaryTableScroll
         className="tags-scroll min-h-0 flex-1"

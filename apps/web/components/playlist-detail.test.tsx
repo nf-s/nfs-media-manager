@@ -132,10 +132,13 @@ function render(
   })
   client.setQueryData(['playlists'], [summary])
   client.setQueryData(['playlist', playlist.id], playlist)
-  client.setQueryData(['playlist', playlist.id, 'entries', 'position', 'asc'], {
-    pages: [playlist],
-    pageParams: [1],
-  })
+  client.setQueryData(
+    ['playlist', playlist.id, 'entries', 'position', 'asc', '', undefined],
+    {
+      pages: [playlist],
+      pageParams: [1],
+    },
+  )
   try {
     return renderToStaticMarkup(
       <QueryClientProvider client={client}>
@@ -327,6 +330,14 @@ test('playlist entries expose sorting for every data column', () => {
   for (const label of ['Title', 'Artists', 'Album', 'Duration', 'Added'])
     assert.match(html, new RegExp(`<button[^>]*>[^<]*${label}`))
   assert.match(html, /> Columns</)
+  assert.ok(
+    html.indexOf('aria-label="Search playlist entries"') <
+      html.indexOf('aria-label="Entry type"'),
+  )
+  assert.ok(
+    html.indexOf('aria-label="Entry type"') <
+      html.indexOf('aria-label="Visible columns"'),
+  )
 })
 
 test('playlist columns sort numeric counts and keep unknown dates last', () => {

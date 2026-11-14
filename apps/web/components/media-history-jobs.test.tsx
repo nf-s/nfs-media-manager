@@ -37,7 +37,16 @@ function renderHistory(pages?: JobPage[]) {
   })
   if (pages)
     client.setQueryData(
-      ['jobs', 'media-history', 'infinite', 'film-1', 'createdAt', 'desc'],
+      [
+        'jobs',
+        'media-history',
+        'infinite',
+        'film-1',
+        'createdAt',
+        'desc',
+        '',
+        '',
+      ],
       {
         pages,
         pageParams: pages.map((entry) => entry.page),
@@ -73,7 +82,7 @@ test('job history appends loaded pages instead of replacing the current page', (
     page(1, 75, 'First provider'),
     page(2, 75, 'Second provider'),
   ])
-  assert.match(html, /Jobs \(75\)/)
+  assert.match(html, /75 jobs/)
   assert.match(html, /href="\/jobs\?jobId=job-1"/)
   assert.match(html, /href="\/jobs\?jobId=job-2"/)
   assert.match(html, /First provider/)
@@ -140,4 +149,15 @@ test('job history exposes a column chooser and a sort control for every data col
     assert.ok(html.includes(`title="Sort by ${name}"`))
   assert.match(html, /type="checkbox"\/>Started/)
   assert.match(html, /type="checkbox"\/>Finished/)
+})
+
+test('job history puts search, status, result count and columns in one ordered toolbar', () => {
+  const html = renderHistory([page(1, 1, 'Example')])
+  const search = html.indexOf('aria-label="Search job history"')
+  const status = html.indexOf('aria-label="Job history status"')
+  const count = html.indexOf('1 jobs')
+  const columns = html.indexOf('class="table-column-controls"')
+  assert.ok(search > -1, 'history has a search field')
+  assert.ok(search < status && status < count && count < columns)
+  assert.match(html, /class="secondary-table-toolbar"/)
 })

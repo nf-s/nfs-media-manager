@@ -45,6 +45,8 @@ describe('film collections API', () => {
       'direction=sideways',
       'page=0',
       'size=101',
+      'watched=unknown',
+      `q=${'x'.repeat(201)}`,
     ])
       expect((await app.request(`/example?${query}`)).status).toBe(422)
     expect(mocks.detail).not.toHaveBeenCalled()
@@ -79,5 +81,20 @@ describe('film collections API', () => {
       new ServerError({ statusCode: 404, message: 'Collection not found' }),
     )
     expect((await app.request('/missing')).status).toBe(404)
+  })
+  it('forwards title and watched filters with pagination', async () => {
+    mocks.detail.mockResolvedValue({ id: 'example' })
+    expect(
+      (await app.request('/example?q=Film&watched=unwatched&page=2&size=1'))
+        .status,
+    ).toBe(200)
+    expect(mocks.detail).toHaveBeenCalledExactlyOnceWith('example', {
+      q: 'Film',
+      watched: 'unwatched',
+      page: 2,
+      size: 1,
+      sortBy: 'position',
+      direction: 'asc',
+    })
   })
 })

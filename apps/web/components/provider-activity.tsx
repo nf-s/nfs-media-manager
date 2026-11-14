@@ -222,7 +222,6 @@ export default function ProviderActivity({
             </p>
             <details className="import-notes">
               <summary>Request counts</summary>
-              {columns.controls}
               <SecondaryTableScroll
                 className="table-scroll-bounded"
                 role="region"
