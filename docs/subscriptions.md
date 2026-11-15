@@ -117,11 +117,11 @@ Filters follow the [browse filter rules](requirements/search.md) of the other li
 - **Grid** is the default. **List** shows thumbnails in compact rows with the title and channel or podcast. All three views reserve the height of every result and show a placeholder for unloaded items, with **Retry** for a failed page. Only the pages near the visible rows are requested, 100 items at a time.
 - **Table** has thumbnails and configurable columns for Title, Channel, Type, Published, Duration, Views, Likes, Comments and Tags. Column widths are saved in the browser. Select a sortable column header to sort.
 - A YouTube item shows its thumbnail with the length, or Live or Upcoming. An episode shows its own artwork, or the show's. Missing values show "-". A release date known only to the month or year shows only that much.
-- Selecting an item opens a drawer with its channel or podcast (which filters by it), type, dates, length, counts, tags (each a filter), description and a link to YouTube or Spotify. `?item=<id>` opens an item directly, reading it on its own when it is outside the loaded rows.
+- Selecting an item opens details with its channel or podcast (which opens channel details), type, dates, length, counts, tags (each a filter), description and a link to YouTube or Spotify. `?item=<id>` opens an item directly, reading it on its own when it is outside the loaded rows.
 - The URL carries `q`, `fields`, `filters`, `ranges`, `sortBy`, `direction`, `view` (`grid`, `list` or `table`), `columns` and `item`. The last view, search, filters and sort are remembered in the browser and restored when the page is opened without parameters.
 - With nothing synced, the page says so and links to Imports.
 
-`/subscriptions/channels` lists subscribed channels and saved podcasts in the shared table, filterable by name and type and sortable by name, type, stored items, latest item and subscribers or episodes. Each name opens the browse page filtered to that source.
+`/subscriptions/channels` lists subscribed channels and saved podcasts in the shared table, filterable by name and type and sortable by name, type, stored items, latest item and subscribers or episodes. Each name opens channel details with stored items and an explicit **Filter subscriptions** action. This action filters by the exact source identity, represented by a removable channel chip, so equally named channels remain distinct. Channel details share the inspector's navigation history and have standalone `/channels/:id` pages. See [artists, people and channels](artists-and-people.md).
 
 ## API
 

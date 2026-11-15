@@ -16,6 +16,9 @@ const DetailTargetSchema = z.object({
     'playlist',
     'subscription',
     'collection',
+    'artist',
+    'person',
+    'channel',
   ]),
   id: z.string().min(1).max(500),
 })
@@ -69,6 +72,9 @@ function legacyDetail(pathname: string, params: URLSearchParams) {
     subscription: ['item'],
     playlist: ['item', 'playlist', 'tab', 'playlistView'],
     collection: ['collection', 'tab'],
+    artist: [],
+    person: [],
+    channel: [],
   }[parsed.data.kind]
   const view = new URLSearchParams()
   for (const key of keys) {
@@ -127,5 +133,6 @@ export function detailEntryParams(
 
 export function detailPageHref(target: DetailTarget, view?: URLSearchParams) {
   const id = encodeURIComponent(target.id)
-  return detailLocation(`/${target.kind}s/${id}`, new URLSearchParams(view))
+  const collection = target.kind === 'person' ? 'people' : `${target.kind}s`
+  return detailLocation(`/${collection}/${id}`, new URLSearchParams(view))
 }

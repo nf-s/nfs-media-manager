@@ -1,4 +1,5 @@
 import {
+  JsonValueSchema,
   PluginDiagnosticSchema,
   type JsonValue,
   type PluginDiagnostic,
@@ -115,6 +116,24 @@ function safeText(value: string, secrets: string[], maxBytes = 512): string {
     prefix += character
   }
   return `${prefix}${TRUNCATED}`
+}
+
+/** Retain provider evidence while keeping credentials out of durable snapshots. */
+export function sanitizeProviderPayload(
+  payload: unknown,
+  secrets: string[],
+): JsonValue {
+  const sanitize = (value: string) =>
+    safeText(value, secrets, Infinity)
+      .replaceAll('\0', '\uFFFD')
+      .replace(/\b[\w.+-]+@[\w.-]+\.[a-z]{2,}\b/gi, REDACTED)
+  const json = JSON.stringify(payload, (key, value: unknown) => {
+    if (isSensitiveProviderKey(key) || sanitize(key) !== key) return undefined
+    if (typeof value === 'number' && secrets.includes(String(value)))
+      return REDACTED
+    return typeof value === 'string' ? sanitize(value) : value
+  })
+  return JsonValueSchema.parse(JSON.parse(json))
 }
 
 export function sanitizeJobDiagnostic(

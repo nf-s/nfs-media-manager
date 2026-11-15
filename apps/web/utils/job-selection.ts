@@ -22,6 +22,11 @@ import {
 import { SPOTIFY_PLAYLIST_ADD_TRACK_TASK } from '@repo/schemas/track-playlist-additions'
 import { YOUTUBE_SYNC_TASK } from '@repo/schemas/youtube'
 import { playlistJobProgress } from './playlist-sync'
+import { ARTIST_ENRICHMENT_TASK } from '@repo/schemas/artist-profiles'
+
+export function isArtistEnrichmentJob(job: Pick<Job, 'options'>): boolean {
+  return getJobTask(job.options) === ARTIST_ENRICHMENT_TASK
+}
 
 /** Scrobble sync jobs are account-level and have no media items. */
 export function isScrobbleSyncJob(job: Pick<Job, 'options'>): boolean {
@@ -70,6 +75,10 @@ function filledText(value: unknown): value is string {
 
 /** Title for a job without media items, or null for media jobs. */
 export function jobTaskTitle(job: Pick<Job, 'options'>): string | null {
+  if (isArtistEnrichmentJob(job))
+    return filledText(job.options.artistName)
+      ? `Artist enrichment · ${job.options.artistName}`
+      : 'Artist enrichment'
   if (isScrobbleSyncJob(job)) return 'Scrobble sync'
   if (isYoutubeSyncJob(job)) return 'YouTube subscription sync'
   if (isSpotifyPodcastSyncJob(job)) return 'Spotify podcast sync'
@@ -128,6 +137,7 @@ export function canRetryJob(job: Job): boolean {
       isYoutubeSyncJob(job) ||
       isSpotifyPodcastSyncJob(job) ||
       isScrobbleSpotifySearchJob(job) ||
+      isArtistEnrichmentJob(job) ||
       isPlaylistImportJob(job) ||
       isPlaylistListingJob(job) ||
       isPlaylistAdditionJob(job))

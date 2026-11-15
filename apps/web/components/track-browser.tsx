@@ -1,4 +1,10 @@
 'use client'
+import { TrackArtistLinks } from './creator-links'
+import { CreatorScopeChip } from './creator-scope-chip'
+import {
+  clearCreatorScope,
+  parseCreatorBrowseScope,
+} from '@/utils/creator-browse'
 
 import { DetailInspector } from './detail-inspector'
 import {
@@ -96,6 +102,7 @@ export default function TrackBrowser() {
   const resize = useRef<{ key: string; x: number; width: number } | null>(null)
   const view = parseBrowseView(searchParams.get('view'), 'list')
   const filters = parseTrackFilters(searchParams.get('filters'))
+  const creator = parseCreatorBrowseScope(searchParams, 'track')
   const rangesResult = BrowseRangesParamSchema.safeParse(
     searchParams.get('ranges'),
   )
@@ -120,7 +127,14 @@ export default function TrackBrowser() {
     searchParams.get('columns')?.split(',').map(canonicalBrowseKey) ??
     defaultTrackColumns
   const columns = fields.filter((field) => columnKeys.includes(field.key))
-  const queryKey = JSON.stringify({ q, filters, ranges, sortBy, direction })
+  const queryKey = JSON.stringify({
+    q,
+    filters,
+    ranges,
+    sortBy,
+    direction,
+    ...creator,
+  })
   const scrollIdentity = `${collection}:${queryKey}:${view}`
   const grid = mediaGridGeometry({
     width: viewport.width,
@@ -162,6 +176,9 @@ export default function TrackBrowser() {
   }
   function changeFilters(next: BrowseFilter[]) {
     setParams({ filters: next.length ? JSON.stringify(next) : null })
+  }
+  function clearFilters() {
+    setParams({ q: null, filters: null, ranges: null, ...clearCreatorScope })
   }
   function openDetail(id: string, trigger?: HTMLElement) {
     inspector?.open({ kind: 'track', id }, trigger)
@@ -254,6 +271,7 @@ export default function TrackBrowser() {
     ranges: JSON.stringify(ranges),
     sortBy,
     direction,
+    ...creator,
   })
   const query = useVirtualBrowse({
     apiBaseUrl,
@@ -272,7 +290,12 @@ export default function TrackBrowser() {
   const facets = useBrowseFacets(apiBaseUrl, collection, draft, ready)
   const titleFilters = matchingTitleFilters(facets.data ?? [], facets.search)
   const titleMatches = useQuery({
-    queryKey: [collection, 'title-suggestions', titleFilters],
+    queryKey: [
+      collection,
+      'title-suggestions',
+      titleFilters,
+      ...(creator ? [creator] : []),
+    ],
     enabled: ready && titleFilters.length > 0,
     queryFn: ({ signal }) => {
       const params = new URLSearchParams({
@@ -281,6 +304,7 @@ export default function TrackBrowser() {
         filters: JSON.stringify(titleFilters),
         sortBy: 'title',
         direction: 'asc',
+        ...creator,
       })
       return fetchApiData(
         apiBaseUrl,
@@ -436,22 +460,29 @@ export default function TrackBrowser() {
   }
 
   function artistFilters(item: TrackListItem) {
-    return item.artists.map((artist) => (
-      <FilterButton
-        key={artist}
-        title={`Filter Artist: ${artist}`}
-        onClick={() => addFilter({ field: 'artist', value: artist })}
-      >
-        {artist}
-      </FilterButton>
-    ))
+    return <TrackArtistLinks track={item} />
   }
 
   function renderValue(item: TrackListItem, field: BrowseField) {
+    if (field.key === 'artist') return artistFilters(item)
     if (field.key === 'title') return trackTitle(item, 'table-title')
     if (field.key === 'album') return trackAlbum(item) ?? '-'
     if (field.key === 'genre')
-      return <BrowseTagBadges tags={item.albumTags} onFilter={addFilter} />
+      return (
+        <BrowseTagBadges
+          tags={item.albumTags}
+          artistTags={item.artistTags}
+          onFilter={addFilter}
+        />
+      )
+    if (field.key === 'albumTag' || field.key === 'artistTag')
+      return (
+        <BrowseTagBadges
+          field={field.key}
+          tags={field.key === 'albumTag' ? item.albumTags : item.artistTags}
+          onFilter={addFilter}
+        />
+      )
     if (field.key === 'durationSec')
       return formatTrackDuration(item.durationSec)
     if (field.key === 'playlist')
@@ -494,10 +525,20 @@ export default function TrackBrowser() {
     return formatBrowseValue(field, value)
   }
 
-  const activeFilterCount = Number(Boolean(q)) + filters.length + ranges.length
+  const activeFilterCount =
+    Number(Boolean(q)) +
+    Number(Boolean(creator)) +
+    filters.length +
+    ranges.length
   const activeFilters =
     activeFilterCount > 0 ? (
       <div className="active-filters">
+        {creator && (
+          <CreatorScopeChip
+            scope={creator}
+            onRemove={() => setParams(clearCreatorScope)}
+          />
+        )}
         {q && (
           <FilterButton
             className="filter-pill"
@@ -536,10 +577,7 @@ export default function TrackBrowser() {
             </FilterButton>
           )
         })}
-        <button
-          className="clear-filters"
-          onClick={() => setParams({ q: null, filters: null, ranges: null })}
-        >
+        <button className="clear-filters" onClick={clearFilters}>
           Clear all
         </button>
       </div>
@@ -700,14 +738,7 @@ export default function TrackBrowser() {
           </span>
           {!query.isPending && !query.isError && total === 0 && (
             <div className="browse-empty">
-              No matches.{' '}
-              <button
-                onClick={() =>
-                  setParams({ q: null, filters: null, ranges: null })
-                }
-              >
-                Clear filters
-              </button>
+              No matches. <button onClick={clearFilters}>Clear filters</button>
             </div>
           )}
           {view === 'grid' ? (
@@ -754,6 +785,7 @@ export default function TrackBrowser() {
                       </div>
                       <BrowseTagBadges
                         tags={item.albumTags}
+                        artistTags={item.artistTags}
                         onFilter={addFilter}
                       />
                     </article>
@@ -805,6 +837,7 @@ export default function TrackBrowser() {
                         </div>
                         <BrowseTagBadges
                           tags={item.albumTags}
+                          artistTags={item.artistTags}
                           onFilter={addFilter}
                         />
                       </div>

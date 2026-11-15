@@ -10,6 +10,7 @@ import {
   type SubscriptionItem,
 } from '@repo/schemas/subscriptions'
 import ServiceIconLinks from './service-icon-links'
+import { DetailLink } from './detail-link'
 import MediaArtwork from './media-artwork'
 import { formatCount } from '@/utils/youtube'
 import {
@@ -154,14 +155,9 @@ function ItemDetails({
       </h1>
       <div className={styles.detailChannel}>
         <SourceAvatar src={item.sourceThumbnailUrl} size="large" />
-        <button
-          type="button"
-          className="metadata-tag"
-          title={`Filter Channel: ${item.sourceTitle}`}
-          onClick={() => onFilter({ field: 'source', value: item.sourceTitle })}
-        >
+        <DetailLink kind="channel" id={item.sourceId} className="metadata-tag">
           {item.sourceTitle}
-        </button>
+        </DetailLink>
         <ServiceIconLinks
           links={[
             {

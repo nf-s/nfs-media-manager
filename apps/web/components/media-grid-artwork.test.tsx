@@ -22,13 +22,36 @@ test('all artwork tags render as keyboard-accessible badges in a bounded strip',
   for (const tag of tags)
     assert.ok(
       html.includes(
-        `<button type="button" title="Filter by ${tag}">${tag}</button>`,
+        `<button type="button" title="Tag: ${tag}">${tag}</button>`,
       ),
     )
   assert.match(
     css,
     /\.browse-tag-badges\s*\{[^}]+max-width:\s*100%[^}]+overflow-x:\s*auto/,
   )
+})
+
+test('artwork distinguishes artist tag fallbacks from album tags', () => {
+  const html = renderToStaticMarkup(
+    <BrowseTagBadges
+      tags={['Album tag']}
+      artistTags={['Artist tag']}
+      onFilter={() => {}}
+    />,
+  )
+  assert.match(html, /title="Tag: Album tag">Album tag<\/button>/)
+  assert.match(
+    html,
+    /title="Artist tag: Artist tag">Artist tag<span[^>]*>Artist<\/span><\/button>/,
+  )
+  const complete = renderToStaticMarkup(
+    <BrowseTagBadges
+      tags={['Album tag', 'Second tag']}
+      artistTags={['Artist tag']}
+      onFilter={() => {}}
+    />,
+  )
+  assert.doesNotMatch(complete, /Artist tag/)
 })
 
 test('missing grid artwork retains its title and album or film aspect ratio', () => {

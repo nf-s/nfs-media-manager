@@ -28,6 +28,10 @@ export const PaginationQuerySchema = z.object({
 
 export const DirectionSchema = z.enum(['asc', 'desc'])
 
+export const CreatorIdSchema = z.string().min(1).max(200)
+export const PersonRoleSchema = z.enum(['director', 'actor'])
+export type PersonRole = z.infer<typeof PersonRoleSchema>
+
 export const ProviderReferenceSchema = z.object({
   provider: z.string(),
   referenceType: z.string(),
@@ -73,6 +77,8 @@ export const ExternalLinkSchema = z.object({
 })
 
 export const CreditSchema = z.object({
+  /** Null for older or name-only summaries; persisted library credits include their identity. */
+  id: z.string().nullable().default(null),
   name: z.string(),
   role: z.string(),
   billingOrder: z.number().int().nonnegative(),

@@ -25,6 +25,7 @@ const baseAlbumDetail: AlbumDetail = {
   sourceLabel: null,
   metadata: null,
   tags: [],
+  artistTags: [],
   credits: [],
   links: [],
   providerReferences: [

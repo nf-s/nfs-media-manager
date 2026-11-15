@@ -49,7 +49,12 @@ test('duplicate film titles navigate by distinct IDs with year and director cont
       title: 'Solaris',
       releaseDate: '1972-01-01',
       credits: [
-        { name: 'Andrei Tarkovsky', role: 'director', billingOrder: 0 },
+        {
+          id: null,
+          name: 'Andrei Tarkovsky',
+          role: 'director',
+          billingOrder: 0,
+        },
       ],
     },
     {
@@ -58,7 +63,12 @@ test('duplicate film titles navigate by distinct IDs with year and director cont
       title: 'Solaris',
       releaseDate: '2002-01-01',
       credits: [
-        { name: 'Steven Soderbergh', role: 'director', billingOrder: 0 },
+        {
+          id: null,
+          name: 'Steven Soderbergh',
+          role: 'director',
+          billingOrder: 0,
+        },
       ],
     },
   ])
@@ -75,7 +85,7 @@ test('album titles show artists, and otherwise identical results retain ID disam
   const album = {
     title: 'Same',
     releaseDate: null,
-    credits: [{ name: 'Artist', role: 'artist', billingOrder: 0 }],
+    credits: [{ id: null, name: 'Artist', role: 'artist', billingOrder: 0 }],
   }
   const items = titleSuggestions([
     { ...album, id: 'a', mediaType: 'album' },

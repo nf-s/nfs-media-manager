@@ -211,6 +211,13 @@
       "when": 1794725347927,
       "tag": "0029_album_library_tracks",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1794725678520,
+      "tag": "0030_artist_provider_profiles",
+      "breakpoints": true
     }
   ]
 }

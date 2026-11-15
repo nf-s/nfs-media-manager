@@ -1,6 +1,12 @@
 'use client'
 
 import { DetailInspector } from './detail-inspector'
+import { CreatorLinks } from './creator-links'
+import { CreatorScopeChip } from './creator-scope-chip'
+import {
+  clearCreatorScope,
+  parseCreatorBrowseScope,
+} from '@/utils/creator-browse'
 import {
   replaceWorkspaceUrl,
   useDetailInspector,
@@ -157,6 +163,7 @@ export default function MediaBrowser({
   const railSlot = useRailSlot()
   const resize = useRef<{ key: string; x: number; width: number } | null>(null)
   const filters = parseFilters(searchParams.get('filters'))
+  const creator = parseCreatorBrowseScope(searchParams, mediaType)
   const rangesResult = BrowseRangesParamSchema.safeParse(
     searchParams.get('ranges'),
   )
@@ -244,6 +251,7 @@ export default function MediaBrowser({
     limitResults,
     listening,
     listeningSort: requestedListeningPeriod,
+    ...creator,
   })
   // With both overlays on, the sort value and provider marks sit on the artwork.
   const tileExtraRow =
@@ -290,6 +298,16 @@ export default function MediaBrowser({
   }
   function changeFilters(next: BrowseFilter[]) {
     setParams({ filters: next.length ? JSON.stringify(next) : null })
+  }
+  function clearFilters() {
+    setParams({
+      q: null,
+      filters: null,
+      ranges: null,
+      limitResults: null,
+      listening: null,
+      ...clearCreatorScope,
+    })
   }
   function openDetail(id: string, trigger?: HTMLElement) {
     inspector?.open({ kind: mediaType, id }, trigger)
@@ -392,6 +410,7 @@ export default function MediaBrowser({
     ranges: JSON.stringify(ranges),
     sortBy,
     direction,
+    ...creator,
   })
   if (includeArchived) params.set('includeArchived', 'true')
   if (limitResults) params.set('limitResults', limitResults)
@@ -419,7 +438,13 @@ export default function MediaBrowser({
   const facets = useBrowseFacets(apiBaseUrl, collection, draft, ready)
   const titleFilters = matchingTitleFilters(facets.data ?? [], facets.search)
   const titleMatches = useQuery({
-    queryKey: [collection, 'title-suggestions', titleFilters, includeArchived],
+    queryKey: [
+      collection,
+      'title-suggestions',
+      titleFilters,
+      includeArchived,
+      ...(creator ? [creator] : []),
+    ],
     enabled: ready && titleFilters.length > 0,
     queryFn: ({ signal }) => {
       const params = new URLSearchParams({
@@ -429,6 +454,7 @@ export default function MediaBrowser({
         sortBy: 'title',
         direction: 'asc',
         includeArchived: String(includeArchived),
+        ...creator,
       })
       return fetchApiData(
         apiBaseUrl,
@@ -518,10 +544,28 @@ export default function MediaBrowser({
   function renderValue(item: AlbumListItem | FilmListItem, field: BrowseField) {
     const values = getBrowseValues(item)
     const value = values[field.key]
-    if (item.mediaType === 'album' && field.key === 'genre')
+    if (['artist', 'director', 'actor'].includes(field.key))
+      return (
+        <CreatorLinks
+          creators={item.credits.filter((credit) => credit.role === field.key)}
+          kind={field.key === 'artist' ? 'artist' : 'person'}
+        />
+      )
+    if (
+      item.mediaType === 'album' &&
+      ['genre', 'albumTag', 'artistTag'].includes(field.key)
+    )
       return (
         <BrowseTagBadges
-          tags={Array.isArray(value) ? value : []}
+          field={field.key}
+          tags={
+            field.key === 'genre'
+              ? item.tags.map((tag) => tag.name)
+              : Array.isArray(value)
+                ? value
+                : []
+          }
+          artistTags={field.key === 'genre' ? item.artistTags : undefined}
           onFilter={addFilter}
         />
       )
@@ -629,19 +673,16 @@ export default function MediaBrowser({
   }
   function creatorButtons(item: AlbumListItem | FilmListItem) {
     const creatorField = item.mediaType === 'album' ? 'artist' : 'director'
-    const creator = getBrowseValues(item)[creatorField]
-    return (Array.isArray(creator) ? creator : []).map((name) => (
-      <FilterButton
-        key={name}
-        title={`Filter ${creatorField}: ${name}`}
-        onClick={() => addFilter({ field: creatorField, value: name })}
-      >
-        {name}
-      </FilterButton>
-    ))
+    return (
+      <CreatorLinks
+        creators={item.credits.filter((credit) => credit.role === creatorField)}
+        kind={item.mediaType === 'album' ? 'artist' : 'person'}
+      />
+    )
   }
   const activeFilterCount =
     Number(Boolean(q)) +
+    Number(Boolean(creator)) +
     filters.length +
     ranges.length +
     (listening?.rules.length ?? 0) +
@@ -649,6 +690,13 @@ export default function MediaBrowser({
   const hasActiveFilters = activeFilterCount > 0
   const activeFilters = hasActiveFilters ? (
     <div className="active-filters">
+      {creator && (
+        <CreatorScopeChip
+          scope={creator}
+          film={mediaType === 'film'}
+          onRemove={() => setParams(clearCreatorScope)}
+        />
+      )}
       {limitResults && (
         <FilterButton
           className="filter-pill"
@@ -713,18 +761,7 @@ export default function MediaBrowser({
           {formatListeningRule(rule)} <X size={12} />
         </FilterButton>
       ))}
-      <button
-        className="clear-filters"
-        onClick={() =>
-          setParams({
-            q: null,
-            filters: null,
-            ranges: null,
-            limitResults: null,
-            listening: null,
-          })
-        }
-      >
+      <button className="clear-filters" onClick={clearFilters}>
         Clear all
       </button>
     </div>
@@ -894,6 +931,7 @@ export default function MediaBrowser({
                         )
                         if (view)
                           setParams({
+                            ...clearCreatorScope,
                             filters: JSON.stringify(view.filters),
                             ranges: JSON.stringify(view.ranges),
                             sortBy: view.sortBy,
@@ -1037,19 +1075,7 @@ export default function MediaBrowser({
           </span>
           {!query.isPending && !query.isError && total === 0 && (
             <div className="browse-empty">
-              No matches.{' '}
-              <button
-                onClick={() =>
-                  setParams({
-                    q: null,
-                    filters: null,
-                    ranges: null,
-                    limitResults: null,
-                  })
-                }
-              >
-                Clear filters
-              </button>
+              No matches. <button onClick={clearFilters}>Clear filters</button>
             </div>
           )}
           {view === 'grid' ? (
@@ -1086,8 +1112,6 @@ export default function MediaBrowser({
                         <div className="virtual-browse-line virtual-browse-line-short virtual-browse-shimmer" />
                       </div>
                     )
-                  const values = getBrowseValues(item)
-                  const tags = Array.isArray(values.genre) ? values.genre : []
                   const hideSpotify =
                     item.mediaType === 'album' &&
                     Boolean(albumSpotifyDestination(item))
@@ -1123,7 +1147,12 @@ export default function MediaBrowser({
                           sortValue(item, 'tile-sort')}
                         {overlays.includes('tags') && (
                           <BrowseTagBadges
-                            tags={tags}
+                            tags={item.tags.map((tag) => tag.name)}
+                            artistTags={
+                              item.mediaType === 'album'
+                                ? item.artistTags
+                                : undefined
+                            }
                             className="tile-tags"
                             onFilter={addFilter}
                           />
@@ -1148,7 +1177,15 @@ export default function MediaBrowser({
                         <span>{item.releaseDate?.slice(0, 4)}</span>
                       </div>
                       {tagsBelowArtwork && (
-                        <BrowseTagBadges tags={tags} onFilter={addFilter} />
+                        <BrowseTagBadges
+                          tags={item.tags.map((tag) => tag.name)}
+                          artistTags={
+                            item.mediaType === 'album'
+                              ? item.artistTags
+                              : undefined
+                          }
+                          onFilter={addFilter}
+                        />
                       )}
                       {tileExtraRow && (
                         <div className="tile-extra">
@@ -1190,7 +1227,6 @@ export default function MediaBrowser({
                         <div className="virtual-browse-line virtual-browse-shimmer" />
                       </div>
                     )
-                  const tags = getBrowseValues(item).genre
                   return (
                     <article
                       className="list-row"
@@ -1235,7 +1271,12 @@ export default function MediaBrowser({
                         </div>
                         {item.mediaType === 'album' && (
                           <BrowseTagBadges
-                            tags={Array.isArray(tags) ? tags : []}
+                            tags={item.tags.map((tag) => tag.name)}
+                            artistTags={
+                              item.mediaType === 'album'
+                                ? item.artistTags
+                                : undefined
+                            }
                             onFilter={addFilter}
                           />
                         )}

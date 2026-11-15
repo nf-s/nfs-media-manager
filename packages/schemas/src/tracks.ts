@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { musicDisplayTags } from './music-tags'
 import {
   BrowseFilterSchema,
   BrowseKeySchema,
@@ -6,6 +7,7 @@ import {
   type BrowseValues,
 } from './browse'
 import {
+  CreatorIdSchema,
   DirectionSchema,
   PaginatedDataSchema,
   PaginationQuerySchema,
@@ -139,6 +141,9 @@ export const TrackListItemSchema = z.object({
   artworkUrl: z.string().url().nullable(),
   releaseDate: z.string().nullable(),
   artists: z.array(z.string()),
+  artistCredits: z
+    .array(z.object({ id: z.string(), name: z.string() }))
+    .default([]),
   /** The reported album name, whether or not it is in the library. */
   albumName: z.string().nullable(),
   /** The linked library album. */
@@ -146,6 +151,7 @@ export const TrackListItemSchema = z.object({
   albumLinkStrategy: TrackAlbumLinkStrategySchema.nullable(),
   /** Tags of the linked library album. */
   albumTags: z.array(z.string()),
+  artistTags: z.array(z.string()).default([]),
   playlists: z.array(TrackPlaylistSchema),
   sources: z.array(TrackSourceSchema).default([]),
   durationSec: z.number().int().nonnegative().nullable(),
@@ -209,6 +215,7 @@ const TrackFiltersParamSchema = z.preprocess((value) => {
 }, z.array(BrowseFilterSchema).max(100))
 
 export const TrackQuerySchema = PaginationQuerySchema.extend({
+  creatorId: CreatorIdSchema.optional(),
   limitResults: z.coerce.number().int().min(1).max(10000).optional(),
   q: z.string().optional(),
   filters: TrackFiltersParamSchema,
@@ -236,7 +243,11 @@ export function getTrackBrowseValues(item: TrackListItem): BrowseValues {
     playlist: item.playlists.map((playlist) => playlist.name),
     source: item.sources.map((source) => trackSourceLabels[source]),
     spotifyMatch: trackSpotifyMatchLabels[item.spotifyMatch],
-    genre: item.albumTags,
+    genre: musicDisplayTags(item.albumTags, item.artistTags).map(
+      (tag) => tag.name,
+    ),
+    albumTag: item.albumTags,
+    artistTag: item.artistTags,
     albumLink: item.album
       ? trackAlbumLinkLabels.linked
       : trackAlbumLinkLabels.unlinked,

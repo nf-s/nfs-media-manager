@@ -23,7 +23,7 @@ import {
   requireAlbum,
 } from './album-provider-helpers'
 
-async function musicBrainzRequest(
+export async function musicBrainzRequest(
   context: MediaPluginTestContext,
   path: string,
   params: Record<string, string>,

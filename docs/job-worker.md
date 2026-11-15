@@ -89,8 +89,8 @@ Discogs worker's private `.env` file.
 | `LOCAL_WORKER_URL`              | Exact HTTPS origin of the hosted API                                          |
 | `LOCAL_WORKER_PROVIDER`         | `discogs`                                                                     |
 | `LOCAL_WORKER_ORIGIN`           | `https://api.discogs.com`                                                     |
-| `LOCAL_WORKER_PATHS`            | `/database/search,/masters/{id},/releases/{id}`                               |
-| `LOCAL_WORKER_QUERY_PARAMETERS` | `type,barcode,artist,release_title,per_page,page`                             |
+| `LOCAL_WORKER_PATHS`            | `/database/search,/masters/{id},/releases/{id},/artists/{id}`                 |
+| `LOCAL_WORKER_QUERY_PARAMETERS` | `type,q,barcode,artist,release_title,per_page,page`                           |
 | `LOCAL_WORKER_CREDENTIALS`      | `{"authorization":"DISCOGS_AUTHORIZATION","user-agent":"DISCOGS_USER_AGENT"}` |
 | `LOCAL_WORKER_STATE_DIR`        | `.local-worker/discogs`                                                       |
 

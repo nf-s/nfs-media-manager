@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import type { AlbumListItem, FilmListItem } from './media'
 import { isSpotifyAudioFeatureKey } from './audio-features'
+import { musicDisplayTags } from './music-tags'
 
 export const RatingDisplaySchema = z.object({
   provider: z.string().min(1),
@@ -97,6 +98,8 @@ export const albumBrowseFields: BrowseField[] = [
   text('title', 'Title'),
   text('artist', 'Artists'),
   text('genre', 'Tags'),
+  text('albumTag', 'Album tags'),
+  text('artistTag', 'Artist tags'),
   text('country', 'Countries'),
   text('playlist', 'Playlists'),
   text('collection', 'Collections'),
@@ -140,7 +143,9 @@ export const trackBrowseFields: BrowseField[] = [
   text('artist', 'Artists'),
   text('album', 'Album'),
   text('playlist', 'Playlists'),
-  text('genre', 'Album tags'),
+  text('genre', 'Tags'),
+  text('albumTag', 'Album tags'),
+  text('artistTag', 'Artist tags'),
   text('albumLink', 'Library album'),
   date('releaseDate', 'Released'),
   date('dateAdded', 'Added'),
@@ -248,7 +253,7 @@ export function sameBrowseFilter(
   if (field !== canonicalBrowseKey(right.field)) return false
   const normalize = (value: string) =>
     value.normalize('NFC').replace(/\s+/gu, ' ').trim().toLowerCase()
-  return field === 'genre'
+  return ['genre', 'albumTag', 'artistTag'].includes(field)
     ? normalize(left.value) === normalize(right.value)
     : left.value === right.value
 }
@@ -302,20 +307,26 @@ export function getBrowseValues(
       .map((c) => c.name),
     actor: item.credits.filter((c) => c.role === 'actor').map((c) => c.name),
     writer: item.credits.filter((c) => c.role === 'writer').map((c) => c.name),
-    genre: [
-      ...new Map(
-        item.tags
-          .filter((tag) => tag.name.trim())
-          .map((tag) => [
-            tag.name
-              .normalize('NFC')
-              .replace(/\s+/gu, ' ')
-              .trim()
-              .toLowerCase(),
-            tag.name.normalize('NFC').replace(/\s+/gu, ' ').trim(),
-          ]),
-      ).values(),
-    ],
+    genre:
+      item.mediaType === 'album'
+        ? musicDisplayTags(
+            item.tags.map((tag) => tag.name),
+            item.artistTags,
+          ).map((tag) => tag.name)
+        : [
+            ...new Map(
+              item.tags
+                .filter((tag) => tag.name.trim())
+                .map((tag) => [
+                  tag.name
+                    .normalize('NFC')
+                    .replace(/\s+/gu, ' ')
+                    .trim()
+                    .toLowerCase(),
+                  tag.name.normalize('NFC').replace(/\s+/gu, ' ').trim(),
+                ]),
+            ).values(),
+          ],
     playlist: item.playlists
       .filter((p) => p.kind === 'playlist')
       .map((p) => p.name),
@@ -325,6 +336,8 @@ export function getBrowseValues(
     provider: [...new Set(item.providerReferences.map((p) => p.provider))],
     ...(item.mediaType === 'album'
       ? {
+          albumTag: item.tags.map((tag) => tag.name),
+          artistTag: item.artistTags,
           dateAdded: item.dateAdded ? Date.parse(item.dateAdded) : null,
           durationSec: item.durationSec,
           trackCount: item.trackCount,

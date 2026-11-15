@@ -125,7 +125,7 @@ test('add to playlist offers only playlists that accept albums, even with no mem
     [['playlist-additions', 'album-1'], noAdditions],
     [['album-playlists', 'album-1'], empty],
   ])
-  assert.match(html, /<h2>Playlists<\/h2>/)
+  assert.match(html, /aria-label="Playlist memberships"/)
   assert.match(html, /popoverTarget="[^"]+"[^>]*>Add to playlist</)
   assert.match(html, /popover="auto"/)
   assert.match(html, />Synthetic mix<span class="quiet"> · 12 tracks/)

@@ -109,6 +109,10 @@ test('completed or partially stopped work invalidates derived library views whil
     const keys = [
       ['tracks', 'browse', 'example'],
       ['track', 'example-track'],
+      ['artist', 'example-artist', 'history'],
+      ['artists'],
+      ['person', 'example-person'],
+      ['people'],
       ['tags', 'infinite', 'album'],
       ['subscriptions', 'sources'],
       ['playlist', 'example-playlist'],

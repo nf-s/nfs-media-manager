@@ -12,6 +12,7 @@ import {
 } from '@repo/schemas/tracks'
 import { SPOTIFY_PODCAST_SYNC_TASK } from '@repo/schemas/subscriptions'
 import { YOUTUBE_SYNC_TASK } from '@repo/schemas/youtube'
+import { ARTIST_ENRICHMENT_TASK } from '@repo/schemas/artist-profiles'
 import {
   activeJobProgressLabel,
   canDismissJob,
@@ -60,6 +61,24 @@ const failedJob: Job = {
   items: [jobItem('failed')],
   logs: [],
 }
+
+test('artist enrichment jobs show their target and can be retried without media items', () => {
+  const job: Job = {
+    ...failedJob,
+    items: [],
+    options: {
+      task: ARTIST_ENRICHMENT_TASK,
+      artistId: 'fixture-artist',
+      artistName: 'Fixture artist',
+    },
+  }
+  assert.equal(jobTaskTitle(job), 'Artist enrichment · Fixture artist')
+  assert.equal(canRetryJob(job), true)
+  assert.equal(
+    jobTaskTitle({ options: { task: ARTIST_ENRICHMENT_TASK } }),
+    'Artist enrichment',
+  )
+})
 
 test('retry includes running jobs; dismissal and cancellation keep distinct eligibility', () => {
   const statuses: Job['status'][] = [

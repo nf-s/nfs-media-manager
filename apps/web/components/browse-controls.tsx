@@ -12,6 +12,7 @@ import {
 import { FilterButton } from './filter-affordance'
 import { FilterPanelSection } from './browse-filter-panel'
 import type { BrowseView } from '@/utils/media-grid'
+import { musicDisplayTags } from '@repo/schemas/music-tags'
 
 const views = [
   { value: 'grid', label: 'Grid view', Icon: Grid2X2 },
@@ -48,28 +49,45 @@ export function BrowseViewSwitch({
 export function BrowseTagBadges({
   field = 'genre',
   tags,
+  artistTags,
   onFilter,
   className = '',
 }: {
   field?: string
   tags: string[]
+  artistTags?: string[]
   onFilter: (filter: BrowseFilter) => void
   className?: string
 }) {
-  if (tags.length === 0) return null
+  const shown =
+    artistTags === undefined
+      ? tags.map((name) => ({
+          name,
+          source: field === 'artistTag' ? 'artist' : 'album',
+        }))
+      : musicDisplayTags(tags, artistTags)
+  if (shown.length === 0) return null
   return (
     <div
       className={`browse-tag-badges ${className}`}
       role="group"
       aria-label="Tags"
     >
-      {tags.map((tag) => (
+      {shown.map(({ name: tag, source }) => (
         <FilterButton
           key={tag}
-          title={`Filter by ${tag}`}
-          onClick={() => onFilter({ field, value: tag })}
+          title={`${source === 'artist' ? 'Artist tag' : 'Tag'}: ${tag}`}
+          onClick={() =>
+            onFilter({
+              field: source === 'artist' ? 'artistTag' : field,
+              value: tag,
+            })
+          }
         >
           {tag}
+          {source === 'artist' && (
+            <span className="ml-1 text-[10px] opacity-60">Artist</span>
+          )}
         </FilterButton>
       ))}
     </div>

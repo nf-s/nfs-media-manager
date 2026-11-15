@@ -39,6 +39,7 @@ import {
   removeOrphanTracks,
 } from './album-library-tracks'
 import { latestSpotifyJobs } from './spotify-playlist-state'
+import { artistTagsExpression } from './music-tags'
 import {
   playlistSync,
   setPlaylistSyncSchedule,
@@ -55,6 +56,8 @@ const TrackRowsSchema = z.array(
     artwork_url: z.string().nullable(),
     release_date: z.string().nullable(),
     artists: z.array(z.string()),
+    artist_credits: z.array(z.object({ id: z.string(), name: z.string() })),
+    artist_tags: z.array(z.string()),
     album_name: z.string().nullable(),
     album_id: z.string().nullable(),
     album_title: z.string().nullable(),
@@ -84,6 +87,10 @@ export async function loadTracks(ids: string[]): Promise<TrackListItem[]> {
             select array_agg(a.name order by c.billing_order, a.name)
             from media_credit c join artist a on a.id = c.artist_id
             where c.media_item_id = mi.id and c.role = 'artist'), '{}') as artists,
+          coalesce((select jsonb_agg(jsonb_build_object('id', a.id, 'name', a.name) order by c.billing_order, a.name)
+            from media_credit c join artist a on a.id = c.artist_id
+            where c.media_item_id = mi.id and c.role = 'artist'), '[]'::jsonb) as artist_credits,
+          ${artistTagsExpression(sql`mi.id`)} as artist_tags,
           coalesce(lt.album_name, am.title) as album_name, lt.album_media_item_id as album_id,
           am.title as album_title, lt.album_link_strategy,
           coalesce((
@@ -125,6 +132,8 @@ export async function loadTracks(ids: string[]): Promise<TrackListItem[]> {
         artworkUrl: row.artwork_url,
         releaseDate: row.release_date,
         artists: row.artists,
+        artistCredits: row.artist_credits,
+        artistTags: row.artist_tags,
         albumName: row.album_name,
         album:
           row.album_id && row.album_title !== null

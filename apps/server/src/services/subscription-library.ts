@@ -10,6 +10,7 @@ import {
   SubscriptionItemSchema,
   SubscriptionPublishedPrecisionSchema,
   SubscriptionRangeFieldSchema,
+  SubscriptionSourceDetailSchema,
   SubscriptionSourceListSchema,
   SubscriptionTextFieldSchema,
   SubscriptionTypeSchema,
@@ -331,8 +332,10 @@ function sortOrder(
  */
 export async function listSubscriptionItems(
   query: SubscriptionItemQuery,
+  sourceId = query.sourceId,
 ): Promise<SubscriptionItemPage> {
-  const conditions: SQL[] = []
+  const conditions =
+    sourceId === undefined ? [] : [sql`i.source_id = ${sourceId}`]
   const any: SQL[] = []
   for (const filter of query.filters) {
     const match = filterMatch(filter)
@@ -410,7 +413,7 @@ const SourceRowsSchema = z.array(
 
 /** Every subscribed channel and podcast with its stored item count. */
 export async function listSubscriptionSources(
-  input: { type?: SubscriptionType } = {},
+  input: { type?: SubscriptionType; id?: string } = {},
 ) {
   const rows = SourceRowsSchema.parse(
     (
@@ -422,6 +425,7 @@ export async function listSubscriptionSources(
         from subscription_source s
         left join subscription_item i on i.source_id = s.id
         where s.subscribed ${input.type ? sql`and s.type = ${input.type}` : sql``}
+          ${input.id === undefined ? sql`` : sql`and s.id = ${input.id}`}
         group by s.id
         order by lower(s.title), s.id`)
     ).rows,
@@ -447,6 +451,21 @@ export async function listSubscriptionSources(
           }
         : { type: row.type, ...shared, itemTotal: row.item_total }
     }),
+  })
+}
+
+export async function getSubscriptionSource(
+  id: string,
+  query: SubscriptionItemQuery,
+) {
+  const {
+    items: [source],
+  } = await listSubscriptionSources({ id })
+  if (!source)
+    throw new ServerError({ statusCode: 404, message: 'Channel not found' })
+  return SubscriptionSourceDetailSchema.parse({
+    source,
+    items: await listSubscriptionItems(query, id),
   })
 }
 

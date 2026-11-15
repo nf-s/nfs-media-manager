@@ -4,6 +4,8 @@
 
 Preserve title, source, poster, synopsis, awards, directors, actors, writers, countries, languages, production companies, tags, collections, watched state and external links. Numeric fields are release date, personal IMDb rating, IMDb rating/votes, Metascore, TMDb rating/votes/popularity, Rotten Tomatoes rating, runtime, budget and box office. Local plugins may contribute additional ratings/votes and collections. Default order is release descending.
 
+Directors and actors open person details with their credited library films and explicit role-specific filters. The People directory shares identities across those roles. See [artists, people and channels](../artists-and-people.md).
+
 ## Requirements
 
 - FILM-01: Account for every cleaned film row and reconcile raw entries by identifier without losing snapshots. Preserve identifiers, source hints, owned status, watched/rating/watchlist state and provider metadata. Raw duplicate records must not erase fields from another record.

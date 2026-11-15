@@ -10,6 +10,7 @@ import { getAlbumProviderDetails } from './album-provider-details'
 import { albumAddedDates } from './album-added-dates'
 import { albumTrackPlaylistNames } from './album-playlists'
 import { loadTracks } from './tracks'
+import { loadArtistTags } from './music-tags'
 import { and, eq, inArray, ne, sql, type SQL } from 'drizzle-orm'
 import type { JsonValue } from '@repo/media-plugin-sdk'
 import {
@@ -43,7 +44,7 @@ import {
 } from '@/schemas/db'
 
 type CommonCredit = {
-  artist: { name: string }
+  artist: { id: string; name: string }
   role: string
   billingOrder: number
 }
@@ -115,6 +116,7 @@ type CommonPayload<TMediaType extends 'album' | 'film'> = {
 function mapCredits(credits: CommonCredit[]): AlbumListItem['credits'] {
   return credits
     .map((credit) => ({
+      id: credit.artist.id,
       name: credit.artist.name,
       role: credit.role,
       billingOrder: credit.billingOrder,
@@ -333,6 +335,7 @@ export async function listAlbums(
   })
 
   const preferredTags = await rymTagIds(ids)
+  const artistTags = await loadArtistTags(ids)
   const addedDates = await albumAddedDates(ids)
   const trackPlaylists = await albumTrackPlaylistNames(ids)
   const items = reorderRecords(records, ids).flatMap((record) => {
@@ -350,6 +353,7 @@ export async function listAlbums(
     )
     const item: AlbumListItem = {
       ...common,
+      artistTags: artistTags.get(record.id) ?? [],
       playlists: withTrackPlaylists(
         common.playlists,
         trackPlaylists.get(record.id),
@@ -494,6 +498,7 @@ export async function getAlbumDetail(id: string): Promise<AlbumDetail | null> {
     ).map((item) => [item.id, item]),
   )
   const albumDetail: AlbumDetail = {
+    artistTags: (await loadArtistTags([id])).get(id) ?? [],
     providerDetails: await getAlbumProviderDetails(id),
     collectionSources: await getCollectionSourceLinks(id, {
       ...record.album.metadata,

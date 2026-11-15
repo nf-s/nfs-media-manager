@@ -37,6 +37,7 @@ const AlbumTrackViewSchema = z.object({
 const AlbumDetailTabSchema = z.enum([
   'overview',
   'tracks',
+  'playlists',
   'listening',
   'edit',
   'history',

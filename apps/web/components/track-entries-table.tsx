@@ -18,6 +18,7 @@ import {
 import { formatTrackDuration } from '@/utils/track-browse'
 import { trackServiceLinks } from '@/utils/track-links'
 import type { PlaybackSource } from '@/utils/playback'
+import { TrackArtistLinks } from './creator-links'
 import { DetailLink } from './detail-link'
 import {
   AlbumReferencePlayButton,
@@ -188,7 +189,15 @@ function TrackEntryCell({
       ) : null
     case 'artists': {
       const text = (track?.artists ?? album?.artists ?? []).join(', ')
-      return <SecondaryCell text={text}>{text || '-'}</SecondaryCell>
+      return (
+        <SecondaryCell text={text}>
+          {track?.artists.length ? (
+            <TrackArtistLinks track={track} />
+          ) : (
+            text || '-'
+          )}
+        </SecondaryCell>
+      )
     }
     case 'album':
       return track?.album ? (

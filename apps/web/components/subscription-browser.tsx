@@ -36,6 +36,7 @@ import { fetchApiData } from '@/utils/api'
 import { useVirtualBrowse } from '@/hooks/useVirtualBrowse'
 import { useBrowseFacets } from '@/hooks/useBrowseFacets'
 import { useRailSlot } from '@/hooks/useRailSlot'
+import { useSubscriptionSource } from '@/hooks/useSubscriptionSource'
 import { matchingTitleFilters } from '@/utils/browse-suggestions'
 import { preserveGridScroll } from '@/utils/media-grid'
 import {
@@ -64,6 +65,7 @@ import {
   withSubscriptionFilter,
 } from '@/utils/subscriptions'
 import { DetailInspector } from './detail-inspector'
+import { DetailLink } from './detail-link'
 import {
   replaceWorkspaceUrl,
   useDetailInspector,
@@ -114,8 +116,9 @@ export default function SubscriptionBrowser() {
   const railSlot = useRailSlot()
   const resize = useRef<{ key: string; x: number; width: number } | null>(null)
   const state = parseSubscriptionBrowseState(new URLSearchParams(searchParams))
-  const { q, filters, ranges, view } = state
+  const { q, filters, ranges, view, sourceId } = state
   const { identity, params, sortBy, direction } = subscriptionBrowseQuery(state)
+  const sourceTitle = useSubscriptionSource(sourceId).data?.source.title
   const selectedId =
     inspector?.root?.kind === 'subscription' ? inspector.root.id : null
   const fieldsQuery = useQuery({
@@ -166,7 +169,13 @@ export default function SubscriptionBrowser() {
     setParams({ filters: next.length ? JSON.stringify(next) : null })
   }
   function clearFilters() {
-    setParams({ q: null, fields: null, filters: null, ranges: null })
+    setParams({
+      q: null,
+      fields: null,
+      filters: null,
+      ranges: null,
+      sourceId: null,
+    })
   }
   function openDetail(id: string, trigger?: HTMLElement) {
     inspector?.open({ kind: 'subscription', id }, trigger)
@@ -276,7 +285,12 @@ export default function SubscriptionBrowser() {
   const facets = useBrowseFacets(apiBaseUrl, collection, draft, ready)
   const titleFilters = matchingTitleFilters(facets.data ?? [], facets.search)
   const titleMatches = useQuery({
-    queryKey: [collection, 'title-suggestions', titleFilters],
+    queryKey: [
+      collection,
+      'title-suggestions',
+      titleFilters,
+      ...(sourceId ? [sourceId] : []),
+    ],
     enabled: ready && titleFilters.length > 0,
     queryFn: ({ signal }) => {
       const params = new URLSearchParams({
@@ -285,6 +299,7 @@ export default function SubscriptionBrowser() {
         filters: JSON.stringify(titleFilters),
         sortBy: 'title',
         direction: 'asc',
+        ...(sourceId ? { sourceId } : {}),
       })
       return fetchApiData(
         apiBaseUrl,
@@ -380,6 +395,17 @@ export default function SubscriptionBrowser() {
           <SubscriptionOpenLink item={item} />
         </div>
       )
+    if (field.key === 'source') {
+      return (
+        <DetailLink
+          className="hover:underline"
+          kind="channel"
+          id={item.sourceId}
+        >
+          {item.sourceTitle}
+        </DetailLink>
+      )
+    }
     const value = getSubscriptionBrowseValues(item)[field.key]
     if (field.type === 'text' && field.filterable) {
       const values = Array.isArray(value)
@@ -407,10 +433,24 @@ export default function SubscriptionBrowser() {
 
   const showFieldsChip = Boolean(q) && state.fields === 'title'
   const activeFilterCount =
-    Number(Boolean(q)) + Number(showFieldsChip) + filters.length + ranges.length
+    Number(Boolean(q)) +
+    Number(showFieldsChip) +
+    Number(Boolean(sourceId)) +
+    filters.length +
+    ranges.length
   const activeFilters =
     activeFilterCount > 0 ? (
       <div className="active-filters">
+        {sourceId && (
+          <FilterButton
+            className="filter-pill filter-required"
+            aria-label="Remove channel filter"
+            onClick={() => setParams({ sourceId: null })}
+          >
+            {sourceTitle ? `Channel: ${sourceTitle}` : 'Channel'}{' '}
+            <X size={12} aria-hidden="true" />
+          </FilterButton>
+        )}
         {q && (
           <FilterButton
             className="filter-pill"
@@ -674,7 +714,6 @@ export default function SubscriptionBrowser() {
                       height={grid.cardHeight}
                       selected={item.id === selectedId}
                       onOpen={(trigger) => openDetail(item.id, trigger)}
-                      onFilter={addFilter}
                     />
                   ) : (
                     <div
@@ -710,7 +749,6 @@ export default function SubscriptionBrowser() {
                       height={listRowHeight}
                       selected={item.id === selectedId}
                       onOpen={(trigger) => openDetail(item.id, trigger)}
-                      onFilter={addFilter}
                       layout="list"
                     />
                   ) : (
@@ -944,7 +982,6 @@ function SubscriptionCard({
   height,
   selected,
   onOpen,
-  onFilter,
   layout = 'grid',
 }: {
   item: SubscriptionItem
@@ -952,7 +989,6 @@ function SubscriptionCard({
   height: number
   selected: boolean
   onOpen: (trigger: HTMLElement) => void
-  onFilter: (filter: BrowseFilter) => void
   layout?: 'grid' | 'list'
 }) {
   const published = formatSubscriptionPublished(
@@ -990,15 +1026,13 @@ function SubscriptionCard({
           >
             {item.title}
           </button>
-          <FilterButton
+          <DetailLink
+            kind="channel"
+            id={item.sourceId}
             className={styles.channel}
-            title={`Filter Channel: ${item.sourceTitle}`}
-            onClick={() =>
-              onFilter({ field: 'source', value: item.sourceTitle })
-            }
           >
             {item.sourceTitle}
-          </FilterButton>
+          </DetailLink>
           <div className={styles.meta}>{meta}</div>
         </div>
         <SubscriptionOpenLink item={item} />

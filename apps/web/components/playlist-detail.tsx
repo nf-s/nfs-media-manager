@@ -112,7 +112,7 @@ export function PlaylistPlayButton({
   total,
   compact = true,
 }: {
-  playlist: PlaylistSummary
+  playlist: Pick<PlaylistSummary, 'id' | 'name' | 'trackCount' | 'albumCount'>
   total?: number
   compact?: boolean
 }) {

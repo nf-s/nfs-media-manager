@@ -1,4 +1,6 @@
 'use client'
+import { CreatorLinks } from './creator-links'
+import { musicDisplayTags } from '@repo/schemas/music-tags'
 
 import Link from 'next/link'
 import { usePathname, useSearchParams } from 'next/navigation'
@@ -416,6 +418,12 @@ export default function MediaDetail({
       </p>
     )
   const item = detail.data
+  const fallbackArtistTags = musicDisplayTags(
+    item.tags.map((tag) => tag.name),
+    item.mediaType === 'album' ? item.artistTags : [],
+  )
+    .filter((tag) => tag.source === 'artist')
+    .map((tag) => tag.name)
   const values = {
     ...getBrowseValues(item),
     ...(browseMetric ? { [browseMetric.field.key]: browseMetric.value } : {}),
@@ -430,7 +438,6 @@ export default function MediaDetail({
       ]
     : baseFields
   const creatorField = mediaType === 'album' ? 'artist' : 'director'
-  const creators = values[creatorField]
   return (
     <div className="media-detail">
       <header className="detail-heading">
@@ -468,13 +475,13 @@ export default function MediaDetail({
           {item.originalTitle && item.originalTitle !== item.title && (
             <p className="quiet">{item.originalTitle}</p>
           )}
-          {Array.isArray(creators) && (
-            <FilterValues
-              field={creatorField}
-              values={creators}
-              onFilter={filter}
-            />
-          )}
+          <CreatorLinks
+            creators={item.credits.filter(
+              (credit) => credit.role === creatorField,
+            )}
+            kind={mediaType === 'album' ? 'artist' : 'person'}
+            pills
+          />
           <div className="detail-facts">
             <span>{item.releaseDate?.slice(0, 10)}</span>
             <span>
@@ -542,6 +549,9 @@ export default function MediaDetail({
         <TabsList>
           <TabsTrigger value="overview">Overview</TabsTrigger>
           {item.mediaType === 'album' && (
+            <TabsTrigger value="playlists">Playlists</TabsTrigger>
+          )}
+          {item.mediaType === 'album' && (
             <TabsTrigger value="tracks">
               Tracks ({item.tracks.length})
             </TabsTrigger>
@@ -602,6 +612,8 @@ export default function MediaDetail({
                     'watched',
                     'provider',
                     'keyword',
+                    'albumTag',
+                    'artistTag',
                     // Albums list their playlists below, with the add control.
                     ...(item.mediaType === 'album' ? ['playlist'] : []),
                   ].includes(field.key),
@@ -627,7 +639,34 @@ export default function MediaDetail({
                         </Link>
                       )}
                     </h2>
-                    {field.filterable ? (
+                    {['actor', 'director'].includes(field.key) ? (
+                      <CreatorLinks
+                        creators={item.credits.filter(
+                          (credit) => credit.role === field.key,
+                        )}
+                        kind="person"
+                        pills
+                      />
+                    ) : field.key === 'genre' && item.mediaType === 'album' ? (
+                      <>
+                        <FilterValues
+                          field="genre"
+                          mediaId={item.id}
+                          values={item.tags.map((tag) => tag.name)}
+                          onFilter={filter}
+                        />
+                        {fallbackArtistTags.length > 0 && (
+                          <div className="mt-2">
+                            <p className="quiet mb-1">Artist tags</p>
+                            <FilterValues
+                              field="artistTag"
+                              values={fallbackArtistTags}
+                              onFilter={filter}
+                            />
+                          </div>
+                        )}
+                      </>
+                    ) : field.filterable ? (
                       <FilterValues
                         field={field.key}
                         mediaId={item.id}
@@ -643,12 +682,14 @@ export default function MediaDetail({
               })}
           </div>
           {item.mediaType === 'album' && (
-            <AlbumPlaylists key={item.id} albumId={item.id} />
-          )}
-          {item.mediaType === 'album' && (
             <AlbumProviderDetails details={item.providerDetails ?? []} />
           )}
         </TabsContent>
+        {item.mediaType === 'album' && (
+          <TabsContent value="playlists">
+            <AlbumPlaylists key={item.id} albumId={item.id} />
+          </TabsContent>
+        )}
         {item.mediaType === 'album' && (
           <TabsContent value="tracks">
             <AlbumTracksTable album={item} />

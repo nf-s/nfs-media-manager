@@ -15,6 +15,9 @@ import TrackDetail from './track-detail'
 import PlaylistDetail from './playlist-detail'
 import { FilmCollectionEntries } from './film-collection-detail'
 import { SubscriptionItemDetails } from './subscription-item-details'
+import { ArtistDetail } from './artist-detail'
+import { PersonDetail } from './person-detail'
+import { ChannelDetail } from './channel-detail'
 import {
   detailBrowseKind,
   detailPageHref,
@@ -30,6 +33,9 @@ const labels = {
   playlist: 'Playlist details',
   subscription: 'Subscription details',
   collection: 'Film collection details',
+  artist: 'Artist details',
+  person: 'Person details',
+  channel: 'Channel details',
 }
 
 type InspectorOptions = {
@@ -95,11 +101,14 @@ export function DetailInspector(options: InspectorOptions) {
   if (!target || !nav) return null
   const { kind: activeKind } = target
   const pageParams =
-    detailBrowseKind(pathname) === activeKind || pathname === `/${activeKind}s`
+    detailBrowseKind(pathname) === activeKind ||
+    (pathname === `/${activeKind}s` &&
+      !['artist', 'person', 'channel'].includes(activeKind))
       ? withoutDetailEntries(pathname, new URLSearchParams(params))
       : new URLSearchParams()
-  for (const [key, value] of new URLSearchParams(target.view))
-    pageParams.set(key, value)
+  const viewParams = new URLSearchParams(target.view)
+  for (const key of new Set(viewParams.keys())) pageParams.delete(key)
+  for (const [key, value] of viewParams) pageParams.append(key, value)
 
   return (
     <>
@@ -183,7 +192,13 @@ function InspectorContent({
     )
   return (
     <div className="inspector-scroll">
-      {target.kind === 'track' ? (
+      {target.kind === 'artist' ? (
+        <ArtistDetail id={target.id} />
+      ) : target.kind === 'person' ? (
+        <PersonDetail id={target.id} />
+      ) : target.kind === 'channel' ? (
+        <ChannelDetail id={target.id} />
+      ) : target.kind === 'track' ? (
         <TrackDetail id={target.id} {...options.track} onMerged={onMerged} />
       ) : target.kind === 'subscription' ? (
         <SubscriptionItemDetails id={target.id} {...options.subscription} />

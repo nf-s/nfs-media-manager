@@ -15,6 +15,10 @@ import {
   uniqueIndex,
 } from 'drizzle-orm/pg-core'
 import type { JsonValue } from '@repo/media-plugin-sdk'
+import type {
+  ArtistProfile,
+  ArtistProfileProvider,
+} from '@repo/schemas/artist-profiles'
 export * from './auth'
 import { user } from './auth'
 import { normalizedTagSql } from '../lib/tag-sql'
@@ -729,6 +733,45 @@ export const providerCurrentState = pgTable(
       table.provider,
     ),
   ],
+)
+
+export const artistProviderSnapshot = pgTable(
+  'artist_provider_snapshot',
+  {
+    id: text('id').primaryKey(),
+    artistId: text('artist_id')
+      .notNull()
+      .references(() => artist.id, { onDelete: 'cascade' }),
+    provider: text('provider').$type<ArtistProfileProvider>().notNull(),
+    payload: jsonb('payload').$type<JsonValue>().notNull(),
+    normalizedData: jsonb('normalized_data').$type<ArtistProfile>().notNull(),
+    scrapeJobId: text('scrape_job_id').references(() => scrapeJob.id, {
+      onDelete: 'set null',
+    }),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (table) => [
+    index('artist_provider_snapshot_artist_time_idx').on(
+      table.artistId,
+      table.createdAt.desc(),
+      table.id.desc(),
+    ),
+  ],
+)
+
+export const artistProviderCurrentState = pgTable(
+  'artist_provider_current_state',
+  {
+    artistId: text('artist_id')
+      .notNull()
+      .references(() => artist.id, { onDelete: 'cascade' }),
+    provider: text('provider').$type<ArtistProfileProvider>().notNull(),
+    latestSnapshotId: text('latest_snapshot_id')
+      .notNull()
+      .references(() => artistProviderSnapshot.id, { onDelete: 'cascade' }),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.artistId, table.provider] })],
 )
 
 export const mediaOverride = pgTable(

@@ -15,6 +15,7 @@ import { useLibraryView, useMediaScope } from './media-scope'
 
 const items = [
   { href: '/browse', label: 'Browse', Icon: LayoutGrid },
+  { href: '/artists', label: 'Artists', Icon: Users },
   { href: '/playlists', label: 'Playlists', Icon: ListMusic },
   { href: '/tags', label: 'Tags', Icon: Tag },
   { href: '/imports', label: 'Imports', Icon: Download },
@@ -23,6 +24,7 @@ const items = [
 ]
 const trackItems = [
   { href: '/tracks', label: 'Browse', Icon: LayoutGrid },
+  { href: '/artists', label: 'Artists', Icon: Users },
   { href: '/playlists', label: 'Playlists', Icon: ListMusic },
   { href: '/imports', label: 'Imports', Icon: Download },
 ]
@@ -127,9 +129,11 @@ export default function AppNavigation() {
             ? scope === 'album'
               ? '/albums'
               : '/films'
-            : item.href === '/playlists' && scope === 'film'
-              ? '/collections'
-              : item.href
+            : item.href === '/artists' && scope === 'film'
+              ? '/people'
+              : item.href === '/playlists' && scope === 'film'
+                ? '/collections'
+                : item.href
         const active =
           path === destination || path.startsWith(`${destination}/`)
         const href =
@@ -142,9 +146,11 @@ export default function AppNavigation() {
             key={item.href}
             aria-current={active ? 'page' : undefined}
           >
-            {item.href === '/playlists' && scope === 'film'
-              ? 'Collections'
-              : item.label}
+            {item.href === '/artists' && scope === 'film'
+              ? 'People'
+              : item.href === '/playlists' && scope === 'film'
+                ? 'Collections'
+                : item.label}
             <item.Icon size={16} aria-hidden="true" />
           </Link>
         )

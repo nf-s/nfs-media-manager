@@ -21,6 +21,7 @@ const scrobbled = TrackDetailSchema.parse({
   artworkUrl: null,
   releaseDate: null,
   artists: ['Example artist'],
+  artistCredits: [{ id: 'fixture-artist', name: 'Example artist' }],
   albumName: 'Recorded album',
   album: null,
   albumLinkStrategy: null,
@@ -104,15 +105,20 @@ test('unmatched Last.fm tracks show recorded metadata, listening and an actionab
   const html = render(scrobbled)
   assert.match(html, /Synthetic track/)
   assert.match(html, /Example artist/)
+  assert.match(html, /href="\/artists\/fixture-artist">Example artist<\/a>/)
   assert.match(html, /Recorded album/)
   assert.match(html, /role="tab"[^>]*>Overview/)
+  assert.match(html, /role="tab"[^>]*>Playlists/)
   assert.match(html, /role="tab"[^>]*>Listening/)
   assert.match(html, /role="tab"[^>]*>Sources/)
   assert.match(
     html,
     /href="https:\/\/www.last.fm\/music\/Example%20artist\/_\/Synthetic%20track"/,
   )
-  assert.match(html, /Match this track to Spotify to add it to a playlist/)
+  assert.match(
+    render(scrobbled, 'tab=playlists'),
+    /Match this track to Spotify to add it to a playlist/,
+  )
   assert.doesNotMatch(html, /Recorded by Last.fm|Spotify has not been searched/)
   assert.match(
     html,
@@ -133,6 +139,7 @@ test('tracks with a Spotify match keep album metadata, playback and every source
     ...scrobbled,
     album: { id: 'album-1', title: 'Library album' },
     albumTags: ['Electronic'],
+    artistTags: ['Synth-pop'],
     durationSec: 243,
     releaseDate: '2020-01-01T00:00:00.000Z',
     sources: ['lastfm', 'spotify', 'spotify-liked'],
@@ -143,6 +150,25 @@ test('tracks with a Spotify match keep album metadata, playback and every source
   const html = render(matched)
   assert.match(html, /href="\/albums\/album-1">Library album<\/a>/)
   assert.match(html, /Electronic/)
+  const albumTagHref = html.match(/href="([^"]+)"[^>]*>Electronic<\/a>/)?.[1]
+  assert.ok(albumTagHref)
+  assert.deepEqual(
+    JSON.parse(
+      new URL(albumTagHref, 'http://localhost').searchParams.get('filters') ??
+        '[]',
+    ),
+    [{ field: 'albumTag', value: 'Electronic' }],
+  )
+  assert.match(html, /<h2>Artist tags<\/h2>/)
+  const artistTagHref = html.match(/href="([^"]+)"[^>]*>Synth-pop<\/a>/)?.[1]
+  assert.ok(artistTagHref)
+  assert.deepEqual(
+    JSON.parse(
+      new URL(artistTagHref, 'http://localhost').searchParams.get('filters') ??
+        '[]',
+    ),
+    [{ field: 'artistTag', value: 'Synth-pop' }],
+  )
   assert.match(html, /4:03/)
   assert.match(html, />Play<\/button>/)
   assert.match(html, />Add to queue<\/button>/)

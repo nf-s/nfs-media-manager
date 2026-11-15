@@ -634,4 +634,43 @@ describe('subscription facets and sources', () => {
       ),
     ).toEqual([ORBIT_TALK, KITCHEN])
   })
+
+  it('scopes every source detail page to that subscribed channel or podcast', async () => {
+    const { getSubscriptionSource, listSubscriptionItems } = await library()
+    const query = SubscriptionItemQuerySchema.parse({
+      q: 'orbit',
+      size: 1,
+      sortBy: 'title',
+      direction: 'asc',
+    })
+    expect(
+      await getSubscriptionSource(ORBIT_TALK, { ...query, sourceId: KEPLER }),
+    ).toMatchObject({
+      source: { id: ORBIT_TALK, storedItems: 2 },
+      items: {
+        totalCount: 2,
+        pageCount: 2,
+        items: [{ sourceId: ORBIT_TALK, title: 'Orbits for beginners' }],
+      },
+    })
+    expect(
+      await getSubscriptionSource(ORBIT_TALK, { ...query, page: 3 }),
+    ).toMatchObject({
+      items: { totalCount: 2, items: [] },
+    })
+    expect(await getSubscriptionSource(KEPLER, query)).toMatchObject({
+      source: { id: KEPLER, storedItems: 2 },
+      items: { items: [{ sourceId: KEPLER }] },
+    })
+    expect(
+      await listSubscriptionItems({ ...query, sourceId: ORBIT_TALK }),
+    ).toMatchObject({
+      totalCount: 2,
+      items: [{ sourceId: ORBIT_TALK }],
+    })
+    for (const id of [RETIRED, channelId('unknown')])
+      await expect(getSubscriptionSource(id, query)).rejects.toMatchObject({
+        response: { statusCode: 404 },
+      })
+  })
 })

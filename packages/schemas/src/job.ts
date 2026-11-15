@@ -113,6 +113,7 @@ export const JobListQuerySchema = z.object({
     .default([]),
   provider: z.string().optional(),
   mediaItemId: z.string().min(1).optional(),
+  artistId: z.string().min(1).max(200).optional(),
   batchId: z.string().min(1).optional(),
   q: z.string().max(200).optional(),
   page: z.coerce.number().int().positive().default(1),
@@ -149,7 +150,7 @@ export function getJobDismissal(options: Record<string, unknown>) {
   return result.success ? result.data : null
 }
 
-/** Account-level jobs carry a task name and no media item. */
+/** Task jobs carry a task name and no media item. */
 export function getJobTask(options: Record<string, unknown>) {
   return typeof options.task === 'string' ? options.task : null
 }

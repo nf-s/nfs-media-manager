@@ -1,6 +1,14 @@
 import { z } from 'zod'
 import { MediaTypeSchema, PaginatedDataSchema } from './common'
 
+export function tagDisplayName(name: string): string {
+  return name.normalize('NFC').replace(/\s+/gu, ' ').trim()
+}
+
+export function normalizeTagName(name: string): string {
+  return tagDisplayName(name).toLowerCase()
+}
+
 export const SourceNavigationLinkSchema = z.object({
   provider: z.string(),
   providerLabel: z.string(),

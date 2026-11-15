@@ -14,12 +14,14 @@ import {
   filmBrowseFields,
 } from './browse'
 import {
+  CreatorIdSchema,
   CreditSchema,
   DirectionSchema,
   ExternalLinkSchema,
   JsonValueSchema,
   MediaTypeSchema,
   PaginationQuerySchema,
+  PersonRoleSchema,
   PlaylistMembershipSchema,
   ProviderReferenceSchema,
   ProviderReferenceOverrideSchema,
@@ -69,6 +71,7 @@ export const FilmFilterOptionSchema = FilmBrowseFilterSchema.extend({
 })
 
 export const AlbumQuerySchema = PaginationQuerySchema.extend({
+  creatorId: CreatorIdSchema.optional(),
   includeArchived: z.enum(['true', 'false']).optional(),
   limitResults: z.coerce.number().int().min(1).max(10000).optional(),
   q: z.string().optional(),
@@ -82,6 +85,8 @@ export const AlbumQuerySchema = PaginationQuerySchema.extend({
 })
 
 export const FilmQuerySchema = PaginationQuerySchema.extend({
+  creatorId: CreatorIdSchema.optional(),
+  creatorRole: PersonRoleSchema.optional(),
   includeArchived: z.enum(['true', 'false']).optional(),
   limitResults: z.coerce.number().int().min(1).max(10000).optional(),
   q: z.string().optional(),
@@ -128,6 +133,7 @@ export const AlbumTrackEntrySchema = z.object({
 
 export const AlbumListItemSchema = MediaBaseSchema.extend({
   mediaType: z.literal('album'),
+  artistTags: z.array(z.string()).default([]),
   listeningScrobbles: z.number().int().nonnegative().optional(),
   dateAdded: z.string().nullable(),
   dateAddedSource: z.string().optional(),

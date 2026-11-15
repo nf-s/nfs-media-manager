@@ -24,7 +24,9 @@ const album = {
   id: 'library-album',
   title: 'Fixture album',
   artworkUrl: null,
-  credits: [{ name: 'Example artist', role: 'artist', billingOrder: 0 }],
+  credits: [
+    { id: null, name: 'Example artist', role: 'artist', billingOrder: 0 },
+  ],
   trackCount: 2,
   spotifyUrl: 'https://open.spotify.com/album/1234567890ABCDEFGHIJKL',
   links: [],

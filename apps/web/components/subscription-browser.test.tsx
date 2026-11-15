@@ -147,7 +147,10 @@ test('the table view uses the compact shared table and virtual placeholder rows'
   assert.match(html, />Bread basics</)
   assert.match(html, /title="Filter Type: YouTube">YouTube</)
   assert.match(html, /title="Filter Type: Podcast">Podcast</)
-  assert.match(html, /title="Filter Channel: Example Science Hour"/)
+  assert.match(
+    html,
+    new RegExp(`href="/channels/${showId}">Example Science Hour</a>`),
+  )
   assert.match(html, />12:34</)
   // A year-precision episode shows only the year.
   assert.match(html, /title="2024"><div class="browse-cell">2024</)
@@ -176,6 +179,10 @@ test('the list view shows compact thumbnail rows and has all three view controls
   assert.match(html, />Bread basics<\/button>/)
   assert.match(
     html,
+    new RegExp(`href="/channels/${channelId}">Example Cooking</a>`),
+  )
+  assert.match(
+    html,
     /aria-label="Open on YouTube: Bread basics \(opens in a new tab\)"/,
   )
   assert.match(html, /src="\/icons\/ratings\/youtube\.svg"/)
@@ -189,6 +196,10 @@ test('the grid view shows type labels on cards and placeholder cards', async () 
   assert.doesNotMatch(html, /<table/)
   assert.match(html, />YouTube<\/span>/)
   assert.match(html, />Podcast<\/span>/)
+  assert.match(
+    html,
+    new RegExp(`href="/channels/${channelId}">Example Cooking</a>`),
+  )
   assert.match(html, />1.2K views · /)
   assert.ok(
     (html.match(/class="virtual-browse-placeholder"/g) ?? []).length > 0,
@@ -215,7 +226,7 @@ test('an empty library points to Imports and a search without results offers to 
   assert.doesNotMatch(noMatches, /Nothing synced yet/)
 })
 
-test('the channels list shows YouTube channels and podcasts in the shared table, linked to the browse page', async () => {
+test('the channels list links names to details and counts to filtered Browse', async () => {
   const { default: SubscriptionChannels } =
     await import('./subscription-channels')
   const sources = {
@@ -269,14 +280,41 @@ test('the channels list shows YouTube channels and podcasts in the shared table,
   assert.match(html, /Reading history/)
   assert.match(html, /History for Example Science Hour/)
   assert.doesNotMatch(html, /<div class="muted">Reading history<\/div>/)
-  const filters = (title: string) =>
-    new URLSearchParams({
-      filters: JSON.stringify([{ field: 'source', value: title }]),
-    }).toString()
-  assert.ok(
-    html.includes(`href="/subscriptions?${filters('Example Cooking')}"`),
+  assert.ok(html.includes(`href="/channels/${channelId}"`))
+  assert.ok(html.includes(`href="/channels/${showId}"`))
+  assert.ok(html.includes(`href="/subscriptions?sourceId=${channelId}"`))
+  assert.ok(html.includes(`href="/subscriptions?sourceId=${showId}"`))
+})
+
+test('source-scoped Browse shows a removable exact channel filter even with no matching items', async () => {
+  const { default: SubscriptionBrowser } =
+    await import('./subscription-browser')
+  const search = new URLSearchParams({ sourceId: channelId }).toString()
+  const source = SubscriptionSourceSchema.parse({
+    type: 'youtube',
+    id: channelId,
+    title: 'Example Cooking',
+    description: null,
+    thumbnailUrl: null,
+    url: `https://www.youtube.com/channel/${channelId}`,
+    storedItems: 0,
+    latestItemAt: null,
+    historyComplete: true,
+    handle: null,
+    subscriberCount: null,
+  })
+  const html = render(
+    <SubscriptionBrowser />,
+    [
+      ...browseData(search, 0),
+      [['subscriptions', 'source', channelId], { source }],
+    ],
+    search,
   )
-  assert.ok(
-    html.includes(`href="/subscriptions?${filters('Example Science Hour')}"`),
+  assert.match(
+    html,
+    /aria-label="Remove channel filter">Channel: Example Cooking/,
   )
+  assert.match(html, /No matches/)
+  assert.doesNotMatch(html, /Nothing synced yet/)
 })

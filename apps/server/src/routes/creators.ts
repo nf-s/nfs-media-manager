@@ -1,0 +1,254 @@
+import { createRoute, z, type OpenAPIHono } from '@hono/zod-openapi'
+import { ArtistEnrichmentInputSchema } from '@repo/schemas/artist-profiles'
+import {
+  ArtistAlbumPageSchema,
+  ArtistAlbumQuerySchema,
+  ArtistDetailSchema,
+  ArtistHistoryPageSchema,
+  ArtistHistoryQuerySchema,
+  ArtistPageSchema,
+  ArtistPlaylistPageSchema,
+  ArtistPlaylistQuerySchema,
+  ArtistQuerySchema,
+  ArtistTrackPageSchema,
+  ArtistTrackQuerySchema,
+  CreatorParamsSchema,
+  PersonDetailSchema,
+  PersonFilmPageSchema,
+  PersonFilmQuerySchema,
+  PersonPageSchema,
+  PersonQuerySchema,
+} from '@repo/schemas/creators'
+import { JobSchema } from '@repo/schemas/job'
+import {
+  createOpenAPIApp,
+  createResponseSchema,
+  jsonErrorResponse,
+  validationErrorResponse,
+  type AppEnv,
+} from '@/lib/openapi'
+import { generateJsonResponse } from '@/lib/response'
+import { authMiddleware, requireOwnerUser } from '@/middlewares/auth'
+import { enqueueArtistEnrichment } from '@/services/artist-enrichment'
+import {
+  getArtist,
+  getArtistHistory,
+  getPerson,
+  listArtistAlbums,
+  listArtistPlaylists,
+  listArtists,
+  listArtistTracks,
+  listPeople,
+  listPersonFilms,
+} from '@/services/creators'
+
+const json = <T extends z.ZodTypeAny>(description: string, schema: T) => ({
+  description,
+  content: { 'application/json': { schema: createResponseSchema(schema) } },
+})
+
+const protectedResponses = {
+  401: jsonErrorResponse('Unauthorized'),
+  422: validationErrorResponse,
+}
+const artistResponses = {
+  ...protectedResponses,
+  404: jsonErrorResponse('Artist not found'),
+}
+const personResponses = {
+  ...protectedResponses,
+  404: jsonErrorResponse('Person not found'),
+}
+
+export const artists: OpenAPIHono<AppEnv> = createOpenAPIApp()
+  .openapi(
+    createRoute({
+      method: 'get',
+      path: '/',
+      middleware: [authMiddleware()],
+      request: { query: ArtistQuerySchema },
+      responses: {
+        ...protectedResponses,
+        200: json('Library music artists', ArtistPageSchema),
+      },
+    }),
+    async (c) =>
+      generateJsonResponse(c, await listArtists(c.req.valid('query')), 200),
+  )
+  .openapi(
+    createRoute({
+      method: 'get',
+      path: '/:id',
+      middleware: [authMiddleware()],
+      request: { params: CreatorParamsSchema },
+      responses: {
+        ...artistResponses,
+        200: json('Artist profile and library counts', ArtistDetailSchema),
+      },
+    }),
+    async (c) =>
+      generateJsonResponse(c, await getArtist(c.req.valid('param').id), 200),
+  )
+  .openapi(
+    createRoute({
+      method: 'get',
+      path: '/:id/albums',
+      middleware: [authMiddleware()],
+      request: { params: CreatorParamsSchema, query: ArtistAlbumQuerySchema },
+      responses: {
+        ...artistResponses,
+        200: json('Albums credited to this artist', ArtistAlbumPageSchema),
+      },
+    }),
+    async (c) =>
+      generateJsonResponse(
+        c,
+        await listArtistAlbums(c.req.valid('param').id, c.req.valid('query')),
+        200,
+      ),
+  )
+  .openapi(
+    createRoute({
+      method: 'get',
+      path: '/:id/tracks',
+      middleware: [authMiddleware()],
+      request: { params: CreatorParamsSchema, query: ArtistTrackQuerySchema },
+      responses: {
+        ...artistResponses,
+        200: json('Tracks credited to this artist', ArtistTrackPageSchema),
+      },
+    }),
+    async (c) =>
+      generateJsonResponse(
+        c,
+        await listArtistTracks(c.req.valid('param').id, c.req.valid('query')),
+        200,
+      ),
+  )
+  .openapi(
+    createRoute({
+      method: 'get',
+      path: '/:id/playlists',
+      middleware: [authMiddleware()],
+      request: {
+        params: CreatorParamsSchema,
+        query: ArtistPlaylistQuerySchema,
+      },
+      responses: {
+        ...artistResponses,
+        200: json(
+          'Playlists containing music credited to this artist',
+          ArtistPlaylistPageSchema,
+        ),
+      },
+    }),
+    async (c) =>
+      generateJsonResponse(
+        c,
+        await listArtistPlaylists(
+          c.req.valid('param').id,
+          c.req.valid('query'),
+        ),
+        200,
+      ),
+  )
+  .openapi(
+    createRoute({
+      method: 'get',
+      path: '/:id/history',
+      middleware: [authMiddleware()],
+      request: { params: CreatorParamsSchema, query: ArtistHistoryQuerySchema },
+      responses: {
+        ...artistResponses,
+        200: json('Saved artist provider results', ArtistHistoryPageSchema),
+      },
+    }),
+    async (c) =>
+      generateJsonResponse(
+        c,
+        await getArtistHistory(c.req.valid('param').id, c.req.valid('query')),
+        200,
+      ),
+  )
+  .openapi(
+    createRoute({
+      method: 'post',
+      path: '/:id/enrichment',
+      middleware: [authMiddleware()],
+      request: {
+        params: CreatorParamsSchema,
+        body: {
+          required: true,
+          content: {
+            'application/json': { schema: ArtistEnrichmentInputSchema },
+          },
+        },
+      },
+      responses: {
+        ...artistResponses,
+        200: json('Queue an artist lookup for one provider', JobSchema),
+        409: jsonErrorResponse('Provider configuration or queue conflict'),
+        429: jsonErrorResponse('Provider is cooling down or halted'),
+      },
+    }),
+    async (c) =>
+      generateJsonResponse(
+        c,
+        await enqueueArtistEnrichment(
+          { artistId: c.req.valid('param').id, ...c.req.valid('json') },
+          requireOwnerUser(c).id,
+        ),
+        200,
+      ),
+  )
+
+export const people: OpenAPIHono<AppEnv> = createOpenAPIApp()
+  .openapi(
+    createRoute({
+      method: 'get',
+      path: '/',
+      middleware: [authMiddleware()],
+      request: { query: PersonQuerySchema },
+      responses: {
+        ...protectedResponses,
+        200: json('Library film directors and actors', PersonPageSchema),
+      },
+    }),
+    async (c) =>
+      generateJsonResponse(c, await listPeople(c.req.valid('query')), 200),
+  )
+  .openapi(
+    createRoute({
+      method: 'get',
+      path: '/:id',
+      middleware: [authMiddleware()],
+      request: { params: CreatorParamsSchema },
+      responses: {
+        ...personResponses,
+        200: json('Person and library film credit counts', PersonDetailSchema),
+      },
+    }),
+    async (c) =>
+      generateJsonResponse(c, await getPerson(c.req.valid('param').id), 200),
+  )
+  .openapi(
+    createRoute({
+      method: 'get',
+      path: '/:id/films',
+      middleware: [authMiddleware()],
+      request: { params: CreatorParamsSchema, query: PersonFilmQuerySchema },
+      responses: {
+        ...personResponses,
+        200: json(
+          'Films credited to this person as director or actor',
+          PersonFilmPageSchema,
+        ),
+      },
+    }),
+    async (c) =>
+      generateJsonResponse(
+        c,
+        await listPersonFilms(c.req.valid('param').id, c.req.valid('query')),
+        200,
+      ),
+  )

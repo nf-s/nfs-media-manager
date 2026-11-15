@@ -31,6 +31,8 @@ Spotify audio features are intentionally discontinued. Remove existing acousticn
 
 Album browse also supports custom listening rules over rolling periods, date ranges and all stored history, combined with all/any matching and a separate configurable period for count sorting. See SEARCH-07 in [search requirements](search.md).
 
+- MUSIC-12: Artists have details shared by Albums and Tracks, listing their library albums, tracks and playlists. Artist enrichment is explicit and provider-specific, preserves snapshot history and shares existing request limits. Artist tags supplement fewer than two distinct visible album tags at read time; keep album and artist provenance distinct without copying memberships. Tags filters follow the displayed fallback, with separate Album tags and Artist tags filters available. See [artists, people and channels](../artists-and-people.md).
+
 ## Acceptance
 
 Reconcile every album in the migration fixture against its cleaned input, excluding only retired audio features while preserving every other nonempty metric, dates and links. Test an album with zero values, one with many genres, one missing artwork, one with Spotify data and one with playlist membership. Verify raw snapshots and track lists match input apart from this targeted removal without making Spotify requests. A cleanup dry run after apply must report zero changed rows; retained backup copies must contain the original removed values.

@@ -35,8 +35,7 @@ export default function AlbumPlaylists({ albumId }: { albumId: string }) {
   const tracks = query.data?.tracks ?? []
   return (
     <div className="detail-metadata mt-6">
-      <section>
-        <h2>Playlists</h2>
+      <section aria-label="Playlist memberships">
         {query.isError && (
           <p role="alert">
             Playlists unavailable.{' '}

@@ -155,6 +155,16 @@ export const SubscriptionSourceQuerySchema = z.object({
 export const SubscriptionSourceListSchema = z.object({
   items: z.array(SubscriptionSourceSchema),
 })
+export const SubscriptionSourceParamsSchema = z.object({
+  id: SubscriptionSourceIdSchema,
+})
+export const SubscriptionSourceDetailSchema = z.object({
+  source: SubscriptionSourceSchema,
+  items: SubscriptionItemPageSchema,
+})
+export type SubscriptionSourceDetail = z.infer<
+  typeof SubscriptionSourceDetailSchema
+>
 
 export const subscriptionBrowseFields: BrowseField[] = [
   { key: 'title', label: 'Title', type: 'text', filterable: true },
@@ -268,6 +278,8 @@ const SubscriptionFiltersParamSchema = z.preprocess(
 )
 
 export const SubscriptionItemQuerySchema = PaginationQuerySchema.extend({
+  /** Restricts the query to one channel or podcast by its stored identifier. */
+  sourceId: SubscriptionSourceIdSchema.optional(),
   /** Web-search syntax: every word must match by its stem or as the start of a word; "quoted phrases", `or` and `-exclusions` are supported. */
   q: z.string().trim().max(200).optional(),
   fields: SubscriptionSearchFieldsSchema.default('all'),

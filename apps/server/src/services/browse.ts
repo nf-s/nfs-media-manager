@@ -1,4 +1,4 @@
-import { and, eq, sql, type SQL } from 'drizzle-orm'
+import { and, eq, inArray, sql, type SQL } from 'drizzle-orm'
 import { PgDialect } from 'drizzle-orm/pg-core'
 import { z } from 'zod'
 import {
@@ -17,14 +17,22 @@ import {
   type TrackQuery,
 } from '@repo/schemas/tracks'
 import { defaultListeningPeriod } from '@repo/schemas/listening'
+import { PersonRoleSchema } from '@repo/schemas/common'
 import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
 import { createDatabaseReadCache } from '@/lib/database-read-cache'
-import { mediaItem, album, film, libraryTrack } from '@/schemas/db'
+import { mediaItem, album, film, libraryTrack, mediaCredit } from '@/schemas/db'
 import { listLoadedScrapePlugins } from '@/plugins/registry'
 import { normalizedTagSql, normalizeTagName } from './tag-state'
 import { albumAddedDateExpression } from './album-added-dates'
 import { createBrowseListening } from './browse-listening'
+import {
+  artistTagMemberships,
+  artistTagsExpression,
+  matchingTagNames,
+  musicTagsExpression,
+  sparseAlbumTags,
+} from './music-tags'
 import {
   albumTrackDurationExpression,
   trackSourcesExpression,
@@ -96,8 +104,14 @@ function trackValueExpression(key: string): SQL | null {
     case 'lastListenedAt':
       return sql`to_jsonb(extract(epoch from ${libraryTrack.lastListenedAt}) * 1000)`
     case 'genre':
-      // A track has no tags of its own; it shows its library album's.
+      return musicTagsExpression(
+        sql`${mediaItem.id}`,
+        sql`${libraryTrack.albumMediaItemId}`,
+      )
+    case 'albumTag':
       return sql`(select jsonb_agg(distinct t.name order by t.name) from media_item_tag mt join tag t on t.id = mt.tag_id where mt.media_item_id = ${libraryTrack.albumMediaItemId} and t.media_type = 'album' and not t.hidden)`
+    case 'artistTag':
+      return artistTagsExpression(sql`${mediaItem.id}`)
     default:
       return null
   }
@@ -106,6 +120,10 @@ function trackValueExpression(key: string): SQL | null {
 function valueExpression(key: string, mediaType: MediaType): SQL {
   const trackValue = mediaType === 'track' ? trackValueExpression(key) : null
   if (trackValue) return trackValue
+  if (mediaType === 'album' && key === 'genre')
+    return musicTagsExpression(sql`${mediaItem.id}`, sql`${mediaItem.id}`)
+  if (mediaType === 'album' && key === 'artistTag')
+    return artistTagsExpression(sql`${mediaItem.id}`)
   if (mediaType === 'album' && key === 'playlist')
     return sql`(select jsonb_agg(p.name order by p.name) from playlist p where p.kind = 'playlist' and p.id in ${albumPlaylistIds})`
   switch (key) {
@@ -141,6 +159,7 @@ function valueExpression(key: string, mediaType: MediaType): SQL {
     case 'writer':
       return sql`(select jsonb_agg(a.name order by c.billing_order, a.name) from media_credit c join artist a on a.id = c.artist_id where c.media_item_id = ${mediaItem.id} and c.role = ${key})`
     case 'genre':
+    case 'albumTag':
     case 'keyword':
       return sql`(select jsonb_agg(distinct t.name order by t.name) from media_item_tag mt join tag t on t.id = mt.tag_id where mt.media_item_id = ${mediaItem.id} and t.media_type = ${mediaItem.mediaType} and not t.hidden)`
     case 'playlist':
@@ -170,7 +189,14 @@ function matchesValue(key: string, value: string, mediaType: MediaType): SQL {
   if (['artist', 'director', 'actor', 'writer'].includes(key)) {
     return sql`exists (select 1 from media_credit c join artist a on a.id = c.artist_id where c.media_item_id = ${mediaItem.id} and c.role = ${key} and lower(a.name) = ${match})`
   }
-  if (key === 'genre' || key === 'keyword') {
+  if ((mediaType === 'album' || mediaType === 'track') && key === 'artistTag') {
+    const names = matchingTagNames(normalizeTagName(value), 'album')
+    return sql`${mediaItem.id} in (
+      select artist_tag.media_item_id from (${artistTagMemberships(true)}) artist_tag
+      where ${normalizedTagSql(sql`artist_tag.name`)} in (${names})
+    )`
+  }
+  if (key === 'genre' || key === 'keyword' || key === 'albumTag') {
     // Resolve merged names once for this library, not once per media/tag pair.
     const name = normalizeTagName(value)
     // A track is matched on the tags of its library album.
@@ -179,18 +205,15 @@ function matchesValue(key: string, value: string, mediaType: MediaType): SQL {
         ? sql`${libraryTrack.albumMediaItemId}`
         : sql`${mediaItem.id}`
     const tagType = mediaType === 'track' ? 'album' : mediaType
-    return sql`${tagged} in (
+    const releaseMatch = sql`coalesce(${tagged} in (
       select mt.media_item_id from media_item_tag mt join tag t on t.id = mt.tag_id
       where t.media_type = ${tagType} and ${normalizedTagSql(sql`t.name`)} in (
-        select ${name}::text
-        union select ${normalizedTagSql(sql`target.name`)}
-          from tag_identity i join tag target on target.id = i.tag_id
-          where i.media_type = ${tagType} and target.media_type = ${tagType} and i.normalized_name = ${name}
-        union select ${normalizedTagSql(sql`target.name`)}
-          from tag_alias a join tag original on original.id = a.source_tag_id join tag target on target.id = a.target_tag_id
-          where original.media_type = ${tagType} and target.media_type = ${tagType} and ${normalizedTagSql(sql`original.name`)} = ${name}
+        ${matchingTagNames(name, tagType)}
       )
-    )`
+    ), false)`
+    if (key !== 'albumTag' && (mediaType === 'album' || mediaType === 'track'))
+      return sql`(${releaseMatch} or (${sparseAlbumTags(tagged)} and ${matchesValue('artistTag', value, mediaType)}))`
+    return releaseMatch
   }
   if (mediaType === 'album' && key === 'playlist')
     return sql`exists (select 1 from playlist p where p.kind = 'playlist' and lower(p.name) = ${match} and p.id in ${albumPlaylistIds})`
@@ -244,6 +267,22 @@ export async function queryBrowseIds(
   if (!sortField)
     throw new ServerError({ statusCode: 422, message: 'Unknown sort field' })
   const conditions: SQL[] = [eq(mediaItem.mediaType, mediaType)]
+  if (query.creatorId) {
+    const role = 'creatorRole' in query ? query.creatorRole : undefined
+    const roles =
+      mediaType === 'film'
+        ? role
+          ? [role]
+          : PersonRoleSchema.options
+        : ['artist']
+    conditions.push(
+      sql`exists (select 1 from ${mediaCredit} where ${and(
+        eq(mediaCredit.mediaItemId, mediaItem.id),
+        eq(mediaCredit.artistId, query.creatorId),
+        inArray(mediaCredit.role, roles),
+      )})`,
+    )
+  }
   if (listening?.condition) conditions.push(listening.condition)
   conditions.push(...(options.conditions ?? []))
   if (!('includeArchived' in query) || query.includeArchived !== 'true')
@@ -438,7 +477,29 @@ function textRows(
   const tagName = options.normalizeTags
     ? normalizedTagSql(sql`t.name`)
     : sql`t.name`
-  if (mediaType === 'track' && key === 'genre')
+  if (
+    (mediaType === 'album' || mediaType === 'track') &&
+    (key === 'genre' || key === 'artistTag')
+  ) {
+    const mediaId = sql`media_item.id`
+    const albumId =
+      mediaType === 'track' ? sql`lt.album_media_item_id` : mediaId
+    const value = options.normalizeTags
+      ? normalizedTagSql(sql`artist_tag.name`)
+      : sql`artist_tag.name`
+    const trackJoin =
+      mediaType === 'track'
+        ? sql`join library_track lt on lt.media_item_id = media_item.id`
+        : sql``
+    const artistSource = sql`select media_item.id, ${value} as value
+      from (${artistTagMemberships()}) artist_tag
+      join media_item on media_item.id = artist_tag.media_item_id ${trackJoin}
+      where ${visible}`
+    if (key === 'artistTag') return artistSource
+    return sql`${textRows('albumTag', mediaType, options)}
+      union all ${artistSource} and ${sparseAlbumTags(albumId)}`
+  }
+  if (mediaType === 'track' && key === 'albumTag')
     return sql`select media_item.id, ${tagName} as value from media_item join library_track lt on lt.media_item_id = media_item.id join media_item_tag mt on mt.media_item_id = lt.album_media_item_id join tag t on t.id = mt.tag_id where ${visible} and t.media_type = 'album' and not t.hidden`
   if (mediaType === 'album' && key === 'playlist')
     return sql`select media_item.id, p.name as value from media_item join (
@@ -451,7 +512,7 @@ function textRows(
       select t.album_media_item_id, pi.playlist_id from track t
       join playlist_item pi on pi.media_item_id = t.track_media_item_id
     ) member on member.id = media_item.id join playlist p on p.id = member.playlist_id where ${visible} and p.kind = 'playlist'`
-  if (key === 'genre' || key === 'keyword')
+  if (key === 'genre' || key === 'keyword' || key === 'albumTag')
     return sql`select media_item.id, ${tagName} as value from media_item join media_item_tag mt on mt.media_item_id = media_item.id join tag t on t.id = mt.tag_id where ${visible} and t.media_type = media_item.media_type and not t.hidden`
   if (key === 'playlist' || key === 'collection')
     return sql`select media_item.id, p.name as value from media_item join playlist_item pi on pi.media_item_id = media_item.id join playlist p on p.id = pi.playlist_id where ${visible} and p.kind = ${key}`

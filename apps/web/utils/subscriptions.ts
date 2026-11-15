@@ -9,6 +9,7 @@ import {
   SubscriptionItemQuerySchema,
   SubscriptionSearchFieldsSchema,
   SubscriptionSortSchema,
+  SubscriptionSourceIdSchema,
   SubscriptionTypeSchema,
   subscriptionTypeLabels,
   type SubscriptionItem,
@@ -43,6 +44,7 @@ export type SubscriptionSearchFields = 'title' | 'all'
 /** Browse page state, read from the URL search parameters. */
 export type SubscriptionBrowseState = {
   q: string
+  sourceId?: string
   fields: SubscriptionSearchFields
   filters: BrowseFilter[]
   ranges: BrowseRange[]
@@ -69,9 +71,11 @@ export function parseSubscriptionBrowseState(
 ): SubscriptionBrowseState {
   const sort = SubscriptionSortSchema.safeParse(params.get('sortBy'))
   const fields = SubscriptionSearchFieldsSchema.safeParse(params.get('fields'))
+  const source = SubscriptionSourceIdSchema.safeParse(params.get('sourceId'))
   const columns = params.get('columns')
   return {
     q: (params.get('q') ?? '').trim().slice(0, 200),
+    ...(source.success ? { sourceId: source.data } : {}),
     fields: fields.success ? fields.data : 'all',
     filters: parseSubscriptionFilters(params.get('filters')),
     ranges: parseSubscriptionRanges(params.get('ranges')),
@@ -121,6 +125,7 @@ export function subscriptionBrowseQuery(state: SubscriptionBrowseState) {
     params.set('q', state.q)
     params.set('fields', state.fields)
   }
+  if (state.sourceId) params.set('sourceId', state.sourceId)
   params.set('filters', JSON.stringify(state.filters))
   params.set('ranges', JSON.stringify(state.ranges))
   params.set('sortBy', sortBy)
@@ -149,9 +154,11 @@ export function savedSubscriptionSearch(params: URLSearchParams) {
 }
 
 export function hasSubscriptionFilters(
-  state: Pick<SubscriptionBrowseState, 'q' | 'filters' | 'ranges'>,
+  state: Pick<SubscriptionBrowseState, 'q' | 'filters' | 'ranges' | 'sourceId'>,
 ) {
-  return Boolean(state.q || state.filters.length || state.ranges.length)
+  return Boolean(
+    state.q || state.sourceId || state.filters.length || state.ranges.length,
+  )
 }
 
 export function withSubscriptionFilter(
@@ -170,8 +177,8 @@ export function subscriptionsHref(filters: BrowseFilter[]) {
 }
 
 /** Browse page filtered to one channel or podcast. */
-export function subscriptionSourceHref(title: string) {
-  return subscriptionsHref([{ field: 'source', value: title }])
+export function subscriptionSourceHref(id: string) {
+  return `${subscriptionsPath}?${new URLSearchParams({ sourceId: id })}`
 }
 
 export function subscriptionTypeFilter(type: SubscriptionType): BrowseFilter {

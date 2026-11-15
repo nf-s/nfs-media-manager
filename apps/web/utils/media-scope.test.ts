@@ -33,6 +33,19 @@ test('scope defaults to films and preserves existing deep-link parameters', () =
   )
 })
 
+test('creator and channel pages retain their own library context', () => {
+  assert.equal(libraryViewForPath('/artists/one', null), 'album')
+  assert.equal(libraryViewForPath('/artists/one', 'track'), 'track')
+  assert.equal(libraryViewForPath('/people/one', 'album'), 'film')
+  assert.equal(libraryViewForPath('/channels/one', 'film'), 'subscription')
+  assert.equal(switchLibraryHref('/artists/one', '', 'film'), '/films')
+  assert.equal(switchLibraryHref('/people/one', '', 'album'), '/albums')
+  assert.equal(
+    switchLibraryHref('/artists/one', 'mediaType=track', 'album'),
+    '/artists/one?mediaType=album',
+  )
+})
+
 test('route-implied scope is consistent across library details and album import entry points', () => {
   for (const path of [
     '/albums',

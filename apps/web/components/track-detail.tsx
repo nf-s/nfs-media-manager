@@ -1,4 +1,6 @@
 'use client'
+import { TrackArtistLinks } from './creator-links'
+import { musicDisplayTags } from '@repo/schemas/music-tags'
 
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
@@ -256,7 +258,9 @@ export default function TrackDetailView({
   const view = useDetailView()
   const activeTab = view.params.get('tab')
   const tab =
-    activeTab === 'listening' || activeTab === 'sources'
+    activeTab === 'listening' ||
+    activeTab === 'sources' ||
+    activeTab === 'playlists'
       ? activeTab
       : 'overview'
   function setTab(next: string) {
@@ -282,6 +286,9 @@ export default function TrackDetailView({
       </p>
     )
   const item = detail.data
+  const fallbackArtistTags = musicDisplayTags(item.albumTags, item.artistTags)
+    .filter((tag) => tag.source === 'artist')
+    .map((tag) => tag.name)
   function openResolvedTrack(targetId: string) {
     if (onMerged) onMerged(targetId)
     else window.location.assign(`/tracks/${encodeURIComponent(targetId)}`)
@@ -301,11 +308,7 @@ export default function TrackDetailView({
           <h1 className="break-words">
             {item.title} <ServiceIconLinks links={trackServiceLinks(item)} />
           </h1>
-          <FilterValues
-            field="artist"
-            values={item.artists}
-            onFilter={onFilter}
-          />
+          <TrackArtistLinks track={item} pills />
           {item.album ? (
             <div className="inline-flex items-center gap-1">
               <AlbumReferencePlayButton
@@ -338,6 +341,7 @@ export default function TrackDetailView({
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList aria-label="Track details">
           <TabsTrigger value="overview">Overview</TabsTrigger>
+          <TabsTrigger value="playlists">Playlists</TabsTrigger>
           <TabsTrigger value="listening">Listening</TabsTrigger>
           <TabsTrigger value="sources">Sources</TabsTrigger>
         </TabsList>
@@ -396,25 +400,34 @@ export default function TrackDetailView({
                 </button>
               </div>
             </section>
-            <section>
-              <h2>Playlists</h2>
-              <PlaylistValues playlists={item.playlists} />
-              <TrackPlaylistAdditions
-                track={item}
-                onResolved={openResolvedTrack}
-              />
-            </section>
             {item.albumTags.length > 0 && (
               <section>
                 <h2>Album tags</h2>
                 <FilterValues
-                  field="genre"
+                  field="albumTag"
                   values={item.albumTags}
                   onFilter={onFilter}
                 />
               </section>
             )}
+            {fallbackArtistTags.length > 0 && (
+              <section>
+                <h2>Artist tags</h2>
+                <FilterValues
+                  field="artistTag"
+                  values={fallbackArtistTags}
+                  onFilter={onFilter}
+                />
+              </section>
+            )}
           </div>
+        </TabsContent>
+        <TabsContent value="playlists">
+          <PlaylistValues playlists={item.playlists} />
+          {item.playlists.length === 0 && (
+            <p className="quiet">No playlist memberships.</p>
+          )}
+          <TrackPlaylistAdditions track={item} onResolved={openResolvedTrack} />
         </TabsContent>
         <TabsContent value="listening">
           <TrackListening listening={item.listening} />

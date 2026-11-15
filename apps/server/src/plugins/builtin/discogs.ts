@@ -38,7 +38,7 @@ const SearchSchema = z.object({
   ),
 })
 
-async function discogsRequest(
+export async function discogsRequest(
   context: MediaPluginTestContext,
   path: string,
   params: Record<string, string> = {},
@@ -153,10 +153,16 @@ export const discogsPlugin: MediaProviderPlugin = {
     localWorkerDefaultMode: 'local',
     localWorker: {
       origin: DISCOGS_API_ORIGIN,
-      paths: ['/database/search', '/masters/{id}', '/releases/{id}'],
+      paths: [
+        '/database/search',
+        '/masters/{id}',
+        '/releases/{id}',
+        '/artists/{id}',
+      ],
       credentialHeaders: ['authorization', 'user-agent'],
       queryParameters: [
         'type',
+        'q',
         'barcode',
         'artist',
         'release_title',

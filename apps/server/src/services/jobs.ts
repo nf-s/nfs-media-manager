@@ -24,6 +24,10 @@ import {
 } from '@repo/schemas/job'
 import type { JsonValue } from '@repo/schemas/common'
 import {
+  ARTIST_ENRICHMENT_TASK,
+  ArtistProfileProviderSchema,
+} from '@repo/schemas/artist-profiles'
+import {
   LASTFM_SCROBBLE_SYNC_TASK,
   LASTFM_SPOTIFY_SEARCH_TASK,
 } from '@repo/schemas/lastfm'
@@ -67,6 +71,8 @@ import { importMediaTypeExpression } from '@/lib/import-media-type'
 import { createDatabaseReadCache } from '@/lib/database-read-cache'
 import { getScrapePlugin, listLoadedScrapePlugins } from '@/plugins/registry'
 import {
+  artistProviderCurrentState,
+  artistProviderSnapshot,
   libraryImport,
   providerCurrentState,
   scrapeJob,
@@ -121,6 +127,10 @@ import {
   prepareSpotifyTrackPlaylistAddition,
   runSpotifyTrackPlaylistAddition,
 } from '@/services/spotify-track-playlist-additions'
+import {
+  prepareArtistEnrichment,
+  runArtistEnrichment,
+} from '@/services/artist-enrichment'
 
 let workerRunning = false
 
@@ -911,20 +921,23 @@ async function processJob(
   })
 }
 
-// Account-level work has a provider and a task name instead of a media item.
+// Task work has a provider and a task name instead of a media item.
 // It still runs through the provider's dispatcher, cooldowns and cancellation.
 export type TaskJobResult = LastfmSyncJobResult & {
+  failureClassification?: 'not-found' | 'ambiguous'
   metadata?: Record<string, JsonValue>
   options?: Record<string, JsonValue>
+  persist?(tx: JobTransaction): Promise<void>
 }
 
 export interface TaskJobContext extends LastfmSyncJobContext {
+  jobId: string
   /** Records how far the job has read, in `options.progress`. */
   progress(progress: JobProgress): Promise<void>
 }
 
 type TaskJobDefinition = {
-  provider: string
+  provider: string | ((options: Record<string, JsonValue>) => string | null)
   prepare(
     userId: string | null,
     options: Record<string, JsonValue>,
@@ -936,6 +949,17 @@ type TaskJobDefinition = {
 }
 
 const taskJobs = new Map<string, TaskJobDefinition>([
+  [
+    ARTIST_ENRICHMENT_TASK,
+    {
+      provider: (options) => {
+        const provider = ArtistProfileProviderSchema.safeParse(options.provider)
+        return provider.success ? provider.data : null
+      },
+      prepare: prepareArtistEnrichment,
+      run: runArtistEnrichment,
+    },
+  ],
   [
     LASTFM_SCROBBLE_SYNC_TASK,
     {
@@ -1011,6 +1035,15 @@ const taskJobs = new Map<string, TaskJobDefinition>([
   ],
 ])
 
+function taskProvider(
+  definition: TaskJobDefinition,
+  options: Record<string, JsonValue>,
+) {
+  return typeof definition.provider === 'string'
+    ? definition.provider
+    : definition.provider(options)
+}
+
 async function insertTaskJob(
   tx: JobTransaction,
   provider: string,
@@ -1081,7 +1114,11 @@ export async function createTaskJob(
   const definition = taskJobs.get(task)
   if (!definition)
     throw new ServerError({ statusCode: 422, message: 'Unknown job task' })
-  const safety = await getProviderSafety(definition.provider)
+  const input = scheduling.taskOptions ?? {}
+  const provider = taskProvider(definition, input)
+  if (!provider)
+    throw new ServerError({ statusCode: 422, message: 'Invalid task provider' })
+  const safety = await getProviderSafety(provider)
   if (safety.halted || safety.cooldownUntil)
     throw new ServerError({
       statusCode: 429,
@@ -1089,10 +1126,11 @@ export async function createTaskJob(
         ? 'Provider requests are halted after access denial'
         : `Provider is cooling down until ${safety.cooldownUntil}`,
     })
-  const prepared = await definition.prepare(
-    userId,
-    scheduling.taskOptions ?? {},
-  )
+  const prepared = await definition.prepare(userId, input)
+  const artistId =
+    task === ARTIST_ENRICHMENT_TASK && typeof prepared.artistId === 'string'
+      ? prepared.artistId
+      : null
   const batchId = scheduling.taskOptions?.batchId
   const taskOptions = {
     ...prepared,
@@ -1109,7 +1147,12 @@ export async function createTaskJob(
         .from(scrapeJob)
         .where(eq(scrapeJob.id, scheduling.retryOf))
         .for('update')
-      if (!job || getJobTask(job.options) !== task)
+      if (
+        !job ||
+        job.provider !== provider ||
+        getJobTask(job.options) !== task ||
+        (artistId !== null && job.options.artistId !== artistId)
+      )
         throw new ServerError({ statusCode: 404, message: 'Job not found' })
       original = job
       if (typeof original.options.retryJobId === 'string') {
@@ -1138,11 +1181,11 @@ export async function createTaskJob(
         await cancelActiveJobInTransaction(tx, original.id, userId, 'running')
     }
     const [active] = await tx
-      .select({ id: scrapeJob.id })
+      .select({ id: scrapeJob.id, options: scrapeJob.options })
       .from(scrapeJob)
       .where(
         and(
-          eq(scrapeJob.provider, definition.provider),
+          eq(scrapeJob.provider, provider),
           inArray(scrapeJob.status, ['queued', 'running']),
           sql`${scrapeJob.options}->>'task' = ${task}`,
           typeof prepared.groupKey === 'string'
@@ -1151,7 +1194,48 @@ export async function createTaskJob(
         ),
       )
       .limit(1)
+    // If a sibling finished before the active-job read, its profile is visible
+    // here. If it is still active, the branch below won't enqueue a second job.
+    if (original && artistId !== null) {
+      const [newerProfile] = await tx
+        .select({ id: artistProviderSnapshot.id })
+        .from(artistProviderCurrentState)
+        .innerJoin(
+          artistProviderSnapshot,
+          eq(
+            artistProviderSnapshot.id,
+            artistProviderCurrentState.latestSnapshotId,
+          ),
+        )
+        .where(
+          and(
+            eq(artistProviderCurrentState.artistId, artistId),
+            eq(
+              artistProviderCurrentState.provider,
+              ArtistProfileProviderSchema.parse(provider),
+            ),
+            sql`${artistProviderSnapshot.createdAt} > (
+            select ${scrapeJob.createdAt} from ${scrapeJob} where ${scrapeJob.id} = ${original.id}
+          )`,
+          ),
+        )
+      if (newerProfile)
+        throw new ServerError({
+          statusCode: 409,
+          message: 'A newer artist profile has already been saved.',
+        })
+    }
     if (active) {
+      if (
+        task === ARTIST_ENRICHMENT_TASK &&
+        typeof prepared.providerArtistId === 'string' &&
+        prepared.providerArtistId !== active.options.providerArtistId
+      )
+        throw new ServerError({
+          statusCode: 409,
+          message:
+            'An artist enrichment job for this provider is already queued or running.',
+        })
       if (scheduling.skipActive)
         throw new ServerError({
           statusCode: 409,
@@ -1176,10 +1260,10 @@ export async function createTaskJob(
     }
     const id = await insertTaskJob(
       tx,
-      definition.provider,
+      provider,
       { task, ...taskOptions, ...(original ? { retryOf: original.id } : {}) },
       userId,
-      `Queued for ${definition.provider}`,
+      `Queued for ${provider}`,
     )
     if (original)
       await linkCreatedJobRetry(
@@ -1192,8 +1276,8 @@ export async function createTaskJob(
     created = true
     return id
   })
-  if (!scheduling.scheduled) await resumeJobProvider(definition.provider)
-  else if (created) await wakeJobProvider(definition.provider)
+  if (!scheduling.scheduled) await resumeJobProvider(provider)
+  else if (created) await wakeJobProvider(provider)
   const job = await getJobRecord(jobId)
   if (!job)
     throw new ServerError({ statusCode: 500, message: 'Failed to create job' })
@@ -1229,7 +1313,12 @@ async function processTaskJob(
     })
 
   const definition = taskJobs.get(task)
-  if (!definition || !plugin || definition.provider !== nextJob.provider) {
+  if (
+    !definition ||
+    !plugin ||
+    taskProvider(definition, nextJob.options) !== nextJob.provider ||
+    (task === ARTIST_ENRICHMENT_TASK && nextJob.items.length !== 0)
+  ) {
     await finish('failed', 'error', 'No handler is loaded for this job task.')
     return
   }
@@ -1262,6 +1351,7 @@ async function processTaskJob(
 
   const result = await definition.run(
     {
+      jobId: nextJob.id,
       assertActive,
       isActive: async () => {
         try {
@@ -1300,7 +1390,11 @@ async function processTaskJob(
     await finish('cancelled', 'warn', stoppedMessage)
     return
   }
-  if (result.outcome === 'failed') {
+  const fail = async (
+    error: unknown,
+    metadata: Record<string, JsonValue> = {},
+    classification?: TaskJobResult['failureClassification'],
+  ) => {
     const providerSecrets = await db.query.providerSecret.findMany({
       where: (table, operators) =>
         operators.eq(table.provider, plugin.manifest.id),
@@ -1312,14 +1406,23 @@ async function processTaskJob(
         plugin.manifest.secrets,
       ),
     )
-    const details = jobErrorDetails(result.error, credentials)
-    const evidence = providerResponseEvidence(result.error, credentials)
+    const details = jobErrorDetails(error, credentials)
+    const evidence = providerResponseEvidence(error, credentials)
+    const diagnostics = Array.isArray(metadata.diagnostics)
+      ? [...metadata.diagnostics, ...evidence]
+      : evidence
     const handled = await finish(
       'failed',
       'error',
       `${details.name}: ${details.message}`.slice(0, 1000),
-      { error: details, ...(evidence.length ? { diagnostics: evidence } : {}) },
+      {
+        ...metadata,
+        error: details,
+        ...(diagnostics.length ? { diagnostics } : {}),
+        ...(classification ? { classification } : {}),
+      },
       async (tx) => {
+        if (classification) return
         execution.failures += 1
         const safety = await getProviderSafety(plugin.manifest.id)
         if (
@@ -1339,8 +1442,11 @@ async function processTaskJob(
         }
       },
     )
-    if (handled)
+    if (handled && !classification)
       await control?.recordOutcome(execution.stopped ? 'stopped' : 'failure')
+  }
+  if (result.outcome === 'failed') {
+    await fail(result.error, result.metadata, result.failureClassification)
     return
   }
 
@@ -1351,6 +1457,7 @@ async function processTaskJob(
     result.message,
     result.metadata ?? {},
     async (tx) => {
+      await result.persist?.(tx)
       if (result.options)
         await tx
           .update(scrapeJob)
@@ -1375,7 +1482,11 @@ async function processTaskJob(
       )
       continued = true
     },
-  )
+  ).catch(async (error: unknown) => {
+    if (!result.persist) throw error
+    await fail(new Error('Could not save the job result.'))
+    return false
+  })
   if (!saved) return
   if (!execution.stopped) execution.failures = 0
   await control?.recordOutcome('success')
@@ -1393,6 +1504,11 @@ export async function createJob(
   } = {},
 ): Promise<Job> {
   const parsedInput = CreateJobSchema.parse(input)
+  if (parsedInput.options.task === ARTIST_ENRICHMENT_TASK)
+    throw new ServerError({
+      statusCode: 422,
+      message: 'Queue artist enrichment from the artist endpoint.',
+    })
   const plugin = await getScrapePlugin(parsedInput.provider)
 
   if (!plugin?.scrapeMediaItem) {
@@ -1704,6 +1820,10 @@ export async function listJobs(
             and history_item.media_item_id = ${query.mediaItemId}
         ) or ${scrapeJob.scope}->'mediaItemIds' @> ${JSON.stringify([query.mediaItemId])}::jsonb)`
       : undefined,
+    query.artistId
+      ? sql`(${scrapeJob.options}->>'task' = ${ARTIST_ENRICHMENT_TASK}
+        and ${scrapeJob.options}->>'artistId' = ${query.artistId})`
+      : undefined,
     query.batchId
       ? sql`${scrapeJob.options}->>'batchId' = ${query.batchId}`
       : undefined,
@@ -1730,6 +1850,7 @@ export async function listJobs(
     offset: (query.page - 1) * query.size,
     orderBy: (table, operators) => {
       const title = sql`case ${table.options}->>'task'
+        when ${ARTIST_ENRICHMENT_TASK} then concat('Artist enrichment · ', ${table.options}->>'artistName')
         when ${LASTFM_SCROBBLE_SYNC_TASK} then 'Scrobble sync'
         when ${YOUTUBE_SYNC_TASK} then 'YouTube subscription sync'
         when ${SPOTIFY_PODCAST_SYNC_TASK} then 'Spotify podcast sync'

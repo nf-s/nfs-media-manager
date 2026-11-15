@@ -73,6 +73,7 @@ function track(id: string, title: string, spotifyTrackId: string) {
     artworkUrl: null,
     releaseDate: null,
     artists: ['Example artist'],
+    artistCredits: [{ id: 'example-artist', name: 'Example artist' }],
     albumName: 'Spotify album',
     album: id === 'track-1' ? { id: 'album-1', title: 'Fixture album' } : null,
     albumLinkStrategy: null,
@@ -258,6 +259,10 @@ test('the drawer lists entries in playlist order in the shared table', async () 
   assert.deepEqual(linkTargets(table, 'Opening track'), [
     { kind: 'playlist', id: 'playlist-1' },
     { kind: 'track', id: 'track-1' },
+  ])
+  assert.deepEqual(linkTargets(table, 'Example artist'), [
+    { kind: 'playlist', id: 'playlist-1' },
+    { kind: 'artist', id: 'example-artist' },
   ])
   assert.deepEqual(linkTargets(table, 'Spotify album').at(-1), {
     kind: 'album',

@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   item: vi.fn(),
   facets: vi.fn(),
   sources: vi.fn(),
+  source: vi.fn(),
   status: vi.fn(),
   queue: vi.fn(),
   schedule: vi.fn(),
@@ -21,6 +22,7 @@ vi.mock('@/services/subscription-library', () => ({
   getSubscriptionItem: mocks.item,
   listSubscriptionFacets: mocks.facets,
   listSubscriptionSources: mocks.sources,
+  getSubscriptionSource: mocks.source,
 }))
 vi.mock('@/services/subscription-sync', () => ({
   getSubscriptionSyncStatus: mocks.status,
@@ -73,6 +75,7 @@ describe('subscriptions API', () => {
       ['GET', '/fields', undefined],
       ['GET', '/facets?q=orbit', undefined],
       ['GET', '/sources', undefined],
+      ['GET', `/sources/${EPISODE}`, undefined],
       ['GET', `/${EPISODE}`, undefined],
       ['GET', '/sync/youtube', undefined],
       ['POST', '/sync/youtube', {}],
@@ -93,6 +96,7 @@ describe('subscriptions API', () => {
       { sortBy: 'dateAdded' },
       { direction: 'up' },
       { fields: 'description' },
+      { sourceId: 'invalid' },
       { size: '101' },
       { page: '0' },
     ]
@@ -100,6 +104,8 @@ describe('subscriptions API', () => {
       expect((await send('GET', query(params))).status).toBe(422)
     expect((await send('GET', '/facets?limitPerField=51')).status).toBe(422)
     expect((await send('GET', '/sources?type=film')).status).toBe(422)
+    expect((await send('GET', '/sources/invalid')).status).toBe(422)
+    expect((await send('GET', `/sources/${EPISODE}?size=101`)).status).toBe(422)
     expect((await send('GET', '/not-an-item-id')).status).toBe(422)
     expect((await send('GET', '/sync/lastfm')).status).toBe(422)
     for (const body of [{ schedule: 'hourly' }, { schedule: 'daily', x: 1 }])
@@ -126,6 +132,25 @@ describe('subscriptions API', () => {
       expect(fn).not.toHaveBeenCalled()
   })
 
+  it('passes the source ID and validated item query to channel detail', async () => {
+    mocks.source.mockResolvedValue({
+      source: { id: EPISODE },
+      items: { items: [] },
+    })
+    expect(
+      (await send('GET', `/sources/${EPISODE}?page=2&size=12&q=orbit`)).status,
+    ).toBe(200)
+    expect(mocks.source).toHaveBeenCalledWith(EPISODE, {
+      q: 'orbit',
+      fields: 'all',
+      direction: 'desc',
+      page: 2,
+      size: 12,
+      filters: [],
+      ranges: [],
+    })
+  })
+
   it('passes parsed browse queries to the library service', async () => {
     const page = { items: [], totalCount: 0, page: 2, size: 100, pageCount: 0 }
     mocks.items.mockResolvedValue(page)
@@ -135,6 +160,7 @@ describe('subscriptions API', () => {
       'GET',
       query({
         q: 'orbit',
+        sourceId: EPISODE,
         filters: JSON.stringify(filters),
         ranges: JSON.stringify(ranges),
         sortBy: 'viewCount',
@@ -147,6 +173,7 @@ describe('subscriptions API', () => {
     expect(await response.json()).toMatchObject({ data: page })
     expect(mocks.items).toHaveBeenCalledWith({
       q: 'orbit',
+      sourceId: EPISODE,
       fields: 'all',
       filters,
       ranges: [{ ...ranges[0], includeMissing: false }],

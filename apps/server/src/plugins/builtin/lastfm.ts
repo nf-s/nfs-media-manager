@@ -4,6 +4,7 @@ import {
   ProviderRequestError,
   type MediaProviderPlugin,
   type MediaPluginScrapeContext,
+  type MediaPluginTestContext,
 } from '@repo/media-plugin-sdk'
 import { z } from 'zod'
 import {
@@ -54,9 +55,14 @@ function lastFmLookup(
   return { artist: names.artist, album: names.title }
 }
 
-async function requestLastFm(
-  context: MediaPluginScrapeContext,
-  method: 'album.getInfo' | 'album.getTopTags',
+export async function requestLastFm(
+  context: MediaPluginTestContext &
+    Pick<MediaPluginScrapeContext, 'recordDiagnostic'>,
+  method:
+    | 'album.getInfo'
+    | 'album.getTopTags'
+    | 'artist.search'
+    | 'artist.getInfo',
   params: Record<string, string>,
 ) {
   const url = new URL('https://ws.audioscrobbler.com/2.0/')
@@ -64,7 +70,7 @@ async function requestLastFm(
     method,
     format: 'json',
     api_key: albumSecret(context, 'apiKey', 'Last.fm'),
-    autocorrect: '1',
+    ...(method.startsWith('album.') ? { autocorrect: '1' } : {}),
     ...params,
   }).toString()
   const payload = await requestAlbumJson(
@@ -84,6 +90,12 @@ async function requestLastFm(
       /^album not found\.?$/i.test(error.message.trim())
     )
       throw new ProviderItemNotFoundError('Last.fm album not found.')
+    if (
+      method === 'artist.getInfo' &&
+      error.error === 6 &&
+      /^artist not found\.?$/i.test(error.message.trim())
+    )
+      throw new ProviderItemNotFoundError('Last.fm artist not found.')
     throw new Error('Last.fm returned a service error.')
   }
   return payload

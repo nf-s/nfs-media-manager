@@ -3,16 +3,11 @@ import type { PluginNormalizedResult } from '@repo/media-plugin-sdk'
 import { db } from '@/lib/db'
 import { createStableId } from '@/lib/media-utils'
 import { mediaItemTag, tag, tagIdentity, tagOccurrence } from '@/schemas/db'
+import { normalizeTagName, tagDisplayName } from '@repo/schemas/tags'
 
 export type TagDatabase = Parameters<Parameters<typeof db.transaction>[0]>[0]
 
-export function normalizeTagName(name: string): string {
-  return tagDisplayName(name).toLowerCase()
-}
-
-export function tagDisplayName(name: string): string {
-  return name.normalize('NFC').replace(/\s+/gu, ' ').trim()
-}
+export { normalizeTagName, tagDisplayName } from '@repo/schemas/tags'
 
 export { normalizedTagSql } from '@/lib/tag-sql'
 

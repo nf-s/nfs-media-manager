@@ -168,13 +168,21 @@ test('relevance applies only with a search and the API query follows the applied
   )
 })
 
-test('filters are added once and source links filter the browse page', () => {
+test('filters are added once and channel links filter exact source IDs', () => {
   const filter = { field: 'source', value: 'Example Cooking' }
   const once = withSubscriptionFilter([], filter)
   assert.equal(withSubscriptionFilter(once, filter), once)
+  const link = new URL(subscriptionSourceHref(channelId), 'http://localhost')
+  assert.equal(link.pathname, '/subscriptions')
+  assert.equal(link.searchParams.get('sourceId'), channelId)
+  const state = parseSubscriptionBrowseState(link.searchParams)
+  assert.equal(state.sourceId, channelId)
+  assert.ok(hasSubscriptionFilters(state))
+  assert.equal(subscriptionBrowseQuery(state).params.get('sourceId'), channelId)
   assert.equal(
-    subscriptionSourceHref('Example Cooking'),
-    `/subscriptions?${new URLSearchParams({ filters: JSON.stringify([filter]) })}`,
+    parseSubscriptionBrowseState(new URLSearchParams('sourceId=invalid'))
+      .sourceId,
+    undefined,
   )
 })
 

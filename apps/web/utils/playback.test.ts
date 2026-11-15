@@ -25,9 +25,9 @@ const album = {
   title: 'Fixture album',
   artworkUrl: null,
   credits: [
-    { name: 'First artist', role: 'artist', billingOrder: 0 },
-    { name: 'A producer', role: 'producer', billingOrder: 1 },
-    { name: 'Second artist', role: 'artist', billingOrder: 2 },
+    { id: null, name: 'First artist', role: 'artist', billingOrder: 0 },
+    { id: null, name: 'A producer', role: 'producer', billingOrder: 1 },
+    { id: null, name: 'Second artist', role: 'artist', billingOrder: 2 },
   ],
   trackCount: 3,
   spotifyUrl: `https://open.spotify.com/album/${albumId}`,

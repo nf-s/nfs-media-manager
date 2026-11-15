@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   findFirst: vi.fn(),
   queryBrowseIds: vi.fn(),
   tagOccurrences: vi.fn(),
+  artistTags: vi.fn(),
 }))
 
 vi.mock('@/lib/db', () => ({
@@ -28,6 +29,9 @@ vi.mock('@/services/album-provider-details', () => ({
 }))
 vi.mock('@/services/album-playlists', () => ({
   albumTrackPlaylistNames: vi.fn(async () => new Map()),
+}))
+vi.mock('@/services/music-tags', () => ({
+  loadArtistTags: mocks.artistTags,
 }))
 vi.mock('@/services/stored-trailers', () => ({
   withStoredTrailerLinks: vi.fn(),
@@ -286,6 +290,9 @@ describe('album serializer RYM rating links', () => {
       }
       mocks.findMany.mockResolvedValue([record])
       mocks.findFirst.mockResolvedValue(record)
+      mocks.artistTags.mockResolvedValue(
+        new Map([[record.id, ['Electronica']]]),
+      )
       mocks.tagOccurrences.mockResolvedValue([
         { mediaItemId: record.id, tagId: 'tag-house' },
       ])
@@ -301,6 +308,7 @@ describe('album serializer RYM rating links', () => {
       expect(item?.metadata?.browse).toEqual(metadata.browse)
       expect(item?.links[0]).toEqual(ratingLink)
       expect(item?.links).toContainEqual(legacyLink)
+      expect(item?.artistTags).toEqual(['Electronica'])
       // The Rate Your Music genre leads; the year tag comes last.
       expect(item?.tags.map((entry) => entry.name)).toEqual([
         'House',

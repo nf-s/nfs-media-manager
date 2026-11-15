@@ -19,6 +19,7 @@ const trackImportPaths = [
 const trackUnsupportedPaths = ['/tags', '/jobs', '/providers']
 const subscriptionPaths = [
   '/subscriptions',
+  '/channels',
   '/imports/youtube',
   '/imports/spotify-podcasts',
 ]
@@ -35,6 +36,7 @@ export function mediaScope(value: string | null): MediaScope {
 function pathMediaScope(path: string): MediaScope | null {
   if (
     isUnder(path, '/albums') ||
+    isUnder(path, '/artists') ||
     trackViewPaths.some((root) => isUnder(path, root)) ||
     path === '/imports/albums' ||
     path === '/imports/spotify' ||
@@ -42,7 +44,12 @@ function pathMediaScope(path: string): MediaScope | null {
     path === '/imports/lastfm'
   )
     return 'album'
-  if (isUnder(path, '/films') || isUnder(path, '/collections')) return 'film'
+  if (
+    isUnder(path, '/films') ||
+    isUnder(path, '/collections') ||
+    isUnder(path, '/people')
+  )
+    return 'film'
   return null
 }
 
@@ -70,6 +77,7 @@ export function libraryViewForPath(
   value: string | null,
 ): LibraryView {
   if (isUnder(path, '/playlists') && value === 'album') return 'album'
+  if (isUnder(path, '/artists') && value === 'track') return 'track'
   return trackViewPaths.some((root) => isUnder(path, root)) ||
     (value === 'track' &&
       (isUnder(path, '/imports') ||
@@ -117,9 +125,15 @@ export function switchMediaScopeHref(
     return `${path}${current.size ? `?${current}` : ''}`
 
   if (
-    ['/albums', '/films', '/collections', '/subscriptions'].some((root) =>
-      isUnder(path, root),
-    )
+    [
+      '/albums',
+      '/films',
+      '/collections',
+      '/subscriptions',
+      '/artists',
+      '/people',
+      '/channels',
+    ].some((root) => isUnder(path, root))
   )
     return libraryHome(mediaType)
 
@@ -149,6 +163,8 @@ export function switchLibraryHref(
   const current = new URLSearchParams(search)
   const shown = libraryViewForPath(path, current.get('mediaType'))
   if (shown === view) return `${path}${current.size ? `?${current}` : ''}`
+  if (isUnder(path, '/artists') && (view === 'album' || view === 'track'))
+    return scopedHref(`${path}${current.size ? `?${current}` : ''}`, view)
   if (isUnder(path, '/playlists'))
     return view === 'album' || view === 'track'
       ? scopedHref(`${path}${current.size ? `?${current}` : ''}`, view)

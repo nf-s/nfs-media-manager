@@ -19,6 +19,11 @@ import {
   TableState,
 } from '@repo/ui/components/ui/table'
 import { useConfig } from './providers'
+import { DetailLink } from './detail-link'
+import {
+  replaceWorkspaceUrl,
+  useDetailInspector,
+} from './detail-inspector-context'
 import { SourceAvatar } from './subscription-item-details'
 import { fetchApiData } from '@/utils/api'
 import {
@@ -61,33 +66,35 @@ function replaceParams(updates: Record<string, string | null>) {
     if (value) params.set(key, value)
     else params.delete(key)
   }
-  window.history.replaceState(
-    null,
-    '',
+  replaceWorkspaceUrl(
     `${window.location.pathname}${params.size ? `?${params}` : ''}`,
+    true,
   )
 }
 
 function SourceRow({
   source,
   visible,
+  selected,
 }: {
   source: SubscriptionSource
   visible: (key: string) => boolean
+  selected: boolean
 }) {
   return (
-    <TableRow>
+    <TableRow data-selected={selected || undefined}>
       {visible('title') && (
         <TableCell>
           <div className="secondary-cell-actions">
             <SourceAvatar src={source.thumbnailUrl} />
             <SecondaryCell text={source.title}>
-              <Link
-                href={subscriptionSourceHref(source.title)}
-                title={`Browse ${source.title}`}
+              <DetailLink
+                kind="channel"
+                id={source.id}
+                className="table-title hover:underline"
               >
                 {source.title}
-              </Link>
+              </DetailLink>
             </SecondaryCell>
           </div>
         </TableCell>
@@ -101,7 +108,13 @@ function SourceRow({
             details={!source.historyComplete ? 'Reading history' : undefined}
             label={`History for ${source.title}`}
           >
-            {source.storedItems.toLocaleString()}
+            <Link
+              href={subscriptionSourceHref(source.id)}
+              title={`Filter subscriptions by ${source.title}`}
+              aria-label={`Filter subscriptions by ${source.title}`}
+            >
+              {source.storedItems.toLocaleString()}
+            </Link>
           </SecondaryCell>
         </TableCell>
       )}
@@ -160,6 +173,9 @@ export default function SubscriptionChannels() {
     subscriptionSourceColumns,
   )
   const search = useSearchParams()
+  const inspector = useDetailInspector()
+  const selectedId =
+    inspector?.root?.kind === 'channel' ? inspector.root.id : null
   const sources = useSubscriptionSources()
   const sortBy = subscriptionSourceSort(search.get('sortBy'))
   const direction = search.get('direction') === 'desc' ? 'desc' : 'asc'
@@ -324,6 +340,7 @@ export default function SubscriptionChannels() {
                 key={source.id}
                 source={source}
                 visible={columns.visible}
+                selected={source.id === selectedId}
               />
             ))}
           </TableBody>

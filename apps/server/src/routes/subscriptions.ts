@@ -9,7 +9,9 @@ import {
   SubscriptionItemParamsSchema,
   SubscriptionItemQuerySchema,
   SubscriptionItemSchema,
+  SubscriptionSourceDetailSchema,
   SubscriptionSourceListSchema,
+  SubscriptionSourceParamsSchema,
   SubscriptionSourceQuerySchema,
   SubscriptionSyncInputSchema,
   SubscriptionSyncParamsSchema,
@@ -30,6 +32,7 @@ import { generateJsonResponse } from '@/lib/response'
 import { authMiddleware } from '@/middlewares/auth'
 import {
   getSubscriptionItem,
+  getSubscriptionSource,
   listSubscriptionFacets,
   listSubscriptionItems,
   listSubscriptionSources,
@@ -148,6 +151,36 @@ app.openapi(
     generateJsonResponse(
       c,
       await listSubscriptionSources(c.req.valid('query')),
+      200,
+    ),
+)
+
+app.openapi(
+  createRoute({
+    method: 'get',
+    path: '/sources/:id',
+    middleware: [authMiddleware()],
+    request: {
+      params: SubscriptionSourceParamsSchema,
+      query: SubscriptionItemQuerySchema,
+    },
+    responses: {
+      200: json(
+        'Subscribed channel or podcast and its stored items',
+        SubscriptionSourceDetailSchema,
+      ),
+      401: jsonErrorResponse('Unauthorized'),
+      404: jsonErrorResponse('Channel not found'),
+      422: validationErrorResponse,
+    },
+  }),
+  async (c) =>
+    generateJsonResponse(
+      c,
+      await getSubscriptionSource(
+        c.req.valid('param').id,
+        c.req.valid('query'),
+      ),
       200,
     ),
 )
