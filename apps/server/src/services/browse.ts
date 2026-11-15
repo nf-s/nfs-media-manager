@@ -14,7 +14,6 @@ import type { AlbumQuery, FilmQuery } from '@repo/schemas/media'
 import {
   trackAlbumLinkLabels,
   trackSourceLabels,
-  trackSpotifyMatchLabels,
   type TrackQuery,
 } from '@repo/schemas/tracks'
 import { defaultListeningPeriod } from '@repo/schemas/listening'
@@ -27,9 +26,8 @@ import { normalizedTagSql, normalizeTagName } from './tag-state'
 import { albumAddedDateExpression } from './album-added-dates'
 import { createBrowseListening } from './browse-listening'
 import {
-  linkedTrackFieldExpression,
+  albumTrackDurationExpression,
   trackSourcesExpression,
-  trackSpotifyIdExpression,
   trackSpotifyMatchExpression,
 } from './track-values'
 
@@ -71,14 +69,18 @@ const albumPlaylistIds = sql`(
   union
   select pi.playlist_id from library_track lt
   join playlist_item pi on pi.media_item_id = lt.media_item_id
-  where lt.album_media_item_id = ${mediaItem.id})`
+  where lt.album_media_item_id = ${mediaItem.id}
+  union
+  select pi.playlist_id from track t
+  join playlist_item pi on pi.media_item_id = t.track_media_item_id
+  where t.album_media_item_id = ${mediaItem.id})`
 
 function trackValueExpression(key: string): SQL | null {
   switch (key) {
     case 'source':
       return trackSourcesExpression(sql`${mediaItem.id}`, true)
     case 'spotifyMatch':
-      return sql`to_jsonb(${trackSpotifyMatchExpression(sql`${libraryTrack.spotifyTrackId}`, sql`${libraryTrack.albumMediaItemId}`, sql`${mediaItem.title}`, true)})`
+      return sql`to_jsonb(${trackSpotifyMatchExpression(sql`${libraryTrack.spotifyTrackId}`, sql`${mediaItem.sourceLabel}`, true)})`
     case 'releaseDate':
       return sql`to_jsonb(extract(epoch from coalesce(${mediaItem.releaseDate}, (select am.release_date from media_item am where am.id = ${libraryTrack.albumMediaItemId}))) * 1000)`
     case 'album':
@@ -88,7 +90,7 @@ function trackValueExpression(key: string): SQL | null {
     case 'dateAdded':
       return sql`to_jsonb(extract(epoch from ${libraryTrack.dateAdded}) * 1000)`
     case 'durationSec':
-      return sql`to_jsonb(coalesce(${libraryTrack.durationSec}, ${linkedTrackFieldExpression('duration_sec', sql`${libraryTrack.albumMediaItemId}`, sql`${mediaItem.title}`)}))`
+      return sql`to_jsonb(coalesce(${libraryTrack.durationSec}, ${albumTrackDurationExpression(sql`${libraryTrack.mediaItemId}`, sql`${libraryTrack.albumMediaItemId}`)}))`
     case 'scrobbles':
       return sql`to_jsonb(${libraryTrack.scrobbleCount})`
     case 'lastListenedAt':
@@ -422,23 +424,17 @@ function textRows(
       union all
       select media_item.id, ${trackSourceLabels['spotify-liked']}::text as value from media_item join playlist_item pi on pi.media_item_id = media_item.id join playlist p on p.id = pi.playlist_id where ${visible} and p.source = 'spotify-liked'
       union all
+      select media_item.id, ${trackSourceLabels.album}::text as value from media_item join track t on t.track_media_item_id = media_item.id where ${visible}
+      union all
       select media_item.id, ${trackSourceLabels.lastfm}::text as value from media_item join lastfm_track_source s on s.track_media_item_id = media_item.id where ${visible}`
   if (mediaType === 'track' && key === 'albumLink')
     return sql`select media_item.id, ${trackAlbumLinkLabels.linked}::text as value from media_item join library_track lt on lt.media_item_id = media_item.id where ${visible} and lt.album_media_item_id is not null
       union all
       select media_item.id, ${trackAlbumLinkLabels.unlinked}::text as value from media_item left join library_track lt on lt.media_item_id = media_item.id where ${visible} and lt.album_media_item_id is null`
-  if (mediaType === 'track' && key === 'spotifyMatch') {
-    const linkedId = trackSpotifyIdExpression(
-      sql`lt.spotify_track_id`,
-      sql`lt.album_media_item_id`,
-      sql`media_item.title`,
-    )
-    return sql`select media_item.id, ${trackSpotifyMatchLabels['spotify-import']}::text as value from media_item join library_track lt on lt.media_item_id = media_item.id where ${visible} and lt.spotify_track_id is not null
-      union all
-      select media_item.id, ${trackSpotifyMatchLabels['album-track-list']}::text as value from media_item join library_track lt on lt.media_item_id = media_item.id where ${visible} and lt.spotify_track_id is null and ${linkedId} is not null
-      union all
-      select media_item.id, ${trackSpotifyMatchLabels.unmatched}::text as value from media_item left join library_track lt on lt.media_item_id = media_item.id where ${visible} and lt.spotify_track_id is null and ${linkedId} is null`
-  }
+  if (mediaType === 'track' && key === 'spotifyMatch')
+    return sql`select media_item.id,
+      ${trackSpotifyMatchExpression(sql`lt.spotify_track_id`, sql`media_item.source_label`, true)} as value
+      from media_item join library_track lt on lt.media_item_id = media_item.id where ${visible}`
   const tagName = options.normalizeTags
     ? normalizedTagSql(sql`t.name`)
     : sql`t.name`
@@ -451,6 +447,9 @@ function textRows(
       select lt.album_media_item_id, pi.playlist_id from library_track lt
       join playlist_item pi on pi.media_item_id = lt.media_item_id
       where lt.album_media_item_id is not null
+      union
+      select t.album_media_item_id, pi.playlist_id from track t
+      join playlist_item pi on pi.media_item_id = t.track_media_item_id
     ) member on member.id = media_item.id join playlist p on p.id = member.playlist_id where ${visible} and p.kind = 'playlist'`
   if (key === 'genre' || key === 'keyword')
     return sql`select media_item.id, ${tagName} as value from media_item join media_item_tag mt on mt.media_item_id = media_item.id join tag t on t.id = mt.tag_id where ${visible} and t.media_type = media_item.media_type and not t.hidden`

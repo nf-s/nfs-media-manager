@@ -110,6 +110,7 @@ export const film = pgTable('film', {
   ...timestampColumns,
 })
 
+// An ordered membership with the original track-list fields supplied by the provider.
 export const track = pgTable(
   'track',
   {
@@ -117,6 +118,9 @@ export const track = pgTable(
     albumMediaItemId: text('album_media_item_id')
       .notNull()
       .references(() => album.mediaItemId, { onDelete: 'cascade' }),
+    trackMediaItemId: text('track_media_item_id')
+      .notNull()
+      .references(() => libraryTrack.mediaItemId),
     externalId: text('external_id'),
     title: text('title').notNull(),
     position: integer('position').notNull(),
@@ -125,6 +129,7 @@ export const track = pgTable(
     ...timestampColumns,
   },
   (table) => [
+    index('track_library_track_idx').on(table.trackMediaItemId),
     index('track_album_title_idx').on(
       table.albumMediaItemId,
       sql`lower(regexp_replace(trim(${table.title}), '[[:space:]]+', ' ', 'g'))`,
@@ -136,8 +141,7 @@ export const track = pgTable(
   ],
 )
 
-// A track imported from a playlist or stored Last.fm history. It is separate from
-// an album's track list above: its album may not be in the library.
+// The recording shared by album track lists, playlists and stored Last.fm history.
 export const libraryTrack = pgTable(
   'library_track',
   {
@@ -1131,6 +1135,10 @@ export const trackRelations = relations(track, ({ one }) => ({
   album: one(album, {
     fields: [track.albumMediaItemId],
     references: [album.mediaItemId],
+  }),
+  libraryTrack: one(libraryTrack, {
+    fields: [track.trackMediaItemId],
+    references: [libraryTrack.mediaItemId],
   }),
 }))
 

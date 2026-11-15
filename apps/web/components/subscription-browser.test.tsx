@@ -119,12 +119,12 @@ function browseData(search: string, total: number) {
   ] satisfies Array<[unknown[], unknown]>
 }
 
-test('the list view is a compact shared table with sortable headers and placeholder rows for unloaded items', async () => {
+test('the table view uses the compact shared table and virtual placeholder rows', async () => {
   const { default: SubscriptionBrowser } =
     await import('./subscription-browser')
-  const search = 'view=list&columns=title,source,type,publishedAt,durationSec'
+  const search = 'view=table&columns=title,source,type,publishedAt,durationSec'
   const html = render(<SubscriptionBrowser />, browseData(search, 250), search)
-  assert.match(html, /class="table-scroll browse-scroll"[^>]*data-view="list"/)
+  assert.match(html, /class="table-scroll browse-scroll"[^>]*data-view="table"/)
   assert.match(
     html,
     /<table class="compact-table[^"]*" aria-label="Subscriptions"/,
@@ -155,6 +155,30 @@ test('the list view is a compact shared table with sortable headers and placehol
     html,
     /aria-label="Open on Spotify: Orbits \(opens in a new tab\)"/,
   )
+  assert.match(html, /src="\/icons\/services\/spotify\.svg"/)
+  assert.match(html, /<button[^>]+aria-label="Open details for Orbits"/)
+})
+
+test('the list view shows compact thumbnail rows and has all three view controls', async () => {
+  const { default: SubscriptionBrowser } =
+    await import('./subscription-browser')
+  const search = 'view=list'
+  const html = render(<SubscriptionBrowser />, browseData(search, 250), search)
+  assert.match(html, /data-view="list"/)
+  assert.doesNotMatch(html, /<table/)
+  assert.equal((html.match(/<article /g) ?? []).length, 2)
+  for (const view of ['Grid', 'Table'])
+    assert.match(
+      html,
+      new RegExp(`aria-label="${view} view" aria-pressed="false"`),
+    )
+  assert.match(html, /aria-label="List view" aria-pressed="true"/)
+  assert.match(html, />Bread basics<\/button>/)
+  assert.match(
+    html,
+    /aria-label="Open on YouTube: Bread basics \(opens in a new tab\)"/,
+  )
+  assert.match(html, /src="\/icons\/ratings\/youtube\.svg"/)
 })
 
 test('the grid view shows type labels on cards and placeholder cards', async () => {

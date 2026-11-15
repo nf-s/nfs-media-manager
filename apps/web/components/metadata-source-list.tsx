@@ -1,8 +1,7 @@
 import React from 'react'
 import type { TagProvenancePage } from '@repo/schemas/tags'
-import ExternalLink from './external-link'
+import ServiceIconLinks from './service-icon-links'
 import { relevantTagSources } from '../utils/tag-actions'
-import { providerIconUrl } from '../utils/provider-ratings'
 
 export function MetadataSourceLinks({
   items,
@@ -16,30 +15,27 @@ export function MetadataSourceLinks({
     <ul className="flex flex-wrap gap-x-3 gap-y-2" aria-label="Source links">
       {sources.map((source) => {
         if (!source.link) return null
-        const icon = providerIconUrl(source.link.provider)
         const description =
           source.linkKind === 'tag'
             ? `View tag on ${source.link.providerLabel}`
             : `View ${source.itemTitle ?? 'film'} on ${source.link.providerLabel}${source.linkKind === 'provider-item' ? ' (import provider)' : ''}`
         return (
           <li key={source.link.url}>
-            <ExternalLink
-              href={source.link.url}
+            <span
+              className="inline-flex items-center gap-1 text-xs"
               title={description}
-              aria-label={description}
-              className="inline-flex items-center gap-1 text-xs hover:underline"
             >
-              {icon && (
-                <img
-                  src={icon}
-                  alt=""
-                  width={16}
-                  height={16}
-                  className="h-4 w-auto max-w-7 object-contain"
-                />
-              )}
               {source.link.providerLabel}
-            </ExternalLink>
+              <ServiceIconLinks
+                links={[
+                  {
+                    provider: source.link.provider,
+                    label: source.link.providerLabel,
+                    url: source.link.url,
+                  },
+                ]}
+              />
+            </span>
           </li>
         )
       })}
@@ -82,11 +78,20 @@ export default function MetadataSourceList({
             <div className="quiet break-all text-xs">ID: {source.sourceId}</div>
           )}
           {source.link ? (
-            <ExternalLink className="text-xs underline" href={source.link.url}>
+            <span className="inline-flex items-center gap-1 text-xs">
               {source.linkKind === 'tag'
                 ? `View tag on ${source.link.providerLabel}`
                 : `View ${source.itemTitle ?? 'film'} on ${source.link.providerLabel}${source.linkKind === 'provider-item' ? ' (import provider)' : ''}`}
-            </ExternalLink>
+              <ServiceIconLinks
+                links={[
+                  {
+                    provider: source.link.provider,
+                    label: source.link.providerLabel,
+                    url: source.link.url,
+                  },
+                ]}
+              />
+            </span>
           ) : (
             <span className="quiet text-xs">
               Source cannot be identified from this import.

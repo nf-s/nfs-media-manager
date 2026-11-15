@@ -113,12 +113,12 @@ Filters follow the [browse filter rules](requirements/search.md) of the other li
 `/subscriptions` lists YouTube videos and podcast episodes together and works like the Albums and Tracks pages:
 
 - The search box suggests titles, channels and podcasts, types and tags from the whole library, each with its count. Choosing a suggestion adds a filter chip; choosing a title opens it. Typed text applies on Enter as a search. **AI search** and dictation are in the same box. Filter chips cycle between Any, Required and Exclude.
-- **Filters** holds **Titles only**, the ranges (Published, Duration, Views, Likes, Comments) and, in the list view, the columns.
-- Grid and list views. The results area takes the full height and is the only scroller; it reserves the height of every result and shows a placeholder for each row or card whose page has not loaded, with **Retry** for a failed page. Only the pages near the visible rows are requested, 100 items at a time.
-- The list is the shared compact table: thumbnail link, Title, Channel, Type, Published, Duration, Views, Likes, Comments and Tags. Columns can be shown, hidden and resized; widths are saved in the browser. Headers of sortable columns sort.
+- **Filters** holds **Titles only**, the ranges (Published, Duration, Views, Likes, Comments) and the columns in Table view.
+- **Grid** is the default. **List** shows thumbnails in compact rows with the title and channel or podcast. All three views reserve the height of every result and show a placeholder for unloaded items, with **Retry** for a failed page. Only the pages near the visible rows are requested, 100 items at a time.
+- **Table** has thumbnails and configurable columns for Title, Channel, Type, Published, Duration, Views, Likes, Comments and Tags. Column widths are saved in the browser. Select a sortable column header to sort.
 - A YouTube item shows its thumbnail with the length, or Live or Upcoming. An episode shows its own artwork, or the show's. Missing values show "-". A release date known only to the month or year shows only that much.
 - Selecting an item opens a drawer with its channel or podcast (which filters by it), type, dates, length, counts, tags (each a filter), description and a link to YouTube or Spotify. `?item=<id>` opens an item directly, reading it on its own when it is outside the loaded rows.
-- The URL carries `q`, `fields`, `filters`, `ranges`, `sortBy`, `direction`, `view` (`grid` or `list`), `columns` and `item`. The last view, search, filters and sort are remembered in the browser and restored when the page is opened without parameters.
+- The URL carries `q`, `fields`, `filters`, `ranges`, `sortBy`, `direction`, `view` (`grid`, `list` or `table`), `columns` and `item`. The last view, search, filters and sort are remembered in the browser and restored when the page is opened without parameters.
 - With nothing synced, the page says so and links to Imports.
 
 `/subscriptions/channels` lists subscribed channels and saved podcasts in the shared table, filterable by name and type and sortable by name, type, stored items, latest item and subscribers or episodes. Each name opens the browse page filtered to that source.
@@ -160,6 +160,6 @@ Migration 0025 adds the video count at a channel's last read. The first sync sta
 - `integration/subscriptions-library.integration.ts` browses synthetic YouTube and podcast rows: search across both types, every filter field and mode, inclusive ranges and missing values, every sort in both directions across pages, facets beyond the first page, sources and single items.
 - Unit tests cover the query and AI plan schemas, the API's authentication and validation, and the AI plans.
 - Navigation tests (`utils/media-scope.test.ts`, `utils/youtube-redirects.test.ts`, `components/media-workspaces.test.tsx`, `components/job-activity.test.tsx`, `components/youtube-sync.test.tsx`, `components/subscription-sync.test.tsx`) and `integration/job-history.integration.ts` cover the library scope, old-link redirects, the Imports pages and sync panels, Jobs and Providers in this library and the activity group.
-- Web tests (`utils/subscriptions.test.ts`, `components/subscription-browser.test.tsx`) cover the browse URL state, chip labels, title suggestions, date precision, AI plans applied to the URL, the list as the shared compact table with placeholder rows, grid cards, the empty library and the channels list with both types.
+- Web tests (`utils/subscriptions.test.ts`, `components/subscription-browser.test.tsx`) cover the browse URL state, chip labels, title suggestions, date precision, AI plans applied to the URL, table placeholders, thumbnail list rows, grid cards, the empty library and the channels list with both types.
 
 No test makes a Google or Spotify request.

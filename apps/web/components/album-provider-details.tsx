@@ -1,6 +1,6 @@
 import React from 'react'
 import type { AlbumProviderDetails as ProviderDetails } from '@repo/schemas/album-provider-details'
-import ExternalLink from './external-link'
+import ServiceIconLinks from './service-icon-links'
 
 const names = {
   musicbrainz: 'MusicBrainz',
@@ -20,13 +20,18 @@ export default function AlbumProviderDetails({
       <div className="mt-3 space-y-5">
         {details.map((source) => (
           <section key={source.provider}>
-            <h2 className="mb-2 font-semibold">
-              {source.url ? (
-                <ExternalLink href={source.url}>
-                  {names[source.provider]}
-                </ExternalLink>
-              ) : (
-                names[source.provider]
+            <h2 className="mb-2 flex items-center gap-1.5 font-semibold">
+              {names[source.provider]}
+              {source.url && (
+                <ServiceIconLinks
+                  links={[
+                    {
+                      provider: source.provider,
+                      label: names[source.provider],
+                      url: source.url,
+                    },
+                  ]}
+                />
               )}
             </h2>
             {source.facts.length > 0 && (
@@ -90,12 +95,17 @@ export default function AlbumProviderDetails({
                       <span className="quiet mr-2">
                         {track.position ?? index + 1}
                       </span>
-                      {track.url ? (
-                        <ExternalLink href={track.url}>
-                          {track.title}
-                        </ExternalLink>
-                      ) : (
-                        track.title
+                      {track.title}
+                      {track.url && (
+                        <ServiceIconLinks
+                          links={[
+                            {
+                              provider: source.provider,
+                              label: names[source.provider],
+                              url: track.url,
+                            },
+                          ]}
+                        />
                       )}
                     </li>
                   ))}
@@ -105,9 +115,21 @@ export default function AlbumProviderDetails({
             {source.links.length > 0 && (
               <div className="mt-2 flex flex-wrap gap-x-4 gap-y-2">
                 {source.links.map((link, index) => (
-                  <ExternalLink key={`${link.url}-${index}`} href={link.url}>
+                  <span
+                    key={`${link.url}-${index}`}
+                    className="inline-flex items-center gap-1.5"
+                  >
                     {link.label}
-                  </ExternalLink>
+                    <ServiceIconLinks
+                      links={[
+                        {
+                          provider: source.provider,
+                          label: link.label,
+                          url: link.url,
+                        },
+                      ]}
+                    />
+                  </span>
                 ))}
               </div>
             )}

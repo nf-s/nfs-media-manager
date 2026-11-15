@@ -19,6 +19,41 @@ require.extensions['.css'] = (module) => {
 const network = mock.method(globalThis, 'fetch', async () => {
   throw new Error('Network forbidden in UI tests')
 })
+function albumTrack(
+  position: number,
+  title: string,
+  spotifyTrackId: string | null,
+  durationSec: number | null,
+) {
+  return {
+    position,
+    track: {
+      id: `fixture-track-${position}`,
+      mediaType: 'track',
+      title,
+      artworkUrl: null,
+      releaseDate: null,
+      artists: ['Fixture artist'],
+      albumName: 'Fixture album',
+      album: { id: 'fixture-album', title: 'Fixture album' },
+      albumLinkStrategy: null,
+      albumTags: [],
+      playlists: [],
+      sources: ['album'],
+      durationSec,
+      dateAdded: null,
+      spotifyTrackId,
+      spotifyMatch: spotifyTrackId ? 'album-track-list' : 'unmatched',
+      spotifyUrl: spotifyTrackId
+        ? `https://open.spotify.com/track/${spotifyTrackId}`
+        : null,
+      isrc: null,
+      scrobbles: 0,
+      lastListenedAt: null,
+    },
+  }
+}
+
 const album = AlbumDetailSchema.parse({
   id: 'fixture-album',
   mediaType: 'album',
@@ -42,24 +77,9 @@ const album = AlbumDetailSchema.parse({
   spotifyUrl: `https://open.spotify.com/album/${'A'.repeat(22)}`,
   trackCount: 3,
   tracks: [
-    {
-      title: 'Song A',
-      position: 1,
-      externalId: 'B'.repeat(22),
-      durationSec: 180,
-    },
-    {
-      title: 'Song Z',
-      position: 2,
-      externalId: 'C'.repeat(22),
-      durationSec: 200,
-    },
-    {
-      title: 'Instrumental',
-      position: 3,
-      externalId: 'D'.repeat(22),
-      durationSec: 220,
-    },
+    albumTrack(1, 'Song A', 'B'.repeat(22), 180),
+    albumTrack(2, 'Song Z', 'C'.repeat(22), 200),
+    albumTrack(3, 'Instrumental', 'D'.repeat(22), 220),
   ],
 })
 
@@ -82,7 +102,7 @@ async function render(search: URLSearchParams, detail = false) {
               {Detail ? (
                 <Detail mediaType="album" id={album.id} />
               ) : (
-                <AlbumTracksTable album={album} scrobbles={null} />
+                <AlbumTracksTable album={album} />
               )}
             </PlaybackViewContext.Provider>
           </SearchParamsContext.Provider>

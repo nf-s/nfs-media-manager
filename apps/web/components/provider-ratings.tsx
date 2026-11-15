@@ -195,7 +195,7 @@ export default function ProviderRatings({
   context: 'poster' | 'table' | 'detail'
   trailerUrl?: string
   highlightKey?: string
-  /** Shown after the ratings, such as service links on a poster. */
+  /** Additional provider links shown alongside ratings. */
   children?: ReactNode
 }) {
   const visibleRatings =
@@ -212,7 +212,7 @@ export default function ProviderRatings({
     <div
       className={`provider-ratings ${contextClasses[context]}`}
       role="group"
-      aria-label="Provider ratings"
+      aria-label={children ? 'Provider ratings and links' : 'Provider ratings'}
     >
       {visibleRatings.map((rating) => (
         <ProviderRatingBadge

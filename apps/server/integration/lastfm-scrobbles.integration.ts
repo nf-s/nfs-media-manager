@@ -13,6 +13,7 @@ import {
   vi,
 } from 'vitest'
 import { env } from '@/env'
+import { replaceAlbumTracks } from '@/services/album-library-tracks'
 import { lastfmPlugin } from '@/plugins/builtin/lastfm'
 import * as schema from '@/schemas/db'
 import type { LastfmSyncJobContext } from '@/services/lastfm-scrobbles'
@@ -174,12 +175,11 @@ beforeEach(async () => {
     artistId: 'artist-fixture',
     role: 'artist',
   })
-  await databaseClient.insert(schema.track).values({
-    id: 'track-fixture',
-    albumMediaItemId: 'album-fixture',
-    title: 'First Track',
-    position: 1,
-  })
+  await databaseClient.transaction((tx) =>
+    replaceAlbumTracks(tx, 'album-fixture', [
+      { title: 'First Track', position: 1 },
+    ]),
+  )
 })
 afterAll(async () => {
   await pool.end()
@@ -269,7 +269,10 @@ describe('Last.fm scrobble sync jobs with offline HTTP and a temporary database'
         ?.albumMediaItemId,
     ).toBe('album-fixture')
 
-    const [item] = await databaseClient.select().from(schema.mediaItem)
+    const [item] = await databaseClient
+      .select()
+      .from(schema.mediaItem)
+      .where(eq(schema.mediaItem.mediaType, 'album'))
     expect(item?.metadata?.['browse']).toEqual({
       country: ['Synthetic'],
       scrobbles: 2,

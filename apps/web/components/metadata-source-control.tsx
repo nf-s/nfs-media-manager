@@ -15,7 +15,7 @@ import {
 } from '@repo/schemas/tags'
 import { fetchApiData } from '@/utils/api'
 import { useConfig } from './providers'
-import ExternalLink from './external-link'
+import ServiceIconLinks from './service-icon-links'
 import styles from './metadata-source-control.module.css'
 import { MetadataSourceLinks } from './metadata-source-list'
 import TagDetailModal from './tag-detail-modal'
@@ -230,14 +230,14 @@ export default function MetadataSourceControl({
     const single = links.length === 1 ? links[0] : undefined
     if (single)
       return (
-        <ExternalLink
-          href={single.url}
-          className={styles.control}
-          aria-label={`Open ${name} on ${single.providerLabel}`}
-          title={`Open on ${single.providerLabel}`}
-          onClick={(event) => event.stopPropagation()}
-          onDoubleClick={(event) => event.stopPropagation()}
-          onKeyDown={(event) => event.stopPropagation()}
+        <ServiceIconLinks
+          links={[
+            {
+              provider: single.provider,
+              label: single.providerLabel,
+              url: single.url,
+            },
+          ]}
         />
       )
     return (
@@ -246,9 +246,18 @@ export default function MetadataSourceControl({
           <ul className={styles.sources}>
             {links.map((link) => (
               <li key={link.url}>
-                <ExternalLink href={link.url}>
+                <span className="inline-flex items-center gap-1">
                   {link.providerLabel}
-                </ExternalLink>
+                  <ServiceIconLinks
+                    links={[
+                      {
+                        provider: link.provider,
+                        label: link.providerLabel,
+                        url: link.url,
+                      },
+                    ]}
+                  />
+                </span>
               </li>
             ))}
           </ul>

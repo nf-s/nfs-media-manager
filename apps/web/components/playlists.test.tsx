@@ -117,7 +117,7 @@ test('playlist rows open the drawer and show the sync schedule and last check', 
   assert.match(html, /<time dateTime="2026-01-03T00:00:00.000Z">/)
   assert.match(
     html,
-    /<button type="button" class="table-title[^"]*">Synthetic mix<\/button>/,
+    /<a class="table-title[^"]*" href="\/playlists\/playlist-1"[^>]*>Synthetic mix<\/a>/,
   )
   assert.doesNotMatch(html, /Playlist details/)
 })
@@ -138,7 +138,7 @@ test('compact playlist names and owners retain their complete text', () => {
   assert.ok(html.includes(`title="${name}"`))
   assert.ok(html.includes(`title="${owner}"`))
   assert.ok(html.includes(`aria-label="Remove ${name}"`))
-  assert.ok(html.includes(`>${name}</button>`))
+  assert.ok(html.includes(`>${name}</a>`))
 })
 
 test('playlist filters combine name, owner and description search with source', () => {

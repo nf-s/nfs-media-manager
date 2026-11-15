@@ -11,9 +11,9 @@ import {
   withTrackFilter,
 } from './track-browse'
 
-test('source is visible by default and can be included or excluded in saved filters', () => {
-  assert.ok(defaultTrackColumns.includes('source'))
-  assert.ok(defaultTrackColumns.includes('spotifyMatch'))
+test('source and match columns default to hidden while source filters still work', () => {
+  assert.ok(!defaultTrackColumns.includes('source'))
+  assert.ok(!defaultTrackColumns.includes('spotifyMatch'))
   const included = withTrackFilter([], { field: 'source', value: 'Last.fm' })
   const filters = withTrackFilter(included, {
     field: 'source',

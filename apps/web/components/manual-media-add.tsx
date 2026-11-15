@@ -20,6 +20,8 @@ import {
 import { useConfig } from './providers'
 import { errorMessage } from './lastfm-sync'
 import MediaArtwork from './media-artwork'
+import ServiceIconLinks from './service-icon-links'
+import { DetailLink } from './detail-link'
 
 export function ManualMediaSearch({
   mediaType,
@@ -191,14 +193,18 @@ export function ManualMediaSearch({
                       fallbackClassName="manual-add-image"
                     />
                     <div className="manual-add-description">
-                      <a
-                        href={item.url}
-                        target="_blank"
-                        rel="noreferrer"
-                        title={`Open on ${provider}`}
-                      >
-                        {item.title}
-                      </a>
+                      <div className="flex items-center gap-1.5">
+                        {item.mediaItemId ? (
+                          <DetailLink kind={mediaType} id={item.mediaItemId}>
+                            {item.title}
+                          </DetailLink>
+                        ) : (
+                          <span>{item.title}</span>
+                        )}
+                        <ServiceIconLinks
+                          links={[{ provider, label: provider, url: item.url }]}
+                        />
+                      </div>
                       {item.subtitle && (
                         <p className="quiet">{item.subtitle}</p>
                       )}

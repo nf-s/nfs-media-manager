@@ -41,6 +41,19 @@
   border-radius: 4px;
 }
 
+.tableTitle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 100%;
+}
+
+.tableTitle > :global(.table-title) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .thumb {
   position: relative;
   display: block;
@@ -107,6 +120,23 @@
 
 .card[data-selected='true'] .thumb {
   box-shadow: 0 0 0 2px #334155;
+}
+
+.listRow:global(.list-row) {
+  grid-template-columns: clamp(54px, 14vw, 82px) minmax(0, 1fr);
+}
+
+.listRow .cardBody {
+  align-items: start;
+  height: auto;
+  padding-top: 0;
+}
+
+.listRow .title {
+  display: block;
+  max-width: 100%;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 /* Keep in step with subscriptionCardBodyHeight in utils/subscriptions.ts. */
@@ -194,6 +224,7 @@
   justify-content: center;
   width: 26px;
   height: 26px;
+  flex-shrink: 0;
   border-radius: 6px;
   color: var(--ink-2);
 }

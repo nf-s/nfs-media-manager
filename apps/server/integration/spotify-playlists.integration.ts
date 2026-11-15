@@ -23,6 +23,7 @@ import {
   TrackQuerySchema,
 } from '@repo/schemas/tracks'
 import { env } from '@/env'
+import { replaceAlbumTracks } from '@/services/album-library-tracks'
 import * as schema from '@/schemas/db'
 import { spotifyPlugin } from '@/plugins/builtin/spotify'
 import { lastfmPlugin } from '@/plugins/builtin/lastfm'
@@ -228,19 +229,21 @@ async function addAlbum(
     tracks?: string[]
     trackIds?: string[]
     tag?: string
+    artistId?: string
   } = {},
 ) {
   await databaseClient
     .insert(schema.mediaItem)
     .values({ id, slug: id, title, mediaType: 'album' })
   await databaseClient.insert(schema.album).values({ mediaItemId: id })
+  const artistId = options.artistId ?? ARTIST_ID
   await databaseClient
     .insert(schema.artist)
-    .values({ id: ARTIST_ID, name: 'The Examples' })
+    .values({ id: artistId, name: 'The Examples' })
     .onConflictDoNothing()
   await databaseClient.insert(schema.mediaCredit).values({
     mediaItemId: id,
-    artistId: ARTIST_ID,
+    artistId,
     role: 'artist',
   })
   if (options.spotifyAlbumId)
@@ -251,14 +254,17 @@ async function addAlbum(
       referenceType: 'album',
       externalId: options.spotifyAlbumId,
     })
-  for (const [index, name] of (options.tracks ?? []).entries())
-    await databaseClient.insert(schema.track).values({
-      id: randomUUID(),
-      albumMediaItemId: id,
-      title: name,
-      position: index + 1,
-      externalId: options.trackIds?.[index],
-    })
+  await databaseClient.transaction((tx) =>
+    replaceAlbumTracks(
+      tx,
+      id,
+      (options.tracks ?? []).map((title, index) => ({
+        title,
+        position: index + 1,
+        externalId: options.trackIds?.[index],
+      })),
+    ),
+  )
   if (options.tag) {
     await databaseClient
       .insert(schema.tag)
@@ -462,6 +468,7 @@ beforeEach(async () => {
   await databaseClient.delete(schema.lastfmScrobble)
   await databaseClient.delete(schema.playlist)
   await databaseClient.delete(schema.mediaItem)
+  await databaseClient.delete(schema.artist)
   await databaseClient.delete(schema.tag)
   await databaseClient.delete(schema.providerRequestState)
   await databaseClient.delete(schema.providerRequestEvent)
@@ -633,7 +640,7 @@ describe('Spotify playlist imports', () => {
         item.albumLinkStrategy,
       ]),
     ).toEqual([
-      ['Closing', 'album-by-title', 'album-title'],
+      ['Closing', 'album-by-title', 'album-track-list'],
       ['Elsewhere', null, null],
       ['Night Drive - Other Remix', null, null],
       ['Opening', 'album-by-id', 'spotify-album'],
@@ -704,8 +711,39 @@ describe('Spotify playlist imports', () => {
       tracks: ['Night Drive (Other Remix)'],
     })
     await relinkLastfmScrobbles()
-    const [remix] = (await listTracks(trackQuery({ q: 'Night Drive' }))).items
-    expect(remix?.album?.id).toBe('album-later')
+    const tracks = (await listTracks(trackQuery({ q: 'Night Drive' }))).items
+    expect(
+      tracks.find((item) => item.sources.includes('spotify'))?.album?.id,
+    ).toBe('album-later')
+  })
+
+  it('keeps an album recording and its legacy artist when a playlist supplies the Spotify identity', async () => {
+    await addAlbum('album-recording', 'Second Album', {
+      tracks: ['Closing'],
+      artistId: 'legacy-example-artist',
+    })
+    const [before] = (await listTracks(trackQuery({ q: 'Closing' }))).items
+    if (!before) throw new Error('Expected a track from the stored album')
+    const result = await importAll({
+      playlists: [chosen(OWNED, 'Morning')],
+      likedSongs: false,
+    })
+    expect(result.queued).toBe(1)
+    const after = (await listTracks(trackQuery({ q: 'Closing' }))).items
+    expect(after).toHaveLength(1)
+    expect(after[0]).toMatchObject({
+      id: before.id,
+      artists: ['The Examples'],
+      sources: ['album', 'spotify'],
+      spotifyTrackId: spotifyId('closing'),
+    })
+    const credits = await databaseClient
+      .select()
+      .from(schema.mediaCredit)
+      .where(eq(schema.mediaCredit.mediaItemId, before.id))
+    expect(credits.map((credit) => credit.artistId)).toEqual([
+      'legacy-example-artist',
+    ])
   })
 
   it('counts scrobbles towards tracks by artist and title', async () => {
@@ -1296,12 +1334,19 @@ describe('Spotify playlist imports', () => {
     const retained = (await listTracks(trackQuery())).items.find(
       (track) => track.spotifyTrackId === derivedId,
     )
-    expect(retained?.id).not.toBe(item.id)
-    expect(await getTrackDetail(item.id)).toBeNull()
+    expect(retained?.id).toBe(item.id)
+    expect(await getTrackDetail(item.id)).toMatchObject({
+      sources: ['album', 'lastfm', 'spotify'],
+      spotifyMatch: 'spotify-import',
+    })
     expect(await listSpotifyTrackPlaylistAdditions(item.id)).toMatchObject({
       additions: [
         { resolvedTrackId: retained?.id, job: { status: 'succeeded' } },
       ],
+    })
+    await removeImportedPlaylist(morning)
+    expect(await getTrackDetail(item.id)).toMatchObject({
+      sources: ['album', 'lastfm'],
     })
   })
 

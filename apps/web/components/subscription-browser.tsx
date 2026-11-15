@@ -6,16 +6,7 @@ import { createPortal } from 'react-dom'
 import { useSearchParams } from 'next/navigation'
 import { useQuery } from '@tanstack/react-query'
 import { z } from 'zod'
-import {
-  ArrowDown,
-  ArrowUp,
-  ArrowUpRight,
-  Columns3,
-  Grid2X2,
-  Rows3,
-  Search,
-  X,
-} from 'lucide-react'
+import { ArrowDown, ArrowUp, Columns3, Search, X } from 'lucide-react'
 import { Button } from '@repo/ui/components/ui/button'
 import {
   TableBody,
@@ -64,7 +55,6 @@ import {
   subscriptionCollection,
   subscriptionGridGeometry,
   subscriptionImportsHref,
-  subscriptionOpenLabel,
   subscriptionRangeLabel,
   subscriptionSortLabels,
   subscriptionSortOptions,
@@ -73,14 +63,23 @@ import {
   updateSubscriptionSearch,
   withSubscriptionFilter,
 } from '@/utils/subscriptions'
-import { errorMessage } from './lastfm-sync'
+import { DetailInspector } from './detail-inspector'
+import {
+  replaceWorkspaceUrl,
+  useDetailInspector,
+} from './detail-inspector-context'
+import ServiceIconLinks from './service-icon-links'
+import { sameDetail, withoutDetailEntries } from '@/utils/detail-inspector'
 import AiSearch from './ai-search'
-import { BrowseFilterChips, RangeEditor } from './browse-controls'
+import {
+  BrowseFilterChips,
+  BrowseViewSwitch,
+  RangeEditor,
+} from './browse-controls'
 import BrowseFilterPanel, { FilterPanelSection } from './browse-filter-panel'
 import { FilterButton } from './filter-affordance'
 import {
   SourceAvatar,
-  SubscriptionItemDetails,
   SubscriptionThumbnail,
 } from './subscription-item-details'
 import styles from './subscription-browser.module.css'
@@ -88,7 +87,8 @@ import styles from './subscription-browser.module.css'
 const collection = subscriptionCollection
 const WidthsSchema = z.record(z.string(), z.number().min(70).max(650))
 /** `.browse-cell` height plus the row divider. */
-const rowHeight = 36
+const tableRowHeight = 36
+const listRowHeight = 62
 const headerHeight = 24
 const thumbColumnWidth = 70
 const searchFieldOptions: Array<{ value: 'all' | 'title'; label: string }> = [
@@ -110,15 +110,14 @@ export default function SubscriptionBrowser() {
   const [viewport, setViewport] = useState({ width: 1000, height: 800 })
   const [widths, setWidths] = useState<Record<string, number>>({})
   const scroller = useRef<HTMLDivElement>(null)
-  const inspector = useRef<HTMLElement>(null)
+  const inspector = useDetailInspector()
   const railSlot = useRailSlot()
-  const openedHere = useRef(false)
-  const detailTrigger = useRef<HTMLElement | null>(null)
   const resize = useRef<{ key: string; x: number; width: number } | null>(null)
   const state = parseSubscriptionBrowseState(new URLSearchParams(searchParams))
   const { q, filters, ranges, view } = state
   const { identity, params, sortBy, direction } = subscriptionBrowseQuery(state)
-  const selectedId = searchParams.get('item')
+  const selectedId =
+    inspector?.root?.kind === 'subscription' ? inspector.root.id : null
   const fieldsQuery = useQuery({
     queryKey: [collection, 'fields'],
     queryFn: () =>
@@ -141,43 +140,36 @@ export default function SubscriptionBrowser() {
       ? preserveGridScroll(previousScrollTop, gridLayout, grid)
       : previousScrollTop
 
-  function setParams(updates: Record<string, string | null>, push = false) {
+  function setParams(updates: Record<string, string | null>, close = false) {
     const next = updateSubscriptionSearch(window.location.search, updates)
-    const url = `${subscriptionsPath}${next.size ? `?${next}` : ''}`
-    if (push) window.history.pushState(null, '', url)
-    else window.history.replaceState(null, '', url)
+    const params = close ? withoutDetailEntries(subscriptionsPath, next) : next
+    const url = `${subscriptionsPath}${params.size ? `?${params}` : ''}`
+    replaceWorkspaceUrl(url, !close)
     try {
       window.localStorage.setItem(
         `browse:${collection}`,
-        savedSubscriptionSearch(next),
+        savedSubscriptionSearch(
+          withoutDetailEntries(subscriptionsPath, params),
+        ),
       )
     } catch {
       /* URL state still works when browser storage is unavailable. */
     }
   }
   function addFilter(filter: BrowseFilter) {
-    setParams({
-      filters: JSON.stringify(withSubscriptionFilter(filters, filter)),
-      item: null,
-    })
+    setParams(
+      { filters: JSON.stringify(withSubscriptionFilter(filters, filter)) },
+      true,
+    )
   }
   function changeFilters(next: BrowseFilter[]) {
-    if (selectedId) openedHere.current = false
     setParams({ filters: next.length ? JSON.stringify(next) : null })
   }
   function clearFilters() {
     setParams({ q: null, fields: null, filters: null, ranges: null })
   }
-  function closeDetail() {
-    if (openedHere.current) {
-      openedHere.current = false
-      window.history.back()
-    } else setParams({ item: null })
-  }
   function openDetail(id: string, trigger?: HTMLElement) {
-    detailTrigger.current = trigger ?? null
-    openedHere.current = true
-    setParams({ item: id }, true)
+    inspector?.open({ kind: 'subscription', id }, trigger)
   }
   function sort(key: string) {
     setParams({
@@ -252,14 +244,10 @@ export default function SubscriptionBrowser() {
     view,
   ])
   useEffect(() => {
-    if (selectedId) {
-      // The inspector covers the results, so it takes focus.
-      inspector.current?.focus({ preventScroll: true })
+    if (selectedId)
       scroller.current
         ?.querySelector('[data-selected="true"]')
         ?.scrollIntoView({ block: 'nearest' })
-    } else if (detailTrigger.current?.isConnected)
-      detailTrigger.current.focus({ preventScroll: true })
   }, [selectedId])
 
   const query = useVirtualBrowse({
@@ -269,30 +257,22 @@ export default function SubscriptionBrowser() {
     params,
     enabled: ready,
     columns: view === 'grid' ? grid.columns : 1,
-    rowHeight: view === 'grid' ? grid.rowHeight : rowHeight,
+    rowHeight:
+      view === 'grid'
+        ? grid.rowHeight
+        : view === 'list'
+          ? listRowHeight
+          : tableRowHeight,
     scrollTop,
     viewportHeight: viewport.height,
-    headerHeight: view === 'list' ? headerHeight : 0,
+    headerHeight: view === 'table' ? headerHeight : 0,
     itemSchema: SubscriptionItemSchema,
   })
   const { total, slots, padTop, padBottom } = query
-  const loadedItem = selectedId
-    ? slots.find(({ item }) => item?.id === selectedId)?.item
-    : undefined
-  // A direct link to an item outside the loaded rows reads it on its own.
-  const itemQuery = useQuery({
-    queryKey: [collection, 'item', selectedId],
-    enabled: ready && Boolean(selectedId) && !loadedItem,
-    retry: false,
-    queryFn: ({ signal }) =>
-      fetchApiData(
-        apiBaseUrl,
-        `/api/v1/${collection}/${encodeURIComponent(selectedId ?? '')}`,
-        SubscriptionItemSchema,
-        { signal },
-      ),
-  })
-  const selectedItem = loadedItem ?? itemQuery.data
+  const activeItem =
+    inspector?.active?.kind === 'subscription'
+      ? slots.find(({ item }) => item?.id === inspector.active?.id)?.item
+      : undefined
   const facets = useBrowseFacets(apiBaseUrl, collection, draft, ready)
   const titleFilters = matchingTitleFilters(facets.data ?? [], facets.search)
   const titleMatches = useQuery({
@@ -334,15 +314,9 @@ export default function SubscriptionBrowser() {
     function onKeyDown(event: KeyboardEvent) {
       if (event.defaultPrevented) return
       const target = event.target instanceof Element ? event.target : null
-      if (event.key === 'Escape') {
-        if (selectedId && !document.querySelector('dialog[open]')) {
-          event.preventDefault()
-          closeDetail()
-        }
-        return
-      }
       if (
         !selectedId ||
+        !sameDetail(inspector?.active, inspector?.root) ||
         (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') ||
         event.altKey ||
         event.ctrlKey ||
@@ -355,14 +329,14 @@ export default function SubscriptionBrowser() {
         target &&
         target !== document.body &&
         !target.closest('.browse-scroll, .detail-topbar') &&
-        target !== inspector.current
+        !target.matches('.media-inspector')
       )
         return
       const current = slots.findIndex(({ item }) => item?.id === selectedId)
       const next = slots[current + (event.key === 'ArrowDown' ? 1 : -1)]?.item
       if (current < 0 || !next) return
       event.preventDefault()
-      setParams({ item: next.id })
+      inspector?.replace({ kind: 'subscription', id: next.id })
     }
     document.addEventListener('keydown', onKeyDown)
     return () => document.removeEventListener('keydown', onKeyDown)
@@ -395,13 +369,16 @@ export default function SubscriptionBrowser() {
   function renderValue(item: SubscriptionItem, field: BrowseField) {
     if (field.key === 'title')
       return (
-        <button
-          type="button"
-          className="table-title"
-          onClick={(event) => openDetail(item.id, event.currentTarget)}
-        >
-          {item.title}
-        </button>
+        <div className={styles.tableTitle}>
+          <button
+            type="button"
+            className="table-title"
+            onClick={(event) => openDetail(item.id, event.currentTarget)}
+          >
+            {item.title}
+          </button>
+          <SubscriptionOpenLink item={item} />
+        </div>
       )
     const value = getSubscriptionBrowseValues(item)[field.key]
     if (field.type === 'text' && field.filterable) {
@@ -500,7 +477,7 @@ export default function SubscriptionBrowser() {
               onValueChange: setDraft,
               onAddFilter: addFilter,
               onApplyText: (value) => {
-                setParams({ q: value.slice(0, 200) || null, item: null })
+                setParams({ q: value.slice(0, 200) || null }, true)
                 setDraft('')
               },
             }}
@@ -584,7 +561,7 @@ export default function SubscriptionBrowser() {
                   })
                 }
               />
-              {view === 'list' && (
+              {view === 'table' && (
                 <FilterPanelSection
                   title="Columns"
                   icon={<Columns3 size={16} />}
@@ -612,24 +589,10 @@ export default function SubscriptionBrowser() {
                 </FilterPanelSection>
               )}
             </BrowseFilterPanel>
-            <div className="view-switch">
-              <Button
-                variant={view === 'grid' ? 'default' : 'ghost'}
-                aria-label="Grid view"
-                aria-pressed={view === 'grid'}
-                onClick={() => setParams({ view: null })}
-              >
-                <Grid2X2 size={16} />
-              </Button>
-              <Button
-                variant={view === 'list' ? 'default' : 'ghost'}
-                aria-label="List view"
-                aria-pressed={view === 'list'}
-                onClick={() => setParams({ view: 'list' })}
-              >
-                <Rows3 size={16} />
-              </Button>
-            </div>
+            <BrowseViewSwitch
+              view={view}
+              onChange={(next) => setParams({ view: next })}
+            />
             <span className="browse-count" aria-live="polite">
               {query.isPending
                 ? 'Loading...'
@@ -727,6 +690,40 @@ export default function SubscriptionBrowser() {
                         <div className="virtual-browse-line virtual-browse-shimmer" />
                         <div className="virtual-browse-line virtual-browse-line-short virtual-browse-shimmer" />
                       </div>
+                    </div>
+                  ),
+                )}
+              </div>
+            </div>
+          ) : view === 'list' ? (
+            <div
+              className="virtual-browse-grid"
+              style={{ height: query.height }}
+            >
+              <div className="media-list" style={{ top: padTop }}>
+                {slots.map(({ item, index }) =>
+                  item ? (
+                    <SubscriptionCard
+                      key={item.id}
+                      item={item}
+                      index={index}
+                      height={listRowHeight}
+                      selected={item.id === selectedId}
+                      onOpen={(trigger) => openDetail(item.id, trigger)}
+                      onFilter={addFilter}
+                      layout="list"
+                    />
+                  ) : (
+                    <div
+                      key={`slot-${index}`}
+                      className={`list-row ${styles.listRow} virtual-browse-placeholder`}
+                      aria-hidden="true"
+                      style={{ height: listRowHeight }}
+                    >
+                      <div
+                        className={`${styles.thumb} virtual-browse-shimmer`}
+                      />
+                      <div className="virtual-browse-line virtual-browse-shimmer" />
                     </div>
                   ),
                 )}
@@ -874,15 +871,16 @@ export default function SubscriptionBrowser() {
                       }}
                     >
                       <TableCell>
-                        <a
+                        <button
+                          type="button"
                           className={styles.rowThumb}
-                          href={item.url}
-                          target="_blank"
-                          rel="noreferrer"
-                          aria-label={`${subscriptionOpenLabel(item.type)}: ${item.title} (opens in a new tab)`}
+                          aria-label={`Open details for ${item.title}`}
+                          onClick={(event) =>
+                            openDetail(item.id, event.currentTarget)
+                          }
                         >
                           <SubscriptionThumbnail item={item} badges={false} />
-                        </a>
+                        </button>
                       </TableCell>
                       {columns.map((field) => (
                         <TableCell
@@ -933,21 +931,9 @@ export default function SubscriptionBrowser() {
           )}
         </TableScroll>
       </div>
-      {selectedId && (
-        <SubscriptionItemDetails
-          key={selectedId}
-          ref={inspector}
-          item={selectedItem}
-          error={
-            !selectedItem && itemQuery.isError
-              ? errorMessage(itemQuery.error, 'Could not load this item.')
-              : null
-          }
-          onRetry={() => itemQuery.refetch()}
-          onClose={closeDetail}
-          onFilter={addFilter}
-        />
-      )}
+      <DetailInspector
+        subscription={{ initialItem: activeItem, onFilter: addFilter }}
+      />
     </section>
   )
 }
@@ -959,6 +945,7 @@ function SubscriptionCard({
   selected,
   onOpen,
   onFilter,
+  layout = 'grid',
 }: {
   item: SubscriptionItem
   index: number
@@ -966,6 +953,7 @@ function SubscriptionCard({
   selected: boolean
   onOpen: (trigger: HTMLElement) => void
   onFilter: (filter: BrowseFilter) => void
+  layout?: 'grid' | 'list'
 }) {
   const published = formatSubscriptionPublished(
     item.publishedAt,
@@ -977,7 +965,7 @@ function SubscriptionCard({
       : `${subscriptionTypeLabels[item.type]} · ${published}`
   return (
     <article
-      className={styles.card}
+      className={layout === 'list' ? `list-row ${styles.listRow}` : styles.card}
       data-item-index={index}
       data-selected={selected}
       style={{ height }}
@@ -989,7 +977,7 @@ function SubscriptionCard({
         aria-hidden="true"
         onClick={(event) => onOpen(event.currentTarget)}
       >
-        <SubscriptionThumbnail item={item} />
+        <SubscriptionThumbnail item={item} badges={layout === 'grid'} />
       </button>
       <div className={styles.cardBody}>
         <SourceAvatar src={item.sourceThumbnailUrl} />
@@ -1013,17 +1001,25 @@ function SubscriptionCard({
           </FilterButton>
           <div className={styles.meta}>{meta}</div>
         </div>
-        <a
-          className={styles.openLink}
-          href={item.url}
-          target="_blank"
-          rel="noreferrer"
-          aria-label={`${subscriptionOpenLabel(item.type)}: ${item.title} (opens in a new tab)`}
-          title={subscriptionOpenLabel(item.type)}
-        >
-          <ArrowUpRight size={15} />
-        </a>
+        <SubscriptionOpenLink item={item} />
       </div>
     </article>
+  )
+}
+
+function SubscriptionOpenLink({ item }: { item: SubscriptionItem }) {
+  return (
+    <span className={styles.openLink}>
+      <ServiceIconLinks
+        links={[
+          {
+            provider: item.type,
+            label: item.type === 'youtube' ? 'YouTube' : 'Spotify',
+            url: item.url,
+          },
+        ]}
+        itemTitle={item.title}
+      />
+    </span>
   )
 }

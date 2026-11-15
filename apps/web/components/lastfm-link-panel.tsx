@@ -1,6 +1,8 @@
 'use client'
 
 import Link from 'next/link'
+import { DetailLink } from './detail-link'
+import { AlbumReferencePlayButton } from './play-controls'
 import { useEffect, useId, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { X } from 'lucide-react'
@@ -256,12 +258,20 @@ export default function LastfmLinkPanel({
           {linked && group.album && (
             <p className="text-sm">
               Library album:{' '}
-              <Link className="underline" href={`/albums/${group.album.id}`}>
+              <AlbumReferencePlayButton
+                id={group.album.id}
+                title={group.album.title}
+              />
+              <DetailLink
+                className="underline"
+                kind="album"
+                id={group.album.id}
+              >
                 {group.album.title}
                 {group.album.artists.length
                   ? ` — ${group.album.artists.join(', ')}`
                   : ''}
-              </Link>
+              </DetailLink>
             </p>
           )}
           {albumName !== null && (
@@ -364,15 +374,20 @@ export default function LastfmLinkPanel({
                             >
                               Link
                             </Button>
-                            <Link
+                            <AlbumReferencePlayButton
+                              id={album.id}
+                              title={album.title}
+                            />
+                            <DetailLink
                               className="min-w-0 break-words underline"
-                              href={`/albums/${album.id}`}
+                              kind="album"
+                              id={album.id}
                             >
                               {album.title}
                               {album.artists.length
                                 ? ` — ${album.artists.join(', ')}`
                                 : ''}
-                            </Link>
+                            </DetailLink>
                           </li>
                         ))}
                       </ul>

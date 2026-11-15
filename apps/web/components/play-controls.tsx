@@ -1,7 +1,11 @@
 'use client'
 
 import { AudioLines, ListPlus, Pause, Play } from 'lucide-react'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { AlbumDetailSchema } from '@repo/schemas/media'
 import { Button } from '@repo/ui/components/ui/button'
+import { fetchApiData } from '@/utils/api'
+import { useConfig } from './providers'
 import {
   usePlayback,
   usePlaybackControls,
@@ -20,6 +24,130 @@ import {
 } from '@/utils/playback'
 
 type Track = { position: number; externalId: string | null; title: string }
+
+export function UnavailablePlayButton({
+  title,
+  available,
+  position,
+  compact = true,
+}: {
+  title: string
+  available: boolean
+  position?: number
+  compact?: boolean
+}) {
+  const playback = usePlayback()
+  const reason = !available
+    ? 'No Spotify recording is available.'
+    : !playback.enabled
+      ? 'Connect Spotify playback in Providers.'
+      : 'No playable tracks are available.'
+  return (
+    <button
+      type="button"
+      className={
+        compact ? 'track-play' : 'inline-flex items-center gap-1.5 text-sm'
+      }
+      aria-label={`Play ${title}: ${reason}`}
+      title={reason}
+      disabled
+    >
+      {position !== undefined && (
+        <span className="track-number">{position}</span>
+      )}
+      <Play size={compact ? 12 : 14} aria-hidden="true" />
+      {!compact && 'Play'}
+    </button>
+  )
+}
+
+export function AlbumInlinePlayButton({
+  album,
+  source,
+}: {
+  album: AlbumSource
+  source?: () => PlaybackSource
+}) {
+  const playback = useAlbumPlayback(album)
+  if (!playback)
+    return (
+      <UnavailablePlayButton
+        title={album.title}
+        available={albumPlayable(album) !== null}
+      />
+    )
+  const Icon = playback.playing ? Pause : Play
+  return (
+    <button
+      type="button"
+      className="track-play"
+      data-current={playback.current}
+      aria-label={`${playback.playing ? 'Pause' : 'Play'} ${album.title}`}
+      onClick={() => playback.play(source)}
+    >
+      <Icon size={12} aria-hidden="true" />
+    </button>
+  )
+}
+
+/** Related albums expose playback without fetching each album on render. */
+export function AlbumReferencePlayButton({
+  id,
+  title,
+  source,
+}: {
+  id: string
+  title: string
+  source?: () => PlaybackSource
+}) {
+  const { apiBaseUrl } = useConfig()
+  const client = useQueryClient()
+  const view = usePlayback()
+  const controls = usePlaybackControls()
+  const current = view.current?.albumId === id
+  const playing = current && view.snapshot !== null && !view.snapshot.paused
+  const playback = useMutation({
+    mutationFn: async () =>
+      albumPlayable(
+        await client.fetchQuery({
+          queryKey: ['album', id],
+          queryFn: () =>
+            fetchApiData(
+              apiBaseUrl,
+              `/api/v1/albums/${encodeURIComponent(id)}`,
+              AlbumDetailSchema,
+            ),
+        }),
+      ),
+    onSuccess: (item) => {
+      if (item) playFromView(controls, view, item, current, source)
+    },
+  })
+  if (!view.enabled || playback.data === null)
+    return (
+      <UnavailablePlayButton title={title} available={playback.data !== null} />
+    )
+  const Icon = playing ? Pause : Play
+  return (
+    <button
+      type="button"
+      className="track-play"
+      disabled={playback.isPending}
+      data-current={current}
+      aria-label={`${playing ? 'Pause' : 'Play'} ${title}`}
+      title={
+        playback.isError
+          ? 'Could not load album playback. Try again.'
+          : undefined
+      }
+      onClick={() =>
+        current && !source ? controls.toggle() : playback.mutate()
+      }
+    >
+      <Icon size={12} aria-hidden="true" />
+    </button>
+  )
+}
 
 function playFromView(
   controls: PlaybackControls,
@@ -63,7 +191,15 @@ export function TilePlayControls({
   source?: () => PlaybackSource
 }) {
   const playback = useAlbumPlayback(album)
-  if (!playback) return null
+  if (!playback)
+    return (
+      <div className="tile-play">
+        <UnavailablePlayButton
+          title={album.title}
+          available={albumPlayable(album) !== null}
+        />
+      </div>
+    )
   const { item, current, playing, controls, play } = playback
   return (
     <div className="tile-play" data-current={current}>
@@ -105,7 +241,16 @@ export function AlbumPlayButtons({
   source?: () => PlaybackSource
 }) {
   const playback = useAlbumPlayback(album)
-  if (!playback) return null
+  if (!playback)
+    return (
+      <div className="detail-play">
+        <UnavailablePlayButton
+          title={album.title}
+          available={albumPlayable(album) !== null}
+          compact={false}
+        />
+      </div>
+    )
   const { item, playing, controls, play } = playback
   return (
     <div className="detail-play">
@@ -143,7 +288,14 @@ export function TrackPlayButton({
   const view = usePlayback()
   const controls = usePlaybackControls()
   const item = view.enabled ? albumPlayable(album, track) : null
-  if (!item) return <>{track.position}</>
+  if (!item)
+    return (
+      <UnavailablePlayButton
+        title={track.title}
+        available={albumPlayable(album, track) !== null}
+        position={track.position}
+      />
+    )
   const uri = spotifyTrackUri(track.externalId)
   const { snapshot } = view
   const current =
@@ -213,8 +365,7 @@ function useLibraryTrackPlayback(track: LibraryTrackSource) {
 
 /**
  * Plays one library track. With a position it is the track number of a
- * playlist row, which shows the play icon while its row (a `group`) is
- * hovered, as in the album drawer; without one the icon is always shown.
+ * playlist row. The play icon remains visible beside the position.
  */
 export function LibraryTrackPlayButton({
   track,
@@ -226,7 +377,14 @@ export function LibraryTrackPlayButton({
   source?: () => PlaybackSource
 }) {
   const playback = useLibraryTrackPlayback(track)
-  if (!playback) return position === undefined ? null : <>{position}</>
+  if (!playback)
+    return (
+      <UnavailablePlayButton
+        title={track.title}
+        available={libraryTrackPlayable(track) !== null}
+        position={position}
+      />
+    )
   const { current, playing, play } = playback
   const Icon = playing ? Pause : Play
   const label = `${playing ? 'Pause' : 'Play'} ${track.title}`
@@ -251,8 +409,8 @@ export function LibraryTrackPlayButton({
       aria-label={label}
       onClick={onClick}
     >
-      <span className="track-number group-hover:hidden">{position}</span>
-      <Icon size={12} aria-hidden="true" className="group-hover:block" />
+      <span className="track-number">{position}</span>
+      <Icon size={12} aria-hidden="true" />
     </button>
   )
 }
@@ -285,7 +443,16 @@ export function LibraryTrackPlayButtons({
   track: LibraryTrackSource
 }) {
   const playback = useLibraryTrackPlayback(track)
-  if (!playback) return null
+  if (!playback)
+    return (
+      <div className="detail-play">
+        <UnavailablePlayButton
+          title={track.title}
+          available={libraryTrackPlayable(track) !== null}
+          compact={false}
+        />
+      </div>
+    )
   const { item, current, playing, controls } = playback
   return (
     <div className="detail-play">

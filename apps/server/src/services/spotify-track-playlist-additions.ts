@@ -12,7 +12,6 @@ import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
 import { SpotifyIdSchema } from '@/lib/spotify-api'
 import { createTaskJob, type TaskJobContext, type TaskJobResult } from './jobs'
-import { trackSpotifyIdExpression } from './track-values'
 import { latestSpotifyJobs, refused } from './spotify-playlist-state'
 import {
   appendSpotifyPlaylistTracks,
@@ -72,8 +71,7 @@ async function trackSpotifyReference(trackId: string) {
   const [track] = TrackRowsSchema.parse(
     (
       await db.execute(sql`
-    select mi.title,
-      ${trackSpotifyIdExpression(sql`lt.spotify_track_id`, sql`lt.album_media_item_id`, sql`mi.title`)} as spotify_track_id
+    select mi.title, lt.spotify_track_id
     from media_item mi join library_track lt on lt.media_item_id = mi.id
     where mi.id = ${trackId} and mi.media_type = 'track'
       and mi.metadata->>'legacyHidden' is distinct from 'true'`)

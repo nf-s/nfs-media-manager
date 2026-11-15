@@ -1,139 +1,81 @@
 'use client'
 
 import type { AlbumDetail } from '@repo/schemas/media'
-import { useSearchParams } from 'next/navigation'
-import { SecondaryCell, SecondaryDataTable } from './secondary-table'
-import { TrackPlayButton, TrackQueueButton } from './play-controls'
-import ExternalLink from './external-link'
+import type { PlaylistEntry } from '@repo/schemas/tracks'
+import { sortTableRows } from '@/utils/secondary-table'
 import {
   albumTrackView,
-  albumTrackViewHref,
   createAlbumPlaybackSource,
 } from '@/utils/playback-source'
+import { useDetailView } from './detail-inspector-context'
+import {
+  TrackEntriesTable,
+  trackEntryKey,
+  trackEntryMatches,
+  trackEntryValue,
+  type TrackEntryColumn,
+} from './track-entries-table'
 
-export default function AlbumTracksTable({
-  album,
-  scrobbles,
-}: {
-  album: AlbumDetail
-  scrobbles: Map<number, number> | null
-}) {
-  const searchParams = useSearchParams()
-  const view = albumTrackView(
-    searchParams?.get('albumTrackView') ?? null,
-    album.id,
+export default function AlbumTracksTable({ album }: { album: AlbumDetail }) {
+  const detail = useDetailView()
+  const view = albumTrackView(detail.params.get('albumTrackView'), album.id)
+  const text = view.q.trim().toLocaleLowerCase()
+  type TrackEntry = Extract<PlaylistEntry, { kind: 'track' }>
+  const entries = album.tracks.map<TrackEntry>(({ position, track }) => ({
+    kind: 'track',
+    position,
+    track,
+    addedAt: track.dateAdded,
+  }))
+  const ordered = sortTableRows<TrackEntry, TrackEntryColumn>(
+    text ? entries.filter((entry) => trackEntryMatches(entry, text)) : entries,
+    { key: view.sortBy, direction: view.direction },
+    trackEntryValue,
   )
+  const rows = ordered.map((entry, index) => ({
+    entry,
+    index,
+    key: trackEntryKey(entry),
+  }))
+
+  function viewParams(next: Partial<typeof view>) {
+    const params = new URLSearchParams(detail.params)
+    params.set('albumTrackView', JSON.stringify({ ...view, ...next }))
+    params.set('tab', 'tracks')
+    return params
+  }
+  function onSort(sortBy: TrackEntryColumn) {
+    detail.replace(
+      viewParams({
+        sortBy,
+        direction:
+          sortBy === view.sortBy && view.direction === 'asc' ? 'desc' : 'asc',
+      }),
+    )
+  }
+
   return (
-    <SecondaryDataTable
-      id="album-tracks"
-      label="Album tracks"
-      rows={album.tracks}
-      search={{
-        label: 'Search album tracks',
-        placeholder: 'Search tracks',
-        maxLength: 200,
-        value: (track) => track.title,
-      }}
-      countLabel="tracks"
-      rowKey={(track) => track.position}
-      defaultSort={{ key: 'position', direction: 'asc' }}
-      view={{
-        sort: { key: view.sortBy, direction: view.direction },
-        query: view.q,
-        onChange: ({ sort, query }) => {
-          const next = albumTrackView(
-            JSON.stringify({
-              id: album.id,
-              q: query,
-              sortBy: sort.key,
-              direction: sort.direction,
-            }),
-            album.id,
-          )
-          window.history.replaceState(
-            null,
-            '',
-            albumTrackViewHref(
-              window.location.pathname,
-              new URLSearchParams(window.location.search),
-              next,
-            ),
-          )
-        },
-      }}
-      empty="No imported tracks."
-      columns={[
-        {
-          key: 'position',
-          label: '#',
-          className: 'numeric',
-          value: (track) => track.position,
-          render: (track, ordered) => (
-            <TrackPlayButton
-              album={album}
-              track={track}
-              source={() =>
-                createAlbumPlaybackSource(
-                  album,
-                  albumTrackViewHref(
-                    window.location.pathname,
-                    new URLSearchParams(window.location.search),
-                    view,
-                  ),
-                  ordered,
-                )
-              }
-            />
-          ),
-        },
-        {
-          key: 'title',
-          label: 'Track',
-          value: (track) => track.title,
-          render: (track) => (
-            <div className="secondary-cell-actions">
-              <SecondaryCell text={track.title}>
-                {track.externalId ? (
-                  <ExternalLink
-                    href={`https://open.spotify.com/track/${encodeURIComponent(track.externalId)}`}
-                  >
-                    {track.title}
-                  </ExternalLink>
-                ) : (
-                  track.title
-                )}
-              </SecondaryCell>
-              <span title={`Add ${track.title} to queue`}>
-                <TrackQueueButton album={album} track={track} />
-              </span>
-            </div>
-          ),
-        },
-        {
-          key: 'duration',
-          label: 'Duration',
-          className: 'numeric',
-          value: (track) => track.durationSec,
-          render: (track) =>
-            track.durationSec === null
-              ? '-'
-              : `${Math.floor(track.durationSec / 60)}:${String(track.durationSec % 60).padStart(2, '0')}`,
-        },
-        {
-          key: 'scrobbles',
-          label: 'Scrobbles',
-          className: 'numeric',
-          value: (track) => scrobbles?.get(track.position),
-          render: (track) =>
-            scrobbles?.get(track.position)?.toLocaleString() ?? '-',
-        },
-        {
-          key: 'externalId',
-          label: 'Spotify ID',
-          defaultVisible: false,
-          value: (track) => track.externalId,
-        },
-      ]}
+    <TrackEntriesTable
+      scope="album"
+      rows={rows}
+      search={view.q}
+      onSearch={(q) => detail.replace(viewParams({ q }))}
+      sortBy={view.sortBy}
+      direction={view.direction}
+      onSort={onSort}
+      count={
+        text
+          ? `${rows.length.toLocaleString()} of ${entries.length.toLocaleString()} tracks`
+          : `${rows.length.toLocaleString()} tracks`
+      }
+      empty={text ? 'No matching tracks.' : 'No imported tracks.'}
+      source={({ index }) =>
+        createAlbumPlaybackSource(
+          album,
+          detail.href(viewParams({})),
+          ordered.slice(index),
+        )
+      }
     />
   )
 }

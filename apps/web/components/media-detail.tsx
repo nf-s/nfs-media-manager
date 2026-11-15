@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { useSearchParams } from 'next/navigation'
+import { usePathname, useSearchParams } from 'next/navigation'
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { z } from 'zod'
@@ -45,22 +45,21 @@ import { FilterButton, FilterIndicator } from './filter-affordance'
 import { BrowseFilterChips, filterModeClass } from './browse-controls'
 import { parseAlbumBrowseFiltersParam } from '@repo/schemas/media'
 import DetailProviderLinks from './detail-provider-links'
-import AlbumTitle from './album-title'
+import { AlbumSpotifyLink } from './service-icon-links'
+import { useDetailView } from './detail-inspector-context'
+import { withoutDetailEntries } from '@/utils/detail-inspector'
 import AlbumProviderDetails from './album-provider-details'
 import { AlbumPlayButtons } from './play-controls'
 import {
   albumDetailTab,
   albumTrackView,
-  albumTrackViewHref,
   createAlbumPlaybackSource,
 } from '@/utils/playback-source'
 import AlbumTracksTable from './album-tracks-table'
-import { albumSpotifyDestination } from '@/utils/album-links'
 import { scopedHref } from '@/utils/media-scope'
 import MetadataSourceControl from './metadata-source-control'
-import AlbumListening, { useAlbumListening } from './album-listening'
+import AlbumListening from './album-listening'
 import AlbumPlaylists from './album-playlists'
-import { scrobblesByPosition } from '@/utils/listening-chart'
 import type { SourceNavigationLink } from '@repo/schemas/tags'
 
 const DetailSchema = z.union([AlbumDetailSchema, FilmDetailSchema])
@@ -104,10 +103,9 @@ function FilterValues({
   mediaId?: string
   collectionSources?: SourceNavigationLink[]
 }) {
-  const [all, setAll] = useState(false)
   return (
-    <div className="detail-tags">
-      {(all ? values : values.slice(0, 12)).map((value) => (
+    <div className="detail-tags detail-tags-scroll">
+      {values.map((value) => (
         <span key={value} className="inline-flex items-center">
           <FilterBadge field={field} value={value} onFilter={onFilter} />
           {mediaId && (
@@ -120,11 +118,6 @@ function FilterValues({
           )}
         </span>
       ))}
-      {values.length > 12 && (
-        <button className="quiet" onClick={() => setAll(!all)}>
-          {all ? 'Less' : `+${values.length - 12} more`}
-        </button>
-      )}
     </div>
   )
 }
@@ -296,31 +289,38 @@ export default function MediaDetail({
   browseMetric?: { field: BrowseField; value: number }
 }) {
   const { apiBaseUrl } = useConfig()
+  const pathname = usePathname()
   const searchParams = useSearchParams()
+  const collection = mediaType === 'album' ? 'albums' : 'films'
+  const matchingBrowse =
+    pathname === `/${collection}` || pathname?.startsWith(`/${collection}/`)
+  const browseParams = matchingBrowse
+    ? withoutDetailEntries(pathname, new URLSearchParams(searchParams))
+    : new URLSearchParams()
   const selectedFilters = parseAlbumBrowseFiltersParam(
-    searchParams.get('filters'),
+    browseParams.get('filters'),
   )
-  const browseParams = new URLSearchParams(searchParams)
-  browseParams.delete('item')
   const queryClient = useQueryClient()
-  const [localTab, setLocalTab] = useState('overview')
+  const view = useDetailView()
+  const activeTab = view.params.get('tab')
   const tab =
     mediaType === 'album'
-      ? albumDetailTab(new URLSearchParams(searchParams), id)
-      : localTab
+      ? albumDetailTab(view.params, id)
+      : activeTab === 'edit' || activeTab === 'history'
+        ? activeTab
+        : 'overview'
   function setTab(next: string) {
-    if (mediaType !== 'album') return setLocalTab(next)
-    const params = new URLSearchParams(window.location.search)
-    const view = albumTrackView(params.get('albumTrackView'), id)
-    window.history.replaceState(
-      null,
-      '',
-      albumTrackViewHref(window.location.pathname, params, view, next),
-    )
+    if (mediaType === 'album')
+      view.params.set(
+        'albumTrackView',
+        JSON.stringify(albumTrackView(view.params.get('albumTrackView'), id)),
+      )
+    if (next === 'overview') view.params.delete('tab')
+    else view.params.set('tab', next)
+    view.replace(view.params)
   }
   const [provider, setProvider] = useState('')
   const [saved, setSaved] = useState(false)
-  const collection = mediaType === 'album' ? 'albums' : 'films'
   const detail = useQuery({
     queryKey: [mediaType, id],
     queryFn: () =>
@@ -355,11 +355,6 @@ export default function MediaDetail({
         z.array(ProviderSummarySchema),
       ),
   })
-  const listening = useAlbumListening(
-    id,
-    '',
-    mediaType === 'album' && tab === 'tracks',
-  )
   const rescrape = useMutation({
     mutationFn: () =>
       fetchApiData(apiBaseUrl, `/api/v1/media/${id}/rescrape`, JobSchema, {
@@ -385,7 +380,9 @@ export default function MediaDetail({
     const next = selectedFilters.some((item) => sameBrowseFilter(item, value))
       ? selectedFilters
       : [...selectedFilters, value]
-    const params = new URLSearchParams(window.location.search)
+    const params = keepOpen
+      ? new URLSearchParams(window.location.search)
+      : browseParams
     params.set('filters', JSON.stringify(next))
     if (keepOpen)
       window.history.replaceState(
@@ -434,9 +431,6 @@ export default function MediaDetail({
     : baseFields
   const creatorField = mediaType === 'album' ? 'artist' : 'director'
   const creators = values[creatorField]
-  const trackScrobbles = listening.data?.total
-    ? scrobblesByPosition(listening.data.tracks)
-    : null
   return (
     <div className="media-detail">
       <header className="detail-heading">
@@ -456,10 +450,12 @@ export default function MediaDetail({
         />
         <div>
           <h1>
-            {item.mediaType === 'album' ? (
-              <AlbumTitle item={item} />
-            ) : (
-              item.title
+            {item.title}
+            {item.mediaType === 'album' && (
+              <>
+                {' '}
+                <AlbumSpotifyLink item={item} />
+              </>
             )}
           </h1>
           {item.mediaType === 'film' &&
@@ -507,10 +503,7 @@ export default function MediaDetail({
             )}
           </div>
           <DetailProviderLinks
-            hideSpotify={
-              item.mediaType === 'album' &&
-              Boolean(albumSpotifyDestination(item))
-            }
+            hideSpotify={item.mediaType === 'album'}
             references={item.providerReferences}
             fields={browseFields}
             values={values}
@@ -658,7 +651,7 @@ export default function MediaDetail({
         </TabsContent>
         {item.mediaType === 'album' && (
           <TabsContent value="tracks">
-            <AlbumTracksTable album={item} scrobbles={trackScrobbles} />
+            <AlbumTracksTable album={item} />
           </TabsContent>
         )}
         {item.mediaType === 'album' && (

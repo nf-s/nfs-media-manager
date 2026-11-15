@@ -1,6 +1,8 @@
 'use client'
 
 import Link from 'next/link'
+import { DetailLink } from './detail-link'
+import { LibraryTrackPlayButton } from './play-controls'
 import { useEffect, useState } from 'react'
 import { Link2 } from 'lucide-react'
 import {
@@ -195,9 +197,9 @@ export function LastfmTrackMatchList() {
       {matchedId && (
         <p role="status" className="muted">
           Track matched.{' '}
-          <Link href={`/tracks/${encodeURIComponent(matchedId)}`}>
+          <DetailLink kind="track" id={matchedId}>
             Open track
-          </Link>
+          </DetailLink>
         </p>
       )}
       {tracks.isError && items.length > 0 && !tracks.isFetchNextPageError && (
@@ -276,10 +278,11 @@ export function LastfmTrackMatchList() {
               >
                 <TableCell>
                   <div className="secondary-cell-actions">
+                    <LibraryTrackPlayButton track={track} />
                     <SecondaryCell text={track.title}>
-                      <Link href={`/tracks/${encodeURIComponent(track.id)}`}>
+                      <DetailLink kind="track" id={track.id}>
                         {track.title}
-                      </Link>
+                      </DetailLink>
                     </SecondaryCell>
                     <ServiceIconLinks links={trackServiceLinks(track)} />
                   </div>
@@ -330,9 +333,9 @@ export function LastfmTrackMatchList() {
                       <Link2 size={14} aria-hidden="true" />
                     </Button>
                   ) : (
-                    <Link href={`/tracks/${encodeURIComponent(track.id)}`}>
+                    <DetailLink kind="track" id={track.id}>
                       Open track
-                    </Link>
+                    </DetailLink>
                   )}
                 </TableCell>
               </TableRow>

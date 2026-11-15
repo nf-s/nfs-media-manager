@@ -27,7 +27,9 @@ export async function getAlbumPlaylists(
         join playlist_item pi on pi.playlist_id = p.id
         left join library_track lt on lt.media_item_id = pi.media_item_id
         where p.kind = 'playlist'
-          and (pi.media_item_id = ${albumId} or lt.album_media_item_id = ${albumId})
+          and (pi.media_item_id = ${albumId} or lt.album_media_item_id = ${albumId}
+            or exists (select 1 from track t where t.album_media_item_id = ${albumId}
+              and t.track_media_item_id = lt.media_item_id))
         group by p.id, p.name
         order by lower(p.name), p.id`)
     ).rows,
@@ -41,7 +43,9 @@ export async function getAlbumPlaylists(
             from playlist_item pi join playlist p on p.id = pi.playlist_id
             where pi.media_item_id = mi.id), '{}') as playlists
         from library_track lt join media_item mi on mi.id = lt.media_item_id
-        where lt.album_media_item_id = ${albumId}
+        where lt.album_media_item_id = ${albumId} or exists (
+          select 1 from track t where t.album_media_item_id = ${albumId}
+            and t.track_media_item_id = lt.media_item_id)
         order by lower(mi.title), mi.id`)
     ).rows,
   )
@@ -71,11 +75,15 @@ export async function albumTrackPlaylistNames(albumIds: string[]) {
   const rows = DerivedPlaylistRowsSchema.parse(
     (
       await db.execute(sql`
-        select distinct lt.album_media_item_id as album_id, p.name
-        from library_track lt
-        join playlist_item pi on pi.media_item_id = lt.media_item_id
+        select distinct members.album_id, p.name
+        from (
+          select album_media_item_id as album_id, media_item_id from library_track
+          union all
+          select album_media_item_id, track_media_item_id from track
+        ) members
+        join playlist_item pi on pi.media_item_id = members.media_item_id
         join playlist p on p.id = pi.playlist_id
-        where p.kind = 'playlist' and lt.album_media_item_id in (${sql.join(
+        where p.kind = 'playlist' and members.album_id in (${sql.join(
           albumIds.map((id) => sql`${id}`),
           sql`, `,
         )})

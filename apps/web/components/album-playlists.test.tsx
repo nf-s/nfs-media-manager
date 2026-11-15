@@ -88,15 +88,6 @@ function render(data: Array<[unknown[], unknown]>) {
   }
 }
 
-const filterParam = (name: string) =>
-  new URLSearchParams({
-    filters: JSON.stringify([
-      { field: 'playlist', value: name, mode: 'required' },
-    ]),
-  })
-    .toString()
-    .replaceAll('&', '&amp;')
-
 test('album playlists list memberships with track counts and linked tracks', () => {
   const html = render([
     [['spotify-account'], account],
@@ -120,11 +111,7 @@ test('album playlists list memberships with track counts and linked tracks', () 
       }),
     ],
   ])
-  assert.ok(
-    html.includes(
-      `class="metadata-tag" href="/albums?${filterParam('Synthetic mix')}"`,
-    ),
-  )
+  assert.ok(html.includes('class="metadata-tag" href="/playlists/p1"'))
   assert.match(html, /2 tracks/)
   assert.doesNotMatch(html, /0 tracks/)
   assert.match(html, /Tracks in the track library/)

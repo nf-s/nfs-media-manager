@@ -9,6 +9,7 @@ import { withStoredTrailerLinks } from './stored-trailers'
 import { getAlbumProviderDetails } from './album-provider-details'
 import { albumAddedDates } from './album-added-dates'
 import { albumTrackPlaylistNames } from './album-playlists'
+import { loadTracks } from './tracks'
 import { and, eq, inArray, ne, sql, type SQL } from 'drizzle-orm'
 import type { JsonValue } from '@repo/media-plugin-sdk'
 import {
@@ -485,6 +486,13 @@ export async function getAlbumDetail(id: string): Promise<AlbumDetail | null> {
     },
     (await rymTagIds([id])).get(id),
   )
+  const tracks = new Map(
+    (
+      await loadTracks(
+        record.album.tracks.map((entry) => entry.trackMediaItemId),
+      )
+    ).map((item) => [item.id, item]),
+  )
   const albumDetail: AlbumDetail = {
     providerDetails: await getAlbumProviderDetails(id),
     collectionSources: await getCollectionSourceLinks(id, {
@@ -504,12 +512,10 @@ export async function getAlbumDetail(id: string): Promise<AlbumDetail | null> {
     spotifyUrl: record.album.spotifyUrl ?? null,
     trackCount: record.album.trackCount,
     tracks: record.album.tracks
-      .map((item) => ({
-        externalId: item.externalId ?? null,
-        title: item.title,
-        position: item.position,
-        durationSec: item.durationSec ?? null,
-      }))
+      .flatMap((entry) => {
+        const track = tracks.get(entry.trackMediaItemId)
+        return track ? [{ position: entry.position, track }] : []
+      })
       .sort((left, right) => left.position - right.position),
   }
 

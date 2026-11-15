@@ -3,7 +3,7 @@ import { test } from 'node:test'
 import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import AlbumTitle from './album-title'
-import ServiceIconLinks from './service-icon-links'
+import ServiceIconLinks, { AlbumSpotifyLink } from './service-icon-links'
 
 const item = {
   title: 'Test album',
@@ -12,33 +12,35 @@ const item = {
   providerReferences: [],
 }
 
-test('album titles are accessible outbound links when Spotify is available', () => {
+test('album titles open local details and Spotify has a separate compact link', () => {
   const html = renderToStaticMarkup(
-    <AlbumTitle item={item} className="tile-title" onOpenDetails={() => {}} />,
+    <>
+      <AlbumTitle item={item} className="tile-title" onOpenDetails={() => {}} />
+      <AlbumSpotifyLink item={item} />
+    </>,
+  )
+  assert.match(
+    html,
+    /<button type="button" class="tile-title"[^>]*>Test album<\/button>/,
   )
   assert.match(html, /href="https:\/\/open.spotify.com\/album\//)
-  assert.match(html, /Test album on Spotify \(opens in a new tab\)/)
+  assert.match(html, /aria-label="Open Spotify \(opens in a new tab\)"/)
+  assert.match(html, /width="14" height="14"/)
   assert.match(html, /target="_blank"/)
   assert.match(html, /rel="noopener noreferrer"/)
-  assert.doesNotMatch(html, /<button/)
 })
 
-test('missing or unsafe Spotify destinations preserve the local details button', () => {
+test('missing or unsafe Spotify destinations omit the outbound icon', () => {
   for (const spotifyUrl of [
     null,
     'https://evil.test/album/1234567890ABCDEFGHIJKL',
   ]) {
     const html = renderToStaticMarkup(
-      <AlbumTitle item={{ ...item, spotifyUrl }} onOpenDetails={() => {}} />,
+      <AlbumSpotifyLink item={{ ...item, spotifyUrl }} />,
     )
-    assert.match(html, /<button/)
-    assert.match(html, /Open details for Test album/)
-    assert.doesNotMatch(html, /<a /)
+    assert.equal(html, '')
   }
-  assert.equal(
-    renderToStaticMarkup(<AlbumTitle item={{ ...item, spotifyUrl: null }} />),
-    'Test album',
-  )
+  assert.equal(renderToStaticMarkup(<AlbumTitle item={item} />), 'Test album')
 })
 
 test('service links use local icons, accessible names and safe separate-tab anchors', () => {

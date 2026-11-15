@@ -67,8 +67,10 @@ export type PlaylistSync = z.infer<typeof PlaylistSyncSchema>
  * `album-title`: same album title and a credited artist.
  * `artist-title`: a credited artist's album lists a track with the same title.
  * `lastfm`: the scrobbled album names consistently link to this library album.
+ * `album-track-list`: the track is on the album's stored track list.
  */
 export const TrackAlbumLinkStrategySchema = z.enum([
+  'album-track-list',
   'lastfm',
   'spotify-album',
   'spotify-track',
@@ -103,9 +105,15 @@ export const TrackPlaylistSchema = z.object({
   name: z.string(),
 })
 
-export const TrackSourceSchema = z.enum(['lastfm', 'spotify', 'spotify-liked'])
+export const TrackSourceSchema = z.enum([
+  'album',
+  'lastfm',
+  'spotify',
+  'spotify-liked',
+])
 export type TrackSource = z.infer<typeof TrackSourceSchema>
 export const trackSourceLabels: Record<TrackSource, string> = {
+  album: 'Album track list',
   lastfm: 'Last.fm',
   spotify: 'Spotify playlists',
   'spotify-liked': 'Liked Songs',
@@ -290,6 +298,8 @@ export const PlaylistEntrySortSchema = z.enum([
   'releaseDate',
   'scrobbles',
   'lastListened',
+  'source',
+  'spotifyMatch',
   'kind',
 ])
 export type PlaylistEntrySort = z.infer<typeof PlaylistEntrySortSchema>

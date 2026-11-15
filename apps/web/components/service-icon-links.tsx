@@ -6,7 +6,13 @@ import type { AlbumListItem, FilmListItem } from '@repo/schemas/media'
 import { providerIconUrl, safeRatingHref } from '../utils/provider-ratings'
 import { albumSpotifyDestination } from '../utils/album-links'
 
-function ServiceIcon({ provider }: { provider: string }) {
+function ServiceIcon({
+  provider,
+  size = 16,
+}: {
+  provider: string
+  size?: number
+}) {
   const serviceIcons: Record<string, string> = {
     spotify: '/icons/services/spotify.svg',
     lastfm: '/img/lastfm.png',
@@ -17,13 +23,58 @@ function ServiceIcon({ provider }: { provider: string }) {
     return (
       <img
         src={icon}
-        width={16}
-        height={16}
+        width={size}
+        height={size}
         alt=""
         className="object-contain"
       />
     )
-  return <Globe2 size={16} aria-hidden="true" />
+  return <Globe2 size={size} aria-hidden="true" />
+}
+
+function ServiceAnchor({
+  link,
+  compact = false,
+  itemTitle,
+}: {
+  link: AlbumListItem['links'][number]
+  compact?: boolean
+  itemTitle?: string
+}) {
+  const label = itemTitle
+    ? `Open on ${link.label}: ${itemTitle}`
+    : `Open ${link.label}`
+  return (
+    <a
+      href={link.url}
+      target="_blank"
+      rel="noopener noreferrer"
+      title={`${label} (new tab)`}
+      aria-label={`${label} (opens in a new tab)`}
+      className={`inline-flex shrink-0 items-center justify-center size-5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] ${link.provider === 'spotify' ? 'spotify-link' : ''}`}
+      onClick={(event) => event.stopPropagation()}
+      onDoubleClick={(event) => event.stopPropagation()}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') event.stopPropagation()
+      }}
+    >
+      <ServiceIcon provider={link.provider} size={compact ? 14 : 16} />
+    </a>
+  )
+}
+
+export function AlbumSpotifyLink({
+  item,
+}: {
+  item: Pick<AlbumListItem, 'spotifyUrl' | 'links' | 'providerReferences'>
+}) {
+  const url = albumSpotifyDestination(item)
+  return url ? (
+    <ServiceAnchor
+      link={{ provider: 'spotify', label: 'Spotify', url }}
+      compact
+    />
+  ) : null
 }
 
 const serviceSites = [
@@ -61,10 +112,12 @@ export default function ServiceIconLinks({
   links,
   item,
   hideSpotify = false,
+  itemTitle,
 }: {
   links?: AlbumListItem['links']
   item?: AlbumListItem | FilmListItem
   hideSpotify?: boolean
+  itemTitle?: string
 }) {
   const spotify =
     item?.mediaType === 'album' ? albumSpotifyDestination(item) : undefined
@@ -95,20 +148,7 @@ export default function ServiceIconLinks({
   return (
     <span className="service-links" role="group" aria-label="Service links">
       {[...unique].map(([key, link]) => (
-        <a
-          key={key}
-          href={link.url}
-          target="_blank"
-          rel="noopener noreferrer"
-          title={`Open ${link.label} (new tab)`}
-          aria-label={`Open ${link.label} (opens in a new tab)`}
-          className={`inline-flex items-center justify-center min-w-5 min-h-5 focus-visible:outline focus-visible:outline-2 ${link.provider === 'spotify' ? 'spotify-link' : ''}`}
-          onClick={(event) => event.stopPropagation()}
-          onDoubleClick={(event) => event.stopPropagation()}
-          onKeyDown={(event) => event.stopPropagation()}
-        >
-          <ServiceIcon provider={link.provider} />
-        </a>
+        <ServiceAnchor key={key} link={link} itemTitle={itemTitle} />
       ))}
     </span>
   )

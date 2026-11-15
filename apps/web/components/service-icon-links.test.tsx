@@ -3,8 +3,9 @@ import { test } from 'node:test'
 import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import AlbumTitle from './album-title'
-import ServiceIconLinks from './service-icon-links'
+import ServiceIconLinks, { AlbumSpotifyLink } from './service-icon-links'
 import DetailProviderLinks from './detail-provider-links'
+import { albumBrowseFields, filmBrowseFields } from '@repo/schemas/browse'
 import { albumSpotifyDestination } from '../utils/album-links'
 
 const album = {
@@ -25,10 +26,11 @@ const album = {
   ],
 }
 
-test('a Spotify-linked album title has no duplicate Spotify service affordance', () => {
+test('an album has one compact Spotify service link beside its local title', () => {
   const html = renderToStaticMarkup(
     <>
       <AlbumTitle item={album} onOpenDetails={() => {}} />
+      <AlbumSpotifyLink item={album} />
       <ServiceIconLinks
         links={album.links}
         hideSpotify={Boolean(albumSpotifyDestination(album))}
@@ -39,7 +41,8 @@ test('a Spotify-linked album title has no duplicate Spotify service affordance',
     (html.match(/href="https:\/\/open.spotify.com/g) ?? []).length,
     1,
   )
-  assert.match(html, /Fixture album on Spotify \(opens in a new tab\)/)
+  assert.match(html, /Open details for Fixture album/)
+  assert.match(html, /Open Spotify \(opens in a new tab\)/)
   assert.match(html, /Open Last.fm/)
 })
 
@@ -49,14 +52,23 @@ test('detail service links still include Spotify by default', () => {
   assert.match(html, /Open Last.fm/)
 })
 
-test('detail header suppresses only Spotify when its album title already links there', () => {
+test('the provider group displays rated and unrated services together and omits the title Spotify icon', () => {
+  const links = [
+    ...album.links,
+    {
+      provider: 'rym',
+      label: 'RYM',
+      url: 'https://rateyourmusic.com/release/album/example/record/',
+    },
+  ]
   const html = renderToStaticMarkup(
     <>
       <AlbumTitle item={album} />
+      <AlbumSpotifyLink item={album} />
       <DetailProviderLinks
-        fields={[]}
-        values={{}}
-        links={album.links}
+        fields={albumBrowseFields}
+        values={{ ratingRymValue: 3.65 }}
+        links={links}
         spotifyUrl={album.spotifyUrl}
         hideSpotify={Boolean(albumSpotifyDestination(album))}
       />
@@ -66,8 +78,32 @@ test('detail header suppresses only Spotify when its album title already links t
     (html.match(/href="https:\/\/open.spotify.com/g) ?? []).length,
     1,
   )
-  assert.match(html, /Fixture album on Spotify/)
-  assert.match(html, /Open Last.fm/)
+  assert.match(
+    html,
+    /class="provider-ratings ratings-detail"[^>]*aria-label="Provider ratings and links"[^>]*>.*RYM rating: 3\.65.*Open Last.fm/,
+  )
+  assert.equal(
+    (html.match(/href="https:\/\/rateyourmusic.com/g) ?? []).length,
+    1,
+  )
+})
+
+test('compact provider groups preserve links for providers whose rating is only shown in details', () => {
+  const html = renderToStaticMarkup(
+    <DetailProviderLinks
+      fields={filmBrowseFields}
+      values={{ ratingTmdb: 7.4 }}
+      links={[
+        {
+          provider: 'tmdb',
+          label: 'TMDb',
+          url: 'https://www.themoviedb.org/movie/1234',
+        },
+      ]}
+      context="table"
+    />,
+  )
+  assert.match(html, /aria-label="Open TMDb \(opens in a new tab\)"/)
 })
 
 test('a non-album Spotify link retains its icon and local title navigation', () => {

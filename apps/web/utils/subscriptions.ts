@@ -19,6 +19,7 @@ import {
 } from '@repo/schemas/subscriptions'
 import { youtubeThumbnailUrl } from '@repo/schemas/youtube'
 import type { TitleSuggestion } from './browse-suggestions'
+import { parseBrowseView, type BrowseView } from './media-grid'
 import { formatVideoDuration } from './youtube'
 
 /** API collection, page path and browser storage key suffix. */
@@ -37,7 +38,6 @@ export const defaultSubscriptionColumns = [
   'viewCount',
 ]
 
-export type SubscriptionView = 'grid' | 'list'
 export type SubscriptionSearchFields = 'title' | 'all'
 
 /** Browse page state, read from the URL search parameters. */
@@ -49,7 +49,7 @@ export type SubscriptionBrowseState = {
   /** As chosen; `subscriptionSort` gives the sort actually applied. */
   sortBy: SubscriptionSort | null
   direction: 'asc' | 'desc'
-  view: SubscriptionView
+  view: BrowseView
   /** Null when the URL does not choose columns. */
   columns: string[] | null
 }
@@ -77,7 +77,7 @@ export function parseSubscriptionBrowseState(
     ranges: parseSubscriptionRanges(params.get('ranges')),
     sortBy: sort.success ? sort.data : null,
     direction: params.get('direction') === 'asc' ? 'asc' : 'desc',
-    view: params.get('view') === 'list' ? 'list' : 'grid',
+    view: parseBrowseView(params.get('view')),
     columns: columns === null ? null : columns.split(',').filter(Boolean),
   }
 }
@@ -176,10 +176,6 @@ export function subscriptionSourceHref(title: string) {
 
 export function subscriptionTypeFilter(type: SubscriptionType): BrowseFilter {
   return { field: 'type', value: subscriptionTypeLabels[type] }
-}
-
-export function subscriptionOpenLabel(type: SubscriptionType) {
-  return type === 'youtube' ? 'Open on YouTube' : 'Open on Spotify'
 }
 
 /** A YouTube thumbnail, or the episode artwork with the show's as fallback. */

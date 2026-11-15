@@ -114,7 +114,11 @@ test('unmatched Last.fm tracks show recorded metadata, listening and an actionab
   )
   assert.match(html, /Match this track to Spotify to add it to a playlist/)
   assert.doesNotMatch(html, /Recorded by Last.fm|Spotify has not been searched/)
-  assert.doesNotMatch(html, />Play<\/button>|>Add to queue<\/button>/)
+  assert.match(
+    html,
+    /aria-label="Play Synthetic track: No Spotify recording is available\."[^>]*disabled=/,
+  )
+  assert.doesNotMatch(html, />Add to queue<\/button>/)
   assert.match(html, /<dt>Scrobbles<\/dt><dd>3<\/dd>/)
   const sourceLink = html.match(/href="([^"]+)">Last.fm<\/a>/)?.[1]
   assert.ok(sourceLink)

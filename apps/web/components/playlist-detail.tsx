@@ -1,18 +1,18 @@
 'use client'
 
 import Link from 'next/link'
-import { useSearchParams } from 'next/navigation'
-import { useDeferredValue, useEffect, useRef, type ReactNode } from 'react'
+import { useDeferredValue, useEffect, useRef, useState } from 'react'
 import {
   useInfiniteQuery,
   useMutation,
   useQuery,
   useQueryClient,
 } from '@tanstack/react-query'
-import { X } from 'lucide-react'
+import { Play } from 'lucide-react'
 import { EnrichmentResultSchema } from '@repo/schemas/job'
 import {
   PlaylistDetailSchema,
+  PlaylistEntrySortSchema,
   PlaylistSummarySchema,
   PlaylistSyncScheduleSchema,
   type PlaylistDetail,
@@ -24,14 +24,6 @@ import {
   type SpotifyPlaylistImportInput,
 } from '@repo/schemas/tracks'
 import { Button } from '@repo/ui/components/ui/button'
-import { Input } from '@repo/ui/components/ui/input'
-import {
-  TableBody,
-  TableCell,
-  TableHeader,
-  TableRow,
-  TableState,
-} from '@repo/ui/components/ui/table'
 import {
   Tabs,
   TabsContent,
@@ -45,7 +37,7 @@ import {
   PlaylistTabSchema,
   playlistTracksHref,
   playlistAlbumsHref,
-  trackHref,
+  playlistHref,
   playlistEntryView,
   playlistEntryViewParam,
   type PlaylistTab,
@@ -61,27 +53,20 @@ import {
   playlistNextSync,
   playlistSourceLabel,
 } from '@/utils/playlist-sync'
-import { albumHref, formatTrackDuration } from '@/utils/track-browse'
 import { createPlaylistPlaybackSource } from '@/utils/playback-source'
 import { youtubeScheduleLabels } from '@/utils/youtube'
 import { errorMessage } from './lastfm-sync'
 import MediaArtwork from './media-artwork'
-import { MediaInspector } from './media-inspector'
+import { UnavailablePlayButton } from './play-controls'
+import { usePlayback, usePlaybackControls } from './playback-provider'
+import { useDetailInspector, useDetailView } from './detail-inspector-context'
 import {
-  LibraryTrackPlayButton,
-  LibraryTrackQueueButton,
-} from './play-controls'
+  TrackEntriesTable,
+  trackEntryKey,
+  type TrackEntryColumn,
+} from './track-entries-table'
 import { useConfig } from './providers'
-import {
-  SecondaryCell,
-  SecondaryColumnFilter,
-  SecondaryTableHead,
-  SecondaryTableScroll,
-  SecondaryTableToolbar,
-  useTableColumns,
-} from './secondary-table'
 import ServiceIconLinks from './service-icon-links'
-import { trackServiceLinks } from '@/utils/track-links'
 
 const ENTRY_PAGE_SIZE = 100
 
@@ -122,10 +107,93 @@ export function usePlaylistSummary(id: string) {
   })
 }
 
-function entryKey(entry: PlaylistEntry) {
-  return entry.kind === 'track'
-    ? `track:${entry.position}:${entry.track.id}`
-    : `album:${entry.position}:${entry.album.id}`
+export function PlaylistPlayButton({
+  playlist,
+  total,
+  compact = true,
+}: {
+  playlist: PlaylistSummary
+  total?: number
+  compact?: boolean
+}) {
+  const { apiBaseUrl } = useConfig()
+  const view = usePlayback()
+  const controls = usePlaybackControls()
+  const detail = useDetailView()
+  const inspector = useDetailInspector()
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+  const hasEntries = (total ?? playlist.trackCount + playlist.albumCount) > 0
+  async function play() {
+    setLoading(true)
+    setError('')
+    try {
+      const count =
+        total ??
+        (
+          await fetchApiData(
+            apiBaseUrl,
+            playlistPath(playlist.id, 1, 1),
+            PlaylistDetailSchema,
+          )
+        ).items.totalCount
+      const returnParams = new URLSearchParams(detail.params)
+      returnParams.delete('tab')
+      const href =
+        total !== undefined
+          ? detail.href(returnParams)
+          : (inspector?.href({ kind: 'playlist', id: playlist.id }) ??
+            playlistHref(playlist.id))
+      const source = createPlaylistPlaybackSource({
+        apiBaseUrl,
+        id: playlist.id,
+        params: new URLSearchParams(),
+        href,
+        label: playlist.name,
+        total: count,
+        startIndex: 0,
+      })
+      for (let index = 0; index < count; index += 1) {
+        const [first] = await source.load(index)
+        if (!first) continue
+        controls.play(first, { ...source, startIndex: index })
+        return
+      }
+      setError('No playable tracks.')
+    } catch (error) {
+      setError(errorMessage(error, 'Could not load tracks.'))
+    } finally {
+      setLoading(false)
+    }
+  }
+  if (!hasEntries || !view.enabled)
+    return (
+      <UnavailablePlayButton
+        title={playlist.name}
+        available={hasEntries}
+        compact={compact}
+      />
+    )
+  return (
+    <>
+      <button
+        type="button"
+        className="inline-flex items-center gap-1.5 rounded px-1 py-0.5 hover:bg-[var(--chip)]"
+        aria-label={`Play ${playlist.name}`}
+        title={`Play ${playlist.name}`}
+        disabled={loading}
+        onClick={play}
+      >
+        <Play size={compact ? 12 : 14} aria-hidden="true" />
+        {!compact && (loading ? 'Loading tracks...' : 'Play')}
+      </button>
+      {error && (
+        <span role="alert" className="text-xs">
+          {error}
+        </span>
+      )}
+    </>
+  )
 }
 
 /** Keep server offsets when a sync causes the same entry to straddle two pages. */
@@ -133,7 +201,7 @@ export function indexedPlaylistEntries(pages: readonly PlaylistDetail[]) {
   const byKey = new Map<string, { entry: PlaylistEntry; index: number }>()
   for (const page of pages)
     page.items.items.forEach((entry, offset) => {
-      const key = entryKey(entry)
+      const key = trackEntryKey(entry)
       if (!byKey.has(key))
         byKey.set(key, {
           entry,
@@ -143,59 +211,33 @@ export function indexedPlaylistEntries(pages: readonly PlaylistDetail[]) {
   return [...byKey.entries()]
 }
 
-const entryColumns: Array<{
-  key: PlaylistEntrySort
-  label: string
-  defaultVisible?: boolean
-  required?: boolean
-}> = [
-  { key: 'position', label: 'Position' },
-  { key: 'title', label: 'Title', required: true },
-  { key: 'artists', label: 'Artists' },
-  { key: 'album', label: 'Album' },
-  { key: 'duration', label: 'Duration' },
-  { key: 'added', label: 'Added' },
-  { key: 'releaseDate', label: 'Released', defaultVisible: false },
-  { key: 'scrobbles', label: 'Scrobbles', defaultVisible: false },
-  { key: 'lastListened', label: 'Last listened', defaultVisible: false },
-  { key: 'kind', label: 'Type' },
-]
-
-export function PlaylistEntries({
-  id,
-  onOpenTrack,
-}: {
-  id: string
-  /** Opens a track in the surrounding browser; without it titles link to the track page. */
-  onOpenTrack?: (trackId: string, trigger: HTMLElement) => void
-}) {
+export function PlaylistEntries({ id }: { id: string }) {
   const { apiBaseUrl } = useConfig()
-  const searchParams = useSearchParams()
-  const view = playlistEntryView(searchParams?.get('playlistView') ?? null, id)
+  const detail = useDetailView()
+  const view = playlistEntryView(detail.params.get('playlistView'), id)
   const { sortBy, direction } = view
   const search = view.q ?? ''
   const q = useDeferredValue(search.trim())
   const kinds = view.kinds ?? []
-  function changeView(patch: Partial<PlaylistDetailQuery>) {
-    const params = new URLSearchParams(window.location.search)
+  function viewParams(patch: Partial<PlaylistDetailQuery>) {
+    const params = new URLSearchParams(detail.params)
     params.set(
       'playlistView',
       playlistEntryViewParam(id, { ...view, ...patch }),
     )
-    window.history.replaceState(
-      null,
-      '',
-      `${window.location.pathname}?${params}`,
-    )
+    params.delete('tab')
+    return params
   }
-  const columns = useTableColumns('playlist-entries', entryColumns)
-  function onSort(key: PlaylistEntrySort) {
-    changeView({
-      sortBy: key,
-      direction: key === sortBy && direction === 'asc' ? 'desc' : 'asc',
-    })
+  function onSort(key: TrackEntryColumn) {
+    const parsed = PlaylistEntrySortSchema.safeParse(key)
+    if (parsed.success)
+      detail.replace(
+        viewParams({
+          sortBy: parsed.data,
+          direction: key === sortBy && direction === 'asc' ? 'desc' : 'asc',
+        }),
+      )
   }
-  const sorting = { sortBy, direction, onSort }
   const entries = useInfiniteQuery({
     queryKey: ['playlist', id, 'entries', sortBy, direction, q, kinds],
     initialPageParam: 1,
@@ -222,259 +264,63 @@ export function PlaylistEntries({
     fetchNextPage: entries.fetchNextPage,
     resetKey: `${id}:${sortBy}:${direction}:${q}:${kinds.join(',')}`,
   })
-  const items = indexedPlaylistEntries(entries.data?.pages ?? [])
+  const rows = indexedPlaylistEntries(entries.data?.pages ?? []).map(
+    ([key, row]) => ({ key, ...row }),
+  )
   const total = entries.data?.pages[0]?.items.totalCount ?? 0
   return (
-    <>
-      <SecondaryTableToolbar
-        search={
-          <Input
-            type="search"
-            aria-label="Search playlist entries"
-            placeholder="Search titles, artists or albums"
-            value={search}
-            maxLength={200}
-            onChange={(event) => changeView({ q: event.target.value })}
-          />
-        }
-        count={
-          entries.data
-            ? `${total.toLocaleString()} ${q || kinds.length ? 'matching ' : ''}entries`
-            : undefined
-        }
-        columns={columns.controls}
-      />
-      <SecondaryTableScroll
-        ref={scroller}
-        className="min-h-0 flex-1"
-        role="region"
-        aria-label="Playlist tracks"
-        aria-busy={entries.isFetching}
-      >
-        <table className="compact-table" aria-label="Playlist tracks">
-          <TableHeader>
-            <TableRow>
-              {entryColumns
-                .filter((column) => columns.visible(column.key))
-                .map((column) => (
-                  <SecondaryTableHead
-                    key={column.key}
-                    sortKey={column.key}
-                    label={column.label}
-                    className={
-                      ['position', 'duration', 'scrobbles'].includes(column.key)
-                        ? 'numeric'
-                        : undefined
-                    }
-                    filter={
-                      column.key === 'kind' ? (
-                        <SecondaryColumnFilter
-                          label="Type"
-                          options={[
-                            { value: 'track', label: 'Tracks' },
-                            { value: 'album', label: 'Albums' },
-                          ]}
-                          value={kinds}
-                          onChange={(kinds) => changeView({ kinds })}
-                        />
-                      ) : undefined
-                    }
-                    {...sorting}
-                  />
-                ))}
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {!items.length && (
-              <TableState colSpan={columns.count} error={entries.isError}>
-                {entries.isPending ? (
-                  'Loading tracks...'
-                ) : entries.isError ? (
-                  <>
-                    {errorMessage(entries.error, 'Could not load tracks.')}{' '}
-                    <button
-                      type="button"
-                      className="underline"
-                      onClick={() => entries.refetch()}
-                    >
-                      Retry
-                    </button>
-                  </>
-                ) : q || kinds.length ? (
-                  'No matching entries.'
-                ) : (
-                  'No tracks.'
-                )}
-              </TableState>
-            )}
-            {items.map(([key, { entry, index }]) =>
-              entry.kind === 'track' ? (
-                <TableRow key={key} className="group">
-                  {columns.visible('position') && (
-                    <TableCell className="numeric">
-                      <LibraryTrackPlayButton
-                        track={entry.track}
-                        position={entry.position}
-                        source={() => {
-                          const params = new URLSearchParams({
-                            sortBy,
-                            direction,
-                            q,
-                            kinds: JSON.stringify(kinds),
-                          })
-                          const href = new URLSearchParams(
-                            window.location.search,
-                          )
-                          href.set(
-                            'playlistView',
-                            playlistEntryViewParam(id, { ...view, q }),
-                          )
-                          return createPlaylistPlaybackSource({
-                            apiBaseUrl,
-                            id,
-                            params,
-                            href: `${window.location.pathname}?${href}`,
-                            label: entries.data?.pages[0]?.name ?? 'Playlist',
-                            total,
-                            startIndex: index,
-                            initialEntry: entry,
-                          })
-                        }}
-                      />
-                    </TableCell>
-                  )}
-                  {columns.visible('title') && (
-                    <TableCell>
-                      <div className="secondary-cell-actions">
-                        <SecondaryCell text={entry.track.title}>
-                          {onOpenTrack ? (
-                            <button
-                              type="button"
-                              className="table-title"
-                              onClick={(event) =>
-                                onOpenTrack(entry.track.id, event.currentTarget)
-                              }
-                            >
-                              {entry.track.title}
-                            </button>
-                          ) : (
-                            <Link
-                              className="table-title"
-                              href={trackHref(entry.track.id)}
-                            >
-                              {entry.track.title}
-                            </Link>
-                          )}
-                        </SecondaryCell>
-                        <ServiceIconLinks
-                          links={trackServiceLinks(entry.track)}
-                        />
-                        <span title={`Add ${entry.track.title} to queue`}>
-                          <LibraryTrackQueueButton track={entry.track} />
-                        </span>
-                      </div>
-                    </TableCell>
-                  )}
-                  {columns.visible('artists') && (
-                    <TableCell>
-                      <SecondaryCell text={entry.track.artists.join(', ')}>
-                        {entry.track.artists.join(', ') || '-'}
-                      </SecondaryCell>
-                    </TableCell>
-                  )}
-                  {columns.visible('album') && (
-                    <TableCell>
-                      <SecondaryCell
-                        text={entry.track.albumName ?? entry.track.album?.title}
-                      >
-                        {entry.track.album ? (
-                          <Link href={albumHref(entry.track.album.id)}>
-                            {entry.track.albumName ?? entry.track.album.title}
-                          </Link>
-                        ) : (
-                          (entry.track.albumName ?? '-')
-                        )}
-                      </SecondaryCell>
-                    </TableCell>
-                  )}
-                  {columns.visible('duration') && (
-                    <TableCell className="numeric">
-                      {formatTrackDuration(entry.track.durationSec)}
-                    </TableCell>
-                  )}
-                  {columns.visible('added') && (
-                    <TableCell className="whitespace-nowrap">
-                      <AddedDate value={entry.addedAt} />
-                    </TableCell>
-                  )}
-                  {columns.visible('releaseDate') && (
-                    <TableCell className="whitespace-nowrap">
-                      <AddedDate value={entry.track.releaseDate} />
-                    </TableCell>
-                  )}
-                  {columns.visible('scrobbles') && (
-                    <TableCell className="numeric">
-                      {entry.track.scrobbles.toLocaleString()}
-                    </TableCell>
-                  )}
-                  {columns.visible('lastListened') && (
-                    <TableCell className="whitespace-nowrap">
-                      <AddedDate value={entry.track.lastListenedAt} />
-                    </TableCell>
-                  )}
-                  {columns.visible('kind') && <TableCell>Track</TableCell>}
-                </TableRow>
-              ) : (
-                <TableRow key={key}>
-                  {columns.visible('position') && (
-                    <TableCell className="numeric">{entry.position}</TableCell>
-                  )}
-                  {columns.visible('title') && (
-                    <TableCell>
-                      <SecondaryCell text={`${entry.album.title} · Album`}>
-                        <Link
-                          className="table-title"
-                          href={albumHref(entry.album.id)}
-                        >
-                          {entry.album.title}
-                        </Link>{' '}
-                        <span className="quiet">Album</span>
-                      </SecondaryCell>
-                    </TableCell>
-                  )}
-                  {columns.visible('artists') && (
-                    <TableCell>
-                      <SecondaryCell text={entry.album.artists.join(', ')}>
-                        {entry.album.artists.join(', ') || '-'}
-                      </SecondaryCell>
-                    </TableCell>
-                  )}
-                  {columns.visible('album') && <TableCell>-</TableCell>}
-                  {columns.visible('duration') && (
-                    <TableCell className="numeric">-</TableCell>
-                  )}
-                  {columns.visible('added') && (
-                    <TableCell className="whitespace-nowrap">
-                      <AddedDate value={entry.addedAt} />
-                    </TableCell>
-                  )}
-                  {columns.visible('releaseDate') && (
-                    <TableCell className="whitespace-nowrap">
-                      <AddedDate value={entry.album.releaseDate} />
-                    </TableCell>
-                  )}
-                  {columns.visible('scrobbles') && (
-                    <TableCell className="numeric">-</TableCell>
-                  )}
-                  {columns.visible('lastListened') && (
-                    <TableCell className="whitespace-nowrap">-</TableCell>
-                  )}
-                  {columns.visible('kind') && <TableCell>Album</TableCell>}
-                </TableRow>
-              ),
-            )}
-          </TableBody>
-        </table>
+    <TrackEntriesTable
+      scope="playlist"
+      rows={rows}
+      search={search}
+      onSearch={(search) => detail.replace(viewParams({ q: search }))}
+      sortBy={sortBy}
+      direction={direction}
+      onSort={onSort}
+      count={
+        entries.data
+          ? `${total.toLocaleString()} ${q || kinds.length ? 'matching ' : ''}entries`
+          : undefined
+      }
+      pending={entries.isPending}
+      empty={q || kinds.length ? 'No matching entries.' : 'No tracks.'}
+      error={
+        entries.isError && !rows.length ? (
+          <>
+            {errorMessage(entries.error, 'Could not load tracks.')}{' '}
+            <button
+              type="button"
+              className="underline"
+              onClick={() => entries.refetch()}
+            >
+              Retry
+            </button>
+          </>
+        ) : undefined
+      }
+      kindFilter={{
+        value: kinds,
+        onChange: (kinds) => detail.replace(viewParams({ kinds })),
+      }}
+      source={({ entry, index }) =>
+        createPlaylistPlaybackSource({
+          apiBaseUrl,
+          id,
+          params: new URLSearchParams({
+            sortBy,
+            direction,
+            q,
+            kinds: JSON.stringify(kinds),
+          }),
+          href: detail.href(viewParams({ q })),
+          label: entries.data?.pages[0]?.name ?? 'Playlist',
+          total,
+          startIndex: index,
+          initialEntry: entry,
+        })
+      }
+      scroller={scroller}
+      trailingRows={
         <div ref={sentinel} className="py-2 text-center">
           {entries.isFetchingNextPage && (
             <p role="status" className="muted">
@@ -496,21 +342,15 @@ export function PlaylistEntries({
                 : 'Load more tracks'}
             </Button>
           )}
-          {!entries.hasNextPage && items.length > 0 && (
+          {!entries.hasNextPage && rows.length > 0 && (
             <p className="muted">
-              {items.length.toLocaleString()} of {total.toLocaleString()}{' '}
-              loaded.
+              {rows.length.toLocaleString()} of {total.toLocaleString()} loaded.
             </p>
           )}
         </div>
-      </SecondaryTableScroll>
-    </>
+      }
+    />
   )
-}
-
-function AddedDate({ value }: { value: string | null }) {
-  if (!value) return <>-</>
-  return <time dateTime={value}>{new Date(value).toLocaleDateString()}</time>
 }
 
 export function PlaylistSyncPanel({ playlist }: { playlist: PlaylistSummary }) {
@@ -665,13 +505,11 @@ export default function PlaylistDetailView({
   id,
   tab,
   onTabChange,
-  onOpenTrack,
   filterTracks,
 }: {
   id: string
   tab: PlaylistTab
   onTabChange: (tab: PlaylistTab) => void
-  onOpenTrack?: (trackId: string, trigger: HTMLElement) => void
   /** Filters the surrounding Tracks browser; without it the button links to Tracks. */
   filterTracks?: (playlist: PlaylistSummary) => void
 }) {
@@ -714,7 +552,18 @@ export default function PlaylistDetailView({
         )}
         <div className="grid min-w-0 gap-1.5">
           <h1 className="text-lg font-semibold leading-tight">
-            {playlist.name}
+            {playlist.name}{' '}
+            {playlist.spotifyUrl && (
+              <ServiceIconLinks
+                links={[
+                  {
+                    provider: 'spotify',
+                    label: 'Spotify',
+                    url: playlist.spotifyUrl,
+                  },
+                ]}
+              />
+            )}
           </h1>
           <div className="detail-facts">
             {facts.map((fact) => (
@@ -722,6 +571,11 @@ export default function PlaylistDetailView({
             ))}
           </div>
           <div className="form-actions">
+            <PlaylistPlayButton
+              playlist={playlist}
+              total={playlist.items.totalCount}
+              compact={false}
+            />
             {filterTracks ? (
               <Button
                 size="sm"
@@ -744,17 +598,6 @@ export default function PlaylistDetailView({
                 </Link>
               </Button>
             )}
-            {playlist.spotifyUrl && (
-              <ServiceIconLinks
-                links={[
-                  {
-                    provider: 'spotify',
-                    label: 'Spotify',
-                    url: playlist.spotifyUrl,
-                  },
-                ]}
-              />
-            )}
           </div>
         </div>
       </header>
@@ -774,79 +617,12 @@ export default function PlaylistDetailView({
           value="tracks"
           className="mt-3 flex min-h-0 flex-1 flex-col data-[state=inactive]:hidden"
         >
-          <PlaylistEntries id={id} onOpenTrack={onOpenTrack} />
+          <PlaylistEntries id={id} />
         </TabsContent>
         <TabsContent value="sync" className="mt-3 min-h-0 flex-1 overflow-auto">
           <PlaylistSyncPanel playlist={playlist} />
         </TabsContent>
       </Tabs>
-    </>
-  )
-}
-
-/** The playlist drawer: the track drawer's shell with the playlist inside. */
-export function PlaylistDrawer({
-  id,
-  tab,
-  topbar,
-  onClose,
-  onTabChange,
-  onOpenTrack,
-  filterTracks,
-}: {
-  id: string
-  tab: PlaylistTab
-  /** The left side of the top bar, such as a link to the Playlists page. */
-  topbar: ReactNode
-  onClose: () => void
-  onTabChange: (tab: PlaylistTab) => void
-  onOpenTrack?: (trackId: string, trigger: HTMLElement) => void
-  filterTracks?: (playlist: PlaylistSummary) => void
-}) {
-  const inspector = useRef<HTMLElement>(null)
-  useEffect(() => {
-    // The drawer covers the page, so it takes focus.
-    inspector.current?.focus({ preventScroll: true })
-  }, [id])
-  useEffect(() => {
-    function onKeyDown(event: KeyboardEvent) {
-      if (
-        event.key !== 'Escape' ||
-        event.defaultPrevented ||
-        document.querySelector('dialog[open]')
-      )
-        return
-      event.preventDefault()
-      onClose()
-    }
-    document.addEventListener('keydown', onKeyDown)
-    return () => document.removeEventListener('keydown', onKeyDown)
-  })
-  return (
-    <>
-      <div className="inspector-backdrop" onClick={onClose} />
-      <MediaInspector
-        ref={inspector}
-        tabIndex={-1}
-        aria-label="Playlist details"
-      >
-        <div className="detail-topbar">
-          {topbar}
-          <button type="button" aria-label="Close details" onClick={onClose}>
-            <X size={18} />
-          </button>
-        </div>
-        <div className="flex min-h-0 flex-1 flex-col gap-3 px-3.5 pb-3.5 pt-3">
-          <PlaylistDetailView
-            key={id}
-            id={id}
-            tab={tab}
-            onTabChange={onTabChange}
-            onOpenTrack={onOpenTrack}
-            filterTracks={filterTracks}
-          />
-        </div>
-      </MediaInspector>
     </>
   )
 }

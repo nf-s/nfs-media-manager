@@ -30,10 +30,11 @@ export function formatArtworkOverlays(overlays: ArtworkOverlay[]): string {
 }
 
 const BrowseViewSchema = z.enum(['grid', 'list', 'table'])
+export type BrowseView = z.infer<typeof BrowseViewSchema>
 
-export function parseBrowseView(value: unknown) {
+export function parseBrowseView(value: unknown, fallback: BrowseView = 'grid') {
   const result = BrowseViewSchema.safeParse(value)
-  return result.success ? result.data : 'grid'
+  return result.success ? result.data : fallback
 }
 
 export function preserveGridScroll(
@@ -56,12 +57,14 @@ export function mediaGridGeometry({
   mediaType,
   density,
   extraRow = true,
+  tagsBelowArtwork = false,
 }: {
   width: number
   mediaType: 'album' | 'film'
   density: GridDensity
   /** Whether tiles keep a row under the byline for a sort value or links. */
   extraRow?: boolean
+  tagsBelowArtwork?: boolean
 }) {
   const mobile = width <= 700
   const gap = mobile ? 8 : 12
@@ -74,6 +77,7 @@ export function mediaGridGeometry({
   const artworkWidth = Math.max(0, (width - (columns - 1) * gap) / columns)
   const artworkHeight = artworkWidth * (mediaType === 'album' ? 1 : 1.5)
   // Match the fixed metadata rows in media-browser.module.css and global tile styles.
-  const cardHeight = artworkHeight + (extraRow ? 64 : 44)
+  const cardHeight =
+    artworkHeight + (extraRow ? 64 : 44) + (tagsBelowArtwork ? 22 : 0)
   return { mobile, gap, columns, cardHeight, rowHeight: cardHeight + gap }
 }

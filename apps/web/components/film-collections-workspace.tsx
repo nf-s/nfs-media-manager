@@ -13,7 +13,8 @@ import {
   TableRow,
   TableState,
 } from '@repo/ui/components/ui/table'
-import { usePlaylistDrawer } from '@/hooks/usePlaylistDrawer'
+import { useDetailInspector } from './detail-inspector-context'
+import { DetailLink } from './detail-link'
 import { fetchApiData } from '@/utils/api'
 import { sortTableRows } from '@/utils/secondary-table'
 import { useConfig } from './providers'
@@ -25,7 +26,6 @@ import {
   SecondaryTableToolbar,
   useTableColumns,
 } from './secondary-table'
-import FilmCollectionDrawer from './film-collection-detail'
 import ServiceIconLinks from './service-icon-links'
 import { collectionFilmsHref } from '@/utils/playlist-links'
 
@@ -49,7 +49,9 @@ export default function FilmCollectionsWorkspace() {
   const [sortBy, setSortBy] = useState<CollectionSort>('name')
   const [direction, setDirection] = useState<'asc' | 'desc'>('asc')
   const table = useTableColumns('film-collections', columns)
-  const drawer = usePlaylistDrawer({ parameter: 'collection' })
+  const inspector = useDetailInspector()
+  const selectedId =
+    inspector?.root?.kind === 'collection' ? inspector.root.id : null
   const query = useQuery({
     queryKey: ['film-collections'],
     queryFn: ({ signal }) =>
@@ -182,20 +184,18 @@ export default function FilmCollectionsWorkspace() {
             {rows.map((row) => (
               <TableRow
                 key={row.id}
-                data-selected={row.id === drawer.playlistId || undefined}
+                data-selected={row.id === selectedId || undefined}
               >
                 {table.visible('name') && (
                   <TableCell>
                     <SecondaryCell text={row.name}>
-                      <button
-                        type="button"
+                      <DetailLink
+                        kind="collection"
+                        id={row.id}
                         className="table-title hover:underline"
-                        onClick={(event) =>
-                          drawer.open(row.id, event.currentTarget)
-                        }
                       >
                         {row.name}
-                      </button>
+                      </DetailLink>
                     </SecondaryCell>
                   </TableCell>
                 )}
@@ -249,13 +249,6 @@ export default function FilmCollectionsWorkspace() {
           </TableBody>
         </table>
       </SecondaryTableScroll>
-      {drawer.playlistId && (
-        <FilmCollectionDrawer
-          key={drawer.playlistId}
-          id={drawer.playlistId}
-          onClose={drawer.close}
-        />
-      )}
     </section>
   )
 }

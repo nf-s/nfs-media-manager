@@ -1,6 +1,6 @@
 # Spotify Playback
 
-Optional in-app playback of library albums and tracks through a connected Spotify Premium account. It is off until connected in Providers. Without it, every Spotify link still opens in Spotify.
+Optional in-app playback of library albums and tracks through a connected Spotify Premium account. It is off until connected in Providers. Spotify icons open the service; music titles open library details. Play buttons remain visible when playback is disconnected, with a connection explanation.
 
 ## Turning it on
 
@@ -17,7 +17,7 @@ Requirements:
 
 ## Using it
 
-- **Grid tiles** show play and add-to-queue buttons over the artwork on hover or focus. Touch devices show the play button only. Album list and table views have no play controls; the Tracks table, the track drawer and the playlist drawer have play and add-to-queue controls on each track.
+- **Grid tiles** show a visible play button over the artwork. Album and track list/table views also show play controls, and album/playlist track tables use the same controls. Queue actions remain available when playback is connected.
 - **The album drawer** has **Play** and **Add to queue** in its heading. In **Tracks**, a track number starts playback from that row using the table's search and sort order, and each row can queue the single track. Returning to this source reopens Tracks with those settings.
 - **Playing from a view:** starting playback from a browse view or playlist keeps that view as the playback source, with its filters and sort order. Playback continues through the source even after navigating away or changing the visible view. Starting from another view replaces the source. Unmatched tracks are skipped.
 - **The player dock** appears at the bottom once something is played or queued, or while the account is already playing on another device: current track, shuffle, previous, play/pause, next, a seek bar, the queue, the device, volume and a link to the track in Spotify. Selecting the current track opens its album. On phones the dock is a mini-player above the tab bar that opens a player sheet.
@@ -27,7 +27,7 @@ Requirements:
 - **Playback started elsewhere:** when the account is playing on another device, for example from the Spotify app on a phone, the dock shows that track and controls that device: play/pause, previous, next, seek and volume. Playing an album here then plays it on that device; choose **This browser** to move it. Queued items do not start on their own after playback the app did not start: press **Next** or play one from the queue. Paused playback on another device is not picked up, and the dock hides again when that playback stops unless something was played or queued here.
 - **Devices apps cannot control:** Spotify marks some speakers, TVs and receivers as restricted and accepts no commands for them. Playback there is shown with the transport, seek bar and volume disabled; playing something here starts it in this browser (or the device chosen before), and **Play on** can move playback to another device. Queued items do not start on their own while playback is on such a device, because starting one would take the sound off it: press **Next**. A speaker that a Spotify app plays to over Spotify Connect is typically restricted. To keep control, play in the Spotify app on a computer (or in this browser) and send the computer's sound to the speaker, for example over AirPlay, so Spotify sees the computer as the device.
 
-Albums and tracks without a valid Spotify album URL or track ID have no play controls.
+Albums and tracks without a valid Spotify album URL or track ID show a disabled play button explaining that no recording is available.
 
 ## How it works
 
@@ -45,7 +45,7 @@ The source belongs to the shared player, so leaving its page does not dispose it
 ## Failures
 
 - **Spotify disconnected:** the token endpoint or Spotify rejected the account. The dock offers **Reconnect**, which repeats the playback consent.
-- **Other errors** (Premium required, device unavailable, rate limited, playback did not start) appear above the dock with **Open in Spotify**. The queue is kept.
+- **Other errors** (Premium required, device unavailable, rate limited, playback did not start) appear above the dock with a Spotify icon. The queue is kept.
 - A command is not retried, except that a browser device Spotify has not registered yet is retried twice. Three failed state reads in a row end the session. A failed background check for playback elsewhere is not reported; the next check repeats it.
 
 ## Limits

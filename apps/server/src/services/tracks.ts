@@ -27,14 +27,17 @@ import {
 import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
 import {
-  linkedTrackFieldExpression,
+  albumTrackDurationExpression,
   trackSourcesExpression,
-  trackSpotifyIdExpression,
   trackSpotifyMatchExpression,
 } from './track-values'
 import { playlist } from '@/schemas/db'
 import { listBrowseFacets, queryBrowseIds } from './browse'
-import { refreshTrackAddedDates, removeOrphanTracks } from './spotify-playlists'
+import { refreshTrackAddedDates } from './spotify-playlists'
+import {
+  lockLibraryTrackWrites,
+  removeOrphanTracks,
+} from './album-library-tracks'
 import { latestSpotifyJobs } from './spotify-playlist-state'
 import {
   playlistSync,
@@ -70,7 +73,7 @@ const TrackRowsSchema = z.array(
   }),
 )
 
-async function loadTracks(ids: string[]): Promise<TrackListItem[]> {
+export async function loadTracks(ids: string[]): Promise<TrackListItem[]> {
   if (!ids.length) return []
   const rows = TrackRowsSchema.parse(
     (
@@ -94,9 +97,9 @@ async function loadTracks(ids: string[]): Promise<TrackListItem[]> {
             from playlist_item pi join playlist p on p.id = pi.playlist_id
             where pi.media_item_id = mi.id), '[]'::jsonb) as playlists,
           ${trackSourcesExpression(sql`mi.id`)} as sources,
-          coalesce(lt.duration_sec, ${linkedTrackFieldExpression('duration_sec', sql`lt.album_media_item_id`, sql`mi.title`)}) as duration_sec,
-          ${trackSpotifyIdExpression(sql`lt.spotify_track_id`, sql`lt.album_media_item_id`, sql`mi.title`)} as spotify_track_id,
-          ${trackSpotifyMatchExpression(sql`lt.spotify_track_id`, sql`lt.album_media_item_id`, sql`mi.title`)} as spotify_match,
+          coalesce(lt.duration_sec, ${albumTrackDurationExpression(sql`lt.media_item_id`, sql`lt.album_media_item_id`)}) as duration_sec,
+          lt.spotify_track_id,
+          ${trackSpotifyMatchExpression(sql`lt.spotify_track_id`, sql`mi.source_label`)} as spotify_match,
           ${isoTimestamp(sql`lt.date_added`)} as date_added,
           lt.spotify_url, lt.isrc, lt.scrobble_count,
           ${isoTimestamp(sql`lt.last_listened_at`)} as last_listened_at
@@ -308,6 +311,10 @@ async function loadPlaylists(id?: string): Promise<PlaylistSummary[]> {
             select lt.album_media_item_id from playlist_item pi
             join library_track lt on lt.media_item_id = pi.media_item_id
             where pi.playlist_id = p.id and lt.album_media_item_id is not null
+            union
+            select t.album_media_item_id from playlist_item pi
+            join track t on t.track_media_item_id = pi.media_item_id
+            where pi.playlist_id = p.id
           ) albums) as album_count
         from playlist p
         left join (
@@ -439,7 +446,7 @@ function playlistEntrySortExpression(key: PlaylistEntrySort): SQL {
     case 'album':
       return sql`lower(coalesce(lt.album_name, am.title))`
     case 'duration':
-      return sql`coalesce(lt.duration_sec, ${linkedTrackFieldExpression('duration_sec', sql`lt.album_media_item_id`, sql`mi.title`)})`
+      return sql`coalesce(lt.duration_sec, ${albumTrackDurationExpression(sql`lt.media_item_id`, sql`lt.album_media_item_id`)})`
     case 'added':
       return sql`pi.added_at`
     case 'releaseDate':
@@ -448,6 +455,10 @@ function playlistEntrySortExpression(key: PlaylistEntrySort): SQL {
       return sql`lt.scrobble_count`
     case 'lastListened':
       return sql`lt.last_listened_at`
+    case 'source':
+      return sql`case when lt.media_item_id is not null then ${trackSourcesExpression(sql`mi.id`, true)} end`
+    case 'spotifyMatch':
+      return sql`case when lt.media_item_id is not null then ${trackSpotifyMatchExpression(sql`lt.spotify_track_id`, sql`mi.source_label`, true)} end`
     case 'kind':
       return sql`case when lt.media_item_id is null then 'album' else 'track' end`
   }
@@ -552,7 +563,7 @@ export async function updatePlaylistSyncSchedule(
 export async function removeImportedPlaylist(id: string) {
   return db.transaction(async (tx) => {
     // The same lock as imports, which also delete tracks with no remaining source.
-    await tx.execute(sql`select pg_advisory_xact_lock(614105)`)
+    await lockLibraryTrackWrites(tx)
     const [stored] = await tx
       .select({ source: playlist.source })
       .from(playlist)

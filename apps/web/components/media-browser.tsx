@@ -1,6 +1,11 @@
 'use client'
 
-import { MediaInspector } from './media-inspector'
+import { DetailInspector } from './detail-inspector'
+import {
+  replaceWorkspaceUrl,
+  useDetailInspector,
+} from './detail-inspector-context'
+import { sameDetail, withoutDetailEntries } from '@/utils/detail-inspector'
 
 import Link from 'next/link'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
@@ -12,11 +17,8 @@ import {
   ArrowDown,
   ArrowUp,
   Columns3,
-  Grid2X2,
   ListMusic,
   Settings2,
-  Rows3,
-  Table2,
   X,
 } from 'lucide-react'
 import { Button } from '@repo/ui/components/ui/button'
@@ -54,18 +56,22 @@ import { useBrowseFacets } from '@/hooks/useBrowseFacets'
 import AiSearch from './ai-search'
 import { aiSearchParams, mediaAiSearchTarget } from '@/utils/ai-search'
 import MediaArtwork from './media-artwork'
-import MediaDetail from './media-detail'
-import { TilePlayControls } from './play-controls'
+import { AlbumInlinePlayButton, TilePlayControls } from './play-controls'
 import { createBrowsePlaybackSource } from '@/utils/playback-source'
 import ManualMediaAdd from './manual-media-add'
-import { BrowseFilterChips, RangeEditor } from './browse-controls'
+import {
+  BrowseFilterChips,
+  BrowseTagBadges,
+  BrowseViewSwitch,
+  RangeEditor,
+} from './browse-controls'
 import { ListeningControls } from './listening-controls'
 import BrowseFilterPanel, { FilterPanelSection } from './browse-filter-panel'
 import {
   formatListeningPeriod,
   formatListeningRule,
 } from '@/utils/listening-filters'
-import ServiceLinks from './service-icon-links'
+import { AlbumSpotifyLink } from './service-icon-links'
 import AlbumTitle from './album-title'
 import { albumSpotifyDestination } from '@/utils/album-links'
 import {
@@ -80,10 +86,9 @@ import {
 import { useRailSlot } from '@/hooks/useRailSlot'
 import styles from './media-browser.module.css'
 import { FilterButton } from './filter-affordance'
-import ProviderRatings from './provider-ratings'
+import DetailProviderLinks from './detail-provider-links'
 import {
   compactRatingStripWidth,
-  getDetailProviderLinks,
   isCompactRating,
 } from '@/utils/provider-ratings'
 import {
@@ -103,7 +108,6 @@ const defaultAlbumColumns = [
   'genre',
   'ratingRymValue',
   'scrobbles',
-  'links',
 ]
 const defaultFilmColumns = [
   'title',
@@ -113,11 +117,9 @@ const defaultFilmColumns = [
   'genre',
   'source',
   'watched',
-  'links',
 ]
 
 const overlayLabels = { ratings: 'Ratings', sort: 'Sort value', tags: 'Tags' }
-const visibleTileTags = 3
 
 function parseFilters(value: string | null): BrowseFilter[] {
   try {
@@ -151,10 +153,8 @@ export default function MediaBrowser({
   const [widths, setWidths] = useState<Record<string, number>>({})
   const scroller = useRef<HTMLDivElement>(null)
   const browser = useRef<HTMLElement>(null)
-  const inspector = useRef<HTMLElement>(null)
+  const inspector = useDetailInspector()
   const railSlot = useRailSlot()
-  const openedHere = useRef(false)
-  const detailTrigger = useRef<HTMLElement | null>(null)
   const resize = useRef<{ key: string; x: number; width: number } | null>(null)
   const filters = parseFilters(searchParams.get('filters'))
   const rangesResult = BrowseRangesParamSchema.safeParse(
@@ -197,9 +197,8 @@ export default function MediaBrowser({
   const view = parseBrowseView(searchParams.get('view'))
   const overlays = parseArtworkOverlays(searchParams.get('overlays'), mediaType)
   const density = parseGridDensity(searchParams.get('density'))
-  const selectedId = searchParams.get('item')
-  const detailParams = new URLSearchParams(searchParams)
-  detailParams.delete('item')
+  const selectedId =
+    inspector?.root?.kind === mediaType ? inspector.root.id : null
   const fieldsQuery = useQuery({
     queryKey: [collection, 'fields'],
     queryFn: () =>
@@ -246,14 +245,16 @@ export default function MediaBrowser({
     listening,
     listeningSort: requestedListeningPeriod,
   })
-  // With both overlays on, the sort value and links sit on the artwork.
+  // With both overlays on, the sort value and provider marks sit on the artwork.
   const tileExtraRow =
     !overlays.includes('sort') || !overlays.includes('ratings')
+  const tagsBelowArtwork = mediaType === 'album' && !overlays.includes('tags')
   const grid = mediaGridGeometry({
     width: viewport.width,
     mediaType,
     density,
     extraRow: tileExtraRow,
+    tagsBelowArtwork,
   })
   const scrollIdentity = `${collection}:${queryKey}:${view}`
   const previousScrollTop = scroll.identity === scrollIdentity ? scroll.top : 0
@@ -262,21 +263,21 @@ export default function MediaBrowser({
       ? preserveGridScroll(previousScrollTop, gridLayout, grid)
       : previousScrollTop
 
-  function setParams(updates: Record<string, string | null>, push = false) {
-    const params = new URLSearchParams(window.location.search)
+  function setParams(updates: Record<string, string | null>, close = false) {
+    const pathname = `/${collection}`
+    const current = new URLSearchParams(window.location.search)
+    const params = close ? withoutDetailEntries(pathname, current) : current
     for (const [key, value] of Object.entries(updates)) {
       if (value === null || value === '') params.delete(key)
       else params.set(key, value)
     }
-    if (Object.keys(updates).some((key) => key !== 'item'))
-      params.delete('page')
-    const url = `/${collection}${params.size ? `?${params}` : ''}`
-    if (push) window.history.pushState(null, '', url)
-    else window.history.replaceState(null, '', url)
-    const saved = new URLSearchParams(params)
-    saved.delete('item')
+    params.delete('page')
+    replaceWorkspaceUrl(`${pathname}${params.size ? `?${params}` : ''}`, !close)
     try {
-      window.localStorage.setItem(`browse:${collection}`, saved.toString())
+      window.localStorage.setItem(
+        `browse:${collection}`,
+        withoutDetailEntries(pathname, params).toString(),
+      )
     } catch {
       /* URL state still works when browser storage is unavailable. */
     }
@@ -285,27 +286,13 @@ export default function MediaBrowser({
     const next = filters.some((item) => sameBrowseFilter(item, filter))
       ? filters
       : [...filters, filter]
-    // Closing must not navigate back to the filter state from before the modal opened.
-    if (keepOpen && next !== filters) openedHere.current = false
-    setParams({
-      filters: JSON.stringify(next),
-      ...(keepOpen ? {} : { item: null }),
-    })
+    setParams({ filters: JSON.stringify(next) }, !keepOpen)
   }
   function changeFilters(next: BrowseFilter[]) {
-    if (selectedId) openedHere.current = false
     setParams({ filters: next.length ? JSON.stringify(next) : null })
   }
-  function closeDetail() {
-    if (openedHere.current) {
-      openedHere.current = false
-      window.history.back()
-    } else setParams({ item: null })
-  }
   function openDetail(id: string, trigger?: HTMLElement) {
-    detailTrigger.current = trigger ?? null
-    openedHere.current = true
-    setParams({ item: id }, true)
+    inspector?.open({ kind: mediaType, id }, trigger)
   }
   function sort(key: string) {
     setParams({
@@ -380,14 +367,10 @@ export default function MediaBrowser({
     view,
   ])
   useEffect(() => {
-    if (selectedId) {
-      // The inspector covers the results, so it takes focus.
-      inspector.current?.focus({ preventScroll: true })
+    if (selectedId)
       scroller.current
         ?.querySelector('[data-selected="true"]')
         ?.scrollIntoView({ block: 'nearest' })
-    } else if (detailTrigger.current?.isConnected)
-      detailTrigger.current.focus({ preventScroll: true })
   }, [selectedId])
 
   const gridColumns = grid.columns
@@ -396,8 +379,12 @@ export default function MediaBrowser({
       ? 36
       : view === 'list'
         ? grid.mobile
-          ? 52
-          : 44
+          ? mediaType === 'album'
+            ? 84
+            : 64
+          : mediaType === 'album'
+            ? 64
+            : 48
         : grid.rowHeight
   const params = new URLSearchParams({
     q,
@@ -488,14 +475,12 @@ export default function MediaBrowser({
         if (popovers.length) {
           for (const popover of popovers) popover.open = false
           event.preventDefault()
-        } else if (selectedId && !document.querySelector('dialog[open]')) {
-          event.preventDefault()
-          closeDetail()
         }
         return
       }
       if (
         !selectedId ||
+        !sameDetail(inspector?.active, inspector?.root) ||
         (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') ||
         event.altKey ||
         event.ctrlKey ||
@@ -508,14 +493,14 @@ export default function MediaBrowser({
         target &&
         target !== document.body &&
         !target.closest('.browse-scroll, .detail-topbar') &&
-        target !== inspector.current
+        !target.matches('.media-inspector')
       )
         return
       const current = slots.findIndex(({ item }) => item?.id === selectedId)
       const next = slots[current + (event.key === 'ArrowDown' ? 1 : -1)]?.item
       if (current < 0 || !next) return
       event.preventDefault()
-      setParams({ item: next.id })
+      inspector?.replace({ kind: mediaType, id: next.id })
     }
     document.addEventListener('pointerdown', onPointerDown)
     document.addEventListener('keydown', onKeyDown)
@@ -524,9 +509,8 @@ export default function MediaBrowser({
       document.removeEventListener('keydown', onKeyDown)
     }
   })
-  const columnCount =
-    columns.length + 1 + (columnKeys.includes('links') ? 1 : 0)
-  const ratingsWidth = compactRatingStripWidth(fields)
+  const columnCount = columns.length + 1
+  const providersWidth = compactRatingStripWidth(fields) + 72
   const widthFor = (field: BrowseField) =>
     widths[field.key] ??
     (field.key === 'title' ? 260 : field.type === 'text' ? 180 : 115)
@@ -534,6 +518,13 @@ export default function MediaBrowser({
   function renderValue(item: AlbumListItem | FilmListItem, field: BrowseField) {
     const values = getBrowseValues(item)
     const value = values[field.key]
+    if (item.mediaType === 'album' && field.key === 'genre')
+      return (
+        <BrowseTagBadges
+          tags={Array.isArray(value) ? value : []}
+          onFilter={addFilter}
+        />
+      )
     if (field.type === 'text' && field.filterable && field.key !== 'title') {
       const values = Array.isArray(value)
         ? value
@@ -578,22 +569,39 @@ export default function MediaBrowser({
       </span>
     )
   }
-  function itemRatings(item: AlbumListItem | FilmListItem) {
-    return getDetailProviderLinks(
-      fields,
-      getBrowseValues(item),
-      item.links,
-      undefined,
-      item.providerReferences,
+  function providerGroup(
+    item: AlbumListItem | FilmListItem,
+    context: 'poster' | 'table',
+    highlightKey?: string,
+    hideSpotify = false,
+  ) {
+    return (
+      <DetailProviderLinks
+        fields={fields}
+        values={getBrowseValues(item)}
+        links={item.links}
+        references={item.providerReferences}
+        spotifyUrl={
+          item.mediaType === 'album' ? albumSpotifyDestination(item) : undefined
+        }
+        hideSpotify={hideSpotify}
+        context={context}
+        highlightKey={highlightKey}
+      />
     )
   }
   function titleControl(item: AlbumListItem | FilmListItem, className: string) {
     return item.mediaType === 'album' ? (
-      <AlbumTitle
-        item={item}
-        className={className}
-        onOpenDetails={(event) => openDetail(item.id, event.currentTarget)}
-      />
+      <div
+        className={`${styles.itemTitleRow} ${className === 'tile-title' ? styles.tileTitleRow : ''}`}
+      >
+        <AlbumTitle
+          item={item}
+          className={className}
+          onOpenDetails={(event) => openDetail(item.id, event.currentTarget)}
+        />
+        <AlbumSpotifyLink item={item} />
+      </div>
     ) : (
       <button
         className={className}
@@ -606,6 +614,18 @@ export default function MediaBrowser({
         )}
       </button>
     )
+  }
+  function albumPlaybackSource(item: AlbumListItem, index: number) {
+    return createBrowsePlaybackSource({
+      apiBaseUrl,
+      collection: 'albums',
+      params,
+      href: `/albums?${searchParams.size ? searchParams : params}`,
+      label: 'Albums',
+      total,
+      startIndex: index,
+      initialItem: item,
+    })
   }
   function creatorButtons(item: AlbumListItem | FilmListItem) {
     const creatorField = item.mediaType === 'album' ? 'artist' : 'director'
@@ -948,58 +968,32 @@ export default function MediaBrowser({
                   icon={<Columns3 size={16} />}
                 >
                   <div className="filter-panel-columns">
-                    {[...fields, { key: 'links', label: 'Links' }].map(
-                      (field) => (
-                        <label className="check-label" key={field.key}>
-                          <input
-                            type="checkbox"
-                            checked={columnKeys.includes(field.key)}
-                            disabled={field.key === 'title'}
-                            onChange={() =>
-                              setParams({
-                                columns: (columnKeys.includes(field.key)
-                                  ? columnKeys.filter(
-                                      (key) => key !== field.key,
-                                    )
-                                  : [...columnKeys, field.key]
-                                ).join(','),
-                              })
-                            }
-                          />
-                          {field.label}
-                        </label>
-                      ),
-                    )}
+                    {fields.map((field) => (
+                      <label className="check-label" key={field.key}>
+                        <input
+                          type="checkbox"
+                          checked={columnKeys.includes(field.key)}
+                          disabled={field.key === 'title'}
+                          onChange={() =>
+                            setParams({
+                              columns: (columnKeys.includes(field.key)
+                                ? columnKeys.filter((key) => key !== field.key)
+                                : [...columnKeys, field.key]
+                              ).join(','),
+                            })
+                          }
+                        />
+                        {field.label}
+                      </label>
+                    ))}
                   </div>
                 </FilterPanelSection>
               )}
             </BrowseFilterPanel>
-            <div className="view-switch">
-              <Button
-                variant={view === 'grid' ? 'default' : 'ghost'}
-                aria-label="Grid view"
-                aria-pressed={view === 'grid'}
-                onClick={() => setParams({ view: 'grid' })}
-              >
-                <Grid2X2 size={16} />
-              </Button>
-              <Button
-                variant={view === 'list' ? 'default' : 'ghost'}
-                aria-label="List view"
-                aria-pressed={view === 'list'}
-                onClick={() => setParams({ view: 'list' })}
-              >
-                <Rows3 size={16} />
-              </Button>
-              <Button
-                variant={view === 'table' ? 'default' : 'ghost'}
-                aria-label="Table view"
-                aria-pressed={view === 'table'}
-                onClick={() => setParams({ view: 'table' })}
-              >
-                <Table2 size={16} />
-              </Button>
-            </div>
+            <BrowseViewSwitch
+              view={view}
+              onChange={(next) => setParams({ view: next })}
+            />
             <span className="browse-count" aria-live="polite">
               {query.isPending
                 ? 'Loading...'
@@ -1093,17 +1087,10 @@ export default function MediaBrowser({
                       </div>
                     )
                   const values = getBrowseValues(item)
-                  const provider = itemRatings(item)
                   const tags = Array.isArray(values.genre) ? values.genre : []
-                  const serviceLinks = (
-                    <ServiceLinks
-                      hideSpotify={
-                        item.mediaType === 'album' &&
-                        Boolean(albumSpotifyDestination(item))
-                      }
-                      item={{ ...item, links: provider.links }}
-                    />
-                  )
+                  const hideSpotify =
+                    item.mediaType === 'album' &&
+                    Boolean(albumSpotifyDestination(item))
                   return (
                     <article
                       className="media-tile"
@@ -1134,50 +1121,24 @@ export default function MediaBrowser({
                         </button>
                         {overlays.includes('sort') &&
                           sortValue(item, 'tile-sort')}
-                        {overlays.includes('tags') && tags.length > 0 && (
-                          <div className="tile-tags" title={tags.join(', ')}>
-                            {tags.slice(0, visibleTileTags).map((tag) => (
-                              <FilterButton
-                                key={tag}
-                                title={`Filter genre: ${tag}`}
-                                onClick={() =>
-                                  addFilter({ field: 'genre', value: tag })
-                                }
-                              >
-                                {tag}
-                              </FilterButton>
-                            ))}
-                            {tags.length > visibleTileTags && (
-                              <span>+{tags.length - visibleTileTags}</span>
-                            )}
-                          </div>
+                        {overlays.includes('tags') && (
+                          <BrowseTagBadges
+                            tags={tags}
+                            className="tile-tags"
+                            onFilter={addFilter}
+                          />
                         )}
-                        {overlays.includes('ratings') && (
-                          <ProviderRatings
-                            ratings={provider.ratings}
-                            context="poster"
-                            highlightKey={
-                              overlays.includes('sort') ? sortRating : undefined
-                            }
-                          >
-                            {serviceLinks}
-                          </ProviderRatings>
-                        )}
+                        {overlays.includes('ratings') &&
+                          providerGroup(
+                            item,
+                            'poster',
+                            overlays.includes('sort') ? sortRating : undefined,
+                            hideSpotify,
+                          )}
                         {item.mediaType === 'album' && (
                           <TilePlayControls
                             album={item}
-                            source={() =>
-                              createBrowsePlaybackSource({
-                                apiBaseUrl,
-                                collection: 'albums',
-                                params,
-                                href: `/albums?${searchParams.size ? searchParams : params}`,
-                                label: 'Albums',
-                                total,
-                                startIndex: index,
-                                initialItem: item,
-                              })
-                            }
+                            source={() => albumPlaybackSource(item, index)}
                           />
                         )}
                       </div>
@@ -1186,10 +1147,19 @@ export default function MediaBrowser({
                         <span>{creatorButtons(item)}</span>
                         <span>{item.releaseDate?.slice(0, 4)}</span>
                       </div>
+                      {tagsBelowArtwork && (
+                        <BrowseTagBadges tags={tags} onFilter={addFilter} />
+                      )}
                       {tileExtraRow && (
                         <div className="tile-extra">
                           {!overlays.includes('sort') && sortValue(item)}
-                          {!overlays.includes('ratings') && serviceLinks}
+                          {!overlays.includes('ratings') &&
+                            providerGroup(
+                              item,
+                              'table',
+                              sortRating,
+                              hideSpotify,
+                            )}
                         </div>
                       )}
                     </article>
@@ -1203,7 +1173,7 @@ export default function MediaBrowser({
               style={{ height: query.height }}
             >
               <div
-                className={`media-list ${mediaType}`}
+                className={`media-list ${mediaType} ${styles.mediaRows}`}
                 data-mobile={grid.mobile}
                 style={{ top: padTop }}
               >
@@ -1214,25 +1184,20 @@ export default function MediaBrowser({
                         key={`slot-${index}`}
                         className="list-row virtual-browse-placeholder"
                         aria-hidden="true"
+                        style={{ height: rowHeight }}
                       >
                         <div className="list-thumb virtual-browse-shimmer" />
                         <div className="virtual-browse-line virtual-browse-shimmer" />
                       </div>
                     )
-                  const provider = itemRatings(item)
+                  const tags = getBrowseValues(item).genre
                   return (
                     <article
                       className="list-row"
                       key={item.id}
                       data-item-index={index}
                       data-selected={item.id === selectedId}
-                      style={
-                        grid.mobile
-                          ? undefined
-                          : {
-                              gridTemplateColumns: `32px minmax(0, 2fr) minmax(0, 1.6fr) ${ratingsWidth}px 132px`,
-                            }
-                      }
+                      style={{ height: rowHeight }}
                     >
                       <button
                         className="list-thumb art-button"
@@ -1249,30 +1214,41 @@ export default function MediaBrowser({
                           fallbackClassName="list-thumb-image"
                         />
                       </button>
-                      <div className="list-title">
-                        {titleControl(item, 'table-title')}
+                      <div className={styles.listContent}>
+                        <div className={styles.listTitle}>
+                          {item.mediaType === 'album' && (
+                            <AlbumInlinePlayButton
+                              album={item}
+                              source={() => albumPlaybackSource(item, index)}
+                            />
+                          )}
+                          {titleControl(item, 'table-title')}
+                        </div>
+                        <div className="list-byline">
+                          <span className="inline-values">
+                            {creatorButtons(item)}
+                          </span>
+                          <span className="list-year">
+                            {item.releaseDate?.slice(0, 4)}
+                          </span>
+                          {sortValue(item, 'list-sort')}
+                        </div>
+                        {item.mediaType === 'album' && (
+                          <BrowseTagBadges
+                            tags={Array.isArray(tags) ? tags : []}
+                            onFilter={addFilter}
+                          />
+                        )}
                       </div>
-                      <div className="list-byline">
-                        <span className="inline-values">
-                          {creatorButtons(item)}
-                        </span>
-                        <span className="list-year">
-                          {item.releaseDate?.slice(0, 4)}
-                        </span>
-                        {sortValue(item, 'list-sort')}
-                      </div>
-                      <ProviderRatings
-                        ratings={provider.ratings}
-                        context="table"
-                        highlightKey={sortRating}
-                      />
-                      <ServiceLinks
-                        hideSpotify={
+                      <div className={styles.listProviders}>
+                        {providerGroup(
+                          item,
+                          'table',
+                          sortRating,
                           item.mediaType === 'album' &&
-                          Boolean(albumSpotifyDestination(item))
-                        }
-                        item={{ ...item, links: provider.links }}
-                      />
+                            Boolean(albumSpotifyDestination(item)),
+                        )}
+                      </div>
                     </article>
                   )
                 })}
@@ -1285,7 +1261,7 @@ export default function MediaBrowser({
               style={{
                 width: columns.reduce(
                   (sum, field) => sum + widthFor(field),
-                  ratingsWidth + (columnKeys.includes('links') ? 220 : 0),
+                  providersWidth,
                 ),
               }}
             >
@@ -1293,8 +1269,7 @@ export default function MediaBrowser({
                 {columns.map((field) => (
                   <col key={field.key} style={{ width: widthFor(field) }} />
                 ))}
-                <col style={{ width: ratingsWidth }} />
-                {columnKeys.includes('links') && <col style={{ width: 220 }} />}
+                <col style={{ width: providersWidth }} />
               </colgroup>
               <thead>
                 <tr>
@@ -1372,8 +1347,7 @@ export default function MediaBrowser({
                       />
                     </th>
                   ))}
-                  <th>Ratings</th>
-                  {columnKeys.includes('links') && <th>Links</th>}
+                  <th>Providers</th>
                 </tr>
               </thead>
               <tbody>
@@ -1422,31 +1396,18 @@ export default function MediaBrowser({
                           }
                         >
                           <div
-                            className={`browse-cell ${field.key === 'title' && item.mediaType === 'album' ? 'flex items-center gap-2' : ''}`}
+                            className={`browse-cell ${item.mediaType === 'album' && (field.key === 'title' || field.key === 'genre') ? 'flex items-center gap-2' : ''}`}
                           >
                             {field.key === 'title' &&
                             item.mediaType === 'album' ? (
                               <>
-                                <AlbumTitle
-                                  item={item}
-                                  className="table-title min-w-0 flex-1 truncate"
-                                  onOpenDetails={(event) =>
-                                    openDetail(item.id, event.currentTarget)
+                                <AlbumInlinePlayButton
+                                  album={item}
+                                  source={() =>
+                                    albumPlaybackSource(item, index)
                                   }
                                 />
-                                <button
-                                  className="shrink-0 text-xs quiet"
-                                  aria-label={`Open details for ${item.title}`}
-                                  onClick={(event) => {
-                                    event.stopPropagation()
-                                    openDetail(item.id, event.currentTarget)
-                                  }}
-                                  onDoubleClick={(event) =>
-                                    event.stopPropagation()
-                                  }
-                                >
-                                  Open details
-                                </button>
+                                {titleControl(item, 'table-title')}
                               </>
                             ) : field.key === 'title' ? (
                               <button
@@ -1470,44 +1431,15 @@ export default function MediaBrowser({
                         </td>
                       ))}
                       <td>
-                        <ProviderRatings
-                          ratings={
-                            getDetailProviderLinks(
-                              fields,
-                              getBrowseValues(item),
-                              item.links,
-                              undefined,
-                              item.providerReferences,
-                            ).ratings
-                          }
-                          context="table"
-                        />
+                        {providerGroup(
+                          item,
+                          'table',
+                          sortRating,
+                          item.mediaType === 'album' &&
+                            columns.some((field) => field.key === 'title') &&
+                            Boolean(albumSpotifyDestination(item)),
+                        )}
                       </td>
-                      {columnKeys.includes('links') && (
-                        <td>
-                          <div className="browse-cell">
-                            <ServiceLinks
-                              hideSpotify={
-                                columns.some(
-                                  (field) => field.key === 'title',
-                                ) &&
-                                item.mediaType === 'album' &&
-                                Boolean(albumSpotifyDestination(item))
-                              }
-                              item={{
-                                ...item,
-                                links: getDetailProviderLinks(
-                                  fields,
-                                  getBrowseValues(item),
-                                  item.links,
-                                  undefined,
-                                  item.providerReferences,
-                                ).links,
-                              }}
-                            />
-                          </div>
-                        </td>
-                      )}
                     </tr>
                   ) : (
                     <tr
@@ -1547,43 +1479,22 @@ export default function MediaBrowser({
           }}
         />
       )}
-      {selectedId && (
-        <>
-          <div className="inspector-backdrop" onClick={closeDetail} />
-          <MediaInspector
-            ref={inspector}
-            tabIndex={-1}
-            aria-label="Media details"
-          >
-            <div className="detail-topbar">
-              <a
-                href={`/${collection}/${selectedId}${detailParams.size ? `?${detailParams}` : ''}`}
-              >
-                Open page
-              </a>
-              <button aria-label="Close details" onClick={closeDetail}>
-                <X size={18} />
-              </button>
-            </div>
-            <div className="inspector-scroll">
-              <MediaDetail
-                key={selectedId}
-                mediaType={mediaType}
-                id={selectedId}
-                onFilter={addFilter}
-                onFiltersChange={changeFilters}
-                highlightField={sortBy}
-                browseMetric={
-                  sortField?.key === 'listeningScrobbles' &&
-                  selectedListeningCount !== undefined
-                    ? { field: sortField, value: selectedListeningCount }
-                    : undefined
-                }
-              />
-            </div>
-          </MediaInspector>
-        </>
-      )}
+      <DetailInspector
+        media={{
+          onFilter:
+            inspector?.active?.kind === mediaType ? addFilter : undefined,
+          onFiltersChange:
+            inspector?.active?.kind === mediaType ? changeFilters : undefined,
+          highlightField:
+            inspector?.active?.kind === mediaType ? sortBy : undefined,
+          browseMetric:
+            sameDetail(inspector?.root, inspector?.active) &&
+            sortField?.key === 'listeningScrobbles' &&
+            selectedListeningCount !== undefined
+              ? { field: sortField, value: selectedListeningCount }
+              : undefined,
+        }}
+      />
     </section>
   )
 }

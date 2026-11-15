@@ -1,6 +1,7 @@
 'use client'
 
 import Link from 'next/link'
+import { DetailLink } from './detail-link'
 import { useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 import {
@@ -258,13 +259,6 @@ function tracksLabel(count: number) {
   return `${count.toLocaleString()} ${count === 1 ? 'track' : 'tracks'}`
 }
 
-/** The playlist drawer on the Playlists page. */
-function playlistDrawerHref(playlistId: string, tab?: 'sync') {
-  const params = new URLSearchParams({ playlist: playlistId })
-  if (tab) params.set('tab', tab)
-  return `/playlists?${params}`
-}
-
 function jobHref(job: SpotifyPlaylistJob) {
   return scopedHref(`/jobs?jobId=${encodeURIComponent(job.jobId)}`, 'album')
 }
@@ -377,9 +371,11 @@ function ScheduleCell({ summary }: { summary: PlaylistSummary | undefined }) {
   if (!summary?.sync.syncable) return <>-</>
   const { schedule, nextScheduledAt } = summary.sync
   return (
-    <Link
+    <DetailLink
       className="underline underline-offset-2"
-      href={playlistDrawerHref(summary.id, 'sync')}
+      kind="playlist"
+      id={summary.id}
+      tab="sync"
       title={
         nextScheduledAt
           ? `Next import ${formatDateTime(nextScheduledAt)}`
@@ -387,7 +383,7 @@ function ScheduleCell({ summary }: { summary: PlaylistSummary | undefined }) {
       }
     >
       {youtubeScheduleLabels[schedule]}
-    </Link>
+    </DetailLink>
   )
 }
 
@@ -1012,14 +1008,13 @@ export default function SpotifyPlaylistImport() {
                           <TableCell>
                             <SecondaryCell text={playlist.name}>
                               {playlist.stored ? (
-                                <Link
+                                <DetailLink
                                   className="font-medium hover:underline"
-                                  href={playlistDrawerHref(
-                                    playlist.stored.playlistId,
-                                  )}
+                                  kind="playlist"
+                                  id={playlist.stored.playlistId}
                                 >
                                   {playlist.name}
-                                </Link>
+                                </DetailLink>
                               ) : (
                                 playlist.name
                               )}

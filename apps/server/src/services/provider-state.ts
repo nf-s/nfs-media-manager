@@ -10,6 +10,10 @@ import { filmAddedDate } from '@/lib/film-added-date'
 import { resolveFileImportPatches } from '@/lib/file-import-patches'
 import { sanitizeAlbumProviderResult } from '@/lib/spotify-audio-features'
 import { recordFilmAddedDate } from './film-added-dates'
+import {
+  lockLibraryTrackWrites,
+  replaceAlbumTracks,
+} from './album-library-tracks'
 import { lockTagWrites, upsertProviderTags } from './tag-state'
 import {
   checksumJson,
@@ -31,7 +35,6 @@ import {
   providerReference,
   providerReferenceOverride,
   providerSnapshot,
-  track,
 } from '@/schemas/db'
 
 type ProviderDatabase = Parameters<Parameters<typeof db.transaction>[0]>[0]
@@ -220,41 +223,6 @@ export function normalizeCreditsForInsert(
   )
 }
 
-async function replaceAlbumTracks(
-  database: ProviderDatabase,
-  mediaItemId: string,
-  tracksToInsert: PluginNormalizedResult['tracks'],
-): Promise<void> {
-  if (tracksToInsert.length === 0) {
-    return
-  }
-
-  await database.delete(track).where(eq(track.albumMediaItemId, mediaItemId))
-
-  for (const trackItem of tracksToInsert) {
-    await database.insert(track).values({
-      id: createStableId(
-        'track',
-        `${mediaItemId}:${trackItem.position}:${trackItem.title}:${trackItem.externalId ?? ''}`,
-      ),
-      albumMediaItemId: mediaItemId,
-      externalId: trackItem.externalId ?? null,
-      title: trackItem.title,
-      position: trackItem.position,
-      durationSec: trackItem.durationSec ?? null,
-      metadata: {},
-    })
-  }
-
-  await database
-    .update(album)
-    .set({
-      trackCount: tracksToInsert.length,
-      updatedAt: new Date(),
-    })
-    .where(eq(album.mediaItemId, mediaItemId))
-}
-
 async function upsertPlaylistMemberships(
   database: ProviderDatabase,
   mediaItemId: string,
@@ -305,6 +273,8 @@ export async function applyProviderResultInTransaction(
     }
   }
   if (input.normalized.tags.length > 0) await lockTagWrites(database)
+  if (input.mediaType === 'album' && input.normalized.tracks.length > 0)
+    await lockLibraryTrackWrites(database)
   await database.execute(
     sql`select id from media_item where id = ${input.mediaItemId} for update`,
   )

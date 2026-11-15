@@ -1,11 +1,12 @@
 'use client'
 
 import Link from 'next/link'
-import { useDeferredValue, useEffect, useRef, useState } from 'react'
+import { DetailLink } from './detail-link'
+import { useDeferredValue } from 'react'
 import { useInfiniteQuery } from '@tanstack/react-query'
-import { X } from 'lucide-react'
 import {
   FilmCollectionDetailSchema,
+  FilmCollectionQuerySchema,
   type FilmCollectionItem,
   type FilmCollectionSort,
   type FilmCollectionQuery,
@@ -26,7 +27,7 @@ import ServiceIconLinks from './service-icon-links'
 import { fetchApiData } from '@/utils/api'
 import { useConfig } from './providers'
 import MediaArtwork from './media-artwork'
-import { MediaInspector } from './media-inspector'
+import { useDetailView } from './detail-inspector-context'
 import {
   SecondaryCell,
   SecondaryColumnFilter,
@@ -66,13 +67,29 @@ function DateValue({ value }: { value: string | null }) {
 
 export function FilmCollectionEntries({ id }: { id: string }) {
   const { apiBaseUrl } = useConfig()
-  const [sortBy, setSortBy] = useState<FilmCollectionSort>('position')
-  const [direction, setDirection] = useState<'asc' | 'desc'>('asc')
-  const [search, setSearch] = useState('')
+  const detail = useDetailView()
+  const parsed = FilmCollectionQuerySchema.safeParse(
+    Object.fromEntries(detail.params),
+  )
+  const view = parsed.success
+    ? parsed.data
+    : FilmCollectionQuerySchema.parse({})
+  const { sortBy, direction } = view
+  const search = view.q ?? ''
   const q = useDeferredValue(search.trim())
-  const [watchedStates, setWatchedStates] = useState<
-    NonNullable<FilmCollectionQuery['watchedStates']>
-  >([])
+  const watchedStates = view.watchedStates ?? []
+  function changeView(patch: Partial<FilmCollectionQuery>) {
+    const next = { ...view, ...patch }
+    const params = new URLSearchParams(detail.params)
+    for (const [key, value] of Object.entries({
+      q: next.q ?? '',
+      sortBy: next.sortBy,
+      direction: next.direction,
+      watchedStates: JSON.stringify(next.watchedStates ?? []),
+    }))
+      params.set(key, value)
+    detail.replace(params)
+  }
   const table = useTableColumns('film-collection-items', columns)
   const query = useInfiniteQuery({
     queryKey: ['film-collection', id, sortBy, direction, q, watchedStates],
@@ -99,8 +116,10 @@ export function FilmCollectionEntries({ id }: { id: string }) {
   const rows = [...byId.values()]
   const summary = query.data?.pages[0]
   function onSort(key: FilmCollectionSort) {
-    setDirection(sortBy === key && direction === 'asc' ? 'desc' : 'asc')
-    setSortBy(key)
+    changeView({
+      sortBy: key,
+      direction: sortBy === key && direction === 'asc' ? 'desc' : 'asc',
+    })
   }
   return (
     <>
@@ -135,7 +154,7 @@ export function FilmCollectionEntries({ id }: { id: string }) {
             placeholder="Search films"
             value={search}
             maxLength={200}
-            onChange={(event) => setSearch(event.target.value)}
+            onChange={(event) => changeView({ q: event.target.value })}
           />
         }
         count={
@@ -152,6 +171,7 @@ export function FilmCollectionEntries({ id }: { id: string }) {
         className="min-h-0 flex-1"
         role="region"
         aria-label="Collection films"
+        data-inspector-scroll=""
         aria-busy={query.isFetching}
       >
         <table className="compact-table" aria-label="Collection films">
@@ -181,7 +201,9 @@ export function FilmCollectionEntries({ id }: { id: string }) {
                             { value: 'watched', label: 'Watched' },
                           ]}
                           value={watchedStates}
-                          onChange={setWatchedStates}
+                          onChange={(watchedStates) =>
+                            changeView({ watchedStates })
+                          }
                         />
                       ) : undefined
                     }
@@ -235,12 +257,13 @@ export function FilmCollectionEntries({ id }: { id: string }) {
                 {table.visible('title') && (
                   <TableCell>
                     <SecondaryCell text={row.title}>
-                      <Link
+                      <DetailLink
                         className="table-title"
-                        href={`/films?item=${encodeURIComponent(row.id)}`}
+                        kind="film"
+                        id={row.id}
                       >
                         {row.title}
-                      </Link>
+                      </DetailLink>
                     </SecondaryCell>
                   </TableCell>
                 )}
@@ -304,53 +327,6 @@ export function FilmCollectionEntries({ id }: { id: string }) {
           )}
         </div>
       </SecondaryTableScroll>
-    </>
-  )
-}
-
-export default function FilmCollectionDrawer({
-  id,
-  onClose,
-}: {
-  id: string
-  onClose: () => void
-}) {
-  const inspector = useRef<HTMLElement>(null)
-  useEffect(() => {
-    inspector.current?.focus({ preventScroll: true })
-  }, [id])
-  useEffect(() => {
-    function onKeyDown(event: KeyboardEvent) {
-      if (
-        event.key !== 'Escape' ||
-        event.defaultPrevented ||
-        document.querySelector('dialog[open]')
-      )
-        return
-      event.preventDefault()
-      onClose()
-    }
-    document.addEventListener('keydown', onKeyDown)
-    return () => document.removeEventListener('keydown', onKeyDown)
-  }, [onClose])
-  return (
-    <>
-      <div className="inspector-backdrop" onClick={onClose} />
-      <MediaInspector
-        ref={inspector}
-        tabIndex={-1}
-        aria-label="Collection details"
-      >
-        <div className="detail-topbar">
-          <span>Collection</span>
-          <button type="button" aria-label="Close details" onClick={onClose}>
-            <X size={18} />
-          </button>
-        </div>
-        <div className="flex min-h-0 flex-1 flex-col gap-3 px-3.5 pb-3.5 pt-3">
-          <FilmCollectionEntries key={id} id={id} />
-        </div>
-      </MediaInspector>
     </>
   )
 }

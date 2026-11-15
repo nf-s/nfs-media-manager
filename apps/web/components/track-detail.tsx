@@ -1,7 +1,6 @@
 'use client'
 
 import Link from 'next/link'
-import { useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { useQuery } from '@tanstack/react-query'
 import { Button } from '@repo/ui/components/ui/button'
@@ -21,10 +20,8 @@ import {
 import { useConfig } from './providers'
 import { fetchApiData } from '@/utils/api'
 import { monthBars } from '@/utils/listening-chart'
-import { playlistHref } from '@/utils/playlist-links'
 import { lastfmTrackUrl, trackServiceLinks } from '@/utils/track-links'
 import {
-  albumHref,
   formatTrackDuration,
   parseTrackFilters,
   trackFilter,
@@ -35,10 +32,15 @@ import { filterModeClass } from './browse-controls'
 import { FilterButton } from './filter-affordance'
 import { ListeningChart } from './listening-chart'
 import MediaArtwork from './media-artwork'
-import { LibraryTrackPlayButtons } from './play-controls'
+import {
+  AlbumReferencePlayButton,
+  LibraryTrackPlayButtons,
+} from './play-controls'
 import ServiceIconLinks from './service-icon-links'
 import TrackMerge from './track-merge'
 import TrackPlaylistAdditions from './track-playlist-additions'
+import { DetailLink } from './detail-link'
+import { useDetailView } from './detail-inspector-context'
 
 type OnFilter = (filter: BrowseFilter, keepOpen?: boolean) => void
 
@@ -97,41 +99,24 @@ function FilterValues({
   )
 }
 
-type OnOpenPlaylist = (id: string, trigger: HTMLElement) => void
-
 /** The track's playlists; each opens the playlist drawer, which can filter by it. */
 function PlaylistValues({
   playlists,
-  onOpenPlaylist,
 }: {
   playlists: TrackDetail['playlists']
-  onOpenPlaylist?: OnOpenPlaylist
 }) {
   return (
     <div className="detail-tags">
-      {playlists.map((playlist) =>
-        onOpenPlaylist ? (
-          <button
-            key={playlist.id}
-            type="button"
-            className="metadata-tag"
-            title={`Open ${playlist.name}`}
-            onClick={(event) =>
-              onOpenPlaylist(playlist.id, event.currentTarget)
-            }
-          >
-            {playlist.name}
-          </button>
-        ) : (
-          <Link
-            key={playlist.id}
-            className="metadata-tag"
-            href={playlistHref(playlist.id)}
-          >
-            {playlist.name}
-          </Link>
-        ),
-      )}
+      {playlists.map((playlist) => (
+        <DetailLink
+          key={playlist.id}
+          kind="playlist"
+          id={playlist.id}
+          className="metadata-tag"
+        >
+          {playlist.name}
+        </DetailLink>
+      ))}
     </div>
   )
 }
@@ -259,19 +244,26 @@ export function TrackSources({ item }: { item: TrackDetail }) {
 export default function TrackDetailView({
   id,
   onFilter,
-  onOpenPlaylist,
   onMerged,
 }: {
   id: string
   /** Applies a filter in the surrounding browser; without it values link to /tracks. */
   onFilter?: OnFilter
-  /** Opens a playlist's drawer in the surrounding browser; without it playlists link to the Playlists page. */
-  onOpenPlaylist?: OnOpenPlaylist
   /** Replaces the discarded track with the retained Spotify track after merging. */
   onMerged?: (targetId: string) => void
 }) {
   const { apiBaseUrl } = useConfig()
-  const [tab, setTab] = useState('overview')
+  const view = useDetailView()
+  const activeTab = view.params.get('tab')
+  const tab =
+    activeTab === 'listening' || activeTab === 'sources'
+      ? activeTab
+      : 'overview'
+  function setTab(next: string) {
+    if (next === 'overview') view.params.delete('tab')
+    else view.params.set('tab', next)
+    view.replace(view.params)
+  }
   const detail = useQuery({
     queryKey: ['track', id],
     queryFn: () =>
@@ -306,19 +298,28 @@ export default function TrackDetailView({
           fallbackClassName="aspect-square"
         />
         <div className="min-w-0">
-          <h1 className="break-words">{item.title}</h1>
+          <h1 className="break-words">
+            {item.title} <ServiceIconLinks links={trackServiceLinks(item)} />
+          </h1>
           <FilterValues
             field="artist"
             values={item.artists}
             onFilter={onFilter}
           />
           {item.album ? (
-            <Link
-              className="text-sm underline underline-offset-2"
-              href={albumHref(item.album.id)}
-            >
-              {item.album.title}
-            </Link>
+            <div className="inline-flex items-center gap-1">
+              <AlbumReferencePlayButton
+                id={item.album.id}
+                title={item.album.title}
+              />
+              <DetailLink
+                className="text-sm underline underline-offset-2"
+                kind="album"
+                id={item.album.id}
+              >
+                {item.album.title}
+              </DetailLink>
+            </div>
           ) : item.albumName ? (
             <p className="text-sm">{item.albumName}</p>
           ) : null}
@@ -328,7 +329,6 @@ export default function TrackDetailView({
               <span>{formatTrackDuration(item.durationSec)}</span>
             )}
           </div>
-          <ServiceIconLinks links={trackServiceLinks(item)} />
           <LibraryTrackPlayButtons track={item} />
           <div className="mt-2">
             <TrackMerge track={item} onMerged={openResolvedTrack} />
@@ -398,10 +398,7 @@ export default function TrackDetailView({
             </section>
             <section>
               <h2>Playlists</h2>
-              <PlaylistValues
-                playlists={item.playlists}
-                onOpenPlaylist={onOpenPlaylist}
-              />
+              <PlaylistValues playlists={item.playlists} />
               <TrackPlaylistAdditions
                 track={item}
                 onResolved={openResolvedTrack}

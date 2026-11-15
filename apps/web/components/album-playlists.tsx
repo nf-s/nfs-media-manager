@@ -1,11 +1,10 @@
 'use client'
 
-import Link from 'next/link'
 import { useQuery } from '@tanstack/react-query'
 import { AlbumPlaylistsSchema } from '@repo/schemas/tracks'
 import { useConfig } from './providers'
 import { fetchApiData } from '@/utils/api'
-import { playlistAlbumsHref, trackHref } from '@/utils/playlist-links'
+import { DetailLink } from './detail-link'
 import {
   AddToPlaylist,
   AdditionState,
@@ -49,10 +48,11 @@ export default function AlbumPlaylists({ albumId }: { albumId: string }) {
         {memberships.length > 0 && (
           <div className="detail-tags">
             {memberships.map((playlist) => (
-              <Link
+              <DetailLink
                 key={playlist.id}
                 className="metadata-tag"
-                href={playlistAlbumsHref(playlist.name)}
+                kind="playlist"
+                id={playlist.id}
               >
                 {playlist.name}
                 {playlist.trackCount > 0 && (
@@ -62,7 +62,7 @@ export default function AlbumPlaylists({ albumId }: { albumId: string }) {
                     {playlist.trackCount === 1 ? 'track' : 'tracks'}
                   </span>
                 )}
-              </Link>
+              </DetailLink>
             ))}
           </div>
         )}
@@ -90,12 +90,13 @@ export default function AlbumPlaylists({ albumId }: { albumId: string }) {
           <ul className="grid gap-1 text-sm">
             {tracks.map((track) => (
               <li key={track.id}>
-                <Link
+                <DetailLink
+                  kind="track"
+                  id={track.id}
                   className="underline underline-offset-2"
-                  href={trackHref(track.id)}
                 >
                   {track.title}
-                </Link>
+                </DetailLink>
                 {track.playlists.length > 0 && (
                   <span className="quiet"> · {track.playlists.join(', ')}</span>
                 )}

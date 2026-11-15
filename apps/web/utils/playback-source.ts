@@ -8,6 +8,7 @@ import {
 } from '@repo/schemas/media'
 import {
   PlaylistDetailSchema,
+  PlaylistEntrySortSchema,
   TrackListItemSchema,
   type PlaylistEntry,
   type TrackListItem,
@@ -16,7 +17,6 @@ import { fetchApiData } from './api'
 import {
   albumPlayable,
   libraryTrackPlayable,
-  trackPlayable,
   type PlayableItem,
   type PlaybackSource,
 } from './playback'
@@ -29,9 +29,9 @@ const ALBUM_CACHE_SIZE = 12
 const AlbumTrackViewSchema = z.object({
   id: z.string(),
   q: z.string().max(200).default(''),
-  sortBy: z
-    .enum(['position', 'title', 'duration', 'scrobbles', 'externalId'])
-    .default('position'),
+  sortBy: PlaylistEntrySortSchema.or(z.literal('externalId')).default(
+    'position',
+  ),
   direction: z.enum(['asc', 'desc']).default('asc'),
 })
 const AlbumDetailTabSchema = z.enum([
@@ -115,8 +115,8 @@ function tracksInAlbum(
 ): PlayableItem[] {
   const tracks = (
     selection ?? [...album.tracks].sort((a, b) => a.position - b.position)
-  ).flatMap((track) => {
-    const playable = trackPlayable(album, track)
+  ).flatMap(({ track }) => {
+    const playable = libraryTrackPlayable(track)
     return playable ? [playable] : []
   })
   if (tracks.length || selection) return tracks

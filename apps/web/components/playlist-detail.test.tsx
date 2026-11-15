@@ -25,6 +25,8 @@ import {
   playlistEntryViewParam,
 } from '@/utils/playlist-links'
 import { indexedPlaylistEntries } from './playlist-detail'
+import { DetailInspectorProvider } from './detail-inspector-context'
+import { detailEntries, detailEntryParams } from '@/utils/detail-inspector'
 
 // The Tracks browser imports a CSS module, which Node cannot load; class names are not under test.
 require.extensions['.css'] = (module) => {
@@ -126,13 +128,14 @@ function detail(playlist = summary): PlaylistDetail {
   })
 }
 
-function render(
+async function render(
   search: string,
   playlist = detail(),
   playback?: PlaybackView,
   page: ReactNode = <PlaylistsWorkspace />,
   path = '/playlists',
-): string {
+): Promise<string> {
+  const { AppDetailInspector } = await import('./detail-inspector')
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
@@ -168,13 +171,19 @@ function render(
         >
           <PathnameContext.Provider value={path}>
             <SearchParamsContext.Provider value={new URLSearchParams(search)}>
-              {playback ? (
-                <PlaybackViewContext.Provider value={playback}>
-                  {page}
-                </PlaybackViewContext.Provider>
-              ) : (
-                page
-              )}
+              <DetailInspectorProvider>
+                {playback ? (
+                  <PlaybackViewContext.Provider value={playback}>
+                    {page}
+                    <AppDetailInspector />
+                  </PlaybackViewContext.Provider>
+                ) : (
+                  <>
+                    {page}
+                    <AppDetailInspector />
+                  </>
+                )}
+              </DetailInspectorProvider>
             </SearchParamsContext.Provider>
           </PathnameContext.Provider>
         </ConfigContext.Provider>
@@ -192,13 +201,38 @@ function drawerOf(html: string) {
   return html.slice(start)
 }
 
-test('no drawer opens without the playlist parameter', () => {
-  assert.doesNotMatch(render(''), /Playlist details/)
+function linkTargets(html: string, label: string) {
+  const href = html.match(new RegExp(`href="([^"]+)"[^>]*>${label}</a>`))?.[1]
+  assert.ok(href)
+  const url = new URL(href.replaceAll('&amp;', '&'), 'http://localhost')
+  return detailEntries(url.pathname, url.searchParams)
+}
+
+test('a nested deep link renders only its active detail and places Back before Open page', async () => {
+  const search = detailEntryParams(
+    '/playlists',
+    new URLSearchParams({ q: 'original' }),
+    [
+      { kind: 'playlist', id: 'playlist-1' },
+      { kind: 'track', id: 'track-1' },
+    ],
+  )
+  const html = await render(search.toString())
+  assert.match(html, /aria-label="Track details"/)
+  assert.doesNotMatch(html, /aria-label="Playlist details"/)
+  const back = html.indexOf(' Back</button>')
+  const open = html.indexOf('>Open page</a>')
+  assert.ok(back >= 0 && back < open)
+  assert.match(html, /href="\/tracks\/track-1"[^>]*>Open page/)
 })
 
-test('the drawer lists entries in playlist order in the shared table', () => {
-  const html = drawerOf(render('playlist=playlist-1'))
-  assert.match(html, /<h1[^>]*>Synthetic mix<\/h1>/)
+test('no drawer opens without the playlist parameter', async () => {
+  assert.doesNotMatch(await render(''), /Playlist details/)
+})
+
+test('the drawer lists entries in playlist order in the shared table', async () => {
+  const html = drawerOf(await render('playlist=playlist-1'))
+  assert.match(html, /<h1[^>]*>Synthetic mix /)
   assert.match(html, /Example owner/)
   assert.match(html, /2 tracks/)
   assert.match(
@@ -221,18 +255,29 @@ test('the drawer lists entries in playlist order in the shared table', () => {
     order,
     [...order].sort((left, right) => left - right),
   )
-  assert.match(table, /href="\/tracks\/track-1"[^>]*>Opening track</)
-  assert.match(table, /href="\/albums\/album-1"[^>]*>Spotify album</)
-  assert.match(table, /href="\/albums\/album-2"[^>]*>Member album</)
+  assert.deepEqual(linkTargets(table, 'Opening track'), [
+    { kind: 'playlist', id: 'playlist-1' },
+    { kind: 'track', id: 'track-1' },
+  ])
+  assert.deepEqual(linkTargets(table, 'Spotify album').at(-1), {
+    kind: 'album',
+    id: 'album-1',
+  })
+  assert.deepEqual(linkTargets(table, 'Member album').at(-1), {
+    kind: 'album',
+    id: 'album-2',
+  })
   assert.match(html, /3 of 3 loaded/)
-  // Playback is off: row numbers only.
-  assert.doesNotMatch(table, /aria-label="Play /)
+  assert.match(
+    table,
+    /aria-label="Play Opening track: Connect Spotify playback in Providers\."[^>]*disabled=/,
+  )
   assert.match(html, /aria-selected="true"[^>]*>Tracks</)
 })
 
-test('track rows have play and queue buttons while playback is on', () => {
+test('track rows have play and queue buttons while playback is on', async () => {
   const html = drawerOf(
-    render('playlist=playlist-1', detail(), {
+    await render('playlist=playlist-1', detail(), {
       ...idlePlaybackState,
       enabled: true,
     }),
@@ -240,11 +285,11 @@ test('track rows have play and queue buttons while playback is on', () => {
   assert.match(html, /aria-label="Play Opening track"/)
   assert.match(html, /aria-label="Play Closing track"/)
   assert.match(html, /aria-label="Add Closing track to queue"/)
-  assert.doesNotMatch(html, /aria-label="Play Member album"/)
+  assert.match(html, /aria-label="Play Member album"/)
 })
 
-test('the sync tab shows the schedule, progress and the latest job', () => {
-  const html = drawerOf(render('playlist=playlist-1&tab=sync'))
+test('the sync tab shows the schedule, progress and the latest job', async () => {
+  const html = drawerOf(await render('playlist=playlist-1&tab=sync'))
   assert.match(html, /aria-selected="true"[^>]*>Sync</)
   assert.match(html, /<option value="daily" selected="">Daily<\/option>/)
   for (const label of [
@@ -263,7 +308,7 @@ test('the sync tab shows the schedule, progress and the latest job', () => {
   assert.match(html, /<progress[^>]*value="2"[^>]*max="5"/)
 })
 
-test('the sync tab explains a missing next sync after a failed import', () => {
+test('the sync tab explains a missing next sync after a failed import', async () => {
   const failed = detail(
     PlaylistSummarySchema.parse({
       ...summary,
@@ -279,7 +324,7 @@ test('the sync tab explains a missing next sync after a failed import', () => {
       },
     }),
   )
-  const html = drawerOf(render('playlist=playlist-1&tab=sync', failed))
+  const html = drawerOf(await render('playlist=playlist-1&tab=sync', failed))
   assert.match(html, /2 pages</)
   assert.doesNotMatch(html, /2 of/)
   assert.match(html, /the last import failed\. Sync now to resume\./)
@@ -288,7 +333,7 @@ test('the sync tab explains a missing next sync after a failed import', () => {
   assert.doesNotMatch(html, /<progress/)
 })
 
-test('a legacy playlist says in one line that it is not synced', () => {
+test('a legacy playlist says in one line that it is not synced', async () => {
   const legacy = detail(
     PlaylistSummarySchema.parse({
       ...summary,
@@ -297,7 +342,7 @@ test('a legacy playlist says in one line that it is not synced', () => {
       sync: undefined,
     }),
   )
-  const html = drawerOf(render('playlist=playlist-1&tab=sync', legacy))
+  const html = drawerOf(await render('playlist=playlist-1&tab=sync', legacy))
   assert.match(html, /This playlist is not synced from Spotify\./)
   assert.doesNotMatch(html, /Sync now|<select/)
 })
@@ -305,7 +350,7 @@ test('a legacy playlist says in one line that it is not synced', () => {
 test('the Tracks browser opens the same drawer and filters itself by the playlist', async () => {
   const { default: TrackBrowser } = await import('./track-browser')
   const html = drawerOf(
-    render(
+    await render(
       'playlist=playlist-1&item=track-9',
       detail(),
       undefined,
@@ -313,20 +358,17 @@ test('the Tracks browser opens the same drawer and filters itself by the playlis
       '/tracks',
     ),
   )
-  assert.match(
-    html,
-    /href="\/playlists\?playlist=playlist-1">Open in Playlists</,
-  )
+  assert.match(html, /href="\/playlists\/playlist-1"[^>]*>Open page/)
   assert.match(html, /<button[^>]*>Filter tracks<\/button>/)
-  assert.match(
-    html,
-    /<button type="button" class="table-title">Opening track<\/button>/,
-  )
+  assert.deepEqual(linkTargets(html, 'Opening track').at(-1), {
+    kind: 'track',
+    id: 'track-1',
+  })
   assert.doesNotMatch(html, /aria-label="Track details"/)
 })
 
-test('playlist data columns share sortable headers and column controls', () => {
-  const html = render('')
+test('playlist data columns share sortable headers and column controls', async () => {
+  const html = await render('')
   for (const label of [
     'Playlist',
     'Source',
@@ -343,8 +385,8 @@ test('playlist data columns share sortable headers and column controls', () => {
   assert.match(html, /> Columns</)
 })
 
-test('playlist entries expose sorting for every data column', () => {
-  const html = drawerOf(render('playlist=playlist-1'))
+test('playlist entries expose sorting for every data column', async () => {
+  const html = drawerOf(await render('playlist=playlist-1'))
   for (const label of ['Title', 'Artists', 'Album', 'Duration', 'Added'])
     assert.match(html, new RegExp(`<button[^>]*>[^<]*${label}`))
   assert.match(html, /> Columns</)
@@ -357,7 +399,7 @@ test('playlist entries expose sorting for every data column', () => {
   assert.match(html, /aria-label="Resize details panel"/)
 })
 
-test('a playback return URL restores the playlist table search and sorting', () => {
+test('a playback return URL restores the playlist table search and sorting', async () => {
   const params = new URLSearchParams({
     playlist: 'playlist-1',
     playlistView: playlistEntryViewParam('playlist-1', {
@@ -368,7 +410,7 @@ test('a playback return URL restores the playlist table search and sorting', () 
       kinds: ['track'],
     }),
   })
-  const html = drawerOf(render(params.toString()))
+  const html = drawerOf(await render(params.toString()))
   assert.match(html, /aria-label="Search playlist entries"[^>]*value="Fixture"/)
   assert.match(html, /aria-sort="descending"><div[^>]*><button[^>]*>Title/)
   assert.match(html, /matching entries/)

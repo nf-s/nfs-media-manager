@@ -9,7 +9,11 @@ import {
   libraryTrack,
   mediaItem,
 } from '@/schemas/db'
-import { refreshTrackAddedDates, removeOrphanTracks } from './spotify-playlists'
+import { refreshTrackAddedDates } from './spotify-playlists'
+import {
+  lockLibraryTrackWrites,
+  removeOrphanTracks,
+} from './album-library-tracks'
 
 const WRITE_BATCH = 500
 const ScrobbledRowsSchema = z.array(
@@ -30,6 +34,8 @@ const CandidateRowsSchema = z.array(
     artists: z.array(z.string()),
     album_name: z.string().nullable(),
     album_id: z.string().nullable(),
+    listed_album_ids: z.array(z.string()),
+    album_only: z.boolean(),
   }),
 )
 const ManualRowsSchema = z.array(
@@ -44,7 +50,7 @@ const ManualRowsSchema = z.array(
 export async function importLastfmLibraryTracks(account: string) {
   await db.transaction(async (tx) => {
     // Share the playlist writer's lock so cleanup cannot remove new memberships.
-    await tx.execute(sql`select pg_advisory_xact_lock(614105)`)
+    await lockLibraryTrackWrites(tx)
     const groups = ScrobbledRowsSchema.parse(
       (
         await tx.execute(sql`
@@ -62,13 +68,19 @@ export async function importLastfmLibraryTracks(account: string) {
     const candidates = CandidateRowsSchema.parse(
       (
         await tx.execute(sql`
-      select lt.media_item_id as id, mi.title, lt.album_name,
+      select lt.media_item_id as id, mi.title, coalesce(lt.album_name, am.title) as album_name,
         lt.album_media_item_id as album_id,
+        array(select distinct t.album_media_item_id from track t
+          where t.track_media_item_id = lt.media_item_id) as listed_album_ids,
+        mi.source_label is distinct from 'spotify' and lt.spotify_track_id is null as album_only,
         coalesce((select array_agg(a.name) from media_credit c
           join artist a on a.id = c.artist_id
           where c.media_item_id = mi.id and c.role = 'artist'), '{}') as artists
       from library_track lt join media_item mi on mi.id = lt.media_item_id
-      where lt.spotify_track_id is not null`)
+      left join media_item am on am.id = lt.album_media_item_id
+      where mi.metadata->>'legacyHidden' is distinct from 'true'
+        and (lt.spotify_track_id is not null or exists (
+          select 1 from track t where t.track_media_item_id = lt.media_item_id))`)
       ).rows,
     )
     const manual = new Map(
@@ -98,10 +110,13 @@ export async function importLastfmLibraryTracks(account: string) {
         byName.get(key(group.artist_name, group.track_name)) ?? []
       ).filter(
         (candidate) =>
-          group.album_names.length === 0 ||
+          (group.album_names.length === 0 && !candidate.album_only) ||
           (!group.has_unlinked_album &&
             group.album_ids.length === 1 &&
-            group.album_ids[0] === candidate.album_id) ||
+            (group.album_ids[0] === candidate.album_id ||
+              candidate.listed_album_ids.some(
+                (id) => id === group.album_ids[0],
+              ))) ||
           group.album_names.every(
             (name) =>
               candidate.album_name !== null &&

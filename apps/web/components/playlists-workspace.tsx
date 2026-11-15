@@ -37,8 +37,10 @@ import {
 import { sortTableRows } from '@/utils/secondary-table'
 import MediaArtwork from './media-artwork'
 import { errorMessage } from './lastfm-sync'
-import { PlaylistDrawer } from './playlist-detail'
-import { usePlaylistDrawer } from '@/hooks/usePlaylistDrawer'
+import { DetailLink } from './detail-link'
+import { useDetailInspector } from './detail-inspector-context'
+import { PlaylistPlayButton } from './playlist-detail'
+import ServiceIconLinks from './service-icon-links'
 import { fetchApiData } from '@/utils/api'
 import { useLibraryView } from './media-scope'
 import { scopedHref } from '@/utils/media-scope'
@@ -181,7 +183,9 @@ export default function PlaylistsWorkspace() {
   )
   const [confirmingId, setConfirmingId] = useState<string | null>(null)
   const [outcome, setOutcome] = useState('')
-  const drawer = usePlaylistDrawer()
+  const inspector = useDetailInspector()
+  const selectedId =
+    inspector?.root?.kind === 'playlist' ? inspector.root.id : null
   const columns = useTableColumns('playlists', playlistColumns)
   const query = useQuery({
     queryKey: ['playlists'],
@@ -340,7 +344,7 @@ export default function PlaylistsWorkspace() {
                   className="cursor-pointer"
                   data-selected={
                     playlist.id === confirmingId ||
-                    playlist.id === drawer.playlistId ||
+                    playlist.id === selectedId ||
                     undefined
                   }
                   onClick={(event) => {
@@ -349,8 +353,8 @@ export default function PlaylistsWorkspace() {
                       event.target.closest('a, button, input, select, textarea')
                     )
                       return
-                    drawer.open(
-                      playlist.id,
+                    inspector?.open(
+                      { kind: 'playlist', id: playlist.id },
                       event.currentTarget.querySelector<HTMLElement>(
                         '.table-title',
                       ) ?? undefined,
@@ -373,17 +377,29 @@ export default function PlaylistsWorkspace() {
                   )}
                   {columns.visible('name') && (
                     <TableCell>
-                      <SecondaryCell text={playlist.name}>
-                        <button
-                          type="button"
-                          className="table-title hover:underline"
-                          onClick={(event) =>
-                            drawer.open(playlist.id, event.currentTarget)
-                          }
-                        >
-                          {playlist.name}
-                        </button>
-                      </SecondaryCell>
+                      <div className="secondary-cell-actions">
+                        <PlaylistPlayButton playlist={playlist} />
+                        <SecondaryCell text={playlist.name}>
+                          <DetailLink
+                            kind="playlist"
+                            id={playlist.id}
+                            className="table-title hover:underline"
+                          >
+                            {playlist.name}
+                          </DetailLink>
+                        </SecondaryCell>
+                        {playlist.spotifyUrl && (
+                          <ServiceIconLinks
+                            links={[
+                              {
+                                provider: 'spotify',
+                                label: 'Spotify',
+                                url: playlist.spotifyUrl,
+                              },
+                            ]}
+                          />
+                        )}
+                      </div>
                     </TableCell>
                   )}
                   {columns.visible('source') && (
@@ -541,15 +557,6 @@ export default function PlaylistsWorkspace() {
         <p className="tags-outcome" role="status">
           {outcome}
         </p>
-      )}
-      {drawer.playlistId && (
-        <PlaylistDrawer
-          id={drawer.playlistId}
-          tab={drawer.tab}
-          topbar={<span>Playlist</span>}
-          onClose={drawer.close}
-          onTabChange={drawer.setTab}
-        />
       )}
     </section>
   )

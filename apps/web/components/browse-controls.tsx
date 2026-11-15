@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { SlidersHorizontal, X } from 'lucide-react'
+import { Grid2X2, Rows3, SlidersHorizontal, Table2, X } from 'lucide-react'
 import { Button } from '@repo/ui/components/ui/button'
 import {
   BrowseRangeSchema,
@@ -11,6 +11,70 @@ import {
 } from '@repo/schemas/browse'
 import { FilterButton } from './filter-affordance'
 import { FilterPanelSection } from './browse-filter-panel'
+import type { BrowseView } from '@/utils/media-grid'
+
+const views = [
+  { value: 'grid', label: 'Grid view', Icon: Grid2X2 },
+  { value: 'list', label: 'List view', Icon: Rows3 },
+  { value: 'table', label: 'Table view', Icon: Table2 },
+] satisfies Array<{ value: BrowseView; label: string; Icon: typeof Grid2X2 }>
+
+export function BrowseViewSwitch({
+  view,
+  onChange,
+}: {
+  view: BrowseView
+  onChange: (view: BrowseView) => void
+}) {
+  return (
+    <div className="view-switch" role="group" aria-label="Browse views">
+      {views.map(({ value, label, Icon }) => (
+        <Button
+          type="button"
+          key={value}
+          variant={view === value ? 'default' : 'ghost'}
+          aria-label={label}
+          aria-pressed={view === value}
+          title={label}
+          onClick={() => onChange(value)}
+        >
+          <Icon size={16} />
+        </Button>
+      ))}
+    </div>
+  )
+}
+
+export function BrowseTagBadges({
+  field = 'genre',
+  tags,
+  onFilter,
+  className = '',
+}: {
+  field?: string
+  tags: string[]
+  onFilter: (filter: BrowseFilter) => void
+  className?: string
+}) {
+  if (tags.length === 0) return null
+  return (
+    <div
+      className={`browse-tag-badges ${className}`}
+      role="group"
+      aria-label="Tags"
+    >
+      {tags.map((tag) => (
+        <FilterButton
+          key={tag}
+          title={`Filter by ${tag}`}
+          onClick={() => onFilter({ field, value: tag })}
+        >
+          {tag}
+        </FilterButton>
+      ))}
+    </div>
+  )
+}
 
 export function filterModeClass(mode: BrowseFilter['mode']) {
   return mode === 'required'

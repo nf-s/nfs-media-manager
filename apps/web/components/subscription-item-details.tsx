@@ -1,25 +1,26 @@
 'use client'
 
-import { MediaInspector } from './media-inspector'
-
-import { forwardRef } from 'react'
-import { X } from 'lucide-react'
+import { useQuery } from '@tanstack/react-query'
+import { useRouter } from 'next/navigation'
 import type { BrowseFilter } from '@repo/schemas/browse'
 import {
   subscriptionSourceUrl,
+  SubscriptionItemSchema,
   subscriptionTypeLabels,
   type SubscriptionItem,
 } from '@repo/schemas/subscriptions'
-import ExternalLink from './external-link'
+import ServiceIconLinks from './service-icon-links'
 import MediaArtwork from './media-artwork'
 import { formatCount } from '@/utils/youtube'
 import {
   formatSubscriptionDuration,
   formatSubscriptionPublished,
   subscriptionArtworkUrl,
-  subscriptionOpenLabel,
+  subscriptionsHref,
   subscriptionTypeFilter,
 } from '@/utils/subscriptions'
+import { fetchApiData } from '@/utils/api'
+import { useConfig } from './providers'
 import styles from './subscription-browser.module.css'
 
 export function SourceAvatar({
@@ -75,64 +76,56 @@ export function SubscriptionThumbnail({
   )
 }
 
-type DetailsProps = {
-  /** Undefined while a directly linked item outside the loaded rows is read. */
-  item: SubscriptionItem | undefined
-  error: string | null
-  onRetry: () => void
-  onClose: () => void
-  onFilter: (filter: BrowseFilter) => void
-}
-
-/** Drawer over the results from the right; a bottom sheet on phones. */
-export const SubscriptionItemDetails = forwardRef<HTMLElement, DetailsProps>(
-  function SubscriptionItemDetails(
-    { item, error, onRetry, onClose, onFilter },
-    ref,
-  ) {
+export function SubscriptionItemDetails({
+  id,
+  initialItem,
+  onFilter,
+}: {
+  id: string
+  initialItem?: SubscriptionItem
+  onFilter?: (filter: BrowseFilter) => void
+}) {
+  const { apiBaseUrl } = useConfig()
+  const router = useRouter()
+  const query = useQuery({
+    queryKey: ['subscriptions', 'item', id],
+    initialData: initialItem,
+    queryFn: ({ signal }) =>
+      fetchApiData(
+        apiBaseUrl,
+        `/api/v1/subscriptions/${encodeURIComponent(id)}`,
+        SubscriptionItemSchema,
+        { signal },
+      ),
+  })
+  if (query.data)
     return (
-      <>
-        <div className="inspector-backdrop" onClick={onClose} />
-        <MediaInspector
-          ref={ref}
-          tabIndex={-1}
-          aria-label={
-            item?.type === 'spotify' ? 'Episode details' : 'Video details'
-          }
-        >
-          <div className="detail-topbar">
-            {item ? (
-              <ExternalLink href={item.url}>
-                {subscriptionOpenLabel(item.type)}
-              </ExternalLink>
-            ) : (
-              <span />
-            )}
-            <button aria-label="Close details" onClick={onClose}>
-              <X size={18} />
-            </button>
-          </div>
-          <div className="inspector-scroll">
-            {item ? (
-              <ItemDetails item={item} onFilter={onFilter} />
-            ) : error ? (
-              <p className="browse-empty" role="alert">
-                {error}{' '}
-                <button type="button" className="underline" onClick={onRetry}>
-                  Retry
-                </button>
-              </p>
-            ) : (
-              <p className="browse-empty" role="status">
-                Loading...
-              </p>
-            )}
-          </div>
-        </MediaInspector>
-      </>
+      <ItemDetails
+        item={query.data}
+        onFilter={
+          onFilter ?? ((filter) => router.push(subscriptionsHref([filter])))
+        }
+      />
     )
-  },
-)
+  if (query.isError)
+    return (
+      <p className="browse-empty" role="alert">
+        Could not load this item.{' '}
+        <button
+          type="button"
+          className="underline"
+          onClick={() => query.refetch()}
+        >
+          Retry
+        </button>
+      </p>
+    )
+  return (
+    <p className="browse-empty" role="status">
+      Loading...
+    </p>
+  )
+}
 
 function ItemDetails({
   item,
@@ -144,17 +137,21 @@ function ItemDetails({
   const typeLabel = subscriptionTypeLabels[item.type]
   return (
     <article className={styles.details}>
-      <a
-        className={styles.detailThumb}
-        href={item.url}
-        target="_blank"
-        rel="noreferrer"
-        tabIndex={-1}
-        aria-hidden="true"
-      >
+      <div className={styles.detailThumb}>
         <SubscriptionThumbnail item={item} />
-      </a>
-      <h1 className={styles.detailTitle}>{item.title}</h1>
+      </div>
+      <h1 className={styles.detailTitle}>
+        {item.title}{' '}
+        <ServiceIconLinks
+          links={[
+            {
+              provider: item.type,
+              label: item.type === 'youtube' ? 'YouTube' : 'Spotify',
+              url: item.url,
+            },
+          ]}
+        />
+      </h1>
       <div className={styles.detailChannel}>
         <SourceAvatar src={item.sourceThumbnailUrl} size="large" />
         <button
@@ -165,9 +162,16 @@ function ItemDetails({
         >
           {item.sourceTitle}
         </button>
-        <ExternalLink href={subscriptionSourceUrl(item.type, item.sourceId)}>
-          {item.type === 'youtube' ? 'Channel on YouTube' : 'Show on Spotify'}
-        </ExternalLink>
+        <ServiceIconLinks
+          links={[
+            {
+              provider: item.type,
+              label:
+                item.type === 'youtube' ? 'YouTube channel' : 'Spotify show',
+              url: subscriptionSourceUrl(item.type, item.sourceId),
+            },
+          ]}
+        />
       </div>
       <dl className="detail-metrics">
         <div>

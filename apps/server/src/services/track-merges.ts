@@ -8,6 +8,10 @@ import {
 import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
 import { refreshTrackAddedDates } from './spotify-playlists'
+import {
+  lockLibraryTrackWrites,
+  removeOrphanTracks,
+} from './album-library-tracks'
 import { refreshTrackListeningTotals } from './track-links'
 
 const MergeTracksSchema = z.array(
@@ -15,6 +19,7 @@ const MergeTracksSchema = z.array(
     id: z.string(),
     spotify_track_id: z.string().nullable(),
     lastfm_source: z.boolean(),
+    imported_spotify: z.boolean(),
   }),
 )
 
@@ -30,11 +35,12 @@ export async function mergeLastfmTrack(
       message: 'Choose a different track to merge into.',
     })
   return db.transaction(async (tx) => {
-    await tx.execute(sql`select pg_advisory_xact_lock(614105)`)
+    await lockLibraryTrackWrites(tx)
     const records = MergeTracksSchema.parse(
       (
         await tx.execute(sql`
           select lt.media_item_id as id, lt.spotify_track_id,
+            (mi.source_label is not distinct from 'spotify') as imported_spotify,
             exists (select 1 from lastfm_track_source s
               where s.track_media_item_id = lt.media_item_id) as lastfm_source
           from library_track lt join media_item mi on mi.id = lt.media_item_id
@@ -48,13 +54,13 @@ export async function mergeLastfmTrack(
     const target = records.find((row) => row.id === targetId)
     if (!source || !target)
       throw new ServerError({ statusCode: 404, message: 'Track not found' })
-    if (source.spotify_track_id !== null || !source.lastfm_source)
+    if (source.imported_spotify || !source.lastfm_source)
       throw new ServerError({
         statusCode: 409,
         message:
           'Only a Last.fm track without an imported Spotify identity can be merged.',
       })
-    if (target.spotify_track_id === null)
+    if (target.spotify_track_id === null || !target.imported_spotify)
       throw new ServerError({
         statusCode: 409,
         message: 'Choose a track imported from Spotify.',
@@ -88,7 +94,24 @@ export async function mergeLastfmTrack(
       where track_media_item_id = ${targetId} and manually_matched
       on conflict (username, artist_key, track_key, track_media_item_id)
         do update set strategy = excluded.strategy`)
-    await tx.execute(sql`delete from media_item where id = ${sourceId}`)
+    if (source.spotify_track_id === null) {
+      await tx.execute(sql`
+        update track set track_media_item_id = ${targetId}
+        where track_media_item_id = ${sourceId}`)
+      await tx.execute(sql`
+        update library_track target
+        set album_media_item_id = source.album_media_item_id,
+          album_link_strategy = 'album-track-list'
+        from library_track source
+        where target.media_item_id = ${targetId} and source.media_item_id = ${sourceId}
+          and target.album_media_item_id is null and exists (
+            select 1 from track t where t.track_media_item_id = target.media_item_id
+              and t.album_media_item_id = source.album_media_item_id)`)
+    }
+    await tx.execute(
+      sql`delete from playlist_item where media_item_id = ${sourceId}`,
+    )
+    await removeOrphanTracks(tx, [sourceId])
     await refreshTrackAddedDates(tx)
     await refreshTrackListeningTotals(tx)
     return { targetId }

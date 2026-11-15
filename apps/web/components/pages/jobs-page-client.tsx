@@ -1,6 +1,7 @@
 'use client'
 
 import Link from 'next/link'
+import { DetailLink } from '../detail-link'
 import { Fragment, useDeferredValue, useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 import {
@@ -921,11 +922,12 @@ export function JobsTable({ provider }: { provider?: string }) {
                                 className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm"
                               >
                                 {item.mediaItemId && item.mediaType ? (
-                                  <Link
-                                    href={`/${item.mediaType === 'album' ? 'albums' : 'films'}/${item.mediaItemId}`}
+                                  <DetailLink
+                                    kind={item.mediaType}
+                                    id={item.mediaItemId}
                                   >
                                     {item.mediaTitle ?? 'Untitled item'}
-                                  </Link>
+                                  </DetailLink>
                                 ) : (
                                   'Unavailable item'
                                 )}

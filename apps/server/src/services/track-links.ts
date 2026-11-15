@@ -6,6 +6,7 @@ import {
 } from '@repo/schemas/tracks'
 import { db } from '@/lib/db'
 import { importLastfmLibraryTracks } from './lastfm-library-tracks'
+import { lockLibraryTrackWrites } from './album-library-tracks'
 import { spotifyAlbumId } from '@/lib/spotify-api'
 import {
   createScrobbleTrackMatcher,
@@ -37,6 +38,7 @@ const TrackRowsSchema = z.array(
     spotify_album_id: z.string().nullable(),
     album_name: z.string().nullable(),
     album_id: z.string().nullable(),
+    listed_album_ids: z.array(z.string()),
     strategy: TrackAlbumLinkStrategySchema.nullable(),
     artists: z.array(z.string()),
   }),
@@ -59,13 +61,15 @@ const LinkRowsSchema = z.array(
   }),
 )
 
-async function libraryTracks(database: typeof db | Transaction = db) {
+async function libraryTracks(database: Transaction) {
   return TrackRowsSchema.parse(
     (
       await database.execute(sql`
         select lt.media_item_id as id, mi.title, mi.source_label, lt.spotify_track_id,
           lt.spotify_album_id, lt.album_name,
           lt.album_media_item_id as album_id,
+          array(select distinct t.album_media_item_id from track t
+            where t.track_media_item_id = lt.media_item_id order by t.album_media_item_id) as listed_album_ids,
           lt.album_link_strategy as strategy,
           coalesce((
             select array_agg(a.name order by c.billing_order)
@@ -82,11 +86,13 @@ async function libraryTracks(database: typeof db | Transaction = db) {
  * tracks; a track whose album left the library is unlinked.
  */
 export async function linkTracksToAlbums() {
-  const tracks = await libraryTracks()
-  if (!tracks.length) return
-  const albums = AlbumRowsSchema.parse(
-    (
-      await db.execute(sql`
+  await db.transaction(async (tx) => {
+    await lockLibraryTrackWrites(tx)
+    const tracks = await libraryTracks(tx)
+    if (!tracks.length) return
+    const albums = AlbumRowsSchema.parse(
+      (
+        await tx.execute(sql`
         select mi.id, mi.title,
           to_char(mi.release_date, 'YYYY-MM-DD') as release_date,
           al.spotify_url,
@@ -105,45 +111,62 @@ export async function linkTracksToAlbums() {
         from media_item mi join album al on al.media_item_id = mi.id
         where mi.media_type = 'album'
           and mi.metadata->>'legacyHidden' is distinct from 'true'`)
-    ).rows,
-  )
-  const match = createTrackAlbumMatcher(
-    albums.map((album) => {
-      const linked = album.spotify_url
-        ? spotifyAlbumId(album.spotify_url)
-        : null
-      return {
-        id: album.id,
-        title: album.title,
-        releaseDate: album.release_date,
-        artists: album.artists,
-        spotifyAlbumIds: [
-          ...album.spotify_album_ids,
-          ...(linked ? [linked] : []),
-        ],
-        tracks: album.tracks,
-      }
-    }),
-  )
-  const changes = tracks
-    .filter((track) => track.source_label !== 'lastfm')
-    .flatMap((track) => {
-      const result = match({
-        spotifyTrackId: track.spotify_track_id,
-        spotifyAlbumId: track.spotify_album_id,
-        title: track.title,
-        albumName: track.album_name,
-        artists: track.artists,
+      ).rows,
+    )
+    const match = createTrackAlbumMatcher(
+      albums.map((album) => {
+        const linked = album.spotify_url
+          ? spotifyAlbumId(album.spotify_url)
+          : null
+        return {
+          id: album.id,
+          title: album.title,
+          releaseDate: album.release_date,
+          artists: album.artists,
+          spotifyAlbumIds: [
+            ...album.spotify_album_ids,
+            ...(linked ? [linked] : []),
+          ],
+          tracks: album.tracks,
+        }
+      }),
+    )
+    const changes = tracks
+      .filter(
+        (track) =>
+          track.source_label !== 'lastfm' || track.listed_album_ids.length > 0,
+      )
+      .flatMap((track) => {
+        if (
+          track.strategy === 'album-track-list' &&
+          track.album_id &&
+          track.listed_album_ids.includes(track.album_id)
+        ) {
+          return []
+        }
+        const result = match({
+          spotifyTrackId: track.spotify_track_id,
+          spotifyAlbumId: track.spotify_album_id,
+          title: track.title,
+          albumName: track.album_name,
+          artists: track.artists,
+        })
+        const listedAlbum = [
+          track.album_id,
+          result?.albumId,
+          ...track.listed_album_ids,
+        ].find((id) => id != null && track.listed_album_ids.includes(id))
+        const albumId = listedAlbum ?? result?.albumId ?? null
+        const strategy = listedAlbum
+          ? 'album-track-list'
+          : (result?.strategy ?? null)
+        return albumId === track.album_id && strategy === track.strategy
+          ? []
+          : [{ id: track.id, album_id: albumId, strategy }]
       })
-      const albumId = result?.albumId ?? null
-      const strategy = result?.strategy ?? null
-      return albumId === track.album_id && strategy === track.strategy
-        ? []
-        : [{ id: track.id, album_id: albumId, strategy }]
-    })
-  for (let start = 0; start < changes.length; start += WRITE_BATCH) {
-    // An album deleted since it was read is skipped; the next relink unlinks it.
-    await db.execute(sql`
+    for (let start = 0; start < changes.length; start += WRITE_BATCH) {
+      // An album deleted since it was read is skipped; the next relink unlinks it.
+      await tx.execute(sql`
       update library_track lt
       set album_media_item_id = r.album_id, album_link_strategy = r.strategy,
         updated_at = now()
@@ -152,7 +175,8 @@ export async function linkTracksToAlbums() {
       )}::jsonb) as r(id text, album_id text, strategy text)
       where lt.media_item_id = r.id and (r.album_id is null or exists (
         select 1 from album a where a.media_item_id = r.album_id))`)
-  }
+    }
+  })
 }
 
 const linkKey = (row: {
@@ -170,7 +194,7 @@ export async function linkScrobblesToTracks(account: string) {
   await db.transaction(async (tx) => {
     // Read and write under the identity writer lock so an in-flight relink
     // cannot overwrite a manual merge computed from newer source memberships.
-    await tx.execute(sql`select pg_advisory_xact_lock(614105)`)
+    await lockLibraryTrackWrites(tx)
     const tracks = await libraryTracks(tx)
     const scrobbled = tracks.length
       ? ScrobbledRowsSchema.parse(
@@ -188,13 +212,21 @@ export async function linkScrobblesToTracks(account: string) {
       : []
     const match = createScrobbleTrackMatcher(
       tracks
-        .filter((track) => track.source_label !== 'lastfm')
-        .map((track) => ({
-          id: track.id,
-          title: track.title,
-          artists: track.artists,
-          albumId: track.album_id,
-        })),
+        .filter(
+          (track) =>
+            track.source_label !== 'lastfm' ||
+            track.listed_album_ids.length > 0,
+        )
+        .flatMap((track) =>
+          [...new Set([track.album_id, ...track.listed_album_ids])].map(
+            (albumId) => ({
+              id: track.id,
+              title: track.title,
+              artists: track.artists,
+              albumId,
+            }),
+          ),
+        ),
     )
     // Manual choices are exclusive for their stored names, even if the chosen
     // Spotify recording's artist, title or album differs from the scrobble.

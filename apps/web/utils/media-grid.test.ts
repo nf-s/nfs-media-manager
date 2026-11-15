@@ -68,6 +68,21 @@ test('browse view accepts grid, list and table and falls back to grid', () => {
     assert.equal(parseBrowseView(view), view)
   for (const invalid of [null, '', 'cards', 'Table'])
     assert.equal(parseBrowseView(invalid), 'grid')
+  assert.equal(parseBrowseView(null, 'list'), 'list')
+  assert.equal(parseBrowseView('grid', 'list'), 'grid')
+})
+
+test('moving album tags off artwork reserves one badge row in the virtual grid', () => {
+  const grid = {
+    width: 390,
+    density: parseGridDensity(null),
+    mediaType: 'album',
+  } satisfies Parameters<typeof mediaGridGeometry>[0]
+  assert.equal(
+    mediaGridGeometry({ ...grid, tagsBelowArtwork: true }).rowHeight -
+      mediaGridGeometry(grid).rowHeight,
+    22,
+  )
 })
 
 test('artwork overlays default per library and round-trip saved preferences', () => {

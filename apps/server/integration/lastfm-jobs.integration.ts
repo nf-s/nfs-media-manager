@@ -13,6 +13,7 @@ import {
 } from 'vitest'
 import { CreateJobSchema } from '@repo/schemas/job'
 import { env } from '@/env'
+import { replaceAlbumTracks } from '@/services/album-library-tracks'
 import * as schema from '@/schemas/db'
 import { lastfmPlugin } from '@/plugins/builtin/lastfm'
 
@@ -131,12 +132,11 @@ describe('Last.fm adapter through queue and persistence, with offline HTTP', () 
       },
     }
     const tracks = { track: { name: 'Different Last.fm track', duration: 5 } }
-    await databaseClient.insert(schema.track).values({
-      id: 'streaming-track',
-      albumMediaItemId: 'album-fixture',
-      title: 'Original streaming track',
-      position: 1,
-    })
+    await databaseClient.transaction((tx) =>
+      replaceAlbumTracks(tx, 'album-fixture', [
+        { title: 'Original streaming track', position: 1 },
+      ]),
+    )
     request.mockImplementationOnce(async () =>
       Response.json({ album: { ...base, tracks } }),
     )
@@ -170,8 +170,8 @@ describe('Last.fm adapter through queue and persistence, with offline HTTP', () 
       topTagsResponse,
     })
     expect(
-      (await databaseClient.select().from(schema.track)).map((t) => t.id),
-    ).toEqual(['streaming-track'])
+      (await databaseClient.select().from(schema.track)).map((t) => t.title),
+    ).toEqual(['Original streaming track'])
   })
 
   it('honors a Last.fm rate-limit error inside HTTP 200 without retrying', async () => {

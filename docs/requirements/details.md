@@ -3,7 +3,7 @@
 ## Requirements
 
 - DETAIL-01: Overview is immediately useful: art, creators, release, source/status, service links, tags, synopsis and key metrics. Important information is not nested in collapsed sections. Use concise tabs: Overview, Tracks (albums), Edit, History. Full raw payloads are collapsed within History only.
-- DETAIL-02: Open from grid/list/table without discarding browse context; direct links work. Clicking creator/tag/source metadata filters the parent library and closes the panel. Closing restores focus and scroll.
+- DETAIL-02: Open an item in one inspector over the current view. Internal detail links replace the visible item in the inspector and add to its history. Back, browser history, reload and copied links restore the selected detail and its view settings. **Open page** opens a standalone detail. Clicking filterable metadata applies a filter to the relevant library. Closing restores focus and scroll.
 - DETAIL-03: Canonical title, art, source and supported album/film fields can be overridden without overwriting provider snapshots. Show saved/error states and refresh list/detail after saving.
 - DETAIL-04: Provider identifier correction is distinct from a canonical field override. Re-scrape uses the corrected identifier. Record actor/time/reason; allow clearing an override to reveal the underlying value.
 - DETAIL-05: History lists timestamp, provider, provenance, status and payload inspection. Every distinct imported/scraped payload is retained. Reimporting an identical source payload is idempotent; do not erase old history.

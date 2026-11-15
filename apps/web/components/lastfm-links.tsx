@@ -1,6 +1,8 @@
 'use client'
 
 import Link from 'next/link'
+import { DetailLink } from './detail-link'
+import { AlbumReferencePlayButton } from './play-controls'
 import { useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { Link2, Plus } from 'lucide-react'
@@ -152,9 +154,15 @@ function LinkRow({
         <TableCell>
           <SecondaryCell text={libraryAlbum}>
             {linked && group.album ? (
-              <Link href={`/albums/${group.album.id}`}>
-                {group.album.title}
-              </Link>
+              <span className="inline-flex items-center gap-1.5">
+                <AlbumReferencePlayButton
+                  id={group.album.id}
+                  title={group.album.title}
+                />
+                <DetailLink kind="album" id={group.album.id}>
+                  {group.album.title}
+                </DetailLink>
+              </span>
             ) : (
               libraryAlbum
             )}

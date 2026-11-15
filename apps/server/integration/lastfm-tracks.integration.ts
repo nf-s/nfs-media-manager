@@ -39,7 +39,9 @@ vi.mock('@/plugins/registry', () => ({
 }))
 
 import { refreshTrackLinks } from '@/services/track-links'
+import { replaceAlbumTracks } from '@/services/album-library-tracks'
 import { mergeLastfmTrack } from '@/services/track-merges'
+import { getAlbumDetail } from '@/services/media'
 import {
   getTrackDetail,
   listTrackFilterOptions,
@@ -159,23 +161,30 @@ async function album(
     spotifyUrl: `https://open.spotify.com/album/${spotifyId(id)}`,
   })
   await credit(id)
-  for (const [index, track] of tracks.entries())
-    await databaseClient.insert(schema.track).values({
-      id: `${id}-track-${index}`,
-      albumMediaItemId: id,
-      title: track.title,
-      externalId: track.spotifyId ?? null,
-      durationSec: track.durationSec ?? null,
-      position: index + 1,
+  await databaseClient.transaction((tx) =>
+    replaceAlbumTracks(
+      tx,
+      id,
+      tracks.map((track, index) => ({
+        title: track.title,
+        externalId: track.spotifyId,
+        durationSec: track.durationSec,
+        position: index + 1,
+      })),
+    ),
+  )
+  const tagId = 'electronic-fixture-tag'
+  await databaseClient
+    .insert(schema.tag)
+    .values({
+      id: tagId,
+      name: 'Electronic',
+      mediaType: 'album',
     })
-  await databaseClient.insert(schema.tag).values({
-    id: `${id}-tag`,
-    name: 'Electronic',
-    mediaType: 'album',
-  })
+    .onConflictDoNothing()
   await databaseClient.insert(schema.mediaItemTag).values({
     mediaItemId: id,
-    tagId: `${id}-tag`,
+    tagId,
   })
 }
 
@@ -373,11 +382,15 @@ describe('Last.fm tracks library', () => {
     await refreshTrackLinks(LISTENER)
 
     const items = await allTracks()
-    expect(items).toHaveLength(2)
+    expect(items).toHaveLength(3)
+    expect(items.find((item) => item.sources.includes('album'))).toMatchObject({
+      title: 'Mixed Song',
+      spotifyTrackId: spotifyId('mixedrecording'),
+    })
     expect(items.find((item) => item.id === 'mixedspotify')?.sources).toEqual([
       'spotify',
     ])
-    const standalone = items.find((item) => item.id !== 'mixedspotify')
+    const standalone = items.find((item) => item.sources.includes('lastfm'))
     expect(standalone).toMatchObject({
       title: 'Mixed Song',
       sources: ['lastfm'],
@@ -425,7 +438,7 @@ describe('Last.fm tracks library', () => {
     await refreshTrackLinks(LISTENER)
     expect((await allTracks())[0]).toMatchObject({
       title: 'Known Song',
-      sources: ['lastfm'],
+      sources: ['album', 'lastfm'],
       album: { id: 'linkedalbum', title: 'Linked Album' },
       albumTags: ['Electronic'],
       artworkUrl: 'https://example.com/album-artwork.jpg',
@@ -455,9 +468,108 @@ describe('Last.fm tracks library', () => {
     })
     await refreshTrackLinks(LISTENER)
     const items = await allTracks()
-    expect(items).toHaveLength(2)
-    expect(items.every((item) => item.spotifyTrackId === null)).toBe(true)
-    expect(items.every((item) => item.durationSec === null)).toBe(true)
+    expect(items).toHaveLength(5)
+    const lastfmTracks = items.filter((item) => item.sources.includes('lastfm'))
+    expect(lastfmTracks.map((item) => item.title)).toEqual([
+      'Repeated Song',
+      'Versioned Song',
+    ])
+    expect(lastfmTracks.every((item) => item.spotifyTrackId === null)).toBe(
+      true,
+    )
+    expect(lastfmTracks.every((item) => item.durationSec === null)).toBe(true)
+  })
+
+  it('reuses canonical tracks across album pages, source filters and list refreshes', async () => {
+    await album('refresh-album', 'Refresh Album', [
+      {
+        title: 'Retained Recording',
+        spotifyId: spotifyId('retained'),
+        durationSec: 205,
+      },
+      { title: 'Removed Recording' },
+    ])
+    const initial = await getAlbumDetail('refresh-album')
+    const [retained, removed] = initial?.tracks ?? []
+    if (!retained || !removed)
+      throw new Error('Expected initial album track fixtures')
+    expect(retained).toMatchObject({
+      position: 1,
+      track: {
+        title: 'Retained Recording',
+        durationSec: 205,
+        sources: ['album'],
+      },
+    })
+    await playlist('retention-playlist', [removed.track.id])
+    await databaseClient.transaction((tx) =>
+      replaceAlbumTracks(tx, 'refresh-album', [
+        { title: 'New Recording', position: 1 },
+        {
+          title: retained.track.title,
+          externalId: spotifyId('retained'),
+          durationSec: 210,
+          position: 2,
+        },
+      ]),
+    )
+    const refreshed = await getAlbumDetail('refresh-album')
+    expect(
+      refreshed?.tracks.map(({ position, track }) => [position, track.title]),
+    ).toEqual([
+      [1, 'New Recording'],
+      [2, 'Retained Recording'],
+    ])
+    expect(refreshed?.tracks[1]?.track).toMatchObject({
+      id: retained.track.id,
+      durationSec: 210,
+    })
+    const source = await listTracks(
+      query({
+        filters: JSON.stringify([
+          { field: 'source', value: 'Album track list', mode: 'required' },
+        ]),
+      }),
+    )
+    expect(source.items.map((item) => item.title)).toEqual([
+      'New Recording',
+      'Retained Recording',
+    ])
+    expect((await getTrackDetail(removed.track.id))?.sources).toEqual([
+      'spotify',
+    ])
+    await removeImportedPlaylist('retention-playlist')
+    expect(await getTrackDetail(removed.track.id)).toBeNull()
+    expect(await getTrackDetail(retained.track.id)).toMatchObject({
+      sources: ['album'],
+    })
+  })
+
+  it('attributes a scrobble to a shared recording through a secondary album', async () => {
+    const spotifyTrackId = spotifyId('sharedrecording')
+    const list = [{ title: 'Shared Recording', spotifyId: spotifyTrackId }]
+    await album('primary-album', 'Primary Album', list)
+    await album('secondary-album', 'Secondary Album', list)
+    await scrobble('Shared Recording', {
+      artist: 'Scrobbled Artist',
+      album: 'Secondary Album',
+      albumId: 'secondary-album',
+    })
+
+    await refreshTrackLinks(LISTENER)
+
+    const items = await allTracks()
+    expect(items.filter((track) => track.sources.includes('album'))).toEqual([
+      expect.objectContaining({
+        spotifyTrackId,
+        album: { id: 'primary-album', title: 'Primary Album' },
+        sources: ['album'],
+        scrobbles: 1,
+      }),
+    ])
+    expect(
+      items.find((track) => track.sources.includes('lastfm'))?.spotifyTrackId,
+    ).toBeNull()
   })
 
   it('ignores non-Spotify album track identifiers for playback', async () => {
@@ -498,10 +610,14 @@ describe('Last.fm tracks library', () => {
     await refreshTrackLinks(LISTENER)
 
     const items = await allTracks()
-    expect(items.map((item) => [item.title, item.spotifyMatch])).toEqual([
+    expect(
+      items
+        .filter((item) => item.sources.includes('lastfm'))
+        .map((item) => [item.title, item.spotifyMatch]),
+    ).toEqual([
       ['Ambiguous Song', 'unmatched'],
       ['Derived Song', 'album-track-list'],
-      ['Imported Song', 'spotify-import'],
+      ['Imported Song', 'unmatched'],
       ['Invalid ID', 'unmatched'],
       ['Unknown Song', 'unmatched'],
     ])
@@ -528,20 +644,20 @@ describe('Last.fm tracks library', () => {
         ]),
       }),
     )
-    expect(unmatched).toMatchObject({ totalCount: 3, pageCount: 3 })
-    expect(unmatched.items.map((item) => item.title)).toEqual(['Invalid ID'])
+    expect(unmatched).toMatchObject({ totalCount: 4, pageCount: 4 })
+    expect(unmatched.items.map((item) => item.title)).toEqual(['Imported Song'])
     const matched = await listTracks(
       query({
         size: 1,
-        page: 2,
+        page: 1,
         filters: JSON.stringify([
           requiredSource,
           { field: 'spotifyMatch', value: 'Unmatched', mode: 'exclude' },
         ]),
       }),
     )
-    expect(matched).toMatchObject({ totalCount: 2, pageCount: 2 })
-    expect(matched.items.map((item) => item.id)).toEqual(['imported'])
+    expect(matched).toMatchObject({ totalCount: 1, pageCount: 1 })
+    expect(matched.items.map((item) => item.id)).toEqual([derived.id])
     const albumMatches = await listTracks(
       query({
         filters: JSON.stringify([
@@ -549,18 +665,23 @@ describe('Last.fm tracks library', () => {
         ]),
       }),
     )
-    expect(albumMatches.totalCount).toBe(1)
-    expect(albumMatches.items.map((item) => item.spotifyTrackId)).toEqual([
-      spotifyId('derived'),
-    ])
+    expect(albumMatches.totalCount).toBe(4)
+    expect(albumMatches.items.map((item) => item.spotifyTrackId)).toEqual(
+      expect.arrayContaining([
+        spotifyId('first'),
+        spotifyId('second'),
+        spotifyId('derived'),
+        spotifyId('alternative'),
+      ]),
+    )
     const facets = await listTrackFilterOptions({ q: 'Spotify match' })
     expect(
       facets
         .filter((facet) => facet.field === 'spotifyMatch')
         .map((facet) => [facet.value, facet.count]),
     ).toEqual([
-      ['Unmatched', 3],
-      ['Album track list', 1],
+      ['Album track list', 4],
+      ['Unmatched', 4],
       ['Spotify import', 1],
     ])
   })

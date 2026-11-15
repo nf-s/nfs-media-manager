@@ -1,7 +1,8 @@
 'use client'
 
 import Link from 'next/link'
-import { usePathname, useRouter } from 'next/navigation'
+import { useRouter } from 'next/navigation'
+import { useDetailInspector } from './detail-inspector-context'
 import {
   useEffect,
   useId,
@@ -34,7 +35,7 @@ import {
   X,
 } from 'lucide-react'
 import { Button } from '@repo/ui/components/ui/button'
-import ExternalLink from './external-link'
+import ServiceIconLinks from './service-icon-links'
 import MediaArtwork from './media-artwork'
 import { useConfig } from './providers'
 import {
@@ -724,9 +725,15 @@ function NowPlayingSheet({
               </button>
             )}
             {shown.spotifyUrl && (
-              <ExternalLink className="player-tool" href={shown.spotifyUrl}>
-                Open in Spotify
-              </ExternalLink>
+              <ServiceIconLinks
+                links={[
+                  {
+                    provider: 'spotify',
+                    label: 'Spotify',
+                    url: shown.spotifyUrl,
+                  },
+                ]}
+              />
             )}
           </div>
           {devicesOpen && (
@@ -744,7 +751,7 @@ function Dock({ view }: { view: PlaybackView }) {
   const controls = usePlaybackControls()
   const { apiBaseUrl } = useConfig()
   const router = useRouter()
-  const pathname = usePathname()
+  const inspector = useDetailInspector()
   const phone = usePhoneLayout()
   const [sheet, setSheet] = useState(false)
   const reconnect = useMutation({
@@ -756,13 +763,8 @@ function Dock({ view }: { view: PlaybackView }) {
   const albumId = current?.albumId ?? null
 
   function openAlbum(albumId: string) {
-    const browsing = pathname === '/albums'
-    const params = new URLSearchParams(browsing ? window.location.search : '')
-    params.set('item', albumId)
-    const url = `/albums?${params}`
-    // The album browser reads the open item from the URL without a navigation.
-    if (browsing) window.history.pushState(null, '', url)
-    else router.push(url)
+    if (inspector) inspector.open({ kind: 'album', id: albumId })
+    else router.push(`/albums?item=${encodeURIComponent(albumId)}`)
   }
 
   if (failure?.status === 'expired')
@@ -805,7 +807,15 @@ function Dock({ view }: { view: PlaybackView }) {
         <div className="player-alert" role="alert">
           <span>{failure.message}</span>
           {shown.spotifyUrl && (
-            <ExternalLink href={shown.spotifyUrl}>Open in Spotify</ExternalLink>
+            <ServiceIconLinks
+              links={[
+                {
+                  provider: 'spotify',
+                  label: 'Spotify',
+                  url: shown.spotifyUrl,
+                },
+              ]}
+            />
           )}
           <button
             type="button"

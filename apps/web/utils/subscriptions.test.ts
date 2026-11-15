@@ -113,7 +113,7 @@ test('invalid URL parameters fall back to defaults', () => {
       ranges: '[{"field":"rating","min":1}]',
       sortBy: 'score',
       direction: 'sideways',
-      view: 'table',
+      view: 'unknown',
     }),
   )
   assert.deepEqual(state, {

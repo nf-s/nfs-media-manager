@@ -2,7 +2,10 @@
 
 import type { BrowseField, BrowseValues } from '@repo/schemas/browse'
 import type { AlbumListItem } from '@repo/schemas/media'
-import { getDetailProviderLinks } from '../utils/provider-ratings'
+import {
+  getDetailProviderLinks,
+  isCompactRating,
+} from '../utils/provider-ratings'
 import { albumSpotifyDestination } from '../utils/album-links'
 import ServiceIconLinks from './service-icon-links'
 import ProviderRatings from './provider-ratings'
@@ -14,6 +17,8 @@ export default function DetailProviderLinks({
   spotifyUrl,
   references,
   hideSpotify = false,
+  context = 'detail',
+  highlightKey,
 }: {
   fields: BrowseField[]
   values: BrowseValues
@@ -21,9 +26,15 @@ export default function DetailProviderLinks({
   spotifyUrl?: string | null
   references?: AlbumListItem['providerReferences']
   hideSpotify?: boolean
+  context?: 'detail' | 'poster' | 'table'
+  highlightKey?: string
 }) {
   const content = getDetailProviderLinks(
-    fields,
+    context === 'detail'
+      ? fields
+      : fields.filter(
+          (field) => field.rating && isCompactRating({ display: field.rating }),
+        ),
     values,
     links,
     albumSpotifyDestination({
@@ -33,16 +44,22 @@ export default function DetailProviderLinks({
     }),
     references,
   )
-  if (!content.ratings.length && !content.links.length && !content.trailerUrl)
-    return null
+  const serviceLinks = hideSpotify
+    ? content.links.filter(({ url }) => {
+        const host = new URL(url).hostname
+        return (
+          host !== 'open.spotify.com' && !host.endsWith('.open.spotify.com')
+        )
+      })
+    : content.links
   return (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-      <ProviderRatings
-        ratings={content.ratings}
-        context="detail"
-        trailerUrl={content.trailerUrl}
-      />
-      <ServiceIconLinks links={content.links} hideSpotify={hideSpotify} />
-    </div>
+    <ProviderRatings
+      ratings={content.ratings}
+      context={context}
+      trailerUrl={content.trailerUrl}
+      highlightKey={highlightKey}
+    >
+      {serviceLinks.length > 0 && <ServiceIconLinks links={serviceLinks} />}
+    </ProviderRatings>
   )
 }

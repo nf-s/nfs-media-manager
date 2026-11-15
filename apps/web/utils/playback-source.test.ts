@@ -19,6 +19,41 @@ import { browsePageSize } from './virtual-browse'
 const albumId = 'A'.repeat(22)
 const firstTrackId = 'B'.repeat(22)
 const secondTrackId = 'C'.repeat(22)
+function albumTrack(
+  position: number,
+  title: string,
+  spotifyTrackId: string | null,
+  durationSec: number | null,
+) {
+  return {
+    position,
+    track: {
+      id: `fixture-track-${position}`,
+      mediaType: 'track',
+      title,
+      artworkUrl: null,
+      releaseDate: null,
+      artists: ['Fixture artist'],
+      albumName: 'Fixture album',
+      album: { id: 'fixture-album', title: 'Fixture album' },
+      albumLinkStrategy: null,
+      albumTags: [],
+      playlists: [],
+      sources: ['album'],
+      durationSec,
+      dateAdded: null,
+      spotifyTrackId,
+      spotifyMatch: spotifyTrackId ? 'album-track-list' : 'unmatched',
+      spotifyUrl: spotifyTrackId
+        ? `https://open.spotify.com/track/${spotifyTrackId}`
+        : null,
+      isrc: null,
+      scrobbles: 0,
+      lastListenedAt: null,
+    },
+  }
+}
+
 const album = AlbumDetailSchema.parse({
   id: 'fixture-album',
   mediaType: 'album',
@@ -42,14 +77,9 @@ const album = AlbumDetailSchema.parse({
   spotifyUrl: `https://open.spotify.com/album/${albumId}`,
   trackCount: 3,
   tracks: [
-    {
-      title: 'Second',
-      position: 2,
-      externalId: secondTrackId,
-      durationSec: 180,
-    },
-    { title: 'Unmatched', position: 3, externalId: null, durationSec: null },
-    { title: 'First', position: 1, externalId: firstTrackId, durationSec: 180 },
+    albumTrack(2, 'Second', secondTrackId, 180),
+    albumTrack(3, 'Unmatched', null, null),
+    albumTrack(1, 'First', firstTrackId, 180),
   ],
 })
 const track = TrackListItemSchema.parse({
@@ -211,7 +241,9 @@ test('an album source uses captured tracks and falls back to album context only 
 })
 
 test('album table playback preserves its selected rows and order instead of re-sorting the album', async () => {
-  const selected = album.tracks.filter((track) => track.externalId !== null)
+  const selected = album.tracks.filter(
+    ({ track }) => track.spotifyTrackId !== null,
+  )
   const source = createAlbumPlaybackSource(album, '/albums', selected)
   assert.deepEqual(
     (await source.load(0)).map((item) => item.title),

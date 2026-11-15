@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { SourceNavigationLinkSchema } from './tags'
 import { AlbumProviderDetailsSchema } from './album-provider-details'
+import { TrackListItemSchema } from './tracks'
 import {
   ListeningFilterParamSchema,
   ListeningPeriodParamSchema,
@@ -120,11 +121,9 @@ const MediaBaseSchema = z.object({
   updatedAt: z.string(),
 })
 
-export const TrackSchema = z.object({
-  externalId: z.string().nullable(),
-  title: z.string(),
+export const AlbumTrackEntrySchema = z.object({
   position: z.number().int().positive(),
-  durationSec: z.number().int().nonnegative().nullable(),
+  track: TrackListItemSchema,
 })
 
 export const AlbumListItemSchema = MediaBaseSchema.extend({
@@ -139,7 +138,7 @@ export const AlbumListItemSchema = MediaBaseSchema.extend({
 
 export const AlbumDetailSchema = AlbumListItemSchema.extend({
   storedDateAdded: z.string().nullable().optional(),
-  tracks: z.array(TrackSchema),
+  tracks: z.array(AlbumTrackEntrySchema),
   collectionSources: z.array(SourceNavigationLinkSchema).optional(),
   providerDetails: z.array(AlbumProviderDetailsSchema).optional(),
 })

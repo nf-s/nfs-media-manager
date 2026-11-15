@@ -116,7 +116,11 @@ describe('manual additions through the canonical persistence path', () => {
       first.mediaItemId,
     ])
     expect(results.filter((result) => result.created)).toHaveLength(1)
-    expect(await databaseClient.select().from(schema.mediaItem)).toHaveLength(1)
+    const items = await databaseClient.select().from(schema.mediaItem)
+    expect(items.map((item) => item.mediaType).sort()).toEqual([
+      'album',
+      'track',
+    ])
     const [storedAlbum] = await databaseClient.select().from(schema.album)
     expect(storedAlbum?.dateAdded).toBeInstanceOf(Date)
     const snapshots = await databaseClient
@@ -124,7 +128,10 @@ describe('manual additions through the canonical persistence path', () => {
       .from(schema.providerSnapshot)
     expect(snapshots).toHaveLength(1)
     expect(snapshots[0]?.source).toBe('manual-add')
-    expect(await databaseClient.select().from(schema.track)).toHaveLength(1)
+    const [albumEntry] = await databaseClient.select().from(schema.track)
+    expect(albumEntry?.trackMediaItemId).toBe(
+      items.find((item) => item.mediaType === 'track')?.id,
+    )
     await databaseClient
       .update(schema.mediaItem)
       .set({ title: 'Corrected title' })
@@ -134,7 +141,10 @@ describe('manual additions through the canonical persistence path', () => {
       await addManualMedia({ mediaType: 'album', externalId: spotifyAlbumId }),
     ).toEqual({ mediaItemId: first.mediaItemId, created: false })
     expect(request).not.toHaveBeenCalled()
-    const [item] = await databaseClient.select().from(schema.mediaItem)
+    const [item] = await databaseClient
+      .select()
+      .from(schema.mediaItem)
+      .where(eq(schema.mediaItem.id, first.mediaItemId))
     expect(item?.title).toBe('Corrected title')
     expect(await databaseClient.select().from(schema.providerSnapshot)).toEqual(
       snapshots,

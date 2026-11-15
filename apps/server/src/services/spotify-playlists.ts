@@ -12,6 +12,7 @@ import {
   type SpotifyPlaylistJob,
 } from '@repo/schemas/tracks'
 import { db } from '@/lib/db'
+import { baseTitleKey } from '@/lib/lastfm-album-matching'
 import {
   createStableId,
   parseOptionalDate,
@@ -37,6 +38,10 @@ import {
 } from '@/schemas/db'
 import { createTaskJob, type TaskJobContext, type TaskJobResult } from './jobs'
 import { getLastfmAccount } from './lastfm-scrobbles'
+import {
+  lockLibraryTrackWrites,
+  removeOrphanTracks,
+} from './album-library-tracks'
 import { spotifyOperation, spotifyPlaylistToken } from './spotify-oauth'
 import {
   LIKED_SONGS_KEY,
@@ -445,14 +450,105 @@ async function resolvePlaylist(tx: Transaction, target: PlaylistTarget) {
 const trackItemId = (spotifyTrackId: string) =>
   createStableId('library-track', `spotify:${spotifyTrackId}`)
 
-/** Deletes tracks with neither playlist membership nor imported Last.fm history. */
-export async function removeOrphanTracks(tx: Transaction) {
-  const removed = await tx.execute(sql`
-    delete from media_item mi
-    where mi.media_type = 'track' and not exists (
-      select 1 from playlist_item pi where pi.media_item_id = mi.id)
-      and not exists (select 1 from lastfm_track_source s where s.track_media_item_id = mi.id)`)
-  return removed.rowCount ?? 0
+const SpotifyTrackCandidateRowsSchema = z.array(
+  z.object({
+    spotify_track_id: z.string(),
+    existing_id: z.string().nullable(),
+    album_recording_id: z.string().nullable(),
+    album_title: z.string().nullable(),
+    known_album_id: z.boolean().nullable(),
+    same_album_id: z.boolean().nullable(),
+  }),
+)
+
+/** Exact Spotify IDs win, then a uniquely corroborated album recording can gain an ID. */
+async function resolveSpotifyTrackIds(
+  tx: Transaction,
+  tracks: SpotifyLibraryTrack[],
+) {
+  if (!tracks.length) return new Map<string, string>()
+  const incoming = tracks.map(
+    ({ spotifyTrackId, spotifyAlbumId, title, artists }) => ({
+      spotifyTrackId,
+      spotifyAlbumId,
+      title,
+      artists,
+    }),
+  )
+  const candidates = SpotifyTrackCandidateRowsSchema.parse(
+    (
+      await tx.execute(sql`
+      select r."spotifyTrackId" as spotify_track_id, existing.media_item_id as existing_id,
+        possible.id as album_recording_id, possible.album_title, possible.known_album_id, possible.same_album_id
+      from jsonb_to_recordset(${JSON.stringify(incoming)}::jsonb)
+        as r("spotifyTrackId" text, "spotifyAlbumId" text, title text, artists text[])
+      left join library_track existing on existing.spotify_track_id = r."spotifyTrackId"
+      left join lateral (
+        select lt.media_item_id as id, am.title as album_title,
+          (
+            al.spotify_url ~ '/album/[A-Za-z0-9]{22}([/?#]|$)'
+            or exists (select 1 from provider_reference ref where ref.media_item_id = am.id
+              and (ref.reference_type = 'spotify' or (ref.provider = 'spotify' and ref.reference_type = 'album')))
+          ) as known_album_id,
+          (
+            al.spotify_url ~ ('/album/' || r."spotifyAlbumId" || '([/?#]|$)')
+            or exists (select 1 from provider_reference ref where ref.media_item_id = am.id
+              and ref.external_id = r."spotifyAlbumId"
+              and (ref.reference_type = 'spotify' or (ref.provider = 'spotify' and ref.reference_type = 'album')))
+          ) as same_album_id
+        from media_item mi
+        join library_track lt on lt.media_item_id = mi.id
+        join track t on t.track_media_item_id = lt.media_item_id
+        join media_item am on am.id = t.album_media_item_id
+        join album al on al.media_item_id = t.album_media_item_id
+        where mi.media_type = 'track' and mi.metadata->>'legacyHidden' is distinct from 'true'
+          and lower(mi.title) = lower(r.title)
+          and lt.spotify_track_id is null
+          and not exists (select 1 from track other
+            where other.album_media_item_id = t.album_media_item_id and other.position <> t.position
+              and lower(regexp_replace(trim(other.title), '[[:space:]]+', ' ', 'g'))
+                = lower(regexp_replace(trim(t.title), '[[:space:]]+', ' ', 'g')))
+          and exists (select 1 from media_credit c join artist a on a.id = c.artist_id
+            where c.media_item_id = mi.id and c.role = 'artist'
+              and lower(a.name) in (select lower(unnest(r.artists))))
+      ) possible on existing.media_item_id is null`)
+    ).rows,
+  )
+  const ids = new Map<string, string>()
+  const names = new Map(
+    tracks.map((track) => [
+      track.spotifyTrackId,
+      track.albumName ? baseTitleKey(track.albumName) : null,
+    ]),
+  )
+  const choices = new Map<string, Set<string>>()
+  const direct = new Map<string, Set<string>>()
+  for (const row of candidates) {
+    if (row.existing_id) ids.set(row.spotify_track_id, row.existing_id)
+    if (!row.album_recording_id) continue
+    const options = row.same_album_id
+      ? direct
+      : !row.known_album_id &&
+          row.album_title &&
+          names.get(row.spotify_track_id) === baseTitleKey(row.album_title)
+        ? choices
+        : null
+    if (!options) continue
+    const recordings = options.get(row.spotify_track_id) ?? new Set<string>()
+    recordings.add(row.album_recording_id)
+    options.set(row.spotify_track_id, recordings)
+  }
+  const possibleIds = new Map<string, string[]>()
+  for (const [spotifyId, options] of new Map([...choices, ...direct])) {
+    const [recording] = options
+    if (!recording || options.size !== 1) continue
+    const matches = possibleIds.get(recording) ?? []
+    if (!matches.includes(spotifyId)) matches.push(spotifyId)
+    possibleIds.set(recording, matches)
+  }
+  for (const [recording, [spotifyId, other]] of possibleIds)
+    if (spotifyId && !other) ids.set(spotifyId, recording)
+  return ids
 }
 
 /** The earliest playlist-added date or first imported scrobble. */
@@ -479,13 +575,15 @@ async function storeImport(
 ) {
   return db.transaction(async (tx) => {
     // One import writes at a time, so two cannot both judge a track orphaned.
-    await tx.execute(sql`select pg_advisory_xact_lock(614105)`)
+    await lockLibraryTrackWrites(tx)
     const playlistId = await resolvePlaylist(tx, target)
+    const knownIds = await resolveSpotifyTrackIds(tx, tracks)
+    const idForTrack = (id: string) => knownIds.get(id) ?? trackItemId(id)
     for (let start = 0; start < tracks.length; start += WRITE_BATCH) {
       const batch = tracks.slice(start, start + WRITE_BATCH)
-      const ids = batch.map((track) => trackItemId(track.spotifyTrackId))
+      const ids = batch.map((track) => idForTrack(track.spotifyTrackId))
       const items: Array<typeof mediaItem.$inferInsert> = batch.map((track) => {
-        const id = trackItemId(track.spotifyTrackId)
+        const id = idForTrack(track.spotifyTrackId)
         return {
           id,
           mediaType: 'track',
@@ -504,6 +602,7 @@ async function storeImport(
           set: {
             title: sql`excluded.title`,
             artworkUrl: sql`excluded.artwork_url`,
+            sourceLabel: 'spotify',
             releaseDate: sql`excluded.release_date`,
             updatedAt: new Date(),
           },
@@ -512,7 +611,7 @@ async function storeImport(
         .insert(libraryTrack)
         .values(
           batch.map((track) => ({
-            mediaItemId: trackItemId(track.spotifyTrackId),
+            mediaItemId: idForTrack(track.spotifyTrackId),
             spotifyTrackId: track.spotifyTrackId,
             isrc: track.isrc,
             durationSec: track.durationSec,
@@ -524,6 +623,8 @@ async function storeImport(
         .onConflictDoUpdate({
           target: libraryTrack.mediaItemId,
           set: {
+            spotifyTrackId: sql`excluded.spotify_track_id`,
+            spotifyUrl: sql`excluded.spotify_url`,
             isrc: sql`excluded.isrc`,
             durationSec: sql`excluded.duration_sec`,
             albumName: sql`excluded.album_name`,
@@ -549,20 +650,24 @@ async function storeImport(
             eq(mediaCredit.role, 'artist'),
           ),
         )
-      await tx
-        .insert(mediaCredit)
-        .values(
-          batch.flatMap((track) =>
-            track.artists.map((name, billingOrder) => ({
-              mediaItemId: trackItemId(track.spotifyTrackId),
-              artistId: createStableId('artist', name.toLowerCase()),
-              role: 'artist',
-              billingOrder,
-            })),
-          ),
-        )
-        // Two spellings of one artist on a track share an artist row.
-        .onConflictDoNothing()
+      const credits = batch.flatMap((track) =>
+        track.artists.map((name, billingOrder) => ({
+          track_id: idForTrack(track.spotifyTrackId),
+          artist_id: createStableId('artist', name.toLowerCase()),
+          artist_name: name,
+          billing_order: billingOrder,
+        })),
+      )
+      // Legacy albums can already credit this artist under another ID.
+      await tx.execute(sql`
+        insert into media_credit (media_item_id, artist_id, role, billing_order)
+        select r.track_id, a.id, 'artist', r.billing_order
+        from jsonb_to_recordset(${JSON.stringify(credits)}::jsonb)
+          as r(track_id text, artist_id text, artist_name text, billing_order int)
+        join lateral (select id from artist where id = r.artist_id or name = r.artist_name
+          order by case when name = r.artist_name then 0 else 1 end limit 1) a on true
+        order by r.track_id, r.billing_order
+        on conflict do nothing`)
     }
     await tx.execute(sql`
       delete from playlist_item pi using library_track lt
@@ -572,7 +677,7 @@ async function storeImport(
       await tx.insert(playlistItem).values(
         tracks.slice(start, start + WRITE_BATCH).map((track, index) => ({
           playlistId,
-          mediaItemId: trackItemId(track.spotifyTrackId),
+          mediaItemId: idForTrack(track.spotifyTrackId),
           position: start + index + 1,
           addedAt: parseOptionalDate(track.addedAt),
         })),

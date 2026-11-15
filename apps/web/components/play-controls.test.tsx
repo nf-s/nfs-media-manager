@@ -72,8 +72,14 @@ function controls() {
   )
 }
 
-test('play controls are absent while playback is off', () => {
-  assert.equal(render(controls()), '2')
+test('play controls remain visible with a connection explanation while playback is off', () => {
+  const html = render(controls())
+  assert.match(
+    html,
+    /Play Fixture album: Connect Spotify playback in Providers/,
+  )
+  assert.match(html, /Play Second track: Connect Spotify playback in Providers/)
+  assert.equal((html.match(/disabled=""/g) ?? []).length, 3)
 })
 
 test('play controls name the album and track they act on', () => {
@@ -109,21 +115,21 @@ test('the playing album and track offer pause', () => {
   assert.match(paused, /aria-label="Play Second track"/)
 })
 
-test('albums and tracks without Spotify identifiers have no play controls', () => {
+test('albums and tracks without Spotify identifiers keep disabled play controls', () => {
   const unlinked = { ...album, spotifyUrl: null }
   const untracked = { ...track, externalId: null }
-  assert.equal(
-    render(
-      <>
-        <TilePlayControls album={unlinked} />
-        <AlbumPlayButtons album={unlinked} />
-        <TrackPlayButton album={album} track={untracked} />
-        <TrackQueueButton album={album} track={untracked} />
-      </>,
-      on,
-    ),
-    '2',
+  const html = render(
+    <>
+      <TilePlayControls album={unlinked} />
+      <AlbumPlayButtons album={unlinked} />
+      <TrackPlayButton album={album} track={untracked} />
+      <TrackQueueButton album={album} track={untracked} />
+    </>,
+    on,
   )
+  assert.match(html, /No Spotify recording is available/)
+  assert.equal((html.match(/disabled=""/g) ?? []).length, 3)
+  assert.doesNotMatch(html, /Add .* to queue/)
 })
 
 const libraryTrack = {
@@ -146,8 +152,11 @@ function libraryControls(track: LibraryTrackSource = libraryTrack) {
   )
 }
 
-test('library track controls are absent while playback is off, leaving the row number', () => {
-  assert.equal(render(libraryControls()), '7')
+test('library track controls explain disconnected playback and retain the row number', () => {
+  const html = render(libraryControls())
+  assert.match(html, /Connect Spotify playback in Providers/)
+  assert.match(html, /class="track-number">7<\/span>/)
+  assert.equal((html.match(/disabled=""/g) ?? []).length, 3)
 })
 
 test('library track controls play, number and queue the track', () => {
@@ -176,13 +185,14 @@ test('the playing library track offers pause', () => {
   assert.match(html, />Pause<\/button>/)
 })
 
-test('library tracks without a Spotify track ID have no play controls', () => {
-  assert.equal(
-    render(libraryControls({ ...libraryTrack, spotifyTrackId: 'local' }), on),
-    '7',
-  )
-  assert.equal(
-    render(libraryControls({ ...libraryTrack, spotifyTrackId: null }), on),
-    '7',
-  )
+test('library tracks without a Spotify track ID explain why playback is disabled', () => {
+  for (const spotifyTrackId of ['local', null]) {
+    const html = render(
+      libraryControls({ ...libraryTrack, spotifyTrackId }),
+      on,
+    )
+    assert.match(html, /No Spotify recording is available/)
+    assert.equal((html.match(/disabled=""/g) ?? []).length, 3)
+    assert.doesNotMatch(html, /Add .* to queue/)
+  }
 })

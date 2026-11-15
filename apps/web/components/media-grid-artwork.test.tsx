@@ -4,33 +4,31 @@ import { test } from 'node:test'
 import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import MediaArtwork from './media-artwork'
-import AlbumTitle from './album-title'
+import { BrowseTagBadges } from './browse-controls'
 
-test('clipped grid titles contain absolute outbound-link labels without hiding the grid', () => {
+test('all artwork tags render as keyboard-accessible badges in a bounded strip', () => {
   const css = readFileSync(
-    new URL('./media-browser.module.css', import.meta.url),
+    new URL('../../../packages/ui/src/globals.css', import.meta.url),
     'utf8',
   )
-  const titleRule = /\.grid :global\(\.tile-title\)\s*\{([^}]+)\}/.exec(
-    css,
-  )?.[1]
-  assert.ok(titleRule)
-  assert.match(titleRule, /position:\s*relative;/)
-
+  const tags = ['Tag one', 'Tag two', 'Tag three', 'Tag four', 'Tag five']
   const html = renderToStaticMarkup(
-    <AlbumTitle
-      item={{
-        title: 'A long album title that exceeds a compact mobile grid column',
-        spotifyUrl: 'https://open.spotify.com/album/1234567890ABCDEFGHIJKL',
-        links: [],
-        providerReferences: [],
-      }}
-      className="tile-title"
-    />,
+    <BrowseTagBadges tags={tags} className="tile-tags" onFilter={() => {}} />,
   )
-  assert.match(html, /<a[^>]+class="tile-title /)
-  assert.match(html, /<span class="sr-only"> \(opens in a new tab\)<\/span>/)
-  assert.doesNotMatch(css, /touch-action:\s*(none|pan-y)/)
+  assert.match(
+    html,
+    /class="browse-tag-badges tile-tags" role="group" aria-label="Tags"/,
+  )
+  for (const tag of tags)
+    assert.ok(
+      html.includes(
+        `<button type="button" title="Filter by ${tag}">${tag}</button>`,
+      ),
+    )
+  assert.match(
+    css,
+    /\.browse-tag-badges\s*\{[^}]+max-width:\s*100%[^}]+overflow-x:\s*auto/,
+  )
 })
 
 test('missing grid artwork retains its title and album or film aspect ratio', () => {

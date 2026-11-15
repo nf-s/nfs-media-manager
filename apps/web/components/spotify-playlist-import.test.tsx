@@ -218,9 +218,9 @@ test('compact import states preserve progress, reasons, schedules and drawer lin
   assert.match(html, /Imported [^<]* · 5 tracks · Changed on Spotify/)
   assert.match(
     html,
-    /<a class="font-medium hover:underline" href="\/playlists\?playlist=p4">Stored<\/a>/,
+    /<a class="font-medium hover:underline" href="\/playlists\/p4">Stored<\/a>/,
   )
-  assert.match(html, /href="\/playlists\?playlist=p4&amp;tab=sync"[^>]*>Daily</)
+  assert.match(html, /href="\/playlists\/p4\?tab=sync"[^>]*>Daily</)
   assert.match(html, /<time dateTime="2026-01-04T00:00:00.000Z">/)
   assert.match(html, />Not imported</)
   assert.match(html, />Needs update</)

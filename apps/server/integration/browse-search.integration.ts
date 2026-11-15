@@ -54,12 +54,12 @@ beforeAll(async () => {
     select 'song-' || n, 'song-' || n,
       case when n = 20000 then 'Distinctive needle song' else 'Synthetic song ' || n end,
       'track' from generate_series(1, 20000) n;
-    insert into library_track (media_item_id, album_media_item_id, date_added)
-    select 'song-' || n, 'album-' || ((n - 1) / 20 + 1),
+    insert into library_track (media_item_id, album_media_item_id, spotify_track_id, date_added)
+    select 'song-' || n, 'album-' || ((n - 1) / 20 + 1), lpad(n::text, 22, '0'),
       case when n % 10 = 0 then null else timestamp '2020-01-01' + (n % 31) * interval '1 day' end
     from generate_series(1, 20000) n;
-    insert into track (id, album_media_item_id, title, position, external_id)
-    select mi.id, lt.album_media_item_id, mi.title,
+    insert into track (id, album_media_item_id, track_media_item_id, title, position, external_id)
+    select mi.id, lt.album_media_item_id, mi.id, mi.title,
       (substring(mi.id from 6)::int - 1) % 20 + 1,
       lpad(substring(mi.id from 6), 22, '0')
     from media_item mi join library_track lt on lt.media_item_id = mi.id;
@@ -186,6 +186,7 @@ it('preserves membership, match labels, album precedence and literal text search
       slug: 'search-import',
       title: 'Signal 50%_\\verbatim',
       mediaType: 'track',
+      sourceLabel: 'spotify',
     },
     {
       id: 'search-derived',
@@ -214,10 +215,22 @@ it('preserves membership, match labels, album precedence and literal text search
       albumName: 'Stored album name',
       albumMediaItemId: 'album-1',
     },
-    { mediaItemId: 'search-derived', albumMediaItemId: 'album-1' },
+    {
+      mediaItemId: 'search-derived',
+      albumMediaItemId: 'album-1',
+      spotifyTrackId: 'D'.repeat(22),
+    },
     { mediaItemId: 'search-unmatched' },
     { mediaItemId: 'search-hidden' },
   ])
+  await databaseClient.insert(schema.track).values({
+    id: 'search-derived-entry',
+    albumMediaItemId: 'album-1',
+    trackMediaItemId: 'search-derived',
+    title: 'Synthetic song 1',
+    position: 21,
+    externalId: 'D'.repeat(22),
+  })
   await databaseClient.insert(schema.artist).values([
     {
       id: 'search-artist-a',

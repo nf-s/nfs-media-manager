@@ -11,6 +11,8 @@ import { FilmCollectionDetailSchema } from '@repo/schemas/film-collections'
 import { ConfigContext } from './providers'
 import FilmCollectionsWorkspace from './film-collections-workspace'
 import AppNavigation from './app-navigation'
+import { DetailInspectorProvider } from './detail-inspector-context'
+import { detailEntries } from '@/utils/detail-inspector'
 
 const network = mock.method(globalThis, 'fetch', async () => {
   throw new Error('Network forbidden in collection UI tests')
@@ -60,7 +62,11 @@ const collection = FilmCollectionDetailSchema.parse({
   },
 })
 
-function render(search: string, path = '/collections') {
+async function render(search: string, path = '/collections') {
+  require.extensions['.css'] = (module) => {
+    module.exports = {}
+  }
+  const { AppDetailInspector } = await import('./detail-inspector')
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
@@ -83,8 +89,11 @@ function render(search: string, path = '/collections') {
         >
           <PathnameContext.Provider value={path}>
             <SearchParamsContext.Provider value={new URLSearchParams(search)}>
-              <AppNavigation />
-              <FilmCollectionsWorkspace />
+              <DetailInspectorProvider>
+                <AppNavigation />
+                <FilmCollectionsWorkspace />
+                <AppDetailInspector />
+              </DetailInspectorProvider>
             </SearchParamsContext.Provider>
           </PathnameContext.Provider>
         </ConfigContext.Provider>
@@ -96,8 +105,8 @@ function render(search: string, path = '/collections') {
   }
 }
 
-test('Films navigation exposes Collections and its shared sortable table controls', () => {
-  const html = render('')
+test('Films navigation exposes Collections and its shared sortable table controls', async () => {
+  const html = await render('')
   assert.match(
     html,
     /aria-current="page" href="\/collections\?mediaType=film">Collections/,
@@ -108,14 +117,16 @@ test('Films navigation exposes Collections and its shared sortable table control
   assert.match(html, /title="Sort by Films"/)
   assert.match(html, /aria-label="Visible columns"/)
   assert.match(html, />Added<\/label>/)
-  assert.doesNotMatch(html, /aria-label="Collection details"/)
+  assert.doesNotMatch(html, /aria-label="Film collection details"/)
   assert.match(html, /href="https:\/\/example.test\/collections\/17"/)
   assert.match(html, /title="Filter films by Synthetic collection"/)
 })
 
-test('collection deep links open members in source order without renumbering gaps', () => {
-  const html = render('collection=collection')
-  const drawer = html.slice(html.indexOf('aria-label="Collection details"'))
+test('collection deep links open members in source order without renumbering gaps', async () => {
+  const html = await render('collection=collection')
+  const drawer = html.slice(
+    html.indexOf('aria-label="Film collection details"'),
+  )
   assert.match(drawer, /Synthetic collection/)
   assert.match(drawer, /aria-label="Collection films"/)
   assert.ok(
@@ -139,7 +150,20 @@ test('collection deep links open members in source order without renumbering gap
   assert.match(drawer, /<td class="numeric">2<\/td>/)
   assert.match(drawer, /<td class="numeric">8<\/td>/)
   assert.ok(drawer.indexOf('Z first film') < drawer.indexOf('A later film'))
-  assert.match(drawer, /href="\/films\?item=later-title"/)
+  const memberHref = /href="([^"]+)">Z first film<\/a>/.exec(drawer)?.[1]
+  assert.ok(memberHref)
+  const url = new URL(memberHref.replaceAll('&amp;', '&'), 'http://localhost')
+  assert.equal(url.pathname, '/collections')
+  assert.deepEqual(
+    detailEntries(url.pathname, url.searchParams).map(({ kind, id }) => ({
+      kind,
+      id,
+    })),
+    [
+      { kind: 'collection', id: 'collection' },
+      { kind: 'film', id: 'later-title' },
+    ],
+  )
   for (const label of ['Film', 'Released', 'Runtime', 'Watched'])
     assert.ok(drawer.includes(`title="Sort by ${label}"`))
   assert.match(
@@ -149,15 +173,18 @@ test('collection deep links open members in source order without renumbering gap
   assert.match(drawer, /aria-label="Close details"/)
 })
 
-test('album and track navigation retain Playlists', () => {
+test('album and track navigation retain Playlists', async () => {
   for (const path of ['/albums', '/tracks']) {
-    const html = render('', path)
+    const html = await render('', path)
     assert.match(
       html,
       path === '/tracks'
         ? /href="\/playlists\?mediaType=track">Playlists/
         : /href="\/playlists\?mediaType=album">Playlists/,
     )
-    assert.doesNotMatch(html, /href="\/collections/)
+    assert.doesNotMatch(
+      html.slice(0, html.indexOf('</nav>')),
+      /href="\/collections/,
+    )
   }
 })
