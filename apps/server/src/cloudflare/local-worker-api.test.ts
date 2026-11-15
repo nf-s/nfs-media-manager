@@ -28,6 +28,7 @@ const mocks = vi.hoisted(() => ({
   getReviewResult: vi.fn(),
   review: vi.fn(),
   getStatus: vi.fn(),
+  setWorkerMode: vi.fn(),
   wake: vi.fn(),
   getWorker: vi.fn(),
   getCoordinator: vi.fn(),
@@ -88,8 +89,14 @@ const plugin: MediaProviderPlugin = {
     rateLimit: { maxConcurrent: 1, minTimeMs: 50, maxRequestsPerHour: 140 },
   },
 }
+const hybridPlugin: MediaProviderPlugin = {
+  ...plugin,
+  manifest: { ...plugin.manifest, localWorkerDefaultMode: 'local' },
+}
 const status = {
+  mode: 'local',
   configured: true,
+  paired: true,
   online: true,
   blocked: false,
   active: false,
@@ -171,6 +178,7 @@ beforeEach(() => {
   mocks.consumeResult.mockResolvedValue(true)
   mocks.expire.mockResolvedValue(true)
   mocks.getStatus.mockResolvedValue({ paused: true, slots: [] })
+  mocks.setWorkerMode.mockResolvedValue('changed')
   mocks.withDatabase.mockImplementation(
     async (execute: () => Promise<unknown>) => execute(),
   )
@@ -196,6 +204,7 @@ beforeEach(() => {
   })
   mocks.getCoordinator.mockReturnValue({
     getStatus: mocks.getStatus,
+    setWorkerMode: mocks.setWorkerMode,
     wake: mocks.wake,
   })
   vi.spyOn(AsyncLocalStorage.prototype, 'getStore').mockReturnValue({
@@ -450,10 +459,75 @@ describe('local worker owner controls', () => {
   it('returns status without exposing the token or changing dispatch', async () => {
     const response = await app.request(controlPath)
     expect(response.status).toBe(200)
-    expect(await response.json()).toEqual({ data: status })
+    expect(await response.json()).toMatchObject({
+      statusCode: 200,
+      data: { ...status, supportsModeSwitch: false },
+    })
     expect(response.headers.get('cache-control')).toContain('no-store')
     expect(mocks.configure).not.toHaveBeenCalled()
   })
+
+  it('returns default local mode and the standard envelope for an unpaired hybrid provider', async () => {
+    mocks.plugin.mockResolvedValue(hybridPlugin)
+    mocks.status.mockResolvedValue({
+      ...status,
+      configured: false,
+      paired: false,
+      online: false,
+      lastSeenAt: null,
+    })
+    const response = await app.request(controlPath)
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({
+      statusCode: 200,
+      data: {
+        mode: 'local',
+        supportsModeSwitch: true,
+        paired: false,
+        online: false,
+      },
+    })
+    expect(mocks.status).toHaveBeenCalledExactlyOnceWith('local')
+  })
+
+  it.each(['cloud', 'local'])(
+    'switches hybrid providers to %s without changing pairing',
+    async (mode) => {
+      mocks.plugin.mockResolvedValue(hybridPlugin)
+      mocks.status.mockResolvedValue({ ...status, mode })
+      const response = await control({ mode })
+      expect(response.status).toBe(200)
+      expect(await response.json()).toMatchObject({
+        statusCode: 200,
+        data: {
+          token: null,
+          status: {
+            mode,
+            configured: true,
+            paired: true,
+            supportsModeSwitch: true,
+          },
+        },
+      })
+      expect(mocks.setWorkerMode).toHaveBeenCalledExactlyOnceWith(
+        'fixture',
+        mode,
+      )
+      expect(mocks.unconfigure).not.toHaveBeenCalled()
+      expect(mocks.configure).not.toHaveBeenCalled()
+      expect(mocks.revoke).not.toHaveBeenCalled()
+    },
+  )
+
+  it.each(['dispatch-active', 'worker-blocked'])(
+    'reports a hybrid switch conflict (%s)',
+    async (result) => {
+      mocks.plugin.mockResolvedValue(hybridPlugin)
+      mocks.setWorkerMode.mockResolvedValue(result)
+      expect((await control({ mode: 'cloud' })).status).toBe(409)
+      expect(mocks.unconfigure).not.toHaveBeenCalled()
+    },
+  )
 
   it.each([
     { paused: false, slots: [] },
@@ -542,10 +616,10 @@ describe('local worker owner controls', () => {
 })
 
 describe('local worker transport RPC boundary', () => {
-  async function transport() {
+  async function transport(selected = plugin) {
     const bindings = bindingContext.getStore()
     if (!bindings) throw new Error('Missing test worker bindings')
-    return localProviderTransport(bindings, plugin)
+    return localProviderTransport(bindings, selected)
   }
 
   it.each([
@@ -566,10 +640,32 @@ describe('local worker transport RPC boundary', () => {
   it('returns cloud execution only when the worker is not configured', async () => {
     mocks.status.mockResolvedValue({
       ...status,
+      mode: 'cloud',
       configured: false,
+      paired: false,
       online: false,
     })
     expect(await transport()).toBeNull()
+  })
+
+  it('blocks an unpaired hybrid provider instead of silently using Cloudflare', async () => {
+    mocks.status.mockResolvedValue({
+      ...status,
+      configured: false,
+      paired: false,
+      online: false,
+    })
+    await expect(transport(hybridPlugin)).rejects.toMatchObject({
+      recorded: true,
+    })
+    expect(mocks.status).toHaveBeenCalledExactlyOnceWith('local')
+    expect(mocks.enqueue).not.toHaveBeenCalled()
+  })
+
+  it('uses the cloud only after explicit selection even when a worker is paired', async () => {
+    mocks.status.mockResolvedValue({ ...status, mode: 'cloud', online: false })
+    expect(await transport(hybridPlugin)).toBeNull()
+    expect(mocks.getPolicy).not.toHaveBeenCalled()
   })
 
   it('rejects an off-policy URL without sending it to the worker', async () => {

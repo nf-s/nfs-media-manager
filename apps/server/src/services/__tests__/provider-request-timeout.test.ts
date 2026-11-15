@@ -4,7 +4,11 @@ import {
   ProviderRequestError,
   type MediaProviderPlugin,
 } from '@repo/media-plugin-sdk'
-import { providerRequestState } from '@/schemas/db'
+import { providerRequestEvent, providerRequestState } from '@/schemas/db'
+import {
+  PROVIDER_ERROR_BODY_BYTES,
+  providerResponseEvidence,
+} from '@/lib/job-diagnostics'
 import {
   withProviderTransport,
   type ProviderTransport,
@@ -71,7 +75,7 @@ function plugin(
 beforeEach(() => {
   vi.useFakeTimers()
   vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
-  mocks.write.mockClear()
+  mocks.write.mockReset()
   mocks.fetch.mockReset()
   mocks.fetch.mockRejectedValue(new Error('Unexpected network request'))
   vi.stubGlobal('fetch', mocks.fetch)
@@ -246,6 +250,169 @@ describe('provider-specific request timeout', () => {
 })
 
 describe('provider request diagnostics', () => {
+  it.each([429, 503])(
+    'retains the HTTP %s error response body',
+    async (status) => {
+      const body = '{"message":"Synthetic provider failure"}'
+      mocks.fetch.mockResolvedValue(
+        new Response(body, {
+          status,
+          headers: { 'Content-Type': 'application/json; charset=utf-8' },
+        }),
+      )
+      const error: unknown = await createProviderRequest(plugin())(
+        'https://fixture.invalid',
+      ).catch((failure: unknown) => failure)
+      expect(error).toBeInstanceOf(ProviderRequestError)
+      expect(JSON.stringify(error)).not.toContain('Synthetic provider failure')
+      expect(providerResponseEvidence(error, [])).toEqual([
+        {
+          stage: 'provider.response',
+          evidence: {
+            source: 'provider-response',
+            httpStatus: status,
+            responseReceivedAt: new Date().toISOString(),
+            quotaError: false,
+            contentType: 'application/json',
+            responseBody: {
+              state: 'captured',
+              format: 'json',
+              text: body,
+              redacted: false,
+            },
+          },
+        },
+      ])
+    },
+  )
+
+  it('redacts echoed credentials and nested sensitive fields before persisting the body', async () => {
+    const body =
+      '{"message":"Driver selected fixture-bearer and fixture-query","data":{"api\\u004bey":"fixture-extra","email":"member@fixture.invalid","status":"overloaded"}}'
+    mocks.fetch.mockResolvedValue(
+      new Response(body, {
+        status: 503,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    )
+    const error: unknown = await createProviderRequest(plugin())(
+      'https://fixture.invalid?api_key=fixture-query',
+      { headers: { Authorization: 'Bearer fixture-bearer' } },
+    ).catch((failure: unknown) => failure)
+    const evidence = providerResponseEvidence(error, [])
+    expect(evidence).toMatchObject([
+      {
+        evidence: {
+          responseBody: { state: 'captured', format: 'json', redacted: true },
+        },
+      },
+    ])
+    const serialized = JSON.stringify(evidence)
+    expect(serialized).toContain('overloaded')
+    for (const value of [
+      'fixture-bearer',
+      'fixture-query',
+      'fixture-extra',
+      'member@fixture.invalid',
+    ])
+      expect(serialized).not.toContain(value)
+  })
+
+  it('reports the byte limit instead of retaining a partial error body', async () => {
+    mocks.fetch.mockResolvedValue(
+      new Response('é'.repeat(PROVIDER_ERROR_BODY_BYTES), { status: 503 }),
+    )
+    const error: unknown = await createProviderRequest(plugin())(
+      'https://fixture.invalid',
+    ).catch((failure: unknown) => failure)
+    expect(providerResponseEvidence(error, [])).toMatchObject([
+      {
+        evidence: {
+          responseBody: { state: 'unavailable', reason: 'byte-limit' },
+        },
+      },
+    ])
+  })
+
+  it('persists HTTP 429 safety before waiting for a stalled diagnostic body', async () => {
+    const retryAt = Date.now() + 120000
+    const cancel = vi.fn()
+    mocks.fetch.mockResolvedValue(
+      new Response(new ReadableStream({ cancel }), {
+        status: 429,
+        headers: { 'Retry-After': '120', 'Content-Type': 'text/plain' },
+      }),
+    )
+    const outcome = createProviderRequest(plugin())(
+      'https://fixture.invalid',
+    ).catch((error: unknown) => error)
+    await vi.advanceTimersByTimeAsync(999)
+    expect(state.cooldownUntil?.getTime()).toBe(retryAt)
+    expect(cancel).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(1)
+    const error = await outcome
+    expect(error).toMatchObject({ code: 'rate-limit', retryAt })
+    expect(cancel).toHaveBeenCalledOnce()
+    expect(providerResponseEvidence(error, [])).toMatchObject([
+      {
+        evidence: {
+          responseBody: { state: 'unavailable', reason: 'read-failed' },
+        },
+      },
+    ])
+  })
+
+  it('halts on HTTP 403 when the JSON body stalls beyond the diagnostic deadline', async () => {
+    const cancel = vi.fn()
+    mocks.fetch.mockResolvedValue(
+      new Response(new ReadableStream({ cancel }), {
+        status: 403,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    )
+    const outcome = createProviderRequest(plugin(120000))(
+      'https://fixture.invalid',
+    ).catch((error: unknown) => error)
+    await vi.advanceTimersByTimeAsync(1000)
+    const error = await outcome
+    expect(error).toMatchObject({
+      code: 'access-denied',
+      diagnostics: { httpStatus: 403, quotaError: false },
+    })
+    expect(state.halted).toBe(true)
+    expect(cancel).toHaveBeenCalledOnce()
+    expect(providerResponseEvidence(error, [])).toMatchObject([
+      {
+        evidence: {
+          responseBody: { state: 'unavailable', reason: 'read-failed' },
+        },
+      },
+    ])
+  })
+
+  it('preserves the local worker credential redaction marker', async () => {
+    const text = 'Synthetic service rejected [redacted]'
+    const error: unknown = await withProviderTransport(
+      async () => ({
+        execute: async () => new Response(text, { status: 503 }),
+      }),
+      () => createProviderRequest(plugin())('https://fixture.invalid'),
+    ).catch((failure: unknown) => failure)
+    expect(providerResponseEvidence(error, [])).toMatchObject([
+      {
+        evidence: {
+          responseBody: {
+            state: 'captured',
+            format: 'text',
+            text,
+            redacted: true,
+          },
+        },
+      },
+    ])
+    expect(mocks.fetch).not.toHaveBeenCalled()
+  })
+
   it('retains a fresh 429 response separately from a later local cooldown refusal', async () => {
     const receivedAt = new Date().toISOString()
     mocks.fetch.mockResolvedValue(
@@ -317,7 +484,10 @@ describe('provider request diagnostics', () => {
     const receivedAt = new Date().toISOString()
     const response = new Response('Unused synthetic body', {
       status: 429,
-      headers: { 'Retry-After': 'Thu, 01 Jan 2026 00:02:00 GMT' },
+      headers: {
+        'Retry-After': 'Thu, 01 Jan 2026 00:02:00 GMT',
+        'Content-Length': String(PROVIDER_ERROR_BODY_BYTES + 1),
+      },
     })
     if (!response.body) throw new Error('Missing fixture response body')
     vi.spyOn(response.body, 'cancel').mockImplementation(async () => {
@@ -335,7 +505,7 @@ describe('provider request diagnostics', () => {
     })
   })
 
-  it('omits arbitrary headers, response bodies and invalid numeric quota values', async () => {
+  it('omits arbitrary headers and invalid numeric quota values from the error summary', async () => {
     mocks.fetch.mockResolvedValue(
       new Response('Synthetic response body', {
         status: 429,
@@ -556,11 +726,10 @@ describe('serial metadata request retries', () => {
     expect(mocks.fetch).toHaveBeenCalledOnce()
   })
 
-  it('starts the retry window at response receipt before body cleanup', async () => {
+  it('starts the retry window at response receipt before dispatch accounting', async () => {
     const response = new Response('Synthetic failure', { status: 503 })
-    if (!response.body) throw new Error('Missing fixture response body')
-    vi.spyOn(response.body, 'cancel').mockImplementation(async () => {
-      vi.setSystemTime(Date.now() + 60000)
+    mocks.write.mockImplementation((table) => {
+      if (table === providerRequestEvent) vi.setSystemTime(Date.now() + 60000)
     })
     const onRetry = vi.fn(async () => {})
     mocks.fetch.mockResolvedValueOnce(response)

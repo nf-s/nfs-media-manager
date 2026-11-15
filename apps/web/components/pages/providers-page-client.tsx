@@ -24,6 +24,10 @@ import ProviderActivity from '../provider-activity'
 import ProviderConfiguration from '../provider-configuration'
 import ProviderJobSummary from '../provider-job-summary'
 import ProviderJobDispatch from '../provider-job-dispatch'
+import {
+  ProviderLocalWorkerBadge,
+  useProviderLocalWorker,
+} from '../provider-local-worker'
 import { JobsTable } from './jobs-page-client'
 import { SectionSidebar, SectionWorkspace } from '../section-sidebar'
 import { useWorkspaceScope } from '../media-scope'
@@ -84,6 +88,8 @@ export default function ProvidersPageClient() {
   const provider =
     available.find((provider) => provider.id === selected) ?? available[0]
   const id = provider?.id ?? ''
+  const localWorker = useProviderLocalWorker(provider)
+  const worker = localWorker.isError ? undefined : localWorker.data
   const jobs = useQuery({
     queryKey: ['jobs', 'provider-summary', id],
     enabled: !!id,
@@ -224,8 +230,20 @@ export default function ProvidersPageClient() {
             }
           >
             <header className="provider-header">
-              <h1>{provider.displayName}</h1>
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                <h1>{provider.displayName}</h1>
+                {worker && <ProviderLocalWorkerBadge status={worker} />}
+              </div>
               <p className="muted">{provider.description}</p>
+              {provider.supportsLocalWorker && localWorker.isPending && (
+                <p role="status">Loading local worker status...</p>
+              )}
+              {localWorker.isError && (
+                <p role="alert">
+                  Could not load local worker status.{' '}
+                  <button onClick={() => localWorker.refetch()}>Retry</button>
+                </p>
+              )}
               {provider.safety?.halted && (
                 <p role="alert">
                   Requests halted after access denial. Check account access
@@ -268,6 +286,7 @@ export default function ProvidersPageClient() {
                 <ProviderJobDispatch
                   key={`dispatch-${provider.id}`}
                   provider={provider}
+                  worker={worker}
                 />
                 <ProviderActivity key={provider.id} provider={provider} />
               </TabsContent>
@@ -276,7 +295,11 @@ export default function ProvidersPageClient() {
                   value="jobs"
                   className="provider-panel min-h-0 flex-1 overflow-hidden data-[state=active]:flex data-[state=active]:flex-col"
                 >
-                  <ProviderJobDispatch key={provider.id} provider={provider} />
+                  <ProviderJobDispatch
+                    key={provider.id}
+                    provider={provider}
+                    worker={worker}
+                  />
                   <div className="min-h-0 flex-1">
                     <JobsTable key={provider.id} provider={provider.id} />
                   </div>

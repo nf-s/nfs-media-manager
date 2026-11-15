@@ -148,6 +148,17 @@ export class CloudJobCoordinator {
     return this.exclusive(() => this.state(provider))
   }
 
+  runWhilePausedAndIdle(
+    provider: string,
+    change: () => Promise<boolean>,
+  ): Promise<'dispatch-active' | 'worker-blocked' | 'changed'> {
+    return this.exclusive(async () => {
+      const state = await this.state(provider)
+      if (!state?.paused || state.slots.length > 0) return 'dispatch-active'
+      return (await change()) ? 'changed' : 'worker-blocked'
+    })
+  }
+
   setPaused(
     provider: string,
     paused: boolean,

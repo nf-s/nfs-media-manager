@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
+  isLocalWorkerUrlAllowed,
   LocalWorkerPolicySchema,
   LocalWorkerPollSchema,
+  LocalWorkerResultSchema,
 } from '../dist/local-worker.js'
 import {
   MediaPluginManifestSchema,
@@ -56,5 +58,62 @@ test('origin remains restricted to an exact HTTPS origin', () => {
       credentialHeaders: [],
     }).success,
     true,
+  )
+})
+
+test('numeric metadata paths permit only positive identifiers and carry no query', () => {
+  const policy = LocalWorkerPolicySchema.parse({
+    origin: 'https://metadata.fixture.invalid',
+    paths: ['/database/search', '/masters/{id}', '/releases/{id}'],
+    queryParameters: ['artist', 'release_title', 'page'],
+    credentialHeaders: ['authorization', 'user-agent'],
+  })
+  const allowed = (path) =>
+    isLocalWorkerUrlAllowed(policy.origin + path, policy)
+  assert.equal(
+    allowed('/database/search?artist=Fixture&release_title=Test&page=1'),
+    true,
+  )
+  assert.equal(allowed('/masters/42'), true)
+  assert.equal(allowed('/releases/9007199254740991'), true)
+  for (const path of [
+    '/database/search?artist=Fixture&artist=Duplicate',
+    '/database/search?token=fixture',
+    '/masters/0',
+    '/masters/0042',
+    '/masters/9007199254740992',
+    '/masters/%34%32',
+    '/masters/42/versions',
+    '/masters/42?page=1',
+    '/releases/42#fragment',
+    '/artists/42',
+  ]) {
+    assert.equal(allowed(path), false, path)
+  }
+  assert.equal(
+    isLocalWorkerUrlAllowed('https://other.fixture.invalid/masters/42', policy),
+    false,
+  )
+})
+
+test('local worker results allow Discogs quota headers without arbitrary headers', () => {
+  const result = {
+    kind: 'response',
+    id: '00000000-0000-4000-8000-000000000001',
+    status: 429,
+    body: '',
+    headers: {
+      'x-discogs-ratelimit': '60',
+      'x-discogs-ratelimit-used': '60',
+      'x-discogs-ratelimit-remaining': '0',
+    },
+  }
+  assert.equal(LocalWorkerResultSchema.safeParse(result).success, true)
+  assert.equal(
+    LocalWorkerResultSchema.safeParse({
+      ...result,
+      headers: { ...result.headers, authorization: 'fixture' },
+    }).success,
+    false,
   )
 })

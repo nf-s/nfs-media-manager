@@ -1,4 +1,5 @@
 import { DurableObject } from 'cloudflare:workers'
+import type { ProviderLocalWorkerMode } from '@repo/schemas/provider'
 import { env } from '@/env'
 import { withCloudDatabase } from '@/cloudflare/db'
 import { providerJobQueue } from '@/cloudflare/job-queues'
@@ -13,6 +14,20 @@ import {
   listCloudQueuedJobIds,
   recoverCloudJobById,
 } from '@/services/cloud-job-store'
+import { getScrapePlugin } from '@/plugins/registry'
+import { localWorkerBlocksDispatch } from './local-worker'
+
+async function workerBlocksDispatch(
+  bindings: CloudflareBindings,
+  provider: string,
+) {
+  const plugin = await getScrapePlugin(provider)
+  if (!plugin) return true
+  const status = await bindings.LOCAL_WORKERS.getByName(provider).status(
+    plugin.manifest.localWorkerDefaultMode,
+  )
+  return localWorkerBlocksDispatch(status)
+}
 
 export class ProviderCoordinator extends DurableObject<CloudflareBindings> {
   private readonly coordinator: CloudJobCoordinator
@@ -33,11 +48,12 @@ export class ProviderCoordinator extends DurableObject<CloudflareBindings> {
         await providerJobQueue(bindings, message.provider).send(message)
       },
       policy: async (provider) => {
-        const local = await bindings.LOCAL_WORKERS.getByName(provider).status()
-        return env.SCRAPING_ENABLED &&
-          (!local.configured || (local.online && !local.blocked))
-          ? getCloudProviderDispatchPolicy(provider)
-          : { maxConcurrent: 1, blocked: true, wakeAt: null }
+        if (
+          !env.SCRAPING_ENABLED ||
+          (await workerBlocksDispatch(bindings, provider))
+        )
+          return { maxConcurrent: 1, blocked: true, wakeAt: null }
+        return getCloudProviderDispatchPolicy(provider)
       },
       queued: listCloudQueuedJobIds,
       recover: recoverCloudJobById,
@@ -65,12 +81,15 @@ export class ProviderCoordinator extends DurableObject<CloudflareBindings> {
     return this.coordinator.setPaused(provider, paused, jobIds)
   }
 
+  setWorkerMode(provider: string, mode: ProviderLocalWorkerMode) {
+    return this.coordinator.runWhilePausedAndIdle(provider, () =>
+      this.env.LOCAL_WORKERS.getByName(provider).setMode(mode),
+    )
+  }
+
   async begin(message: CloudJobMessage): Promise<boolean> {
     if (!env.SCRAPING_ENABLED) return Promise.resolve(false)
-    const local = await this.env.LOCAL_WORKERS.getByName(
-      message.provider,
-    ).status()
-    if (local.configured && (!local.online || local.blocked)) return false
+    if (await workerBlocksDispatch(this.env, message.provider)) return false
     return this.coordinator.begin(message)
   }
 

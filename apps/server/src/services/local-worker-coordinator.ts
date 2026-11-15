@@ -1,6 +1,11 @@
 import { timingSafeEqual } from 'node:crypto'
 import { z } from 'zod'
 import {
+  ProviderLocalWorkerModeSchema,
+  type ProviderLocalWorkerMode,
+  type ProviderLocalWorkerStatus,
+} from '@repo/schemas/provider'
+import {
   isLocalWorkerUrlAllowed,
   LocalWorkerPolicySchema,
   LocalWorkerResultSchema,
@@ -32,6 +37,7 @@ const TaskStateSchema = z
   )
 const StateSchema = z
   .object({
+    mode: ProviderLocalWorkerModeSchema.optional(),
     policy: LocalWorkerPolicySchema.nullable(),
     tokenHash: TokenHashSchema.nullable(),
     lastSeenAt: z.number().int().positive().nullable(),
@@ -63,13 +69,10 @@ export interface LocalWorkerCoordinatorDependencies {
   storage: LocalWorkerCoordinatorStorage
   now?: () => number
 }
-export interface LocalWorkerCoordinatorStatus {
-  configured: boolean
-  online: boolean
-  lastSeenAt: number | null
-  blocked: boolean
-  active: boolean
-}
+export type LocalWorkerCoordinatorStatus = Omit<
+  ProviderLocalWorkerStatus,
+  'supportsModeSwitch'
+>
 
 function matchesHash(expected: string | null, supplied: string): boolean {
   if (expected === null || !TokenHashSchema.safeParse(supplied).success)
@@ -179,6 +182,7 @@ export class LocalWorkerCoordinator {
     return this.exclusive(async () => {
       const state = await this.state()
       if (state.active || state.blocked) return false
+      delete state.mode
       state.policy = null
       state.tokenHash = null
       state.lastSeenAt = null
@@ -187,11 +191,25 @@ export class LocalWorkerCoordinator {
     })
   }
 
-  status(): Promise<LocalWorkerCoordinatorStatus> {
+  setMode(mode: ProviderLocalWorkerMode): Promise<boolean> {
+    return this.exclusive(async () => {
+      const state = await this.state()
+      if (state.active || state.blocked) return false
+      state.mode = ProviderLocalWorkerModeSchema.parse(mode)
+      await this.dependencies.storage.save(state)
+      return true
+    })
+  }
+
+  status(
+    defaultMode: ProviderLocalWorkerMode = 'cloud',
+  ): Promise<LocalWorkerCoordinatorStatus> {
     return this.exclusive(async () => {
       const state = await this.state()
       return {
+        mode: state.mode ?? (state.policy ? 'local' : defaultMode),
         configured: state.policy !== null,
+        paired: state.tokenHash !== null,
         online: this.online(state),
         lastSeenAt: state.lastSeenAt,
         blocked: state.blocked,
@@ -243,7 +261,12 @@ export class LocalWorkerCoordinator {
     return this.exclusive(async () => {
       const task = LocalWorkerTaskSchema.parse(input)
       const state = await this.state()
-      if (!state.policy || !state.tokenHash || !this.online(state))
+      if (
+        state.mode === 'cloud' ||
+        !state.policy ||
+        !state.tokenHash ||
+        !this.online(state)
+      )
         throw new Error('Local worker is unavailable')
       if (state.blocked) throw new Error('Local worker is blocked')
       if (state.active)
@@ -275,6 +298,7 @@ export class LocalWorkerCoordinator {
       const state = await this.state()
       const active = state.active
       if (
+        state.mode === 'cloud' ||
         !matchesHash(state.tokenHash, hash) ||
         !this.online(state) ||
         state.blocked ||
@@ -301,6 +325,7 @@ export class LocalWorkerCoordinator {
       const state = await this.state()
       const active = state.active
       if (
+        state.mode === 'cloud' ||
         !matchesHash(state.tokenHash, hash) ||
         !this.online(state) ||
         state.blocked ||

@@ -201,9 +201,10 @@ export default function ProviderConfiguration({
           ))}
         </dl>
         <p className="muted">
-          Two unexpected failures stop queued work. No automatic retries.
-          Requests time out after 15 seconds and responses are limited to 10
-          MiB.
+          Five consecutive unexpected failures stop queued work. Serial metadata
+          GET requests can make up to three attempts total on HTTP 502, 503 or
+          504. Requests time out after 15 seconds by default and responses are
+          limited to 10 MiB.
         </p>
       </section>
       {provider.mediaTypes.length > 0 && (

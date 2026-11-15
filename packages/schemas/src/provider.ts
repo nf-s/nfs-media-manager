@@ -119,6 +119,37 @@ export const ClearProviderCooldownSchema = z.object({
   expectedCooldownUntil: z.string().datetime(),
 })
 
+export const ProviderLocalWorkerModeSchema = z.enum(['local', 'cloud'])
+export type ProviderLocalWorkerMode = z.infer<
+  typeof ProviderLocalWorkerModeSchema
+>
+
+export const ProviderLocalWorkerStatusSchema = z.object({
+  mode: ProviderLocalWorkerModeSchema,
+  supportsModeSwitch: z.boolean(),
+  configured: z.boolean(),
+  paired: z.boolean(),
+  online: z.boolean(),
+  lastSeenAt: z.number().int().positive().nullable(),
+  blocked: z.boolean(),
+  active: z.boolean(),
+})
+export type ProviderLocalWorkerStatus = z.infer<
+  typeof ProviderLocalWorkerStatusSchema
+>
+
+export const ProviderLocalWorkerControlSchema = z
+  .object({ mode: z.enum(['pair', 'revoke', 'local', 'cloud', 'review']) })
+  .strict()
+
+export const ProviderLocalWorkerControlResultSchema = z.object({
+  token: z
+    .string()
+    .regex(/^[A-Za-z0-9_-]{43}$/)
+    .nullable(),
+  status: ProviderLocalWorkerStatusSchema,
+})
+
 export const ProviderSummarySchema = z.object({
   id: z.string(),
   displayName: z.string(),
@@ -149,6 +180,7 @@ export const ProviderSummarySchema = z.object({
   }),
   supportsScrape: z.boolean(),
   supportsJobDispatchControl: z.boolean().default(false),
+  supportsLocalWorker: z.boolean().optional(),
   maxItemsPerJob: z.number().int().positive().optional(),
   requireExplicitSelection: z.boolean().optional(),
   identifierTypes: z.array(z.string()).default([]),

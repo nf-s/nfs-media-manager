@@ -14,9 +14,11 @@ import {
 } from 'vitest'
 import {
   ProviderRequestError,
+  type MediaPluginScrapeContext,
   type MediaProviderPlugin,
 } from '@repo/media-plugin-sdk'
 import { env } from '@/env'
+import { discogsPlugin } from '@/plugins/builtin/discogs'
 import * as schema from '@/schemas/db'
 import {
   withProviderTransport,
@@ -114,6 +116,80 @@ async function remoteRequest(configuredPlugin = plugin) {
 }
 
 describe('local worker shared provider gate', () => {
+  async function discogsContext(
+    secrets: MediaPluginScrapeContext['secrets'] = {},
+  ): Promise<MediaPluginScrapeContext> {
+    const { createProviderRequest } =
+      await import('@/services/provider-requests')
+    return {
+      mediaItemId: 'synthetic-album',
+      mediaType: 'album',
+      existingReferences: [
+        {
+          referenceType: 'release',
+          externalId: '22',
+          isPrimary: true,
+          metadata: { sourceProvider: 'discogs' },
+        },
+      ],
+      secrets,
+      request: createProviderRequest(discogsPlugin),
+      log: async () => {},
+    }
+  }
+
+  it('accepts worker-only Discogs credentials and refuses direct execution without a token', async () => {
+    const scrape = discogsPlugin.scrapeMediaItem
+    if (!scrape) throw new Error('Missing Discogs scraper')
+    const context = await discogsContext()
+    await expect(scrape(context)).rejects.toMatchObject({
+      code: 'request-failed',
+      recorded: true,
+    })
+    expect(
+      await databaseClient.select().from(schema.providerRequestEvent),
+    ).toHaveLength(0)
+
+    const release = {
+      id: 22,
+      title: 'Fixture',
+      artists: [{ id: 1, name: 'Example Artist' }],
+    }
+    execute.mockResolvedValueOnce(Response.json(release))
+    const result = await withProviderTransport(
+      async () => ({ execute }),
+      () => scrape(context),
+    )
+    expect(result.payload).toEqual({ release })
+    expect(execute).toHaveBeenCalledExactlyOnceWith(
+      'https://api.discogs.com/releases/22',
+      expect.objectContaining({ dispatchBefore: expect.any(Number) }),
+    )
+    expect(
+      await databaseClient.select().from(schema.providerRequestEvent),
+    ).toHaveLength(1)
+  })
+
+  it('keeps Discogs cooldown and budget state when the transport switches to cloud', async () => {
+    const scrape = discogsPlugin.scrapeMediaItem
+    if (!scrape) throw new Error('Missing Discogs scraper')
+    const context = await discogsContext({ token: 'synthetic-discogs-token' })
+    execute.mockResolvedValueOnce(
+      new Response(null, { status: 429, headers: { 'retry-after': '120' } }),
+    )
+    await expect(
+      withProviderTransport(
+        async () => ({ execute }),
+        () => scrape(context),
+      ),
+    ).rejects.toMatchObject({ code: 'rate-limit' })
+    await expect(scrape(context)).rejects.toMatchObject({ code: 'cooldown' })
+    expect(execute).toHaveBeenCalledOnce()
+    expect(
+      await databaseClient.select().from(schema.providerRequestEvent),
+    ).toHaveLength(1)
+  })
+
   it('routes through the scoped transport with deadlines inside the durable lease', async () => {
     execute.mockImplementation(async (requestUrl, timing) => {
       const reserved = await state()

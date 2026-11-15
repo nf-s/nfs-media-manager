@@ -140,8 +140,9 @@ export async function requestAlbumJson(
   url: URL,
   init?: RequestInit,
   classifyFailure?: (body: unknown) => ProviderRequestError['code'] | null,
+  requestOptions?: Parameters<MediaPluginTestContext['request']>[2],
 ) {
-  const response = await context.request(url, init)
+  const response = await context.request(url, init, requestOptions)
   if (!response.ok) {
     const bodyCode = classifyFailure
       ? classifyFailure(await readAlbumErrorBody(response))

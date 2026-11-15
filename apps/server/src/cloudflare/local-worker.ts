@@ -1,6 +1,10 @@
 import { randomBytes, randomUUID, createHash } from 'node:crypto'
 import { z } from 'zod'
 import {
+  ProviderLocalWorkerControlSchema,
+  ProviderLocalWorkerStatusSchema,
+} from '@repo/schemas/provider'
+import {
   ProviderRequestError,
   type MediaProviderPlugin,
 } from '@repo/media-plugin-sdk'
@@ -13,6 +17,7 @@ import { env } from '@/env'
 import { ServerError } from '@/lib/error'
 import { getScrapePlugin } from '@/plugins/registry'
 import type { ProviderTransport } from '@/services/provider-transport'
+import type { LocalWorkerCoordinatorStatus } from '@/services/local-worker-coordinator'
 import { protectProviderFromLocalResponse } from '@/services/provider-requests'
 import { withCloudDatabase } from './db'
 
@@ -20,25 +25,68 @@ const pause = (ms: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, ms))
 const hash = (token: string) => createHash('sha256').update(token).digest('hex')
 const IdSchema = z.object({ id: z.string().uuid() }).strict()
-export const LocalWorkerModeSchema = z
-  .object({ mode: z.enum(['pair', 'revoke', 'cloud', 'review']) })
-  .strict()
+const dispatchActiveMessage =
+  'Pause the provider and wait for active jobs before changing its worker'
+const workerBlockedMessage =
+  'Local worker has an unresolved request; review it before changing execution mode'
+
+export async function getLocalWorkerStatus(
+  bindings: CloudflareBindings,
+  plugin: MediaProviderPlugin,
+) {
+  const { id, localWorkerDefaultMode } = plugin.manifest
+  const status = await bindings.LOCAL_WORKERS.getByName(id).status(
+    localWorkerDefaultMode,
+  )
+  return ProviderLocalWorkerStatusSchema.parse({
+    ...status,
+    supportsModeSwitch: localWorkerDefaultMode !== undefined,
+  })
+}
+
+export function localWorkerBlocksDispatch(
+  status: LocalWorkerCoordinatorStatus,
+) {
+  return (
+    status.blocked ||
+    (status.mode === 'local' && (!status.paired || !status.online))
+  )
+}
 
 export async function configureLocalWorker(
   bindings: CloudflareBindings,
   provider: string,
-  mode: z.infer<typeof LocalWorkerModeSchema>['mode'],
+  mode: z.infer<typeof ProviderLocalWorkerControlSchema>['mode'],
 ) {
   const plugin = await getScrapePlugin(provider)
   if (!plugin)
     throw new ServerError({ statusCode: 404, message: 'Unknown provider' })
-  const dispatch =
-    await bindings.PROVIDER_COORDINATORS.getByName(provider).getStatus(provider)
+  const coordinator = bindings.PROVIDER_COORDINATORS.getByName(provider)
+  if (
+    mode === 'local' ||
+    (mode === 'cloud' && plugin.manifest.localWorkerDefaultMode)
+  ) {
+    if (!plugin.manifest.localWorkerDefaultMode)
+      throw new ServerError({
+        statusCode: 422,
+        message: 'Provider does not support switching execution modes',
+      })
+    const result = await coordinator.setWorkerMode(provider, mode)
+    if (result !== 'changed')
+      throw new ServerError({
+        statusCode: 409,
+        message:
+          result === 'dispatch-active'
+            ? dispatchActiveMessage
+            : workerBlockedMessage,
+      })
+    return { token: null, status: await getLocalWorkerStatus(bindings, plugin) }
+  }
+  const dispatch = await coordinator.getStatus(provider)
   if (!dispatch?.paused || dispatch.slots.length)
     throw new ServerError({
       statusCode: 409,
-      message:
-        'Pause the provider and wait for active jobs before changing its worker',
+      message: dispatchActiveMessage,
     })
   const worker = bindings.LOCAL_WORKERS.getByName(provider)
   if (mode === 'review') {
@@ -56,20 +104,19 @@ export async function configureLocalWorker(
         message:
           'Wait for the local request execution window to expire before reviewing',
       })
-    return { token: null, status: await worker.status() }
+    return { token: null, status: await getLocalWorkerStatus(bindings, plugin) }
   }
   if (mode === 'revoke') {
     await worker.revoke()
-    return { token: null, status: await worker.status() }
+    return { token: null, status: await getLocalWorkerStatus(bindings, plugin) }
   }
   if (mode === 'cloud') {
     if (!(await worker.unconfigure()))
       throw new ServerError({
         statusCode: 409,
-        message:
-          'Local worker has an unresolved request; review it before changing execution mode',
+        message: workerBlockedMessage,
       })
-    return { token: null, status: await worker.status() }
+    return { token: null, status: await getLocalWorkerStatus(bindings, plugin) }
   }
   if (
     !plugin.manifest.localWorker ||
@@ -87,7 +134,7 @@ export async function configureLocalWorker(
       statusCode: 409,
       message: 'Local worker has an active request',
     })
-  return { token, status: await worker.status() }
+  return { token, status: await getLocalWorkerStatus(bindings, plugin) }
 }
 
 export async function localProviderTransport(
@@ -95,15 +142,15 @@ export async function localProviderTransport(
   plugin: MediaProviderPlugin,
 ): Promise<ProviderTransport | null> {
   const worker = bindings.LOCAL_WORKERS.getByName(plugin.manifest.id)
-  const status = await worker.status()
-  if (!status.configured) return null
-  if (!status.online || status.blocked)
+  const status = await worker.status(plugin.manifest.localWorkerDefaultMode)
+  if (localWorkerBlocksDispatch(status))
     throw new ProviderRequestError(
-      'Local worker is offline or requires review; no provider request was sent',
+      'Local worker is unpaired, offline or requires review; no provider request was sent',
       'request-failed',
       null,
       true,
     )
+  if (status.mode === 'cloud') return null
   const policy = await worker.getPolicy()
   if (!policy) throw new Error('Local worker policy is missing')
   return {
@@ -253,7 +300,7 @@ export async function handleLocalWorkerRequest(
         ? reply(permit)
         : reply({ message: 'Request permit expired or already consumed' }, 409)
     }
-    if (!before.online)
+    if (!before.online && before.mode === 'local')
       await bindings.PROVIDER_COORDINATORS.getByName(provider).wake(provider)
     const policy = await worker.getPolicy()
     if (!policy) return reply({ message: 'Worker revoked' }, 401)

@@ -118,6 +118,8 @@ export async function listProviders(): Promise<ProviderSummary[]> {
         supportsTestConnection: !!plugin?.testConnection,
         supportsJobDispatchControl:
           env.RUNTIME_KIND === 'cloudflare' && plugin !== null,
+        supportsLocalWorker:
+          env.RUNTIME_KIND === 'cloudflare' && !!plugin?.manifest.localWorker,
         maxItemsPerJob: provider.maxItemsPerJob,
         requireExplicitSelection: provider.requireExplicitSelection,
         identifierTypes: provider.identifierTypes ?? [],

@@ -898,6 +898,88 @@ describe('structured HTTP quota handling', () => {
   })
 })
 
+describe('saved HTTP response evidence', () => {
+  it('keeps each HTTP failure on its own job log and out of list polling', async () => {
+    const { getJobData } = await import('@/services/job-data')
+    const { listJobs, processQueuedJobs } = await import('@/services/jobs')
+    const mediaItemId = 'fixture-http-evidence'
+    await databaseClient.insert(schema.mediaItem).values({
+      id: mediaItemId,
+      mediaType: 'film',
+      slug: mediaItemId,
+      title: 'HTTP evidence fixture',
+    })
+    await databaseClient.insert(schema.film).values({ mediaItemId })
+    fetchMock
+      .mockResolvedValueOnce(
+        new Response('Synthetic upstream overload', { status: 503 }),
+      )
+      .mockResolvedValueOnce(
+        Response.json(
+          {
+            message: 'Synthetic provider rate limit',
+            token: 'fixture-echoed-credential',
+          },
+          {
+            status: 429,
+            headers: {
+              'Retry-After': '120',
+              'X-Discogs-Ratelimit-Remaining': '0',
+            },
+          },
+        ),
+      )
+    const [job] = await createFixtureJobs([mediaItemId])
+    if (!job) throw new Error('Expected a fixture job')
+    await processQueuedJobs()
+    const data = await getJobData(job.id)
+    expect(data.diagnostics).toMatchObject([
+      {
+        data: [
+          {
+            stage: 'provider.response',
+            evidence: {
+              httpStatus: 503,
+              responseBody: {
+                state: 'captured',
+                format: 'text',
+                text: 'Synthetic upstream overload',
+                redacted: false,
+              },
+            },
+          },
+        ],
+      },
+      {
+        data: [
+          {
+            stage: 'provider.response',
+            evidence: {
+              httpStatus: 429,
+              retryAfter: { seconds: 120 },
+              quotaHeaders: { 'x-discogs-ratelimit-remaining': 0 },
+              responseBody: {
+                state: 'captured',
+                format: 'json',
+                text: '{"message":"Synthetic provider rate limit","token":"[REDACTED]"}',
+                redacted: true,
+              },
+            },
+          },
+        ],
+      },
+    ])
+    expect(JSON.stringify(data)).not.toContain('fixture-echoed-credential')
+    const listed = (await listJobs({ q: 'HTTP evidence fixture' })).items
+    expect(listed.find((item) => item.id === job.id)?.status).toBe('failed')
+    expect(JSON.stringify(listed)).not.toContain('Synthetic upstream overload')
+    expect(JSON.stringify(listed)).not.toContain(
+      'Synthetic provider rate limit',
+    )
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+})
+
 describe('configurable request budgets', () => {
   const now = Date.parse('2026-10-27T18:00:00Z')
   const midnight = Date.parse('2026-10-27T00:00:00Z')

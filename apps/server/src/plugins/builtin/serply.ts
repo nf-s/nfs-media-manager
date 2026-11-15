@@ -103,6 +103,10 @@ function identityMatches(actual: string, expected: string) {
     value
       .normalize('NFKD')
       .replace(/\p{M}/gu, '')
+      // These letters do not decompose under NFKD, but RYM spells them in
+      // ASCII paths. Displayed artist/title conflicts are still checked.
+      .replace(/æ/gi, 'ae')
+      .replace(/ø/gi, 'o')
       .replace(
         /(?<![\p{L}\p{N},._])(?:\d{1,3}(?:,\d{3})+|\d{1,3}(?:_\d{3})+)(?![\p{L}\p{N},._])/gu,
         (number) => number.replace(/[,_]/g, ''),

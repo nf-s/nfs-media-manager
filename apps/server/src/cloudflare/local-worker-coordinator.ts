@@ -1,5 +1,6 @@
 import { DurableObject } from 'cloudflare:workers'
 import { z } from 'zod'
+import type { ProviderLocalWorkerMode } from '@repo/schemas/provider'
 import type {
   LocalWorkerPolicy,
   LocalWorkerTask,
@@ -65,8 +66,11 @@ export class LocalRequestWorker extends DurableObject<CloudflareBindings> {
   unconfigure() {
     return this.worker.unconfigure()
   }
-  status() {
-    return this.worker.status()
+  setMode(mode: ProviderLocalWorkerMode) {
+    return this.worker.setMode(mode)
+  }
+  status(defaultMode?: ProviderLocalWorkerMode) {
+    return this.worker.status(defaultMode)
   }
   getPolicy() {
     return this.worker.getPolicy()

@@ -5,6 +5,7 @@ import {
 } from '@repo/media-plugin-sdk'
 import { z } from 'zod'
 import { redactJobText } from './job-errors'
+import type { ProviderRequestDiagnostics } from '@repo/schemas/provider'
 
 const EnvelopeSchema = z.object({
   stage: z.string().min(1).max(80),
@@ -19,6 +20,73 @@ const MAX_BYTES = 384 * 1024
 const MAX_ENTRIES = 14
 const sensitiveKey =
   /secret|password|passwd|passkey|token|authorization|authentication|cookie|headers?|credential|session|apikey|apiuser|privatekey|clientsecret|csrf|xsrf|signature|^auth$|^key$|^jwt$/i
+
+export const PROVIDER_ERROR_BODY_BYTES = 16 * 1024
+
+export type CapturedProviderBody =
+  | { state: 'captured'; text: string; relayed: boolean }
+  | { state: 'empty' }
+  | {
+      state: 'unavailable'
+      reason:
+        | 'byte-limit'
+        | 'read-failed'
+        | 'unsupported-format'
+        | 'local-response'
+    }
+
+type ProviderResponseEvidence = {
+  diagnostics: ProviderRequestDiagnostics
+  contentType: string | null
+  body: CapturedProviderBody
+  requestSecrets: string[]
+}
+
+// Keep raw upstream text off exception objects and out of API error logs.
+const providerResponses = new WeakMap<Error, ProviderResponseEvidence>()
+
+const isSensitiveKey = (key: string) =>
+  sensitiveKey.test(key.replace(/[^a-z0-9]/gi, ''))
+const isSensitiveProviderKey = (key: string) =>
+  isSensitiveKey(key) ||
+  /^(?:email(?:address)?|username|userid|accountid|ip(?:address)?)$/i.test(
+    key.replace(/[^a-z0-9]/gi, ''),
+  )
+
+export function captureProviderResponseEvidence(
+  error: Error,
+  diagnostics: ProviderRequestDiagnostics,
+  contentType: string | null,
+  body: CapturedProviderBody,
+  url: string | URL,
+  headers: HeadersInit | undefined,
+): void {
+  const requestSecrets: string[] = []
+  try {
+    for (const [name, value] of new Headers(headers)) {
+      if (!isSensitiveKey(name)) continue
+      requestSecrets.push(value)
+      for (const [, part] of value.matchAll(
+        /(?:^(?:Bearer|Basic)\s+|(?:^|[\s,;])[\w-]+=)([^\s,;]+)/gi,
+      )) {
+        if (part) requestSecrets.push(part)
+      }
+    }
+    const requestUrl = new URL(url)
+    requestSecrets.push(requestUrl.username, requestUrl.password)
+    for (const [name, value] of requestUrl.searchParams)
+      if (isSensitiveProviderKey(name)) requestSecrets.push(value)
+  } catch {
+    // Diagnostics must preserve the HTTP failure even if request evidence is unreadable.
+    body = { state: 'unavailable', reason: 'read-failed' }
+  }
+  providerResponses.set(error, {
+    diagnostics,
+    contentType,
+    body,
+    requestSecrets,
+  })
+}
 
 function safeText(value: string, secrets: string[], maxBytes = 512): string {
   // Never retain a prefix that may cut a credential before it can be redacted.
@@ -119,7 +187,7 @@ export function sanitizeJobDiagnostic(
           const safeKey = safeText(key, secrets)
           bytes += Buffer.byteLength(JSON.stringify(safeKey))
           const descriptor = Object.getOwnPropertyDescriptor(value, key)
-          const safeValue = sensitiveKey.test(key.replace(/[^a-z0-9]/gi, ''))
+          const safeValue = isSensitiveKey(key)
             ? REDACTED
             : descriptor && 'value' in descriptor
               ? visit(descriptor.value, depth + 1)
@@ -154,6 +222,121 @@ export function sanitizeJobDiagnostic(
     // Malformed plugin values must never replace the provider's real failure.
     return null
   }
+}
+
+function safeProviderBody(
+  body: CapturedProviderBody,
+  secrets: string[],
+): JsonValue {
+  if (body.state !== 'captured') return body
+  const { text } = body
+  const workerRedacted = body.relayed && text.includes('[redacted]')
+  const sanitize = (value: string) =>
+    safeText(value, secrets, Infinity)
+      .replaceAll('\0', '\uFFFD')
+      .replace(/\b[\w.+-]+@[\w.-]+\.[a-z]{2,}\b/gi, REDACTED)
+  let raw: unknown
+  try {
+    raw = JSON.parse(text)
+  } catch {
+    const namedField = /([\w.-]+)["']?\s*[:=]|<\/?([\w.-]+)/g
+    if (
+      /<(?:input|script)\b/i.test(text) ||
+      Array.from(text.matchAll(namedField)).some(([, name, tag]) =>
+        isSensitiveProviderKey(name ?? tag ?? ''),
+      )
+    )
+      return { state: 'unavailable', reason: 'sensitive-fields' }
+    const safe = sanitize(text)
+    if (Buffer.byteLength(safe) > PROVIDER_ERROR_BODY_BYTES)
+      return { state: 'unavailable', reason: 'byte-limit' }
+    return {
+      state: 'captured',
+      format: 'text',
+      text: safe,
+      redacted: workerRedacted || safe !== text,
+    }
+  }
+  try {
+    let sensitiveKeyValue = false
+    const sanitized = JSON.stringify(raw, (key, value: unknown) => {
+      if (sanitize(key) !== key) sensitiveKeyValue = true
+      if (isSensitiveProviderKey(key)) return REDACTED
+      if (typeof value === 'number' && secrets.includes(String(value)))
+        return REDACTED
+      return typeof value === 'string' ? sanitize(value) : value
+    })
+    if (sensitiveKeyValue)
+      return { state: 'unavailable', reason: 'sensitive-fields' }
+    if (Buffer.byteLength(sanitized) > PROVIDER_ERROR_BODY_BYTES)
+      return { state: 'unavailable', reason: 'byte-limit' }
+    // Scan original JSON strings too. A duplicate property can hide its older
+    // value from JSON.parse, including values written with Unicode escapes.
+    const changed =
+      sanitized !== JSON.stringify(raw) ||
+      sanitize(text) !== text ||
+      Array.from(text.matchAll(/"(?:[^"\\]|\\.)*"/g)).some(
+        ({ 0: token, index }) => {
+          const value = z.string().parse(JSON.parse(token))
+          return (
+            sanitize(value) !== value ||
+            (isSensitiveProviderKey(value) &&
+              /^\s*:/.test(text.slice(index + token.length)))
+          )
+        },
+      )
+    return {
+      state: 'captured',
+      format: 'json',
+      text: changed ? sanitized : text,
+      redacted: workerRedacted || changed,
+    }
+  } catch {
+    return { state: 'unavailable', reason: 'redaction-failed' }
+  }
+}
+
+export function providerResponseEvidence(
+  error: unknown,
+  secrets: string[],
+): JsonValue[] {
+  const evidence: JsonValue[] = []
+  const seen = new Set<Error>()
+  for (let current = error; current instanceof Error && seen.size < 6; ) {
+    if (seen.has(current)) break
+    seen.add(current)
+    const response = providerResponses.get(current)
+    if (response) {
+      const credentials = [...secrets, ...response.requestSecrets]
+      const {
+        contentType,
+        diagnostics: { retryAfter, quotaHeaders, ...status },
+      } = response
+      const safeRetry = JSON.stringify(retryAfter ?? null)
+      const safeQuota = JSON.stringify(quotaHeaders ?? null)
+      evidence.push({
+        stage: 'provider.response',
+        evidence: {
+          ...status,
+          ...(retryAfter && redactJobText(safeRetry, credentials) === safeRetry
+            ? { retryAfter }
+            : {}),
+          ...(quotaHeaders &&
+          redactJobText(safeQuota, credentials) === safeQuota
+            ? { quotaHeaders }
+            : {}),
+          contentType:
+            contentType &&
+            redactJobText(contentType, credentials) === contentType
+              ? contentType
+              : null,
+          responseBody: safeProviderBody(response.body, credentials),
+        },
+      })
+    }
+    current = Object.getOwnPropertyDescriptor(current, 'cause')?.value
+  }
+  return evidence
 }
 
 export function createJobDiagnostics(secrets: string[]) {

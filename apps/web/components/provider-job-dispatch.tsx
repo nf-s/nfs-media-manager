@@ -6,7 +6,10 @@ import {
   CloudDispatchControlSchema,
   CloudDispatchStatusSchema,
 } from '@repo/schemas/job'
-import type { ProviderSummary } from '@repo/schemas/provider'
+import type {
+  ProviderLocalWorkerStatus,
+  ProviderSummary,
+} from '@repo/schemas/provider'
 import { Button } from '@repo/ui/components/ui/button'
 import { fetchApiData } from '@/utils/api'
 import {
@@ -14,11 +17,14 @@ import {
   type ProviderDispatchAction,
 } from '@/utils/provider-job-dispatch'
 import { useConfig } from './providers'
+import { useProviderLocalWorkerMode } from './provider-local-worker'
 
 export default function ProviderJobDispatch({
   provider,
+  worker,
 }: {
   provider: ProviderSummary
+  worker?: ProviderLocalWorkerStatus
 }) {
   const { apiBaseUrl } = useConfig()
   const client = useQueryClient()
@@ -71,6 +77,8 @@ export default function ProviderJobDispatch({
       await client.invalidateQueries({ queryKey: ['providers'] })
     },
   })
+  const changeMode = useProviderLocalWorkerMode(provider.id)
+  const busy = update.isPending || changeMode.isPending
   if (!provider.supportsJobDispatchControl) return null
   const resumeLabel =
     data?.paused || data?.stopped
@@ -87,6 +95,12 @@ export default function ProviderJobDispatch({
         ? 'Resume all queued jobs'
         : resumeLabel
   const cooldownUntil = provider.safety?.cooldownUntil
+  const nextMode = worker?.mode === 'local' ? 'cloud' : 'local'
+  const switchRestriction = worker?.blocked
+    ? 'Review the local request before switching.'
+    : !data?.paused || active > 0 || worker?.active
+      ? 'Pause the queue and wait for active work to finish.'
+      : null
   function startReview(action: ProviderDispatchAction) {
     if (!data) return
     update.reset()
@@ -170,7 +184,7 @@ export default function ProviderJobDispatch({
                 <Button
                   size="sm"
                   disabled={
-                    update.isPending ||
+                    busy ||
                     (reviewing !== 'pause' && waitingToResume) ||
                     (reviewing === 'resume-all' && active > 0)
                   }
@@ -181,7 +195,7 @@ export default function ProviderJobDispatch({
                 <Button
                   size="sm"
                   variant="ghost"
-                  disabled={update.isPending}
+                  disabled={busy}
                   onClick={() => setReview(null)}
                 >
                   Back
@@ -193,7 +207,7 @@ export default function ProviderJobDispatch({
               <Button
                 size="sm"
                 variant="outline"
-                disabled={update.isPending || waitingToResume}
+                disabled={busy || waitingToResume}
                 onClick={() => startReview('resume')}
               >
                 {resumeLabel}
@@ -202,7 +216,7 @@ export default function ProviderJobDispatch({
                 <Button
                   size="sm"
                   variant="outline"
-                  disabled={update.isPending || active > 0}
+                  disabled={busy || active > 0}
                   onClick={() => startReview('resume-all')}
                 >
                   Resume all queued jobs
@@ -212,7 +226,7 @@ export default function ProviderJobDispatch({
                 <Button
                   size="sm"
                   variant="ghost"
-                  disabled={update.isPending}
+                  disabled={busy}
                   onClick={() => startReview('pause')}
                 >
                   Pause queue
@@ -221,6 +235,30 @@ export default function ProviderJobDispatch({
             </div>
           )}
         </>
+      )}
+      {worker?.supportsModeSwitch && (
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={
+              busy || !!reviewing || !!switchRestriction || status.isError
+            }
+            onClick={() => changeMode.mutate(nextMode)}
+          >
+            {changeMode.isPending
+              ? 'Switching...'
+              : nextMode === 'cloud'
+                ? 'Switch to Cloudflare'
+                : 'Switch to Local'}
+          </Button>
+          {switchRestriction && <p className="muted">{switchRestriction}</p>}
+        </div>
+      )}
+      {changeMode.isError && (
+        <p role="alert">
+          {changeMode.error.message || 'Could not switch transport.'}
+        </p>
       )}
       {update.isError && <p role="alert">{update.error.message}</p>}
       {update.isSuccess && (

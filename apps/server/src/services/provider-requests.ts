@@ -9,6 +9,11 @@ import {
   type MediaPluginTestContext,
 } from '@repo/media-plugin-sdk'
 import { db } from '@/lib/db'
+import {
+  PROVIDER_ERROR_BODY_BYTES,
+  captureProviderResponseEvidence,
+  type CapturedProviderBody,
+} from '@/lib/job-diagnostics'
 import { getProviderTransport } from '@/services/provider-transport'
 import {
   ProviderRequestBudgetSchema,
@@ -112,6 +117,7 @@ const DISPATCH_WINDOW_MS = 4000
 const RequestTimeoutSchema = PluginRequestTimeoutSchema.default(15000)
 const TRANSIENT_MAX_ATTEMPTS = 3
 const TRANSIENT_RETRY_WINDOW_MS = 60000
+const ERROR_BODY_CAPTURE_TIMEOUT_MS = 1000
 
 type TransientDisposition = 'retry' | 'backoff' | 'cooldown'
 
@@ -195,6 +201,89 @@ async function readBoundedBody(
     }
     return Buffer.concat(chunks).toString('utf8')
   } finally {
+    reader.releaseLock()
+  }
+}
+
+function responseContentType(response: Response): string | null {
+  const type = response.headers.get('content-type')?.split(';', 1)[0]?.trim()
+  return type &&
+    /^[a-z0-9][a-z0-9!#$&^_.+-]{0,63}\/[a-z0-9][a-z0-9!#$&^_.+-]{0,63}$/i.test(
+      type,
+    )
+    ? type.toLowerCase()
+    : null
+}
+
+function capturedErrorText(
+  text: string,
+  relayed: boolean,
+): CapturedProviderBody {
+  if (!text)
+    return relayed
+      ? { state: 'unavailable', reason: 'local-response' }
+      : { state: 'empty' }
+  if (Buffer.byteLength(text) > PROVIDER_ERROR_BODY_BYTES)
+    return { state: 'unavailable', reason: 'byte-limit' }
+  return { state: 'captured', text, relayed }
+}
+
+async function readErrorBody(
+  response: Response,
+  signal: AbortSignal,
+  relayed: boolean,
+  contentType: string | null,
+): Promise<CapturedProviderBody> {
+  if (!response.body) return capturedErrorText('', relayed)
+  if (response.body.locked)
+    return { state: 'unavailable', reason: 'read-failed' }
+  if (
+    Number(response.headers.get('content-length')) > PROVIDER_ERROR_BODY_BYTES
+  ) {
+    void response.body.cancel().catch(() => undefined)
+    return { state: 'unavailable', reason: 'byte-limit' }
+  }
+  if (
+    contentType &&
+    !contentType.startsWith('text/') &&
+    !/(?:\/|\+)(?:json|xml)$/.test(contentType)
+  ) {
+    void response.body.cancel().catch(() => undefined)
+    return { state: 'unavailable', reason: 'unsupported-format' }
+  }
+  const reader = response.body.getReader()
+  const cancel = () => {
+    void reader.cancel().catch(() => undefined)
+  }
+  signal.addEventListener('abort', cancel, { once: true })
+  let complete = false
+  try {
+    const chunks: Uint8Array[] = []
+    let bytes = 0
+    for (;;) {
+      signal.throwIfAborted()
+      const chunk = await reader.read()
+      signal.throwIfAborted()
+      if (chunk.done) {
+        complete = true
+        break
+      }
+      bytes += chunk.value.byteLength
+      if (bytes > PROVIDER_ERROR_BODY_BYTES)
+        return { state: 'unavailable', reason: 'byte-limit' }
+      chunks.push(chunk.value)
+    }
+    return capturedErrorText(
+      new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(
+        Buffer.concat(chunks),
+      ),
+      relayed,
+    )
+  } catch {
+    return { state: 'unavailable', reason: 'read-failed' }
+  } finally {
+    signal.removeEventListener('abort', cancel)
+    if (!complete) cancel()
     reader.releaseLock()
   }
 }
@@ -677,6 +766,13 @@ export function createProviderRequest(
     await assertActive?.()
     init?.signal?.throwIfAborted()
     const transport = await getProviderTransport(plugin)
+    if (options?.requireLocalTransport && !transport)
+      throw new ProviderRequestError(
+        'Provider credentials are required for direct provider requests',
+        'request-failed',
+        null,
+        true,
+      )
     if (
       transport &&
       ((init?.method ?? 'GET').toUpperCase() !== 'GET' || init?.body)
@@ -723,6 +819,7 @@ export function createProviderRequest(
     let requestStartedAt: number | undefined
     let remoteAccountingComplete = false
     let transient: TransientFailure | undefined
+    let retainResponseEvidence: (() => Promise<void>) | undefined
     try {
       await checkDispatch(plugin.manifest.id, reservation)
       const timeout = AbortSignal.timeout(timeoutMs)
@@ -771,24 +868,30 @@ export function createProviderRequest(
       // Persist before reading the body: a parsing/size failure must not lose quota state.
       if (response.ok && quota?.exhausted && quota.resetAt !== null)
         await recordResponseQuota(plugin.manifest.id, quota.resetAt)
+      const contentType = responseContentType(response)
       const jsonResponse =
         response.headers.get('content-type')?.toLowerCase().includes('json') ??
         false
       let body = ''
+      let errorBody: CapturedProviderBody | undefined
+      const inspectDenial = response.status === 403 && jsonResponse
+      const captureErrorBody = () =>
+        readErrorBody(
+          response,
+          AbortSignal.any([
+            signal,
+            AbortSignal.timeout(ERROR_BODY_CAPTURE_TIMEOUT_MS),
+          ]),
+          transport !== null,
+          contentType,
+        )
       if (response.ok) {
         body = await readBoundedBody(response)
-      } else if (response.status === 403 && jsonResponse) {
-        try {
-          body = await readBoundedBody(response, 16 * 1024)
-        } catch {
-          // Malformed, oversized or unreadable denial bodies cannot clear an access halt.
-        }
-      } else {
-        try {
-          await response.body?.cancel()
-        } catch {
-          // Header-based failures, especially 429, must survive body cancellation errors.
-        }
+      } else if (inspectDenial) {
+        // A structured quota denial is the only failed response that needs its
+        // body classified before persisting provider safety.
+        errorBody = await captureErrorBody()
+        if (errorBody.state === 'captured') body = errorBody.text
       }
       let apiLimit = false
       if (jsonResponse && (response.ok || response.status === 403)) {
@@ -800,14 +903,38 @@ export function createProviderRequest(
       }
       const redirected = response.status >= 300 && response.status < 400
       if (redirected || !response.ok || apiLimit) {
-        if (response.status === 404 && options?.notFoundOn404) {
-          throw new ProviderItemNotFoundError(
-            'Provider has no matching item (HTTP 404)',
-          )
-        }
         const transientStatus = [502, 503, 504].includes(response.status)
         const transientQuota =
           retryPolicy !== null && transientStatus && quota?.exhausted === true
+        const diagnostics = responseDiagnostics(
+          response,
+          responseReceivedAt,
+          apiLimit || transientQuota,
+        )
+        const attachEvidence = (error: Error) => {
+          retainResponseEvidence = async () => {
+            const evidenceBody =
+              errorBody ??
+              (response.ok
+                ? capturedErrorText(body, transport !== null)
+                : await captureErrorBody())
+            captureProviderResponseEvidence(
+              error,
+              diagnostics,
+              contentType,
+              evidenceBody,
+              url,
+              init?.headers,
+            )
+          }
+        }
+        if (response.status === 404 && options?.notFoundOn404) {
+          const error = new ProviderItemNotFoundError(
+            'Provider has no matching item (HTTP 404)',
+          )
+          attachEvidence(error)
+          throw error
+        }
         const limited = response.status === 429 || apiLimit || transientQuota
         const denied = response.status === 401 || response.status === 403
         const now = Date.now()
@@ -846,7 +973,7 @@ export function createProviderRequest(
         const until = limited
           ? rateLimitRetryAt(
               response.headers,
-              now,
+              responseReceivedAt,
               plugin.manifest.rateLimit.rateLimitCooldownMs ?? 60000,
               quota,
               plugin.manifest.rateLimit.retryAfterIsAuthoritative,
@@ -854,9 +981,9 @@ export function createProviderRequest(
           : (transient?.retryAt ??
             ((response.status === 400 || response.status >= 500) &&
             (errorBackoff > 0 || retryAfter !== null)
-              ? retryAfterTime(retryAfter, now, errorBackoff)
+              ? retryAfterTime(retryAfter, responseReceivedAt, errorBackoff)
               : null))
-        throw new ProviderRequestError(
+        const error = new ProviderRequestError(
           limited
             ? response.status === 429
               ? 'Provider rate limit reached (HTTP 429)'
@@ -865,14 +992,10 @@ export function createProviderRequest(
           limited ? 'rate-limit' : denied ? 'access-denied' : 'request-failed',
           until,
           false,
-          {
-            diagnostics: responseDiagnostics(
-              response,
-              responseReceivedAt,
-              apiLimit || transientQuota,
-            ),
-          },
+          { diagnostics },
         )
+        attachEvidence(error)
+        throw error
       }
       // HTTP safety signals take precedence over dispatch bookkeeping errors.
       if (dispatchResult.status === 'rejected') throw dispatchResult.reason
@@ -886,7 +1009,10 @@ export function createProviderRequest(
       )
     } catch (error) {
       if (requestStartedAt === undefined) throw error
-      if (isProviderItemNotFoundError(error)) throw error
+      if (isProviderItemNotFoundError(error)) {
+        await retainResponseEvidence?.()
+        throw error
+      }
       if (error instanceof ProviderRequestError && error.recorded) throw error
       const safe =
         error instanceof ProviderRequestError
@@ -899,6 +1025,7 @@ export function createProviderRequest(
               { cause: error },
             )
       await recordProviderFailure(plugin, safe, transient?.disposition)
+      await retainResponseEvidence?.()
       const recorded = new ProviderRequestError(
         safe.message,
         safe.code,
@@ -981,6 +1108,7 @@ export function createProviderRequest(
       )
       if (result instanceof Response) return result
       pending = result
+      if (Date.now() >= result.retryBefore) await expireRetry(result)
       try {
         await onRetry?.({
           error: result.error,

@@ -67,6 +67,43 @@ every dispatch. An exhausted request counts as one provider
 failure. Access denials, quota responses and writes retain their existing
 safeguards.
 
+## Discogs execution
+
+On the hosted runtime, Discogs starts in Local mode. Queued jobs wait until its
+paired worker is online. The provider page shows execution mode and worker
+availability. To change mode, pause the dispatcher, wait for its slots to
+drain, then choose Cloudflare or Local. Resume dispatch when ready. The
+existing pairing and provider safety limits apply across switches. A request
+with an uncertain outcome requires worker review before switching modes.
+Cloudflare execution uses the server-side Discogs credential. Local execution
+uses the credentials configured on that worker.
+
+To set up a Discogs worker, pause Discogs and use the owner-authenticated
+`POST /api/v1/cloud/providers/discogs/local-worker` with
+`{"mode":"pair"}`. Keep the returned token in the worker's private
+environment as `LOCAL_WORKER_TOKEN`. Set the other worker variables in the
+Discogs worker's private `.env` file.
+
+| Variable                        | Value                                                                         |
+| ------------------------------- | ----------------------------------------------------------------------------- |
+| `LOCAL_WORKER_URL`              | Exact HTTPS origin of the hosted API                                          |
+| `LOCAL_WORKER_PROVIDER`         | `discogs`                                                                     |
+| `LOCAL_WORKER_ORIGIN`           | `https://api.discogs.com`                                                     |
+| `LOCAL_WORKER_PATHS`            | `/database/search,/masters/{id},/releases/{id}`                               |
+| `LOCAL_WORKER_QUERY_PARAMETERS` | `type,barcode,artist,release_title,per_page,page`                             |
+| `LOCAL_WORKER_CREDENTIALS`      | `{"authorization":"DISCOGS_AUTHORIZATION","user-agent":"DISCOGS_USER_AGENT"}` |
+| `LOCAL_WORKER_STATE_DIR`        | `.local-worker/discogs`                                                       |
+
+Set `DISCOGS_AUTHORIZATION` to the complete authorization header value
+`Discogs token=<token>` and `DISCOGS_USER_AGENT` to the application's
+identifying User-Agent. Build the CLI from the repository root with
+`corepack pnpm --filter @repo/local-worker... build`. From the directory
+containing the worker's `.env`, run
+`node /path/to/repository/packages/local-worker/dist/cli.js start`.
+Use a dedicated state directory for each paired provider. The worker supports
+only the listed metadata GET endpoints and sends requests through the shared
+provider gate. Both Local and Cloudflare honor the same cooldown and access halt.
+
 ## Interrupted Jobs
 
 Before scheduling any dispatch, the owner recovers jobs with status `running` in
@@ -117,12 +154,17 @@ have been captured before the adapter threw. Old failed jobs without retained
 responses cannot be reconstructed; viewing their JSON must not trigger a retry.
 
 Provider request errors retain their classification and retry time in the job
-log, including nested causes. New HTTP failures also retain the response status,
+log, including nested causes. New HTTP failures retain the response status,
 receipt time, normalized `Retry-After` and allowlisted numeric quota fields,
-including Discogs limit, used and remaining values. The expanded error shows
-these details. Local cooldown, budget and access-halt refusals are identified
-separately and do not imply that a request reached the provider. Request URLs,
-credentials, arbitrary headers and error bodies are excluded from this evidence.
+including Discogs limit, used and remaining values. The response data includes
+the HTTP content type and up to 16 KiB of readable error text from the response,
+including responses that led to automatic retries. Credential redaction is
+marked, and an absent, oversized or unavailable body is identified separately.
+Local cooldown, budget and access-halt refusals are identified separately in the
+error. Diagnostic body reads have a one-second limit and stay within the
+request deadline. The gate records safety before reading the body when status
+and headers establish the classification. A 403 with an unreadable JSON body
+is treated as an access denial.
 
 When diagnosing recently executed queued work, sort jobs by **Started** or
 **Finished**. **Created** shows when a job was queued, which can be much earlier
@@ -138,9 +180,9 @@ with candidate summaries and a final decision within those bounds. Serply normal
 caps searches at five; six is allowed only when OST/DJ Mix role simplification
 adds a distinct natural-language fallback. These are ceilings, not required calls.
 Truncation and unavailable bodies are explicitly
-marked. HTTP error-body reads use the existing 16 KiB helper limit. If the request
-gateway fails before returning a response, there is no response body to retain;
-the normal error log remains the evidence. This adds no requests or retries.
+marked. If the provider returns an HTTP error, the gateway retains the available
+response evidence in the same job data view. A transport failure without an HTTP
+response has no body to retain.
 
 ### Lifecycle Tests
 

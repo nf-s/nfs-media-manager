@@ -4,7 +4,11 @@ import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { CloudDispatchStatusSchema } from '@repo/schemas/job'
-import { ProviderSummarySchema } from '@repo/schemas/provider'
+import {
+  ProviderLocalWorkerStatusSchema,
+  ProviderSummarySchema,
+  type ProviderLocalWorkerStatus,
+} from '@repo/schemas/provider'
 import ProviderJobDispatch from './provider-job-dispatch'
 
 const provider = ProviderSummarySchema.parse({
@@ -29,7 +33,11 @@ const stopped = CloudDispatchStatusSchema.parse({
   slots: [],
 })
 
-function render(data: unknown = stopped, configuration = provider) {
+function render(
+  data: unknown = stopped,
+  configuration = provider,
+  worker?: ProviderLocalWorkerStatus,
+) {
   const client = new QueryClient({
     defaultOptions: { queries: { enabled: false, retry: false } },
   })
@@ -41,7 +49,7 @@ function render(data: unknown = stopped, configuration = provider) {
   try {
     return renderToStaticMarkup(
       <QueryClientProvider client={client}>
-        <ProviderJobDispatch provider={configuration} />
+        <ProviderJobDispatch provider={configuration} worker={worker} />
       </QueryClientProvider>,
     )
   } finally {
@@ -149,4 +157,53 @@ test('only an unexpired cooldown is shown as active', () => {
     render(stopped, withCooldown(new Date(Date.now() + 60_000).toISOString())),
     /Provider cooldown until/,
   )
+})
+
+const worker = ProviderLocalWorkerStatusSchema.parse({
+  mode: 'local',
+  configured: true,
+  paired: true,
+  online: true,
+  blocked: false,
+  active: false,
+  lastSeenAt: 1700000000000,
+  supportsModeSwitch: true,
+})
+const workerProvider = { ...provider, supportsLocalWorker: true }
+const paused = { ...stopped, paused: true }
+
+test('switchable providers can explicitly change mode in either direction after pausing', () => {
+  assert.doesNotMatch(
+    button(render(paused, workerProvider, worker), 'Switch to Cloudflare'),
+    /disabled=""/,
+  )
+  const cloud = render(paused, workerProvider, {
+    ...worker,
+    mode: 'cloud',
+    online: false,
+    paired: false,
+    lastSeenAt: null,
+  })
+  assert.doesNotMatch(button(cloud, 'Switch to Local'), /disabled=""/)
+  assert.doesNotMatch(
+    render(paused, workerProvider, { ...worker, supportsModeSwitch: false }),
+    /Switch to/,
+  )
+})
+
+test('transport switching waits for paused, drained dispatch and a clear local worker', () => {
+  const active = {
+    ...paused,
+    slots: [
+      { jobId: 'fixture-job', phase: 'running', expiresAt: 1700000000000 },
+    ],
+  }
+  for (const state of [stopped, active]) {
+    const html = render(state, workerProvider, worker)
+    assert.match(button(html, 'Switch to Cloudflare'), /disabled=""/)
+    assert.match(html, /Pause the queue and wait for active work to finish/)
+  }
+  const blocked = render(paused, workerProvider, { ...worker, blocked: true })
+  assert.match(button(blocked, 'Switch to Cloudflare'), /disabled=""/)
+  assert.match(blocked, /Review the local request before switching/)
 })

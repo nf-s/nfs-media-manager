@@ -1,6 +1,8 @@
 import { z } from 'zod'
 import {
+  ProviderLocalWorkerModeSchema,
   ProviderRequestDiagnosticsSchema,
+  type ProviderLocalWorkerMode,
   type ProviderRequestDiagnostics,
 } from '@repo/schemas/provider'
 import {
@@ -197,7 +199,7 @@ export interface MediaPluginTestContext {
   request: (
     url: string | URL,
     init?: RequestInit,
-    options?: { notFoundOn404?: boolean },
+    options?: { notFoundOn404?: boolean; requireLocalTransport?: boolean },
   ) => Promise<Response>
 }
 
@@ -232,6 +234,7 @@ export interface MediaPluginLegacyImportContext {
 
 export interface MediaPluginManifest {
   localWorker?: LocalWorkerPolicy
+  localWorkerDefaultMode?: ProviderLocalWorkerMode
   id: string
   displayName: string
   description: string
@@ -354,6 +357,7 @@ export class ProviderRequestError extends Error {
 export const MediaPluginManifestSchema = z
   .object({
     localWorker: LocalWorkerPolicySchema.optional(),
+    localWorkerDefaultMode: ProviderLocalWorkerModeSchema.optional(),
     id: z.string().regex(/^[a-z][a-z0-9-]*$/),
     displayName: z.string().min(1),
     description: z.string(),
@@ -437,6 +441,13 @@ export const MediaPluginManifestSchema = z
       .optional(),
   })
   .superRefine((manifest, context) => {
+    if (manifest.localWorkerDefaultMode && !manifest.localWorker) {
+      context.addIssue({
+        code: 'custom',
+        path: ['localWorkerDefaultMode'],
+        message: 'A local worker default mode requires a local worker policy',
+      })
+    }
     const keys = (manifest.browseFields ?? []).map((field) => field.key)
     if (
       new Set(keys).size !== keys.length ||

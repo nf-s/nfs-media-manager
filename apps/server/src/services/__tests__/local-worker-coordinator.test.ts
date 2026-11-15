@@ -89,10 +89,82 @@ afterEach(() => {
 })
 
 describe('local worker coordinator', () => {
+  it('keeps local-by-default providers local while unpaired', async () => {
+    const f = fixture()
+    expect(await f.coordinator.status('local')).toMatchObject({
+      mode: 'local',
+      paired: false,
+      online: false,
+    })
+    expect(f.dependencies.storage.save).not.toHaveBeenCalled()
+  })
+
+  it('retains a hidden worker capability across cloud and local switches', async () => {
+    const f = fixture()
+    await f.ready()
+    expect(await f.coordinator.setMode('cloud')).toBe(true)
+    expect(await f.recreate().status('local')).toMatchObject({
+      mode: 'cloud',
+      configured: true,
+      paired: true,
+      online: true,
+    })
+    expect(await f.coordinator.heartbeat(hash)).toBe(true)
+    await expect(f.coordinator.enqueue(f.task)).rejects.toThrow('unavailable')
+    expect(await f.coordinator.take(hash)).toBeNull()
+    expect(await f.coordinator.confirmStart(hash, id)).toBeNull()
+
+    expect(await f.coordinator.setMode('local')).toBe(true)
+    expect(await f.recreate().status('local')).toMatchObject({
+      mode: 'local',
+      paired: true,
+      online: true,
+    })
+    expect(await f.coordinator.enqueue(f.task)).toBe(true)
+    expect(await f.coordinator.take(hash)).toEqual(f.task)
+  })
+
+  it('rejects transport changes while a local request is active or unresolved', async () => {
+    const f = fixture()
+    await f.start()
+    expect(await f.coordinator.setMode('cloud')).toBe(false)
+    f.setNow(f.task.expiresAt)
+    expect(await f.coordinator.consumeResult(id)).toBe(true)
+    expect(await f.coordinator.setMode('cloud')).toBe(false)
+    expect(await f.coordinator.review()).toBe(true)
+    expect(await f.coordinator.setMode('cloud')).toBe(true)
+  })
+
+  it('preserves legacy configured and revoked states without a stored mode', async () => {
+    const f = fixture()
+    f.replaceStored({
+      policy,
+      tokenHash: null,
+      lastSeenAt: null,
+      blocked: false,
+      active: null,
+      retired: null,
+    })
+    expect(await f.coordinator.status()).toMatchObject({
+      mode: 'local',
+      configured: true,
+      paired: false,
+      online: false,
+    })
+    expect(await f.coordinator.unconfigure()).toBe(true)
+    expect(await f.coordinator.status()).toMatchObject({
+      mode: 'cloud',
+      configured: false,
+      paired: false,
+    })
+  })
+
   it('returns sanitized default status without writes', async () => {
     const f = fixture()
     expect(await f.coordinator.status()).toEqual({
+      mode: 'cloud',
       configured: false,
+      paired: false,
       online: false,
       lastSeenAt: null,
       blocked: false,
@@ -115,7 +187,9 @@ describe('local worker coordinator', () => {
     expect((await f.coordinator.status()).online).toBe(false)
     await f.coordinator.heartbeat(hash)
     expect(await f.coordinator.status()).toEqual({
+      mode: 'local',
       configured: true,
+      paired: true,
       online: true,
       lastSeenAt: 1000,
       blocked: false,
@@ -151,7 +225,9 @@ describe('local worker coordinator', () => {
     expect(f.stored()).toEqual(before)
     expect(await f.coordinator.disconnect(hash)).toBe(true)
     expect(await f.recreate().status()).toEqual({
+      mode: 'local',
       configured: true,
+      paired: true,
       online: false,
       lastSeenAt: null,
       blocked: false,

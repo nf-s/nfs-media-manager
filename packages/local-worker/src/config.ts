@@ -95,13 +95,61 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env) {
 
 export type WorkerConfig = ReturnType<typeof loadConfig>
 
-export function redact(value: string, config: WorkerConfig): string {
-  let clean = value
-  for (const secret of [
-    config.token,
-    ...Object.values(config.credentials),
-  ].sort((a, b) => b.length - a.length)) {
-    clean = clean.split(secret).join('[redacted]')
+function authorizationFragments(header: string | undefined): string[] {
+  const value = header?.trim()
+  if (!value) return []
+  const scheme = /^([A-Za-z][\w-]*) +(.+)$/.exec(value)
+  const credentials = scheme?.[2] ?? value
+  if (scheme?.[1]?.toLowerCase() === 'basic') {
+    const decoded = Buffer.from(credentials, 'base64').toString('utf8')
+    const separator = decoded.indexOf(':')
+    return separator === -1
+      ? [credentials]
+      : [
+          credentials,
+          decoded,
+          decoded.slice(0, separator),
+          decoded.slice(separator + 1),
+        ]
   }
-  return clean
+  return [
+    credentials,
+    ...Array.from(
+      credentials.matchAll(
+        /(?:^|[\s,;])[\w-]+\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\s,;"']+))/g,
+      ),
+      ([, quoted, singleQuoted, bare]) => quoted ?? singleQuoted ?? bare ?? '',
+    ),
+  ]
+}
+
+export function redact(value: string, config: WorkerConfig): string {
+  const secrets = [
+    ...new Set(
+      [
+        config.token,
+        ...Object.values(config.credentials),
+        ...authorizationFragments(config.credentials['authorization']),
+      ]
+        .filter(Boolean)
+        .flatMap((secret) => [secret, encodeURIComponent(secret)]),
+    ),
+  ].sort((a, b) => b.length - a.length)
+  const scrub = (text: string) => {
+    for (const secret of secrets) text = text.replaceAll(secret, '[redacted]')
+    return text
+  }
+  const decoded = value.includes('\\')
+    ? value.replace(/"(?:[^"\\]|\\.)*"/g, (literal) => {
+        if (!literal.includes('\\')) return literal
+        try {
+          const text = z.string().parse(JSON.parse(literal))
+          const clean = scrub(text)
+          return clean === text ? literal : JSON.stringify(clean)
+        } catch {
+          return literal
+        }
+      })
+    : value
+  return scrub(decoded)
 }

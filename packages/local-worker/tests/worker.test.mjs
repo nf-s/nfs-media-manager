@@ -155,6 +155,51 @@ test('only explicit tasks fetch, credentials stay local, response headers and bo
   )
 })
 
+test('scrubs bare Discogs authorization credentials before journaling and upload', async (t) => {
+  const token = 'synthetic-bare-discogs-value'
+  const h = fixture(t, {
+    LOCAL_WORKER_CREDENTIALS: '{"Authorization":"FIXTURE_SECRET"}',
+    FIXTURE_SECRET: 'Discogs token=' + token,
+  })
+  let recordedBody
+  h.provider = () =>
+    new Response(
+      '{"message":"Invalid credential \\u0073' + token.slice(1) + '"}',
+      {
+        status: 403,
+        headers: { 'content-type': 'application/json' },
+      },
+    )
+  h.result = () => {
+    recordedBody = h.store.readResult(id).body
+    return json({ accepted: true })
+  }
+  await h.run()
+  assert.equal(
+    JSON.parse(recordedBody).message,
+    'Invalid credential [redacted]',
+  )
+  assert.equal(
+    JSON.parse(h.uploads[0].body).message,
+    'Invalid credential [redacted]',
+  )
+})
+
+test('scrubs complete and bare Bearer credentials in plain response text', async (t) => {
+  const token = 'synthetic-bare-bearer-value'
+  const authorization = 'Bearer ' + token
+  const h = fixture(t, {
+    LOCAL_WORKER_CREDENTIALS: '{"Authorization":"FIXTURE_SECRET"}',
+    FIXTURE_SECRET: authorization,
+  })
+  h.provider = () =>
+    new Response('Refused ' + authorization + ' (' + token + ')', {
+      status: 401,
+      headers: { 'content-type': 'text/plain' },
+    })
+  await h.run()
+  assert.equal(h.uploads[0].body, 'Refused [redacted] ([redacted])')
+})
 test('offline reconnect is bounded and successful empty polls reset its backoff', async (t) => {
   const h = fixture(t)
   let count = 0

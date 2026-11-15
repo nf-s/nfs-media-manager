@@ -16,12 +16,12 @@ import {
   albumNameMatches,
   albumNames,
   albumReference,
-  albumSecret,
   requestAlbumJson,
   requireAlbum,
 } from './album-provider-helpers'
 
 const IdSchema = z.number().int().positive().safe()
+const DISCOGS_API_ORIGIN = 'https://api.discogs.com'
 const ReferenceIdSchema = z
   .string()
   .regex(/^[1-9]\d*$/)
@@ -43,16 +43,25 @@ async function discogsRequest(
   path: string,
   params: Record<string, string> = {},
 ) {
-  const url = new URL(`https://api.discogs.com/${path}`)
+  const url = new URL(`${DISCOGS_API_ORIGIN}/${path}`)
   for (const [key, value] of Object.entries(params))
     url.searchParams.set(key, value)
-  const payload = await requestAlbumJson(context, 'Discogs', url, {
-    headers: {
-      Authorization: `Discogs token=${albumSecret(context, 'token', 'Discogs')}`,
-      'User-Agent': 'NfsMediaScraper/0.1',
-      Accept: 'application/json',
+  const token = context.secrets['token']?.trim()
+  const hasToken = !!token && !/[\r\n]/.test(token)
+  const payload = await requestAlbumJson(
+    context,
+    'Discogs',
+    url,
+    {
+      headers: {
+        ...(hasToken ? { Authorization: `Discogs token=${token}` } : {}),
+        'User-Agent': 'NfsMediaScraper/0.1',
+        Accept: 'application/json',
+      },
     },
-  })
+    undefined,
+    hasToken ? undefined : { requireLocalTransport: true },
+  )
   if ('message' in payload || 'error' in payload)
     throw new Error('Discogs returned a service error.')
   return payload
@@ -141,6 +150,20 @@ export const discogsPlugin: MediaProviderPlugin = {
     mediaTypes: ['album'],
     identifierTypes: ['master', 'release', 'upc'],
     supportsNameLookup: true,
+    localWorkerDefaultMode: 'local',
+    localWorker: {
+      origin: DISCOGS_API_ORIGIN,
+      paths: ['/database/search', '/masters/{id}', '/releases/{id}'],
+      credentialHeaders: ['authorization', 'user-agent'],
+      queryParameters: [
+        'type',
+        'barcode',
+        'artist',
+        'release_title',
+        'per_page',
+        'page',
+      ],
+    },
     rateLimit: { maxConcurrent: 1, minTimeMs: 1050 },
     secrets: [
       {

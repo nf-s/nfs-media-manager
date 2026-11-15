@@ -7,10 +7,18 @@ import {
   PathnameContext,
   SearchParamsContext,
 } from 'next/dist/shared/lib/hooks-client-context.shared-runtime'
-import { ProviderSummarySchema } from '@repo/schemas/provider'
+import {
+  ProviderLocalWorkerStatusSchema,
+  ProviderSummarySchema,
+  type ProviderLocalWorkerStatus,
+} from '@repo/schemas/provider'
 import ProvidersPageClient from './pages/providers-page-client'
 
-function render(total: number, section = 'activity') {
+function render(
+  total: number,
+  section = 'activity',
+  worker?: ProviderLocalWorkerStatus,
+) {
   const client = new QueryClient({
     defaultOptions: { queries: { enabled: false, retry: false } },
   })
@@ -22,11 +30,14 @@ function render(total: number, section = 'activity') {
     mediaTypes: ['album'],
     rateLimit: { maxConcurrent: 1, minTimeMs: 1500 },
     supportsScrape: false,
+    supportsLocalWorker: Boolean(worker),
     supportsLegacyImport: true,
     secrets: [],
     pluginPath: null,
   })
   client.setQueryData(['providers'], [provider])
+  if (worker)
+    client.setQueryData(['providers', 'local-worker', provider.id], worker)
   client.setQueryData(['jobs', 'provider-summary', provider.id], {
     provider: provider.id,
     total,
@@ -80,4 +91,43 @@ test('provider jobs render the shared table and keep the provider fixed', () => 
   assert.match(html, /aria-label="Filter Job status"/)
   assert.doesNotMatch(html, /aria-label="Filter Job provider"/)
   assert.doesNotMatch(html, /Resume queue|Restart queue/)
+})
+
+test('provider settings describe the dispatch stop and bounded request retries', () => {
+  const settings = render(0, 'settings')
+  assert.match(
+    settings,
+    /Five consecutive unexpected failures stop queued work/,
+  )
+  assert.match(
+    settings,
+    /Serial metadata GET requests can make up to three attempts total on HTTP 502, 503 or 504/,
+  )
+})
+
+test('the provider header shows transport and availability on every tab', () => {
+  const worker = ProviderLocalWorkerStatusSchema.parse({
+    mode: 'local',
+    configured: true,
+    paired: true,
+    online: false,
+    blocked: false,
+    active: false,
+    lastSeenAt: null,
+    supportsModeSwitch: false,
+  })
+  const settings = render(0, 'settings', worker)
+  assert.match(settings, /<h1>Fixture provider<\/h1>.*>Local<\/span>/)
+  assert.match(settings, /Local worker offline/)
+  assert.doesNotMatch(settings, /Switch to Cloudflare/)
+
+  const activity = render(1, 'activity', {
+    ...worker,
+    mode: 'cloud',
+    online: true,
+    supportsModeSwitch: true,
+  })
+  assert.match(activity, /<h1>Fixture provider<\/h1>.*>Cloudflare<\/span>/)
+  assert.match(activity, /Local worker online/)
+  assert.doesNotMatch(render(0), /Local worker|>Cloudflare<\/span>/)
 })

@@ -69,6 +69,53 @@ function fixture(concurrency = 2) {
 }
 
 describe('durable provider dispatch', () => {
+  it('serializes a paused worker mode change with dispatcher resume', async () => {
+    const f = fixture(1)
+    await f.coordinator.setPaused('fixture', true)
+    let beginChange = () => {}
+    const changing = new Promise<void>((resolve) => {
+      beginChange = resolve
+    })
+    let finishChange = () => {}
+    const changeFinished = new Promise<void>((resolve) => {
+      finishChange = resolve
+    })
+    const changed = f.coordinator.runWhilePausedAndIdle('fixture', async () => {
+      beginChange()
+      await changeFinished
+      return true
+    })
+    await changing
+    const resumed = f.coordinator.setPaused('fixture', false)
+    expect(f.state()?.paused).toBe(true)
+    finishChange()
+    expect(await changed).toBe('changed')
+    expect(await resumed).toBe(true)
+
+    const unavailable = vi.fn(async () => true)
+    expect(
+      await f.coordinator.runWhilePausedAndIdle('fixture', unavailable),
+    ).toBe('dispatch-active')
+    expect(unavailable).not.toHaveBeenCalled()
+  })
+
+  it('does not change worker mode while a paused dispatcher still has a slot', async () => {
+    const f = fixture(1)
+    await f.coordinator.setPaused('fixture', false)
+    await f.coordinator.alarm()
+    expect(await f.coordinator.begin(f.message())).toBe(true)
+    await f.coordinator.setPaused('fixture', true)
+    const change = vi.fn(async () => false)
+    expect(await f.coordinator.runWhilePausedAndIdle('fixture', change)).toBe(
+      'dispatch-active',
+    )
+    expect(change).not.toHaveBeenCalled()
+    await f.coordinator.finish(f.message())
+    expect(await f.coordinator.runWhilePausedAndIdle('fixture', change)).toBe(
+      'worker-blocked',
+    )
+  })
+
   it('reads default and legacy status without saving or arming an alarm', async () => {
     const f = fixture()
     const save = vi.spyOn(f.dependencies.storage, 'save')

@@ -2186,6 +2186,57 @@ describe('Serply indexed RYM provider', () => {
   )
 
   it.each([
+    { artist: 'MÆRA', path: 'maera' },
+    { artist: 'Sølvin', path: 'solvin' },
+    { artist: 'SØLVIN', path: 'solvin' },
+  ])(
+    'matches the ASCII slug for $artist with matching display evidence',
+    async ({ artist, path }) => {
+      const link = `https://rateyourmusic.com/release/album/${path}/quiet-water/`
+      const result = {
+        link,
+        title: `Quiet Water by ${artist} (Album, Ambient)`,
+        description: `Quiet Water, an Album by ${artist}. Released 7 June 2011.`,
+        metadata: { rating: '3.5', reviews: '120' },
+      }
+      const output = await scrape(
+        context(
+          { results: [result] },
+          {
+            media: {
+              title: 'Quiet Water',
+              artists: [artist],
+              releaseDate: '2011-06-07',
+            },
+          },
+        ),
+      )
+      expect(output.normalized.references[0]?.externalId).toBe(link)
+      expect(output.normalized.mediaPatch?.metadata?.['browse']).toMatchObject({
+        ratingRymValue: 3.5,
+      })
+      await expect(
+        scrape(
+          context(
+            {
+              results: [
+                { ...result, title: 'Quiet Water by Another Artist (Album)' },
+              ],
+            },
+            {
+              media: {
+                title: 'Quiet Water',
+                artists: [artist],
+                releaseDate: '2011-06-07',
+              },
+            },
+          ),
+        ),
+      ).rejects.toBeInstanceOf(ProviderItemNotFoundError)
+    },
+  )
+
+  it.each([
     { title: "Can't Stop", resultTitle: 'Can T Stop', path: 'cant-stop' },
     { title: 'Can T Stop', resultTitle: "Can't Stop", path: 'can-t-stop' },
     { title: 'A Part', resultTitle: 'Apart', path: 'a-part' },

@@ -1,6 +1,9 @@
 import { z } from 'zod'
 
 export const LOCAL_RESPONSE_BYTES = 2 * 1024 * 1024
+const LiteralPathPattern = /^\/[a-zA-Z0-9/_-]+(?:\.[a-zA-Z0-9]+)?$/
+const NumericPathPattern = /^(\/[a-zA-Z0-9/_-]+)\/\{id\}$/
+
 export const LocalWorkerPolicySchema = z
   .object({
     origin: z
@@ -15,7 +18,14 @@ export const LocalWorkerPolicySchema = z
         }
       }),
     paths: z
-      .array(z.string().regex(/^\/[a-zA-Z0-9/_-]+(?:\.[a-zA-Z0-9]+)?$/))
+      .array(
+        z
+          .string()
+          .refine(
+            (path) =>
+              LiteralPathPattern.test(path) || NumericPathPattern.test(path),
+          ),
+      )
       .min(1)
       .max(10),
     credentialHeaders: z
@@ -29,6 +39,13 @@ export const LocalWorkerPolicySchema = z
   .strict()
 export type LocalWorkerPolicy = z.infer<typeof LocalWorkerPolicySchema>
 
+function matchesNumericPath(path: string, pattern: string): boolean {
+  const prefix = NumericPathPattern.exec(pattern)?.[1]
+  if (!prefix || !path.startsWith(`${prefix}/`)) return false
+  const id = path.slice(prefix.length + 1)
+  return /^[1-9]\d{0,15}$/.test(id) && Number.isSafeInteger(Number(id))
+}
+
 export function isLocalWorkerUrlAllowed(
   value: string,
   policy: LocalWorkerPolicy,
@@ -36,12 +53,16 @@ export function isLocalWorkerUrlAllowed(
   try {
     const url = new URL(value)
     const keys = [...url.searchParams.keys()]
+    const literalPath = policy.paths.includes(url.pathname)
+    const numericPath =
+      keys.length === 0 &&
+      policy.paths.some((pattern) => matchesNumericPath(url.pathname, pattern))
     return (
       url.origin === policy.origin &&
       !url.username &&
       !url.password &&
       !url.hash &&
-      policy.paths.includes(url.pathname) &&
+      (literalPath || numericPath) &&
       new Set(keys).size === keys.length &&
       keys.every((key) => policy.queryParameters.includes(key))
     )
@@ -92,6 +113,9 @@ export const LocalWorkerResultSchema = z.discriminatedUnion('kind', [
               'x-ratelimit-limit',
               'x-ratelimit-remaining',
               'x-ratelimit-reset',
+              'x-discogs-ratelimit',
+              'x-discogs-ratelimit-used',
+              'x-discogs-ratelimit-remaining',
             ].includes(key),
           ),
         ),

@@ -403,6 +403,22 @@ describe('Last.fm album adapter', () => {
 })
 
 describe('Discogs album adapter', () => {
+  it('requires the remote-worker transport when the server has no credential', async () => {
+    const request = replies(release)
+    await scrape(
+      discogsPlugin,
+      context({
+        existingReferences: [ref('discogs', 'release', '22')],
+        secrets: {},
+        request,
+      }),
+    )
+    expect(request.mock.calls[0]?.[2]).toEqual({ requireLocalTransport: true })
+    expect(
+      new Headers(request.mock.calls[0]?.[1]?.headers).has('authorization'),
+    ).toBe(false)
+  })
+
   it('does not label a release country as artist country', async () => {
     const request = replies(release)
     const result = await scrape(

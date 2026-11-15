@@ -6,6 +6,10 @@ import {
   CloudDispatchControlSchema,
   CloudDispatchStatusSchema,
 } from '@repo/schemas/job'
+import {
+  ProviderLocalWorkerControlResultSchema,
+  ProviderLocalWorkerControlSchema,
+} from '@repo/schemas/provider'
 import { env } from '@/env'
 import { authMiddleware } from '@/middlewares/auth'
 import { generateJsonResponse } from '@/lib/response'
@@ -27,9 +31,9 @@ import { withCloudDatabase } from './db'
 import { withProviderTransport } from '@/services/provider-transport'
 import {
   configureLocalWorker,
+  getLocalWorkerStatus,
   handleLocalWorkerRequest,
   localProviderTransport,
-  LocalWorkerModeSchema,
 } from './local-worker'
 export { ProviderCoordinator } from './provider-coordinator'
 export { LocalRequestWorker } from './local-worker-coordinator'
@@ -94,13 +98,13 @@ app.get(
   async (c) => {
     const bindings = workerBindings.getStore()
     if (!bindings) return c.json({ message: 'Local workers unavailable' }, 503)
-    if (!(await getScrapePlugin(c.req.param('provider'))))
-      return c.json({ message: 'Unknown provider' }, 404)
-    return c.json({
-      data: await bindings.LOCAL_WORKERS.getByName(
-        c.req.param('provider'),
-      ).status(),
-    })
+    const plugin = await getScrapePlugin(c.req.param('provider'))
+    if (!plugin) return c.json({ message: 'Unknown provider' }, 404)
+    return generateJsonResponse(
+      c,
+      await getLocalWorkerStatus(bindings, plugin),
+      200,
+    )
   },
 )
 
@@ -108,20 +112,23 @@ app.post(
   '/api/v1/cloud/providers/:provider/local-worker',
   authMiddleware({ sessionOnly: true }),
   async (c) => {
-    const input = LocalWorkerModeSchema.safeParse(
+    const input = ProviderLocalWorkerControlSchema.safeParse(
       await c.req.json().catch(() => null),
     )
     if (!input.success)
       return c.json({ message: 'Invalid worker settings' }, 422)
     const bindings = workerBindings.getStore()
     if (!bindings) return c.json({ message: 'Local workers unavailable' }, 503)
-    return c.json({
-      data: await configureLocalWorker(
-        bindings,
-        c.req.param('provider'),
-        input.data.mode,
-      ),
-    })
+    const result = await configureLocalWorker(
+      bindings,
+      c.req.param('provider'),
+      input.data.mode,
+    )
+    return generateJsonResponse(
+      c,
+      ProviderLocalWorkerControlResultSchema.parse(result),
+      200,
+    )
   },
 )
 

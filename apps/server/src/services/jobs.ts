@@ -56,7 +56,10 @@ import {
   redactJobText,
 } from '@/lib/job-errors'
 import { resolveProviderSecrets } from '@/lib/provider-secrets'
-import { createJobDiagnostics } from '@/lib/job-diagnostics'
+import {
+  createJobDiagnostics,
+  providerResponseEvidence,
+} from '@/lib/job-diagnostics'
 import { canIdentifyMedia } from '@/lib/provider-identification'
 import { scrapeMediaType } from '@/lib/scrape-media-type'
 import { sanitizeAlbumProviderResult } from '@/lib/spotify-audio-features'
@@ -691,7 +694,9 @@ async function processJob(
           secrets,
           request: createProviderRequest(plugin, assertActive, {
             onRetry: async ({ error, attempt, retryAt }) => {
-              const details = jobErrorDetails(error, jobLogSecrets(secrets))
+              const credentials = jobLogSecrets(secrets)
+              const details = jobErrorDetails(error, credentials)
+              const evidence = providerResponseEvidence(error, credentials)
               const message =
                 `Retrying request (attempt ${attempt}) after ${details.name}: ${details.message}`.slice(
                   0,
@@ -707,6 +712,7 @@ async function processJob(
                     error: details,
                     attempt,
                     retryAt: new Date(retryAt).toISOString(),
+                    ...(evidence.length ? { diagnostics: evidence } : {}),
                   },
                   tx,
                 ),
@@ -790,9 +796,13 @@ async function processJob(
             stopped = execution.stopped = true
           await recordProviderFailure(plugin, error)
         }
-        const details = jobErrorDetails(error, jobLogSecrets(secrets))
+        const credentials = jobLogSecrets(secrets)
+        const details = jobErrorDetails(error, credentials)
         const message = `${details.name}: ${details.message}`.slice(0, 1000)
-        const evidence = diagnostics?.snapshot() ?? []
+        const evidence = [
+          ...(diagnostics?.snapshot() ?? []),
+          ...providerResponseEvidence(error, credentials),
+        ]
 
         await tx
           .update(scrapeJobItem)
@@ -1295,21 +1305,20 @@ async function processTaskJob(
       where: (table, operators) =>
         operators.eq(table.provider, plugin.manifest.id),
     })
-    const details = jobErrorDetails(
-      result.error,
-      jobLogSecrets(
-        resolveProviderSecrets(
-          plugin.manifest.id,
-          providerSecrets,
-          plugin.manifest.secrets,
-        ),
+    const credentials = jobLogSecrets(
+      resolveProviderSecrets(
+        plugin.manifest.id,
+        providerSecrets,
+        plugin.manifest.secrets,
       ),
     )
+    const details = jobErrorDetails(result.error, credentials)
+    const evidence = providerResponseEvidence(result.error, credentials)
     const handled = await finish(
       'failed',
       'error',
       `${details.name}: ${details.message}`.slice(0, 1000),
-      { error: details },
+      { error: details, ...(evidence.length ? { diagnostics: evidence } : {}) },
       async (tx) => {
         execution.failures += 1
         const safety = await getProviderSafety(plugin.manifest.id)
