@@ -409,7 +409,7 @@ describe('durable provider dispatch', () => {
   })
 
   it('durably latches repeated failures and ignores duplicate outcomes and late successes', async () => {
-    const f = fixture(3)
+    const f = fixture(6)
     await f.coordinator.setPaused('fixture', false)
     await f.coordinator.alarm()
     for (const message of f.sent) await f.coordinator.begin(message)
@@ -417,14 +417,15 @@ describe('durable provider dispatch', () => {
     await f.coordinator.recordOutcome(f.message(), 'failure')
     expect(f.state()?.failures).toBe(1)
     const restored = f.recreate()
-    await restored.recordOutcome(f.message(1), 'failure')
-    await restored.recordOutcome(f.message(2), 'success')
-    expect(f.state()?.stopped).toBe(true)
-    expect(await restored.isActive(f.message(2))).toBe(false)
+    for (let index = 1; index < 5; index++)
+      await restored.recordOutcome(f.message(index), 'failure')
+    await restored.recordOutcome(f.message(5), 'success')
+    expect(f.state()).toMatchObject({ stopped: true, failures: 5 })
+    expect(await restored.isActive(f.message(5))).toBe(false)
     await restored.setPaused('fixture', false)
     expect(f.state()?.stopped).toBe(true)
     await restored.alarm()
-    expect(f.sent).toHaveLength(3)
+    expect(f.sent).toHaveLength(6)
   })
 
   it.each([false, true])(
@@ -433,18 +434,20 @@ describe('durable provider dispatch', () => {
       const f = fixture(1)
       await f.coordinator.setPaused('fixture', false)
       await f.coordinator.alarm()
-      const outcomes = includeBenignMiss
-        ? ['failure', 'benign', 'failure']
-        : ['failure', 'failure']
+      const outcomes = Array.from({ length: 5 }, () => 'failure')
+      if (includeBenignMiss) outcomes.splice(1, 0, 'benign')
+      let failures = 0
       for (const [index, outcome] of outcomes.entries()) {
         const message = f.message(index)
         expect(await f.coordinator.begin(message)).toBe(true)
-        if (outcome === 'failure')
+        if (outcome === 'failure') {
           await f.coordinator.recordOutcome(message, 'failure')
+          failures += 1
+        }
         f.records.set(message.jobId, 'failed')
         await f.coordinator.finish(message)
         await f.recreate().alarm()
-        expect(f.state()?.failures).toBe(index === outcomes.length - 1 ? 2 : 1)
+        expect(f.state()).toMatchObject({ failures, stopped: failures === 5 })
       }
       expect(f.state()).toMatchObject({ stopped: true, slots: [] })
       expect(f.sent).toHaveLength(outcomes.length)
@@ -455,7 +458,7 @@ describe('durable provider dispatch', () => {
       expect(f.alarmAt()).toBeNull()
       await restored.alarm()
       await restored.setPaused('fixture', true)
-      expect(f.state()).toMatchObject({ stopped: true, failures: 2 })
+      expect(f.state()).toMatchObject({ stopped: true, failures: 5 })
       expect(f.sent).toHaveLength(outcomes.length)
 
       await restored.setPaused('fixture', false)

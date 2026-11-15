@@ -5,6 +5,10 @@ import {
   type MediaProviderPlugin,
 } from '@repo/media-plugin-sdk'
 import { providerRequestState } from '@/schemas/db'
+import {
+  withProviderTransport,
+  type ProviderTransport,
+} from '../provider-transport'
 
 const mocks = vi.hoisted(() => ({
   fetch: vi.fn<typeof fetch>(),
@@ -12,9 +16,6 @@ const mocks = vi.hoisted(() => ({
 }))
 let state: typeof providerRequestState.$inferSelect
 
-vi.mock('@/services/provider-transport', () => ({
-  getProviderTransport: async () => null,
-}))
 vi.mock('@/lib/db', () => {
   const client = {
     select: () => ({
@@ -395,4 +396,339 @@ describe('provider request diagnostics', () => {
     expect(error.diagnostics).toEqual({ source: 'local-access-halt' })
     expect(mocks.fetch).not.toHaveBeenCalled()
   })
+})
+
+describe('serial metadata request retries', () => {
+  it('retries HTTP 503 through the request gate and returns the successful response', async () => {
+    const startedAt = Date.now()
+    const onRetry = vi.fn(async () => {})
+    mocks.fetch
+      .mockResolvedValueOnce(new Response(null, { status: 503 }))
+      .mockResolvedValueOnce(Response.json({ ok: true }))
+    const outcome = expect(
+      createProviderRequest(plugin(), undefined, { onRetry })(
+        'https://fixture.invalid',
+      ).then((response) => response.json()),
+    ).resolves.toEqual({ ok: true })
+
+    await vi.advanceTimersByTimeAsync(4999)
+    expect(mocks.fetch).toHaveBeenCalledOnce()
+    expect(state.failureCount).toBe(0)
+    expect(state.cooldownUntil).toBeNull()
+    expect(state.leaseUntil).toBeNull()
+    expect(state.nextAllowedAt?.getTime()).toBe(startedAt + 5000)
+    expect(onRetry).toHaveBeenCalledExactlyOnceWith({
+      error: expect.objectContaining({
+        diagnostics: expect.objectContaining({ httpStatus: 503 }),
+      }),
+      attempt: 2,
+      retryAt: startedAt + 5000,
+    })
+
+    await vi.advanceTimersByTimeAsync(1)
+    await outcome
+    expect(mocks.fetch).toHaveBeenCalledTimes(2)
+    expect(state.requests).toEqual([startedAt, startedAt + 5000])
+  })
+
+  it.each([0, 4])(
+    'counts three transient responses as one exhausted failure after %s prior failures',
+    async (failures) => {
+      const startedAt = Date.now()
+      state.failureCount = failures
+      const onRetry = vi.fn(async () => {})
+      mocks.fetch
+        .mockResolvedValueOnce(new Response(null, { status: 502 }))
+        .mockResolvedValueOnce(new Response(null, { status: 504 }))
+        .mockResolvedValueOnce(new Response(null, { status: 503 }))
+      const outcome = expect(
+        createProviderRequest(plugin(), undefined, { onRetry })(
+          'https://fixture.invalid',
+        ),
+      ).rejects.toMatchObject({
+        code: 'request-failed',
+        recorded: true,
+        diagnostics: { httpStatus: 503 },
+      })
+
+      await vi.advanceTimersByTimeAsync(14999)
+      expect(mocks.fetch).toHaveBeenCalledTimes(2)
+      expect(onRetry).toHaveBeenCalledTimes(2)
+      expect(state.failureCount).toBe(failures)
+      expect(state.cooldownUntil).toBeNull()
+      await vi.advanceTimersByTimeAsync(1)
+      await outcome
+
+      expect(mocks.fetch).toHaveBeenCalledTimes(3)
+      expect(state.requests).toEqual([
+        startedAt,
+        startedAt + 5000,
+        startedAt + 15000,
+      ])
+      expect(state.failureCount).toBe(failures + 1)
+      expect(state.nextAllowedAt?.getTime()).toBe(startedAt + 25000)
+      expect(state.cooldownUntil).toEqual(
+        failures === 4 ? new Date(startedAt + 15000 + 900000) : null,
+      )
+    },
+  )
+
+  it('honors Retry-After when it extends the default wait', async () => {
+    const startedAt = Date.now()
+    const onRetry = vi.fn(async () => {})
+    mocks.fetch
+      .mockResolvedValueOnce(
+        new Response(null, { status: 503, headers: { 'Retry-After': '8' } }),
+      )
+      .mockResolvedValueOnce(Response.json({ ok: true }))
+    const outcome = createProviderRequest(plugin(), undefined, { onRetry })(
+      'https://fixture.invalid',
+    )
+    await vi.advanceTimersByTimeAsync(7999)
+    expect(mocks.fetch).toHaveBeenCalledOnce()
+    expect(state.nextAllowedAt?.getTime()).toBe(startedAt + 8000)
+    await vi.advanceTimersByTimeAsync(1)
+    expect((await outcome).ok).toBe(true)
+    expect(mocks.fetch).toHaveBeenCalledTimes(2)
+  })
+
+  it('persists a Retry-After beyond the retry window as a provider cooldown', async () => {
+    const startedAt = Date.now()
+    const onRetry = vi.fn(async () => {})
+    mocks.fetch.mockResolvedValueOnce(
+      new Response(null, { status: 503, headers: { 'Retry-After': '120' } }),
+    )
+    const request = createProviderRequest(plugin(), undefined, { onRetry })
+    await expect(request('https://fixture.invalid')).rejects.toMatchObject({
+      code: 'request-failed',
+      retryAt: startedAt + 120000,
+    })
+    await expect(request('https://fixture.invalid')).rejects.toMatchObject({
+      code: 'cooldown',
+      retryAt: startedAt + 120000,
+    })
+    expect(state.failureCount).toBe(1)
+    expect(state.cooldownUntil?.getTime()).toBe(startedAt + 120000)
+    expect(mocks.fetch).toHaveBeenCalledOnce()
+    expect(onRetry).not.toHaveBeenCalled()
+  })
+
+  it('does not reserve a retry after its execution window expires', async () => {
+    const onRetry = vi.fn(async () => {
+      await new Promise<void>((resolve) => setTimeout(resolve, 60001))
+    })
+    mocks.fetch.mockResolvedValueOnce(new Response(null, { status: 503 }))
+    const outcome = expect(
+      createProviderRequest(plugin(), undefined, { onRetry })(
+        'https://fixture.invalid',
+      ),
+    ).rejects.toMatchObject({
+      message:
+        'Provider request failed (HTTP 503). Request retry window expired.',
+      recorded: true,
+      diagnostics: { httpStatus: 503 },
+    })
+    await vi.advanceTimersByTimeAsync(60001)
+    await outcome
+    expect(state.requests).toHaveLength(1)
+    expect(state.failureCount).toBe(1)
+    expect(state.cooldownUntil).toBeNull()
+    expect(mocks.fetch).toHaveBeenCalledOnce()
+  })
+
+  it('retains the HTTP failure when job history cannot record the retry', async () => {
+    const onRetry = vi.fn(async () => {
+      throw new Error('Synthetic log error')
+    })
+    mocks.fetch.mockResolvedValueOnce(new Response(null, { status: 503 }))
+    await expect(
+      createProviderRequest(plugin(), undefined, { onRetry })(
+        'https://fixture.invalid',
+      ),
+    ).rejects.toMatchObject({
+      message:
+        'Provider request failed (HTTP 503). Could not record the request retry.',
+      recorded: true,
+      diagnostics: { httpStatus: 503 },
+    })
+    expect(state.failureCount).toBe(1)
+    expect(state.requests).toHaveLength(1)
+    expect(mocks.fetch).toHaveBeenCalledOnce()
+  })
+
+  it('starts the retry window at response receipt before body cleanup', async () => {
+    const response = new Response('Synthetic failure', { status: 503 })
+    if (!response.body) throw new Error('Missing fixture response body')
+    vi.spyOn(response.body, 'cancel').mockImplementation(async () => {
+      vi.setSystemTime(Date.now() + 60000)
+    })
+    const onRetry = vi.fn(async () => {})
+    mocks.fetch.mockResolvedValueOnce(response)
+    await expect(
+      createProviderRequest(plugin(), undefined, { onRetry })(
+        'https://fixture.invalid',
+      ),
+    ).rejects.toMatchObject({ diagnostics: { httpStatus: 503 } })
+    expect(onRetry).not.toHaveBeenCalled()
+    expect(state.failureCount).toBe(1)
+    expect(state.requests).toHaveLength(1)
+  })
+
+  it('bounds the local worker retry dispatch window at the same deadline', async () => {
+    const startedAt = Date.now()
+    const onRetry = vi.fn(async () => {})
+    const execute = vi.fn<ProviderTransport['execute']>()
+    execute
+      .mockResolvedValueOnce(
+        new Response(null, { status: 503, headers: { 'Retry-After': '59' } }),
+      )
+      .mockResolvedValueOnce(Response.json({ ok: true }))
+    const request = createProviderRequest(plugin(), undefined, { onRetry })
+    const outcome = withProviderTransport(
+      async () => ({ execute }),
+      () => request('https://fixture.invalid'),
+    )
+    await vi.advanceTimersByTimeAsync(59000)
+    expect((await outcome).ok).toBe(true)
+    expect(execute).toHaveBeenCalledTimes(2)
+    expect(execute).toHaveBeenNthCalledWith(2, 'https://fixture.invalid', {
+      dispatchBefore: startedAt + 60000,
+      expiresAt: startedAt + 75000,
+    })
+    expect(mocks.fetch).not.toHaveBeenCalled()
+  })
+
+  it('counts the first request against the budget before reserving a retry', async () => {
+    const limited = plugin()
+    limited.manifest.rateLimit.maxRequestsPerHour = 1
+    const onRetry = vi.fn(async () => {})
+    mocks.fetch.mockResolvedValueOnce(new Response(null, { status: 503 }))
+    await expect(
+      createProviderRequest(limited, undefined, { onRetry })(
+        'https://fixture.invalid',
+      ),
+    ).rejects.toMatchObject({
+      code: 'cooldown',
+      diagnostics: { source: 'local-budget' },
+    })
+    expect(state.requests).toHaveLength(1)
+    expect(mocks.fetch).toHaveBeenCalledOnce()
+  })
+
+  it.each(['job', 'signal'])(
+    'cancels retry waits through the %s',
+    async (cancellation) => {
+      const controller = new AbortController()
+      let cancelled = false
+      const assertActive = async () => {
+        if (cancelled) throw new Error('Cancelled fixture request')
+      }
+      const onRetry = vi.fn(async () => {})
+      mocks.fetch.mockResolvedValueOnce(new Response(null, { status: 503 }))
+      const outcome = expect(
+        createProviderRequest(plugin(), assertActive, { onRetry })(
+          'https://fixture.invalid',
+          { signal: controller.signal },
+        ),
+      ).rejects.toThrow('Cancelled fixture request')
+      await vi.advanceTimersByTimeAsync(1)
+      if (cancellation === 'job') cancelled = true
+      else controller.abort(new Error('Cancelled fixture request'))
+      await vi.advanceTimersByTimeAsync(1000)
+      await outcome
+      expect(mocks.fetch).toHaveBeenCalledOnce()
+      expect(state.requests).toHaveLength(1)
+      expect(state.failureCount).toBe(0)
+      expect(state.leaseUntil).toBeNull()
+    },
+  )
+
+  it.each([
+    { status: 401, code: 'access-denied', halted: true },
+    { status: 403, code: 'access-denied', halted: true },
+    { status: 429, code: 'rate-limit', halted: false },
+    { status: 500, code: 'request-failed', halted: false },
+  ])('does not retry HTTP $status', async ({ status, code, halted }) => {
+    const onRetry = vi.fn(async () => {})
+    mocks.fetch.mockResolvedValueOnce(new Response(null, { status }))
+    await expect(
+      createProviderRequest(plugin(), undefined, { onRetry })(
+        'https://fixture.invalid',
+      ),
+    ).rejects.toMatchObject({ code })
+    expect(state.halted).toBe(halted)
+    expect(state.failureCount).toBe(1)
+    expect(mocks.fetch).toHaveBeenCalledOnce()
+    expect(onRetry).not.toHaveBeenCalled()
+  })
+
+  it.each([200, 403])(
+    'does not retry a quota error in HTTP %s',
+    async (status) => {
+      const onRetry = vi.fn(async () => {})
+      mocks.fetch.mockResolvedValueOnce(
+        Response.json(
+          { error: { code: 403, errors: [{ reason: 'quotaExceeded' }] } },
+          { status },
+        ),
+      )
+      await expect(
+        createProviderRequest(plugin(), undefined, { onRetry })(
+          'https://fixture.invalid',
+        ),
+      ).rejects.toMatchObject({ code: 'rate-limit' })
+      expect(state.halted).toBe(false)
+      expect(state.cooldownUntil).not.toBeNull()
+      expect(mocks.fetch).toHaveBeenCalledOnce()
+      expect(onRetry).not.toHaveBeenCalled()
+    },
+  )
+
+  it('honors confirmed quota exhaustion on an otherwise retryable response', async () => {
+    const limited = plugin()
+    limited.manifest.rateLimit.respectRateLimitHeaders = true
+    const reset = Date.now() + 120000
+    const onRetry = vi.fn(async () => {})
+    mocks.fetch.mockResolvedValueOnce(
+      new Response(null, {
+        status: 503,
+        headers: {
+          'X-RateLimit-Limit': '100',
+          'X-RateLimit-Remaining': '0',
+          'X-RateLimit-Reset': String(reset / 1000),
+        },
+      }),
+    )
+    await expect(
+      createProviderRequest(limited, undefined, { onRetry })(
+        'https://fixture.invalid',
+      ),
+    ).rejects.toMatchObject({
+      code: 'rate-limit',
+      retryAt: reset,
+      diagnostics: { httpStatus: 503, quotaError: true },
+    })
+    expect(state.cooldownUntil?.getTime()).toBe(reset)
+    expect(mocks.fetch).toHaveBeenCalledOnce()
+    expect(onRetry).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    { method: 'POST', concurrent: false },
+    { method: 'GET', concurrent: true },
+  ])(
+    'does not retry HTTP 503 for $method with concurrent=$concurrent',
+    async ({ method, concurrent }) => {
+      const onRetry = vi.fn(async () => {})
+      mocks.fetch.mockResolvedValueOnce(new Response(null, { status: 503 }))
+      await expect(
+        createProviderRequest(plugin(undefined, concurrent), undefined, {
+          onRetry,
+        })('https://fixture.invalid', { method }),
+      ).rejects.toMatchObject({ code: 'request-failed' })
+      expect(state.cooldownUntil).not.toBeNull()
+      expect(mocks.fetch).toHaveBeenCalledOnce()
+      expect(onRetry).not.toHaveBeenCalled()
+    },
+  )
 })

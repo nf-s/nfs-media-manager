@@ -126,6 +126,7 @@ beforeEach(async () => {
   plugin.manifest.rateLimit.concurrentRequests = true
   plugin.manifest.rateLimit.maxConcurrent = 3
   plugin.manifest.rateLimit.minTimeMs = 25
+  plugin.manifest.rateLimit.failureCooldownMs = 0
   delete plugin.manifest.rateLimit.maxRequestsPerHour
   execute.mockReset().mockImplementation(async ({ request, mediaItemId }) => {
     await request(`https://fixture.invalid/${mediaItemId}`)
@@ -230,18 +231,18 @@ describe('bounded concurrent one-item jobs', () => {
     expect(network).not.toHaveBeenCalled()
   })
 
-  it.each(['access-denied', 'two failures'])(
+  it.each(['access-denied', 'five failures'])(
     'stops controlled dispatch after %s without mutating the unselected backlog',
     async (failure) => {
       const jobs = await import('@/services/jobs')
       const { ProviderRequestError } = await import('@repo/media-plugin-sdk')
       const { getProviderSafety } = await import('@/services/provider-requests')
       const canaries = await createFixtureJobs(
-        failure === 'access-denied' ? 1 : 2,
+        failure === 'access-denied' ? 1 : 5,
       )
       const backlog = [
-        ...(await createFixtureJobs(3, 2)),
-        ...(await createFixtureJobs(1, 5, serialPlugin.manifest.id)),
+        ...(await createFixtureJobs(2, canaries.length)),
+        ...(await createFixtureJobs(1, 7, serialPlugin.manifest.id)),
       ]
       const backlogIds = backlog.map((job) => job.id)
       const readBacklog = async () => ({
@@ -325,6 +326,47 @@ describe('bounded concurrent one-item jobs', () => {
     expect((await getProviderSafety(job.provider)).consecutiveFailures).toBe(0)
     expect(control.recordOutcome).not.toHaveBeenCalled()
     expect(network).toHaveBeenCalledOnce()
+  })
+
+  it('retains the warning for a recovered serial request within one job attempt', async () => {
+    const jobs = await import('@/services/jobs')
+    network
+      .mockResolvedValueOnce(new Response('Unavailable', { status: 503 }))
+      .mockResolvedValueOnce(Response.json({ fixture: true }))
+    const job = await createFixtureJob(0, serialPlugin.manifest.id)
+    const control = {
+      canContinue: vi.fn(async () => true),
+      recordOutcome: vi.fn(async () => {}),
+    }
+    await jobs.processQueuedJobById(job.id, job.provider, control)
+    const completed = await jobs.getJob(job.id)
+    expect(completed?.status).toBe('succeeded')
+    expect(completed?.items[0]).toMatchObject({
+      status: 'succeeded',
+      attemptCount: 1,
+    })
+    expect(completed?.logs).toContainEqual(
+      expect.objectContaining({
+        level: 'warn',
+        message:
+          'Retrying request (attempt 2) after ProviderRequestError: Provider request failed (HTTP 503)',
+        metadata: expect.objectContaining({
+          mediaItemId: 'film-0',
+          attempt: 2,
+          retryAt: expect.any(String),
+          error: expect.objectContaining({
+            code: 'request-failed',
+            diagnostics: expect.objectContaining({ httpStatus: 503 }),
+          }),
+        }),
+      }),
+    )
+    expect(execute).toHaveBeenCalledOnce()
+    expect(network).toHaveBeenCalledTimes(2)
+    expect(
+      await databaseClient.select().from(schema.providerRequestEvent),
+    ).toHaveLength(2)
+    expect(control.recordOutcome).toHaveBeenCalledExactlyOnceWith('success')
   })
 
   it('preserves cancellation fences for Queue execution results and logs', async () => {
@@ -591,24 +633,25 @@ describe('bounded concurrent one-item jobs', () => {
   it.each([429, 403, 500])(
     'stops sibling job refills after HTTP %s',
     async (status) => {
+      // A provider with a failure cooldown treats Retry-After on HTTP 500
+      // as a provider-wide pause before it reaches the failure threshold.
+      if (status === 500) plugin.manifest.rateLimit.failureCooldownMs = 60000
       const jobs = await import('@/services/jobs')
       const requests = holdRequests()
       await createFixtureJobs()
       const worker = jobs.processQueuedJobs()
       try {
         await vi.waitFor(() => expect(requests.pending).toHaveLength(3))
-        const failures = status === 500 ? 2 : 1
-        for (const request of requests.pending.slice(0, failures))
-          request.release(
-            new Response('Blocked', {
-              status,
-              headers: { 'retry-after': '60' },
-            }),
-          )
+        requests.pending[0]?.release(
+          new Response('Blocked', {
+            status,
+            headers: { 'retry-after': '60' },
+          }),
+        )
         await vi.waitFor(async () => {
           const records = await databaseClient.select().from(schema.scrapeJob)
           expect(records.filter((job) => job.status === 'failed')).toHaveLength(
-            failures,
+            1,
           )
         })
         requests.releaseAll()
@@ -616,13 +659,14 @@ describe('bounded concurrent one-item jobs', () => {
         expect(network).toHaveBeenCalledTimes(3)
         expect(execute).toHaveBeenCalledTimes(3)
         expect(await jobs.getJobActivity()).toMatchObject({
-          completed: 3 - failures,
-          queued: status === 429 ? 3 : 0,
+          completed: 2,
+          queued: status === 403 ? 0 : 3,
         })
         const { getProviderSafety } =
           await import('@/services/provider-requests')
         const safety = await getProviderSafety(plugin.manifest.id)
-        if (status === 429) expect(safety.cooldownUntil).not.toBeNull()
+        if (status === 429 || status === 500)
+          expect(safety.cooldownUntil).not.toBeNull()
         if (status === 403) expect(safety.halted).toBe(true)
       } finally {
         requests.releaseAll()
@@ -1062,20 +1106,26 @@ describe('bounded concurrent one-item jobs', () => {
     },
   )
 
-  it('keeps the two-error stop latched after an in-flight success and cancels queued sibling jobs', async () => {
+  it('keeps the five-error stop latched after an in-flight success and cancels queued sibling jobs', async () => {
+    plugin.manifest.rateLimit.maxConcurrent = 2
     const jobs = await import('@/services/jobs')
     const requests = holdRequests()
-    const queued = await createFixtureJobs(7)
+    const queued = await createFixtureJobs(8)
     const worker = jobs.processQueuedJobs()
     try {
-      await vi.waitFor(() => expect(requests.pending).toHaveLength(3), {
+      await vi.waitFor(() => expect(requests.pending).toHaveLength(2), {
         timeout: 3000,
       })
-      requests.pending[0]?.release(new Response('Failure', { status: 500 }))
-      requests.pending[1]?.release(new Response('Failure', { status: 500 }))
+      // Hold the second request while its sibling slot processes five failures.
+      for (const index of [0, 2, 3, 4, 5]) {
+        await vi.waitFor(() => expect(requests.pending[index]).toBeDefined())
+        requests.pending[index]?.release(
+          new Response('Failure', { status: 500 }),
+        )
+      }
       await vi.waitFor(async () => {
         const records = await databaseClient.select().from(schema.scrapeJob)
-        expect(records.filter((job) => job.status === 'failed')).toHaveLength(2)
+        expect(records.filter((job) => job.status === 'failed')).toHaveLength(5)
       })
       requests.releaseAll()
       await worker
@@ -1086,13 +1136,13 @@ describe('bounded concurrent one-item jobs', () => {
         1,
       )
       expect(stopped.filter((job) => job?.status === 'cancelled')).toHaveLength(
-        4,
+        2,
       )
       expect(
         stopped.filter((job) => job?.items[0]?.attemptCount === 0),
-      ).toHaveLength(4)
-      expect(network).toHaveBeenCalledTimes(3)
-      expect(execute).toHaveBeenCalledTimes(3)
+      ).toHaveLength(2)
+      expect(network).toHaveBeenCalledTimes(6)
+      expect(execute).toHaveBeenCalledTimes(6)
     } finally {
       requests.releaseAll()
       await worker

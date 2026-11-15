@@ -20,6 +20,8 @@ import { YOUTUBE_SYNC_TASK } from '@repo/schemas/youtube'
 import { env } from '@/env'
 import * as schema from '@/schemas/db'
 
+vi.mock('@/lib/load-workspace-env', () => ({ loadWorkspaceEnv: () => {} }))
+
 const database = `media_history_test_${randomUUID().replaceAll('-', '')}`
 const connection = {
   host: env.DATABASE_HOST,
@@ -454,12 +456,25 @@ describe('media job history and dismissal', () => {
     expect(network).not.toHaveBeenCalled()
   })
 
-  it('starts a retry undismissed and requires attention if that retry fails', async () => {
-    const { dismissJob, retryJob, listJobs, getJobActivity } =
+  it('dismisses the original failed scrape and requires attention if its replacement fails', async () => {
+    const { getJob, retryJob, listJobs, getJobActivity } =
       await import('@/services/jobs')
     await seedJob('original', 'failed')
-    await dismissJob('original', 'reviewer')
+    const before = await getJob('original')
     const retry = await retryJob('original', null, false)
+    const original = await getJob('original')
+    expect(getJobDismissal(original?.options ?? {})).toEqual({
+      dismissedAt: expect.any(String),
+      userId: null,
+    })
+    expect(original).toMatchObject({
+      status: 'failed',
+      errorMessage: before?.errorMessage,
+      items: before?.items,
+      logs: expect.arrayContaining(before?.logs ?? []),
+      options: { batchId: 'fixture-batch', retryJobId: retry.id },
+    })
+    expect(retry.status).toBe('queued')
     expect(getJobDismissal(retry.options)).toBeNull()
     expect(retry.options.retryOf).toBe('original')
     expect(retry.options.benignReviewed).toBe(false)
@@ -475,8 +490,50 @@ describe('media job history and dismissal', () => {
     expect(network).not.toHaveBeenCalled()
   })
 
+  it('keeps an existing dismissal when retrying a failed job', async () => {
+    const { dismissJob, getJob, retryJob } = await import('@/services/jobs')
+    await seedJob('original', 'failed')
+    const dismissed = await dismissJob('original', 'reviewer')
+    await retryJob('original', null, false)
+    expect((await getJob('original'))?.options.dismissal).toEqual(
+      dismissed.options.dismissal,
+    )
+  })
+
+  it('dismisses a failed task job when a replacement is queued', async () => {
+    const { createTaskJob, getJob, retryJob } = await import('@/services/jobs')
+    const userId = 'fixture-reviewer'
+    await databaseClient.insert(schema.user).values({
+      id: userId,
+      name: 'Fixture reviewer',
+      email: 'reviewer@example.com',
+    })
+    const original = await createTaskJob(YOUTUBE_SYNC_TASK, null)
+    await databaseClient
+      .update(schema.scrapeJob)
+      .set({ status: 'failed', errorMessage: 'Original error' })
+      .where(eq(schema.scrapeJob.id, original.id))
+    const retry = await retryJob(original.id, userId, false)
+    const dismissed = await getJob(original.id)
+    expect(dismissed).toMatchObject({
+      status: 'failed',
+      errorMessage: 'Original error',
+      options: { retryJobId: retry.id },
+    })
+    expect(getJobDismissal(dismissed?.options ?? {})).toEqual({
+      dismissedAt: expect.any(String),
+      userId,
+    })
+    expect(retry).toMatchObject({
+      status: 'queued',
+      options: { task: YOUTUBE_SYNC_TASK, retryOf: original.id },
+    })
+    expect(getJobDismissal(retry.options)).toBeNull()
+    expect(network).not.toHaveBeenCalled()
+  })
+
   it('does not inherit intentional cancellation when a new retry fails', async () => {
-    const { bulkCancelJobs, retryJob, getJobActivity } =
+    const { bulkCancelJobs, getJob, retryJob, getJobActivity } =
       await import('@/services/jobs')
     await seedJob('cancelled-before-start', 'queued')
     await bulkCancelJobs(
@@ -485,6 +542,9 @@ describe('media job history and dismissal', () => {
     )
     expect((await getJobActivity()).failed).toBe(0)
     const retry = await retryJob('cancelled-before-start', null, false)
+    expect(
+      (await getJob('cancelled-before-start'))?.options.dismissal,
+    ).toBeUndefined()
     expect(retry.options.cancellation).toBeNull()
     await databaseClient
       .update(schema.scrapeJob)

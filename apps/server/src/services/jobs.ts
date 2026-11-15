@@ -72,6 +72,7 @@ import {
 } from '@/schemas/db'
 import { applyProviderResultInTransaction } from '@/services/provider-state'
 import { getProviderReferenceHints } from '@/services/provider-reference-hints'
+import { MAX_CONSECUTIVE_PROVIDER_FAILURES } from '@/lib/request-policy'
 import {
   resumeJobProvider,
   wakeJobProvider,
@@ -688,7 +689,30 @@ async function processJob(
             ...referenceHints,
           ],
           secrets,
-          request: createProviderRequest(plugin, assertActive),
+          request: createProviderRequest(plugin, assertActive, {
+            onRetry: async ({ error, attempt, retryAt }) => {
+              const details = jobErrorDetails(error, jobLogSecrets(secrets))
+              const message =
+                `Retrying request (attempt ${attempt}) after ${details.name}: ${details.message}`.slice(
+                  0,
+                  1000,
+                )
+              await withRunningJob(nextJob.id, (tx) =>
+                logJob(
+                  nextJob.id,
+                  'warn',
+                  message,
+                  {
+                    mediaItemId,
+                    error: details,
+                    attempt,
+                    retryAt: new Date(retryAt).toISOString(),
+                  },
+                  tx,
+                ),
+              )
+            },
+          }),
           recordDiagnostic: diagnostics.recordDiagnostic,
           log: async (level: 'info' | 'warn' | 'error', message: string) => {
             await withRunningJob(nextJob.id, (tx) =>
@@ -757,7 +781,7 @@ async function processJob(
           // Late errors from cancelled jobs must not stop sibling dispatch.
           execution.failures += 1
           if (
-            execution.failures >= 2 ||
+            execution.failures >= MAX_CONSECUTIVE_PROVIDER_FAILURES ||
             (error instanceof ProviderRequestError &&
               (error.code === 'rate-limit' ||
                 error.code === 'cooldown' ||
@@ -795,9 +819,9 @@ async function processJob(
         if (notFound || stoppedBeforeRequest) return
         const safety = await getProviderSafety(plugin.manifest.id)
         if (
-          execution.failures >= 2 ||
+          execution.failures >= MAX_CONSECUTIVE_PROVIDER_FAILURES ||
           safety.halted ||
-          safety.consecutiveFailures >= 2
+          safety.consecutiveFailures >= MAX_CONSECUTIVE_PROVIDER_FAILURES
         ) {
           // Controlled dispatch may select only a canary, not the backlog.
           // Latch persisted failures too so its outcome stops the coordinator.
@@ -1006,9 +1030,29 @@ async function insertTaskJob(
   return jobId
 }
 
+async function linkCreatedJobRetry(
+  tx: JobTransaction,
+  original: typeof scrapeJob.$inferSelect,
+  retryJobId: string,
+  userId: string | null,
+  message: string,
+): Promise<void> {
+  const options: Record<string, JsonValue> = { retryJobId }
+  if (original.status === 'failed' && !getJobDismissal(original.options))
+    options.dismissal = { dismissedAt: new Date().toISOString(), userId }
+
+  await tx
+    .update(scrapeJob)
+    .set({
+      options: sql`${scrapeJob.options} || ${JSON.stringify(options)}::jsonb`,
+    })
+    .where(eq(scrapeJob.id, original.id))
+  await logJob(original.id, 'info', message, { retryJobId }, tx)
+}
+
 /**
  * Queues a task job, or returns the one already queued or running. With
- * `retryOf`, the failed or cancelled original is linked to its replacement.
+ * `retryOf`, a newly queued replacement links to the original and dismisses it if failed.
  * Unless `scheduled`, the request is the owner's and restarts a dispatcher
  * that stopped after errors; a cooldown or access halt still refuses it.
  */
@@ -1048,15 +1092,16 @@ export async function createTaskJob(
   let created = false
   const jobId = await db.transaction(async (tx) => {
     await tx.execute(sql`select pg_advisory_xact_lock(614104)`)
-    const retryOptions: Record<string, JsonValue> = {}
+    let original: typeof scrapeJob.$inferSelect | undefined
     if (scheduling.retryOf) {
-      const [original] = await tx
+      const [job] = await tx
         .select()
         .from(scrapeJob)
         .where(eq(scrapeJob.id, scheduling.retryOf))
         .for('update')
-      if (!original || getJobTask(original.options) !== task)
+      if (!job || getJobTask(job.options) !== task)
         throw new ServerError({ statusCode: 404, message: 'Job not found' })
+      original = job
       if (typeof original.options.retryJobId === 'string') {
         const [previous] = await tx
           .select({ id: scrapeJob.id })
@@ -1081,7 +1126,6 @@ export async function createTaskJob(
         })
       if (original.status === 'running')
         await cancelActiveJobInTransaction(tx, original.id, userId, 'running')
-      retryOptions.retryOf = original.id
     }
     const [active] = await tx
       .select({ id: scrapeJob.id })
@@ -1123,25 +1167,18 @@ export async function createTaskJob(
     const id = await insertTaskJob(
       tx,
       definition.provider,
-      { task, ...taskOptions, ...retryOptions },
+      { task, ...taskOptions, ...(original ? { retryOf: original.id } : {}) },
       userId,
       `Queued for ${definition.provider}`,
     )
-    if (scheduling.retryOf) {
-      await tx
-        .update(scrapeJob)
-        .set({
-          options: sql`${scrapeJob.options} || ${JSON.stringify({ retryJobId: id })}::jsonb`,
-        })
-        .where(eq(scrapeJob.id, scheduling.retryOf))
-      await logJob(
-        scheduling.retryOf,
-        'info',
-        'Queued again as a new job.',
-        { retryJobId: id },
+    if (original)
+      await linkCreatedJobRetry(
         tx,
+        original,
+        id,
+        userId,
+        'Queued again as a new job.',
       )
-    }
     created = true
     return id
   })
@@ -1277,10 +1314,10 @@ async function processTaskJob(
         execution.failures += 1
         const safety = await getProviderSafety(plugin.manifest.id)
         if (
-          execution.failures >= 2 ||
+          execution.failures >= MAX_CONSECUTIVE_PROVIDER_FAILURES ||
           safety.halted ||
           safety.cooldownUntil ||
-          safety.consecutiveFailures >= 2
+          safety.consecutiveFailures >= MAX_CONSECUTIVE_PROVIDER_FAILURES
         ) {
           execution.stopped = true
           await logJob(
@@ -1376,7 +1413,8 @@ export async function createJob(
   if (
     safety.halted ||
     (safety.cooldownUntil &&
-      (!scheduling.deferUntilReady || safety.consecutiveFailures >= 2))
+      (!scheduling.deferUntilReady ||
+        safety.consecutiveFailures >= MAX_CONSECUTIVE_PROVIDER_FAILURES))
   )
     throw new ServerError({
       statusCode: 429,
@@ -1496,19 +1534,13 @@ export async function createJob(
         })
       if (original.status === 'running')
         await cancelActiveJobInTransaction(tx, original.id, userId, 'running')
-      await tx
-        .update(scrapeJob)
-        .set({
-          options: sql`${scrapeJob.options} || ${JSON.stringify({ retryJobId: jobId })}::jsonb`,
-        })
-        .where(eq(scrapeJob.id, original.id))
-      await tx.insert(scrapeJobLog).values({
-        id: nanoid(),
-        jobId: original.id,
-        level: 'info',
-        message: 'Unfinished items queued for retry.',
-        metadata: { retryJobId: jobId },
-      })
+      await linkCreatedJobRetry(
+        tx,
+        original,
+        jobId,
+        userId,
+        'Unfinished items queued for retry.',
+      )
     }
     const active = await tx
       .select({ id: scrapeJobItem.id })

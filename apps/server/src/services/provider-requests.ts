@@ -20,6 +20,7 @@ import { providerRequestState, providerRequestEvent } from '@/schemas/db'
 import {
   FAILURE_COOLDOWN_MS,
   HOUR_MS,
+  MAX_CONSECUTIVE_PROVIDER_FAILURES,
   hourlyBudget,
   retryAfterTime,
   responseQuota,
@@ -109,6 +110,28 @@ const delay = (ms: number) =>
 const LEASE_GRACE_MS = 5000
 const DISPATCH_WINDOW_MS = 4000
 const RequestTimeoutSchema = PluginRequestTimeoutSchema.default(15000)
+const TRANSIENT_MAX_ATTEMPTS = 3
+const TRANSIENT_RETRY_WINDOW_MS = 60000
+
+type TransientDisposition = 'retry' | 'backoff' | 'cooldown'
+
+interface TransientFailure {
+  retryAt: number
+  retryBefore: number
+  disposition: TransientDisposition
+}
+
+interface ProviderRequestRetry {
+  error: ProviderRequestError
+  attempt: number
+  retryAt: number
+}
+
+interface PendingProviderRetry {
+  error: ProviderRequestError
+  retryAt: number
+  retryBefore: number
+}
 
 function responseDiagnostics(
   response: Response,
@@ -422,10 +445,10 @@ async function recordDispatch(
 export async function recordProviderFailure(
   plugin: MediaProviderPlugin,
   error: unknown,
-  leaseId?: string,
+  transient?: TransientDisposition,
 ) {
   if (isProviderItemNotFoundError(error)) return
-  if (error instanceof ProviderRequestError && error.recorded && !leaseId)
+  if (error instanceof ProviderRequestError && error.recorded && !transient)
     return
   const provider = plugin.manifest.id
   await db.transaction(async (tx) => {
@@ -439,17 +462,17 @@ export async function recordProviderFailure(
       .where(eq(providerRequestState.provider, provider))
       .for('update')
     if (!state) return
-    const count = state.failureCount + 1
+    const count = state.failureCount + (transient === 'retry' ? 0 : 1)
     const failureCooldown =
       plugin.manifest.rateLimit.failureCooldownMs ?? FAILURE_COOLDOWN_MS
     const retryAt =
       error instanceof ProviderRequestError ? (error.retryAt ?? 0) : 0
-    const requestBackoff =
-      failureCooldown === 0 &&
-      error instanceof ProviderRequestError &&
-      error.code === 'request-failed'
-        ? retryAt
-        : 0
+    const delaysNextRequest = transient
+      ? transient !== 'cooldown'
+      : failureCooldown === 0 &&
+        error instanceof ProviderRequestError &&
+        error.code === 'request-failed'
+    const requestBackoff = delaysNextRequest ? retryAt : 0
     const requested = requestBackoff ? 0 : retryAt
     const scheduledRateLimit =
       plugin.manifest.rateLimit.retryAfterIsAuthoritative &&
@@ -458,7 +481,10 @@ export async function recordProviderFailure(
     const until = Math.max(
       state.cooldownUntil?.getTime() ?? 0,
       requested,
-      count >= 2 && failureCooldown > 0 && !scheduledRateLimit
+      transient !== 'retry' &&
+        count >= MAX_CONSECUTIVE_PROVIDER_FAILURES &&
+        failureCooldown > 0 &&
+        !scheduledRateLimit
         ? Date.now() + failureCooldown
         : 0,
     )
@@ -618,15 +644,38 @@ export async function protectProviderFromLocalResponse(
 export function createProviderRequest(
   plugin: MediaProviderPlugin,
   assertActive?: () => Promise<void>,
-  configuration: { timeoutMs?: number } = {},
+  configuration: {
+    timeoutMs?: number
+    onRetry?: (retry: ProviderRequestRetry) => Promise<void>
+  } = {},
 ): MediaPluginTestContext['request'] {
   const timeoutMs = RequestTimeoutSchema.parse(
     configuration.timeoutMs === undefined
       ? plugin.manifest.rateLimit.requestTimeoutMs
       : configuration.timeoutMs,
   )
-  return async (url, init, options) => {
+  const failRetry = async (
+    pending: PendingProviderRetry,
+    reason: string,
+  ): Promise<never> => {
+    const error = new ProviderRequestError(
+      `${pending.error.message}. ${reason}`,
+      pending.error.code,
+      pending.retryAt,
+      true,
+      { cause: pending.error, diagnostics: pending.error.diagnostics },
+    )
+    await recordProviderFailure(plugin, error, 'backoff')
+    throw error
+  }
+  const expireRetry = (pending: PendingProviderRetry) =>
+    failRetry(pending, 'Request retry window expired.')
+  const requestOnce = async (
+    retryPolicy: { attempt: number; pending?: PendingProviderRetry } | null,
+    ...[url, init, options]: Parameters<MediaPluginTestContext['request']>
+  ) => {
     await assertActive?.()
+    init?.signal?.throwIfAborted()
     const transport = await getProviderTransport(plugin)
     if (
       transport &&
@@ -638,6 +687,8 @@ export function createProviderRequest(
         null,
         true,
       )
+    const pending = retryPolicy?.pending
+    if (pending && Date.now() >= pending.retryBefore) await expireRetry(pending)
     let reservation = await reserve(
       plugin,
       init?.method ?? 'GET',
@@ -647,6 +698,9 @@ export function createProviderRequest(
     while (reservation.kind === 'wait') {
       await delay(reservation.ms)
       await assertActive?.()
+      init?.signal?.throwIfAborted()
+      if (pending && Date.now() >= pending.retryBefore)
+        await expireRetry(pending)
       reservation = await reserve(
         plugin,
         init?.method ?? 'GET',
@@ -668,6 +722,7 @@ export function createProviderRequest(
     const reservedAt = reservation.reservedAt
     let requestStartedAt: number | undefined
     let remoteAccountingComplete = false
+    let transient: TransientFailure | undefined
     try {
       await checkDispatch(plugin.manifest.id, reservation)
       const timeout = AbortSignal.timeout(timeoutMs)
@@ -675,16 +730,21 @@ export function createProviderRequest(
         ? AbortSignal.any([init.signal, timeout])
         : timeout
       signal.throwIfAborted()
+      const dispatchBefore = pending
+        ? Math.min(reservation.dispatchBefore, pending.retryBefore)
+        : reservation.dispatchBefore
       const startedAt = Date.now()
       // No async work between this deadline check and fetch. The full timeout
       // still fits inside the durable lease, with a margin for abort delivery.
-      if (startedAt >= reservation.dispatchBefore) throw expiredReservation()
+      if (pending && startedAt >= pending.retryBefore)
+        await expireRetry(pending)
+      if (startedAt >= dispatchBefore) throw expiredReservation()
       requestStartedAt = startedAt
       const responsePromise = (
         transport
           ? transport.execute(String(url), {
-              dispatchBefore: reservation.dispatchBefore,
-              expiresAt: reservation.dispatchBefore + timeoutMs,
+              dispatchBefore,
+              expiresAt: dispatchBefore + timeoutMs,
             })
           : fetch(url, { ...init, redirect: 'manual', signal })
       ).then((response) => ({ response, receivedAt: Date.now() }))
@@ -745,25 +805,57 @@ export function createProviderRequest(
             'Provider has no matching item (HTTP 404)',
           )
         }
-        const limited = response.status === 429 || apiLimit
+        const transientStatus = [502, 503, 504].includes(response.status)
+        const transientQuota =
+          retryPolicy !== null && transientStatus && quota?.exhausted === true
+        const limited = response.status === 429 || apiLimit || transientQuota
         const denied = response.status === 401 || response.status === 403
+        const now = Date.now()
+        const retryAfter = response.headers.get('retry-after')
         const errorBackoff = plugin.manifest.rateLimit.errorBackoffMs ?? 60000
+        if (
+          retryPolicy &&
+          !limited &&
+          !denied &&
+          dispatchResult.status === 'fulfilled' &&
+          transientStatus
+        ) {
+          const wait = retryPolicy.attempt === 1 ? 5000 : 10000
+          const retryAt = retryAfterTime(
+            retryAfter,
+            responseReceivedAt,
+            Math.max(wait, plugin.manifest.rateLimit.errorBackoffMs ?? 0),
+          )
+          const retryBefore =
+            pending?.retryBefore ??
+            responseReceivedAt + TRANSIENT_RETRY_WINDOW_MS
+          const canRetry =
+            retryPolicy.attempt < TRANSIENT_MAX_ATTEMPTS &&
+            Math.max(now, retryAt) < retryBefore
+          transient = {
+            retryAt,
+            retryBefore,
+            disposition:
+              retryAt > responseReceivedAt + TRANSIENT_RETRY_WINDOW_MS
+                ? 'cooldown'
+                : canRetry
+                  ? 'retry'
+                  : 'backoff',
+          }
+        }
         const until = limited
           ? rateLimitRetryAt(
               response.headers,
-              Date.now(),
+              now,
               plugin.manifest.rateLimit.rateLimitCooldownMs ?? 60000,
               quota,
               plugin.manifest.rateLimit.retryAfterIsAuthoritative,
             )
-          : (response.status === 400 || response.status >= 500) &&
-              (errorBackoff > 0 || response.headers.has('retry-after'))
-            ? retryAfterTime(
-                response.headers.get('retry-after'),
-                Date.now(),
-                errorBackoff,
-              )
-            : null
+          : (transient?.retryAt ??
+            ((response.status === 400 || response.status >= 500) &&
+            (errorBackoff > 0 || retryAfter !== null)
+              ? retryAfterTime(retryAfter, now, errorBackoff)
+              : null))
         throw new ProviderRequestError(
           limited
             ? response.status === 429
@@ -777,7 +869,7 @@ export function createProviderRequest(
             diagnostics: responseDiagnostics(
               response,
               responseReceivedAt,
-              apiLimit,
+              apiLimit || transientQuota,
             ),
           },
         )
@@ -806,14 +898,21 @@ export function createProviderRequest(
               false,
               { cause: error },
             )
-      await recordProviderFailure(plugin, safe, token)
-      throw new ProviderRequestError(
+      await recordProviderFailure(plugin, safe, transient?.disposition)
+      const recorded = new ProviderRequestError(
         safe.message,
         safe.code,
         safe.retryAt,
         true,
         { cause: safe, diagnostics: safe.diagnostics },
       )
+      if (transient?.disposition === 'retry')
+        return {
+          error: recorded,
+          retryAt: transient.retryAt,
+          retryBefore: transient.retryBefore,
+        }
+      throw recorded
     } finally {
       await db.transaction(async (tx) => {
         const [state] = await tx
@@ -864,6 +963,33 @@ export function createProviderRequest(
             .where(eq(providerRequestState.provider, plugin.manifest.id))
         }
       })
+    }
+  }
+  const onRetry = configuration.onRetry
+  return async (...args) => {
+    const [, init] = args
+    const retryEnabled =
+      onRetry !== undefined &&
+      !plugin.manifest.rateLimit.concurrentRequests &&
+      (init?.method ?? 'GET').toUpperCase() === 'GET' &&
+      init?.body == null
+    let pending: PendingProviderRetry | undefined
+    for (let attempt = 1; ; attempt += 1) {
+      const result = await requestOnce(
+        retryEnabled ? { attempt, pending } : null,
+        ...args,
+      )
+      if (result instanceof Response) return result
+      pending = result
+      try {
+        await onRetry?.({
+          error: result.error,
+          attempt: attempt + 1,
+          retryAt: result.retryAt,
+        })
+      } catch {
+        await failRetry(result, 'Could not record the request retry.')
+      }
     }
   }
 }

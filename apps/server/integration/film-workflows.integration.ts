@@ -25,6 +25,11 @@ import { env } from '@/env'
 import * as schema from '@/schemas/db'
 import { createCatalogEntryFromPlugin } from '@/lib/provider-catalog'
 
+vi.mock('@/lib/load-workspace-env', () => ({
+  loadWorkspaceEnv: () => {},
+  findWorkspaceRootPath: () => resolve('integration/fixtures'),
+}))
+
 const database = `media_workflow_test_${randomUUID().replaceAll('-', '')}`
 const connection = {
   host: env.DATABASE_HOST,
@@ -106,7 +111,11 @@ vi.mock('@/lib/db', () => ({
 vi.mock('@/env', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/env')>()
   return {
-    env: { ...actual.env, SCAN_DIR: resolve('integration/fixtures/films') },
+    env: {
+      ...actual.env,
+      LEGACY_SERVER_DATA_DIR: resolve('integration/fixtures'),
+      SCAN_DIR: resolve('integration/fixtures/films'),
+    },
   }
 })
 vi.mock('@/plugins/registry', () => ({
@@ -915,15 +924,21 @@ describe('reviewed film import and enrichment', () => {
     expect((await getJob(retry.id))?.status).toBe('succeeded')
     expect(fetch).not.toHaveBeenCalled()
   })
-  it('cancels remaining provider jobs after repeated failures across separate jobs', async () => {
+  it('cancels remaining provider jobs after five consecutive failures across separate jobs', async () => {
     const { confirmFilmImport } = await import('@/services/film-imports')
     const { queueFilmEnrichment } = await import('@/services/film-enrichment')
     const { processQueuedJobs, listJobs } = await import('@/services/jobs')
+    const rows = Array.from({ length: 6 }, (_, index) => index)
     const preview = await previewCsv(
-      'Const,Title,Created\ntt9999901,One,2026-01-01\ntt9999902,Two,2026-01-01\ntt9999903,Three,2026-01-01',
+      [
+        'Const,Title,Created',
+        ...rows.map(
+          (index) => `tt999990${index + 1},Fixture ${index + 1},2026-01-01`,
+        ),
+      ].join('\n'),
     )
     const run = await confirmFilmImport(
-      ConfirmFilmImportSchema.parse({ previewId: preview.id, rows: [0, 1, 2] }),
+      ConfirmFilmImportSchema.parse({ previewId: preview.id, rows }),
       null,
     )
     await finishImport(run.id)
@@ -931,18 +946,16 @@ describe('reviewed film import and enrichment', () => {
     await queueFilmEnrichment(
       films.map((film) => ({ mediaItemId: film.id, provider: 'fixture-one' })),
       null,
-      { batchId: 'failure-batch', missingOnly: true, confirmBroadRun: false },
+      { batchId: 'failure-batch', missingOnly: true, confirmBroadRun: true },
     )
     execute.mockRejectedValue(new Error('Fixture failure'))
-    await processQueuedJobs()
-    await processQueuedJobs()
-    await processQueuedJobs()
-    expect(execute).toHaveBeenCalledTimes(2)
+    for (let pass = 0; pass < rows.length; pass++) await processQueuedJobs()
+    expect(execute).toHaveBeenCalledTimes(5)
     expect(
       (await listJobs({ batchId: 'failure-batch' })).items
         .map((job) => job.status)
         .sort(),
-    ).toEqual(['cancelled', 'failed', 'failed'])
+    ).toEqual(['cancelled', 'failed', 'failed', 'failed', 'failed', 'failed'])
   })
   it('stages previews without library writes, retains missing IDs and imports exact reviewed rows once', async () => {
     const { confirmFilmImport } = await import('@/services/film-imports')

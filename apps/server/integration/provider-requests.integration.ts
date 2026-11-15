@@ -1215,7 +1215,7 @@ describe('opt-in HTTP lookup misses', () => {
       fetchMock.mockImplementation(
         async () => new Response('Not found', { status: 404 }),
       )
-      for (let count = 1; count <= 2; count++) {
+      for (let count = 1; count <= 5; count++) {
         await expect(
           createProviderRequest(plugin)(
             'https://fixture.invalid/metadata',
@@ -1223,15 +1223,15 @@ describe('opt-in HTTP lookup misses', () => {
             options,
           ),
         ).rejects.toMatchObject({ code: 'request-failed', recorded: true })
-        expect((await getProviderSafety('fixture')).consecutiveFailures).toBe(
-          count,
-        )
+        const safety = await getProviderSafety('fixture')
+        expect(safety.consecutiveFailures).toBe(count)
+        if (count < 5) expect(safety.cooldownUntil).toBeNull()
       }
       expect((await getProviderSafety('fixture')).cooldownUntil).not.toBeNull()
       await expect(
         createProviderRequest(plugin)('https://fixture.invalid/metadata'),
       ).rejects.toMatchObject({ code: 'cooldown', recorded: true })
-      expect(fetchMock).toHaveBeenCalledTimes(2)
+      expect(fetchMock).toHaveBeenCalledTimes(5)
     },
   )
 
@@ -2146,10 +2146,10 @@ describe('persistent provider request safety', () => {
       delete plugin.manifest.reviewableErrors
     }
   })
-  it('can disable generic timed cooldowns without disabling the shared two-error stop', async () => {
+  it('can disable generic timed cooldowns while keeping the five-failure stop', async () => {
     const { processQueuedJobs, getJob } = await import('@/services/jobs')
     const { getProviderSafety } = await import('@/services/provider-requests')
-    const ids = ['failure-stop-1', 'failure-stop-2', 'failure-stop-3']
+    const ids = Array.from({ length: 6 }, (_, index) => `failure-stop-${index}`)
     for (const id of ids)
       await databaseClient
         .insert(schema.mediaItem)
@@ -2167,15 +2167,15 @@ describe('persistent provider request safety', () => {
       const results = await Promise.all(
         queued.map(async (job) => JobSchema.parse(await getJob(job.id))),
       )
-      expect(results.filter((job) => job.status === 'failed')).toHaveLength(2)
+      expect(results.filter((job) => job.status === 'failed')).toHaveLength(5)
       expect(results.filter((job) => job.status === 'cancelled')).toHaveLength(
         1,
       )
       expect(await getProviderSafety('fixture')).toMatchObject({
         cooldownUntil: null,
-        consecutiveFailures: 2,
+        consecutiveFailures: 5,
       })
-      expect(fetchMock).toHaveBeenCalledTimes(2)
+      expect(fetchMock).toHaveBeenCalledTimes(5)
     } finally {
       plugin.manifest.rateLimit.minTimeMs = minTimeMs
       delete plugin.manifest.rateLimit.failureCooldownMs
@@ -2461,10 +2461,10 @@ describe('persistent provider request safety', () => {
     ).rejects.toMatchObject({ code: 'cooldown' })
     expect(fetchMock).not.toHaveBeenCalled()
   })
-  it('stops sibling jobs after two failures and rejects new jobs during cooldown', async () => {
+  it('stops sibling jobs after five failures and rejects new jobs during cooldown', async () => {
     const { createJob, processQueuedJobs, getJob } =
       await import('@/services/jobs')
-    for (let index = 0; index < 5; index++) {
+    for (let index = 0; index < 8; index++) {
       await databaseClient.insert(schema.mediaItem).values({
         id: `fixture-${index}`,
         mediaType: 'film',
@@ -2475,7 +2475,7 @@ describe('persistent provider request safety', () => {
         .insert(schema.film)
         .values({ mediaItemId: `fixture-${index}` })
     }
-    const ids = Array.from({ length: 5 }, (_, index) => `fixture-${index}`)
+    const ids = Array.from({ length: 8 }, (_, index) => `fixture-${index}`)
     fetchMock.mockImplementation(
       async () => new Response('Not found', { status: 404 }),
     )
@@ -2487,11 +2487,11 @@ describe('persistent provider request safety', () => {
       const results = await Promise.all(
         queued.map(async (job) => JobSchema.parse(await getJob(job.id))),
       )
-      expect(results.filter((job) => job.status === 'failed')).toHaveLength(2)
+      expect(results.filter((job) => job.status === 'failed')).toHaveLength(5)
       expect(results.filter((job) => job.status === 'cancelled')).toHaveLength(
         3,
       )
-      expect(fetchMock).toHaveBeenCalledTimes(2)
+      expect(fetchMock).toHaveBeenCalledTimes(5)
       await expect(
         createJob(
           CreateJobSchema.parse({

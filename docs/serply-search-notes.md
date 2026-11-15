@@ -4,6 +4,8 @@
 
 The adapter uses the [Serply Google Search endpoint](https://www.serply.io/docs/resources/google-search) with an `X-Api-Key` header. Put the search text in the `q` parameter. Inspect organic results for the destination, indexed title, description and optional structured rating metadata. HTTP success does not establish a match; empty results do not prove that an album is absent from RYM.
 
+Requests explicitly select mobile results, US localization (`gl=us`), English (`hl=en`) and ten results. They leave Google's duplicate filtering at its default. Desktop and mobile searches can return different destinations and snippets; compare the complete request when investigating a manual result. The device setting improves retrieval for observed cases, but does not establish album identity or guarantee a rating.
+
 ## Query syntax and encoding
 
 Set `q` once with `URL.searchParams.set`; do not pre-encode search text or embedded URLs. [Search operators](https://www.serply.io/docs/guides/search-operators) belong inside the query. A [Google site restriction](https://developers.google.com/search/docs/monitor-debug/search-operators/all-search-site) can select a URL prefix, not just the exact release. Validate the returned URL and indexed identity before using any fields.

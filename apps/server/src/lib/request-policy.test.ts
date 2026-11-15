@@ -189,7 +189,14 @@ describe('request budgets', () => {
     expect(retryAfterTime('Thu, 01 Jan 2026 00:03:00 GMT', now, 60000)).toBe(
       now + 180000,
     )
-    for (const header of [null, '', 'invalid', '-1', '1'])
+    for (const header of [
+      null,
+      '',
+      'invalid',
+      '-1',
+      '1',
+      '99999999999999999999',
+    ])
       expect(retryAfterTime(header, now, 60000)).toBe(now + 60000)
   })
   it('uses a rolling hour and the oldest request even if timestamps are unordered', () => {

@@ -368,6 +368,16 @@ describe('selected job retries', () => {
     ])
     expect(JSON.stringify(result)).not.toContain('secret-fixture-token')
     expect(result.results[0]?.message).toContain('cooling down or halted')
+    for (const entry of result.results) {
+      const original = await databaseClient.query.scrapeJob.findFirst({
+        where: (table, operators) => operators.eq(table.id, entry.jobId),
+      })
+      expect(original?.options.dismissal).toEqual(
+        entry.status === 'queued'
+          ? { dismissedAt: expect.any(String), userId: null }
+          : undefined,
+      )
+    }
     expect(
       await databaseClient.select().from(schema.providerRequestState),
     ).toEqual(safetyBefore)

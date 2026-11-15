@@ -123,6 +123,36 @@ afterEach(() => {
 })
 
 describe('Serply indexed RYM provider', () => {
+  it('requests mobile English results while preserving the complete query', async () => {
+    const request = replies({
+      results: [
+        {
+          title: 'Crossing Deluxe by Aster & Vale (Album, Art Pop)',
+          description: 'Genres: Art Pop.',
+          link: 'https://rateyourmusic.com/release/album/aster-and-vale/crossing-deluxe/',
+          metadata: { rating: '3.4', reviews: '150' },
+        },
+      ],
+    })
+    await scrape(
+      context(undefined, {
+        media: { title: 'Crossing Deluxe', artists: ['Aster & Vale'] },
+        request,
+      }),
+    )
+    expect(request).toHaveBeenCalledTimes(1)
+    const call = request.mock.calls[0]
+    if (!call) throw new Error('Expected a search request')
+    const url = new URL(call[0])
+    expect(Object.fromEntries(url.searchParams)).toEqual({
+      q: 'site:rateyourmusic.com Aster & Vale Crossing Deluxe',
+      gl: 'us',
+      hl: 'en',
+      num: '10',
+    })
+    expect(new Headers(call[1]?.headers).get('X-User-Agent')).toBe('mobile')
+  })
+
   it('evaluates the fresh date-prefixed One Battle result with six exact-query responses and no stale rating', async () => {
     const title =
       'One Battle After Another (Original Motion Picture Soundtrack)'

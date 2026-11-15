@@ -37,10 +37,10 @@ Every five minutes, between dispatches, the worker queues what the owner's sched
 
 In the hosted runtime, queued jobs can wait while their provider's dispatcher is
 paused or stopped, while a request budget/cooldown applies, while its local worker
-is offline, or while another job occupies its available slots. Two provider
-failures or a provider-request stop latch a safety stop. Repeated infrastructure
-errors pause dispatch after eight failed attempts. Scheduled wakeups do not clear
-either condition.
+is offline, or while another job occupies its available slots. Five consecutive
+provider failures or a provider-request stop latch a safety stop. Repeated
+infrastructure errors pause dispatch after eight failed attempts. Scheduled
+wakeups do not clear either condition.
 
 Providers with retained jobs expose a **Jobs** tab with the shared job table.
 The provider overview summarizes every retained status across libraries. Hosted
@@ -55,6 +55,17 @@ slots exist. Provider concurrency, request spacing, budgets, cooldowns, access
 halts and active execution leases remain enforced. A stopped dispatcher cannot
 clear its safety stop until its active slots have drained. The Node runtime keeps
 its existing polling lifecycle and does not expose the hosted dispatch controls.
+
+Both runtimes retry bodyless metadata GET requests to serial providers such as
+MusicBrainz after HTTP 502, 503 or 504. Each request gets up to three attempts
+through the shared gate. The default waits are five and ten seconds, with longer
+waits when the provider declares a higher backoff or sends `Retry-After`. The
+gate must dispatch each retry within 60 seconds of the first failure. A backoff
+longer than 60 seconds from receipt is persisted as a provider cooldown. The job
+history records each scheduled retry, and the provider request history counts
+every dispatch. An exhausted request counts as one provider
+failure. Access denials, quota responses and writes retain their existing
+safeguards.
 
 ## Interrupted Jobs
 

@@ -16,13 +16,15 @@ Google Custom Search is retired. Historical ratings and source links remain impo
 
 ## Request safety
 
-| Provider    | Concurrency / minimum spacing | Maximum calls per album                               |
+| Provider    | Concurrency / minimum spacing | Lookup requests per album before transient retries    |
 | ----------- | ----------------------------- | ----------------------------------------------------- |
 | MusicBrainz | 1 / 1000 ms                   | 1 direct; 2 name or barcode; 3 barcode miss then name |
 | Last.fm     | 1 / 200 ms                    | 1 normally; 2 with `options.includeTopTags: true`     |
 | Discogs     | 1 / 1050 ms                   | 1 release; 2 master; at most 4 with searches          |
 
 Every HTTP request, including searches, uses `context.request`. There are no client libraries, direct fetches, hidden retries, pagination walks, quota-discovery calls, or network activity on module import. The persistent server gate owns spacing, timeouts, cooldowns and shared budgets. Runtime account access is not proven by these offline tests. The MusicBrainz, Last.fm and Discogs plugins do not claim a connection-test hook; no credentials are tested on import. The separate [Last.fm scrobble sync](lastfm-scrobbles.md) runs as account-level Last.fm jobs outside the plugin; it pages `user.getRecentTracks` through the same Last.fm gate and repeats a page after a temporary failure. Last.fm sets `errorBackoffMs: 5000` and `failureCooldownMs: 0`: an HTTP 400 or 5xx delays the next request by five seconds without a provider cooldown, for album jobs as well.
+
+Serial metadata jobs can make up to three attempts for a bodyless GET returning HTTP 502, 503 or 504. The shared gate records every request and the job logs each retry, with five- and ten-second minimum backoffs and any longer `Retry-After`. This does not extend adapter search windows. Concurrent providers, account task jobs, writes, timeouts, authentication errors and rate limits do not gain this retry behavior. See [job worker](job-worker.md) for the retry window and repeated-failure threshold.
 
 An existing owned reference is validated before any search. Invalid IDs fail immediately, rather than silently searching for a different album. Search windows are at most five MusicBrainz/Discogs candidates. Ambiguous matches or responses reporting more candidates than the bounded window require a direct corrected ID and are not marked benign. Validated searches with no matching item throw `ProviderItemNotFoundError`; malformed bodies, HTTP failures and access denial are not benign misses. Transport/gateway errors retain their type and retry time. Last.fm error 29 uses `ProviderRequestError('rate-limit')`, without retries, with at least a 60-second retry time extended by Retry-After. Existing shared request-gate quota classification remains unchanged by Google retirement; it no longer implies an active Google adapter.
 
@@ -47,6 +49,8 @@ Google snapshots, current state, imported ratings, links and tag provenance rema
 ## Serply (Rate Your Music)
 
 `serply` retrieves indexed Google results through `GET https://api.serply.io/v1/search/`. Configure its `apiKey` in Providers → Credentials; `SERPLY_API_KEY` is an optional environment fallback. It appears in the existing album metadata job and refresh workflows. Requests use the persistent gate, up to two concurrent requests, 250 ms between starts and optional configurable budgets. No request fetches RYM directly.
+
+Search requests use mobile results with `gl=us`, `hl=en` and `num=10`, without overriding duplicate filtering. Device and language settings can change the returned evidence; the same identity and rating checks apply to every result.
 
 Serply uses a 120-second request timeout. Account for gate waits and processing time as well as HTTP time within the job lease.
 

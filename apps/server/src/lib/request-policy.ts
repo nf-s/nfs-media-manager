@@ -3,6 +3,7 @@ import { z } from 'zod'
 export const HOUR_MS = 60 * 60 * 1000
 export const DAY_MS = 24 * HOUR_MS
 export const FAILURE_COOLDOWN_MS = 15 * 60 * 1000
+export const MAX_CONSECUTIVE_PROVIDER_FAILURES = 5
 
 export function fixedRequestWindow(durationMs: number, now: number) {
   const from = Math.floor(now / durationMs) * durationMs
@@ -94,7 +95,10 @@ export function retryAfterTime(
     : value
       ? Date.parse(value)
       : NaN
-  return Math.max(now + minimumMs, Number.isFinite(parsed) ? parsed : 0)
+  return Math.max(
+    now + minimumMs,
+    Number.isFinite(new Date(parsed).getTime()) ? parsed : 0,
+  )
 }
 
 export function rateLimitRetryAt(

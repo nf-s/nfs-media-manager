@@ -4,6 +4,7 @@ import {
   CloudDispatchControlSchema,
   CloudDispatchJobIdsSchema,
 } from '@repo/schemas/job'
+import { MAX_CONSECUTIVE_PROVIDER_FAILURES } from '@/lib/request-policy'
 import {
   CloudJobMessageSchema,
   CloudJobOutcomeSchema,
@@ -238,7 +239,11 @@ export class CloudJobCoordinator {
       slot.outcomeRecorded = true
       if (outcome === 'success' && !state.stopped) state.failures = 0
       if (outcome === 'failure') state.failures += 1
-      if (outcome === 'stopped' || state.failures >= 2) state.stopped = true
+      if (
+        outcome === 'stopped' ||
+        state.failures >= MAX_CONSECUTIVE_PROVIDER_FAILURES
+      )
+        state.stopped = true
       await this.save(state)
     })
   }

@@ -1437,8 +1437,8 @@ async function search(context: MediaPluginScrapeContext, query: string) {
   for (const [key, value] of Object.entries({
     q: query,
     gl: 'us',
+    hl: 'en',
     num: '10',
-    filter: '0',
   }))
     url.searchParams.set(key, value)
   let status: number | null = null
@@ -1483,7 +1483,7 @@ async function search(context: MediaPluginScrapeContext, query: string) {
     {
       headers: {
         'X-Api-Key': albumSecret(context, 'apiKey', 'Serply'),
-        'X-User-Agent': 'desktop',
+        'X-User-Agent': 'mobile',
       },
     },
     (body) => {
