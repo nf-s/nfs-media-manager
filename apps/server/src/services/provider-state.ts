@@ -517,11 +517,26 @@ export async function applyProviderResultInTransaction(
   }
 
   if (input.mediaType === 'album' && input.normalized.tracks.length > 0) {
-    await replaceAlbumTracks(
-      database,
-      input.mediaItemId,
-      input.normalized.tracks,
-    )
+    // A later partial Spotify import can have no tracks in current state.
+    // The successful snapshot history records whether Spotify supplied a list.
+    const spotifyTrackList =
+      input.provider !== 'spotify' &&
+      (await database.query.providerSnapshot.findFirst({
+        columns: { id: true },
+        where: (table, operators) =>
+          operators.and(
+            operators.eq(table.mediaItemId, input.mediaItemId),
+            operators.eq(table.provider, 'spotify'),
+            sql`jsonb_typeof(${table.normalizedData}->'tracks') = 'array'
+              and jsonb_typeof(${table.normalizedData}->'tracks'->0) = 'object'`,
+          ),
+      }))
+    if (!spotifyTrackList)
+      await replaceAlbumTracks(
+        database,
+        input.mediaItemId,
+        input.normalized.tracks,
+      )
   }
 
   if (input.normalized.playlists.length > 0) {

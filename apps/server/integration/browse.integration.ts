@@ -2,11 +2,14 @@ import { randomUUID } from 'node:crypto'
 import pg from 'pg'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { migrate } from 'drizzle-orm/node-postgres/migrator'
-import { eq } from 'drizzle-orm'
+import { and, asc, eq } from 'drizzle-orm'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { AlbumQuerySchema, FilmQuerySchema } from '@repo/schemas/media'
 import { TrackQuerySchema } from '@repo/schemas/tracks'
-import { PluginResultSchema } from '@repo/media-plugin-sdk'
+import {
+  PluginResultSchema,
+  type PluginNormalizedResult,
+} from '@repo/media-plugin-sdk'
 import { env } from '@/env'
 import * as schema from '@/schemas/db'
 import {
@@ -52,6 +55,93 @@ afterAll(async () => {
   if (created) await admin.query(`drop database ${database}`)
   await admin.end()
   vi.unstubAllGlobals()
+})
+
+describe('album track lists', () => {
+  it('keeps Spotify edition tracks while retaining other providers’ track lists', async () => {
+    const { applyProviderResult } = await import('@/services/provider-state')
+    const id = 'fixture-album-track-edition'
+    await databaseClient.insert(schema.mediaItem).values({
+      id,
+      slug: id,
+      title: 'Edition fixture',
+      mediaType: 'album',
+    })
+    await databaseClient.insert(schema.album).values({ mediaItemId: id })
+
+    const spotifyTracks = [
+      { title: 'Opening', position: 1, externalId: 'fixture-spotify-one' },
+      { title: 'Closing', position: 2, externalId: 'fixture-spotify-two' },
+    ]
+    const catalogTracks = [{ title: 'Different edition', position: 1 }]
+    const apply = (
+      provider: string,
+      tracks: PluginNormalizedResult['tracks'],
+    ) =>
+      applyProviderResult({
+        mediaItemId: id,
+        mediaType: 'album',
+        provider,
+        source: 'scrape-job',
+        ...PluginResultSchema.parse({
+          payload: { tracks },
+          normalized: { tracks },
+        }),
+      })
+    const getTracks = () =>
+      databaseClient
+        .select({
+          title: schema.track.title,
+          position: schema.track.position,
+          externalId: schema.track.externalId,
+        })
+        .from(schema.track)
+        .where(eq(schema.track.albumMediaItemId, id))
+        .orderBy(asc(schema.track.position))
+
+    try {
+      await apply('spotify', [])
+      await apply('lastfm', catalogTracks)
+      expect(await getTracks()).toEqual([
+        { ...catalogTracks[0], externalId: null },
+      ])
+
+      await apply('spotify', spotifyTracks)
+      await apply('spotify', [])
+      await apply('discogs', catalogTracks)
+      expect(await getTracks()).toEqual(spotifyTracks)
+      const [album] = await databaseClient
+        .select({ trackCount: schema.album.trackCount })
+        .from(schema.album)
+        .where(eq(schema.album.mediaItemId, id))
+      expect(album?.trackCount).toBe(spotifyTracks.length)
+      const [state] = await databaseClient
+        .select({
+          payload: schema.providerCurrentState.payload,
+          normalizedData: schema.providerCurrentState.normalizedData,
+        })
+        .from(schema.providerCurrentState)
+        .where(
+          and(
+            eq(schema.providerCurrentState.mediaItemId, id),
+            eq(schema.providerCurrentState.provider, 'discogs'),
+          ),
+        )
+      expect(state?.payload).toEqual({ tracks: catalogTracks })
+      expect(state?.normalizedData?.tracks).toEqual(catalogTracks)
+
+      const refreshed = [
+        ...spotifyTracks,
+        { title: 'Encore', position: 3, externalId: 'fixture-spotify-three' },
+      ]
+      await apply('spotify', refreshed)
+      expect(await getTracks()).toEqual(refreshed)
+    } finally {
+      await databaseClient
+        .delete(schema.mediaItem)
+        .where(eq(schema.mediaItem.id, id))
+    }
+  })
 })
 
 describe('bounded searchable facets', () => {
