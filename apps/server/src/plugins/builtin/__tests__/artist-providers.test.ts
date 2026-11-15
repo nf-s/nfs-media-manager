@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
-import { type MediaPluginTestContext } from '@repo/media-plugin-sdk'
+import {
+  ProviderItemNotFoundError,
+  ProviderRequestError,
+  type MediaPluginTestContext,
+} from '@repo/media-plugin-sdk'
 import {
   ArtistSearchAmbiguousError,
   lookupArtistProvider,
@@ -113,6 +117,42 @@ describe('artist provider lookups', () => {
     expect(detail.searchParams.get('artist')).toBe(artistName)
     expect(detail.searchParams.get('autocorrect')).toBe('0')
     expect(context.request).toHaveBeenCalledTimes(2)
+  })
+
+  it('retains the numeric Last.fm error code without the upstream message', async () => {
+    const context = responses({
+      error: 6,
+      message: 'Fixture invalid artist input',
+    })
+    await expect(
+      lookupArtistProvider('lastfm', artistName, mbid, context),
+    ).rejects.toHaveProperty(
+      'message',
+      'Last.fm returned a service error (code 6).',
+    )
+    expect(context.request).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([
+    { upstreamCode: 10, code: 'access-denied' },
+    { upstreamCode: 29, code: 'rate-limit' },
+  ])('preserves Last.fm $code errors', async ({ upstreamCode, code }) => {
+    const context = responses({
+      error: upstreamCode,
+      message: 'Fixture API error',
+    })
+    await expect(
+      lookupArtistProvider('lastfm', artistName, mbid, context),
+    ).rejects.toMatchObject({ name: ProviderRequestError.name, code })
+    expect(context.request).toHaveBeenCalledTimes(1)
+  })
+
+  it('preserves the explicit Last.fm artist not found result', async () => {
+    const context = responses({ error: 6, message: 'Artist not found' })
+    await expect(
+      lookupArtistProvider('lastfm', artistName, mbid, context),
+    ).rejects.toBeInstanceOf(ProviderItemNotFoundError)
+    expect(context.request).toHaveBeenCalledTimes(1)
   })
 
   it('rejects Discogs numeric suffix ambiguities without reading any artist details', async () => {

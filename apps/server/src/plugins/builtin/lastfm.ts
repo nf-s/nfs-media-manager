@@ -96,6 +96,10 @@ export async function requestLastFm(
       /^artist not found\.?$/i.test(error.message.trim())
     )
       throw new ProviderItemNotFoundError('Last.fm artist not found.')
+    if (method.startsWith('artist.'))
+      throw new Error(
+        'Last.fm returned a service error (code ' + error.error + ').',
+      )
     throw new Error('Last.fm returned a service error.')
   }
   return payload

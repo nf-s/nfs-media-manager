@@ -1,4 +1,13 @@
-import { and, asc, count, eq, inArray, sql, type SQL } from 'drizzle-orm'
+import {
+  and,
+  asc,
+  count,
+  eq,
+  inArray,
+  sql,
+  type SQL,
+  type SQLWrapper,
+} from 'drizzle-orm'
 import type {
   ArtistProfile,
   ArtistProviderSnapshot,
@@ -107,17 +116,19 @@ const visiblePlaylist = sql`${playlist.kind} = 'playlist' and (
   )
 )`
 
-function artistPlaylistCredits(artistId: string | typeof artist.id) {
+function artistPlaylistCredits(artistId?: string | SQLWrapper) {
+  const selectedArtist =
+    artistId === undefined ? sql`` : sql`and credit.artist_id = ${artistId}`
   return sql`
-    select member.playlist_id, recording.media_item_id, 'track' as kind
+    select credit.artist_id, member.playlist_id, recording.media_item_id, 'track' as kind
     from media_credit credit
     join library_track recording on recording.media_item_id = credit.media_item_id
     join media_item item on item.id = recording.media_item_id
     join playlist_item member on member.media_item_id = recording.media_item_id
-    where credit.artist_id = ${artistId} and credit.role = 'artist'
+    where credit.role = 'artist' ${selectedArtist}
       and item.media_type = 'track' and item.metadata->>'legacyHidden' is distinct from 'true'
     union all
-    select member.playlist_id, release.media_item_id, 'album' as kind
+    select credit.artist_id, member.playlist_id, release.media_item_id, 'album' as kind
     from media_credit credit
     join album release on release.media_item_id = credit.media_item_id
     join media_item item on item.id = release.media_item_id
@@ -132,12 +143,12 @@ function artistPlaylistCredits(artistId: string | typeof artist.id) {
     ) related
     join playlist_item member on member.media_item_id = related.media_item_id
     join media_item linked_item on linked_item.id = member.media_item_id
-    where credit.artist_id = ${artistId} and credit.role = 'artist'
+    where credit.role = 'artist' ${selectedArtist}
       and item.media_type = 'album' and item.metadata->>'legacyHidden' is distinct from 'true'
       and linked_item.metadata->>'legacyHidden' is distinct from 'true'`
 }
 
-function artistPlaylistMembership(artistId: string | typeof artist.id) {
+function artistPlaylistMembership(artistId: string | SQLWrapper) {
   return db
     .select({
       id: playlist.id,
@@ -173,18 +184,6 @@ function artistDirectory(q?: string, id?: string) {
       trackCount: sql<number>`count(*) filter (where ${isTrack})::int`.as(
         'track_count',
       ),
-      playlistCount:
-        sql<number>`(select count(*)::int from (${artistPlaylistMembership(artist.id)}) as memberships)`.as(
-          'playlist_count',
-        ),
-      artworkUrl: sql<string | null>`(
-        select s.normalized_data->>'artworkUrl'
-        from artist_provider_current_state state
-        join artist_provider_snapshot s on s.id = state.latest_snapshot_id
-        where state.artist_id = ${artist.id}
-          and s.normalized_data->>'artworkUrl' is not null
-        order by s.created_at desc, s.id desc limit 1
-      )`.as('artwork_url'),
     })
     .from(artist)
     .innerJoin(mediaCredit, eq(mediaCredit.artistId, artist.id))
@@ -202,27 +201,111 @@ function artistDirectory(q?: string, id?: string) {
     .groupBy(artist.id)
 }
 
+function artistArtwork(id: SQLWrapper) {
+  return sql<string | null>`(
+    select s.normalized_data->>'artworkUrl'
+    from artist_provider_current_state state
+    join artist_provider_snapshot s on s.id = state.latest_snapshot_id
+    where state.artist_id = ${id} and s.normalized_data->>'artworkUrl' is not null
+    order by s.created_at desc, s.id desc limit 1
+  )`
+}
+
+function artistPlaylistCount(id: SQLWrapper) {
+  return sql<number>`(select count(*)::int from (${artistPlaylistMembership(id)}) memberships)`
+}
+
+/** Sorting by playlist count needs every count, so build them in one pass. */
+function artistPlaylistCounts() {
+  const artistId = sql<string>`memberships.artist_id`
+  return db
+    .select({
+      artistId: artistId.as('artist_id'),
+      count: sql<number>`count(distinct ${playlist.id})::int`.as(
+        'playlist_count',
+      ),
+    })
+    .from(sql`(${artistPlaylistCredits()}) memberships`)
+    .innerJoin(playlist, sql`${playlist.id} = memberships.playlist_id`)
+    .where(visiblePlaylist)
+    .groupBy(artistId)
+}
+
+type ArtistDirectoryColumns = Record<
+  keyof typeof identityColumns | 'albumCount' | 'trackCount',
+  SQLWrapper
+>
+
+function artistOrder(
+  source: ArtistDirectoryColumns,
+  query: ArtistQuery,
+  playlistCount: SQLWrapper,
+) {
+  const sortColumns = {
+    name: sql`lower(coalesce(${source.sortName}, ${source.name}))`,
+    createdAt: source.createdAt,
+    albumCount: source.albumCount,
+    trackCount: source.trackCount,
+    playlistCount,
+  }
+  return [
+    order(sql`${sortColumns[query.sortBy]}`, query.direction),
+    sql`lower(${source.name})`,
+    asc(source.id),
+  ]
+}
+
 export async function listArtists(query: ArtistQuery) {
   const directory = artistDirectory(query.q).as('directory')
-  const sortColumns = {
-    name: sql`lower(coalesce(${directory.sortName}, ${directory.name}))`,
-    createdAt: sql`${directory.createdAt}`,
-    albumCount: sql`${directory.albumCount}`,
-    trackCount: sql`${directory.trackCount}`,
-    playlistCount: sql`${directory.playlistCount}`,
-  }
+  const countBeforePaging = query.sortBy === 'playlistCount'
+  const playlistCounts = artistPlaylistCounts().as('playlist_counts')
+  const playlistCount = countBeforePaging
+    ? sql<number>`coalesce(${playlistCounts.count}, 0)`
+    : sql<number>`0::int`
+  const candidates = db
+    .select({
+      id: directory.id,
+      name: directory.name,
+      sortName: directory.sortName,
+      createdAt: directory.createdAt,
+      albumCount: directory.albumCount,
+      trackCount: directory.trackCount,
+      playlistCount: playlistCount.as('playlist_count'),
+    })
+    .from(directory)
+  // Compute the directory page before loading details that do not affect its order.
+  const selected = (
+    countBeforePaging
+      ? candidates.leftJoin(
+          playlistCounts,
+          eq(playlistCounts.artistId, directory.id),
+        )
+      : candidates
+  )
+    .orderBy(...artistOrder(directory, query, playlistCount))
+    .limit(query.size)
+    .offset((query.page - 1) * query.size)
+    .as('artist_page')
+  // Drizzle unqualifies column chunks for single-table projections. Keep the
+  // outer alias in the correlated subqueries, whose tables also have an id.
+  const selectedArtistId = sql`"artist_page"."id"`
   const [[total], rows] = await Promise.all([
     db.select({ value: count() }).from(directory),
     db
-      .select()
-      .from(directory)
-      .orderBy(
-        order(sortColumns[query.sortBy], query.direction),
-        sql`lower(${directory.name})`,
-        asc(directory.id),
-      )
-      .limit(query.size)
-      .offset((query.page - 1) * query.size),
+      .select({
+        id: selected.id,
+        name: selected.name,
+        sortName: selected.sortName,
+        createdAt: selected.createdAt,
+        albumCount: selected.albumCount,
+        trackCount: selected.trackCount,
+        playlistCount: countBeforePaging
+          ? selected.playlistCount
+          : artistPlaylistCount(selectedArtistId),
+        artworkUrl: artistArtwork(selectedArtistId),
+      })
+      .from(selected)
+      .orderBy(...artistOrder(selected, query, selected.playlistCount)),
   ])
   return ArtistPageSchema.parse(
     page(
@@ -249,7 +332,20 @@ function combineProfiles(providers: ArtistProviderSnapshot[]): ArtistProfile {
 }
 
 export async function getArtist(id: string) {
-  const [summary] = await artistDirectory(undefined, id)
+  const directory = artistDirectory(undefined, id).as('directory')
+  const artistId = sql`${id}`
+  const [summary] = await db
+    .select({
+      id: directory.id,
+      name: directory.name,
+      sortName: directory.sortName,
+      createdAt: directory.createdAt,
+      albumCount: directory.albumCount,
+      trackCount: directory.trackCount,
+      playlistCount: artistPlaylistCount(artistId),
+      artworkUrl: artistArtwork(artistId),
+    })
+    .from(directory)
   if (!summary)
     throw new ServerError({ statusCode: 404, message: 'Artist not found' })
   const [providers, history] = await Promise.all([

@@ -239,6 +239,18 @@ describe('creator directories and related library items', () => {
       items: [{ id: 'dual', albumCount: 2, trackCount: 2, playlistCount: 3 }],
     })
     expect(
+      await listArtists(
+        ArtistQuerySchema.parse({
+          sortBy: 'playlistCount',
+          direction: 'desc',
+          size: 1,
+        }),
+      ),
+    ).toMatchObject({
+      totalCount: 2,
+      items: [{ id: 'dual', playlistCount: 3 }],
+    })
+    expect(
       (
         await listArtists(ArtistQuerySchema.parse({ q: 'fixture, delta' }))
       ).items.map((row) => row.id),
@@ -362,6 +374,20 @@ describe('creator directories and related library items', () => {
     expect(detail).toMatchObject({
       artworkUrl: 'https://example.test/profile.png',
       profile: { summary: 'A test profile', tags: ['Art Rock', 'Jazz'] },
+    })
+    expect(
+      await listArtists(
+        ArtistQuerySchema.parse({ q: 'Delta Fixture', size: 1 }),
+      ),
+    ).toMatchObject({
+      totalCount: 1,
+      items: [
+        {
+          id: 'dual',
+          artworkUrl: 'https://example.test/profile.png',
+          playlistCount: 3,
+        },
+      ],
     })
     expect(detail.providers.map((profile) => profile.scrapeJobId)).toEqual([
       'catalog-job',
