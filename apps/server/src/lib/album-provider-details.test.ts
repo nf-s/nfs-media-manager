@@ -11,6 +11,7 @@ const group = {
   title: 'Provider title',
   'artist-credit': [
     { artist: { id: mbid, name: 'Provider artist', country: 'GB' } },
+    { artist: { id: mbid, name: 'Additional artist', country: null } },
   ],
   'primary-type': 'Album',
   'secondary-types': ['Live'],

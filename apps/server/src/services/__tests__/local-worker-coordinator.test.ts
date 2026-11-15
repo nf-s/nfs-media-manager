@@ -10,6 +10,7 @@ import {
   LocalWorkerCoordinator,
   type LocalWorkerCoordinatorDependencies,
 } from '@/services/local-worker-coordinator'
+import { LOCAL_WORKER_DISPATCH_WINDOW_MS } from '@/services/provider-transport'
 
 const hash = 'a'.repeat(64)
 const otherHash = 'b'.repeat(64)
@@ -299,7 +300,10 @@ describe('local worker coordinator', () => {
 
   it.each([
     { dispatchBefore: 1000, expiresAt: 25000 },
-    { dispatchBefore: 5001, expiresAt: 25000 },
+    {
+      dispatchBefore: 1000 + LOCAL_WORKER_DISPATCH_WINDOW_MS + 1,
+      expiresAt: 25000,
+    },
     { dispatchBefore: 5000, expiresAt: 5000 },
   ])('rejects invalid execution deadlines %j', async (deadlines) => {
     const f = fixture()
@@ -307,6 +311,25 @@ describe('local worker coordinator', () => {
     await expect(
       f.coordinator.enqueue({ ...f.task, ...deadlines }),
     ).rejects.toThrow('deadlines')
+  })
+
+  it('still grants exactly one start permit after more than four seconds of handoff', async () => {
+    const f = fixture()
+    await f.ready()
+    const task = {
+      ...f.task,
+      dispatchBefore: 1000 + LOCAL_WORKER_DISPATCH_WINDOW_MS,
+    }
+    await f.coordinator.enqueue(task)
+    f.setNow(4500)
+    expect(await f.coordinator.take(hash)).toEqual(task)
+    f.setNow(6000)
+    expect(await f.coordinator.confirmStart(hash, id)).toEqual({
+      serverTime: 6000,
+      dispatchBefore: task.dispatchBefore,
+      expiresAt: task.expiresAt,
+    })
+    expect(await f.coordinator.confirmStart(hash, id)).toBeNull()
   })
 
   it('persists take before returning and never redelivers after restart', async () => {

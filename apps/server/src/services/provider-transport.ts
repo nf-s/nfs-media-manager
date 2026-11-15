@@ -1,6 +1,8 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
 import type { MediaProviderPlugin } from '@repo/media-plugin-sdk'
 
+export const LOCAL_WORKER_DISPATCH_WINDOW_MS = 12000
+
 export interface ProviderTransport {
   execute(
     url: string,

@@ -176,6 +176,16 @@ export class LocalWorker {
       return failure('policy')
     if (signal.aborted) return failure('interrupted')
     const started = this.runtime.clock()
+    const expired = (
+      phase: string,
+      duration = elapsed(started, this.runtime.clock()),
+    ) => {
+      const timing = Number.isFinite(duration)
+        ? `${Math.round(duration)} ms since start request`
+        : 'local clock moved backwards'
+      this.runtime.report(`Dispatch expired during ${phase} (${timing})`)
+      return failure('expired')
+    }
     let permit
     try {
       const startSignal = AbortSignal.any([
@@ -185,7 +195,9 @@ export class LocalWorker {
       const response = await this.cloud('start', { id: task.id }, startSignal)
       if (response.status !== 200) {
         void response.body?.cancel().catch(() => {})
-        return failure(response.status === 409 ? 'expired' : 'interrupted')
+        return response.status === 409
+          ? expired('start permit rejection, HTTP 409')
+          : failure('interrupted')
       }
       permit = LocalWorkerPermitSchema.parse(
         JSON.parse(await readBody(response, 16_384, startSignal)),
@@ -199,20 +211,18 @@ export class LocalWorker {
     }
     // Include all start round-trip time and local processing. Absolute local wall
     // time is never compared with server epoch time; either clock can expire work.
-    const remaining = () => ({
-      dispatch:
-        permit.dispatchBefore -
-        permit.serverTime -
-        elapsed(started, this.runtime.clock()) -
-        500,
-      expiry:
-        permit.expiresAt -
-        permit.serverTime -
-        elapsed(started, this.runtime.clock()) -
-        500,
-    })
+    const remaining = () => {
+      const duration = elapsed(started, this.runtime.clock())
+      const guardedTime = permit.serverTime + duration + 500
+      return {
+        dispatch: permit.dispatchBefore - guardedTime,
+        expiry: permit.expiresAt - guardedTime,
+        duration,
+      }
+    }
     const budget = remaining()
-    if (budget.dispatch <= 0 || budget.expiry <= 0) return failure('expired')
+    if (budget.dispatch <= 0 || budget.expiry <= 0)
+      return expired('start permit validation', budget.duration)
     const timeout = AbortSignal.timeout(
       Math.max(
         1,
@@ -225,7 +235,7 @@ export class LocalWorker {
       const finalBudget = remaining()
       if (providerSignal.aborted) return failure('interrupted')
       if (finalBudget.dispatch <= 0 || finalBudget.expiry <= 0)
-        return failure('expired')
+        return expired('provider request setup', finalBudget.duration)
       // No await between the final deadline check and the only provider dispatch.
       response = await abortable(
         this.runtime.transport(task.url, {
@@ -244,18 +254,18 @@ export class LocalWorker {
         providerSignal,
       )
     } catch (error) {
+      if (!signal.aborted && error instanceof DispatchExpiredError)
+        return expired(error.phase)
       return {
         kind: 'error',
         id: task.id,
         error: signal.aborted
           ? 'interrupted'
-          : error instanceof DispatchExpiredError
-            ? 'expired'
-            : timeout.aborted
-              ? 'timeout'
-              : error instanceof WorkerError
-                ? 'policy'
-                : 'network',
+          : timeout.aborted
+            ? 'timeout'
+            : error instanceof WorkerError
+              ? 'policy'
+              : 'network',
       }
     }
     const headers: Record<string, string> = {}

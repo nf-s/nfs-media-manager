@@ -2,6 +2,9 @@
 
 The current album adapters validate responses at the provider boundary and return shared media contracts. Tests use synthetic responses through mocked requests. Private integrations are loaded separately through the plugin SDK.
 
+MusicBrainz artist countries may be absent or null. Unknown countries do not
+prevent an otherwise valid release group from being matched or imported.
+
 ## Supported adapters
 
 | Provider    | Behavior                                                                                                                                     |
@@ -58,7 +61,7 @@ The gate settings are application limits, not account entitlements. Provider bud
 
 The adapter permits at most five distinct searches normally. Only when removing a recognized OST/DJ Mix role suffix changes the cleaned search title (`queryTitle !== cleanTitle`) does the ceiling increase to six, with an additional simplified natural-language query. The original four full-title, release-path, quoted artist/title and natural-language queries remain intact. An owned, matched or legacy-hint release URL inserts a prioritized `site:<release-url>` query within the applicable ceiling. These are maximums, not required call counts: duplicate/exhausted queries and a selected release with both a rating and explicit description genres stop the loop early. HTTP/service failures propagate rather than triggering fallback searches. Matching guards, two-request concurrency and 250 ms start spacing remain unchanged.
 
-Serply-owned references constrain candidates to the normalized release URL family; invalid owned references fail before searching. Only an explicit `rym-url` override marked `metadata.manualOverride: true` is authoritative over conflicting library identity/year metadata. Its exact URL-family constraint remains enforced, and provenance records the manual reference, source year and identity/year conflicts. The manual URL supplies identity evidence, not a rating: usable indexed fields are still required. Ordinary saved references do not gain this conflict bypass. Explicit edition headers such as `(Album; Label)` and individual-review scores remain excluded even for manual overrides.
+Serply-owned references constrain candidates to the normalized release URL family; invalid owned references fail before searching. Only an explicit `rym-url` override marked `metadata.manualOverride: true` is authoritative over conflicting library identity/year metadata. Its exact URL-family constraint remains enforced, and provenance records the manual reference, source year and identity/year conflicts. The manual URL supplies identity evidence, not a rating: usable indexed fields are still required. Ordinary saved references do not gain this conflict bypass. Explicit edition headers such as `(Album; Label)` remain excluded except for identity and tags on a direct primary-issue `.p` page whose artist, title, kind and explicit release date all corroborate the library entry. Edition ratings and individual-review scores remain excluded even for manual overrides.
 
 Historical Google RYM URLs are search hints, not constraints on new matching evidence. For Serply albums without any existing `rym-url` (including overrides), the helper reads at most eight media-scoped links from `google-custom-search` or `legacy-browser`, validates/deduplicates them and normalizes review/list child paths. Returned hints remain non-primary, foreign-owned and context-only (`searchHint: true`); the helper performs no database writes or ownership promotion. Invalid hints are ignored.
 

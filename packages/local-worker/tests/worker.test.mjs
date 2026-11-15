@@ -279,6 +279,10 @@ for (const mode of ['expired', 'margin', 'sleep', 'backwards', 'expires']) {
     }
     await h.run()
     assert.equal(h.uploads[0].error, 'expired')
+    assert.match(
+      h.events[0],
+      /^Dispatch expired during start permit validation \((?:\d+ ms since start request|local clock moved backwards)\)$/,
+    )
     assert.equal(
       h.calls.some(({ method }) => method === 'GET'),
       false,
@@ -292,12 +296,17 @@ test('deadline rechecked immediately before provider dispatch', async (t) => {
   await h.run({
     runtime: {
       clock: () => {
-        if (++reads === 4) h.tick(10000)
+        if (++reads === 3) h.tick(10000)
         return { ...h.time }
       },
     },
   })
   assert.equal(h.uploads[0].error, 'expired')
+  assert.ok(
+    h.events.includes(
+      'Dispatch expired during provider request setup (10000 ms since start request)',
+    ),
+  )
   assert.equal(
     h.calls.some(({ method }) => method === 'GET'),
     false,
@@ -316,6 +325,12 @@ for (const failure of ['lost', 'expired', 'malformed']) {
       h.uploads[0].error,
       failure === 'expired' ? 'expired' : 'interrupted',
     )
+    if (failure === 'expired')
+      assert.ok(
+        h.events.includes(
+          'Dispatch expired during start permit rejection, HTTP 409 (0 ms since start request)',
+        ),
+      )
     assert.equal(h.calls.filter(({ url }) => url.endsWith('/start')).length, 1)
     assert.equal(
       h.calls.some(({ method }) => method === 'GET'),
@@ -693,10 +708,15 @@ test('transport dispatch callback expires during delayed DNS or laptop sleep', a
     assert.equal(options.canDispatch(), true)
     h.time.wall += 60_000
     assert.equal(options.canDispatch(), false)
-    throw new DispatchExpiredError('Dispatch deadline elapsed')
+    throw new DispatchExpiredError('DNS lookup')
   }
   await h.run()
   assert.equal(h.uploads[0].error, 'expired')
+  assert.ok(
+    h.events.includes(
+      'Dispatch expired during DNS lookup (60000 ms since start request)',
+    ),
+  )
 })
 
 test('offline notification ignores the stopped run signal and never retries errors', async (t) => {

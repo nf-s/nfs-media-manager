@@ -187,11 +187,14 @@ function descriptionIdentity(value: string) {
     : null
 }
 
-function indexedReleaseDate(result: z.infer<typeof ResultSchema>) {
+function indexedReleaseDate(
+  result: z.infer<typeof ResultSchema>,
+  usePublishedTime = true,
+) {
   const date =
     result.description.match(
       /\bReleased[,\s]+(\d{1,2}\s+[A-Za-z]+\s+\d{4})\b/i,
-    )?.[1] ?? result.metadata?.published_time
+    )?.[1] ?? (usePublishedTime ? result.metadata?.published_time : null)
   if (
     typeof date !== 'string' ||
     !/^(?:\d{1,2}\s+[A-Za-z]+\s+\d{4}|[A-Za-z]+\s+\d{1,2},\s+\d{4})$/.test(date)
@@ -718,9 +721,31 @@ function candidates(
       record('identity-mismatch')
       continue
     }
-    if (
+    const editionHeader =
       /\((?:Album|EP|Mixtape|Compilation|Single|DJ Mix);/i.test(result.title)
-    ) {
+    const description = descriptionIdentity(result.description)
+    // A dated, corroborated primary issue identifies the release and its tags.
+    // Its edition header cannot establish the scope of a rating.
+    const exactPrimaryIssue =
+      editionHeader &&
+      page.primaryIssue &&
+      !page.review &&
+      !page.child &&
+      expectedDate !== null &&
+      indexedReleaseDate(result, false) === expectedDate &&
+      identityMatches(page.artist, requestedNames.artist) &&
+      identityMatches(page.title, baseTitle(requestedNames.title)) &&
+      description !== null &&
+      description.kind === releaseKinds[page.kind] &&
+      displayIdentityMatches(description.title, cleanTitle) &&
+      displayIdentityMatches(description.artist, names.artist) &&
+      titles.some(
+        (title) =>
+          title.kind === description.kind &&
+          displayIdentityMatches(title.title, description.title) &&
+          displayIdentityMatches(title.artist, description.artist),
+      )
+    if (editionHeader && !exactPrimaryIssue) {
       record('edition-title')
       continue
     }
@@ -733,7 +758,6 @@ function candidates(
       record('edition-path')
       continue
     }
-    const description = descriptionIdentity(result.description)
     const descriptionConflict = Boolean(
       description &&
       (!displayMatches(description.title, cleanTitle) ||
@@ -763,7 +787,9 @@ function candidates(
       record('year-mismatch')
       continue
     }
-    const score = rating(result, page.review || page.child)
+    const score = editionHeader
+      ? null
+      : rating(result, page.review || page.child)
     const tags = genres(result)
     const sourcePublishedTime =
       typeof result.metadata?.published_time === 'string'
@@ -887,6 +913,7 @@ function tagEvidence(
   payload: unknown,
   selectedSourceUrl: string,
   genreVocabulary: ReadonlySet<string>,
+  expectedDate: string | null = null,
 ) {
   const tags: (SerplyAlbumTag & { field: string })[] = []
   const parsed = SavedSearchesSchema.safeParse(payload)
@@ -914,7 +941,7 @@ function tagEvidence(
         scope,
         undefined,
         true,
-        null,
+        expectedDate,
         [names.artist],
         singles,
         { candidates: [], reasons: {} },
@@ -1234,6 +1261,9 @@ export const serplyPlugin: MediaProviderPlugin = {
     const expectedYear = releaseDate?.success
       ? releaseDate.data.getUTCFullYear()
       : undefined
+    const expectedDate = releaseDate?.success
+      ? releaseDate.data.toISOString().slice(0, 10)
+      : null
     const searches = []
     const acceptedSearches = []
     const matches: ReturnType<typeof candidates> = []
@@ -1271,9 +1301,7 @@ export const serplyPlugin: MediaProviderPlugin = {
           reference,
           expectedYear,
           manualReference,
-          releaseDate?.success
-            ? releaseDate.data.toISOString().slice(0, 10)
-            : null,
+          expectedDate,
           context.media?.artists
             .map((artist) => artist.trim())
             .filter(Boolean) ?? [names.artist],
@@ -1349,6 +1377,7 @@ export const serplyPlugin: MediaProviderPlugin = {
       { searches: acceptedSearches },
       selected.result.link,
       new Set(),
+      expectedDate,
     )
     const genre = tags.find((tag) => tag.kind === 'genre')
     const matchStatus = score

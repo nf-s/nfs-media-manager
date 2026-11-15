@@ -14,9 +14,9 @@ import {
   type LocalWorkerResult,
   type LocalWorkerTask,
 } from '@repo/media-plugin-sdk/local-worker'
+import { LOCAL_WORKER_DISPATCH_WINDOW_MS } from './provider-transport'
 
 export const LOCAL_WORKER_HEARTBEAT_MS = 35000
-const MAX_DISPATCH_WINDOW_MS = 4000
 const TokenHashSchema = z.string().regex(/^[a-f0-9]{64}$/)
 const TaskStateSchema = z
   .object({
@@ -278,7 +278,7 @@ export class LocalWorkerCoordinator {
       const now = this.now()
       if (
         task.dispatchBefore <= now ||
-        task.dispatchBefore > now + MAX_DISPATCH_WINDOW_MS ||
+        task.dispatchBefore > now + LOCAL_WORKER_DISPATCH_WINDOW_MS ||
         task.expiresAt <= task.dispatchBefore
       )
         throw new Error('Invalid local worker request deadlines')

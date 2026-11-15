@@ -2586,6 +2586,86 @@ describe('Serply indexed RYM provider', () => {
     ).rejects.toBeInstanceOf(ProviderItemNotFoundError)
   })
 
+  const primaryIssue = {
+    link: 'https://rateyourmusic.com/release/album/fixture-artist/fixture_album.p/',
+    title: 'Fixture Album by Fixture Artist (Album; Fixture Label; FX-012)',
+    description:
+      'Fixture Album, an Album by Fixture Artist. Released 7 June 2011 on Fixture Label (catalog no. FX-012; CD). Genres: Indie Pop. RYM Rating 4.2 from 100 ratings.',
+    metadata: { rating: 4.2, reviews: 100, published_time: 'Jun 7, 2011' },
+  }
+  const primaryIssueMedia = {
+    title: 'Fixture Album',
+    artists: ['Fixture Artist'],
+    releaseDate: '2011-06-07',
+  }
+  const primaryIssueReference = {
+    referenceType: 'rym-url',
+    externalId: primaryIssue.link,
+    isPrimary: true,
+    metadata: { sourceProvider: 'serply', manualOverride: true },
+  }
+
+  it.each([undefined, primaryIssueReference])(
+    'imports genres from a dated primary issue without its edition rating (reference %j)',
+    async (reference) => {
+      const output = await scrape(
+        context(
+          { results: [primaryIssue] },
+          {
+            media: primaryIssueMedia,
+            existingReferences: reference ? [reference] : [],
+          },
+        ),
+      )
+      expect(output.normalized.references).toMatchObject([
+        { externalId: primaryIssue.link },
+      ])
+      expect(output.normalized.mediaPatch?.metadata?.['browse']).toEqual({})
+      expect(
+        output.normalized.mediaPatch?.metadata?.['plugin.serply.provenance'],
+      ).toMatchObject({
+        matchStatus: 'genres-only',
+        genresSourceUrl: primaryIssue.link,
+        ratingSourceUrl: null,
+      })
+    },
+  )
+
+  it.each([
+    { link: primaryIssue.link.replace('.p/', '/') },
+    { link: primaryIssue.link + 'lists/' },
+    { title: primaryIssue.title.replace('(Album;', '(EP;') },
+    { title: primaryIssue.title.replace('Fixture Album', 'Different Album') },
+    { description: primaryIssue.description.replace('7 June', '8 June') },
+    {
+      description:
+        'Fixture Album, an Album by Fixture Artist. Genres: Indie Pop.',
+    },
+  ])('requires consistent primary issue evidence for %j', async (override) => {
+    await expect(
+      scrape(
+        context(
+          { results: [{ ...primaryIssue, ...override }] },
+          { media: primaryIssueMedia },
+        ),
+      ),
+    ).rejects.toBeInstanceOf(ProviderItemNotFoundError)
+  })
+
+  it('does not bypass a primary issue edition mismatch for a manual override', async () => {
+    await expect(
+      scrape(
+        context(
+          { results: [primaryIssue] },
+          {
+            media: { ...primaryIssueMedia, releaseDate: '2011-06-08' },
+            existingReferences: [primaryIssueReference],
+          },
+        ),
+      ),
+    ).rejects.toBeInstanceOf(ProviderItemNotFoundError)
+  })
+
   it.each(['pripyat.p', 'pripyat-2'])(
     'never publishes an edition aggregate: %s',
     async (slug) => {

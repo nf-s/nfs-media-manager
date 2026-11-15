@@ -390,14 +390,19 @@ describe('provider request diagnostics', () => {
     ])
   })
 
-  it('preserves the local worker credential redaction marker', async () => {
+  it('preserves buffered local evidence received after the direct request timeout', async () => {
     const text = 'Synthetic service rejected [redacted]'
-    const error: unknown = await withProviderTransport(
+    const outcome = withProviderTransport(
       async () => ({
-        execute: async () => new Response(text, { status: 503 }),
+        execute: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 16000))
+          return new Response(text, { status: 503 })
+        },
       }),
       () => createProviderRequest(plugin())('https://fixture.invalid'),
     ).catch((failure: unknown) => failure)
+    await vi.advanceTimersByTimeAsync(16000)
+    const error: unknown = await outcome
     expect(providerResponseEvidence(error, [])).toMatchObject([
       {
         evidence: {
@@ -741,6 +746,33 @@ describe('serial metadata request retries', () => {
     expect(onRetry).not.toHaveBeenCalled()
     expect(state.failureCount).toBe(1)
     expect(state.requests).toHaveLength(1)
+  })
+
+  it('allows a local worker to dispatch after a slow handoff with its lease still held', async () => {
+    const startedAt = Date.now()
+    const execute = vi.fn<ProviderTransport['execute']>(
+      async (_url, timing) => {
+        await new Promise((resolve) => setTimeout(resolve, 5000))
+        if (Date.now() >= timing.dispatchBefore)
+          throw new Error('Synthetic handoff exceeded the dispatch deadline')
+        expect(timing.expiresAt).toBe(timing.dispatchBefore + 15000)
+        expect(state.leaseUntil?.getTime()).toBeGreaterThan(timing.expiresAt)
+        await new Promise((resolve) => setTimeout(resolve, 14000))
+        return Response.json({ ok: true })
+      },
+    )
+    const request = createProviderRequest(plugin())
+    const outcome = withProviderTransport(
+      async () => ({ execute }),
+      () => request('https://fixture.invalid'),
+    ).catch((error: unknown) => error)
+    await vi.advanceTimersByTimeAsync(19000)
+    expect(await outcome).toHaveProperty('status', 200)
+    expect(execute).toHaveBeenCalledOnce()
+    expect(state.requests).toEqual([startedAt + 19000])
+    expect(state.nextAllowedAt?.getTime()).toBe(startedAt + 19250)
+    expect(state.leaseUntil).toBeNull()
+    expect(mocks.fetch).not.toHaveBeenCalled()
   })
 
   it('bounds the local worker retry dispatch window at the same deadline', async () => {

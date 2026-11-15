@@ -26,7 +26,7 @@ export const MusicBrainzGroupIdentitySchema = z.object({
         artist: z.object({
           id: AlbumMbidSchema,
           name: z.string().min(1),
-          country: z.string().optional(),
+          country: z.string().nullable().optional(),
         }),
       }),
     )

@@ -75,7 +75,7 @@ test('transport checks permission before creating the request', async (t) => {
       signal: new AbortController().signal,
       canDispatch: () => false,
     }),
-    DispatchExpiredError,
+    { name: 'Error', phase: 'request setup' },
   )
   assert.equal(state.requests, 0)
 })
@@ -89,7 +89,11 @@ test('DNS callback after deadline destroys request without sending', async (t) =
     signal: new AbortController().signal,
     canDispatch: () => permitted,
   })
-  const rejection = assert.rejects(promise, DispatchExpiredError)
+  const rejection = assert.rejects(promise, (error) => {
+    assert.ok(error instanceof DispatchExpiredError)
+    assert.equal(error.phase, 'DNS lookup')
+    return true
+  })
   await Promise.resolve()
   permitted = false
   state.dnsCallback(null, [{ address: '93.184.216.34', family: 4 }])
@@ -120,7 +124,11 @@ test('TLS readiness after deadline never flushes credentials or request bytes', 
     signal: new AbortController().signal,
     canDispatch: () => permitted,
   })
-  const rejection = assert.rejects(promise, DispatchExpiredError)
+  const rejection = assert.rejects(promise, (error) => {
+    assert.ok(error instanceof DispatchExpiredError)
+    assert.equal(error.phase, 'TLS connection')
+    return true
+  })
   await Promise.resolve()
   state.dnsCallback(null, [{ address: '93.184.216.34', family: 4 }])
   assert.equal(state.sent, 0)

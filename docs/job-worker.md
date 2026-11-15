@@ -184,6 +184,17 @@ marked. If the provider returns an HTTP error, the gateway retains the available
 response evidence in the same job data view. A transport failure without an HTTP
 response has no body to retain.
 
+MusicBrainz, Discogs and Last.fm also retain bounded, credential-redacted JSON
+responses before adapter validation, including successful HTTP responses that
+later fail schema or identity checks. Request evidence includes the path and
+allowlisted lookup parameters; credentials and request headers are omitted.
+
+Local requests have a twelve-second dispatch window for the cloud handoff and
+connection setup. Their central lease covers that window, the provider response
+timeout and a one-second abort margin. Expired or uncertain requests still
+require review before another request can run. Local logs identify the expiry
+phase and elapsed time without recording request data.
+
 ### Lifecycle Tests
 
 Run the isolated tests from the repository root:

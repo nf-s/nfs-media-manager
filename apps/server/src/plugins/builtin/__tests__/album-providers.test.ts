@@ -122,6 +122,22 @@ afterEach(() => {
 })
 
 describe('MusicBrainz album adapter', () => {
+  it('accepts unknown artist countries in searches and release-group lookups', async () => {
+    const payload = {
+      ...group,
+      'artist-credit': [
+        { artist: { id: artistMbid, name: 'Example Artist', country: null } },
+      ],
+    }
+    const request = replies({ count: 1, 'release-groups': [payload] }, payload)
+    const result = await scrape(musicbrainzPlugin, context({ request }))
+    expect(result.normalized.references[0]?.externalId).toBe(mbid)
+    expect(result.normalized.tags).toContainEqual(
+      expect.objectContaining({ name: 'Ambient' }),
+    )
+    expect(result.payload).toEqual({ releaseGroup: payload })
+    expect(request).toHaveBeenCalledTimes(2)
+  })
   it('keeps canonical identity while exposing release-group details and tag weights', async () => {
     const payload = {
       ...group,

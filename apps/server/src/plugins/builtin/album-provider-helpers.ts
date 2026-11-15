@@ -1,11 +1,13 @@
 import {
   JsonValueSchema,
   ProviderRequestError,
+  recordPluginDiagnostic,
   type MediaPluginScrapeContext,
   type MediaPluginTestContext,
   type PluginReference,
 } from '@repo/media-plugin-sdk'
 import { z } from 'zod'
+import { sanitizeJobDiagnostic } from '@/lib/job-diagnostics'
 import { isJsonRecord } from '@/lib/provider-normalizers'
 import { retryAfterTime } from '@/lib/request-policy'
 
@@ -135,7 +137,8 @@ async function readAlbumErrorBody(response: Response): Promise<unknown> {
 }
 
 export async function requestAlbumJson(
-  context: MediaPluginTestContext,
+  context: MediaPluginTestContext &
+    Pick<MediaPluginScrapeContext, 'recordDiagnostic'>,
   provider: string,
   url: URL,
   init?: RequestInit,
@@ -161,7 +164,29 @@ export async function requestAlbumJson(
         : null,
     )
   }
-  const payload = JsonValueSchema.parse(await response.json())
+  const body: unknown = await response.json()
+  // Serply already records each response with its own diagnostic budget.
+  if (context.recordDiagnostic && provider !== 'Serply') {
+    const query = Object.fromEntries(
+      ['query', 'q', 'barcode', 'release_title', 'artist', 'album', 'method']
+        .filter((name) => url.searchParams.has(name))
+        .map((name) => [name, url.searchParams.get(name)]),
+    )
+    const diagnostic = sanitizeJobDiagnostic(
+      {
+        stage: `${provider.toLowerCase()}.response`,
+        evidence: {
+          path: url.pathname,
+          query,
+          status: response.status,
+          response: body,
+        },
+      },
+      Object.values(context.secrets).flatMap((value) => [value, value.trim()]),
+    )
+    if (diagnostic) recordPluginDiagnostic(context, diagnostic)
+  }
+  const payload = JsonValueSchema.parse(body)
   if (!isJsonRecord(payload))
     throw new Error(`${provider} returned a non-object payload.`)
   const bodyCode = classifyFailure?.(payload)

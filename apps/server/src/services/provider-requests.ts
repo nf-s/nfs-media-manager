@@ -14,7 +14,10 @@ import {
   captureProviderResponseEvidence,
   type CapturedProviderBody,
 } from '@/lib/job-diagnostics'
-import { getProviderTransport } from '@/services/provider-transport'
+import {
+  getProviderTransport,
+  LOCAL_WORKER_DISPATCH_WINDOW_MS,
+} from '@/services/provider-transport'
 import {
   ProviderRequestBudgetSchema,
   ProviderQuotaHeadersSchema,
@@ -114,6 +117,7 @@ const delay = (ms: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, ms))
 const LEASE_GRACE_MS = 5000
 const DISPATCH_WINDOW_MS = 4000
+const LOCAL_WORKER_LEASE_GRACE_MS = 1000
 const RequestTimeoutSchema = PluginRequestTimeoutSchema.default(15000)
 const TRANSIENT_MAX_ATTEMPTS = 3
 const TRANSIENT_RETRY_WINDOW_MS = 60000
@@ -426,7 +430,8 @@ async function reserve(
     if (wait > 0) return { kind: 'wait', ms: Math.min(wait, 1000) }
     const token = randomUUID()
     const dispatchBefore = Math.min(
-      now + DISPATCH_WINDOW_MS,
+      now +
+        (localWorker ? LOCAL_WORKER_DISPATCH_WINDOW_MS : DISPATCH_WINDOW_MS),
       fixedWindow
         ? fixedRequestWindow(fixedWindow.durationMs, now).resetsAt
         : Infinity,
@@ -434,7 +439,13 @@ async function reserve(
         ? requestBudgetWindow('day', now).resetsAt
         : Infinity,
     )
-    const expiresAt = now + timeoutMs + LEASE_GRACE_MS
+    // The worker may send at the end of the dispatch window. Keep the lease
+    // through its full response deadline and allow for abort delivery.
+    const expiresAt =
+      timeoutMs +
+      (localWorker
+        ? dispatchBefore + LOCAL_WORKER_LEASE_GRACE_MS
+        : now + LEASE_GRACE_MS)
     await tx
       .insert(providerRequestEvent)
       .values({ id: token, provider, requestedAt: new Date(now), requestClass })
@@ -822,11 +833,14 @@ export function createProviderRequest(
     let retainResponseEvidence: (() => Promise<void>) | undefined
     try {
       await checkDispatch(plugin.manifest.id, reservation)
-      const timeout = AbortSignal.timeout(timeoutMs)
-      const signal = init?.signal
-        ? AbortSignal.any([init.signal, timeout])
-        : timeout
-      signal.throwIfAborted()
+      init?.signal?.throwIfAborted()
+      // The local transport owns its execution deadline. Its response is
+      // already buffered when it reaches the separate evidence capture timer.
+      const timeout = transport ? undefined : AbortSignal.timeout(timeoutMs)
+      const signal =
+        init?.signal && timeout
+          ? AbortSignal.any([init.signal, timeout])
+          : (timeout ?? init?.signal)
       const dispatchBefore = pending
         ? Math.min(reservation.dispatchBefore, pending.retryBefore)
         : reservation.dispatchBefore
@@ -875,16 +889,17 @@ export function createProviderRequest(
       let body = ''
       let errorBody: CapturedProviderBody | undefined
       const inspectDenial = response.status === 403 && jsonResponse
-      const captureErrorBody = () =>
-        readErrorBody(
+      const captureErrorBody = () => {
+        const captureTimeout = AbortSignal.timeout(
+          ERROR_BODY_CAPTURE_TIMEOUT_MS,
+        )
+        return readErrorBody(
           response,
-          AbortSignal.any([
-            signal,
-            AbortSignal.timeout(ERROR_BODY_CAPTURE_TIMEOUT_MS),
-          ]),
+          signal ? AbortSignal.any([signal, captureTimeout]) : captureTimeout,
           transport !== null,
           contentType,
         )
+      }
       if (response.ok) {
         body = await readBoundedBody(response)
       } else if (inspectDenial) {

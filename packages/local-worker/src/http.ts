@@ -59,7 +59,13 @@ export type Transport = (
   options: HttpOptions,
 ) => Promise<HttpResponse>
 
-export class DispatchExpiredError extends WorkerError {}
+export class DispatchExpiredError extends WorkerError {
+  constructor(
+    readonly phase: 'request setup' | 'DNS lookup' | 'TLS connection',
+  ) {
+    super('Dispatch deadline elapsed')
+  }
+}
 
 // Resolve and validate at socket connection time, not in a separate DNS preflight.
 // Native HTTPS never follows redirects or uses an ambient cookie jar/proxy.
@@ -72,7 +78,7 @@ export const httpsTransport: Transport = (url, options) =>
     const canDispatch = () =>
       !options.signal.aborted && (options.canDispatch?.() ?? true)
     if (!canDispatch()) {
-      reject(new DispatchExpiredError('Dispatch deadline elapsed'))
+      reject(new DispatchExpiredError('request setup'))
       return
     }
     const outgoing = request(
@@ -85,11 +91,7 @@ export const httpsTransport: Transport = (url, options) =>
         lookup(hostname, lookupOptions, callback) {
           lookup(hostname, { all: true }, (error, addresses) => {
             if (!canDispatch())
-              return callback(
-                new DispatchExpiredError('Dispatch deadline elapsed'),
-                '',
-                4,
-              )
+              return callback(new DispatchExpiredError('DNS lookup'), '', 4)
             if (error) return callback(error, '', 4)
             const first = addresses[0]
             if (
@@ -148,9 +150,7 @@ export const httpsTransport: Transport = (url, options) =>
     outgoing.once('socket', (socket) => {
       socket.prependOnceListener('secureConnect', () => {
         if (!canDispatch())
-          outgoing.destroy(
-            new DispatchExpiredError('Dispatch deadline elapsed'),
-          )
+          outgoing.destroy(new DispatchExpiredError('TLS connection'))
         else outgoing.end(options.body)
       })
     })
