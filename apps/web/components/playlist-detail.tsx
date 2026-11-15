@@ -2,12 +2,7 @@
 
 import Link from 'next/link'
 import { useDeferredValue, useEffect, useRef, useState } from 'react'
-import {
-  useInfiniteQuery,
-  useMutation,
-  useQuery,
-  useQueryClient,
-} from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ListPlus, Play } from 'lucide-react'
 import { EnrichmentResultSchema } from '@repo/schemas/job'
 import {
@@ -17,7 +12,6 @@ import {
   PlaylistSyncScheduleSchema,
   type PlaylistDetail,
   type PlaylistDetailQuery,
-  type PlaylistEntry,
   type PlaylistEntrySort,
   type PlaylistSummary,
   type PlaylistSyncSchedule,
@@ -30,7 +24,7 @@ import {
   TabsList,
   TabsTrigger,
 } from '@repo/ui/components/ui/tabs'
-import { useInfiniteTableScroll } from '@/hooks/useInfiniteTableScroll'
+import { useVirtualTable } from '@/hooks/useVirtualTable'
 import { fetchApiData } from '@/utils/api'
 import { scopedHref } from '@/utils/media-scope'
 import {
@@ -65,6 +59,7 @@ import { useDetailInspector, useDetailView } from './detail-inspector-context'
 import {
   TrackEntriesTable,
   trackEntryKey,
+  type IndexedTrackEntry,
   type TrackEntryColumn,
 } from './track-entries-table'
 import { useConfig } from './providers'
@@ -223,19 +218,17 @@ export function PlaylistPlayButton({
   )
 }
 
-/** Keep server offsets when a sync causes the same entry to straddle two pages. */
-export function indexedPlaylistEntries(pages: readonly PlaylistDetail[]) {
-  const byKey = new Map<string, { entry: PlaylistEntry; index: number }>()
-  for (const page of pages)
-    page.items.items.forEach((entry, offset) => {
-      const key = trackEntryKey(entry)
-      if (!byKey.has(key))
-        byKey.set(key, {
-          entry,
-          index: (page.items.page - 1) * page.items.size + offset,
-        })
-    })
-  return [...byKey.entries()]
+/** Preserve the scroll and playback offsets when adjacent pages overlap after a sync. */
+export function playlistWindowSlots(
+  slots: readonly { index: number; item: IndexedTrackEntry | undefined }[],
+) {
+  const seen = new Set<string>()
+  return slots.map((slot) => {
+    if (slot.item === undefined) return slot
+    if (seen.has(slot.item.key)) return { index: slot.index, item: null }
+    seen.add(slot.item.key)
+    return slot
+  })
 }
 
 export function PlaylistEntries({ id }: { id: string }) {
@@ -265,61 +258,55 @@ export function PlaylistEntries({ id }: { id: string }) {
         }),
       )
   }
-  const entries = useInfiniteQuery({
+  const entries = useVirtualTable({
     queryKey: ['playlist', id, 'entries', sortBy, direction, q, kinds],
-    initialPageParam: 1,
-    queryFn: ({ pageParam, signal }) =>
-      fetchApiData(
+    pageSize: ENTRY_PAGE_SIZE,
+    loadPage: async (page, size, signal) => {
+      const result = await fetchApiData(
         apiBaseUrl,
-        playlistPath(
-          id,
-          pageParam,
-          ENTRY_PAGE_SIZE,
-          sortBy,
-          direction,
-          q,
-          kinds,
-        ),
+        playlistPath(id, page, size, sortBy, direction, q, kinds),
         PlaylistDetailSchema,
         { signal },
-      ),
-    getNextPageParam: (last) =>
-      last.items.page < last.items.pageCount ? last.items.page + 1 : undefined,
+      )
+      return {
+        ...result.items,
+        name: result.name,
+        items: result.items.items.map((entry, offset) => ({
+          entry,
+          key: trackEntryKey(entry),
+          index: (page - 1) * size + offset,
+        })),
+      }
+    },
   })
-  const { scroller, sentinel } = useInfiniteTableScroll({
-    enabled: entries.hasNextPage && !entries.isFetching && !entries.isError,
-    fetchNextPage: entries.fetchNextPage,
-    resetKey: `${id}:${sortBy}:${direction}:${q}:${kinds.join(',')}`,
-  })
-  const rows = indexedPlaylistEntries(entries.data?.pages ?? []).map(
-    ([key, row]) => ({ key, ...row }),
-  )
-  const total = entries.data?.pages[0]?.items.totalCount ?? 0
+  const total = entries.total
   return (
     <TrackEntriesTable
       scope="playlist"
-      rows={rows}
+      window={{
+        slots: playlistWindowSlots(entries.slots),
+        total,
+        rowHeight: entries.rowHeight,
+        padTop: entries.padTop,
+        padBottom: entries.padBottom,
+      }}
       search={search}
       onSearch={(search) => detail.replace(viewParams({ q: search }))}
       sortBy={sortBy}
       direction={direction}
       onSort={onSort}
       count={
-        entries.data
+        entries.hasTotal
           ? `${total.toLocaleString()} ${q || kinds.length ? 'matching ' : ''}entries`
           : undefined
       }
-      pending={entries.isPending}
+      pending={!entries.hasTotal}
       empty={q || kinds.length ? 'No matching entries.' : 'No tracks.'}
       error={
-        entries.isError && !rows.length ? (
+        entries.isError ? (
           <>
-            {errorMessage(entries.error, 'Could not load tracks.')}{' '}
-            <button
-              type="button"
-              className="underline"
-              onClick={() => entries.refetch()}
-            >
+            Could not load tracks.{' '}
+            <button type="button" className="underline" onClick={entries.retry}>
               Retry
             </button>
           </>
@@ -340,42 +327,14 @@ export function PlaylistEntries({ id }: { id: string }) {
             kinds: JSON.stringify(kinds),
           }),
           href: detail.href(viewParams({ q })),
-          label: entries.data?.pages[0]?.name ?? 'Playlist',
+          label: entries.firstPage?.name ?? 'Playlist',
           total,
           startIndex: index,
           initialEntry: entry,
         })
       }
-      scroller={scroller}
-      trailingRows={
-        <div ref={sentinel} className="py-2 text-center">
-          {entries.isFetchingNextPage && (
-            <p role="status" className="muted">
-              Loading more tracks...
-            </p>
-          )}
-          {entries.isFetchNextPageError && (
-            <p role="alert">Could not load more tracks.</p>
-          )}
-          {entries.hasNextPage && !entries.isFetchingNextPage && (
-            <Button
-              type="button"
-              variant="ghost"
-              disabled={entries.isFetching}
-              onClick={() => entries.fetchNextPage({ cancelRefetch: false })}
-            >
-              {entries.isFetchNextPageError
-                ? 'Retry loading tracks'
-                : 'Load more tracks'}
-            </Button>
-          )}
-          {!entries.hasNextPage && rows.length > 0 && (
-            <p className="muted">
-              {rows.length.toLocaleString()} of {total.toLocaleString()} loaded.
-            </p>
-          )}
-        </div>
-      }
+      scroller={entries.scroller}
+      onScroll={entries.onScroll}
     />
   )
 }

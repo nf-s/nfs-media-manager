@@ -2,21 +2,18 @@
 
 import Link from 'next/link'
 import React, { useDeferredValue, useState } from 'react'
-import { useInfiniteQuery } from '@tanstack/react-query'
 import {
   JobPageSchema,
   jobStatusFilters,
   type JobStatusFilter,
   getJobDismissal,
-  type Job,
   type JobSortKey,
 } from '@repo/schemas/job'
 import { Input } from '@repo/ui/components/ui/input'
-import { Button } from '@repo/ui/components/ui/button'
 import { TableState } from '@repo/ui/components/ui/table'
-import { useInfiniteTableScroll } from '@/hooks/useInfiniteTableScroll'
+import { useVirtualTable } from '@/hooks/useVirtualTable'
 import { fetchApiData } from '@/utils/api'
-import { jobPagesPollInterval } from '@/utils/job-cache'
+import { canCancelJob } from '@/utils/job-selection'
 import { useConfig } from './providers'
 import {
   SecondaryColumnFilter,
@@ -24,6 +21,7 @@ import {
   SecondaryTableToolbar,
   SecondaryTableScroll,
   SecondaryTableHead,
+  SecondaryVirtualRows,
   useTableColumns,
 } from './secondary-table'
 
@@ -53,11 +51,11 @@ export default function MediaHistoryJobs({
     setDirection(sortBy === key && direction === 'asc' ? 'desc' : 'asc')
   }
   const { apiBaseUrl } = useConfig()
-  const jobs = useInfiniteQuery({
+  const jobs = useVirtualTable({
     queryKey: [
       'jobs',
       'media-history',
-      'infinite',
+      'table',
       mediaItemId,
       artistId,
       provider,
@@ -66,44 +64,23 @@ export default function MediaHistoryJobs({
       query,
       statuses,
     ],
-    initialPageParam: 1,
-    queryFn: ({ pageParam, signal }) =>
+    pageSize: 25,
+    loadPage: (page, size, signal) =>
       fetchApiData(
         apiBaseUrl,
-        `/api/v1/scrape/jobs?${new URLSearchParams({ ...(mediaItemId ? { mediaItemId } : { artistId: artistId ?? '' }), ...(provider ? { provider } : {}), sortBy, direction, page: String(pageParam), size: '25', ...(query ? { q: query } : {}), statuses: JSON.stringify(statuses) })}`,
+        `/api/v1/scrape/jobs?${new URLSearchParams({ ...(mediaItemId ? { mediaItemId } : { artistId: artistId ?? '' }), ...(provider ? { provider } : {}), sortBy, direction, page: String(page), size: String(size), ...(query ? { q: query } : {}), statuses: JSON.stringify(statuses) })}`,
         JobPageSchema,
         { signal },
       ),
-    getNextPageParam: (last) =>
-      last.page < last.pageCount ? last.page + 1 : undefined,
-    refetchInterval: (query) => jobPagesPollInterval(query.state.data?.pages),
+    refetchInterval: (page) => (page?.items.some(canCancelJob) ? 3000 : false),
   })
-  const { scroller, sentinel } = useInfiniteTableScroll({
-    enabled: jobs.hasNextPage && !jobs.isFetching && !jobs.isError,
-    fetchNextPage: jobs.fetchNextPage,
-    resetKey: JSON.stringify([
-      mediaItemId,
-      artistId,
-      provider,
-      sortBy,
-      direction,
-      query,
-      statuses,
-    ]),
-  })
-  // New jobs can move offset boundaries between requests. Keep each job once.
-  const jobsById = new Map<string, Job>()
-  for (const page of jobs.data?.pages ?? [])
-    for (const job of page.items)
-      if (!jobsById.has(job.id)) jobsById.set(job.id, job)
-  const items = [...jobsById.values()]
   return (
     <section aria-label="Jobs">
       <h2 className="text-sm font-semibold">Jobs</h2>
-      {jobs.isError && items.length > 0 && !jobs.isFetchNextPageError && (
+      {jobs.isError && jobs.total > 0 && (
         <p role="alert">
           Could not load jobs.{' '}
-          <button type="button" onClick={() => jobs.refetch()}>
+          <button type="button" onClick={jobs.retry}>
             Retry
           </button>
         </p>
@@ -119,11 +96,12 @@ export default function MediaHistoryJobs({
             onChange={(event) => setSearch(event.target.value)}
           />
         }
-        count={`${jobs.data?.pages[0]?.totalCount.toLocaleString() ?? 0} jobs`}
+        count={`${jobs.total.toLocaleString()} jobs`}
         columns={columns.controls}
       />
       <SecondaryTableScroll
-        ref={scroller}
+        ref={jobs.scroller}
+        onScroll={jobs.onScroll}
         className="table-scroll-bounded"
         role="region"
         aria-label="Job history"
@@ -197,7 +175,7 @@ export default function MediaHistoryJobs({
             </tr>
           </thead>
           <tbody>
-            {!items.length && (
+            {!jobs.total && (
               <TableState colSpan={columns.count} error={jobs.isError}>
                 {jobs.isPending
                   ? 'Loading jobs...'
@@ -210,132 +188,116 @@ export default function MediaHistoryJobs({
                   <button
                     type="button"
                     className="ml-1 underline"
-                    onClick={() => jobs.refetch()}
+                    onClick={jobs.retry}
                   >
                     Retry
                   </button>
                 )}
               </TableState>
             )}
-            {items.map((job) => {
-              const providerLabel =
-                job.provider === 'google-custom-search'
-                  ? 'Google Custom Search (legacy)'
-                  : job.provider
-              const item = job.items.find(
-                (candidate) => candidate.mediaItemId === mediaItemId,
-              )
-              const dismissal = getJobDismissal(job.options)
-              const result = item?.message ?? job.errorMessage ?? '-'
-              const itemStatus =
-                item && item.status !== job.status
-                  ? `This item: ${item.status}`
-                  : undefined
-              return (
-                <tr key={job.id}>
-                  {columns.visible('provider') && (
-                    <td>
-                      <SecondaryCell text={providerLabel}>
-                        <Link
-                          className="underline underline-offset-2"
-                          href={`/jobs?jobId=${encodeURIComponent(job.id)}`}
-                          aria-label={`View ${providerLabel} job from ${new Date(job.createdAt).toLocaleString()}`}
-                        >
-                          {providerLabel}
-                        </Link>
-                      </SecondaryCell>
-                    </td>
-                  )}
-                  {columns.visible('status') && (
-                    <td>
-                      <SecondaryCell
-                        text={`${job.status}${dismissal ? ' · dismissed' : ''}`}
-                        details={
-                          dismissal
-                            ? `Dismissed ${new Date(dismissal.dismissedAt).toLocaleString()}. Errors retained.`
-                            : undefined
-                        }
-                        label="Dismissal details"
-                      >
-                        <span className="job-status" data-status={job.status}>
-                          {job.status}
-                          {dismissal ? ' · dismissed' : ''}
-                        </span>
-                      </SecondaryCell>
-                    </td>
-                  )}
-                  {columns.visible('createdAt') && (
-                    <td className="whitespace-nowrap">
-                      <SecondaryCell
-                        text={new Date(job.createdAt).toLocaleString()}
-                      >
-                        <time dateTime={job.createdAt}>
-                          {new Date(job.createdAt).toLocaleString()}
-                        </time>
-                      </SecondaryCell>
-                    </td>
-                  )}
-                  {columns.visible('result') && (
-                    <td>
-                      <SecondaryCell
-                        text={[itemStatus, result].filter(Boolean).join(' · ')}
-                        label="Job result details"
-                      >
-                        {itemStatus ? `${itemStatus} · ` : ''}
-                        {result}
-                      </SecondaryCell>
-                    </td>
-                  )}
-                  {columns.visible('startedAt') && (
-                    <td className="whitespace-nowrap">
-                      <SecondaryCell>
-                        {job.startedAt
-                          ? new Date(job.startedAt).toLocaleString()
-                          : '-'}
-                      </SecondaryCell>
-                    </td>
-                  )}
-                  {columns.visible('finishedAt') && (
-                    <td className="whitespace-nowrap">
-                      <SecondaryCell>
-                        {job.finishedAt
-                          ? new Date(job.finishedAt).toLocaleString()
-                          : '-'}
-                      </SecondaryCell>
-                    </td>
-                  )}
-                </tr>
-              )
-            })}
+            {(!jobs.isError || jobs.hasTotal) && (
+              <SecondaryVirtualRows
+                window={jobs}
+                colSpan={columns.count}
+                renderRow={(job) => {
+                  const providerLabel =
+                    job.provider === 'google-custom-search'
+                      ? 'Google Custom Search (legacy)'
+                      : job.provider
+                  const item = job.items.find(
+                    (candidate) => candidate.mediaItemId === mediaItemId,
+                  )
+                  const dismissal = getJobDismissal(job.options)
+                  const result = item?.message ?? job.errorMessage ?? '-'
+                  const itemStatus =
+                    item && item.status !== job.status
+                      ? `This item: ${item.status}`
+                      : undefined
+                  return (
+                    <tr key={job.id}>
+                      {columns.visible('provider') && (
+                        <td>
+                          <SecondaryCell text={providerLabel}>
+                            <Link
+                              className="underline underline-offset-2"
+                              href={`/jobs?jobId=${encodeURIComponent(job.id)}`}
+                              aria-label={`View ${providerLabel} job from ${new Date(job.createdAt).toLocaleString()}`}
+                            >
+                              {providerLabel}
+                            </Link>
+                          </SecondaryCell>
+                        </td>
+                      )}
+                      {columns.visible('status') && (
+                        <td>
+                          <SecondaryCell
+                            text={`${job.status}${dismissal ? ' · dismissed' : ''}`}
+                            details={
+                              dismissal
+                                ? `Dismissed ${new Date(dismissal.dismissedAt).toLocaleString()}. Errors retained.`
+                                : undefined
+                            }
+                            label="Dismissal details"
+                          >
+                            <span
+                              className="job-status"
+                              data-status={job.status}
+                            >
+                              {job.status}
+                              {dismissal ? ' · dismissed' : ''}
+                            </span>
+                          </SecondaryCell>
+                        </td>
+                      )}
+                      {columns.visible('createdAt') && (
+                        <td className="whitespace-nowrap">
+                          <SecondaryCell
+                            text={new Date(job.createdAt).toLocaleString()}
+                          >
+                            <time dateTime={job.createdAt}>
+                              {new Date(job.createdAt).toLocaleString()}
+                            </time>
+                          </SecondaryCell>
+                        </td>
+                      )}
+                      {columns.visible('result') && (
+                        <td>
+                          <SecondaryCell
+                            text={[itemStatus, result]
+                              .filter(Boolean)
+                              .join(' · ')}
+                            label="Job result details"
+                          >
+                            {itemStatus ? `${itemStatus} · ` : ''}
+                            {result}
+                          </SecondaryCell>
+                        </td>
+                      )}
+                      {columns.visible('startedAt') && (
+                        <td className="whitespace-nowrap">
+                          <SecondaryCell>
+                            {job.startedAt
+                              ? new Date(job.startedAt).toLocaleString()
+                              : '-'}
+                          </SecondaryCell>
+                        </td>
+                      )}
+                      {columns.visible('finishedAt') && (
+                        <td className="whitespace-nowrap">
+                          <SecondaryCell>
+                            {job.finishedAt
+                              ? new Date(job.finishedAt).toLocaleString()
+                              : '-'}
+                          </SecondaryCell>
+                        </td>
+                      )}
+                    </tr>
+                  )
+                }}
+              />
+            )}
           </tbody>
         </table>
-        <div ref={sentinel} className="py-2 text-center">
-          {jobs.isFetchingNextPage && (
-            <p role="status" className="muted">
-              Loading more jobs...
-            </p>
-          )}
-          {jobs.isFetchNextPageError && (
-            <p role="alert">Could not load more jobs.</p>
-          )}
-          {jobs.hasNextPage && !jobs.isFetchingNextPage && (
-            <Button
-              type="button"
-              variant="ghost"
-              disabled={jobs.isFetching}
-              onClick={() => jobs.fetchNextPage({ cancelRefetch: false })}
-            >
-              {jobs.isFetchNextPageError
-                ? 'Retry loading jobs'
-                : 'Load more jobs'}
-            </Button>
-          )}
-          {!jobs.hasNextPage && items.length > 0 && (
-            <p className="muted">
-              All {items.length.toLocaleString()} jobs loaded.
-            </p>
-          )}
-        </div>
       </SecondaryTableScroll>
     </section>
   )

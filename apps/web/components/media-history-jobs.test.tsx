@@ -35,12 +35,12 @@ function renderHistory(pages?: JobPage[]) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
-  if (pages)
+  for (const page of pages ?? [])
     client.setQueryData(
       [
         'jobs',
         'media-history',
-        'infinite',
+        'table',
         'film-1',
         undefined,
         undefined,
@@ -48,11 +48,9 @@ function renderHistory(pages?: JobPage[]) {
         'desc',
         '',
         [],
+        page.page,
       ],
-      {
-        pages,
-        pageParams: pages.map((entry) => entry.page),
-      },
+      page,
     )
   try {
     return renderToStaticMarkup(
@@ -79,24 +77,26 @@ test('job history starts with an accessible loading row inside a bounded scroll 
   assert.doesNotMatch(html, /Previous|>Next</)
 })
 
-test('job history appends loaded pages instead of replacing the current page', () => {
+test('job history reserves room for unloaded pages and renders only its viewport', () => {
   const html = renderHistory([
     page(1, 75, 'First provider'),
     page(2, 75, 'Second provider'),
   ])
   assert.match(html, /75 jobs/)
   assert.match(html, /href="\/jobs\?jobId=job-1"/)
-  assert.match(html, /href="\/jobs\?jobId=job-2"/)
-  assert.match(html, /First provider/)
-  assert.match(html, /Second provider/)
-  assert.match(html, /Load more jobs/)
-  assert.doesNotMatch(html, /Previous|>Next<|All .* jobs loaded/)
+  assert.match(html, /virtual-browse-placeholder/)
+  assert.match(html, /style="height:\d+px;padding:0;border:0"/)
+  assert.doesNotMatch(html, /Second provider|Load more jobs|Previous|>Next</)
 })
 
-test('completed history has an explicit end state and no paging controls', () => {
+test('completed history renders its rows without paging controls', () => {
   const html = renderHistory([page(1, 1, 'Example')])
-  assert.match(html, /All 1 jobs loaded/)
-  assert.doesNotMatch(html, /Load more jobs|Previous|>Next</)
+  assert.match(html, /1 jobs/)
+  assert.match(html, />Example<\/a>/)
+  assert.doesNotMatch(
+    html,
+    /virtual-browse-placeholder|Load more jobs|Previous|>Next</,
+  )
 })
 
 test('retired Google jobs show a readable legacy label without changing their provider ID', () => {
@@ -111,7 +111,7 @@ test('retired Google jobs show a readable legacy label without changing their pr
   assert.deepEqual(googlePage, original)
 })
 
-test('overlapping live-history pages keep each job once and preserve the first result', () => {
+test('an offscreen cached history page does not append duplicate job rows', () => {
   const first = page(1, 50, 'First result')
   const second = page(2, 50, 'Second result')
   const repeated = first.items[0]

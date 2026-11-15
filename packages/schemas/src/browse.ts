@@ -56,6 +56,19 @@ export const BrowseFacetQuerySchema = z.object({
   limitPerField: z.coerce.number().int().min(1).max(50).default(25),
 })
 export type BrowseFacetQuery = z.infer<typeof BrowseFacetQuerySchema>
+
+export const BrowsePageSliceSchema = <T extends z.ZodTypeAny>(itemSchema: T) =>
+  z.object({
+    items: z.array(itemSchema),
+    page: z.number().int().positive(),
+    size: z.number().int().positive(),
+    hasMore: z.boolean(),
+  })
+
+export const BrowseCountSchema = z.object({
+  totalCount: z.number().int().nonnegative(),
+})
+
 export const BrowseValueSchema = z.union([
   z.string(),
   z.number(),

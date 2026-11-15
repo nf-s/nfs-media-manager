@@ -209,8 +209,14 @@ test('artist album rows append to the detail stack and show playback', () => {
     cache: [
       [['artist', artist.id], artist],
       [
-        ['artist', artist.id, 'albums', 'size=50&sortBy=title&direction=asc'],
-        { pages: [page(album)], pageParams: [1] },
+        [
+          'artist',
+          artist.id,
+          'albums',
+          'size=50&sortBy=title&direction=asc',
+          1,
+        ],
+        page(album),
       ],
     ],
     children: (
@@ -246,17 +252,16 @@ test('legacy artist History links reopen the provider in Sources and list summar
     cache: [
       [['artist', artist.id], artist],
       [
-        ['history', artist.id, 'artist', 'spotify', 'snapshots'],
-        {
-          pages: [{ ...page(oldSnapshot), pageCount: 2, totalCount: 21 }],
-          pageParams: [1],
-        },
+        ['history', artist.id, 'artist', 'spotify', 'snapshots', 1],
+        { ...page(oldSnapshot), size: 20, pageCount: 2, totalCount: 21 },
       ],
     ],
   })
   assert.match(html, /aria-label="Spotify history" aria-expanded="true"/)
   assert.match(html, /View snapshot/)
-  assert.match(html, /Load more snapshots/)
+  assert.match(html, /aria-rowcount="22"/)
+  assert.match(html, /virtual-browse-placeholder/)
+  assert.doesNotMatch(html, /Load more snapshots/)
   assert.doesNotMatch(html, /Stored response/)
   assert.equal(
     destination(html, 'View job').searchParams.get('jobId'),
@@ -309,8 +314,9 @@ test('person details open films and pass the selected credit role to Browse', ()
           person.id,
           'films',
           'size=50&sortBy=title&direction=asc&role=director',
+          1,
         ],
-        { pages: [page(film)], pageParams: [1] },
+        page(film),
       ],
     ],
   })
@@ -411,8 +417,9 @@ test('channel details show saved podcast episodes and scope Browse to the exact 
           id,
           'items',
           'size=50&sortBy=publishedAt&direction=desc',
+          1,
         ],
-        { pages: [data.items], pageParams: [1] },
+        data.items,
       ],
     ],
   })

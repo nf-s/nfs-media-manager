@@ -2,9 +2,53 @@ import type { QueryClient } from '@tanstack/react-query'
 import {
   ManualMediaAddInputSchema,
   ManualMediaAddResultSchema,
+  ManualMediaSearchInputSchema,
+  ManualMediaSearchResultSchema,
   type ManualMediaSearchItem,
+  type ManualMediaSearchResult,
 } from '@repo/schemas/manual-add'
 import { fetchApiData } from './api'
+
+/** Stored snapshots stay offline; explicit searches may load another page. */
+export async function loadManualSearchPage({
+  apiBaseUrl,
+  mediaType,
+  query,
+  page,
+  stored,
+  liveSearch,
+  signal,
+}: {
+  apiBaseUrl: string
+  mediaType: 'album' | 'film'
+  query: string
+  page: number
+  stored: ManualMediaSearchResult | undefined
+  liveSearch: boolean
+  signal: AbortSignal
+}) {
+  if (!liveSearch || (stored && stored.totalCount === undefined))
+    return { items: stored?.items ?? [], totalCount: stored?.items.length ?? 0 }
+  const result =
+    stored?.page === page
+      ? stored
+      : await fetchApiData(
+          apiBaseUrl,
+          '/api/v1/manual-add/search',
+          ManualMediaSearchResultSchema,
+          {
+            method: 'POST',
+            signal,
+            body: JSON.stringify(
+              ManualMediaSearchInputSchema.parse({ mediaType, q: query, page }),
+            ),
+          },
+        )
+  return {
+    items: result.items,
+    totalCount: result.totalCount ?? result.items.length,
+  }
+}
 
 /** Adds a selected provider result, or reuses its existing library item. */
 export async function addManualMediaItem(

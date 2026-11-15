@@ -1,4 +1,5 @@
 import { and, sql, type SQL } from 'drizzle-orm'
+import { PgDialect } from 'drizzle-orm/pg-core'
 import { z } from 'zod'
 import {
   BrowseFacetQuerySchema,
@@ -119,6 +120,11 @@ function searchQuery(text: string) {
 
 const LexemeRowsSchema = z.array(z.object({ nodes: z.coerce.number() }))
 const TotalRowsSchema = z.array(z.object({ total: z.coerce.number() }))
+const countCache = createDatabaseReadCache<number>({
+  maxEntries: 128,
+  maxValueBytes: 64,
+})
+const dialect = new PgDialect()
 
 const ItemRowsSchema = z.array(
   z.object({
@@ -138,7 +144,7 @@ const ItemRowsSchema = z.array(
     comment_count: CountSchema,
     live: z.enum(['none', 'live', 'upcoming']).catch('none'),
     artwork_url: z.string().nullable(),
-    total: z.coerce.number(),
+    total: z.coerce.number().optional(),
   }),
 )
 type SubscriptionItemRow = z.infer<typeof ItemRowsSchema>[number]
@@ -162,7 +168,7 @@ type SubscriptionItemSearch = {
  * such as "The Who", or of punctuation has no lexemes to match; it falls back
  * to the literal text in the item or source title.
  */
-async function searchSubscriptionItemRows(search: SubscriptionItemSearch) {
+async function subscriptionSearchQueries(search: SubscriptionItemSearch) {
   const text = search.text || null
   const match = text === null ? null : searchQuery(text)
   const literal =
@@ -192,36 +198,39 @@ async function searchSubscriptionItemRows(search: SubscriptionItemSearch) {
     ],
     sql` and `,
   )
+  const members = sql`from subscription_item i
+    join subscription_source s on s.id = i.source_id
+    where ${where}`
   const offset = (search.page - 1) * search.size
-  const rows = ItemRowsSchema.parse(
-    (
-      await db.execute(sql`
+  async function readPage(size: number, withCount = false) {
+    return ItemRowsSchema.parse(
+      (
+        await db.execute(sql`
         select i.id, i.type, i.source_id, s.title as source_title,
           s.thumbnail_url as source_thumbnail_url, i.title, i.description,
           i.tags, extract(epoch from i.published_at)::float8 as published,
           i.published_precision, i.duration_sec, i.view_count, i.like_count,
-          i.comment_count, i.live, i.artwork_url,
-          count(*) over () as total
-        from subscription_item i
-        join subscription_source s on s.id = i.source_id
-        where ${where}
+          i.comment_count, i.live, i.artwork_url
+          ${withCount ? sql`, count(*) over () as total` : sql``}
+        ${members}
         order by ${search.order(ranked)}, i.id
-        limit ${search.size} offset ${offset}`)
-    ).rows,
-  )
+        limit ${size} offset ${offset}`)
+      ).rows,
+    )
+  }
+  async function readCount() {
+    const result = await db.execute(sql`select count(*) as total ${members}`)
+    return TotalRowsSchema.parse(result.rows)[0]?.total ?? 0
+  }
+  return { members, offset, readPage, readCount }
+}
+
+async function searchSubscriptionItemRows(search: SubscriptionItemSearch) {
+  const { offset, readPage, readCount } =
+    await subscriptionSearchQueries(search)
+  const rows = await readPage(search.size, true)
   // A page past the end has no rows to carry the window count.
-  const totalCount =
-    rows[0]?.total ??
-    (offset === 0
-      ? 0
-      : (TotalRowsSchema.parse(
-          (
-            await db.execute(sql`
-              select count(*) as total from subscription_item i
-              join subscription_source s on s.id = i.source_id
-              where ${where}`)
-          ).rows,
-        )[0]?.total ?? 0))
+  const totalCount = rows[0]?.total ?? (offset === 0 ? 0 : await readCount())
   return { rows, totalCount }
 }
 
@@ -330,10 +339,10 @@ function sortOrder(
  * other libraries' filter semantics: required and excluded filters, one any-of
  * group across fields, and inclusive ranges with an optional missing value.
  */
-export async function listSubscriptionItems(
+function subscriptionBrowseSearch(
   query: SubscriptionItemQuery,
   sourceId = query.sourceId,
-): Promise<SubscriptionItemPage> {
+): SubscriptionItemSearch {
   const conditions =
     sourceId === undefined ? [] : [sql`i.source_id = ${sourceId}`]
   const any: SQL[] = []
@@ -365,14 +374,23 @@ export async function listSubscriptionItems(
     )
   }
   const sortBy = query.sortBy ?? (query.q ? 'relevance' : 'publishedAt')
-  const { rows, totalCount } = await searchSubscriptionItemRows({
+  return {
     text: query.q,
     fields: query.fields,
     conditions,
     order: (ranked) => sortOrder(sortBy, query.direction, ranked),
     page: query.page,
     size: query.size,
-  })
+  }
+}
+
+export async function listSubscriptionItems(
+  query: SubscriptionItemQuery,
+  sourceId = query.sourceId,
+): Promise<SubscriptionItemPage> {
+  const { rows, totalCount } = await searchSubscriptionItemRows(
+    subscriptionBrowseSearch(query, sourceId),
+  )
   return SubscriptionItemPageSchema.parse({
     items: rows.map(subscriptionItem),
     totalCount,
@@ -380,6 +398,32 @@ export async function listSubscriptionItems(
     size: query.size,
     pageCount: Math.ceil(totalCount / query.size),
   })
+}
+
+export async function listSubscriptionBrowsePage(query: SubscriptionItemQuery) {
+  const { readPage } = await subscriptionSearchQueries(
+    subscriptionBrowseSearch(query),
+  )
+  const rows = await readPage(query.size + 1)
+  return {
+    items: rows.slice(0, query.size).map(subscriptionItem),
+    page: query.page,
+    size: query.size,
+    hasMore: rows.length > query.size,
+  }
+}
+
+export async function countSubscriptionBrowseItems(
+  query: SubscriptionItemQuery,
+) {
+  const { members, readCount } = await subscriptionSearchQueries(
+    subscriptionBrowseSearch(query),
+  )
+  const totalCount = await countCache(
+    JSON.stringify(dialect.sqlToQuery(members)),
+    readCount,
+  )
+  return { totalCount }
 }
 
 /** One stored item of a subscribed source, for a link to a row outside the loaded pages. */

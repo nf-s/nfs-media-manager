@@ -50,6 +50,31 @@ test('table offsets include the sticky header, and rows fill the entire extent',
   )
 })
 
+test('secondary tables use their actual page size and retain expanded row height offscreen', () => {
+  const extraRowHeights = new Map([
+    [5, 200],
+    [60, 100],
+  ])
+  const window = browseWindow({
+    total: 153,
+    columns: 1,
+    rowHeight: 32,
+    headerHeight: 24,
+    scrollTop: 24 + 200 + 60 * 32,
+    viewportHeight: 96,
+    pageSize: 25,
+    extraRowHeights,
+  })
+  assert.equal(window.start, 56)
+  assert.deepEqual(window.pages, [3])
+  assert.equal(window.padTop, 56 * 32 + 200)
+  assert.equal(window.height, 153 * 32 + 300)
+  assert.equal(
+    window.padTop + (window.end - window.start) * 32 + 100 + window.padBottom,
+    window.height,
+  )
+})
+
 test('responsive columns recalculate the total height and bound visible slots', () => {
   for (const columns of [2, 5, 10]) {
     const window = browseWindow({ ...geometry, columns, scrollTop: 9000 })

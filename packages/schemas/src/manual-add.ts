@@ -22,6 +22,7 @@ export const ManualMediaSearchResultSchema = z.object({
   items: z.array(ManualMediaSearchItemSchema).max(20),
   page: z.number().int().min(1).max(50),
   hasMore: z.boolean(),
+  totalCount: z.number().int().nonnegative().optional(),
 })
 
 export const ManualMediaAddInputSchema = z.discriminatedUnion('mediaType', [

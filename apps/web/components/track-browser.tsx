@@ -420,21 +420,25 @@ export default function TrackBrowser() {
     index: number,
     className?: string,
   ) {
+    const source = (length: number) =>
+      createBrowsePlaybackSource({
+        apiBaseUrl,
+        collection: 'tracks',
+        params,
+        href: `/tracks?${searchParams.size ? searchParams : params}`,
+        label: 'Tracks',
+        total: length,
+        startIndex: index,
+        initialItem: item,
+      })
     return (
       <div className={className}>
         <LibraryTrackPlayButton
           track={item}
           source={() =>
-            createBrowsePlaybackSource({
-              apiBaseUrl,
-              collection: 'tracks',
-              params,
-              href: `/tracks?${searchParams.size ? searchParams : params}`,
-              label: 'Tracks',
-              total,
-              startIndex: index,
-              initialItem: item,
-            })
+            query.isCounting
+              ? query.resolveTotal(index).then(source)
+              : source(total)
           }
         />
         <LibraryTrackQueueButton track={item} />
@@ -700,9 +704,21 @@ export default function TrackBrowser() {
               onChange={(next) => setParams({ view: next })}
             />
             <span className="browse-count" aria-live="polite">
-              {query.isPending
-                ? 'Loading...'
-                : `${total.toLocaleString()} ${total === 1 ? 'track' : 'tracks'}`}
+              {query.countError ? (
+                <button
+                  type="button"
+                  className="underline"
+                  onClick={query.retryCount}
+                >
+                  Retry count
+                </button>
+              ) : !query.isCounting ? (
+                `${total.toLocaleString()} ${total === 1 ? 'track' : 'tracks'}`
+              ) : query.isPending ? (
+                'Loading...'
+              ) : (
+                'Counting...'
+              )}
             </span>
           </div>
         </div>
@@ -740,7 +756,7 @@ export default function TrackBrowser() {
           <span className="sr-only" role="status">
             {query.isFetching ? 'Loading items' : ''}
           </span>
-          {!query.isPending && !query.isError && total === 0 && (
+          {query.hasTotal && !query.isError && total === 0 && (
             <div className="browse-empty">
               No matches. <button onClick={clearFilters}>Clear filters</button>
             </div>
@@ -867,7 +883,7 @@ export default function TrackBrowser() {
           ) : (
             <table
               className="browse-table"
-              aria-rowcount={total + 1}
+              aria-rowcount={query.hasTotal ? total + 1 : undefined}
               style={{
                 width: columns.reduce(
                   (sum, field) => sum + widthFor(field),

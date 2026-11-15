@@ -2,7 +2,7 @@
 
 import { useDeferredValue, useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { useInfiniteQuery } from '@tanstack/react-query'
+import { useVirtualTable } from '@/hooks/useVirtualTable'
 import { Settings2 } from 'lucide-react'
 import { TagPageSchema, type TagSortKey } from '@repo/schemas/tags'
 import { Button } from '@repo/ui/components/ui/button'
@@ -16,6 +16,7 @@ import TagActions from '@/components/tag-actions'
 import { useMediaScope } from '@/components/media-scope'
 import {
   SecondaryCell,
+  SecondaryVirtualRows,
   SecondaryTableFrame,
   SecondaryTableFooter,
   SecondaryTableToolbar,
@@ -55,59 +56,27 @@ export default function TagsPageClient({
     message: string
     interrupted: boolean
   } | null>(null)
-  const scroller = useRef<HTMLDivElement>(null)
-  const sentinel = useRef<HTMLDivElement>(null)
   const selectAll = useRef<HTMLInputElement>(null)
   const shift = useRef(false)
-  const tags = useInfiniteQuery({
-    queryKey: ['tags', 'infinite', mediaType, hidden, query, sortBy, direction],
-    initialPageParam: 1,
-    queryFn: ({ pageParam, signal }) =>
+  const tags = useVirtualTable({
+    queryKey: ['tags', 'virtual', mediaType, hidden, query, sortBy, direction],
+    loadPage: (page, size, signal) =>
       fetchApiData(
         apiBaseUrl,
-        `/api/v1/tags?${new URLSearchParams({ mediaType, q: query, sortBy, direction, visibility: hidden ? 'hidden' : 'visible', page: String(pageParam), size: '100' })}`,
+        `/api/v1/tags?${new URLSearchParams({ mediaType, q: query, sortBy, direction, visibility: hidden ? 'hidden' : 'visible', page: String(page), size: String(size) })}`,
         TagPageSchema,
         { signal },
       ),
-    getNextPageParam: (page) =>
-      page.page < page.pageCount ? page.page + 1 : undefined,
   })
-  const items = [
-    ...new Map(
-      tags.data?.pages
-        .flatMap((page) => page.items)
-        .map((tag) => [tag.id, tag]),
-    ).values(),
-  ]
+  const items = tags.loadedSlots.map(({ item }) => item)
   const selectedTags = items.filter((tag) => selected.includes(tag.id))
   const orderedIds = items.map((tag) => tag.id)
   const allSelected =
     items.length > 0 && items.every((tag) => selected.includes(tag.id))
-  const { hasNextPage, isFetching, isError, fetchNextPage } = tags
-  useEffect(() => {
-    if (
-      !sentinel.current ||
-      !scroller.current ||
-      !hasNextPage ||
-      isFetching ||
-      isError
-    )
-      return
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries.some((entry) => entry.isIntersecting))
-          void fetchNextPage({ cancelRefetch: false })
-      },
-      { root: scroller.current, rootMargin: '300px' },
-    )
-    observer.observe(sentinel.current)
-    return () => observer.disconnect()
-  }, [hasNextPage, isFetching, isError, fetchNextPage])
   useEffect(() => {
     setSelected([])
     setAnchor(null)
     setOutcome(null)
-    scroller.current?.scrollTo({ top: 0 })
   }, [mediaType, hidden, query, sortBy, direction])
   useEffect(() => {
     if (selectAll.current)
@@ -145,17 +114,19 @@ export default function TagsPageClient({
             }}
           />
         }
-        count={`${tags.data?.pages[0]?.totalCount.toLocaleString() ?? '...'} tags`}
+        count={`${tags.hasTotal ? tags.total.toLocaleString() : '...'} tags`}
         columns={columns.controls}
       />
       <SecondaryTableFrame>
         <SecondaryTableScroll
-          ref={scroller}
+          ref={tags.scroller}
+          onScroll={tags.onScroll}
+          aria-busy={tags.isFetching}
           className="tags-scroll"
           role="region"
           aria-label="Tags table"
         >
-          <table className="compact-table w-full">
+          <table className="compact-table w-full secondary-virtual-table">
             <thead>
               <tr>
                 <th scope="col" className="table-selection-cell">
@@ -222,102 +193,106 @@ export default function TagsPageClient({
               </tr>
             </thead>
             <tbody>
-              {items.map((tag) => (
-                <tr
-                  key={tag.id}
-                  data-selected={selected.includes(tag.id) || undefined}
-                >
-                  <td className="table-selection-cell">
-                    <input
-                      type="checkbox"
-                      aria-label={`Select ${tag.name}`}
-                      checked={selected.includes(tag.id)}
-                      disabled={pending}
-                      onClick={(event) => {
-                        shift.current = event.shiftKey
-                      }}
-                      onKeyDown={(event) => {
-                        shift.current = event.shiftKey
-                      }}
-                      onChange={(event) => {
-                        setSelected(
-                          updateJobSelection(
-                            selected,
-                            orderedIds,
-                            tag.id,
-                            anchor,
-                            shift.current,
-                            event.target.checked,
-                          ),
-                        )
-                        setAnchor(tag.id)
-                        shift.current = false
-                      }}
-                    />
-                  </td>
-                  {columns.visible('name') && (
-                    <td>
-                      <SecondaryCell text={tag.name}>
-                        <button
-                          type="button"
-                          className="tag-name"
-                          onClick={() => updateParams('tag', tag.id)}
+              <SecondaryVirtualRows
+                window={tags}
+                colSpan={1 + columns.count}
+                renderRow={(tag) => (
+                  <tr
+                    key={tag.id}
+                    data-selected={selected.includes(tag.id) || undefined}
+                  >
+                    <td className="table-selection-cell">
+                      <input
+                        type="checkbox"
+                        aria-label={`Select ${tag.name}`}
+                        checked={selected.includes(tag.id)}
+                        disabled={pending}
+                        onClick={(event) => {
+                          shift.current = event.shiftKey
+                        }}
+                        onKeyDown={(event) => {
+                          shift.current = event.shiftKey
+                        }}
+                        onChange={(event) => {
+                          setSelected(
+                            updateJobSelection(
+                              selected,
+                              orderedIds,
+                              tag.id,
+                              anchor,
+                              shift.current,
+                              event.target.checked,
+                            ),
+                          )
+                          setAnchor(tag.id)
+                          shift.current = false
+                        }}
+                      />
+                    </td>
+                    {columns.visible('name') && (
+                      <td>
+                        <SecondaryCell text={tag.name}>
+                          <button
+                            type="button"
+                            className="tag-name"
+                            onClick={() => updateParams('tag', tag.id)}
+                          >
+                            {tag.name}
+                          </button>
+                        </SecondaryCell>
+                      </td>
+                    )}
+                    {columns.visible('mediaCount') && (
+                      <td className="numeric">
+                        {tag.mediaCount.toLocaleString()}
+                      </td>
+                    )}
+                    {columns.visible('sourceCount') && (
+                      <td className="numeric">
+                        <span className="inline-flex items-center gap-1">
+                          {tag.sourceCount.toLocaleString()}
+                          <MetadataSourceControl
+                            field="genre"
+                            name={tag.name}
+                            tagId={tag.id}
+                            mediaType={mediaType}
+                            onManage={() => updateParams('tag', tag.id)}
+                          />
+                        </span>
+                      </td>
+                    )}
+                    {columns.visible('mergedNames') && (
+                      <td>
+                        <SecondaryCell
+                          text={tag.mergedNames.join(', ')}
+                          details={
+                            tag.mergedNames.length
+                              ? tag.mergedNames.join(', ')
+                              : undefined
+                          }
+                          label={`Merged names for ${tag.name}`}
                         >
-                          {tag.name}
-                        </button>
-                      </SecondaryCell>
-                    </td>
-                  )}
-                  {columns.visible('mediaCount') && (
-                    <td className="numeric">
-                      {tag.mediaCount.toLocaleString()}
-                    </td>
-                  )}
-                  {columns.visible('sourceCount') && (
-                    <td className="numeric">
-                      <span className="inline-flex items-center gap-1">
-                        {tag.sourceCount.toLocaleString()}
-                        <MetadataSourceControl
-                          field="genre"
-                          name={tag.name}
-                          tagId={tag.id}
-                          mediaType={mediaType}
-                          onManage={() => updateParams('tag', tag.id)}
-                        />
-                      </span>
-                    </td>
-                  )}
-                  {columns.visible('mergedNames') && (
-                    <td>
-                      <SecondaryCell
-                        text={tag.mergedNames.join(', ')}
-                        details={
-                          tag.mergedNames.length
-                            ? tag.mergedNames.join(', ')
-                            : undefined
-                        }
-                        label={`Merged names for ${tag.name}`}
-                      >
-                        {tag.mergedNames.join(', ') || '-'}
-                      </SecondaryCell>
-                    </td>
-                  )}
-                  {columns.visible('actions') && (
-                    <td className="text-right">
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="size-6 p-0"
-                        onClick={() => updateParams('tag', tag.id)}
-                        aria-label={`Manage tag ${tag.name}`}
-                        title={`Manage tag ${tag.name}`}
-                      >
-                        <Settings2 size={14} aria-hidden="true" />
-                      </Button>
-                    </td>
-                  )}
-                </tr>
-              ))}
+                          {tag.mergedNames.join(', ') || '-'}
+                        </SecondaryCell>
+                      </td>
+                    )}
+                    {columns.visible('actions') && (
+                      <td className="text-right">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="size-6 p-0"
+                          onClick={() => updateParams('tag', tag.id)}
+                          aria-label={`Manage tag ${tag.name}`}
+                          title={`Manage tag ${tag.name}`}
+                        >
+                          <Settings2 size={14} aria-hidden="true" />
+                        </Button>
+                      </td>
+                    )}
+                  </tr>
+                )}
+              />
             </tbody>
           </table>
           {tags.isPending && (
@@ -328,32 +303,18 @@ export default function TagsPageClient({
           {tags.isError && (
             <p className="p-3" role="alert">
               Could not load tags.{' '}
-              <button
-                className="underline"
-                onClick={() =>
-                  tags.isFetchNextPageError
-                    ? tags.fetchNextPage()
-                    : tags.refetch()
-                }
-              >
+              <button className="underline" onClick={tags.retry}>
                 Retry
               </button>
             </p>
           )}
-          {tags.data && items.length === 0 && (
+          {tags.hasTotal && tags.total === 0 && (
             <p className="p-3">
               {hidden
                 ? 'No hidden tags match this search.'
                 : 'No matching tags.'}
             </p>
           )}
-          <div ref={sentinel} className="load-more" role="status">
-            {tags.isFetchingNextPage
-              ? 'Loading more tags...'
-              : tags.hasNextPage
-                ? 'Scroll for more tags'
-                : `${items.length.toLocaleString()} tags loaded`}
-          </div>
         </SecondaryTableScroll>
         {(selectedTags.length > 0 || outcome) && (
           <SecondaryTableFooter

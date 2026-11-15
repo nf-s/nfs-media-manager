@@ -1,6 +1,6 @@
 'use client'
 
-import type { ReactNode, Ref } from 'react'
+import type { ReactNode, Ref, UIEventHandler } from 'react'
 import {
   trackSourceLabels,
   trackSpotifyMatchLabels,
@@ -31,6 +31,8 @@ import {
   SecondaryTableHead,
   SecondaryTableScroll,
   SecondaryTableToolbar,
+  SecondaryVirtualRows,
+  type SecondaryVirtualWindow,
   useTableColumns,
   type TableColumn,
 } from './secondary-table'
@@ -244,7 +246,7 @@ function TrackEntryCell({
 
 export function TrackEntriesTable({
   scope,
-  rows,
+  window,
   sortBy,
   direction,
   onSort,
@@ -257,10 +259,10 @@ export function TrackEntriesTable({
   source,
   kindFilter,
   scroller,
-  trailingRows,
+  onScroll,
 }: {
   scope: 'album' | 'playlist'
-  rows: IndexedTrackEntry[]
+  window: SecondaryVirtualWindow<IndexedTrackEntry | null> & { total: number }
   sortBy: TrackEntryColumn
   direction: 'asc' | 'desc'
   onSort: (key: TrackEntryColumn) => void
@@ -273,7 +275,7 @@ export function TrackEntriesTable({
   source?: (row: IndexedTrackEntry) => PlaybackSource
   kindFilter?: { value: EntryKind[]; onChange: (kinds: EntryKind[]) => void }
   scroller?: Ref<HTMLDivElement>
-  trailingRows?: ReactNode
+  onScroll?: UIEventHandler<HTMLDivElement>
 }) {
   const playlist = scope === 'playlist'
   const labels = playlist
@@ -304,15 +306,25 @@ export function TrackEntriesTable({
         count={count}
         columns={columns.controls}
       />
+      {error && (
+        <div role="alert" className="quiet">
+          {error}
+        </div>
+      )}
       <SecondaryTableScroll
         ref={scroller}
-        className="min-h-0 flex-1"
+        onScroll={onScroll}
+        className={playlist ? 'min-h-0 flex-1' : 'max-h-[min(420px,50dvh)]'}
         role="region"
         aria-label={labels.table}
         aria-busy={pending}
         data-inspector-scroll=""
       >
-        <table className="compact-table" aria-label={labels.table}>
+        <table
+          className="compact-table"
+          aria-label={labels.table}
+          aria-rowcount={pending ? undefined : window.total + 1}
+        >
           <TableHeader>
             <TableRow>
               {visible.map(({ key, label }) => (
@@ -341,31 +353,47 @@ export function TrackEntriesTable({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {!rows.length && (
-              <TableState colSpan={columns.count} error={Boolean(error)}>
-                {error ?? (pending ? 'Loading tracks...' : empty)}
-              </TableState>
+            {!window.total && !pending && !error && (
+              <TableState colSpan={columns.count}>{empty}</TableState>
             )}
-            {rows.map((row) => (
-              <TableRow key={row.key} className="group">
-                {visible.map(({ key }) => (
-                  <TableCell
-                    key={key}
-                    className={numeric.includes(key) ? 'numeric' : undefined}
+            <SecondaryVirtualRows
+              window={window}
+              colSpan={columns.count}
+              renderRow={(row, index) =>
+                row ? (
+                  <TableRow
+                    key={row.key}
+                    className="group"
+                    aria-rowindex={index + 2}
                   >
-                    <TrackEntryCell
-                      column={key}
-                      entry={row.entry}
-                      source={source ? () => source(row) : undefined}
-                      playInTitle={!columns.visible('position')}
+                    {visible.map(({ key }) => (
+                      <TableCell
+                        key={key}
+                        className={
+                          numeric.includes(key) ? 'numeric' : undefined
+                        }
+                      >
+                        <TrackEntryCell
+                          column={key}
+                          entry={row.entry}
+                          source={source ? () => source(row) : undefined}
+                          playInTitle={!columns.visible('position')}
+                        />
+                      </TableCell>
+                    ))}
+                  </TableRow>
+                ) : (
+                  <tr aria-hidden="true">
+                    <td
+                      colSpan={columns.count}
+                      style={{ height: window.rowHeight, padding: 0 }}
                     />
-                  </TableCell>
-                ))}
-              </TableRow>
-            ))}
+                  </tr>
+                )
+              }
+            />
           </TableBody>
         </table>
-        {trailingRows}
       </SecondaryTableScroll>
     </>
   )

@@ -6,6 +6,8 @@ const mocks = vi.hoisted(() => ({
   merge: vi.fn(),
   addTrack: vi.fn(),
   additions: vi.fn(),
+  browsePage: vi.fn(),
+  browseCount: vi.fn(),
 }))
 vi.mock('@/env', () => ({
   env: {
@@ -18,10 +20,14 @@ vi.mock('@/lib/db', () => ({ db: {} }))
 vi.mock('@/lib/auth', () => ({ auth: { api: { getSession: mocks.session } } }))
 vi.mock('@/services/tracks', () => ({
   getTrackDetail: vi.fn(),
+  listTrackBrowsePage: mocks.browsePage,
   listTrackFilterOptions: vi.fn(),
   listTracks: vi.fn(),
 }))
-vi.mock('@/services/browse', () => ({ listBrowseFields: vi.fn() }))
+vi.mock('@/services/browse', () => ({
+  listBrowseFields: vi.fn(),
+  queryBrowseCount: mocks.browseCount,
+}))
 vi.mock('@/services/track-merges', () => ({ mergeLastfmTrack: mocks.merge }))
 vi.mock('@/services/spotify-track-playlist-additions', () => ({
   queueSpotifyTrackPlaylistAddition: mocks.addTrack,
@@ -65,6 +71,47 @@ describe('tracks API', () => {
     })
   })
   afterEach(() => vi.unstubAllGlobals())
+
+  it('authorizes and validates separate browse page and count requests', async () => {
+    for (const path of ['/browse-page', '/browse-count']) {
+      mocks.session.mockResolvedValueOnce(null)
+      expect((await app.request(path)).status).toBe(401)
+      expect((await app.request(`${path}?filters=invalid`)).status).toBe(422)
+    }
+    expect(mocks.browsePage).not.toHaveBeenCalled()
+    expect(mocks.browseCount).not.toHaveBeenCalled()
+
+    const page = { items: [], page: 3, size: 2, hasMore: false }
+    const query = '?page=3&size=2&limitResults=4&q=fixture'
+    mocks.browsePage.mockResolvedValue(page)
+    const response = await app.request(`/browse-page${query}`)
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ data: page })
+    expect(mocks.browsePage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        page: 3,
+        size: 2,
+        limitResults: 4,
+        q: 'fixture',
+      }),
+    )
+    expect(mocks.browseCount).not.toHaveBeenCalled()
+
+    mocks.browseCount.mockResolvedValueOnce({ totalCount: 4 })
+    const count = await app.request(`/browse-count${query}`)
+    expect(count.status).toBe(200)
+    expect(await count.json()).toMatchObject({ data: { totalCount: 4 } })
+    expect(mocks.browseCount).toHaveBeenCalledWith(
+      'track',
+      expect.objectContaining({ limitResults: 4, q: 'fixture' }),
+    )
+
+    mocks.browseCount.mockRejectedValueOnce(
+      new ServerError({ statusCode: 503, message: 'Count unavailable' }),
+    )
+    expect((await app.request(`/browse-count${query}`)).status).toBe(503)
+    expect((await app.request(`/browse-page${query}`)).status).toBe(200)
+  })
 
   it('requires owner authentication before merging', async () => {
     mocks.session.mockResolvedValue(null)

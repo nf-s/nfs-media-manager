@@ -5,13 +5,7 @@ import { DetailLink } from './detail-link'
 import { LibraryTrackInlinePlayButtons } from './play-controls'
 import { useEffect, useState } from 'react'
 import { Link2 } from 'lucide-react'
-import {
-  keepPreviousData,
-  useInfiniteQuery,
-  useMutation,
-  useQuery,
-  useQueryClient,
-} from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { BrowseFilter } from '@repo/schemas/browse'
 import { PaginatedDataSchema } from '@repo/schemas/common'
 import {
@@ -30,7 +24,7 @@ import {
   TableRow,
   TableState,
 } from '@repo/ui/components/ui/table'
-import { useInfiniteTableScroll } from '@/hooks/useInfiniteTableScroll'
+import { useVirtualTable } from '@/hooks/useVirtualTable'
 import { fetchApiData } from '@/utils/api'
 import { tracksHref } from '@/utils/track-browse'
 import { trackServiceLinks } from '@/utils/track-links'
@@ -48,6 +42,7 @@ import {
   SecondaryTableHead,
   SecondaryTableScroll,
   SecondaryTableToolbar,
+  SecondaryVirtualRows,
   useTableColumns,
   type TableColumn,
 } from './secondary-table'
@@ -141,7 +136,7 @@ export function LastfmTrackMatchList() {
     const timer = window.setTimeout(() => setQuery(draft.trim()), 250)
     return () => window.clearTimeout(timer)
   }, [draft])
-  const tracks = useInfiniteQuery({
+  const tracks = useVirtualTable({
     queryKey: [
       'tracks',
       'lastfm-matching',
@@ -150,25 +145,16 @@ export function LastfmTrackMatchList() {
       sortBy,
       direction,
     ],
-    initialPageParam: 1,
-    placeholderData: keepPreviousData,
-    queryFn: ({ pageParam, signal }) =>
+    pageSize: 100,
+    loadPage: (page, _size, signal) =>
       loadLastfmTracksToMatch(
         apiBaseUrl,
-        { q: query, statuses, sortBy, direction, page: pageParam },
+        { q: query, statuses, sortBy, direction, page },
         signal,
       ),
-    getNextPageParam: (last) =>
-      last.page < last.pageCount ? last.page + 1 : undefined,
   })
-  const { scroller, sentinel } = useInfiniteTableScroll({
-    enabled: tracks.hasNextPage && !tracks.isFetching && !tracks.isError,
-    fetchNextPage: tracks.fetchNextPage,
-    resetKey: JSON.stringify([query, statusesKey, sortBy, direction]),
-  })
-  const items = tracks.data?.pages.flatMap((page) => page.items) ?? []
-  const total = tracks.data?.pages[0]?.totalCount ?? 0
-  const changing = tracks.isPlaceholderData || draft.trim() !== query
+  const total = tracks.total
+  const changing = tracks.isPending || draft.trim() !== query
   function sort(key: MatchSort) {
     setDirection(sortBy === key && direction === 'desc' ? 'asc' : 'desc')
     setSortBy(key)
@@ -202,10 +188,10 @@ export function LastfmTrackMatchList() {
           </DetailLink>
         </p>
       )}
-      {tracks.isError && items.length > 0 && !tracks.isFetchNextPageError && (
+      {tracks.isError && tracks.total > 0 && (
         <p role="alert">
           Could not load Last.fm tracks.{' '}
-          <button type="button" onClick={() => tracks.refetch()}>
+          <button type="button" onClick={tracks.retry}>
             Retry
           </button>
         </p>
@@ -218,7 +204,8 @@ export function LastfmTrackMatchList() {
         />
       )}
       <SecondaryTableScroll
-        ref={scroller}
+        ref={tracks.scroller}
+        onScroll={tracks.onScroll}
         className="table-scroll-bounded"
         role="region"
         aria-label="Last.fm tracks to match"
@@ -253,7 +240,7 @@ export function LastfmTrackMatchList() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {!items.length && (
+            {!tracks.total && (
               <TableState colSpan={columns.count} error={tracks.isError}>
                 {tracks.isPending
                   ? 'Loading Last.fm tracks...'
@@ -264,106 +251,90 @@ export function LastfmTrackMatchList() {
                   <button
                     type="button"
                     className="ml-1 underline"
-                    onClick={() => tracks.refetch()}
+                    onClick={tracks.retry}
                   >
                     Retry
                   </button>
                 )}
               </TableState>
             )}
-            {items.map((track) => (
-              <TableRow
-                key={track.id}
-                data-selected={selected?.id === track.id || undefined}
-              >
-                <TableCell>
-                  <div className="secondary-cell-actions">
-                    <LibraryTrackInlinePlayButtons track={track} />
-                    <SecondaryCell text={track.title}>
-                      <DetailLink kind="track" id={track.id}>
-                        {track.title}
-                      </DetailLink>
-                    </SecondaryCell>
-                    <ServiceIconLinks links={trackServiceLinks(track)} />
-                  </div>
-                </TableCell>
-                {columns.visible('artist') && (
-                  <TableCell>
-                    <SecondaryCell text={track.artists.join(', ')}>
-                      {track.artists.join(', ') || '-'}
-                    </SecondaryCell>
-                  </TableCell>
+            {(!tracks.isError || tracks.hasTotal) && (
+              <SecondaryVirtualRows
+                window={tracks}
+                colSpan={columns.count}
+                renderRow={(track) => (
+                  <TableRow
+                    key={track.id}
+                    data-selected={selected?.id === track.id || undefined}
+                  >
+                    <TableCell>
+                      <div className="secondary-cell-actions">
+                        <LibraryTrackInlinePlayButtons track={track} />
+                        <SecondaryCell text={track.title}>
+                          <DetailLink kind="track" id={track.id}>
+                            {track.title}
+                          </DetailLink>
+                        </SecondaryCell>
+                        <ServiceIconLinks links={trackServiceLinks(track)} />
+                      </div>
+                    </TableCell>
+                    {columns.visible('artist') && (
+                      <TableCell>
+                        <SecondaryCell text={track.artists.join(', ')}>
+                          {track.artists.join(', ') || '-'}
+                        </SecondaryCell>
+                      </TableCell>
+                    )}
+                    {columns.visible('album') && (
+                      <TableCell>
+                        <SecondaryCell text={track.albumName ?? '-'}>
+                          {track.albumName ?? '-'}
+                        </SecondaryCell>
+                      </TableCell>
+                    )}
+                    {columns.visible('scrobbles') && (
+                      <TableCell className="tabular-nums">
+                        {track.scrobbles.toLocaleString()}
+                      </TableCell>
+                    )}
+                    {columns.visible('spotifyMatch') && (
+                      <TableCell>
+                        <SecondaryCell
+                          text={trackSpotifyMatchLabels[track.spotifyMatch]}
+                        >
+                          {trackSpotifyMatchLabels[track.spotifyMatch]}
+                        </SecondaryCell>
+                      </TableCell>
+                    )}
+                    <TableCell>
+                      {canMergeLastfmTrack(track) ? (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="secondary-cell-action"
+                          aria-label={`Match ${track.title}`}
+                          title={`Match ${track.title}`}
+                          aria-haspopup="dialog"
+                          disabled={changing || tracks.isError}
+                          onClick={() => {
+                            setMatchedId(null)
+                            setSelected(track)
+                          }}
+                        >
+                          <Link2 size={14} aria-hidden="true" />
+                        </Button>
+                      ) : (
+                        <DetailLink kind="track" id={track.id}>
+                          Open track
+                        </DetailLink>
+                      )}
+                    </TableCell>
+                  </TableRow>
                 )}
-                {columns.visible('album') && (
-                  <TableCell>
-                    <SecondaryCell text={track.albumName ?? '-'}>
-                      {track.albumName ?? '-'}
-                    </SecondaryCell>
-                  </TableCell>
-                )}
-                {columns.visible('scrobbles') && (
-                  <TableCell className="tabular-nums">
-                    {track.scrobbles.toLocaleString()}
-                  </TableCell>
-                )}
-                {columns.visible('spotifyMatch') && (
-                  <TableCell>
-                    <SecondaryCell
-                      text={trackSpotifyMatchLabels[track.spotifyMatch]}
-                    >
-                      {trackSpotifyMatchLabels[track.spotifyMatch]}
-                    </SecondaryCell>
-                  </TableCell>
-                )}
-                <TableCell>
-                  {canMergeLastfmTrack(track) ? (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="secondary-cell-action"
-                      aria-label={`Match ${track.title}`}
-                      title={`Match ${track.title}`}
-                      aria-haspopup="dialog"
-                      disabled={changing || tracks.isError}
-                      onClick={() => {
-                        setMatchedId(null)
-                        setSelected(track)
-                      }}
-                    >
-                      <Link2 size={14} aria-hidden="true" />
-                    </Button>
-                  ) : (
-                    <DetailLink kind="track" id={track.id}>
-                      Open track
-                    </DetailLink>
-                  )}
-                </TableCell>
-              </TableRow>
-            ))}
+              />
+            )}
           </TableBody>
         </table>
-        <div ref={sentinel} className="py-2 text-center">
-          {tracks.isFetchingNextPage && (
-            <p role="status" className="muted">
-              Loading more tracks...
-            </p>
-          )}
-          {tracks.isFetchNextPageError && (
-            <p role="alert">Could not load more tracks.</p>
-          )}
-          {tracks.hasNextPage && !tracks.isFetchingNextPage && (
-            <Button
-              type="button"
-              variant="ghost"
-              disabled={tracks.isFetching}
-              onClick={() => tracks.fetchNextPage({ cancelRefetch: false })}
-            >
-              {tracks.isFetchNextPageError
-                ? 'Retry loading tracks'
-                : 'Load more tracks'}
-            </Button>
-          )}
-        </div>
       </SecondaryTableScroll>
     </>
   )

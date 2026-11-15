@@ -1,8 +1,10 @@
 'use client'
 
+import { useMemo } from 'react'
 import type { AlbumDetail } from '@repo/schemas/media'
 import type { PlaylistEntry } from '@repo/schemas/tracks'
 import { sortTableRows } from '@/utils/secondary-table'
+import { useVirtualRows } from '@/hooks/useVirtualTable'
 import {
   albumTrackView,
   createAlbumPlaybackSource,
@@ -21,22 +23,37 @@ export default function AlbumTracksTable({ album }: { album: AlbumDetail }) {
   const view = albumTrackView(detail.params.get('albumTrackView'), album.id)
   const text = view.q.trim().toLocaleLowerCase()
   type TrackEntry = Extract<PlaylistEntry, { kind: 'track' }>
-  const entries = album.tracks.map<TrackEntry>(({ position, track }) => ({
-    kind: 'track',
-    position,
-    track,
-    addedAt: track.dateAdded,
-  }))
-  const ordered = sortTableRows<TrackEntry, TrackEntryColumn>(
-    text ? entries.filter((entry) => trackEntryMatches(entry, text)) : entries,
-    { key: view.sortBy, direction: view.direction },
-    trackEntryValue,
+  const entries = useMemo(
+    () =>
+      album.tracks.map<TrackEntry>(({ position, track }) => ({
+        kind: 'track',
+        position,
+        track,
+        addedAt: track.dateAdded,
+      })),
+    [album.tracks],
   )
-  const rows = ordered.map((entry, index) => ({
-    entry,
-    index,
-    key: trackEntryKey(entry),
-  }))
+  const ordered = useMemo(
+    () =>
+      sortTableRows<TrackEntry, TrackEntryColumn>(
+        text
+          ? entries.filter((entry) => trackEntryMatches(entry, text))
+          : entries,
+        { key: view.sortBy, direction: view.direction },
+        trackEntryValue,
+      ),
+    [entries, text, view.sortBy, view.direction],
+  )
+  const rows = useMemo(
+    () =>
+      ordered.map((entry, index) => ({
+        entry,
+        index,
+        key: trackEntryKey(entry),
+      })),
+    [ordered],
+  )
+  const window = useVirtualRows({ rows, identity: JSON.stringify(view) })
 
   function viewParams(next: Partial<typeof view>) {
     const params = new URLSearchParams(detail.params)
@@ -57,7 +74,9 @@ export default function AlbumTracksTable({ album }: { album: AlbumDetail }) {
   return (
     <TrackEntriesTable
       scope="album"
-      rows={rows}
+      window={window}
+      scroller={window.scroller}
+      onScroll={window.onScroll}
       search={view.q}
       onSearch={(q) => detail.replace(viewParams({ q }))}
       sortBy={view.sortBy}

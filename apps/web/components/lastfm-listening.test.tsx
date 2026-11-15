@@ -169,8 +169,9 @@ function syncPage(status: unknown, search?: string, reason = '') {
           '',
           'scrobbles',
           'desc',
+          1,
         ],
-        { pages: [report], pageParams: [1] },
+        report,
       ],
     ],
     <ImportsWorkspace>

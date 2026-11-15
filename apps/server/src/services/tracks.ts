@@ -32,7 +32,7 @@ import {
   trackSpotifyMatchExpression,
 } from './track-values'
 import { playlist } from '@/schemas/db'
-import { listBrowseFacets, queryBrowseIds } from './browse'
+import { listBrowseFacets, queryBrowseIds, queryBrowsePageIds } from './browse'
 import { refreshTrackAddedDates } from './spotify-playlists'
 import {
   lockLibraryTrackWrites,
@@ -163,6 +163,16 @@ export async function loadTracks(ids: string[]): Promise<TrackListItem[]> {
 export async function listTracks(query: TrackQuery) {
   const { ids, totalCount, pageCount } = await queryBrowseIds('track', query)
   return { items: await loadTracks(ids), totalCount, pageCount }
+}
+
+export async function listTrackBrowsePage(query: TrackQuery) {
+  const { ids, hasMore } = await queryBrowsePageIds('track', query)
+  return {
+    items: await loadTracks(ids),
+    page: query.page,
+    size: query.size,
+    hasMore,
+  }
 }
 
 export const listTrackFilterOptions = (query: Partial<BrowseFacetQuery>) =>

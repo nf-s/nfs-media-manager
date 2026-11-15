@@ -102,6 +102,7 @@ describe('manual provider search and library additions', () => {
     })
     expect(result).toEqual({
       page: 2,
+      totalCount: 31,
       hasMore: true,
       items: [
         {
@@ -135,6 +136,7 @@ describe('manual provider search and library additions', () => {
       Response.json({
         page: 1,
         total_pages: 2,
+        total_results: 25,
         results: [
           {
             id: 701,
@@ -160,6 +162,7 @@ describe('manual provider search and library additions', () => {
       mediaItemId: null,
     })
     expect(result.hasMore).toBe(true)
+    expect(result.totalCount).toBe(25)
     const url = new URL(String(mocks.request.mock.calls[0]?.[0]))
     expect(url.pathname).toBe('/3/search/movie')
     expect(url.searchParams.get('query')).toBe('Example Film')

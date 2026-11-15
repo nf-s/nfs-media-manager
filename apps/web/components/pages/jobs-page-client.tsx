@@ -2,14 +2,18 @@
 
 import Link from 'next/link'
 import { DetailLink } from '../detail-link'
-import { Fragment, useDeferredValue, useEffect, useRef, useState } from 'react'
-import { useSearchParams } from 'next/navigation'
 import {
-  useInfiniteQuery,
-  useMutation,
-  useQuery,
-  useQueryClient,
-} from '@tanstack/react-query'
+  Fragment,
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
+import { useSearchParams } from 'next/navigation'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { z } from 'zod'
 import { ChevronRight } from 'lucide-react'
 import { ProviderSummarySchema } from '@repo/schemas/provider'
@@ -35,6 +39,7 @@ import {
   SecondaryTableScroll,
   SecondaryTableToolbar,
   SecondaryTableHead,
+  SecondaryVirtualRows,
   useTableColumns,
 } from '../secondary-table'
 import { TableState } from '@repo/ui/components/ui/table'
@@ -42,7 +47,7 @@ import { Button } from '@repo/ui/components/ui/button'
 import { Input } from '@repo/ui/components/ui/input'
 import { useConfig } from '@/components/providers'
 import { fetchApiData } from '@/utils/api'
-import { jobPagesPollInterval } from '@/utils/job-cache'
+import { useVirtualTable } from '@/hooks/useVirtualTable'
 import JobBulkActions from '../job-bulk-actions'
 import JobDataViewer from '../job-data-viewer'
 import JsonTree from '../json-tree'
@@ -340,7 +345,6 @@ export function JobsTable({ provider }: { provider?: string }) {
     columns.visible(column.key),
   )
   const selectAll = useRef<HTMLInputElement>(null)
-  const sentinel = useRef<HTMLDivElement>(null)
   const scroller = useRef<HTMLDivElement>(null)
   const [retryConfirmed, setRetryConfirmed] = useState(false)
   const [checkedJobIds, setCheckedJobIds] = useState<string[]>([])
@@ -373,65 +377,78 @@ export function JobsTable({ provider }: { provider?: string }) {
       ? item.subscriptions
       : item.mediaTypes.some((kind) => kind === mediaType),
   )
-  const jobs = useInfiniteQuery({
-    queryKey: [
-      'jobs',
-      'infinite',
-      provider ? null : mediaType,
-      statusesKey,
-      batchId,
-      deferredQuery,
-      providersKey,
-      sortBy,
-      direction,
-    ],
-    initialPageParam: 1,
-    queryFn: ({ pageParam, signal }) =>
-      fetchApiData(
-        apiBaseUrl,
-        `/api/v1/scrape/jobs?${new URLSearchParams({ ...(!provider ? { mediaType } : {}), sortBy, direction, page: String(pageParam), size: '25', statuses: statusesKey, providers: providersKey, ...(batchId ? { batchId } : {}), ...(deferredQuery ? { q: deferredQuery } : {}) })}`,
-        JobPageSchema,
-        { signal },
-      ),
-    getNextPageParam: (last) =>
-      last.page < last.pageCount ? last.page + 1 : undefined,
-    refetchInterval: (query) => jobPagesPollInterval(query.state.data?.pages),
-  })
-  const { hasNextPage, isFetching, isError, fetchNextPage } = jobs
-  useEffect(() => {
-    if (
-      !sentinel.current ||
-      !scroller.current ||
-      !hasNextPage ||
-      isFetching ||
-      isError
-    )
-      return
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries.some((entry) => entry.isIntersecting))
-          void fetchNextPage({ cancelRefetch: false })
-      },
-      { root: scroller.current, rootMargin: '300px' },
-    )
-    observer.observe(sentinel.current)
-    return () => observer.disconnect()
-  }, [hasNextPage, isFetching, isError, fetchNextPage])
-  useEffect(() => {
-    scroller.current?.scrollTo({ top: 0 })
-    setCheckedJobIds([])
-    setSelectionAnchor(null)
-    setRetryConfirmed(false)
-  }, [
-    mediaType,
+  const selectedJobId = search.get('jobId')
+  const jobsKey = [
+    'jobs',
+    'table',
+    provider ? null : mediaType,
     statusesKey,
     batchId,
     deferredQuery,
     providersKey,
     sortBy,
     direction,
-  ])
-  const selectedJobId = search.get('jobId')
+  ]
+  const identity = JSON.stringify(jobsKey)
+  const [measured, setMeasured] = useState<{
+    identity: string
+    rows: Map<string, { index: number; height: number }>
+  }>({ identity, rows: new Map() })
+  const extraRowHeights = new Map<number, number>()
+  if (measured.identity === identity)
+    for (const [id, { index, height }] of measured.rows)
+      if (expandedJobIds.includes(id) || selectedJobId === id)
+        extraRowHeights.set(index, height)
+  function observeDetails(
+    id: string,
+    index: number,
+    element: HTMLTableRowElement,
+  ) {
+    function measure() {
+      const height = Math.ceil(element.getBoundingClientRect().height)
+      setMeasured((current) => {
+        const rows =
+          current.identity === identity
+            ? current.rows
+            : new Map<string, { index: number; height: number }>()
+        const prior = rows.get(id)
+        if (prior?.index === index && prior.height === height) return current
+        return { identity, rows: new Map([...rows, [id, { index, height }]]) }
+      })
+    }
+    measure()
+    if (typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(measure)
+    observer.observe(element)
+    return () => observer.disconnect()
+  }
+  const jobs = useVirtualTable({
+    queryKey: jobsKey,
+    pageSize: 25,
+    extraRowHeights,
+    loadPage: (page, size, signal) =>
+      fetchApiData(
+        apiBaseUrl,
+        `/api/v1/scrape/jobs?${new URLSearchParams({ ...(!provider ? { mediaType } : {}), sortBy, direction, page: String(page), size: String(size), statuses: statusesKey, providers: providersKey, ...(batchId ? { batchId } : {}), ...(deferredQuery ? { q: deferredQuery } : {}) })}`,
+        JobPageSchema,
+        { signal },
+      ),
+    refetchInterval: (page) => (page?.items.some(canCancelJob) ? 3000 : false),
+  })
+  const setVirtualScroller = jobs.scroller
+  const setScroller = useCallback(
+    (element: HTMLDivElement | null) => {
+      scroller.current = element
+      setVirtualScroller(element)
+    },
+    [setVirtualScroller],
+  )
+  useEffect(() => {
+    setCheckedJobIds([])
+    setSelectionAnchor(null)
+    setRetryConfirmed(false)
+    setExpandedJobIds([])
+  }, [identity])
   const selectedJob = useQuery({
     queryKey: ['jobs', 'detail', selectedJobId],
     enabled: !!selectedJobId,
@@ -472,12 +489,25 @@ export function JobsTable({ provider }: { provider?: string }) {
   }, [provider, search, selectedJob.data])
   const providerName = (id: string) =>
     providers.data?.find((item) => item.id === id)?.displayName ?? id
-  // New jobs can move offset boundaries between requests. Keep each job once.
-  const jobsById = new Map<string, Job>()
-  for (const page of jobs.data?.pages ?? [])
-    for (const job of page.items)
-      if (!jobsById.has(job.id)) jobsById.set(job.id, job)
-  const loadedJobs = [...jobsById.values()]
+  // New jobs can move offset boundaries between reads. Loaded selection stays by job ID.
+  const loadedSlots = jobs.loadedSlots
+  const jobsById = useMemo(() => {
+    const indexed = new Map<string, { item: Job; index: number }>()
+    for (const slot of loadedSlots)
+      if (!indexed.has(slot.item.id)) indexed.set(slot.item.id, slot)
+    return indexed
+  }, [loadedSlots])
+  useLayoutEffect(() => {
+    if (measured.identity !== identity) return
+    let rows: typeof measured.rows | undefined
+    for (const [id, dimensions] of measured.rows) {
+      const index = jobsById.get(id)?.index
+      if (index === undefined || index === dimensions.index) continue
+      rows ??= new Map(measured.rows)
+      rows.set(id, { ...dimensions, index })
+    }
+    if (rows) setMeasured({ identity, rows })
+  }, [identity, jobsById, measured])
   const matchingSelectedJob =
     selectedJob.data &&
     (provider
@@ -485,12 +515,22 @@ export function JobsTable({ provider }: { provider?: string }) {
       : jobMatchesScope(selectedJob.data, mediaType))
       ? selectedJob.data
       : undefined
-  const visibleJobs = matchingSelectedJob
-    ? [
-        matchingSelectedJob,
-        ...loadedJobs.filter((job) => job.id !== matchingSelectedJob.id),
-      ]
-    : loadedJobs
+  const selectedIndex = matchingSelectedJob
+    ? jobsById.get(matchingSelectedJob.id)?.index
+    : undefined
+  const pinnedJob =
+    selectedIndex === undefined ? matchingSelectedJob : undefined
+  const loadedJobs = [...jobsById.values()].map(({ item }) => item)
+  const visibleJobs = pinnedJob ? [pinnedJob, ...loadedJobs] : loadedJobs
+  let selectedTop =
+    selectedIndex === undefined ? undefined : selectedIndex * jobs.rowHeight
+  if (selectedTop !== undefined && selectedIndex !== undefined)
+    for (const [index, height] of extraRowHeights)
+      if (index < selectedIndex) selectedTop += height
+  useLayoutEffect(() => {
+    if (selectedTop !== undefined)
+      scroller.current?.scrollTo({ top: selectedTop })
+  }, [selectedJobId, selectedTop])
   const actionableJobs = visibleJobs.filter(
     (job) => canRetryJob(job) || canDismissJob(job) || canCancelJob(job),
   )
@@ -520,6 +560,212 @@ export function JobsTable({ provider }: { provider?: string }) {
     if (!shift || !selectionAnchor || !actionableIds.includes(selectionAnchor))
       setSelectionAnchor(id)
   }
+  function renderJobRow(job: Job, index?: number) {
+    const dismissal = getJobDismissal(job.options)
+    const taskTitle = jobTaskTitle(job)
+    const progress = activeJobProgressLabel(job)
+    const title =
+      taskTitle ??
+      job.items.map((item) => item.mediaTitle ?? 'Unavailable item').join(', ')
+    const result =
+      job.errorMessage ??
+      (job.items
+        .map((item) => item.message)
+        .filter(Boolean)
+        .join(' · ') ||
+        '-')
+    const expanded = expandedJobIds.includes(job.id) || selectedJobId === job.id
+    return (
+      <Fragment key={job.id}>
+        <tr data-selected={selectedIds.includes(job.id) || undefined}>
+          <td className="table-selection-cell">
+            {actionableIds.includes(job.id) ? (
+              <input
+                type="checkbox"
+                className="job-select"
+                aria-label={`Select ${providerName(job.provider)} job for ${taskTitle ?? job.items[0]?.mediaTitle ?? 'unavailable item'}`}
+                title="Shift-click to select a range"
+                disabled={bulkPending || retryBatch.isPending}
+                checked={selectedIds.includes(job.id)}
+                onClick={(event) => event.stopPropagation()}
+                onChange={(event) =>
+                  toggleJob(
+                    job.id,
+                    event.target.checked,
+                    'shiftKey' in event.nativeEvent &&
+                      event.nativeEvent.shiftKey === true,
+                  )
+                }
+              />
+            ) : (
+              <span aria-hidden="true" />
+            )}
+          </td>
+          <td>
+            <button
+              type="button"
+              className="flex items-center"
+              aria-label={`${expanded ? 'Collapse' : 'Expand'} ${providerName(job.provider)} job`}
+              aria-expanded={expanded}
+              aria-controls={`job-details-${job.id}`}
+              onClick={() => {
+                if (selectedJobId === job.id) setParams({ jobId: '' })
+                setExpandedJobIds((ids) =>
+                  expanded
+                    ? ids.filter((id) => id !== job.id)
+                    : [...ids, job.id],
+                )
+              }}
+            >
+              <ChevronRight
+                size={14}
+                aria-hidden="true"
+                className={expanded ? 'rotate-90' : ''}
+              />
+            </button>
+          </td>
+          {columns.visible('provider') && (
+            <td>
+              <SecondaryCell text={providerName(job.provider)}>
+                {providerName(job.provider)}
+              </SecondaryCell>
+            </td>
+          )}
+          {columns.visible('title') && (
+            <td>
+              <SecondaryCell
+                text={`${title}${progress ? ` · ${progress}` : ''}`}
+              >
+                {taskTitle ??
+                  job.items
+                    .slice(0, 2)
+                    .map((item) => item.mediaTitle ?? 'Unavailable item')
+                    .join(', ')}
+                {job.items.length > 2 ? ` +${job.items.length - 2}` : ''}
+                {progress && <span className="quiet"> · {progress}</span>}
+              </SecondaryCell>
+            </td>
+          )}
+          {columns.visible('status') && (
+            <td>
+              <SecondaryCell
+                text={`${job.status}${dismissal ? ' · dismissed' : ''}`}
+              >
+                <span className="job-status" data-status={job.status}>
+                  {job.status}
+                  {dismissal ? ' · dismissed' : ''}
+                </span>
+              </SecondaryCell>
+            </td>
+          )}
+          {columns.visible('createdAt') && (
+            <td className="whitespace-nowrap">
+              <SecondaryCell text={new Date(job.createdAt).toLocaleString()}>
+                <time dateTime={job.createdAt}>
+                  {new Date(job.createdAt).toLocaleString()}
+                </time>
+              </SecondaryCell>
+            </td>
+          )}
+          {columns.visible('startedAt') && (
+            <td className="whitespace-nowrap">
+              <SecondaryCell>
+                {job.startedAt ? new Date(job.startedAt).toLocaleString() : '-'}
+              </SecondaryCell>
+            </td>
+          )}
+          {columns.visible('finishedAt') && (
+            <td className="whitespace-nowrap">
+              <SecondaryCell>
+                {job.finishedAt
+                  ? new Date(job.finishedAt).toLocaleString()
+                  : '-'}
+              </SecondaryCell>
+            </td>
+          )}
+          {columns.visible('result') && (
+            <td>
+              <SecondaryCell text={result}>{result}</SecondaryCell>
+            </td>
+          )}
+        </tr>
+        {expanded && (
+          <tr
+            ref={(element) =>
+              index === undefined || !element
+                ? undefined
+                : observeDetails(job.id, index, element)
+            }
+            id={`job-details-${job.id}`}
+            className="secondary-table-detail-row"
+          >
+            <td colSpan={columns.count + 2}>
+              <div className="job-content">
+                {job.errorMessage && <p role="alert">{job.errorMessage}</p>}
+                <JobBulkActions
+                  jobs={[job]}
+                  selectedIds={[job.id]}
+                  single
+                  disabled={bulkPending || retryBatch.isPending}
+                  onSelect={() => {}}
+                  onPending={setBulkPending}
+                />
+                {dismissal && (
+                  <p className="muted">
+                    Dismissed {new Date(dismissal.dismissedAt).toLocaleString()}
+                    . Errors retained.
+                  </p>
+                )}
+                {typeof job.options.retryJobId === 'string' && (
+                  <Link
+                    href={scopedHref(
+                      `/jobs?jobId=${job.options.retryJobId}`,
+                      jobMediaScope(job) ?? mediaType,
+                    )}
+                  >
+                    View retry
+                  </Link>
+                )}
+                <JobDataViewer job={job} visible={expanded} />
+                {job.items.map((item) => (
+                  <p
+                    key={item.id}
+                    className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm"
+                  >
+                    {item.mediaItemId && item.mediaType ? (
+                      <DetailLink kind={item.mediaType} id={item.mediaItemId}>
+                        {item.mediaTitle ?? 'Untitled item'}
+                      </DetailLink>
+                    ) : (
+                      'Unavailable item'
+                    )}
+                    <span className="muted">
+                      {item.attemptCount}{' '}
+                      {item.attemptCount === 1 ? 'attempt' : 'attempts'}
+                    </span>
+                    {item.message && item.message !== job.errorMessage && (
+                      <span>{item.message}</span>
+                    )}
+                  </p>
+                ))}
+                <details
+                  className="job-logs"
+                  open={job.status === 'failed' ? true : undefined}
+                >
+                  <summary>Log ({job.logs.length})</summary>
+                  <ol>
+                    {job.logs.map((log) => (
+                      <JobLogEntry key={log.id} log={log} jobId={job.id} />
+                    ))}
+                  </ol>
+                </details>
+              </div>
+            </td>
+          </tr>
+        )}
+      </Fragment>
+    )
+  }
   return (
     <section className="admin-page jobs-page">
       {!provider && <h1>{jobsHeadings[mediaType]}</h1>}
@@ -534,12 +780,6 @@ export function JobsTable({ provider }: { provider?: string }) {
           >
             Open {jobMediaScope(selectedJob.data)} job
           </Link>
-        </p>
-      )}
-      {jobs.isError && !jobs.isFetchNextPageError && (
-        <p role="alert">
-          Could not load jobs.{' '}
-          <button onClick={() => jobs.refetch()}>Retry</button>
         </p>
       )}
       {batchId && (
@@ -616,13 +856,33 @@ export function JobsTable({ provider }: { provider?: string }) {
             }}
           />
         }
-        count={`${jobs.data?.pages[0]?.totalCount ?? 0} jobs`}
+        count={`${jobs.total} jobs`}
         columns={columns.controls}
       />
+      {pinnedJob && (
+        <SecondaryTableScroll
+          className="max-h-[min(340px,35dvh)] shrink-0"
+          role="region"
+          aria-label="Selected job"
+        >
+          <table className="compact-table" aria-label="Selected job">
+            <tbody>{renderJobRow(pinnedJob)}</tbody>
+          </table>
+        </SecondaryTableScroll>
+      )}
+      {jobs.isError && jobs.hasTotal && (
+        <p role="alert">
+          Could not load jobs.{' '}
+          <button type="button" onClick={jobs.retry}>
+            Retry
+          </button>
+        </p>
+      )}
       <SecondaryTableFrame>
         <SecondaryTableScroll
           className="jobs-scroll"
-          ref={scroller}
+          ref={setScroller}
+          onScroll={jobs.onScroll}
           role="region"
           aria-label="Jobs"
           aria-busy={jobs.isFetching}
@@ -720,271 +980,48 @@ export function JobsTable({ provider }: { provider?: string }) {
               </tr>
             </thead>
             <tbody>
-              {!visibleJobs.length && (
+              {!jobs.total && (
                 <TableState colSpan={columns.count + 2} error={jobs.isError}>
                   {jobs.isPending
                     ? 'Loading jobs...'
                     : jobs.isError
                       ? 'Jobs unavailable.'
                       : 'No matching jobs.'}
+                  {jobs.isError && (
+                    <button
+                      type="button"
+                      className="ml-1 underline"
+                      onClick={jobs.retry}
+                    >
+                      Retry
+                    </button>
+                  )}
                 </TableState>
               )}
-              {visibleJobs.map((job) => {
-                const dismissal = getJobDismissal(job.options)
-                const taskTitle = jobTaskTitle(job)
-                const progress = activeJobProgressLabel(job)
-                const title =
-                  taskTitle ??
-                  job.items
-                    .map((item) => item.mediaTitle ?? 'Unavailable item')
-                    .join(', ')
-                const result =
-                  job.errorMessage ??
-                  (job.items
-                    .map((item) => item.message)
-                    .filter(Boolean)
-                    .join(' · ') ||
-                    '-')
-                const expanded =
-                  expandedJobIds.includes(job.id) || selectedJobId === job.id
-                return (
-                  <Fragment key={job.id}>
-                    <tr
-                      data-selected={selectedIds.includes(job.id) || undefined}
-                    >
-                      <td className="table-selection-cell">
-                        {actionableIds.includes(job.id) ? (
-                          <input
-                            type="checkbox"
-                            className="job-select"
-                            aria-label={`Select ${providerName(job.provider)} job for ${taskTitle ?? job.items[0]?.mediaTitle ?? 'unavailable item'}`}
-                            title="Shift-click to select a range"
-                            disabled={bulkPending || retryBatch.isPending}
-                            checked={selectedIds.includes(job.id)}
-                            onClick={(event) => event.stopPropagation()}
-                            onChange={(event) =>
-                              toggleJob(
-                                job.id,
-                                event.target.checked,
-                                'shiftKey' in event.nativeEvent &&
-                                  event.nativeEvent.shiftKey === true,
-                              )
-                            }
-                          />
-                        ) : (
-                          <span aria-hidden="true" />
-                        )}
-                      </td>
-                      <td>
-                        <button
-                          type="button"
-                          className="flex items-center"
-                          aria-label={`${expanded ? 'Collapse' : 'Expand'} ${providerName(job.provider)} job`}
-                          aria-expanded={expanded}
-                          aria-controls={`job-details-${job.id}`}
-                          onClick={() => {
-                            if (selectedJobId === job.id)
-                              setParams({ jobId: '' })
-                            setExpandedJobIds((ids) =>
-                              expanded
-                                ? ids.filter((id) => id !== job.id)
-                                : [...ids, job.id],
-                            )
+              {(!jobs.isError || jobs.hasTotal) && (
+                <SecondaryVirtualRows
+                  window={jobs}
+                  colSpan={columns.count + 2}
+                  renderRow={(job, index) =>
+                    jobsById.get(job.id)?.index === index ? (
+                      renderJobRow(job, index)
+                    ) : (
+                      <tr aria-hidden="true">
+                        <td
+                          colSpan={columns.count + 2}
+                          style={{
+                            height: jobs.rowHeight,
+                            padding: 0,
+                            border: 0,
                           }}
-                        >
-                          <ChevronRight
-                            size={14}
-                            aria-hidden="true"
-                            className={expanded ? 'rotate-90' : ''}
-                          />
-                        </button>
-                      </td>
-                      {columns.visible('provider') && (
-                        <td>
-                          <SecondaryCell text={providerName(job.provider)}>
-                            {providerName(job.provider)}
-                          </SecondaryCell>
-                        </td>
-                      )}
-                      {columns.visible('title') && (
-                        <td>
-                          <SecondaryCell
-                            text={`${title}${progress ? ` · ${progress}` : ''}`}
-                          >
-                            {taskTitle ??
-                              job.items
-                                .slice(0, 2)
-                                .map(
-                                  (item) =>
-                                    item.mediaTitle ?? 'Unavailable item',
-                                )
-                                .join(', ')}
-                            {job.items.length > 2
-                              ? ` +${job.items.length - 2}`
-                              : ''}
-                            {progress && (
-                              <span className="quiet"> · {progress}</span>
-                            )}
-                          </SecondaryCell>
-                        </td>
-                      )}
-                      {columns.visible('status') && (
-                        <td>
-                          <SecondaryCell
-                            text={`${job.status}${dismissal ? ' · dismissed' : ''}`}
-                          >
-                            <span
-                              className="job-status"
-                              data-status={job.status}
-                            >
-                              {job.status}
-                              {dismissal ? ' · dismissed' : ''}
-                            </span>
-                          </SecondaryCell>
-                        </td>
-                      )}
-                      {columns.visible('createdAt') && (
-                        <td className="whitespace-nowrap">
-                          <SecondaryCell
-                            text={new Date(job.createdAt).toLocaleString()}
-                          >
-                            <time dateTime={job.createdAt}>
-                              {new Date(job.createdAt).toLocaleString()}
-                            </time>
-                          </SecondaryCell>
-                        </td>
-                      )}
-                      {columns.visible('startedAt') && (
-                        <td className="whitespace-nowrap">
-                          <SecondaryCell>
-                            {job.startedAt
-                              ? new Date(job.startedAt).toLocaleString()
-                              : '-'}
-                          </SecondaryCell>
-                        </td>
-                      )}
-                      {columns.visible('finishedAt') && (
-                        <td className="whitespace-nowrap">
-                          <SecondaryCell>
-                            {job.finishedAt
-                              ? new Date(job.finishedAt).toLocaleString()
-                              : '-'}
-                          </SecondaryCell>
-                        </td>
-                      )}
-                      {columns.visible('result') && (
-                        <td>
-                          <SecondaryCell text={result}>{result}</SecondaryCell>
-                        </td>
-                      )}
-                    </tr>
-                    {expanded && (
-                      <tr
-                        id={`job-details-${job.id}`}
-                        className="secondary-table-detail-row"
-                      >
-                        <td colSpan={columns.count + 2}>
-                          <div className="job-content">
-                            {job.errorMessage && (
-                              <p role="alert">{job.errorMessage}</p>
-                            )}
-                            <JobBulkActions
-                              jobs={[job]}
-                              selectedIds={[job.id]}
-                              single
-                              disabled={bulkPending || retryBatch.isPending}
-                              onSelect={() => {}}
-                              onPending={setBulkPending}
-                            />
-                            {dismissal && (
-                              <p className="muted">
-                                Dismissed{' '}
-                                {new Date(
-                                  dismissal.dismissedAt,
-                                ).toLocaleString()}
-                                . Errors retained.
-                              </p>
-                            )}
-                            {typeof job.options.retryJobId === 'string' && (
-                              <Link
-                                href={scopedHref(
-                                  `/jobs?jobId=${job.options.retryJobId}`,
-                                  jobMediaScope(job) ?? mediaType,
-                                )}
-                              >
-                                View retry
-                              </Link>
-                            )}
-                            <JobDataViewer job={job} visible={expanded} />
-                            {job.items.map((item) => (
-                              <p
-                                key={item.id}
-                                className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm"
-                              >
-                                {item.mediaItemId && item.mediaType ? (
-                                  <DetailLink
-                                    kind={item.mediaType}
-                                    id={item.mediaItemId}
-                                  >
-                                    {item.mediaTitle ?? 'Untitled item'}
-                                  </DetailLink>
-                                ) : (
-                                  'Unavailable item'
-                                )}
-                                <span className="muted">
-                                  {item.attemptCount}{' '}
-                                  {item.attemptCount === 1
-                                    ? 'attempt'
-                                    : 'attempts'}
-                                </span>
-                                {item.message &&
-                                  item.message !== job.errorMessage && (
-                                    <span>{item.message}</span>
-                                  )}
-                              </p>
-                            ))}
-                            <details
-                              className="job-logs"
-                              open={job.status === 'failed' ? true : undefined}
-                            >
-                              <summary>Log ({job.logs.length})</summary>
-                              <ol>
-                                {job.logs.map((log) => (
-                                  <JobLogEntry
-                                    key={log.id}
-                                    log={log}
-                                    jobId={job.id}
-                                  />
-                                ))}
-                              </ol>
-                            </details>
-                          </div>
-                        </td>
+                        />
                       </tr>
-                    )}
-                  </Fragment>
-                )
-              })}
+                    )
+                  }
+                />
+              )}
             </tbody>
           </table>
-          <div
-            ref={sentinel}
-            className="py-3 text-center text-sm text-muted-foreground"
-          >
-            {jobs.isFetchingNextPage && (
-              <span role="status">Loading more jobs...</span>
-            )}
-            {jobs.isFetchNextPageError && (
-              <p role="alert">
-                Could not load more jobs.{' '}
-                <button
-                  onClick={() => jobs.fetchNextPage({ cancelRefetch: false })}
-                >
-                  Retry
-                </button>
-              </p>
-            )}
-          </div>
         </SecondaryTableScroll>
         <SecondaryTableFooter selectedCount={selectedIds.length}>
           <JobBulkActions

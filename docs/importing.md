@@ -4,7 +4,7 @@ Select Films or Albums in the top-left menu, then open **Imports**. A preview le
 
 ## Add one album or film
 
-In Browse, choose **Add album** or **Add film**. Search Spotify for an album or TMDb for a film, check the artwork, artist or original title and release date, then choose **Add**. Search requires the provider's credentials in Providers; Spotify account connection is not required. **Next** reads one more page only when selected.
+In Browse, choose **Add album** or **Add film**. Search Spotify for an album or TMDb for a film, check the artwork, artist or original title and release date, then choose **Add**. Search requires the provider's credentials in Providers; Spotify account connection is not required. After an explicit search, the result list reserves the full searchable height and loads only the pages near the scroll position, with placeholders while they load. Saved search snapshots retain explicit page controls; viewing or scrolling one does not contact a provider.
 
 Adding fetches metadata for the selected provider ID and stores the item with its provider history. Spotify albums include their tracks. The app does not save the album to your Spotify account. Existing items stay unchanged, including dates and manual edits; repeated or concurrent additions resolve to the same library item. No other providers or background scrape jobs are started. Failed provider requests are not retried automatically, and the normal provider request limits and cooldowns apply.
 

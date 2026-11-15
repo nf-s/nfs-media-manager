@@ -116,13 +116,16 @@ function renderList(items: TrackListItem[]) {
     defaultOptions: { queries: { retry: false } },
   })
   client.setQueryData(
-    ['tracks', 'lastfm-matching', '', '["needs-match"]', 'scrobbles', 'desc'],
-    {
-      pages: [
-        { page: 1, size: 100, totalCount: items.length, pageCount: 1, items },
-      ],
-      pageParams: [1],
-    },
+    [
+      'tracks',
+      'lastfm-matching',
+      '',
+      '["needs-match"]',
+      'scrobbles',
+      'desc',
+      1,
+    ],
+    { page: 1, size: 100, totalCount: items.length, pageCount: 1, items },
   )
   try {
     return renderToStaticMarkup(

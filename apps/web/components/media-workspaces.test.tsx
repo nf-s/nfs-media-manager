@@ -165,11 +165,12 @@ function render(
   })
   for (const scope of ['album', 'film']) {
     const items = selectionItems.filter((item) => item.mediaType === scope)
-    client.setQueryData([`${scope}-selection`, params.toString()], {
-      pages: [
-        { items, page: 1, pageCount: 1, totalCount: items.length, size: 50 },
-      ],
-      pageParams: [1],
+    client.setQueryData([`${scope}-selection`, params.toString(), 1], {
+      items,
+      page: 1,
+      pageCount: 1,
+      totalCount: items.length,
+      size: 50,
     })
   }
   try {

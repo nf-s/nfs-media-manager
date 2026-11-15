@@ -1,6 +1,7 @@
 import {
   listBrowseFacets,
   queryBrowseIds,
+  queryBrowsePageIds,
   type BrowseQueryOptions,
 } from './browse'
 import type { BrowseFacetQuery } from '@repo/schemas/browse'
@@ -308,7 +309,31 @@ export async function listAlbums(
 ): Promise<{ items: AlbumListItem[]; totalCount: number; pageCount: number }> {
   const { ids, totalCount, pageCount, listeningScrobbles } =
     await queryBrowseIds('album', query, options)
-  if (!ids.length) return { items: [], totalCount, pageCount }
+  return {
+    items: await loadAlbums(ids, listeningScrobbles),
+    totalCount,
+    pageCount,
+  }
+}
+
+export async function listAlbumBrowsePage(query: AlbumQuery) {
+  const { ids, listeningScrobbles, hasMore } = await queryBrowsePageIds(
+    'album',
+    query,
+  )
+  return {
+    items: await loadAlbums(ids, listeningScrobbles),
+    page: query.page,
+    size: query.size,
+    hasMore,
+  }
+}
+
+async function loadAlbums(
+  ids: string[],
+  listeningScrobbles: ReadonlyMap<string, number> | undefined,
+) {
+  if (!ids.length) return []
 
   const records = await db.query.mediaItem.findMany({
     where: (table, operators) => operators.inArray(table.id, ids),
@@ -374,7 +399,7 @@ export async function listAlbums(
     return [item]
   })
 
-  return { items, totalCount, pageCount }
+  return items
 }
 
 export async function listFilms(
@@ -386,7 +411,21 @@ export async function listFilms(
     query,
     options,
   )
-  if (!ids.length) return { items: [], totalCount, pageCount }
+  return { items: await loadFilms(ids), totalCount, pageCount }
+}
+
+export async function listFilmBrowsePage(query: FilmQuery) {
+  const { ids, hasMore } = await queryBrowsePageIds('film', query)
+  return {
+    items: await loadFilms(ids),
+    page: query.page,
+    size: query.size,
+    hasMore,
+  }
+}
+
+async function loadFilms(ids: string[]) {
+  if (!ids.length) return []
 
   const records = await db.query.mediaItem.findMany({
     where: (table, operators) => operators.inArray(table.id, ids),
@@ -441,7 +480,7 @@ export async function listFilms(
     return [item]
   })
 
-  return { items, totalCount, pageCount }
+  return items
 }
 
 export async function getAlbumDetail(id: string): Promise<AlbumDetail | null> {

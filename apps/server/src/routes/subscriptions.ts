@@ -2,7 +2,12 @@ import { createRoute, type OpenAPIHono } from '@hono/zod-openapi'
 import { createMiddleware } from 'hono/factory'
 import type { Context } from 'hono'
 import { z } from 'zod'
-import { BrowseFacetQuerySchema, BrowseFieldSchema } from '@repo/schemas/browse'
+import {
+  BrowseCountSchema,
+  BrowseFacetQuerySchema,
+  BrowseFieldSchema,
+  BrowsePageSliceSchema,
+} from '@repo/schemas/browse'
 import {
   SubscriptionFilterOptionSchema,
   SubscriptionItemPageSchema,
@@ -31,8 +36,10 @@ import {
 import { generateJsonResponse } from '@/lib/response'
 import { authMiddleware } from '@/middlewares/auth'
 import {
+  countSubscriptionBrowseItems,
   getSubscriptionItem,
   getSubscriptionSource,
+  listSubscriptionBrowsePage,
   listSubscriptionFacets,
   listSubscriptionItems,
   listSubscriptionSources,
@@ -72,6 +79,52 @@ const statusResponse = (description: string) =>
   json(description, SubscriptionSyncStatusSchema)
 
 const app: OpenAPIHono<AppEnv> = createOpenAPIApp()
+
+app.openapi(
+  createRoute({
+    method: 'get',
+    path: '/browse-page',
+    middleware: [authMiddleware()],
+    request: { query: SubscriptionItemQuerySchema },
+    responses: {
+      200: json(
+        'Browse rows with a continuation indicator',
+        BrowsePageSliceSchema(SubscriptionItemSchema),
+      ),
+      401: jsonErrorResponse('Unauthorized'),
+      422: validationErrorResponse,
+    },
+  }),
+  async (c) =>
+    generateJsonResponse(
+      c,
+      await listSubscriptionBrowsePage(c.req.valid('query')),
+      200,
+    ),
+)
+
+app.openapi(
+  createRoute({
+    method: 'get',
+    path: '/browse-count',
+    middleware: [authMiddleware()],
+    request: { query: SubscriptionItemQuerySchema },
+    responses: {
+      200: json(
+        'Exact count for the current browse filters',
+        BrowseCountSchema,
+      ),
+      401: jsonErrorResponse('Unauthorized'),
+      422: validationErrorResponse,
+    },
+  }),
+  async (c) =>
+    generateJsonResponse(
+      c,
+      await countSubscriptionBrowseItems(c.req.valid('query')),
+      200,
+    ),
+)
 
 app.openapi(
   createRoute({

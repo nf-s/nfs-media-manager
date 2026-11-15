@@ -41,6 +41,7 @@ import {
 const TmdbSearchSchema = z.object({
   page: z.number().int().positive(),
   total_pages: z.number().int().nonnegative(),
+  total_results: z.number().int().nonnegative().optional(),
   results: z
     .array(
       z.object({
@@ -214,6 +215,7 @@ export async function searchManualMedia(
           : (matches[index]?.id ?? null),
       })),
       page: options.page,
+      totalCount: Math.min(page.total, 500),
       hasMore:
         options.page < 50 &&
         page.items.length > 0 &&
@@ -258,6 +260,9 @@ export async function searchManualMedia(
       mediaItemId: matches[index]?.error ? null : (matches[index]?.id ?? null),
     })),
     page: options.page,
+    ...(page.total_results === undefined
+      ? {}
+      : { totalCount: Math.min(page.total_results, 1000) }),
     hasMore:
       options.page < 50 &&
       page.results.length > 0 &&

@@ -2,14 +2,14 @@
 
 import { useDeferredValue, useEffect, useId, useRef, useState } from 'react'
 import Link from 'next/link'
-import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
+import { useVirtualTable } from '@/hooks/useVirtualTable'
 import { X } from 'lucide-react'
 import { TagDetailSchema, TagPageSchema, type Tag } from '@repo/schemas/tags'
-import { Button } from '@repo/ui/components/ui/button'
 import { Input } from '@repo/ui/components/ui/input'
 import { useConfig } from './providers'
 import { fetchApiData } from '@/utils/api'
-import MetadataSourceList from './metadata-source-list'
+import { VirtualTagSources } from './metadata-source-list'
+import { SecondaryTableScroll, SecondaryVirtualRows } from './secondary-table'
 import TagActions from './tag-actions'
 
 function TagManagement({ tag }: { tag: Tag }) {
@@ -22,13 +22,15 @@ function TagManagement({ tag }: { tag: Tag }) {
     message: string
     interrupted: boolean
   } | null>(null)
-  const matches = useQuery({
+  const matches = useVirtualTable({
     queryKey: ['tags', 'merge-search', tag.mediaType, query],
-    enabled: query.length > 0,
-    queryFn: ({ signal }) =>
+    enabled: query.length > 0 && !candidate && !pending,
+    pageSize: 25,
+    headerHeight: 0,
+    loadPage: (page, size, signal) =>
       fetchApiData(
         apiBaseUrl,
-        `/api/v1/tags?${new URLSearchParams({ mediaType: tag.mediaType, q: query, visibility: 'all', size: '25' })}`,
+        `/api/v1/tags?${new URLSearchParams({ mediaType: tag.mediaType, q: query, visibility: 'all', page: String(page), size: String(size) })}`,
         TagPageSchema,
         { signal },
       ),
@@ -55,46 +57,60 @@ function TagManagement({ tag }: { tag: Tag }) {
           }}
         />
       </label>
-      {query && !candidate && (
-        <div className="max-h-40 overflow-auto border text-sm">
-          {matches.isPending && (
-            <p className="p-2" role="status">
-              Loading tags...
-            </p>
-          )}
+      {query && !candidate && !pending && (
+        <div>
           {matches.isError && (
             <p className="p-2" role="alert">
               Could not find tags.{' '}
-              <button className="underline" onClick={() => matches.refetch()}>
+              <button
+                type="button"
+                className="underline"
+                onClick={matches.retry}
+              >
                 Retry
               </button>
             </p>
           )}
-          {matches.data?.items
-            .filter((item) => item.id !== tag.id)
-            .map((item) => (
-              <button
-                type="button"
-                key={item.id}
-                className="block w-full px-2 py-1 text-left hover:bg-neutral-100"
-                disabled={pending}
-                onClick={() => setCandidate(item)}
-              >
-                {item.name}
-                {item.hidden ? ' (hidden)' : ''}
-              </button>
-            ))}
-          {matches.data &&
-            !matches.data.items.some((item) => item.id !== tag.id) && (
-              <p className="p-2">No other matching tags.</p>
+          <SecondaryTableScroll
+            ref={matches.scroller}
+            onScroll={matches.onScroll}
+            className="max-h-40"
+            role="region"
+            aria-label="Tags to merge"
+            aria-busy={matches.isFetching}
+          >
+            <table
+              className="compact-table"
+              aria-label="Tags to merge"
+              aria-rowcount={matches.hasTotal ? matches.total : undefined}
+            >
+              <tbody>
+                <SecondaryVirtualRows
+                  window={matches}
+                  colSpan={1}
+                  renderRow={(item, index) => (
+                    <tr key={item.id} aria-rowindex={index + 1}>
+                      <td>
+                        <button
+                          type="button"
+                          className="block w-full truncate text-left hover:underline"
+                          disabled={pending || item.id === tag.id}
+                          onClick={() => setCandidate(item)}
+                        >
+                          {item.name}
+                          {item.hidden ? ' (hidden)' : ''}
+                          {item.id === tag.id ? ' (current tag)' : ''}
+                        </button>
+                      </td>
+                    </tr>
+                  )}
+                />
+              </tbody>
+            </table>
+            {matches.hasTotal && !matches.total && (
+              <p className="p-2">No matching tags.</p>
             )}
-          {matches.data &&
-            matches.data.totalCount > matches.data.items.length && (
-              <p className="quiet p-2 text-xs">
-                Showing the first 25 matches. Refine the search to find a
-                specific tag.
-              </p>
-            )}
+          </SecondaryTableScroll>
         </div>
       )}
       {candidate && (
@@ -141,22 +157,19 @@ export default function TagDetailModal({
   const { apiBaseUrl } = useConfig()
   const dialog = useRef<HTMLDialogElement>(null)
   const titleId = useId()
-  const detail = useInfiniteQuery({
+  const detail = useVirtualTable({
     queryKey: ['tag-detail', mediaType, id],
-    initialPageParam: 1,
-    queryFn: ({ pageParam, signal }) =>
-      fetchApiData(
+    loadPage: async (page, size, signal) => {
+      const result = await fetchApiData(
         apiBaseUrl,
-        `/api/v1/tags/${encodeURIComponent(id)}?mediaType=${mediaType}&page=${pageParam}&size=100`,
+        `/api/v1/tags/${encodeURIComponent(id)}?${new URLSearchParams({ mediaType, page: String(page), size: String(size) })}`,
         TagDetailSchema,
         { signal },
-      ),
-    getNextPageParam: (last) =>
-      last.provenance.page < last.provenance.pageCount
-        ? last.provenance.page + 1
-        : undefined,
+      )
+      return { ...result.provenance, summary: result }
+    },
   })
-  const data = detail.data?.pages[0]
+  const data = detail.firstPage?.summary
   useEffect(() => {
     const element = dialog.current
     const previous = document.activeElement
@@ -196,18 +209,10 @@ export default function TagDetailModal({
         </div>
         <div className="tag-drawer-body">
           <h1 id={titleId}>{data?.tag.name ?? 'Tag details'}</h1>
-          {detail.isPending && <p role="status">Loading tag details...</p>}
           {detail.isError && (
             <p role="alert">
               Could not load tag details.{' '}
-              <button
-                className="underline"
-                onClick={() =>
-                  detail.isFetchNextPageError
-                    ? detail.fetchNextPage()
-                    : detail.refetch()
-                }
-              >
+              <button className="underline" onClick={detail.retry}>
                 Retry
               </button>
             </p>
@@ -244,34 +249,12 @@ export default function TagDetailModal({
                   <p className="quiet text-sm">No merged aliases.</p>
                 )}
               </section>
-              <section>
-                <h2 className="mb-3 font-semibold">Detailed provenance</h2>
-                <MetadataSourceList
-                  items={
-                    detail.data?.pages.flatMap(
-                      (page) => page.provenance.items,
-                    ) ?? []
-                  }
-                />
-                {data.provenance.totalCount === 0 && (
-                  <p className="quiet text-sm">
-                    No original source metadata was saved for this tag.
-                  </p>
-                )}
-                {detail.hasNextPage && (
-                  <Button
-                    className="mt-3"
-                    size="sm"
-                    variant="outline"
-                    disabled={detail.isFetchingNextPage}
-                    onClick={() => detail.fetchNextPage()}
-                  >
-                    {detail.isFetchingNextPage ? 'Loading...' : 'More sources'}
-                  </Button>
-                )}
-              </section>
             </div>
           )}
+          <section>
+            <h2 className="mb-3 font-semibold">Detailed provenance</h2>
+            <VirtualTagSources query={detail} label="Detailed provenance" />
+          </section>
         </div>
       </div>
     </dialog>

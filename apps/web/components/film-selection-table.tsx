@@ -2,7 +2,11 @@
 
 import Link from 'next/link'
 import { useEffect, useRef, useState } from 'react'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import {
+  useIsMutating,
+  useMutation,
+  useQueryClient,
+} from '@tanstack/react-query'
 import {
   type BrowseFilter,
   type BrowseRange,
@@ -16,10 +20,8 @@ import {
   lastScrapedField,
   ProviderFreshnessFilterSchema,
   QueueFilmSelectionSchema,
-  type FilmSelectionItem,
   type ProviderFreshnessFilter,
 } from '@repo/schemas/film-selection'
-import type { AlbumSelectionItem } from '@repo/schemas/album-selection'
 import { EnrichmentResultSchema } from '@repo/schemas/job'
 import type { ProviderSummary } from '@repo/schemas/provider'
 import { Button } from '@repo/ui/components/ui/button'
@@ -33,13 +35,13 @@ import {
   SecondaryTableToolbar,
   SecondaryTableScroll,
   SecondaryTableHead,
+  SecondaryVirtualRows,
   useTableColumns,
 } from './secondary-table'
 import { FilmProviderSelection } from './film-provider-selection'
 import { BrowseFilterChips, RangeEditor } from './browse-controls'
 import BrowseFilterAutocomplete from './browse-filter-autocomplete'
 import { useFilmSelection } from '@/hooks/useFilmSelection'
-import { useInfiniteTableScroll } from '@/hooks/useInfiniteTableScroll'
 import { updateJobSelection } from '@/utils/job-selection'
 import { dispatchFilmSelection } from '@/utils/film-selection'
 import { fetchApiData } from '@/utils/api'
@@ -110,10 +112,13 @@ function SelectionTable({ providers, mediaType = 'film' }: Props) {
     legacyImport,
   })
   if (sortBy === 'lastScrapedAt') params.set('provider', provider)
+  const queueKey = ['metadata-selection-queue', mediaType]
+  const queuePending = useIsMutating({ mutationKey: queueKey }) > 0
   const { fields, facets, films } = useFilmSelection(
     params.toString(),
     mediaType,
     draft,
+    queuePending,
   )
   const available =
     fields.data ??
@@ -147,12 +152,10 @@ function SelectionTable({ providers, mediaType = 'film' }: Props) {
     columnWidths.reduce((total, width) => total + width, 0) +
     (columns.visible('legacyImport') ? 110 : 0) +
     visibleProviders.length * 110
-  const items =
-    films.data?.pages.flatMap<FilmSelectionItem | AlbumSelectionItem>(
-      (page) => page.items,
-    ) ?? []
-  const ids = items.map((item) => item.id)
+  const ids = [...new Set(films.loadedSlots.map(({ item }) => item.id))]
   const allChecked = ids.length > 0 && ids.every((id) => selected.includes(id))
+  const partiallyChecked =
+    !allChecked && ids.some((id) => selected.includes(id))
   const launchProviders = providers
     .filter(
       (item) =>
@@ -167,6 +170,7 @@ function SelectionTable({ providers, mediaType = 'film' }: Props) {
   const broadConfirmed = confirmed && confirmedKey === confirmationKey
   const [batchId, setBatchId] = useState('')
   const queue = useMutation({
+    mutationKey: queueKey,
     mutationFn: async () => {
       const batch = crypto.randomUUID()
       setBatchId(batch)
@@ -210,29 +214,9 @@ function SelectionTable({ providers, mediaType = 'film' }: Props) {
       await client.invalidateQueries({ queryKey: [`${mediaType}-selection`] })
     },
   })
-  const { scroller, sentinel } = useInfiniteTableScroll({
-    enabled:
-      films.hasNextPage &&
-      !films.isFetching &&
-      !films.isError &&
-      !queue.isPending,
-    fetchNextPage: films.fetchNextPage,
-    resetKey: params.toString(),
-  })
-  const refetchSelection = films.refetch
   useEffect(() => {
-    if (queue.isPending) return
-    const timer = window.setInterval(() => {
-      if (document.visibilityState === 'visible')
-        void refetchSelection({ cancelRefetch: false })
-    }, 10000)
-    return () => window.clearInterval(timer)
-  }, [refetchSelection, queue.isPending])
-  useEffect(() => {
-    if (all.current)
-      all.current.indeterminate =
-        !allChecked && ids.some((id) => selected.includes(id))
-  }, [allChecked, ids, selected])
+    if (all.current) all.current.indeterminate = partiallyChecked
+  }, [partiallyChecked])
   function clear() {
     setSelected([])
     setAnchor(null)
@@ -259,10 +243,10 @@ function SelectionTable({ providers, mediaType = 'film' }: Props) {
           Match any selected status per provider, and every filtered provider.
         </p>
       )}
-      {films.isError && items.length > 0 && !films.isFetchNextPageError && (
+      {films.isError && films.total > 0 && (
         <p role="alert">
           Could not load {plural}.{' '}
-          <button type="button" onClick={() => films.refetch()}>
+          <button type="button" onClick={films.retry}>
             Retry
           </button>
         </p>
@@ -338,13 +322,14 @@ function SelectionTable({ providers, mediaType = 'film' }: Props) {
               onOpenItem={() => {}}
             />
           }
-          count={`${films.data?.pages[0]?.totalCount.toLocaleString() ?? '…'} ${plural}`}
+          count={`${films.firstPage?.totalCount.toLocaleString() ?? '…'} ${plural}`}
           columns={columns.controls}
         />
       </fieldset>
       <SecondaryTableFrame>
         <SecondaryTableScroll
-          ref={scroller}
+          ref={films.scroller}
+          onScroll={films.onScroll}
           className="film-selection-scroll"
           aria-label={`${mediaType === 'album' ? 'Album' : 'Film'} selection`}
           role="region"
@@ -518,117 +503,127 @@ function SelectionTable({ providers, mediaType = 'film' }: Props) {
               </tr>
             </thead>
             <tbody>
-              {items.map((item) => {
-                const values: BrowseValues = getBrowseValues(item)
-                return (
-                  <tr
-                    key={item.id}
-                    data-selected={selected.includes(item.id) || undefined}
-                  >
-                    <td className="table-selection-cell">
-                      <input
-                        type="checkbox"
-                        aria-label={`Select ${item.title}`}
-                        checked={selected.includes(item.id)}
-                        disabled={queue.isPending}
-                        onChange={(event) => {
-                          changeSelection(
-                            updateJobSelection(
-                              selected,
-                              ids,
-                              item.id,
-                              anchor,
-                              'shiftKey' in event.nativeEvent &&
-                                event.nativeEvent.shiftKey === true,
-                              event.target.checked,
-                            ),
-                          )
-                          setAnchor(item.id)
-                        }}
-                      />
-                    </td>
-                    {visible.map((field) => (
-                      <td
-                        key={field.key}
-                        title={formatBrowseValue(field, values[field.key])}
+              {(!films.isError || films.hasTotal) && (
+                <SecondaryVirtualRows
+                  window={films}
+                  colSpan={columns.count + 1}
+                  renderRow={(item) => {
+                    const values: BrowseValues = getBrowseValues(item)
+                    return (
+                      <tr
+                        key={item.id}
+                        data-selected={selected.includes(item.id) || undefined}
                       >
-                        {field.key === 'title' ? (
-                          <Link href={`/${plural}/${item.id}`}>
-                            {item.title}
-                          </Link>
-                        ) : (
-                          formatBrowseValue(field, values[field.key])
-                        )}
-                      </td>
-                    ))}
-                    {columns.visible('legacyImport') && (
-                      <td>{item.hasLegacyImport ? 'Yes' : 'No'}</td>
-                    )}
-                    {visibleProviders.map((source) => {
-                      const state = item.providerFreshness[source.id]
-                      const date = state?.lastScrapedAt
-                      const attempt = state?.lastAttempt
-                      const successTitle = date
-                        ? `Last successful scrape: ${date}`
-                        : 'No successful scrape'
-                      return (
-                        <td key={`scraped-${source.id}`} title={successTitle}>
-                          {attempt && attempt.status !== 'succeeded' ? (
-                            <span className="flex w-full min-w-0 max-w-full items-center gap-1 overflow-hidden">
-                              <Link
-                                className="job-status shrink-0 underline underline-offset-2"
-                                data-status={attempt.status}
-                                href={scopedHref(
-                                  `/jobs?jobId=${encodeURIComponent(attempt.jobId)}`,
-                                  mediaType,
-                                )}
-                                title={`${source.displayName} attempt started: ${attempt.startedAt}${attempt.finishedAt ? `; finished: ${attempt.finishedAt}` : ''}. ${successTitle}`}
-                              >
-                                {attempt.status === 'failed'
-                                  ? 'Failed'
-                                  : attempt.status === 'running'
-                                    ? 'Running'
-                                    : 'Cancelled'}
+                        <td className="table-selection-cell">
+                          <input
+                            type="checkbox"
+                            aria-label={`Select ${item.title}`}
+                            checked={selected.includes(item.id)}
+                            disabled={queue.isPending}
+                            onChange={(event) => {
+                              changeSelection(
+                                updateJobSelection(
+                                  selected,
+                                  ids,
+                                  item.id,
+                                  anchor,
+                                  'shiftKey' in event.nativeEvent &&
+                                    event.nativeEvent.shiftKey === true,
+                                  event.target.checked,
+                                ),
+                              )
+                              setAnchor(item.id)
+                            }}
+                          />
+                        </td>
+                        {visible.map((field) => (
+                          <td
+                            key={field.key}
+                            title={formatBrowseValue(field, values[field.key])}
+                          >
+                            {field.key === 'title' ? (
+                              <Link href={`/${plural}/${item.id}`}>
+                                {item.title}
                               </Link>
-                              {attempt.status === 'failed' && attempt.error && (
-                                <span
-                                  className="min-w-0 truncate"
-                                  title={attempt.error}
+                            ) : (
+                              formatBrowseValue(field, values[field.key])
+                            )}
+                          </td>
+                        ))}
+                        {columns.visible('legacyImport') && (
+                          <td>{item.hasLegacyImport ? 'Yes' : 'No'}</td>
+                        )}
+                        {visibleProviders.map((source) => {
+                          const state = item.providerFreshness[source.id]
+                          const date = state?.lastScrapedAt
+                          const attempt = state?.lastAttempt
+                          const successTitle = date
+                            ? `Last successful scrape: ${date}`
+                            : 'No successful scrape'
+                          return (
+                            <td
+                              key={`scraped-${source.id}`}
+                              title={successTitle}
+                            >
+                              {attempt && attempt.status !== 'succeeded' ? (
+                                <span className="flex w-full min-w-0 max-w-full items-center gap-1 overflow-hidden">
+                                  <Link
+                                    className="job-status shrink-0 underline underline-offset-2"
+                                    data-status={attempt.status}
+                                    href={scopedHref(
+                                      `/jobs?jobId=${encodeURIComponent(attempt.jobId)}`,
+                                      mediaType,
+                                    )}
+                                    title={`${source.displayName} attempt started: ${attempt.startedAt}${attempt.finishedAt ? `; finished: ${attempt.finishedAt}` : ''}. ${successTitle}`}
+                                  >
+                                    {attempt.status === 'failed'
+                                      ? 'Failed'
+                                      : attempt.status === 'running'
+                                        ? 'Running'
+                                        : 'Cancelled'}
+                                  </Link>
+                                  {attempt.status === 'failed' &&
+                                    attempt.error && (
+                                      <span
+                                        className="min-w-0 truncate"
+                                        title={attempt.error}
+                                      >
+                                        {attempt.error}
+                                      </span>
+                                    )}
+                                </span>
+                              ) : date ? (
+                                <time
+                                  dateTime={date}
+                                  aria-label={`Last successful ${source.displayName} scrape: ${date}`}
                                 >
-                                  {attempt.error}
+                                  {formatBrowseValue(
+                                    lastScrapedField,
+                                    Date.parse(date),
+                                  )}
+                                </time>
+                              ) : attempt ? (
+                                'Succeeded'
+                              ) : (
+                                'Never'
+                              )}
+                              {state && !state.hasProviderIdentifier && (
+                                <span
+                                  className="needs-id ml-2"
+                                  title={`Needs ID for ${source.displayName}`}
+                                >
+                                  Needs ID
                                 </span>
                               )}
-                            </span>
-                          ) : date ? (
-                            <time
-                              dateTime={date}
-                              aria-label={`Last successful ${source.displayName} scrape: ${date}`}
-                            >
-                              {formatBrowseValue(
-                                lastScrapedField,
-                                Date.parse(date),
-                              )}
-                            </time>
-                          ) : attempt ? (
-                            'Succeeded'
-                          ) : (
-                            'Never'
-                          )}
-                          {state && !state.hasProviderIdentifier && (
-                            <span
-                              className="needs-id ml-2"
-                              title={`Needs ID for ${source.displayName}`}
-                            >
-                              Needs ID
-                            </span>
-                          )}
-                        </td>
-                      )
-                    })}
-                  </tr>
-                )
-              })}
-              {!items.length && (
+                            </td>
+                          )
+                        })}
+                      </tr>
+                    )
+                  }}
+                />
+              )}
+              {!films.total && (
                 <TableState colSpan={columns.count + 1} error={films.isError}>
                   {films.isPending
                     ? `Loading ${plural}...`
@@ -639,7 +634,7 @@ function SelectionTable({ providers, mediaType = 'film' }: Props) {
                     <button
                       type="button"
                       className="ml-1 underline"
-                      onClick={() => films.refetch()}
+                      onClick={films.retry}
                     >
                       Retry
                     </button>
@@ -648,33 +643,6 @@ function SelectionTable({ providers, mediaType = 'film' }: Props) {
               )}
             </tbody>
           </table>
-          <div ref={sentinel} className="py-2 text-center">
-            {films.isFetchNextPageError && (
-              <p role="alert">Could not load more {plural}.</p>
-            )}
-            {films.isFetchingNextPage && (
-              <p role="status" className="muted">
-                Loading more {plural}...
-              </p>
-            )}
-            {films.hasNextPage && !films.isFetchingNextPage && (
-              <Button
-                type="button"
-                variant="ghost"
-                disabled={films.isFetching || queue.isPending}
-                onClick={() => films.fetchNextPage({ cancelRefetch: false })}
-              >
-                {films.isFetchNextPageError
-                  ? `Retry loading ${plural}`
-                  : `Load more ${plural}`}
-              </Button>
-            )}
-            {!films.hasNextPage && items.length > 0 && (
-              <p className="muted">
-                All {items.length.toLocaleString()} matching {plural} loaded.
-              </p>
-            )}
-          </div>
         </SecondaryTableScroll>
         <SecondaryTableFooter selectedCount={selected.length}>
           <div className="film-selection-footer">

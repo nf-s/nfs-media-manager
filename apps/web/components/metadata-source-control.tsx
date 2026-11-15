@@ -8,16 +8,16 @@ import React, {
   type ReactNode,
 } from 'react'
 import { Layers3 } from 'lucide-react'
-import { useInfiniteQuery } from '@tanstack/react-query'
 import {
   TagProvenancePageSchema,
   type SourceNavigationLink,
 } from '@repo/schemas/tags'
 import { fetchApiData } from '@/utils/api'
+import { useVirtualTable } from '@/hooks/useVirtualTable'
 import { useConfig } from './providers'
 import ServiceIconLinks from './service-icon-links'
 import styles from './metadata-source-control.module.css'
-import { MetadataSourceLinks } from './metadata-source-list'
+import { VirtualTagSources } from './metadata-source-list'
 import TagDetailModal from './tag-detail-modal'
 
 function TagSources({
@@ -34,54 +34,30 @@ function TagSources({
   onManage: (id: string, mediaType: 'album' | 'film') => void
 }) {
   const { apiBaseUrl } = useConfig()
-  const query = useInfiniteQuery({
+  const query = useVirtualTable({
     queryKey: ['tag-provenance', mediaType, mediaId, name],
-    initialPageParam: 1,
-    queryFn: ({ pageParam }) =>
+    pageSize: 25,
+    loadPage: (page, size, signal) =>
       fetchApiData(
         apiBaseUrl,
-        `/api/v1/tags/provenance?${new URLSearchParams({ ...(mediaId ? { mediaId } : {}), ...(mediaType ? { mediaType } : {}), name, page: String(pageParam), size: '25' })}`,
+        `/api/v1/tags/provenance?${new URLSearchParams({ ...(mediaId ? { mediaId } : {}), ...(mediaType ? { mediaType } : {}), name, page: String(page), size: String(size) })}`,
         TagProvenancePageSchema,
+        { signal },
       ),
-    getNextPageParam: (page) =>
-      page.page < page.pageCount ? page.page + 1 : undefined,
   })
-  const canonicalId = tagId ?? query.data?.pages[0]?.tagId
-  const scope = query.data?.pages[0]?.mediaType ?? mediaType
+  const canonicalId = tagId ?? query.firstPage?.tagId
+  const scope = query.firstPage?.mediaType ?? mediaType
   return (
     <>
-      {query.data && (
-        <MetadataSourceLinks
-          items={query.data.pages.flatMap((page) => page.items)}
-        />
-      )}
-      {query.isPending && <p role="status">Loading sources...</p>}
       {query.isError && (
         <p role="alert">
           Could not load sources.{' '}
-          <button
-            type="button"
-            onClick={() =>
-              query.isFetchNextPageError
-                ? query.fetchNextPage()
-                : query.refetch()
-            }
-            className="underline"
-          >
+          <button type="button" onClick={query.retry} className="underline">
             Retry
           </button>
         </p>
       )}
-      {query.hasNextPage && (
-        <button
-          type="button"
-          className="mt-2 underline"
-          disabled={query.isFetchingNextPage}
-          onClick={() => query.fetchNextPage()}
-        >
-          {query.isFetchingNextPage ? 'Loading...' : 'More sources'}
-        </button>
-      )}
+      <VirtualTagSources query={query} label="Source links" linksOnly />
       <div className="mt-3 border-t pt-2">
         <button
           type="button"

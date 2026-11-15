@@ -1,7 +1,7 @@
 'use client'
 
 import { useDeferredValue, useEffect, useId, useRef, useState } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { X } from 'lucide-react'
 import { PaginatedDataSchema } from '@repo/schemas/common'
 import {
@@ -14,6 +14,13 @@ import {
 import { Button } from '@repo/ui/components/ui/button'
 import { Input } from '@repo/ui/components/ui/input'
 import { fetchApiData } from '@/utils/api'
+import { useVirtualTable } from '@/hooks/useVirtualTable'
+import { TableState } from '@repo/ui/components/ui/table'
+import {
+  SecondaryCell,
+  SecondaryTableScroll,
+  SecondaryVirtualRows,
+} from './secondary-table'
 import { trackServiceLinks } from '@/utils/track-links'
 import { errorMessage, invalidateScrobbleLinks } from './lastfm-sync'
 import { useConfig } from './providers'
@@ -150,12 +157,12 @@ export function TrackMergePanel({
   const titleId = useId()
   const [draft, setDraft] = useState(track.title.slice(0, 200))
   const query = useDeferredValue(draft.trim())
-  const [page, setPage] = useState(1)
   const [target, setTarget] = useState<TrackListItem | null>(null)
-  const candidates = useQuery({
-    queryKey: ['tracks', 'merge-candidates', query, page],
+  const candidates = useVirtualTable({
+    queryKey: ['tracks', 'merge-candidates', query],
+    pageSize: SEARCH_RESULTS,
     enabled: target === null && query.length > 0,
-    queryFn: ({ signal }) =>
+    loadPage: (page, _size, signal) =>
       loadTrackMergeCandidates(apiBaseUrl, query, page, signal),
   })
   const merge = useMutation({
@@ -179,10 +186,6 @@ export function TrackMergePanel({
         previous.focus({ preventScroll: true })
     }
   }, [])
-  const items =
-    candidates.data?.items.filter(
-      (item) => item.id !== track.id && item.spotifyMatch === 'spotify-import',
-    ) ?? []
   return (
     <dialog
       ref={dialog}
@@ -245,74 +248,117 @@ export function TrackMergePanel({
                 placeholder="Search library tracks"
                 maxLength={200}
                 value={draft}
-                onChange={(event) => {
-                  setDraft(event.target.value)
-                  setPage(1)
-                }}
+                onChange={(event) => setDraft(event.target.value)}
               />
-              {query.length > 0 && candidates.isFetching && (
-                <p role="status">Searching tracks...</p>
-              )}
-              {candidates.isError && (
-                <p role="alert">
-                  {errorMessage(candidates.error, 'Could not search tracks.')}{' '}
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => candidates.refetch()}
-                  >
-                    Retry
-                  </Button>
-                </p>
-              )}
-              {candidates.isSuccess && !items.length && (
-                <p className="quiet">No imported Spotify tracks found.</p>
-              )}
-              {items.length > 0 && (
-                <ul className="grid gap-2" aria-label="Spotify library tracks">
-                  {items.map((item) => (
-                    <li
-                      key={item.id}
-                      className="flex items-start gap-2 text-sm"
-                    >
+              {query.length > 0 && (
+                <>
+                  {candidates.hasTotal && (
+                    <p className="quiet">
+                      {candidates.total.toLocaleString()} matching tracks
+                    </p>
+                  )}
+                  {candidates.isError && (
+                    <p role="alert">
+                      Could not search tracks.{' '}
                       <Button
                         size="sm"
-                        variant="outline"
-                        className="shrink-0"
-                        aria-label={`Merge with ${item.title} by ${item.artists.join(', ')}`}
-                        onClick={() => setTarget(item)}
+                        variant="ghost"
+                        onClick={candidates.retry}
                       >
-                        Merge
+                        Retry
                       </Button>
-                      <TrackIdentity track={item} />
-                    </li>
-                  ))}
-                </ul>
-              )}
-              {candidates.data && candidates.data.pageCount > 1 && (
-                <div className="form-actions" aria-label="Track search pages">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={page <= 1 || candidates.isFetching}
-                    onClick={() => setPage(page - 1)}
+                    </p>
+                  )}
+                  <SecondaryTableScroll
+                    ref={candidates.scroller}
+                    onScroll={candidates.onScroll}
+                    className="table-scroll-bounded"
+                    role="region"
+                    aria-label="Spotify library tracks"
+                    aria-busy={candidates.isFetching}
                   >
-                    Previous
-                  </Button>
-                  <span className="text-sm">
-                    Page {page} of {candidates.data.pageCount}
-                  </span>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={
-                      page >= candidates.data.pageCount || candidates.isFetching
-                    }
-                    onClick={() => setPage(page + 1)}
-                  >
-                    Next
-                  </Button>
-                </div>
+                    <table
+                      className="compact-table"
+                      aria-label="Spotify library tracks"
+                    >
+                      <thead>
+                        <tr>
+                          <th>Track</th>
+                          <th>Artist</th>
+                          <th>Album</th>
+                          <th>Action</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {candidates.hasTotal && !candidates.total && (
+                          <TableState colSpan={4}>
+                            No imported Spotify tracks found.
+                          </TableState>
+                        )}
+                        {(!candidates.isError || candidates.hasTotal) && (
+                          <SecondaryVirtualRows
+                            window={candidates}
+                            colSpan={4}
+                            renderRow={(item) =>
+                              item.id === track.id ||
+                              item.spotifyMatch !== 'spotify-import' ? (
+                                <tr aria-hidden="true">
+                                  <td
+                                    colSpan={4}
+                                    style={{
+                                      height: candidates.rowHeight,
+                                      border: 0,
+                                      padding: 0,
+                                    }}
+                                  />
+                                </tr>
+                              ) : (
+                                <tr key={item.id}>
+                                  <td>
+                                    <div className="secondary-cell-actions">
+                                      <SecondaryCell text={item.title}>
+                                        {item.title}
+                                      </SecondaryCell>
+                                      <ServiceIconLinks
+                                        links={trackServiceLinks(item)}
+                                      />
+                                    </div>
+                                  </td>
+                                  <td>
+                                    <SecondaryCell
+                                      text={item.artists.join(', ')}
+                                    >
+                                      {item.artists.join(', ') ||
+                                        'Unknown artist'}
+                                    </SecondaryCell>
+                                  </td>
+                                  <td>
+                                    <SecondaryCell
+                                      text={item.albumName ?? undefined}
+                                    >
+                                      {item.albumName ?? 'Album unknown'}
+                                    </SecondaryCell>
+                                  </td>
+                                  <td>
+                                    <Button
+                                      size="sm"
+                                      className="h-6"
+                                      variant="outline"
+                                      aria-label={`Merge with ${item.title} by ${item.artists.join(', ')}`}
+                                      onClick={() => setTarget(item)}
+                                    >
+                                      Merge
+                                    </Button>
+                                  </td>
+                                </tr>
+                              )
+                            }
+                          />
+                        )}
+                      </tbody>
+                    </table>
+                  </SecondaryTableScroll>
+                </>
               )}
             </>
           )}

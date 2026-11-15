@@ -660,16 +660,20 @@ export default function MediaBrowser({
     )
   }
   function albumPlaybackSource(item: AlbumListItem, index: number) {
-    return createBrowsePlaybackSource({
-      apiBaseUrl,
-      collection: 'albums',
-      params,
-      href: `/albums?${searchParams.size ? searchParams : params}`,
-      label: 'Albums',
-      total,
-      startIndex: index,
-      initialItem: item,
-    })
+    const source = (length: number) =>
+      createBrowsePlaybackSource({
+        apiBaseUrl,
+        collection: 'albums',
+        params,
+        href: `/albums?${searchParams.size ? searchParams : params}`,
+        label: 'Albums',
+        total: length,
+        startIndex: index,
+        initialItem: item,
+      })
+    return query.isCounting
+      ? query.resolveTotal(index).then(source)
+      : source(total)
   }
   function creatorButtons(item: AlbumListItem | FilmListItem) {
     const creatorField = item.mediaType === 'album' ? 'artist' : 'director'
@@ -1033,9 +1037,21 @@ export default function MediaBrowser({
               onChange={(next) => setParams({ view: next })}
             />
             <span className="browse-count" aria-live="polite">
-              {query.isPending
-                ? 'Loading...'
-                : `${total.toLocaleString()} ${collection}`}
+              {query.countError ? (
+                <button
+                  type="button"
+                  className="underline"
+                  onClick={query.retryCount}
+                >
+                  Retry count
+                </button>
+              ) : !query.isCounting ? (
+                `${total.toLocaleString()} ${collection}`
+              ) : query.isPending ? (
+                'Loading...'
+              ) : (
+                'Counting...'
+              )}
             </span>
           </div>
         </div>
@@ -1073,7 +1089,7 @@ export default function MediaBrowser({
           <span className="sr-only" role="status">
             {query.isFetching ? 'Loading items' : ''}
           </span>
-          {!query.isPending && !query.isError && total === 0 && (
+          {query.hasTotal && !query.isError && total === 0 && (
             <div className="browse-empty">
               No matches. <button onClick={clearFilters}>Clear filters</button>
             </div>
@@ -1298,7 +1314,7 @@ export default function MediaBrowser({
           ) : (
             <table
               className="browse-table"
-              aria-rowcount={total + 1}
+              aria-rowcount={query.hasTotal ? total + 1 : undefined}
               style={{
                 width: columns.reduce(
                   (sum, field) => sum + widthFor(field),

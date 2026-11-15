@@ -24,6 +24,14 @@ Search finds matching media IDs through field-specific queries. Titles, summarie
 
 Indexes are targeted at stored columns and query expressions. Generic JSON metadata expansion and broad aggregate reports still need to process matching rows. Very short substring searches and common words can match much of a library; a trigram index is most useful when the search contains selective runs of at least three characters. PostgreSQL can choose a sequential scan when that is cheaper.
 
+## Browse pagination
+
+Albums, Films, Tracks and Subscriptions expose `/api/v1/{library}/browse-page` for rows and `/api/v1/{library}/browse-count` for the exact filtered total. The first returns `items`, `page`, `size` and `hasMore`. It reads one extra result to detect continuation and respects the result cap where the library supports one. The second returns `totalCount` from the same membership predicate and reuses the short-lived, database-versioned cache. The original paginated routes still return rows and totals together.
+
+Browse can display the first page and expand the scroll area when the total arrives. A first page with `hasMore: false` already gives the total. Later pages skip counting, including when a requested page is empty. A failed count can be retried while the loaded page remains available.
+
+On a disposable fixture of 20,000 synthetic tracks, the exact count for a required Album track list filter took about 123 ms, while the first page and its metadata took about 10 ms. On 50,000 synthetic subscription items, the original first page with a window count took about 22 ms. Executing the page and exact count independently took about 0.3 ms and 3.8 ms respectively. These are medians from five warm database measurements, excluding HTTP and browser rendering.
+
 ## Verification
 
 The browse-search and query-indexes integration tests create disposable databases and synthetic libraries. They cover query results, substring escaping, cross-field word matching and PostgreSQL query plans. They do not read or scrape a real library. Run them from the workspace root:

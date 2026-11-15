@@ -1,6 +1,11 @@
 import { createRoute, type OpenAPIHono } from '@hono/zod-openapi'
 import { z } from 'zod'
-import { BrowseFacetQuerySchema, BrowseFieldSchema } from '@repo/schemas/browse'
+import {
+  BrowseCountSchema,
+  BrowseFacetQuerySchema,
+  BrowseFieldSchema,
+  BrowsePageSliceSchema,
+} from '@repo/schemas/browse'
 import { PaginatedDataSchema } from '@repo/schemas/common'
 import {
   TrackDetailSchema,
@@ -25,9 +30,10 @@ import {
 } from '@/lib/openapi'
 import { generateJsonResponse } from '@/lib/response'
 import { authMiddleware, mutationOriginMiddleware } from '@/middlewares/auth'
-import { listBrowseFields } from '@/services/browse'
+import { listBrowseFields, queryBrowseCount } from '@/services/browse'
 import {
   getTrackDetail,
+  listTrackBrowsePage,
   listTrackFilterOptions,
   listTracks,
 } from '@/services/tracks'
@@ -38,6 +44,64 @@ import {
 } from '@/services/spotify-track-playlist-additions'
 
 const app: OpenAPIHono<AppEnv> = createOpenAPIApp()
+
+app.openapi(
+  createRoute({
+    method: 'get',
+    path: '/browse-page',
+    middleware: [authMiddleware()],
+    request: { query: TrackQuerySchema },
+    responses: {
+      200: {
+        description: 'Browse rows with a continuation indicator',
+        content: {
+          'application/json': {
+            schema: createResponseSchema(
+              BrowsePageSliceSchema(TrackListItemSchema),
+            ),
+          },
+        },
+      },
+      401: jsonErrorResponse('Unauthorized'),
+      422: validationErrorResponse,
+    },
+  }),
+  async (c) =>
+    generateJsonResponse(
+      c,
+      await listTrackBrowsePage(c.req.valid('query')),
+      200,
+    ),
+)
+
+app.openapi(
+  createRoute({
+    method: 'get',
+    path: '/browse-count',
+    middleware: [authMiddleware()],
+    request: { query: TrackQuerySchema },
+    responses: {
+      200: {
+        description: 'Exact count for the current browse filters',
+        content: {
+          'application/json': {
+            schema: createResponseSchema(BrowseCountSchema),
+          },
+        },
+      },
+      401: jsonErrorResponse('Unauthorized'),
+      422: validationErrorResponse,
+    },
+  }),
+  async (c) =>
+    generateJsonResponse(
+      c,
+      await queryBrowseCount('track', c.req.valid('query')),
+      200,
+    ),
+)
+
+app
   .openapi(
     createRoute({
       method: 'get',

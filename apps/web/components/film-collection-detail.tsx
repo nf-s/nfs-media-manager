@@ -3,11 +3,9 @@
 import Link from 'next/link'
 import { DetailLink } from './detail-link'
 import { useDeferredValue } from 'react'
-import { useInfiniteQuery } from '@tanstack/react-query'
 import {
   FilmCollectionDetailSchema,
   FilmCollectionQuerySchema,
-  type FilmCollectionItem,
   type FilmCollectionSort,
   type FilmCollectionQuery,
 } from '@repo/schemas/film-collections'
@@ -21,7 +19,7 @@ import {
   TableRow,
   TableState,
 } from '@repo/ui/components/ui/table'
-import { useInfiniteTableScroll } from '@/hooks/useInfiniteTableScroll'
+import { useVirtualTable } from '@/hooks/useVirtualTable'
 import { collectionFilmsHref } from '@/utils/playlist-links'
 import ServiceIconLinks from './service-icon-links'
 import { fetchApiData } from '@/utils/api'
@@ -35,6 +33,7 @@ import {
   SecondaryTableHead,
   SecondaryTableScroll,
   SecondaryTableToolbar,
+  SecondaryVirtualRows,
   useTableColumns,
 } from './secondary-table'
 
@@ -92,30 +91,21 @@ export function FilmCollectionEntries({ id }: { id: string }) {
     detail.replace(params)
   }
   const table = useTableColumns('film-collection-items', columns)
-  const query = useInfiniteQuery({
+  const query = useVirtualTable({
     queryKey: ['film-collection', id, sortBy, direction, q, watchedStates],
-    initialPageParam: 1,
-    queryFn: ({ pageParam, signal }) =>
-      fetchApiData(
+    rowHeight: 36,
+    viewportEnabled: detail.params.get('tab') !== 'sources',
+    loadPage: async (page, size, signal) => {
+      const result = await fetchApiData(
         apiBaseUrl,
-        `/api/v1/collections/${encodeURIComponent(id)}?${new URLSearchParams({ page: String(pageParam), size: '100', sortBy, direction, ...(q ? { q } : {}), ...(watchedStates.length ? { watchedStates: JSON.stringify(watchedStates) } : {}) })}`,
+        `/api/v1/collections/${encodeURIComponent(id)}?${new URLSearchParams({ page: String(page), size: String(size), sortBy, direction, ...(q ? { q } : {}), ...(watchedStates.length ? { watchedStates: JSON.stringify(watchedStates) } : {}) })}`,
         FilmCollectionDetailSchema,
         { signal },
-      ),
-    getNextPageParam: (last) =>
-      last.items.page < last.items.pageCount ? last.items.page + 1 : undefined,
+      )
+      return { ...result.items, summary: result }
+    },
   })
-  const { scroller, sentinel } = useInfiniteTableScroll({
-    enabled: query.hasNextPage && !query.isFetching && !query.isError,
-    fetchNextPage: query.fetchNextPage,
-    resetKey: `${id}:${sortBy}:${direction}:${q}:${watchedStates.join(',')}`,
-  })
-  const byId = new Map<string, FilmCollectionItem>()
-  for (const page of query.data?.pages ?? [])
-    for (const row of page.items.items)
-      if (!byId.has(row.id)) byId.set(row.id, row)
-  const rows = [...byId.values()]
-  const summary = query.data?.pages[0]
+  const summary = query.firstPage?.summary
   function onSort(key: FilmCollectionSort) {
     changeView({
       sortBy: key,
@@ -148,15 +138,28 @@ export function FilmCollectionEntries({ id }: { id: string }) {
         }
         columns={table.controls}
       />
+      {query.isError && (
+        <p role="alert" className="quiet">
+          Could not load collection films.{' '}
+          <button type="button" className="underline" onClick={query.retry}>
+            Retry
+          </button>
+        </p>
+      )}
       <SecondaryTableScroll
-        ref={scroller}
+        ref={query.scroller}
+        onScroll={query.onScroll}
         className="min-h-0 flex-1"
         role="region"
         aria-label="Collection films"
         data-inspector-scroll=""
         aria-busy={query.isFetching}
       >
-        <table className="compact-table" aria-label="Collection films">
+        <table
+          className="compact-table"
+          aria-label="Collection films"
+          aria-rowcount={query.hasTotal ? query.total + 1 : undefined}
+        >
           <TableHeader>
             <TableRow>
               {table.visible('artwork') && (
@@ -195,119 +198,84 @@ export function FilmCollectionEntries({ id }: { id: string }) {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {!rows.length && (
-              <TableState colSpan={table.count} error={query.isError}>
-                {query.isPending ? (
-                  'Loading collection...'
-                ) : query.isError ? (
-                  <>
-                    Could not load this collection.{' '}
-                    <button
-                      type="button"
-                      className="underline"
-                      onClick={() => query.refetch()}
-                    >
-                      Retry
-                    </button>
-                  </>
-                ) : q || watchedStates.length ? (
-                  'No matching films.'
-                ) : (
-                  'No films in this collection.'
-                )}
+            {query.hasTotal && !query.total && (
+              <TableState colSpan={table.count}>
+                {q || watchedStates.length
+                  ? 'No matching films.'
+                  : 'No films in this collection.'}
               </TableState>
             )}
-            {rows.map((row) => (
-              <TableRow key={row.id}>
-                {table.visible('artwork') && (
-                  <TableCell className="w-10">
-                    <MediaArtwork
-                      src={row.artworkUrl}
-                      alt=""
-                      fallbackLabel=""
-                      containerClassName="h-7 w-5 rounded"
-                      imageClassName="h-7 w-5 object-cover"
-                      fallbackClassName="h-7 w-5"
-                    />
-                  </TableCell>
-                )}
-                {table.visible('position') && (
-                  <TableCell className="numeric">
-                    {row.position.toLocaleString()}
-                  </TableCell>
-                )}
-                {table.visible('title') && (
-                  <TableCell>
-                    <SecondaryCell text={row.title}>
-                      <DetailLink
-                        className="table-title"
-                        kind="film"
-                        id={row.id}
-                      >
-                        {row.title}
-                      </DetailLink>
-                    </SecondaryCell>
-                  </TableCell>
-                )}
-                {table.visible('releaseDate') && (
-                  <TableCell className="whitespace-nowrap">
-                    <DateValue value={row.releaseDate} />
-                  </TableCell>
-                )}
-                {table.visible('runtimeMinutes') && (
-                  <TableCell className="numeric">
-                    {row.runtimeMinutes === null
-                      ? '-'
-                      : `${row.runtimeMinutes.toLocaleString()} min`}
-                  </TableCell>
-                )}
-                {table.visible('watched') && (
-                  <TableCell>{row.watched ? 'Yes' : 'No'}</TableCell>
-                )}
-                {table.visible('source') && (
-                  <TableCell>
-                    <SecondaryCell text={row.source ?? undefined}>
-                      {row.source ?? '-'}
-                    </SecondaryCell>
-                  </TableCell>
-                )}
-                {table.visible('dateAdded') && (
-                  <TableCell className="whitespace-nowrap">
-                    <DateValue value={row.dateAdded} />
-                  </TableCell>
-                )}
-              </TableRow>
-            ))}
+            <SecondaryVirtualRows
+              window={query}
+              colSpan={table.count}
+              renderRow={(row, index) => (
+                <TableRow
+                  key={row.id}
+                  aria-rowindex={index + 2}
+                  style={{ height: query.rowHeight }}
+                >
+                  {table.visible('artwork') && (
+                    <TableCell className="w-10">
+                      <MediaArtwork
+                        src={row.artworkUrl}
+                        alt=""
+                        fallbackLabel=""
+                        containerClassName="h-7 w-5 rounded"
+                        imageClassName="h-7 w-5 object-cover"
+                        fallbackClassName="h-7 w-5"
+                      />
+                    </TableCell>
+                  )}
+                  {table.visible('position') && (
+                    <TableCell className="numeric">
+                      {row.position.toLocaleString()}
+                    </TableCell>
+                  )}
+                  {table.visible('title') && (
+                    <TableCell>
+                      <SecondaryCell text={row.title}>
+                        <DetailLink
+                          className="table-title"
+                          kind="film"
+                          id={row.id}
+                        >
+                          {row.title}
+                        </DetailLink>
+                      </SecondaryCell>
+                    </TableCell>
+                  )}
+                  {table.visible('releaseDate') && (
+                    <TableCell className="whitespace-nowrap">
+                      <DateValue value={row.releaseDate} />
+                    </TableCell>
+                  )}
+                  {table.visible('runtimeMinutes') && (
+                    <TableCell className="numeric">
+                      {row.runtimeMinutes === null
+                        ? '-'
+                        : `${row.runtimeMinutes.toLocaleString()} min`}
+                    </TableCell>
+                  )}
+                  {table.visible('watched') && (
+                    <TableCell>{row.watched ? 'Yes' : 'No'}</TableCell>
+                  )}
+                  {table.visible('source') && (
+                    <TableCell>
+                      <SecondaryCell text={row.source ?? undefined}>
+                        {row.source ?? '-'}
+                      </SecondaryCell>
+                    </TableCell>
+                  )}
+                  {table.visible('dateAdded') && (
+                    <TableCell className="whitespace-nowrap">
+                      <DateValue value={row.dateAdded} />
+                    </TableCell>
+                  )}
+                </TableRow>
+              )}
+            />
           </TableBody>
         </table>
-        <div ref={sentinel} className="py-2 text-center">
-          {query.isFetchingNextPage && (
-            <p role="status" className="muted">
-              Loading more films...
-            </p>
-          )}
-          {query.isFetchNextPageError && (
-            <p role="alert">Could not load more films.</p>
-          )}
-          {query.hasNextPage && !query.isFetchingNextPage && (
-            <Button
-              type="button"
-              variant="ghost"
-              disabled={query.isFetching}
-              onClick={() => query.fetchNextPage({ cancelRefetch: false })}
-            >
-              {query.isFetchNextPageError
-                ? 'Retry loading films'
-                : 'Load more films'}
-            </Button>
-          )}
-          {!query.hasNextPage && rows.length > 0 && (
-            <p className="muted">
-              {rows.length.toLocaleString()} of{' '}
-              {summary?.items.totalCount.toLocaleString()} loaded.
-            </p>
-          )}
-        </div>
       </SecondaryTableScroll>
     </>
   )
@@ -350,8 +318,7 @@ export function FilmCollectionEntries({ id }: { id: string }) {
             query.isError && !summary
               ? 'Could not load collection sources.'
               : undefined,
-          onRetry:
-            query.isError && !summary ? () => query.refetch() : undefined,
+          onRetry: query.isError && !summary ? query.retry : undefined,
         }}
       >
         {films}

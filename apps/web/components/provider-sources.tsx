@@ -3,7 +3,6 @@
 import Link from 'next/link'
 import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react'
 import {
-  useInfiniteQuery,
   useMutation,
   useQueries,
   useQuery,
@@ -23,6 +22,7 @@ import { z } from 'zod'
 import type { ExternalLinkSchema } from '@repo/schemas/common'
 import { Button } from '@repo/ui/components/ui/button'
 import { TableState } from '@repo/ui/components/ui/table'
+import { useVirtualTable } from '@/hooks/useVirtualTable'
 import { fetchApiData } from '@/utils/api'
 import { canCancelJob } from '@/utils/job-selection'
 import { sortTableRows, type TableSort } from '@/utils/secondary-table'
@@ -38,6 +38,7 @@ import {
   SecondaryTableHead,
   SecondaryTableScroll,
   SecondaryTableToolbar,
+  SecondaryVirtualRows,
 } from './secondary-table'
 import { Input } from '@repo/ui/components/ui/input'
 import ServiceIconLinks from './service-icon-links'
@@ -204,104 +205,105 @@ function SourceHistory({
 }) {
   const { apiBaseUrl } = useConfig()
   const [selectedSnapshot, setSelectedSnapshot] = useState<string | null>(null)
-  const history = useInfiniteQuery({
+  const history = useVirtualTable({
     queryKey: ['history', scope.id, scope.kind, row.id, 'snapshots'],
-    initialPageParam: 1,
-    queryFn: ({ pageParam, signal }) =>
+    pageSize: 20,
+    loadPage: (page, size, signal) =>
       fetchApiData(
         apiBaseUrl,
-        `${sourcePath(scope, row.id)}/history?${new URLSearchParams({ page: String(pageParam), size: '20' })}`,
+        `${sourcePath(scope, row.id)}/history?${new URLSearchParams({ page: String(page), size: String(size) })}`,
         SourceSnapshotPageSchema,
         { signal },
       ),
-    getNextPageParam: (last) =>
-      last.page < last.pageCount ? last.page + 1 : undefined,
   })
-  const snapshots = new Map<
-    string,
-    z.infer<typeof SourceSnapshotPageSchema>['items'][number]
-  >()
-  for (const page of history.data?.pages ?? [])
-    for (const snapshot of page.items)
-      if (!snapshots.has(snapshot.id)) snapshots.set(snapshot.id, snapshot)
   return (
     <section aria-label={`${row.label} history`} className="space-y-3">
       <h2 className="text-sm font-semibold">{row.label} history</h2>
       {row.details}
       <section aria-label="Snapshots" className="space-y-1">
         <h3 className="text-sm font-semibold">Snapshots</h3>
-        {history.isPending && (
-          <p role="status" className="quiet">
-            Loading snapshots...
-          </p>
-        )}
-        {history.isError && !snapshots.size && (
+        {history.isError && (
           <ErrorWithRetry
             message="Could not load snapshots."
-            onRetry={() => history.refetch()}
+            onRetry={history.retry}
           />
         )}
-        {history.isSuccess && !snapshots.size && (
-          <p className="quiet">No snapshots.</p>
-        )}
-        <div className="history-list">
-          {[...snapshots.values()].map((snapshot) => {
-            const open = selectedSnapshot === snapshot.id
-            return (
-              <section
-                key={snapshot.id}
-                className="border-b border-[var(--line-soft)] py-1"
-              >
-                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
-                  <time dateTime={snapshot.createdAt}>
-                    {new Date(snapshot.createdAt).toLocaleString()}
-                  </time>
-                  {snapshot.source && (
-                    <span className="quiet">{snapshot.source}</span>
-                  )}
-                  <button
-                    type="button"
-                    className="underline underline-offset-2"
-                    aria-expanded={open}
-                    onClick={() =>
-                      setSelectedSnapshot(open ? null : snapshot.id)
-                    }
-                  >
-                    {open ? 'Hide snapshot' : 'View snapshot'}
-                  </button>
-                  {snapshot.jobId && (
-                    <Link
-                      className="underline underline-offset-2"
-                      href={jobLink(snapshot.jobId, scope)}
-                    >
-                      View job
-                    </Link>
-                  )}
-                </div>
-                {open && (
-                  <SnapshotDetails
-                    scope={scope}
-                    provider={row.id}
-                    id={snapshot.id}
-                  />
-                )}
-              </section>
-            )
-          })}
-        </div>
-        {history.hasNextPage && (
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={history.isFetching}
-            onClick={() => history.fetchNextPage({ cancelRefetch: false })}
+        <SecondaryTableScroll
+          ref={history.scroller}
+          onScroll={history.onScroll}
+          className="table-scroll-bounded"
+          role="region"
+          aria-label="Snapshots"
+          aria-busy={history.isFetching}
+        >
+          <table
+            className="compact-table"
+            aria-label="Snapshots"
+            aria-rowcount={history.hasTotal ? history.total + 1 : undefined}
           >
-            {history.isFetchingNextPage
-              ? 'Loading snapshots...'
-              : history.isFetchNextPageError
-                ? 'Retry loading snapshots'
-                : 'Load more snapshots'}
-          </Button>
+            <thead>
+              <tr>
+                <th>Saved</th>
+                <th>Source</th>
+                <th>
+                  <span className="sr-only">Actions</span>
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {history.hasTotal && !history.total && (
+                <TableState colSpan={3}>No snapshots.</TableState>
+              )}
+              <SecondaryVirtualRows
+                window={history}
+                colSpan={3}
+                renderRow={(snapshot, index) => {
+                  const open = selectedSnapshot === snapshot.id
+                  return (
+                    <tr key={snapshot.id} aria-rowindex={index + 2}>
+                      <td>
+                        <time dateTime={snapshot.createdAt}>
+                          {new Date(snapshot.createdAt).toLocaleString()}
+                        </time>
+                      </td>
+                      <td>
+                        <SecondaryCell>{snapshot.source ?? '-'}</SecondaryCell>
+                      </td>
+                      <td>
+                        <div className="secondary-cell-actions">
+                          <button
+                            type="button"
+                            className="underline underline-offset-2"
+                            aria-expanded={open}
+                            onClick={() =>
+                              setSelectedSnapshot(open ? null : snapshot.id)
+                            }
+                          >
+                            {open ? 'Hide snapshot' : 'View snapshot'}
+                          </button>
+                          {snapshot.jobId && (
+                            <Link
+                              className="underline underline-offset-2"
+                              href={jobLink(snapshot.jobId, scope)}
+                            >
+                              View job
+                            </Link>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                }}
+              />
+            </tbody>
+          </table>
+        </SecondaryTableScroll>
+        {selectedSnapshot && (
+          <SnapshotDetails
+            scope={scope}
+            provider={row.id}
+            id={selectedSnapshot}
+          />
         )}
       </section>
       {scope.kind === 'artist' ? (

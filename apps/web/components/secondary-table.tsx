@@ -1,6 +1,7 @@
 'use client'
 
 import {
+  Fragment,
   forwardRef,
   useEffect,
   useId,
@@ -593,6 +594,63 @@ export const SecondaryTableScroll = forwardRef<
   />
 ))
 SecondaryTableScroll.displayName = 'SecondaryTableScroll'
+
+/** Keep a table's complete height while rendering only its current window. */
+export type SecondaryVirtualWindow<Item> = {
+  slots: readonly { index: number; item: Item | undefined }[]
+  padTop: number
+  padBottom: number
+  rowHeight: number
+}
+
+export function SecondaryVirtualRows<Item>({
+  window,
+  colSpan,
+  renderRow,
+}: {
+  window: SecondaryVirtualWindow<Item>
+  colSpan: number
+  renderRow: (item: Item, index: number) => ReactNode
+}) {
+  const { slots, padTop, padBottom, rowHeight } = window
+  return (
+    <>
+      {padTop > 0 && (
+        <tr aria-hidden="true">
+          <td
+            colSpan={colSpan}
+            style={{ height: padTop, padding: 0, border: 0 }}
+          />
+        </tr>
+      )}
+      {slots.map(({ item, index }) =>
+        item === undefined ? (
+          <tr
+            key={`slot-${index}`}
+            className="virtual-browse-placeholder"
+            aria-hidden="true"
+          >
+            {Array.from({ length: colSpan }, (_, column) => (
+              <td key={column} style={{ height: rowHeight }}>
+                <div className="virtual-browse-line virtual-browse-shimmer" />
+              </td>
+            ))}
+          </tr>
+        ) : (
+          <Fragment key={index}>{renderRow(item, index)}</Fragment>
+        ),
+      )}
+      {padBottom > 0 && (
+        <tr aria-hidden="true">
+          <td
+            colSpan={colSpan}
+            style={{ height: padBottom, padding: 0, border: 0 }}
+          />
+        </tr>
+      )}
+    </>
+  )
+}
 
 export function SecondaryTableHead<Key extends string>({
   sortKey,

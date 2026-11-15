@@ -493,7 +493,7 @@ export default function SubscriptionBrowser() {
       </div>
     ) : null
 
-  const empty = !query.isPending && !query.isError && total === 0
+  const empty = query.hasTotal && !query.isError && total === 0
   return (
     <section
       className={`media-browser ${styles.browser}`}
@@ -634,9 +634,21 @@ export default function SubscriptionBrowser() {
               onChange={(next) => setParams({ view: next })}
             />
             <span className="browse-count" aria-live="polite">
-              {query.isPending
-                ? 'Loading...'
-                : `${total.toLocaleString()} ${total === 1 ? 'item' : 'items'}`}
+              {query.countError ? (
+                <button
+                  type="button"
+                  className="underline"
+                  onClick={query.retryCount}
+                >
+                  Retry count
+                </button>
+              ) : !query.isCounting ? (
+                `${total.toLocaleString()} ${total === 1 ? 'item' : 'items'}`
+              ) : query.isPending ? (
+                'Loading...'
+              ) : (
+                'Counting...'
+              )}
             </span>
           </div>
         </div>
@@ -771,7 +783,7 @@ export default function SubscriptionBrowser() {
             <table
               className={`compact-table ${styles.table}`}
               aria-label="Subscriptions"
-              aria-rowcount={total + 1}
+              aria-rowcount={query.hasTotal ? total + 1 : undefined}
               style={{
                 width: columns.reduce(
                   (sum, field) => sum + widthFor(field),

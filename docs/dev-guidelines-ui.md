@@ -26,6 +26,7 @@
 ## Interaction
 
 - Browse pages must handle loading, empty, and populated states.
+- Every paginated table, list, grid and detail section reserves its full matching scroll extent when the total is known. Render same-size placeholders for unloaded slots, load only the viewport and nearby pages, and offer Retry within the view. See the [secondary table pattern](secondary-tables.md).
 - Detail pages must expose history, provider references, overrides, and re-scrape actions.
 - Job creation UI must remain conservative by default and clearly signal broad-run confirmation.
 

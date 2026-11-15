@@ -1,6 +1,7 @@
 'use client'
 
-import { useEffect, useId, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
+import { useVirtualRows, useVirtualTable } from '@/hooks/useVirtualTable'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { X } from 'lucide-react'
 import {
@@ -15,6 +16,7 @@ import { Input } from '@repo/ui/components/ui/input'
 import { fetchApiData } from '@/utils/api'
 import {
   addManualMediaItem,
+  loadManualSearchPage,
   invalidateManualMediaAddition,
 } from '@/utils/manual-media-add'
 import { useConfig } from './providers'
@@ -92,6 +94,7 @@ export function ManualMediaSearch({
     },
   })
   const result = search.data ?? (showInitialResult ? initialResult : undefined)
+  const liveSearch = search.isSuccess && result?.page === 1
   const { mutate: searchMedia } = search
   useEffect(() => {
     if (
@@ -154,7 +157,6 @@ export function ManualMediaSearch({
           </Button>
         </div>
       </form>
-      {search.isPending && <p role="status">Searching {provider}…</p>}
       {search.isError && (
         <p role="alert">
           {errorMessage(search.error, `Could not search ${provider}.`)}
@@ -165,103 +167,221 @@ export function ManualMediaSearch({
           {errorMessage(add.error, `Could not add ${mediaType}.`)}
         </p>
       )}
-      {result && !search.isPending && (
+      {(result || search.isPending || search.isError) && (
         <>
-          {result.items.length === 0 ? (
-            <p role="status">
-              No matching {mediaType === 'album' ? 'albums' : 'films'}.
-            </p>
-          ) : (
-            <ul
-              className="manual-add-results"
-              aria-label={`${provider} results`}
-            >
-              {result.items.map((item) => {
-                const inLibrary = Boolean(
-                  item.mediaItemId || addedIds.current.has(item.externalId),
-                )
-                const pending =
-                  add.isPending && add.variables?.externalId === item.externalId
-                return (
-                  <li key={item.externalId} className="manual-add-result">
-                    <MediaArtwork
-                      src={item.artworkUrl}
-                      alt=""
-                      fallbackLabel="No art"
-                      containerClassName={`manual-add-artwork ${mediaType === 'film' ? 'manual-add-poster' : ''}`}
-                      imageClassName="manual-add-image"
-                      fallbackClassName="manual-add-image"
-                    />
-                    <div className="manual-add-description">
-                      <div className="flex items-center gap-1.5">
-                        {item.mediaItemId ? (
-                          <DetailLink kind={mediaType} id={item.mediaItemId}>
-                            {item.title}
-                          </DetailLink>
-                        ) : (
-                          <span>{item.title}</span>
-                        )}
-                        <ServiceIconLinks
-                          links={[{ provider, label: provider, url: item.url }]}
-                        />
-                      </div>
-                      {item.subtitle && (
-                        <p className="quiet">{item.subtitle}</p>
+          <ManualSearchResults
+            mediaType={mediaType}
+            query={search.variables?.q ?? initialQuery}
+            result={search.isPending ? undefined : result}
+            revision={search.submittedAt}
+            loading={search.isPending}
+            liveSearch={liveSearch}
+            disabled={disabled || add.isPending}
+            renderItem={(item) => {
+              const inLibrary = Boolean(
+                item.mediaItemId || addedIds.current.has(item.externalId),
+              )
+              const pending =
+                add.isPending && add.variables?.externalId === item.externalId
+              return (
+                <div className="manual-add-result">
+                  <MediaArtwork
+                    src={item.artworkUrl}
+                    alt=""
+                    fallbackLabel="No art"
+                    containerClassName={`manual-add-artwork ${mediaType === 'film' ? 'manual-add-poster' : ''}`}
+                    imageClassName="manual-add-image"
+                    fallbackClassName="manual-add-image"
+                  />
+                  <div
+                    className="manual-add-description"
+                    title={[item.title, item.subtitle]
+                      .filter(Boolean)
+                      .join(' — ')}
+                  >
+                    <div className="flex items-center gap-1.5">
+                      {item.mediaItemId ? (
+                        <DetailLink kind={mediaType} id={item.mediaItemId}>
+                          {item.title}
+                        </DetailLink>
+                      ) : (
+                        <span>{item.title}</span>
                       )}
-                      <p className="quiet">
-                        {item.releaseDate?.slice(0, 4)}
-                        {inLibrary && (
-                          <span>{item.releaseDate ? ' · ' : ''}In library</span>
-                        )}
-                      </p>
+                      <ServiceIconLinks
+                        links={[{ provider, label: provider, url: item.url }]}
+                      />
                     </div>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      disabled={busy}
-                      aria-label={`${inLibrary ? existingActionLabel : 'Add'} ${item.title}`}
-                      onClick={() =>
-                        onChoose ? onChoose(item) : add.mutate(item)
-                      }
-                    >
-                      {pending
-                        ? 'Saving…'
-                        : inLibrary
-                          ? existingActionLabel
-                          : 'Add'}
-                    </Button>
-                  </li>
-                )
-              })}
-            </ul>
-          )}
-          {(result.page > 1 || result.hasMore) && (
-            <div className="manual-add-pagination">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={busy || result.page <= 1}
-                onClick={() => find(result.page - 1)}
-              >
-                Previous
-              </Button>
-              <span>Page {result.page}</span>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={busy || !result.hasMore || result.page >= 50}
-                onClick={() => find(result.page + 1)}
-              >
-                Next
-              </Button>
-            </div>
-          )}
+                    {item.subtitle && <p className="quiet">{item.subtitle}</p>}
+                    <p className="quiet">
+                      {item.releaseDate?.slice(0, 4)}
+                      {inLibrary && (
+                        <span>{item.releaseDate ? ' · ' : ''}In library</span>
+                      )}
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={busy}
+                    aria-label={`${inLibrary ? existingActionLabel : 'Add'} ${item.title}`}
+                    onClick={() =>
+                      onChoose ? onChoose(item) : add.mutate(item)
+                    }
+                  >
+                    {pending
+                      ? 'Saving…'
+                      : inLibrary
+                        ? existingActionLabel
+                        : 'Add'}
+                  </Button>
+                </div>
+              )
+            }}
+          />
+          {result &&
+            (result.totalCount === undefined || !liveSearch) &&
+            (result.page > 1 || result.hasMore) && (
+              <div className="manual-add-pagination">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={busy || result.page <= 1}
+                  onClick={() => find(result.page - 1)}
+                >
+                  Previous
+                </Button>
+                <span>Page {result.page}</span>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={busy || !result.hasMore || result.page >= 50}
+                  onClick={() => find(result.page + 1)}
+                >
+                  Next
+                </Button>
+              </div>
+            )}
         </>
       )}
     </div>
+  )
+}
+
+/** Stored searches stay bounded until the user explicitly searches again. */
+function ManualSearchResults({
+  mediaType,
+  query,
+  result,
+  revision,
+  loading,
+  liveSearch,
+  disabled,
+  renderItem,
+}: {
+  mediaType: 'album' | 'film'
+  query: string
+  result: ManualMediaSearchResult | undefined
+  revision: number
+  loading: boolean
+  liveSearch: boolean
+  disabled: boolean
+  renderItem: (item: ManualMediaSearchItem) => ReactNode
+}) {
+  const { apiBaseUrl } = useConfig()
+  const pageSize = mediaType === 'album' ? 10 : 20
+  const rowHeight = mediaType === 'album' ? 88 : 106
+  const storedOnly = Boolean(
+    result && !loading && (!liveSearch || result.totalCount === undefined),
+  )
+  const storedRows = useVirtualRows({
+    rows: storedOnly ? (result?.items ?? []) : [],
+    identity: `${mediaType}:${query}:${revision}`,
+    rowHeight,
+    headerHeight: 0,
+  })
+  const results = useVirtualTable({
+    queryKey: [
+      'manual-media-search-window',
+      mediaType,
+      query,
+      revision,
+      liveSearch,
+    ],
+    pageSize,
+    rowHeight,
+    headerHeight: 0,
+    enabled:
+      Boolean(result) && !storedOnly && !loading && liveSearch && !disabled,
+    loadPage: (page, _size, signal) =>
+      loadManualSearchPage({
+        apiBaseUrl,
+        mediaType,
+        query,
+        page,
+        stored: result,
+        liveSearch,
+        signal,
+      }),
+  })
+  const window = storedOnly ? storedRows : results
+  return (
+    <>
+      <div
+        ref={window.scroller}
+        onScroll={window.onScroll}
+        className="manual-add-results-scroll"
+        role="region"
+        aria-label={`${mediaType === 'album' ? 'Spotify' : 'TMDb'} results`}
+        aria-busy={!storedOnly && (loading || results.isFetching)}
+        tabIndex={0}
+      >
+        {!loading && (storedOnly || results.hasTotal) && window.total === 0 && (
+          <p role="status">
+            No matching {mediaType === 'album' ? 'albums' : 'films'}.
+          </p>
+        )}
+        <ul className="manual-add-results">
+          {window.padTop > 0 && (
+            <li aria-hidden="true" style={{ height: window.padTop }} />
+          )}
+          {window.slots.map(({ item, index }) => (
+            <li
+              key={index}
+              className="manual-add-result-slot"
+              style={{ height: rowHeight }}
+            >
+              {item ? (
+                renderItem(item)
+              ) : (
+                <div
+                  className="manual-add-result virtual-browse-placeholder"
+                  aria-hidden="true"
+                >
+                  <div className="manual-add-artwork virtual-browse-shimmer" />
+                  <div className="manual-add-description">
+                    <div className="virtual-browse-line virtual-browse-shimmer" />
+                  </div>
+                </div>
+              )}
+            </li>
+          ))}
+          {window.padBottom > 0 && (
+            <li aria-hidden="true" style={{ height: window.padBottom }} />
+          )}
+        </ul>
+      </div>
+      {!storedOnly && results.isError && (
+        <p role="alert">
+          Could not load results.{' '}
+          <button className="underline" onClick={results.retry}>
+            Retry
+          </button>
+        </p>
+      )}
+    </>
   )
 }
 

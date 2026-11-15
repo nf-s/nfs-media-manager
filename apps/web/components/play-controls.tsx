@@ -24,6 +24,8 @@ import {
 } from '@/utils/playback'
 
 type Track = { position: number; externalId: string | null; title: string }
+type PlaybackSourceFactory = () => PlaybackSource | Promise<PlaybackSource>
+const playRequests = new WeakMap<PlaybackControls, object>()
 
 export function UnavailablePlayButton({
   title,
@@ -66,7 +68,7 @@ export function AlbumInlinePlayButton({
   source,
 }: {
   album: AlbumSource
-  source?: () => PlaybackSource
+  source?: PlaybackSourceFactory
 }) {
   const playback = useAlbumPlayback(album)
   if (!playback)
@@ -108,7 +110,7 @@ export function AlbumReferencePlayButton({
 }: {
   id: string
   title: string
-  source?: () => PlaybackSource
+  source?: PlaybackSourceFactory
 }) {
   const { apiBaseUrl } = useConfig()
   const client = useQueryClient()
@@ -182,15 +184,23 @@ function playFromView(
   view: PlaybackView,
   item: PlayableItem,
   current: boolean,
-  source?: () => PlaybackSource,
+  source?: PlaybackSourceFactory,
 ) {
+  const request = {}
+  playRequests.set(controls, request)
   if (current && view.snapshot && !view.snapshot.paused) {
     controls.toggle()
     return
   }
   const next = source?.()
-  if (current && (!next || view.source?.href === next.href)) controls.toggle()
-  else controls.play(item, next)
+  function start(resolved: PlaybackSource | undefined) {
+    if (playRequests.get(controls) !== request) return
+    if (current && (!resolved || view.source?.href === resolved.href))
+      controls.toggle()
+    else controls.play(item, resolved)
+  }
+  if (next instanceof Promise) void next.then(start, () => start(undefined))
+  else start(next)
 }
 
 /** The album's playable form and whether the player is on it. Null while playback is off. */
@@ -205,7 +215,7 @@ function useAlbumPlayback(album: AlbumSource) {
     current,
     playing: current && view.snapshot !== null && !view.snapshot.paused,
     controls,
-    play: (source?: () => PlaybackSource) =>
+    play: (source?: PlaybackSourceFactory) =>
       playFromView(controls, view, item, current, source),
   }
 }
@@ -216,7 +226,7 @@ export function TilePlayControls({
   source,
 }: {
   album: AlbumSource
-  source?: () => PlaybackSource
+  source?: PlaybackSourceFactory
 }) {
   const playback = useAlbumPlayback(album)
   if (!playback)
@@ -266,7 +276,7 @@ export function AlbumPlayButtons({
   source,
 }: {
   album: AlbumSource
-  source?: () => PlaybackSource
+  source?: PlaybackSourceFactory
 }) {
   const playback = useAlbumPlayback(album)
   if (!playback)
@@ -311,7 +321,7 @@ export function TrackPlayButton({
 }: {
   album: AlbumSource
   track: Track
-  source?: () => PlaybackSource
+  source?: PlaybackSourceFactory
 }) {
   const view = usePlayback()
   const controls = usePlaybackControls()
@@ -386,7 +396,7 @@ function useLibraryTrackPlayback(track: LibraryTrackSource) {
     current,
     playing: current && !snapshot.paused,
     controls,
-    play: (source?: () => PlaybackSource) =>
+    play: (source?: PlaybackSourceFactory) =>
       playFromView(controls, view, item, current, source),
   }
 }
@@ -402,7 +412,7 @@ export function LibraryTrackPlayButton({
 }: {
   track: LibraryTrackSource
   position?: number
-  source?: () => PlaybackSource
+  source?: PlaybackSourceFactory
 }) {
   const playback = useLibraryTrackPlayback(track)
   if (!playback)
@@ -451,7 +461,7 @@ export function LibraryTrackInlinePlayButtons({
 }: {
   track: LibraryTrackSource
   position?: number
-  source?: () => PlaybackSource
+  source?: PlaybackSourceFactory
 }) {
   return (
     <span className="inline-flex shrink-0 items-center">

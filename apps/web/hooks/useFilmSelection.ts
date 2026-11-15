@@ -1,6 +1,6 @@
 'use client'
 
-import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
+import { useQuery } from '@tanstack/react-query'
 import { z } from 'zod'
 import { BrowseFieldSchema } from '@repo/schemas/browse'
 import { FilmSelectionPageSchema } from '@repo/schemas/film-selection'
@@ -9,11 +9,13 @@ import type { MediaScope } from '@/utils/media-scope'
 import { useConfig } from '@/components/providers'
 import { fetchApiData } from '@/utils/api'
 import { useBrowseFacets } from './useBrowseFacets'
+import { useVirtualTable } from './useVirtualTable'
 
 export function useFilmSelection(
   params: string,
   mediaType: MediaScope = 'film',
   draft = '',
+  paused = false,
 ) {
   const resource = mediaType === 'album' ? 'albums' : 'films'
   const { apiBaseUrl } = useConfig()
@@ -27,20 +29,20 @@ export function useFilmSelection(
       ),
   })
   const facets = useBrowseFacets(apiBaseUrl, resource, draft)
-  const films = useInfiniteQuery({
+  const films = useVirtualTable({
     queryKey: [`${mediaType}-selection`, params],
-    initialPageParam: 1,
-    queryFn: ({ pageParam, signal }) =>
+    pageSize: 50,
+    enabled: !paused,
+    refetchInterval: 10_000,
+    loadPage: (page, size, signal) =>
       fetchApiData(
         apiBaseUrl,
-        `/api/v1/${resource}/selection?${params}&page=${pageParam}&size=50`,
+        `/api/v1/${resource}/selection?${params}&page=${page}&size=${size}`,
         mediaType === 'album'
           ? AlbumSelectionPageSchema
           : FilmSelectionPageSchema,
         { signal },
       ),
-    getNextPageParam: (last) =>
-      last.page < last.pageCount ? last.page + 1 : undefined,
   })
   return { fields, facets, films }
 }

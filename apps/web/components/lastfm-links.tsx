@@ -6,12 +6,7 @@ import { AlbumReferencePlayButton } from './play-controls'
 import { useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { Link2, Plus } from 'lucide-react'
-import {
-  keepPreviousData,
-  useInfiniteQuery,
-  useMutation,
-  useQueryClient,
-} from '@tanstack/react-query'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   LastfmLinkReportSchema,
   type LastfmLinkGroup,
@@ -26,7 +21,7 @@ import {
   TableRow,
   TableState,
 } from '@repo/ui/components/ui/table'
-import { useInfiniteTableScroll } from '@/hooks/useInfiniteTableScroll'
+import { useVirtualTable } from '@/hooks/useVirtualTable'
 import { fetchApiData } from '@/utils/api'
 import {
   lastfmLinkFilterValues,
@@ -42,6 +37,7 @@ import {
   lastfmSpotifySearchLabel,
   canSearchLastfmGroup,
   LASTFM_SYNC_POLL_MS,
+  LASTFM_LINKS_PAGE_SIZE,
   type LastfmLinkFilter,
   type LastfmLinkSort,
 } from '@/utils/lastfm-sync'
@@ -65,6 +61,7 @@ import {
   SecondaryCell,
   SecondaryDataTable,
   SecondaryTableToolbar,
+  SecondaryVirtualRows,
   SecondaryTableScroll,
   SecondaryTableHead,
   useTableColumns,
@@ -270,44 +267,35 @@ export default function LastfmLinks() {
     return () => window.clearTimeout(timer)
   }, [draft])
   const status = useLastfmSyncStatus()
-  const links = useInfiniteQuery({
+  const links = useVirtualTable({
     queryKey: ['lastfm-links', reasonsKey, query, sortBy, sortDirection],
-    initialPageParam: 1,
-    placeholderData: keepPreviousData,
-    queryFn: ({ pageParam, signal }) =>
+    pageSize: LASTFM_LINKS_PAGE_SIZE,
+    enabled: !queuePending,
+    loadPage: (page, size, signal) =>
       fetchApiData(
         apiBaseUrl,
         lastfmLinksPath({
           reasons,
           q: query,
-          page: pageParam,
+          page,
+          size,
           sortBy,
           sortDirection,
         }),
         LastfmLinkReportSchema,
         { signal },
       ),
-    getNextPageParam: (last) =>
-      last.page < last.pageCount ? last.page + 1 : undefined,
-    refetchInterval: (result) =>
-      result.state.data?.pages.some((page) =>
-        page.items.some(
-          (group) =>
-            group.spotifySearch?.status === 'queued' ||
-            group.spotifySearch?.status === 'running',
-        ),
+    refetchInterval: (page) =>
+      page?.items.some(
+        (group) =>
+          group.spotifySearch?.status === 'queued' ||
+          group.spotifySearch?.status === 'running',
       )
         ? LASTFM_SYNC_POLL_MS
         : false,
   })
   const relink = useMutation({
     mutationFn: () => refreshScrobbleLinks(apiBaseUrl, client),
-  })
-  const { scroller, sentinel } = useInfiniteTableScroll({
-    enabled:
-      links.hasNextPage && !links.isFetching && !links.isError && !queuePending,
-    fetchNextPage: links.fetchNextPage,
-    resetKey: JSON.stringify([reasonsKey, query, sortBy, sortDirection]),
   })
   function clearSelection() {
     setSelectedIds([])
@@ -343,21 +331,22 @@ export default function LastfmLinks() {
       `${window.location.pathname}?${params}`,
     )
   }
-  const items = links.data?.pages.flatMap((page) => page.items) ?? []
+  const items = [
+    ...new Map(
+      links.loadedSlots.map(({ item }) => [lastfmLinkKey(item), item]),
+    ).values(),
+  ]
   const ids = items.filter(canSearchLastfmGroup).map(lastfmLinkKey)
   const allChecked =
     ids.length > 0 && ids.every((id) => selectedIds.includes(id))
   const selectionDisabled =
-    queuePending ||
-    links.isPlaceholderData ||
-    draft.trim() !== query ||
-    links.isError
+    queuePending || links.isPending || draft.trim() !== query || links.isError
   useEffect(() => {
     if (all.current)
       all.current.indeterminate =
         !allChecked && ids.some((id) => selectedIds.includes(id))
   }, [allChecked, ids, selectedIds])
-  const summary = links.data?.pages[0]?.summary
+  const summary = links.firstPage?.summary
   const running = status.data?.state === 'running'
   return (
     <section aria-labelledby="scrobble-links-heading">
@@ -434,10 +423,10 @@ export default function LastfmLinks() {
           </p>
         )}
       </div>
-      {links.isError && items.length > 0 && !links.isFetchNextPageError && (
+      {links.isError && links.total > 0 && (
         <p role="alert">
           Could not load scrobble links.{' '}
-          <button type="button" onClick={() => links.refetch()}>
+          <button type="button" onClick={links.retry}>
             Retry
           </button>
         </p>
@@ -463,8 +452,8 @@ export default function LastfmLinks() {
         }
         count={
           <>
-            {links.data?.pages[0]?.totalCount.toLocaleString() ?? 0} names
-            {(links.isPlaceholderData || draft.trim() !== query) && (
+            {links.total.toLocaleString()} names
+            {(links.isPending || draft.trim() !== query) && (
               <span role="status"> · Loading...</span>
             )}
           </>
@@ -473,7 +462,8 @@ export default function LastfmLinks() {
       />
       <SecondaryTableFrame>
         <SecondaryTableScroll
-          ref={scroller}
+          ref={links.scroller}
+          onScroll={links.onScroll}
           className="table-scroll-bounded"
           role="region"
           aria-label="Scrobble links"
@@ -534,7 +524,7 @@ export default function LastfmLinks() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {!items.length && (
+              {!links.total && (
                 <TableState colSpan={columns.count + 1} error={links.isError}>
                   {links.isPending
                     ? 'Loading scrobble links...'
@@ -545,61 +535,45 @@ export default function LastfmLinks() {
                     <button
                       type="button"
                       className="ml-1 underline"
-                      onClick={() => links.refetch()}
+                      onClick={links.retry}
                     >
                       Retry
                     </button>
                   )}
                 </TableState>
               )}
-              {items.map((group) => (
-                <LinkRow
-                  key={lastfmLinkKey(group)}
-                  group={group}
-                  visible={columns.visible}
-                  checked={selectedIds.includes(lastfmLinkKey(group))}
-                  disabled={selectionDisabled}
-                  onSelect={(checked, shift) => {
-                    const id = lastfmLinkKey(group)
-                    setSelectedIds(
-                      updateJobSelection(
-                        selectedIds,
-                        ids,
-                        id,
-                        anchor,
-                        shift,
-                        checked,
-                      ),
-                    )
-                    setAnchor(id)
-                  }}
-                  onOpen={(mode) => setSelected({ group, mode })}
+              {(!links.isError || links.hasTotal) && (
+                <SecondaryVirtualRows
+                  window={links}
+                  colSpan={columns.count + 1}
+                  renderRow={(group) => (
+                    <LinkRow
+                      key={lastfmLinkKey(group)}
+                      group={group}
+                      visible={columns.visible}
+                      checked={selectedIds.includes(lastfmLinkKey(group))}
+                      disabled={selectionDisabled}
+                      onSelect={(checked, shift) => {
+                        const id = lastfmLinkKey(group)
+                        setSelectedIds(
+                          updateJobSelection(
+                            selectedIds,
+                            ids,
+                            id,
+                            anchor,
+                            shift,
+                            checked,
+                          ),
+                        )
+                        setAnchor(id)
+                      }}
+                      onOpen={(mode) => setSelected({ group, mode })}
+                    />
+                  )}
                 />
-              ))}
+              )}
             </TableBody>
           </table>
-          <div ref={sentinel} className="py-2 text-center">
-            {links.isFetchingNextPage && (
-              <p role="status" className="muted">
-                Loading more scrobble links...
-              </p>
-            )}
-            {links.isFetchNextPageError && (
-              <p role="alert">Could not load more scrobble links.</p>
-            )}
-            {links.hasNextPage && !links.isFetchingNextPage && (
-              <Button
-                type="button"
-                variant="ghost"
-                disabled={links.isFetching || queuePending}
-                onClick={() => links.fetchNextPage({ cancelRefetch: false })}
-              >
-                {links.isFetchNextPageError
-                  ? 'Retry loading scrobble links'
-                  : 'Load more scrobble links'}
-              </Button>
-            )}
-          </div>
         </SecondaryTableScroll>
         <SecondaryTableFooter selectedCount={selectedIds.length}>
           <LastfmSearchActions

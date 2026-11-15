@@ -227,7 +227,7 @@ function matchesValue(key: string, value: string, mediaType: MediaType): SQL {
   return sql`exists (select 1 from jsonb_array_elements_text(case when jsonb_typeof(${expression}) = 'array' then ${expression} else jsonb_build_array(${expression}) end) filter_value(value) where lower(filter_value.value) = ${match})`
 }
 
-export async function queryBrowseIds(
+async function browseQueries(
   mediaType: MediaType,
   query: AlbumQuery | FilmQuery | TrackQuery,
   options: BrowseQueryOptions = {},
@@ -390,53 +390,101 @@ export async function queryBrowseIds(
   }
   // Cache the raw count by the actual predicate, including caller SQL options.
   // Page, ordering and result caps do not change membership; IDs stay uncached.
-  const total = await countCache(
-    JSON.stringify(
-      dialect.sqlToQuery(sql`${listening?.source ?? sql``} ${where}`),
-    ),
-    async () => {
-      const query = db
-        .select({ value: sql<number>`count(*)::int` })
-        .from(mediaItem)
-        .leftJoin(album, eq(album.mediaItemId, mediaItem.id))
-        .leftJoin(film, eq(film.mediaItemId, mediaItem.id))
-      const tracks =
-        mediaType === 'track'
-          ? query.innerJoin(libraryTrack, trackJoin)
-          : query.leftJoin(libraryTrack, trackJoin)
-      const rows = await (
-        listening
-          ? tracks.leftJoin(
-              listening.source,
-              sql`listening_counts.album_media_item_id = ${mediaItem.id}`,
-            )
-          : tracks
-      ).where(where)
-      return rows[0]?.value ?? 0
-    },
-  )
-  const offset = (query.page - 1) * query.size
-  const totalCount = Math.min(
-    total,
-    query.limitResults ?? Number.MAX_SAFE_INTEGER,
-  )
-  const rows = await base()
-    .where(where)
-    .orderBy(
-      order,
-      ...(mediaType === 'track' ? trackNaturalOrder(sortField.key) : []),
-      mediaItem.id,
+  async function readCount() {
+    const total = await countCache(
+      JSON.stringify(
+        dialect.sqlToQuery(sql`${listening?.source ?? sql``} ${where}`),
+      ),
+      async () => {
+        const query = db
+          .select({ value: sql<number>`count(*)::int` })
+          .from(mediaItem)
+          .leftJoin(album, eq(album.mediaItemId, mediaItem.id))
+          .leftJoin(film, eq(film.mediaItemId, mediaItem.id))
+        const tracks =
+          mediaType === 'track'
+            ? query.innerJoin(libraryTrack, trackJoin)
+            : query.leftJoin(libraryTrack, trackJoin)
+        const rows = await (
+          listening
+            ? tracks.leftJoin(
+                listening.source,
+                sql`listening_counts.album_media_item_id = ${mediaItem.id}`,
+              )
+            : tracks
+        ).where(where)
+        return rows[0]?.value ?? 0
+      },
     )
-    .limit(Math.min(query.size, Math.max(0, totalCount - offset)))
-    .offset(offset)
+    return Math.min(total, query.limitResults ?? Number.MAX_SAFE_INTEGER)
+  }
+  const offset = (query.page - 1) * query.size
+  const naturalOrder =
+    mediaType === 'track' ? trackNaturalOrder(sortField.key) : []
+
+  async function readPage(limit: number) {
+    const rows = await base()
+      .where(where)
+      .orderBy(order, ...naturalOrder, mediaItem.id)
+      .limit(limit)
+      .offset(offset)
+    const items = rows.slice(0, query.size)
+    return {
+      ids: items.map((row) => row.id),
+      listeningScrobbles: listening?.sort
+        ? new Map(items.map((row) => [row.id, row.listeningScrobbles ?? 0]))
+        : undefined,
+      hasMore: rows.length > query.size,
+    }
+  }
+  return { offset, readCount, readPage }
+}
+
+type BrowseQuery = AlbumQuery | FilmQuery | TrackQuery
+
+export async function queryBrowseIds(
+  mediaType: MediaType,
+  query: BrowseQuery,
+  options: BrowseQueryOptions = {},
+) {
+  const { offset, readCount, readPage } = await browseQueries(
+    mediaType,
+    query,
+    options,
+  )
+  const totalCount = await readCount()
+  const { ids, listeningScrobbles } = await readPage(
+    Math.min(query.size, Math.max(0, totalCount - offset)),
+  )
   return {
-    ids: rows.map((row) => row.id),
-    listeningScrobbles: listening?.sort
-      ? new Map(rows.map((row) => [row.id, row.listeningScrobbles ?? 0]))
-      : undefined,
+    ids,
+    listeningScrobbles,
     totalCount,
     pageCount: Math.ceil(totalCount / query.size),
   }
+}
+
+/** One extra ID determines whether the page can continue without an exact count. */
+export async function queryBrowsePageIds(
+  mediaType: MediaType,
+  query: BrowseQuery,
+) {
+  const { offset, readPage } = await browseQueries(mediaType, query)
+  const remaining =
+    query.limitResults === undefined
+      ? query.size + 1
+      : Math.max(0, query.limitResults - offset)
+  if (!remaining)
+    return { ids: [], listeningScrobbles: undefined, hasMore: false }
+  return readPage(Math.min(query.size + 1, remaining))
+}
+
+export async function queryBrowseCount(
+  mediaType: MediaType,
+  query: BrowseQuery,
+) {
+  const { readCount } = await browseQueries(mediaType, query)
+  return { totalCount: await readCount() }
 }
 
 function directSortExpression(key: string, mediaType: MediaType): SQL | null {

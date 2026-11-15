@@ -1,5 +1,10 @@
-import { BrowseFacetQuerySchema, BrowseFieldSchema } from '@repo/schemas/browse'
-import { listBrowseFields } from '@/services/browse'
+import {
+  BrowseCountSchema,
+  BrowseFacetQuerySchema,
+  BrowseFieldSchema,
+  BrowsePageSliceSchema,
+} from '@repo/schemas/browse'
+import { listBrowseFields, queryBrowseCount } from '@/services/browse'
 import { createRoute, type OpenAPIHono } from '@hono/zod-openapi'
 import { z } from 'zod'
 import {
@@ -21,6 +26,7 @@ import {
 import { generateJsonResponse } from '@/lib/response'
 import {
   getFilmDetail,
+  listFilmBrowsePage,
   listFilmFilterOptions,
   listFilms,
   patchFilm,
@@ -33,6 +39,64 @@ import {
 import { listFilmSelection } from '@/services/film-selection'
 
 const app: OpenAPIHono<AppEnv> = createOpenAPIApp()
+
+app.openapi(
+  createRoute({
+    method: 'get',
+    path: '/browse-page',
+    middleware: [authMiddleware()],
+    request: { query: FilmQuerySchema },
+    responses: {
+      200: {
+        description: 'Browse rows with a continuation indicator',
+        content: {
+          'application/json': {
+            schema: createResponseSchema(
+              BrowsePageSliceSchema(FilmListItemSchema),
+            ),
+          },
+        },
+      },
+      401: jsonErrorResponse('Unauthorized'),
+      422: validationErrorResponse,
+    },
+  }),
+  async (c) =>
+    generateJsonResponse(
+      c,
+      await listFilmBrowsePage(c.req.valid('query')),
+      200,
+    ),
+)
+
+app.openapi(
+  createRoute({
+    method: 'get',
+    path: '/browse-count',
+    middleware: [authMiddleware()],
+    request: { query: FilmQuerySchema },
+    responses: {
+      200: {
+        description: 'Exact count for the current browse filters',
+        content: {
+          'application/json': {
+            schema: createResponseSchema(BrowseCountSchema),
+          },
+        },
+      },
+      401: jsonErrorResponse('Unauthorized'),
+      422: validationErrorResponse,
+    },
+  }),
+  async (c) =>
+    generateJsonResponse(
+      c,
+      await queryBrowseCount('film', c.req.valid('query')),
+      200,
+    ),
+)
+
+app
   .openapi(
     createRoute({
       method: 'get',

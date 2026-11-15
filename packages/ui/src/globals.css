@@ -3391,6 +3391,29 @@
   min-width: 0;
 }
 
+.manual-add-results-scroll {
+  height: min(420px, 55dvh);
+  min-height: 180px;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.manual-add-result-slot > .manual-add-result {
+  height: 100%;
+  box-sizing: border-box;
+}
+
+.manual-add-result-slot .manual-add-description > div {
+  max-height: 40px;
+  overflow: hidden;
+}
+
+.manual-add-result-slot .manual-add-description p {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .manual-add-results {
   padding: 0;
   margin: 0;

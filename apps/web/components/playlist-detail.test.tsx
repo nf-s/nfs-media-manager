@@ -24,7 +24,8 @@ import {
   playlistEntryView,
   playlistEntryViewParam,
 } from '@/utils/playlist-links'
-import { indexedPlaylistEntries } from './playlist-detail'
+import { playlistWindowSlots } from './playlist-detail'
+import { trackEntryKey } from './track-entries-table'
 import { DetailInspectorProvider } from './detail-inspector-context'
 import { detailEntries, detailEntryParams } from '@/utils/detail-inspector'
 
@@ -155,10 +156,16 @@ async function render(
       view.direction,
       view.q ?? '',
       view.kinds ?? [],
+      1,
     ],
     {
-      pages: [playlist],
-      pageParams: [1],
+      ...playlist.items,
+      name: playlist.name,
+      items: playlist.items.items.map((entry, index) => ({
+        entry,
+        key: trackEntryKey(entry),
+        index,
+      })),
     },
   )
   try {
@@ -245,7 +252,7 @@ test('the drawer lists entries in playlist order in the shared table', async () 
     /href="\/tracks\?filters=[^"]*Synthetic\+mix[^"]*"[^>]*>Filter tracks</,
   )
   const table = html.match(
-    /<table class="compact-table" aria-label="Playlist tracks">[\s\S]*?<\/table>/,
+    /<table class="compact-table" aria-label="Playlist tracks" aria-rowcount="4">[\s\S]*?<\/table>/,
   )?.[0]
   assert.ok(table, 'compact table of entries')
   const order = ['Opening track', 'Closing track', 'Member album'].map(
@@ -272,7 +279,8 @@ test('the drawer lists entries in playlist order in the shared table', async () 
     kind: 'album',
     id: 'album-2',
   })
-  assert.match(html, /3 of 3 loaded/)
+  assert.match(html, /3 entries/)
+  assert.doesNotMatch(html, /Load more tracks/)
   assert.match(
     table,
     /aria-label="Play Opening track: Connect Spotify playback in Providers\."[^>]*disabled=/,
@@ -422,7 +430,7 @@ test('a playback return URL restores the playlist table search and sorting', asy
   assert.match(html, /matching entries/)
 })
 
-test('overlapping playlist pages keep playback offsets after removing duplicate rows', () => {
+test('overlapping playlist pages reserve duplicate row space and keep playback offsets', () => {
   const page = detail()
   const first = page.items.items[0]
   const second = page.items.items[1]
@@ -430,22 +438,21 @@ test('overlapping playlist pages keep playback offsets after removing duplicate 
   assert.ok(first)
   assert.ok(second)
   assert.ok(third)
-  const pages = [
-    {
-      ...page,
-      items: { ...page.items, page: 1, size: 2, items: [first, second] },
-    },
-    {
-      ...page,
-      items: { ...page.items, page: 2, size: 2, items: [second, third] },
-    },
-  ]
-  const rows = indexedPlaylistEntries(pages)
+  const slots = [first, second, second, third].map((entry, index) => ({
+    index,
+    item: { entry, key: trackEntryKey(entry), index },
+  }))
+  const rows = playlistWindowSlots(slots)
   assert.deepEqual(
-    rows.map(([, row]) => row.index),
-    [0, 1, 3],
+    rows.map(({ index, item }) => [index, item?.index ?? null]),
+    [
+      [0, 0],
+      [1, 1],
+      [2, null],
+      [3, 3],
+    ],
   )
-  assert.equal(rows[2]?.[1].entry, third)
+  assert.equal(rows[3]?.item?.entry, third)
 })
 
 test('playlist columns sort numeric counts and keep unknown dates last', () => {

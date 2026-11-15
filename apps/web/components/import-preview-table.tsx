@@ -9,6 +9,7 @@ import {
   SecondaryTableScroll,
   SecondaryTableHead,
   SecondaryTableToolbar,
+  SecondaryVirtualRows,
   useTableColumns,
 } from './secondary-table'
 import {
@@ -16,10 +17,9 @@ import {
   type TableSort,
   type TableValue,
 } from '@/utils/secondary-table'
-import { Button } from '@repo/ui/components/ui/button'
 import { Input } from '@repo/ui/components/ui/input'
 import { TableState } from '@repo/ui/components/ui/table'
-import { useInfiniteTableScroll } from '@/hooks/useInfiniteTableScroll'
+import { useVirtualRows } from '@/hooks/useVirtualTable'
 import { updateJobSelection } from '@/utils/job-selection'
 
 export type ImportPreviewFilter<Item> = {
@@ -97,18 +97,14 @@ export default function ImportPreviewTable<
       ? item.row
       : columns.find((column) => column.key === key)?.value(item),
   )
-  const [count, setCount] = useState(50)
   const [anchor, setAnchor] = useState<string | null>(null)
   const all = useRef<HTMLInputElement>(null)
   const ids = ordered.filter(actionable).map((item) => String(item.row))
   const selection = selected.map(String)
   const checked = ids.length > 0 && ids.every((id) => selection.includes(id))
-  const { scroller, sentinel } = useInfiniteTableScroll({
-    enabled: count < ordered.length,
-    fetchNextPage: async () => {
-      setCount((value) => Math.min(value + 50, ordered.length))
-    },
-    resetKey: JSON.stringify([sort.key, sort.direction, search, filter]),
+  const preview = useVirtualRows({
+    rows: ordered,
+    identity: JSON.stringify([sort.key, sort.direction, search, filter]),
   })
   useEffect(() => {
     if (all.current)
@@ -118,7 +114,6 @@ export default function ImportPreviewTable<
   function clearSelection() {
     onChange([])
     setAnchor(null)
-    setCount(50)
   }
   return (
     <>
@@ -141,7 +136,8 @@ export default function ImportPreviewTable<
       />
       <SecondaryTableFrame>
         <SecondaryTableScroll
-          ref={scroller}
+          ref={preview.scroller}
+          onScroll={preview.onScroll}
           className="import-preview-scroll"
           role="region"
           aria-label="Import preview"
@@ -197,7 +193,6 @@ export default function ImportPreviewTable<
                               : 'asc',
                         })
                         setAnchor(null)
-                        setCount(50)
                       }}
                     />
                   ))}
@@ -209,68 +204,56 @@ export default function ImportPreviewTable<
                   {items.length ? 'No matching items.' : 'No items to import.'}
                 </TableState>
               )}
-              {ordered.slice(0, count).map((item) => (
-                <tr
-                  key={item.row}
-                  data-selected={selected.includes(item.row) || undefined}
-                >
-                  <td className="table-selection-cell">
-                    <input
-                      type="checkbox"
-                      aria-label={`Import ${item.title}`}
-                      checked={selected.includes(item.row)}
-                      disabled={disabled || !actionable(item)}
-                      onChange={(event) => {
-                        onChange(
-                          updateJobSelection(
-                            selection,
-                            ids,
-                            String(item.row),
-                            anchor,
-                            'shiftKey' in event.nativeEvent &&
-                              event.nativeEvent.shiftKey === true,
-                            event.target.checked,
-                          ).map(Number),
-                        )
-                        setAnchor(String(item.row))
-                      }}
-                    />
-                  </td>
-                  {columns
-                    .filter((column) => visibility.visible(column.key))
-                    .map((column) => (
-                      <td key={column.key}>
-                        {column.render ? (
-                          column.render(item)
-                        ) : (
-                          <SecondaryCell
-                            text={String(column.value(item) ?? '-')}
-                          >
-                            {String(column.value(item) ?? '-')}
-                          </SecondaryCell>
-                        )}
-                      </td>
-                    ))}
-                </tr>
-              ))}
+              <SecondaryVirtualRows
+                window={preview}
+                colSpan={visibility.count + 1}
+                renderRow={(item) => (
+                  <tr
+                    key={item.row}
+                    data-selected={selected.includes(item.row) || undefined}
+                  >
+                    <td className="table-selection-cell">
+                      <input
+                        type="checkbox"
+                        aria-label={`Import ${item.title}`}
+                        checked={selected.includes(item.row)}
+                        disabled={disabled || !actionable(item)}
+                        onChange={(event) => {
+                          onChange(
+                            updateJobSelection(
+                              selection,
+                              ids,
+                              String(item.row),
+                              anchor,
+                              'shiftKey' in event.nativeEvent &&
+                                event.nativeEvent.shiftKey === true,
+                              event.target.checked,
+                            ).map(Number),
+                          )
+                          setAnchor(String(item.row))
+                        }}
+                      />
+                    </td>
+                    {columns
+                      .filter((column) => visibility.visible(column.key))
+                      .map((column) => (
+                        <td key={column.key}>
+                          {column.render ? (
+                            column.render(item)
+                          ) : (
+                            <SecondaryCell
+                              text={String(column.value(item) ?? '-')}
+                            >
+                              {String(column.value(item) ?? '-')}
+                            </SecondaryCell>
+                          )}
+                        </td>
+                      ))}
+                  </tr>
+                )}
+              />
             </tbody>
           </table>
-          <div
-            ref={sentinel}
-            className="py-2 text-center text-sm text-muted-foreground"
-            role="status"
-          >
-            {Math.min(count, ordered.length)} of {ordered.length} items loaded
-          </div>
-          {count < ordered.length && (
-            <Button
-              type="button"
-              variant="ghost"
-              onClick={() => setCount((value) => value + 50)}
-            >
-              Load more
-            </Button>
-          )}
         </SecondaryTableScroll>
         <SecondaryTableFooter selectedCount={selected.length}>
           {footer}

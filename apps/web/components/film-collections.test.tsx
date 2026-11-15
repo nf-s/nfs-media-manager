@@ -72,11 +72,8 @@ async function render(search: string, path = '/collections') {
   })
   client.setQueryData(['film-collections'], [collection])
   client.setQueryData(
-    ['film-collection', collection.id, 'position', 'asc', '', []],
-    {
-      pages: [collection],
-      pageParams: [1],
-    },
+    ['film-collection', collection.id, 'position', 'asc', '', [], 1],
+    { ...collection.items, summary: collection },
   )
   try {
     return renderToStaticMarkup(

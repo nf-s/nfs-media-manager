@@ -1,9 +1,7 @@
 'use client'
 
 import { useDeferredValue, useEffect, useState, type ReactNode } from 'react'
-import { useInfiniteQuery } from '@tanstack/react-query'
 import type { z } from 'zod'
-import { Button } from '@repo/ui/components/ui/button'
 import { Input } from '@repo/ui/components/ui/input'
 import {
   TableBody,
@@ -13,7 +11,7 @@ import {
   TableRow,
   TableState,
 } from '@repo/ui/components/ui/table'
-import { useInfiniteTableScroll } from '@/hooks/useInfiniteTableScroll'
+import { useVirtualTable } from '@/hooks/useVirtualTable'
 import { fetchApiData } from '@/utils/api'
 import type { DetailTarget } from '@/utils/detail-inspector'
 import { useDetailInspector, useDetailView } from './detail-inspector-context'
@@ -24,6 +22,7 @@ import {
   SecondaryTableHead,
   SecondaryTableScroll,
   SecondaryTableToolbar,
+  SecondaryVirtualRows,
   useTableColumns,
   type TableColumn,
 } from './secondary-table'
@@ -87,29 +86,19 @@ export function CreatorLibraryTable<Row extends { id: string }>({
     ...(search ? { q: search } : {}),
     ...filters,
   })
-  const query = useInfiniteQuery({
+  const query = useVirtualTable({
     queryKey: [...queryKey, params.toString()],
-    initialPageParam: 1,
-    queryFn: ({ pageParam, signal }) => {
+    pageSize: 50,
+    loadPage: (index, _size, signal) => {
       const page = new URLSearchParams(params)
-      page.set('page', String(pageParam))
+      page.set('page', String(index))
       return fetchApiData(apiBaseUrl, `${path}?${page}`, schema, { signal })
     },
-    getNextPageParam: (last) =>
-      last.page < last.pageCount ? last.page + 1 : undefined,
-  })
-  const { scroller, sentinel } = useInfiniteTableScroll({
-    enabled: query.hasNextPage && !query.isFetching && !query.isError,
-    fetchNextPage: query.fetchNextPage,
-    resetKey: `${path}?${params}`,
   })
   const inspector = useDetailInspector()
   const selectedId =
     workspace && inspector?.root?.kind === kind ? inspector.root.id : undefined
-  const rows = new Map<string, Row>()
-  for (const page of query.data?.pages ?? [])
-    for (const row of page.items) if (!rows.has(row.id)) rows.set(row.id, row)
-  const total = query.data?.pages[0]?.totalCount
+  const total = query.hasTotal ? query.total : undefined
   const visible = columns.filter((column) => table.visible(column.key))
   const narrowed = Boolean(search || (filters && Object.keys(filters).length))
 
@@ -148,27 +137,28 @@ export function CreatorLibraryTable<Row extends { id: string }>({
         }
         columns={table.controls}
       />
-      {query.isRefetchError && !query.isFetchNextPageError && rows.size > 0 && (
+      {query.isError && (
         <p className="quiet" role="alert">
-          Could not refresh {label}. Showing stored results.{' '}
-          <button
-            type="button"
-            className="underline"
-            onClick={() => query.refetch()}
-          >
+          Could not load {label}.{' '}
+          <button type="button" className="underline" onClick={query.retry}>
             Retry
           </button>
         </p>
       )}
       <SecondaryTableScroll
-        ref={scroller}
+        ref={query.scroller}
+        onScroll={query.onScroll}
         data-inspector-scroll={!workspace || undefined}
         className={workspace ? 'min-h-0 flex-1' : 'max-h-[min(420px,50dvh)]'}
         role="region"
         aria-label={label}
         aria-busy={query.isFetching}
       >
-        <table className="compact-table" aria-label={label}>
+        <table
+          className="compact-table"
+          aria-label={label}
+          aria-rowcount={total === undefined ? undefined : total + 1}
+        >
           <TableHeader>
             <TableRow>
               {visible.map((column) =>
@@ -192,68 +182,30 @@ export function CreatorLibraryTable<Row extends { id: string }>({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {!rows.size && (
-              <TableState colSpan={visible.length} error={query.isError}>
-                {query.isPending ? (
-                  `Loading ${label}...`
-                ) : query.isError ? (
-                  <>
-                    Could not load {label}.{' '}
-                    <button
-                      type="button"
-                      className="underline"
-                      onClick={() => query.refetch()}
-                    >
-                      Retry
-                    </button>
-                  </>
-                ) : narrowed ? (
-                  `No matching ${label}.`
-                ) : (
-                  `No ${label} stored.`
-                )}
+            {total === 0 && (
+              <TableState colSpan={visible.length}>
+                {narrowed ? `No matching ${label}.` : `No ${label} stored.`}
               </TableState>
             )}
-            {[...rows.values()].map((row) => (
-              <TableRow
-                key={row.id}
-                data-selected={row.id === selectedId || undefined}
-              >
-                {visible.map((column) => (
-                  <TableCell key={column.key} className={column.className}>
-                    {column.render(row)}
-                  </TableCell>
-                ))}
-              </TableRow>
-            ))}
+            <SecondaryVirtualRows
+              window={query}
+              colSpan={visible.length}
+              renderRow={(row, index) => (
+                <TableRow
+                  key={row.id}
+                  data-selected={row.id === selectedId || undefined}
+                  aria-rowindex={index + 2}
+                >
+                  {visible.map((column) => (
+                    <TableCell key={column.key} className={column.className}>
+                      {column.render(row)}
+                    </TableCell>
+                  ))}
+                </TableRow>
+              )}
+            />
           </TableBody>
         </table>
-        {(query.hasNextPage || query.isFetchNextPageError) && (
-          <div ref={sentinel} className="py-2 text-center">
-            {query.isFetchingNextPage ? (
-              <p role="status" className="quiet">
-                Loading more {label}...
-              </p>
-            ) : (
-              <>
-                {query.isFetchNextPageError && (
-                  <p role="alert">Could not load more {label}.</p>
-                )}
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="ghost"
-                  disabled={query.isFetching}
-                  onClick={() => query.fetchNextPage({ cancelRefetch: false })}
-                >
-                  {query.isFetchNextPageError
-                    ? `Retry loading ${label}`
-                    : `Load more ${label}`}
-                </Button>
-              </>
-            )}
-          </div>
-        )}
       </SecondaryTableScroll>
     </>
   )

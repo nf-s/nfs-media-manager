@@ -34,7 +34,7 @@ function render(search = 'mediaType=film', provider?: string) {
   client.setQueryData(
     [
       'jobs',
-      'infinite',
+      'table',
       provider ? null : 'film',
       '[]',
       '',
@@ -48,19 +48,15 @@ function render(search = 'mediaType=film', provider?: string) {
       ),
       params.get('sortBy') ?? 'createdAt',
       params.get('direction') === 'asc' ? 'asc' : 'desc',
+      1,
     ],
-    {
-      pages: [
-        JobPageSchema.parse({
-          page: 1,
-          size: 25,
-          totalCount: items.length,
-          pageCount: 1,
-          items,
-        }),
-      ],
-      pageParams: [1],
-    },
+    JobPageSchema.parse({
+      page: 1,
+      size: 25,
+      totalCount: items.length,
+      pageCount: 1,
+      items,
+    }),
   )
   client.setQueryData(['jobs', 'detail', job.id], job)
   try {

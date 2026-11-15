@@ -146,6 +146,64 @@ function flattenPlan(plan: PlanNode): PlanNode[] {
   return [plan, ...(plan.Plans ?? []).flatMap(flattenPlan)]
 }
 
+it('counts the same filtered, capped browse set without blocking any row-only page', async () => {
+  const { queryBrowseCount, queryBrowseIds, queryBrowsePageIds } =
+    await import('@/services/browse')
+  const filters = JSON.stringify([
+    { field: 'source', value: 'Album track list', mode: 'required' },
+  ])
+  const query = TrackQuerySchema.parse({ filters, size: 2, limitResults: 3 })
+
+  capturedQueries.length = 0
+  const first = await queryBrowsePageIds('track', query)
+  expect(first.ids).toHaveLength(2)
+  expect(first.hasMore).toBe(true)
+  expect(capturedQueries).toHaveLength(1)
+  expect(capturedQueries[0]?.query).toMatch(/^select "media_item"."id"/)
+
+  const second = await queryBrowsePageIds('track', { ...query, page: 2 })
+  expect(second.ids).toHaveLength(1)
+  expect(second.hasMore).toBe(false)
+  expect(first.ids).not.toContain(second.ids[0])
+  expect(
+    await queryBrowsePageIds('track', { ...query, page: 3 }),
+  ).toMatchObject({
+    ids: [],
+    hasMore: false,
+  })
+
+  capturedQueries.length = 0
+  expect(await queryBrowseCount('track', { ...query, page: 3 })).toEqual({
+    totalCount: 3,
+  })
+  expect(
+    capturedQueries.filter(
+      ({ query }) => !query.includes('pg_current_snapshot'),
+    ),
+  ).toEqual([
+    expect.objectContaining({
+      query: expect.stringMatching(/^select count\(\*\)/),
+    }),
+  ])
+
+  capturedQueries.length = 0
+  expect(
+    await queryBrowseCount('track', {
+      ...query,
+      sortBy: 'title',
+      limitResults: 5,
+    }),
+  ).toEqual({ totalCount: 5 })
+  expect(capturedQueries.map(({ query }) => query)).toEqual([
+    expect.stringContaining('pg_current_snapshot'),
+  ])
+  expect(await queryBrowseIds('track', query)).toMatchObject({
+    ids: first.ids,
+    totalCount: 3,
+    pageCount: 2,
+  })
+})
+
 it('uses the default track date ordering index', async () => {
   const { queryBrowseIds } = await import('@/services/browse')
   capturedQueries.length = 0

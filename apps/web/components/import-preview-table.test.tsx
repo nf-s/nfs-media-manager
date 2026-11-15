@@ -59,7 +59,7 @@ test('shared preview preserves selected rows, bounded scrolling and escapes impo
   assert.doesNotMatch(html, /<script>/)
 })
 
-test('large previews initially render fifty rows and expose manual load more', () => {
+test('large previews reserve full result height and render just the viewport', () => {
   const html = renderToStaticMarkup(
     <ImportPreviewTable
       items={Array.from({ length: 101 }, (_, row) => ({
@@ -74,9 +74,13 @@ test('large previews initially render fifty rows and expose manual load more', (
       columns={[{ key: 'title', label: 'Title', value: (item) => item.title }]}
     />,
   )
-  assert.equal((html.match(/aria-label="Import Album/g) ?? []).length, 50)
-  assert.match(html, /50 of 101 items/)
-  assert.match(html, /Load more/)
+  const rendered = (html.match(/aria-label="Import Album/g) ?? []).length
+  assert.ok(rendered > 0 && rendered < 50)
+  assert.match(html, /101 of 101 items/)
+  assert.ok(
+    html.includes(`height:${(101 - rendered) * 32}px;padding:0;border:0`),
+  )
+  assert.doesNotMatch(html, /Load more/)
 })
 
 test('import preview exposes search above the table', () => {

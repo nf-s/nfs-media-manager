@@ -22,7 +22,11 @@ const connection = {
 }
 const admin = new pg.Client({ ...connection, database: env.DATABASE_NAME })
 const pool = new pg.Pool({ ...connection, database })
-const databaseClient = drizzle(pool, { schema })
+const capturedQueries: string[] = []
+const databaseClient = drizzle(pool, {
+  schema,
+  logger: { logQuery: (query) => capturedQueries.push(query) },
+})
 
 vi.mock('@/lib/db', () => ({
   get db() {
@@ -265,6 +269,55 @@ afterAll(async () => {
 const visible = items.filter((item) => item.sourceId !== RETIRED)
 
 describe('subscription items', () => {
+  it('shares ranked and source filters between count-only and row-only browse', async () => {
+    const { countSubscriptionBrowseItems, listSubscriptionBrowsePage } =
+      await library()
+    const input = { q: 'bread', sourceId: BREAD, fields: 'title', size: 2 }
+    const first = await list(input)
+    expect(first.totalCount).toBeGreaterThan(2)
+
+    capturedQueries.length = 0
+    const page = await listSubscriptionBrowsePage(query(input))
+    expect(page).toEqual({
+      items: first.items,
+      hasMore: true,
+      page: 1,
+      size: 2,
+    })
+    expect(capturedQueries).toEqual([
+      expect.stringContaining('numnode'),
+      expect.stringContaining('from subscription_item i'),
+    ])
+    expect(capturedQueries[1]).not.toContain('count(*)')
+
+    capturedQueries.length = 0
+    expect(
+      await listSubscriptionBrowsePage(query({ ...input, page: 201 })),
+    ).toEqual({
+      items: [],
+      hasMore: false,
+      page: 201,
+      size: 2,
+    })
+    expect(capturedQueries[1]).not.toContain('count(*)')
+
+    expect(
+      await countSubscriptionBrowseItems(query({ ...input, page: 201 })),
+    ).toEqual({
+      totalCount: first.totalCount,
+    })
+    capturedQueries.length = 0
+    expect(
+      await countSubscriptionBrowseItems(query({ ...input, sortBy: 'title' })),
+    ).toEqual({
+      totalCount: first.totalCount,
+    })
+    expect(capturedQueries).toEqual([
+      expect.stringContaining('numnode'),
+      expect.stringContaining('pg_current_snapshot'),
+    ])
+  })
+
   it('lists both types newest first, hides unsubscribed sources and pages by 100', async () => {
     const first = await list({ size: 100 })
     expect(first).toMatchObject({
