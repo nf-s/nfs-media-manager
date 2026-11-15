@@ -137,6 +137,8 @@ function returnParams() {
 
 test('album track tables restore a playback source search and sort', async () => {
   const html = await render(returnParams())
+  for (const view of ['Grid', 'Details', 'Table'])
+    assert.ok(html.includes(`aria-label="${view} view"`))
   assert.match(html, /value="Song "/)
   assert.match(html, /aria-sort="descending"/)
   assert.match(html, /2 of 3 tracks/)
@@ -156,4 +158,16 @@ test('returning to an album playback source opens Tracks with its saved table st
     await render(other, true),
     /role="tab" aria-selected="true"[^>]*>Overview/,
   )
+})
+
+test('an album track URL restores Grid with its search and sort', async () => {
+  const params = returnParams()
+  params.set('view', 'grid')
+  const html = await render(params, true)
+  assert.match(html, /aria-label="Grid view" aria-pressed="true"/)
+  assert.match(html, /value="Song "/)
+  assert.match(html, /aria-label="Sort ascending"/)
+  assert.match(html, /<option value="title" selected="">Title<\/option>/)
+  assert.ok(html.indexOf('Play Song Z') < html.indexOf('Play Song A'))
+  assert.doesNotMatch(html, /<table|Instrumental/)
 })

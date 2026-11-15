@@ -128,6 +128,19 @@ function page<T>(...items: T[]) {
   }
 }
 
+function assertNestedViewControls(
+  html: string,
+  active: 'Grid' | 'Details' | 'Table' = 'Table',
+) {
+  for (const label of ['Grid', 'Details', 'Table'])
+    assert.match(
+      html,
+      new RegExp(
+        `aria-label="${label} view" aria-pressed="${label === active}"`,
+      ),
+    )
+}
+
 function render({
   pathname,
   search = '',
@@ -195,11 +208,11 @@ test('artist overview displays profile evidence and independent music filters wi
   ])
 })
 
-test('artist album rows append to the detail stack and show playback', () => {
+test('copied artist album Grid preserves the parent detail and playback controls', () => {
   const entry: DetailEntry = {
     kind: 'artist',
     id: artist.id,
-    view: 'tab=albums',
+    view: 'tab=albums&view=grid',
   }
   const html = render({
     pathname: '/artists',
@@ -230,11 +243,41 @@ test('artist album rows append to the detail stack and show playback', () => {
     ),
   })
   assert.match(html, /aria-label="Play Synthetic album[^"]*"/)
+  assertNestedViewControls(html, 'Grid')
+  assert.match(html, /data-view="grid" data-media-type="album"/)
   const target = destination(html, 'Synthetic album')
   assert.deepEqual(detailEntries(target.pathname, target.searchParams), [
     entry,
     { kind: 'album', id: album.id },
   ])
+})
+
+test('artist tracks and playlists offer layout controls on their own result pages', () => {
+  for (const { tab, sortBy } of [
+    { tab: 'tracks', sortBy: 'title' },
+    { tab: 'playlists', sortBy: 'name' },
+  ]) {
+    const html = render({
+      pathname: `/artists/${artist.id}`,
+      search: `tab=${tab}`,
+      children: <ArtistDetail id={artist.id} />,
+      cache: [
+        [['artist', artist.id], artist],
+        [
+          [
+            'artist',
+            artist.id,
+            tab,
+            `size=50&sortBy=${sortBy}&direction=asc`,
+            1,
+          ],
+          page(),
+        ],
+      ],
+    })
+    assertNestedViewControls(html)
+    assert.ok(html.includes(`No ${tab} stored.`))
+  }
 })
 
 test('legacy artist History links reopen the provider in Sources and list summary records', () => {
@@ -322,12 +365,39 @@ test('person details open films and pass the selected credit role to Browse', ()
   })
   assert.equal(destination(html, film.title).pathname, `/films/${film.id}`)
   assert.match(html, /Director, Actor/)
+  assertNestedViewControls(html)
   for (const role of person.roles) {
     const target = destination(html, `Filter films as ${role}`)
     assert.equal(target.pathname, '/films')
     assert.equal(target.searchParams.get('creatorId'), person.id)
     assert.equal(target.searchParams.get('creatorRole'), role)
   }
+})
+
+test('copied person film Details keeps the stored paging and role filter', () => {
+  const html = render({
+    pathname: `/people/${person.id}`,
+    search: 'view=list&role=director&sortBy=runtimeMinutes&direction=desc',
+    children: <PersonDetail id={person.id} />,
+    cache: [
+      [['person', person.id], person],
+      [
+        [
+          'person',
+          person.id,
+          'films',
+          'size=50&sortBy=runtimeMinutes&direction=desc&role=director',
+          1,
+        ],
+        page(film),
+      ],
+    ],
+  })
+  assertNestedViewControls(html, 'Details')
+  assert.match(html, /data-view="list" data-media-type="film"/)
+  assert.match(html, /aria-label="Sort by"/)
+  assert.match(html, /aria-label="Filter Role"/)
+  assert.equal(destination(html, film.title).pathname, `/films/${film.id}`)
 })
 
 test('person Sources reports the absence of a provider record', () => {
@@ -407,6 +477,7 @@ test('channel details show saved podcast episodes and scope Browse to the exact 
   })
   const html = render({
     pathname: `/channels/${id}`,
+    search: 'view=grid',
     children: <ChannelDetail id={id} />,
     cache: [
       [['subscriptions', 'source', id], data],
@@ -425,7 +496,9 @@ test('channel details show saved podcast episodes and scope Browse to the exact 
   })
   assert.match(html, /Synthetic description\./)
   assert.match(html, /Reading history/)
-  assert.match(html, /<time dateTime="2026-01-01T00:00:00.000Z">2026<\/time>/)
+  assertNestedViewControls(html, 'Grid')
+  assert.match(html, /data-view="grid" data-media-type="subscription"/)
+  assert.match(html, /class="nested-media-line">2026<\/div>/)
   assert.equal(
     destination(html, 'Synthetic episode').pathname,
     `/subscriptions/${episodeId}`,

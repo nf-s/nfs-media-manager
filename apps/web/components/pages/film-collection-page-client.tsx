@@ -9,7 +9,7 @@ export default function FilmCollectionPageClient({
   collectionId: string
 }) {
   return (
-    <div className="detail-page flex min-h-0 w-full max-w-none flex-1 flex-col gap-3">
+    <div className="detail-page flex h-full min-h-0 w-full max-w-none flex-1 flex-col gap-3">
       <Link href="/collections">Back to collections</Link>
       <FilmCollectionEntries id={collectionId} />
     </div>

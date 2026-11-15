@@ -16,6 +16,8 @@ import {
 import { AlbumQuerySchema } from '@repo/schemas/media'
 import {
   PlaylistDetailQuerySchema,
+  PlaylistBrowseQuerySchema,
+  PlaylistBrowseSortSchema,
   PlaylistEntrySortSchema,
   SPOTIFY_PLAYLIST_ADD_ALBUM_TASK,
   SPOTIFY_PLAYLIST_IMPORT_TASK,
@@ -89,12 +91,16 @@ import { getJob, processQueuedJobs, retryJob } from '@/services/jobs'
 import {
   getPlaylistDetail,
   getTrackDetail,
-  listPlaylists,
   listTrackFilterOptions,
   listTracks,
   removeImportedPlaylist,
   updatePlaylistSyncSchedule,
 } from '@/services/tracks'
+import {
+  countPlaylists,
+  listPlaylistBrowsePage,
+  listPlaylists,
+} from '@/services/playlist-directory'
 import { getAlbumPlaylists } from '@/services/album-playlists'
 import { listAlbumFilterOptions, listAlbums } from '@/services/media'
 import { relinkLastfmScrobbles } from '@/services/lastfm-scrobbles'
@@ -481,6 +487,102 @@ afterAll(async () => {
 })
 
 describe('Spotify playlist imports', () => {
+  it('bounds playlist pages and applies directory filters and sorts before paging', async () => {
+    await databaseClient.insert(schema.playlist).values(
+      Array.from(
+        { length: 105 },
+        (_, index): typeof schema.playlist.$inferInsert => ({
+          id: `playlist-fixture-${index}`,
+          name: `Fixture playlist ${String(index).padStart(3, '0')}`,
+          kind: 'playlist',
+          source: index === 102 ? 'spotify-liked' : 'spotify',
+          spotifyId:
+            index === 102
+              ? null
+              : spotifyId(`fixture${String(index).padStart(3, '0')}`),
+          ownerName: index === 100 ? 'Has Needle' : null,
+          description: index === 101 ? 'Has Needle' : null,
+          spotifyEditable: index !== 100,
+          syncSchedule: index === 0 ? '3h' : index >= 103 ? '1h' : 'off',
+          importedAt: new Date(Date.UTC(2024, 0, index + 1)),
+        }),
+      ),
+    )
+    await databaseClient.insert(schema.scrapeJob).values({
+      id: 'failed-fixture-import',
+      provider: 'spotify',
+      status: 'failed',
+      scope: {},
+      options: {
+        task: SPOTIFY_PLAYLIST_IMPORT_TASK,
+        groupKey: `spotify:${spotifyId('fixture104')}`,
+      },
+    })
+    expect(await listPlaylists()).toHaveLength(100)
+    const secondPage = await listPlaylistBrowsePage(
+      PlaylistBrowseQuerySchema.parse({ page: 2 }),
+    )
+    expect(secondPage).toMatchObject({ page: 2, size: 100, hasMore: false })
+    expect(secondPage.items.map((item) => item.id)).toEqual(
+      [100, 101, 102, 103, 104].map((id) => `playlist-fixture-${id}`),
+    )
+    const q = PlaylistBrowseQuerySchema.parse({
+      q: ' NEEDLE ',
+      size: 1,
+      page: 2,
+    })
+    expect(await countPlaylists(q)).toEqual({ totalCount: 2 })
+    expect((await listPlaylistBrowsePage(q)).items[0]?.id).toBe(
+      'playlist-fixture-101',
+    )
+    expect(
+      await countPlaylists(PlaylistBrowseQuerySchema.parse({ q: '%' })),
+    ).toEqual({ totalCount: 0 })
+    const pick = PlaylistBrowseQuerySchema.parse({
+      name: 'playlist 10',
+      acceptsAdditions: 'true',
+      ids: [
+        'playlist-fixture-100',
+        'playlist-fixture-101',
+        'playlist-fixture-102',
+      ],
+    })
+    expect(await countPlaylists(pick)).toEqual({ totalCount: 1 })
+    expect((await listPlaylistBrowsePage(pick)).items[0]?.id).toBe(
+      'playlist-fixture-101',
+    )
+
+    for (const sortBy of PlaylistBrowseSortSchema.options) {
+      const result = await listPlaylistBrowsePage(
+        PlaylistBrowseQuerySchema.parse({ sortBy, size: 1 }),
+      )
+      expect(result, sortBy).toMatchObject({
+        hasMore: true,
+        items: [expect.any(Object)],
+      })
+    }
+
+    const next = await listPlaylistBrowsePage(
+      PlaylistBrowseQuerySchema.parse({
+        sortBy: 'nextSync',
+        direction: 'desc',
+        size: 3,
+      }),
+    )
+    expect(next.items.map((item) => item.id)).toEqual([
+      'playlist-fixture-103',
+      'playlist-fixture-0',
+      'playlist-fixture-1',
+    ])
+    expect(next.items[0]?.sync.nextScheduledAt).toBe('2024-04-13T01:00:00.000Z')
+    expect(next.items[2]?.sync.nextScheduledAt).toBeNull()
+    const liked = await listPlaylistBrowsePage(
+      PlaylistBrowseQuerySchema.parse({ sources: ['spotify-liked'] }),
+    )
+    expect(liked.items.map((item) => item.id)).toEqual(['playlist-fixture-102'])
+    expect(request).not.toHaveBeenCalled()
+  })
+
   it('lists the account playlists in a job and marks the ones Spotify lets it read', async () => {
     const listed = await listAll()
     expect(listed.total).toBe(3)
@@ -575,7 +677,13 @@ describe('Spotify playlist imports', () => {
     })
 
     const state = await getSpotifyPlaylistImports()
-    expect(state.likedSongs.stored?.trackCount).toBe(1)
+    expect(state.likedSongs.stored).toMatchObject({
+      trackCount: 1,
+      summary: {
+        id: expect.any(String),
+        sync: { syncable: true, schedule: 'off', nextScheduledAt: null },
+      },
+    })
     expect(state.jobs[OWNED]?.status).toBe('succeeded')
     const job = await getJob(state.jobs[OWNED]?.jobId ?? '')
     expect(job?.logs.map((log) => log.message).join(' ')).toContain(
@@ -584,7 +692,17 @@ describe('Spotify playlist imports', () => {
     const listed = await getSpotifyPlaylists(USER_ID)
     expect(listed.playlists[0]).toMatchObject({
       current: true,
-      stored: { trackCount: 3 },
+      stored: {
+        trackCount: 3,
+        summary: {
+          id: expect.any(String),
+          albumCount: 0,
+          linkedTrackCount: 0,
+          durationSec: 600,
+          createdAt: expect.any(String),
+          sync: { syncable: true, schedule: 'off', nextScheduledAt: null },
+        },
+      },
     })
   })
 

@@ -1,14 +1,18 @@
-import { and, desc, eq, sql } from 'drizzle-orm'
+import { and, desc, eq, inArray, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import { getJobProgress } from '@repo/schemas/job'
 import {
+  PlaylistSyncScheduleSchema,
   SpotifyPlaylistJobSchema,
+  type PlaylistSync,
+  type PlaylistSummary,
   type SpotifyPlaylistJob,
 } from '@repo/schemas/tracks'
 import { db } from '@/lib/db'
+import { nextPlaylistSyncAt } from '@/lib/playlist-sync'
 import { ServerError } from '@/lib/error'
 import { SpotifyIdSchema } from '@/lib/spotify-api'
-import { scrapeJob, spotifyPlaylistListing } from '@/schemas/db'
+import { playlist, scrapeJob, spotifyPlaylistListing } from '@/schemas/db'
 import { getSpotifyAccountStatus } from './spotify-oauth'
 
 export const LIKED_SONGS_KEY = 'spotify-liked'
@@ -24,6 +28,47 @@ export function refused(message: string) {
 /** The import job group of a Spotify playlist, or of Liked Songs. */
 export const playlistGroupKey = (spotifyId: string | null) =>
   spotifyId === null ? LIKED_SONGS_KEY : `${PLAYLIST_KEY_PREFIX}${spotifyId}`
+
+type SyncRow = {
+  source: string | null
+  spotifyId: string | null
+  syncSchedule: string
+  checkedAt: Date | null
+  importedAt: Date | null
+}
+
+/** The import job group of a stored playlist; null for a legacy-only playlist. */
+export const storedGroupKey = (row: Pick<SyncRow, 'source' | 'spotifyId'>) =>
+  row.source === 'spotify-liked'
+    ? playlistGroupKey(null)
+    : row.source === 'spotify' && row.spotifyId
+      ? playlistGroupKey(row.spotifyId)
+      : null
+
+/** The sync block of a stored playlist. */
+export function playlistSync(
+  row: SyncRow,
+  job: SpotifyPlaylistJob | null,
+): PlaylistSync {
+  const syncable = storedGroupKey(row) !== null
+  const schedule = PlaylistSyncScheduleSchema.catch('off').parse(
+    row.syncSchedule,
+  )
+  return {
+    syncable,
+    schedule,
+    lastCheckedAt: (row.checkedAt ?? row.importedAt)?.toISOString() ?? null,
+    nextScheduledAt:
+      nextPlaylistSyncAt({
+        syncable,
+        schedule,
+        checkedAt: row.checkedAt,
+        importedAt: row.importedAt,
+        jobStatus: job?.status ?? null,
+      })?.toISOString() ?? null,
+    job,
+  }
+}
 
 export const playlistUrl = (spotifyId: string) =>
   `https://open.spotify.com/playlist/${spotifyId}`
@@ -44,32 +89,31 @@ export async function requirePlaylistAccess(userId: string) {
 }
 
 /** The latest job of a Spotify task in each job group, with its progress. */
-export async function latestSpotifyJobs(task: string) {
+export async function latestSpotifyJobs(task: string, groupKeys?: string[]) {
+  const groupKey = sql<string>`${scrapeJob.options}->>'groupKey'`
+  const latest = new Map<
+    string,
+    { job: SpotifyPlaylistJob; options: Record<string, unknown> }
+  >()
+  if (groupKeys?.length === 0) return latest
   const jobs = await db
-    .selectDistinctOn([sql`${scrapeJob.options}->>'groupKey'`], {
+    .selectDistinctOn([groupKey], {
       id: scrapeJob.id,
       status: scrapeJob.status,
       errorMessage: scrapeJob.errorMessage,
       finishedAt: scrapeJob.finishedAt,
       options: scrapeJob.options,
-      groupKey: sql<unknown>`${scrapeJob.options}->>'groupKey'`,
+      groupKey,
     })
     .from(scrapeJob)
     .where(
       and(
         eq(scrapeJob.provider, 'spotify'),
         sql`${scrapeJob.options}->>'task' = ${task}`,
+        groupKeys ? inArray(groupKey, groupKeys) : undefined,
       ),
     )
-    .orderBy(
-      sql`${scrapeJob.options}->>'groupKey'`,
-      desc(scrapeJob.createdAt),
-      desc(scrapeJob.id),
-    )
-  const latest = new Map<
-    string,
-    { job: SpotifyPlaylistJob; options: Record<string, unknown> }
-  >()
+    .orderBy(groupKey, desc(scrapeJob.createdAt), desc(scrapeJob.id))
   for (const job of jobs) {
     const key = z.string().safeParse(job.groupKey)
     if (key.success)
@@ -87,36 +131,29 @@ export async function latestSpotifyJobs(task: string) {
   return latest
 }
 
-const StoredRowsSchema = z.array(
-  z.object({
-    id: z.string(),
-    source: z.string(),
-    spotify_id: z.string().nullable(),
-    snapshot_id: z.string().nullable(),
-    imported_at: z.string().nullable(),
-    track_count: z.number().int().nonnegative(),
-  }),
-)
-export type StoredImport = z.infer<typeof StoredRowsSchema>[number]
-
-export async function storedImports() {
-  return StoredRowsSchema.parse(
-    (
-      await db.execute(sql`
-        select p.id, p.source, p.spotify_id, p.snapshot_id,
-          to_char(p.imported_at, 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as imported_at,
-          (select count(*)::int from playlist_item pi
-            join library_track lt on lt.media_item_id = pi.media_item_id
-            where pi.playlist_id = p.id) as track_count
-        from playlist p where p.source is not null`)
-    ).rows,
-  )
+export async function listStoredSpotifyImports(spotifyIds: string[]) {
+  if (!spotifyIds.length) return []
+  return db
+    .select({
+      id: playlist.id,
+      spotifyId: playlist.spotifyId,
+      snapshotId: playlist.snapshotId,
+    })
+    .from(playlist)
+    .where(
+      and(
+        eq(playlist.kind, 'playlist'),
+        eq(playlist.source, 'spotify'),
+        inArray(playlist.spotifyId, spotifyIds),
+      ),
+    )
 }
 
-export const storedSummary = (row: StoredImport) => ({
-  playlistId: row.id,
-  importedAt: row.imported_at,
-  trackCount: row.track_count,
+export const storedSummary = (summary: PlaylistSummary) => ({
+  playlistId: summary.id,
+  importedAt: summary.importedAt,
+  trackCount: summary.trackCount,
+  summary,
 })
 
 /** One playlist as the listing job stored it. */

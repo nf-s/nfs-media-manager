@@ -2,7 +2,10 @@ import type { z } from 'zod'
 import type { JobStatusSchema } from '@repo/schemas/job'
 import type { PlaylistSyncSchedule } from '@repo/schemas/tracks'
 
-const SCHEDULE_MINUTES: Record<PlaylistSyncSchedule, number | null> = {
+export const playlistScheduleMinutes: Record<
+  PlaylistSyncSchedule,
+  number | null
+> = {
   off: null,
   '1h': 60,
   '3h': 3 * 60,
@@ -24,7 +27,7 @@ export function nextPlaylistSyncAt(input: {
   importedAt: Date | null
   jobStatus: z.infer<typeof JobStatusSchema> | null
 }): Date | null {
-  const minutes = SCHEDULE_MINUTES[input.schedule]
+  const minutes = playlistScheduleMinutes[input.schedule]
   const from = input.checkedAt ?? input.importedAt
   if (!input.syncable || minutes === null || !from) return null
   if (input.jobStatus !== null && input.jobStatus !== 'succeeded') return null

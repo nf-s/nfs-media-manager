@@ -55,6 +55,7 @@ import {
 import AlbumTracksTable from './album-tracks-table'
 import { scopedHref } from '@/utils/media-scope'
 import MetadataSourceControl from './metadata-source-control'
+import { FilmCollectionLinks } from './film-collection-links'
 import AlbumListening from './album-listening'
 import AlbumPlaylists from './album-playlists'
 import type { SourceNavigationLink } from '@repo/schemas/tags'
@@ -617,6 +618,13 @@ export default function MediaDetail({
                           </div>
                         )}
                       </>
+                    ) : field.key === 'collection' &&
+                      item.mediaType === 'film' ? (
+                      <FilmCollectionLinks
+                        item={item}
+                        activeFilters={selectedFilters}
+                        pills
+                      />
                     ) : field.filterable ? (
                       <FilterValues
                         field={field.key}

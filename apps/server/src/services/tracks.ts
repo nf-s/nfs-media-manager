@@ -5,8 +5,6 @@ import {
   PlaylistAlbumSchema,
   PlaylistDetailSchema,
   PlaylistRemovalSchema,
-  PlaylistSummarySchema,
-  SPOTIFY_PLAYLIST_IMPORT_TASK,
   TrackAlbumLinkStrategySchema,
   TrackDetailSchema,
   TrackListItemSchema,
@@ -18,7 +16,6 @@ import {
   type PlaylistDetailQuery,
   type PlaylistEntry,
   type PlaylistEntrySort,
-  type PlaylistSummary,
   type PlaylistSyncSchedule,
   type TrackDetail,
   type TrackListItem,
@@ -38,13 +35,9 @@ import {
   lockLibraryTrackWrites,
   removeOrphanTracks,
 } from './album-library-tracks'
-import { latestSpotifyJobs } from './spotify-playlist-state'
 import { artistTagsExpression } from './music-tags'
-import {
-  playlistSync,
-  setPlaylistSyncSchedule,
-  storedGroupKey,
-} from './spotify-playlist-sync'
+import { getPlaylistSummary } from './playlist-directory'
+import { setPlaylistSyncSchedule } from './spotify-playlist-sync'
 
 const isoTimestamp = (column: SQL) =>
   sql`to_char(${column}, 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`
@@ -282,120 +275,6 @@ export async function getTrackDetail(id: string): Promise<TrackDetail | null> {
       })),
     },
   })
-}
-
-const PlaylistRowsSchema = z.array(
-  z.object({
-    id: z.string(),
-    name: z.string(),
-    source: z.string().nullable(),
-    spotify_id: z.string().nullable(),
-    owner_name: z.string().nullable(),
-    description: z.string().nullable(),
-    artwork_url: z.string().nullable(),
-    spotify_url: z.string().nullable(),
-    imported_at: z.string().nullable(),
-    created_at: z.string().nullable(),
-    checked_at: z.string().nullable(),
-    sync_schedule: z.string(),
-    spotify_editable: z.boolean(),
-    track_count: z.number().int(),
-    linked_track_count: z.number().int(),
-    album_count: z.number().int(),
-    duration_sec: z.coerce.number().int(),
-  }),
-)
-
-const optionalDate = (value: string | null) => (value ? new Date(value) : null)
-
-/** Playlists that hold tracks or albums, by name; one playlist with `id`. */
-async function loadPlaylists(id?: string): Promise<PlaylistSummary[]> {
-  const rows = PlaylistRowsSchema.parse(
-    (
-      await db.execute(sql`
-        select p.id, p.name, p.source, p.spotify_id, p.owner_name, p.description,
-          p.artwork_url, p.spotify_url,
-          ${isoTimestamp(sql`p.imported_at`)} as imported_at,
-          ${isoTimestamp(sql`p.created_at`)} as created_at,
-          ${isoTimestamp(sql`p.checked_at`)} as checked_at,
-          p.sync_schedule, p.spotify_editable,
-          coalesce(t.track_count, 0) as track_count,
-          coalesce(t.linked_track_count, 0) as linked_track_count,
-          coalesce(t.duration_sec, 0) as duration_sec,
-          (select count(*)::int from (
-            select pi.media_item_id from playlist_item pi
-            join album a on a.media_item_id = pi.media_item_id
-            where pi.playlist_id = p.id
-            union
-            select lt.album_media_item_id from playlist_item pi
-            join library_track lt on lt.media_item_id = pi.media_item_id
-            where pi.playlist_id = p.id and lt.album_media_item_id is not null
-            union
-            select t.album_media_item_id from playlist_item pi
-            join track t on t.track_media_item_id = pi.media_item_id
-            where pi.playlist_id = p.id
-          ) albums) as album_count
-        from playlist p
-        left join (
-          select pi.playlist_id, count(*)::int as track_count,
-            count(lt.album_media_item_id)::int as linked_track_count,
-            coalesce(sum(lt.duration_sec), 0)::int as duration_sec
-          from playlist_item pi
-          join library_track lt on lt.media_item_id = pi.media_item_id
-          group by pi.playlist_id
-        ) t on t.playlist_id = p.id
-        where p.kind = 'playlist' ${id === undefined ? sql`` : sql`and p.id = ${id}`}
-        order by lower(p.name), p.id`)
-    ).rows,
-  )
-  const jobs = await latestSpotifyJobs(SPOTIFY_PLAYLIST_IMPORT_TASK)
-  return rows
-    .filter((row) => row.source !== null || row.album_count > 0)
-    .map((row) => {
-      const key = storedGroupKey({
-        source: row.source,
-        spotifyId: row.spotify_id,
-      })
-      return PlaylistSummarySchema.parse({
-        id: row.id,
-        name: row.name,
-        source: row.source,
-        ownerName: row.owner_name,
-        description: row.description,
-        artworkUrl: row.artwork_url,
-        spotifyUrl: row.spotify_url,
-        importedAt: row.imported_at,
-        createdAt: row.created_at,
-        trackCount: row.track_count,
-        linkedTrackCount: row.linked_track_count,
-        albumCount: row.album_count,
-        durationSec: row.duration_sec,
-        acceptsAdditions:
-          row.source === 'spotify' &&
-          row.spotify_id !== null &&
-          row.spotify_editable,
-        sync: playlistSync(
-          {
-            source: row.source,
-            spotifyId: row.spotify_id,
-            syncSchedule: row.sync_schedule,
-            checkedAt: optionalDate(row.checked_at),
-            importedAt: optionalDate(row.imported_at),
-          },
-          key ? (jobs.get(key)?.job ?? null) : null,
-        ),
-      })
-    })
-}
-
-/** Playlists that hold tracks or albums, by name. */
-export const listPlaylists = () => loadPlaylists()
-
-async function getPlaylistSummary(id: string) {
-  const [summary] = await loadPlaylists(id)
-  if (!summary)
-    throw new ServerError({ statusCode: 404, message: 'Playlist not found' })
-  return summary
 }
 
 const EntryRowsSchema = z.array(

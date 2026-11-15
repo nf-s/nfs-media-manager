@@ -33,7 +33,7 @@ Each imported playlist and Liked Songs has its own schedule: off (the default), 
 
 The schedule queues nothing for a playlist whose import is queued or running, or while Spotify is cooling down or halted. After a failed or cancelled import it waits until the owner imports the playlist again. Legacy playlists without a Spotify source cannot be scheduled.
 
-The schedule is set on the [playlist drawer's](#playlist-drawer) **Sync** tab. The Playlists table shows each playlist's schedule and last check.
+The schedule is set on the [playlist drawer's](#playlist-drawer) **Sources** tab. The Playlists table shows each playlist's schedule and last check.
 
 | Limit                           | Behaviour                                                                                                                                                                                                             |
 | ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -64,11 +64,15 @@ Track details use **Overview**, **Listening** and **Sources** tabs. Overview con
 
 ## Playlist drawer
 
+The Playlists directory reads bounded pages from `GET /api/v1/playlists/browse-page` and gets its matching count independently from `/browse-count`. Rows can appear before the count arrives. Search, source filters and every sort apply to the complete matching set on the server; pages contain at most 100 summaries. The table reserves the full matching height once counted, renders placeholders for unloaded rows and requests only pages near the viewport. Source is hidden by default. The legacy `/api/v1/playlists` array route also caps each response at 100 rows.
+
+The **Add to playlist** picker searches writable imported playlists by name and loads 25-row pages only while open, with the same full-height placeholder behavior. Addition status reads only the related playlist IDs. The Spotify import preview remains an explicitly bounded saved provider listing; its stored summary metadata is scoped to that listing, so sorting the preview does not fetch the library directory.
+
 Selecting a playlist opens it in the same inspector used for albums and tracks. Links inside the inspector replace its visible detail and keep the original view in place. **Back** returns to the previous detail, and **Open page** opens the standalone detail. Browser history, reload and shared links restore the open detail and its settings. Older links with `?playlist=<playlist ID>` and optional `&tab=sync` still open the playlist inspector. Escape, the backdrop and the close button close it.
 
 The header shows the name, source, owner, track count and duration, **Filter tracks** (Tracks filtered by the playlist, as a required filter) and a Spotify link when the playlist has one.
 
-- **Tracks** uses the same table as album track lists. A playlist shows entries in stored order with their added dates, followed by legacy album members. It reads 100 entries per page (`GET /api/v1/playlists/:id`) and loads more on scroll. Track and album titles open the corresponding library detail in the inspector. Scroll the table horizontally on phones to reach all visible columns.
+- **Tracks** shares Grid, Details and Table presentations with album track lists, with independent remembered choices for album and playlist entries. A playlist shows entries in stored order with their added dates, followed by legacy album members. It reads at most 100 entries per page (`GET /api/v1/playlists/:id`), reserves the full result height and loads only pages near the viewport. Changing presentation preserves the visible item, query and playback order; placeholders match the current card or row size. Track and album titles open the corresponding library detail in the inspector. Scroll the table horizontally on phones to reach all visible columns.
 - **Sources** shows the stored playlist source and last import date. For a Spotify playlist or Liked Songs, it includes the schedule (`PUT /api/v1/playlists/:id/sync-schedule`) and **Sync now**, which queues the normal import and displays any refusal. It shows the last check, next scheduled import, and latest import job with its status, progress, error, finish time and Jobs link. The drawer polls while the job is queued or running and refreshes affected views when it ends.
 
 ## Adding an album to a playlist

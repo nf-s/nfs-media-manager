@@ -3,6 +3,7 @@ import { musicDisplayTags } from './music-tags'
 import {
   BrowseFilterSchema,
   BrowseKeySchema,
+  BrowsePageSliceSchema,
   BrowseRangesParamSchema,
   type BrowseValues,
 } from './browse'
@@ -295,6 +296,58 @@ export const PlaylistSummarySchema = z.object({
 })
 export type PlaylistSummary = z.infer<typeof PlaylistSummarySchema>
 
+export const PlaylistBrowseSortSchema = z.enum([
+  'name',
+  'source',
+  'owner',
+  'tracks',
+  'linkedTracks',
+  'albums',
+  'duration',
+  'imported',
+  'schedule',
+  'checked',
+  'added',
+  'description',
+  'nextSync',
+])
+export type PlaylistBrowseSort = z.infer<typeof PlaylistBrowseSortSchema>
+
+function readJsonQuery(value: unknown): unknown {
+  if (typeof value !== 'string') return value
+  try {
+    return JSON.parse(value)
+  } catch {
+    return value
+  }
+}
+
+export const PlaylistBrowseQuerySchema = PaginationQuerySchema.extend({
+  q: z.string().trim().max(200).optional(),
+  name: z.string().trim().max(200).optional(),
+  size: PaginationQuerySchema.shape.size.default(100),
+  sortBy: PlaylistBrowseSortSchema.default('name'),
+  direction: DirectionSchema.default('asc'),
+  sources: z.preprocess(
+    readJsonQuery,
+    z
+      .array(z.enum(['library', ...PlaylistSourceSchema.options]))
+      .max(3)
+      .optional(),
+  ),
+  ids: z.preprocess(
+    readJsonQuery,
+    z.array(z.string().min(1).max(500)).min(1).max(100).optional(),
+  ),
+  acceptsAdditions: z.enum(['true', 'false']).optional(),
+})
+export type PlaylistBrowseQuery = z.infer<typeof PlaylistBrowseQuerySchema>
+
+export const PlaylistBrowsePageSchema = BrowsePageSliceSchema(
+  PlaylistSummarySchema,
+)
+export type PlaylistBrowsePage = z.infer<typeof PlaylistBrowsePageSchema>
+
 export const PlaylistRemovalSchema = z.object({
   removedTracks: z.number().int().nonnegative(),
 })
@@ -316,14 +369,7 @@ export const PlaylistEntrySortSchema = z.enum([
 export type PlaylistEntrySort = z.infer<typeof PlaylistEntrySortSchema>
 
 const PlaylistKindsParamSchema = z.preprocess(
-  (value) => {
-    if (typeof value !== 'string') return value
-    try {
-      return JSON.parse(value)
-    } catch {
-      return value
-    }
-  },
+  readJsonQuery,
   z
     .array(z.enum(['track', 'album']))
     .max(2)
@@ -416,10 +462,23 @@ export type AlbumPlaylists = z.infer<typeof AlbumPlaylistsSchema>
 
 export const SpotifyPlaylistImportJobSchema = SpotifyPlaylistJobSchema
 
+export const SpotifyPlaylistStoredMetadataSchema = PlaylistSummarySchema.pick({
+  id: true,
+  createdAt: true,
+  linkedTrackCount: true,
+  albumCount: true,
+  durationSec: true,
+  description: true,
+}).extend({ sync: PlaylistSyncSchema.omit({ job: true }) })
+export type SpotifyPlaylistStoredMetadata = z.infer<
+  typeof SpotifyPlaylistStoredMetadataSchema
+>
+
 export const SpotifyPlaylistStoredSchema = z.object({
   playlistId: z.string(),
   importedAt: z.string().datetime().nullable(),
   trackCount: z.number().int().nonnegative(),
+  summary: SpotifyPlaylistStoredMetadataSchema.optional(),
 })
 
 export const SpotifyPlaylistSchema = z.object({

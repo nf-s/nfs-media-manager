@@ -1,7 +1,8 @@
-import { and, asc, count, eq, inArray, sql } from 'drizzle-orm'
+import { and, asc, count, eq, exists, ilike, inArray, sql } from 'drizzle-orm'
 import {
+  FilmCollectionBrowsePageSchema,
   FilmCollectionDetailSchema,
-  FilmCollectionSummarySchema,
+  type FilmCollectionBrowseQuery,
   type FilmCollectionQuery,
   type FilmCollectionSummary,
 } from '@repo/schemas/film-collections'
@@ -16,6 +17,15 @@ const summaryColumns = {
   name: playlist.name,
   createdAt: playlist.createdAt,
   filmCount: count(),
+}
+
+const visibleFilm = and(
+  eq(mediaItem.mediaType, 'film'),
+  sql`${mediaItem.metadata}->>'legacyHidden' is distinct from 'true'`,
+)
+
+function containsPattern(value: string) {
+  return `%${value.replace(/[\\%_]/g, '\\$&')}%`
 }
 
 const COLLECTION_LINK_BATCH = 100
@@ -50,8 +60,7 @@ async function collectionLinks(
             playlistItem.playlistId,
             collectionIds.slice(offset, offset + COLLECTION_LINK_BATCH),
           ),
-          eq(mediaItem.mediaType, 'film'),
-          sql`${mediaItem.metadata}->>'legacyHidden' is distinct from 'true'`,
+          visibleFilm,
         ),
       )
     for (const member of members) {
@@ -100,31 +109,68 @@ async function collectionLinks(
   return links
 }
 
-/** Only collections with film members; music playlists cannot appear here. */
-export async function listFilmCollections() {
-  const rows = await db
-    .select(summaryColumns)
-    .from(playlist)
-    .innerJoin(playlistItem, eq(playlistItem.playlistId, playlist.id))
+function collectionFilmCount() {
+  return db
+    .select({ value: count() })
+    .from(playlistItem)
     .innerJoin(mediaItem, eq(mediaItem.id, playlistItem.mediaItemId))
     .innerJoin(film, eq(film.mediaItemId, mediaItem.id))
-    .where(
-      and(
-        eq(playlist.kind, 'collection'),
-        eq(mediaItem.mediaType, 'film'),
-        sql`${mediaItem.metadata}->>'legacyHidden' is distinct from 'true'`,
-      ),
-    )
-    .groupBy(playlist.id)
-    .orderBy(sql`lower(${playlist.name})`, asc(playlist.id))
-  const links = await collectionLinks(rows)
-  return rows.map((row) =>
-    FilmCollectionSummarySchema.parse({
-      ...row,
-      sourceLinks: links.get(row.id) ?? [],
-      createdAt: row.createdAt.toISOString(),
-    }),
+    .where(and(eq(playlistItem.playlistId, playlist.id), visibleFilm))
+}
+
+function matchingCollections(query: FilmCollectionBrowseQuery) {
+  const matchingFilm = db
+    .select({ id: playlistItem.mediaItemId })
+    .from(playlistItem)
+    .innerJoin(mediaItem, eq(mediaItem.id, playlistItem.mediaItemId))
+    .innerJoin(film, eq(film.mediaItemId, mediaItem.id))
+    .where(and(eq(playlistItem.playlistId, playlist.id), visibleFilm))
+  return and(
+    eq(playlist.kind, 'collection'),
+    query.q ? ilike(playlist.name, containsPattern(query.q)) : undefined,
+    exists(matchingFilm),
   )
+}
+
+export async function countFilmCollections(query: FilmCollectionBrowseQuery) {
+  const [result] = await db
+    .select({ totalCount: count() })
+    .from(playlist)
+    .where(matchingCollections(query))
+  return { totalCount: result?.totalCount ?? 0 }
+}
+
+export async function listFilmCollectionBrowsePage(
+  query: FilmCollectionBrowseQuery,
+) {
+  const filmCount = sql<number>`(${collectionFilmCount()})`.mapWith(Number)
+  const name = sql`lower(${playlist.name})`
+  const sortColumns = { name, filmCount, createdAt: playlist.createdAt }
+  const direction = query.direction === 'asc' ? sql`asc` : sql`desc`
+  const rows = await db
+    .select({ ...summaryColumns, filmCount })
+    .from(playlist)
+    .where(matchingCollections(query))
+    .orderBy(
+      sql`${sortColumns[query.sortBy]} ${direction}`,
+      ...(query.sortBy === 'name' ? [] : [name]),
+      asc(playlist.id),
+    )
+    .limit(query.size + 1)
+    .offset((query.page - 1) * query.size)
+  const page = rows.slice(0, query.size)
+  const links =
+    query.includeSources === 'true' ? await collectionLinks(page) : undefined
+  return FilmCollectionBrowsePageSchema.parse({
+    page: query.page,
+    size: query.size,
+    hasMore: rows.length > query.size,
+    items: page.map((row) => ({
+      ...row,
+      sourceLinks: links?.get(row.id) ?? [],
+      createdAt: row.createdAt.toISOString(),
+    })),
+  })
 }
 
 export async function getFilmCollection(
@@ -138,18 +184,12 @@ export async function getFilmCollection(
     .innerJoin(mediaItem, eq(mediaItem.id, playlistItem.mediaItemId))
     .innerJoin(film, eq(film.mediaItemId, mediaItem.id))
     .where(
-      and(
-        eq(playlist.id, id),
-        eq(playlist.kind, 'collection'),
-        eq(mediaItem.mediaType, 'film'),
-        sql`${mediaItem.metadata}->>'legacyHidden' is distinct from 'true'`,
-      ),
+      and(eq(playlist.id, id), eq(playlist.kind, 'collection'), visibleFilm),
     )
     .groupBy(playlist.id)
   if (!summary)
     throw new ServerError({ statusCode: 404, message: 'Collection not found' })
 
-  const links = await collectionLinks([summary])
   const watchedStates =
     query.watchedStates ?? (query.watched ? [query.watched] : [])
   const dateAdded =
@@ -166,12 +206,10 @@ export async function getFilmCollection(
     dateAdded,
   }
   const direction = query.direction === 'asc' ? sql`asc` : sql`desc`
-  const pattern = `%${(query.q ?? '').replace(/[\\%_]/g, '\\$&')}%`
   const members = and(
     eq(playlistItem.playlistId, id),
-    eq(mediaItem.mediaType, 'film'),
-    sql`${mediaItem.metadata}->>'legacyHidden' is distinct from 'true'`,
-    query.q ? sql`${mediaItem.title} ilike ${pattern}` : undefined,
+    visibleFilm,
+    query.q ? ilike(mediaItem.title, containsPattern(query.q)) : undefined,
     watchedStates.length
       ? inArray(
           film.watched,
@@ -209,10 +247,14 @@ export async function getFilmCollection(
     )
     .limit(query.size)
     .offset((query.page - 1) * query.size)
+  const links =
+    query.includeSources === 'false'
+      ? undefined
+      : await collectionLinks([summary])
 
   return FilmCollectionDetailSchema.parse({
     ...summary,
-    sourceLinks: links.get(summary.id) ?? [],
+    sourceLinks: links?.get(summary.id) ?? [],
     createdAt: summary.createdAt.toISOString(),
     items: {
       page: query.page,

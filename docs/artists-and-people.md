@@ -6,6 +6,8 @@ Creator and channel names open details by default. Related albums, tracks, playl
 
 Music details put playlist memberships in a Playlists tab. Artist details show the albums, tracks and playlists already in the library; these are library memberships, not a provider's complete discography. Film people initially expose director and actor credits.
 
+Related media tables offer Grid, Details and Table. Album and track artwork stays square, film posters stay portrait, and channel thumbnails use 16:9. Each nested list type remembers its view separately. Search, sorting, role filters and playback actions remain available in every mode. Keep each nested viewport bounded to the panel; the full result height belongs inside that scroller, not in the surrounding document. Only the visible pages and overscan load, including after changing view or resizing the panel.
+
 ## Artist enrichment
 
 Artist enrichment is an explicit job for one artist and one provider: Spotify, Last.fm, Discogs or MusicBrainz. It uses the existing provider dispatcher, request gate, budgets and cooldowns. Viewing details does not start a job. Provider identifiers are independent of the internal artist ID. An ambiguous name search needs an explicit provider artist identifier instead of silently selecting a namesake.

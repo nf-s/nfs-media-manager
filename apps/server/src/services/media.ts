@@ -71,7 +71,7 @@ type CommonReference = {
 
 type CommonPlaylistItem = {
   position: number
-  playlist: { name: string; kind: 'playlist' | 'collection' }
+  playlist: { id: string; name: string; kind: 'playlist' | 'collection' }
 }
 
 type CommonRecord<TMediaType extends 'album' | 'film'> = {
@@ -225,9 +225,15 @@ function mapReferences(
     )
 }
 
-function mapPlaylists(items: CommonPlaylistItem[]): AlbumListItem['playlists'] {
+function mapPlaylists(
+  items: CommonPlaylistItem[],
+  mediaType: 'album' | 'film',
+): AlbumListItem['playlists'] {
   return items
     .map((item) => ({
+      ...(mediaType === 'film' && item.playlist.kind === 'collection'
+        ? { id: item.playlist.id }
+        : {}),
       name: item.playlist.name,
       kind: item.playlist.kind,
       position: item.position,
@@ -279,7 +285,7 @@ function buildCommonPayload<TMediaType extends 'album' | 'film'>(
     credits: mapCredits(record.credits),
     links: withRymRatingSourceLink(mapLinks(record.links), record.metadata),
     providerReferences: mapReferences(record.providerReferences),
-    playlists: mapPlaylists(record.playlistItems),
+    playlists: mapPlaylists(record.playlistItems, record.mediaType),
     createdAt: record.createdAt.toISOString(),
     updatedAt: record.updatedAt.toISOString(),
   }

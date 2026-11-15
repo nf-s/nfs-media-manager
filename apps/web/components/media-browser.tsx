@@ -2,6 +2,7 @@
 
 import { DetailInspector } from './detail-inspector'
 import { CreatorLinks } from './creator-links'
+import { FilmCollectionLinks } from './film-collection-links'
 import { CreatorScopeChip } from './creator-scope-chip'
 import {
   clearCreatorScope,
@@ -542,6 +543,8 @@ export default function MediaBrowser({
     (field.key === 'title' ? 260 : field.type === 'text' ? 180 : 115)
 
   function renderValue(item: AlbumListItem | FilmListItem, field: BrowseField) {
+    if (item.mediaType === 'film' && field.key === 'collection')
+      return <FilmCollectionLinks item={item} />
     const values = getBrowseValues(item)
     const value = values[field.key]
     if (['artist', 'director', 'actor'].includes(field.key))
@@ -609,7 +612,11 @@ export default function MediaBrowser({
         title={sortBy === 'dateAdded' ? item.dateAddedSource : sortField.label}
       >
         {sortBy === 'dateAdded' ? 'Added ' : ''}
-        {formatBrowseValue(sortField, getBrowseValues(item)[sortBy])}
+        {item.mediaType === 'film' && sortBy === 'collection' ? (
+          <FilmCollectionLinks item={item} />
+        ) : (
+          formatBrowseValue(sortField, getBrowseValues(item)[sortBy])
+        )}
       </span>
     )
   }

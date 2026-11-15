@@ -79,6 +79,20 @@ export function PersonDetail({ id }: { id: string }) {
 
 function PersonFilms({ person, path }: { person: Person; path: string }) {
   const roles = usePersonRoleFilter()
+  function creditRoles(film: FilmListItem) {
+    return person.roles
+      .filter((role) =>
+        film.credits.some(
+          (credit) =>
+            credit.role === role &&
+            (credit.id === null
+              ? credit.name === person.name
+              : credit.id === person.id),
+        ),
+      )
+      .map((role) => personRoleLabels[role])
+      .join(', ')
+  }
   const columns: CreatorLibraryColumn<FilmListItem>[] = [
     {
       key: 'title',
@@ -90,18 +104,7 @@ function PersonFilms({ person, path }: { person: Person; path: string }) {
           kind="film"
           id={film.id}
           title={film.title}
-          context={person.roles
-            .filter((role) =>
-              film.credits.some(
-                (credit) =>
-                  credit.role === role &&
-                  (credit.id === null
-                    ? credit.name === person.name
-                    : credit.id === person.id),
-              ),
-            )
-            .map((role) => personRoleLabels[role])
-            .join(', ')}
+          context={creditRoles(film)}
         />
       ),
     },
@@ -136,6 +139,20 @@ function PersonFilms({ person, path }: { person: Person; path: string }) {
       path={path}
       schema={PersonFilmPageSchema}
       columns={columns}
+      card={(film) => ({
+        title: film.title,
+        artworkUrl: film.artworkUrl,
+        subtitle: creditRoles(film),
+        metadata: [
+          film.releaseDate?.slice(0, 4),
+          film.runtimeMinutes === null
+            ? undefined
+            : `${film.runtimeMinutes} min`,
+          film.watched ? 'Watched' : undefined,
+        ]
+          .filter(Boolean)
+          .join(' · '),
+      })}
       label="films"
       defaultSort={{ key: 'title', direction: 'asc' }}
       filters={roles.filters}

@@ -1,99 +1,95 @@
 'use client'
 
 import Link from 'next/link'
-import { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import { z } from 'zod'
-import { FilmCollectionSummarySchema } from '@repo/schemas/film-collections'
+import { useDeferredValue, useState } from 'react'
+import { BrowseCountSchema } from '@repo/schemas/browse'
+import {
+  FilmCollectionBrowsePageSchema,
+  type FilmCollectionBrowseSort,
+} from '@repo/schemas/film-collections'
 import { Input } from '@repo/ui/components/ui/input'
 import {
   TableBody,
   TableCell,
+  TableHead,
   TableHeader,
   TableRow,
   TableState,
 } from '@repo/ui/components/ui/table'
 import { useDetailInspector } from './detail-inspector-context'
 import { DetailLink } from './detail-link'
+import { useCountedVirtualTable } from '@/hooks/useVirtualTable'
 import { fetchApiData } from '@/utils/api'
-import { sortTableRows } from '@/utils/secondary-table'
 import { useConfig } from './providers'
 import {
   SecondaryCell,
-  SecondaryColumnFilter,
   SecondaryTableHead,
   SecondaryTableScroll,
   SecondaryTableToolbar,
+  SecondaryVirtualRows,
   useTableColumns,
 } from './secondary-table'
 import ServiceIconLinks from './service-icon-links'
 import { collectionFilmsHref } from '@/utils/playlist-links'
 
-type CollectionSort = 'name' | 'filmCount' | 'createdAt' | 'source'
 const columns: Array<{
-  key: CollectionSort
+  key: FilmCollectionBrowseSort | 'source'
   label: string
   required?: boolean
   defaultVisible?: boolean
 }> = [
   { key: 'name', label: 'Collection', required: true },
   { key: 'filmCount', label: 'Films' },
-  { key: 'source', label: 'Source' },
+  { key: 'source', label: 'Source', defaultVisible: false },
   { key: 'createdAt', label: 'Added', defaultVisible: false },
 ]
 
 export default function FilmCollectionsWorkspace() {
   const { apiBaseUrl } = useConfig()
   const [search, setSearch] = useState('')
-  const [sources, setSources] = useState<string[]>([])
-  const [sortBy, setSortBy] = useState<CollectionSort>('name')
+  const q = useDeferredValue(search.trim())
+  const [sortBy, setSortBy] = useState<FilmCollectionBrowseSort>('name')
   const [direction, setDirection] = useState<'asc' | 'desc'>('asc')
   const table = useTableColumns('film-collections', columns)
+  const includeSources = table.visible('source')
   const inspector = useDetailInspector()
   const selectedId =
     inspector?.root?.kind === 'collection' ? inspector.root.id : null
-  const query = useQuery({
-    queryKey: ['film-collections'],
-    queryFn: ({ signal }) =>
+  const viewportKey = ['film-collections', 'browse', q, sortBy, direction]
+  const {
+    window: query,
+    isCounting,
+    countError,
+    retryCount,
+  } = useCountedVirtualTable({
+    viewportKey,
+    queryKey: [...viewportKey, includeSources],
+    countKey: ['film-collections', 'browse-count', q],
+    loadCount: (signal) =>
       fetchApiData(
         apiBaseUrl,
-        '/api/v1/collections',
-        z.array(FilmCollectionSummarySchema),
+        `/api/v1/collections/browse-count?${new URLSearchParams({ q })}`,
+        BrowseCountSchema,
         { signal },
       ),
+    loadPage: (page, size, signal) => {
+      const params = new URLSearchParams({
+        q,
+        sortBy,
+        direction,
+        page: String(page),
+        size: String(size),
+        includeSources: String(includeSources),
+      })
+      return fetchApiData(
+        apiBaseUrl,
+        `/api/v1/collections/browse-page?${params}`,
+        FilmCollectionBrowsePageSchema,
+        { signal },
+      )
+    },
   })
-  const sourceOptions = [
-    ...new Map(
-      (query.data ?? []).flatMap((row) =>
-        row.sourceLinks.map(
-          (link) =>
-            [link.provider, link.providerLabel] satisfies [string, string],
-        ),
-      ),
-    ).entries(),
-  ]
-    .map(([value, label]) => ({ value, label }))
-    .sort((left, right) => left.label.localeCompare(right.label))
-  const rows = sortTableRows(
-    (query.data ?? []).filter(
-      (row) =>
-        row.name
-          .toLocaleLowerCase()
-          .includes(search.trim().toLocaleLowerCase()) &&
-        (!sources.length ||
-          row.sourceLinks.some((link) => sources.includes(link.provider))),
-    ),
-    { key: sortBy, direction },
-    (row, key) =>
-      key === 'filmCount'
-        ? row.filmCount
-        : key === 'createdAt'
-          ? Date.parse(row.createdAt)
-          : key === 'source'
-            ? row.sourceLinks.map((link) => link.providerLabel).join(', ')
-            : row.name,
-  )
-  function onSort(key: CollectionSort) {
+  function onSort(key: FilmCollectionBrowseSort) {
     setDirection(sortBy === key && direction === 'asc' ? 'desc' : 'asc')
     setSortBy(key)
   }
@@ -107,145 +103,133 @@ export default function FilmCollectionsWorkspace() {
             aria-label="Search collections"
             placeholder="Search collections"
             value={search}
+            maxLength={200}
             onChange={(event) => setSearch(event.target.value)}
             className="max-w-xs"
           />
         }
         count={
-          <span aria-live="polite">
-            {query.data
-              ? search.trim() || sources.length
-                ? `${rows.length.toLocaleString()} of ${query.data.length.toLocaleString()} collections`
-                : `${rows.length.toLocaleString()} ${rows.length === 1 ? 'collection' : 'collections'}`
-              : ''}
-          </span>
+          countError ? (
+            <button type="button" className="underline" onClick={retryCount}>
+              Retry count
+            </button>
+          ) : !isCounting ? (
+            `${query.total.toLocaleString()} ${query.total === 1 ? 'collection' : 'collections'}`
+          ) : query.isPending ? (
+            'Loading collections...'
+          ) : (
+            'Counting collections...'
+          )
         }
         columns={table.controls}
       />
+      {query.isError && (
+        <p className="quiet" role="alert">
+          Could not load collections.{' '}
+          <button type="button" className="underline" onClick={query.retry}>
+            Retry
+          </button>
+        </p>
+      )}
       <SecondaryTableScroll
-        className="tags-scroll"
+        ref={query.scroller}
+        onScroll={query.onScroll}
         role="region"
         aria-label="Film collections"
         aria-busy={query.isFetching}
       >
-        <table className="compact-table" aria-label="Film collections">
+        <table
+          className="compact-table"
+          aria-label="Film collections"
+          aria-rowcount={query.hasTotal ? query.total + 1 : undefined}
+        >
           <TableHeader>
             <TableRow>
               {columns
                 .filter((column) => table.visible(column.key))
-                .map((column) => (
-                  <SecondaryTableHead
-                    key={column.key}
-                    sortKey={column.key}
-                    label={column.label}
-                    sortBy={sortBy}
-                    direction={direction}
-                    onSort={onSort}
-                    filter={
-                      column.key === 'source' && sourceOptions.length > 1 ? (
-                        <SecondaryColumnFilter
-                          label="Source"
-                          options={sourceOptions}
-                          value={sources}
-                          onChange={setSources}
-                        />
-                      ) : undefined
-                    }
-                    className={
-                      column.key === 'filmCount' ? 'numeric' : undefined
-                    }
-                  />
-                ))}
+                .map((column) =>
+                  column.key === 'source' ? (
+                    <TableHead key={column.key}>{column.label}</TableHead>
+                  ) : (
+                    <SecondaryTableHead
+                      key={column.key}
+                      sortKey={column.key}
+                      label={column.label}
+                      sortBy={sortBy}
+                      direction={direction}
+                      onSort={onSort}
+                      className={
+                        column.key === 'filmCount' ? 'numeric' : undefined
+                      }
+                    />
+                  ),
+                )}
             </TableRow>
           </TableHeader>
           <TableBody>
-            {!rows.length && (
-              <TableState colSpan={table.count} error={query.isError}>
-                {query.isPending ? (
-                  'Loading collections...'
-                ) : query.isError ? (
-                  <>
-                    Could not load collections.{' '}
-                    <button
-                      type="button"
-                      className="underline"
-                      onClick={() => query.refetch()}
-                    >
-                      Retry
-                    </button>
-                  </>
-                ) : search || sources.length ? (
-                  'No matching collections.'
-                ) : (
-                  'No stored film collections.'
-                )}
+            {query.hasTotal && !query.total && (
+              <TableState colSpan={table.count}>
+                {q ? 'No matching collections.' : 'No stored film collections.'}
               </TableState>
             )}
-            {rows.map((row) => (
-              <TableRow
-                key={row.id}
-                data-selected={row.id === selectedId || undefined}
-              >
-                {table.visible('name') && (
-                  <TableCell>
-                    <SecondaryCell text={row.name}>
-                      <DetailLink
-                        kind="collection"
-                        id={row.id}
-                        className="table-title hover:underline"
-                      >
-                        {row.name}
-                      </DetailLink>
-                    </SecondaryCell>
-                  </TableCell>
-                )}
-                {table.visible('filmCount') && (
-                  <TableCell className="numeric">
-                    <Link
-                      href={collectionFilmsHref(row.name)}
-                      title={`Filter films by ${row.name}`}
-                    >
-                      {row.filmCount.toLocaleString()}
-                    </Link>
-                  </TableCell>
-                )}
-                {table.visible('source') && (
-                  <TableCell>
-                    <div className="flex min-w-0 items-center gap-1.5">
-                      <SecondaryCell
-                        text={row.sourceLinks
-                          .map((link) => link.providerLabel)
-                          .join(', ')}
-                      >
-                        {row.sourceLinks.length
-                          ? [
-                              ...new Set(
-                                row.sourceLinks.map(
-                                  (link) => link.providerLabel,
-                                ),
-                              ),
-                            ].join(', ')
-                          : '-'}
+            <SecondaryVirtualRows
+              window={query}
+              colSpan={table.count}
+              renderRow={(row, index) => (
+                <TableRow
+                  key={row.id}
+                  data-selected={row.id === selectedId || undefined}
+                  aria-rowindex={index + 2}
+                  style={{ height: query.rowHeight }}
+                >
+                  {table.visible('name') && (
+                    <TableCell>
+                      <SecondaryCell text={row.name}>
+                        <DetailLink
+                          kind="collection"
+                          id={row.id}
+                          className="table-title hover:underline"
+                        >
+                          {row.name}
+                        </DetailLink>
                       </SecondaryCell>
-                      <ServiceIconLinks
-                        links={row.sourceLinks.map((link) => ({
-                          provider: link.provider,
-                          label: link.providerLabel,
-                          url: link.url,
-                        }))}
-                      />
-                    </div>
-                  </TableCell>
-                )}
-                {table.visible('createdAt') && (
-                  <TableCell className="whitespace-nowrap">
-                    <time dateTime={row.createdAt}>
-                      {new Date(row.createdAt).toLocaleDateString()}
-                    </time>
-                  </TableCell>
-                )}
-              </TableRow>
-            ))}
+                    </TableCell>
+                  )}
+                  {table.visible('filmCount') && (
+                    <TableCell className="numeric">
+                      <Link
+                        href={collectionFilmsHref(row.name)}
+                        title={`Filter films by ${row.name}`}
+                      >
+                        {row.filmCount.toLocaleString()}
+                      </Link>
+                    </TableCell>
+                  )}
+                  {includeSources && (
+                    <TableCell>
+                      {row.sourceLinks.length ? (
+                        <ServiceIconLinks
+                          links={row.sourceLinks.map((link) => ({
+                            provider: link.provider,
+                            label: link.providerLabel,
+                            url: link.url,
+                          }))}
+                        />
+                      ) : (
+                        '-'
+                      )}
+                    </TableCell>
+                  )}
+                  {table.visible('createdAt') && (
+                    <TableCell className="whitespace-nowrap">
+                      <time dateTime={row.createdAt}>
+                        {new Date(row.createdAt).toLocaleDateString()}
+                      </time>
+                    </TableCell>
+                  )}
+                </TableRow>
+              )}
+            />
           </TableBody>
         </table>
       </SecondaryTableScroll>

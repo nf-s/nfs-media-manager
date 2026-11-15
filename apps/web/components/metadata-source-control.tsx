@@ -238,10 +238,7 @@ export default function MetadataSourceControl({
             ))}
           </ul>
         ) : (
-          <p className="quiet">
-            No collection ID or source link was saved. The collection can still
-            be used as a filter.
-          </p>
+          <p className="quiet">No source link was saved.</p>
         )}
       </SourcePopover>
     )

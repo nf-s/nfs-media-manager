@@ -63,6 +63,13 @@ const playlists = [
 
 const empty = AlbumPlaylistsSchema.parse({ playlists: [], tracks: [] })
 const noAdditions = PlaylistAlbumAdditionsSchema.parse({ additions: [] })
+const pickerKey = ['playlists', 'picker', '', 1]
+
+function pickerPage(
+  items = playlists.filter((playlist) => playlist.acceptsAdditions),
+) {
+  return { items, page: 1, size: 25, hasMore: false, totalCount: items.length }
+}
 
 function render(data: Array<[unknown[], unknown]>) {
   const client = new QueryClient({
@@ -91,7 +98,6 @@ function render(data: Array<[unknown[], unknown]>) {
 test('album playlists list memberships without a duplicate track library section', () => {
   const html = render([
     [['spotify-account'], account],
-    [['playlists'], playlists],
     [['playlist-additions', 'album-1'], noAdditions],
     [
       ['album-playlists', 'album-1'],
@@ -121,7 +127,7 @@ test('album playlists list memberships without a duplicate track library section
 test('add to playlist offers only playlists that accept albums, even with no memberships', () => {
   const html = render([
     [['spotify-account'], account],
-    [['playlists'], playlists],
+    [pickerKey, pickerPage()],
     [['playlist-additions', 'album-1'], noAdditions],
     [['album-playlists', 'album-1'], empty],
   ])
@@ -134,28 +140,44 @@ test('add to playlist offers only playlists that accept albums, even with no mem
   assert.doesNotMatch(html, /Filter playlists/)
 })
 
-test('a long playlist list gets a filter and no accepting playlist explains why', () => {
-  const many = Array.from({ length: 9 }, (_, index) =>
+test('a long picker keeps server-backed scroll space and an empty picker explains eligibility', () => {
+  const firstPage = Array.from({ length: 25 }, (_, index) =>
     PlaylistSummarySchema.parse({
       ...summary,
-      id: `many-${index}`,
+      id: `mix-${index}`,
       name: `Mix ${index}`,
       acceptsAdditions: true,
     }),
   )
+  const long = render([
+    [['spotify-account'], account],
+    [
+      pickerKey,
+      { ...pickerPage(firstPage), hasMore: true, totalCount: undefined },
+    ],
+    [['playlists', 'picker-count', ''], { totalCount: 800 }],
+    [['playlist-additions', 'album-1'], noAdditions],
+    [['album-playlists', 'album-1'], empty],
+  ])
+  assert.match(long, /aria-label="Filter playlists"/)
+  assert.match(long, /aria-setsize="800"/)
+  const reservedHeight = /<li aria-hidden="true" style="height:(\d+)px"/.exec(
+    long,
+  )?.[1]
+  assert.ok(Number(reservedHeight) > 24000)
   assert.match(
     render([
       [['spotify-account'], account],
-      [['playlists'], many],
+      [['playlists', 'picker-count', ''], { totalCount: 800 }],
       [['playlist-additions', 'album-1'], noAdditions],
       [['album-playlists', 'album-1'], empty],
     ]),
-    /aria-label="Filter playlists"/,
+    /virtual-browse-placeholder/,
   )
   assert.match(
     render([
       [['spotify-account'], account],
-      [['playlists'], [playlists[1]]],
+      [pickerKey, pickerPage([])],
       [['playlist-additions', 'album-1'], noAdditions],
       [['album-playlists', 'album-1'], empty],
     ]),
@@ -166,7 +188,6 @@ test('a long playlist list gets a filter and no accepting playlist explains why'
 test('a connection without playlist changes offers to allow them instead', () => {
   const html = render([
     [['spotify-account'], { ...account, playlistChanges: false }],
-    [['playlists'], playlists],
     [['playlist-additions', 'album-1'], noAdditions],
     [['album-playlists', 'album-1'], empty],
   ])
@@ -178,7 +199,6 @@ test('a connection without playlist changes offers to allow them instead', () =>
 test('without a Spotify connection the control links to the playlist import page', () => {
   const html = render([
     [['spotify-account'], { ...account, connected: false, playlists: false }],
-    [['playlists'], playlists],
     [['playlist-additions', 'album-1'], noAdditions],
     [['album-playlists', 'album-1'], empty],
   ])
@@ -197,7 +217,8 @@ test('additions show queued, adding with progress, added and failed states', () 
   }
   const html = render([
     [['spotify-account'], account],
-    [['playlists'], playlists],
+    [pickerKey, pickerPage()],
+    [['playlists', 'related', ['gone', 'p1', 'p2', 'p3']], playlists],
     [['album-playlists', 'album-1'], empty],
     [
       ['playlist-additions', 'album-1'],

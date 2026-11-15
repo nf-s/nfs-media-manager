@@ -2,11 +2,14 @@ import { createRoute, type OpenAPIHono } from '@hono/zod-openapi'
 import type { Context } from 'hono'
 import { createMiddleware } from 'hono/factory'
 import { z } from 'zod'
+import { BrowseCountSchema } from '@repo/schemas/browse'
 import {
   PlaylistAlbumAdditionInputSchema,
   PlaylistAlbumAdditionSchema,
   PlaylistAlbumAdditionsQuerySchema,
   PlaylistAlbumAdditionsSchema,
+  PlaylistBrowsePageSchema,
+  PlaylistBrowseQuerySchema,
   PlaylistDetailQuerySchema,
   PlaylistDetailSchema,
   PlaylistRemovalSchema,
@@ -25,8 +28,12 @@ import {
 import { generateJsonResponse } from '@/lib/response'
 import { authMiddleware } from '@/middlewares/auth'
 import {
-  getPlaylistDetail,
+  countPlaylists,
+  listPlaylistBrowsePage,
   listPlaylists,
+} from '@/services/playlist-directory'
+import {
+  getPlaylistDetail,
   removeImportedPlaylist,
   updatePlaylistSyncSchedule,
 } from '@/services/tracks'
@@ -63,10 +70,11 @@ const app: OpenAPIHono<AppEnv> = createOpenAPIApp()
       method: 'get',
       path: '/',
       middleware: [authMiddleware()],
+      request: { query: PlaylistBrowseQuerySchema },
       responses: {
         200: {
           description:
-            'Playlists with their track and library album counts, sync state and whether they accept albums',
+            'One page of playlists with stored counts and sync state',
           content: {
             'application/json': {
               schema: createResponseSchema(z.array(PlaylistSummarySchema)),
@@ -74,9 +82,61 @@ const app: OpenAPIHono<AppEnv> = createOpenAPIApp()
           },
         },
         401: jsonErrorResponse('Unauthorized'),
+        422: validationErrorResponse,
       },
     }),
-    async (c) => generateJsonResponse(c, await listPlaylists(), 200),
+    async (c) =>
+      generateJsonResponse(c, await listPlaylists(c.req.valid('query')), 200),
+  )
+  .openapi(
+    createRoute({
+      method: 'get',
+      path: '/browse-page',
+      middleware: [authMiddleware()],
+      request: { query: PlaylistBrowseQuerySchema },
+      responses: {
+        200: {
+          description:
+            'Playlist rows with stored counts, sync state and a continuation indicator',
+          content: {
+            'application/json': {
+              schema: createResponseSchema(PlaylistBrowsePageSchema),
+            },
+          },
+        },
+        401: jsonErrorResponse('Unauthorized'),
+        422: validationErrorResponse,
+      },
+    }),
+    async (c) =>
+      generateJsonResponse(
+        c,
+        await listPlaylistBrowsePage(c.req.valid('query')),
+        200,
+      ),
+  )
+  .openapi(
+    createRoute({
+      method: 'get',
+      path: '/browse-count',
+      middleware: [authMiddleware()],
+      request: { query: PlaylistBrowseQuerySchema },
+      responses: {
+        200: {
+          description:
+            'Exact count of stored playlists matching the current filters',
+          content: {
+            'application/json': {
+              schema: createResponseSchema(BrowseCountSchema),
+            },
+          },
+        },
+        401: jsonErrorResponse('Unauthorized'),
+        422: validationErrorResponse,
+      },
+    }),
+    async (c) =>
+      generateJsonResponse(c, await countPlaylists(c.req.valid('query')), 200),
   )
   .openapi(
     createRoute({

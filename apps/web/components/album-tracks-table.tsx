@@ -4,6 +4,7 @@ import { useMemo } from 'react'
 import type { AlbumDetail } from '@repo/schemas/media'
 import type { PlaylistEntry } from '@repo/schemas/tracks'
 import { sortTableRows } from '@/utils/secondary-table'
+import { parseBrowseView } from '@/utils/media-grid'
 import { useVirtualRows } from '@/hooks/useVirtualTable'
 import {
   albumTrackView,
@@ -17,9 +18,16 @@ import {
   trackEntryValue,
   type TrackEntryColumn,
 } from './track-entries-table'
+import { useNestedMediaView } from './nested-media-view'
 
 export default function AlbumTracksTable({ album }: { album: AlbumDetail }) {
   const detail = useDetailView()
+  const [savedPresentation, setPresentation] =
+    useNestedMediaView('album-tracks')
+  const presentation = parseBrowseView(
+    detail.params.get('view'),
+    savedPresentation,
+  )
   const view = albumTrackView(detail.params.get('albumTrackView'), album.id)
   const text = view.q.trim().toLocaleLowerCase()
   type TrackEntry = Extract<PlaylistEntry, { kind: 'track' }>
@@ -53,35 +61,39 @@ export default function AlbumTracksTable({ album }: { album: AlbumDetail }) {
       })),
     [ordered],
   )
-  const window = useVirtualRows({ rows, identity: JSON.stringify(view) })
+  const window = useVirtualRows({
+    rows,
+    identity: JSON.stringify(view),
+    presentation: { view: presentation, mediaType: 'album' },
+  })
 
-  function viewParams(next: Partial<typeof view>) {
+  function viewParams(
+    next: Partial<typeof view>,
+    nextPresentation = presentation,
+  ) {
     const params = new URLSearchParams(detail.params)
     params.set('albumTrackView', JSON.stringify({ ...view, ...next }))
     params.set('tab', 'tracks')
+    params.set('view', nextPresentation)
     return params
   }
-  function onSort(sortBy: TrackEntryColumn) {
-    detail.replace(
-      viewParams({
-        sortBy,
-        direction:
-          sortBy === view.sortBy && view.direction === 'asc' ? 'desc' : 'asc',
-      }),
-    )
-  }
-
   return (
     <TrackEntriesTable
       scope="album"
       window={window}
-      scroller={window.scroller}
-      onScroll={window.onScroll}
+      view={presentation}
+      onViewChange={(next) => {
+        setPresentation(next)
+        detail.replace(viewParams({}, next))
+      }}
+      fallbackArtworkUrl={album.artworkUrl}
       search={view.q}
       onSearch={(q) => detail.replace(viewParams({ q }))}
       sortBy={view.sortBy}
       direction={view.direction}
-      onSort={onSort}
+      onSort={(sortBy, direction) =>
+        detail.replace(viewParams({ sortBy, direction }))
+      }
       count={
         text
           ? `${rows.length.toLocaleString()} of ${entries.length.toLocaleString()} tracks`

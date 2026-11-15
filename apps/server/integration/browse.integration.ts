@@ -4,7 +4,12 @@ import { drizzle } from 'drizzle-orm/node-postgres'
 import { migrate } from 'drizzle-orm/node-postgres/migrator'
 import { and, asc, eq } from 'drizzle-orm'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
-import { AlbumQuerySchema, FilmQuerySchema } from '@repo/schemas/media'
+import {
+  AlbumQuerySchema,
+  FilmDetailSchema,
+  FilmListItemSchema,
+  FilmQuerySchema,
+} from '@repo/schemas/media'
 import { TrackQuerySchema } from '@repo/schemas/tracks'
 import {
   PluginResultSchema,
@@ -953,4 +958,46 @@ it('orders Tracks by artist, album, release and equal listening totals in album 
     'u',
     'q',
   ])
+})
+
+it('returns the stored collection ID in film Browse and detail memberships', async () => {
+  const { getFilmDetail, listFilmBrowsePage } = await import('@/services/media')
+  const id = 'film-collection-fixture'
+  const membership = {
+    id: 'stored-collection-id',
+    name: 'Collection membership fixture',
+    kind: 'collection',
+    position: 9,
+  }
+  await databaseClient.insert(schema.mediaItem).values({
+    id,
+    slug: id,
+    title: 'Film collection membership fixture',
+    mediaType: 'film',
+  })
+  await databaseClient.insert(schema.film).values({ mediaItemId: id })
+  await databaseClient.insert(schema.playlist).values({
+    id: membership.id,
+    name: membership.name,
+    kind: 'collection',
+  })
+  await databaseClient.insert(schema.playlistItem).values({
+    playlistId: membership.id,
+    mediaItemId: id,
+    position: membership.position,
+  })
+  const page = await listFilmBrowsePage(
+    FilmQuerySchema.parse({
+      filters: JSON.stringify([
+        { field: 'collection', value: membership.name },
+      ]),
+    }),
+  )
+  expect(FilmListItemSchema.parse(page.items[0]).playlists).toEqual([
+    membership,
+  ])
+  expect(FilmDetailSchema.parse(await getFilmDetail(id)).playlists).toEqual([
+    membership,
+  ])
+  expect(fetch).not.toHaveBeenCalled()
 })

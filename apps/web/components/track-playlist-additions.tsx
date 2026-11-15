@@ -24,12 +24,7 @@ function MatchedTrackAdditions({
   )
   return (
     <>
-      <AddToPlaylist
-        mediaType="track"
-        id={trackId}
-        playlists={playlists}
-        additions={additionList}
-      />
+      <AddToPlaylist mediaType="track" id={trackId} additions={additionList} />
       {additions.isError && (
         <p role="alert" className="quiet mt-2">
           Could not load playlist additions.{' '}

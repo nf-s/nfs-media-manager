@@ -73,7 +73,6 @@ export default function AlbumPlaylists({ albumId }: { albumId: string }) {
         <AddToPlaylist
           mediaType="album"
           id={albumId}
-          playlists={playlists}
           additions={additionList}
         />
         {additionList.length > 0 && (

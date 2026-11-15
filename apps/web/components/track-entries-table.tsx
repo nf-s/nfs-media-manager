@@ -1,6 +1,6 @@
 'use client'
 
-import type { ReactNode, Ref, UIEventHandler } from 'react'
+import type { ReactNode } from 'react'
 import {
   trackSourceLabels,
   trackSpotifyMatchLabels,
@@ -17,6 +17,7 @@ import {
 } from '@repo/ui/components/ui/table'
 import { formatTrackDuration } from '@/utils/track-browse'
 import { trackServiceLinks } from '@/utils/track-links'
+import type { BrowseView } from '@/utils/media-grid'
 import type { PlaybackSource } from '@/utils/playback'
 import { TrackArtistLinks } from './creator-links'
 import { DetailLink } from './detail-link'
@@ -32,10 +33,15 @@ import {
   SecondaryTableScroll,
   SecondaryTableToolbar,
   SecondaryVirtualRows,
-  type SecondaryVirtualWindow,
   useTableColumns,
   type TableColumn,
 } from './secondary-table'
+import {
+  NestedMediaCard,
+  NestedMediaCards,
+  NestedMediaViewControls,
+  type NestedMediaWindow,
+} from './nested-media-view'
 
 export type TrackEntryColumn = PlaylistEntrySort | 'externalId'
 type EntryKind = PlaylistEntry['kind']
@@ -122,6 +128,83 @@ function DateCell({ value }: { value?: string | null }) {
   )
 }
 
+function TrackEntryServices({ entry }: { entry: PlaylistEntry }) {
+  const links =
+    entry.kind === 'track'
+      ? trackServiceLinks(entry.track)
+      : entry.album.spotifyUrl
+        ? [
+            {
+              provider: 'spotify',
+              label: 'Spotify',
+              url: entry.album.spotifyUrl,
+            },
+          ]
+        : []
+  return <ServiceIconLinks links={links} />
+}
+
+function TrackEntryCard({
+  entry,
+  view,
+  source,
+  fallbackArtworkUrl,
+}: {
+  entry: PlaylistEntry
+  view: 'grid' | 'list'
+  source?: () => PlaybackSource
+  fallbackArtworkUrl?: string | null
+}) {
+  const item = entry.kind === 'track' ? entry.track : entry.album
+  return (
+    <NestedMediaCard
+      view={view}
+      kind={entry.kind}
+      id={item.id}
+      title={item.title}
+      artworkUrl={item.artworkUrl ?? fallbackArtworkUrl ?? null}
+      subtitle={
+        entry.kind === 'track' ? (
+          <TrackArtistLinks track={entry.track} />
+        ) : (
+          item.artists.join(', ')
+        )
+      }
+      metadata={
+        <>
+          <span>#{entry.position}</span>
+          {entry.kind === 'track' && entry.track.durationSec !== null && (
+            <span> · {formatTrackDuration(entry.track.durationSec)}</span>
+          )}
+          {item.releaseDate && (
+            <span>
+              {' · '}
+              <DateCell value={item.releaseDate} />
+            </span>
+          )}
+        </>
+      }
+      actions={
+        <>
+          {entry.kind === 'track' ? (
+            <LibraryTrackInlinePlayButtons
+              track={entry.track}
+              source={source}
+            />
+          ) : (
+            <AlbumReferencePlayButton
+              id={item.id}
+              title={item.title}
+              source={source}
+            />
+          )}
+          <TrackEntryServices entry={entry} />
+        </>
+      }
+    />
+  )
+}
+
 function TrackEntryCell({
   column,
   entry,
@@ -158,7 +241,7 @@ function TrackEntryCell({
               {track.title}
             </DetailLink>
           </SecondaryCell>
-          <ServiceIconLinks links={trackServiceLinks(track)} />
+          <TrackEntryServices entry={entry} />
         </div>
       ) : album ? (
         <div className="secondary-cell-actions">
@@ -172,17 +255,7 @@ function TrackEntryCell({
               {album.title}
             </DetailLink>
           </SecondaryCell>
-          {album.spotifyUrl && (
-            <ServiceIconLinks
-              links={[
-                {
-                  provider: 'spotify',
-                  label: 'Spotify',
-                  url: album.spotifyUrl,
-                },
-              ]}
-            />
-          )}
+          <TrackEntryServices entry={entry} />
         </div>
       ) : null
     case 'artists': {
@@ -247,6 +320,8 @@ function TrackEntryCell({
 export function TrackEntriesTable({
   scope,
   window,
+  view,
+  onViewChange,
   sortBy,
   direction,
   onSort,
@@ -257,15 +332,16 @@ export function TrackEntriesTable({
   empty,
   error,
   source,
+  fallbackArtworkUrl,
   kindFilter,
-  scroller,
-  onScroll,
 }: {
   scope: 'album' | 'playlist'
-  window: SecondaryVirtualWindow<IndexedTrackEntry | null> & { total: number }
+  window: NestedMediaWindow<IndexedTrackEntry> & { padBottom: number }
+  view: BrowseView
+  onViewChange: (view: BrowseView) => void
   sortBy: TrackEntryColumn
   direction: 'asc' | 'desc'
-  onSort: (key: TrackEntryColumn) => void
+  onSort: (key: TrackEntryColumn, direction: 'asc' | 'desc') => void
   search: string
   onSearch: (q: string) => void
   count?: string
@@ -273,9 +349,8 @@ export function TrackEntriesTable({
   empty: ReactNode
   error?: ReactNode
   source?: (row: IndexedTrackEntry) => PlaybackSource
+  fallbackArtworkUrl?: string | null
   kindFilter?: { value: EntryKind[]; onChange: (kinds: EntryKind[]) => void }
-  scroller?: Ref<HTMLDivElement>
-  onScroll?: UIEventHandler<HTMLDivElement>
 }) {
   const playlist = scope === 'playlist'
   const labels = playlist
@@ -290,6 +365,19 @@ export function TrackEntriesTable({
   )
   const visible = available.filter(({ key }) => columns.visible(key))
   const numeric = ['position', 'duration', 'scrobbles']
+  const scrollClassName = playlist
+    ? 'min-h-0 flex-1'
+    : 'max-h-[min(420px,50dvh)]'
+  const typeFilter = kindFilter && (
+    <SecondaryColumnFilter
+      label="Type"
+      options={[
+        { value: 'track', label: 'Tracks' },
+        { value: 'album', label: 'Albums' },
+      ]}
+      {...kindFilter}
+    />
+  )
   return (
     <>
       <SecondaryTableToolbar
@@ -304,97 +392,123 @@ export function TrackEntriesTable({
           />
         }
         count={count}
-        columns={columns.controls}
+        columns={view === 'table' ? columns.controls : undefined}
+        filters={
+          <NestedMediaViewControls
+            view={view}
+            onViewChange={onViewChange}
+            sortBy={sortBy}
+            direction={direction}
+            sortOptions={available}
+            onSortChange={(key) => onSort(key, 'asc')}
+            onDirectionChange={(next) => onSort(sortBy, next)}
+            filters={typeFilter}
+          />
+        }
       />
       {error && (
         <div role="alert" className="quiet">
           {error}
         </div>
       )}
-      <SecondaryTableScroll
-        ref={scroller}
-        onScroll={onScroll}
-        className={playlist ? 'min-h-0 flex-1' : 'max-h-[min(420px,50dvh)]'}
-        role="region"
-        aria-label={labels.table}
-        aria-busy={pending}
-        data-inspector-scroll=""
-      >
-        <table
-          className="compact-table"
-          aria-label={labels.table}
-          aria-rowcount={pending ? undefined : window.total + 1}
-        >
-          <TableHeader>
-            <TableRow>
-              {visible.map(({ key, label }) => (
-                <SecondaryTableHead
-                  key={key}
-                  sortKey={key}
-                  label={label}
-                  sortBy={sortBy}
-                  direction={direction}
-                  onSort={onSort}
-                  className={numeric.includes(key) ? 'numeric' : undefined}
-                  filter={
-                    key === 'kind' && kindFilter ? (
-                      <SecondaryColumnFilter
-                        label="Type"
-                        options={[
-                          { value: 'track', label: 'Tracks' },
-                          { value: 'album', label: 'Albums' },
-                        ]}
-                        {...kindFilter}
-                      />
-                    ) : undefined
-                  }
-                />
-              ))}
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {!window.total && !pending && !error && (
-              <TableState colSpan={columns.count}>{empty}</TableState>
-            )}
-            <SecondaryVirtualRows
-              window={window}
-              colSpan={columns.count}
-              renderRow={(row, index) =>
-                row ? (
-                  <TableRow
-                    key={row.key}
-                    className="group"
-                    aria-rowindex={index + 2}
-                  >
-                    {visible.map(({ key }) => (
-                      <TableCell
-                        key={key}
-                        className={
-                          numeric.includes(key) ? 'numeric' : undefined
-                        }
-                      >
-                        <TrackEntryCell
-                          column={key}
-                          entry={row.entry}
-                          source={source ? () => source(row) : undefined}
-                          playInTitle={!columns.visible('position')}
-                        />
-                      </TableCell>
-                    ))}
-                  </TableRow>
-                ) : (
-                  <tr aria-hidden="true">
-                    <td
-                      colSpan={columns.count}
-                      style={{ height: window.rowHeight, padding: 0 }}
-                    />
-                  </tr>
-                )
-              }
+      {view !== 'table' ? (
+        <NestedMediaCards
+          window={window}
+          view={view}
+          mediaType="album"
+          label={labels.table}
+          className={scrollClassName}
+          busy={pending}
+          empty={!error ? empty : undefined}
+          renderItem={(row) => (
+            <TrackEntryCard
+              entry={row.entry}
+              view={view}
+              source={source ? () => source(row) : undefined}
+              fallbackArtworkUrl={fallbackArtworkUrl}
             />
-          </TableBody>
-        </table>
-      </SecondaryTableScroll>
+          )}
+        />
+      ) : (
+        <SecondaryTableScroll
+          ref={window.scroller}
+          onScroll={window.onScroll}
+          className={scrollClassName}
+          role="region"
+          aria-label={labels.table}
+          aria-busy={pending}
+          data-inspector-scroll=""
+        >
+          <table
+            className="compact-table"
+            aria-label={labels.table}
+            aria-rowcount={pending ? undefined : window.total + 1}
+          >
+            <TableHeader>
+              <TableRow>
+                {visible.map(({ key, label }) => (
+                  <SecondaryTableHead
+                    key={key}
+                    sortKey={key}
+                    label={label}
+                    sortBy={sortBy}
+                    direction={direction}
+                    onSort={(key) =>
+                      onSort(
+                        key,
+                        key === sortBy && direction === 'asc' ? 'desc' : 'asc',
+                      )
+                    }
+                    className={numeric.includes(key) ? 'numeric' : undefined}
+                    filter={key === 'kind' ? typeFilter : undefined}
+                  />
+                ))}
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {!window.total && !pending && !error && (
+                <TableState colSpan={columns.count}>{empty}</TableState>
+              )}
+              <SecondaryVirtualRows
+                window={window}
+                colSpan={columns.count}
+                renderRow={(row, index) =>
+                  row ? (
+                    <TableRow
+                      key={row.key}
+                      className="group"
+                      aria-rowindex={index + 2}
+                    >
+                      {visible.map(({ key }) => (
+                        <TableCell
+                          key={key}
+                          className={
+                            numeric.includes(key) ? 'numeric' : undefined
+                          }
+                        >
+                          <TrackEntryCell
+                            column={key}
+                            entry={row.entry}
+                            source={source ? () => source(row) : undefined}
+                            playInTitle={!columns.visible('position')}
+                          />
+                        </TableCell>
+                      ))}
+                    </TableRow>
+                  ) : (
+                    <tr aria-hidden="true">
+                      <td
+                        colSpan={columns.count}
+                        style={{ height: window.rowHeight, padding: 0 }}
+                      />
+                    </tr>
+                  )
+                }
+              />
+            </TableBody>
+          </table>
+        </SecondaryTableScroll>
+      )}
     </>
   )
 }

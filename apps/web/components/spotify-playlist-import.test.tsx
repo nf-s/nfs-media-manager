@@ -36,12 +36,37 @@ const account = SpotifyAccountStatusSchema.parse({
   playlistChanges: true,
 })
 
+const stored = PlaylistSummarySchema.parse({
+  id: 'p4',
+  name: 'Stored',
+  source: 'spotify',
+  ownerName: 'Example owner',
+  description: null,
+  artworkUrl: null,
+  spotifyUrl: null,
+  createdAt: '2026-01-01T00:00:00.000Z',
+  importedAt: '2026-01-02T00:00:00.000Z',
+  trackCount: 5,
+  linkedTrackCount: 2,
+  albumCount: 1,
+  durationSec: 1200,
+  acceptsAdditions: true,
+  sync: {
+    syncable: true,
+    schedule: 'daily',
+    lastCheckedAt: '2026-01-04T00:00:00.000Z',
+    nextScheduledAt: '2026-01-05T00:00:00.000Z',
+    job: null,
+  },
+})
+
 const imports = SpotifyPlaylistImportsSchema.parse({
   likedSongs: {
     stored: {
       playlistId: 'liked',
       importedAt: '2026-01-02T00:00:00.000Z',
       trackCount: 40,
+      summary: { ...stored, id: 'liked' },
     },
     job: null,
   },
@@ -96,6 +121,7 @@ const listing = SpotifyPlaylistListSchema.parse({
         playlistId: 'p4',
         importedAt: '2026-01-02T00:00:00.000Z',
         trackCount: 5,
+        summary: stored,
       },
       current: false,
     },
@@ -112,29 +138,6 @@ const listing = SpotifyPlaylistListSchema.parse({
       },
     },
   ],
-})
-
-const stored = PlaylistSummarySchema.parse({
-  id: 'p4',
-  name: 'Stored',
-  source: 'spotify',
-  ownerName: 'Example owner',
-  description: null,
-  artworkUrl: null,
-  spotifyUrl: null,
-  importedAt: '2026-01-02T00:00:00.000Z',
-  trackCount: 5,
-  linkedTrackCount: 2,
-  albumCount: 1,
-  durationSec: 1200,
-  acceptsAdditions: true,
-  sync: {
-    syncable: true,
-    schedule: 'daily',
-    lastCheckedAt: '2026-01-04T00:00:00.000Z',
-    nextScheduledAt: '2026-01-05T00:00:00.000Z',
-    job: null,
-  },
 })
 
 function render(data: Array<[unknown[], unknown]>, search = '') {
@@ -175,9 +178,8 @@ test('playlist import asks to reconnect when the connection lacks playlist acces
 test('the stored list renders in the shared table without a listing request', () => {
   const html = render([
     [['spotify-account'], account],
-    [['spotify-playlist-imports'], imports],
-    [['spotify-playlists'], listing],
-    [['playlists'], [stored]],
+    [['playlists', 'spotify-imports'], imports],
+    [['playlists', 'spotify-listing'], listing],
   ])
   assert.match(
     html,
@@ -193,6 +195,7 @@ test('the stored list renders in the shared table without a listing request', ()
   assert.doesNotMatch(html, /disabled=""[^>]*>List again/)
   assert.match(html, /Listed /)
   assert.match(html, /40 tracks/)
+  assert.match(html, /href="\/playlists\/liked\?tab=sync"[^>]*>Daily</)
   assert.match(html, />Import again</)
   assert.match(html, /5 of 5 playlists/)
   assert.match(html, /0 selected/)
@@ -202,9 +205,8 @@ test('the stored list renders in the shared table without a listing request', ()
 test('compact import states preserve progress, reasons, schedules and drawer links in details', () => {
   const html = render([
     [['spotify-account'], account],
-    [['spotify-playlist-imports'], imports],
-    [['spotify-playlists'], listing],
-    [['playlists'], [stored]],
+    [['playlists', 'spotify-imports'], imports],
+    [['playlists', 'spotify-listing'], listing],
   ])
   assert.match(
     html,
@@ -239,9 +241,8 @@ test('compact import states preserve progress, reasons, schedules and drawer lin
 test('playlist import reasons and progress stay in detail popups instead of growing rows', () => {
   const html = render([
     [['spotify-account'], account],
-    [['spotify-playlist-imports'], imports],
-    [['spotify-playlists'], listing],
-    [['playlists'], [stored]],
+    [['playlists', 'spotify-imports'], imports],
+    [['playlists', 'spotify-listing'], listing],
   ])
   const popovers =
     html.match(/<div[^>]*popover="auto"[^>]*>[\s\S]*?<\/div>/g) ?? []
@@ -270,9 +271,9 @@ test('playlist import reasons and progress stay in detail popups instead of grow
 test('an unlisted account offers List playlists and an empty table state', () => {
   const html = render([
     [['spotify-account'], account],
-    [['spotify-playlist-imports'], imports],
+    [['playlists', 'spotify-imports'], imports],
     [
-      ['spotify-playlists'],
+      ['playlists', 'spotify-listing'],
       SpotifyPlaylistListSchema.parse({ playlists: [], total: 0 }),
     ],
   ])
@@ -294,8 +295,8 @@ test('a listing in progress shows its page, polls and disables the button', () =
   }
   const html = render([
     [['spotify-account'], account],
-    [['spotify-playlist-imports'], imports],
-    [['spotify-playlists'], running],
+    [['playlists', 'spotify-imports'], imports],
+    [['playlists', 'spotify-listing'], running],
   ])
   assert.match(html, /disabled=""[^>]*>List again/)
   assert.match(
@@ -305,9 +306,9 @@ test('a listing in progress shows its page, polls and disables the button', () =
   assert.match(
     render([
       [['spotify-account'], account],
-      [['spotify-playlist-imports'], imports],
+      [['playlists', 'spotify-imports'], imports],
       [
-        ['spotify-playlists'],
+        ['playlists', 'spotify-listing'],
         {
           ...running,
           job: {
@@ -324,9 +325,9 @@ test('a listing in progress shows its page, polls and disables the button', () =
 test('a failed listing shows its message and keeps the stored list', () => {
   const html = render([
     [['spotify-account'], account],
-    [['spotify-playlist-imports'], imports],
+    [['playlists', 'spotify-imports'], imports],
     [
-      ['spotify-playlists'],
+      ['playlists', 'spotify-listing'],
       {
         ...listing,
         job: {
@@ -355,9 +356,9 @@ test('track imports label shared album jobs and settings before leaving the libr
   const configured = render(
     [
       [['spotify-account'], account],
-      [['spotify-playlist-imports'], imports],
+      [['playlists', 'spotify-imports'], imports],
       [
-        ['spotify-playlists'],
+        ['playlists', 'spotify-listing'],
         {
           ...listing,
           job: {
@@ -388,8 +389,8 @@ test('track imports label shared album jobs and settings before leaving the libr
 test('a connection without playlist changes offers to allow them', () => {
   const html = render([
     [['spotify-account'], { ...account, playlistChanges: false }],
-    [['spotify-playlist-imports'], imports],
-    [['spotify-playlists'], listing],
+    [['playlists', 'spotify-imports'], imports],
+    [['playlists', 'spotify-listing'], listing],
   ])
   assert.match(
     html,
@@ -401,9 +402,8 @@ test('a connection without playlist changes offers to allow them', () => {
 test('playlist import has sortable data columns and a column picker', () => {
   const html = render([
     [['spotify-account'], account],
-    [['spotify-playlist-imports'], imports],
-    [['spotify-playlists'], listing],
-    [['playlists'], [stored]],
+    [['playlists', 'spotify-imports'], imports],
+    [['playlists', 'spotify-listing'], listing],
   ])
   for (const label of [
     'Playlist',
@@ -420,14 +420,10 @@ test('playlist import has sortable data columns and a column picker', () => {
 
 test('import sorting uses counts and stored library dates with missing dates last', () => {
   const values = (key: ImportPlaylistSortKey, direction: 'asc' | 'desc') =>
-    sortTableRows(listing.playlists, { key, direction }, (playlist, column) =>
-      importPlaylistSortValue(
-        playlist,
-        playlist.stored
-          ? { ...stored, createdAt: '2026-01-01T00:00:00.000Z' }
-          : undefined,
-        column,
-      ),
+    sortTableRows(
+      listing.playlists,
+      { key, direction },
+      importPlaylistSortValue,
     ).map((playlist) => playlist.name)
   assert.equal(values('tracks', 'desc')[0], 'Huge')
   assert.equal(values('added', 'asc')[0], 'Stored')
@@ -439,11 +435,14 @@ test('import dates sort by timestamp rather than displayed text', () => {
   const base = listing.playlists.find((playlist) => playlist.stored)
   assert.ok(base?.stored)
   const date = '2026-01-01T01:00:00+02:00'
-  const playlist = { ...base, stored: { ...base.stored, importedAt: date } }
   const summary = {
     ...stored,
     createdAt: date,
     sync: { ...stored.sync, lastCheckedAt: date, nextScheduledAt: date },
+  }
+  const playlist = {
+    ...base,
+    stored: { ...base.stored, importedAt: date, summary },
   }
   const keys: ImportPlaylistSortKey[] = [
     'added',
@@ -452,25 +451,34 @@ test('import dates sort by timestamp rather than displayed text', () => {
     'nextSync',
   ]
   for (const key of keys)
-    assert.equal(
-      importPlaylistSortValue(playlist, summary, key),
-      Date.parse(date),
-    )
+    assert.equal(importPlaylistSortValue(playlist, key), Date.parse(date))
+})
+
+test('the complete preview sorts by stored metadata beyond one directory page', () => {
+  const base = listing.playlists.find((playlist) => playlist.stored)
+  const saved = base?.stored
+  assert.ok(base && saved)
+  const rows = Array.from({ length: 105 }, (_, linkedTrackCount) => ({
+    ...base,
+    spotifyId: String(linkedTrackCount).padStart(22, '0'),
+    name: `Fixture ${linkedTrackCount}`,
+    stored: { ...saved, summary: { ...stored, linkedTrackCount } },
+  }))
+  const sorted = sortTableRows(
+    rows,
+    { key: 'linkedTracks', direction: 'desc' },
+    importPlaylistSortValue,
+  )
+  assert.equal(sorted.length, 105)
+  assert.equal(sorted[0]?.name, 'Fixture 104')
 })
 
 test('import status sorting uses the same changed state shown in the cell', () => {
   const playlist = listing.playlists.find((item) => item.stored)
   assert.ok(playlist)
+  assert.equal(importPlaylistSortValue(playlist, 'status'), 'Needs update')
   assert.equal(
-    importPlaylistSortValue(playlist, undefined, 'status'),
-    'Needs update',
-  )
-  assert.equal(
-    importPlaylistSortValue(
-      { ...playlist, current: true },
-      undefined,
-      'status',
-    ),
+    importPlaylistSortValue({ ...playlist, current: true }, 'status'),
     'Imported',
   )
 })
@@ -478,9 +486,8 @@ test('import status sorting uses the same changed state shown in the cell', () =
 test('playlist import places filters in headers and selected actions in the attached footer', () => {
   const html = render([
     [['spotify-account'], account],
-    [['spotify-playlist-imports'], imports],
-    [['spotify-playlists'], listing],
-    [['playlists'], [stored]],
+    [['playlists', 'spotify-imports'], imports],
+    [['playlists', 'spotify-listing'], listing],
   ])
   assert.match(html, /aria-label="Filter Import status"/)
   assert.match(html, /Not imported<\/span>/)
@@ -589,9 +596,9 @@ test('playlist filters combine multiple statuses and owners over the complete li
 test('plain import statuses omit redundant details and unavailable playlists disable the header checkbox', () => {
   const html = render([
     [['spotify-account'], account],
-    [['spotify-playlist-imports'], imports],
+    [['playlists', 'spotify-imports'], imports],
     [
-      ['spotify-playlists'],
+      ['playlists', 'spotify-listing'],
       {
         ...listing,
         playlists: [
@@ -599,7 +606,6 @@ test('plain import statuses omit redundant details and unavailable playlists dis
         ],
       },
     ],
-    [['playlists'], []],
   ])
   assert.match(html, />Not imported</)
   assert.doesNotMatch(html, /Import details for Plain/)

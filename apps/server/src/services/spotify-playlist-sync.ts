@@ -1,59 +1,18 @@
 import { and, eq, isNotNull, ne } from 'drizzle-orm'
 import {
-  PlaylistSyncScheduleSchema,
   SPOTIFY_PLAYLIST_IMPORT_TASK,
-  type PlaylistSync,
   type PlaylistSyncSchedule,
-  type SpotifyPlaylistJob,
 } from '@repo/schemas/tracks'
 import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
-import { nextPlaylistSyncAt } from '@/lib/playlist-sync'
 import { playlist } from '@/schemas/db'
 import { createTaskJob } from './jobs'
 import { storedImportTarget } from './spotify-playlists'
-import { latestSpotifyJobs, playlistGroupKey } from './spotify-playlist-state'
-
-type SyncRow = {
-  source: string | null
-  spotifyId: string | null
-  syncSchedule: string
-  checkedAt: Date | null
-  importedAt: Date | null
-}
-
-/** The import job group of a stored playlist; null for a legacy-only playlist. */
-export const storedGroupKey = (row: Pick<SyncRow, 'source' | 'spotifyId'>) =>
-  row.source === 'spotify-liked'
-    ? playlistGroupKey(null)
-    : row.source === 'spotify' && row.spotifyId
-      ? playlistGroupKey(row.spotifyId)
-      : null
-
-/** The sync block of a stored playlist. */
-export function playlistSync(
-  row: SyncRow,
-  job: SpotifyPlaylistJob | null,
-): PlaylistSync {
-  const syncable = storedGroupKey(row) !== null
-  const schedule = PlaylistSyncScheduleSchema.catch('off').parse(
-    row.syncSchedule,
-  )
-  return {
-    syncable,
-    schedule,
-    lastCheckedAt: (row.checkedAt ?? row.importedAt)?.toISOString() ?? null,
-    nextScheduledAt:
-      nextPlaylistSyncAt({
-        syncable,
-        schedule,
-        checkedAt: row.checkedAt,
-        importedAt: row.importedAt,
-        jobStatus: job?.status ?? null,
-      })?.toISOString() ?? null,
-    job,
-  }
-}
+import {
+  latestSpotifyJobs,
+  playlistSync,
+  storedGroupKey,
+} from './spotify-playlist-state'
 
 /** Sets how often an imported playlist is imported again; off by default. */
 export async function setPlaylistSyncSchedule(

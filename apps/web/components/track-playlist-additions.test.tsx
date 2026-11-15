@@ -68,7 +68,14 @@ function render(
     defaultOptions: { queries: { retry: false } },
   })
   client.setQueryData(['spotify-account'], connected)
-  client.setQueryData(['playlists'], playlists)
+  const items = playlists.filter((playlist) => playlist.acceptsAdditions)
+  client.setQueryData(['playlists', 'picker', '', 1], {
+    items,
+    page: 1,
+    size: 25,
+    hasMore: false,
+    totalCount: items.length,
+  })
   client.setQueryData(['track-playlist-additions', 'track-1'], noAdditions)
   try {
     return renderToStaticMarkup(

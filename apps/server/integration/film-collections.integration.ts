@@ -10,6 +10,7 @@ import { inArray } from 'drizzle-orm'
 import { migrate } from 'drizzle-orm/node-postgres/migrator'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import {
+  FilmCollectionBrowseQuerySchema,
   FilmCollectionQuerySchema,
   FilmCollectionSortSchema,
 } from '@repo/schemas/film-collections'
@@ -42,18 +43,19 @@ const manifest = MediaPluginManifestSchema.parse({
     collectionUrlTemplate: 'https://example.test/collections/{id}',
   },
 })
+const readStoredCollections = vi.fn(
+  (payload: JsonValue) =>
+    z
+      .object({
+        collections: z.array(z.object({ id: z.string(), name: z.string() })),
+      })
+      .parse(payload).collections,
+)
 vi.mock('@/plugins/registry', () => ({
   listLoadedScrapePlugins: async () => [
     {
       manifest,
-      readStoredCollections: (payload: JsonValue) =>
-        z
-          .object({
-            collections: z.array(
-              z.object({ id: z.string(), name: z.string() }),
-            ),
-          })
-          .parse(payload).collections,
+      readStoredCollections,
     },
     {
       manifest: {
@@ -68,9 +70,18 @@ vi.mock('@/plugins/registry', () => ({
   ],
 }))
 import {
+  countFilmCollections,
   getFilmCollection,
-  listFilmCollections,
+  listFilmCollectionBrowsePage,
 } from '@/services/film-collections'
+
+const browseQuery = FilmCollectionBrowseQuerySchema.parse
+
+async function listFilmCollections() {
+  return (
+    await listFilmCollectionBrowsePage(browseQuery({ includeSources: 'true' }))
+  ).items
+}
 
 let created = false
 beforeAll(async () => {
@@ -212,6 +223,24 @@ describe('film collections', () => {
     ).toEqual(expected)
   })
 
+  it('can page collection films without reading collection source payloads', async () => {
+    readStoredCollections.mockClear()
+    const detail = await getFilmCollection(
+      'collection',
+      FilmCollectionQuerySchema.parse({
+        size: 1,
+        page: 2,
+        includeSources: 'false',
+      }),
+    )
+    expect(detail.sourceLinks).toEqual([])
+    expect(detail.items).toMatchObject({
+      totalCount: 3,
+      items: [{ id: 'alpha' }],
+    })
+    expect(readStoredCollections).not.toHaveBeenCalled()
+  })
+
   it('filters multiple watched values before pagination', async () => {
     const both = await getFilmCollection(
       'collection',
@@ -294,6 +323,56 @@ describe('film collections', () => {
       name: 'Fixture collection',
       filmCount: 3,
     })
+    expect(await countFilmCollections(browseQuery({}))).toEqual({
+      totalCount: 1,
+    })
+  })
+
+  it('loads source payloads only for returned rows when requested', async () => {
+    const id = 'a-collection'
+    await databaseClient.insert(schema.playlist).values({
+      id,
+      name: 'fixture collection',
+      kind: 'collection',
+    })
+    try {
+      await databaseClient.insert(schema.playlistItem).values({
+        playlistId: id,
+        mediaItemId: 'gamma',
+      })
+      readStoredCollections.mockClear()
+      const first = await listFilmCollectionBrowsePage(
+        browseQuery({ q: 'FIXTURE', size: 1, includeSources: 'true' }),
+      )
+      expect(first).toMatchObject({
+        hasMore: true,
+        items: [{ id, sourceLinks: [] }],
+      })
+      expect(readStoredCollections).not.toHaveBeenCalled()
+
+      const query = browseQuery({ q: 'FIXTURE', size: 1, page: 2 })
+      const second = await listFilmCollectionBrowsePage(query)
+      expect(second).toMatchObject({
+        hasMore: false,
+        items: [{ id: 'collection', sourceLinks: [] }],
+      })
+      expect(await countFilmCollections(query)).toEqual({ totalCount: 2 })
+      expect(readStoredCollections).not.toHaveBeenCalled()
+
+      const withSources = await listFilmCollectionBrowsePage({
+        ...query,
+        includeSources: 'true',
+      })
+      expect(withSources.items[0]?.sourceLinks).toHaveLength(2)
+      expect(readStoredCollections).toHaveBeenCalledOnce()
+      expect(await countFilmCollections(browseQuery({ q: '%' }))).toEqual({
+        totalCount: 0,
+      })
+    } finally {
+      await databaseClient
+        .delete(schema.playlist)
+        .where(inArray(schema.playlist.id, [id]))
+    }
   })
 
   it('defaults to stored positions before pagination, keeping gaps and stable ties', async () => {
@@ -381,6 +460,7 @@ describe('film collections', () => {
         id: `batch-collection-${index}`,
         name: `Batch collection ${index}`,
         kind: 'collection',
+        createdAt: new Date(Date.UTC(2020, 0, index + 1)),
       }),
     )
     const sourceNames = ['Batch collection 0', 'Batch collection 1']
@@ -441,6 +521,40 @@ describe('film collections', () => {
         },
       })
       const listed = await listFilmCollections()
+      expect(listed).toHaveLength(100)
+      const lastPage = await listFilmCollectionBrowsePage(
+        browseQuery({ page: 2 }),
+      )
+      expect(lastPage).toMatchObject({ page: 2, size: 100, hasMore: false })
+      expect(lastPage.items).toHaveLength(6)
+      expect(
+        new Set([...listed, ...lastPage.items].map((row) => row.id)).size,
+      ).toBe(106)
+
+      const filtered = browseQuery({
+        q: ' batch collection 10 ',
+        sortBy: 'createdAt',
+        direction: 'desc',
+        page: 2,
+        size: 2,
+      })
+      expect(await countFilmCollections(filtered)).toEqual({ totalCount: 6 })
+      const filteredPage = await listFilmCollectionBrowsePage(filtered)
+      expect(filteredPage.items.map((row) => row.id)).toEqual([
+        'batch-collection-102',
+        'batch-collection-101',
+      ])
+      expect(filteredPage.hasMore).toBe(true)
+
+      const byCount = await listFilmCollectionBrowsePage(
+        browseQuery({
+          sortBy: 'filmCount',
+          direction: 'desc',
+          page: 2,
+          size: 1,
+        }),
+      )
+      expect(byCount.items.map((row) => row.id)).toEqual(['batch-collection-1'])
       const expected = [
         'https://example.test/collections/legacy',
         'https://example.test/collections/saved',

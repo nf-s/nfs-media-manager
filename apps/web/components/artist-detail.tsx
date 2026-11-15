@@ -252,7 +252,8 @@ export function ArtistDetail({ id }: { id: string }) {
   function setTab(next: string) {
     if (next === 'overview') view.params.delete('tab')
     else view.params.set('tab', next)
-    for (const key of ['q', 'sortBy', 'direction']) view.params.delete(key)
+    for (const key of ['q', 'sortBy', 'direction', 'view'])
+      view.params.delete(key)
     view.replace(view.params)
   }
 
@@ -311,6 +312,14 @@ export function ArtistDetail({ id }: { id: string }) {
             path={`${path}/albums`}
             schema={ArtistAlbumPageSchema}
             columns={albumColumns}
+            card={(album) => ({
+              title: album.title,
+              artworkUrl: album.artworkUrl,
+              metadata: album.releaseDate && (
+                <CreatorLibraryDate value={album.releaseDate} />
+              ),
+              actions: <AlbumInlinePlayButton album={album} />,
+            })}
             label="albums"
             defaultSort={{ key: 'title', direction: 'asc' }}
           />
@@ -322,6 +331,15 @@ export function ArtistDetail({ id }: { id: string }) {
             path={`${path}/tracks`}
             schema={ArtistTrackPageSchema}
             columns={trackColumns}
+            card={(track) => ({
+              title: track.title,
+              artworkUrl: track.artworkUrl,
+              subtitle: track.album?.title ?? track.albumName ?? undefined,
+              metadata:
+                track.durationSec !== null &&
+                formatTrackDuration(track.durationSec),
+              actions: <LibraryTrackInlinePlayButtons track={track} />,
+            })}
             label="tracks"
             defaultSort={{ key: 'title', direction: 'asc' }}
           />
@@ -333,6 +351,21 @@ export function ArtistDetail({ id }: { id: string }) {
             path={`${path}/playlists`}
             schema={ArtistPlaylistPageSchema}
             columns={playlistColumns}
+            card={(playlist) => ({
+              title: playlist.name,
+              artworkUrl: playlist.artworkUrl,
+              metadata: [
+                playlist.trackCount
+                  ? `${playlist.trackCount.toLocaleString()} artist ${playlist.trackCount === 1 ? 'track' : 'tracks'}`
+                  : undefined,
+                playlist.albumCount
+                  ? `${playlist.albumCount.toLocaleString()} artist ${playlist.albumCount === 1 ? 'album' : 'albums'}`
+                  : undefined,
+              ]
+                .filter(Boolean)
+                .join(' · '),
+              actions: <PlaylistPlayButton playlist={playlist} />,
+            })}
             label="playlists"
             defaultSort={{ key: 'name', direction: 'asc' }}
           />

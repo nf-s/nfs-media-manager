@@ -90,6 +90,7 @@ export const TagSchema = z.object({
 })
 
 export const PlaylistMembershipSchema = z.object({
+  id: z.string().min(1).optional(),
   name: z.string(),
   kind: z.enum(['playlist', 'collection']),
   position: z.number().int().nonnegative(),

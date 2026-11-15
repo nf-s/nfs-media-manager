@@ -4,6 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({
   session: vi.fn(),
   list: vi.fn(),
+  page: vi.fn(),
+  count: vi.fn(),
   detail: vi.fn(),
   schedule: vi.fn(),
   remove: vi.fn(),
@@ -15,8 +17,12 @@ vi.mock('@/env', () => ({
 }))
 vi.mock('@/lib/db', () => ({ db: {} }))
 vi.mock('@/lib/auth', () => ({ auth: { api: { getSession: mocks.session } } }))
-vi.mock('@/services/tracks', () => ({
+vi.mock('@/services/playlist-directory', () => ({
   listPlaylists: mocks.list,
+  listPlaylistBrowsePage: mocks.page,
+  countPlaylists: mocks.count,
+}))
+vi.mock('@/services/tracks', () => ({
   getPlaylistDetail: mocks.detail,
   updatePlaylistSyncSchedule: mocks.schedule,
   removeImportedPlaylist: mocks.remove,
@@ -77,6 +83,8 @@ describe('playlist API', () => {
     mocks.session.mockResolvedValue(null)
     const requests: Array<[string, string, unknown]> = [
       ['GET', '/', undefined],
+      ['GET', '/browse-page', undefined],
+      ['GET', '/browse-count', undefined],
       ['GET', '/playlist-1', undefined],
       ['GET', '/additions?albumId=album-1', undefined],
       ['PUT', '/playlist-1/sync-schedule', { schedule: 'daily' }],
@@ -87,6 +95,50 @@ describe('playlist API', () => {
       expect((await send(method, path, body)).status).toBe(401)
     for (const fn of Object.values(mocks).filter((fn) => fn !== mocks.session))
       expect(fn).not.toHaveBeenCalled()
+  })
+
+  it('shares validated playlist directory filters between independently loaded rows and counts', async () => {
+    const params = new URLSearchParams({
+      q: ' Mix ',
+      name: 'Favorite',
+      sources: JSON.stringify(['spotify', 'library']),
+      acceptsAdditions: 'true',
+      ids: JSON.stringify(['playlist-1']),
+      sortBy: 'nextSync',
+      direction: 'desc',
+      page: '2',
+      size: '20',
+    })
+    const parsed = {
+      q: 'Mix',
+      name: 'Favorite',
+      sources: ['spotify', 'library'],
+      acceptsAdditions: 'true',
+      ids: ['playlist-1'],
+      sortBy: 'nextSync',
+      direction: 'desc',
+      page: 2,
+      size: 20,
+    }
+    const page = { items: [], page: 2, size: 20, hasMore: false }
+    mocks.page.mockResolvedValue(page)
+    mocks.count.mockResolvedValue({ totalCount: 1 })
+    mocks.list.mockResolvedValue([])
+    expect((await send('GET', `/browse-page?${params}`)).status).toBe(200)
+    expect(mocks.page).toHaveBeenCalledExactlyOnceWith(parsed)
+    expect(mocks.count).not.toHaveBeenCalled()
+    expect((await send('GET', `/browse-count?${params}`)).status).toBe(200)
+    expect(mocks.count).toHaveBeenCalledExactlyOnceWith(parsed)
+    expect(mocks.page).toHaveBeenCalledTimes(1)
+    const legacy = await send('GET', '/')
+    expect(legacy.status).toBe(200)
+    expect(await legacy.json()).toMatchObject({ data: [] })
+    expect(mocks.list).toHaveBeenCalledExactlyOnceWith({
+      sortBy: 'name',
+      direction: 'asc',
+      page: 1,
+      size: 100,
+    })
   })
 
   it('rejects invalid input and other origins before service work', async () => {
@@ -100,6 +152,15 @@ describe('playlist API', () => {
       expect((await send('POST', '/p/additions', body)).status).toBe(422)
     expect((await send('GET', '/additions')).status).toBe(422)
     expect((await send('GET', '/p?size=101')).status).toBe(422)
+    for (const query of [
+      'size=101',
+      'sortBy=unknown',
+      'sources=malformed',
+      'ids=%5B%5D',
+      'acceptsAdditions=yes',
+    ])
+      for (const path of ['/', '/browse-page', '/browse-count'])
+        expect((await send('GET', `${path}?${query}`)).status).toBe(422)
     for (const query of [
       'sortBy=unknown',
       'direction=reverse',
@@ -133,6 +194,9 @@ describe('playlist API', () => {
     expect(mocks.add).not.toHaveBeenCalled()
     expect(mocks.additions).not.toHaveBeenCalled()
     expect(mocks.detail).not.toHaveBeenCalled()
+    expect(mocks.list).not.toHaveBeenCalled()
+    expect(mocks.page).not.toHaveBeenCalled()
+    expect(mocks.count).not.toHaveBeenCalled()
   })
 
   it('passes the playlist, page, schedule and album to the services', async () => {

@@ -1,14 +1,15 @@
 'use client'
 
 import Link from 'next/link'
-import { useState } from 'react'
+import { useDeferredValue, useState } from 'react'
 import { Trash2 } from 'lucide-react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { z } from 'zod'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { BrowseCountSchema } from '@repo/schemas/browse'
 import {
+  PlaylistBrowsePageSchema,
   PlaylistRemovalSchema,
-  PlaylistSummarySchema,
   PlaylistSourceSchema,
+  type PlaylistBrowseSort,
   type PlaylistSource,
   type PlaylistSummary,
 } from '@repo/schemas/tracks'
@@ -31,10 +32,11 @@ import {
   SecondaryTableFooter,
   SecondaryTableScroll,
   SecondaryTableToolbar,
+  SecondaryVirtualRows,
   useTableColumns,
   type TableColumn,
 } from './secondary-table'
-import { sortTableRows } from '@/utils/secondary-table'
+import { useCountedVirtualTable } from '@/hooks/useVirtualTable'
 import MediaArtwork from './media-artwork'
 import { errorMessage } from './lastfm-sync'
 import { DetailLink } from './detail-link'
@@ -63,31 +65,16 @@ function formatShortDateTime(value: string) {
   })
 }
 
-export type PlaylistSortKey =
-  | 'name'
-  | 'source'
-  | 'owner'
-  | 'tracks'
-  | 'linkedTracks'
-  | 'albums'
-  | 'duration'
-  | 'imported'
-  | 'schedule'
-  | 'checked'
-  | 'added'
-  | 'description'
-  | 'nextSync'
-
 type PlaylistColumn = TableColumn &
   (
-    | { key: PlaylistSortKey; sortable: true }
+    | { key: PlaylistBrowseSort; sortable: true }
     | { key: 'artwork' | 'actions'; sortable: false }
   )
 
 const playlistColumns: readonly PlaylistColumn[] = [
   { key: 'artwork', sortable: false, label: 'Artwork' },
   { key: 'name', sortable: true, label: 'Playlist', required: true },
-  { key: 'source', sortable: true, label: 'Source' },
+  { key: 'source', sortable: true, label: 'Source', defaultVisible: false },
   { key: 'owner', sortable: true, label: 'Owner' },
   { key: 'tracks', sortable: true, label: 'Tracks' },
   { key: 'linkedTracks', sortable: true, label: 'In album library' },
@@ -112,88 +99,50 @@ const playlistColumns: readonly PlaylistColumn[] = [
   { key: 'actions', sortable: false, label: 'Actions' },
 ]
 
-export function playlistSortValue(
-  playlist: PlaylistSummary,
-  key: PlaylistSortKey,
-) {
-  switch (key) {
-    case 'name':
-      return playlist.name
-    case 'source':
-      return playlistSourceLabel(playlist.source)
-    case 'owner':
-      return playlist.ownerName
-    case 'tracks':
-      return playlist.trackCount
-    case 'linkedTracks':
-      return playlist.linkedTrackCount
-    case 'albums':
-      return playlist.albumCount
-    case 'duration':
-      return playlist.durationSec
-    case 'imported':
-      return playlist.importedAt ? Date.parse(playlist.importedAt) : null
-    case 'schedule':
-      return playlist.sync.syncable
-        ? youtubeScheduleLabels[playlist.sync.schedule]
-        : null
-    case 'checked':
-      return playlist.sync.lastCheckedAt
-        ? Date.parse(playlist.sync.lastCheckedAt)
-        : null
-    case 'added':
-      return playlist.createdAt ? Date.parse(playlist.createdAt) : null
-    case 'description':
-      return playlist.description
-    case 'nextSync':
-      return playlist.sync.nextScheduledAt
-        ? Date.parse(playlist.sync.nextScheduledAt)
-        : null
-    default:
-      return null
-  }
-}
-
-export function filterPlaylists(
-  rows: readonly PlaylistSummary[],
-  search: string,
-  sources: readonly (PlaylistSource | 'library')[],
-) {
-  const text = search.trim().toLocaleLowerCase()
-  return rows.filter(
-    (row) =>
-      (!sources.length || sources.includes(row.source ?? 'library')) &&
-      [row.name, row.ownerName, row.description].some((value) =>
-        value?.toLocaleLowerCase().includes(text),
-      ),
-  )
-}
-
 export default function PlaylistsWorkspace() {
   const { apiBaseUrl } = useConfig()
   const client = useQueryClient()
-  const [sortBy, setSortBy] = useState<PlaylistSortKey>('name')
+  const [sortBy, setSortBy] = useState<PlaylistBrowseSort>('name')
   const [direction, setDirection] = useState<Direction>('asc')
   const [search, setSearch] = useState('')
+  const q = useDeferredValue(search.trim())
   const [sources, setSources] = useState<Array<PlaylistSource | 'library'>>([])
   const view = useLibraryView()
   const importHref = scopedHref(
     '/imports/spotify-playlists',
     view === 'album' ? 'album' : 'track',
   )
-  const [confirmingId, setConfirmingId] = useState<string | null>(null)
+  const [confirming, setConfirming] = useState<PlaylistSummary | null>(null)
   const [outcome, setOutcome] = useState('')
   const inspector = useDetailInspector()
   const selectedId =
     inspector?.root?.kind === 'playlist' ? inspector.root.id : null
   const columns = useTableColumns('playlists', playlistColumns)
-  const query = useQuery({
-    queryKey: ['playlists'],
-    queryFn: () =>
+  const filters = {
+    q,
+    ...(sources.length ? { sources: JSON.stringify(sources) } : {}),
+  }
+  const {
+    window: query,
+    isCounting,
+    countError,
+    retryCount,
+  } = useCountedVirtualTable({
+    queryKey: ['playlists', 'browse', q, sources, sortBy, direction],
+    countKey: ['playlists', 'browse-count', q, sources],
+    loadCount: (signal) =>
       fetchApiData(
         apiBaseUrl,
-        '/api/v1/playlists',
-        z.array(PlaylistSummarySchema),
+        `/api/v1/playlists/browse-count?${new URLSearchParams(filters)}`,
+        BrowseCountSchema,
+        { signal },
+      ),
+    loadPage: (page, size, signal) =>
+      fetchApiData(
+        apiBaseUrl,
+        `/api/v1/playlists/browse-page?${new URLSearchParams({ ...filters, sortBy, direction, page: String(page), size: String(size) })}`,
+        PlaylistBrowsePageSchema,
+        { signal },
       ),
   })
   const remove = useMutation({
@@ -206,14 +155,15 @@ export default function PlaylistsWorkspace() {
       ),
     onMutate: () => setOutcome(''),
     onSuccess: async (result, playlist) => {
-      setConfirmingId(null)
+      setConfirming(null)
       setOutcome(
         `Removed ${playlist.name} and ${result.removedTracks.toLocaleString()} ${result.removedTracks === 1 ? 'track' : 'tracks'}.`,
       )
       await invalidatePlaylists(client)
     },
   })
-  function sort(key: PlaylistSortKey) {
+  function sort(key: PlaylistBrowseSort) {
+    setConfirming(null)
     if (sortBy === key) setDirection(direction === 'asc' ? 'desc' : 'asc')
     else {
       setSortBy(key)
@@ -221,12 +171,6 @@ export default function PlaylistsWorkspace() {
     }
   }
   const sorting = { sortBy, direction, onSort: sort }
-  const playlists = sortTableRows(
-    filterPlaylists(query.data ?? [], search, sources),
-    { key: sortBy, direction },
-    playlistSortValue,
-  )
-  const confirming = playlists.find((playlist) => playlist.id === confirmingId)
   return (
     <section className="admin-page table-workspace">
       <h1>Playlists</h1>
@@ -242,28 +186,50 @@ export default function PlaylistsWorkspace() {
             aria-label="Search playlists"
             placeholder="Search playlists"
             value={search}
-            onChange={(event) => setSearch(event.target.value)}
+            maxLength={200}
+            onChange={(event) => {
+              setSearch(event.target.value)
+              setConfirming(null)
+            }}
           />
         }
         count={
-          <span aria-live="polite">
-            {query.data
-              ? search.trim() || sources.length
-                ? `${playlists.length.toLocaleString()} of ${query.data.length.toLocaleString()} playlists`
-                : `${query.data.length.toLocaleString()} playlists`
-              : ''}
-          </span>
+          countError ? (
+            <button type="button" className="underline" onClick={retryCount}>
+              Retry count
+            </button>
+          ) : !isCounting ? (
+            `${query.total.toLocaleString()} ${query.total === 1 ? 'playlist' : 'playlists'}`
+          ) : query.isPending ? (
+            'Loading playlists...'
+          ) : (
+            'Counting playlists...'
+          )
         }
         columns={columns.controls}
       />
+      {query.isError && (
+        <p className="quiet" role="alert">
+          Could not load playlists.{' '}
+          <button type="button" className="underline" onClick={query.retry}>
+            Retry
+          </button>
+        </p>
+      )}
       <SecondaryTableFrame>
         <SecondaryTableScroll
+          ref={query.scroller}
+          onScroll={query.onScroll}
           className="tags-scroll"
           role="region"
           aria-label="Playlists"
           aria-busy={query.isFetching}
         >
-          <table className="compact-table" aria-label="Playlists">
+          <table
+            className="compact-table"
+            aria-label="Playlists"
+            aria-rowcount={query.hasTotal ? query.total + 1 : undefined}
+          >
             <TableHeader>
               <TableRow>
                 {playlistColumns
@@ -302,7 +268,10 @@ export default function PlaylistsWorkspace() {
                                 ),
                               ]}
                               value={sources}
-                              onChange={setSources}
+                              onChange={(next) => {
+                                setSources([...next].sort())
+                                setConfirming(null)
+                              }}
                             />
                           ) : undefined
                         }
@@ -313,22 +282,9 @@ export default function PlaylistsWorkspace() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {!playlists.length && (
-                <TableState colSpan={columns.count} error={query.isError}>
-                  {query.isPending ? (
-                    'Loading playlists...'
-                  ) : query.isError ? (
-                    <>
-                      Could not load playlists.{' '}
-                      <button
-                        type="button"
-                        className="underline"
-                        onClick={() => query.refetch()}
-                      >
-                        Retry
-                      </button>
-                    </>
-                  ) : search.trim() || sources.length ? (
+              {query.hasTotal && query.total === 0 && (
+                <TableState colSpan={columns.count}>
+                  {q || sources.length ? (
                     'No matching playlists.'
                   ) : (
                     <>
@@ -338,187 +294,195 @@ export default function PlaylistsWorkspace() {
                   )}
                 </TableState>
               )}
-              {playlists.map((playlist) => (
-                <TableRow
-                  key={playlist.id}
-                  className="cursor-pointer"
-                  data-selected={
-                    playlist.id === confirmingId ||
-                    playlist.id === selectedId ||
-                    undefined
-                  }
-                  onClick={(event) => {
-                    if (
-                      event.target instanceof Element &&
-                      event.target.closest('a, button, input, select, textarea')
-                    )
-                      return
-                    inspector?.open(
-                      { kind: 'playlist', id: playlist.id },
-                      event.currentTarget.querySelector<HTMLElement>(
-                        '.table-title',
-                      ) ?? undefined,
-                    )
-                  }}
-                >
-                  {columns.visible('artwork') && (
-                    <TableCell className="w-10">
-                      {playlist.artworkUrl && (
-                        <MediaArtwork
-                          src={playlist.artworkUrl}
-                          alt=""
-                          fallbackLabel=""
-                          containerClassName="size-6 rounded"
-                          imageClassName="size-6 object-cover"
-                          fallbackClassName="size-6"
-                        />
-                      )}
-                    </TableCell>
-                  )}
-                  {columns.visible('name') && (
-                    <TableCell>
-                      <div className="secondary-cell-actions">
-                        <PlaylistPlayButton playlist={playlist} />
-                        <SecondaryCell text={playlist.name}>
-                          <DetailLink
-                            kind="playlist"
-                            id={playlist.id}
-                            className="table-title hover:underline"
-                          >
-                            {playlist.name}
-                          </DetailLink>
-                        </SecondaryCell>
-                        {playlist.spotifyUrl && (
-                          <ServiceIconLinks
-                            links={[
-                              {
-                                provider: 'spotify',
-                                label: 'Spotify',
-                                url: playlist.spotifyUrl,
-                              },
-                            ]}
+              <SecondaryVirtualRows
+                window={query}
+                colSpan={columns.count}
+                renderRow={(playlist, index) => (
+                  <TableRow
+                    key={playlist.id}
+                    className="cursor-pointer"
+                    aria-rowindex={index + 2}
+                    style={{ height: query.rowHeight }}
+                    data-selected={
+                      playlist.id === confirming?.id ||
+                      playlist.id === selectedId ||
+                      undefined
+                    }
+                    onClick={(event) => {
+                      if (
+                        event.target instanceof Element &&
+                        event.target.closest(
+                          'a, button, input, select, textarea',
+                        )
+                      )
+                        return
+                      inspector?.open(
+                        { kind: 'playlist', id: playlist.id },
+                        event.currentTarget.querySelector<HTMLElement>(
+                          '.table-title',
+                        ) ?? undefined,
+                      )
+                    }}
+                  >
+                    {columns.visible('artwork') && (
+                      <TableCell className="w-10">
+                        {playlist.artworkUrl && (
+                          <MediaArtwork
+                            src={playlist.artworkUrl}
+                            alt=""
+                            fallbackLabel=""
+                            containerClassName="size-6 rounded"
+                            imageClassName="size-6 object-cover"
+                            fallbackClassName="size-6"
                           />
                         )}
-                      </div>
-                    </TableCell>
-                  )}
-                  {columns.visible('source') && (
-                    <TableCell>
-                      {playlistSourceLabel(playlist.source)}
-                    </TableCell>
-                  )}
-                  {columns.visible('owner') && (
-                    <TableCell>
-                      <SecondaryCell text={playlist.ownerName ?? undefined}>
-                        {playlist.ownerName ?? '-'}
-                      </SecondaryCell>
-                    </TableCell>
-                  )}
-                  {columns.visible('tracks') && (
-                    <TableCell className="numeric">
-                      <Link href={playlistTracksHref(playlist.name)}>
-                        {playlist.trackCount.toLocaleString()}
-                      </Link>
-                    </TableCell>
-                  )}
-                  {columns.visible('linkedTracks') && (
-                    <TableCell className="whitespace-nowrap">
-                      {playlist.trackCount > 0
-                        ? `${playlist.linkedTrackCount.toLocaleString()} of ${playlist.trackCount.toLocaleString()}`
-                        : '-'}
-                    </TableCell>
-                  )}
-                  {columns.visible('albums') && (
-                    <TableCell className="numeric">
-                      <Link href={playlistAlbumsHref(playlist.name)}>
-                        {playlist.albumCount.toLocaleString()}
-                      </Link>
-                    </TableCell>
-                  )}
-                  {columns.visible('duration') && (
-                    <TableCell className="numeric whitespace-nowrap">
-                      {formatPlaylistDuration(playlist.durationSec)}
-                    </TableCell>
-                  )}
-                  {columns.visible('imported') && (
-                    <TableCell className="whitespace-nowrap">
-                      {playlist.importedAt ? (
-                        <time dateTime={playlist.importedAt}>
-                          {new Date(playlist.importedAt).toLocaleDateString()}
-                        </time>
-                      ) : (
-                        '-'
-                      )}
-                    </TableCell>
-                  )}
-                  {columns.visible('schedule') && (
-                    <TableCell className="whitespace-nowrap">
-                      {playlist.sync.syncable
-                        ? youtubeScheduleLabels[playlist.sync.schedule]
-                        : '-'}
-                    </TableCell>
-                  )}
-                  {columns.visible('checked') && (
-                    <TableCell className="whitespace-nowrap">
-                      {playlist.sync.lastCheckedAt ? (
-                        <time dateTime={playlist.sync.lastCheckedAt}>
-                          {formatShortDateTime(playlist.sync.lastCheckedAt)}
-                        </time>
-                      ) : (
-                        '-'
-                      )}
-                    </TableCell>
-                  )}
-                  {columns.visible('added') && (
-                    <TableCell className="whitespace-nowrap">
-                      <time dateTime={playlist.createdAt ?? undefined}>
-                        {playlist.createdAt
-                          ? formatShortDateTime(playlist.createdAt)
+                      </TableCell>
+                    )}
+                    {columns.visible('name') && (
+                      <TableCell>
+                        <div className="secondary-cell-actions">
+                          <PlaylistPlayButton playlist={playlist} />
+                          <SecondaryCell text={playlist.name}>
+                            <DetailLink
+                              kind="playlist"
+                              id={playlist.id}
+                              className="table-title hover:underline"
+                            >
+                              {playlist.name}
+                            </DetailLink>
+                          </SecondaryCell>
+                          {playlist.spotifyUrl && (
+                            <ServiceIconLinks
+                              links={[
+                                {
+                                  provider: 'spotify',
+                                  label: 'Spotify',
+                                  url: playlist.spotifyUrl,
+                                },
+                              ]}
+                            />
+                          )}
+                        </div>
+                      </TableCell>
+                    )}
+                    {columns.visible('source') && (
+                      <TableCell>
+                        {playlistSourceLabel(playlist.source)}
+                      </TableCell>
+                    )}
+                    {columns.visible('owner') && (
+                      <TableCell>
+                        <SecondaryCell text={playlist.ownerName ?? undefined}>
+                          {playlist.ownerName ?? '-'}
+                        </SecondaryCell>
+                      </TableCell>
+                    )}
+                    {columns.visible('tracks') && (
+                      <TableCell className="numeric">
+                        <Link href={playlistTracksHref(playlist.name)}>
+                          {playlist.trackCount.toLocaleString()}
+                        </Link>
+                      </TableCell>
+                    )}
+                    {columns.visible('linkedTracks') && (
+                      <TableCell className="whitespace-nowrap">
+                        {playlist.trackCount > 0
+                          ? `${playlist.linkedTrackCount.toLocaleString()} of ${playlist.trackCount.toLocaleString()}`
                           : '-'}
-                      </time>
-                    </TableCell>
-                  )}
-                  {columns.visible('description') && (
-                    <TableCell>
-                      <SecondaryCell
-                        text={playlist.description ?? undefined}
-                        details={playlist.description || undefined}
-                        label={`Description of ${playlist.name}`}
-                      >
-                        {playlist.description ?? '-'}
-                      </SecondaryCell>
-                    </TableCell>
-                  )}
-                  {columns.visible('nextSync') && (
-                    <TableCell className="whitespace-nowrap">
-                      {playlist.sync.nextScheduledAt
-                        ? formatShortDateTime(playlist.sync.nextScheduledAt)
-                        : '-'}
-                    </TableCell>
-                  )}
-                  {columns.visible('actions') && (
-                    <TableCell className="text-right">
-                      {playlist.source && (
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          className="size-6 p-0"
-                          disabled={remove.isPending}
-                          aria-label={`Remove ${playlist.name}`}
-                          title={`Remove ${playlist.name}`}
-                          onClick={() => {
-                            setConfirmingId(playlist.id)
-                            setOutcome('')
-                            remove.reset()
-                          }}
+                      </TableCell>
+                    )}
+                    {columns.visible('albums') && (
+                      <TableCell className="numeric">
+                        <Link href={playlistAlbumsHref(playlist.name)}>
+                          {playlist.albumCount.toLocaleString()}
+                        </Link>
+                      </TableCell>
+                    )}
+                    {columns.visible('duration') && (
+                      <TableCell className="numeric whitespace-nowrap">
+                        {formatPlaylistDuration(playlist.durationSec)}
+                      </TableCell>
+                    )}
+                    {columns.visible('imported') && (
+                      <TableCell className="whitespace-nowrap">
+                        {playlist.importedAt ? (
+                          <time dateTime={playlist.importedAt}>
+                            {new Date(playlist.importedAt).toLocaleDateString()}
+                          </time>
+                        ) : (
+                          '-'
+                        )}
+                      </TableCell>
+                    )}
+                    {columns.visible('schedule') && (
+                      <TableCell className="whitespace-nowrap">
+                        {playlist.sync.syncable
+                          ? youtubeScheduleLabels[playlist.sync.schedule]
+                          : '-'}
+                      </TableCell>
+                    )}
+                    {columns.visible('checked') && (
+                      <TableCell className="whitespace-nowrap">
+                        {playlist.sync.lastCheckedAt ? (
+                          <time dateTime={playlist.sync.lastCheckedAt}>
+                            {formatShortDateTime(playlist.sync.lastCheckedAt)}
+                          </time>
+                        ) : (
+                          '-'
+                        )}
+                      </TableCell>
+                    )}
+                    {columns.visible('added') && (
+                      <TableCell className="whitespace-nowrap">
+                        <time dateTime={playlist.createdAt ?? undefined}>
+                          {playlist.createdAt
+                            ? formatShortDateTime(playlist.createdAt)
+                            : '-'}
+                        </time>
+                      </TableCell>
+                    )}
+                    {columns.visible('description') && (
+                      <TableCell>
+                        <SecondaryCell
+                          text={playlist.description ?? undefined}
+                          details={playlist.description || undefined}
+                          label={`Description of ${playlist.name}`}
                         >
-                          <Trash2 size={14} aria-hidden="true" />
-                        </Button>
-                      )}
-                    </TableCell>
-                  )}
-                </TableRow>
-              ))}
+                          {playlist.description ?? '-'}
+                        </SecondaryCell>
+                      </TableCell>
+                    )}
+                    {columns.visible('nextSync') && (
+                      <TableCell className="whitespace-nowrap">
+                        {playlist.sync.nextScheduledAt
+                          ? formatShortDateTime(playlist.sync.nextScheduledAt)
+                          : '-'}
+                      </TableCell>
+                    )}
+                    {columns.visible('actions') && (
+                      <TableCell className="text-right">
+                        {playlist.source && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="size-6 p-0"
+                            disabled={remove.isPending}
+                            aria-label={`Remove ${playlist.name}`}
+                            title={`Remove ${playlist.name}`}
+                            onClick={() => {
+                              setConfirming(playlist)
+                              setOutcome('')
+                              remove.reset()
+                            }}
+                          >
+                            <Trash2 size={14} aria-hidden="true" />
+                          </Button>
+                        )}
+                      </TableCell>
+                    )}
+                  </TableRow>
+                )}
+              />
             </TableBody>
           </table>
         </SecondaryTableScroll>
@@ -541,7 +505,7 @@ export default function PlaylistsWorkspace() {
               size="sm"
               variant="outline"
               disabled={remove.isPending}
-              onClick={() => setConfirmingId(null)}
+              onClick={() => setConfirming(null)}
             >
               Cancel
             </Button>

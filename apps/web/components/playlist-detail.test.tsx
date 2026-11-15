@@ -13,11 +13,7 @@ import {
   type PlaylistDetail,
 } from '@repo/schemas/tracks'
 import { PlaybackViewContext, type PlaybackView } from './playback-provider'
-import PlaylistsWorkspace, {
-  playlistSortValue,
-  type PlaylistSortKey,
-} from './playlists-workspace'
-import { sortTableRows } from '@/utils/secondary-table'
+import PlaylistsWorkspace from './playlists-workspace'
 import { ConfigContext } from './providers'
 import { idlePlaybackState } from '@/utils/playback-engine'
 import {
@@ -25,9 +21,13 @@ import {
   playlistEntryViewParam,
 } from '@/utils/playlist-links'
 import { playlistWindowSlots } from './playlist-detail'
-import { trackEntryKey } from './track-entries-table'
+import { TrackEntriesTable, trackEntryKey } from './track-entries-table'
 import { DetailInspectorProvider } from './detail-inspector-context'
-import { detailEntries, detailEntryParams } from '@/utils/detail-inspector'
+import {
+  detailEntries,
+  detailEntryParams,
+  type DetailEntry,
+} from '@/utils/detail-inspector'
 
 // The Tracks browser imports a CSS module, which Node cannot load; class names are not under test.
 require.extensions['.css'] = (module) => {
@@ -141,10 +141,18 @@ async function render(
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
-  client.setQueryData(['playlists'], [summary])
+  client.setQueryData(['playlists', 'browse', '', [], 'name', 'asc', 1], {
+    items: [summary],
+    page: 1,
+    size: 100,
+    hasMore: false,
+    totalCount: 1,
+  })
   client.setQueryData(['playlist', playlist.id], playlist)
   const view = playlistEntryView(
-    new URLSearchParams(search).get('playlistView'),
+    new URLSearchParams(
+      detailEntries(path, new URLSearchParams(search)).at(-1)?.view,
+    ).get('playlistView'),
     playlist.id,
   )
   client.setQueryData(
@@ -385,7 +393,6 @@ test('playlist data columns share sortable headers and column controls', async (
   const html = await render('')
   for (const label of [
     'Playlist',
-    'Source',
     'Owner',
     'Tracks',
     'In album library',
@@ -397,10 +404,13 @@ test('playlist data columns share sortable headers and column controls', async (
   ])
     assert.match(html, new RegExp(`<button[^>]*>[^<]*${label}`))
   assert.match(html, /> Columns</)
+  assert.match(html, />Source<\/label>/)
 })
 
 test('playlist entries expose sorting for every data column', async () => {
   const html = drawerOf(await render('playlist=playlist-1'))
+  for (const view of ['Grid', 'Details', 'Table'])
+    assert.ok(html.includes(`aria-label="${view} view"`))
   for (const label of ['Title', 'Artists', 'Album', 'Duration', 'Added'])
     assert.match(html, new RegExp(`<button[^>]*>[^<]*${label}`))
   assert.match(html, /> Columns</)
@@ -411,6 +421,77 @@ test('playlist entries expose sorting for every data column', async () => {
   assert.ok(html.indexOf('aria-label="Filter Type"') > html.indexOf('<thead>'))
   assert.doesNotMatch(html, /<select[^>]*aria-label="Entry type"/)
   assert.match(html, /aria-label="Resize details panel"/)
+})
+
+test('playlist grid and details keep artwork, playback, navigation, and the visible result window', async () => {
+  const entries = detail().items.items.map((entry, index) => {
+    const artworkUrl = `https://example.test/${entry.kind}-${index}.jpg`
+    const item =
+      entry.kind === 'track'
+        ? { ...entry, track: { ...entry.track, artworkUrl } }
+        : { ...entry, album: { ...entry.album, artworkUrl } }
+    return { index, item: { index, key: trackEntryKey(entry), entry: item } }
+  })
+  const views: ('grid' | 'list')[] = ['grid', 'list']
+  for (const view of views) {
+    const label = view === 'grid' ? 'Grid' : 'Details'
+    const html = await render(
+      'playlist=playlist-1',
+      detail(),
+      { ...idlePlaybackState, enabled: true },
+      <TrackEntriesTable
+        scope="playlist"
+        view={view}
+        onViewChange={() => {}}
+        window={{
+          slots: [...entries, { index: 3, item: null }],
+          total: 684,
+          rowHeight: 64,
+          height: 684 * 64,
+          columns: view === 'grid' ? 2 : 1,
+          gap: 0,
+          padTop: 0,
+          padBottom: 0,
+          scroller: () => {},
+          onScroll: () => {},
+        }}
+        search="Fixture"
+        onSearch={() => {}}
+        sortBy="position"
+        direction="asc"
+        onSort={() => {}}
+        kindFilter={{ value: [], onChange: () => {} }}
+        empty="No tracks."
+      />,
+    )
+    const cards = html.slice(0, html.indexOf('aria-label="Playlist details"'))
+    assert.match(
+      cards,
+      new RegExp(`aria-label="${label} view" aria-pressed="true"`),
+    )
+    assert.match(
+      cards,
+      /aria-label="Search playlist entries"[^>]*value="Fixture"/,
+    )
+    assert.match(cards, /aria-label="Sort by"/)
+    assert.match(cards, /aria-label="Filter Type"/)
+    assert.match(cards, /aria-posinset="3" aria-setsize="684"/)
+    assert.match(cards, /virtual-browse-placeholder/)
+    assert.doesNotMatch(cards, /<table|Visible columns/)
+    assert.match(cards, /src="https:\/\/example\.test\/track-0\.jpg"/)
+    assert.match(cards, /src="https:\/\/example\.test\/album-2\.jpg"/)
+    assert.match(cards, /Open Last\.fm \(opens in a new tab\)/)
+    const play = cards.indexOf('Play Opening track')
+    assert.ok(play >= 0 && play < cards.indexOf('Add Opening track to queue'))
+    assert.deepEqual(linkTargets(cards, 'Opening track'), [
+      { kind: 'playlist', id: 'playlist-1' },
+      { kind: 'track', id: 'track-1' },
+    ])
+    assert.deepEqual(linkTargets(cards, 'Member album').at(-1), {
+      kind: 'album',
+      id: 'album-2',
+    })
+  }
 })
 
 test('a playback return URL restores the playlist table search and sorting', async () => {
@@ -428,6 +509,34 @@ test('a playback return URL restores the playlist table search and sorting', asy
   assert.match(html, /aria-label="Search playlist entries"[^>]*value="Fixture"/)
   assert.match(html, /aria-sort="descending"><div[^>]*><button[^>]*>Title/)
   assert.match(html, /matching entries/)
+})
+
+test('a playlist inspector link restores Details independently of the workspace view', async () => {
+  const entry: DetailEntry = {
+    kind: 'playlist',
+    id: summary.id,
+    view: new URLSearchParams({
+      view: 'list',
+      playlistView: playlistEntryViewParam(summary.id, {
+        ...playlistEntryView(null, summary.id),
+        sortBy: 'title',
+        direction: 'desc',
+      }),
+    }).toString(),
+  }
+  const params = detailEntryParams(
+    '/playlists',
+    new URLSearchParams({ view: 'grid' }),
+    [entry],
+  )
+  const html = drawerOf(await render(params.toString()))
+  assert.match(html, /aria-label="Details view" aria-pressed="true"/)
+  assert.match(html, /<option value="title" selected="">Title<\/option>/)
+  assert.deepEqual(linkTargets(html, 'Opening track'), [
+    entry,
+    { kind: 'track', id: 'track-1' },
+  ])
+  assert.doesNotMatch(html, /<table/)
 })
 
 test('overlapping playlist pages reserve duplicate row space and keep playback offsets', () => {
@@ -453,58 +562,4 @@ test('overlapping playlist pages reserve duplicate row space and keep playback o
     ],
   )
   assert.equal(rows[3]?.item?.entry, third)
-})
-
-test('playlist columns sort numeric counts and keep unknown dates last', () => {
-  const rows = [
-    {
-      ...summary,
-      id: 'ten',
-      trackCount: 10,
-      linkedTrackCount: 8,
-      ownerName: 'Zed',
-      createdAt: null,
-    },
-    {
-      ...summary,
-      id: 'two',
-      trackCount: 2,
-      linkedTrackCount: 1,
-      ownerName: 'Ada',
-      createdAt: '2026-01-01T00:00:00.000Z',
-    },
-  ]
-  const sorted = (key: PlaylistSortKey, direction: 'asc' | 'desc') =>
-    sortTableRows(rows, { key, direction }, playlistSortValue).map(
-      (row) => row.id,
-    )
-  assert.deepEqual(sorted('tracks', 'asc'), ['two', 'ten'])
-  assert.deepEqual(sorted('linkedTracks', 'desc'), ['ten', 'two'])
-  assert.deepEqual(sorted('owner', 'asc'), ['two', 'ten'])
-  assert.deepEqual(sorted('added', 'desc'), ['two', 'ten'])
-})
-
-test('playlist date sorting compares instants across timestamp offsets', () => {
-  const rows = [
-    { ...summary, id: 'later', createdAt: '2026-01-01T00:00:00Z' },
-    { ...summary, id: 'earlier', createdAt: '2026-01-01T01:00:00+02:00' },
-  ]
-  assert.deepEqual(
-    sortTableRows(
-      rows,
-      { key: 'added', direction: 'asc' },
-      playlistSortValue,
-    ).map((row) => row.id),
-    ['earlier', 'later'],
-  )
-  const date = '2026-01-01T01:00:00+02:00'
-  const dated = {
-    ...summary,
-    createdAt: date,
-    importedAt: date,
-    sync: { ...summary.sync, lastCheckedAt: date, nextScheduledAt: date },
-  }
-  const keys: PlaylistSortKey[] = ['added', 'imported', 'checked', 'nextSync']
-  for (const key of keys)
-    assert.equal(playlistSortValue(dated, key), Date.parse(date))
 })

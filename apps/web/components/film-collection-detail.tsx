@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { DetailLink } from './detail-link'
 import { useDeferredValue } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import {
   FilmCollectionDetailSchema,
   FilmCollectionQuerySchema,
@@ -21,12 +22,19 @@ import {
 } from '@repo/ui/components/ui/table'
 import { useVirtualTable } from '@/hooks/useVirtualTable'
 import { collectionFilmsHref } from '@/utils/playlist-links'
-import ServiceIconLinks from './service-icon-links'
+import { parseBrowseView } from '@/utils/media-grid'
+import { clientQueryDefaults } from '@/utils/query-cache'
 import { fetchApiData } from '@/utils/api'
 import { useConfig } from './providers'
 import MediaArtwork from './media-artwork'
 import { useDetailView } from './detail-inspector-context'
 import { DetailSourceTabs } from './detail-source-tabs'
+import {
+  NestedMediaCard,
+  NestedMediaCards,
+  NestedMediaViewControls,
+  useNestedMediaView,
+} from './nested-media-view'
 import {
   SecondaryCell,
   SecondaryColumnFilter,
@@ -78,6 +86,13 @@ export function FilmCollectionEntries({ id }: { id: string }) {
   const search = view.q ?? ''
   const q = useDeferredValue(search.trim())
   const watchedStates = view.watchedStates ?? []
+  const showSources = detail.params.get('tab') === 'sources'
+  const [savedPresentation, setPresentation] =
+    useNestedMediaView('collection-films')
+  const presentation = parseBrowseView(
+    detail.params.get('view'),
+    savedPresentation,
+  )
   function changeView(patch: Partial<FilmCollectionQuery>) {
     const next = { ...view, ...patch }
     const params = new URLSearchParams(detail.params)
@@ -91,27 +106,59 @@ export function FilmCollectionEntries({ id }: { id: string }) {
     detail.replace(params)
   }
   const table = useTableColumns('film-collection-items', columns)
+  const path = `/api/v1/collections/${encodeURIComponent(id)}`
+  const sources = useQuery({
+    queryKey: ['film-collection', id, 'sources'],
+    queryFn: ({ signal }) =>
+      fetchApiData(
+        apiBaseUrl,
+        `${path}?size=1&includeSources=true`,
+        FilmCollectionDetailSchema,
+        { signal },
+      ),
+    enabled: showSources,
+    ...clientQueryDefaults,
+    retry: false,
+  })
   const query = useVirtualTable({
     queryKey: ['film-collection', id, sortBy, direction, q, watchedStates],
     rowHeight: 36,
-    viewportEnabled: detail.params.get('tab') !== 'sources',
+    presentation: { view: presentation, mediaType: 'film' },
+    enabled: !showSources,
     loadPage: async (page, size, signal) => {
       const result = await fetchApiData(
         apiBaseUrl,
-        `/api/v1/collections/${encodeURIComponent(id)}?${new URLSearchParams({ page: String(page), size: String(size), sortBy, direction, ...(q ? { q } : {}), ...(watchedStates.length ? { watchedStates: JSON.stringify(watchedStates) } : {}) })}`,
+        `${path}?${new URLSearchParams({ page: String(page), size: String(size), sortBy, direction, includeSources: 'false', ...(q ? { q } : {}), ...(watchedStates.length ? { watchedStates: JSON.stringify(watchedStates) } : {}) })}`,
         FilmCollectionDetailSchema,
         { signal },
       )
       return { ...result.items, summary: result }
     },
   })
-  const summary = query.firstPage?.summary
+  const summary = query.firstPage?.summary ?? sources.data
   function onSort(key: FilmCollectionSort) {
     changeView({
       sortBy: key,
       direction: sortBy === key && direction === 'asc' ? 'desc' : 'asc',
     })
   }
+  const watchedFilter = (
+    <SecondaryColumnFilter
+      label="Watched"
+      options={[
+        { value: 'unwatched', label: 'Unwatched' },
+        { value: 'watched', label: 'Watched' },
+      ]}
+      value={watchedStates}
+      onChange={(watchedStates) => changeView({ watchedStates })}
+    />
+  )
+  const empty =
+    query.hasTotal && query.total === 0
+      ? q || watchedStates.length
+        ? 'No matching films.'
+        : 'No films in this collection.'
+      : undefined
   const films = (
     <>
       <p className="quiet text-xs">
@@ -129,14 +176,31 @@ export function FilmCollectionEntries({ id }: { id: string }) {
             onChange={(event) => changeView({ q: event.target.value })}
           />
         }
+        filters={
+          <NestedMediaViewControls
+            view={presentation}
+            onViewChange={(next) => {
+              setPresentation(next)
+              const params = new URLSearchParams(detail.params)
+              params.set('view', next)
+              detail.replace(params)
+            }}
+            sortBy={sortBy}
+            direction={direction}
+            sortOptions={dataColumns}
+            onSortChange={(sortBy) => changeView({ sortBy, direction: 'asc' })}
+            onDirectionChange={(direction) => changeView({ direction })}
+            filters={watchedFilter}
+          />
+        }
         count={
-          summary
+          query.firstPage
             ? q || watchedStates.length
-              ? `${summary.items.totalCount.toLocaleString()} of ${summary.filmCount.toLocaleString()} films`
-              : `${summary.filmCount.toLocaleString()} films`
+              ? `${query.total.toLocaleString()} of ${query.firstPage.summary.filmCount.toLocaleString()} films`
+              : `${query.total.toLocaleString()} films`
             : undefined
         }
-        columns={table.controls}
+        columns={presentation === 'table' ? table.controls : undefined}
       />
       {query.isError && (
         <p role="alert" className="quiet">
@@ -146,137 +210,153 @@ export function FilmCollectionEntries({ id }: { id: string }) {
           </button>
         </p>
       )}
-      <SecondaryTableScroll
-        ref={query.scroller}
-        onScroll={query.onScroll}
-        className="min-h-0 flex-1"
-        role="region"
-        aria-label="Collection films"
-        data-inspector-scroll=""
-        aria-busy={query.isFetching}
-      >
-        <table
-          className="compact-table"
+      {presentation === 'table' ? (
+        <SecondaryTableScroll
+          ref={query.scroller}
+          onScroll={query.onScroll}
+          className="min-h-0 flex-1"
+          role="region"
           aria-label="Collection films"
-          aria-rowcount={query.hasTotal ? query.total + 1 : undefined}
+          data-inspector-scroll=""
+          aria-busy={query.isFetching}
         >
-          <TableHeader>
-            <TableRow>
-              {table.visible('artwork') && (
-                <TableHead>
-                  <span className="sr-only">Artwork</span>
-                </TableHead>
-              )}
-              {dataColumns
-                .filter((column) => table.visible(column.key))
-                .map((column) => (
-                  <SecondaryTableHead
-                    key={column.key}
-                    sortKey={column.key}
-                    label={column.label}
-                    sortBy={sortBy}
-                    direction={direction}
-                    onSort={onSort}
-                    filter={
-                      column.key === 'watched' ? (
-                        <SecondaryColumnFilter
-                          label="Watched"
-                          options={[
-                            { value: 'unwatched', label: 'Unwatched' },
-                            { value: 'watched', label: 'Watched' },
-                          ]}
-                          value={watchedStates}
-                          onChange={(watchedStates) =>
-                            changeView({ watchedStates })
-                          }
+          <table
+            className="compact-table"
+            aria-label="Collection films"
+            aria-rowcount={query.hasTotal ? query.total + 1 : undefined}
+          >
+            <TableHeader>
+              <TableRow>
+                {table.visible('artwork') && (
+                  <TableHead>
+                    <span className="sr-only">Artwork</span>
+                  </TableHead>
+                )}
+                {dataColumns
+                  .filter((column) => table.visible(column.key))
+                  .map((column) => (
+                    <SecondaryTableHead
+                      key={column.key}
+                      sortKey={column.key}
+                      label={column.label}
+                      sortBy={sortBy}
+                      direction={direction}
+                      onSort={onSort}
+                      filter={
+                        column.key === 'watched' ? watchedFilter : undefined
+                      }
+                      className={column.className}
+                    />
+                  ))}
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {empty && <TableState colSpan={table.count}>{empty}</TableState>}
+              <SecondaryVirtualRows
+                window={query}
+                colSpan={table.count}
+                renderRow={(row, index) => (
+                  <TableRow
+                    key={row.id}
+                    aria-rowindex={index + 2}
+                    style={{ height: query.rowHeight }}
+                  >
+                    {table.visible('artwork') && (
+                      <TableCell className="w-10">
+                        <MediaArtwork
+                          src={row.artworkUrl}
+                          alt=""
+                          fallbackLabel=""
+                          containerClassName="h-7 w-5 rounded"
+                          imageClassName="h-7 w-5 object-cover"
+                          fallbackClassName="h-7 w-5"
                         />
-                      ) : undefined
-                    }
-                    className={column.className}
-                  />
-                ))}
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {query.hasTotal && !query.total && (
-              <TableState colSpan={table.count}>
-                {q || watchedStates.length
-                  ? 'No matching films.'
-                  : 'No films in this collection.'}
-              </TableState>
-            )}
-            <SecondaryVirtualRows
-              window={query}
-              colSpan={table.count}
-              renderRow={(row, index) => (
-                <TableRow
-                  key={row.id}
-                  aria-rowindex={index + 2}
-                  style={{ height: query.rowHeight }}
-                >
-                  {table.visible('artwork') && (
-                    <TableCell className="w-10">
-                      <MediaArtwork
-                        src={row.artworkUrl}
-                        alt=""
-                        fallbackLabel=""
-                        containerClassName="h-7 w-5 rounded"
-                        imageClassName="h-7 w-5 object-cover"
-                        fallbackClassName="h-7 w-5"
-                      />
-                    </TableCell>
-                  )}
-                  {table.visible('position') && (
-                    <TableCell className="numeric">
-                      {row.position.toLocaleString()}
-                    </TableCell>
-                  )}
-                  {table.visible('title') && (
-                    <TableCell>
-                      <SecondaryCell text={row.title}>
-                        <DetailLink
-                          className="table-title"
-                          kind="film"
-                          id={row.id}
-                        >
-                          {row.title}
-                        </DetailLink>
-                      </SecondaryCell>
-                    </TableCell>
-                  )}
-                  {table.visible('releaseDate') && (
-                    <TableCell className="whitespace-nowrap">
-                      <DateValue value={row.releaseDate} />
-                    </TableCell>
-                  )}
-                  {table.visible('runtimeMinutes') && (
-                    <TableCell className="numeric">
-                      {row.runtimeMinutes === null
-                        ? '-'
-                        : `${row.runtimeMinutes.toLocaleString()} min`}
-                    </TableCell>
-                  )}
-                  {table.visible('watched') && (
-                    <TableCell>{row.watched ? 'Yes' : 'No'}</TableCell>
-                  )}
-                  {table.visible('source') && (
-                    <TableCell>
-                      <SecondaryCell text={row.source ?? undefined}>
-                        {row.source ?? '-'}
-                      </SecondaryCell>
-                    </TableCell>
-                  )}
-                  {table.visible('dateAdded') && (
-                    <TableCell className="whitespace-nowrap">
-                      <DateValue value={row.dateAdded} />
-                    </TableCell>
-                  )}
-                </TableRow>
-              )}
+                      </TableCell>
+                    )}
+                    {table.visible('position') && (
+                      <TableCell className="numeric">
+                        {row.position.toLocaleString()}
+                      </TableCell>
+                    )}
+                    {table.visible('title') && (
+                      <TableCell>
+                        <SecondaryCell text={row.title}>
+                          <DetailLink
+                            className="table-title"
+                            kind="film"
+                            id={row.id}
+                          >
+                            {row.title}
+                          </DetailLink>
+                        </SecondaryCell>
+                      </TableCell>
+                    )}
+                    {table.visible('releaseDate') && (
+                      <TableCell className="whitespace-nowrap">
+                        <DateValue value={row.releaseDate} />
+                      </TableCell>
+                    )}
+                    {table.visible('runtimeMinutes') && (
+                      <TableCell className="numeric">
+                        {row.runtimeMinutes === null
+                          ? '-'
+                          : `${row.runtimeMinutes.toLocaleString()} min`}
+                      </TableCell>
+                    )}
+                    {table.visible('watched') && (
+                      <TableCell>{row.watched ? 'Yes' : 'No'}</TableCell>
+                    )}
+                    {table.visible('source') && (
+                      <TableCell>
+                        <SecondaryCell text={row.source ?? undefined}>
+                          {row.source ?? '-'}
+                        </SecondaryCell>
+                      </TableCell>
+                    )}
+                    {table.visible('dateAdded') && (
+                      <TableCell className="whitespace-nowrap">
+                        <DateValue value={row.dateAdded} />
+                      </TableCell>
+                    )}
+                  </TableRow>
+                )}
+              />
+            </TableBody>
+          </table>
+        </SecondaryTableScroll>
+      ) : (
+        <NestedMediaCards
+          window={query}
+          view={presentation}
+          mediaType="film"
+          label="Collection films"
+          empty={empty}
+          busy={query.isFetching}
+          renderItem={(row) => (
+            <NestedMediaCard
+              view={presentation}
+              kind="film"
+              id={row.id}
+              title={row.title}
+              artworkUrl={row.artworkUrl}
+              subtitle={[
+                `Position ${row.position.toLocaleString()}`,
+                row.releaseDate?.slice(0, 4),
+              ]
+                .filter(Boolean)
+                .join(' · ')}
+              metadata={[
+                row.runtimeMinutes === null
+                  ? undefined
+                  : `${row.runtimeMinutes.toLocaleString()} min`,
+                row.watched ? 'Watched' : 'Unwatched',
+              ]
+                .filter(Boolean)
+                .join(' · ')}
             />
-          </TableBody>
-        </table>
-      </SecondaryTableScroll>
+          )}
+        />
+      )}
     </>
   )
   return (
@@ -291,13 +371,6 @@ export function FilmCollectionEntries({ id }: { id: string }) {
           <Button asChild size="sm" variant="outline">
             <Link href={collectionFilmsHref(summary.name)}>Filter films</Link>
           </Button>
-          <ServiceIconLinks
-            links={summary.sourceLinks.map((link) => ({
-              provider: link.provider,
-              label: link.providerLabel,
-              url: link.url,
-            }))}
-          />
         </div>
       )}
       <DetailSourceTabs
@@ -306,19 +379,22 @@ export function FilmCollectionEntries({ id }: { id: string }) {
         overviewClassName="flex flex-1 flex-col gap-3"
         sources={{
           rows:
-            summary?.sourceLinks.map((link) => ({
+            sources.data?.sourceLinks.map((link) => ({
               id: `${link.provider}:${link.url}`,
               label: link.providerLabel,
               links: [
                 { provider: link.provider, label: link.name, url: link.url },
               ],
             })) ?? [],
-          pending: query.isPending,
+          pending: sources.isPending,
           unavailable:
-            query.isError && !summary
+            sources.isError && !sources.data
               ? 'Could not load collection sources.'
               : undefined,
-          onRetry: query.isError && !summary ? query.retry : undefined,
+          onRetry:
+            sources.isError && !sources.data
+              ? () => sources.refetch()
+              : undefined,
         }}
       >
         {films}

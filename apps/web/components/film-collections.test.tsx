@@ -7,7 +7,11 @@ import {
   PathnameContext,
   SearchParamsContext,
 } from 'next/dist/shared/lib/hooks-client-context.shared-runtime'
-import { FilmCollectionDetailSchema } from '@repo/schemas/film-collections'
+import {
+  FilmCollectionDetailSchema,
+  type FilmCollectionBrowsePage,
+  type FilmCollectionDetail,
+} from '@repo/schemas/film-collections'
 import { ConfigContext } from './providers'
 import FilmCollectionsWorkspace from './film-collections-workspace'
 import AppNavigation from './app-navigation'
@@ -62,7 +66,15 @@ const collection = FilmCollectionDetailSchema.parse({
   },
 })
 
-async function render(search: string, path = '/collections') {
+async function render(
+  search: string,
+  path = '/collections',
+  directory: {
+    page?: FilmCollectionBrowsePage | null
+    totalCount?: number
+  } = {},
+  members: FilmCollectionDetail = collection,
+) {
   require.extensions['.css'] = (module) => {
     module.exports = {}
   }
@@ -70,11 +82,27 @@ async function render(search: string, path = '/collections') {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
-  client.setQueryData(['film-collections'], [collection])
+  const page =
+    directory.page === undefined
+      ? { items: [collection], page: 1, size: 100, hasMore: false }
+      : directory.page
+  if (page)
+    client.setQueryData(
+      ['film-collections', 'browse', '', 'name', 'asc', false, 1],
+      {
+        ...page,
+        totalCount: page.hasMore ? undefined : page.items.length,
+      },
+    )
+  if (directory.totalCount !== undefined)
+    client.setQueryData(['film-collections', 'browse-count', ''], {
+      totalCount: directory.totalCount,
+    })
   client.setQueryData(
     ['film-collection', collection.id, 'position', 'asc', '', [], 1],
-    { ...collection.items, summary: collection },
+    { ...members.items, summary: { ...members, sourceLinks: [] } },
   )
+  client.setQueryData(['film-collection', collection.id, 'sources'], collection)
   try {
     return renderToStaticMarkup(
       <QueryClientProvider client={client}>
@@ -102,6 +130,45 @@ async function render(search: string, path = '/collections') {
   }
 }
 
+test('the collection directory renders a bounded window before and after counting', async () => {
+  const items = Array.from({ length: 100 }, (_, index) => ({
+    ...collection,
+    id: `collection-${index + 1}`,
+    name: `Fixture collection ${index + 1}`,
+  }))
+  const page = { items, page: 1, size: 100, hasMore: true }
+  for (const totalCount of [undefined, 305]) {
+    const html = await render('', '/collections', { page, totalCount })
+    const rowCount = (
+      html.match(/<tbody>[\s\S]*?<\/tbody>/)?.[0].match(/<tr\b/g) ?? []
+    ).length
+    assert.ok(
+      rowCount <= 30,
+      `Expected the visible window, rendered ${rowCount} rows`,
+    )
+    assert.match(html, /aria-rowindex="2"[^>]*>.*?>Fixture collection 1<\/a>/)
+    assert.ok(!html.includes('Fixture collection 100'))
+    if (totalCount === undefined) {
+      assert.match(html, /Counting collections/)
+      assert.doesNotMatch(html, /aria-rowcount=/)
+    } else {
+      assert.match(html, /305 collections/)
+      assert.match(html, /aria-rowcount="306"/)
+      assert.match(html, /style="height:9152px;padding:0;border:0"/)
+    }
+  }
+})
+
+test('the collection directory reserves initial row placeholders', async () => {
+  const html = await render('', '/collections', { page: null })
+  assert.match(html, /Loading collections/)
+  assert.equal(
+    (html.match(/class="virtual-browse-placeholder"/g) ?? []).length,
+    14,
+  )
+  assert.doesNotMatch(html, /aria-rowcount=/)
+})
+
 test('Films navigation exposes Collections and its shared sortable table controls', async () => {
   const html = await render('')
   assert.match(
@@ -113,9 +180,10 @@ test('Films navigation exposes Collections and its shared sortable table control
   assert.match(html, /title="Sort by Collection"/)
   assert.match(html, /title="Sort by Films"/)
   assert.match(html, /aria-label="Visible columns"/)
+  assert.match(html, />Source<\/label>/)
   assert.match(html, />Added<\/label>/)
   assert.doesNotMatch(html, /aria-label="Film collection details"/)
-  assert.match(html, /href="https:\/\/example.test\/collections\/17"/)
+  assert.doesNotMatch(html, /href="https:\/\/example.test\/collections\/17"/)
   assert.match(html, /title="Filter films by Synthetic collection"/)
 })
 
@@ -134,7 +202,8 @@ test('collection deep links open members in source order without renumbering gap
     drawer.indexOf('aria-label="Filter Watched"') > drawer.indexOf('<thead>'),
   )
   assert.match(drawer, /aria-label="Resize details panel"/)
-  assert.match(drawer, /href="https:\/\/example.test\/collections\/17"/)
+  assert.doesNotMatch(drawer, /href="https:\/\/example.test\/collections\/17"/)
+  assert.match(drawer, /aria-label="Table view" aria-pressed="true"/)
   assert.match(
     drawer,
     /href="\/films\?filters=[^"]*Synthetic\+collection[^"]*">Filter films</,
@@ -168,6 +237,60 @@ test('collection deep links open members in source order without renumbering gap
     /Older imports may not contain the source&#x27;s film order/,
   )
   assert.match(drawer, /aria-label="Close details"/)
+})
+
+test('collection card views retain filtering, nested links, and bounded rendering', async () => {
+  const seed = collection.items.items[0]
+  assert.ok(seed)
+  const members = FilmCollectionDetailSchema.parse({
+    ...collection,
+    filmCount: 305,
+    items: {
+      ...collection.items,
+      totalCount: 305,
+      pageCount: 4,
+      items: Array.from({ length: 100 }, (_, index) => ({
+        ...seed,
+        title: `Fixture film ${index + 1}`,
+        id: `film-${index + 1}`,
+      })),
+    },
+  })
+  for (const view of ['grid', 'list']) {
+    const entry = {
+      kind: 'collection',
+      id: collection.id,
+      view: `view=${view}`,
+    }
+    const search = new URLSearchParams({ inspect: JSON.stringify([entry]) })
+    const html = await render(search.toString(), '/collections', {}, members)
+    const drawer = html.slice(
+      html.indexOf('aria-label="Film collection details"'),
+    )
+    const cardCount = (drawer.match(/class="nested-media-card"/g) ?? []).length
+    assert.ok(cardCount > 0 && cardCount < 40, `Rendered ${cardCount} cards`)
+    assert.match(drawer, /305 films/)
+    assert.match(drawer, /aria-posinset="1" aria-setsize="305"/)
+    const label = view === 'grid' ? 'Grid' : 'Details'
+    assert.match(
+      drawer,
+      new RegExp(`aria-label="${label} view" aria-pressed="true"`),
+    )
+    assert.match(drawer, /aria-label="Sort by"/)
+    assert.match(drawer, /aria-label="Filter Watched"/)
+    assert.match(drawer, /Position 2/)
+    assert.match(drawer, /90 min · Unwatched/)
+    assert.doesNotMatch(drawer, /Fixture film 100|Visible columns/)
+    const href = /<a[^>]* href="([^"]+)"[^>]*>Fixture film 1<\/a>/.exec(
+      drawer,
+    )?.[1]
+    assert.ok(href)
+    const url = new URL(href.replaceAll('&amp;', '&'), 'http://localhost')
+    assert.deepEqual(detailEntries(url.pathname, url.searchParams), [
+      entry,
+      { kind: 'film', id: 'film-1' },
+    ])
+  }
 })
 
 test('collection Sources displays only saved collection destinations', async () => {

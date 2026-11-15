@@ -1,15 +1,15 @@
 'use client'
 
 import Link from 'next/link'
-import { useEffect, useId, useRef, useState } from 'react'
+import { useDeferredValue, useEffect, useId, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { z } from 'zod'
+import { BrowseCountSchema } from '@repo/schemas/browse'
 import { SpotifyAccountStatusSchema } from '@repo/schemas/spotify'
 import {
   PlaylistAlbumAdditionInputSchema,
   PlaylistAlbumAdditionSchema,
   PlaylistAlbumAdditionsSchema,
-  PlaylistSummarySchema,
+  PlaylistBrowsePageSchema,
   type PlaylistSummary,
   type SpotifyPlaylistJob,
 } from '@repo/schemas/tracks'
@@ -19,6 +19,7 @@ import { useConfig } from './providers'
 import { errorMessage, invalidateScrobbleLinks } from './lastfm-sync'
 import AllowPlaylistChanges from './spotify-playlist-changes'
 import { fetchApiData } from '@/utils/api'
+import { useVirtualTable } from '@/hooks/useVirtualTable'
 import { scopedHref } from '@/utils/media-scope'
 import {
   invalidatePlaylists,
@@ -36,6 +37,8 @@ type PlaylistMediaType = 'album' | 'track'
 
 /** Playlists with more entries than this get a filter in the picker. */
 const FILTER_THRESHOLD = 8
+const PICKER_PAGE_SIZE = 25
+const RELATED_PLAYLIST_BATCH_SIZE = 100
 
 const additionLabels: Record<SpotifyPlaylistJob['status'], string> = {
   queued: 'Queued',
@@ -59,6 +62,41 @@ function followOnImports(
     (playlist) =>
       added.has(playlist.id) && playlistJobActive(playlist.sync.job),
   )
+}
+
+function relatedPlaylistIds(additions: Addition[]) {
+  return [...new Set(additions.map((addition) => addition.playlistId))].sort()
+}
+
+function relatedPlaylistsKey(ids: string[]) {
+  return ['playlists', 'related', ids]
+}
+
+async function loadRelatedPlaylists(
+  apiBaseUrl: string,
+  ids: string[],
+  signal: AbortSignal,
+) {
+  const playlists: PlaylistSummary[] = []
+  for (
+    let offset = 0;
+    offset < ids.length;
+    offset += RELATED_PLAYLIST_BATCH_SIZE
+  ) {
+    const batch = ids.slice(offset, offset + RELATED_PLAYLIST_BATCH_SIZE)
+    const params = new URLSearchParams({
+      ids: JSON.stringify(batch),
+      size: String(batch.length),
+    })
+    const page = await fetchApiData(
+      apiBaseUrl,
+      `/api/v1/playlists/browse-page?${params}`,
+      PlaylistBrowsePageSchema,
+      { signal },
+    )
+    playlists.push(...page.items)
+  }
+  return playlists
 }
 
 export function resolvedTrackReplacement(
@@ -102,7 +140,11 @@ export function usePlaylistAdditions(
       ) ||
       followOnImports(
         query.state.data?.additions ?? [],
-        client.getQueryData<PlaylistSummary[]>(['playlists']),
+        client.getQueryData<PlaylistSummary[]>(
+          relatedPlaylistsKey(
+            relatedPlaylistIds(query.state.data?.additions ?? []),
+          ),
+        ),
       )
         ? 2000
         : false,
@@ -124,16 +166,13 @@ export function usePlaylistAdditions(
   const adding = additionList.some((addition) =>
     playlistJobActive(addition.job),
   )
-  const playlists = useQuery({
-    queryKey: ['playlists'],
+  const ids = relatedPlaylistIds(additionList)
+  const playlists = useQuery<PlaylistSummary[]>({
+    queryKey: relatedPlaylistsKey(ids),
+    enabled: ids.length > 0,
     refetchInterval: (query) =>
       adding || followOnImports(additionList, query.state.data) ? 2000 : false,
-    queryFn: () =>
-      fetchApiData(
-        apiBaseUrl,
-        '/api/v1/playlists',
-        z.array(PlaylistSummarySchema),
-      ),
+    queryFn: ({ signal }) => loadRelatedPlaylists(apiBaseUrl, ids, signal),
   })
   const importing = followOnImports(additionList, playlists.data)
   // The playlist import can replace an album-derived Last.fm identity.
@@ -176,7 +215,6 @@ export function usePlaylistAdditions(
           next
             ? invalidateScrobbleLinks(client, id)
             : invalidatePlaylists(client),
-          client.invalidateQueries({ queryKey: ['spotify-playlists'] }),
           client.invalidateQueries({ queryKey: ['jobs'] }),
           client.invalidateQueries({ queryKey: ['job-activity'] }),
         ])
@@ -242,16 +280,10 @@ export function AdditionState({
 export function AddToPlaylist({
   mediaType,
   id,
-  playlists,
   additions,
 }: {
   mediaType: PlaylistMediaType
   id: string
-  playlists: {
-    data: PlaylistSummary[] | undefined
-    isError: boolean
-    refetch: () => unknown
-  }
   additions: Addition[]
 }) {
   const { apiBaseUrl } = useConfig()
@@ -345,12 +377,6 @@ export function AddToPlaylist({
     <div className="mt-2 grid gap-1">
       <PlaylistPicker
         mediaType={mediaType}
-        options={(playlists.data ?? []).filter(
-          (playlist) => playlist.acceptsAdditions,
-        )}
-        loading={!playlists.data && !playlists.isError}
-        failed={playlists.isError}
-        onRetry={() => playlists.refetch()}
         busy={(playlistId) => add.isPending || active.has(playlistId)}
         onChoose={(playlistId) => add.mutate(playlistId)}
       />
@@ -368,21 +394,14 @@ export function AddToPlaylist({
 
 function PlaylistPicker({
   mediaType,
-  options,
-  loading,
-  failed,
-  onRetry,
   busy,
   onChoose,
 }: {
   mediaType: PlaylistMediaType
-  options: PlaylistSummary[]
-  loading: boolean
-  failed: boolean
-  onRetry: () => void
   busy: (playlistId: string) => boolean
   onChoose: (playlistId: string) => void
 }) {
+  const { apiBaseUrl } = useConfig()
   const importHref = scopedHref('/imports/spotify-playlists', mediaType)
   const id = useId()
   const titleId = useId()
@@ -390,6 +409,55 @@ function PlaylistPicker({
   const panel = useRef<HTMLDivElement>(null)
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState('')
+  const name = useDeferredValue(search.trim())
+  const scope = { acceptsAdditions: 'true', ...(name ? { name } : {}) }
+  const count = useQuery({
+    queryKey: ['playlists', 'picker-count', name],
+    enabled: open,
+    retry: false,
+    queryFn: ({ signal }) =>
+      fetchApiData(
+        apiBaseUrl,
+        `/api/v1/playlists/browse-count?${new URLSearchParams(scope)}`,
+        BrowseCountSchema,
+        { signal },
+      ),
+  })
+  const choices = useVirtualTable({
+    queryKey: ['playlists', 'picker', name],
+    enabled: open,
+    pageSize: PICKER_PAGE_SIZE,
+    rowHeight: 32,
+    headerHeight: 0,
+    totalCount: count.data?.totalCount,
+    loadPage: async (page, size, signal) => {
+      const params = new URLSearchParams({
+        ...scope,
+        page: String(page),
+        size: String(size),
+      })
+      const result = await fetchApiData(
+        apiBaseUrl,
+        `/api/v1/playlists/browse-page?${params}`,
+        PlaylistBrowsePageSchema,
+        { signal },
+      )
+      return {
+        ...result,
+        totalCount:
+          page === 1 && !result.hasMore ? result.items.length : undefined,
+      }
+    },
+  })
+  const conflict = choices.conflictingPage
+  const refetchCount = count.refetch
+  useEffect(() => {
+    if (open && conflict !== undefined)
+      void refetchCount({ cancelRefetch: false })
+  }, [open, conflict, refetchCount])
+  const countError =
+    count.isError && (!choices.hasTotal || conflict !== undefined)
+  const failed = choices.isError || countError
   useEffect(() => {
     if (!open) return
     panel.current?.focus({ preventScroll: true })
@@ -415,12 +483,6 @@ function PlaylistPicker({
     panel.current?.hidePopover()
     trigger.current?.focus()
   }
-  const term = search.trim().toLocaleLowerCase()
-  const visible = term
-    ? options.filter((playlist) =>
-        playlist.name.toLocaleLowerCase().includes(term),
-      )
-    : options
   return (
     <>
       <Button
@@ -457,59 +519,102 @@ function PlaylistPicker({
             Close
           </button>
         </div>
-        {options.length > FILTER_THRESHOLD && (
+        {(search || choices.total > FILTER_THRESHOLD || !choices.hasTotal) && (
           <Input
             aria-label="Filter playlists"
             placeholder="Filter playlists..."
             className="mb-2 h-7 text-xs"
             value={search}
+            maxLength={200}
             onChange={(event) => setSearch(event.target.value)}
           />
         )}
-        {loading ? (
-          <p className="quiet">Loading playlists...</p>
-        ) : failed ? (
+        {failed && (
           <p role="alert">
             Could not load playlists.{' '}
-            <button type="button" className="underline" onClick={onRetry}>
+            <button
+              type="button"
+              className="underline"
+              onClick={() => {
+                choices.retry()
+                if (countError) void count.refetch()
+              }}
+            >
               Retry
             </button>
           </p>
-        ) : !options.length ? (
-          <p className="quiet">
-            No imported playlist accepts{' '}
-            {mediaType === 'album' ? 'albums' : 'tracks'}.{' '}
-            {mediaType === 'album' ? 'Albums' : 'Tracks'} can be added to
-            imported Spotify playlists the account owns or collaborates on.{' '}
-            <Link className="underline" href={importHref}>
-              Import playlists
-            </Link>
-          </p>
-        ) : !visible.length ? (
-          <p className="quiet">No playlists match this filter.</p>
+        )}
+        {choices.hasTotal && choices.total === 0 && !failed ? (
+          name ? (
+            <p className="quiet">No playlists match this filter.</p>
+          ) : (
+            <p className="quiet">
+              No imported playlist accepts{' '}
+              {mediaType === 'album' ? 'albums' : 'tracks'}.{' '}
+              {mediaType === 'album' ? 'Albums' : 'Tracks'} can be added to
+              imported Spotify playlists the account owns or collaborates on.{' '}
+              <Link className="underline" href={importHref}>
+                Import playlists
+              </Link>
+            </p>
+          )
         ) : (
-          <ul className="grid">
-            {visible.map((playlist) => (
-              <li key={playlist.id}>
-                <button
-                  type="button"
-                  className="w-full rounded-md px-2 py-1 text-left hover:bg-slate-100 disabled:opacity-50"
-                  disabled={busy(playlist.id)}
-                  onClick={() => {
-                    close()
-                    onChoose(playlist.id)
-                  }}
-                >
-                  {playlist.name}
-                  <span className="quiet">
-                    {' '}
-                    · {playlist.trackCount.toLocaleString()}{' '}
-                    {playlist.trackCount === 1 ? 'track' : 'tracks'}
-                  </span>
-                </button>
-              </li>
-            ))}
-          </ul>
+          <div
+            className="max-h-[min(288px,45dvh)] overflow-auto overscroll-contain [overflow-anchor:none]"
+            ref={choices.scroller}
+            onScroll={choices.onScroll}
+            role="region"
+            aria-label="Available playlists"
+            aria-busy={!choices.hasTotal || choices.isFetching}
+            tabIndex={0}
+            data-inspector-scroll=""
+          >
+            <ul role="list" className="grid">
+              {choices.padTop > 0 && (
+                <li aria-hidden="true" style={{ height: choices.padTop }} />
+              )}
+              {choices.slots.map(({ index, item: playlist }) =>
+                playlist ? (
+                  <li
+                    key={index}
+                    style={{ height: choices.rowHeight }}
+                    aria-posinset={index + 1}
+                    aria-setsize={choices.hasTotal ? choices.total : undefined}
+                  >
+                    <button
+                      type="button"
+                      className="h-full w-full truncate rounded-md px-2 text-left hover:bg-slate-100 disabled:opacity-50"
+                      disabled={busy(playlist.id)}
+                      title={playlist.name}
+                      onClick={() => {
+                        close()
+                        onChoose(playlist.id)
+                      }}
+                    >
+                      {playlist.name}
+                      <span className="quiet">
+                        {' '}
+                        · {playlist.trackCount.toLocaleString()}{' '}
+                        {playlist.trackCount === 1 ? 'track' : 'tracks'}
+                      </span>
+                    </button>
+                  </li>
+                ) : (
+                  <li
+                    key={index}
+                    className="virtual-browse-placeholder"
+                    aria-hidden="true"
+                    style={{ height: choices.rowHeight }}
+                  >
+                    <div className="virtual-browse-line virtual-browse-shimmer" />
+                  </li>
+                ),
+              )}
+              {choices.padBottom > 0 && (
+                <li aria-hidden="true" style={{ height: choices.padBottom }} />
+              )}
+            </ul>
+          </div>
         )}
       </div>
     </>

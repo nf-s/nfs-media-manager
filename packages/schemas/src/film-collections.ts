@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { BrowsePageSliceSchema } from './browse'
 import { SourceNavigationLinkSchema } from './tags'
 import {
   DirectionSchema,
@@ -14,6 +15,33 @@ export const FilmCollectionSummarySchema = z.object({
   createdAt: z.string().datetime(),
 })
 export type FilmCollectionSummary = z.infer<typeof FilmCollectionSummarySchema>
+
+export const FilmCollectionBrowseSortSchema = z.enum([
+  'name',
+  'filmCount',
+  'createdAt',
+])
+export type FilmCollectionBrowseSort = z.infer<
+  typeof FilmCollectionBrowseSortSchema
+>
+
+export const FilmCollectionBrowseQuerySchema = PaginationQuerySchema.extend({
+  q: z.string().trim().max(200).optional(),
+  size: PaginationQuerySchema.shape.size.default(100),
+  sortBy: FilmCollectionBrowseSortSchema.default('name'),
+  direction: DirectionSchema.default('asc'),
+  includeSources: z.enum(['true', 'false']).optional(),
+})
+export type FilmCollectionBrowseQuery = z.infer<
+  typeof FilmCollectionBrowseQuerySchema
+>
+
+export const FilmCollectionBrowsePageSchema = BrowsePageSliceSchema(
+  FilmCollectionSummarySchema,
+)
+export type FilmCollectionBrowsePage = z.infer<
+  typeof FilmCollectionBrowsePageSchema
+>
 
 export const FilmCollectionSortSchema = z.enum([
   'position',
@@ -49,6 +77,7 @@ export const FilmCollectionQuerySchema = PaginationQuerySchema.extend({
   size: PaginationQuerySchema.shape.size.default(100),
   sortBy: FilmCollectionSortSchema.default('position'),
   direction: DirectionSchema.default('asc'),
+  includeSources: z.enum(['true', 'false']).optional(),
 })
 export type FilmCollectionQuery = z.infer<typeof FilmCollectionQuerySchema>
 

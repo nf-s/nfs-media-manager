@@ -3,14 +3,16 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
   session: vi.fn(),
-  list: vi.fn(),
+  page: vi.fn(),
+  count: vi.fn(),
   detail: vi.fn(),
 }))
 vi.mock('@/env', () => ({ env: { NODE_ENV: 'test' } }))
 vi.mock('@/lib/db', () => ({ db: {} }))
 vi.mock('@/lib/auth', () => ({ auth: { api: { getSession: mocks.session } } }))
 vi.mock('@/services/film-collections', () => ({
-  listFilmCollections: mocks.list,
+  listFilmCollectionBrowsePage: mocks.page,
+  countFilmCollections: mocks.count,
   getFilmCollection: mocks.detail,
 }))
 import { ServerError } from '@/lib/error'
@@ -34,9 +36,68 @@ describe('film collections API', () => {
   })
   it('requires authentication before reading lists or members', async () => {
     mocks.session.mockResolvedValue(null)
-    for (const path of ['/', '/example'])
+    for (const path of ['/', '/browse-page', '/browse-count', '/example'])
       expect((await app.request(path)).status).toBe(401)
-    expect(mocks.list).not.toHaveBeenCalled()
+    expect(mocks.page).not.toHaveBeenCalled()
+    expect(mocks.count).not.toHaveBeenCalled()
+    expect(mocks.detail).not.toHaveBeenCalled()
+  })
+  it('validates the directory query before invoking a service', async () => {
+    for (const path of ['/', '/browse-page', '/browse-count'])
+      for (const query of [
+        'sortBy=source',
+        'direction=sideways',
+        'page=0',
+        'size=101',
+        'includeSources=unknown',
+        `q=${'x'.repeat(201)}`,
+      ])
+        expect((await app.request(`${path}?${query}`)).status).toBe(422)
+    expect(mocks.page).not.toHaveBeenCalled()
+    expect(mocks.count).not.toHaveBeenCalled()
+  })
+  it('keeps the legacy directory response as a bounded array', async () => {
+    mocks.page.mockResolvedValue({
+      page: 1,
+      size: 100,
+      hasMore: true,
+      items: [],
+    })
+    const response = await app.request('/')
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ data: [] })
+    expect(mocks.page).toHaveBeenCalledExactlyOnceWith({
+      page: 1,
+      size: 100,
+      direction: 'asc',
+      sortBy: 'name',
+      includeSources: 'true',
+    })
+  })
+  it('serves directory rows and counts separately using the validated query', async () => {
+    const page = { page: 2, size: 15, hasMore: true, items: [] }
+    const count = { totalCount: 90 }
+    mocks.page.mockResolvedValue(page)
+    mocks.count.mockResolvedValue(count)
+    const query = '?q=+Fixture+&page=2&size=15&sortBy=filmCount&direction=desc'
+    const parsed = {
+      q: 'Fixture',
+      page: 2,
+      size: 15,
+      sortBy: 'filmCount',
+      direction: 'desc',
+    }
+    const rowsResponse = await app.request(`/browse-page${query}`)
+    expect(rowsResponse.status).toBe(200)
+    expect(await rowsResponse.json()).toMatchObject({ data: page })
+    expect(mocks.page).toHaveBeenCalledExactlyOnceWith(parsed)
+    expect(mocks.count).not.toHaveBeenCalled()
+
+    const countResponse = await app.request(`/browse-count${query}`)
+    expect(countResponse.status).toBe(200)
+    expect(await countResponse.json()).toMatchObject({ data: count })
+    expect(mocks.count).toHaveBeenCalledExactlyOnceWith(parsed)
+    expect(mocks.page).toHaveBeenCalledTimes(1)
     expect(mocks.detail).not.toHaveBeenCalled()
   })
   it('validates sort and paging before service calls', async () => {
@@ -48,14 +109,13 @@ describe('film collections API', () => {
       'watched=unknown',
       'watchedStates=invalid',
       'watchedStates=%5B%22unknown%22%5D',
+      'includeSources=unknown',
       `q=${'x'.repeat(201)}`,
     ])
       expect((await app.request(`/example?${query}`)).status).toBe(422)
     expect(mocks.detail).not.toHaveBeenCalled()
   })
   it('passes validated defaults and selected ordering to read-only services', async () => {
-    mocks.list.mockResolvedValue([])
-    expect((await app.request('/')).status).toBe(200)
     mocks.detail.mockResolvedValue({ id: 'example' })
     expect((await app.request('/example')).status).toBe(200)
     expect(mocks.detail).toHaveBeenLastCalledWith('example', {
@@ -98,8 +158,11 @@ describe('film collections API', () => {
   it('forwards title and watched filters with pagination', async () => {
     mocks.detail.mockResolvedValue({ id: 'example' })
     expect(
-      (await app.request('/example?q=Film&watched=unwatched&page=2&size=1'))
-        .status,
+      (
+        await app.request(
+          '/example?q=Film&watched=unwatched&page=2&size=1&includeSources=false',
+        )
+      ).status,
     ).toBe(200)
     expect(mocks.detail).toHaveBeenCalledExactlyOnceWith('example', {
       q: 'Film',
@@ -108,6 +171,7 @@ describe('film collections API', () => {
       size: 1,
       sortBy: 'position',
       direction: 'asc',
+      includeSources: 'false',
     })
   })
 })

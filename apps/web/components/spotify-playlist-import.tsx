@@ -4,25 +4,19 @@ import Link from 'next/link'
 import { DetailLink } from './detail-link'
 import { useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
-import {
-  useMutation,
-  useQuery,
-  useQueryClient,
-  type QueryClient,
-} from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { z } from 'zod'
 import { EnrichmentResultSchema } from '@repo/schemas/job'
 import { SpotifyAccountStatusSchema } from '@repo/schemas/spotify'
 import {
-  PlaylistSummarySchema,
   SPOTIFY_PLAYLIST_ITEM_LIMIT,
   SpotifyPlaylistImportInputSchema,
   SpotifyPlaylistImportsSchema,
   SpotifyPlaylistListSchema,
-  type PlaylistSummary,
   type SpotifyPlaylist,
   type SpotifyPlaylistImportInput,
   type SpotifyPlaylistJob,
+  type SpotifyPlaylistStoredMetadata,
 } from '@repo/schemas/tracks'
 import { Button } from '@repo/ui/components/ui/button'
 import { Input } from '@repo/ui/components/ui/input'
@@ -65,6 +59,9 @@ import { spotifyCallbackSetup } from '@/utils/spotify-setup'
 import { youtubeScheduleLabels } from '@/utils/youtube'
 
 type JobLabels = Record<SpotifyPlaylistJob['status'], string>
+
+const spotifyListingKey = ['playlists', 'spotify-listing']
+const spotifyImportsKey = ['playlists', 'spotify-imports']
 
 const listingLabels: JobLabels = {
   queued: 'Queued',
@@ -196,9 +193,9 @@ export function filterImportPlaylists(
 
 export function importPlaylistSortValue(
   playlist: SpotifyPlaylist,
-  summary: PlaylistSummary | undefined,
   key: ImportPlaylistSortKey,
 ) {
+  const summary = playlist.stored?.summary
   switch (key) {
     case 'name':
       return playlist.name
@@ -261,14 +258,6 @@ function tracksLabel(count: number) {
 
 function jobHref(job: SpotifyPlaylistJob) {
   return scopedHref(`/jobs?jobId=${encodeURIComponent(job.jobId)}`, 'album')
-}
-
-/** Refreshes the stored list and everything an import changes. */
-function invalidateImportedPlaylists(client: QueryClient) {
-  return Promise.all([
-    invalidatePlaylists(client),
-    client.invalidateQueries({ queryKey: ['spotify-playlists'] }),
-  ])
 }
 
 function JobStatus({
@@ -367,7 +356,11 @@ function ImportState({ playlist }: { playlist: SpotifyPlaylist }) {
   )
 }
 
-function ScheduleCell({ summary }: { summary: PlaylistSummary | undefined }) {
+function ScheduleCell({
+  summary,
+}: {
+  summary: SpotifyPlaylistStoredMetadata | undefined
+}) {
   if (!summary?.sync.syncable) return <>-</>
   const { schedule, nextScheduledAt } = summary.sync
   return (
@@ -451,7 +444,7 @@ export default function SpotifyPlaylistImport() {
   const status = account.data
   const ready = Boolean(status?.connected && status.playlists)
   const imports = useQuery({
-    queryKey: ['spotify-playlist-imports'],
+    queryKey: spotifyImportsKey,
     refetchInterval: (query) =>
       importsActive(query.state.data) ? 2000 : false,
     queryFn: () =>
@@ -463,7 +456,7 @@ export default function SpotifyPlaylistImport() {
   })
   // The stored list; reading it makes no Spotify request.
   const listing = useQuery({
-    queryKey: ['spotify-playlists'],
+    queryKey: spotifyListingKey,
     enabled: ready,
     refetchInterval: (query) =>
       playlistJobActive(query.state.data?.job) ? 2000 : false,
@@ -472,16 +465,6 @@ export default function SpotifyPlaylistImport() {
         apiBaseUrl,
         '/api/v1/spotify/playlists',
         SpotifyPlaylistListSchema,
-      ),
-  })
-  const library = useQuery({
-    queryKey: ['playlists'],
-    enabled: ready,
-    queryFn: () =>
-      fetchApiData(
-        apiBaseUrl,
-        '/api/v1/playlists',
-        z.array(PlaylistSummarySchema),
       ),
   })
   const authorize = useMutation({
@@ -500,7 +483,7 @@ export default function SpotifyPlaylistImport() {
         SpotifyPlaylistListSchema,
         { method: 'POST', body: '{}' },
       ),
-    onSuccess: (data) => client.setQueryData(['spotify-playlists'], data),
+    onSuccess: (data) => client.setQueryData(spotifyListingKey, data),
     onSettled: async () => {
       await Promise.all([
         client.invalidateQueries({ queryKey: ['jobs'] }),
@@ -527,7 +510,7 @@ export default function SpotifyPlaylistImport() {
     },
     onSettled: async () => {
       await Promise.all([
-        client.invalidateQueries({ queryKey: ['spotify-playlist-imports'] }),
+        client.invalidateQueries({ queryKey: spotifyImportsKey }),
         client.invalidateQueries({ queryKey: ['jobs'] }),
         client.invalidateQueries({ queryKey: ['job-activity'] }),
       ])
@@ -537,7 +520,7 @@ export default function SpotifyPlaylistImport() {
   const active = importsActive(imports.data)
   const wasActive = useRef(active)
   useEffect(() => {
-    if (wasActive.current && !active) void invalidateImportedPlaylists(client)
+    if (wasActive.current && !active) void invalidatePlaylists(client)
     wasActive.current = active
   }, [active, client])
 
@@ -558,11 +541,6 @@ export default function SpotifyPlaylistImport() {
     appUrl,
     status?.redirectUri ?? null,
   )
-  const summaries = new Map(
-    (library.data ?? []).map((summary) => [summary.id, summary]),
-  )
-  const summaryOf = (playlistId: string | undefined) =>
-    playlistId ? summaries.get(playlistId) : undefined
   const playlists = (listing.data?.playlists ?? []).map((playlist) => ({
     ...playlist,
     job: imports.data?.jobs[playlist.spotifyId] ?? playlist.job,
@@ -581,12 +559,7 @@ export default function SpotifyPlaylistImport() {
   const visible = sortTableRows(
     filtered,
     { key: sortBy, direction },
-    (playlist, key) =>
-      importPlaylistSortValue(
-        playlist,
-        summaryOf(playlist.stored?.playlistId),
-        key,
-      ),
+    importPlaylistSortValue,
   )
   const targets = visible.filter(
     (playlist) => selected.includes(playlist.spotifyId) && selectable(playlist),
@@ -608,7 +581,7 @@ export default function SpotifyPlaylistImport() {
   const confirmed = confirmedKey === confirmationKey
   const tooMany = targets.length > 100
   const liked = imports.data?.likedSongs
-  const likedSummary = summaryOf(liked?.stored?.playlistId)
+  const likedSummary = liked?.stored?.summary
   const likedResult = queue.variables?.likedSongs === true
   const listedAt = listing.data?.listedAt ?? null
   const result = queue.data && (
@@ -963,7 +936,7 @@ export default function SpotifyPlaylistImport() {
                     const checked =
                       selected.includes(playlist.spotifyId) &&
                       selectable(playlist)
-                    const summary = summaryOf(playlist.stored?.playlistId)
+                    const summary = playlist.stored?.summary
                     return (
                       <TableRow
                         key={playlist.spotifyId}

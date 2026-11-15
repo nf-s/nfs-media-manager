@@ -18,19 +18,19 @@ import {
 } from '@/lib/spotify-api'
 import { playlist, spotifyPlaylistListing } from '@/schemas/db'
 import { createTaskJob, type TaskJobContext, type TaskJobResult } from './jobs'
+import { loadPlaylistSummaries } from './playlist-directory'
 import { spotifyOperation, spotifyPlaylistToken } from './spotify-oauth'
 import {
   NOT_IMPORTABLE,
   latestSpotifyJobs,
+  listStoredSpotifyImports,
   playlistGroupKey,
   playlistUrl,
   readSpotifyPlaylistListing,
   refused,
   requirePlaylistAccess,
-  storedImports,
   storedSummary,
   type ListedPlaylist,
-  type StoredImport,
 } from './spotify-playlist-state'
 
 // The account's playlist list is read in full; this bounds a runaway listing.
@@ -170,18 +170,29 @@ export async function getSpotifyPlaylists(
   userId: string,
 ): Promise<SpotifyPlaylistList> {
   const listing = await readSpotifyPlaylistListing(userId)
-  const stored = new Map<string, StoredImport>()
-  for (const row of await storedImports())
-    if (row.spotify_id) stored.set(row.spotify_id, row)
-  const imports = await latestSpotifyJobs(SPOTIFY_PLAYLIST_IMPORT_TASK)
-  const listings = await latestSpotifyJobs(SPOTIFY_PLAYLIST_LISTING_TASK)
   const playlists = listing?.playlists ?? []
+  const spotifyIds = playlists.map((item) => item.spotifyId)
+  const [stored, imports, listings] = await Promise.all([
+    listStoredSpotifyImports(spotifyIds),
+    latestSpotifyJobs(
+      SPOTIFY_PLAYLIST_IMPORT_TASK,
+      spotifyIds.map(playlistGroupKey),
+    ),
+    latestSpotifyJobs(SPOTIFY_PLAYLIST_LISTING_TASK, [listingGroupKey(userId)]),
+  ])
+  const bySpotifyId = new Map(stored.map((row) => [row.spotifyId, row]))
+  const summaries = await loadPlaylistSummaries(
+    stored.map((row) => row.id),
+    imports,
+  )
+  const byId = new Map(summaries.map((summary) => [summary.id, summary]))
   return SpotifyPlaylistListSchema.parse({
     total: playlists.length,
     listedAt: listing?.listedAt.toISOString() ?? null,
     job: listings.get(listingGroupKey(userId))?.job ?? null,
     playlists: playlists.map((item) => {
-      const row = stored.get(item.spotifyId)
+      const row = bySpotifyId.get(item.spotifyId)
+      const summary = row && byId.get(row.id)
       return {
         spotifyId: item.spotifyId,
         name: item.name,
@@ -191,9 +202,12 @@ export async function getSpotifyPlaylists(
         trackTotal: item.trackTotal,
         artworkUrl: item.artworkUrl,
         spotifyUrl: playlistUrl(item.spotifyId),
-        stored: row ? storedSummary(row) : null,
+        stored: summary ? storedSummary(summary) : null,
         current: Boolean(
-          row && item.snapshotId && row.snapshot_id === item.snapshotId,
+          summary &&
+          row &&
+          item.snapshotId &&
+          row.snapshotId === item.snapshotId,
         ),
         job: imports.get(playlistGroupKey(item.spotifyId))?.job ?? null,
       }

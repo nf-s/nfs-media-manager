@@ -12,6 +12,7 @@ import {
   formatSubscriptionDuration,
   formatSubscriptionPublished,
   formatSubscriptionSourceSize,
+  subscriptionArtworkUrl,
   subscriptionSourceHref,
 } from '@/utils/subscriptions'
 import { CreatorDetailState } from './creator-detail-state'
@@ -141,6 +142,19 @@ export function ChannelDetail({ id }: { id: string }) {
           path={path}
           schema={itemPageSchema}
           columns={isVideo ? videoColumns : itemColumns}
+          card={(item) => ({
+            title: item.title,
+            artworkUrl: subscriptionArtworkUrl(item),
+            subtitle: formatSubscriptionPublished(
+              item.publishedAt,
+              item.publishedPrecision,
+            ),
+            metadata:
+              item.durationSec !== null ||
+              (item.type === 'youtube' && item.live !== 'none')
+                ? formatSubscriptionDuration(item)
+                : undefined,
+          })}
           label={isVideo ? 'videos' : 'episodes'}
           defaultSort={{ key: 'publishedAt', direction: 'desc' }}
         />

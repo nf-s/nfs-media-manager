@@ -38,6 +38,7 @@ import {
 } from '@/schemas/db'
 import { createTaskJob, type TaskJobContext, type TaskJobResult } from './jobs'
 import { getLastfmAccount } from './lastfm-scrobbles'
+import { loadPlaylistSummaries } from './playlist-directory'
 import {
   lockLibraryTrackWrites,
   removeOrphanTracks,
@@ -54,7 +55,6 @@ import {
   readSpotifyPlaylistListing,
   refused,
   requirePlaylistAccess,
-  storedImports,
   storedSummary,
 } from './spotify-playlist-state'
 import { refreshTrackLinks } from './track-links'
@@ -119,10 +119,24 @@ export function storedImportTarget(row: {
 
 /** Stored import state and the latest jobs; no Spotify requests. */
 export async function getSpotifyPlaylistImports() {
-  const liked = (await storedImports()).find(
-    (row) => row.source === LIKED_SONGS_KEY,
+  const [likedRows, jobs] = await Promise.all([
+    db
+      .select({ id: playlist.id })
+      .from(playlist)
+      .where(
+        and(
+          eq(playlist.kind, 'playlist'),
+          eq(playlist.source, LIKED_SONGS_KEY),
+        ),
+      )
+      .orderBy(playlist.id)
+      .limit(1),
+    latestSpotifyJobs(SPOTIFY_PLAYLIST_IMPORT_TASK),
+  ])
+  const [liked] = await loadPlaylistSummaries(
+    likedRows.map((row) => row.id),
+    jobs,
   )
-  const jobs = await latestSpotifyJobs(SPOTIFY_PLAYLIST_IMPORT_TASK)
   const playlistJobs: Record<string, SpotifyPlaylistJob> = {}
   for (const [key, latest] of jobs)
     if (key.startsWith(PLAYLIST_KEY_PREFIX))

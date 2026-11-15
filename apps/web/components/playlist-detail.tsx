@@ -26,6 +26,7 @@ import {
 } from '@repo/ui/components/ui/tabs'
 import { useVirtualTable } from '@/hooks/useVirtualTable'
 import { fetchApiData } from '@/utils/api'
+import { parseBrowseView, type BrowseView } from '@/utils/media-grid'
 import { scopedHref } from '@/utils/media-scope'
 import {
   PlaylistTabSchema,
@@ -65,6 +66,7 @@ import {
 import { useConfig } from './providers'
 import ServiceIconLinks from './service-icon-links'
 import { ProviderSources } from './provider-sources'
+import { useNestedMediaView } from './nested-media-view'
 
 const ENTRY_PAGE_SIZE = 100
 
@@ -109,11 +111,13 @@ export function PlaylistPlayButton({
   playlist,
   total,
   compact = true,
+  presentation,
 }: {
   playlist: Pick<PlaylistSummary, 'id' | 'name'> &
     Partial<Pick<PlaylistSummary, 'trackCount' | 'albumCount'>>
   total?: number
   compact?: boolean
+  presentation?: BrowseView
 }) {
   const { apiBaseUrl } = useConfig()
   const view = usePlayback()
@@ -143,6 +147,7 @@ export function PlaylistPlayButton({
         ).items.totalCount
       const returnParams = new URLSearchParams(detail.params)
       returnParams.delete('tab')
+      if (presentation) returnParams.set('view', presentation)
       const href =
         total !== undefined
           ? detail.href(returnParams)
@@ -231,7 +236,15 @@ export function playlistWindowSlots(
   })
 }
 
-export function PlaylistEntries({ id }: { id: string }) {
+function PlaylistEntries({
+  id,
+  presentation,
+  onPresentationChange,
+}: {
+  id: string
+  presentation: BrowseView
+  onPresentationChange: (view: BrowseView) => void
+}) {
   const { apiBaseUrl } = useConfig()
   const detail = useDetailView()
   const view = playlistEntryView(detail.params.get('playlistView'), id)
@@ -239,28 +252,33 @@ export function PlaylistEntries({ id }: { id: string }) {
   const search = view.q ?? ''
   const q = useDeferredValue(search.trim())
   const kinds = view.kinds ?? []
-  function viewParams(patch: Partial<PlaylistDetailQuery>) {
+  function viewParams(
+    patch: Partial<PlaylistDetailQuery>,
+    nextPresentation = presentation,
+  ) {
     const params = new URLSearchParams(detail.params)
     params.set(
       'playlistView',
       playlistEntryViewParam(id, { ...view, ...patch }),
     )
     params.delete('tab')
+    params.set('view', nextPresentation)
     return params
   }
-  function onSort(key: TrackEntryColumn) {
+  function onSort(key: TrackEntryColumn, direction: 'asc' | 'desc') {
     const parsed = PlaylistEntrySortSchema.safeParse(key)
     if (parsed.success)
       detail.replace(
         viewParams({
           sortBy: parsed.data,
-          direction: key === sortBy && direction === 'asc' ? 'desc' : 'asc',
+          direction,
         }),
       )
   }
   const entries = useVirtualTable({
     queryKey: ['playlist', id, 'entries', sortBy, direction, q, kinds],
     pageSize: ENTRY_PAGE_SIZE,
+    presentation: { view: presentation, mediaType: 'album' },
     loadPage: async (page, size, signal) => {
       const result = await fetchApiData(
         apiBaseUrl,
@@ -286,9 +304,20 @@ export function PlaylistEntries({ id }: { id: string }) {
       window={{
         slots: playlistWindowSlots(entries.slots),
         total,
+        hasTotal: entries.hasTotal,
         rowHeight: entries.rowHeight,
+        height: entries.height,
+        columns: entries.columns,
+        gap: entries.gap,
         padTop: entries.padTop,
         padBottom: entries.padBottom,
+        scroller: entries.scroller,
+        onScroll: entries.onScroll,
+      }}
+      view={presentation}
+      onViewChange={(next) => {
+        onPresentationChange(next)
+        detail.replace(viewParams({}, next))
       }}
       search={search}
       onSearch={(search) => detail.replace(viewParams({ q: search }))}
@@ -333,8 +362,6 @@ export function PlaylistEntries({ id }: { id: string }) {
           initialEntry: entry,
         })
       }
-      scroller={entries.scroller}
-      onScroll={entries.onScroll}
     />
   )
 }
@@ -374,7 +401,6 @@ export function PlaylistSyncPanel({ playlist }: { playlist: PlaylistSummary }) {
           exact: true,
         }),
         client.invalidateQueries({ queryKey: ['playlists'] }),
-        client.invalidateQueries({ queryKey: ['spotify-playlist-imports'] }),
         client.invalidateQueries({ queryKey: ['jobs'] }),
         client.invalidateQueries({ queryKey: ['job-activity'] }),
       ])
@@ -500,6 +526,13 @@ export default function PlaylistDetailView({
   filterTracks?: (playlist: PlaylistSummary) => void
 }) {
   const client = useQueryClient()
+  const detail = useDetailView()
+  const [savedPresentation, setPresentation] =
+    useNestedMediaView('playlist-entries')
+  const presentation = parseBrowseView(
+    detail.params.get('view'),
+    savedPresentation,
+  )
   const summary = usePlaylistSummary(id)
   const active = playlistJobActive(summary.data?.sync.job)
   const wasActive = useRef(active)
@@ -561,6 +594,7 @@ export default function PlaylistDetailView({
               playlist={playlist}
               total={playlist.items.totalCount}
               compact={false}
+              presentation={presentation}
             />
             {filterTracks ? (
               <Button
@@ -603,7 +637,11 @@ export default function PlaylistDetailView({
           value="tracks"
           className="mt-3 flex min-h-0 flex-1 flex-col data-[state=inactive]:hidden"
         >
-          <PlaylistEntries id={id} />
+          <PlaylistEntries
+            id={id}
+            presentation={presentation}
+            onPresentationChange={setPresentation}
+          />
         </TabsContent>
         <TabsContent
           value="sync"

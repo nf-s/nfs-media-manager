@@ -1,6 +1,9 @@
 import { createRoute, type OpenAPIHono } from '@hono/zod-openapi'
 import { z } from 'zod'
+import { BrowseCountSchema } from '@repo/schemas/browse'
 import {
+  FilmCollectionBrowsePageSchema,
+  FilmCollectionBrowseQuerySchema,
   FilmCollectionDetailSchema,
   FilmCollectionQuerySchema,
   FilmCollectionSummarySchema,
@@ -15,8 +18,9 @@ import {
 import { generateJsonResponse } from '@/lib/response'
 import { authMiddleware } from '@/middlewares/auth'
 import {
+  countFilmCollections,
   getFilmCollection,
-  listFilmCollections,
+  listFilmCollectionBrowsePage,
 } from '@/services/film-collections'
 
 const app: OpenAPIHono<AppEnv> = createOpenAPIApp()
@@ -25,9 +29,11 @@ const app: OpenAPIHono<AppEnv> = createOpenAPIApp()
       method: 'get',
       path: '/',
       middleware: [authMiddleware()],
+      request: { query: FilmCollectionBrowseQuerySchema },
       responses: {
         200: {
-          description: 'Stored collections containing library films',
+          description:
+            'One page of stored collections containing library films',
           content: {
             'application/json': {
               schema: createResponseSchema(
@@ -37,9 +43,69 @@ const app: OpenAPIHono<AppEnv> = createOpenAPIApp()
           },
         },
         401: jsonErrorResponse('Unauthorized'),
+        422: validationErrorResponse,
       },
     }),
-    async (c) => generateJsonResponse(c, await listFilmCollections(), 200),
+    async (c) => {
+      const query = c.req.valid('query')
+      const page = await listFilmCollectionBrowsePage({
+        ...query,
+        includeSources: query.includeSources ?? 'true',
+      })
+      return generateJsonResponse(c, page.items, 200)
+    },
+  )
+  .openapi(
+    createRoute({
+      method: 'get',
+      path: '/browse-page',
+      middleware: [authMiddleware()],
+      request: { query: FilmCollectionBrowseQuerySchema },
+      responses: {
+        200: {
+          description: 'Collection rows with a continuation indicator',
+          content: {
+            'application/json': {
+              schema: createResponseSchema(FilmCollectionBrowsePageSchema),
+            },
+          },
+        },
+        401: jsonErrorResponse('Unauthorized'),
+        422: validationErrorResponse,
+      },
+    }),
+    async (c) =>
+      generateJsonResponse(
+        c,
+        await listFilmCollectionBrowsePage(c.req.valid('query')),
+        200,
+      ),
+  )
+  .openapi(
+    createRoute({
+      method: 'get',
+      path: '/browse-count',
+      middleware: [authMiddleware()],
+      request: { query: FilmCollectionBrowseQuerySchema },
+      responses: {
+        200: {
+          description: 'Exact count of stored collections matching the search',
+          content: {
+            'application/json': {
+              schema: createResponseSchema(BrowseCountSchema),
+            },
+          },
+        },
+        401: jsonErrorResponse('Unauthorized'),
+        422: validationErrorResponse,
+      },
+    }),
+    async (c) =>
+      generateJsonResponse(
+        c,
+        await countFilmCollections(c.req.valid('query')),
+        200,
+      ),
   )
   .openapi(
     createRoute({

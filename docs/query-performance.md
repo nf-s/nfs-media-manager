@@ -30,6 +30,8 @@ Albums, Films, Tracks and Subscriptions expose `/api/v1/{library}/browse-page` f
 
 Browse can display the first page and expand the scroll area when the total arrives. A first page with `hasMore: false` already gives the total. Later pages skip counting, including when a requested page is empty. A failed count can be retried while the loaded page remains available.
 
+The film collection directory follows the same split through `/api/v1/collections/browse-page` and `/browse-count`. Name search, film-only membership, ordering and the page limit are evaluated in SQL. The directory's hidden-by-default source column requests `includeSources=true` only when shown; provenance expansion is restricted to returned collections, never the entire directory or its count query. Arbitrary plugin source readers are not an indexed directory sort/filter field. Collection membership IDs travel with film rows so opening a collection requires no directory lookup.
+
 On a disposable fixture of 20,000 synthetic tracks, the exact count for a required Album track list filter took about 123 ms, while the first page and its metadata took about 10 ms. On 50,000 synthetic subscription items, the original first page with a window count took about 22 ms. Executing the page and exact count independently took about 0.3 ms and 3.8 ms respectively. These are medians from five warm database measurements, excluding HTTP and browser rendering.
 
 ## Verification
