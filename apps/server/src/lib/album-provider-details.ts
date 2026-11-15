@@ -65,7 +65,7 @@ export const DiscogsRecordSchema = z.object({
   master_id: z.number().int().nonnegative().safe().optional(),
   genres: z.array(z.string().min(1)).optional(),
   styles: z.array(z.string().min(1)).optional(),
-  country: z.string().optional(),
+  country: z.string().nullable().optional(),
   released: z.string().optional(),
   year: z.number().int().nonnegative().safe().optional(),
   notes: z.string().optional(),

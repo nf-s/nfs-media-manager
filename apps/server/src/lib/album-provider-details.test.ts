@@ -203,6 +203,31 @@ describe('readonly album provider details', () => {
     expect(result?.url).toBe('https://www.discogs.com/release/22')
   })
 
+  it.each([
+    {
+      release: { ...release, country: null },
+    },
+    {
+      master: { ...release, id: 11, main_release: 22 },
+      mainRelease: { ...release, master_id: 11, country: null },
+    },
+  ])('retains release details with an unknown country', (payload) => {
+    const result = readAlbumProviderDetails('discogs', payload)
+    expect(result?.facts).toContainEqual({
+      label: 'Label',
+      value: 'Example label / CAT-001',
+    })
+    expect(result?.facts.map(({ label }) => label)).not.toContain(
+      'Release country',
+    )
+    expect(albumProviderDetailsMetadata('discogs', payload).browse).toEqual({
+      'plugin.discogs.labels': ['Example label'],
+      'plugin.discogs.formats': ['Vinyl, LP, Album'],
+      'plugin.discogs.have': 0,
+      'plugin.discogs.want': 15,
+    })
+  })
+
   it('keeps missing have/want unknown independently and does not invent zero values', () => {
     const payload = { release: { ...release, community: { have: 0 }, year: 0 } }
     const result = readAlbumProviderDetails('discogs', payload)
