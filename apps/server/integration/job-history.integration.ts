@@ -286,7 +286,12 @@ describe('media job history and dismissal', () => {
     expect((await getJobActivity()).failed).toBe(1)
   })
   it('retains the exact snapshot job link through the history response contract', async () => {
-    const { getMediaHistory } = await import('@/services/history')
+    const {
+      getMediaHistory,
+      getMediaSources,
+      getMediaSourceSnapshot,
+      listMediaSourceSnapshots,
+    } = await import('@/services/history')
     const { MediaHistorySchema } = await import('@repo/schemas/media')
     await seedJob('snapshot-origin', 'succeeded')
     await seedJob('different-job', 'failed')
@@ -322,6 +327,45 @@ describe('media job history and dismissal', () => {
       type: 'snapshot',
       jobId: null,
     })
+    await databaseClient.insert(schema.providerCurrentState).values({
+      id: 'current-linked',
+      mediaItemId: 'film-1',
+      provider: plugin.manifest.id,
+      latestSnapshotId: 'linked-snapshot',
+      checksum: 'scraped-checksum',
+      payload: { title: 'Fixture film' },
+      status: 'succeeded',
+    })
+    expect(await getMediaSources('film-1')).toMatchObject({
+      providers: [
+        {
+          id: plugin.manifest.id,
+          latestSnapshot: { id: 'linked-snapshot', jobId: 'snapshot-origin' },
+        },
+      ],
+    })
+    const historyPage = await listMediaSourceSnapshots(
+      'film-1',
+      plugin.manifest.id,
+      { page: 1, size: 20 },
+    )
+    expect(historyPage.totalCount).toBe(2)
+    expect(historyPage.items.every((snapshot) => !('data' in snapshot))).toBe(
+      true,
+    )
+    await expect(
+      getMediaSourceSnapshot('film-1', plugin.manifest.id, 'linked-snapshot'),
+    ).resolves.toMatchObject({ data: { title: 'Fixture film' } })
+    await expect(
+      getMediaSourceSnapshot(
+        'other-film',
+        plugin.manifest.id,
+        'linked-snapshot',
+      ),
+    ).rejects.toMatchObject({ response: { statusCode: 404 } })
+    await expect(
+      getMediaSourceSnapshot('film-1', 'other-provider', 'linked-snapshot'),
+    ).rejects.toMatchObject({ response: { statusCode: 404 } })
     await databaseClient
       .delete(schema.scrapeJob)
       .where(eq(schema.scrapeJob.id, 'snapshot-origin'))

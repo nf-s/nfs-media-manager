@@ -5,6 +5,7 @@ import { AlbumPlaylistsSchema } from '@repo/schemas/tracks'
 import { useConfig } from './providers'
 import { fetchApiData } from '@/utils/api'
 import { DetailLink } from './detail-link'
+import { PlaylistPlayButton } from './playlist-detail'
 import {
   AddToPlaylist,
   AdditionState,
@@ -32,7 +33,6 @@ export default function AlbumPlaylists({ albumId }: { albumId: string }) {
     (playlists.data ?? []).map((playlist) => [playlist.id, playlist.name]),
   )
   const memberships = query.data?.playlists ?? []
-  const tracks = query.data?.tracks ?? []
   return (
     <div className="detail-metadata mt-6">
       <section aria-label="Playlist memberships">
@@ -47,21 +47,26 @@ export default function AlbumPlaylists({ albumId }: { albumId: string }) {
         {memberships.length > 0 && (
           <div className="detail-tags">
             {memberships.map((playlist) => (
-              <DetailLink
+              <span
                 key={playlist.id}
-                className="metadata-tag"
-                kind="playlist"
-                id={playlist.id}
+                className="inline-flex items-center gap-1"
               >
-                {playlist.name}
-                {playlist.trackCount > 0 && (
-                  <span className="quiet">
-                    {' '}
-                    · {playlist.trackCount}{' '}
-                    {playlist.trackCount === 1 ? 'track' : 'tracks'}
-                  </span>
-                )}
-              </DetailLink>
+                <PlaylistPlayButton playlist={playlist} />
+                <DetailLink
+                  className="metadata-tag"
+                  kind="playlist"
+                  id={playlist.id}
+                >
+                  {playlist.name}
+                  {playlist.trackCount > 0 && (
+                    <span className="quiet">
+                      {' '}
+                      · {playlist.trackCount}{' '}
+                      {playlist.trackCount === 1 ? 'track' : 'tracks'}
+                    </span>
+                  )}
+                </DetailLink>
+              </span>
             ))}
           </div>
         )}
@@ -83,27 +88,6 @@ export default function AlbumPlaylists({ albumId }: { albumId: string }) {
           </ul>
         )}
       </section>
-      {tracks.length > 0 && (
-        <section>
-          <h2>Tracks in the track library</h2>
-          <ul className="grid gap-1 text-sm">
-            {tracks.map((track) => (
-              <li key={track.id}>
-                <DetailLink
-                  kind="track"
-                  id={track.id}
-                  className="underline underline-offset-2"
-                >
-                  {track.title}
-                </DetailLink>
-                {track.playlists.length > 0 && (
-                  <span className="quiet"> · {track.playlists.join(', ')}</span>
-                )}
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
     </div>
   )
 }

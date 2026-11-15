@@ -1,5 +1,5 @@
 import { and, eq, inArray, sql, type SQL } from 'drizzle-orm'
-import { PgDialect } from 'drizzle-orm/pg-core'
+import { alias, PgDialect } from 'drizzle-orm/pg-core'
 import { z } from 'zod'
 import {
   albumBrowseFields,
@@ -50,6 +50,8 @@ const facetCache = createDatabaseReadCache<z.infer<typeof FacetRowSchema>[]>({
   maxValueBytes: 512 * 1024,
 })
 const dialect = new PgDialect()
+const trackSortAlbum = alias(mediaItem, 'track_sort_album')
+const trackSortAlbumName = sql`lower(coalesce(nullif(trim(${trackSortAlbum.title}), ''), nullif(trim(${libraryTrack.albumName}), '')))`
 
 export type BrowseQueryOptions = {
   conditions?: SQL[]
@@ -372,7 +374,12 @@ export async function queryBrowseIds(
       .leftJoin(film, eq(film.mediaItemId, mediaItem.id))
     const tracks =
       mediaType === 'track'
-        ? query.innerJoin(libraryTrack, trackJoin)
+        ? query
+            .innerJoin(libraryTrack, trackJoin)
+            .leftJoin(
+              trackSortAlbum,
+              eq(trackSortAlbum.id, libraryTrack.albumMediaItemId),
+            )
         : query.leftJoin(libraryTrack, trackJoin)
     return listening
       ? tracks.leftJoin(
@@ -415,7 +422,11 @@ export async function queryBrowseIds(
   )
   const rows = await base()
     .where(where)
-    .orderBy(order, mediaItem.id)
+    .orderBy(
+      order,
+      ...(mediaType === 'track' ? trackNaturalOrder(sortField.key) : []),
+      mediaItem.id,
+    )
     .limit(Math.min(query.size, Math.max(0, totalCount - offset)))
     .offset(offset)
   return {
@@ -432,11 +443,48 @@ function directSortExpression(key: string, mediaType: MediaType): SQL | null {
   if (key === 'releaseDate' && mediaType !== 'track')
     return sql`${mediaItem.releaseDate}`
   if (mediaType === 'track') {
+    if (key === 'artist') return firstTrackArtist(sql`${mediaItem.id}`)
+    if (key === 'album') return trackSortAlbumName
+    if (key === 'releaseDate')
+      return sql`coalesce(${trackSortAlbum.releaseDate}, ${mediaItem.releaseDate})`
     if (key === 'dateAdded') return sql`${libraryTrack.dateAdded}`
     if (key === 'scrobbles') return sql`${libraryTrack.scrobbleCount}`
     if (key === 'lastListenedAt') return sql`${libraryTrack.lastListenedAt}`
   }
   return null
+}
+
+function firstTrackArtist(mediaItemId: SQL) {
+  return sql`(select lower(a.name)
+    from media_credit c join artist a on a.id = c.artist_id
+    where c.media_item_id = ${mediaItemId} and c.role = 'artist'
+    order by c.billing_order, a.name limit 1)`
+}
+
+/** Keep ties in a release together and in their stored playing order. */
+function trackNaturalOrder(primary: string) {
+  const albumId = sql`${libraryTrack.albumMediaItemId}`
+  const artist = firstTrackArtist(sql`coalesce(${albumId}, ${mediaItem.id})`)
+  const albumDate = sql`case when ${albumId} is null then ${mediaItem.releaseDate}
+    else ${trackSortAlbum.releaseDate} end`
+  const position = sql`(select min(t.position) from track t
+    where t.track_media_item_id = ${mediaItem.id} and t.album_media_item_id = ${albumId})`
+  const withinAlbum = [
+    albumId,
+    sql`case when ${albumId} is null then ${libraryTrack.spotifyAlbumId} end`,
+    position,
+    sql`lower(${mediaItem.title})`,
+  ]
+  const year = sql`extract(year from ${albumDate})`
+  const grouped =
+    primary === 'artist'
+      ? [year, trackSortAlbumName]
+      : primary === 'album'
+        ? [albumDate]
+        : primary === 'releaseDate'
+          ? [artist, trackSortAlbumName]
+          : [artist, year, trackSortAlbumName]
+  return [...grouped, ...withinAlbum].map((key) => sql`${key} asc nulls last`)
 }
 
 /** Search and facets read values before aggregation so PostgreSQL can index them. */

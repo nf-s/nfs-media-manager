@@ -27,6 +27,7 @@ export default function SignOutButton() {
   return (
     <Button
       variant="outline"
+      className="whitespace-nowrap"
       onClick={() => signOutMutation.mutate()}
       disabled={signOutMutation.isPending}
     >

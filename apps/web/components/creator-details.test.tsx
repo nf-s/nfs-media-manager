@@ -10,6 +10,7 @@ import {
 import { ArtistDetailSchema, PersonDetailSchema } from '@repo/schemas/creators'
 import { AlbumListItemSchema, FilmListItemSchema } from '@repo/schemas/media'
 import { SubscriptionSourceDetailSchema } from '@repo/schemas/subscriptions'
+import { ProviderSummarySchema } from '@repo/schemas/provider'
 import {
   DetailInspectorProvider,
   InspectorEntryContext,
@@ -230,11 +231,13 @@ test('artist album rows append to the detail stack and show playback', () => {
   ])
 })
 
-test('history reads its own paginated provider-filtered query and exposes earlier results', () => {
+test('legacy artist History links reopen the provider in Sources and list summary records', () => {
   const oldSnapshot = {
-    ...spotifyProfile,
     id: 'older-profile',
-    profile: { ...spotifyProfile.profile, name: 'Earlier profile' },
+    provider: 'spotify',
+    source: null,
+    jobId: 'artist-job',
+    createdAt: timestamp,
   }
   const html = render({
     pathname: `/artists/${artist.id}`,
@@ -243,7 +246,7 @@ test('history reads its own paginated provider-filtered query and exposes earlie
     cache: [
       [['artist', artist.id], artist],
       [
-        ['artist', artist.id, 'history', 'spotify'],
+        ['history', artist.id, 'artist', 'spotify', 'snapshots'],
         {
           pages: [{ ...page(oldSnapshot), pageCount: 2, totalCount: 21 }],
           pageParams: [1],
@@ -251,28 +254,46 @@ test('history reads its own paginated provider-filtered query and exposes earlie
       ],
     ],
   })
-  assert.match(html, /Earlier profile/)
-  assert.match(html, /Load more history/)
-  assert.match(html, /<option value="spotify" selected="">Spotify<\/option>/)
+  assert.match(html, /aria-label="Spotify history" aria-expanded="true"/)
+  assert.match(html, /View snapshot/)
+  assert.match(html, /Load more snapshots/)
+  assert.doesNotMatch(html, /Stored response/)
   assert.equal(
     destination(html, 'View job').searchParams.get('jobId'),
     'artist-job',
   )
 })
 
-test('profile refresh requires an explicit provider selection', () => {
+test('artist Sources offers selectable eligible providers and explicit refresh', () => {
+  const spotify = ProviderSummarySchema.parse({
+    id: 'spotify',
+    displayName: 'Spotify',
+    description: '',
+    surface: 'provider',
+    mediaTypes: ['album'],
+    rateLimit: { maxConcurrent: 1, minTimeMs: 0 },
+    supportsScrape: true,
+    supportsLegacyImport: false,
+    secrets: [],
+    pluginPath: null,
+  })
   const html = render({
     pathname: `/artists/${artist.id}`,
     search: 'tab=sources',
     children: <ArtistDetail id={artist.id} />,
     cache: [
       [['artist', artist.id], artist],
-      [['jobs', 'artist-enrichment', artist.id], page()],
+      [['providers'], [spotify]],
+      [
+        ['jobs', 'source-refresh-active', { kind: 'artist', id: artist.id }],
+        page(),
+      ],
     ],
   })
-  assert.match(html, /<option value="" selected="">Choose provider<\/option>/)
-  assert.match(html, /<button[^>]*disabled=""[^>]*>Refresh profile<\/button>/)
-  assert.match(html, /aria-label="Current profile sources"/)
+  assert.match(html, /aria-label="Select Spotify"/)
+  assert.match(html, /aria-label="Edit Spotify identifier"/)
+  assert.match(html, /Refresh all eligible/)
+  assert.match(html, /aria-label="Sources"/)
 })
 
 test('person details open films and pass the selected credit role to Browse', () => {
@@ -301,6 +322,18 @@ test('person details open films and pass the selected credit role to Browse', ()
     assert.equal(target.searchParams.get('creatorId'), person.id)
     assert.equal(target.searchParams.get('creatorRole'), role)
   }
+})
+
+test('person Sources reports the absence of a provider record', () => {
+  const html = render({
+    pathname: `/people/${person.id}`,
+    search: 'tab=sources',
+    children: <PersonDetail id={person.id} />,
+    cache: [[['person', person.id], person]],
+  })
+  assert.match(html, /aria-label="Sources"/)
+  assert.match(html, /No provider sources are stored for this person\./)
+  assert.doesNotMatch(html, /Refresh (all eligible|selected)/)
 })
 
 test('film Browse uses the creator scope for its query and names the removable role filter', async () => {
@@ -394,4 +427,17 @@ test('channel details show saved podcast episodes and scope Browse to the exact 
     destination(html, 'Filter subscriptions').searchParams.get('sourceId'),
     id,
   )
+  const sources = render({
+    pathname: `/channels/${id}`,
+    search: 'tab=sources',
+    children: <ChannelDetail id={id} />,
+    cache: [[['subscriptions', 'source', id], data]],
+  })
+  const table = sources.slice(sources.indexOf('<table'))
+  assert.match(table, /aria-label="Sources"/)
+  assert.match(table, /title="Sort by Provider"/)
+  assert.match(table, /title="Sort by Identifier"/)
+  assert.ok(table.includes(data.source.url))
+  assert.ok(table.includes(id))
+  assert.doesNotMatch(table, /Refresh (all eligible|selected)/)
 })

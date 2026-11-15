@@ -7,6 +7,7 @@ import {
   PathnameContext,
   SearchParamsContext,
 } from 'next/dist/shared/lib/hooks-client-context.shared-runtime'
+import { AppRouterContext } from 'next/dist/shared/lib/app-router-context.shared-runtime'
 import {
   SpotifySubscriptionItemSchema,
   SubscriptionSourceSchema,
@@ -224,6 +225,38 @@ test('an empty library points to Imports and a search without results offers to 
   assert.match(noMatches, /No matches/)
   assert.match(noMatches, /Search: nothing/)
   assert.doesNotMatch(noMatches, /Nothing synced yet/)
+})
+
+test('subscription Sources uses the stored provider ID and destination', async () => {
+  const { SubscriptionItemDetails } =
+    await import('./subscription-item-details')
+  const noNavigation = () => {
+    throw new Error('Unexpected navigation')
+  }
+  const router = {
+    back: noNavigation,
+    forward: noNavigation,
+    refresh: noNavigation,
+    hmrRefresh: noNavigation,
+    push: noNavigation,
+    replace: noNavigation,
+    prefetch: noNavigation,
+  }
+  for (const item of [video, episode]) {
+    const html = render(
+      <AppRouterContext.Provider value={router}>
+        <SubscriptionItemDetails id={item.id} initialItem={item} />
+      </AppRouterContext.Provider>,
+      [],
+      'tab=sources',
+      `/subscriptions/${item.id}`,
+    )
+    const table = html.slice(html.indexOf('<table'))
+    assert.match(table, /aria-label="Sources"/)
+    assert.ok(table.includes(item.id))
+    assert.ok(table.includes(item.url))
+    assert.doesNotMatch(table, /Refresh (all eligible|selected)/)
+  }
 })
 
 test('the channels list links names to details and counts to filtered Browse', async () => {

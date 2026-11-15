@@ -78,15 +78,25 @@ export function AlbumInlinePlayButton({
     )
   const Icon = playback.playing ? Pause : Play
   return (
-    <button
-      type="button"
-      className="track-play"
-      data-current={playback.current}
-      aria-label={`${playback.playing ? 'Pause' : 'Play'} ${album.title}`}
-      onClick={() => playback.play(source)}
-    >
-      <Icon size={12} aria-hidden="true" />
-    </button>
+    <span className="inline-flex shrink-0 items-center">
+      <button
+        type="button"
+        className="track-play"
+        data-current={playback.current}
+        aria-label={`${playback.playing ? 'Pause' : 'Play'} ${album.title}`}
+        onClick={() => playback.play(source)}
+      >
+        <Icon size={12} aria-hidden="true" />
+      </button>
+      <button
+        type="button"
+        className="track-queue"
+        aria-label={`Add ${album.title} to queue`}
+        onClick={() => playback.controls.enqueue(playback.item)}
+      >
+        <ListPlus size={14} aria-hidden="true" />
+      </button>
+    </span>
   )
 }
 
@@ -106,7 +116,7 @@ export function AlbumReferencePlayButton({
   const controls = usePlaybackControls()
   const current = view.current?.albumId === id
   const playing = current && view.snapshot !== null && !view.snapshot.paused
-  const playback = useMutation({
+  const playback = useMutation<PlayableItem | null, Error, 'play' | 'queue'>({
     mutationFn: async () =>
       albumPlayable(
         await client.fetchQuery({
@@ -119,8 +129,10 @@ export function AlbumReferencePlayButton({
             ),
         }),
       ),
-    onSuccess: (item) => {
-      if (item) playFromView(controls, view, item, current, source)
+    onSuccess: (item, action) => {
+      if (!item) return
+      if (action === 'queue') controls.enqueue(item)
+      else playFromView(controls, view, item, current, source)
     },
   })
   if (!view.enabled || playback.data === null)
@@ -129,23 +141,39 @@ export function AlbumReferencePlayButton({
     )
   const Icon = playing ? Pause : Play
   return (
-    <button
-      type="button"
-      className="track-play"
-      disabled={playback.isPending}
-      data-current={current}
-      aria-label={`${playing ? 'Pause' : 'Play'} ${title}`}
-      title={
-        playback.isError
-          ? 'Could not load album playback. Try again.'
-          : undefined
-      }
-      onClick={() =>
-        current && !source ? controls.toggle() : playback.mutate()
-      }
-    >
-      <Icon size={12} aria-hidden="true" />
-    </button>
+    <span className="inline-flex shrink-0 items-center">
+      <button
+        type="button"
+        className="track-play"
+        disabled={playback.isPending}
+        data-current={current}
+        aria-label={`${playing ? 'Pause' : 'Play'} ${title}`}
+        title={
+          playback.isError
+            ? 'Could not load album playback. Try again.'
+            : undefined
+        }
+        onClick={() =>
+          current && !source ? controls.toggle() : playback.mutate('play')
+        }
+      >
+        <Icon size={12} aria-hidden="true" />
+      </button>
+      <button
+        type="button"
+        className="track-queue"
+        aria-label={`Add ${title} to queue`}
+        disabled={playback.isPending}
+        title={
+          playback.isError
+            ? 'Could not load album playback. Try again.'
+            : undefined
+        }
+        onClick={() => playback.mutate('queue')}
+      >
+        <ListPlus size={14} aria-hidden="true" />
+      </button>
+    </span>
   )
 }
 
@@ -415,7 +443,29 @@ export function LibraryTrackPlayButton({
   )
 }
 
-/** Adds one library track to the queue; shown while its row (a `group`) is hovered. */
+/** Keeps compact playback actions together in rows and related-item lists. */
+export function LibraryTrackInlinePlayButtons({
+  track,
+  position,
+  source,
+}: {
+  track: LibraryTrackSource
+  position?: number
+  source?: () => PlaybackSource
+}) {
+  return (
+    <span className="inline-flex shrink-0 items-center">
+      <LibraryTrackPlayButton
+        track={track}
+        position={position}
+        source={source}
+      />
+      <LibraryTrackQueueButton track={track} />
+    </span>
+  )
+}
+
+/** Adds one library track to the queue. */
 export function LibraryTrackQueueButton({
   track,
 }: {
@@ -427,7 +477,7 @@ export function LibraryTrackQueueButton({
   return (
     <button
       type="button"
-      className="track-queue group-hover:opacity-100"
+      className="track-queue"
       aria-label={`Add ${track.title} to queue`}
       onClick={() => controls.enqueue(item)}
     >

@@ -11,6 +11,7 @@ import {
 } from '@repo/schemas/subscriptions'
 import ServiceIconLinks from './service-icon-links'
 import { DetailLink } from './detail-link'
+import { DetailSourceTabs } from './detail-source-tabs'
 import MediaArtwork from './media-artwork'
 import { formatCount } from '@/utils/youtube'
 import {
@@ -136,39 +137,15 @@ function ItemDetails({
   onFilter: (filter: BrowseFilter) => void
 }) {
   const typeLabel = subscriptionTypeLabels[item.type]
-  return (
-    <article className={styles.details}>
-      <div className={styles.detailThumb}>
-        <SubscriptionThumbnail item={item} />
-      </div>
-      <h1 className={styles.detailTitle}>
-        {item.title}{' '}
-        <ServiceIconLinks
-          links={[
-            {
-              provider: item.type,
-              label: item.type === 'youtube' ? 'YouTube' : 'Spotify',
-              url: item.url,
-            },
-          ]}
-        />
-      </h1>
-      <div className={styles.detailChannel}>
-        <SourceAvatar src={item.sourceThumbnailUrl} size="large" />
-        <DetailLink kind="channel" id={item.sourceId} className="metadata-tag">
-          {item.sourceTitle}
-        </DetailLink>
-        <ServiceIconLinks
-          links={[
-            {
-              provider: item.type,
-              label:
-                item.type === 'youtube' ? 'YouTube channel' : 'Spotify show',
-              url: subscriptionSourceUrl(item.type, item.sourceId),
-            },
-          ]}
-        />
-      </div>
+  const provider = item.type === 'youtube' ? 'YouTube' : 'Spotify'
+  const itemLink = { provider: item.type, label: provider, url: item.url }
+  const sourceLink = {
+    provider: item.type,
+    label: item.type === 'youtube' ? 'YouTube channel' : 'Spotify show',
+    url: subscriptionSourceUrl(item.type, item.sourceId),
+  }
+  const overview = (
+    <>
       <dl className="detail-metrics">
         <div>
           <dt>Type</dt>
@@ -238,6 +215,39 @@ function ItemDetails({
       {item.description && (
         <p className={styles.description}>{item.description}</p>
       )}
+    </>
+  )
+  return (
+    <article className={styles.details}>
+      <div className={styles.detailThumb}>
+        <SubscriptionThumbnail item={item} />
+      </div>
+      <h1 className={styles.detailTitle}>
+        {item.title} <ServiceIconLinks links={[itemLink]} />
+      </h1>
+      <div className={styles.detailChannel}>
+        <SourceAvatar src={item.sourceThumbnailUrl} size="large" />
+        <DetailLink kind="channel" id={item.sourceId} className="metadata-tag">
+          {item.sourceTitle}
+        </DetailLink>
+        <ServiceIconLinks links={[sourceLink]} />
+      </div>
+      <DetailSourceTabs
+        label="Subscription details"
+        overviewLabel="Overview"
+        sources={{
+          rows: [
+            {
+              id: item.type,
+              label: provider,
+              identifier: item.id,
+              links: [itemLink],
+            },
+          ],
+        }}
+      >
+        {overview}
+      </DetailSourceTabs>
     </article>
   )
 }

@@ -173,6 +173,18 @@ test('collection deep links open members in source order without renumbering gap
   assert.match(drawer, /aria-label="Close details"/)
 })
 
+test('collection Sources displays only saved collection destinations', async () => {
+  const html = await render('collection=collection&tab=sources')
+  const drawer = html.slice(
+    html.indexOf('aria-label="Film collection details"'),
+  )
+  const table = drawer.slice(drawer.indexOf('<table'))
+  assert.match(table, /aria-label="Sources"/)
+  assert.match(table, />Fixture</)
+  assert.match(table, /href="https:\/\/example.test\/collections\/17"/)
+  assert.doesNotMatch(drawer, /aria-label="Collection films"|Refresh selected/)
+})
+
 test('album and track navigation retain Playlists', async () => {
   for (const path of ['/albums', '/tracks']) {
     const html = await render('', path)

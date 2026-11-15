@@ -4,6 +4,7 @@ import {
   detailEntries,
   detailEntryParams,
   detailPageHref,
+  userDetailId,
   withoutDetailEntries,
   type DetailEntry,
 } from './detail-inspector'
@@ -29,6 +30,25 @@ test('cross-kind stacks preserve workspace parameters and each view when copied 
   const back = detailEntryParams('/albums', linked, stack.slice(0, -1))
   assert.deepEqual(detailEntries('/albums', back), stack.slice(0, -1))
   assert.equal(back.get('tab'), 'existing workspace tab')
+})
+
+test('User uses one inspector entry and keeps a standalone scoped page', () => {
+  const workspace = new URLSearchParams({ view: 'table', q: 'Fixture' })
+  const user: DetailEntry = { kind: 'user', id: userDetailId }
+  const url = detailEntryParams('/tracks', workspace, [user])
+  assert.deepEqual(detailEntries('/tracks', url), [user])
+  assert.deepEqual(withoutDetailEntries('/tracks', url), workspace)
+  assert.equal(
+    detailPageHref(user, new URLSearchParams({ mediaType: 'track' })),
+    '/user?mediaType=track',
+  )
+  assert.deepEqual(
+    detailEntries(
+      '/tracks',
+      detailEntryParams('/tracks', workspace, [{ ...user, id: 'invalid' }]),
+    ),
+    [],
+  )
 })
 
 test('existing inspector links normalize without losing tabs or filters', () => {
@@ -74,5 +94,20 @@ test('invalid inspector state falls back to the legacy detail or original worksp
       new URLSearchParams({ tab: 'sync' }),
     ),
     '/playlists/playlist%2F1?tab=sync',
+  )
+})
+
+test('legacy film history links preserve the detail tab and browse filters', () => {
+  const params = new URLSearchParams({
+    item: 'film-1',
+    tab: 'history',
+    q: 'Fixture',
+  })
+  assert.deepEqual(detailEntries('/films', params), [
+    { kind: 'film', id: 'film-1', view: 'tab=history' },
+  ])
+  assert.deepEqual(
+    withoutDetailEntries('/films', params),
+    new URLSearchParams({ q: 'Fixture' }),
   )
 })

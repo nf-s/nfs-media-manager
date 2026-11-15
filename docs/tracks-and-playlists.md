@@ -69,7 +69,7 @@ Selecting a playlist opens it in the same inspector used for albums and tracks. 
 The header shows the name, source, owner, track count and duration, **Filter tracks** (Tracks filtered by the playlist, as a required filter) and a Spotify link when the playlist has one.
 
 - **Tracks** uses the same table as album track lists. A playlist shows entries in stored order with their added dates, followed by legacy album members. It reads 100 entries per page (`GET /api/v1/playlists/:id`) and loads more on scroll. Track and album titles open the corresponding library detail in the inspector. Scroll the table horizontally on phones to reach all visible columns.
-- **Sync** sets the schedule (`PUT /api/v1/playlists/:id/sync-schedule`) and has **Sync now**, which queues the playlist's normal import (Liked Songs or the Spotify playlist) and shows the server's message if it is refused, for example a playlist missing from the stored playlist list. It shows when the playlist was last checked, when its contents were last stored, and the next scheduled import or why there is none: the schedule is off, an import is in progress, or the last import failed or was cancelled and waits for **Sync now**. The latest import job shows its status, "N of M pages" read (or "N pages" until the total is known), its error, its finish time and a link to it in Jobs. While it is queued or running the drawer reads the playlist again every two seconds, and when it ends the playlist, Playlists, Tracks and album playlist views are refreshed. A legacy playlist says it is not synced from Spotify.
+- **Sources** shows the stored playlist source and last import date. For a Spotify playlist or Liked Songs, it includes the schedule (`PUT /api/v1/playlists/:id/sync-schedule`) and **Sync now**, which queues the normal import and displays any refusal. It shows the last check, next scheduled import, and latest import job with its status, progress, error, finish time and Jobs link. The drawer polls while the job is queued or running and refreshes affected views when it ends.
 
 ## Adding an album to a playlist
 
@@ -100,6 +100,8 @@ The subsequent import reuses the stored library track when its Spotify ID is alr
 ## Browsing tracks
 
 List is the default Tracks view. List, Grid and Table show artwork when available, including artwork inherited from the linked album. Use Table to enable the **Source** and **Spotify match** columns. Search, [AI search](ai-search.md), filters, ranges and sorting use the same URL parameters as albums.
+
+**Artist** groups by the first billed track artist, then release year and album name. **Album** sorts by album name, then release date. **Released** sorts by release date and keeps ties in album order. Both use the linked album's title and date when available, so edition names and dates reported for individual tracks do not split the release. Other sorts break ties by the album's billed artist, release year and title. The stored album position preserves disc and track order. Secondary keys stay ascending in either sort direction, with missing values last.
 
 | Field                    | Source                                                                       |
 | ------------------------ | ---------------------------------------------------------------------------- |

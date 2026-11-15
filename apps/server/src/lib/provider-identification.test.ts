@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   canIdentifyMedia,
   hasProviderIdentifier,
-} from './provider-identification'
+} from '@repo/schemas/provider-identification'
 
 describe('provider-specific album identification', () => {
   it('accepts shared validated RYM URLs for Serply, including corrected review URLs', () => {

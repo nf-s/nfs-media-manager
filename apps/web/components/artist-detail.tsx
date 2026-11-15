@@ -24,7 +24,6 @@ import { artistBrowseHref, artistTagBrowseHref } from '@/utils/creator-browse'
 import { safeRatingHref } from '@/utils/provider-ratings'
 import { formatTrackDuration } from '@/utils/track-browse'
 import {
-  ArtistProfileHistory,
   ArtistProfileLinks,
   ArtistProfileSources,
 } from './artist-profile-sources'
@@ -37,7 +36,10 @@ import {
 } from './creator-library-table'
 import { useDetailView } from './detail-inspector-context'
 import MediaArtwork from './media-artwork'
-import { AlbumInlinePlayButton, LibraryTrackPlayButton } from './play-controls'
+import {
+  AlbumInlinePlayButton,
+  LibraryTrackInlinePlayButtons,
+} from './play-controls'
 import { PlaylistPlayButton } from './playlist-detail'
 import { useConfig } from './providers'
 
@@ -78,7 +80,7 @@ const trackColumns: CreatorLibraryColumn<TrackListItem>[] = [
         id={track.id}
         title={track.title}
         context={track.album?.title ?? track.albumName ?? undefined}
-        action={<LibraryTrackPlayButton track={track} />}
+        action={<LibraryTrackInlinePlayButtons track={track} />}
       />
     ),
   },
@@ -148,7 +150,6 @@ const tabs = [
   { value: 'tracks', label: 'Tracks' },
   { value: 'playlists', label: 'Playlists' },
   { value: 'sources', label: 'Sources' },
-  { value: 'history', label: 'History' },
 ]
 
 function ArtistOverview({ artist }: { artist: Artist }) {
@@ -221,13 +222,19 @@ function ArtistOverview({ artist }: { artist: Artist }) {
 export function ArtistDetail({ id }: { id: string }) {
   const { apiBaseUrl } = useConfig()
   const view = useDetailView()
-  const activeTab = view.params.get('tab')
+  const activeTab =
+    view.params.get('tab') === 'history' ? 'sources' : view.params.get('tab')
   const tab = tabs.find(({ value }) => value === activeTab)?.value ?? 'overview'
   const path = `/api/v1/artists/${encodeURIComponent(id)}`
   const query = useQuery({
     queryKey: ['artist', id],
     queryFn: ({ signal }) =>
-      fetchApiData(apiBaseUrl, path, ArtistDetailSchema, { signal }),
+      fetchApiData(
+        apiBaseUrl,
+        `${path}?includeHistory=false`,
+        ArtistDetailSchema,
+        { signal },
+      ),
   })
   if (!query.data)
     return (
@@ -332,9 +339,6 @@ export function ArtistDetail({ id }: { id: string }) {
         </TabsContent>
         <TabsContent value="sources">
           <ArtistProfileSources id={id} snapshots={artist.providers} />
-        </TabsContent>
-        <TabsContent value="history">
-          <ArtistProfileHistory id={id} />
         </TabsContent>
       </Tabs>
     </article>

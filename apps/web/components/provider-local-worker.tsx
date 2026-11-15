@@ -1,6 +1,11 @@
 'use client'
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import {
+  queryOptions,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query'
 import {
   ProviderLocalWorkerControlResultSchema,
   ProviderLocalWorkerControlSchema,
@@ -15,10 +20,8 @@ const workerPath = (provider: string) =>
   `/api/v1/cloud/providers/${encodeURIComponent(provider)}/local-worker`
 const workerKey = (provider: string) => ['providers', 'local-worker', provider]
 
-export function useProviderLocalWorker(provider: ProviderSummary | undefined) {
-  const { apiBaseUrl } = useConfig()
-  const id = provider?.supportsLocalWorker ? provider.id : ''
-  return useQuery({
+export function providerLocalWorkerQuery(apiBaseUrl: string, id: string) {
+  return queryOptions({
     queryKey: workerKey(id),
     enabled: id !== '',
     queryFn: ({ signal }) =>
@@ -33,6 +36,16 @@ export function useProviderLocalWorker(provider: ProviderSummary | undefined) {
     staleTime: 0,
     refetchInterval: 5000,
   })
+}
+
+export function useProviderLocalWorker(provider: ProviderSummary | undefined) {
+  const { apiBaseUrl } = useConfig()
+  return useQuery(
+    providerLocalWorkerQuery(
+      apiBaseUrl,
+      provider?.supportsLocalWorker ? provider.id : '',
+    ),
+  )
 }
 
 export function useProviderLocalWorkerMode(provider: string) {

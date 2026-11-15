@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { DetailLink } from './detail-link'
-import { LibraryTrackPlayButton } from './play-controls'
+import { LibraryTrackInlinePlayButtons } from './play-controls'
 import { useEffect, useState } from 'react'
 import { Link2 } from 'lucide-react'
 import {
@@ -278,7 +278,7 @@ export function LastfmTrackMatchList() {
               >
                 <TableCell>
                   <div className="secondary-cell-actions">
-                    <LibraryTrackPlayButton track={track} />
+                    <LibraryTrackInlinePlayButtons track={track} />
                     <SecondaryCell text={track.title}>
                       <DetailLink kind="track" id={track.id}>
                         {track.title}

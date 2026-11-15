@@ -40,7 +40,7 @@ const AlbumDetailTabSchema = z.enum([
   'playlists',
   'listening',
   'edit',
-  'history',
+  'sources',
 ])
 
 function savedAlbumTrackView(value: string | null, id: string) {
@@ -59,6 +59,8 @@ export function albumTrackView(value: string | null, id: string) {
 }
 
 export function albumDetailTab(params: URLSearchParams, id: string) {
+  if (params.get('tab') === 'history' || params.get('tab') === 'sources')
+    return 'sources'
   if (!savedAlbumTrackView(params.get('albumTrackView'), id)) return 'overview'
   const tab = AlbumDetailTabSchema.safeParse(params.get('tab'))
   return tab.success ? tab.data : 'overview'

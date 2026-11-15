@@ -12,7 +12,6 @@ import {
   FilmDetailSchema,
   AlbumPatchSchema,
   FilmPatchSchema,
-  MediaHistorySchema,
   type AlbumDetail,
   type FilmDetail,
 } from '@repo/schemas/media'
@@ -27,8 +26,6 @@ import {
   type BrowseField,
   type BrowseFilter,
 } from '@repo/schemas/browse'
-import { ProviderSummarySchema } from '@repo/schemas/provider'
-import { JobSchema } from '@repo/schemas/job'
 import { Button } from '@repo/ui/components/ui/button'
 import {
   Tabs,
@@ -41,8 +38,7 @@ import { useConfig } from './providers'
 import { fetchApiData } from '@/utils/api'
 import { invalidateMediaItem } from '@/utils/query-cache'
 import MediaArtwork from './media-artwork'
-import MediaHistoryList from './media-history-list'
-import ProviderIdentifiers from './provider-identifiers'
+import MediaSources, { MediaEditHistory } from './media-sources'
 import { FilterButton, FilterIndicator } from './filter-affordance'
 import { BrowseFilterChips, filterModeClass } from './browse-controls'
 import { parseAlbumBrowseFiltersParam } from '@repo/schemas/media'
@@ -50,7 +46,6 @@ import DetailProviderLinks from './detail-provider-links'
 import { AlbumSpotifyLink } from './service-icon-links'
 import { useDetailView } from './detail-inspector-context'
 import { withoutDetailEntries } from '@/utils/detail-inspector'
-import AlbumProviderDetails from './album-provider-details'
 import { AlbumPlayButtons } from './play-controls'
 import {
   albumDetailTab,
@@ -308,9 +303,11 @@ export default function MediaDetail({
   const tab =
     mediaType === 'album'
       ? albumDetailTab(view.params, id)
-      : activeTab === 'edit' || activeTab === 'history'
-        ? activeTab
-        : 'overview'
+      : activeTab === 'sources' || activeTab === 'history'
+        ? 'sources'
+        : activeTab === 'edit'
+          ? 'edit'
+          : 'overview'
   function setTab(next: string) {
     if (mediaType === 'album')
       view.params.set(
@@ -321,7 +318,6 @@ export default function MediaDetail({
     else view.params.set('tab', next)
     view.replace(view.params)
   }
-  const [provider, setProvider] = useState('')
   const [saved, setSaved] = useState(false)
   const detail = useQuery({
     queryKey: [mediaType, id],
@@ -336,39 +332,6 @@ export default function MediaDetail({
         `/api/v1/${collection}/fields`,
         z.array(BrowseFieldSchema),
       ),
-  })
-  const history = useQuery({
-    queryKey: ['history', id],
-    enabled: tab === 'history',
-    queryFn: () =>
-      fetchApiData(
-        apiBaseUrl,
-        `/api/v1/media/${id}/history`,
-        MediaHistorySchema,
-      ),
-  })
-  const providers = useQuery({
-    queryKey: ['providers'],
-    enabled: tab === 'edit',
-    queryFn: () =>
-      fetchApiData(
-        apiBaseUrl,
-        '/api/v1/providers',
-        z.array(ProviderSummarySchema),
-      ),
-  })
-  const rescrape = useMutation({
-    mutationFn: () =>
-      fetchApiData(apiBaseUrl, `/api/v1/media/${id}/rescrape`, JobSchema, {
-        method: 'POST',
-        body: JSON.stringify({ provider }),
-      }),
-    onSuccess: () =>
-      Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['jobs'] }),
-        queryClient.invalidateQueries({ queryKey: ['job-activity'] }),
-        queryClient.invalidateQueries({ queryKey: [`${mediaType}-selection`] }),
-      ]),
   })
   async function onSaved() {
     await invalidateMediaItem(queryClient, mediaType, id)
@@ -559,23 +522,11 @@ export default function MediaDetail({
           {item.mediaType === 'album' && (
             <TabsTrigger value="listening">Listening</TabsTrigger>
           )}
+          <TabsTrigger value="sources">Sources</TabsTrigger>
           <TabsTrigger value="edit">Edit</TabsTrigger>
-          <TabsTrigger value="history">History</TabsTrigger>
         </TabsList>
         <TabsContent value="overview">
           {item.summary && <p className="detail-summary">{item.summary}</p>}
-          {item.mediaType === 'film' &&
-            item.metadata?.nfo &&
-            typeof item.metadata.nfo === 'object' &&
-            !Array.isArray(item.metadata.nfo) &&
-            typeof item.metadata.nfo.path === 'string' && (
-              <dl className="my-3 text-sm">
-                <dt className="quiet">NFO file</dt>
-                <dd className="break-all select-text font-mono text-xs">
-                  {item.metadata.nfo.path}
-                </dd>
-              </dl>
-            )}
           <dl className="detail-metrics">
             {browseFields
               .filter((field) => field.type !== 'text' && !field.rating)
@@ -681,9 +632,6 @@ export default function MediaDetail({
                 )
               })}
           </div>
-          {item.mediaType === 'album' && (
-            <AlbumProviderDetails details={item.providerDetails ?? []} />
-          )}
         </TabsContent>
         {item.mediaType === 'album' && (
           <TabsContent value="playlists">
@@ -701,52 +649,18 @@ export default function MediaDetail({
           </TabsContent>
         )}
         <TabsContent value="edit" onInputCapture={() => setSaved(false)}>
-          <ProviderIdentifiers item={item} onSaved={onSaved} />
           <EditMedia key={item.updatedAt} item={item} onSaved={onSaved} />
           {saved && <p role="status">Changes saved.</p>}
-          <div className="rescrape-row">
-            <select
-              aria-label="Rescrape provider"
-              value={provider}
-              onChange={(event) => setProvider(event.target.value)}
-            >
-              <option value="">Choose provider</option>
-              {providers.data
-                ?.filter(
-                  (provider) =>
-                    provider.supportsScrape &&
-                    provider.mediaTypes.includes(mediaType),
-                )
-                .map((provider) => (
-                  <option key={provider.id} value={provider.id}>
-                    {provider.displayName}
-                  </option>
-                ))}
-            </select>
-            <Button
-              variant="outline"
-              disabled={!provider || rescrape.isPending}
-              onClick={() => rescrape.mutate()}
-            >
-              Re-scrape this item
-            </Button>
-            {rescrape.data && (
-              <Link href={`/jobs?jobId=${rescrape.data.id}`}>View job</Link>
-            )}
-            {rescrape.isError && <p role="alert">{rescrape.error.message}</p>}
-          </div>
+          <MediaEditHistory id={item.id} />
         </TabsContent>
-        <TabsContent value="history">
-          {history.isPending ? (
-            <p>Loading history...</p>
-          ) : history.isError ? (
-            <p role="alert">
-              History unavailable.{' '}
-              <Button onClick={() => history.refetch()}>Retry</Button>
-            </p>
-          ) : (
-            <MediaHistoryList history={history.data} />
-          )}
+        <TabsContent value="sources">
+          <MediaSources
+            key={item.id}
+            item={item}
+            onSaved={async () => {
+              await invalidateMediaItem(queryClient, mediaType, id)
+            }}
+          />
         </TabsContent>
       </Tabs>
     </div>

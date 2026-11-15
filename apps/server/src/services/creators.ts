@@ -20,6 +20,7 @@ import {
   PersonPageSchema,
   PersonSummarySchema,
   type ArtistAlbumQuery,
+  type ArtistDetailQuery,
   type ArtistHistoryQuery,
   type ArtistPlaylistQuery,
   type ArtistQuery,
@@ -331,7 +332,7 @@ function combineProfiles(providers: ArtistProviderSnapshot[]): ArtistProfile {
   return profile
 }
 
-export async function getArtist(id: string) {
+export async function getArtist(id: string, query: ArtistDetailQuery = {}) {
   const directory = artistDirectory(undefined, id).as('directory')
   const artistId = sql`${id}`
   const [summary] = await db
@@ -350,7 +351,7 @@ export async function getArtist(id: string) {
     throw new ServerError({ statusCode: 404, message: 'Artist not found' })
   const [providers, history] = await Promise.all([
     listCurrentArtistProfiles(id),
-    listArtistProfileHistory(id, 20),
+    query.includeHistory === 'false' ? [] : listArtistProfileHistory(id, 20),
   ])
   return ArtistDetailSchema.parse({
     ...summary,

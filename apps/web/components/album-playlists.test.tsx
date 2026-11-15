@@ -88,7 +88,7 @@ function render(data: Array<[unknown[], unknown]>) {
   }
 }
 
-test('album playlists list memberships with track counts and linked tracks', () => {
+test('album playlists list memberships without a duplicate track library section', () => {
   const html = render([
     [['spotify-account'], account],
     [['playlists'], playlists],
@@ -114,8 +114,8 @@ test('album playlists list memberships with track counts and linked tracks', () 
   assert.ok(html.includes('class="metadata-tag" href="/playlists/p1"'))
   assert.match(html, /2 tracks/)
   assert.doesNotMatch(html, /0 tracks/)
-  assert.match(html, /Tracks in the track library/)
-  assert.match(html, /href="\/tracks\/track-1">First track/)
+  assert.doesNotMatch(html, /Tracks in the track library/)
+  assert.doesNotMatch(html, /href="\/tracks\/track-1"/)
 })
 
 test('add to playlist offers only playlists that accept albums, even with no memberships', () => {

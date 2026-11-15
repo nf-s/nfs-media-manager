@@ -18,6 +18,8 @@ import { SubscriptionItemDetails } from './subscription-item-details'
 import { ArtistDetail } from './artist-detail'
 import { PersonDetail } from './person-detail'
 import { ChannelDetail } from './channel-detail'
+import UserPageClient from './pages/user-page-client'
+import { libraryViewForPath } from '@/utils/media-scope'
 import {
   detailBrowseKind,
   detailPageHref,
@@ -36,6 +38,7 @@ const labels = {
   artist: 'Artist details',
   person: 'Person details',
   channel: 'Channel details',
+  user: 'User panel',
 }
 
 type InspectorOptions = {
@@ -109,6 +112,11 @@ export function DetailInspector(options: InspectorOptions) {
   const viewParams = new URLSearchParams(target.view)
   for (const key of new Set(viewParams.keys())) pageParams.delete(key)
   for (const [key, value] of viewParams) pageParams.append(key, value)
+  if (activeKind === 'user')
+    pageParams.set(
+      'mediaType',
+      libraryViewForPath(pathname, params.get('mediaType')),
+    )
 
   return (
     <>
@@ -117,6 +125,36 @@ export function DetailInspector(options: InspectorOptions) {
         ref={inspector}
         tabIndex={-1}
         aria-label={labels[activeKind]}
+        onDismiss={nav.close}
+        header={
+          <>
+            <div className="flex items-center gap-3">
+              {nav.canGoBack && (
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 hover:bg-[var(--chip)]"
+                  onClick={nav.back}
+                >
+                  <ArrowLeft size={14} aria-hidden="true" /> Back
+                </button>
+              )}
+              <Link
+                className="hover:underline"
+                href={detailPageHref(target, pageParams)}
+                prefetch={false}
+              >
+                Open page
+              </Link>
+            </div>
+            <button
+              type="button"
+              aria-label="Close details"
+              onClick={nav.close}
+            >
+              <X size={18} aria-hidden="true" />
+            </button>
+          </>
+        }
         onScrollCapture={(event) => {
           if (!(event.target instanceof HTMLElement)) return
           const area = event.target.matches('.inspector-scroll')
@@ -135,29 +173,6 @@ export function DetailInspector(options: InspectorOptions) {
           })
         }}
       >
-        <div className="detail-topbar">
-          <div className="flex items-center gap-3">
-            {nav.canGoBack && (
-              <button
-                type="button"
-                className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 hover:bg-[var(--chip)]"
-                onClick={nav.back}
-              >
-                <ArrowLeft size={14} aria-hidden="true" /> Back
-              </button>
-            )}
-            <Link
-              className="hover:underline"
-              href={detailPageHref(target, pageParams)}
-              prefetch={false}
-            >
-              Open page
-            </Link>
-          </div>
-          <button type="button" aria-label="Close details" onClick={nav.close}>
-            <X size={18} aria-hidden="true" />
-          </button>
-        </div>
         <InspectorEntryContext.Provider value={nav}>
           <InspectorContent
             key={nav.entryKey}
@@ -192,7 +207,9 @@ function InspectorContent({
     )
   return (
     <div className="inspector-scroll">
-      {target.kind === 'artist' ? (
+      {target.kind === 'user' ? (
+        <UserPageClient />
+      ) : target.kind === 'artist' ? (
         <ArtistDetail id={target.id} />
       ) : target.kind === 'person' ? (
         <PersonDetail id={target.id} />

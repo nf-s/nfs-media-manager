@@ -1,6 +1,7 @@
 import { z } from 'zod'
 
 const inspectorParam = 'inspect'
+export const userDetailId = 'account'
 const browseDetailKinds = {
   '/albums': 'album',
   '/films': 'film',
@@ -19,6 +20,7 @@ const DetailTargetSchema = z.object({
     'artist',
     'person',
     'channel',
+    'user',
   ]),
   id: z.string().min(1).max(500),
 })
@@ -26,7 +28,7 @@ export type DetailTarget = z.infer<typeof DetailTargetSchema>
 
 const DetailEntrySchema = DetailTargetSchema.extend({
   view: z.string().max(4000).optional(),
-})
+}).refine(({ kind, id }) => kind !== 'user' || id === userDetailId)
 export type DetailEntry = z.infer<typeof DetailEntrySchema>
 
 export function sameDetail(
@@ -67,7 +69,7 @@ function legacyDetail(pathname: string, params: URLSearchParams) {
   if (!parsed.success) return null
   const keys = {
     album: ['item', 'tab', 'albumTrackView'],
-    film: ['item'],
+    film: ['item', 'tab'],
     track: ['item'],
     subscription: ['item'],
     playlist: ['item', 'playlist', 'tab', 'playlistView'],
@@ -75,6 +77,7 @@ function legacyDetail(pathname: string, params: URLSearchParams) {
     artist: [],
     person: [],
     channel: [],
+    user: [],
   }[parsed.data.kind]
   const view = new URLSearchParams()
   for (const key of keys) {
@@ -132,6 +135,8 @@ export function detailEntryParams(
 }
 
 export function detailPageHref(target: DetailTarget, view?: URLSearchParams) {
+  if (target.kind === 'user')
+    return detailLocation('/user', new URLSearchParams(view))
   const id = encodeURIComponent(target.id)
   const collection = target.kind === 'person' ? 'people' : `${target.kind}s`
   return detailLocation(`/${collection}/${id}`, new URLSearchParams(view))

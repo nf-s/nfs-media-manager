@@ -105,7 +105,7 @@ Google scraping is unconditionally retired in this application, independent of a
 
 ## Additional Stored Album Details
 
-Album details expose a compact, collapsed `More album info` section from the latest retained MusicBrainz, Discogs and Last.fm payloads. This is a read-only projection: opening an album does not request metadata, rewrite snapshots or reapply provider values over manual edits.
+In album **Sources**, open a provider's history for its retained snapshots and jobs. MusicBrainz, Discogs and Last.fm also offer a collapsed **More album info** section using the latest stored results. Opening album details or history uses stored data. Edit a provider ID on its Sources row and use **Refresh selected** or **Refresh all eligible** to queue new work.
 
 MusicBrainz contributes release types, disambiguation, artist countries, weighted original tags and existing URL relationships. Discogs contributes edition-specific labels/catalogue numbers, formats, companies, credits, notes, native track positions and have/want counts. These counts describe the fetched release, not every edition. Last.fm contributes wiki text/publication date, source track links and original tags. Provider prose is rendered as text, never executable HTML.
 

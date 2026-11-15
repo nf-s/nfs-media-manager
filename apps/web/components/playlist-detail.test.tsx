@@ -295,7 +295,8 @@ test('track rows have play and queue buttons while playback is on', async () => 
 
 test('the sync tab shows the schedule, progress and the latest job', async () => {
   const html = drawerOf(await render('playlist=playlist-1&tab=sync'))
-  assert.match(html, /aria-selected="true"[^>]*>Sync</)
+  assert.match(html, /aria-selected="true"[^>]*>Sources</)
+  assert.match(html, /aria-label="Sources"/)
   assert.match(html, /<option value="daily" selected="">Daily<\/option>/)
   for (const label of [
     'Off',

@@ -801,3 +801,156 @@ describe('free-text browse search', () => {
     }
   })
 })
+
+it('orders Tracks by artist, album, release and equal listening totals in album sequence', async () => {
+  const { queryBrowseIds } = await import('@/services/browse')
+  await pool.query(`
+    insert into artist (id, name) values
+      ('order-amber', 'Amber Artist'), ('order-zinc', 'Zinc Artist');
+    insert into media_item (id, slug, title, media_type, release_date) values
+      ('order-album-zephyr', 'order-album-zephyr', 'Zephyr Records', 'album', '1990-02-10'),
+      ('order-album-birch', 'order-album-birch', 'Birch Sounds', 'album', '1990-11-10'),
+      ('order-album-kite', 'order-album-kite', 'Kite Collection', 'album', '2001-05-10'),
+      ('order-album-unknown', 'order-album-unknown', 'Undated Album', 'album', null);
+    insert into album (media_item_id) select id from media_item where id like 'order-album-%';
+    insert into media_credit (media_item_id, artist_id, role)
+    select media_item_id, case when media_item_id = 'order-album-kite'
+      then 'order-zinc' else 'order-amber' end, 'artist'
+    from album where media_item_id like 'order-album-%';
+
+    insert into media_item (id, slug, title, media_type) values
+      ('order-a', 'order-a', 'Natural-order-fixture Disc two opener', 'track'),
+      ('order-z', 'order-z', 'Natural-order-fixture Disc one opener', 'track'),
+      ('order-m', 'order-m', 'Natural-order-fixture Disc one closer', 'track'),
+      ('order-b', 'order-b', 'Natural-order-fixture Birch opener', 'track'),
+      ('order-k', 'order-k', 'Natural-order-fixture Kite opener', 'track'),
+      ('order-u', 'order-u', 'Natural-order-fixture Undated track', 'track'),
+      ('order-n', 'order-n', 'Natural-order-fixture Known album without position', 'track'),
+      ('order-q', 'order-q', 'Natural-order-fixture Unknown album and artist', 'track');
+    update media_item set release_date = '2010-09-01' where id = 'order-a';
+    insert into library_track (media_item_id, album_media_item_id, scrobble_count) values
+      ('order-a', 'order-album-zephyr', 8),
+      ('order-z', 'order-album-zephyr', 8),
+      ('order-m', 'order-album-zephyr', 8),
+      ('order-b', 'order-album-birch', 8),
+      ('order-k', 'order-album-kite', 10),
+      ('order-u', 'order-album-unknown', 8),
+      ('order-n', 'order-album-zephyr', 8),
+      ('order-q', null, 8);
+    update library_track set album_name = 'Alternate edition title' where media_item_id = 'order-a';
+    insert into media_credit (media_item_id, artist_id, role)
+    select media_item_id, case when media_item_id in ('order-k', 'order-a')
+      then 'order-zinc' else 'order-amber' end, 'artist'
+    from library_track where media_item_id like 'order-%' and media_item_id <> 'order-q';
+
+    -- Stored Spotify positions follow disc number and track number across the release.
+    insert into track (id, album_media_item_id, track_media_item_id, title, position) values
+      ('order-entry-a', 'order-album-zephyr', 'order-a', 'Disc two opener', 3),
+      ('order-entry-z', 'order-album-zephyr', 'order-z', 'Disc one opener', 1),
+      ('order-entry-m', 'order-album-zephyr', 'order-m', 'Disc one closer', 2),
+      ('order-entry-b', 'order-album-birch', 'order-b', 'Birch opener', 1),
+      ('order-entry-k', 'order-album-kite', 'order-k', 'Kite opener', 1),
+      ('order-entry-u', 'order-album-unknown', 'order-u', 'Undated track', 1);
+  `)
+
+  const order = async (
+    sortBy: string,
+    direction: 'asc' | 'desc',
+    page?: number,
+    size?: number,
+  ) =>
+    (
+      await queryBrowseIds(
+        'track',
+        TrackQuerySchema.parse({
+          q: 'natural-order-fixture',
+          sortBy,
+          direction,
+          page,
+          size,
+        }),
+      )
+    ).ids.map((id) => id.replace('order-', ''))
+
+  expect(await order('scrobbles', 'desc')).toEqual([
+    'k',
+    'b',
+    'z',
+    'm',
+    'a',
+    'n',
+    'u',
+    'q',
+  ])
+  expect(await order('scrobbles', 'asc')).toEqual([
+    'b',
+    'z',
+    'm',
+    'a',
+    'n',
+    'u',
+    'q',
+    'k',
+  ])
+  expect(await order('scrobbles', 'desc', 2, 3)).toEqual(['m', 'a', 'n'])
+  expect(await order('artist', 'asc')).toEqual([
+    'b',
+    'z',
+    'm',
+    'n',
+    'u',
+    'a',
+    'k',
+    'q',
+  ])
+  expect(await order('artist', 'desc')).toEqual([
+    'a',
+    'k',
+    'b',
+    'z',
+    'm',
+    'n',
+    'u',
+    'q',
+  ])
+  expect(await order('album', 'asc')).toEqual([
+    'b',
+    'k',
+    'u',
+    'z',
+    'm',
+    'a',
+    'n',
+    'q',
+  ])
+  expect(await order('album', 'desc')).toEqual([
+    'z',
+    'm',
+    'a',
+    'n',
+    'u',
+    'k',
+    'b',
+    'q',
+  ])
+  expect(await order('releaseDate', 'asc')).toEqual([
+    'z',
+    'm',
+    'a',
+    'n',
+    'b',
+    'k',
+    'u',
+    'q',
+  ])
+  expect(await order('releaseDate', 'desc')).toEqual([
+    'k',
+    'b',
+    'z',
+    'm',
+    'a',
+    'n',
+    'u',
+    'q',
+  ])
+})

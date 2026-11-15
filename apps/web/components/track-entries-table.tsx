@@ -22,8 +22,7 @@ import { TrackArtistLinks } from './creator-links'
 import { DetailLink } from './detail-link'
 import {
   AlbumReferencePlayButton,
-  LibraryTrackPlayButton,
-  LibraryTrackQueueButton,
+  LibraryTrackInlinePlayButtons,
 } from './play-controls'
 import ServiceIconLinks from './service-icon-links'
 import {
@@ -138,7 +137,7 @@ function TrackEntryCell({
   switch (column) {
     case 'position':
       return track ? (
-        <LibraryTrackPlayButton
+        <LibraryTrackInlinePlayButtons
           track={track}
           position={entry.position}
           source={source}
@@ -150,7 +149,7 @@ function TrackEntryCell({
       return track ? (
         <div className="secondary-cell-actions">
           {playInTitle && (
-            <LibraryTrackPlayButton track={track} source={source} />
+            <LibraryTrackInlinePlayButtons track={track} source={source} />
           )}
           <SecondaryCell text={track.title}>
             <DetailLink kind="track" id={track.id} className="table-title">
@@ -158,9 +157,6 @@ function TrackEntryCell({
             </DetailLink>
           </SecondaryCell>
           <ServiceIconLinks links={trackServiceLinks(track)} />
-          <span title={`Add ${track.title} to queue`}>
-            <LibraryTrackQueueButton track={track} />
-          </span>
         </div>
       ) : album ? (
         <div className="secondary-cell-actions">

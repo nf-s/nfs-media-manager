@@ -23,6 +23,7 @@ import {
   type JobProgress,
 } from '@repo/schemas/job'
 import type { JsonValue } from '@repo/schemas/common'
+import { canIdentifyMedia } from '@repo/schemas/provider-identification'
 import {
   ARTIST_ENRICHMENT_TASK,
   ArtistProfileProviderSchema,
@@ -64,7 +65,6 @@ import {
   createJobDiagnostics,
   providerResponseEvidence,
 } from '@/lib/job-diagnostics'
-import { canIdentifyMedia } from '@/lib/provider-identification'
 import { scrapeMediaType } from '@/lib/scrape-media-type'
 import { sanitizeAlbumProviderResult } from '@/lib/spotify-audio-features'
 import { importMediaTypeExpression } from '@/lib/import-media-type'

@@ -10,9 +10,9 @@ import {
 } from '@repo/schemas/film-selection'
 import type { AlbumListItem, FilmListItem } from '@repo/schemas/media'
 import type { ProviderSummary } from '@repo/schemas/provider'
+import { canIdentifyMedia } from '@repo/schemas/provider-identification'
 import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
-import { canIdentifyMedia } from '@/lib/provider-identification'
 import { mediaItem, providerCurrentState, providerSnapshot } from '@/schemas/db'
 import { listProviders } from './providers'
 import {

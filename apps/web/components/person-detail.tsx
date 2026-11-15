@@ -20,6 +20,7 @@ import {
 } from './creator-library-table'
 import { usePersonRoleFilter } from './person-role-filter'
 import { useConfig } from './providers'
+import { DetailSourceTabs } from './detail-source-tabs'
 
 export function PersonDetail({ id }: { id: string }) {
   const { apiBaseUrl } = useConfig()
@@ -62,7 +63,16 @@ export function PersonDetail({ id }: { id: string }) {
           ))}
         </div>
       </header>
-      <PersonFilms person={person} path={`${path}/films`} />
+      <DetailSourceTabs
+        label="Person details"
+        overviewLabel="Films"
+        sources={{
+          rows: [],
+          unavailable: 'No provider sources are stored for this person.',
+        }}
+      >
+        <PersonFilms person={person} path={`${path}/films`} />
+      </DetailSourceTabs>
     </article>
   )
 }

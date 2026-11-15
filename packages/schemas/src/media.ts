@@ -20,6 +20,7 @@ import {
   ExternalLinkSchema,
   JsonValueSchema,
   MediaTypeSchema,
+  PaginatedDataSchema,
   PaginationQuerySchema,
   PersonRoleSchema,
   PlaylistMembershipSchema,
@@ -179,6 +180,34 @@ export const MediaHistorySchema = z.object({
   mediaItemId: z.string(),
   events: z.array(MediaHistoryEventSchema),
 })
+
+export const SourceSnapshotSummarySchema = z.object({
+  id: z.string(),
+  provider: z.string(),
+  source: z.string().nullable(),
+  jobId: z.string().nullable(),
+  createdAt: z.string().datetime(),
+})
+export type SourceSnapshotSummary = z.infer<typeof SourceSnapshotSummarySchema>
+export const SourceSnapshotPageSchema = PaginatedDataSchema(
+  SourceSnapshotSummarySchema,
+)
+export const SourceSnapshotSchema = SourceSnapshotSummarySchema.extend({
+  data: JsonValueSchema,
+  normalizedData: JsonValueSchema,
+})
+export type SourceSnapshot = z.infer<typeof SourceSnapshotSchema>
+
+export const MediaSourcesSchema = z.object({
+  providers: z.array(
+    z.object({
+      id: z.string(),
+      latestSnapshot: SourceSnapshotSummarySchema.nullable(),
+    }),
+  ),
+  changes: z.array(MediaHistoryEventSchema),
+})
+export type MediaSources = z.infer<typeof MediaSourcesSchema>
 
 export const AlbumPatchSchema = z.object({
   title: z.string().min(1).optional(),

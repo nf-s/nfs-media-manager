@@ -76,7 +76,7 @@ afterAll(async () => {
   vi.unstubAllGlobals()
 })
 
-it('searches synthetic track titles without per-row metadata aggregation', async () => {
+it('reads album positions only for matching rows in a selective track search', async () => {
   const { queryBrowseIds, listBrowseFacets } = await import('@/services/browse')
   capturedQueries.length = 0
   expect(
@@ -107,7 +107,15 @@ it('searches synthetic track titles without per-row metadata aggregation', async
         row['QUERY PLAN'].flatMap((plan) => flattenPlan(plan.Plan)),
       )
       .filter((plan) => plan['Relation Name'] === 'track')
-    expect(trackReads.every((plan) => plan['Actual Loops'] === 0)).toBe(true)
+    expect(
+      trackReads.reduce((sum, plan) => sum + plan['Actual Loops'], 0),
+    ).toBeLessThanOrEqual(1)
+    expect(
+      trackReads.reduce(
+        (sum, plan) => sum + plan['Actual Loops'] * plan['Actual Rows'],
+        0,
+      ),
+    ).toBeLessThanOrEqual(1)
   }
 })
 
@@ -116,6 +124,7 @@ type PlanNode = {
   'Relation Name'?: string
   'Index Name'?: string
   'Actual Loops': number
+  'Actual Rows': number
   Plans?: PlanNode[]
 }
 const PlanNodeSchema: z.ZodType<PlanNode> = z.lazy(() =>
@@ -124,6 +133,7 @@ const PlanNodeSchema: z.ZodType<PlanNode> = z.lazy(() =>
     'Relation Name': z.string().optional(),
     'Index Name': z.string().optional(),
     'Actual Loops': z.number(),
+    'Actual Rows': z.number(),
     Plans: z.array(PlanNodeSchema).optional(),
   }),
 )
@@ -156,6 +166,7 @@ it('uses the default track date ordering index', async () => {
     )
     .map((plan) => plan['Index Name'])
   expect(names).toContain('library_track_added_id_idx')
+  const albumTitle = (id: number) => `Synthetic album ${Math.ceil(id / 20)}`
   const sortedIds = (direction: 'asc' | 'desc') =>
     Array.from({ length: 20000 }, (_, index) => index + 1)
       .sort((a, b) => {
@@ -165,7 +176,11 @@ it('uses the default track date ordering index', async () => {
         if (bDate === null && aDate !== null) return -1
         const dateOrder =
           ((aDate ?? 0) - (bDate ?? 0)) * (direction === 'asc' ? 1 : -1)
-        return dateOrder || (`song-${a}` < `song-${b}` ? -1 : 1)
+        if (dateOrder) return dateOrder
+        const aTitle = albumTitle(a)
+        const bTitle = albumTitle(b)
+        if (aTitle !== bTitle) return aTitle < bTitle ? -1 : 1
+        return a - b
       })
       .slice(0, 25)
       .map((id) => `song-${id}`)

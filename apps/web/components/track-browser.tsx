@@ -1,4 +1,6 @@
 'use client'
+
+import { PlaylistPlayButton } from './playlist-detail'
 import { TrackArtistLinks } from './creator-links'
 import { CreatorScopeChip } from './creator-scope-chip'
 import {
@@ -489,14 +491,16 @@ export default function TrackBrowser() {
       return (
         <span className="inline-values">
           {item.playlists.map((playlist) => (
-            <DetailLink
-              kind="playlist"
-              id={playlist.id}
-              key={playlist.id}
-              title={`Open ${playlist.name}`}
-            >
-              {playlist.name}
-            </DetailLink>
+            <span key={playlist.id} className="inline-flex items-center gap-1">
+              <PlaylistPlayButton playlist={playlist} />
+              <DetailLink
+                kind="playlist"
+                id={playlist.id}
+                title={`Open ${playlist.name}`}
+              >
+                {playlist.name}
+              </DetailLink>
+            </span>
           ))}
         </span>
       )

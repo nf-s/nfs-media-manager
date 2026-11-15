@@ -1,9 +1,9 @@
 'use client'
 
 import { useState } from 'react'
-import { useMutation, useQuery } from '@tanstack/react-query'
+import { useMutation } from '@tanstack/react-query'
 import { z } from 'zod'
-import { ProviderSummarySchema } from '@repo/schemas/provider'
+import type { ProviderSummary } from '@repo/schemas/provider'
 import {
   AlbumDetailSchema,
   FilmDetailSchema,
@@ -16,7 +16,7 @@ import { Input } from '@repo/ui/components/ui/input'
 import { fetchApiData } from '@/utils/api'
 import { useConfig } from './providers'
 
-function IdentifierRow({
+export function IdentifierRow({
   item,
   provider,
   label,
@@ -38,7 +38,7 @@ function IdentifierRow({
     mutationFn: (override: z.infer<typeof ProviderReferenceOverrideSchema>) =>
       fetchApiData(
         apiBaseUrl,
-        `/api/v1/${item.mediaType === 'film' ? 'films' : 'albums'}/${item.id}`,
+        `/api/v1/${item.mediaType === 'film' ? 'films' : 'albums'}/${encodeURIComponent(item.id)}`,
         z.union([AlbumDetailSchema, FilmDetailSchema]),
         {
           method: 'PATCH',
@@ -99,81 +99,36 @@ function IdentifierRow({
   )
 }
 
-export default function ProviderIdentifiers({
-  item,
-  onSaved,
-}: {
-  item: AlbumDetail | FilmDetail
-  onSaved: () => Promise<void>
-}) {
-  const { apiBaseUrl } = useConfig()
-  const providers = useQuery({
-    queryKey: ['providers'],
-    queryFn: () =>
-      fetchApiData(
-        apiBaseUrl,
-        '/api/v1/providers',
-        z.array(ProviderSummarySchema),
-      ),
-  })
-  return (
-    <section className="provider-identifiers">
-      <h2>Provider IDs</h2>
-      {providers.isError && <p role="alert">Could not load providers.</p>}
-      {providers.isPending && <p className="muted">Loading providers...</p>}
-      {providers.data
-        ?.filter(
-          (provider) =>
-            provider.surface === 'provider' &&
-            provider.mediaTypes.includes(item.mediaType),
-        )
-        .map((provider) => {
-          const owned = item.providerReferences.filter(
-            (reference) => reference.provider === provider.id,
-          )
-          const referenceType =
-            (item.mediaType === 'album'
-              ? owned.find((reference) => reference.isPrimary)?.referenceType
-              : undefined) ??
-            provider.identifierTypes[0] ??
-            owned[0]?.referenceType
-          if (!referenceType)
-            return (
-              <div className="identifier-row" key={provider.id}>
-                <strong>{provider.displayName}</strong>
-                <span className="muted">No item identifier</span>
-              </div>
-            )
-          const shared =
-            item.mediaType === 'film' &&
-            ['imdb', 'tmdb'].includes(referenceType)
-          const saveProvider = shared ? referenceType : provider.id
-          const current =
-            item.providerReferences.find(
-              (reference) =>
-                reference.referenceType === referenceType &&
-                reference.provider === saveProvider,
-            )?.externalId ??
-            owned.find((reference) => reference.referenceType === referenceType)
-              ?.externalId ??
-            (shared
-              ? item.providerReferences.find(
-                  (reference) => reference.referenceType === referenceType,
-                )?.externalId
-              : '') ??
-            ''
-          return (
-            <IdentifierRow
-              key={`${provider.id}:${referenceType}:${current}`}
-              item={item}
-              provider={saveProvider}
-              label={provider.displayName}
-              referenceType={referenceType}
-              current={current}
-              onSaved={onSaved}
-            />
-          )
-        })}
-    </section>
+export function mediaProviderIdentifiers(
+  item: AlbumDetail | FilmDetail,
+  id: string,
+  provider?: ProviderSummary,
+) {
+  const owned = item.providerReferences.filter(
+    (reference) => reference.provider === id,
   )
+  const referenceTypes = new Set([
+    ...owned.map((reference) => reference.referenceType),
+    ...(provider?.identifierTypes ?? []),
+  ])
+  return [...referenceTypes].map((referenceType) => {
+    const shared =
+      item.mediaType === 'film' && ['imdb', 'tmdb'].includes(referenceType)
+    const saveProvider = shared ? referenceType : id
+    const current =
+      item.providerReferences.find(
+        (reference) =>
+          reference.referenceType === referenceType &&
+          reference.provider === saveProvider,
+      )?.externalId ??
+      owned.find((reference) => reference.referenceType === referenceType)
+        ?.externalId ??
+      (shared
+        ? item.providerReferences.find(
+            (reference) => reference.referenceType === referenceType,
+          )?.externalId
+        : undefined) ??
+      ''
+    return { provider: saveProvider, referenceType, current }
+  })
 }

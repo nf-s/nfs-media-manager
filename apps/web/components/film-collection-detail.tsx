@@ -28,6 +28,7 @@ import { fetchApiData } from '@/utils/api'
 import { useConfig } from './providers'
 import MediaArtwork from './media-artwork'
 import { useDetailView } from './detail-inspector-context'
+import { DetailSourceTabs } from './detail-source-tabs'
 import {
   SecondaryCell,
   SecondaryColumnFilter,
@@ -121,31 +122,12 @@ export function FilmCollectionEntries({ id }: { id: string }) {
       direction: sortBy === key && direction === 'asc' ? 'desc' : 'asc',
     })
   }
-  return (
+  const films = (
     <>
-      <header className="flex shrink-0 flex-wrap items-center gap-3">
-        <h1 className="text-lg font-semibold">
-          {summary?.name ?? 'Collection'}
-        </h1>
-      </header>
       <p className="quiet text-xs">
         Stored positions are preserved, including gaps. Older imports may not
         contain the source's film order.
       </p>
-      {summary && (
-        <div className="form-actions">
-          <Button asChild size="sm" variant="outline">
-            <Link href={collectionFilmsHref(summary.name)}>Filter films</Link>
-          </Button>
-          <ServiceIconLinks
-            links={summary.sourceLinks.map((link) => ({
-              provider: link.provider,
-              label: link.providerLabel,
-              url: link.url,
-            }))}
-          />
-        </div>
-      )}
       <SecondaryTableToolbar
         search={
           <Input
@@ -327,6 +309,53 @@ export function FilmCollectionEntries({ id }: { id: string }) {
           )}
         </div>
       </SecondaryTableScroll>
+    </>
+  )
+  return (
+    <>
+      <header className="flex shrink-0 flex-wrap items-center gap-3">
+        <h1 className="text-lg font-semibold">
+          {summary?.name ?? 'Collection'}
+        </h1>
+      </header>
+      {summary && (
+        <div className="form-actions">
+          <Button asChild size="sm" variant="outline">
+            <Link href={collectionFilmsHref(summary.name)}>Filter films</Link>
+          </Button>
+          <ServiceIconLinks
+            links={summary.sourceLinks.map((link) => ({
+              provider: link.provider,
+              label: link.providerLabel,
+              url: link.url,
+            }))}
+          />
+        </div>
+      )}
+      <DetailSourceTabs
+        label="Collection details"
+        overviewLabel="Films"
+        overviewClassName="flex flex-1 flex-col gap-3"
+        sources={{
+          rows:
+            summary?.sourceLinks.map((link) => ({
+              id: `${link.provider}:${link.url}`,
+              label: link.providerLabel,
+              links: [
+                { provider: link.provider, label: link.name, url: link.url },
+              ],
+            })) ?? [],
+          pending: query.isPending,
+          unavailable:
+            query.isError && !summary
+              ? 'Could not load collection sources.'
+              : undefined,
+          onRetry:
+            query.isError && !summary ? () => query.refetch() : undefined,
+        }}
+      >
+        {films}
+      </DetailSourceTabs>
     </>
   )
 }

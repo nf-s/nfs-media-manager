@@ -1,4 +1,6 @@
 'use client'
+
+import { PlaylistPlayButton } from './playlist-detail'
 import { TrackArtistLinks } from './creator-links'
 import { musicDisplayTags } from '@repo/schemas/music-tags'
 
@@ -110,14 +112,12 @@ function PlaylistValues({
   return (
     <div className="detail-tags">
       {playlists.map((playlist) => (
-        <DetailLink
-          key={playlist.id}
-          kind="playlist"
-          id={playlist.id}
-          className="metadata-tag"
-        >
-          {playlist.name}
-        </DetailLink>
+        <span key={playlist.id} className="inline-flex items-center gap-1">
+          <PlaylistPlayButton playlist={playlist} />
+          <DetailLink kind="playlist" id={playlist.id} className="metadata-tag">
+            {playlist.name}
+          </DetailLink>
+        </span>
       ))}
     </div>
   )

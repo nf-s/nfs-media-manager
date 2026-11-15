@@ -8,7 +8,7 @@ import {
   useQuery,
   useQueryClient,
 } from '@tanstack/react-query'
-import { Play } from 'lucide-react'
+import { ListPlus, Play } from 'lucide-react'
 import { EnrichmentResultSchema } from '@repo/schemas/job'
 import {
   PlaylistDetailSchema,
@@ -52,8 +52,10 @@ import {
   playlistJobProgress,
   playlistNextSync,
   playlistSourceLabel,
+  spotifyPlaylistId,
 } from '@/utils/playlist-sync'
 import { createPlaylistPlaybackSource } from '@/utils/playback-source'
+import type { PlayableItem } from '@/utils/playback'
 import { youtubeScheduleLabels } from '@/utils/youtube'
 import { errorMessage } from './lastfm-sync'
 import MediaArtwork from './media-artwork'
@@ -67,6 +69,7 @@ import {
 } from './track-entries-table'
 import { useConfig } from './providers'
 import ServiceIconLinks from './service-icon-links'
+import { ProviderSources } from './provider-sources'
 
 const ENTRY_PAGE_SIZE = 100
 
@@ -112,7 +115,8 @@ export function PlaylistPlayButton({
   total,
   compact = true,
 }: {
-  playlist: Pick<PlaylistSummary, 'id' | 'name' | 'trackCount' | 'albumCount'>
+  playlist: Pick<PlaylistSummary, 'id' | 'name'> &
+    Partial<Pick<PlaylistSummary, 'trackCount' | 'albumCount'>>
   total?: number
   compact?: boolean
 }) {
@@ -123,8 +127,13 @@ export function PlaylistPlayButton({
   const inspector = useDetailInspector()
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
-  const hasEntries = (total ?? playlist.trackCount + playlist.albumCount) > 0
-  async function play() {
+  const knownCount =
+    total ??
+    (playlist.trackCount !== undefined && playlist.albumCount !== undefined
+      ? playlist.trackCount + playlist.albumCount
+      : undefined)
+  const hasEntries = knownCount === undefined || knownCount > 0
+  async function play(action: 'play' | 'queue') {
     setLoading(true)
     setError('')
     try {
@@ -153,13 +162,20 @@ export function PlaylistPlayButton({
         total: count,
         startIndex: 0,
       })
+      const queued: PlayableItem[] = []
       for (let index = 0; index < count; index += 1) {
-        const [first] = await source.load(index)
+        const items = await source.load(index)
+        if (action === 'queue') {
+          queued.push(...items)
+          continue
+        }
+        const [first] = items
         if (!first) continue
         controls.play(first, { ...source, startIndex: index })
         return
       }
-      setError('No playable tracks.')
+      if (queued.length) queued.forEach((item) => controls.enqueue(item))
+      else setError('No playable tracks.')
     } catch (error) {
       setError(errorMessage(error, 'Could not load tracks.'))
     } finally {
@@ -175,24 +191,35 @@ export function PlaylistPlayButton({
       />
     )
   return (
-    <>
+    <span className="inline-flex shrink-0 items-center gap-1.5">
       <button
         type="button"
         className="inline-flex items-center gap-1.5 rounded px-1 py-0.5 hover:bg-[var(--chip)]"
         aria-label={`Play ${playlist.name}`}
         title={`Play ${playlist.name}`}
         disabled={loading}
-        onClick={play}
+        onClick={() => play('play')}
       >
         <Play size={compact ? 12 : 14} aria-hidden="true" />
         {!compact && (loading ? 'Loading tracks...' : 'Play')}
+      </button>
+      <button
+        type="button"
+        className="inline-flex items-center gap-1.5 rounded px-1 py-0.5 hover:bg-[var(--chip)]"
+        aria-label={`Add ${playlist.name} to queue`}
+        title={`Add ${playlist.name} to queue`}
+        disabled={loading}
+        onClick={() => play('queue')}
+      >
+        <ListPlus size={compact ? 12 : 14} aria-hidden="true" />
+        {!compact && 'Add to queue'}
       </button>
       {error && (
         <span role="alert" className="text-xs">
           {error}
         </span>
       )}
-    </>
+    </span>
   )
 }
 
@@ -611,7 +638,7 @@ export default function PlaylistDetailView({
       >
         <TabsList className="self-start">
           <TabsTrigger value="tracks">Tracks</TabsTrigger>
-          <TabsTrigger value="sync">Sync</TabsTrigger>
+          <TabsTrigger value="sync">Sources</TabsTrigger>
         </TabsList>
         <TabsContent
           value="tracks"
@@ -619,7 +646,32 @@ export default function PlaylistDetailView({
         >
           <PlaylistEntries id={id} />
         </TabsContent>
-        <TabsContent value="sync" className="mt-3 min-h-0 flex-1 overflow-auto">
+        <TabsContent
+          value="sync"
+          className="mt-3 min-h-0 flex-1 space-y-4 overflow-auto"
+        >
+          <ProviderSources
+            rows={[
+              {
+                id: playlist.source ?? 'legacy',
+                label:
+                  playlist.source === 'spotify'
+                    ? 'Spotify'
+                    : playlistSourceLabel(playlist.source),
+                identifier: spotifyPlaylistId(playlist.spotifyUrl) ?? undefined,
+                updatedAt: playlist.importedAt ?? undefined,
+                links: playlist.spotifyUrl
+                  ? [
+                      {
+                        provider: 'spotify',
+                        label: 'Spotify',
+                        url: playlist.spotifyUrl,
+                      },
+                    ]
+                  : undefined,
+              },
+            ]}
+          />
           <PlaylistSyncPanel playlist={playlist} />
         </TabsContent>
       </Tabs>

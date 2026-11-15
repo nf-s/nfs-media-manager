@@ -42,6 +42,8 @@ function renderHistory(pages?: JobPage[]) {
         'media-history',
         'infinite',
         'film-1',
+        undefined,
+        undefined,
         'createdAt',
         'desc',
         '',

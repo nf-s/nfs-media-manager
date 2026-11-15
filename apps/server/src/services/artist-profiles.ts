@@ -7,7 +7,9 @@ import {
   type ArtistProfileProvider,
 } from '@repo/schemas/artist-profiles'
 import { JsonValueSchema, type JsonValue } from '@repo/schemas/common'
+import type { SourceSnapshot } from '@repo/schemas/media'
 import { db } from '@/lib/db'
+import { ServerError } from '@/lib/error'
 import {
   artist,
   artistProviderCurrentState,
@@ -105,6 +107,20 @@ const snapshotColumns = {
   scrapeJobId: artistProviderSnapshot.scrapeJobId,
   createdAt: artistProviderSnapshot.createdAt,
 }
+const snapshotSummaryColumns = {
+  id: artistProviderSnapshot.id,
+  provider: artistProviderSnapshot.provider,
+  jobId: artistProviderSnapshot.scrapeJobId,
+  createdAt: artistProviderSnapshot.createdAt,
+}
+function formatSnapshotSummary(
+  row: Pick<
+    typeof artistProviderSnapshot.$inferSelect,
+    'id' | 'provider' | 'createdAt'
+  > & { jobId: string | null },
+) {
+  return { ...row, createdAt: row.createdAt.toISOString(), source: null }
+}
 const formatSnapshot = (
   row: Pick<
     typeof artistProviderSnapshot.$inferSelect,
@@ -175,4 +191,55 @@ export async function listArtistProfileHistory(
     .limit(size)
     .offset(offset)
   return rows.map(formatSnapshot)
+}
+
+export async function listArtistSourceSnapshots(
+  id: string,
+  provider: ArtistProfileProvider,
+  { page, size }: { page: number; size: number },
+) {
+  const [totalCount, rows] = await Promise.all([
+    countArtistProfileHistory(id, provider),
+    db
+      .select(snapshotSummaryColumns)
+      .from(artistProviderSnapshot)
+      .where(profileHistoryFilter(id, provider))
+      .orderBy(
+        desc(artistProviderSnapshot.createdAt),
+        desc(artistProviderSnapshot.id),
+      )
+      .limit(size)
+      .offset((page - 1) * size),
+  ])
+  return {
+    page,
+    size,
+    totalCount,
+    pageCount: Math.ceil(totalCount / size),
+    items: rows.map(formatSnapshotSummary),
+  }
+}
+
+export async function getArtistSourceSnapshot(
+  id: string,
+  provider: ArtistProfileProvider,
+  snapshotId: string,
+): Promise<SourceSnapshot> {
+  const [row] = await db
+    .select({
+      ...snapshotSummaryColumns,
+      data: artistProviderSnapshot.payload,
+      normalizedData: artistProviderSnapshot.normalizedData,
+    })
+    .from(artistProviderSnapshot)
+    .where(
+      and(
+        profileHistoryFilter(id, provider),
+        eq(artistProviderSnapshot.id, snapshotId),
+      ),
+    )
+  if (!row)
+    throw new ServerError({ statusCode: 404, message: 'Snapshot not found.' })
+  const { data, normalizedData, ...summary } = row
+  return { ...formatSnapshotSummary(summary), data, normalizedData }
 }

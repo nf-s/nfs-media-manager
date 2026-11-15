@@ -2782,12 +2782,55 @@
     }
     .media-inspector {
       top: 28px;
+      right: 0;
       left: 0;
-      width: 100%;
+      width: auto;
+      max-width: 100%;
+      overflow: clip;
+      overflow-wrap: anywhere;
       border-left: 0;
       border-radius: 14px 14px 0 0;
       box-shadow: 0 -8px 30px #0f172a33;
       animation-name: inspector-up;
+    }
+    .media-inspector > :not(.inspector-resize-handle),
+    .media-inspector .inspector-scroll > *,
+    .media-inspector :is(.table-scroll, pre, [role='tablist']) {
+      min-width: 0;
+      max-width: 100%;
+    }
+    .media-inspector .inspector-scroll {
+      overflow-x: hidden;
+    }
+    .media-inspector [role='tablist'] {
+      overflow-x: auto;
+      overscroll-behavior-inline: contain;
+    }
+    .media-inspector > .detail-topbar {
+      position: relative;
+      touch-action: pinch-zoom;
+      user-select: none;
+    }
+    .media-inspector > .detail-topbar::before {
+      position: absolute;
+      top: 5px;
+      left: 50%;
+      width: 26px;
+      height: 3px;
+      border-radius: 999px;
+      background: var(--line);
+      transform: translateX(-50%);
+      content: '';
+      pointer-events: none;
+    }
+    @media (prefers-reduced-motion: no-preference) {
+      .media-inspector {
+        transition: transform 0.16s ease-out;
+      }
+      .media-inspector[data-dragging] {
+        transform: translateY(var(--inspector-drag-y, 0px));
+        transition: none;
+      }
     }
     @keyframes inspector-up {
       from {
@@ -4027,7 +4070,7 @@ button.player-track:hover strong {
   border-radius: 5px;
   color: var(--ink-2);
   vertical-align: middle;
-  opacity: 0;
+  opacity: 1;
 }
 .track-table tr:hover .track-queue,
 .track-queue:focus-visible {
@@ -4043,7 +4086,6 @@ button.player-track:hover strong {
   .track-queue {
     opacity: 1;
   }
-  .tile-play button + button,
   .queue-grip {
     display: none;
   }

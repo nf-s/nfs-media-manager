@@ -1,9 +1,18 @@
 import { createRoute, z, type OpenAPIHono } from '@hono/zod-openapi'
-import { ArtistEnrichmentInputSchema } from '@repo/schemas/artist-profiles'
+import {
+  ArtistEnrichmentInputSchema,
+  ArtistProfileProviderSchema,
+} from '@repo/schemas/artist-profiles'
+import { PaginationQuerySchema } from '@repo/schemas/common'
+import {
+  SourceSnapshotPageSchema,
+  SourceSnapshotSchema,
+} from '@repo/schemas/media'
 import {
   ArtistAlbumPageSchema,
   ArtistAlbumQuerySchema,
   ArtistDetailSchema,
+  ArtistDetailQuerySchema,
   ArtistHistoryPageSchema,
   ArtistHistoryQuerySchema,
   ArtistPageSchema,
@@ -30,6 +39,10 @@ import {
 import { generateJsonResponse } from '@/lib/response'
 import { authMiddleware, requireOwnerUser } from '@/middlewares/auth'
 import { enqueueArtistEnrichment } from '@/services/artist-enrichment'
+import {
+  getArtistSourceSnapshot,
+  listArtistSourceSnapshots,
+} from '@/services/artist-profiles'
 import {
   getArtist,
   getArtistHistory,
@@ -59,6 +72,9 @@ const personResponses = {
   ...protectedResponses,
   404: jsonErrorResponse('Person not found'),
 }
+const ArtistSourceParams = CreatorParamsSchema.extend({
+  provider: ArtistProfileProviderSchema,
+})
 
 export const artists: OpenAPIHono<AppEnv> = createOpenAPIApp()
   .openapi(
@@ -80,14 +96,18 @@ export const artists: OpenAPIHono<AppEnv> = createOpenAPIApp()
       method: 'get',
       path: '/:id',
       middleware: [authMiddleware()],
-      request: { params: CreatorParamsSchema },
+      request: { params: CreatorParamsSchema, query: ArtistDetailQuerySchema },
       responses: {
         ...artistResponses,
         200: json('Artist profile and library counts', ArtistDetailSchema),
       },
     }),
     async (c) =>
-      generateJsonResponse(c, await getArtist(c.req.valid('param').id), 200),
+      generateJsonResponse(
+        c,
+        await getArtist(c.req.valid('param').id, c.req.valid('query')),
+        200,
+      ),
   )
   .openapi(
     createRoute({
@@ -201,6 +221,55 @@ export const artists: OpenAPIHono<AppEnv> = createOpenAPIApp()
         200,
       ),
   )
+
+artists.openapi(
+  createRoute({
+    method: 'get',
+    path: '/:id/sources/:provider/history',
+    middleware: [authMiddleware()],
+    request: { params: ArtistSourceParams, query: PaginationQuerySchema },
+    responses: {
+      ...protectedResponses,
+      200: json(
+        'Stored snapshot summaries for one artist source',
+        SourceSnapshotPageSchema,
+      ),
+    },
+  }),
+  async (c) => {
+    const { id, provider } = c.req.valid('param')
+    return generateJsonResponse(
+      c,
+      await listArtistSourceSnapshots(id, provider, c.req.valid('query')),
+      200,
+    )
+  },
+)
+artists.openapi(
+  createRoute({
+    method: 'get',
+    path: '/:id/sources/:provider/snapshots/:snapshotId',
+    middleware: [authMiddleware()],
+    request: {
+      params: ArtistSourceParams.extend({
+        snapshotId: z.string().min(1).max(500),
+      }),
+    },
+    responses: {
+      ...protectedResponses,
+      200: json('Stored payload for an artist snapshot', SourceSnapshotSchema),
+      404: jsonErrorResponse('Snapshot not found'),
+    },
+  }),
+  async (c) => {
+    const { id, provider, snapshotId } = c.req.valid('param')
+    return generateJsonResponse(
+      c,
+      await getArtistSourceSnapshot(id, provider, snapshotId),
+      200,
+    )
+  },
+)
 
 export const people: OpenAPIHono<AppEnv> = createOpenAPIApp()
   .openapi(

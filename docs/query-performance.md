@@ -14,7 +14,7 @@ Search finds matching media IDs through field-specific queries. Titles, summarie
 | Track album names                         | Trigram stored album names and media titles                                                                |
 | Tags and original labels                  | Trigram display names, normalized names, identities and occurrence labels; existing tag membership indexes |
 | Title ordering                            | Existing `(media_type, lower(title), id)` index, using the column directly                                 |
-| Default track and film ordering           | Added-date and release-date indexes matching descending dates, missing dates last and ascending ID ties    |
+| Default track and film ordering           | Added-date index supplies the track order before album ties; release-date index supports film date and ID  |
 | Track album-list matching                 | Album ID plus the exact normalized-title expression                                                        |
 | Album listening date windows              | Partial `(listened_at, album_media_item_id)` index for linked scrobbles                                    |
 | Subscription text search                  | Existing full-text GIN index on `subscription_item.search`                                                 |
@@ -32,7 +32,7 @@ The browse-search and query-indexes integration tests create disposable database
 corepack pnpm --filter @repo/server exec vitest run --config vitest.integration.config.ts integration/browse-search.integration.ts integration/query-indexes.integration.ts
 ```
 
-On a local synthetic fixture of 20,000 tracks linked to 1,000 albums, a selective title search plus autocomplete took approximately 8.5 seconds before these changes and 83 milliseconds afterwards. This measures the service calls with fixture setup excluded, not browser or network latency. Plan assertions check that unrelated album-track matching is not executed; tests do not depend on a machine-specific millisecond threshold.
+On a local synthetic fixture of 20,000 tracks linked to 1,000 albums, a selective title search plus autocomplete took approximately 8.5 seconds before these changes and 83 milliseconds afterwards. This measures the service calls with fixture setup excluded, not browser or network latency. Plan assertions check that a selective search reads album positions only for matching tracks and that default Track ordering can use its Added-date index. Tests do not depend on a machine-specific millisecond threshold.
 
 Uncached broad autocomplete on that fixture took approximately 0.5–0.6 seconds for empty input, one character and match-status labels. Those requests still count values across the library; the selective-search improvement is not a latency guarantee for every filter or library size.
 

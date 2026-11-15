@@ -22,6 +22,7 @@ import {
 } from './creator-library-table'
 import ServiceIconLinks from './service-icon-links'
 import { SourceAvatar } from './subscription-item-details'
+import { DetailSourceTabs } from './detail-source-tabs'
 
 const itemPageSchema = SubscriptionSourceDetailSchema.transform(
   ({ items }) => items,
@@ -80,6 +81,11 @@ export function ChannelDetail({ id }: { id: string }) {
     )
   const { source } = query.data
   const isVideo = source.type === 'youtube'
+  const sourceLink = {
+    provider: source.type,
+    label: isVideo ? 'YouTube channel' : 'Spotify show',
+    url: source.url,
+  }
   return (
     <article className="media-detail">
       {query.isRefetchError && (
@@ -90,16 +96,7 @@ export function ChannelDetail({ id }: { id: string }) {
           <SourceAvatar src={source.thumbnailUrl} size="large" />
           <div className="min-w-0">
             <h1 className="break-words text-xl font-semibold">
-              {source.title}{' '}
-              <ServiceIconLinks
-                links={[
-                  {
-                    provider: source.type,
-                    label: isVideo ? 'YouTube channel' : 'Spotify show',
-                    url: source.url,
-                  },
-                ]}
-              />
+              {source.title} <ServiceIconLinks links={[sourceLink]} />
             </h1>
             <div className="detail-facts mt-1">
               <span>{subscriptionTypeLabels[source.type]}</span>
@@ -124,15 +121,30 @@ export function ChannelDetail({ id }: { id: string }) {
           </Button>
         </div>
       </header>
-      <CreatorLibraryTable
-        kind="subscription"
-        queryKey={['subscriptions', 'source', id, 'items']}
-        path={path}
-        schema={itemPageSchema}
-        columns={isVideo ? videoColumns : itemColumns}
-        label={isVideo ? 'videos' : 'episodes'}
-        defaultSort={{ key: 'publishedAt', direction: 'desc' }}
-      />
+      <DetailSourceTabs
+        label="Channel details"
+        overviewLabel={isVideo ? 'Videos' : 'Episodes'}
+        sources={{
+          rows: [
+            {
+              id: source.type,
+              label: isVideo ? 'YouTube' : 'Spotify',
+              identifier: source.id,
+              links: [sourceLink],
+            },
+          ],
+        }}
+      >
+        <CreatorLibraryTable
+          kind="subscription"
+          queryKey={['subscriptions', 'source', id, 'items']}
+          path={path}
+          schema={itemPageSchema}
+          columns={isVideo ? videoColumns : itemColumns}
+          label={isVideo ? 'videos' : 'episodes'}
+          defaultSort={{ key: 'publishedAt', direction: 'desc' }}
+        />
+      </DetailSourceTabs>
     </article>
   )
 }

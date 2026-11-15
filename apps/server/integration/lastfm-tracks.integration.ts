@@ -977,7 +977,9 @@ describe('Last.fm tracks library', () => {
       albumId: 'datedalbum',
     })
     await refreshTrackLinks(LISTENER)
-    expect((await allTracks())[0]).toMatchObject({
+    expect(
+      (await allTracks()).find((item) => item.id === 'dated'),
+    ).toMatchObject({
       album: { id: 'datedalbum' },
       dateAdded: '2010-01-01T00:00:00.000Z',
       albumTags: ['Electronic'],
@@ -986,7 +988,9 @@ describe('Last.fm tracks library', () => {
       .delete(schema.mediaItem)
       .where(eq(schema.mediaItem.id, 'datedalbum'))
     await refreshTrackLinks(LISTENER)
-    expect((await allTracks())[0]).toMatchObject({
+    expect(
+      (await allTracks()).find((item) => item.id === 'dated'),
+    ).toMatchObject({
       id: 'dated',
       album: null,
       albumTags: [],

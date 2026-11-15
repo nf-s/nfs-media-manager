@@ -1,4 +1,34 @@
-import { AlbumRymUrlSchema } from '@/plugins/builtin/album-provider-helpers'
+import { z } from 'zod'
+
+export const AlbumHttpUrlSchema = z
+  .string()
+  .url()
+  .refine((value) => {
+    try {
+      const url = new URL(value)
+      return (
+        ['http:', 'https:'].includes(url.protocol) &&
+        !url.username &&
+        !url.password
+      )
+    } catch {
+      return false
+    }
+  }, 'Expected a public HTTP URL')
+
+export const AlbumRymUrlSchema = AlbumHttpUrlSchema.refine((value) => {
+  try {
+    const url = new URL(value)
+    return (
+      ['rateyourmusic.com', 'www.rateyourmusic.com'].includes(url.hostname) &&
+      !url.port &&
+      (/^\/release\/[^/]+\/[^/]+\/[^/]+\/?$/.test(url.pathname) ||
+        /^\/music-review\/[^/]+\/[^/]+\/[^/]+\/\d+\/?$/.test(url.pathname))
+    )
+  } catch {
+    return false
+  }
+}, 'Expected a RYM release or album review URL')
 
 type LookupProvider = {
   id: string

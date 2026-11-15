@@ -67,6 +67,7 @@ export type PlaylistTab = z.infer<typeof PlaylistTabSchema>
 
 /** The `tab` URL parameter of the playlist drawer, defaulting to Tracks. */
 export function parsePlaylistTab(value: string | null): PlaylistTab {
+  if (value === 'sources') return 'sync'
   const parsed = PlaylistTabSchema.safeParse(value)
   return parsed.success ? parsed.data : 'tracks'
 }

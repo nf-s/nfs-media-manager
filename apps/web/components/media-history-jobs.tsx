@@ -29,9 +29,12 @@ import {
 
 export default function MediaHistoryJobs({
   mediaItemId,
-}: {
-  mediaItemId: string
-}) {
+  artistId,
+  provider,
+}: (
+  | { mediaItemId: string; artistId?: never }
+  | { artistId: string; mediaItemId?: never }
+) & { provider?: string }) {
   const columns = useTableColumns('media-job-history', [
     { key: 'provider', label: 'Provider' },
     { key: 'status', label: 'Job' },
@@ -56,6 +59,8 @@ export default function MediaHistoryJobs({
       'media-history',
       'infinite',
       mediaItemId,
+      artistId,
+      provider,
       sortBy,
       direction,
       query,
@@ -65,7 +70,7 @@ export default function MediaHistoryJobs({
     queryFn: ({ pageParam, signal }) =>
       fetchApiData(
         apiBaseUrl,
-        `/api/v1/scrape/jobs?${new URLSearchParams({ mediaItemId, sortBy, direction, page: String(pageParam), size: '25', ...(query ? { q: query } : {}), statuses: JSON.stringify(statuses) })}`,
+        `/api/v1/scrape/jobs?${new URLSearchParams({ ...(mediaItemId ? { mediaItemId } : { artistId: artistId ?? '' }), ...(provider ? { provider } : {}), sortBy, direction, page: String(pageParam), size: '25', ...(query ? { q: query } : {}), statuses: JSON.stringify(statuses) })}`,
         JobPageSchema,
         { signal },
       ),
@@ -76,7 +81,15 @@ export default function MediaHistoryJobs({
   const { scroller, sentinel } = useInfiniteTableScroll({
     enabled: jobs.hasNextPage && !jobs.isFetching && !jobs.isError,
     fetchNextPage: jobs.fetchNextPage,
-    resetKey: JSON.stringify([mediaItemId, sortBy, direction, query, statuses]),
+    resetKey: JSON.stringify([
+      mediaItemId,
+      artistId,
+      provider,
+      sortBy,
+      direction,
+      query,
+      statuses,
+    ]),
   })
   // New jobs can move offset boundaries between requests. Keep each job once.
   const jobsById = new Map<string, Job>()

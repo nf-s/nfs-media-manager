@@ -37,6 +37,8 @@ vi.mock('@/plugins/registry', () => ({
 }))
 
 import {
+  getArtistSourceSnapshot,
+  listArtistSourceSnapshots,
   loadArtistProviderTarget,
   saveArtistProviderResult,
 } from '@/services/artist-profiles'
@@ -398,6 +400,10 @@ describe('creator directories and related library items', () => {
       'newer-job',
       'older-job',
     ])
+    const currentOnly = await getArtist('dual', { includeHistory: 'false' })
+    expect(currentOnly.providers).toEqual(detail.providers)
+    expect(currentOnly.profile).toEqual(detail.profile)
+    expect(currentOnly.history).toEqual([])
     expect(
       await getArtistHistory(
         'dual',
@@ -413,6 +419,30 @@ describe('creator directories and related library items', () => {
         { scrapeJobId: 'older-job', profile: { externalId: 'first-id' } },
       ],
     })
+    const snapshots = await listArtistSourceSnapshots('dual', 'spotify', {
+      page: 2,
+      size: 1,
+    })
+    expect(snapshots).toMatchObject({
+      totalCount: 2,
+      items: [{ jobId: 'older-job' }],
+    })
+    const [first] = snapshots.items
+    if (!first) throw new Error('Expected a stored snapshot')
+    expect(first).not.toHaveProperty('data')
+    expect(first).not.toHaveProperty('normalizedData')
+    await expect(
+      getArtistSourceSnapshot('dual', 'spotify', first.id),
+    ).resolves.toMatchObject({
+      data: { title: 'First provider fixture' },
+      normalizedData: { externalId: 'first-id' },
+    })
+    await expect(
+      getArtistSourceSnapshot('music', 'spotify', first.id),
+    ).rejects.toMatchObject({ response: { statusCode: 404 } })
+    await expect(
+      getArtistSourceSnapshot('dual', 'musicbrainz', first.id),
+    ).rejects.toMatchObject({ response: { statusCode: 404 } })
     expect(await databaseClient.select().from(schema.mediaItemTag)).toEqual([])
   })
 

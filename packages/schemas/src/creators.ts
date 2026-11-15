@@ -23,6 +23,10 @@ const CreatorIdentitySchema = z.object({
 })
 
 export const CreatorParamsSchema = z.object({ id: CreatorIdSchema })
+export const ArtistDetailQuerySchema = z.object({
+  includeHistory: z.enum(['true', 'false']).optional(),
+})
+export type ArtistDetailQuery = z.infer<typeof ArtistDetailQuerySchema>
 export { PersonRoleSchema, type PersonRole } from './common'
 
 export const ArtistSummarySchema = CreatorIdentitySchema.extend({
