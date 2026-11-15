@@ -52,7 +52,7 @@ export const MusicBrainzReleaseGroupSchema =
 
 const IdSchema = z.number().int().positive().safe()
 const DiscogsCreditSchema = z.object({
-  id: IdSchema.optional(),
+  id: z.number().int().nonnegative().safe().optional(),
   name: z.string().min(1),
   role: z.string().optional(),
   tracks: z.string().optional(),
@@ -260,7 +260,7 @@ function discogsAlbumDetails(
     credit: z.infer<typeof DiscogsCreditSchema>,
     tracks = credit.tracks,
   ) => ({
-    id: credit.id === undefined ? null : String(credit.id),
+    id: credit.id ? String(credit.id) : null,
     name: credit.name,
     role: nullableText(credit.role),
     tracks: nullableText(tracks),

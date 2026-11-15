@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AlbumProviderDetailsSchema } from '@repo/schemas/album-provider-details'
 import {
   albumProviderDetailsMetadata,
+  DiscogsRecordSchema,
   readAlbumProviderDetails,
 } from './album-provider-details'
 
@@ -201,6 +202,41 @@ describe('readonly album provider details', () => {
     const result = readAlbumProviderDetails('discogs', { release })
     expect(readAlbumProviderDetails('discogs', release)).toEqual(result)
     expect(result?.url).toBe('https://www.discogs.com/release/22')
+  })
+
+  it('projects unlinked Discogs credits from the main release and its tracklist', () => {
+    const payload = {
+      master: { ...release, id: 11, main_release: 22 },
+      mainRelease: {
+        ...release,
+        master_id: 11,
+        extraartists: [{ id: 0, name: 'Example producer', role: 'Producer' }],
+        tracklist: [
+          {
+            type_: 'track',
+            title: 'Example track',
+            position: 'A1',
+            extraartists: [{ id: 0, name: 'Example mixer', role: 'Mixed By' }],
+          },
+        ],
+      },
+    }
+    const result = readAlbumProviderDetails('discogs', payload)
+    expect(result?.credits).toEqual([
+      { name: 'Example producer', role: 'Producer' },
+      { name: 'Example mixer', role: 'Mixed By (A1)' },
+    ])
+  })
+
+  it.each([
+    { extraartists: [{ id: -1, name: 'Example producer' }] },
+    { artists: [{ id: 0, name: 'Example artist' }] },
+    { id: 0 },
+    { main_release: 0 },
+  ])('rejects invalid Discogs identifiers %j', (fields) => {
+    expect(
+      DiscogsRecordSchema.safeParse({ ...release, ...fields }).success,
+    ).toBe(false)
   })
 
   it.each([
