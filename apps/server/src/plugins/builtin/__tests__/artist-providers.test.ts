@@ -14,6 +14,7 @@ const artistName = 'Artist Fixture'
 const spotifyId = '0123456789abcdefghijkl'
 const mbid = '11111111-1111-4111-8111-111111111111'
 const lastFmUrl = 'https://www.last.fm/music/Artist+Fixture'
+const lastFmKey = 'fixture-lastfm-key'
 
 function responses(...payloads: unknown[]) {
   const request = vi.fn<MediaPluginTestContext['request']>(async () => {
@@ -25,10 +26,10 @@ function responses(...payloads: unknown[]) {
     secrets: {
       clientId: 'fixture-client',
       clientSecret: 'fixture-client-secret',
-      apiKey: 'fixture-lastfm-key',
+      apiKey: lastFmKey,
       token: 'fixture-discogs-token',
       appName: 'FixtureApp',
-      appVersion: '2.0',
+      appVersion: '1.7',
       contact: 'offline@example.test',
     },
     recordDiagnostic: vi.fn(),
@@ -122,7 +123,8 @@ describe('artist provider lookups', () => {
   it('retains the numeric Last.fm error code without the upstream message', async () => {
     const context = responses({
       error: 6,
-      message: 'Fixture invalid artist input',
+      message: `Fixture invalid artist input for ${lastFmKey}`,
+      api_key: lastFmKey,
     })
     await expect(
       lookupArtistProvider('lastfm', artistName, mbid, context),
@@ -131,6 +133,19 @@ describe('artist provider lookups', () => {
       'Last.fm returned a service error (code 6).',
     )
     expect(context.request).toHaveBeenCalledTimes(1)
+    expect(context.recordDiagnostic).toHaveBeenCalledExactlyOnceWith({
+      stage: 'last.fm.response',
+      evidence: {
+        path: '/2.0/',
+        query: { method: 'artist.getInfo' },
+        status: 200,
+        response: {
+          error: 6,
+          message: 'Fixture invalid artist input for [REDACTED]',
+          api_key: '[REDACTED]',
+        },
+      },
+    })
   })
 
   it.each([

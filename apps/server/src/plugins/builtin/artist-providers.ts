@@ -188,7 +188,11 @@ export async function lookupArtistProvider(
   context: ArtistRequestContext,
 ) {
   const evidence: Record<string, JsonValue> = {}
-  const providerContext = { request: context.request, secrets: context.secrets }
+  const providerContext = {
+    request: context.request,
+    secrets: context.secrets,
+    recordDiagnostic: context.recordDiagnostic,
+  }
   const secrets = jobLogSecrets(context.secrets)
   const lookup: { match?: ArtistCandidate } = {}
   async function find(
