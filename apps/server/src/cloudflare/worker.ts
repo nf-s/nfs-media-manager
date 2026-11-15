@@ -90,7 +90,7 @@ function run<T>(
 
 app.get(
   '/api/v1/cloud/providers/:provider/local-worker',
-  authMiddleware(),
+  authMiddleware({ sessionOnly: true }),
   async (c) => {
     const bindings = workerBindings.getStore()
     if (!bindings) return c.json({ message: 'Local workers unavailable' }, 503)
@@ -106,7 +106,7 @@ app.get(
 
 app.post(
   '/api/v1/cloud/providers/:provider/local-worker',
-  authMiddleware(),
+  authMiddleware({ sessionOnly: true }),
   async (c) => {
     const input = LocalWorkerModeSchema.safeParse(
       await c.req.json().catch(() => null),

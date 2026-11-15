@@ -73,6 +73,7 @@ export function libraryViewForPath(
   return trackViewPaths.some((root) => isUnder(path, root)) ||
     (value === 'track' &&
       (isUnder(path, '/imports') ||
+        isUnder(path, '/user') ||
         trackUnsupportedPaths.some((root) => isUnder(path, root))))
     ? 'track'
     : workspaceScopeForPath(path, value)

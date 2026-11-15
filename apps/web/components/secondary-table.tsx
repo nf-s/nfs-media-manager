@@ -26,6 +26,7 @@ import {
 
 export type DataColumn<T> = TableColumn & {
   value: (row: T) => TableValue
+  sortable?: boolean
   render?: (row: T, orderedRows: readonly T[]) => ReactNode
   className?: string
   filter?: ReactNode
@@ -525,26 +526,32 @@ export function SecondaryDataTable<T>({
         <table className="compact-table" aria-label={label}>
           <thead>
             <tr>
-              {shown.map((column) => (
-                <SecondaryTableHead
-                  key={column.key}
-                  sortKey={column.key}
-                  label={column.label}
-                  sortBy={sort.key}
-                  direction={sort.direction}
-                  className={column.className}
-                  filter={column.filter}
-                  onSort={(key) =>
-                    setSort({
-                      key,
-                      direction:
-                        key === sort.key && sort.direction === 'asc'
-                          ? 'desc'
-                          : 'asc',
-                    })
-                  }
-                />
-              ))}
+              {shown.map((column) =>
+                column.sortable === false ? (
+                  <TableHead key={column.key} className={column.className}>
+                    {column.label}
+                  </TableHead>
+                ) : (
+                  <SecondaryTableHead
+                    key={column.key}
+                    sortKey={column.key}
+                    label={column.label}
+                    sortBy={sort.key}
+                    direction={sort.direction}
+                    className={column.className}
+                    filter={column.filter}
+                    onSort={(key) =>
+                      setSort({
+                        key,
+                        direction:
+                          key === sort.key && sort.direction === 'asc'
+                            ? 'desc'
+                            : 'asc',
+                      })
+                    }
+                  />
+                ),
+              )}
             </tr>
           </thead>
           <tbody>

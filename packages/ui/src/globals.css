@@ -1452,7 +1452,8 @@
     padding-top: 8px;
     border-top: 1px solid var(--line);
   }
-  .rail-foot > button {
+  .rail-foot > button,
+  .rail-user-actions > :is(button, a) {
     height: 28px;
     padding: 0 8px;
     font-size: 11px;
@@ -1460,6 +1461,14 @@
   }
   .rail-foot {
     flex-wrap: wrap;
+  }
+  .rail-user-actions {
+    display: flex;
+    flex: 1 0 100%;
+    gap: 4px;
+  }
+  .rail-user-actions > :is(button, a) {
+    flex: 1;
   }
   .rail-foot .job-activity {
     flex: 1 1 100%;
@@ -2670,6 +2679,9 @@
     }
     .rail-foot .job-activity {
       flex: 0 1 auto;
+    }
+    .rail-user-actions {
+      flex: 0 0 auto;
     }
     .rail-foot .job-activity-trigger {
       width: auto;

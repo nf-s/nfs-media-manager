@@ -11,6 +11,8 @@ export type AppEnv = Env & {
   Variables: AuthType
 }
 
+export const ownerSessionSecurity = [{ ownerSession: [] }]
+
 function createDefaultValidationHook<E extends Env>(): NonNullable<
   OpenAPIHonoOptions<E>['defaultHook']
 > {

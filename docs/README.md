@@ -4,6 +4,7 @@ Start with [getting started](getting-started.md) for installation or [applicatio
 
 ## Using the app
 
+- [API keys and agent access](api-access.md): key management, temporary access and authenticated API documentation.
 - [Getting started](getting-started.md): installation, account setup, environment variables, provider API keys and troubleshooting.
 - [Importing a library](importing.md): CSV, NFO, Spotify and legacy JSON workflows.
 - [Spotify account setup](spotify-album-imports.md): callbacks, saved-album previews and read-only access.

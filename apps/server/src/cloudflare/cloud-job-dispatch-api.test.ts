@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
     SCRAPING_ENABLED: true,
   },
   getSession: vi.fn(),
+  authenticateApiKey: vi.fn(),
   plugin: vi.fn(),
   getStatus: vi.fn(),
   setPaused: vi.fn(),
@@ -21,6 +22,10 @@ vi.mock('@/env', () => ({ env: mocks.env }))
 vi.mock('@/lib/db', () => ({ db: {} }))
 vi.mock('@/lib/auth', () => ({
   auth: { api: { getSession: mocks.getSession }, handler: vi.fn() },
+}))
+vi.mock('@/services/api-keys', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/services/api-keys')>()),
+  authenticateApiKey: mocks.authenticateApiKey,
 }))
 vi.mock('@/plugins/registry', () => ({
   getScrapePlugin: mocks.plugin,
@@ -147,6 +152,23 @@ describe('Cloudflare dispatch owner API', () => {
       (await control({ paused: false }, 'https://evil.example')).status,
     ).toBe(403)
     expect(mocks.setPaused).not.toHaveBeenCalled()
+  })
+
+  it('accepts API keys for dispatch status and requires a session for local worker pairing', async () => {
+    mocks.authenticateApiKey.mockResolvedValue({
+      status: 'authenticated',
+      id: 'fixture-key-id',
+      user: session().user,
+    })
+    const headers = { authorization: 'Bearer fixture-key' }
+    expect((await app.request(path, { headers })).status).toBe(200)
+    expect(mocks.authenticateApiKey).toHaveBeenCalledTimes(1)
+    const pairing = '/api/v1/cloud/providers/fixture/local-worker'
+    expect((await app.request(pairing, { headers })).status).toBe(403)
+    expect(
+      (await app.request(pairing, { method: 'POST', headers })).status,
+    ).toBe(403)
+    expect(mocks.getSession).not.toHaveBeenCalled()
   })
 
   it.each([

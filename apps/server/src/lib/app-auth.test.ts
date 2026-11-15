@@ -4,6 +4,7 @@ import { APIError } from 'better-auth/api'
 const mocks = vi.hoisted(() => ({
   env: {
     NODE_ENV: 'test',
+    APP_URL: 'http://localhost:3000',
     OWNER_EMAIL: 'owner@example.com',
     OWNER_USER_ID: '',
     TRUSTED_ORIGINS: ['http://localhost:3000'],
@@ -188,8 +189,16 @@ describe('application privacy boundary', () => {
   })
 
   it('serves the API reference only to the owner without caching it', async () => {
-    const response = await app.request('/api/v1/scalar')
-    expect(response.status, await response.text()).toBe(200)
+    const response = await app.request('http://localhost:4000/api/v1/scalar')
+    const html = await response.text()
+    expect(response.status, html).toBe(200)
+    const scripts = [...html.matchAll(/<script src="([^"]+)"/g)]
+    expect(scripts.map((match) => match[1])).toEqual([
+      'http://localhost:3000/vendor/scalar/1.78.1.js',
+    ])
+    expect(html).not.toContain('cdn.jsdelivr.net')
+    expect(html).toMatch(/"agent":\s*{\s*"disabled": true\s*}/)
+    expect(html).toContain('"hideClientButton": true')
     expect(response.headers.get('cache-control')).toContain('no-store')
     expect(response.headers.get('cdn-cache-control')).toBe('no-store')
     expect(response.headers.get('cloudflare-cdn-cache-control')).toBe(

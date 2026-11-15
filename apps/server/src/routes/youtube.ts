@@ -1,6 +1,5 @@
 import { createRoute, type OpenAPIHono } from '@hono/zod-openapi'
 import { createMiddleware } from 'hono/factory'
-import type { Context } from 'hono'
 import {
   YoutubeAuthorizeInputSchema,
   YoutubeAuthorizeResultSchema,
@@ -13,11 +12,12 @@ import {
   createOpenAPIApp,
   createResponseSchema,
   jsonErrorResponse,
+  ownerSessionSecurity,
   validationErrorResponse,
   type AppEnv,
 } from '@/lib/openapi'
 import { generateJsonResponse } from '@/lib/response'
-import { authMiddleware } from '@/middlewares/auth'
+import { authMiddleware, requireBrowserSession } from '@/middlewares/auth'
 import {
   authorizeYoutube,
   disconnectYoutube,
@@ -25,13 +25,7 @@ import {
   youtubeCallbackDestination,
 } from '@/services/youtube-oauth'
 
-function actor(c: Context<AppEnv>) {
-  const user = c.get('user')
-  const session = c.get('session')
-  if (!user || !session)
-    throw new ServerError({ statusCode: 401, message: 'Unauthorized' })
-  return { userId: user.id, sessionId: session.id }
-}
+const browserSession = authMiddleware({ sessionOnly: true })
 
 const sameOrigin = createMiddleware<AppEnv>(async (c, next) => {
   const origin = c.req.header('origin')
@@ -58,7 +52,8 @@ app.openapi(
   createRoute({
     method: 'post',
     path: '/authorize',
-    middleware: [authMiddleware(), sameOrigin],
+    security: ownerSessionSecurity,
+    middleware: [browserSession, sameOrigin],
     request: {
       body: {
         required: true,
@@ -77,19 +72,16 @@ app.openapi(
           },
         },
       },
-      401: jsonErrorResponse('Unauthorized'),
+      401: jsonErrorResponse('Owner browser session required'),
+      403: jsonErrorResponse('Forbidden'),
       422: validationErrorResponse,
     },
   }),
   async (c) => {
-    const current = actor(c)
+    const { user, session } = requireBrowserSession(c)
     return generateJsonResponse(
       c,
-      await authorizeYoutube(
-        current.userId,
-        current.sessionId,
-        c.req.header('origin'),
-      ),
+      await authorizeYoutube(user.id, session.id, c.req.header('origin')),
       200,
     )
   },
@@ -99,6 +91,7 @@ app.openapi(
   createRoute({
     method: 'get',
     path: '/callback',
+    security: [],
     request: { query: YoutubeCallbackSchema },
     responses: {
       302: { description: 'Relay to the configured authenticated API origin' },
@@ -112,26 +105,28 @@ app.openapi(
   createRoute({
     method: 'get',
     path: '/complete',
-    middleware: [authMiddleware()],
+    security: ownerSessionSecurity,
+    middleware: [browserSession],
     request: { query: YoutubeCallbackSchema },
     responses: {
       302: {
         description:
           'Return to the YouTube import page, without exposing tokens or authorization codes',
       },
-      401: jsonErrorResponse('Unauthorized'),
+      401: jsonErrorResponse('Owner browser session required'),
+      403: jsonErrorResponse('Forbidden'),
       422: validationErrorResponse,
     },
   }),
   async (c) => {
-    const current = actor(c)
+    const { user, session } = requireBrowserSession(c)
     let connected = false
     let returnOrigin = env.APP_URL
     try {
       const result = await finishYoutubeAuthorization(
         c.req.valid('query'),
-        current.userId,
-        current.sessionId,
+        user.id,
+        session.id,
       )
       connected = result.connected
       returnOrigin = result.returnOrigin
@@ -151,7 +146,8 @@ app.openapi(
   createRoute({
     method: 'delete',
     path: '/account',
-    middleware: [authMiddleware(), sameOrigin],
+    security: ownerSessionSecurity,
+    middleware: [browserSession, sameOrigin],
     responses: {
       200: {
         description:
@@ -162,11 +158,16 @@ app.openapi(
           },
         },
       },
-      401: jsonErrorResponse('Unauthorized'),
+      401: jsonErrorResponse('Owner browser session required'),
+      403: jsonErrorResponse('Forbidden'),
     },
   }),
   async (c) =>
-    generateJsonResponse(c, await disconnectYoutube(actor(c).userId), 200),
+    generateJsonResponse(
+      c,
+      await disconnectYoutube(requireBrowserSession(c).user.id),
+      200,
+    ),
 )
 
 app.onError((error, c) =>

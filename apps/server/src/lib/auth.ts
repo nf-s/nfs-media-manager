@@ -130,6 +130,11 @@ const authConfig = {
 export const auth = betterAuth(authConfig)
 
 export type AuthType = {
-  user: typeof auth.$Infer.Session.user | null
+  user:
+    | (Pick<typeof auth.$Infer.Session.user, 'id' | 'email' | 'name'> & {
+        role?: string | null
+      })
+    | null
   session: typeof auth.$Infer.Session.session | null
+  apiKeyId: string | null
 }

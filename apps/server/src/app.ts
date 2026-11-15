@@ -9,6 +9,7 @@ import {
   createOpenAPIApp,
   createResponseSchema,
   jsonErrorResponse,
+  ownerSessionSecurity,
 } from '@/lib/openapi'
 import { generateJsonResponse } from '@/lib/response'
 import { logger } from '@/middlewares/logger'
@@ -30,6 +31,7 @@ import providers from '@/routes/providers'
 import tags from '@/routes/tags'
 import manualAdd from '@/routes/manual-add'
 import ai from '@/routes/ai'
+import user from '@/routes/user'
 import { z } from '@hono/zod-openapi'
 import { createRoute } from '@hono/zod-openapi'
 
@@ -54,7 +56,7 @@ app.use(
     allowHeaders: ['Content-Type', 'Authorization'],
     allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
     credentials: true,
-    exposeHeaders: ['Content-Type', 'Authorization'],
+    exposeHeaders: ['Content-Type', 'Authorization', 'Retry-After'],
   }),
 )
 app.use('*', secureHeaders())
@@ -62,6 +64,8 @@ app.use('*', secureHeaders())
 app.use('*', mutationOriginMiddleware())
 
 app.on(['POST', 'GET'], '/api/auth/*', async (c) => {
+  if (c.req.raw.headers.has('authorization'))
+    throw new ServerError({ statusCode: 401, message: 'Unauthorized' })
   return auth.handler(c.req.raw)
 })
 
@@ -103,12 +107,29 @@ v1ApiBase.route('/subscriptions', subscriptions)
 v1ApiBase.route('/tags', tags)
 v1ApiBase.route('/manual-add', manualAdd)
 v1ApiBase.route('/ai', ai)
+v1ApiBase.route('/user', user)
+
+v1ApiBase.openAPIRegistry.registerComponent('securitySchemes', 'bearerAuth', {
+  type: 'http',
+  scheme: 'bearer',
+  description: 'API key created from the User page.',
+})
+v1ApiBase.openAPIRegistry.registerComponent('securitySchemes', 'ownerSession', {
+  type: 'apiKey',
+  in: 'cookie',
+  name:
+    env.NODE_ENV === 'production'
+      ? '__Secure-better-auth.session_token'
+      : 'better-auth.session_token',
+  description: 'Owner browser session from signing in.',
+})
 
 const v1ApiRoutes = v1ApiBase
   .openapi(
     createRoute({
       method: 'get',
       path: '/healthcheck',
+      security: [],
       responses: {
         200: {
           description: 'Service healthcheck.',
@@ -127,26 +148,31 @@ const v1ApiRoutes = v1ApiBase
     }),
     (c) => generateJsonResponse(c, { message: 'OK' }, 200),
   )
-  .doc('/doc', (c) => ({
+  .doc('/doc', {
     openapi: '3.0.0',
     info: {
       version: '0.0.1',
       title: 'NFS Media Manager API',
-      description: 'Private media admin API.',
+      description:
+        'Send an API key as Authorization: Bearer <key> for library requests. API keys work with authenticated machine requests that omit browser origin headers. API key management, provider credentials and connections, playback tokens and local worker pairing require an owner browser session. Each key allows 10,000 requests per hour. A 429 response from key authentication includes a Retry-After header.',
     },
-    servers: [
-      {
-        url: (() => {
-          const proto = c.req.header('x-forwarded-proto')
-          const host = c.req.header('x-forwarded-host') ?? c.req.header('host')
-          if (proto && host) return `${proto}://${host}`
-          return new URL(c.req.url).origin
-        })(),
-        description: 'Current environment',
-      },
-    ],
-  }))
-  .get('/scalar', Scalar({ url: '/api/v1/doc' }))
+    servers: [{ url: '/' }],
+    security: [...ownerSessionSecurity, { bearerAuth: [] }],
+  })
+  .get(
+    '/scalar',
+    Scalar(() => ({
+      url: '/api/v1/doc',
+      cdn: `${new URL(env.APP_URL).origin}/vendor/scalar/1.78.1.js`,
+      agent: { disabled: true },
+      hideClientButton: true,
+      persistAuth: false,
+      proxyUrl: '',
+      showDeveloperTools: 'never',
+      telemetry: false,
+      withDefaultFonts: false,
+    })),
+  )
 
 app.onError(async (err, c) => {
   if (err instanceof ServerError) {

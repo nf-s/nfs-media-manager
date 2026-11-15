@@ -1,5 +1,6 @@
 import AppNavigation from './app-navigation'
 import SignOutButton from './sign-out-button'
+import UserLink from './user-link'
 import RefreshDataButton from './refresh-data-button'
 import JobActivity from './job-activity'
 import { LibrarySelector, MediaScopeContent } from './media-scope'
@@ -20,7 +21,10 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           <div className="rail-foot">
             <JobActivity />
             <RefreshDataButton />
-            <SignOutButton />
+            <div className="rail-user-actions">
+              <UserLink />
+              <SignOutButton />
+            </div>
           </div>
         </aside>
         <main className="app-main">

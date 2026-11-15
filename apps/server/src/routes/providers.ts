@@ -17,6 +17,7 @@ import {
   createOpenAPIApp,
   createResponseSchema,
   jsonErrorResponse,
+  ownerSessionSecurity,
   type AppEnv,
   validationErrorResponse,
 } from '@/lib/openapi'
@@ -33,6 +34,8 @@ import {
   getProviderJobSummary,
   clearProviderCooldown,
 } from '@/services/provider-activity'
+
+const browserSession = authMiddleware({ sessionOnly: true })
 
 const app: OpenAPIHono<AppEnv> = createOpenAPIApp()
   .openapi(
@@ -60,7 +63,8 @@ const app: OpenAPIHono<AppEnv> = createOpenAPIApp()
     createRoute({
       method: 'get',
       path: '/:provider/secrets',
-      middleware: [authMiddleware()],
+      security: ownerSessionSecurity,
+      middleware: [browserSession],
       request: {
         params: z.object({
           provider: z.string().min(1),
@@ -75,7 +79,8 @@ const app: OpenAPIHono<AppEnv> = createOpenAPIApp()
             },
           },
         },
-        401: jsonErrorResponse('Unauthorized'),
+        401: jsonErrorResponse('Owner browser session required'),
+        403: jsonErrorResponse('Forbidden'),
         404: jsonErrorResponse('Provider not found'),
       },
     }),
@@ -91,7 +96,8 @@ const app: OpenAPIHono<AppEnv> = createOpenAPIApp()
     createRoute({
       method: 'patch',
       path: '/:provider/secrets',
-      middleware: [authMiddleware()],
+      security: ownerSessionSecurity,
+      middleware: [browserSession],
       request: {
         params: z.object({
           provider: z.string().min(1),
@@ -114,7 +120,8 @@ const app: OpenAPIHono<AppEnv> = createOpenAPIApp()
             },
           },
         },
-        401: jsonErrorResponse('Unauthorized'),
+        401: jsonErrorResponse('Owner browser session required'),
+        403: jsonErrorResponse('Forbidden'),
         404: jsonErrorResponse('Provider not found'),
         422: validationErrorResponse,
       },
@@ -133,7 +140,8 @@ const app: OpenAPIHono<AppEnv> = createOpenAPIApp()
     createRoute({
       method: 'post',
       path: '/:provider/test',
-      middleware: [authMiddleware()],
+      security: ownerSessionSecurity,
+      middleware: [browserSession],
       request: {
         params: z.object({
           provider: z.string().min(1),
@@ -148,7 +156,8 @@ const app: OpenAPIHono<AppEnv> = createOpenAPIApp()
             },
           },
         },
-        401: jsonErrorResponse('Unauthorized'),
+        401: jsonErrorResponse('Owner browser session required'),
+        403: jsonErrorResponse('Forbidden'),
         404: jsonErrorResponse('Provider not found'),
       },
     }),

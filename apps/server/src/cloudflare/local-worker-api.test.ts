@@ -348,7 +348,7 @@ describe('dedicated local worker capability routes', () => {
         headers: { authorization: `Bearer ${token}` },
       })
       expect(response.status).toBe(401)
-      expect(mocks.getSession).toHaveBeenCalledOnce()
+      expect(mocks.getSession).not.toHaveBeenCalled()
       expect(mocks.getWorker).not.toHaveBeenCalled()
       expect(mocks.getCoordinator).not.toHaveBeenCalled()
     },

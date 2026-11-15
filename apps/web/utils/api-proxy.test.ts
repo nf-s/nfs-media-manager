@@ -14,6 +14,7 @@ test('API proxy preserves method, path, query, body, cookies and origin without 
       body: 'synthetic import',
       headers: {
         cookie: 'session=synthetic',
+        authorization: 'Bearer synthetic-api-key',
         origin: 'https://media.example',
         'content-type': 'text/plain',
         'x-forwarded-host': 'attacker.example',
@@ -30,6 +31,10 @@ test('API proxy preserves method, path, query, body, cookies and origin without 
     assert.equal(upstream.redirect, 'manual')
     assert.equal(await upstream.text(), 'synthetic import')
     assert.equal(upstream.headers.get('cookie'), 'session=synthetic')
+    assert.equal(
+      upstream.headers.get('authorization'),
+      'Bearer synthetic-api-key',
+    )
     assert.equal(upstream.headers.get('origin'), 'https://media.example')
     assert.equal(upstream.headers.get('content-type'), 'text/plain')
     assert.equal(upstream.headers.get('x-forwarded-host'), 'media.example')
