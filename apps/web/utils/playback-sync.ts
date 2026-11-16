@@ -34,13 +34,17 @@ export type PlaybackSyncOptions = {
   /** This tab ran the queue until it was reloaded, and takes it back. */
   resuming?: boolean
   now?: () => number
-  /** Whether the page is visible; a hidden follower stops asking. */
+  /** Whether the page is visible; a hidden page asks far less. */
   visible?: () => boolean
 }
 
-/** Time between exchanges while there is a session, and while there is none. */
-const ACTIVE_MS = 3_000
-const IDLE_MS = 5_000
+/**
+ * Time between exchanges while something plays, and while nothing does. The
+ * first keeps the driver's lease; the second may let it lapse, which costs
+ * nothing while no queue has to be run.
+ */
+const PLAYING_MS = 3_000
+const QUIET_MS = 8_000
 /** A change is saved this soon after it is made. */
 const SAVE_DELAY_MS = 400
 /** While something plays, its position is saved at least this often. */
@@ -124,6 +128,8 @@ export function createPlaybackSync(options: PlaybackSyncOptions) {
   let alone = false
   let busy: Promise<void> | null = null
   let timer: ReturnType<typeof setTimeout> | null = null
+  /** Whether the pending exchange was timed for something playing. */
+  let paced = false
   let saveTimer: ReturnType<typeof setTimeout> | null = null
   let disposed = false
   let shown = compose()
@@ -261,19 +267,27 @@ export function createPlaybackSync(options: PlaybackSyncOptions) {
     return exchanged
   }
 
-  /** Schedules the next exchange. A follower asks only while it is shown. */
+  function playing() {
+    const { snapshot, starting } = shown
+    return starting || (snapshot !== null && !snapshot.paused)
+  }
+
+  /**
+   * Schedules the next exchange. A hidden page asks only while it runs a
+   * queue that is playing.
+   */
   function plan() {
     if (timer) clearTimeout(timer)
     timer = null
     if (disposed) return
-    const idle = stored === null && engine.saved() === null
-    if (!visible() && (role !== 'driver' || idle)) return
+    paced = playing()
+    if (!visible() && !(role === 'driver' && paced)) return
     timer = setTimeout(
       () => {
         timer = null
         void exchange()
       },
-      idle ? IDLE_MS : ACTIVE_MS,
+      paced ? PLAYING_MS : QUIET_MS,
     )
   }
 
@@ -288,6 +302,8 @@ export function createPlaybackSync(options: PlaybackSyncOptions) {
   const unsubscribe = engine.subscribe(() => {
     publish()
     saveSoon()
+    // Playback that starts or stops changes how often the server is asked.
+    if (!busy && playing() !== paced) plan()
   })
 
   /**

@@ -3312,6 +3312,73 @@ test('a second load of the same tab does not run the queue beside the first', as
   one.close()
 })
 
+test('the server is asked less often while nothing plays, and a hidden page asks only to run a playing queue', async () => {
+  const sessions = fakeSessions()
+  let asked = 0
+  const api: SessionApi = {
+    sync(input) {
+      asked += 1
+      return sessions.api.sync(input)
+    },
+    release: sessions.api.release,
+  }
+  const setup = harness(undefined, undefined, {
+    browserId: 'the-tab',
+    restoreSource,
+  })
+  const sync = createPlaybackSync({
+    engine: setup.engine,
+    api,
+    clientId: 'client-pace',
+    clientName: 'Chrome on Mac',
+    now: () => clock,
+    visible: () => setup.page.visible,
+  })
+  sync.start()
+  await settle()
+  asked = 0
+  await advance(24_000)
+  assert.equal(asked, 3)
+
+  await setup.engine.selectDevice({ kind: 'remote', device: speaker })
+  sync.play(sourceTrack(0), savedFixtureSource(40))
+  await settle()
+  setup.remote.device = { ...speaker, active: true }
+  setup.remote.snapshot = playing(0, 1_000)
+  await advance(1_000)
+  asked = 0
+  await advance(12_000)
+  assert.ok(asked >= 4, `asked ${asked} times while playing`)
+
+  // Hidden, the page still runs the playing queue and keeps its lease.
+  setup.page.visible = false
+  asked = 0
+  await advance(12_000)
+  assert.ok(asked >= 4, `asked ${asked} times while hidden and playing`)
+  assert.equal(sessions.record.driver?.clientId, 'client-pace')
+
+  setup.remote.snapshot = remoteSnapshot({
+    trackUri: sourceTrack(0).uri,
+    contextUri: null,
+    positionMs: 30_000,
+    paused: true,
+  })
+  await advance(8_000)
+  assert.equal(sessions.record.state?.snapshot?.paused, true)
+  asked = 0
+  await advance(60_000)
+  assert.equal(asked, 0)
+
+  // Shown again, it asks at once.
+  setup.page.visible = true
+  sync.refresh()
+  await settle()
+  assert.equal(asked, 1)
+  assert.equal(sync.getState().sharing.role, 'driver')
+  sync.dispose()
+  setup.engine.dispose()
+})
+
 test('a session on a Sonos room is shown and taken over on another page', async () => {
   const sessions = fakeSessions()
   const sonos = fakeSonos()
