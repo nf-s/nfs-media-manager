@@ -20,10 +20,22 @@ import { fetchApiData } from '@/utils/api'
 import {
   createPlaybackEngine,
   idlePlaybackState,
-  type PlaybackEngine,
   type PlaybackState,
   type SonosRoomRef,
 } from '@/utils/playback-engine'
+import { restorePlaybackSource } from '@/utils/playback-source'
+import {
+  createPlaybackSync,
+  createSessionApi,
+  type PlaybackSync,
+} from '@/utils/playback-sync'
+import {
+  markDriving,
+  playerBrowserId,
+  playerClientId,
+  playerClientName,
+  takeDriving,
+} from '@/utils/player-client'
 import { createPlayerApi } from '@/utils/spotify-player-api'
 import { createSonosControlApi } from '@/utils/sonos-player-api'
 import { loadSpotifySdk } from '@/utils/spotify-sdk'
@@ -40,7 +52,7 @@ export type PlaybackView = PlaybackState & {
   connection: PlaybackConnection
 }
 export type PlaybackControls = Pick<
-  PlaybackEngine,
+  PlaybackSync,
   | 'play'
   | 'enqueue'
   | 'playFromQueue'
@@ -200,7 +212,23 @@ function createEngine(apiBaseUrl: string) {
     sonos: createSonosControlApi(apiBaseUrl),
     initialRoom: savedRoom(),
     onRoom: saveRoom,
+    browserId: playerBrowserId(),
+    restoreSource: (saved) => restorePlaybackSource(apiBaseUrl, saved),
   })
+}
+
+/** The engine with the account's shared session around it. */
+function createPlayer(apiBaseUrl: string) {
+  const engine = createEngine(apiBaseUrl)
+  const sync = createPlaybackSync({
+    engine,
+    api: createSessionApi(apiBaseUrl),
+    clientId: playerClientId(),
+    clientName: playerClientName(window.navigator.userAgent),
+    resuming: takeDriving(Date.now()),
+    visible: () => document.visibilityState === 'visible',
+  })
+  return { engine, sync }
 }
 
 const noSubscription = () => () => undefined
@@ -222,31 +250,41 @@ export default function PlaybackProvider({
       ),
   })
   const enabled = account.data?.playback === true
-  const [engine, setEngine] = useState<PlaybackEngine | null>(null)
+  const [player, setPlayer] = useState<PlaybackSync | null>(null)
   useEffect(() => {
     if (!enabled) return
-    const created = createEngine(apiBaseUrl)
-    created.prepare()
-    created.watch()
-    setEngine(created)
+    const { engine, sync } = createPlayer(apiBaseUrl)
+    engine.prepare()
+    engine.watch()
+    sync.start()
+    setPlayer(sync)
     const refresh = () => {
-      if (document.visibilityState === 'visible') created.refresh()
+      if (document.visibilityState !== 'visible') return
+      engine.refresh()
+      sync.refresh()
+    }
+    const close = () => {
+      if (sync.close()) markDriving(Date.now())
     }
     document.addEventListener('visibilitychange', refresh)
+    window.addEventListener('pagehide', close)
     return () => {
       document.removeEventListener('visibilitychange', refresh)
-      created.dispose()
-      setEngine(null)
+      window.removeEventListener('pagehide', close)
+      sync.close()
+      sync.dispose()
+      engine.dispose()
+      setPlayer(null)
     }
   }, [enabled, apiBaseUrl])
   const subscribe = useCallback(
     (listener: () => void) =>
-      engine ? engine.subscribe(listener) : noSubscription(),
-    [engine],
+      player ? player.subscribe(listener) : noSubscription(),
+    [player],
   )
   const state = useSyncExternalStore(
     subscribe,
-    engine ? engine.getState : idleState,
+    player ? player.getState : idleState,
     idleState,
   )
   const status = account.data
@@ -258,11 +296,11 @@ export default function PlaybackProvider({
         ? 'disconnected'
         : 'unconfigured'
   const view = useMemo(
-    () => ({ ...state, enabled: engine !== null, connection }),
-    [state, engine, connection],
+    () => ({ ...state, enabled: player !== null, connection }),
+    [state, player, connection],
   )
   return (
-    <PlaybackControlsContext.Provider value={engine ?? disabledControls}>
+    <PlaybackControlsContext.Provider value={player ?? disabledControls}>
       <PlaybackViewContext.Provider value={view}>
         {children}
       </PlaybackViewContext.Provider>

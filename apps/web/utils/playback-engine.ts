@@ -37,6 +37,11 @@ import type {
   SonosGroupState,
 } from '@repo/schemas/sonos'
 import type { SonosControlApi } from './sonos-player-api'
+import type {
+  SavedPlayback,
+  SavedSource,
+  SavedTarget,
+} from '@repo/schemas/playback'
 
 /** A Sonos group, with the household whose Spotify account it plays with. */
 export type SonosRoomRef = { id: string; name: string; household: string }
@@ -63,6 +68,18 @@ type RoomTarget = Extract<PlaybackTarget, { kind: 'room' }>
 /** A device Spotify reports but accepts no app commands for. */
 type ObservedTarget = Extract<PlaybackTarget, { kind: 'restricted' | 'sonos' }>
 type RemoteState = Awaited<ReturnType<PlayerApi['state']>>
+
+/** How this page takes part in the account's shared session. */
+export type PlaybackSharing = {
+  /**
+   * The driver runs the queue: it follows the device and gives it the tracks
+   * due next. A follower shows the driver's queue and takes over when it is
+   * used here or the driver goes away.
+   */
+  role: 'driver' | 'follower'
+  /** The client running the queue, when it is not this page. */
+  driverName: string | null
+}
 
 export type PlaybackState = {
   /**
@@ -92,6 +109,8 @@ export type PlaybackState = {
   failure: PlaybackFailure | null
   /** Latest queue change, for assistive technology. */
   announcement: string
+  /** Set by the session sync; the engine alone always runs its own queue. */
+  sharing: PlaybackSharing
 }
 
 export const idlePlaybackState: PlaybackState = {
@@ -111,6 +130,7 @@ export const idlePlaybackState: PlaybackState = {
   starting: false,
   failure: null,
   announcement: '',
+  sharing: { role: 'driver', driverName: null },
 }
 
 export type PlaybackEngineOptions = {
@@ -132,6 +152,13 @@ export type PlaybackEngineOptions = {
   /** The Sonos group chosen as the device last time. */
   initialRoom?: SonosRoomRef | null
   onRoom?: (room: SonosRoomRef | null) => void
+  /**
+   * Names this browser tab, the same after a reload, so a saved session can
+   * tell whether the browser it played in was this one.
+   */
+  browserId?: string
+  /** Reads a saved source's entries again; null when it cannot be read. */
+  restoreSource?: (saved: SavedSource) => PlaybackSource | null
 }
 
 const LOCAL_POLL_MS = 1_000
@@ -165,6 +192,12 @@ const ROOM_VOLUME_EVERY = 5
 const ROOM_RETRY_MS = 15_000
 /** How long a Sonos group may keep reporting the track before the one it was told to play. */
 const ROOM_EXPECT_MS = 6_000
+/** Source tracks saved either side of the current one. */
+const SAVED_TRACKS = 50
+/** Tracks given to a device that are saved with a session. */
+const SAVED_SENT = 150
+/** A browser that was playing this recently starts again by itself after a reload. */
+const RESUME_WITHIN_MS = 60_000
 const LOCAL: Extract<PlaybackTarget, { kind: 'local' }> = { kind: 'local' }
 const NOT_STARTED: PlaybackFailure = {
   status: 'error',
@@ -206,6 +239,26 @@ const SOURCE_PARALLEL = 6
 
 function sourceTrackKey(index: number, position: number) {
   return `${index}:${position}`
+}
+
+/** Ascending indexes as `[from, to)` ranges, and back. */
+function indexRanges(indexes: readonly number[]) {
+  const ranges: Array<[number, number]> = []
+  for (const index of [...indexes].sort((a, b) => a - b)) {
+    const last = ranges.at(-1)
+    if (last && last[1] === index) last[1] = index + 1
+    else if (!last || index > last[1]) ranges.push([index, index + 1])
+  }
+  return ranges
+}
+
+function rangeIndexes(ranges: ReadonlyArray<readonly [number, number]>) {
+  return ranges.flatMap(([from, to]) =>
+    Array.from(
+      { length: Math.max(0, to - from) },
+      (_, offset) => from + offset,
+    ),
+  )
 }
 
 function isObserved(target: PlaybackTarget): target is ObservedTarget {
@@ -368,6 +421,11 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
   let roomExpected: { uri: string; until: number } | null = null
   /** Spotify's details of tracks a Sonos group plays; null once asked for. */
   const roomTracks = new Map<string, TrackDetails | null>()
+  /**
+   * The item a restored session was on when nothing is playing it any more,
+   * and where in it to start again.
+   */
+  let resume: { item: PlayableItem; positionMs: number } | null = null
 
   function set(patch: Partial<PlaybackState>) {
     if (disposed) return
@@ -1043,6 +1101,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     }
     run += 1
     const started = run
+    resume = null
     session = startSession(item, now())
     used = true
     latest = null
@@ -1197,6 +1256,11 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
   function observe(after: PlaybackSnapshot) {
     const before = latest
     latest = after
+    if (resume && !session && !after.paused) {
+      // Something else plays now, so the restored item is no longer current.
+      resume = null
+      set({ current: null })
+    }
     if (session) {
       const starting = session.phase === 'starting'
       const step = stepSession(session, before, after, skippedAt)
@@ -1699,6 +1763,16 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
 
   function seek(positionMs: number) {
     const target = state.target
+    if (!latest && resume && state.snapshot) {
+      // Nothing plays yet: this moves where the restored item will start.
+      const position = Math.max(
+        0,
+        Math.min(positionMs, state.snapshot.durationMs),
+      )
+      resume = { ...resume, positionMs: position }
+      set({ snapshot: { ...state.snapshot, positionMs: position, at: now() } })
+      return
+    }
     if (!latest || target.kind === 'restricted') return
     if (target.kind === 'sonos' && !target.group.actions.seek) return
     const position = Math.max(0, Math.min(positionMs, latest.durationMs))
@@ -1728,6 +1802,11 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
         .catch(ignored)
   }
 
+  function selectedVolume(next: SelectableTarget) {
+    if (next.kind === 'local') return localVolume
+    return next.kind === 'remote' ? next.device.volume : null
+  }
+
   /**
    * Moves playback to or from a Sonos group. Spotify cannot move a session
    * there, so what is playing is started again on the chosen device at the
@@ -1737,6 +1816,18 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     const from = state.target
     if (sameDevice(from, next)) return
     if (next.kind === 'local') player?.activateElement().catch(() => undefined)
+    if (resume && !latest) {
+      // Nothing plays yet: the restored item starts on the chosen device.
+      roomPolls = 0
+      set({
+        target: next,
+        volume: selectedVolume(next),
+        failure: null,
+        findingSonos: false,
+      })
+      schedule(0)
+      return
+    }
     const shown = latest
     const playing = shown !== null && !shown.paused
     const position = shown ? positionAt(shown, now()) : 0
@@ -1768,12 +1859,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     if (!started || !item) currentFromSource = false
     set({
       target: next,
-      volume:
-        next.kind === 'local'
-          ? localVolume
-          : next.kind === 'remote'
-            ? next.device.volume
-            : null,
+      volume: selectedVolume(next),
       snapshot: null,
       current: item,
       starting: false,
@@ -1784,8 +1870,361 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     else schedule(0)
   }
 
+  /** The target in terms another browser can resolve. */
+  function savedTarget(): SavedTarget {
+    const target = state.target
+    if (target.kind === 'room') return { kind: 'room', room: target.room }
+    if (target.kind === 'remote') {
+      const { id, name, type, volume } = target.device
+      return {
+        kind: 'spotify',
+        device: { id, name, type, volume },
+        browser: null,
+      }
+    }
+    if (target.kind === 'local')
+      return {
+        kind: 'spotify',
+        device: localId
+          ? {
+              id: localId,
+              name: options.playerName,
+              type: 'computer',
+              volume: localVolume,
+            }
+          : null,
+        browser: options.browserId ?? null,
+      }
+    return { kind: 'spotify', device: null, browser: null }
+  }
+
+  function savedSource(): SavedSource | null {
+    const active = source
+    const descriptor = active?.definition.descriptor
+    if (!active || !descriptor || active.initializing) return null
+    const { label, href, length, startIndex, kind } = active.definition
+    return {
+      descriptor,
+      label,
+      href,
+      length,
+      startIndex,
+      kind,
+      remaining: indexRanges(active.remaining),
+      played: [...active.played],
+      skipped: [...active.skipped],
+      exhausted: [...active.exhausted],
+      upcoming: active.upcoming.slice(0, SAVED_TRACKS),
+      history: active.history.slice(-SAVED_TRACKS),
+    }
+  }
+
+  /**
+   * What this app is playing and has queued, for the shared session. Null
+   * when there is nothing of its own to carry on with.
+   */
+  function saved(): SavedPlayback | null {
+    const kept = savedSource()
+    const active = session
+    if (!active && !state.current && !state.queue.length && !kept) return null
+    const at = now()
+    const from = active && active.sent.length > SAVED_SENT ? active.index : 0
+    return {
+      version: 1,
+      savedAt: at,
+      queue: state.queue,
+      sequence,
+      current: state.current,
+      currentFromSource,
+      session: active
+        ? {
+            item: active.item,
+            sent: active.sent.slice(from, from + SAVED_SENT),
+            index: active.index - from,
+            anchorUri: active.anchorUri,
+          }
+        : null,
+      snapshot: latest
+        ? { ...latest, positionMs: positionAt(latest, at), at }
+        : resume
+          ? state.snapshot
+          : null,
+      shuffle: state.shuffle,
+      target: savedTarget(),
+      source: kept,
+    }
+  }
+
+  function restoredTarget(target: SavedTarget): SelectableTarget {
+    if (target.kind === 'room')
+      return options.sonos ? { kind: 'room', room: target.room } : LOCAL
+    const { device, browser } = target
+    // This page's own player, now or before a reload, is this browser.
+    if (
+      !device ||
+      device.id === localId ||
+      (browser !== null && browser === options.browserId)
+    )
+      return LOCAL
+    return {
+      kind: 'remote',
+      device: { ...device, active: false, restricted: false },
+    }
+  }
+
+  /** Where the device is in the tracks it was given: an index into them, or -1. */
+  function sentIndex(active: PlaybackSession, after: PlaybackSnapshot) {
+    if (active.item.kind === 'album')
+      return after.contextUri === active.item.uri ? active.index : -1
+    const index = active.sent.findIndex(
+      (item, at) =>
+        at >= active.index &&
+        (item.uri === after.trackUri || item.uri === after.linkedFromUri),
+    )
+    // Spotify may have played another recording of the current track.
+    if (index < 0 && after.trackUri && after.trackUri === active.anchorUri)
+      return active.index
+    return index
+  }
+
+  /**
+   * Picks a restored session up from what the device reports. A device still
+   * on the tracks it was given is followed from the track it has reached. When
+   * nothing plays them any more, the item is kept to start again where it
+   * stopped.
+   */
+  function reattach(restored: SavedPlayback, after: PlaybackSnapshot | null) {
+    const active = session
+    const index = after && active ? sentIndex(active, after) : -1
+    if (after && active && index >= 0) {
+      const item = active.sent[index]
+      if (item && index > active.index) {
+        // Only the tracks the device was given count as played. One queued
+        // after they were sent is still due, and starts when this one ends.
+        const reached = new Set(
+          active.sent
+            .slice(active.index + 1, index + 1)
+            .map((sent) => sent.uri),
+        )
+        for (const next of planned()) {
+          if (!reached.delete(next.item.uri)) continue
+          take(next)
+          if (next.item.uri === item.uri)
+            currentFromSource = next.from === 'source'
+        }
+        session = { ...active, item, index, anchorUri: after.trackUri }
+        set({ current: item })
+      }
+      latest = after
+      set({ active: true, snapshot: after, starting: false })
+      findSonos()
+      maintainRoom()
+      return
+    }
+    detach()
+    if (after && !after.paused) {
+      // Other playback has taken the device. The queue and source are kept.
+      currentFromSource = false
+      latest = after
+      set({ current: null, snapshot: after, starting: false })
+      findSonos()
+      return
+    }
+    const shown = restored.snapshot
+    const item = restored.current
+    resume = item
+      ? {
+          item:
+            item.kind === 'album' && shown?.trackUri
+              ? { ...item, startUri: shown.trackUri }
+              : item,
+          positionMs: shown?.positionMs ?? 0,
+        }
+      : null
+    set({
+      snapshot: shown && item ? { ...shown, paused: true, at: now() } : null,
+      starting: false,
+    })
+    const ownBrowser =
+      restored.target.kind === 'spotify' &&
+      restored.target.browser !== null &&
+      restored.target.browser === options.browserId
+    // A reload of the page that was playing carries on by itself.
+    if (
+      resume &&
+      ownBrowser &&
+      state.target.kind === 'local' &&
+      shown &&
+      !shown.paused &&
+      now() - restored.savedAt <= RESUME_WITHIN_MS
+    )
+      void start(resume.item, undefined, resume.positionMs)
+  }
+
+  /**
+   * Takes a saved session over: its queue, source and device, then what the
+   * device is playing now. Nothing is sent to the device unless this page was
+   * the one playing and has just been reloaded.
+   */
+  async function restore(restored: SavedPlayback) {
+    if (disposed) return
+    run += 1
+    roomRun += 1
+    const restoring = run
+    const current = () => restoring === run && !disposed
+    stop()
+    const kept = restored.source
+    const definition = kept ? (options.restoreSource?.(kept) ?? null) : null
+    const active: SourceSession | null =
+      kept && definition
+        ? {
+            definition,
+            tracks: new Map(),
+            remaining: rangeIndexes(kept.remaining),
+            played: new Set(kept.played),
+            skipped: new Set(kept.skipped),
+            exhausted: new Set(kept.exhausted),
+            upcoming: [...kept.upcoming],
+            history: [...kept.history],
+            initializing: false,
+            revision: 0,
+            filling: null,
+            draws: [],
+          }
+        : null
+    source = active
+    sourceStarting = false
+    currentFromSource = active !== null && restored.currentFromSource
+    sequence = Math.max(sequence, restored.sequence)
+    used = true
+    latest = null
+    skippedAt = null
+    sawLocalState = false
+    missing = 0
+    pollErrors = 0
+    fallback = null
+    left = null
+    settlesAt = 0
+    sonosChecked = null
+    roomExpected = null
+    roomRetryAt = 0
+    roomPolls = 0
+    resume = null
+    session = restored.session
+      ? { ...restored.session, phase: 'playing', startedAt: now() }
+      : null
+    const target = restoredTarget(restored.target)
+    set({
+      active: true,
+      current: restored.current,
+      snapshot: null,
+      queue: restored.queue,
+      source: active
+        ? { label: active.definition.label, href: active.definition.href }
+        : null,
+      upcoming: active ? active.upcoming.map((entry) => entry.item) : [],
+      shuffle: restored.shuffle,
+      sourceLoading: false,
+      target,
+      volume: selectedVolume(target),
+      starting: restored.current !== null,
+      failure: null,
+      findingSonos: false,
+    })
+    if (active) previewSource(active)
+    let found: PlaybackSnapshot | null = null
+    try {
+      if (target.kind === 'room') {
+        const reported = await options.sonos?.state(target.room.id, true)
+        if (!current()) return
+        if (reported?.volume !== undefined) set({ volume: reported.volume })
+        const snapshot = reported ? roomSnapshot(reported, now()) : null
+        found = snapshot ? roomTrack(snapshot) : null
+      } else {
+        const remote = await api.state()
+        if (!current()) return
+        const device = reported(remote)
+        if (device && remote.snapshot) {
+          if (!sameDevice(state.target, device))
+            set({
+              target: device,
+              volume:
+                device.kind === 'local' ? localVolume : targetVolume(device),
+            })
+          if (device.kind === 'local') sawLocalState = true
+          found = remote.snapshot
+        } else if (target.kind === 'remote') {
+          // The device may have gone since the session was saved.
+          const devices = await api.devices().catch(() => null)
+          if (!current()) return
+          if (devices && !devices.some(({ id }) => id === target.device.id))
+            set({ target: LOCAL, volume: localVolume })
+        }
+      }
+    } catch (error) {
+      if (!current()) return
+      if (playbackFailure(error).status === 'expired') fail(error)
+    }
+    reattach(restored, found)
+    if (!timer && pollDelay() !== null) schedule(FOLLOW_UP_MS)
+  }
+
+  /** Watches another device without touching what it plays. */
+  function watchTarget(next: SelectableTarget) {
+    latest = null
+    missing = 0
+    roomPolls = 0
+    roomExpected = null
+    fallback = null
+    sawLocalState = false
+    set({ target: next, volume: selectedVolume(next), snapshot: null })
+    schedule(0)
+  }
+
   return {
     getState: () => state,
+    saved,
+    restore,
+    /**
+     * Another client has taken the session over. The queue, source and item
+     * are dropped here without a command to the device, whose playback is
+     * still shown and controlled.
+     */
+    release() {
+      run += 1
+      roomRun += 1
+      detach()
+      source = null
+      sourceStarting = false
+      currentFromSource = false
+      resume = null
+      set({
+        queue: [],
+        current: null,
+        source: null,
+        upcoming: [],
+        sourceLoading: false,
+        starting: false,
+        shuffle: preferredShuffle,
+        ...(latest ? {} : { snapshot: null }),
+      })
+      if (!timer && pollDelay() !== null) schedule(0)
+    },
+    /**
+     * Follows the device another client's session plays on, so its playback
+     * is shown here. Spotify devices are found through the account's own
+     * report; a Sonos group has to be named.
+     */
+    watchSaved(target: SavedTarget) {
+      const shown = state.target
+      if (target.kind === 'room') {
+        if (!options.sonos) return
+        if (shown.kind === 'room' && shown.room.id === target.room.id) return
+        watchTarget({ kind: 'room', room: target.room })
+      } else if (shown.kind === 'room') watchTarget(LOCAL)
+    },
+    /** Unlocks audio in this browser; call it inside the user's gesture. */
+    activate,
     subscribe(listener: () => void) {
       listeners.add(listener)
       return () => {
@@ -1893,10 +2332,12 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
         void startSource(state.current, source.definition)
         return
       }
-      if (!latest) {
-        // Nothing is loaded on the device: retry the item, or start the queue.
+      if (!latest || (resume && latest.paused)) {
+        // Nothing is loaded on the device: start the restored item where it
+        // stopped, retry the item, or start the queue.
         if (refused()) return
-        if (state.current) void start(state.current)
+        if (resume) void start(resume.item, undefined, resume.positionMs)
+        else if (state.current) void start(state.current)
         else startNext()
         return
       }
