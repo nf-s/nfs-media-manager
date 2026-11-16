@@ -62,6 +62,7 @@ import {
   finishSonosAuthorization,
   getSonosAccountStatus,
   getSonosRooms,
+  sendSonosCommand,
   sonosCallbackDestination,
 } from '../sonos-oauth'
 
@@ -351,6 +352,34 @@ describe('Sonos owner/session-bound OAuth (mock database and gate)', () => {
       .object({ headers: z.record(z.string(), z.string()) })
       .parse(mocks.request.mock.calls[1]?.[1])
     expect(rooms.headers['Authorization']).toBe('Bearer fake-new-token')
+  })
+
+  it('reports a command Sonos refuses without asking for a new sign-in', async () => {
+    mocks.database.select
+      .mockReturnValueOnce(query([]))
+      .mockReturnValueOnce(storedTokens())
+    mocks.request.mockRejectedValueOnce(
+      new ProviderRequestError(
+        'Provider request failed (HTTP 400)',
+        'request-failed',
+        null,
+        true,
+      ),
+    )
+    await expect(
+      sendSonosCommand('user-1', 'RINCON_A:1', { action: 'next' }),
+    ).rejects.toThrow('Sonos did not accept that.')
+
+    mocks.database.select
+      .mockReturnValueOnce(query([]))
+      .mockReturnValueOnce(storedTokens())
+    mocks.request.mockResolvedValueOnce(Response.json({}))
+    expect(
+      await sendSonosCommand('user-1', 'RINCON_A:1', { action: 'pause' }),
+    ).toEqual({ done: true })
+    expect(mocks.request.mock.calls.at(-1)?.[0]).toBe(
+      'https://api.ws.sonos.com/control/api/v1/groups/RINCON_A%3A1/playback/pause',
+    )
   })
 
   it('needs a connection before listing rooms', async () => {

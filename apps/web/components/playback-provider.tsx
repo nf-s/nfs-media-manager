@@ -23,6 +23,7 @@ import {
   type PlaybackState,
 } from '@/utils/playback-engine'
 import { createPlayerApi } from '@/utils/spotify-player-api'
+import { createSonosControlApi } from '@/utils/sonos-player-api'
 import { loadSpotifySdk } from '@/utils/spotify-sdk'
 
 export type PlaybackView = PlaybackState & {
@@ -137,6 +138,7 @@ function createEngine(apiBaseUrl: string) {
     initialVolume: savedVolume(),
     onLocalVolume: saveVolume,
     visible: () => document.visibilityState === 'visible',
+    sonos: createSonosControlApi(apiBaseUrl),
   })
 }
 

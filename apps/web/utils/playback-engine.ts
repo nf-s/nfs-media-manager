@@ -27,15 +27,25 @@ import {
   type SpotifySdk,
   type SpotifySdkPlayer,
 } from './spotify-sdk'
+import type { SonosCommand, SonosGroupControl } from '@repo/schemas/sonos'
+import type { SonosControlApi } from './sonos-player-api'
 
 export type PlaybackTarget =
   | { kind: 'local' }
   | { kind: 'remote'; device: PlaybackDevice }
   /** A device Spotify does not let apps control: its playback is shown only. */
   | { kind: 'restricted'; name: string; type: string }
+  /** A restricted Sonos group, controlled through the Sonos connection instead. */
+  | { kind: 'sonos'; name: string; type: string; group: SonosGroupControl }
 /** A target playback can be started on or moved to. */
-export type SelectableTarget = Exclude<PlaybackTarget, { kind: 'restricted' }>
+export type SelectableTarget = Exclude<
+  PlaybackTarget,
+  { kind: 'restricted' | 'sonos' }
+>
 type FollowedTarget = Exclude<PlaybackTarget, { kind: 'local' }>
+/** A device Spotify reports but accepts no app commands for. */
+type ObservedTarget = Extract<PlaybackTarget, { kind: 'restricted' | 'sonos' }>
+type SonosTarget = Extract<PlaybackTarget, { kind: 'sonos' }>
 type RemoteState = Awaited<ReturnType<PlayerApi['state']>>
 
 export type PlaybackState = {
@@ -95,6 +105,8 @@ export type PlaybackEngineOptions = {
   random?: () => number
   /** Whether the page is visible; idle remote polling stops while hidden. */
   visible?: () => boolean
+  /** Controls restricted Sonos groups through the Sonos connection. */
+  sonos?: SonosControlApi
 }
 
 const LOCAL_POLL_MS = 1_000
@@ -139,16 +151,21 @@ function sourceTrackKey(index: number, position: number) {
   return `${index}:${position}`
 }
 
+function isObserved(target: PlaybackTarget): target is ObservedTarget {
+  return target.kind === 'restricted' || target.kind === 'sonos'
+}
+
 function sameDevice(a: PlaybackTarget, b: PlaybackTarget) {
   if (a.kind === 'remote' && b.kind === 'remote')
     return a.device.id === b.device.id
-  if (a.kind === 'restricted' && b.kind === 'restricted')
+  if (isObserved(a) && isObserved(b))
     return a.name === b.name && a.type === b.type
   return a.kind === b.kind && a.kind === 'local'
 }
 
 function targetVolume(target: FollowedTarget) {
-  return target.kind === 'remote' ? target.device.volume : null
+  if (target.kind === 'remote') return target.device.volume
+  return target.kind === 'sonos' ? target.group.volume : null
 }
 
 function sameShown(shown: PlaybackSnapshot | null, after: PlaybackSnapshot) {
@@ -207,6 +224,8 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
   let fallback: SelectableTarget | null = null
   /** Until then Spotify may still report the device playback was moved from. */
   let settlesAt = 0
+  /** The restricted device and track last looked up as a Sonos group. */
+  let sonosChecked: string | null = null
 
   function set(patch: Partial<PlaybackState>) {
     if (disposed) return
@@ -369,7 +388,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
   /** Where new playback goes. A restricted device cannot take it, so the earlier target does. */
   function playTarget(): SelectableTarget {
     const target = state.target
-    if (target.kind !== 'restricted') return target
+    if (!isObserved(target)) return target
     const next = fallback ?? LOCAL
     fallback = null
     if (next.kind === 'local') sawLocalState = false
@@ -670,7 +689,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
    * control, so there the queue waits for Next.
    */
   function continueQueue(): boolean {
-    return state.target.kind !== 'restricted' && startNext()
+    return !isObserved(state.target) && startNext()
   }
 
   function publish(after: PlaybackSnapshot) {
@@ -700,6 +719,46 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       }
     }
     publish(after)
+    findSonos()
+  }
+
+  /**
+   * Looks up the Sonos group behind a restricted device, once per device and
+   * track, so its controls work through the Sonos connection.
+   */
+  function findSonos() {
+    const sonos = options.sonos
+    const target = state.target
+    const track = latest?.trackUri
+    if (!sonos || !isObserved(target) || !track) return
+    const key = `${target.name}\n${target.type}\n${track}`
+    if (key === sonosChecked) return
+    sonosChecked = key
+    sonos.find(track, target.name).then(
+      (group) => {
+        const current = state.target
+        if (disposed || !isObserved(current) || !sameDevice(current, target))
+          return
+        const { name, type } = current
+        if (group)
+          set({
+            target: { kind: 'sonos', name, type, group },
+            volume: volumeTimer ? state.volume : group.volume,
+          })
+        else if (current.kind === 'sonos')
+          set({ target: { kind: 'restricted', name, type }, volume: null })
+      },
+      // A failed lookup leaves the device shown only; the next track tries again.
+      () => undefined,
+    )
+  }
+
+  function sonosSend(target: SonosTarget, command: SonosCommand) {
+    options.sonos?.command(target.group.id, command).catch((error: unknown) => {
+      // The group may have changed; look it up again with the next report.
+      sonosChecked = null
+      fail(error)
+    })
   }
 
   function observeLocal(payload: unknown) {
@@ -727,8 +786,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     if (ended && continueQueue()) return
     detach()
     latest = null
-    const restored =
-      fallback ?? (state.target.kind === 'restricted' ? LOCAL : null)
+    const restored = fallback ?? (isObserved(state.target) ? LOCAL : null)
     fallback = null
     if (restored?.kind === 'local') sawLocalState = false
     set({
@@ -751,7 +809,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
    * comes back once that device goes quiet.
    */
   function follow(target: FollowedTarget, snapshot: PlaybackSnapshot) {
-    if (state.target.kind !== 'restricted') fallback ??= state.target
+    if (!isObserved(state.target)) fallback ??= state.target
     missing = 0
     set({ target, volume: targetVolume(target) })
     observe(snapshot)
@@ -913,10 +971,13 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
   function seek(positionMs: number) {
     const target = state.target
     if (!latest || target.kind === 'restricted') return
+    if (target.kind === 'sonos' && !target.group.actions.seek) return
     const position = Math.max(0, Math.min(positionMs, latest.durationMs))
     set({ failure: null })
     expect({ positionMs: position })
     if (target.kind === 'local') guard(player?.seek(position))
+    else if (target.kind === 'sonos')
+      sonosSend(target, { action: 'seek', positionMs: Math.round(position) })
     else guard(api.seek(target.device.id, position))
     schedule(FOLLOW_UP_MS)
   }
@@ -1029,13 +1090,26 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       else {
         const paused = latest.paused
         expect({ paused: !paused })
-        guard(
-          paused ? api.resume(target.device.id) : api.pause(target.device.id),
-        )
+        if (target.kind === 'sonos')
+          sonosSend(target, { action: paused ? 'play' : 'pause' })
+        else
+          guard(
+            paused ? api.resume(target.device.id) : api.pause(target.device.id),
+          )
       }
       schedule(FOLLOW_UP_MS)
     },
     next() {
+      const current = state.target
+      if (current.kind === 'sonos') {
+        // Starting the queue would take playback off the Sonos group.
+        if (!latest) return
+        skippedAt = now()
+        set({ failure: null })
+        sonosSend(current, { action: 'next' })
+        schedule(FOLLOW_UP_MS)
+        return
+      }
       const itemEnds =
         !session ||
         session.phase === 'starting' ||
@@ -1045,7 +1119,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       activate()
       if (itemEnds && startNext()) return
       const target = state.target
-      if (!latest || target.kind === 'restricted') return
+      if (!latest || isObserved(target)) return
       skippedAt = now()
       set({ failure: null })
       if (target.kind === 'local') guard(player?.nextTrack())
@@ -1056,6 +1130,14 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       const target = state.target
       if (!latest || target.kind === 'restricted') return
       if (positionAt(latest, now()) > RESTART_AFTER_MS) return seek(0)
+      if (target.kind === 'sonos') {
+        // Sonos refuses to go back in some Spotify Connect sessions.
+        if (!target.group.actions.previous) return seek(0)
+        set({ failure: null })
+        sonosSend(target, { action: 'previous' })
+        schedule(FOLLOW_UP_MS)
+        return
+      }
       if (currentFromSource && source && source.history.length > 1) {
         const previous = source.history.at(-2)
         const current = source.history.pop()
@@ -1087,6 +1169,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       const volume = Math.min(1, Math.max(0, value))
       const target = state.target
       if (target.kind === 'restricted') return
+      if (target.kind === 'sonos' && target.group.volume === null) return
       set({ volume })
       if (target.kind === 'local') {
         localVolume = volume
@@ -1097,7 +1180,9 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       if (volumeTimer) clearTimeout(volumeTimer)
       volumeTimer = setTimeout(() => {
         volumeTimer = null
-        guard(api.volume(target.device.id, volume))
+        if (target.kind === 'sonos')
+          sonosSend(target, { action: 'volume', volume })
+        else guard(api.volume(target.device.id, volume))
       }, VOLUME_DEBOUNCE_MS)
     },
     async refreshDevices() {

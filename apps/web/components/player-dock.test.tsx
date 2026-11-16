@@ -231,6 +231,46 @@ test('a device apps cannot control is shown with its transport disabled', () => 
   assert.doesNotMatch(queued, /aria-label="Next" disabled=""/)
 })
 
+test('a Sonos group enables the controls Sonos accepts', () => {
+  const html = render({
+    ...on,
+    active: true,
+    snapshot: { ...snapshot, paused: false },
+    target: {
+      kind: 'sonos',
+      name: 'Fixture hi-fi',
+      type: 'speaker',
+      group: {
+        id: 'RINCON_FIXTURE:1',
+        name: 'Fixture hi-fi',
+        actions: {
+          pause: true,
+          play: true,
+          next: true,
+          previous: false,
+          seek: false,
+        },
+        volume: 0.3,
+      },
+    },
+    queue: [{ key: 'queued-1', item }],
+    volume: 0.3,
+  })
+  assert.match(html, /aria-label="Play on: Fixture hi-fi"/)
+  assert.match(html, /aria-label="Pause"(?! disabled)/)
+  assert.doesNotMatch(html, /aria-label="Pause" disabled=""/)
+  assert.doesNotMatch(html, /aria-label="Next" disabled=""/)
+  // Neither previous nor seek is accepted, so both are off.
+  assert.match(html, /aria-label="Previous" disabled=""/)
+  assert.match(html, /aria-label="Seek"[^>]* disabled=""/)
+  assert.match(html, /aria-label="Volume"/)
+  assert.match(html, /Fixture hi-fi is controlled through Sonos\./)
+  assert.doesNotMatch(
+    html,
+    /Press Next to start the queue|does not let apps control/,
+  )
+})
+
 test('a playback error keeps the controls and links to Spotify', () => {
   const html = render({
     ...on,

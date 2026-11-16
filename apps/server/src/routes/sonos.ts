@@ -5,9 +5,15 @@ import {
   SonosAuthorizeInputSchema,
   SonosAuthorizeResultSchema,
   SonosCallbackSchema,
+  SonosCommandResultSchema,
+  SonosCommandSchema,
   SonosDisconnectResultSchema,
+  SonosGroupIdSchema,
+  SonosPlaybackMatchSchema,
+  SonosPlaybackQuerySchema,
   SonosRoomsSchema,
 } from '@repo/schemas/sonos'
+import { z } from 'zod'
 import { env } from '@/env'
 import { ServerError } from '@/lib/error'
 import {
@@ -27,9 +33,11 @@ import {
 import {
   authorizeSonos,
   disconnectSonos,
+  findSonosPlayback,
   finishSonosAuthorization,
   getSonosAccountStatus,
   getSonosRooms,
+  sendSonosCommand,
   sonosCallbackDestination,
 } from '@/services/sonos-oauth'
 
@@ -102,6 +110,73 @@ app.openapi(
   }),
   async (c) =>
     generateJsonResponse(c, await getSonosRooms(requireOwnerUser(c).id), 200),
+)
+
+app.openapi(
+  createRoute({
+    method: 'get',
+    path: '/playback',
+    middleware: [authMiddleware()],
+    request: { query: SonosPlaybackQuerySchema },
+    responses: {
+      200: {
+        description:
+          'The Sonos group playing this Spotify track, with its controls and volume; null when none matches',
+        content: {
+          'application/json': {
+            schema: createResponseSchema(SonosPlaybackMatchSchema),
+          },
+        },
+      },
+      401: jsonErrorResponse('Unauthorized'),
+      422: validationErrorResponse,
+    },
+  }),
+  async (c) =>
+    generateJsonResponse(
+      c,
+      await findSonosPlayback(requireOwnerUser(c).id, c.req.valid('query')),
+      200,
+    ),
+)
+
+app.openapi(
+  createRoute({
+    method: 'post',
+    path: '/groups/{groupId}/command',
+    security: ownerSessionSecurity,
+    middleware: [browserSession, sameOrigin],
+    request: {
+      params: z.object({ groupId: SonosGroupIdSchema }),
+      body: {
+        required: true,
+        content: { 'application/json': { schema: SonosCommandSchema } },
+      },
+    },
+    responses: {
+      200: {
+        description: 'Transport or volume command sent to the Sonos group',
+        content: {
+          'application/json': {
+            schema: createResponseSchema(SonosCommandResultSchema),
+          },
+        },
+      },
+      401: jsonErrorResponse('Owner browser session required'),
+      403: jsonErrorResponse('Forbidden'),
+      422: validationErrorResponse,
+    },
+  }),
+  async (c) =>
+    generateJsonResponse(
+      c,
+      await sendSonosCommand(
+        requireBrowserSession(c).user.id,
+        c.req.valid('param').groupId,
+        c.req.valid('json'),
+      ),
+      200,
+    ),
 )
 
 app.openapi(

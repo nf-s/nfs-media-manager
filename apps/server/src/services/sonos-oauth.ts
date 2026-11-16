@@ -9,6 +9,7 @@ import {
   SonosCallbackSchema,
   SonosDisconnectResultSchema,
   type SonosAccountStatus,
+  type SonosCommand,
   type SonosRooms,
 } from '@repo/schemas/sonos'
 import { db } from '@/lib/db'
@@ -18,6 +19,8 @@ import { ServerError } from '@/lib/error'
 import { resolveProviderSecrets } from '@/lib/provider-secrets'
 import {
   sonosAuthorization,
+  sonosCommand,
+  sonosPlaying,
   sonosRedirectUri,
   sonosRooms,
   sonosToken,
@@ -387,20 +390,52 @@ async function sonosAccessToken(userId: string, request: SonosRequest) {
 }
 
 /** The account's rooms and what they play, read from the Sonos cloud. */
-export async function getSonosRooms(userId: string): Promise<SonosRooms> {
+/** Runs Control API calls with a current token; a rejected token asks for a new sign-in. */
+function withSonos<T>(
+  userId: string,
+  execute: (request: SonosRequest, token: string) => Promise<T>,
+  refused?: string,
+) {
   return sonosOperation(async (request) => {
     const token = await sonosAccessToken(userId, request)
     try {
-      return await sonosRooms(request, token)
+      return await execute(request, token)
     } catch (error) {
-      if (
-        error instanceof ProviderRequestError &&
-        error.code === 'access-denied'
-      )
-        throw unavailable(REJECTED)
+      if (error instanceof ProviderRequestError) {
+        if (error.code === 'access-denied') throw unavailable(REJECTED)
+        if (refused && error.code === 'request-failed')
+          throw unavailable(refused)
+      }
       throw error
     }
   })
+}
+
+export async function getSonosRooms(userId: string): Promise<SonosRooms> {
+  return withSonos(userId, sonosRooms)
+}
+
+/** The Sonos group playing the Spotify track the player shows, if any. */
+export async function findSonosPlayback(
+  userId: string,
+  playing: { trackUri: string; device: string },
+) {
+  return withSonos(userId, (request, token) =>
+    sonosPlaying(request, token, playing),
+  )
+}
+
+export async function sendSonosCommand(
+  userId: string,
+  groupId: string,
+  command: SonosCommand,
+) {
+  await withSonos(
+    userId,
+    (request, token) => sonosCommand(request, token, groupId, command),
+    'Sonos did not accept that. The room may have changed; try again.',
+  )
+  return { done: true as const }
 }
 
 /** Deletes the account's tokens and pending authorization. */

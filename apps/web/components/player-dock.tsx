@@ -117,6 +117,12 @@ function targetLabel(target: PlaybackTarget) {
   return target.kind === 'remote' ? target.device.name : target.name
 }
 
+/** Seeking is refused on restricted devices and on Sonos playback that disallows it. */
+function seekable(target: PlaybackTarget) {
+  if (target.kind === 'sonos') return target.group.actions.seek
+  return target.kind !== 'restricted'
+}
+
 function DeviceIcon({ type }: { type: string }) {
   const Icon =
     type === 'computer'
@@ -212,6 +218,8 @@ function Transport({ view }: { view: PlaybackView }) {
   const nothingToPlay = !snapshot && !view.current && !hasNext
   // Spotify does not let apps control a restricted device; the queue can still start here.
   const readOnly = view.target.kind === 'restricted'
+  // A Sonos group accepts the controls Sonos reports for its current playback.
+  const sonos = view.target.kind === 'sonos' ? view.target.group.actions : null
   return (
     <div className="player-buttons">
       <button
@@ -229,7 +237,11 @@ function Transport({ view }: { view: PlaybackView }) {
         type="button"
         className="player-skip"
         aria-label="Previous"
-        disabled={!snapshot || readOnly}
+        disabled={
+          !snapshot ||
+          readOnly ||
+          (sonos !== null && !sonos.previous && !sonos.seek)
+        }
         onClick={controls.previous}
       >
         <SkipBack size={16} aria-hidden="true" />
@@ -238,7 +250,12 @@ function Transport({ view }: { view: PlaybackView }) {
         type="button"
         className="player-toggle"
         aria-label={starting ? 'Starting' : playing ? 'Pause' : 'Play'}
-        disabled={starting || nothingToPlay || readOnly}
+        disabled={
+          starting ||
+          nothingToPlay ||
+          readOnly ||
+          (sonos !== null && !(playing ? sonos.pause : sonos.play))
+        }
         onClick={controls.toggle}
       >
         {starting ? (
@@ -257,7 +274,9 @@ function Transport({ view }: { view: PlaybackView }) {
         type="button"
         className="player-skip"
         aria-label="Next"
-        disabled={(!snapshot || readOnly) && !hasNext}
+        disabled={
+          sonos ? !snapshot || !sonos.next : (!snapshot || readOnly) && !hasNext
+        }
         onClick={controls.next}
       >
         <SkipForward size={16} aria-hidden="true" />
@@ -421,9 +440,12 @@ function QueueContents({
       )}
       <section>
         <h3>Queued</h3>
-        {view.queue.length > 0 && !view.current && view.snapshot && (
-          <p className="quiet">Press Next to start the queue.</p>
-        )}
+        {view.queue.length > 0 &&
+          !view.current &&
+          view.snapshot &&
+          view.target.kind !== 'sonos' && (
+            <p className="quiet">Press Next to start the queue.</p>
+          )}
         {view.queue.length ? (
           <QueueList queue={view.queue} />
         ) : (
@@ -475,7 +497,7 @@ function DeviceList({
     target.kind === 'remote' &&
     !view.devices.some((device) => device.id === target.device.id)
       ? [target.device, ...view.devices]
-      : target.kind === 'restricted'
+      : target.kind === 'restricted' || target.kind === 'sonos'
         ? view.devices.filter((device) => device.name !== target.name)
         : view.devices
   function choose(next: SelectableTarget) {
@@ -496,7 +518,7 @@ function DeviceList({
             {target.kind === 'local' && <Check size={14} aria-hidden="true" />}
           </button>
         </li>
-        {target.kind === 'restricted' && (
+        {(target.kind === 'restricted' || target.kind === 'sonos') && (
           <li>
             <button type="button" aria-pressed disabled>
               <DeviceIcon type={target.type} />
@@ -543,6 +565,12 @@ function DeviceList({
         <p className="quiet">
           Spotify does not let apps control {target.name}. Choose a device to
           play there instead.
+        </p>
+      )}
+      {target.kind === 'sonos' && (
+        <p className="quiet">
+          {target.name} is controlled through Sonos. Choose a device to play
+          there instead.
         </p>
       )}
       <p className="quiet">Devices appear when Spotify is open on them.</p>
@@ -695,7 +723,7 @@ function NowPlayingSheet({
           </div>
           <Scrubber
             snapshot={view.snapshot}
-            readOnly={view.target.kind === 'restricted'}
+            readOnly={!seekable(view.target)}
           />
           <Transport view={view} />
           <div className="player-sheet-actions">
@@ -854,7 +882,7 @@ function Dock({ view }: { view: PlaybackView }) {
           <Transport view={view} />
           <Scrubber
             snapshot={view.snapshot}
-            readOnly={view.target.kind === 'restricted'}
+            readOnly={!seekable(view.target)}
           />
         </div>
         <div className="player-tools">

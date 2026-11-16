@@ -9,6 +9,8 @@ import {
   type RestrictedDevice,
 } from './spotify-player-api'
 import type { SpotifySdk, SpotifySdkPlayer } from './spotify-sdk'
+import type { SonosControlApi } from './sonos-player-api'
+import type { SonosGroupControl } from '@repo/schemas/sonos'
 
 const album: PlayableItem = {
   kind: 'album',
@@ -87,7 +89,7 @@ function remoteSnapshot(values: Partial<PlaybackSnapshot>): PlaybackSnapshot {
 
 let clock = 0
 
-function harness(random?: () => number) {
+function harness(random?: () => number, sonos?: SonosControlApi) {
   const calls: string[] = []
   const page = { visible: true }
   const listeners = new Map<string, Array<(payload: unknown) => void>>()
@@ -176,6 +178,7 @@ function harness(random?: () => number) {
     now: () => clock,
     visible: () => page.visible,
     random,
+    sonos,
   })
   return {
     engine,
@@ -1385,5 +1388,135 @@ test('retrying a failed source lookup ignores old playback reported while it was
   assert.deepEqual(setup.sent('play'), [
     'play speaker {"uris":["spotify:track:source-0"]}',
   ])
+  setup.engine.dispose()
+})
+
+const sonosGroup: SonosGroupControl = {
+  id: 'RINCON_FIXTURE:1',
+  name: 'Fixture hi-fi',
+  actions: { pause: true, play: true, next: true, previous: false, seek: true },
+  volume: 0.3,
+}
+
+function fakeSonos(group: SonosGroupControl | null = sonosGroup) {
+  const lookups: string[] = []
+  const commands: string[] = []
+  const failures: Error[] = []
+  const api: SonosControlApi = {
+    async find(trackUri, device) {
+      lookups.push(`${device} ${trackUri}`)
+      return group
+    },
+    async command(groupId, command) {
+      commands.push(
+        `${groupId} ${command.action}${'positionMs' in command ? ` ${command.positionMs}` : ''}${'volume' in command ? ` ${command.volume}` : ''}`,
+      )
+      const failure = failures.shift()
+      if (failure) throw failure
+    },
+  }
+  return { api, lookups, commands, failures }
+}
+
+async function watchRestricted(sonos: ReturnType<typeof fakeSonos>) {
+  const setup = harness(undefined, sonos.api)
+  setup.remote.restricted = { name: 'Fixture hi-fi', type: 'speaker' }
+  setup.remote.snapshot = remoteSnapshot({ contextUri: 'spotify:playlist:x' })
+  setup.engine.watch()
+  await advance(100)
+  return setup
+}
+
+test('a restricted Sonos group is controlled through the Sonos connection', async () => {
+  const sonos = fakeSonos()
+  const setup = await watchRestricted(sonos)
+  const { engine } = setup
+  assert.deepEqual(sonos.lookups, ['Fixture hi-fi spotify:track:one'])
+  assert.deepEqual(engine.getState().target, {
+    kind: 'sonos',
+    name: 'Fixture hi-fi',
+    type: 'speaker',
+    group: sonosGroup,
+  })
+  assert.equal(engine.getState().volume, 0.3)
+
+  engine.toggle()
+  assert.equal(engine.getState().snapshot?.paused, true)
+  engine.next()
+  // Sonos refuses previous here, so it restarts the track instead.
+  engine.previous()
+  engine.seek(30_000)
+  engine.setVolume(0.5)
+  await advance(300)
+  assert.deepEqual(sonos.commands, [
+    'RINCON_FIXTURE:1 pause',
+    'RINCON_FIXTURE:1 next',
+    'RINCON_FIXTURE:1 seek 0',
+    'RINCON_FIXTURE:1 seek 30000',
+    'RINCON_FIXTURE:1 volume 0.5',
+  ])
+  assert.deepEqual(
+    setup.calls.filter((call) => call !== 'state'),
+    [],
+  )
+
+  // Later reports of the same track and device need no new lookup.
+  await advance(6_000)
+  assert.equal(sonos.lookups.length, 1)
+  engine.dispose()
+})
+
+test('Next skips on the Sonos group instead of moving playback to start the queue', async () => {
+  const sonos = fakeSonos()
+  const setup = await watchRestricted(sonos)
+  setup.engine.enqueue(track)
+  setup.engine.next()
+  await settle()
+  assert.deepEqual(sonos.commands, ['RINCON_FIXTURE:1 next'])
+  assert.deepEqual(setup.sent('play'), [])
+  assert.equal(setup.engine.getState().target.kind, 'sonos')
+  assert.equal(setup.engine.getState().queue.length, 1)
+  setup.engine.dispose()
+})
+
+test('a restricted device with no matching Sonos group stays shown only', async () => {
+  const sonos = fakeSonos(null)
+  const setup = await watchRestricted(sonos)
+  assert.equal(setup.engine.getState().target.kind, 'restricted')
+  setup.engine.toggle()
+  await settle()
+  assert.deepEqual(sonos.commands, [])
+
+  // Each new track is looked up again.
+  setup.remote.snapshot = remoteSnapshot({
+    contextUri: 'spotify:playlist:x',
+    trackUri: 'spotify:track:two',
+  })
+  await advance(3_000)
+  assert.deepEqual(sonos.lookups, [
+    'Fixture hi-fi spotify:track:one',
+    'Fixture hi-fi spotify:track:two',
+  ])
+  setup.engine.dispose()
+})
+
+test('a refused Sonos command is reported and the group is looked up again', async () => {
+  const sonos = fakeSonos()
+  const setup = await watchRestricted(sonos)
+  sonos.failures.push(
+    Object.assign(new Error('Unprocessable'), {
+      statusCode: 422,
+      message:
+        'Sonos did not accept that. The room may have changed; try again.',
+    }),
+  )
+  setup.engine.toggle()
+  await settle()
+  assert.equal(
+    setup.engine.getState().failure?.message,
+    'Sonos did not accept that. The room may have changed; try again.',
+  )
+  await advance(3_000)
+  assert.equal(sonos.lookups.length, 2)
   setup.engine.dispose()
 })

@@ -3,7 +3,9 @@ import { z } from 'zod'
 import type { MediaPluginTestContext } from '@repo/media-plugin-sdk'
 import {
   SONOS_SCOPE,
+  SonosPlaybackMatchSchema,
   SonosRoomsSchema,
+  type SonosCommand,
   type SonosRoom,
   type SonosRooms,
 } from '@repo/schemas/sonos'
@@ -74,10 +76,16 @@ const MetadataSchema = z.object({
           name: z.string().optional(),
           artist: NamedSchema,
           service: NamedSchema,
+          id: z.object({ objectId: z.string().optional() }).optional(),
         })
         .optional(),
     })
     .optional(),
+})
+
+const VolumeSchema = z.object({
+  volume: z.number().int().min(0).max(100),
+  fixed: z.boolean().optional(),
 })
 
 const STATES = {
@@ -158,6 +166,28 @@ async function controlJson(
   return response.json()
 }
 
+function controls(playback: z.infer<typeof PlaybackSchema>) {
+  const actions = playback.availablePlaybackActions
+  return {
+    pause: actions.canPause ?? false,
+    play: actions.canPlay ?? false,
+    next: actions.canSkip ?? false,
+    previous: actions.canSkipBack ?? actions.canSkipToPrevious ?? false,
+    seek: actions.canSeek ?? false,
+  }
+}
+
+/** The Spotify track URI Sonos reports for a group, e.g. `spotify:track:…`. */
+function trackUri(metadata: z.infer<typeof MetadataSchema>) {
+  const id = metadata.currentItem?.track?.id?.objectId
+  if (!id) return null
+  try {
+    return decodeURIComponent(id)
+  } catch {
+    return id
+  }
+}
+
 /** Each room or group, what it plays and which controls Sonos accepts for it. */
 export async function sonosRooms(
   request: SonosRequest,
@@ -188,7 +218,6 @@ export async function sonosRooms(
         ),
       ])
       const state = playback.playbackState ?? group.playbackState
-      const actions = playback.availablePlaybackActions
       const track = metadata.currentItem?.track
       const coordinatorFirst = [
         group.coordinatorId,
@@ -206,16 +235,99 @@ export async function sonosRooms(
           track?.service?.name ?? metadata.container?.service?.name ?? null,
         track: track?.name ?? null,
         artist: track?.artist?.name ?? null,
-        actions: {
-          pause: actions.canPause ?? false,
-          play: actions.canPlay ?? false,
-          next: actions.canSkip ?? false,
-          previous: actions.canSkipBack ?? actions.canSkipToPrevious ?? false,
-          seek: actions.canSeek ?? false,
-        },
+        actions: controls(playback),
       })
     }
     result.push({ id: household.id, name: household.name ?? null, rooms })
   }
   return SonosRoomsSchema.parse({ households: result })
+}
+
+/**
+ * The group playing the given Spotify track. Several households can share a
+ * Sonos account, so the track must match and the group name Spotify reports
+ * decides between groups playing the same track.
+ */
+export async function sonosPlaying(
+  request: SonosRequest,
+  token: string,
+  playing: { trackUri: string; device: string },
+) {
+  const { households } = HouseholdsSchema.parse(
+    await controlJson(request, token, '/households'),
+  )
+  const matches = []
+  for (const household of households) {
+    const { groups } = GroupsSchema.parse(
+      await controlJson(
+        request,
+        token,
+        `/households/${encodeURIComponent(household.id)}/groups`,
+      ),
+    )
+    for (const group of groups) {
+      if (group.playbackState === 'PLAYBACK_STATE_IDLE') continue
+      const path = `/groups/${encodeURIComponent(group.id)}`
+      const metadata = MetadataSchema.parse(
+        await controlJson(request, token, `${path}/playbackMetadata`),
+      )
+      if (trackUri(metadata) === playing.trackUri)
+        matches.push({ id: group.id, name: group.name, path })
+    }
+  }
+  const named = matches.filter((match) => match.name === playing.device)
+  const match =
+    named.length === 1 ? named[0] : matches.length === 1 ? matches[0] : null
+  if (!match) return SonosPlaybackMatchSchema.parse({ group: null })
+  const [playback, volume] = await Promise.all([
+    controlJson(request, token, `${match.path}/playback`).then((value) =>
+      PlaybackSchema.parse(value),
+    ),
+    controlJson(request, token, `${match.path}/groupVolume`).then((value) =>
+      VolumeSchema.parse(value),
+    ),
+  ])
+  return SonosPlaybackMatchSchema.parse({
+    group: {
+      id: match.id,
+      name: match.name,
+      actions: controls(playback),
+      volume: volume.fixed ? null : volume.volume / 100,
+    },
+  })
+}
+
+const COMMANDS = {
+  play: 'playback/play',
+  pause: 'playback/pause',
+  next: 'playback/skipToNextTrack',
+  previous: 'playback/skipToPreviousTrack',
+  seek: 'playback/seek',
+  volume: 'groupVolume',
+} as const
+
+/** Sends one transport or volume command to a group. */
+export async function sonosCommand(
+  request: SonosRequest,
+  token: string,
+  groupId: string,
+  command: SonosCommand,
+) {
+  const body =
+    command.action === 'seek'
+      ? { positionMillis: command.positionMs }
+      : command.action === 'volume'
+        ? { volume: Math.round(command.volume * 100) }
+        : {}
+  await request(
+    `${CONTROL_API}/groups/${encodeURIComponent(groupId)}/${COMMANDS[command.action]}`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    },
+  )
 }

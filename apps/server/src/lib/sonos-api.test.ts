@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
-import { sonosRedirectUri, sonosRooms, type SonosRequest } from './sonos-api'
+import {
+  sonosCommand,
+  sonosPlaying,
+  sonosRedirectUri,
+  sonosRooms,
+  type SonosRequest,
+} from './sonos-api'
 
 const API = 'https://api.ws.sonos.com/control/api/v1'
 
@@ -119,5 +125,105 @@ describe('Sonos Control API helpers', () => {
     expect(request).toHaveBeenCalledWith(`${API}/households`, {
       headers: { Authorization: 'Bearer fixture-token' },
     })
+  })
+
+  it('finds the group playing the Spotify track, using the device name between households', async () => {
+    const track = 'spotify:track:ABCDEFGHIJKLMNOPQRSTUV'
+    const group = (id: string, name: string) => ({
+      id,
+      name,
+      coordinatorId: id,
+      playbackState: 'PLAYBACK_STATE_PLAYING',
+      playerIds: [id],
+    })
+    const playing = (objectId: string) => ({
+      container: { type: 'spotify.connect' },
+      currentItem: { track: { id: { serviceId: '12', objectId } } },
+    })
+    const request = fakeSonos({
+      [`${API}/households`]: { households: [{ id: 'home' }, { id: 'other' }] },
+      [`${API}/households/home/groups`]: {
+        groups: [
+          group('A', 'Lounge + 1'),
+          { ...group('B', 'Study'), playbackState: 'PLAYBACK_STATE_IDLE' },
+        ],
+      },
+      [`${API}/households/other/groups`]: { groups: [group('C', 'Kitchen')] },
+      [`${API}/groups/A/playbackMetadata`]: playing(encodeURIComponent(track)),
+      [`${API}/groups/C/playbackMetadata`]: playing(track),
+      [`${API}/groups/A/playback`]: {
+        playbackState: 'PLAYBACK_STATE_PLAYING',
+        availablePlaybackActions: {
+          canPlay: true,
+          canPause: true,
+          canSkip: true,
+          canSkipBack: false,
+          canSeek: true,
+        },
+      },
+      [`${API}/groups/A/groupVolume`]: {
+        volume: 25,
+        muted: false,
+        fixed: false,
+      },
+    })
+    expect(
+      await sonosPlaying(request, 'fixture-token', {
+        trackUri: track,
+        device: 'Lounge + 1',
+      }),
+    ).toEqual({
+      group: {
+        id: 'A',
+        name: 'Lounge + 1',
+        actions: {
+          pause: true,
+          play: true,
+          next: true,
+          previous: false,
+          seek: true,
+        },
+        volume: 0.25,
+      },
+    })
+    // An idle group's metadata is never read.
+    expect(request).not.toHaveBeenCalledWith(
+      `${API}/groups/B/playbackMetadata`,
+      expect.anything(),
+    )
+    // Two groups play the track and neither has the reported name.
+    expect(
+      await sonosPlaying(request, 'fixture-token', {
+        trackUri: track,
+        device: 'Somewhere else',
+      }),
+    ).toEqual({ group: null })
+  })
+
+  it('sends each command to its Control API endpoint', async () => {
+    const request: SonosRequest = vi.fn(async () => Response.json({}))
+    await sonosCommand(request, 'fixture-token', 'A:1', { action: 'next' })
+    await sonosCommand(request, 'fixture-token', 'A:1', {
+      action: 'seek',
+      positionMs: 30000,
+    })
+    await sonosCommand(request, 'fixture-token', 'A:1', {
+      action: 'volume',
+      volume: 0.456,
+    })
+    expect(vi.mocked(request).mock.calls).toEqual([
+      [
+        `${API}/groups/A%3A1/playback/skipToNextTrack`,
+        expect.objectContaining({ method: 'POST', body: '{}' }),
+      ],
+      [
+        `${API}/groups/A%3A1/playback/seek`,
+        expect.objectContaining({ body: '{"positionMillis":30000}' }),
+      ],
+      [
+        `${API}/groups/A%3A1/groupVolume`,
+        expect.objectContaining({ body: '{"volume":46}' }),
+      ],
+    ])
   })
 })

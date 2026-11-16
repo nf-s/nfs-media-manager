@@ -16,6 +16,8 @@ export const sonosPlugin: MediaProviderPlugin = {
       concurrentRequests: true,
       minTimeMs: 100,
       rateLimitCooldownMs: 60 * 1000,
+      // A refused command must not pause the controls that still work.
+      errorBackoffMs: 0,
     },
     secrets: [
       {
