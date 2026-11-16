@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Concept template · Media Manager design library</title>
+    <link rel="icon" href="data:," />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link
+      rel="stylesheet"
+      href="../../packages/ui/src/design-system/tokens.css"
+    />
+    <link
+      rel="stylesheet"
+      href="../../packages/ui/src/design-system/components.css"
+    />
+    <link rel="stylesheet" href="assets/gallery.css" />
+    <!--
+      Styles for the concepts go here while they are concepts. Use only the
+      tokens. The accepted concept's styles move to components.css.
+    -->
+    <style></style>
+  </head>
+  <body class="ds g" data-page="concept-template.html">
+    <script src="assets/ds.js"></script>
+    <script>
+      const D = DS
+      const { g, btn, status, pill } = D
+
+      /*
+        Copy this file to concept-<name>.html, then:
+        1. State what the feature needs and why no existing component covers it.
+        2. Draw two or three options with invented data, built from the
+           existing tokens and components.
+        3. Give the trade-off of each and say which one you recommend.
+        4. Show the page to the owner and wait for a decision.
+        Delete the page once the accepted option is in the design system.
+      */
+      D.page({
+        title: 'Concept: name of the element',
+        lede: 'What the feature needs, in one or two sentences, and why the existing components do not cover it.',
+        sections: [
+          {
+            id: 'option-a',
+            title: 'Option A',
+            body:
+              g.spec(
+                `<div style="display:flex;align-items:center;gap:8px">${status('waiting', 'Waiting until 14:20')}${btn('Resume', { size: 'xs' })}</div>`,
+              ) +
+              g.rules([
+                '<b>For:</b> what this option does well.',
+                '<b>Against:</b> what it costs.',
+              ]),
+          },
+          {
+            id: 'option-b',
+            title: 'Option B',
+            body:
+              g.spec(
+                `<div style="display:flex;align-items:center;gap:8px">${pill('Waiting')}${btn('Resume', { size: 'xs', variant: 'ghost' })}</div>`,
+              ) +
+              g.rules([
+                '<b>For:</b> what this option does well.',
+                '<b>Against:</b> what it costs.',
+              ]),
+          },
+          {
+            id: 'recommendation',
+            title: 'Recommendation',
+            body: g.note(
+              'Recommended',
+              'Which option, and the reason in one sentence. The owner decides.',
+            ),
+          },
+        ],
+      })
+    </script>
+  </body>
+</html>

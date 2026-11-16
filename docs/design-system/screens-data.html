@@ -355,7 +355,7 @@
             title: 'Sources tab',
             body:
               `<p>Sources answers three questions about an item: which providers know it, how each was matched, and how fresh the data is. Each provider is one row that opens in place.</p>` +
-              `<div class="g-pair" data-split="narrow"><div>${g.label('Now')}${g.spec(oldSources)}${g.rules(
+              `<div class="g-pair" data-split="narrow"><div>${g.label('Before')}${g.spec(oldSources)}${g.rules(
                 [
                   'Timestamps to the second push the Actions column off the edge',
                   'Nothing says how the item was matched, or that MusicBrainz is missing an identifier',
@@ -363,7 +363,7 @@
                   'A dark footer bar for one button; search appears only past three rows',
                   "A track's Sources tab is a single sentence",
                 ],
-              )}</div><div>${g.label('Proposed', 'new')}${inspectorFrame(
+              )}</div><div>${g.label('Now', 'new')}${inspectorFrame(
                 D.inspector({
                   crumbs: ['Albums', 'Harbour Lights'],
                   head: albumHead,

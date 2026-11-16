@@ -127,14 +127,14 @@
 
       D.page({
         title: 'Browse screens',
-        lede: 'How each resource appears in Grid, List and Table, rebuilt from the shared components. The first section sets the current album card beside the proposed one.',
+        lede: 'How each resource appears in Grid, List and Table, built from the shared components. The first section sets the earlier album card beside the current one.',
         sections: [
           {
             id: 'card',
             title: 'Album card',
             body:
-              `<p>The current card puts about fifteen elements on a 190px tile, most of them on top of the artwork, in four different surface treatments. The proposal moves everything off the artwork and keeps three lines of text.</p>` +
-              `<div class="g-pair" data-split="narrow"><div>${g.label('Now')}${g.spec(
+              `<p>The earlier card put about fifteen elements on a 190px tile, most of them on top of the artwork, in four different surface treatments. The card now keeps the artwork clean and puts the text under it: title, creator, the year with a rating or the sorted value, and a line of tags.</p>` +
+              `<div class="g-pair" data-split="narrow"><div>${g.label('Before')}${g.spec(
                 oldCard +
                   g.rules([
                     'Dark Added pill and two dark circular buttons over the top of the artwork',
@@ -142,7 +142,7 @@
                     'A translucent strip with four coloured provider icons; scores follow only two of them',
                     'A provider icon after the title, then artist and year',
                   ]),
-              )}</div><div>${g.label('Proposed', 'new')}${g.spec(
+              )}</div><div>${g.label('Now', 'new')}${g.spec(
                 g.flow(
                   [
                     g.item(fixed(albumCard(A[0]), 164), 'at rest'),
@@ -163,15 +163,15 @@
                       'sorted by Added',
                     ),
                     g.item(
-                      fixed(albumCard(A[0], { tags: true }), 164),
-                      'tags on (View options)',
+                      fixed(albumCard(A[0], { tags: false }), 164),
+                      'tags off (View options)',
                     ),
                   ],
                   { top: true },
                 ),
               )}${g.spec(
                 g.doc(
-                  ['On the card today', 'Where it goes'],
+                  ['On the earlier card', 'Where it went'],
                   [
                     [
                       'Added date pill',
@@ -183,7 +183,7 @@
                     ],
                     [
                       'Tag pills over the artwork',
-                      'Off by default. View options adds one line: two pills and a count. All tags are in List, Table and the overview.',
+                      'One line under the year and rating, on by default: the pills that fit and a count. View options can turn it off. All tags are in List, Table and the overview.',
                     ],
                     [
                       'Provider icons and scores',
@@ -215,14 +215,14 @@
             id: 'list-table',
             title: 'Albums · List and Table',
             body:
-              `<div class="g-pair" data-split="narrow"><div>${g.label('Now · list row')}${g.spec(
+              `<div class="g-pair" data-split="narrow"><div>${g.label('Before · list row')}${g.spec(
                 oldRow +
                   g.rules([
                     'Three lines; ratings and tags run together on the third',
                     'Play icons sit before the title here, over the artwork in Grid, and at the far right in the Tracks list',
                     'Nothing lines up from row to row, and the right 40% is empty',
                   ]),
-              )}</div><div>${g.label('Proposed · list', 'new')}${panel(
+              )}</div><div>${g.label('Now · list', 'new')}${panel(
                 `<div class="ds-list">${albumListHead}${A.slice(0, 5)
                   .map((a, i) =>
                     albumRow(a, {
@@ -232,7 +232,7 @@
                   )
                   .join('')}</div>`,
               )}</div></div>` +
-              g.sub('Proposed · table') +
+              g.sub('Now · table') +
               panel(
                 D.toolbar({
                   placeholder: 'Search albums',
@@ -266,7 +266,7 @@
               `<p>One order everywhere: identity, creator, parent, properties, dates, counts, ratings, pills. A person who learns one table has learned them all.</p>` +
               g.spec(
                 g.doc(
-                  ['Resource', 'Now', 'Proposed'],
+                  ['Resource', 'Before', 'Now'],
                   [
                     [
                       'Albums',
@@ -453,7 +453,7 @@
             id: 'phone',
             title: 'Phone',
             body:
-              `<p>At 375px the album grid currently shows five columns of thumbnails with the play circles covering most of each one. The proposal uses two columns, a persistent mini player and bottom navigation.</p>` +
+              `<p>At 375px the album grid used to show five columns of thumbnails with the play circles covering most of each one. It now uses two columns, a persistent mini player and bottom navigation.</p>` +
               g.flow(
                 [
                   g.item(

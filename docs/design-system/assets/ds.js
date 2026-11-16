@@ -311,7 +311,7 @@
   function card(item, o = {}) {
     const playable =
       item.kind !== 'film' && item.kind !== 'video' && o.play !== false
-    return `<article class="ds-card"${attrs({ 'data-state': o.state, 'aria-selected': o.selected ? 'true' : undefined })}>${artBox(item, { play: playable, badge: o.badge, playing: o.state === 'playing' })}<a class="ds-card-title" href="#">${esc(item.title)}</a>${item.by ? `<span class="ds-card-by">${esc(item.by)}</span>` : ''}<span class="ds-card-meta">${(o.meta || []).join('')}</span>${o.tags ? pills(item.tags, { max: 2 }) : ''}</article>`
+    return `<article class="ds-card"${attrs({ 'data-state': o.state, 'aria-selected': o.selected ? 'true' : undefined })}>${artBox(item, { play: playable, badge: o.badge, playing: o.state === 'playing' })}<a class="ds-card-title" href="#">${esc(item.title)}</a>${item.by ? `<span class="ds-card-by">${esc(item.by)}</span>` : ''}<span class="ds-card-meta">${(o.meta || []).join('')}</span>${o.tags !== false && item.tags && item.tags.length ? pills(item.tags, { max: 2 }) : ''}</article>`
   }
 
   function row(item, o = {}) {
@@ -1239,7 +1239,7 @@
 
   function page(o) {
     const here = document.body.dataset.page
-    const nav = `<nav class="g-nav" aria-label="Design library"><div class="g-nav-title">Media Manager</div><div class="g-nav-sub">Design library · proposal</div>${PAGES.map(
+    const nav = `<nav class="g-nav" aria-label="Design library"><div class="g-nav-title">Media Manager</div><div class="g-nav-sub">Design library</div>${PAGES.map(
       ([href, label]) =>
         `<a href="${href}"${href === here ? ' aria-current="page"' : ''}>${label}</a>${href === here ? o.sections.map((s) => `<a data-sub href="#${s.id}">${esc(s.title)}</a>`).join('') : ''}`,
     ).join('')}</nav>`

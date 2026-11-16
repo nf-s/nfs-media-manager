@@ -1,6 +1,8 @@
-# Design library
+# Design system
 
-The Media Manager design system: one set of design tokens, the shared components and the screens assembled from them. The app and these pages load the same two stylesheets from `packages/ui/src/design-system/`, so what is drawn here is what the app renders.
+The Media Manager design system: one set of design tokens, the shared components, and the screens assembled from them. The app and these pages load the same two stylesheets, so what is drawn here is what the app renders.
+
+All interface work in this repository uses it. The rules for agents are in [AGENTS.md](../../AGENTS.md#interface); the working guidelines are in the [UI guidelines](../dev-guidelines-ui.md).
 
 ## Viewing it
 
@@ -10,40 +12,88 @@ Open `index.html` in a browser. There is no build step and no server; the pages 
 open docs/design-system/index.html
 ```
 
-## What is here
+## Where things are
 
-| File                                 | Contents                                                                               |
-| ------------------------------------ | -------------------------------------------------------------------------------------- |
-| `index.html`                         | Overview: what the review found, what stays, a build order and open questions          |
-| `foundations.html`                   | Principles, colour, type, space and size, layout and overflow, icons, formats, wording |
-| `components.html`                    | Each component with its variants, rules and what it replaces                           |
-| `screens-browse.html`                | Album card, Grid, List and Table, default columns per resource, phone                  |
-| `screens-detail.html`                | Detail header, tab order, album overview, standalone page, other resources             |
-| `screens-data.html`                  | Sources, provenance, the listening chart, filling in missing data                      |
-| `screens-ops.html`                   | Jobs, job details, activity, Metadata, providers overview, provider page, connections  |
-| [`audit.md`](audit.md)               | The inventory of the current interface that the proposal answers                       |
-| [`user-stories.md`](user-stories.md) | The tasks the proposal is designed around                                              |
-| `assets/ds.js`                       | Template functions that produce each component's markup, mock data and the chart       |
-| `assets/gallery.css`                 | Layout of these documentation pages only (`g-*` classes)                               |
+| Path                                           | Contents                                                                                    |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `packages/ui/src/design-system/tokens.css`     | The design tokens, as `--ds-*` custom properties: colour, type, space, size, radius, shadow |
+| `packages/ui/src/design-system/components.css` | Every component, as `ds-*` classes that read only the tokens                                |
+| `packages/ui/src/components/ds/`               | The React components that render those classes                                              |
+| `packages/ui/src/components/ui/`               | Button, Input, Label, Tabs and the one Table                                                |
+| `packages/ui/src/lib/format.ts`                | Dates, times, ages, counts and durations                                                    |
+| `packages/ui/src/lib/trend.ts`                 | Grain selection and smoothing for the trend chart                                           |
+| `packages/ui/src/styles/`                      | Page layout per area. No component visuals                                                  |
+| `index.html`                                   | Overview and the decisions behind the system                                                |
+| `foundations.html`                             | Principles, colour, type, space and size, layout and overflow, icons, formats, wording      |
+| `components.html`                              | Each component with its variants, rules and what it replaced                                |
+| `screens-browse.html`                          | Card, Grid, List and Table, default columns per resource, phone                             |
+| `screens-detail.html`                          | Detail header, tab order, overviews, standalone page                                        |
+| `screens-data.html`                            | Sources, field provenance, the listening chart, coverage                                    |
+| `screens-ops.html`                             | Jobs, job details, activity, Metadata, providers overview, provider page                    |
+| [`audit.md`](audit.md)                         | The inventory of the earlier interface that the system answers                              |
+| [`user-stories.md`](user-stories.md)           | The tasks the system is designed around                                                     |
+| `assets/ds.js`                                 | Template functions that draw each component on these pages, with invented data              |
+| `assets/gallery.css`                           | Layout of these documentation pages only (`g-*` classes)                                    |
+| `concept-template.html`                        | The page to copy when proposing new interface. `concept-*.html` pages are pending decisions |
 
-Mockups labelled **Now** recreate the current interface from the code for comparison. Mockups labelled **Proposed** are the redesign. **UI only** marks work that needs no server change; **Needs API** marks work that does.
+Mockups labelled **Before** show the interface the system replaced. They explain a decision and are never a reference. Everything else on these pages is the specification.
+
+## Components
+
+Import from `@repo/ui/components/ds/<file>` or `@repo/ui/components/ui/<file>`.
+
+| Need                                        | Component                                                                                                          | File                                 |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ | ------------------------------------ |
+| An action                                   | `Button` (`default`, `primary`, `ghost`, `danger`, `link`; `xs`, `sm`, `md`; `icon`)                               | `ui/button`                          |
+| A form field                                | `Label`, `Input`, `Select`                                                                                         | `ui/label`, `ui/input`, `ds/toolbar` |
+| Sections of one item                        | `Tabs` (underline)                                                                                                 | `ui/tabs`                            |
+| A view or range switch                      | `Segmented`                                                                                                        | `ds/segmented`                       |
+| Any table                                   | `TableScroll`, `Table`, `TableRow`, `TableHead`, `TableCell`, `TableSortButton`, `TableSelectionBar`, `TableState` | `ui/table`                           |
+| A state                                     | `Status`                                                                                                           | `ds/status`                          |
+| A tag, filter, count, provider mark, rating | `Pill`, `Pills`, `Count`, `ProviderMark`, `Rating`, `EmptyValue`                                                   | `ds/pill`                            |
+| Play and Add to queue                       | `PlayPair` (tile, row), `PlayHeaderButtons`                                                                        | `ds/play`                            |
+| Artwork                                     | `Art`, `Thumb`, `ArtFallback`                                                                                      | `ds/artwork`                         |
+| A grid item                                 | `CardGrid`, `Card`, `CardTitle`                                                                                    | `ds/card`                            |
+| A list item                                 | `List`, `ListRow`, `RowTitle`, `RowValue`, `ListHead`                                                              | `ds/list-row`                        |
+| Facts, headline figures, a titled group     | `Facts`, `KeyValues`, `Stats`, `Section`                                                                           | `ds/facts`                           |
+| A share or progress                         | `Meter`, `Progress`, `Coverage`                                                                                    | `ds/meter`                           |
+| A provider's record for an item             | `SourceRow`, `SourceBlock`, `Timeline`                                                                             | `ds/source`                          |
+| Messages, empty, loading and error          | `Notice`, `State`, `Skeleton`                                                                                      | `ds/feedback`                        |
+| The head of an item                         | `DetailHeader`                                                                                                     | `ds/detail-header`                   |
+| The head of a page and its controls         | `PageHead`, `Toolbar`, `ToolbarCount`, `ToolbarEnd`                                                                | `ds/toolbar`                         |
+| Counts over time                            | `TrendChart`, `Sparkline`                                                                                          | `ds/trend-chart`                     |
+
+The components page states the rules for each one. The ones that matter most:
+
+- **One table.** 28px header, 32px rows, the identity column first and pinned, numbers right-aligned, ISO dates, one sort control per header, selection in the inverse bar.
+- **Play.** Play is always immediately followed by Add to queue. Artwork and titles open the item; only the pair plays.
+- **Card.** Clean artwork, then title, creator, a line for the year and rating or the sorted value, and a line of tags.
+- **Pills** are never clipped or scrolled: show what fits and count the rest (`+N`).
+- **Status** uses one vocabulary: Queued, Running, Waiting, Done, Failed, Cancelled, Paused, Never.
+- **Tabs** are for sections of one item; the segmented control is only for views and ranges.
+- **One chart.** `TrendChart` picks days, weeks, months, quarters or years so each point has enough in it to read as a line.
+- **No green** in any role.
 
 ## How it is organised
 
-- **Tokens** are the only source of colour, type, space, size, radius and shadow. Components never use a literal value.
-- **Components** are plain CSS classes. The markup for each is produced by one function in `assets/ds.js`, for example `DS.table(columns, rows)`, `DS.card(item)`, `DS.status('waiting', 'Waiting until 14:20')` and `DS.chartBox('album')`. Those functions are documentation, not application code; they show the structure a React component should render.
-- **Screens** call the same functions and add no styles of their own. If a screen needs something new, it becomes a component first.
-- **The chart** is drawn by `drawChart` in `assets/ds.js`. Its bucketing rule (`bucket`) and smoothing (`smooth`) are written to be lifted into the app as they are.
+- **Tokens** are the only source of colour, type, space, size, radius and shadow. Nothing else uses a literal value.
+- **Components** are CSS classes in `components.css` with a React component that renders them. A component has no page-specific variant.
+- **Screens** put components together and add layout only, in the stylesheet for their area under `packages/ui/src/styles/`.
+- **These pages** draw the same classes with `assets/ds.js`. When a component changes, change the stylesheet, the React component and its section here together.
 
-## Porting to the app
+`packages/ui/src/globals.css` sets the cascade: the reset, the tokens, the components, the utilities, then the area stylesheets.
 
-The suggested order is on the [overview page](index.html#order). In short:
+## Adding or changing interface
 
-1. Add `assets/tokens.css` to `packages/ui/src/globals.css` and point the existing variables and the most-used literals at the new tokens.
-2. Build each component in `packages/ui` from its section of `assets/components.css`, replacing the classes listed under "Replaces" on its page.
-3. Move one screen at a time onto the shared components, starting with the table, then the play control, card and list row.
+Putting existing components together into a new screen needs no approval.
 
-Each step should remove the styles it replaces, so `globals.css` shrinks as the work proceeds.
+A new visual element, a variant with its own look, or a change to how an existing component looks does. The owner decides it:
+
+1. Stop that part of the work.
+2. Copy `concept-template.html` to `concept-<name>.html` and draw two or three concepts on it, built from the existing tokens and components and following `assets/ds.js` for markup. Use invented data.
+3. Show the owner the concepts with the trade-off of each and a recommendation. Wait for the owner to accept one. Do not choose for the owner, and do not ship a temporary version.
+4. Add the accepted concept to the system: tokens if it needs them (with the reason on the Foundations page), its styles in `components.css`, its React component, and its section with rules on the components page. Delete the concept pages.
+5. Continue the feature with the new component.
 
 ## Rules for changing this library
 
@@ -51,5 +101,5 @@ Each step should remove the styles it replaces, so `globals.css` shrinks as the 
 - Interface copy is functional: no slogans, taglines or decorative headings.
 - No green in any colour role.
 - A new value needs a new token, and a new token needs a reason on the Foundations page.
-- Keep Play immediately followed by Queue wherever music can be played.
+- Keep Play immediately followed by Add to queue wherever music can be played.
 - Every table uses the one table component.

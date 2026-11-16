@@ -14,6 +14,19 @@ Keep installation-specific Markdown in ignored `docs/.local/`. Do not publish li
 - Keep library interfaces consistent. Every primary Browse page, including Artists, must use the shared Tracks Browse pattern: Grid/List/Table views, sorting, full autocomplete search with field filters and AI search, filter modes, ranges and URL state. Metadata selection must use that same search control and filter semantics alongside provider freshness filters. Do not substitute a plain text search or secondary table for a primary Browse page. Reuse shared controls and verify parity before finishing.
 - Stay within scope. Do not silently refactor unrelated code, leave debug logging or keep commented-out implementations.
 
+## Interface
+
+The [design system](docs/design-system/README.md) is the only source of interface design. Read it before any interface work, and open its pages in a browser to see each component and screen.
+
+- Build screens from the shared components in `packages/ui/src/components/ds` and `packages/ui/src/components/ui`. Style only with the `--ds-*` tokens in `packages/ui/src/design-system/tokens.css`. No literal colours, sizes, radii, shadows or fonts, no component styles written for one page, and no second style of table, card, list row, pill, tab, status or chart.
+- The stylesheets in `packages/ui/src/styles` hold page layout only. Formats for dates, times, counts and durations come from `packages/ui/src/lib/format.ts`.
+- Putting existing components together into a new screen needs no approval. A new visual element, a variant with its own look, or a change to how an existing component looks does. When the work needs one, stop that part of the work and:
+  1. Draw two or three concepts as static pages copied from `docs/design-system/concept-template.html`, built from the existing tokens and components, with invented data.
+  2. Show them to the owner with the trade-off of each and a recommendation, and wait for the owner to accept one. Do not choose for the owner and do not ship a temporary version in the meantime.
+  3. Add the accepted concept to the design system: tokens if it needs them, its styles in `components.css`, its React component, and its section with rules on the components page. Delete the concept pages.
+  4. Continue the feature using the new component.
+- Check interface changes in a browser at desktop and phone widths against the design library page for that screen, on a disposable database with synthetic data.
+
 ## Workflow
 
 - Automatically delegate independent units of work to subagents. Use Sol for every subagent and select it explicitly; never use Astra or implicitly inherit a model that could be Astra. Choose reasoning effort for the work and preserve the main thread's selected speed. Give each agent clear ownership, constraints, these instructions and verification criteria. Coordinate dependencies between agents; keep tightly coupled edits together. The main agent reviews and verifies the integrated result.

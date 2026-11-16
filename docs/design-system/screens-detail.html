@@ -515,7 +515,7 @@
             body:
               g.spec(
                 g.doc(
-                  ['Resource', 'Now', 'Proposed'],
+                  ['Resource', 'Before', 'Now'],
                   [
                     [
                       'Album',
@@ -583,15 +583,15 @@
             id: 'album',
             title: 'Album · Overview',
             body:
-              `<p>The overview today is a grid of fifteen figures followed by a section for each provider's tag facet, with a source icon after every tag. The tracks are on another tab. The proposal leads with four figures, then the tracks.</p>` +
-              `<div class="g-pair" data-split="narrow"><div>${g.label('Now')}${g.spec(oldOverview)}${g.rules(
+              `<p>The overview used to be a grid of fifteen figures followed by a section for each provider's tag facet, with a source icon after every tag, and the tracks were on another tab. It now leads with four figures, then the tracks.</p>` +
+              `<div class="g-pair" data-split="narrow"><div>${g.label('Before')}${g.spec(oldOverview)}${g.rules(
                 [
                   'Every numeric field is shown, including provider statistics nobody reads here',
                   'Dates are DD/MM/YYYY here and ISO in the browse table',
                   'A source icon after each tag doubles the visual weight of the tag list',
                   'Tracks need a second click and bring a second toolbar with Artist and Album columns that repeat the header',
                 ],
-              )}</div><div>${g.label('Proposed', 'new')}${inspectorFrame(albumInspector(0, albumOverview), 900)}</div></div>` +
+              )}</div><div>${g.label('Now', 'new')}${inspectorFrame(albumInspector(0, albumOverview), 900)}</div></div>` +
               g.rules([
                 '<b>Summary:</b> scrobbles with a 12-month sparkline, the headline ratings and last played. Provider statistics (votes, have, want, listeners) move to each source.',
                 '<b>Tracks are a compact table</b> in the overview: number, title, duration, scrobbles. No toolbar, no Artist or Album column. An Artist column appears only on a compilation. Past 20 tracks the list shows the first 20 and a Show all button.',
@@ -605,13 +605,13 @@
             id: 'album-listening',
             title: 'Album · Listening',
             body:
-              `<div class="g-pair" data-split="narrow"><div>${g.label('Now')}${g.spec(
+              `<div class="g-pair" data-split="narrow"><div>${g.label('Before')}${g.spec(
                 `<div class="g-old"><div style="display:flex;gap:6px;justify-content:flex-end;margin-bottom:10px"><span class="g-old-pill" style="background:#edf0f4">Year</span><span class="g-old-pill" style="background:#334155;color:#fff">Month</span><span class="g-old-pill" style="background:#edf0f4">Bar</span><span class="g-old-pill" style="background:#334155;color:#fff">Line</span></div><div class="g-old-chart"><i></i></div><div style="margin-top:14px;font-weight:600">Linked scrobble names</div><div style="margin-top:6px;display:flex;gap:8px;align-items:center"><span class="g-old-pill" style="background:#edf0f4">Remove</span>Harbour Lights</div><div style="margin-top:14px;font-weight:600">Similar unlinked names</div><div style="margin-top:6px;display:flex;gap:8px;align-items:center"><span class="g-old-pill" style="background:#edf0f4">Add</span>Harbour Lights (Deluxe)</div></div>`,
               )}${g.rules([
                 'One month of data draws a single hollow dot',
                 'Year or Month only, no values on hover',
                 'Name matching, a data-cleaning task, sits under the chart',
-              ])}</div><div>${g.label('Proposed', 'new')}${inspectorFrame(albumInspector(1, albumListening), 800)}</div></div>` +
+              ])}</div><div>${g.label('Now', 'new')}${inspectorFrame(albumInspector(1, albumListening), 800)}</div></div>` +
               g.rules([
                 '<b>The same chart as everywhere else,</b> with the track picker beside the range.',
                 "<b>By track</b> ranks the album's tracks, with a bar for share and the last play.",
@@ -622,7 +622,7 @@
             id: 'page',
             title: 'Album · standalone page',
             body:
-              `<p>The page is the drawer's column stretched to 1100px today, with the right half empty. The proposal uses two columns: contents and listening on the left, reference information on the right.</p>` +
+              `<p>The page used to be the drawer's column stretched to 1100px, with the right half empty. It now has two columns: contents and listening on the left, reference information on the right.</p>` +
               `<div class="g-scroll"><div class="g-panel" style="min-width:1040px">${albumPage}</div></div>` +
               g.rules([
                 '<b>Same sections, more room.</b> The track table gains Last played and Playlists. Listening is on the page itself, so the page has three tabs, not four.',

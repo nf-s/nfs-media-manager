@@ -33,7 +33,7 @@
 
       D.page({
         title: 'Media Manager design library',
-        lede: 'A proposal for one consistent interface. Nothing in the app has changed: these pages are static HTML and CSS with invented data. The stylesheets are written so the components can be ported to <code>packages/ui</code> one at a time.',
+        lede: 'One consistent interface for the app. These pages are static HTML with invented data, and they load the same two stylesheets as the app (<code>packages/ui/src/design-system</code>), so what is drawn here is what the app renders. All interface work uses this system; see <code>README.md</code> for how to add to it.',
         sections: [
           {
             id: 'contents',
@@ -68,17 +68,17 @@
                   ],
                   [
                     '<code>audit.md</code>',
-                    'The inventory behind this proposal: what exists today, what is consistent and what is not, with counts.',
+                    'The inventory of the earlier interface that the system answers: what was consistent and what was not, with counts.',
                   ],
                   [
                     '<code>user-stories.md</code>',
-                    'The tasks the proposal is designed around, and the path through the interface for each.',
+                    'The tasks the system is designed around, and the path through the interface for each.',
                   ],
                 ],
               ) +
               g.rules([
-                '<b>Reading the mockups.</b> A frame labelled Now recreates the current interface from the code. A frame labelled Proposed is the redesign.',
-                `<b>Scope marks.</b> ${ui} can be built from data the app already serves. ${api} needs a new or changed endpoint before it can be built.`,
+                '<b>Reading the mockups.</b> A frame labelled Before recreates the interface the system replaced and is never a reference. Everything else is the specification.',
+                `<b>Scope marks.</b> ${ui} was built from data the app already served. ${api} came with a new or changed endpoint.`,
               ]),
           },
           {
@@ -102,9 +102,9 @@
           },
           {
             id: 'findings',
-            title: 'What the review found',
+            title: 'What the review found and what replaced it',
             body: g.doc(
-              ['Area', 'Now', 'Proposal', 'See'],
+              ['Area', 'Before', 'Now', 'See'],
               [
                 [
                   '<b>Tables</b>',
@@ -201,7 +201,7 @@
           },
           {
             id: 'keep',
-            title: 'What already works and stays',
+            title: 'What stayed',
             body: g.rules([
               '<b>The shell:</b> rail, one white panel, a detail drawer over it and the player dock beneath.',
               '<b>Browse:</b> Grid, List and Table on every primary page, the search box with field filters and AI search, filter modes, ranges, and all of it held in the URL.',
@@ -214,7 +214,7 @@
           },
           {
             id: 'order',
-            title: 'Suggested build order',
+            title: 'What was built',
             body:
               g.doc(
                 ['Step', 'Work', 'Scope'],
@@ -282,22 +282,24 @@
                 ],
               ) +
               g.note(
-                'Each step',
-                'replaces existing styles as it lands, so the stylesheet shrinks as the work proceeds. Steps 1 to 8 need no server changes.',
+                'All twelve',
+                'are in the app. Steps 1 to 8 needed no server changes; steps 9 to 12 came with the endpoints described in the requirements.',
               ),
           },
           {
             id: 'open',
-            title: 'Open questions',
+            title: 'Decisions',
             body: g.rules([
-              '<b>Album tracks in the overview.</b> The proposal removes the Tracks and Playlists tabs from albums and puts both in the overview. Long albums show 20 tracks and Show all.',
-              '<b>Track listening in the overview.</b> A track has little else to show, so its chart moves into the overview and the Listening and Playlists tabs go.',
+              '<b>Album tracks in the overview.</b> Albums have no Tracks or Playlists tab; both are in the overview. Long albums show 20 tracks and Show all.',
+              '<b>Track listening in the overview.</b> A track has little else to show, so its chart is in the overview.',
+              '<b>The card.</b> Artwork stays clean. Under it: title, creator, the year with one rating or the sorted value, and a line of tags that is on by default.',
               '<b>The rating on a card.</b> One rating shows by default: RYM for albums, IMDb for films. Sorting by another value swaps it in. Other ratings are in the drawer.',
-              '<b>Rating colours.</b> IMDb yellow and the Metacritic traffic lights are replaced by a neutral source label and a number, which also removes the only green in the app.',
-              '<b>Jobs and Providers leave the library menu.</b> They sit under System in the rail and cover every library, with a library filter on Jobs. Each provider is listed once.',
-              '<b>Double-click</b> no longer opens a table row. The title is the link; the row is for selection.',
-              '<b>Tags</b> open in the shared drawer instead of their own dialog.',
-              '<b>Dark theme.</b> Not designed here. The single token set makes it possible later.',
+              '<b>Rating colours.</b> Ratings are a neutral source label and a number. No IMDb yellow, no Metacritic traffic lights, no green.',
+              '<b>Jobs and Providers</b> sit under System in the rail and cover every library, with a library filter. Each provider is listed once.',
+              '<b>Double-click</b> does not open a row. The title is the link; the row is for selection.',
+              '<b>Tags</b> open in the shared drawer.',
+              '<b>Playback connections</b> (Spotify, Sonos) are made in the player. Providers shows their state only.',
+              '<b>Dark theme.</b> Not designed. The single token set makes it possible later.',
             ]),
           },
         ],

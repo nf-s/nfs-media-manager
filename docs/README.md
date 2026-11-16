@@ -36,7 +36,7 @@ Back up the database and encryption key before migrations or repair commands.
 - [Library query performance and indexes](query-performance.md)
 - [UI guidelines](dev-guidelines-ui.md) and [backend guidelines](dev-guidelines-backend.md)
 - [Secondary tables](secondary-tables.md): shared sorting, column controls, styling and verification.
-- [Design library (proposal)](design-system/README.md): interface audit, design tokens, shared components and redesigned screens as static pages.
+- [Design system](design-system/README.md): the tokens, shared components and screens every interface change uses, how to view them, and how new interface is proposed and accepted.
 - [Job worker](job-worker.md)
 - [Feature requirements](requirements/README.md) and [verification checklist](requirements/verification.md)
 

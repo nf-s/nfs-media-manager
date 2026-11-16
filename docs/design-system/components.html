@@ -420,10 +420,10 @@
                     ),
                     g.item(
                       fixed(
-                        card(A[6], { meta: albumMeta(A[6]), tags: true }),
+                        card(A[6], { meta: albumMeta(A[6]), tags: false }),
                         164,
                       ),
-                      'with tags',
+                      'tags off',
                     ),
                     g.item(
                       fixed(
@@ -465,8 +465,8 @@
               ) +
               g.rules([
                 '<b>Artwork is left clean.</b> Nothing sits on it at rest. The play pair appears on hover; a duration badge is allowed on video.',
-                '<b>Three lines of text:</b> title, creator, then one meta line with the year on the left and one value on the right. That value is the headline rating by default, or whatever the grid is sorted by.',
-                '<b>Tags are optional</b> (View options) and take one extra line: two pills and a count.',
+                '<b>Text under the artwork:</b> title, creator, then one meta line with the year on the left and one value on the right. That value is the headline rating by default, or whatever the grid is sorted by.',
+                '<b>Tags take one more line,</b> on by default: the pills that fit and a count of the rest. View options can turn the line off. An item without tags has no empty line.',
                 '<b>Same anatomy for every resource.</b> Only the artwork shape changes: square, poster, round, 16:9.',
               ]),
           },
