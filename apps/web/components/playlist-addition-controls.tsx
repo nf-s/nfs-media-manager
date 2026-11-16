@@ -1,5 +1,6 @@
 'use client'
 
+import { DetailLink } from './detail-link'
 import Link from 'next/link'
 import { useDeferredValue, useEffect, useId, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -230,11 +231,9 @@ export function usePlaylistAdditions(
 export function AdditionState({
   addition,
   name,
-  mediaType = 'album',
 }: {
   addition: Addition
   name: string
-  mediaType?: PlaylistMediaType
 }) {
   const { job } = addition
   const progress = playlistJobActive(job)
@@ -243,22 +242,14 @@ export function AdditionState({
   return (
     <li>
       {name}{' '}
-      <Link
+      <DetailLink
         className="job-status underline underline-offset-2"
         data-status={job.status}
-        title={mediaType === 'track' ? 'View job in Albums' : undefined}
-        aria-label={
-          mediaType === 'track'
-            ? `${additionLabels[job.status]} · View job in Albums`
-            : undefined
-        }
-        href={scopedHref(
-          `/jobs?jobId=${encodeURIComponent(job.jobId)}`,
-          'album',
-        )}
+        kind="job"
+        id={job.jobId}
       >
         {additionLabels[job.status]}
-      </Link>
+      </DetailLink>
       {progress && <span className="quiet"> {progress}</span>}
       {job.status === 'succeeded' && job.finishedAt && (
         <span className="quiet">

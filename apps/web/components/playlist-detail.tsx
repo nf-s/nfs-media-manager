@@ -1,5 +1,6 @@
 'use client'
 
+import { DetailLink } from './detail-link'
 import Link from 'next/link'
 import { useDeferredValue, useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -27,7 +28,6 @@ import {
 import { useVirtualTable } from '@/hooks/useVirtualTable'
 import { fetchApiData } from '@/utils/api'
 import { parseBrowseView, type BrowseView } from '@/utils/media-grid'
-import { scopedHref } from '@/utils/media-scope'
 import {
   PlaylistTabSchema,
   playlistTracksHref,
@@ -482,15 +482,13 @@ export function PlaylistSyncPanel({ playlist }: { playlist: PlaylistSummary }) {
             {job.finishedAt && (
               <span>Finished {formatDateTime(job.finishedAt)}</span>
             )}
-            <Link
+            <DetailLink
               className="underline underline-offset-2"
-              href={scopedHref(
-                `/jobs?jobId=${encodeURIComponent(job.jobId)}`,
-                'album',
-              )}
+              kind="job"
+              id={job.jobId}
             >
-              View job in Albums
-            </Link>
+              View job
+            </DetailLink>
           </div>
           {active && (
             <progress

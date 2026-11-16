@@ -1,6 +1,6 @@
 'use client'
 
-import Link from 'next/link'
+import { DetailLink } from './detail-link'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import {
   useMutation,
@@ -23,7 +23,6 @@ import { errorMessage } from './lastfm-sync'
 import { fetchApiData } from '@/utils/api'
 import { dispatchJobCancellation } from '@/utils/job-bulk-actions'
 import { canCancelJob } from '@/utils/job-selection'
-import { scopedHref } from '@/utils/media-scope'
 import {
   youtubeScheduleLabels,
   youtubeSyncPollInterval,
@@ -287,14 +286,9 @@ export function SubscriptionSync({
           </>
         )}
         {data.job && (
-          <Link
-            href={scopedHref(
-              `/jobs?jobId=${encodeURIComponent(data.job.id)}`,
-              'subscription',
-            )}
-          >
+          <DetailLink kind="job" id={data.job.id}>
             {running ? 'View current job' : 'View last job'}
-          </Link>
+          </DetailLink>
         )}
       </div>
       <p className="muted">

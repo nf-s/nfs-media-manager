@@ -1,5 +1,6 @@
 'use client'
 
+import { DetailLink } from './detail-link'
 import Link from 'next/link'
 import { useEffect, useRef, useState } from 'react'
 import {
@@ -567,13 +568,11 @@ function SelectionTable({ providers, mediaType = 'film' }: Props) {
                             >
                               {attempt && attempt.status !== 'succeeded' ? (
                                 <span className="flex w-full min-w-0 max-w-full items-center gap-1 overflow-hidden">
-                                  <Link
+                                  <DetailLink
                                     className="job-status shrink-0 underline underline-offset-2"
                                     data-status={attempt.status}
-                                    href={scopedHref(
-                                      `/jobs?jobId=${encodeURIComponent(attempt.jobId)}`,
-                                      mediaType,
-                                    )}
+                                    kind="job"
+                                    id={attempt.jobId}
                                     title={`${source.displayName} attempt started: ${attempt.startedAt}${attempt.finishedAt ? `; finished: ${attempt.finishedAt}` : ''}. ${successTitle}`}
                                   >
                                     {attempt.status === 'failed'
@@ -581,7 +580,7 @@ function SelectionTable({ providers, mediaType = 'film' }: Props) {
                                       : attempt.status === 'running'
                                         ? 'Running'
                                         : 'Cancelled'}
-                                  </Link>
+                                  </DetailLink>
                                   {attempt.status === 'failed' &&
                                     attempt.error && (
                                       <span

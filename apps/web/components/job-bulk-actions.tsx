@@ -1,6 +1,6 @@
 'use client'
 
-import Link from 'next/link'
+import { DetailLink } from './detail-link'
 import { useState } from 'react'
 import { z } from 'zod'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
@@ -325,13 +325,11 @@ export default function JobBulkActions({
                   )
                   .map((entry) => (
                     <li key={entry.jobId}>
-                      <Link
-                        href={`/jobs?jobId=${encodeURIComponent(entry.jobId)}`}
-                      >
+                      <DetailLink kind="job" id={entry.jobId}>
                         {jobActionTitle(
                           jobs.find((job) => job.id === entry.jobId),
                         )}
-                      </Link>
+                      </DetailLink>
                       : {entry.message ?? entry.status}
                     </li>
                   ))}

@@ -1,6 +1,6 @@
 'use client'
 
-import Link from 'next/link'
+import { DetailLink } from './detail-link'
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { z } from 'zod'
@@ -321,11 +321,9 @@ export default function ProviderActivity({
             <ul>
               {data.benignReviews.map((review, index) => (
                 <li key={`${review.jobId}:${index}`}>
-                  <Link
-                    href={`/jobs?jobId=${encodeURIComponent(review.jobId)}`}
-                  >
+                  <DetailLink kind="job" id={review.jobId}>
                     {review.message}
-                  </Link>{' '}
+                  </DetailLink>{' '}
                   <span className="muted">
                     · {new Date(review.reviewedAt).toLocaleString()}
                   </span>

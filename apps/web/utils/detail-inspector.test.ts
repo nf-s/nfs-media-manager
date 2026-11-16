@@ -111,3 +111,52 @@ test('legacy film history links preserve the detail tab and browse filters', () 
     new URLSearchParams({ q: 'Fixture' }),
   )
 })
+
+test('legacy job links open details without consuming the job table filters', () => {
+  const params = new URLSearchParams({
+    jobId: 'job-1',
+    tab: 'logs',
+    mediaType: 'album',
+    provider: 'spotify',
+    statuses: '["failed"]',
+    sortBy: 'createdAt',
+  })
+  const entries = [{ kind: 'job', id: 'job-1', view: 'tab=logs' }]
+  assert.deepEqual(detailEntries('/jobs', params), entries)
+  const workspace = withoutDetailEntries('/jobs', params)
+  assert.equal(workspace.has('jobId'), false)
+  assert.equal(workspace.has('tab'), false)
+  assert.equal(workspace.get('mediaType'), 'album')
+  assert.equal(workspace.get('provider'), 'spotify')
+  assert.equal(workspace.get('statuses'), '["failed"]')
+  assert.equal(workspace.get('sortBy'), 'createdAt')
+  assert.equal(
+    detailPageHref(
+      { kind: 'job', id: 'job/1' },
+      new URLSearchParams({ tab: 'data' }),
+    ),
+    '/jobs/job%2F1?tab=data',
+  )
+})
+
+test('job, retry and item navigation retain each parent view in the inspector stack', () => {
+  const workspace = new URLSearchParams({ q: 'Fixture', view: 'table' })
+  const entries: DetailEntry[] = [
+    {
+      kind: 'album',
+      id: 'album-1',
+      view: 'tab=sources&jobsSortBy=status&jobsDirection=asc',
+    },
+    { kind: 'job', id: 'job-1', view: 'tab=logs' },
+    { kind: 'job', id: 'retry-1', view: 'tab=data' },
+    { kind: 'artist', id: 'artist-1' },
+  ]
+  const params = detailEntryParams('/albums', workspace, entries)
+  assert.deepEqual(
+    detailEntries('/albums', new URLSearchParams(params)),
+    entries,
+  )
+  const back = detailEntryParams('/albums', params, entries.slice(0, -1))
+  assert.deepEqual(detailEntries('/albums', back), entries.slice(0, -1))
+  assert.deepEqual(withoutDetailEntries('/albums', back), workspace)
+})

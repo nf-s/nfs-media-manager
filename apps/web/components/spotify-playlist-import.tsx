@@ -256,10 +256,6 @@ function tracksLabel(count: number) {
   return `${count.toLocaleString()} ${count === 1 ? 'track' : 'tracks'}`
 }
 
-function jobHref(job: SpotifyPlaylistJob) {
-  return scopedHref(`/jobs?jobId=${encodeURIComponent(job.jobId)}`, 'album')
-}
-
 function JobStatus({
   job,
   labels,
@@ -267,23 +263,16 @@ function JobStatus({
   job: SpotifyPlaylistJob
   labels: JobLabels
 }) {
-  const trackLibrary = useLibraryView() === 'track'
   return (
-    <Link
+    <DetailLink
       className="job-status underline underline-offset-2"
       data-status={job.status}
-      href={jobHref(job)}
-      title={
-        trackLibrary
-          ? [job.errorMessage, 'Open job in Albums'].filter(Boolean).join(' · ')
-          : (job.errorMessage ?? undefined)
-      }
-      aria-label={
-        trackLibrary ? `${labels[job.status]}: open job in Albums` : undefined
-      }
+      kind="job"
+      id={job.jobId}
+      title={job.errorMessage ?? undefined}
     >
       {labels[job.status]}
-    </Link>
+    </DetailLink>
   )
 }
 
@@ -764,9 +753,9 @@ export default function SpotifyPlaylistImport() {
                 {listingJob.errorMessage
                   ? `: ${listingJob.errorMessage}`
                   : '.'}{' '}
-                <Link href={jobHref(listingJob)}>
-                  {trackLibrary ? 'View job in Albums' : 'View job'}
-                </Link>
+                <DetailLink kind="job" id={listingJob.jobId}>
+                  View job
+                </DetailLink>
               </p>
             )}
           <div className="secondary-table-actions">

@@ -288,7 +288,7 @@ test('failed metadata attempts show the error and scoped job link instead of Nev
       },
     ],
   )
-  assert.match(html, /href="\/jobs\?jobId=failed%2Fjob&amp;mediaType=album"/)
+  assert.match(html, /href="\/jobs\/failed%2Fjob"/)
   assert.match(html, />Failed<\/a>/)
   assert.match(html, /class="job-status [^"]*" data-status="failed"/)
   assert.match(
@@ -360,7 +360,7 @@ test('latest failed, running and cancelled attempts take precedence over success
   >['status'][] = ['failed', 'running', 'cancelled']
   for (const status of statuses) {
     for (const lastScrapedAt of [null, '2026-01-01T00:00:00Z']) {
-      for (const { scope, html } of renderFreshness({
+      for (const { html } of renderFreshness({
         lastScrapedAt,
         hasProviderIdentifier: true,
         lastAttempt: {
@@ -372,11 +372,7 @@ test('latest failed, running and cancelled attempts take precedence over success
             status === 'failed' ? 'Upstream <unavailable> & retry later' : null,
         },
       })) {
-        assert.ok(
-          html.includes(
-            `href="/jobs?jobId=attempt%2Fjob&amp;mediaType=${scope}"`,
-          ),
-        )
+        assert.ok(html.includes('href="/jobs/attempt%2Fjob"'))
         const label =
           status === 'failed'
             ? 'Failed'

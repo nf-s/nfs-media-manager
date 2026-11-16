@@ -8,7 +8,7 @@ import { LASTFM_SCROBBLE_SYNC_TASK } from '@repo/schemas/lastfm'
 import { SPOTIFY_PODCAST_SYNC_TASK } from '@repo/schemas/subscriptions'
 import { YOUTUBE_SYNC_TASK } from '@repo/schemas/youtube'
 import JobBulkActions from './job-bulk-actions'
-import { JobLogEntry } from './pages/jobs-page-client'
+import { JobLogEntry } from './job-log-entry'
 
 const network = mock.method(globalThis, 'fetch', async () => {
   throw new Error('Network forbidden in bulk action tests')

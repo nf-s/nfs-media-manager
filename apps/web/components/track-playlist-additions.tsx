@@ -41,7 +41,6 @@ function MatchedTrackAdditions({
         <ul className="mt-2 grid gap-1 text-sm" aria-label="Additions">
           {additionList.map((addition) => (
             <AdditionState
-              mediaType="track"
               key={addition.job.jobId}
               addition={addition}
               name={names.get(addition.playlistId) ?? 'Playlist'}

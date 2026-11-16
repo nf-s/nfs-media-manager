@@ -1,6 +1,5 @@
 'use client'
 
-import React, { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import type { Job } from '@repo/schemas/job'
 import { Button } from '@repo/ui/components/ui/button'
@@ -59,28 +58,5 @@ export function StoredJobData({ job }: { job: DataJob }) {
         </>
       )}
     </div>
-  )
-}
-
-export default function JobDataViewer({
-  job,
-  visible,
-}: {
-  job: DataJob
-  visible: boolean
-}) {
-  const [open, setOpen] = useState(false)
-  return (
-    <details
-      className="min-w-0 py-1 text-xs"
-      open={open}
-      onToggle={(event) => {
-        if (event.target === event.currentTarget)
-          setOpen(event.currentTarget.open)
-      }}
-    >
-      <summary>Stored JSON</summary>
-      {visible && open && <StoredJobData job={job} />}
-    </details>
   )
 }

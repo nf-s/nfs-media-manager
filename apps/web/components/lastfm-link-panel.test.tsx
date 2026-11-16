@@ -106,7 +106,7 @@ test('stored Spotify candidates are available to choose without a new provider s
   assert.match(html, /aria-label="Spotify results"/)
   assert.match(html, /Saved result/)
   assert.match(html, /aria-label="Link Saved result"/)
-  assert.match(html, /jobs\?jobId=search-job&amp;mediaType=album/)
+  assert.match(html, /jobs\/search-job/)
   assert.doesNotMatch(html, /Searching Spotify/)
 })
 

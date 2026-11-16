@@ -306,10 +306,7 @@ test('legacy artist History links reopen the provider in Sources and list summar
   assert.match(html, /virtual-browse-placeholder/)
   assert.doesNotMatch(html, /Load more snapshots/)
   assert.doesNotMatch(html, /Stored response/)
-  assert.equal(
-    destination(html, 'View job').searchParams.get('jobId'),
-    'artist-job',
-  )
+  assert.equal(destination(html, 'View job').pathname, '/jobs/artist-job')
 })
 
 test('artist Sources offers selectable eligible providers and explicit refresh', () => {

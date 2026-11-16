@@ -18,6 +18,7 @@ import { SubscriptionItemDetails } from './subscription-item-details'
 import { ArtistDetail } from './artist-detail'
 import { PersonDetail } from './person-detail'
 import { ChannelDetail } from './channel-detail'
+import { JobDetail } from './job-detail'
 import UserPageClient from './pages/user-page-client'
 import { libraryViewForPath } from '@/utils/media-scope'
 import {
@@ -38,6 +39,7 @@ const labels = {
   artist: 'Artist details',
   person: 'Person details',
   channel: 'Channel details',
+  job: 'Job details',
   user: 'User panel',
 }
 
@@ -209,6 +211,8 @@ function InspectorContent({
     <div className="inspector-scroll">
       {target.kind === 'user' ? (
         <UserPageClient />
+      ) : target.kind === 'job' ? (
+        <JobDetail id={target.id} />
       ) : target.kind === 'artist' ? (
         <ArtistDetail id={target.id} />
       ) : target.kind === 'person' ? (

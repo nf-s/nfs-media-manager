@@ -1,6 +1,5 @@
 'use client'
 
-import Link from 'next/link'
 import { DetailLink } from './detail-link'
 import { AlbumReferencePlayButton } from './play-controls'
 import { useEffect, useId, useRef, useState } from 'react'
@@ -34,7 +33,6 @@ import { useConfig } from './providers'
 import { fetchApiData } from '@/utils/api'
 import { invalidateManualMediaAddition } from '@/utils/manual-media-add'
 import { addAndLinkLastfmAlbum } from '@/utils/lastfm-album-add'
-import { scopedHref } from '@/utils/media-scope'
 
 export type LastfmLinkPanelMode = 'library' | 'new'
 
@@ -51,6 +49,7 @@ function ScrobbleSpotifySearch({
   onPendingChange,
   onAdded,
   onChoose,
+  onOpenJob,
 }: {
   group: LastfmLinkGroup
   active: boolean
@@ -58,6 +57,7 @@ function ScrobbleSpotifySearch({
   onPendingChange: (pending: boolean) => void
   onAdded: (id: string) => Promise<void>
   onChoose?: (item: ManualMediaSearchItem) => void
+  onOpenJob: () => void
 }) {
   const { apiBaseUrl } = useConfig()
   const client = useQueryClient()
@@ -118,14 +118,22 @@ function ScrobbleSpotifySearch({
             : job.errorMessage
               ? `${job.errorMessage} `
               : 'Saved Spotify search. '}
-          <Link
-            href={scopedHref(
-              `/jobs?jobId=${encodeURIComponent(job.jobId)}`,
-              'album',
-            )}
+          <DetailLink
+            kind="job"
+            id={job.jobId}
+            onClick={(event) => {
+              if (
+                event.button === 0 &&
+                !event.metaKey &&
+                !event.altKey &&
+                !event.ctrlKey &&
+                !event.shiftKey
+              )
+                onOpenJob()
+            }}
           >
             View job
-          </Link>
+          </DetailLink>
         </p>
       )}
       <ManualMediaSearch
@@ -414,6 +422,7 @@ export default function LastfmLinkPanel({
                       disabled={busy}
                       onPendingChange={setAdding}
                       onAdded={link}
+                      onOpenJob={onClose}
                       onChoose={onChoose}
                     />
                   )}

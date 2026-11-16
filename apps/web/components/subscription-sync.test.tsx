@@ -95,10 +95,7 @@ test('podcast sync names podcasts and episodes and links to its job', () => {
   assert.match(html, /<dt>New episodes this run<\/dt>/)
   assert.match(html, /<dt>Stored episodes<\/dt><dd>240<\/dd>/)
   assert.match(html, /<progress[^>]+value="3"[^>]+max="8"/)
-  assert.match(
-    html,
-    /href="\/jobs\?jobId=job-5&amp;mediaType=subscription">View current job/,
-  )
+  assert.match(html, /href="\/jobs\/job-5">View current job/)
   assert.match(html, />Reconnect Spotify</)
   assert.match(html, /href="\/subscriptions\/channels\?type=spotify"/)
   assert.doesNotMatch(html, /channels read|videos/i)

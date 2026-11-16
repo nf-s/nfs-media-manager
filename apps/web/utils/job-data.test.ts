@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { QueryClient, QueryObserver } from '@tanstack/react-query'
 import type { Job } from '@repo/schemas/job'
-import { jobDataOptions } from './job-data'
+import { jobDataOptions, jobDetailOptions } from './job-data'
 
 const empty = {
   jobId: 'job/1',
@@ -14,6 +14,35 @@ const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 10))
 function response(data: unknown = empty) {
   return Response.json({ statusCode: 200, message: 'OK', data })
 }
+
+test('job detail reads the encoded job endpoint and closing aborts its read', (t) => {
+  const client = new QueryClient()
+  const requests: { input: RequestInfo | URL; init?: RequestInit }[] = []
+  t.mock.method(
+    globalThis,
+    'fetch',
+    (input: RequestInfo | URL, init?: RequestInit) => {
+      requests.push({ input, init })
+      return new Promise<Response>(() => {})
+    },
+  )
+  const observer = new QueryObserver(
+    client,
+    jobDetailOptions('/backend', 'job/1'),
+  )
+  const close = observer.subscribe(() => {})
+  try {
+    assert.equal(requests.length, 1)
+    assert.equal(requests[0]?.input, '/backend/api/v1/scrape/jobs/job%2F1')
+    assert.equal(requests[0]?.init?.method ?? 'GET', 'GET')
+    assert.equal(requests[0]?.init?.signal?.aborted, false)
+    close()
+    assert.equal(requests[0]?.init?.signal?.aborted, true)
+  } finally {
+    observer.destroy()
+    client.clear()
+  }
+})
 
 test('mounting the open viewer reads only the exact job data endpoint; closing aborts the read', async (t) => {
   const client = new QueryClient()

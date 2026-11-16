@@ -20,6 +20,7 @@ const DetailTargetSchema = z.object({
     'artist',
     'person',
     'channel',
+    'job',
     'user',
   ]),
   id: z.string().min(1).max(500),
@@ -53,6 +54,7 @@ export function detailLocation(
 }
 
 function legacyDetail(pathname: string, params: URLSearchParams) {
+  const job = pathname === '/jobs' ? params.get('jobId') : null
   const playlist =
     pathname === '/playlists' || pathname === '/tracks'
       ? params.get('playlist')
@@ -60,11 +62,13 @@ function legacyDetail(pathname: string, params: URLSearchParams) {
   const collection =
     pathname === '/collections' ? params.get('collection') : null
   const parsed = DetailTargetSchema.safeParse(
-    playlist
-      ? { kind: 'playlist', id: playlist }
-      : collection
-        ? { kind: 'collection', id: collection }
-        : { kind: detailBrowseKind(pathname), id: params.get('item') },
+    job
+      ? { kind: 'job', id: job }
+      : playlist
+        ? { kind: 'playlist', id: playlist }
+        : collection
+          ? { kind: 'collection', id: collection }
+          : { kind: detailBrowseKind(pathname), id: params.get('item') },
   )
   if (!parsed.success) return null
   const keys = {
@@ -77,6 +81,7 @@ function legacyDetail(pathname: string, params: URLSearchParams) {
     artist: [],
     person: [],
     channel: [],
+    job: ['jobId', 'tab'],
     user: [],
   }[parsed.data.kind]
   const view = new URLSearchParams()
@@ -85,6 +90,7 @@ function legacyDetail(pathname: string, params: URLSearchParams) {
     if (
       value !== null &&
       key !== 'item' &&
+      key !== 'jobId' &&
       key !== 'playlist' &&
       key !== 'collection'
     )

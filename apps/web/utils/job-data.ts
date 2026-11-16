@@ -1,8 +1,27 @@
 import { queryOptions } from '@tanstack/react-query'
-import { JobDataSchema, type Job } from '@repo/schemas/job'
+import { JobDataSchema, JobSchema, type Job } from '@repo/schemas/job'
 import { fetchApiData } from './api'
 import { canCancelJob } from './job-selection'
 import { clientCacheStaleTime } from './query-cache'
+
+export function jobDetailOptions(apiBaseUrl: string, id: string) {
+  return queryOptions({
+    queryKey: ['jobs', 'detail', id],
+    queryFn: ({ signal }) =>
+      fetchApiData(
+        apiBaseUrl,
+        `/api/v1/scrape/jobs/${encodeURIComponent(id)}`,
+        JobSchema,
+        { signal },
+      ),
+    staleTime: (query) =>
+      query.state.data && canCancelJob(query.state.data)
+        ? 0
+        : clientCacheStaleTime,
+    refetchInterval: (query) =>
+      query.state.data && canCancelJob(query.state.data) ? 3000 : false,
+  })
+}
 
 export function jobDataOptions(
   apiBaseUrl: string,

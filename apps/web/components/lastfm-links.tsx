@@ -1,6 +1,5 @@
 'use client'
 
-import Link from 'next/link'
 import { DetailLink } from './detail-link'
 import { AlbumReferencePlayButton } from './play-controls'
 import { useEffect, useRef, useState } from 'react'
@@ -42,7 +41,6 @@ import {
   type LastfmLinkSort,
 } from '@/utils/lastfm-sync'
 import { updateJobSelection } from '@/utils/job-selection'
-import { scopedHref } from '@/utils/media-scope'
 import {
   errorMessage,
   refreshScrobbleLinks,
@@ -174,16 +172,14 @@ function LinkRow({
             details={group.spotifySearch?.errorMessage}
           >
             {group.spotifySearch ? (
-              <Link
+              <DetailLink
                 className="job-status underline underline-offset-2"
                 data-status={group.spotifySearch.status}
-                href={scopedHref(
-                  `/jobs?jobId=${encodeURIComponent(group.spotifySearch.jobId)}`,
-                  'album',
-                )}
+                kind="job"
+                id={group.spotifySearch.jobId}
               >
                 {lastfmSpotifySearchLabel(group.spotifySearch)}
-              </Link>
+              </DetailLink>
             ) : (
               <span className="muted">{lastfmSpotifySearchLabel(null)}</span>
             )}

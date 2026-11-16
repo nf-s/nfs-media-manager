@@ -261,10 +261,7 @@ test('running sync shows progress, the current job and Stop', () => {
   assert.match(html, /1,800 of 2,400/)
   assert.match(html, />Stop</)
   assert.match(html, /disabled=""[^>]*>Sync now/)
-  assert.match(
-    html,
-    /href="\/jobs\?jobId=job-1&amp;mediaType=album">View current job/,
-  )
+  assert.match(html, /href="\/jobs\/job-1">View current job/)
   assert.match(html, /disabled=""[^>]*>Relink/)
 })
 
@@ -366,10 +363,7 @@ test('scrobble links show reason totals and link library albums', () => {
     /aria-label="Select Artist fixture — Album fixture" disabled=""/,
   )
   assert.match(html, /aria-label="Select Artist fixture — Shared title"\/>/)
-  assert.match(
-    html,
-    /href="\/jobs\?jobId=search-fixture&amp;mediaType=album">2 matches/,
-  )
+  assert.match(html, /href="\/jobs\/search-fixture">2 matches/)
   assert.match(html, /Shift-click to select a range/)
 })
 

@@ -1,5 +1,6 @@
 'use client'
 
+import { DetailLink } from './detail-link'
 import Link from 'next/link'
 import { useEffect, useRef, useState } from 'react'
 import {
@@ -26,7 +27,6 @@ import {
   lastfmSyncPollInterval,
   lastfmSyncStateLabels,
 } from '@/utils/lastfm-sync'
-import { scopedHref } from '@/utils/media-scope'
 
 const ErrorMessageSchema = z.object({ message: z.string().min(1) })
 
@@ -295,20 +295,9 @@ export default function LastfmSync({
           </>
         )}
         {data.job && (
-          <Link
-            href={scopedHref(
-              `/jobs?jobId=${encodeURIComponent(data.job.id)}`,
-              'album',
-            )}
-          >
-            {trackLibrary
-              ? running
-                ? 'View current sync job in Albums'
-                : 'View last sync job in Albums'
-              : running
-                ? 'View current job'
-                : 'View last job'}
-          </Link>
+          <DetailLink kind="job" id={data.job.id}>
+            {running ? 'View current job' : 'View last job'}
+          </DetailLink>
         )}
       </div>
       <p className="muted">

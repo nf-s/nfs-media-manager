@@ -325,7 +325,10 @@ test('the sync tab shows the schedule, progress and the latest job', async () =>
   assert.match(html, /2 of 5 pages/)
   assert.match(html, /Import in progress/)
   assert.match(html, /data-status="running"[^>]*>Importing</)
-  assert.match(html, /href="\/jobs\?jobId=job-1&amp;mediaType=album"/)
+  assert.deepEqual(linkTargets(html, 'View job'), [
+    { kind: 'playlist', id: 'playlist-1', view: 'tab=sync' },
+    { kind: 'job', id: 'job-1' },
+  ])
   assert.match(html, /disabled=""[^>]*>Sync now</)
   assert.match(html, /<progress[^>]*value="2"[^>]*max="5"/)
 })

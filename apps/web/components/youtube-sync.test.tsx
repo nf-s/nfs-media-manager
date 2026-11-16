@@ -124,10 +124,7 @@ test('a running sync shows channel progress, stop and the current job', () => {
   assert.match(html, /<progress[^>]+value="2"[^>]+max="6"/)
   assert.match(button(html, 'Sync now'), / disabled=""/)
   assert.doesNotMatch(button(html, 'Stop'), / disabled=""/)
-  assert.match(
-    html,
-    /href="\/jobs\?jobId=job-2&amp;mediaType=subscription">View current job/,
-  )
+  assert.match(html, /href="\/jobs\/job-2">View current job/)
   assert.match(button(html, 'Reconnect'), /<button/)
   assert.match(button(html, 'Disconnect'), /<button/)
 })

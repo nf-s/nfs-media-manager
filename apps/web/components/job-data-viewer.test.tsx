@@ -5,7 +5,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { JobDataSchema, type Job } from '@repo/schemas/job'
 import { jobDataOptions } from '@/utils/job-data'
-import JobDataViewer, { StoredJobData } from './job-data-viewer'
+import { StoredJobData } from './job-data-viewer'
 
 const network = mock.method(globalThis, 'fetch', async () => {
   throw new Error('Network forbidden in rendering tests')
@@ -20,14 +20,10 @@ const empty = {
 function render({
   status = 'failed',
   data,
-  collapsed = false,
-  visible = true,
   error = false,
 }: {
   status?: Job['status']
   data?: unknown
-  collapsed?: boolean
-  visible?: boolean
   error?: boolean
 } = {}) {
   const client = new QueryClient()
@@ -46,11 +42,7 @@ function render({
   try {
     return renderToStaticMarkup(
       <QueryClientProvider client={client}>
-        {collapsed ? (
-          <JobDataViewer job={job} visible={visible} />
-        ) : (
-          <StoredJobData job={job} />
-        )}
+        <StoredJobData job={job} />
       </QueryClientProvider>,
     )
   } finally {
@@ -58,27 +50,6 @@ function render({
     assert.equal(network.mock.callCount(), 0)
   }
 }
-
-test('successful and failed jobs have a compact collapsed viewer without a data query', () => {
-  const statuses: Job['status'][] = [
-    'succeeded',
-    'failed',
-    'running',
-    'queued',
-    'cancelled',
-  ]
-  for (const status of statuses) {
-    for (const visible of [false, true]) {
-      const html = render({
-        status,
-        collapsed: true,
-        visible,
-      })
-      assert.match(html, /<summary>Stored JSON<\/summary>/)
-      assert.doesNotMatch(html, /Loading|Raw JSON|<pre|open=""/)
-    }
-  }
-})
 
 test('loading is distinct from missing retained data and does not offer scraping', () => {
   const html = render()

@@ -1,6 +1,7 @@
 'use client'
 
-import Link from 'next/link'
+import { DetailLink } from './detail-link'
+import { useDetailView } from './detail-inspector-context'
 import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react'
 import {
   useMutation,
@@ -119,10 +120,6 @@ export function useSourceAvailability(providers: ProviderSummary[]) {
       return 'Credentials required'
     return undefined
   }
-}
-
-function jobLink(job: string, scope: SourceScope) {
-  return `/jobs?${new URLSearchParams({ jobId: job, mediaType: scope.kind === 'film' ? 'film' : 'album' })}`
 }
 
 function sourcePath(scope: SourceScope, provider: string) {
@@ -282,12 +279,13 @@ function SourceHistory({
                             {open ? 'Hide snapshot' : 'View snapshot'}
                           </button>
                           {snapshot.jobId && (
-                            <Link
+                            <DetailLink
                               className="underline underline-offset-2"
-                              href={jobLink(snapshot.jobId, scope)}
+                              kind="job"
+                              id={snapshot.jobId}
                             >
                               View job
-                            </Link>
+                            </DetailLink>
                           )}
                         </div>
                       </td>
@@ -332,18 +330,35 @@ export function ProviderSources({
 }) {
   const { apiBaseUrl } = useConfig()
   const client = useQueryClient()
+  const view = useDetailView()
   const [selected, setSelected] = useState<string[]>([])
   const [search, setSearch] = useState('')
   const [sort, setSort] = useState<TableSort<SourceSortKey>>({
     key: 'label',
     direction: 'asc',
   })
-  const [opened, setOpened] = useState<{
+  const savedProvider = view.params.get('sourceProvider') ?? initialProvider
+  const sourceMode = view.params.get('sourceMode')
+  const opened: {
     provider: string
     type: 'history' | 'edit'
-  } | null>(
-    initialProvider ? { provider: initialProvider, type: 'history' } : null,
-  )
+  } | null =
+    savedProvider && sourceMode !== 'closed'
+      ? {
+          provider: savedProvider,
+          type: sourceMode === 'edit' ? 'edit' : 'history',
+        }
+      : null
+  function setOpened(next: typeof opened) {
+    if (next) {
+      view.params.set('sourceProvider', next.provider)
+      view.params.set('sourceMode', next.type)
+    } else {
+      view.params.delete('sourceProvider')
+      view.params.set('sourceMode', 'closed')
+    }
+    view.replace(view.params)
+  }
   const selectAll = useRef<HTMLInputElement>(null)
   const refreshable = Boolean(scope && rows.some((row) => row.refresh))
   const activeJobs = useQuery({
@@ -636,12 +651,13 @@ export function ProviderSources({
               {row.label} ·{' '}
               {error ??
                 (job && (
-                  <Link
+                  <DetailLink
                     className="underline underline-offset-2"
-                    href={jobLink(job.id, scope)}
+                    kind="job"
+                    id={job.id}
                   >
                     View refresh job
-                  </Link>
+                  </DetailLink>
                 ))}
             </li>
           ))}

@@ -1,6 +1,6 @@
 'use client'
 
-import Link from 'next/link'
+import { DetailLink } from './detail-link'
 import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import {
@@ -122,12 +122,9 @@ function ArtistIdentifierEditor({
       )}
       {refresh.data && (
         <p role="status" className="quiet w-full">
-          <Link
-            className="underline"
-            href={`/jobs?${new URLSearchParams({ mediaType: 'album', jobId: refresh.data.id })}`}
-          >
+          <DetailLink className="underline" kind="job" id={refresh.data.id}>
             View refresh job
-          </Link>
+          </DetailLink>
         </p>
       )}
     </form>

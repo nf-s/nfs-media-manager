@@ -344,15 +344,12 @@ test('a failed listing shows its message and keeps the stored list', () => {
     html,
     /role="alert">The last listing failed: Spotify is cooling down\./,
   )
-  assert.match(
-    html,
-    /href="\/jobs\?jobId=listing-2&amp;mediaType=album">View job/,
-  )
+  assert.match(html, /href="\/jobs\/listing-2">View job/)
   assert.doesNotMatch(html, /disabled=""[^>]*>List again/)
   assert.match(html, /aria-label="Select Stored"/)
 })
 
-test('track imports label shared album jobs and settings before leaving the library', () => {
+test('track imports open job details and label shared provider settings', () => {
   const configured = render(
     [
       [['spotify-account'], account],
@@ -373,12 +370,9 @@ test('track imports label shared album jobs and settings before leaving the libr
     ],
     'mediaType=track',
   )
-  assert.match(configured, /View job in Albums/)
-  assert.match(configured, /aria-label="Failed: open job in Albums"/)
-  assert.match(
-    configured,
-    /href="\/jobs\?jobId=listing-fixture&amp;mediaType=album"/,
-  )
+  assert.match(configured, /View job/)
+  assert.doesNotMatch(configured, /open job in Albums|View job in Albums/)
+  assert.match(configured, /href="\/jobs\/listing-fixture"/)
   const unconfigured = render(
     [[['spotify-account'], { ...account, configured: false }]],
     'mediaType=track',
