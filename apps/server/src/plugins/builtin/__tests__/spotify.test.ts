@@ -36,6 +36,26 @@ function scrape(input: MediaPluginScrapeContext) {
 }
 
 describe('Spotify read-only album adapter', () => {
+  it('preserves track-level artist credits independently of album artists', () => {
+    const album = spotifyAlbumFixture()
+    const result = normalizeSpotifyAlbum({
+      ...album,
+      tracks: {
+        ...album.tracks,
+        items: album.tracks.items.map((track) => ({
+          ...track,
+          artists: [
+            { id: 'A'.repeat(22), name: 'Example Artist' },
+            { id: 'B'.repeat(22), name: 'Guest Artist' },
+          ],
+        })),
+      },
+    })
+    expect(result.normalized.tracks[0]).toMatchObject({
+      artists: ['Example Artist', 'Guest Artist'],
+    })
+  })
+
   beforeEach(() =>
     vi.stubGlobal(
       'fetch',

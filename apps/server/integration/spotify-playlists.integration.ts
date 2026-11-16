@@ -31,6 +31,7 @@ import { spotifyPlugin } from '@/plugins/builtin/spotify'
 import { lastfmPlugin } from '@/plugins/builtin/lastfm'
 import { albumNameKey } from '@/lib/album-import-candidates'
 import { createStableId } from '@/lib/media-utils'
+import { normalizeSpotifyAlbum } from '@/lib/spotify-api'
 
 const database = `spotify_playlists_${randomUUID().replaceAll('-', '')}`
 const connection = {
@@ -487,6 +488,100 @@ afterAll(async () => {
 })
 
 describe('Spotify playlist imports', () => {
+  it('uses native album-track artists while preserving imported track credits', async () => {
+    liked = [track('imported', { artists: ['Imported Artist'] })]
+    await importAll({ playlists: [], likedSongs: true })
+    await addAlbum('track-credit-album', 'Track Credit Album')
+    const normalized = normalizeSpotifyAlbum({
+      id: ALBUM,
+      name: 'Track Credit Album',
+      artists: [{ name: 'The Examples' }],
+      tracks: {
+        offset: 0,
+        next: null,
+        total: 2,
+        items: ['albumonly', 'imported'].map((id, index) => ({
+          id: spotifyId(id),
+          name: id,
+          disc_number: 1,
+          track_number: index + 1,
+          duration_ms: 100000,
+          artists: [
+            { name: 'The Examples' },
+            { name: 'Featured Artist', id: spotifyId('featured') },
+          ],
+        })),
+      },
+    }).normalized
+    await databaseClient.transaction((tx) =>
+      replaceAlbumTracks(tx, 'track-credit-album', normalized.tracks),
+    )
+    const rows = (await listTracks(trackQuery())).items
+    expect(rows.find((row) => row.title === 'albumonly')?.artists).toEqual([
+      'The Examples',
+      'Featured Artist',
+    ])
+    expect(rows.find((row) => row.title === 'imported')?.artists).toEqual([
+      'Imported Artist',
+    ])
+    await databaseClient.transaction((tx) =>
+      replaceAlbumTracks(
+        tx,
+        'track-credit-album',
+        normalized.tracks.map((track) => ({ ...track, artists: [] })),
+      ),
+    )
+    const refreshed = (await listTracks(trackQuery())).items
+    expect(refreshed.find((row) => row.title === 'albumonly')?.artists).toEqual(
+      ['The Examples', 'Featured Artist'],
+    )
+  })
+
+  it('retains artist IDs with their import origin without replacing unrelated track metadata', async () => {
+    const artistCredits = [{ id: spotifyId('artist'), name: 'The Examples' }]
+    const entry = {
+      added_at: '2024-03-01T10:00:00Z',
+      item: {
+        type: 'track',
+        id: spotifyId('identity'),
+        name: 'Identity Fixture',
+        duration_ms: 120000,
+        artists: artistCredits,
+      },
+    }
+    liked = [entry]
+    await importAll({ playlists: [], likedSongs: true })
+    const [stored] = await databaseClient.select().from(schema.mediaItem)
+    expect(stored?.metadata).toMatchObject({
+      spotifyArtistCredits: artistCredits,
+      spotifyArtistCreditsSource: {
+        source: 'spotify-liked',
+        jobId: expect.any(String),
+        playlistId: expect.any(String),
+        recordedAt: expect.any(String),
+      },
+    })
+    await databaseClient
+      .update(schema.mediaItem)
+      .set({ metadata: { unrelated: 'keep' } })
+      .where(eq(schema.mediaItem.id, stored?.id ?? ''))
+    await importAll({ playlists: [], likedSongs: true })
+    const [updated] = await databaseClient.select().from(schema.mediaItem)
+    expect(updated?.metadata).toMatchObject({
+      unrelated: 'keep',
+      spotifyArtistCredits: artistCredits,
+    })
+    liked = [
+      {
+        ...entry,
+        item: { ...entry.item, artists: [{ name: 'The Examples' }] },
+      },
+    ]
+    await importAll({ playlists: [], likedSongs: true })
+    const [withoutIds] = await databaseClient.select().from(schema.mediaItem)
+    expect(withoutIds?.metadata).toEqual(updated?.metadata)
+  })
+
   it('bounds playlist pages and applies directory filters and sorts before paging', async () => {
     await databaseClient.insert(schema.playlist).values(
       Array.from(

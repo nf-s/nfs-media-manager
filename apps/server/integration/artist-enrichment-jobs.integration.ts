@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { drizzle } from 'drizzle-orm/node-postgres'
+import { eq } from 'drizzle-orm'
 import { migrate } from 'drizzle-orm/node-postgres/migrator'
 import pg from 'pg'
 import {
@@ -89,6 +90,7 @@ async function providerEvidence(
   mediaItemId: string,
   provider: ArtistProfileProvider,
   payload: JsonValue,
+  snapshotId?: string,
 ) {
   await databaseClient.insert(schema.providerCurrentState).values({
     id: provider + '-' + mediaItemId,
@@ -97,6 +99,7 @@ async function providerEvidence(
     payload,
     checksum: 'fixture',
     status: 'ready',
+    latestSnapshotId: snapshotId,
   })
 }
 
@@ -115,6 +118,7 @@ beforeEach(async () => {
   })
   await databaseClient.delete(schema.scrapeJob)
   await databaseClient.delete(schema.mediaItem)
+  await databaseClient.delete(schema.providerSnapshot)
   await databaseClient.delete(schema.artist)
   await databaseClient.delete(schema.providerRequestState)
   await databaseClient.delete(schema.providerRequestEvent)
@@ -131,6 +135,565 @@ afterAll(async () => {
 })
 
 describe('artist enrichment through queued jobs and stored evidence', () => {
+  it('shows stored album artist identifiers before any artist enrichment', async () => {
+    await providerEvidence('album-fixture', 'spotify', {
+      id: spotifyAlbumId,
+      artists: [{ id: spotifyArtistId, name: artistName }],
+    })
+    const { getArtist } = await import('@/services/creators')
+    expect(
+      await getArtist(artistId, { includeHistory: 'false' }),
+    ).toMatchObject({
+      providers: [],
+      identifiers: expect.arrayContaining([
+        {
+          provider: 'spotify',
+          externalId: spotifyArtistId,
+          status: 'inferred',
+          url: 'https://open.spotify.com/artist/' + spotifyArtistId,
+        },
+      ]),
+    })
+    expect(request).not.toHaveBeenCalled()
+  })
+
+  it('recovers wrapped imports and paginates exact album provenance without scraping', async () => {
+    await seedArtistAlbum('second-album')
+    const payload = {
+      source: 'spotify',
+      data: {
+        id: spotifyAlbumId,
+        artists: [
+          { id: spotifyArtistId, name: artistName },
+          { id: '0123456789abcdefghijkp', name: 'Other Artist' },
+        ],
+      },
+    }
+    await databaseClient.insert(schema.scrapeJob).values({
+      id: 'source-job',
+      provider: 'spotify',
+      status: 'succeeded',
+      scope: {},
+      options: {},
+    })
+    await databaseClient.insert(schema.providerSnapshot).values({
+      id: 'source-snapshot',
+      provider: 'spotify',
+      mediaItemId: 'album-fixture',
+      source: 'import',
+      checksum: 'fixture',
+      payload,
+      scrapeJobId: 'source-job',
+    })
+    await providerEvidence(
+      'album-fixture',
+      'spotify',
+      payload,
+      'source-snapshot',
+    )
+    await providerEvidence('second-album', 'spotify', payload)
+    const { getArtist } = await import('@/services/creators')
+    const { listArtistIdentifierSources } =
+      await import('@/services/artist-provider-evidence')
+    expect((await getArtist(artistId)).identifiers).toContainEqual({
+      provider: 'spotify',
+      externalId: spotifyArtistId,
+      status: 'inferred',
+      url: 'https://open.spotify.com/artist/' + spotifyArtistId,
+    })
+    const first = await listArtistIdentifierSources(artistId, 'spotify', {
+      page: 1,
+      size: 1,
+    })
+    const second = await listArtistIdentifierSources(artistId, 'spotify', {
+      page: 2,
+      size: 1,
+    })
+    expect(first).toMatchObject({
+      page: 1,
+      size: 1,
+      totalCount: 2,
+      pageCount: 2,
+    })
+    expect(first.items).toHaveLength(1)
+    expect(second.items).toHaveLength(1)
+    expect([...first.items, ...second.items]).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          externalId: spotifyArtistId,
+          kind: 'album',
+          provider: 'spotify',
+          id: 'album-fixture',
+          title: 'Album fixture',
+          snapshotId: 'source-snapshot',
+          jobId: 'source-job',
+        }),
+        expect.objectContaining({
+          id: 'second-album',
+          externalId: spotifyArtistId,
+        }),
+      ]),
+    )
+    expect(
+      (
+        await listArtistIdentifierSources(artistId, 'spotify', {
+          page: 3,
+          size: 1,
+        })
+      ).items,
+    ).toEqual([])
+    expect(request).not.toHaveBeenCalled()
+  })
+
+  it('shows conflicts and keeps confirmed artist profiles authoritative with both sources visible', async () => {
+    await seedArtistAlbum('second-album')
+    await providerEvidence('album-fixture', 'musicbrainz', {
+      releaseGroup: {
+        id: duplicateMbid,
+        'artist-credit': [
+          {
+            name: artistName,
+            artist: { id: artistMbid, name: 'Canonical Artist' },
+          },
+        ],
+      },
+    })
+    await providerEvidence('second-album', 'musicbrainz', {
+      releaseGroup: {
+        'artist-credit': [{ artist: { id: duplicateMbid, name: artistName } }],
+      },
+    })
+    const { getArtist } = await import('@/services/creators')
+    const { listArtistIdentifierSources } =
+      await import('@/services/artist-provider-evidence')
+    expect((await getArtist(artistId)).identifiers).toContainEqual({
+      provider: 'musicbrainz',
+      externalId: null,
+      status: 'conflict',
+      url: null,
+    })
+    await databaseClient.insert(schema.scrapeJob).values({
+      id: 'profile-job',
+      provider: 'musicbrainz',
+      status: 'succeeded',
+      scope: {},
+      options: {},
+    })
+    const { saveArtistProviderResult } =
+      await import('@/services/artist-profiles')
+    await saveArtistProviderResult(artistId, 'musicbrainz', {
+      profile: { externalId: artistMbid, tags: [] },
+      payload: {},
+      scrapeJobId: 'profile-job',
+    })
+    expect((await getArtist(artistId)).identifiers).toContainEqual({
+      provider: 'musicbrainz',
+      externalId: artistMbid,
+      status: 'confirmed',
+      url: 'https://musicbrainz.org/artist/' + artistMbid,
+    })
+    expect(
+      await listArtistIdentifierSources(artistId, 'musicbrainz', {
+        page: 1,
+        size: 10,
+      }),
+    ).toMatchObject({
+      totalCount: 3,
+      items: expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'artist',
+          externalId: artistMbid,
+          jobId: 'profile-job',
+        }),
+        expect.objectContaining({
+          kind: 'album',
+          id: 'second-album',
+          externalId: duplicateMbid,
+        }),
+      ]),
+    })
+    expect(request).not.toHaveBeenCalled()
+  })
+
+  it('shares only artist MBIDs across MusicBrainz and Last.fm and excludes release IDs and invalid credits', async () => {
+    await providerEvidence('album-fixture', 'musicbrainz', {
+      releaseGroup: {
+        id: duplicateMbid,
+        'artist-credit': [
+          { artist: { id: artistMbid.toUpperCase(), name: artistName } },
+          { artist: { id: duplicateMbid, name: 'Other Artist' } },
+        ],
+      },
+    })
+    await providerEvidence('album-fixture', 'spotify', {
+      id: spotifyAlbumId,
+      artists: [{ id: 'invalid-id', name: artistName }],
+    })
+    await providerEvidence('album-fixture', 'lastfm', {
+      album: {
+        mbid: duplicateMbid,
+        artist: artistName,
+      },
+    })
+    const { getArtist } = await import('@/services/creators')
+    const { listArtistIdentifierSources, listStoredArtistProviderCandidates } =
+      await import('@/services/artist-provider-evidence')
+    const detail = await getArtist(artistId)
+    expect(detail.identifiers).toEqual(
+      expect.arrayContaining([
+        {
+          provider: 'musicbrainz',
+          externalId: artistMbid,
+          status: 'inferred',
+          url: 'https://musicbrainz.org/artist/' + artistMbid,
+        },
+        {
+          provider: 'lastfm',
+          externalId: artistMbid,
+          status: 'inferred',
+          url: null,
+        },
+        { provider: 'spotify', externalId: null, status: 'missing', url: null },
+      ]),
+    )
+    expect(
+      await listStoredArtistProviderCandidates(artistId, artistName, 'lastfm'),
+    ).toEqual([{ id: artistMbid, name: artistName, exact: true }])
+    expect(
+      await listArtistIdentifierSources(artistId, 'lastfm', {
+        page: 1,
+        size: 10,
+      }),
+    ).toMatchObject({
+      totalCount: 1,
+      items: [
+        {
+          provider: 'musicbrainz',
+          id: 'album-fixture',
+          externalId: artistMbid,
+        },
+      ],
+    })
+    expect(request).not.toHaveBeenCalled()
+  })
+
+  it('reads imported track credits with their import job independently of album enrichment', async () => {
+    await databaseClient.insert(schema.scrapeJob).values({
+      id: 'track-import-job',
+      provider: 'spotify',
+      status: 'succeeded',
+      scope: {},
+      options: {},
+    })
+    await databaseClient.insert(schema.mediaItem).values({
+      id: 'track-import',
+      slug: 'track-import',
+      title: 'Imported Track',
+      mediaType: 'track',
+      metadata: {
+        spotifyArtistCredits: [{ id: spotifyArtistId, name: artistName }],
+        spotifyArtistCreditsSource: {
+          source: 'spotify-liked',
+          jobId: 'track-import-job',
+        },
+      },
+    })
+    await databaseClient
+      .insert(schema.libraryTrack)
+      .values({ mediaItemId: 'track-import', spotifyTrackId })
+    await databaseClient
+      .insert(schema.mediaCredit)
+      .values({ mediaItemId: 'track-import', artistId, role: 'artist' })
+    const { getArtist } = await import('@/services/creators')
+    const { listArtistIdentifierSources } =
+      await import('@/services/artist-provider-evidence')
+    expect((await getArtist(artistId)).identifiers).toContainEqual({
+      provider: 'spotify',
+      externalId: spotifyArtistId,
+      status: 'inferred',
+      url: 'https://open.spotify.com/artist/' + spotifyArtistId,
+    })
+    expect(
+      await listArtistIdentifierSources(artistId, 'spotify', {
+        page: 1,
+        size: 10,
+      }),
+    ).toMatchObject({
+      totalCount: 1,
+      items: [
+        {
+          provider: 'spotify',
+          kind: 'track',
+          id: 'track-import',
+          title: 'Imported Track',
+          jobId: 'track-import-job',
+        },
+      ],
+    })
+    expect(request).not.toHaveBeenCalled()
+  })
+
+  it('retains the latest stored track credit after a partial import and prefers subsequent current credits', async () => {
+    await databaseClient.insert(schema.mediaItem).values({
+      id: 'retained-track',
+      slug: 'retained-track',
+      title: 'Retained Track',
+      mediaType: 'track',
+    })
+    await databaseClient.insert(schema.libraryTrack).values({
+      mediaItemId: 'retained-track',
+      spotifyTrackId,
+      albumMediaItemId: 'album-fixture',
+    })
+    await databaseClient.insert(schema.mediaCredit).values({
+      mediaItemId: 'retained-track',
+      artistId,
+      role: 'artist',
+    })
+    const payload = (id: string) => ({
+      id: spotifyAlbumId,
+      tracks: {
+        items: [{ id: spotifyTrackId, artists: [{ id, name: artistName }] }],
+      },
+    })
+    const partial = { source: 'spotify', data: { id: spotifyAlbumId } }
+    await databaseClient.insert(schema.scrapeJob).values({
+      id: 'retained-credit-job',
+      provider: 'spotify',
+      status: 'succeeded',
+      scope: {},
+      options: {},
+    })
+    await databaseClient.insert(schema.providerSnapshot).values([
+      {
+        id: 'stale-track-credit',
+        mediaItemId: 'album-fixture',
+        provider: 'spotify',
+        source: 'scrape',
+        checksum: 'stale',
+        payload: payload('0123456789abcdefghijkp'),
+        createdAt: new Date('2025-01-01T00:00:00Z'),
+      },
+      {
+        id: 'retained-track-credit',
+        mediaItemId: 'album-fixture',
+        provider: 'spotify',
+        source: 'scrape',
+        checksum: 'retained',
+        payload: { source: 'spotify', data: payload(spotifyArtistId) },
+        scrapeJobId: 'retained-credit-job',
+        createdAt: new Date('2025-01-02T00:00:00Z'),
+      },
+      {
+        id: 'unrelated-track-credit',
+        mediaItemId: 'album-fixture',
+        provider: 'spotify',
+        source: 'scrape',
+        checksum: 'unrelated',
+        payload: {
+          id: spotifyAlbumId,
+          tracks: {
+            items: [
+              {
+                id: '0123456789abcdefghijko',
+                artists: [{ id: '0123456789abcdefghijkp', name: artistName }],
+              },
+            ],
+          },
+        },
+        createdAt: new Date('2025-01-02T12:00:00Z'),
+      },
+      {
+        id: 'partial-track-credit',
+        mediaItemId: 'album-fixture',
+        provider: 'spotify',
+        source: 'import',
+        checksum: 'partial',
+        payload: partial,
+        createdAt: new Date('2025-01-03T00:00:00Z'),
+      },
+    ])
+    await providerEvidence(
+      'album-fixture',
+      'spotify',
+      partial,
+      'partial-track-credit',
+    )
+    const { listStoredArtistProviderCandidates, listArtistIdentifierSources } =
+      await import('@/services/artist-provider-evidence')
+    expect(
+      await listStoredArtistProviderCandidates(artistId, artistName, 'spotify'),
+    ).toEqual([{ id: spotifyArtistId, name: artistName, exact: true }])
+    expect(
+      await listArtistIdentifierSources(artistId, 'spotify', {
+        page: 1,
+        size: 10,
+      }),
+    ).toMatchObject({
+      totalCount: 1,
+      items: [
+        {
+          externalId: spotifyArtistId,
+          snapshotId: 'retained-track-credit',
+          jobId: 'retained-credit-job',
+          createdAt: '2025-01-02T00:00:00.000Z',
+        },
+      ],
+    })
+    const replacement = payload('0123456789abcdefghijkq')
+    await databaseClient.insert(schema.providerSnapshot).values({
+      id: 'current-track-credit',
+      mediaItemId: 'album-fixture',
+      provider: 'spotify',
+      source: 'scrape',
+      checksum: 'current',
+      payload: replacement,
+      createdAt: new Date('2025-01-04T00:00:00Z'),
+    })
+    await databaseClient
+      .update(schema.providerCurrentState)
+      .set({
+        payload: replacement,
+        latestSnapshotId: 'current-track-credit',
+      })
+      .where(eq(schema.providerCurrentState.id, 'spotify-album-fixture'))
+    expect(
+      await listStoredArtistProviderCandidates(artistId, artistName, 'spotify'),
+    ).toEqual([{ id: '0123456789abcdefghijkq', name: artistName, exact: true }])
+    expect(
+      await listArtistIdentifierSources(artistId, 'spotify', {
+        page: 1,
+        size: 10,
+      }),
+    ).toMatchObject({
+      totalCount: 1,
+      items: [
+        {
+          externalId: '0123456789abcdefghijkq',
+          snapshotId: 'current-track-credit',
+        },
+      ],
+    })
+    expect(request).not.toHaveBeenCalled()
+  })
+
+  it('uses one MBID with its matching Last.fm artist URL and keeps distinct URLs ambiguous', async () => {
+    await providerEvidence('album-fixture', 'musicbrainz', {
+      releaseGroup: {
+        'artist-credit': [{ artist: { id: artistMbid, name: artistName } }],
+      },
+    })
+    await providerEvidence('album-fixture', 'lastfm', {
+      album: {
+        artist: artistName,
+        tracks: {
+          track: [
+            {
+              artist: {
+                name: artistName,
+                url: 'https://www.last.fm/music/Artist+Fixture',
+              },
+            },
+          ],
+        },
+      },
+    })
+    const { listStoredArtistProviderCandidates, listArtistIdentifierSources } =
+      await import('@/services/artist-provider-evidence')
+    expect(
+      await listStoredArtistProviderCandidates(artistId, artistName, 'lastfm'),
+    ).toEqual([{ id: artistMbid, name: artistName, exact: true }])
+    expect(
+      await listArtistIdentifierSources(artistId, 'lastfm', {
+        page: 1,
+        size: 10,
+      }),
+    ).toMatchObject({ totalCount: 2 })
+    await seedArtistAlbum('other-lastfm-album')
+    await providerEvidence('other-lastfm-album', 'lastfm', {
+      album: {
+        artist: {
+          name: artistName,
+          url: 'https://www.last.fm/music/Other+Artist+Fixture',
+        },
+      },
+    })
+    expect(
+      await listStoredArtistProviderCandidates(artistId, artistName, 'lastfm'),
+    ).toHaveLength(3)
+    const { getArtist } = await import('@/services/creators')
+    expect((await getArtist(artistId)).identifiers).toContainEqual({
+      provider: 'lastfm',
+      externalId: null,
+      status: 'conflict',
+      url: null,
+    })
+    expect(request).not.toHaveBeenCalled()
+  })
+
+  it('reads a wrapped track credit through any album membership and ignores unrelated track IDs', async () => {
+    await databaseClient.insert(schema.mediaItem).values({
+      id: 'member-track',
+      slug: 'member-track',
+      title: 'Member Track',
+      mediaType: 'track',
+    })
+    await databaseClient
+      .insert(schema.libraryTrack)
+      .values({ mediaItemId: 'member-track' })
+    await databaseClient
+      .insert(schema.mediaCredit)
+      .values({ mediaItemId: 'member-track', artistId, role: 'artist' })
+    await databaseClient.insert(schema.track).values({
+      id: 'membership',
+      albumMediaItemId: 'album-fixture',
+      trackMediaItemId: 'member-track',
+      externalId: spotifyTrackId,
+      title: 'Member Track',
+      position: 1,
+    })
+    await providerEvidence('album-fixture', 'spotify', {
+      source: 'spotify',
+      data: {
+        id: spotifyAlbumId,
+        tracks: {
+          items: [
+            {
+              id: spotifyTrackId,
+              artists: [{ id: spotifyArtistId, name: artistName }],
+            },
+            {
+              id: '0123456789abcdefghijko',
+              artists: [{ id: '0123456789abcdefghijkp', name: artistName }],
+            },
+          ],
+        },
+      },
+    })
+    const { listStoredArtistProviderCandidates, listArtistIdentifierSources } =
+      await import('@/services/artist-provider-evidence')
+    expect(
+      await listStoredArtistProviderCandidates(artistId, artistName, 'spotify'),
+    ).toEqual([{ id: spotifyArtistId, name: artistName, exact: true }])
+    expect(
+      await listArtistIdentifierSources(artistId, 'spotify', {
+        page: 1,
+        size: 10,
+      }),
+    ).toMatchObject({
+      totalCount: 1,
+      items: [
+        {
+          provider: 'spotify',
+          kind: 'album',
+          id: 'album-fixture',
+          externalId: spotifyArtistId,
+        },
+      ],
+    })
+    expect(request).not.toHaveBeenCalled()
+  })
+
   it('queues one job per artist and provider, reads the stored native artist ID, and keeps album evidence intact', async () => {
     const albumEvidence = {
       releaseGroup: {
@@ -369,6 +932,13 @@ describe('artist enrichment through queued jobs and stored evidence', () => {
     ).toEqual([{ id: '71', name: artistName, exact: true }])
     expect(
       await listStoredArtistProviderCandidates(artistId, artistName, 'lastfm'),
+    ).toEqual([{ id: artistMbid, name: artistName, exact: true }])
+    expect(
+      await listStoredArtistProviderCandidates(
+        artistId,
+        artistName,
+        'musicbrainz',
+      ),
     ).toEqual([{ id: artistMbid, name: artistName, exact: true }])
   })
 

@@ -586,17 +586,24 @@ export async function refreshTrackAddedDates(tx: Transaction) {
 async function storeImport(
   target: PlaylistTarget,
   tracks: SpotifyLibraryTrack[],
+  jobId: string,
 ) {
   return db.transaction(async (tx) => {
     // One import writes at a time, so two cannot both judge a track orphaned.
     await lockLibraryTrackWrites(tx)
     const playlistId = await resolvePlaylist(tx, target)
+    const artistCreditsSource = {
+      source: target.source,
+      playlistId,
+      jobId,
+      recordedAt: new Date().toISOString(),
+    }
     const knownIds = await resolveSpotifyTrackIds(tx, tracks)
     const idForTrack = (id: string) => knownIds.get(id) ?? trackItemId(id)
     for (let start = 0; start < tracks.length; start += WRITE_BATCH) {
       const batch = tracks.slice(start, start + WRITE_BATCH)
       const ids = batch.map((track) => idForTrack(track.spotifyTrackId))
-      const items: Array<typeof mediaItem.$inferInsert> = batch.map((track) => {
+      const items = batch.map((track): typeof mediaItem.$inferInsert => {
         const id = idForTrack(track.spotifyTrackId)
         return {
           id,
@@ -606,6 +613,12 @@ async function storeImport(
           artworkUrl: track.artworkUrl,
           releaseDate: parseOptionalDate(track.releaseDate),
           sourceLabel: 'spotify',
+          metadata: track.artistCredits.length
+            ? {
+                spotifyArtistCredits: track.artistCredits,
+                spotifyArtistCreditsSource: artistCreditsSource,
+              }
+            : {},
         }
       })
       await tx
@@ -617,6 +630,7 @@ async function storeImport(
             title: sql`excluded.title`,
             artworkUrl: sql`excluded.artwork_url`,
             sourceLabel: 'spotify',
+            metadata: sql`coalesce(${mediaItem.metadata}, '{}'::jsonb) || excluded.metadata`,
             releaseDate: sql`excluded.release_date`,
             updatedAt: new Date(),
           },
@@ -727,7 +741,11 @@ export async function runSpotifyPlaylistImport(
         message: 'The playlist has not changed since the last import.',
       }
     }
-    const stored = await storeImport(fetched.target, fetched.entries)
+    const stored = await storeImport(
+      fetched.target,
+      fetched.entries,
+      context.jobId,
+    )
     await refreshTrackLinks(await getLastfmAccount())
     const name =
       fetched.target.source === 'spotify'

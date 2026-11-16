@@ -111,6 +111,7 @@ export const PluginTrackSchema = z.object({
   title: z.string().min(1),
   position: z.number().int().positive(),
   durationSec: z.number().int().nonnegative().optional(),
+  artists: z.array(z.string().trim().min(1)).optional(),
 })
 
 export const PluginNormalizedMediaPatchSchema = z.object({

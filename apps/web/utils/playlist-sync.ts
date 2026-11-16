@@ -41,6 +41,8 @@ export function invalidatePlaylists(client: QueryClient) {
         'track',
         'albums',
         'album',
+        'artists',
+        'artist',
         'album-playlists',
       ].includes(String(query.queryKey[0])),
   })

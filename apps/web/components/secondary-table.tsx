@@ -11,7 +11,7 @@ import {
   type ReactNode,
 } from 'react'
 import { z } from 'zod'
-import { Columns3, Filter, Info, TriangleAlert } from 'lucide-react'
+import { Columns3, Eye, Filter, Info, TriangleAlert } from 'lucide-react'
 import { Button } from '@repo/ui/components/ui/button'
 import { Input } from '@repo/ui/components/ui/input'
 import {
@@ -93,10 +93,12 @@ export function SecondaryCellDetails({
   children,
   label,
   tone = 'info',
+  icon = 'info',
 }: {
-  children: ReactNode
+  children: ReactNode | (() => ReactNode)
   label: string
   tone?: 'info' | 'warning'
+  icon?: 'info' | 'eye'
 }) {
   const id = useId()
   const trigger = useRef<HTMLButtonElement>(null)
@@ -183,6 +185,8 @@ export function SecondaryCellDetails({
       >
         {tone === 'warning' ? (
           <TriangleAlert size={14} aria-hidden="true" />
+        ) : icon === 'eye' ? (
+          <Eye size={14} aria-hidden="true" />
         ) : (
           <Info size={14} aria-hidden="true" />
         )}
@@ -200,7 +204,7 @@ export function SecondaryCellDetails({
           if (!visible) pinned.current = false
         }}
       >
-        {children}
+        {typeof children === 'function' ? (open ? children() : null) : children}
       </div>
     </div>
   )

@@ -51,6 +51,7 @@ import {
 import { queryBrowseIds } from './browse'
 import { listAlbums, listFilms } from './media'
 import { loadTracks } from './tracks'
+import { listArtistIdentifiers } from './artist-provider-evidence'
 
 const identityColumns = {
   id: artist.id,
@@ -355,6 +356,7 @@ export async function getArtist(id: string, query: ArtistDetailQuery = {}) {
   ])
   return ArtistDetailSchema.parse({
     ...summary,
+    identifiers: await listArtistIdentifiers(id, summary.name, providers),
     createdAt: summary.createdAt.toISOString(),
     profile: combineProfiles(providers),
     providers,

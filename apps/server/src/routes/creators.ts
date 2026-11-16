@@ -2,6 +2,7 @@ import { createRoute, z, type OpenAPIHono } from '@hono/zod-openapi'
 import {
   ArtistEnrichmentInputSchema,
   ArtistProfileProviderSchema,
+  ArtistIdentifierSourcePageSchema,
 } from '@repo/schemas/artist-profiles'
 import { PaginationQuerySchema } from '@repo/schemas/common'
 import {
@@ -39,6 +40,7 @@ import {
 import { generateJsonResponse } from '@/lib/response'
 import { authMiddleware, requireOwnerUser } from '@/middlewares/auth'
 import { enqueueArtistEnrichment } from '@/services/artist-enrichment'
+import { listArtistIdentifierSources } from '@/services/artist-provider-evidence'
 import {
   getArtistSourceSnapshot,
   listArtistSourceSnapshots,
@@ -221,6 +223,30 @@ export const artists: OpenAPIHono<AppEnv> = createOpenAPIApp()
         200,
       ),
   )
+
+artists.openapi(
+  createRoute({
+    method: 'get',
+    path: '/:id/sources/:provider/identifiers',
+    middleware: [authMiddleware()],
+    request: { params: ArtistSourceParams, query: PaginationQuerySchema },
+    responses: {
+      ...artistResponses,
+      200: json(
+        'Stored evidence for an artist identifier',
+        ArtistIdentifierSourcePageSchema,
+      ),
+    },
+  }),
+  async (c) => {
+    const { id, provider } = c.req.valid('param')
+    return generateJsonResponse(
+      c,
+      await listArtistIdentifierSources(id, provider, c.req.valid('query')),
+      200,
+    )
+  },
+)
 
 artists.openapi(
   createRoute({

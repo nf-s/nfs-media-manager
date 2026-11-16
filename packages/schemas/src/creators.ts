@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import {
   ArtistProfileProviderSchema,
+  ArtistIdentifierSchema,
   ArtistProfileSchema,
   ArtistProviderSnapshotSchema,
 } from './artist-profiles'
@@ -40,6 +41,7 @@ export const ArtistPageSchema = PaginatedDataSchema(ArtistSummarySchema)
 export type ArtistPage = z.infer<typeof ArtistPageSchema>
 
 export const ArtistDetailSchema = ArtistSummarySchema.extend({
+  identifiers: z.array(ArtistIdentifierSchema),
   profile: ArtistProfileSchema,
   providers: z.array(ArtistProviderSnapshotSchema),
   history: z.array(ArtistProviderSnapshotSchema),

@@ -36,6 +36,26 @@ function track(overrides: Record<string, unknown> = {}) {
 }
 
 describe('normalizeSpotifyTrackEntry', () => {
+  it('retains distinct validated artist IDs from playlists and Liked Songs', () => {
+    const credited = [
+      { id: 'B'.repeat(22), name: 'The Examples' },
+      { id: 'C'.repeat(22), name: 'Example Singer' },
+    ]
+    for (const field of ['item', 'track']) {
+      const result = normalizeSpotifyTrackEntry({
+        [field]: track({
+          artists: [
+            ...credited,
+            credited[0],
+            { id: 'invalid', name: 'Guest' },
+            { name: 'Unidentified Guest' },
+          ],
+        }),
+      })
+      expect(result.track).toMatchObject({ artistCredits: credited })
+    }
+  })
+
   it('reads a playlist entry', () => {
     expect(
       normalizeSpotifyTrackEntry({
@@ -47,6 +67,7 @@ describe('normalizeSpotifyTrackEntry', () => {
         spotifyTrackId: TRACK_ID,
         title: 'Night Drive',
         artists: ['The Examples', 'Example Singer'],
+        artistCredits: [],
         durationSec: 215,
         albumName: 'Example Album',
         spotifyAlbumId: ALBUM_ID,

@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { PaginatedDataSchema } from './common'
 import { uniqueMusicTags } from './music-tags'
 import { SourceNavigationLinkSchema } from './tags'
 
@@ -11,6 +12,34 @@ export const ArtistProfileProviderSchema = z.enum([
   'musicbrainz',
 ])
 export type ArtistProfileProvider = z.infer<typeof ArtistProfileProviderSchema>
+
+export const ArtistIdentifierSchema = z.object({
+  provider: ArtistProfileProviderSchema,
+  externalId: z.string().nullable(),
+  status: z.enum(['confirmed', 'inferred', 'conflict', 'missing']),
+  url: SourceNavigationLinkSchema.shape.url.nullable(),
+})
+export type ArtistIdentifier = z.infer<typeof ArtistIdentifierSchema>
+
+export const ArtistIdentifierSourceSchema = z.object({
+  externalId: z.string(),
+  provider: ArtistProfileProviderSchema,
+  kind: z.enum(['album', 'track', 'artist']),
+  id: z.string(),
+  title: z.string(),
+  snapshotId: z.string().nullable(),
+  jobId: z.string().nullable(),
+  createdAt: z.string().datetime().nullable(),
+})
+export type ArtistIdentifierSource = z.infer<
+  typeof ArtistIdentifierSourceSchema
+>
+export const ArtistIdentifierSourcePageSchema = PaginatedDataSchema(
+  ArtistIdentifierSourceSchema,
+)
+export type ArtistIdentifierSourcePage = z.infer<
+  typeof ArtistIdentifierSourcePageSchema
+>
 
 const ProfileTextSchema = z.string().trim().min(1)
 const ProfileUrlSchema = SourceNavigationLinkSchema.shape.url

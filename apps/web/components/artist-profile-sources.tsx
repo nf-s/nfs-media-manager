@@ -6,6 +6,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   ArtistEnrichmentInputSchema,
   ArtistProfileProviderSchema,
+  type ArtistIdentifier,
   type ArtistProfileProvider,
   type ArtistProviderSnapshot,
 } from '@repo/schemas/artist-profiles'
@@ -22,13 +23,10 @@ import {
   useSourceCatalog,
 } from './provider-sources'
 import ServiceIconLinks from './service-icon-links'
-
-const providerLabels: Record<ArtistProfileProvider, string> = {
-  spotify: 'Spotify',
-  lastfm: 'Last.fm',
-  discogs: 'Discogs',
-  musicbrainz: 'MusicBrainz',
-}
+import {
+  ArtistIdentifierSources,
+  artistProviderLabels as providerLabels,
+} from './artist-identifier-sources'
 
 function profileLinks(snapshots: ArtistProviderSnapshot[]) {
   return snapshots.flatMap(({ provider, profile }) =>
@@ -40,10 +38,24 @@ function profileLinks(snapshots: ArtistProviderSnapshot[]) {
 
 export function ArtistProfileLinks({
   snapshots,
+  identifiers,
 }: {
   snapshots: ArtistProviderSnapshot[]
+  identifiers: ArtistIdentifier[]
 }) {
-  return <ServiceIconLinks links={profileLinks(snapshots)} />
+  const links = profileLinks(snapshots)
+  for (const identifier of identifiers) {
+    if (
+      identifier.url &&
+      !links.some((link) => link.provider === identifier.provider)
+    )
+      links.push({
+        provider: identifier.provider,
+        label: providerLabels[identifier.provider],
+        url: identifier.url,
+      })
+  }
+  return <ServiceIconLinks links={links} />
 }
 
 function queueArtistRefresh(
@@ -134,9 +146,11 @@ function ArtistIdentifierEditor({
 export function ArtistProfileSources({
   id,
   snapshots,
+  identifiers,
 }: {
   id: string
   snapshots: ArtistProviderSnapshot[]
+  identifiers: ArtistIdentifier[]
 }) {
   const { apiBaseUrl } = useConfig()
   const catalog = useSourceCatalog()
@@ -152,12 +166,25 @@ export function ArtistProfileSources({
   const rows = ArtistProfileProviderSchema.options.map((provider) => {
     const configured = catalog.data?.find((entry) => entry.id === provider)
     const current = snapshots.find((snapshot) => snapshot.provider === provider)
+    const identifier = identifiers.find((entry) => entry.provider === provider)
+    const externalId = identifier
+      ? (identifier.externalId ?? undefined)
+      : current?.profile.externalId
     return {
       id: provider,
       label: providerLabels[provider],
-      identifier: current?.profile.externalId,
+      identifier:
+        identifier?.status === 'conflict' ? 'Conflicting IDs' : externalId,
+      identifierDetails:
+        identifier && identifier.status !== 'missing'
+          ? () => <ArtistIdentifierSources id={id} identifier={identifier} />
+          : undefined,
       updatedAt: current?.createdAt,
-      links: current ? profileLinks([current]) : undefined,
+      links: identifier?.url
+        ? [{ provider, label: providerLabels[provider], url: identifier.url }]
+        : current
+          ? profileLinks([current])
+          : undefined,
       unavailable: catalog.isPending
         ? undefined
         : sourceUnavailable(configured),
@@ -167,10 +194,10 @@ export function ArtistProfileSources({
       editor: configured
         ? (canRefresh: boolean) => (
             <ArtistIdentifierEditor
-              key={`${provider}:${current?.profile.externalId}`}
+              key={`${provider}:${externalId}`}
               id={id}
               provider={provider}
-              initial={current?.profile.externalId}
+              initial={externalId}
               canRefresh={canRefresh}
             />
           )

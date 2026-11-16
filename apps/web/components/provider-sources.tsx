@@ -34,6 +34,7 @@ import { providerLocalWorkerQuery } from './provider-local-worker'
 import { useConfig } from './providers'
 import {
   SecondaryCell,
+  SecondaryCellDetails,
   SecondaryTableFooter,
   SecondaryTableFrame,
   SecondaryTableHead,
@@ -49,6 +50,7 @@ export type ProviderSourceRow = {
   id: string
   label: string
   identifier?: string
+  identifierDetails?: () => ReactNode
   updatedAt?: string
   links?: z.infer<typeof ExternalLinkSchema>[]
   unavailable?: string
@@ -550,7 +552,17 @@ export function ProviderSources({
                     </div>
                   </td>
                   <td>
-                    <SecondaryCell>{row.identifier ?? '-'}</SecondaryCell>
+                    <div className="secondary-cell-actions">
+                      <SecondaryCell>{row.identifier ?? '-'}</SecondaryCell>
+                      {row.identifierDetails && (
+                        <SecondaryCellDetails
+                          label={`Sources for ${row.label} identifier`}
+                          icon="eye"
+                        >
+                          {row.identifierDetails}
+                        </SecondaryCellDetails>
+                      )}
+                    </div>
                   </td>
                   <td>
                     <SecondaryCell>

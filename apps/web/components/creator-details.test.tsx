@@ -16,6 +16,7 @@ import {
   InspectorEntryContext,
 } from './detail-inspector-context'
 import { ArtistDetail } from './artist-detail'
+import { ArtistIdentifierSourceRow } from './artist-identifier-sources'
 import { PersonDetail } from './person-detail'
 import { ConfigContext } from './providers'
 import { detailEntries, type DetailEntry } from '@/utils/detail-inspector'
@@ -52,6 +53,7 @@ const artist = ArtistDetailSchema.parse({
   artworkUrl: null,
   profile: spotifyProfile.profile,
   providers: [spotifyProfile],
+  identifiers: [],
   history: [spotifyProfile],
   createdAt: timestamp,
   albumCount: 1,
@@ -339,6 +341,77 @@ test('artist Sources offers selectable eligible providers and explicit refresh',
   assert.match(html, /aria-label="Edit Spotify identifier"/)
   assert.match(html, /Refresh all eligible/)
   assert.match(html, /aria-label="Sources"/)
+})
+
+test('artist Sources shows stored IDs and provenance controls before any artist enrichment', () => {
+  const known = {
+    ...artist,
+    providers: [],
+    history: [],
+    identifiers: [
+      {
+        provider: 'spotify',
+        externalId: spotifyArtistId,
+        status: 'inferred',
+        url: `https://open.spotify.com/artist/${spotifyArtistId}`,
+      },
+      {
+        provider: 'discogs',
+        externalId: null,
+        status: 'conflict',
+        url: null,
+      },
+    ],
+  }
+  const html = render({
+    pathname: `/artists/${artist.id}`,
+    search: 'tab=sources',
+    children: <ArtistDetail id={artist.id} />,
+    cache: [[['artist', artist.id], ArtistDetailSchema.parse(known)]],
+  })
+  assert.match(html, new RegExp(`>${spotifyArtistId}</div>`))
+  assert.match(html, /aria-label="Sources for Spotify identifier"/)
+  assert.match(html, /aria-label="Sources for Discogs identifier"/)
+  assert.match(html, /Conflicting IDs/)
+  assert.match(html, /lucide-eye/)
+  assert.match(
+    html,
+    new RegExp(`href="https://open.spotify.com/artist/${spotifyArtistId}"`),
+  )
+  assert.doesNotMatch(html, /From stored sources|No stored identifier sources/)
+})
+
+test('identifier provenance names and links the actual album, provider and job', () => {
+  const html = renderToStaticMarkup(
+    <table>
+      <tbody>
+        <ArtistIdentifierSourceRow
+          index={0}
+          source={{
+            externalId: spotifyArtistId,
+            provider: 'spotify',
+            kind: 'album',
+            id: 'source-album',
+            title: 'Synthetic source album',
+            snapshotId: 'source-snapshot',
+            jobId: 'source-job',
+            createdAt: timestamp,
+          }}
+        />
+      </tbody>
+    </table>,
+  )
+  assert.match(html, /Album: Synthetic source album/)
+  assert.equal(
+    destination(html, 'Synthetic source album').pathname,
+    '/albums/source-album',
+  )
+  assert.equal(
+    destination(html, 'Synthetic source album').searchParams.get('tab'),
+    'sources',
+  )
+  assert.equal(destination(html, 'Spotify').pathname, '/jobs/source-job')
+  assert.ok(html.includes(spotifyArtistId))
 })
 
 test('person details open films and pass the selected credit role to Browse', () => {

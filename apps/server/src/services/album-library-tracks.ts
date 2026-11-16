@@ -1,9 +1,9 @@
-import { eq, sql } from 'drizzle-orm'
+import { and, eq, inArray, sql } from 'drizzle-orm'
 import type { PluginNormalizedResult } from '@repo/media-plugin-sdk'
 import { z } from 'zod'
 import type { db } from '@/lib/db'
 import { createStableId } from '@/lib/media-utils'
-import { album, track } from '@/schemas/db'
+import { album, artist, mediaCredit, mediaItem, track } from '@/schemas/db'
 
 type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0]
 
@@ -34,6 +34,7 @@ export async function replaceAlbumTracks(
     position: item.position,
     external_id: item.externalId ?? null,
     durationSec: item.durationSec ?? null,
+    artists: item.artists ?? [],
   }))
   const resolved = ResolvedTracksSchema.parse(
     (
@@ -67,6 +68,66 @@ export async function replaceAlbumTracks(
       }
     }),
   )
+
+  const creditedRecordings = entries.flatMap((entry) => {
+    const id = recordings.get(entry.id)
+    return id && entry.artists.length ? [{ id, artists: entry.artists }] : []
+  })
+  if (creditedRecordings.length) {
+    // Playlist and Last.fm imports own their credits. Only replace album
+    // fallback credits when this list supplies native track-level artists.
+    const owned = await database
+      .select({ id: mediaItem.id })
+      .from(mediaItem)
+      .where(
+        and(
+          inArray(
+            mediaItem.id,
+            creditedRecordings.map((recording) => recording.id),
+          ),
+          eq(mediaItem.sourceLabel, 'album'),
+        ),
+      )
+    const ownedIds = new Set(owned.map((item) => item.id))
+    const credits = creditedRecordings
+      .filter((recording) => ownedIds.has(recording.id))
+      .flatMap((recording) =>
+        [...new Set(recording.artists)].map((name, billingOrder) => ({
+          track_id: recording.id,
+          artist_id: createStableId('artist', name.toLowerCase()),
+          artist_name: name,
+          billing_order: billingOrder,
+        })),
+      )
+    if (credits.length) {
+      const artists = new Map(
+        credits.map((credit) => [credit.artist_id, credit.artist_name]),
+      )
+      await database
+        .insert(artist)
+        .values(
+          [...artists].map(([id, name]) => ({ id, name, sortName: name })),
+        )
+        .onConflictDoNothing()
+      await database
+        .delete(mediaCredit)
+        .where(
+          and(
+            inArray(mediaCredit.mediaItemId, [...ownedIds]),
+            eq(mediaCredit.role, 'artist'),
+          ),
+        )
+      await database.execute(sql`
+        insert into media_credit (media_item_id, artist_id, role, billing_order)
+        select r.track_id, a.id, 'artist', r.billing_order
+        from jsonb_to_recordset(${JSON.stringify(credits)}::jsonb)
+          as r(track_id text, artist_id text, artist_name text, billing_order int)
+        join lateral (select id from artist where id = r.artist_id or name = r.artist_name
+          order by case when name = r.artist_name then 0 else 1 end limit 1) a on true
+        order by r.track_id, r.billing_order
+        on conflict do nothing`)
+    }
+  }
 
   await database.execute(sql`select merge_album_track_history(${albumId})`)
 

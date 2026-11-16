@@ -275,7 +275,11 @@ export function ArtistDetail({ id }: { id: string }) {
         )}
         <div className="min-w-0">
           <h1 className="break-words text-xl font-semibold">
-            {artist.name} <ArtistProfileLinks snapshots={artist.providers} />
+            {artist.name}{' '}
+            <ArtistProfileLinks
+              snapshots={artist.providers}
+              identifiers={artist.identifiers}
+            />
           </h1>
           <div className="form-actions mt-2">
             <Button asChild size="sm" variant="outline">
@@ -371,7 +375,11 @@ export function ArtistDetail({ id }: { id: string }) {
           />
         </TabsContent>
         <TabsContent value="sources">
-          <ArtistProfileSources id={id} snapshots={artist.providers} />
+          <ArtistProfileSources
+            id={id}
+            snapshots={artist.providers}
+            identifiers={artist.identifiers}
+          />
         </TabsContent>
       </Tabs>
     </article>

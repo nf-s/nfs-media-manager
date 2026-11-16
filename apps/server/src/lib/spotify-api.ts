@@ -164,6 +164,7 @@ export type SpotifyLibraryTrack = {
   spotifyTrackId: string
   title: string
   artists: string[]
+  artistCredits: Array<{ id: string; name: string }>
   durationSec: number
   albumName: string | null
   spotifyAlbumId: string | null
@@ -486,11 +487,21 @@ export function normalizeSpotifyTrackEntry(
     .string()
     .datetime({ offset: true })
     .safeParse(entry.added_at)
+  const artistCredits = new Map<string, { id: string; name: string }>()
+  for (const artist of data.artists) {
+    const id = SpotifyIdSchema.safeParse(artist.id)
+    if (id.success)
+      artistCredits.set(`${id.data}:${artist.name}`, {
+        id: id.data,
+        name: artist.name,
+      })
+  }
   return {
     track: {
       spotifyTrackId: data.id,
       title: data.name,
       artists: [...new Set(data.artists.map((artist) => artist.name))],
+      artistCredits: [...artistCredits.values()],
       durationSec: Math.round(data.duration_ms / 1000),
       albumName: data.album?.name || null,
       spotifyAlbumId: albumId.success ? albumId.data : null,
@@ -572,6 +583,7 @@ export function normalizeSpotifyAlbum(value: unknown, addedAt?: string) {
         title: track.name,
         position: index + 1,
         durationSec: Math.round(track.duration_ms / 1000),
+        artists: [...new Set(track.artists.map((artist) => artist.name))],
       })),
     },
   })
