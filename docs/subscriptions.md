@@ -6,10 +6,10 @@ The library is separate from albums, films and tracks. It has no metadata scrape
 
 ## Navigation
 
-- **Subscriptions** is a choice in the library selector, with **Browse** (`/subscriptions`), **Channels** (`/subscriptions/channels`), **Imports**, **Jobs** and **Providers**, each scoped with `mediaType=subscription` like the album and film libraries. Tags and Playlists are not shown.
+- **Subscriptions** is a choice in the library selector, with **Browse** (`/subscriptions`), **Channels** (`/subscriptions/channels`) and **Imports**. Tags and Playlists are not shown. **Jobs** and **Providers** sit once under System and filter by library; `mediaType=subscription` selects Subscriptions.
 - **Imports** has **YouTube** (`/imports/youtube`: account connection and sync) and **Spotify podcasts** (`/imports/spotify-podcasts`: Spotify account state and sync). There is no import history.
-- **Jobs** lists only the YouTube and podcast sync jobs, under **Subscription jobs**; they no longer appear among album jobs. The activity popover counts them under **Subscriptions**.
-- **Providers** lists YouTube and Spotify with their credentials and settings. YouTube is no longer listed for albums or films; Spotify is also listed for albums.
+- **Jobs** filtered to Subscriptions (`/jobs?mediaType=subscription`) lists the YouTube and podcast sync jobs; the Albums filter does not include them. The activity popover lists them with every other library's running and queued work.
+- **Providers** filtered to Subscriptions lists YouTube and Spotify; each opens its provider page with credentials and settings. YouTube is not listed under the album or film filters; Spotify is also listed for albums.
 - The old `/youtube` links redirect to `/subscriptions`, keeping the search, Titles only, sort, direction, view, open video and published days (as one Published range); channel and duration filters are dropped. `/youtube/subscriptions` redirects to `/imports/youtube`.
 
 ## YouTube setup
@@ -26,7 +26,7 @@ The sync signs in to Google with read-only access, so private subscriptions work
 
    A hosted installation uses its HTTPS API address with the same path. HTTP is accepted only for `localhost`, `127.0.0.1` and `[::1]`.
 
-4. Open **Providers → YouTube → Credentials** and save the client ID, client secret and the same redirect URI. The environment fallbacks are `YOUTUBE_CLIENT_ID`, `YOUTUBE_CLIENT_SECRET` and `YOUTUBE_REDIRECT_URI`; saved values take precedence.
+4. Open **Providers → YouTube → Settings** (`/providers/youtube?tab=settings`) and save the client ID, client secret and the same redirect URI. The environment fallbacks are `YOUTUBE_CLIENT_ID`, `YOUTUBE_CLIENT_SECRET` and `YOUTUBE_REDIRECT_URI`; saved values take precedence.
 5. Open **Subscriptions → Imports → YouTube** and choose **Connect YouTube**. Approve the request to view your YouTube account. The app requests only the [`youtube.readonly`](https://developers.google.com/youtube/v3/guides/auth/server-side-web-apps) scope and cannot change subscriptions, playlists or videos.
 
 Connecting is an explicit authenticated request. The public callback only relays Google's parameters to `/api/v1/youtube/complete` on the configured API address; completion requires the same signed-in session, a single-use state value, PKCE and a ten-minute expiry. Access and refresh tokens are stored encrypted on the server and never sent to the browser. **Disconnect** deletes the stored tokens and keeps the stored channels and videos; it does not remove the app from the Google account's third-party access list.
@@ -35,7 +35,7 @@ Connecting is an explicit authenticated request. The public callback only relays
 
 Choose **Sync now** on **Subscriptions → Imports → YouTube**. Opening a page only reads stored data.
 
-The sync is a YouTube job with no media item. It appears in the Subscriptions library's Jobs as **YouTube subscription sync**, with its progress log, cancel and retry. No page needs to stay open.
+The sync is a YouTube job with no media item. It appears in Jobs, under the Subscriptions filter, as **YouTube subscription sync**, with its progress log, cancel and retry. No page needs to stay open.
 
 - A sync first reads the subscription list, then each subscribed channel's Shorts list and uploads, 50 per request.
 - A channel is skipped without a request when its history has been read, a sync has recorded its Shorts, the video count in its channel details equals the count at its last read, and none of its stored videos was live or upcoming when last read. A sync where nothing changed makes only the subscription list requests: two per 50 subscriptions.
@@ -74,7 +74,7 @@ The podcast sync uses the Spotify account connected for albums and playlists (se
 
 **Subscriptions → Imports → Spotify podcasts** shows whether Spotify is configured and connected, with **Connect Spotify** (or **Reconnect Spotify**), which returns to the same page and keeps the playback and playlist change access the connection already has. Below it is the same sync panel as YouTube's, counting podcasts and episodes. A server without the podcast sync says so on the page.
 
-**Sync now** (`POST /api/v1/subscriptions/sync/spotify`) queues the sync. It is a Spotify job with no media item, **Spotify podcast sync**, listed in the Subscriptions library's Jobs, and goes through the same request gate as every other Spotify request: one request at a time with the configured spacing. It is refused while Spotify is not configured or connected, cooling down or halted.
+**Sync now** (`POST /api/v1/subscriptions/sync/spotify`) queues the sync. It is a Spotify job with no media item, **Spotify podcast sync**, listed in Jobs under the Subscriptions filter, and goes through the same request gate as every other Spotify request: one request at a time with the configured spacing. It is refused while Spotify is not configured or connected, cooling down or halted.
 
 - A sync first reads the saved podcasts, then each podcast's episodes, 50 per request.
 - A podcast is skipped without a request when its history has been read and the number of stored episodes equals the episode total in the saved-podcast list. A sync where nothing changed makes only the saved-podcast requests: one per 50 saved podcasts.
@@ -114,14 +114,16 @@ Filters follow the [browse filter rules](requirements/search.md) of the other li
 
 - The search box suggests titles, channels and podcasts, types and tags from the whole library, each with its count. Choosing a suggestion adds a filter chip; choosing a title opens it. Typed text applies on Enter as a search. **AI search** and dictation are in the same box. Filter chips cycle between Any, Required and Exclude.
 - **Filters** holds **Titles only**, the ranges (Published, Duration, Views, Likes, Comments) and the columns in Table view.
-- **Grid** is the default. **List** shows thumbnails in compact rows with the title and channel or podcast. All three views reserve the height of every result and show a placeholder for unloaded items, with **Retry** for a failed page. Only the pages near the visible rows are requested, 100 items at a time.
-- **Table** has thumbnails and configurable columns for Title, Channel, Type, Published, Duration, Views, Likes, Comments and Tags. Column widths are saved in the browser. Select a sortable column header to sort.
-- A YouTube item shows its thumbnail with the length, or Live or Upcoming. An episode shows its own artwork, or the show's. Missing values show "-". A release date known only to the month or year shows only that much.
+- **Grid** is the default: 16:9 thumbnails with the length (or Live, Upcoming) as a badge, then title, channel or podcast, the publish date with the view count or Podcast, and tags.
+- **List** shows 48px rows: thumbnail, title over channel, tags, and Published, Duration and Views on the right.
+- **Table** columns default to Title, Channel, Published and Duration; Type, Views, Likes, Comments and Tags can be added. Column widths are saved in the browser. Select a sortable column header to sort.
+- All three views reserve the height of every result and show a placeholder for unloaded items, with **Retry** for a failed page. Only the pages near the visible rows are requested, 100 items at a time.
+- A YouTube item shows its thumbnail with the length, or Live or Upcoming. An episode shows its own artwork, or the show's. Missing values show an en dash. Dates are ISO: `2024-03-01`, or `2024-03` / `2024` when the provider reported only the month or year.
 - Selecting an item opens details with its channel or podcast (which opens channel details), type, dates, length, counts, tags (each a filter), description and a link to YouTube or Spotify. `?item=<id>` opens an item directly, reading it on its own when it is outside the loaded rows.
 - The URL carries `q`, `fields`, `filters`, `ranges`, `sortBy`, `direction`, `view` (`grid`, `list` or `table`), `columns` and `item`. The last view, search, filters and sort are remembered in the browser and restored when the page is opened without parameters.
-- With nothing synced, the page says so and links to Imports.
+- With nothing synced, the page says "No subscriptions yet" with Open Imports.
 
-`/subscriptions/channels` lists subscribed channels and saved podcasts in the shared table, filterable by name and type and sortable by name, type, stored items, latest item and subscribers or episodes. Each name opens channel details with stored items and an explicit **Filter subscriptions** action. This action filters by the exact source identity, represented by a removable channel chip, so equally named channels remain distinct. Channel details share the inspector's navigation history and have standalone `/channels/:id` pages. See [artists, people and channels](artists-and-people.md).
+`/subscriptions/channels` lists subscribed channels and saved podcasts in the shared table, filterable by name and type and sortable by name, type, stored items, latest item and subscribers or episodes. Each name opens channel details with stored items and an explicit **Filter subscriptions** action. This action filters by the exact source identity, represented by a removable channel chip, so equally named channels remain distinct. Channel details share the inspector's navigation history and have standalone `/channels/:id` pages. The count reads "N channels", or "N of M channels" while filtered. History shows Complete or Reading history as a status. A search or filter with no match offers Clear filters. See [artists, people and channels](artists-and-people.md).
 
 ## API
 
@@ -159,7 +161,7 @@ Migration 0025 adds the video count at a channel's last read. The first sync sta
 - `integration/spotify-podcast-sync.integration.ts` runs the podcast sync through the job dispatcher and the Spotify request gate against a fake Spotify API and a temporary database. It covers chained jobs, an unchanged sync that makes only the saved-podcast requests, incremental and oldest-first reads, release-date precision, an unsaved podcast beside YouTube channels, a removed podcast, empty entries, a rate-limit pause and resume, a rejected token, failure, cancellation, a list that changes while it is read, the schedule intervals and podcast search and type filters.
 - `integration/subscriptions-library.integration.ts` browses synthetic YouTube and podcast rows: search across both types, every filter field and mode, inclusive ranges and missing values, every sort in both directions across pages, facets beyond the first page, sources and single items.
 - Unit tests cover the query and AI plan schemas, the API's authentication and validation, and the AI plans.
-- Navigation tests (`utils/media-scope.test.ts`, `utils/youtube-redirects.test.ts`, `components/media-workspaces.test.tsx`, `components/job-activity.test.tsx`, `components/youtube-sync.test.tsx`, `components/subscription-sync.test.tsx`) and `integration/job-history.integration.ts` cover the library scope, old-link redirects, the Imports pages and sync panels, Jobs and Providers in this library and the activity group.
+- Navigation tests (`utils/media-scope.test.ts`, `utils/youtube-redirects.test.ts`, `components/media-workspaces.test.tsx`, `components/job-activity.test.tsx`, `components/youtube-sync.test.tsx`, `components/subscription-sync.test.tsx`) and `integration/job-history.integration.ts` cover the library scope, old-link redirects, the Imports pages and sync panels, Jobs and Providers filtered to this library and the activity group.
 - Web tests (`utils/subscriptions.test.ts`, `components/subscription-browser.test.tsx`) cover the browse URL state, chip labels, title suggestions, date precision, AI plans applied to the URL, table placeholders, thumbnail list rows, grid cards, the empty library and the channels list with both types.
 
 No test makes a Google or Spotify request.

@@ -33,7 +33,7 @@ An existing owned reference is validated before any search. Invalid IDs fail imm
 
 ## Provider Workspace
 
-Providers lists integrations for the selected library. **Activity** contains request history, active cooldown controls and past error reviews. **Credentials** groups credential fields, configuration status, environment fallbacks and supported remote checks. **Settings** contains editable request budgets, effective request limits, lookup rules and integration details. Switching sections or providers only reads stored configuration and history; saving credentials, changing budgets, checking credentials and clearing cooldowns remain explicit actions.
+Providers lists every integration in one table with a Library filter, and each provider has its own page (`/providers/<providerId>`). **Overview** contains job figures, request history, past error reviews and cooldown clears. **Jobs** is the shared jobs table for that provider. **Settings** groups credential fields, configuration status, environment fallbacks and supported remote checks with editable request budgets, effective request limits, lookup rules and integration details. Clear cooldown sits in the table's row actions and in the provider page's waiting notice. Switching tabs or providers only reads stored configuration and history; saving credentials, changing budgets, checking credentials and clearing cooldowns remain explicit actions.
 
 ## Integration Contract
 
@@ -53,7 +53,7 @@ Google snapshots, current state, imported ratings, links and tag provenance rema
 
 ## Serply (Rate Your Music)
 
-`serply` retrieves indexed Google results through `GET https://api.serply.io/v1/search/`. Configure its `apiKey` in Providers → Credentials; `SERPLY_API_KEY` is an optional environment fallback. It appears in the existing album metadata job and refresh workflows. Requests use the persistent gate, up to two concurrent requests, 250 ms between starts and optional configurable budgets. No request fetches RYM directly.
+`serply` retrieves indexed Google results through `GET https://api.serply.io/v1/search/`. Configure its `apiKey` in Providers → Serply → Settings; `SERPLY_API_KEY` is an optional environment fallback. It appears in the existing album metadata job and refresh workflows. Requests use the persistent gate, up to two concurrent requests, 250 ms between starts and optional configurable budgets. No request fetches RYM directly.
 
 Search requests use mobile results with `gl=us`, `hl=en` and `num=10`, without overriding duplicate filtering. Device and language settings can change the returned evidence; the same identity and rating checks apply to every result.
 
@@ -105,7 +105,7 @@ Google scraping is unconditionally retired in this application, independent of a
 
 ## Additional Stored Album Details
 
-In album **Sources**, open a provider's history for its retained snapshots and jobs. MusicBrainz, Discogs and Last.fm also offer a collapsed **More album info** section using the latest stored results. Opening album details or history uses stored data. Edit a provider ID on its Sources row and use **Refresh selected** or **Refresh all eligible** to queue new work.
+In album **Sources**, open a provider's history for its retained snapshots and jobs. MusicBrainz, Discogs and Last.fm also offer a collapsed **More album info** section using the latest stored results. Opening album details or history uses stored data. Edit a provider ID on its Sources row and choose **Save and refresh**, or use the row's Refresh or **Refresh all** in the Sources summary line, to queue new work.
 
 MusicBrainz contributes release types, disambiguation, artist countries, weighted original tags and existing URL relationships. Discogs contributes edition-specific labels/catalogue numbers, formats, companies, credits, notes, native track positions and have/want counts. These counts describe the fetched release, not every edition. Last.fm contributes wiki text/publication date, source track links and original tags. Provider prose is rendered as text, never executable HTML.
 

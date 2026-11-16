@@ -4,13 +4,13 @@ The app can store every scrobble from one Last.fm account and use it for album l
 
 ## Setup
 
-Add the Last.fm API key and username in Providers → Credentials, or set `LASTFM_API_KEY` and `LASTFM_USERNAME`. The account's recent listening must be public; the sync uses the API key only and has no Last.fm sign-in.
+Add the Last.fm API key and username in the Last.fm provider's Settings (`/providers/lastfm?tab=settings`), or set `LASTFM_API_KEY` and `LASTFM_USERNAME`. The account's recent listening must be public; the sync uses the API key only and has no Last.fm sign-in.
 
 ## Syncing
 
 The sync is a Last.fm job. It has no media item and appears in Jobs as **Scrobble sync**, with its status, progress log, cancel and retry. No page needs to stay open.
 
-Open Imports → Last.fm scrobbles and choose **Sync now**. Opening the page only reads stored status.
+Open Imports → Last.fm scrobbles and choose **Sync now**. Opening the page only reads stored status. The page shows the sync state as Never, Running, Cancelled, Failed or Done; a running sync shows a progress bar with the pages read ("12 / 340"). **Stop** asks first.
 
 - The first sync reads the full history through [`user.getRecentTracks`](https://www.last.fm/api/show/user.getRecentTracks), 200 scrobbles per request and one request per second. A history of 200,000 scrobbles is 1,000 requests, about 20 minutes.
 - One job fetches at most 300 pages or eight minutes, then succeeds and queues a follow-on job in the same transaction. A long sync is a chain of jobs; each follow-on records the job it continues.
@@ -71,7 +71,7 @@ Unlinked names also have **Add new album**, which opens the panel's Spotify sear
 
 Choose a release and add it to the library; that scrobbled name is then linked to it. The panel closes immediately while the add and link finish, with a progress indicator on the page. A failure restores the panel when it is free, or offers recovery without interrupting another open album. If the album is added but linking fails, retrying uses the existing album instead of adding it again. A result already in the library can be linked directly. Spotify provider credentials are required; the operation does not save albums to a Spotify account.
 
-The album's Listening tab has **Remove** on each linked name, **Add** on each similar unlinked name, and **Add scrobbled name** to search every scrobbled name.
+Scrobble names for an album are matched in Sources, in the Last.fm row: one table of linked names and similar unlinked names, each with its scrobble count and **Unlink** or **Link**, plus **Add scrobbled name** to search every scrobbled name and **Review scrobble links**. Album Listening points there with **Open Sources** (and lists the same table itself where Sources cannot be opened).
 
 A manual link, and a name kept unlinked, are stored and survive every later sync and relink. **Automatic** on the page returns a name to automatic matching. A manual link is removed when its album is deleted.
 
@@ -92,16 +92,16 @@ A summary gives the number of names and scrobbles for each outcome. The list fil
 
 The report uses the same table primitives and selection behavior as album metadata: sortable columns, individual checkboxes, inclusive Shift-click ranges and select-all-loaded with a mixed state. Filtering or sorting clears the selection. Nothing is selected initially, and selection alone makes no provider requests.
 
-Filter to **Unlinked**, select the albums to investigate, then choose **Search Spotify albums**. More than five searches require confirmation. Large selections are submitted in serial groups of at most 100. Each eligible group creates a separate Spotify album-search job with no library item; existing active searches and linked names are skipped. An uncertain submission error stops further groups and leaves the unconfirmed selection for review.
+Filter to **Unlinked**, select the albums to investigate, then choose **Search Spotify albums**. Searching more than five unlinked albums asks "Search Spotify for 12 albums?" in a popover on the button. Large selections are submitted in serial groups of at most 100. Each eligible group creates a separate Spotify album-search job with no library item; existing active searches and linked names are skipped. An uncertain submission error stops further groups and leaves the unconfirmed selection for review.
 
-Searches use the existing Spotify dispatcher, request spacing, cooldowns and access limits. Their status is shown in the report and Jobs, where they can be cancelled or explicitly retried. Each search saves its first page of candidates against the scrobbled artist/album group. Opening **Add new album** reads those candidates without repeating the search. No album is added or linked until you choose one.
+Searches use the existing Spotify dispatcher, request spacing, cooldowns and access limits. Their status is shown in the report's Spotify search column (Running while a search runs) and in Jobs, where they can be cancelled or explicitly retried. Each search saves its first page of candidates against the scrobbled artist/album group. Opening **Add new album** reads those candidates without repeating the search. No album is added or linked until you choose one.
 
 ## In the app
 
 - **Added** uses the earlier of the stored library date and the first linked Last.fm scrobble, including in album sorting and date ranges. If the stored date is unknown, the first linked scrobble is used. This is calculated from the current links when reading the library; it does not overwrite the stored date or provider history and does not require another sync. Unlinking or moving scrobbles updates Added immediately. Album details identify the date's source, and Edit keeps the original field under **Stored date added**.
-- **Album → Listening** shows total scrobbles, first and last listen, and scrobbles per month or year for the album or one of its tracks, as a line or bars; it opens on the monthly line. Pointing at or focusing the chart shows one period's count; the arrow keys move between periods. It lists the scrobbled names linked to the album, and unlinked names that resemble it: the same title under another artist, or a credited artist with a title that starts with the album's title or the reverse. Names can be added and removed there; see [manual links](#manual-links).
+- **Album → Listening** shows total scrobbles, first and last listen and the busiest month, the shared trend chart (30 days, 1 year, 5 years, all time; hover or focus for a period's count, the current period dotted) with a **Track** picker for one scrobbled track, and the album's tracks by scrobbles with a share bar and last play (the top six, or all). Unlinked names that resemble the album, the same title under another artist, or a credited artist with a title that starts with the album's title or the reverse, are listed with the linked names in Sources under Last.fm; see [manual links](#manual-links).
 - **Listening series.** `GET /api/v1/{albums,tracks,artists,playlists}/:id/listening/series` returns one series for the trend chart: total, first and last listen dates, UTC daily counts for the five years ending today (at most 1,827 days, `daysFrom` to `daysTo`) and UTC monthly counts for all time. Only days and months with scrobbles are listed. Album and track series use the same links as **Listening**, so their months match it. An artist counts every scrobble linked to a library album or track credited to the artist; a playlist counts every scrobble linked to one of its tracks, as on track details, or to one of its album entries. A scrobble linked both ways is counted once, and scrobbled artist names are not matched directly. For example, a scrobble linked to an artist's album and counted towards one of its tracks adds one to the artist, not two.
-- **Album → Tracks** shows each track's scrobble count. Track counts match scrobbled track names to the album's track titles.
+- The track list in an album's **Overview** shows each track's scrobble count. Track counts match scrobbled track names to the album's track titles.
 - **Browse** gains three album fields, recomputed at the end of every sync:
   - `Last listened`: date of the most recent linked scrobble.
   - `Scrobbles, last year` and `Scrobbles, last 5 years`: linked scrobbles in a rolling window ending at the last sync.

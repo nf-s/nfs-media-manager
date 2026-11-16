@@ -1,6 +1,6 @@
 # API access
 
-Open **User** beside **Sign Out** to create and revoke API keys. Choose a name and expiry, then copy the new key. The complete key is shown only once; the list contains its prefix, status, creation time, expiry and last use. Revoking a key stops subsequent requests immediately.
+Open **User** beside **Sign out** to create and revoke API keys. Choose a name and expiry, then copy the new key. The complete key is shown only once; the list contains its prefix, status, creation time, expiry and last use. **Revoke** asks first and says that requests with the key stop working; revoking a key stops subsequent requests immediately.
 
 **Grant Agent Access** creates a key that expires 60 minutes after creation and shows instructions to paste into an agent. The instructions include the API URL, authentication header, expiry and documentation links. Copying uses the browser clipboard; if clipboard access is blocked, select and copy the text manually. Closing the result or leaving the page discards the displayed key. Create another grant when access expires.
 

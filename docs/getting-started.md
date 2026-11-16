@@ -100,7 +100,7 @@ An empty library is expected. Choose Films or Albums in the top-left selector, t
 
 ## 6. Add the providers you want
 
-Open **Providers**, choose a service and select **Credentials**. Save its required fields. Saved values are encrypted in the database and take precedence over environment variables. Existing secret values are not displayed; leaving a field blank keeps its saved value.
+Open **Providers**, choose a service and select **Settings**. Save its required fields. Saved values are encrypted in the database and take precedence over environment variables. Existing secret values are not displayed; leaving a field blank keeps its saved value.
 
 | Provider    | What to configure                                   | Where to get access                                                                                                                           | Optional environment variables                                       |
 | ----------- | --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
@@ -114,7 +114,7 @@ Open **Providers**, choose a service and select **Credentials**. Save its requir
 | Serply      | API key for Rate Your Music search metadata         | [Serply dashboard](https://app.serply.io/)                                                                                                    | `SERPLY_API_KEY`                                                     |
 | YouTube     | OAuth client ID, client secret and redirect URI     | [Google Cloud console](https://console.cloud.google.com/) and the [YouTube setup guide](subscriptions.md#youtube-setup)                       | `YOUTUBE_CLIENT_ID`, `YOUTUBE_CLIENT_SECRET`, `YOUTUBE_REDIRECT_URI` |
 
-Where supported, **Check credentials** makes a small real request. Saving credentials alone does not scrape your collection. Providers without a credential-check endpoint are checked when you explicitly run a lookup. **Settings** shows limits and configurable budgets; **Activity** shows requests and cooldowns. A higher app budget cannot increase a service's account quota.
+Where supported, **Check credentials** makes a small real request. Saving credentials alone does not scrape your collection. Providers without a credential-check endpoint are checked when you explicitly run a lookup. **Settings** also shows limits and configurable budgets; **Overview** shows requests and cooldown clears. A higher app budget cannot increase a service's account quota.
 
 ### Spotify saved albums
 

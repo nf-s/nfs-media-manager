@@ -1,6 +1,6 @@
 # Interface audit
 
-This is the inventory behind the [design library](README.md). It records how the web app is built today, what is already consistent and what is not. The proposal that answers it is in the HTML pages; each section below links to the relevant one.
+This is the inventory behind the [design library](README.md). It records how the web app was built on 2026-11-16, before it was rebuilt on the design system: what was already consistent and what was not. "Today" in this document means that date. The design that answers it is in the HTML pages; each section below links to the relevant one. The app now follows that design; [user stories](user-stories.md) lists the parts not built.
 
 The audit covers `apps/web` and `packages/ui` as they stood on 2026-11-16: every `.tsx` file under `apps/web/components` and `apps/web/app` (181 files, tests excluded), `packages/ui/src/globals.css` (about 4,860 lines), four CSS modules and the six shared primitives. Counts come from scripted passes over the code and will drift as the code changes. The running app was also walked screen by screen; nothing from that walk is reproduced here, and every example in the library uses invented data.
 

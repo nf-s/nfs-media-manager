@@ -14,11 +14,11 @@ Provider search follows the [Spotify album search](https://developer.spotify.com
 
 ## Film CSVs
 
-Choose the matching IMDb ratings or watchlist format and drop the exported CSV. The preview shows new, changed and unchanged films, missing IDs and personal-state changes. Select the rows to import and any providers you want to enrich **new films**.
+Choose the matching IMDb ratings or watchlist format and drop the exported CSV. The preview shows new, changed and unchanged films, missing IDs and personal-state changes. Select the rows to import and any providers you want to enrich **new films**. The toolbar counts the preview ("128 items") and the selection bar reads "12 selected of 128".
 
 Existing films keep their canonical metadata, artwork, public scores and manual overrides. Personal ratings, watched/watchlist state, dates and missing identifiers can be updated. Existing films are not automatically scraped again; use **Jobs → Metadata** for that.
 
-Matching uses IMDb/TMDb identifiers and refuses ambiguous identities. A film with no external ID still appears in the library as **Needs ID**. Open its details and Edit to correct identifiers later.
+Matching uses IMDb/TMDb identifiers and refuses ambiguous identities. A film with no external ID still appears in the library as **Needs ID**. Open its details and use **Add ID** in Sources to add or correct identifiers later.
 
 ## Film NFOs
 
@@ -42,7 +42,7 @@ Album imports leave existing albums unchanged. Only newly created albums can que
 
 ## Spotify saved albums
 
-Configure and connect Spotify as described in [getting started](getting-started.md#spotify-saved-albums). Preview a small batch first. A bounded preview is a page of saved albums, not necessarily the newest across the account. Reading the whole library requires explicit confirmation and finds the newest by saved date before presenting a selection.
+Configure and connect Spotify as described in [getting started](getting-started.md#spotify-saved-albums). The connection shows **Connected** or **Needs sign-in**; **Disconnect** asks first. Preview a small batch first. A bounded preview is a page of saved albums, not necessarily the newest across the account. Reading the whole library requires explicit confirmation and finds the newest by saved date before presenting a selection.
 
 Previewing Spotify makes read-only API requests. It does not import until you confirm selected rows. No playlist writes or playback controls are used.
 
@@ -54,9 +54,11 @@ Previewing Spotify makes read-only API requests. It does not import until you co
 
 - CSV files are limited to 20 MB and fewer than 10,000 media rows.
 - Previews belong to the signed-in account, expire after an hour and can be committed once.
-- Imports queue one explicitly selected item per provider job. More than five operations requires confirmation.
+- Imports queue one explicitly selected item per provider job. Above five metadata jobs, **Import 12 albums** (or films) asks "Import 12 albums?" in a popover on the button before queueing.
 - Already queued/scraped work and items lacking IDs or credentials are skipped and reported.
 - Jobs retain request limits, cooldowns and error stops. Retry is an explicit action; successful work is not repeated.
+
+**Imports → Recent imports** shows each run's Status as Queued, Running, Done, Failed or Cancelled, and its header filter uses the same labels. Started and Finished show `2026-11-16 14:20`.
 
 Open **Jobs** to see progress or an error. Inspect a job's stored data without making another provider request. Correct credentials or identifiers before reviewing a retry.
 
@@ -74,14 +76,14 @@ This section is only for installations with the earlier app's JSON exports. New 
 
 The raw directory defaults to `apps/server/data`. The cleaned files supply derived browse values; raw inputs preserve provider payloads and library context. Local plugins translate their own data. These folders are ignored by Git.
 
-Back up PostgreSQL first. Start with the **Legacy JSON library** import's two-album/two-film default, or use:
+Back up PostgreSQL first. Start with the **Legacy JSON library** import's two-album/two-film default, which starts at once, or use:
 
 ```sh
 corepack pnpm --filter @repo/server import:legacy --album-limit=2 --film-limit=2
 corepack pnpm --filter @repo/server verify:legacy
 ```
 
-After reviewing the result, the command below imports **all local records**:
+After reviewing the result, tick **Import all local records** and choose **Import full library**, which asks first, or run the command below to import **all local records**:
 
 ```sh
 corepack pnpm --filter @repo/server import:legacy

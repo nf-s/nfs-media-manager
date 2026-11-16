@@ -8,7 +8,7 @@ With the connection, a Sonos room is chosen under **Play on** like any other dev
 
 1. Create a control integration on [developer.sonos.com](https://developer.sonos.com/) and generate a key. The integration name is what Sonos shows on its sign-in screen.
 2. Register the redirect URI `https://<app host>/api/v1/sonos/callback` on the key. Sonos only sends sign-in results to a public HTTPS address, so connecting works from the deployed app, not from a local development server.
-3. In **Providers → Sonos → Credentials**, save the integration key, secret and the same redirect URI. They can also come from `SONOS_CLIENT_ID`, `SONOS_CLIENT_SECRET` and `SONOS_REDIRECT_URI`.
+3. In **Providers → Sonos → Settings** (`/providers/sonos?tab=settings`), save the integration key, secret and the same redirect URI. They can also come from `SONOS_CLIENT_ID`, `SONOS_CLIENT_SECRET` and `SONOS_REDIRECT_URI`.
 4. In the player, open **Play on** and choose **Connect Sonos** under **Connections**, then sign in with the Sonos account. Sonos returns to the app and the player reports the result.
 
 **Connections** shows whether Sonos is set up, connected or not. **Disconnect** deletes the stored tokens. Access can also be revoked in the Sonos app.

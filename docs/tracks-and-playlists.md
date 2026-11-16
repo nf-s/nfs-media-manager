@@ -16,7 +16,9 @@ Playlists need a connected Spotify account with the `playlist-read-private` and 
 
 **Imports → Spotify playlists** shows Liked Songs and the stored list of the account's playlists. **List playlists** queues a Spotify listing job, shown in Jobs with its progress, cancel and retry; it reads one page of 50 playlists per request and replaces the stored list. Opening the page reads only the stored list, with the time it was listed and the latest listing job. A second listing is not queued while one is queued or running, and the list is never re-read automatically.
 
-Choose rows from the stored list and import, up to 100 at a time; each one becomes its own Spotify job in Jobs, where it can be cancelled or retried. One job per playlist runs at a time. A playlist missing from the stored list is skipped until the list is read again.
+Choose rows from the stored list and import, up to 100 at a time; each one becomes its own Spotify job in Jobs, where it can be cancelled or retried. One job per playlist runs at a time. A playlist missing from the stored list is skipped until the list is read again. Selecting more than five playlists asks "Import 12 playlists?" in a popover on the import button before queueing.
+
+The Import column shows Imported, Needs update or Not imported, or the job state (Queued, Running, Failed, Cancelled) while a job exists. A running listing shows Running with its page count, and "Listed 2026-11-16 14:20" when done.
 
 An import of a playlist first reads the playlist's details: one request that gives its current version and, only for a playlist the account owns or collaborates on, its item count. A playlist the account can no longer read fails without requesting its tracks. Otherwise the import reads the whole playlist in pages of 50 through the Spotify request gate (one request at a time, at least 1500 ms apart), then stores it in a single transaction:
 
@@ -44,7 +46,7 @@ The schedule is set on the [playlist drawer's](#playlist-drawer) **Sources** tab
 
 An imported playlist that shares its name with a playlist from the legacy album import becomes the same playlist, so its albums and tracks appear together. Otherwise a playlist whose name is already used is stored as "Name (owner)".
 
-**Remove** on the Playlists page removes an imported playlist and tracks with no remaining album, playlist or Last.fm membership. Album memberships from the legacy import are kept.
+**Remove** on the Playlists page removes an imported playlist and tracks with no remaining album, playlist or Last.fm membership. It asks first in a popover on the playlist's trash button ("Remove Example mix? · Remove · Cancel"). Album memberships from the legacy import are kept.
 
 ### Last.fm tracks
 
@@ -60,7 +62,7 @@ Existing installations must apply the database migration that allows `library_tr
 
 ## Track details
 
-Track details use **Overview**, **Listening** and **Sources** tabs. Overview contains counts, library metadata, playlist memberships and **Add to playlist**. Listening contains the chart and attributed names; Sources explains the Spotify identity and retains the original Last.fm names, recorded albums and manual choices. Spotify and Last.fm icon links appear beside tracks and in details. Last.fm links use recorded names where available, including after a merge.
+Track details use **Overview** and **Sources** tabs; older `listening` and `playlists` tab links open Overview. Overview contains counts, the **Listening** chart, playlist memberships with **Add to playlist**, and the album's tags. Sources explains the Spotify identity and retains the original Last.fm names, recorded albums and manual choices. The Spotify and Last.fm links sit at the end of the detail header; track rows and cards carry no provider icons. Last.fm links use recorded names where available, including after a merge.
 
 ## Playlist drawer
 
@@ -68,11 +70,12 @@ The Playlists directory reads bounded pages from `GET /api/v1/playlists/browse-p
 
 The **Add to playlist** picker searches writable imported playlists by name and loads 25-row pages only while open, with the same full-height placeholder behavior. Addition status reads only the related playlist IDs. The Spotify import preview remains an explicitly bounded saved provider listing; its stored summary metadata is scoped to that listing, so sorting the preview does not fetch the library directory.
 
-Selecting a playlist opens it in the same inspector used for albums and tracks. Links inside the inspector replace its visible detail and keep the original view in place. **Back** returns to the previous detail, and **Open page** opens the standalone detail. Browser history, reload and shared links restore the open detail and its settings. Older links with `?playlist=<playlist ID>` and optional `&tab=sync` still open the playlist inspector. Escape, the backdrop and the close button close it.
+Selecting a playlist name opens it in the same inspector used for albums and tracks; the row itself does not. The Playlists table shows durations such as "1h 5m". Links inside the inspector replace its visible detail and keep the original view in place. **Back** returns to the previous detail, and **Open page** opens the standalone detail. Browser history, reload and shared links restore the open detail and its settings. Older links with `?playlist=<playlist ID>` and optional `&tab=sync` still open the playlist inspector; `sync` opens Sources. Escape, the backdrop and the close button close it.
 
-The header shows the name, source, owner, track count and duration, **Filter tracks** (Tracks filtered by the playlist, as a required filter) and a Spotify link when the playlist has one.
+The header shows the name, source, owner, track count and duration, **Play**, **Filter tracks** (Tracks filtered by the playlist, as a required filter), **Filter albums** when the playlist has library albums, and a Spotify link at the end when the playlist has one. The tabs are **Overview**, **Listening** and **Sources**.
 
-- **Tracks** shares Grid, Details and Table presentations with album track lists, with independent remembered choices for album and playlist entries. A playlist shows entries in stored order with their added dates, followed by legacy album members. It reads at most 100 entries per page (`GET /api/v1/playlists/:id`), reserves the full result height and loads only pages near the viewport. Changing presentation preserves the visible item, query and playback order; placeholders match the current card or row size. Track and album titles open the corresponding library detail in the inspector. Scroll the table horizontally on phones to reach all visible columns.
+- **Overview** leads with the track, library album and linked track counts and the last check, then metadata coverage and the **Tracks** section. Tracks shares Grid, List and Table presentations with album track lists, with independent remembered choices for album and playlist entries. A playlist shows entries in stored order with their added dates, followed by legacy album members. It reads at most 100 entries per page (`GET /api/v1/playlists/:id`), reserves the full result height and loads only pages near the viewport. Changing presentation preserves the visible item, query and playback order; placeholders match the current card or row size. Track and album titles open the corresponding library detail in the inspector; album names in its rows are links without their own play buttons.
+- **Listening** shows the playlist's scrobbles in the shared trend chart. Scroll the table horizontally on phones to reach all visible columns.
 - **Sources** shows the stored playlist source and last import date. For a Spotify playlist or Liked Songs, it includes the schedule (`PUT /api/v1/playlists/:id/sync-schedule`) and **Sync now**, which queues the normal import and displays any refusal. It shows the last check, next scheduled import, and latest import job with its status, progress, error, finish time and Jobs link. The drawer polls while the job is queued or running and refreshes affected views when it ends.
 
 ## Adding an album to a playlist
@@ -103,7 +106,7 @@ The subsequent import reuses the stored library track when its Spotify ID is alr
 
 ## Browsing tracks
 
-List is the default Tracks view. List, Grid and Table show artwork when available, including artwork inherited from the linked album. Use Table to enable the **Source** and **Spotify match** columns. Search, [AI search](ai-search.md), filters, ranges and sorting use the same URL parameters as albums.
+List is the default Tracks view. Table columns default to Title, Artists, Album, Duration, Added, Scrobbles, Playlists and Tags. The title cell has the artwork and the Play and Add to queue pair; album and playlist names are links, without their own play buttons. List rows show artists and album under the title and Duration, Scrobbles and Added on the right. Grid cards show the release year and the active sort value (Added by default, or the length for text sorts). List, Grid and Table show artwork when available, including artwork inherited from the linked album. Use Table to enable the **Source** and **Spotify match** columns. Search, [AI search](ai-search.md), filters, ranges and sorting use the same URL parameters as albums.
 
 **Artist** groups by the first billed track artist, then release year and album name. **Album** sorts by album name, then release date. **Released** sorts by release date and keeps ties in album order. Both use the linked album's title and date when available, so edition names and dates reported for individual tracks do not split the release. Other sorts break ties by the album's billed artist, release year and title. The stored album position preserves disc and track order. Secondary keys stay ascending in either sort direction, with missing values last.
 
@@ -134,7 +137,7 @@ On a Last.fm-backed track without an imported Spotify identity, **Merge with Spo
 
 This action does not merge two different imported Spotify identities or search Spotify's remote catalogue. Different releases and versions may legitimately be separate; the retained recording is an explicit choice.
 
-Play controls are visible beside tracks, albums and playlists. Connect [Spotify playback](spotify-playback.md) to enable them where the library has a playable recording. Album and playlist track tables use the Position cell for play, or the Title cell when Position is hidden. Playing a row captures the current table order for subsequent tracks. The playlist heading's **Play** starts at the first recorded entry that can play. Spotify opens from its service icon.
+Play controls are visible beside tracks, albums and playlists. Connect [Spotify playback](spotify-playback.md) to enable them where the library has a playable recording. Play is always followed by Add to queue. In Grid the pair appears on the artwork on hover, focus or touch; in List and Table it follows the title. In album and playlist track tables the row number sits before the pair. Playing a row captures the current table order for subsequent tracks. The playlist heading's **Play** starts at the first recorded entry that can play. Spotify opens from the link at the end of the detail header.
 
 ### Spotify matching and playback
 

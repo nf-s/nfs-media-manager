@@ -354,6 +354,7 @@
                 '<b>One toolbar order</b> on every browse page: search, sort, direction, filters, view, count. Table-only pages drop sort and view and add Columns.',
                 '<b>Every control is 28px.</b> Native selects use the same border, radius and chevron as buttons.',
                 '<b>The count reads the same everywhere:</b> <code>128 albums</code>, or <code>14 of 128 albums</code> when filtered.',
+                '<b>On a phone</b> the toolbar wraps: the search takes the first line and the other controls the second.',
               ]) +
               g.note(
                 'Replaces',
@@ -389,7 +390,7 @@
                 '<b>Numbers align right</b> in tabular figures. Dates are ISO (<code>2026-10-02</code>) so they sort and align as text.',
                 '<b>Nothing is clipped by the scrollbar.</b> The scroll area reserves its gutter and the last column keeps the 12px inset. When the table is wider than the panel the identity column stays in place and the rest scrolls beneath a soft edge.',
                 "<b>Inside another item</b> the table drops the columns that the parent already answers: no Album or Artist column in an album's track list.",
-                '<b>Selection</b> shows the one inverse bar, attached to the bottom of the table, with the count on the left and actions on the right.',
+                '<b>Selection</b> shows the one inverse bar, attached to the bottom of the table, with the count on the left and actions on the right. The bar appears with a selection or a result to report and is hidden otherwise. An import preview keeps it, reading <code>0 selected of 128</code>, because choosing rows is the task.',
               ]) +
               g.note(
                 'Replaces',
@@ -534,7 +535,7 @@
               g.rules([
                 '<b>In rows and cards</b> a rating is a short source label and the score in mono figures. No coloured badges.',
                 '<b>In a detail overview</b> each rating gets a small card with the score, the source and, on hover, the vote count and when it was fetched.',
-                '<b>Each source keeps its own scale.</b> Scores are not converted.',
+                '<b>Each source keeps its own scale.</b> Scores are not converted. A scale up to 10 always shows one decimal (<code>8.0</code>); larger scales show whole numbers.',
               ]) +
               g.note(
                 'Replaces',
