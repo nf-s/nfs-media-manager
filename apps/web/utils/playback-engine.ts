@@ -156,14 +156,15 @@ const SONOS_RETRY_MS = 2_000
 const ROOM_IDLE_POLL_MS = 10_000
 /**
  * Tracks kept in a Sonos group's queue after the current one. Sonos takes
- * about a second for each track added and a queue change waits for the
- * request before it, so they are added a few at a time.
+ * about a second for each track added, so they are added one at a time and a
+ * skip never waits behind more than one of them.
  */
 const ROOM_AHEAD = 10
-const ROOM_CHUNK = 3
 const ROOM_VOLUME_EVERY = 5
 /** How long the group's queue is left alone after Sonos refused a change to it. */
 const ROOM_RETRY_MS = 15_000
+/** How long a Sonos group may keep reporting the track before the one it was told to play. */
+const ROOM_EXPECT_MS = 6_000
 const LOCAL: Extract<PlaybackTarget, { kind: 'local' }> = { kind: 'local' }
 const NOT_STARTED: PlaybackFailure = {
   status: 'error',
@@ -355,6 +356,12 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
   let roomRun = 0
   let roomPolls = 0
   let roomRetryAt = 0
+  /** Sonos commands sent and not yet answered. */
+  let sonosPending = 0
+  /** Changes with each Sonos command sent or answered; a report read across one may predate it. */
+  let sonosEpoch = 0
+  /** The track a Sonos group was told to play, until it reports that track. */
+  let roomExpected: { uri: string; until: number } | null = null
   /** Spotify's details of tracks a Sonos group plays; null once asked for. */
   const roomTracks = new Map<string, TrackDetails | null>()
 
@@ -904,19 +911,12 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     let mode: 'append' | 'next' = 'append'
     const added: PlayableItem[] = []
     if (agrees) {
-      const queued = new Set(
-        active.sent.slice(active.index).map((item) => item.uri),
-      )
-      for (const item of plan.slice(tail.length)) {
-        if (
-          queued.has(item.uri) ||
-          tail.length + added.length >= ROOM_AHEAD ||
-          added.length >= ROOM_CHUNK
-        )
-          break
-        queued.add(item.uri)
-        added.push(item)
-      }
+      const following = plan[tail.length]
+      const queued = active.sent
+        .slice(active.index)
+        .some((item) => item.uri === following?.uri)
+      if (following && !queued && tail.length < ROOM_AHEAD)
+        added.push(following)
     } else if (head && tail[0]?.uri !== head.uri) {
       mode = 'next'
       added.push(head)
@@ -987,6 +987,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       if (target.kind === 'room') {
         roomRun += 1
         roomRetryAt = 0
+        roomExpected = null
         if (item.kind === 'track') describeRoomTrack(item.uri)
         const skip =
           item.kind === 'album' && item.startUri
@@ -1001,6 +1002,8 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
           ...(from > 0 ? { positionMs: Math.round(from) } : {}),
         })
         if (started !== run) return
+        // Sonos has accepted the track; its own report follows a second later.
+        if (item.kind === 'track') expectRoomTrack(item, from, false)
         // The tracks that follow may still be resolving; they are added as
         // they become known.
         maintainRoom()
@@ -1209,12 +1212,75 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     return target.kind === 'room' ? target.room.id : target.group.id
   }
 
-  function sonosSend(groupId: string, command: SonosCommand) {
-    options.sonos?.command(groupId, command).catch((error: unknown) => {
+  /**
+   * Sends a command to a Sonos group, after `after` when given. The group is
+   * read again once Sonos has answered, not before: a report from before the
+   * answer would undo what the command is expected to change.
+   */
+  function sonosCommand(
+    groupId: string,
+    command: SonosCommand,
+    after?: Promise<unknown>,
+  ): Promise<void> {
+    const sonos = options.sonos
+    if (!sonos) return Promise.resolve()
+    sonosPending += 1
+    sonosEpoch += 1
+    const send = () => sonos.command(groupId, command)
+    const sent = after ? after.then(send) : send()
+    const answered = () => {
+      sonosPending -= 1
+      sonosEpoch += 1
+      if (sonosPending === 0 && state.target.kind === 'room') schedule(0)
+    }
+    sent.then(answered, answered)
+    return sent
+  }
+
+  function sonosSend(
+    groupId: string,
+    command: SonosCommand,
+    after?: Promise<unknown>,
+  ) {
+    sonosCommand(groupId, command, after).catch((error: unknown) => {
       // The group may have changed; look it up again with the next report.
       sonosChecked = null
+      roomExpected = null
       fail(error)
     })
+  }
+
+  /**
+   * Shows the track a Sonos group was told to play before the group reports
+   * it, which takes a second or more.
+   */
+  function expectRoomTrack(
+    item: PlayableItem,
+    positionMs: number,
+    paused: boolean,
+  ) {
+    const at = now()
+    roomExpected = { uri: item.uri, until: at + ROOM_EXPECT_MS }
+    observe(
+      roomTrack({
+        trackUri: item.uri,
+        linkedFromUri: null,
+        trackName: '',
+        artists: '',
+        albumName: '',
+        albumUri: null,
+        artistLinks: [],
+        artworkUrl: null,
+        durationMs: 0,
+        positionMs,
+        paused,
+        contextUri: null,
+        hasNext: null,
+        trackNumber: null,
+        discNumber: null,
+        at,
+      }),
+    )
   }
 
   /** Reads Spotify's details of a track a Sonos group plays, once. */
@@ -1274,14 +1340,22 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
   /** Reads what a Sonos group plays and keeps its queue supplied. */
   async function pollRoom(target: RoomTarget) {
     const sonos = options.sonos
-    if (!sonos) return
-    roomPolls += 1
-    const reported = await sonos.state(
-      target.room.id,
-      roomPolls % ROOM_VOLUME_EVERY === 1,
-    )
-    pollErrors = 0
-    if (!sameDevice(state.target, target) || disposed) return
+    // The answer to a command on its way starts the next read.
+    if (!sonos || sonosPending > 0) return
+    let reported: SonosGroupState
+    let epoch: number
+    do {
+      epoch = sonosEpoch
+      roomPolls += 1
+      reported = await sonos.state(
+        target.room.id,
+        roomPolls % ROOM_VOLUME_EVERY === 1,
+      )
+      pollErrors = 0
+      if (!sameDevice(state.target, target) || disposed) return
+      // A report read across a command may predate it, so it is read again.
+    } while (epoch !== sonosEpoch && sonosPending === 0)
+    if (epoch !== sonosEpoch) return
     if (
       reported.volume !== undefined &&
       !volumeTimer &&
@@ -1289,6 +1363,17 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     )
       set({ volume: reported.volume })
     const snapshot = roomSnapshot(reported, now())
+    if (roomExpected) {
+      if (
+        snapshot?.trackUri !== roomExpected.uri &&
+        now() < roomExpected.until
+      ) {
+        // The group has not caught up with what it was told to play.
+        schedule(FOLLOW_UP_MS)
+        return
+      }
+      roomExpected = null
+    }
     if (!snapshot) {
       missing += 1
       if (missing === MISSING_STATES && (session || latest)) playbackStopped()
@@ -1297,6 +1382,9 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     missing = 0
     observe(roomTrack(snapshot))
     maintainRoom()
+    // The track due next is described ahead, so a skip to it shows at once.
+    const following = session?.sent[session.index + 1]
+    if (following?.kind === 'track') describeRoomTrack(following.uri)
   }
 
   function observeLocal(payload: unknown) {
@@ -1324,6 +1412,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     if (ended && continueQueue()) return
     detach()
     latest = null
+    roomExpected = null
     const restored = fallback ?? (isObserved(state.target) ? LOCAL : null)
     fallback = null
     if (restored?.kind === 'local') sawLocalState = false
@@ -1594,6 +1683,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     run += 1
     detach()
     latest = null
+    roomExpected = null
     fallback = null
     // Spotify keeps reporting a device it would not let this app pause.
     left = from.kind === 'restricted' ? from : null
@@ -1761,10 +1851,10 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
           : undefined
       const due = state.queue[0]?.item ?? source?.upcoming[0]?.item
       const inStep = queued !== undefined && queued.uri === due?.uri
-      const skip = (group: string) => {
+      const skip = (group: string, after?: Promise<unknown>) => {
         skippedAt = now()
         set({ failure: null })
-        sonosSend(group, { action: 'next' })
+        sonosSend(group, { action: 'next' }, after)
         schedule(FOLLOW_UP_MS)
       }
       if (isObserved(target)) {
@@ -1784,7 +1874,12 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       activate()
       if (target.kind === 'room') {
         if (!(inStep && latest) && itemEnds && startNext()) return
-        if (latest) skip(groupId(target))
+        if (!latest) return
+        const paused = latest.paused
+        // A queue change on its way to the group goes first, so the track
+        // is there to skip to.
+        skip(groupId(target), roomBusy > 0 ? roomWork : undefined)
+        if (inStep && queued) expectRoomTrack(queued, 0, paused)
         return
       }
       if (itemEnds && startNext()) return
@@ -1827,9 +1922,9 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       if (target.kind === 'local') guard(player?.previousTrack())
       else if (target.kind === 'room')
         // The group's queue has nothing before the track it started with.
-        options.sonos
-          ?.command(target.room.id, { action: 'previous' })
-          .catch(() => seek(0))
+        sonosCommand(target.room.id, { action: 'previous' }).catch(() =>
+          seek(0),
+        )
       else
         api.previous(target.device.id).catch((error: unknown) => {
           // Spotify refuses to go back from the first track of a context.

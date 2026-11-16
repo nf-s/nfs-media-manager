@@ -36,6 +36,6 @@ Run the configured Prettier formatter on changed files as the final edit step. D
 
 ## Provider development
 
-Use the registry and [plugin SDK workflow](local-plugins.md). Validate untrusted inputs at the boundary. Route handlers validate/authenticate, call services and return results. Providers must use the shared request gate; no direct networking, hidden retries or broad automatic runs.
+Use the registry and [plugin SDK workflow](local-plugins.md). Validate untrusted inputs at the boundary. Route handlers validate/authenticate, call services and return results. Providers must use the shared request gate; no direct networking, hidden retries or broad automatic runs. The one exception is the [Sonos](sonos.md) Control API, whose calls a listener is waiting on: they use the gate module's `createDirectProviderRequest`, which keeps the provider's halt, cooldown and failure records but skips the durable reservation, pacing and request count. It refuses any provider with a request budget.
 
 Use synthetic test fixtures. Keep live scraping to an explicitly reviewed small selection. The archived application and unused spatial/editor packages have been removed; legacy-data imports are supported by the current server and covered by its tests.

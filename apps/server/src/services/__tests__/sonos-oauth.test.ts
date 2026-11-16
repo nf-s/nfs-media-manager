@@ -36,6 +36,8 @@ const mocks = vi.hoisted(() => {
     values: vi.fn(),
     set: vi.fn(),
     request: vi.fn(),
+    gated: vi.fn(),
+    direct: vi.fn(),
     success: vi.fn(),
     failure: vi.fn(),
     clearHalt: vi.fn(),
@@ -50,7 +52,8 @@ vi.mock('@/lib/provider-secrets', () => ({
 }))
 vi.mock('@/services/provider-requests', () => ({
   clearProviderAccessHalt: mocks.clearHalt,
-  createProviderRequest: () => mocks.request,
+  createDirectProviderRequest: mocks.direct,
+  createProviderRequest: mocks.gated,
   recordProviderFailure: mocks.failure,
   recordProviderSuccess: mocks.success,
 }))
@@ -221,6 +224,8 @@ describe('Sonos owner/session-bound OAuth (mock database and gate)', () => {
     mocks.values.mockReturnValue(empty)
     mocks.set.mockReturnValue(empty)
     mocks.request.mockResolvedValue(Response.json(tokenFixture))
+    mocks.gated.mockReturnValue(mocks.request)
+    mocks.direct.mockReturnValue(mocks.request)
   })
   afterEach(() => {
     mocks.resetEnvironment()
@@ -322,6 +327,9 @@ describe('Sonos owner/session-bound OAuth (mock database and gate)', () => {
       clientId: 'fixture-key',
     })
     expect(mocks.clearHalt).toHaveBeenCalledWith('sonos')
+    expect(mocks.gated).toHaveBeenCalledOnce()
+    expect(mocks.direct).not.toHaveBeenCalled()
+    expect(mocks.success).toHaveBeenCalledWith('sonos')
   })
 
   it('rejects a state from another session without contacting Sonos', async () => {
@@ -360,6 +368,11 @@ describe('Sonos owner/session-bound OAuth (mock database and gate)', () => {
     expect(mocks.request.mock.calls[0]?.[0]).toBe(
       'https://api.ws.sonos.com/control/api/v1/households',
     )
+    // Control API calls skip the durable gate and its success bookkeeping.
+    expect(mocks.direct).toHaveBeenCalledOnce()
+    expect(mocks.gated).not.toHaveBeenCalled()
+    expect(mocks.success).not.toHaveBeenCalled()
+    expect(mocks.transaction).not.toHaveBeenCalled()
 
     mocks.database.select
       .mockReturnValueOnce(query([]))
@@ -382,6 +395,7 @@ describe('Sonos owner/session-bound OAuth (mock database and gate)', () => {
     mocks.database.select
       .mockReturnValueOnce(query([]))
       .mockReturnValueOnce(query([]))
+      .mockReturnValueOnce(storedTokens({ expiresAt: Date.now() + 1000 }))
       .mockReturnValueOnce(storedTokens({ expiresAt: Date.now() + 1000 }))
     mocks.request
       .mockResolvedValueOnce(

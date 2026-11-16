@@ -35,6 +35,7 @@ import { sonosPlugin } from '@/plugins/builtin/sonos'
 import { providerSecret } from '@/schemas/db'
 import {
   clearProviderAccessHalt,
+  createDirectProviderRequest,
   createProviderRequest,
   recordProviderFailure,
   recordProviderSuccess,
@@ -67,6 +68,7 @@ const REFUSED =
   'Sonos did not accept that. The room may have changed; try again.'
 const UNKNOWN_SPOTIFY =
   'Play Spotify on this room once from a Spotify app, so its Spotify account is known.'
+const REFRESH_MARGIN_MS = 60000
 const hash = (value: string) => createHash('sha256').update(value).digest('hex')
 const namespace = (userId: string) => `sonos-account-${hash(userId)}`
 type SecretDatabase = Pick<typeof db, 'insert' | 'select' | 'delete' | 'update'>
@@ -133,10 +135,17 @@ async function settings() {
   }
 }
 
+/**
+ * Runs Sonos requests and reports their failure as the provider's. `direct`
+ * is for Control API calls: someone is waiting on each of them, and the
+ * durable request gate takes as long as Sonos itself does to answer.
+ */
 async function sonosOperation<T>(
   execute: (request: SonosRequest) => Promise<T>,
+  direct = false,
 ): Promise<T> {
   try {
+    if (direct) return await execute(createDirectProviderRequest(sonosPlugin))
     const result = await execute(createProviderRequest(sonosPlugin))
     await recordProviderSuccess('sonos')
     return result
@@ -395,15 +404,23 @@ export async function finishSonosAuthorization(
 }
 
 /**
- * A current access token for the account, refreshed through the given request
- * gate when it is about to expire.
+ * A current access token for the account, refreshed with the given request
+ * when it is about to expire.
  */
 async function sonosAccessToken(userId: string, request: SonosRequest) {
-  const config = await settings()
+  const [config, saved] = await Promise.all([settings(), storedAccount(userId)])
   if (!config)
     throw unavailable(
       'Sonos is not configured. Add the integration in Providers and connect Sonos in the player.',
     )
+  // A token that is not due for a refresh is used as read, without the lock.
+  if (
+    saved &&
+    saved.clientId === config.clientId &&
+    hasScope(saved.scope) &&
+    saved.expiresAt > Date.now() + REFRESH_MARGIN_MS
+  )
+    return saved.accessToken
   return db.transaction(async (tx) => {
     // Serialize refresh/disconnect so a refreshed token cannot overwrite a newer account state.
     const [row] = await tx
@@ -417,7 +434,8 @@ async function sonosAccessToken(userId: string, request: SonosRequest) {
     )
     if (account.clientId !== config.clientId || !hasScope(account.scope))
       throw unavailable('Sonos account configuration changed. Connect again.')
-    if (account.expiresAt > Date.now() + 60000) return account.accessToken
+    if (account.expiresAt > Date.now() + REFRESH_MARGIN_MS)
+      return account.accessToken
     let token: Awaited<ReturnType<typeof sonosToken>>
     try {
       token = await sonosToken(
@@ -450,7 +468,6 @@ async function sonosAccessToken(userId: string, request: SonosRequest) {
   })
 }
 
-/** The account's rooms and what they play, read from the Sonos cloud. */
 /** Runs Control API calls with a current token; a rejected token asks for a new sign-in. */
 function withSonos<T>(
   userId: string,
@@ -469,9 +486,10 @@ function withSonos<T>(
       }
       throw error
     }
-  })
+  }, true)
 }
 
+/** The account's rooms and what they play, read from the Sonos cloud. */
 export async function getSonosRooms(userId: string): Promise<SonosRooms> {
   const stored = await storedSpotifyAccounts(userId)
   const { result, accounts } = await withSonos(userId, (request, token) =>

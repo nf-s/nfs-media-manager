@@ -85,7 +85,7 @@ function roomState(room: SonosRoom, current: 'chosen' | 'controlled' | null) {
 /**
  * The account's Sonos rooms. A room Sonos can start Spotify content on is
  * chosen like a device. Mounted while the device list is open, so each
- * opening reads the rooms once.
+ * opening reads the rooms once; the rooms read before stay in view meanwhile.
  */
 export function SonosRooms({
   view,
@@ -158,7 +158,7 @@ export function SonosRooms({
           })}
         </ul>
       )}
-      {rooms.isFetching && (
+      {rooms.isFetching && groups.length === 0 && (
         <p role="status" className="device-status">
           <LoaderCircle
             size={12}

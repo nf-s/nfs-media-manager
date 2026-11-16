@@ -477,7 +477,8 @@ function expiredReservation() {
   )
 }
 
-async function checkDispatch(provider: string, reservation: ReadyReservation) {
+/** The provider's request state; throws while access is halted or cooling down. */
+async function openProviderState(provider: string) {
   const [state] = await db
     .select()
     .from(providerRequestState)
@@ -498,6 +499,11 @@ async function checkDispatch(provider: string, reservation: ReadyReservation) {
       true,
       { diagnostics: { source: 'local-cooldown' } },
     )
+  return state
+}
+
+async function checkDispatch(provider: string, reservation: ReadyReservation) {
+  const state = await openProviderState(provider)
   if (state?.leaseId !== reservation.token) throw expiredReservation()
 }
 
@@ -739,6 +745,124 @@ export async function protectProviderFromLocalResponse(
       })
       .where(eq(providerRequestState.provider, plugin.manifest.id))
   })
+}
+
+/**
+ * A request sent straight to the provider for an action someone is waiting
+ * on, such as a playback control. The durable reservation costs many database
+ * round trips per request, so this skips it: requests are not paced or
+ * counted, and it is only for providers whose manifest sets no request
+ * budget. The returned function sends at most the manifest's `maxConcurrent`
+ * requests at once. It still refuses while the provider is halted or cooling
+ * down, and records every failure as the gate does, so a rate limit or a
+ * rejected sign-in stops the provider's requests on every path.
+ */
+export function createDirectProviderRequest(
+  plugin: MediaProviderPlugin,
+): MediaPluginTestContext['request'] {
+  const provider = plugin.manifest.id
+  const limits = plugin.manifest.rateLimit
+  if (
+    limits.maxRequestsPerHour !== undefined ||
+    limits.requestBudget ||
+    limits.fixedWindow ||
+    limits.respectRateLimitHeaders
+  )
+    throw new Error('Direct requests are not available with a request budget')
+  const timeoutMs = RequestTimeoutSchema.parse(limits.requestTimeoutMs)
+  let active = 0
+  const waiting: (() => void)[] = []
+  const send: MediaPluginTestContext['request'] = async (url, init) => {
+    init?.signal?.throwIfAborted()
+    const state = await openProviderState(provider)
+    let response: Response
+    let body: string
+    try {
+      const timeout = AbortSignal.timeout(timeoutMs)
+      response = await fetch(url, {
+        ...init,
+        redirect: 'manual',
+        signal: init?.signal
+          ? AbortSignal.any([init.signal, timeout])
+          : timeout,
+      })
+      const receivedAt = Date.now()
+      if (!response.ok) {
+        void response.body?.cancel().catch(() => undefined)
+        const limited = response.status === 429
+        const retryAfter = response.headers.get('retry-after')
+        const errorBackoff = limits.errorBackoffMs ?? 60000
+        throw new ProviderRequestError(
+          limited
+            ? 'Provider rate limit reached (HTTP 429)'
+            : `Provider request failed (HTTP ${response.status})`,
+          limited
+            ? 'rate-limit'
+            : response.status === 401 || response.status === 403
+              ? 'access-denied'
+              : 'request-failed',
+          limited
+            ? rateLimitRetryAt(
+                response.headers,
+                receivedAt,
+                limits.rateLimitCooldownMs ?? 60000,
+                null,
+                limits.retryAfterIsAuthoritative,
+              )
+            : (response.status === 400 || response.status >= 500) &&
+                (errorBackoff > 0 || retryAfter !== null)
+              ? retryAfterTime(retryAfter, receivedAt, errorBackoff)
+              : null,
+          false,
+          { diagnostics: responseDiagnostics(response, receivedAt, false) },
+        )
+      }
+      body = await readBoundedBody(response)
+    } catch (error) {
+      const safe =
+        error instanceof ProviderRequestError
+          ? error
+          : new ProviderRequestError(
+              'Provider request failed or timed out',
+              'request-failed',
+              null,
+              false,
+              { cause: error },
+            )
+      await recordProviderFailure(plugin, safe)
+      throw new ProviderRequestError(
+        safe.message,
+        safe.code,
+        safe.retryAt,
+        true,
+        { cause: safe, diagnostics: safe.diagnostics },
+      )
+    }
+    // Earlier failures count towards a cooldown until a request succeeds.
+    if (state && (state.failureCount > 0 || state.lastError !== null))
+      await recordProviderSuccess(provider)
+    return new Response(
+      response.status === 204 || response.status === 205 ? null : body,
+      {
+        status: response.status,
+        statusText: response.statusText,
+        headers: response.headers,
+      },
+    )
+  }
+  return async (url, init) => {
+    if (active >= limits.maxConcurrent)
+      await new Promise<void>((resolve) => waiting.push(resolve))
+    else active += 1
+    try {
+      return await send(url, init)
+    } finally {
+      // A finished request hands its place to the one that waited longest.
+      const next = waiting.shift()
+      if (next) next()
+      else active -= 1
+    }
+  }
 }
 
 export function createProviderRequest(

@@ -1850,16 +1850,16 @@ const kitchen = {
   household: 'Sonos_fixture.home',
 }
 
-function uris(from: number, to: number) {
-  return Array.from(
-    { length: to - from + 1 },
-    (_, offset) => sourceTrack(from + offset).uri,
-  ).join(',')
-}
-
-/** Plays a source track in this browser, then chooses a Sonos room under Play on. */
-async function sourceOnRoom(sonos: ReturnType<typeof fakeSonos>) {
+/**
+ * Plays a source track in this browser, then chooses a Sonos room under Play
+ * on. Spotify has no details of the `unknown` tracks.
+ */
+async function sourceOnRoom(
+  sonos: ReturnType<typeof fakeSonos>,
+  unknown: string[] = [],
+) {
   const setup = harness(undefined, sonos.api)
+  for (const uri of unknown) setup.failLookup(uri)
   setup.engine.prepare()
   await settle()
   setup.engine.play(sourceTrack(0), fixtureSource(40))
@@ -1890,12 +1890,15 @@ test('choosing a Sonos room moves the track there with the tracks that follow it
     sonos.loads[0] ?? '',
     /^RINCON_FIXTURE:1 replace spotify:track:source-0 play at \d+$/,
   )
-  assert.deepEqual(sonos.loads.slice(1), [
-    `RINCON_FIXTURE:1 append ${uris(1, 3)} play`,
-    `RINCON_FIXTURE:1 append ${uris(4, 6)} play`,
-    `RINCON_FIXTURE:1 append ${uris(7, 9)} play`,
-    `RINCON_FIXTURE:1 append ${uris(10, 10)} play`,
-  ])
+  // The tracks that follow are added one at a time.
+  assert.deepEqual(
+    sonos.loads.slice(1),
+    Array.from(
+      { length: 10 },
+      (_, index) =>
+        `RINCON_FIXTURE:1 append ${sourceTrack(index + 1).uri} play`,
+    ),
+  )
   const state = setup.engine.getState()
   assert.deepEqual(state.target, { kind: 'room', room: kitchen })
   assert.equal(state.current?.uri, sourceTrack(0).uri)
@@ -1911,12 +1914,31 @@ test('Next on a Sonos room skips in its queue and the queue is topped up', async
   const sonos = fakeSonos()
   const setup = await sourceOnRoom(sonos)
   const loaded = sonos.loads.length
+  const reads = sonos.reads.length
   setup.engine.next()
+  // The next track shows at once, before Sonos answers or reports it.
+  let shown = setup.engine.getState()
+  assert.equal(shown.current?.uri, sourceTrack(1).uri)
+  assert.equal(shown.snapshot?.trackUri, sourceTrack(1).uri)
+  assert.equal(
+    shown.snapshot?.trackName,
+    `Spotify name of ${sourceTrack(1).uri}`,
+  )
+  assert.equal(shown.snapshot?.durationMs, 180_000)
+  assert.equal(shown.snapshot?.positionMs, 0)
+  assert.equal(shown.snapshot?.paused, false)
+  assert.equal(shown.upcoming[0]?.uri, sourceTrack(2).uri)
+  assert.equal(sonos.reads.length, reads)
   await settle()
   assert.deepEqual(sonos.commands, ['RINCON_FIXTURE:1 next'])
+  // The room is read as soon as Sonos has answered the command.
+  await advance(100)
+  assert.equal(sonos.reads.length, reads + 1)
   sonos.room.state = roomState(sourceTrack(1).uri, { hasNext: true })
   await advance(3_000)
   setup.engine.next()
+  shown = setup.engine.getState()
+  assert.equal(shown.current?.uri, sourceTrack(2).uri)
   await settle()
   sonos.room.state = roomState(sourceTrack(2).uri, { hasNext: true })
   await advance(3_000)
@@ -1984,9 +2006,8 @@ test('a track Sonos reports by URI alone is described by the queue, then by Spot
 
 test('a room track Spotify cannot describe keeps what the queue knows of it', async () => {
   const sonos = fakeSonos()
-  const setup = await sourceOnRoom(sonos)
   const uri = sourceTrack(1).uri
-  setup.failLookup(uri)
+  const setup = await sourceOnRoom(sonos, [uri])
   setup.engine.next()
   await settle()
   sonos.room.state = roomState(uri, {
@@ -2011,6 +2032,122 @@ test('a room track Spotify cannot describe keeps what the queue knows of it', as
     setup.lookups.filter((seen) => seen === uri),
     [uri],
   )
+  setup.engine.dispose()
+})
+
+test('a Sonos room that is slow to skip keeps showing the track it was told to play', async () => {
+  const sonos = fakeSonos()
+  const setup = await sourceOnRoom(sonos)
+  setup.engine.next()
+  // Sonos has answered, and the room still reports the track before.
+  await advance(3_000)
+  let state = setup.engine.getState()
+  assert.equal(state.current?.uri, sourceTrack(1).uri)
+  assert.equal(state.snapshot?.trackUri, sourceTrack(1).uri)
+  sonos.room.state = roomState(sourceTrack(1).uri, {
+    positionMs: 2_500,
+    hasNext: true,
+  })
+  await advance(1_000)
+  state = setup.engine.getState()
+  assert.equal(state.snapshot?.trackUri, sourceTrack(1).uri)
+  assert.equal(state.snapshot?.trackName, 'Fixture track')
+  assert.equal(state.failure, null)
+  setup.engine.dispose()
+})
+
+test('a Sonos room that never skips is shown as it is once the wait is over', async () => {
+  const sonos = fakeSonos()
+  const setup = await sourceOnRoom(sonos)
+  setup.engine.next()
+  await advance(8_000)
+  const state = setup.engine.getState()
+  assert.equal(state.snapshot?.trackUri, sourceTrack(0).uri)
+  assert.equal(state.current?.uri, sourceTrack(0).uri)
+  setup.engine.dispose()
+})
+
+test('a skip Sonos refuses is reported and the room is shown as it is', async () => {
+  const sonos = fakeSonos()
+  const setup = await sourceOnRoom(sonos)
+  sonos.failures.push(new Error('Sonos did not accept that.'))
+  setup.engine.next()
+  assert.equal(setup.engine.getState().current?.uri, sourceTrack(1).uri)
+  await advance(1_000)
+  const state = setup.engine.getState()
+  assert.notEqual(state.failure, null)
+  assert.equal(state.snapshot?.trackUri, sourceTrack(0).uri)
+  assert.equal(state.current?.uri, sourceTrack(0).uri)
+  setup.engine.dispose()
+})
+
+test('a Sonos report read before a command was answered does not undo it', async () => {
+  const sonos = fakeSonos()
+  const setup = await sourceOnRoom(sonos)
+  const read = sonos.api.state
+  let answer = () => undefined
+  sonos.api.state = async (groupId, volume) => {
+    const reported = await read(groupId, volume)
+    await new Promise<void>((resolve) => {
+      answer = () => {
+        resolve()
+        return undefined
+      }
+    })
+    return reported
+  }
+  // A read is under way when Pause is pressed.
+  await advance(3_000)
+  const reads = sonos.reads.length
+  setup.engine.toggle()
+  assert.equal(setup.engine.getState().snapshot?.paused, true)
+  await settle()
+  assert.deepEqual(sonos.commands, ['RINCON_FIXTURE:1 pause'])
+  sonos.api.state = read
+  sonos.room.state = roomState(sourceTrack(0).uri, {
+    state: 'paused',
+    positionMs: 5_000,
+    hasNext: true,
+  })
+  // The earlier read answers with the room still playing and is read again.
+  answer()
+  await settle()
+  assert.equal(setup.engine.getState().snapshot?.paused, true)
+  assert.equal(sonos.reads.length, reads + 1)
+  await advance(3_000)
+  assert.equal(setup.engine.getState().snapshot?.paused, true)
+  setup.engine.dispose()
+})
+
+test('a skip waits for a queue change on its way to the Sonos room', async () => {
+  const sonos = fakeSonos()
+  const setup = await sourceOnRoom(sonos)
+  const load = sonos.api.load
+  let finish = () => undefined
+  sonos.api.load = async (groupId, input) => {
+    await load(groupId, input)
+    await new Promise<void>((resolve) => {
+      finish = () => {
+        resolve()
+        return undefined
+      }
+    })
+  }
+  setup.engine.enqueue(track)
+  await advance(3_000)
+  assert.equal(
+    sonos.loads.at(-1),
+    'RINCON_FIXTURE:1 next spotify:track:single play',
+  )
+  setup.engine.next()
+  // The queued track shows at once; the skip follows the track into the room.
+  assert.equal(setup.engine.getState().current, track)
+  await settle()
+  assert.deepEqual(sonos.commands, [])
+  sonos.api.load = load
+  finish()
+  await settle()
+  assert.deepEqual(sonos.commands, ['RINCON_FIXTURE:1 next'])
   setup.engine.dispose()
 })
 
@@ -2047,6 +2184,11 @@ test('playing something else while on a Sonos room starts it on the room', async
     sonos.loads.at(-1),
     'RINCON_FIXTURE:1 replace spotify:track:single play',
   )
+  // Sonos accepted the track, so it shows as playing before the room reports it.
+  const accepted = setup.engine.getState()
+  assert.equal(accepted.starting, false)
+  assert.equal(accepted.snapshot?.trackUri, track.uri)
+  assert.equal(accepted.snapshot?.paused, false)
   sonos.room.state = roomState(track.uri)
   await advance(1_000)
   const state = setup.engine.getState()
