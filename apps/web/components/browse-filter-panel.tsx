@@ -71,7 +71,7 @@ function FilterDialog({
     <dialog
       id={id}
       ref={dialog}
-      className="ds-inspector browse-drawer"
+      className="sec-drawer browse-drawer"
       aria-labelledby={titleId}
       onCancel={(event) => {
         event.preventDefault()
@@ -84,21 +84,23 @@ function FilterDialog({
       }}
       onKeyDown={(event) => event.stopPropagation()}
     >
-      <div className="ds-inspector-bar">
-        <h2 id={titleId} className="browse-drawer-title">
-          Filters
-        </h2>
-        <Button
-          type="button"
-          variant="ghost"
-          icon
-          aria-label="Close filters"
-          onClick={onClose}
-        >
-          <X className="ds-i" aria-hidden />
-        </Button>
+      <div className="ds-inspector">
+        <div className="ds-inspector-bar">
+          <h2 id={titleId} className="browse-drawer-title">
+            Filters
+          </h2>
+          <Button
+            type="button"
+            variant="ghost"
+            icon
+            aria-label="Close filters"
+            onClick={onClose}
+          >
+            <X className="ds-i" aria-hidden />
+          </Button>
+        </div>
+        <div className="ds-inspector-body browse-drawer-body">{children}</div>
       </div>
-      <div className="ds-inspector-body browse-drawer-body">{children}</div>
     </dialog>,
     document.body,
   )

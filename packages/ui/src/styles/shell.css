@@ -134,9 +134,12 @@
     grid-area: 4 / 1 / 5 / -1;
   }
   .shell-nav-row {
-    display: contents;
+    display: flex;
+    flex: 1;
+    min-width: 0;
   }
   .shell-nav .ds-nav-item {
+    position: relative;
     flex: 1;
     flex-direction: column;
     justify-content: center;
@@ -150,9 +153,27 @@
     background: var(--ds-chip);
     box-shadow: none;
   }
+  /* A count sits on the corner of its tab; the Jobs count opens Activity */
+  .shell-nav .ds-nav-item > .ds-count,
+  .shell-activity {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: auto;
+    margin: 0;
+  }
+  .shell-activity-trigger {
+    align-items: start;
+    justify-content: end;
+    width: var(--ds-h-sm);
+    height: var(--ds-h-sm);
+    padding: 0;
+  }
+  .shell-activity-trigger:hover {
+    background: none;
+  }
   .shell-nav-label,
-  .shell-activity,
-  .shell-nav .ds-count {
+  .shell-activity[data-idle] {
     display: none;
   }
 }

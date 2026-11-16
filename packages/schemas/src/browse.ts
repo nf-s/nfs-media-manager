@@ -67,6 +67,8 @@ export const BrowsePageSliceSchema = <T extends z.ZodTypeAny>(itemSchema: T) =>
 
 export const BrowseCountSchema = z.object({
   totalCount: z.number().int().nonnegative(),
+  /** The count after Clear filters: the same library and archived state without search, filters, ranges or limits. */
+  unfilteredCount: z.number().int().nonnegative().optional(),
 })
 
 export const BrowseValueSchema = z.union([

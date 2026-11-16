@@ -55,6 +55,7 @@ export const omdbPlugin: MediaProviderPlugin = {
     id: 'omdb',
     displayName: 'OMDb',
     description: 'Film metadata and ratings',
+    siteUrl: 'https://www.omdbapi.com',
     mediaTypes: ['film'],
     identifierTypes: ['imdb'],
     rateLimit: {

@@ -3,7 +3,7 @@ import { mock, test } from 'node:test'
 import React, { type ReactNode } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { JobSchema, type Job } from '@repo/schemas/job'
+import { JobSchema, type Job, type JobBatchEntry } from '@repo/schemas/job'
 import { LASTFM_SCROBBLE_SYNC_TASK } from '@repo/schemas/lastfm'
 import { SPOTIFY_PODCAST_SYNC_TASK } from '@repo/schemas/subscriptions'
 import { YOUTUBE_SYNC_TASK } from '@repo/schemas/youtube'
@@ -191,6 +191,102 @@ test('a row action chooses its action and opens the review for that job', () => 
     assert.match(html, /role="region" aria-label="Review job action"/)
     assert.match(html, new RegExp(`>${label}</button>`))
   }
+})
+
+function batch(overrides: Partial<JobBatchEntry> = {}): JobBatchEntry {
+  return {
+    kind: 'batch',
+    batchId: 'batch-1',
+    provider: 'fixture',
+    providers: ['fixture'],
+    mediaType: 'album',
+    label: null,
+    importId: null,
+    total: 240,
+    matching: 240,
+    queued: 142,
+    running: 2,
+    succeeded: 94,
+    failed: 2,
+    cancelled: 0,
+    createdAt: '2026-01-02T00:00:00.000Z',
+    startedAt: '2026-01-02T00:02:00.000Z',
+    finishedAt: null,
+    waiting: null,
+    ...overrides,
+  }
+}
+
+test("a batch row's Cancel reviews every unfinished job and keeps finished ones", () => {
+  const html = renderControl(
+    <JobBulkActions
+      jobs={[]}
+      selectedIds={[]}
+      batches={[batch()]}
+      selectedBatchIds={['batch-1']}
+      request={{ action: 'cancel', batchId: 'batch-1', at: 1 }}
+      onSelect={() => {}}
+      onPending={() => {}}
+    />,
+  )
+  assert.match(html, /<option value="cancel" selected="">Cancel \(144\)/)
+  assert.doesNotMatch(html, /value="retry"|value="dismiss"/)
+  assert.match(html, /role="region" aria-label="Review job action"/)
+  assert.match(html, /<strong>Cancel jobs<\/strong> · 144 jobs/)
+  assert.match(html, /Stop 2 running/)
+  assert.match(
+    html,
+    /Cancel 144 unfinished jobs in this batch, including jobs not loaded here. Keep 96 finished jobs and their results./,
+  )
+  assert.doesNotMatch(html, /Stop queued and running work/)
+  assert.match(html, />Confirm cancel jobs<\/button>/)
+})
+
+test('selected batch jobs are not counted twice and other actions skip the batch', () => {
+  const child = JobSchema.parse({
+    ...job('child', 'queued'),
+    options: { batchId: 'batch-1' },
+  })
+  const failed = job('failed', 'failed')
+  const props = {
+    jobs: [child, failed],
+    selectedIds: ['child', 'failed'],
+    batches: [batch({ running: 0 })],
+    selectedBatchIds: ['batch-1'],
+    onSelect: () => {},
+    onPending: () => {},
+  }
+  const cancel = renderControl(
+    <JobBulkActions
+      {...props}
+      request={{ action: 'cancel', batchId: 'batch-1', at: 1 }}
+    />,
+  )
+  assert.match(cancel, /value="cancel" selected="">Cancel \(142\)/)
+  assert.match(cancel, /· 142 jobs · 1 ineligible jobs will be skipped/)
+  assert.doesNotMatch(cancel, /running/)
+  const retry = renderControl(
+    <JobBulkActions
+      {...props}
+      request={{ action: 'retry', jobId: 'failed', at: 1 }}
+    />,
+  )
+  assert.match(retry, /value="retry" selected="">Retry \(1\)/)
+  assert.match(retry, / · 1 batch will be skipped/)
+})
+
+test('a finished batch offers no cancellation', () => {
+  const html = renderControl(
+    <JobBulkActions
+      jobs={[]}
+      selectedIds={[]}
+      batches={[batch({ queued: 0, running: 0, succeeded: 238 })]}
+      selectedBatchIds={['batch-1']}
+      onSelect={() => {}}
+      onPending={() => {}}
+    />,
+  )
+  assert.equal(html, '')
 })
 
 test('successful single jobs render no unavailable action controls', () => {

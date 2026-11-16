@@ -258,7 +258,7 @@ export async function listStoredArtistProviderCandidates(
   return values
 }
 
-function identifierUrl(provider: ArtistProfileProvider, id: string) {
+export function identifierUrl(provider: ArtistProfileProvider, id: string) {
   switch (provider) {
     case 'spotify':
       return 'https://open.spotify.com/artist/' + id

@@ -73,10 +73,14 @@ import {
   withSubscriptionFilter,
 } from '@/utils/subscriptions'
 import {
+  columnOrderParam,
+  hasCustomColumnOrder,
   formatFieldValue,
   itemGridGeometry,
   nextSortDirection,
+  orderColumns,
   orderFields,
+  parseColumnOrder,
   sortedValueLabel,
   textValues,
 } from '@/utils/browse-items'
@@ -120,7 +124,7 @@ const tableRowHeight = 32
 const cardMinWidth = 200
 const noun = { one: 'item', other: 'items' }
 /** Sorts whose value the card does not already show. */
-const cardSortKeys = new Set(['likeCount', 'commentCount'])
+const cardSortKeys = new Set(['watchedAt', 'likeCount', 'commentCount'])
 const searchFieldOptions: Array<{ value: 'all' | 'title'; label: string }> = [
   { value: 'all', label: 'Titles and descriptions' },
   { value: 'title', label: 'Titles only' },
@@ -161,14 +165,21 @@ export default function SubscriptionBrowser() {
     subscriptionFieldOrder,
   )
   const sortField = fields.find((field) => field.key === sortBy)
-  const columnFields = fields.filter((field) => field.key !== 'description')
+  // Watched Yes/No is a filter; the Watched column shows the date.
+  const columnFields = fields.filter(
+    (field) => field.key !== 'description' && field.key !== 'watched',
+  )
   const columnKeys = [
     ...new Set([
       'title',
       ...(state.columns?.map(canonicalBrowseKey) ?? defaultSubscriptionColumns),
     ]),
   ]
-  const columns = columnFields.filter((field) => columnKeys.includes(field.key))
+  const columnOrder = parseColumnOrder(searchParams.get('columnOrder'))
+  const orderedFields = orderColumns(columnFields, columnOrder, 'title')
+  const columns = orderedFields.filter((field) =>
+    columnKeys.includes(field.key),
+  )
   const widths = useColumnWidths(collection, (field) =>
     field.key === 'title'
       ? 340
@@ -648,10 +659,20 @@ export default function SubscriptionBrowser() {
               {view === 'table' && (
                 <BrowseColumnsSection>
                   <ColumnChoices
-                    fields={columnFields}
+                    fields={orderedFields}
                     selected={columnKeys}
                     required="title"
                     onChange={(keys) => setParams({ columns: keys.join(',') })}
+                    onOrderChange={(keys) =>
+                      setParams({
+                        columnOrder: columnOrderParam(keys, columnFields),
+                      })
+                    }
+                    onResetOrder={
+                      hasCustomColumnOrder(orderedFields, columnFields, 'title')
+                        ? () => setParams({ columnOrder: null })
+                        : undefined
+                    }
                   />
                 </BrowseColumnsSection>
               )}
@@ -659,7 +680,14 @@ export default function SubscriptionBrowser() {
           }
           view={view}
           onViewChange={(next) => setParams({ view: next })}
-          count={<BrowseItemsCount query={query} total={total} noun={noun} />}
+          count={
+            <BrowseItemsCount
+              query={query}
+              total={total}
+              unfiltered={query.unfilteredTotal}
+              noun={noun}
+            />
+          }
         />
         {filterPills && (
           <PlacedFilters railSlot={railSlot} onClear={clearFilters}>

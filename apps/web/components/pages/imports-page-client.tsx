@@ -10,9 +10,10 @@ import {
 } from '@repo/schemas/imports'
 import { Button } from '@repo/ui/components/ui/button'
 import { Notice, Skeleton } from '@repo/ui/components/ds/feedback'
+import { Progress } from '@repo/ui/components/ds/meter'
 import { Status } from '@repo/ui/components/ds/status'
 import { PageHead } from '@repo/ui/components/ds/toolbar'
-import { formatCount, formatDateTime } from '@repo/ui/lib/format'
+import { EMPTY_VALUE, formatCount, formatDateTime } from '@repo/ui/lib/format'
 import { fetchApiData } from '@/utils/api'
 import { importIdlePollMs, importPollInterval } from '@/utils/import-cache'
 import { runStatusLabel, runStatusStates } from '@/utils/run-status'
@@ -26,14 +27,40 @@ import { useMediaScope } from '@/components/media-scope'
 import { scopedHref } from '@/utils/media-scope'
 import { ImportStatusNotice } from '@/components/imports-workspace'
 
-function resultSummary(run: ImportRun) {
-  if (!run.result) return run.errorMessage ?? '–'
+/** What an import did, in words: created, updated, unchanged, skipped, failed. */
+export function resultSummary(run: ImportRun) {
+  if (!run.result) return run.errorMessage ?? EMPTY_VALUE
   const { result } = run
   const counts =
     result.created !== undefined
-      ? `${formatCount(result.created)} new items, ${formatCount(result.updated ?? 0)} changed, ${formatCount(result.unchanged ?? 0)} unchanged`
-      : `${formatCount(result.albums)} albums, ${formatCount(result.films)} film rows`
-  return `${counts}${result.skipped ? `, ${formatCount(result.skipped)} skipped` : ''}${result.failed ? `, ${formatCount(result.failed)} failed` : ''}`
+      ? [
+          `${formatCount(result.created)} created`,
+          `${formatCount(result.updated ?? 0)} updated`,
+          ...(result.unchanged
+            ? [`${formatCount(result.unchanged)} unchanged`]
+            : []),
+        ]
+      : [
+          `${formatCount(result.albums)} albums`,
+          `${formatCount(result.films)} films`,
+        ]
+  return [
+    ...counts,
+    ...(result.skipped ? [`${formatCount(result.skipped)} skipped`] : []),
+    ...(result.failed ? [`${formatCount(result.failed)} failed`] : []),
+  ].join(' · ')
+}
+
+/** A queued or running import's progress bar, or a finished import's counts. */
+export function ImportProgress({ run }: { run: ImportRun }) {
+  const active = run.status === 'queued' || run.status === 'running'
+  if (!run.total) return <span className="ds-muted">{EMPTY_VALUE}</span>
+  if (active) return <Progress done={run.processed} total={run.total} />
+  return (
+    <>
+      {formatCount(run.processed)} of {formatCount(run.total)}
+    </>
+  )
 }
 
 export default function ImportsPageClient() {
@@ -142,25 +169,29 @@ export default function ImportsPageClient() {
           },
           { key: 'stage', label: 'Stage', value: (run) => run.stage },
           {
+            key: 'progress',
+            label: 'Progress',
+            value: (run) => (run.total ? run.processed / run.total : null),
+            render: (run) => <ImportProgress run={run} />,
+          },
+          {
             key: 'processed',
             label: 'Processed',
+            defaultVisible: false,
             align: 'end',
             value: (run) => run.processed,
           },
           {
             key: 'total',
             label: 'Total',
+            defaultVisible: false,
             align: 'end',
             value: (run) => run.total,
           },
           {
             key: 'result',
             label: 'Result',
-            value: (run) =>
-              run.errorMessage ??
-              (run.result
-                ? `${run.result.created ?? run.result.albums} new, ${run.result.updated ?? run.result.films} changed`
-                : null),
+            value: (run) => run.errorMessage ?? resultSummary(run),
             render: (run) => (
               <SecondaryCell
                 text={resultSummary(run)}
@@ -217,14 +248,14 @@ export default function ImportsPageClient() {
           },
           {
             key: 'created',
-            label: 'New items',
+            label: 'Created',
             defaultVisible: false,
             align: 'end',
             value: (run) => run.result?.created,
           },
           {
             key: 'updated',
-            label: 'Changed',
+            label: 'Updated',
             defaultVisible: false,
             align: 'end',
             value: (run) => run.result?.updated,

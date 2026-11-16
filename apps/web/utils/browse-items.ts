@@ -1,4 +1,5 @@
 import {
+  canonicalBrowseKey,
   formatBrowseValue,
   type BrowseField,
   type BrowseValues,
@@ -73,6 +74,87 @@ export function orderFields(
     .map((field, index) => ({ field, index }))
     .sort((a, b) => rank(a.field) - rank(b.field) || a.index - b.index)
     .map(({ field }) => field)
+}
+
+/**
+ * The owner's column order from the `columnOrder` URL value: column keys,
+ * comma-separated. Null when the order is the default one.
+ */
+export function parseColumnOrder(value: string | null): string[] | null {
+  const keys = [
+    ...new Set((value ?? '').split(',').map(canonicalBrowseKey)),
+  ].filter(Boolean)
+  return keys.length ? keys : null
+}
+
+/**
+ * Columns in the owner's order. Saved keys come first as saved; a column the
+ * saved order does not name follows the column before it in `defaults`, so
+ * new fields keep their default place. `pinned`, the identity column, leads.
+ */
+export function orderColumns<Column extends { key: string }>(
+  defaults: readonly Column[],
+  saved: readonly string[] | null,
+  pinned?: string,
+): Column[] {
+  const ordered: Column[] = []
+  for (const key of saved ?? []) {
+    const column = defaults.find((item) => item.key === key)
+    if (column && !ordered.includes(column)) ordered.push(column)
+  }
+  defaults.forEach((column, index) => {
+    if (ordered.includes(column)) return
+    const previous = defaults[index - 1]
+    ordered.splice(previous ? ordered.indexOf(previous) + 1 : 0, 0, column)
+  })
+  const lead = ordered.find((column) => column.key === pinned)
+  return lead ? [lead, ...ordered.filter((column) => column !== lead)] : ordered
+}
+
+/** The `columnOrder` URL value for `keys`: null when it is the default order. */
+export function columnOrderParam(
+  keys: readonly string[],
+  defaults: readonly { key: string }[],
+): string | null {
+  return keys.join(',') === defaults.map(({ key }) => key).join(',')
+    ? null
+    : keys.join(',')
+}
+
+/**
+ * Whether `ordered`, the columns as shown, differ from the default order. A
+ * `columnOrder` value that names only the default order or unknown keys does not
+ * count, so Reset order shows only when it would change something.
+ */
+export function hasCustomColumnOrder(
+  ordered: readonly { key: string }[],
+  defaults: readonly { key: string }[],
+  pinned?: string,
+) {
+  return (
+    columnOrderParam(
+      ordered.map(({ key }) => key),
+      orderColumns(defaults, null, pinned),
+    ) !== null
+  )
+}
+
+/**
+ * Whether the toolbar count is still loading. Page one alone can give the
+ * total, but the count query also brings the unfiltered total for `3 of 128`,
+ * so the count waits for it rather than reading `3 albums` first. A failed
+ * count query falls back to the total alone.
+ */
+export function isBrowseCounting({
+  hasTotal,
+  conflict,
+  countSettled,
+}: {
+  hasTotal: boolean
+  conflict: boolean
+  countSettled: boolean
+}) {
+  return !hasTotal || conflict || !countSettled
 }
 
 /** A new sort starts ascending for text and descending for dates and numbers. */

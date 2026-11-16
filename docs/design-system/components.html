@@ -560,7 +560,7 @@
                 '<b>Granularity follows the data.</b> Of day, week, month, quarter and year, the chart takes the finest that averages three or more per point, with at least ten points on screen and no more than one point every 8px, so a narrow chart uses a coarser grain than a wide one. A sparse history falls back to the coarsest bucket that still gives ten points, and a short one is padded to 30 days, so one month of listening is thirty points, not one dot.',
                 '<b>Periods with no plays are zero,</b> so gaps read as gaps.',
                 '<b>The current, unfinished period</b> is dotted, so a part-month does not read as a drop.',
-                '<b>Ranges:</b> 30d, 1y, 5y, All. The caption states the measure and the granularity in use.',
+                '<b>Ranges:</b> 30d, 1y, 5y, All. The caption states the measure and the granularity in use. A history that is stored by the day for a short time offers only the ranges it can fill: provider requests use 30d and 90d.',
                 '<b>Sparkline:</b> the same curve at 72 × 20px, without axes, for table cells and summaries.',
               ]) +
               g.note(
@@ -595,7 +595,7 @@
                   ),
               ) +
               g.rules([
-                '<b>Section.</b> A 12px semibold title, an optional count or note, and one action on the right. Sections are separated by a hairline, not boxes.',
+                '<b>Section.</b> A 12px semibold title, an optional count or note, and one action on the right. Sections are separated by a hairline, not boxes. On a phone the controls wrap under the title instead of widening the page.',
                 '<b>Facts.</b> Label above value, in a grid. Only fields a person reads; provider statistics live in Sources.',
                 '<b>Stat.</b> A large figure with its label beneath, optionally a sparkline beside it.',
               ]) +
@@ -660,8 +660,9 @@
                   `<div style="max-width:220px;margin-top:12px">${D.progress(96, 240)}</div>`,
               ) +
               g.rules([
-                '<b>Source row.</b> One provider per row: match state, identifier, when it was last fetched, and the queue state if it is not idle. Refresh and Open at provider are always the same two icons. The row opens in place.',
-                '<b>Coverage.</b> How many items in a set have a field or a source, with one button that queues the missing ones.',
+                '<b>Source row.</b> One provider per row: match state, identifier, when it was last fetched, and the queue state if it is not idle. Refresh and Open at provider are always the same two icons. The row opens in place. The action follows the state: a row without an ID shows one button, Find match where the provider can be searched and Add ID where it cannot. When the facts do not fit on one line they wrap; they never overlap.',
+                "<b>Find match</b> opens in the row: a search field holding the item's own text, then the candidates as compact list rows with artwork, title, creator and year, a link to the provider and Choose. The stored candidate reads Current. The identifier form follows for a row without an ID.",
+                '<b>Coverage.</b> How many items in a set have a field or a source, with one button that queues the missing ones. On a phone the button takes its own line under the bar. A count links to the list of those items where the page has one.',
                 '<b>Progress.</b> A bar with <code>done / total</code>. Used for jobs, imports and batches in place of text.',
               ]),
           },
@@ -689,7 +690,7 @@
                 '<b>Notice.</b> One line, an optional single action. Neutral, attention or danger. It sits in the flow of the panel it concerns and never floats over content.',
                 '<b>Empty and error states</b> use the same block: what happened, what to do, one button. No illustrations.',
                 '<b>Loading</b> is a skeleton of the content that will appear, not a spinner or the word Loading.',
-                '<b>Popover and menu</b> share one shell: 8px radius, hairline, one shadow. Filters, columns, devices, activity and confirmations all use it.',
+                '<b>Popover and menu</b> share one shell: 8px radius, hairline, one shadow. Filters, columns, devices, activity and confirmations all use it. A menu item that is a link looks the same as one that is a button.',
               ]) +
               g.note(
                 'Replaces',
@@ -714,6 +715,7 @@
                 '<b>Same order for every resource:</b> artwork, kind, title, creator, one line of facts, actions.',
                 '<b>Title is 18px</b> in the drawer and 22px on the standalone page.',
                 '<b>Actions:</b> Play and Queue first where the item can be played, then item-specific actions, then Open at provider and More at the far end.',
+                '<b>Side panels.</b> Filters, Add and Scrobble link use the same modal side panel as details: a panel on the right, or a sheet from the top edge on a phone, closed by its Close button, Escape or the backdrop.',
               ]) +
               g.note(
                 'Replaces',
@@ -732,7 +734,7 @@
                 { style: 'overflow-x:auto' },
               ) +
               g.rules([
-                '<b>Rail.</b> Jobs and Providers carry a count when something is running, waiting or failed, so their state is visible from every page.',
+                '<b>Rail.</b> Jobs and Providers carry a count when something is running, waiting or failed, so their state is visible from every page. On a phone the count sits on the corner of the tab, and the Jobs count opens Activity above the tab bar.',
                 '<b>Dock.</b> Messages about playback belong in the dock beside the device button. The floating banner above the dock, which covers the last row of every list, goes away.',
               ]),
           },

@@ -3,7 +3,12 @@ import type { Context } from 'hono'
 import { createMiddleware } from 'hono/factory'
 import { z } from 'zod'
 import { BrowseCountSchema } from '@repo/schemas/browse'
-import { CoverageQuerySchema, CoverageSchema } from '@repo/schemas/coverage'
+import {
+  CoverageEntriesQuerySchema,
+  CoverageEntriesSchema,
+  CoverageQuerySchema,
+  CoverageSchema,
+} from '@repo/schemas/coverage'
 import { ListeningSeriesSchema } from '@repo/schemas/lastfm'
 import {
   PlaylistAlbumAdditionInputSchema,
@@ -44,7 +49,10 @@ import {
   queueSpotifyPlaylistAddition,
 } from '@/services/spotify-playlist-additions'
 import { getPlaylistListeningSeries } from '@/services/listening-series'
-import { getPlaylistCoverage } from '@/services/metadata-coverage'
+import {
+  getPlaylistCoverage,
+  getPlaylistCoverageEntries,
+} from '@/services/metadata-coverage'
 
 function userId(c: Context<AppEnv>) {
   const user = c.get('user')
@@ -253,6 +261,40 @@ const app: OpenAPIHono<AppEnv> = createOpenAPIApp()
       generateJsonResponse(
         c,
         await getPlaylistCoverage(
+          c.req.valid('param').id,
+          c.req.valid('query'),
+        ),
+        200,
+      ),
+  )
+  .openapi(
+    createRoute({
+      method: 'get',
+      path: '/:id/coverage/entries',
+      middleware: [authMiddleware()],
+      request: {
+        params: PlaylistParamsSchema,
+        query: CoverageEntriesQuerySchema,
+      },
+      responses: {
+        200: {
+          description:
+            'A page of the playlist entries whose albums are missing or stale for a metadata provider, with the gaps of each entry',
+          content: {
+            'application/json': {
+              schema: createResponseSchema(CoverageEntriesSchema),
+            },
+          },
+        },
+        401: jsonErrorResponse('Unauthorized'),
+        404: jsonErrorResponse('Playlist not found'),
+        422: validationErrorResponse,
+      },
+    }),
+    async (c) =>
+      generateJsonResponse(
+        c,
+        await getPlaylistCoverageEntries(
           c.req.valid('param').id,
           c.req.valid('query'),
         ),

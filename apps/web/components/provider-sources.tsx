@@ -33,10 +33,11 @@ import {
 } from '@repo/ui/components/ds/source'
 import { Status } from '@repo/ui/components/ds/status'
 import { Button } from '@repo/ui/components/ui/button'
-import { formatAge, formatDateTime } from '@repo/ui/lib/format'
+import { formatAge, formatDateTime, formatItemCount } from '@repo/ui/lib/format'
 import { fetchApiData } from '@/utils/api'
 import { canCancelJob } from '@/utils/job-selection'
 import {
+  IDENTIFIER_REQUIRED,
   jobState,
   mergeHistory,
   providerMarkText,
@@ -47,6 +48,7 @@ import {
 } from '@/utils/source-rows'
 import { DetailLink } from './detail-link'
 import { useDetailView } from './detail-inspector-context'
+import { useUnresolvedMatches, type FindMatchContext } from './find-match'
 import JsonTree from './json-tree'
 import { errorMessage } from './lastfm-sync'
 import { providerLocalWorkerQuery } from './provider-local-worker'
@@ -74,6 +76,8 @@ export type ProviderSourceRow = {
   provides?: string[]
   /** Further blocks shown in the open row, such as scrobble names. */
   blocks?: { title: string; content: ReactNode }[]
+  /** Searches the provider for candidates: Find match, or Choose. */
+  findMatch?: (context: FindMatchContext) => ReactNode
 }
 
 const HISTORY_PAGE = 10
@@ -421,12 +425,15 @@ export function ProviderSources({
   const sourceMode = view.params.get('sourceMode')
   const opened: {
     provider: string
-    type: 'history' | 'edit'
+    type: 'history' | 'edit' | 'match'
   } | null =
     savedProvider && sourceMode !== 'closed'
       ? {
           provider: savedProvider,
-          type: sourceMode === 'edit' ? 'edit' : 'history',
+          type:
+            sourceMode === 'edit' || sourceMode === 'match'
+              ? sourceMode
+              : 'history',
         }
       : null
   function setOpened(next: typeof opened) {
@@ -489,27 +496,56 @@ export function ProviderSources({
       .filter(canCancelJob)
       .map((job) => [job.provider, job]),
   )
+  const unresolved = useUnresolvedMatches(
+    scope,
+    rows.some((row) => row.findMatch),
+  )
+  const unresolvedByProvider = new Map(
+    (unresolved.data?.items ?? []).map((item) => [item.provider, item]),
+  )
   const ordered = [...rows].sort((left, right) =>
     left.label.localeCompare(right.label),
   )
-  const canRefresh = (row: ProviderSourceRow) =>
+  const canRefresh = (row: ProviderSourceRow, identified = false) =>
     activeJobs.isSuccess &&
     !refresh.isPending &&
-    Boolean(row.refresh && !row.unavailable && !activeByProvider.has(row.id))
-  const eligible = ordered.filter(canRefresh)
+    Boolean(
+      row.refresh &&
+      (!row.unavailable ||
+        (identified && row.unavailable === IDENTIFIER_REQUIRED)) &&
+      !activeByProvider.has(row.id),
+    )
+  const eligible = ordered.filter((row) => canRefresh(row))
+  /** Candidates kept by the provider's latest, ambiguous lookup. */
+  const storedCandidates = (row: ProviderSourceRow) =>
+    (row.findMatch && unresolvedByProvider.get(row.id)?.candidates) || []
   const matches = new Map(
-    ordered.map((row) => [
-      row.id,
-      row.match ??
-        sourceMatch({
-          identifier: row.identifier,
-          updatedAt: row.updatedAt,
-          unavailable: row.unavailable,
-          refreshable: Boolean(row.refresh),
-        }),
-    ]),
+    ordered.map((row) => {
+      const lookup = row.findMatch && unresolvedByProvider.get(row.id)
+      const candidates = storedCandidates(row).length
+      return [
+        row.id,
+        candidates
+          ? {
+              state: 'attention',
+              label: formatItemCount(candidates, {
+                one: 'candidate',
+                other: 'candidates',
+              }),
+            }
+          : (row.match ??
+            (lookup?.outcome === 'not-found' && !row.identifier
+              ? { state: 'attention', label: 'Needs ID' }
+              : sourceMatch({
+                  identifier: row.identifier,
+                  updatedAt: row.updatedAt,
+                  unavailable: row.unavailable,
+                  refreshable: Boolean(row.refresh),
+                }))),
+      ] satisfies [string, SourceMatch]
+    }),
   )
-  function toggle(row: ProviderSourceRow, type: 'history' | 'edit') {
+  function toggle(row: ProviderSourceRow, type: 'history' | 'edit' | 'match') {
     setOpened(
       opened?.provider === row.id && opened.type === type
         ? null
@@ -583,12 +619,58 @@ export function ProviderSources({
           const job = activeByProvider.get(row.id)
           const rowCanRefresh = canRefresh(row)
           const needsId = match?.label === 'Needs ID' && row.editor
+          const matching =
+            open && opened?.type === 'match' && Boolean(row.findMatch)
+          const stored = storedCandidates(row)
+          const findMatchAction = stored.length
+            ? 'Choose'
+            : match?.label === 'Needs ID' && row.findMatch
+              ? 'Find match'
+              : null
           const body: ReactNode[] = []
-          if (open) {
-            if (row.editor)
+          if (matching && row.findMatch)
+            body.push(
+              <SourceBlock key="find-match" title="Find match">
+                {unresolved.isLoading ? (
+                  <Skeleton height={48} />
+                ) : (
+                  row.findMatch({
+                    // Choosing a candidate supplies the missing identifier.
+                    canRefresh: canRefresh(row, true),
+                    stored,
+                    query: unresolved.data?.query ?? undefined,
+                    cancel: () => setOpened(null),
+                    chosen: () =>
+                      setOpened({ provider: row.id, type: 'history' }),
+                  })
+                )}
+              </SourceBlock>,
+            )
+          if (matching && needsId && row.editor)
+            body.push(
+              <SourceBlock key="identifier" title="Identifier">
+                {row.editor(rowCanRefresh, () => setOpened(null))}
+              </SourceBlock>,
+            )
+          if (!matching && open) {
+            const editor = row.editor?.(rowCanRefresh, () => setOpened(null))
+            if (row.findMatch && !editing)
               body.push(
                 <SourceBlock key="identifier" title="Identifier">
-                  {row.editor(rowCanRefresh, () => setOpened(null))}
+                  <div className="data-stack">
+                    {editor}
+                    <span>
+                      <Button size="xs" onClick={() => toggle(row, 'match')}>
+                        Find match
+                      </Button>
+                    </span>
+                  </div>
+                </SourceBlock>,
+              )
+            else if (row.editor)
+              body.push(
+                <SourceBlock key="identifier" title="Identifier">
+                  {editor}
                 </SourceBlock>,
               )
             if (!editing) {
@@ -673,29 +755,44 @@ export function ProviderSources({
                 state={<SourceState job={job} unavailable={row.unavailable} />}
                 actions={
                   <>
-                    {needsId ? (
+                    {findMatchAction && (
                       <Button
                         size="xs"
-                        aria-expanded={editing}
-                        onClick={() => toggle(row, 'edit')}
+                        aria-expanded={matching}
+                        onClick={() => toggle(row, 'match')}
                       >
-                        Add ID
+                        {findMatchAction}
                       </Button>
-                    ) : (
-                      row.editor && (
-                        <Button
-                          size="xs"
-                          variant="ghost"
-                          icon
-                          title={`Edit ${row.label} identifier`}
-                          aria-label={`Edit ${row.label} identifier`}
-                          aria-expanded={editing}
-                          onClick={() => toggle(row, 'edit')}
-                        >
-                          <Pencil className="ds-i" data-size="sm" aria-hidden />
-                        </Button>
-                      )
                     )}
+                    {needsId
+                      ? // Find match leads; the identifier form stays in the
+                        // opened row.
+                        !findMatchAction && (
+                          <Button
+                            size="xs"
+                            aria-expanded={editing}
+                            onClick={() => toggle(row, 'edit')}
+                          >
+                            Add ID
+                          </Button>
+                        )
+                      : row.editor && (
+                          <Button
+                            size="xs"
+                            variant="ghost"
+                            icon
+                            title={`Edit ${row.label} identifier`}
+                            aria-label={`Edit ${row.label} identifier`}
+                            aria-expanded={editing}
+                            onClick={() => toggle(row, 'edit')}
+                          >
+                            <Pencil
+                              className="ds-i"
+                              data-size="sm"
+                              aria-hidden
+                            />
+                          </Button>
+                        )}
                     {scope && row.refresh && (
                       <Button
                         size="xs"

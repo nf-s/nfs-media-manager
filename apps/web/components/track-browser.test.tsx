@@ -46,7 +46,11 @@ const track = TrackListItemSchema.parse({
   lastListenedAt: null,
 })
 
-async function render(search = '', total = 250) {
+async function render(
+  search = '',
+  total = 250,
+  counts?: { totalCount: number; unfilteredCount: number },
+) {
   const { default: TrackBrowser } = await import('./track-browser')
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -59,6 +63,17 @@ async function render(search = '', total = 250) {
     sortBy: params.get('sortBy') ?? 'dateAdded',
     direction: params.get('direction') === 'asc' ? 'asc' : 'desc',
   })
+  const countParams = new URLSearchParams({
+    q: params.get('q') ?? '',
+    filters: '[]',
+    ranges: '[]',
+  })
+  countParams.sort()
+  if (counts)
+    client.setQueryData(
+      ['tracks', 'browse-count', countParams.toString()],
+      counts,
+    )
   client.setQueryData(['ai-status'], { available: true, reason: null })
   client.setQueryData(['tracks', 'fields'], trackBrowseFields)
   client.setQueryData(['tracks', 'browse', identity, 1], {
@@ -170,6 +185,26 @@ test('Tracks Table: drawn default columns, pinned title with thumbnail and play 
     /aria-label="Playlists">.*?href="\/playlists\/playlist-one".*?Morning.*?Evening.*?\+1/,
   )
   assert.doesNotMatch(html, /[↑↓]/)
+})
+
+test('Tracks Table follows the chosen column order with the title first', async () => {
+  const html = await render(
+    'view=table&columnOrder=scrobbles,title,album,durationSec&columns=album,durationSec,scrobbles',
+  )
+  assert.deepEqual(
+    [...html.matchAll(/aria-label="Resize ([^"]+)"/g)].map(
+      ([, label]) => label,
+    ),
+    ['Title', 'Scrobbles', 'Album', 'Duration'],
+  )
+})
+
+test('a filtered Tracks count reads N of M', async () => {
+  const html = await render('q=Example', 1, {
+    totalCount: 1,
+    unfilteredCount: 1024,
+  })
+  assert.match(html, /role="status">1 of 1,024 tracks<\/span>/)
 })
 
 test('an empty Tracks library and an empty search say different things', async () => {

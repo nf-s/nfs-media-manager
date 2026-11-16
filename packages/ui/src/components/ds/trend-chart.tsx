@@ -21,10 +21,12 @@ export type TrendMonth = { month: string; count: number }
 
 const RANGES: readonly { value: TrendRange; label: string }[] = [
   { value: '30d', label: '30d' },
+  { value: '90d', label: '90d' },
   { value: '1y', label: '1y' },
   { value: '5y', label: '5y' },
   { value: 'all', label: 'All' },
 ]
+const DEFAULT_RANGES: readonly TrendRange[] = ['30d', '1y', '5y', 'all']
 const MARGIN = { top: 10, right: 6, bottom: 22, left: 32 }
 const FIVE_YEARS_MS = 1826 * 86_400_000
 
@@ -44,11 +46,12 @@ export function TrendChart({
   months,
   unit = 'scrobbles',
   defaultRange = 'all',
-  ranges = RANGES.map((range) => range.value),
+  ranges = DEFAULT_RANGES,
   height = 168,
   now,
   extra,
   monthsOnly = false,
+  partialDay = false,
 }: {
   days: readonly TrendDay[]
   months?: readonly TrendMonth[]
@@ -62,6 +65,8 @@ export function TrendChart({
   extra?: ReactNode
   /** Only `months` is known: chart months and coarser in every range. */
   monthsOnly?: boolean
+  /** Today is still being counted: dot the last point at day grain too. */
+  partialDay?: boolean
 }) {
   const box = useRef<HTMLDivElement>(null)
   const tip = useRef<HTMLDivElement>(null)
@@ -125,7 +130,7 @@ export function TrendChart({
     y(point.v),
   ])
   const path = smoothPath(coordinates)
-  const partial = grain !== 'day' && path.segments.length > 1
+  const partial = (partialDay || grain !== 'day') && path.segments.length > 1
   const solid =
     path.start + (partial ? path.segments.slice(0, -1) : path.segments).join('')
   const first = coordinates[0]
@@ -264,6 +269,10 @@ export function TrendChart({
               </b>
               <span>
                 {periodLabel(hovered.t, grain, hover === points.length - 1)}
+                {partialDay &&
+                  grain === 'day' &&
+                  hover === points.length - 1 &&
+                  ', so far'}
               </span>
             </>
           )}

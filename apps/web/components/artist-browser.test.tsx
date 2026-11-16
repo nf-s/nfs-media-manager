@@ -8,7 +8,10 @@ import {
   SearchParamsContext,
 } from 'next/dist/shared/lib/hooks-client-context.shared-runtime'
 import { ArtistQuerySchema, ArtistSummarySchema } from '@repo/schemas/creators'
-import { artistBrowseFields } from '@repo/schemas/artist-browse'
+import {
+  ARTIST_LISTENING_MONTHS,
+  artistBrowseFields,
+} from '@repo/schemas/artist-browse'
 import { ConfigContext } from './providers'
 
 require.extensions['.css'] = (module) => {
@@ -26,10 +29,17 @@ const artist = ArtistSummarySchema.parse({
   albumCount: 4,
   trackCount: 12,
   playlistCount: 2,
+  scrobbleCount: 1234,
+  listeningMonths: [0, 2, 5, 1, 0, 0, 3, 8, 4, 2, 6, 9],
   browse: { genre: ['Jazz'], country: ['GB'], playlist: ['Morning'] },
 })
 
-async function render(search = '', total = 250) {
+async function render(
+  search = '',
+  total = 250,
+  counts?: { totalCount: number; unfilteredCount: number },
+  item = artist,
+) {
   const { default: ArtistBrowser } = await import('./artist-browser')
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -45,10 +55,22 @@ async function render(search = '', total = 250) {
     playlistIds: parsed.playlistIds,
     limitResults: parsed.limitResults,
   })
+  const countParams = new URLSearchParams({
+    q: parsed.q ?? '',
+    filters: JSON.stringify(parsed.filters),
+    ranges: JSON.stringify(parsed.ranges),
+    playlistIds: JSON.stringify(parsed.playlistIds),
+  })
+  countParams.sort()
+  if (counts)
+    client.setQueryData(
+      ['artists', 'browse-count', countParams.toString()],
+      counts,
+    )
   client.setQueryData(['ai-status'], { available: true, reason: null })
   client.setQueryData(['artists', 'fields'], artistBrowseFields)
   client.setQueryData(['artists', 'browse', identity, 1], {
-    items: total ? [artist] : [],
+    items: total ? [item] : [],
     page: 1,
     size: 100,
     hasMore: total > 100,
@@ -109,7 +131,15 @@ test('Artists list uses 48px rows: round thumbnail, title, country, tag pills an
   assert.match(html, /title="Tag: Jazz" class="ds-pill"/)
   assert.match(
     html,
-    /<span class="ds-w-num">4<\/span><span class="ds-w-num">12<\/span><span class="ds-w-num">2<\/span>/,
+    new RegExp(
+      `<span class="ds-w-num">Albums</span><span class="ds-w-num">Scrobbles</span><span class="ds-w-spark">${ARTIST_LISTENING_MONTHS} months</span>`,
+    ),
+  )
+  assert.match(
+    html,
+    new RegExp(
+      `<span class="ds-w-num">4</span><span class="ds-w-num">1,234</span><span class="ds-w-spark"><svg class="ds-spark"[^>]*role="img" aria-label="Scrobbles per month for Example Artist, last ${ARTIST_LISTENING_MONTHS} months"`,
+    ),
   )
   assert.ok((html.match(/data-placeholder=""/g) ?? []).length > 0)
   assert.doesNotMatch(html, /onDoubleClick|media-tile|list-row|browse-table/)
@@ -124,12 +154,31 @@ test('Artists grid uses clean round artwork cards with a meta line and tags', as
   assert.match(grid, /<span class="ds-card-by">GB<\/span>/)
   assert.match(
     grid,
-    /<span class="ds-card-meta"><span>4 albums<\/span><span>12 tracks<\/span><\/span>/,
+    /<span class="ds-card-meta"><span>4 albums<\/span><span>1,234 scrobbles<\/span><\/span>/,
   )
   assert.match(grid, /title="Tag: Jazz"/)
   assert.doesNotMatch(grid, /ds-play/)
   const sorted = await render('view=grid&sortBy=createdAt&direction=desc')
   assert.match(sorted, /<span>Added 2026-03-0[12]<\/span>/)
+})
+
+test('an artist without a scrobble count shows the empty value, not 0 scrobbles', async () => {
+  const unknown = ArtistSummarySchema.parse({
+    ...artist,
+    scrobbleCount: undefined,
+    listeningMonths: undefined,
+  })
+  const grid = await render('view=grid', 250, undefined, unknown)
+  assert.doesNotMatch(grid, /0 scrobbles/)
+  assert.match(
+    grid,
+    /<span class="ds-card-meta"><span>4 albums<\/span><span><span class="ds-empty-value">–<\/span><\/span><\/span>/,
+  )
+  const list = await render('', 250, undefined, unknown)
+  assert.match(
+    list,
+    /<span class="ds-w-num">4<\/span><span class="ds-w-num"><span class="ds-empty-value">–<\/span><\/span>/,
+  )
 })
 
 test('Artists Table pins the name, right-aligns counts and sorts through the shared header', async () => {
@@ -160,9 +209,48 @@ test('Artists Table pins the name, right-aligns counts and sorts through the sha
     'Added',
     'Albums',
     'Tracks',
+    'Scrobbles',
     'Tags',
   ])
   assert.match(defaults, /<td title="2026-03-01">2026-03-01<\/td>/)
+  assert.match(defaults, /<td data-align="end" title="1,234">1,234<\/td>/)
+  assert.match(
+    defaults,
+    /aria-label="Resize Scrobbles"/,
+    'Scrobbles is sortable and resizable like the other counts',
+  )
+})
+
+test('Artists Table shows the chosen column order with the name pinned first', async () => {
+  const table = await render(
+    'view=table&columns=country,albumCount,scrobbles&columnOrder=scrobbles,country,name,albumCount',
+  )
+  const heads = [...table.matchAll(/title="Sort by ([^"]+)"/g)].map(
+    ([, label]) => label,
+  )
+  assert.deepEqual(heads, ['Artist', 'Scrobbles', 'Country', 'Albums'])
+  const saved = await render('view=table&columns=albumCount,country')
+  assert.deepEqual(
+    [...saved.matchAll(/title="Sort by ([^"]+)"/g)].map(([, label]) => label),
+    ['Artist', 'Country', 'Albums'],
+    'a saved selection without an order keeps the default order',
+  )
+})
+
+test('a filtered count reads N of M from the unfiltered total', async () => {
+  const html = await render('q=Example', 1, {
+    totalCount: 1,
+    unfilteredCount: 250,
+  })
+  assert.match(
+    html,
+    /<span class="ds-toolbar-count" role="status">1 of 250 artists<\/span>/,
+  )
+  const unfiltered = await render('', 250, {
+    totalCount: 250,
+    unfilteredCount: 250,
+  })
+  assert.match(unfiltered, /role="status">250 artists<\/span>/)
 })
 
 test('mixed filters, ranges, limits and legacy playlist scopes stay visible with no results', async () => {

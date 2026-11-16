@@ -5,9 +5,11 @@ const mocks = vi.hoisted(() => ({
   session: vi.fn(),
   items: vi.fn(),
   item: vi.fn(),
+  watched: vi.fn(),
   facets: vi.fn(),
   sources: vi.fn(),
   source: vi.fn(),
+  counts: vi.fn(),
   status: vi.fn(),
   queue: vi.fn(),
   schedule: vi.fn(),
@@ -20,9 +22,11 @@ vi.mock('@/lib/auth', () => ({ auth: { api: { getSession: mocks.session } } }))
 vi.mock('@/services/subscription-library', () => ({
   listSubscriptionItems: mocks.items,
   getSubscriptionItem: mocks.item,
+  setSubscriptionItemWatched: mocks.watched,
   listSubscriptionFacets: mocks.facets,
   listSubscriptionSources: mocks.sources,
   getSubscriptionSource: mocks.source,
+  subscriptionBrowseCounts: mocks.counts,
 }))
 vi.mock('@/services/subscription-sync', () => ({
   getSubscriptionSyncStatus: mocks.status,
@@ -67,6 +71,24 @@ describe('subscriptions API', () => {
     })
   })
   afterEach(() => vi.unstubAllGlobals())
+
+  it('returns the filtered and the unfiltered count for Browse', async () => {
+    mocks.session.mockResolvedValueOnce(null)
+    expect((await send('GET', '/browse-count')).status).toBe(401)
+    expect((await send('GET', '/browse-count?filters=invalid')).status).toBe(
+      422,
+    )
+    expect(mocks.counts).not.toHaveBeenCalled()
+    mocks.counts.mockResolvedValueOnce({ totalCount: 2, unfilteredCount: 64 })
+    const response = await send('GET', '/browse-count?q=bread')
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({
+      data: { totalCount: 2, unfilteredCount: 64 },
+    })
+    expect(mocks.counts).toHaveBeenCalledWith(
+      expect.objectContaining({ q: 'bread' }),
+    )
+  })
 
   it('requires a session for every endpoint', async () => {
     mocks.session.mockResolvedValue(null)
@@ -205,6 +227,49 @@ describe('subscriptions API', () => {
     expect(mocks.item).toHaveBeenCalledWith(EPISODE)
     mocks.item.mockResolvedValue({ id: EPISODE })
     expect((await send('GET', `/${EPISODE}`)).status).toBe(200)
+  })
+
+  it('sets and clears the watched date through the library service', async () => {
+    const watchedAt = '2026-09-21T18:30:00.000Z'
+    mocks.session.mockResolvedValueOnce(null)
+    expect((await send('PATCH', `/${EPISODE}`, { watchedAt })).status).toBe(401)
+    for (const body of [
+      {},
+      { watchedAt: 'yesterday' },
+      { watchedAt, title: 'Changed' },
+    ])
+      expect((await send('PATCH', `/${EPISODE}`, body)).status).toBe(422)
+    expect(
+      (await send('PATCH', '/not-an-id', { watchedAt: null })).status,
+    ).toBe(422)
+    expect(
+      (
+        await send(
+          'PATCH',
+          `/${EPISODE}`,
+          { watchedAt },
+          'https://evil.invalid',
+        )
+      ).status,
+    ).toBe(403)
+    expect(mocks.watched).not.toHaveBeenCalled()
+    mocks.watched.mockResolvedValue({ id: EPISODE, watchedAt })
+    const set = await send('PATCH', `/${EPISODE}`, { watchedAt })
+    expect(set.status).toBe(200)
+    expect(await set.json()).toMatchObject({ data: { watchedAt } })
+    expect(mocks.watched).toHaveBeenLastCalledWith(EPISODE, { watchedAt })
+    expect(
+      (await send('PATCH', `/${EPISODE}`, { watchedAt: null })).status,
+    ).toBe(200)
+    expect(mocks.watched).toHaveBeenLastCalledWith(EPISODE, {
+      watchedAt: null,
+    })
+    mocks.watched.mockRejectedValue(
+      new ServerError({ statusCode: 404, message: 'Item not found' }),
+    )
+    expect(
+      (await send('PATCH', `/${EPISODE}`, { watchedAt: null })).status,
+    ).toBe(404)
   })
 
   it('passes the provider, user and schedule to the sync service', async () => {

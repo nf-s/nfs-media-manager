@@ -64,10 +64,14 @@ import {
   withTrackFilter,
 } from '@/utils/track-browse'
 import {
+  columnOrderParam,
+  hasCustomColumnOrder,
   formatFieldValue,
   itemGridGeometry,
   nextSortDirection,
+  orderColumns,
   orderFields,
+  parseColumnOrder,
   sortedValueLabel,
   textValues,
 } from '@/utils/browse-items'
@@ -159,7 +163,11 @@ export default function TrackBrowser() {
         defaultTrackColumns),
     ]),
   ]
-  const columns = fields.filter((field) => columnKeys.includes(field.key))
+  const columnOrder = parseColumnOrder(searchParams.get('columnOrder'))
+  const orderedFields = orderColumns(fields, columnOrder, 'title')
+  const columns = orderedFields.filter((field) =>
+    columnKeys.includes(field.key),
+  )
   const widths = useColumnWidths(collection, (field) =>
     field.key === 'title' ? 280 : field.type === 'text' ? 180 : 110,
   )
@@ -656,10 +664,18 @@ export default function TrackBrowser() {
               {view === 'table' && (
                 <BrowseColumnsSection>
                   <ColumnChoices
-                    fields={fields}
+                    fields={orderedFields}
                     selected={columnKeys}
                     required="title"
                     onChange={(keys) => setParams({ columns: keys.join(',') })}
+                    onOrderChange={(keys) =>
+                      setParams({ columnOrder: columnOrderParam(keys, fields) })
+                    }
+                    onResetOrder={
+                      hasCustomColumnOrder(orderedFields, fields, 'title')
+                        ? () => setParams({ columnOrder: null })
+                        : undefined
+                    }
                   />
                 </BrowseColumnsSection>
               )}
@@ -667,7 +683,14 @@ export default function TrackBrowser() {
           }
           view={view}
           onViewChange={(next) => setParams({ view: next })}
-          count={<BrowseItemsCount query={query} total={total} noun={noun} />}
+          count={
+            <BrowseItemsCount
+              query={query}
+              total={total}
+              unfiltered={query.unfilteredTotal}
+              noun={noun}
+            />
+          }
         />
         {filterPills && (
           <PlacedFilters railSlot={railSlot} onClear={clearFilters}>

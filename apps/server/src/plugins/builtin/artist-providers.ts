@@ -19,7 +19,7 @@ import {
 } from './album-provider-helpers'
 import { discogsRequest } from './discogs'
 import { requestLastFm } from './lastfm'
-import { musicBrainzRequest } from './musicbrainz'
+import { musicBrainzRequest, musicBrainzText } from './musicbrainz'
 import { spotifyClientToken } from './spotify'
 
 const searchLimit = 5
@@ -180,6 +180,157 @@ type ArtistRequestContext = MediaPluginTestContext & {
   searched(): Promise<void>
 }
 
+type ArtistSearchContext = MediaPluginTestContext & {
+  recordDiagnostic?: (diagnostic: unknown) => void
+}
+
+/** A search result with what Find match shows beside its name. */
+export type ArtistSearchCandidate = ArtistCandidate & { artworkUrl?: string }
+
+/** One page of the provider's artist search: the request a lookup makes by name. */
+async function searchArtistProvider(
+  provider: ArtistProfileProvider,
+  query: string,
+  context: ArtistSearchContext,
+  spotifyToken: () => Promise<string>,
+): Promise<{
+  response: JsonValue
+  total: number
+  candidates: ArtistSearchCandidate[]
+}> {
+  switch (provider) {
+    case 'spotify': {
+      const response = JsonValueSchema.parse(
+        await spotifyJson(context.request, await spotifyToken(), 'search', {
+          q: query,
+          type: 'artist',
+          limit: String(searchLimit),
+        }),
+      )
+      const { artists } = z
+        .object({
+          artists: z.object({
+            total: AlbumCountSchema,
+            items: z.array(SpotifyArtistSchema).max(searchLimit),
+          }),
+        })
+        .parse(response)
+      return {
+        response,
+        total: artists.total,
+        candidates: artists.items.map(({ id, name, images }) => ({
+          id,
+          name,
+          artworkUrl: images
+            ?.map((image) => artworkUrl(image.url))
+            .find(Boolean),
+        })),
+      }
+    }
+    case 'lastfm': {
+      const response = await requestLastFm(context, 'artist.search', {
+        artist: query,
+        limit: String(searchLimit),
+      })
+      const { results } = z
+        .object({
+          results: z.object({
+            'opensearch:totalResults': AlbumCountSchema,
+            artistmatches: z.object({
+              artist: z.array(LastFmArtistSchema).max(searchLimit),
+            }),
+          }),
+        })
+        .parse(response)
+      return {
+        response,
+        total: results['opensearch:totalResults'],
+        candidates: results.artistmatches.artist.map((artist) => ({
+          id: artist.mbid || artist.url.url,
+          name: artist.name,
+        })),
+      }
+    }
+    case 'discogs': {
+      const response = await discogsRequest(context, 'database/search', {
+        q: query,
+        type: 'artist',
+        per_page: String(searchLimit),
+        page: '1',
+      })
+      const results = z
+        .object({
+          pagination: z.object({ items: AlbumCountSchema }),
+          results: z.array(DiscogsArtistSearchItemSchema).max(searchLimit),
+        })
+        .parse(response)
+      return {
+        response,
+        total: results.pagination.items,
+        candidates: results.results.map(({ id, title }) => ({
+          id,
+          name: title,
+        })),
+      }
+    }
+    case 'musicbrainz': {
+      const response = await musicBrainzRequest(context, 'artist/', {
+        query,
+        limit: String(searchLimit),
+      })
+      const results = z
+        .object({
+          count: AlbumCountSchema,
+          artists: z.array(MusicBrainzArtistSchema).max(searchLimit),
+        })
+        .parse(response)
+      return {
+        response,
+        total: results.count,
+        candidates: results.artists.map(({ id, name, disambiguation }) => ({
+          id,
+          name,
+          ...(disambiguation ? { details: disambiguation } : {}),
+        })),
+      }
+    }
+  }
+}
+
+/** The search text a lookup by name sends to each provider. */
+function artistNameQuery(provider: ArtistProfileProvider, name: string) {
+  switch (provider) {
+    case 'spotify':
+      return 'artist:"' + name.replace(/["\\]/g, ' ') + '"'
+    case 'musicbrainz':
+      return 'artist:"' + name.replace(/["\\]/g, '\\$&') + '"'
+    case 'lastfm':
+    case 'discogs':
+      return name
+  }
+}
+
+/**
+ * The artists a provider's search lists for Find match: the lookup's own
+ * search by name, or the text the owner typed.
+ */
+export async function searchArtistCandidates(
+  provider: ArtistProfileProvider,
+  name: string,
+  query: string | undefined,
+  context: MediaPluginTestContext,
+): Promise<ArtistSearchCandidate[]> {
+  const typed =
+    query && provider === 'musicbrainz' ? musicBrainzText(query) : query
+  const result = await searchArtistProvider(
+    provider,
+    typed ?? artistNameQuery(provider, name),
+    context,
+    () => spotifyClientToken(context.secrets, context.request),
+  )
+  return result.candidates
+}
+
 /** Each lookup reads at most one search page and one artist record. */
 export async function lookupArtistProvider(
   provider: ArtistProfileProvider,
@@ -195,18 +346,24 @@ export async function lookupArtistProvider(
   }
   const secrets = jobLogSecrets(context.secrets)
   const lookup: { match?: ArtistCandidate } = {}
-  async function find(
-    response: JsonValue,
-    total: number,
-    candidates: ArtistCandidate[],
-  ) {
+  async function find(spotifyToken = '') {
+    const { response, total, candidates } = await searchArtistProvider(
+      provider,
+      artistNameQuery(provider, name),
+      providerContext,
+      async () => spotifyToken,
+    )
     evidence.search = response
     await context.searched()
     const match = selectArtist(
       provider,
       name,
       total,
-      candidates,
+      candidates.map(({ id, name, details }) => ({
+        id,
+        name,
+        ...(details ? { details } : {}),
+      })),
       context.recordDiagnostic,
     )
     lookup.match = match
@@ -223,28 +380,7 @@ export async function lookupArtistProvider(
     case 'spotify': {
       const token = await spotifyClientToken(context.secrets, context.request)
       secrets.push(token)
-      if (!id) {
-        const response = JsonValueSchema.parse(
-          await spotifyJson(context.request, token, 'search', {
-            q: 'artist:"' + name.replace(/["\\]/g, ' ') + '"',
-            type: 'artist',
-            limit: String(searchLimit),
-          }),
-        )
-        const { artists } = z
-          .object({
-            artists: z.object({
-              total: AlbumCountSchema,
-              items: z.array(SpotifyArtistSchema).max(searchLimit),
-            }),
-          })
-          .parse(response)
-        id = await find(
-          response,
-          artists.total,
-          artists.items.map(({ id, name }) => ({ id, name })),
-        )
-      }
+      if (!id) id = await find(token)
       evidence.artist = JsonValueSchema.parse(
         await spotifyJson(
           context.request,
@@ -267,30 +403,7 @@ export async function lookupArtistProvider(
       break
     }
     case 'lastfm': {
-      if (!id) {
-        const response = await requestLastFm(providerContext, 'artist.search', {
-          artist: name,
-          limit: String(searchLimit),
-        })
-        const { results } = z
-          .object({
-            results: z.object({
-              'opensearch:totalResults': AlbumCountSchema,
-              artistmatches: z.object({
-                artist: z.array(LastFmArtistSchema).max(searchLimit),
-              }),
-            }),
-          })
-          .parse(response)
-        id = await find(
-          response,
-          results['opensearch:totalResults'],
-          results.artistmatches.artist.map((artist) => ({
-            id: artist.mbid || artist.url.url,
-            name: artist.name,
-          })),
-        )
-      }
+      if (!id) id = await find()
       const link = lastFmArtistUrl(id)
       evidence.artist = await requestLastFm(providerContext, 'artist.getInfo', {
         ...(link ? { artist: link.name } : { mbid: id }),
@@ -327,29 +440,7 @@ export async function lookupArtistProvider(
       break
     }
     case 'discogs': {
-      if (!id) {
-        const response = await discogsRequest(
-          providerContext,
-          'database/search',
-          {
-            q: name,
-            type: 'artist',
-            per_page: String(searchLimit),
-            page: '1',
-          },
-        )
-        const results = z
-          .object({
-            pagination: z.object({ items: AlbumCountSchema }),
-            results: z.array(DiscogsArtistSearchItemSchema).max(searchLimit),
-          })
-          .parse(response)
-        id = await find(
-          response,
-          results.pagination.items,
-          results.results.map(({ id, title }) => ({ id, name: title })),
-        )
-      }
+      if (!id) id = await find()
       evidence.artist = await discogsRequest(providerContext, 'artists/' + id)
       const artist = z
         .object({
@@ -371,27 +462,7 @@ export async function lookupArtistProvider(
       break
     }
     case 'musicbrainz': {
-      if (!id) {
-        const response = await musicBrainzRequest(providerContext, 'artist/', {
-          query: 'artist:"' + name.replace(/["\\]/g, '\\$&') + '"',
-          limit: String(searchLimit),
-        })
-        const results = z
-          .object({
-            count: AlbumCountSchema,
-            artists: z.array(MusicBrainzArtistSchema).max(searchLimit),
-          })
-          .parse(response)
-        id = await find(
-          response,
-          results.count,
-          results.artists.map(({ id, name, disambiguation }) => ({
-            id,
-            name,
-            ...(disambiguation ? { details: disambiguation } : {}),
-          })),
-        )
-      }
+      if (!id) id = await find()
       evidence.artist = await musicBrainzRequest(
         providerContext,
         'artist/' + id,

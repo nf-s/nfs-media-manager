@@ -243,6 +243,14 @@ test('overview leads with the summary headline, code, retry time and its actions
   const provider = html.indexOf('>Open provider<')
   assert.ok(find > -1 && find < retry && retry < provider)
   assert.match(html, /data-variant="primary"[^>]*href="[^"]*"[^>]*>Find match</)
+  const findHref = /href="([^"]*)"[^>]*>Find match</.exec(html)?.[1] ?? ''
+  const findUrl = new URL(findHref.replaceAll('&amp;', '&'), 'http://localhost')
+  assert.equal(findUrl.pathname, '/films/film-1')
+  assert.deepEqual(Object.fromEntries(findUrl.searchParams), {
+    tab: 'sources',
+    sourceProvider: 'example-provider',
+    sourceMode: 'match',
+  })
   assert.match(html, /href="\/providers\/example-provider">Open provider</)
   assert.match(html, /Request and response/)
   assert.match(html, /aria-label="Job items"/)

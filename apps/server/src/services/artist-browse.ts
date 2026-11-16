@@ -13,6 +13,7 @@ import {
   type ArtistQuery,
   type ArtistMetadataQuery,
 } from '@repo/schemas/creators'
+import { ARTIST_LISTENING_MONTHS } from '@repo/schemas/artist-browse'
 import { db } from '@/lib/db'
 import { createDatabaseReadCache } from '@/lib/database-read-cache'
 import {
@@ -52,6 +53,40 @@ const facetCache = createDatabaseReadCache<z.infer<typeof FacetSchema>[]>({
   maxValueBytes: 512 * 1024,
 })
 
+/**
+ * One row per artist and scrobble linked to a library album or library track
+ * credited to the artist, counted once: the same link as the artist's
+ * listening chart. `artists` narrows `c.artist_id`.
+ */
+function artistScrobbles(artists: SQL): SQL {
+  const credited = sql`c.role = 'artist' and ${artists}
+    and m.metadata->>'legacyHidden' is distinct from 'true'`
+  return sql`select c.artist_id, s.id, s.listened_at
+    from media_credit c join media_item m on m.id = c.media_item_id
+    join lastfm_scrobble s on s.album_media_item_id = c.media_item_id
+    where m.media_type = 'album' and ${credited}
+    union
+    select c.artist_id, s.id, s.listened_at
+    from media_credit c join media_item m on m.id = c.media_item_id
+    join lastfm_track_link l on l.track_media_item_id = c.media_item_id
+    join lastfm_scrobble s on s.username = l.username
+      and s.artist_key = l.artist_key and s.track_key = l.track_key
+    where m.media_type = 'track' and ${credited}`
+}
+
+/** UTC calendar months, oldest first, ending with the current month. */
+function listeningMonths(now: Date) {
+  return Array.from({ length: ARTIST_LISTENING_MONTHS }, (_, index) => {
+    const offset = ARTIST_LISTENING_MONTHS - 1 - index
+    const year = now.getUTCFullYear()
+    const month = now.getUTCMonth() - offset
+    return {
+      from: new Date(Date.UTC(year, month, 1)).toISOString(),
+      to: new Date(Date.UTC(year, month + 1, 1)).toISOString(),
+    }
+  })
+}
+
 function pattern(value: string) {
   return `%${value.replace(/[\\%_]/g, '\\$&')}%`
 }
@@ -88,6 +123,8 @@ function textMatch(field: string, value: string, substring = false): SQL {
 function numericValue(field: string): SQL {
   if (field === 'albumCount') return sql`coalesce(music_counts.album_count, 0)`
   if (field === 'trackCount') return sql`coalesce(music_counts.track_count, 0)`
+  if (field === 'scrobbles')
+    return sql`coalesce(scrobble_counts.scrobble_count, 0)`
   if (field === 'createdAt') return sql`extract(epoch from a.created_at) * 1000`
   return sql`coalesce(playlist_counts.playlist_count, 0)`
 }
@@ -97,6 +134,7 @@ function candidates(query: Query, includeOrder: boolean): SQL {
   if (includeOrder) required.add(query.sortBy)
   const music = required.has('albumCount') || required.has('trackCount')
   const playlists = required.has('playlistCount')
+  const scrobbles = required.has('scrobbles')
   const textSort =
     includeOrder &&
     artistBrowseFields.some(
@@ -117,6 +155,13 @@ function candidates(query: Query, includeOrder: boolean): SQL {
         : sql``
     }
     ${playlists ? sql`left join (${artistPlaylistCounts()}) playlist_counts on playlist_counts.artist_id = a.id` : sql``}
+    ${
+      scrobbles
+        ? sql`left join (select artist_id, count(*)::int as scrobble_count
+      from (${artistScrobbles(sql`true`)}) linked group by artist_id
+    ) scrobble_counts on scrobble_counts.artist_id = a.id`
+        : sql``
+    }
     ${textSort ? sql`left join (select id, min(lower(value)) as value from (${textRows(query.sortBy)}) source group by id) sort_values on sort_values.id = a.id` : sql``}`
 }
 
@@ -169,9 +214,13 @@ function ordering(query: Query): SQL {
   else if (query.sortBy === 'name')
     value = sql`lower(coalesce(a.sort_name, a.name))`
   else if (
-    ['createdAt', 'albumCount', 'trackCount', 'playlistCount'].includes(
-      query.sortBy,
-    )
+    [
+      'createdAt',
+      'albumCount',
+      'trackCount',
+      'scrobbles',
+      'playlistCount',
+    ].includes(query.sortBy)
   )
     value = numericValue(query.sortBy)
   else value = sql`sort_values.value`
@@ -186,11 +235,34 @@ const IdSchema = z.array(z.object({ id: z.string() }))
 const ArtistRowSchema = ArtistSummarySchema.extend({
   createdAt: z.coerce.date(),
 })
+const ListeningRowsSchema = z.array(
+  z.object({
+    artist_id: z.string(),
+    scrobbles: z.coerce.number().int().nonnegative(),
+    months: z.array(z.coerce.number().int().nonnegative()),
+  }),
+)
 
-async function loadArtists(ids: string[]) {
+/** Each artist's scrobbles and monthly scrobbles, in one grouped read. */
+async function loadArtistListening(requested: SQL, now: Date) {
+  const months = listeningMonths(now).map(
+    ({ from, to }) =>
+      sql`(count(*) filter (where listened_at >= ${from}::timestamp and listened_at < ${to}::timestamp))::int`,
+  )
+  const result =
+    await db.execute(sql`select artist_id, count(*)::int as scrobbles,
+      array[${sql.join(months, sql`, `)}] as months
+    from (${artistScrobbles(sql`c.artist_id = ${requested}`)}) linked
+    group by artist_id`)
+  return new Map(
+    ListeningRowsSchema.parse(result.rows).map((row) => [row.artist_id, row]),
+  )
+}
+
+async function loadArtists(ids: string[], now = new Date()) {
   if (!ids.length) return []
   const requested = sql`any(${sql.param(ids)}::text[])`
-  const [result, profiles] = await Promise.all([
+  const [result, profiles, listening] = await Promise.all([
     db.execute(sql`with counts as (
       select credit.artist_id, count(*) filter (where item.media_type = 'album')::int as albums,
         count(*) filter (where item.media_type = 'track')::int as tracks
@@ -210,6 +282,7 @@ async function loadArtists(ids: string[]) {
     db.execute(sql`select state.artist_id as id, state.provider, snapshot.normalized_data as profile
       from artist_provider_current_state state join artist_provider_snapshot snapshot on snapshot.id = state.latest_snapshot_id
       where state.artist_id = ${requested} order by snapshot.created_at desc, snapshot.id desc`),
+    loadArtistListening(requested, now),
   ])
   const parsedProfiles = z
     .array(
@@ -224,11 +297,16 @@ async function loadArtists(ids: string[]) {
   const byId = new Map(
     rows.map((row) => {
       const sources = parsedProfiles.filter((profile) => profile.id === row.id)
+      const listened = listening.get(row.id)
       return [
         row.id,
         {
           ...row,
           createdAt: row.createdAt.toISOString(),
+          scrobbleCount: listened?.scrobbles ?? 0,
+          listeningMonths:
+            listened?.months ??
+            Array.from({ length: ARTIST_LISTENING_MONTHS }, () => 0),
           browse: {
             ...row.browse,
             genre: uniqueMusicTags(
@@ -313,6 +391,33 @@ export async function countArtistBrowse(query: Query) {
     totalCount:
       limitResults === undefined ? total : Math.min(total, limitResults),
   }
+}
+
+/**
+ * The filtered count and, for "N of M", the count Clear filters leaves:
+ * without search, filters, ranges, playlists or a result limit.
+ */
+export async function artistBrowseCounts(query: ArtistQuery) {
+  const filtered =
+    Boolean(query.q) ||
+    query.filters.length > 0 ||
+    query.ranges.length > 0 ||
+    query.playlistIds.length > 0 ||
+    query.limitResults !== undefined
+  const [{ totalCount }, unfiltered] = await Promise.all([
+    countArtistBrowse(query),
+    filtered
+      ? countArtistBrowse({
+          ...query,
+          q: undefined,
+          filters: [],
+          ranges: [],
+          playlistIds: [],
+          limitResults: undefined,
+        })
+      : undefined,
+  ])
+  return { totalCount, unfilteredCount: unfiltered?.totalCount ?? totalCount }
 }
 
 export async function listArtistMetadataBrowsePage(query: ArtistMetadataQuery) {

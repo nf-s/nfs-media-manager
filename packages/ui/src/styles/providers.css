@@ -51,10 +51,6 @@
 .providers-chart {
   height: calc(var(--ds-h-md) * 2);
 }
-.providers-chart .ds-spark {
-  width: 100%;
-  height: 100%;
-}
 .providers-field {
   height: var(--ds-h-md);
 }
@@ -65,9 +61,6 @@
 }
 .providers-details[open] > summary {
   margin-bottom: var(--ds-4);
-}
-.providers-table-bounded {
-  max-height: calc(var(--ds-row) * 12);
 }
 .providers-list {
   display: grid;

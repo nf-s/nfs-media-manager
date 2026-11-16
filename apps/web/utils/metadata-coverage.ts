@@ -1,12 +1,13 @@
 import {
   COVERAGE_ITEM_ID_LIMIT,
+  type CoverageGap,
   type CoverageUnavailableReason,
   type ProviderCoverage,
 } from '@repo/schemas/coverage'
 import { QueueAlbumSelectionSchema } from '@repo/schemas/album-selection'
 
 export type MetadataCoverageKind = 'playlist' | 'artist'
-export type CoverageGap = 'missing' | 'stale'
+export type { CoverageGap }
 
 /** Above this many jobs the album queue needs `confirmBroadRun`. */
 export const BROAD_RUN_JOBS = 5

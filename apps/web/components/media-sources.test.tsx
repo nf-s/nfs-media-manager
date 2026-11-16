@@ -347,3 +347,35 @@ test('the Last.fm row of an album holds its scrobble names and each row lists wh
   assert.match(example, />Title</)
   assert.match(example, /<h4>History<\/h4>/)
 })
+
+test('a provider with match search offers Find match from its open row and searches in place', () => {
+  const searchable = ProviderSummarySchema.parse({
+    ...provider,
+    supportsMatchSearch: true,
+  })
+  assert.doesNotMatch(
+    renderSources(provider, undefined, item, 'sourceProvider=example'),
+    />Find match</,
+  )
+  assert.match(
+    renderSources(searchable, undefined, item, 'sourceProvider=example'),
+    /<h4>Identifier<\/h4><div class="data-stack">[\s\S]*>Find match<\/button>/,
+  )
+  const searching = renderSources(
+    searchable,
+    undefined,
+    item,
+    'sourceProvider=example&sourceMode=match',
+    [
+      [
+        ['jobs', 'find-match-unresolved', item.mediaType, item.id],
+        { query: null, items: [] },
+      ],
+    ],
+  )
+  assert.match(searching, /<h4>Find match<\/h4>/)
+  assert.match(searching, />Search Example provider<\/label>/)
+  assert.match(searching, /<button[^>]*type="submit"[^>]*disabled=""/)
+  assert.match(searching, />Cancel</)
+  assert.doesNotMatch(searching, /<h4>History<\/h4>/)
+})

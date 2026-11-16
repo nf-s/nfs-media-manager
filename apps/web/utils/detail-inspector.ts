@@ -173,6 +173,114 @@ export function detailEntryParams(
   return next
 }
 
+export const detailKindNames: Record<DetailTarget['kind'], string> = {
+  album: 'Album',
+  film: 'Film',
+  track: 'Track',
+  playlist: 'Playlist',
+  subscription: 'Subscription',
+  collection: 'Collection',
+  artist: 'Artist',
+  person: 'Person',
+  channel: 'Channel',
+  job: 'Job',
+  user: 'Account',
+  tag: 'Tag',
+}
+
+type LibraryPage = { path: string; label: string }
+
+/** Longer paths first, so a section wins over the page that contains it. */
+const libraries = {
+  channels: { path: '/subscriptions/channels', label: 'Channels' },
+  subscriptions: { path: '/subscriptions', label: 'Subscriptions' },
+  albums: { path: '/albums', label: 'Albums' },
+  films: { path: '/films', label: 'Films' },
+  tracks: { path: '/tracks', label: 'Tracks' },
+  artists: { path: '/artists', label: 'Artists' },
+  people: { path: '/people', label: 'People' },
+  playlists: { path: '/playlists', label: 'Playlists' },
+  collections: { path: '/collections', label: 'Collections' },
+  tags: { path: '/tags', label: 'Tags' },
+  imports: { path: '/imports', label: 'Imports' },
+  jobs: { path: '/jobs', label: 'Jobs' },
+  providers: { path: '/providers', label: 'Providers' },
+  account: { path: '/user', label: 'Account' },
+} satisfies Record<string, LibraryPage>
+
+const pathLibraries: readonly LibraryPage[] = Object.values(libraries)
+
+/** The library page each kind belongs to. */
+const kindLibraries: Record<DetailTarget['kind'], LibraryPage> = {
+  album: libraries.albums,
+  film: libraries.films,
+  track: libraries.tracks,
+  playlist: libraries.playlists,
+  subscription: libraries.subscriptions,
+  collection: libraries.collections,
+  artist: libraries.artists,
+  person: libraries.people,
+  channel: libraries.channels,
+  job: libraries.jobs,
+  user: libraries.account,
+  tag: libraries.tags,
+}
+
+/** What a drawer item's details say about it once loaded. */
+export type DetailCrumb = {
+  title: string
+  /** The Jobs list of the batch a job belongs to. */
+  batchHref?: string
+}
+
+export type DetailCrumbStep =
+  | { label: string; to: 'library' }
+  | { label: string; to: 'entry'; index: number }
+  | { label: string; to: 'href'; href: string }
+  | { label: string; to: 'current' }
+
+export function detailCrumbKey(target: DetailTarget) {
+  return `${target.kind}:${target.id}`
+}
+
+/**
+ * The drawer's breadcrumbs: the library the path started from, then each
+ * item on the path by title (its kind until its details have loaded), with a
+ * job's batch before the job. The library crumb closes the drawer when that
+ * library is the page underneath, and otherwise links to it: from an item's
+ * page to its library, or from a page outside the libraries to the root
+ * item's library.
+ */
+export function detailCrumbTrail(
+  pathname: string,
+  entries: readonly DetailTarget[],
+  crumbs: ReadonlyMap<string, DetailCrumb>,
+): DetailCrumbStep[] {
+  const root = entries[0]
+  if (!root) return []
+  const library =
+    pathLibraries.find(
+      ({ path }) => pathname === path || pathname.startsWith(`${path}/`),
+    ) ?? kindLibraries[root.kind]
+  const trail: DetailCrumbStep[] = [
+    pathname === library.path
+      ? { label: library.label, to: 'library' }
+      : { label: library.label, to: 'href', href: library.path },
+  ]
+  entries.forEach((entry, index) => {
+    const crumb = crumbs.get(detailCrumbKey(entry))
+    if (entry.kind === 'job' && crumb?.batchHref)
+      trail.push({ label: 'Batch', to: 'href', href: crumb.batchHref })
+    const label = crumb?.title || detailKindNames[entry.kind]
+    trail.push(
+      index === entries.length - 1
+        ? { label, to: 'current' }
+        : { label, to: 'entry', index },
+    )
+  })
+  return trail
+}
+
 export function detailPageHref(target: DetailTarget, view?: URLSearchParams) {
   if (target.kind === 'user')
     return detailLocation('/user', new URLSearchParams(view))

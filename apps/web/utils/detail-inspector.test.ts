@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
+  detailCrumbKey,
+  detailCrumbTrail,
   detailEntries,
   detailEntryParams,
   detailPageHref,
@@ -201,4 +203,84 @@ test('detail tabs fall back to the first tab and map older tab values', () => {
   assert.equal(detailTab('history', tabs, aliases), 'sources')
   assert.equal(detailTab('tracks', tabs, aliases), 'overview')
   assert.equal(detailTab('unknown', tabs, aliases), 'overview')
+})
+
+test('drawer breadcrumbs start at the library and name each item once loaded', () => {
+  const album: DetailEntry = { kind: 'album', id: 'album-1' }
+  const path: DetailEntry[] = [
+    album,
+    { kind: 'track', id: 'track-1' },
+    { kind: 'artist', id: 'artist-1' },
+  ]
+  const crumbs = new Map([[detailCrumbKey(album), { title: 'Fixture album' }]])
+  assert.deepEqual(detailCrumbTrail('/albums', path, crumbs), [
+    { label: 'Albums', to: 'library' },
+    { label: 'Fixture album', to: 'entry', index: 0 },
+    { label: 'Track', to: 'entry', index: 1 },
+    { label: 'Artist', to: 'current' },
+  ])
+  assert.deepEqual(
+    detailCrumbTrail(
+      '/subscriptions/channels',
+      [{ kind: 'channel', id: 'c' }],
+      new Map(),
+    ),
+    [
+      { label: 'Channels', to: 'library' },
+      { label: 'Channel', to: 'current' },
+    ],
+  )
+  assert.deepEqual(detailCrumbTrail('/albums', [], new Map()), [])
+})
+
+test('the library crumb closes the drawer only over that library, and otherwise links to it', () => {
+  const artist: DetailEntry[] = [{ kind: 'artist', id: 'artist-1' }]
+  assert.deepEqual(detailCrumbTrail('/artists', artist, new Map())[0], {
+    label: 'Artists',
+    to: 'library',
+  })
+  // On an album's page the crumb leads to Albums, not back to the album.
+  assert.deepEqual(detailCrumbTrail('/albums/album-1', artist, new Map())[0], {
+    label: 'Albums',
+    to: 'href',
+    href: '/albums',
+  })
+  assert.deepEqual(
+    detailCrumbTrail('/subscriptions/channels/x', artist, new Map())[0],
+    { label: 'Channels', to: 'href', href: '/subscriptions/channels' },
+  )
+  // Outside the libraries the root item's library is named and linked.
+  assert.deepEqual(
+    detailCrumbTrail('/', [{ kind: 'person', id: 'p' }], new Map())[0],
+    { label: 'People', to: 'href', href: '/people' },
+  )
+  assert.deepEqual(
+    detailCrumbTrail('/', [{ kind: 'channel', id: 'c' }], new Map())[0],
+    { label: 'Channels', to: 'href', href: '/subscriptions/channels' },
+  )
+  assert.deepEqual(
+    detailCrumbTrail('/', [{ kind: 'user', id: 'me' }], new Map())[0],
+    { label: 'Account', to: 'href', href: '/user' },
+  )
+})
+
+test('a job in a batch shows the batch before the job', () => {
+  const job: DetailEntry = { kind: 'job', id: 'job-1' }
+  assert.deepEqual(
+    detailCrumbTrail(
+      '/jobs',
+      [job],
+      new Map([
+        [
+          detailCrumbKey(job),
+          { title: 'Fetch rating', batchHref: '/jobs?batchId=batch-1' },
+        ],
+      ]),
+    ),
+    [
+      { label: 'Jobs', to: 'library' },
+      { label: 'Batch', to: 'href', href: '/jobs?batchId=batch-1' },
+      { label: 'Fetch rating', to: 'current' },
+    ],
+  )
 })

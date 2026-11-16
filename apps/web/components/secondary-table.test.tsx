@@ -47,6 +47,11 @@ test('secondary tables share a labelled scroll region, sortable data headers and
   assert.match(html, /Reset columns/)
   assert.doesNotMatch(html, /title="Sort by ID"/)
   assert.ok(html.indexOf('&lt;Item 2&gt;') < html.indexOf('Item 12'))
+  // The picker moves columns; the first, identity column stays first.
+  assert.match(html, /aria-label="Title stays first"/)
+  for (const label of ['Count', 'ID', 'Source'])
+    assert.match(html, new RegExp(`aria-label="Move ${label}"`))
+  assert.match(html, /Press the up and down arrow keys to move the column\./)
 })
 
 test('empty small tables show all columns and use their full column count', () => {

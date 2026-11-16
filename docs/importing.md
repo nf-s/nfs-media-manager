@@ -18,7 +18,7 @@ Choose the matching IMDb ratings or watchlist format and drop the exported CSV. 
 
 Existing films keep their canonical metadata, artwork, public scores and manual overrides. Personal ratings, watched/watchlist state, dates and missing identifiers can be updated. Existing films are not automatically scraped again; use **Jobs → Metadata** for that.
 
-Matching uses IMDb/TMDb identifiers and refuses ambiguous identities. A film with no external ID still appears in the library as **Needs ID**. Open its details and use **Add ID** in Sources to add or correct identifiers later.
+Matching uses IMDb/TMDb identifiers and refuses ambiguous identities. A film with no external ID still appears in the library as **Needs ID**. Open its details and use **Find match** (TMDb) or **Add ID** in Sources to add or correct identifiers later.
 
 ## Film NFOs
 
@@ -58,7 +58,7 @@ Previewing Spotify makes read-only API requests. It does not import until you co
 - Already queued/scraped work and items lacking IDs or credentials are skipped and reported.
 - Jobs retain request limits, cooldowns and error stops. Retry is an explicit action; successful work is not repeated.
 
-**Imports → Recent imports** shows each run's Status as Queued, Running, Done, Failed or Cancelled, and its header filter uses the same labels. Started and Finished show `2026-11-16 14:20`.
+**Imports → Recent imports** shows each run's Status as Queued, Running, Done, Failed or Cancelled, and its header filter uses the same labels. Started and Finished show `2026-11-16 14:20`. Progress shows a running import's bar and count, and Result its counts (`3 created · 2 updated`).
 
 Open **Jobs** to see progress or an error. Inspect a job's stored data without making another provider request. Correct credentials or identifiers before reviewing a retry.
 

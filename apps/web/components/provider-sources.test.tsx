@@ -6,8 +6,10 @@ import {
   PathnameContext,
   SearchParamsContext,
 } from 'next/dist/shared/lib/hooks-client-context.shared-runtime'
+import type { UnresolvedMatchList } from '@repo/schemas/find-match'
 import { JobSchema } from '@repo/schemas/job'
 import { InspectorEntryContext } from './detail-inspector-context'
+import type { FindMatchContext } from './find-match'
 import { ProviderSources, type ProviderSourceRow } from './provider-sources'
 import {
   jobState,
@@ -43,6 +45,7 @@ function render(
   initialProvider?: string,
   rows: ProviderSourceRow[] = [{ id: 'example', label: 'Example provider' }],
   activeJobs = [queuedJob],
+  unresolved?: UnresolvedMatchList,
 ) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false, retryOnMount: false } },
@@ -55,6 +58,11 @@ function render(
     totalCount: activeJobs.length,
     pageCount: 1,
   })
+  if (unresolved)
+    client.setQueryData(
+      ['jobs', 'find-match-unresolved', 'film', 'film-1'],
+      unresolved,
+    )
   try {
     return renderToStaticMarkup(
       <QueryClientProvider client={client}>
@@ -201,6 +209,143 @@ test('an open row shows the identifier editor, what the provider supplies, extra
     /aria-label="Edit Example provider identifier" aria-expanded="true"/,
   )
   assert.doesNotMatch(editing, /Provides|Stored data|History/)
+})
+
+test('Find match is offered for a missing ID, inside an open matched row, and opens in place', () => {
+  const findMatch = ({ stored, query }: FindMatchContext) => (
+    <span>
+      search {query ?? 'pending'} with {stored.length} stored
+    </span>
+  )
+  const rows: ProviderSourceRow[] = [
+    {
+      id: 'missing',
+      label: 'Missing provider',
+      unavailable: 'Identifier required',
+      refresh: noJob,
+      editor: () => <span>editor</span>,
+      findMatch,
+    },
+    {
+      id: 'matched',
+      label: 'Matched provider',
+      identifier: 'id-1',
+      refresh: noJob,
+      editor: () => <span>editor</span>,
+      findMatch,
+    },
+    {
+      id: 'plain',
+      label: 'Plain provider',
+      unavailable: 'Identifier required',
+      editor: () => <span>editor</span>,
+    },
+  ]
+  const closed = render('tab=sources&sourceMode=closed', undefined, rows, [])
+  // Find match leads a row that needs an ID; Add ID stays where there is
+  // no match search.
+  assert.match(closed, /aria-expanded="false">Find match<\/button>/)
+  assert.equal(closed.match(/>Find match</g)?.length, 1)
+  assert.equal(closed.match(/>Add ID</g)?.length, 1)
+
+  const opened = render(
+    'sourceProvider=matched&sourceMode=history',
+    undefined,
+    rows,
+    [],
+  )
+  assert.match(
+    opened,
+    /<h4>Identifier<\/h4><div class="data-stack"><span>editor<\/span><span><button[^>]*>Find match<\/button>/,
+  )
+  assert.match(opened, /<h4>History<\/h4>/)
+
+  // The search waits for the latest lookup, which may hold candidates.
+  const waiting = render(
+    'sourceProvider=missing&sourceMode=match',
+    undefined,
+    rows,
+    [],
+  )
+  assert.match(waiting, /<h4>Find match<\/h4><div class="ds-skel"/)
+  assert.doesNotMatch(waiting, /search pending/)
+  const searching = render(
+    'sourceProvider=missing&sourceMode=match',
+    undefined,
+    rows,
+    [],
+    { query: null, items: [] },
+  )
+  // The identifier form follows the search on a row that needs an ID.
+  assert.match(
+    searching,
+    /<h4>Find match<\/h4><span>search pending with 0 stored<\/span><\/div><div><h4>Identifier<\/h4><span>editor<\/span>/,
+  )
+  assert.match(searching, /aria-expanded="true">Find match</)
+  assert.doesNotMatch(searching, /<h4>History<\/h4>/)
+})
+
+test('stored candidates and missing matches from the latest lookup set the row state', () => {
+  const candidate = {
+    referenceType: 'tmdb',
+    externalId: '701',
+    title: 'Example Film',
+    subtitle: null,
+    releaseDate: '2021',
+    artworkUrl: null,
+    url: null,
+    current: false,
+  }
+  const rows: ProviderSourceRow[] = [
+    {
+      id: 'ambiguous',
+      label: 'Ambiguous provider',
+      refresh: noJob,
+      editor: () => <span>editor</span>,
+      findMatch: ({ stored, query }) => (
+        <span>
+          {stored.length} kept for {query}
+        </span>
+      ),
+    },
+    {
+      id: 'unfound',
+      label: 'Unfound provider',
+      refresh: noJob,
+      editor: () => <span>editor</span>,
+      findMatch: () => <span>search</span>,
+    },
+  ]
+  const unresolved: UnresolvedMatchList = {
+    query: 'Example Film',
+    items: [
+      {
+        provider: 'ambiguous',
+        jobId: 'job-1',
+        outcome: 'ambiguous',
+        candidates: [candidate, { ...candidate, externalId: '702' }],
+      },
+      {
+        provider: 'unfound',
+        jobId: 'job-2',
+        outcome: 'not-found',
+        candidates: [],
+      },
+    ],
+  }
+  const html = render('tab=sources', undefined, rows, [], unresolved)
+  assert.match(html, /data-status="attention">2 candidates</)
+  assert.match(html, />Choose</)
+  assert.match(html, /data-status="attention">Needs ID</)
+  assert.match(html, /2 sources · 1 needs an ID/)
+  const choosing = render(
+    'sourceProvider=ambiguous&sourceMode=match',
+    undefined,
+    rows,
+    [],
+    unresolved,
+  )
+  assert.match(choosing, /<span>2 kept for Example Film<\/span>/)
 })
 
 test('read-only rows without a scope offer no refresh and an empty list says so', () => {

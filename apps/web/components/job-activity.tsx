@@ -154,8 +154,15 @@ export default function JobActivity() {
       if (!trigger.current || !panel.current) return
       const rect = trigger.current.getBoundingClientRect()
       const box = panel.current.getBoundingClientRect()
+      // Below the trigger, or above it when there is no room, as on the
+      // phone tab bar.
+      const below = rect.bottom + 4
+      const top =
+        below + box.height + 8 <= window.innerHeight
+          ? below
+          : rect.top - box.height - 4
       panel.current.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - box.width - 8))}px`
-      panel.current.style.top = `${Math.max(8, Math.min(rect.bottom + 4, window.innerHeight - box.height - 8))}px`
+      panel.current.style.top = `${Math.max(8, top)}px`
     }
     position()
     const observer = new ResizeObserver(position)
@@ -187,7 +194,10 @@ export default function JobActivity() {
   }
 
   return (
-    <div className="shell-activity">
+    <div
+      className="shell-activity"
+      data-idle={failed === 0 && active === 0 ? '' : undefined}
+    >
       <button
         type="button"
         ref={trigger}

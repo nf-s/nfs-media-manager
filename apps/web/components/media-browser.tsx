@@ -135,6 +135,14 @@ import {
   matchingTitleFilters,
   titleSuggestions,
 } from '@/utils/browse-suggestions'
+import {
+  columnOrderParam,
+  hasCustomColumnOrder,
+  orderColumns,
+  orderFields,
+  parseColumnOrder,
+} from '@/utils/browse-items'
+import { ColumnChoices } from './browse-items'
 
 type MediaItem = AlbumListItem | FilmListItem
 
@@ -166,7 +174,83 @@ export const defaultFilmColumns = [
   'ratingRt',
   'genre',
 ]
-/** Columns of pills absorb spare width, so a new column goes before them. */
+/**
+ * Column and picker order: identity, creator, properties, dates, counts,
+ * ratings, pills. Fields not named here, such as plugin ratings, go before
+ * the pill columns.
+ */
+const albumFieldOrder = [
+  'title',
+  'artist',
+  'country',
+  'source',
+  'provider',
+  'durationSec',
+  'releaseDate',
+  'dateAdded',
+  'lastListenedAt',
+  'trackCount',
+  'scrobbles',
+  'scrobblesLast1y',
+  'scrobblesLast5y',
+  'listeningScrobbles',
+  'ratingRymValue',
+  'ratingRymVotes',
+  'ratingDiscogsValue',
+  'ratingDiscogsVotes',
+  'ratingMetacriticValue',
+  'ratingMetacriticVotes',
+  'popularityDiscogs',
+  'popularitySpotify',
+  'popularityLastFm',
+  'playlist',
+  'collection',
+  'albumTag',
+  'artistTag',
+  'genre',
+]
+const filmFieldOrder = [
+  'title',
+  'director',
+  'actor',
+  'writer',
+  'country',
+  'language',
+  'productionCompany',
+  'source',
+  'identification',
+  'provider',
+  'releaseDate',
+  'runtimeMinutes',
+  'watched',
+  'dateAdded',
+  'updatedAt',
+  'ratingImdbPersonal',
+  'ratingImdbPersonalDate',
+  'ratingImdbValue',
+  'ratingImdbVotes',
+  'ratingMetascore',
+  'ratingRt',
+  'ratingTmdbValue',
+  'ratingTmdbVotes',
+  'popularityTmdb',
+  'ratingMetacriticUser',
+  'ratingMetacriticUserVotes',
+  'ratingTrakt',
+  'ratingTraktVotes',
+  'ratingLetterboxd',
+  'ratingLetterboxdVotes',
+  'ratingRtAudience',
+  'ratingRtAudienceVotes',
+  'budget',
+  'boxOffice',
+  'awards',
+  'summary',
+  'collection',
+  'playlist',
+  'genre',
+]
+/** Columns of pills absorb spare width, so they come last. */
 const pillColumns = new Set([
   'genre',
   'albumTag',
@@ -196,14 +280,19 @@ function parseFilters(value: string | null): BrowseFilter[] {
   }
 }
 
-/** Adds a column before the trailing pill columns, or removes it. */
-export function toggleColumn(keys: string[], key: string): string[] {
-  if (keys.includes(key)) return keys.filter((item) => item !== key)
-  if (pillColumns.has(key)) return [...keys, key]
-  const firstPill = keys.findIndex((item) => pillColumns.has(item))
-  return firstPill < 0
-    ? [...keys, key]
-    : [...keys.slice(0, firstPill), key, ...keys.slice(firstPill)]
+/** Fields in the default column order, with the pill columns last. */
+function mediaColumnFields(
+  fields: readonly BrowseField[],
+  mediaType: 'album' | 'film',
+) {
+  const ordered = orderFields(
+    fields,
+    mediaType === 'album' ? albumFieldOrder : filmFieldOrder,
+  )
+  return [
+    ...ordered.filter((field) => !pillColumns.has(field.key)),
+    ...ordered.filter((field) => pillColumns.has(field.key)),
+  ]
 }
 
 function isMissing(value: BrowseValues[string] | undefined) {
@@ -317,14 +406,19 @@ export default function MediaBrowser({
           },
         ]
       : baseFields
-  const columnKeys =
-    searchParams.get('columns')?.split(',').map(canonicalBrowseKey) ??
-    (mediaType === 'album' ? defaultAlbumColumns : defaultFilmColumns)
-  // Columns keep the order they were chosen in; the title always leads.
-  const columns = [
-    'title',
-    ...columnKeys.filter((key) => key !== 'title'),
-  ].flatMap((key) => fields.filter((field) => field.key === key))
+  const columnKeys = [
+    ...new Set([
+      'title',
+      ...(searchParams.get('columns')?.split(',').map(canonicalBrowseKey) ??
+        (mediaType === 'album' ? defaultAlbumColumns : defaultFilmColumns)),
+    ]),
+  ]
+  const columnFields = mediaColumnFields(fields, mediaType)
+  const columnOrder = parseColumnOrder(searchParams.get('columnOrder'))
+  const orderedFields = orderColumns(columnFields, columnOrder, 'title')
+  const columns = orderedFields.filter((field) =>
+    columnKeys.includes(field.key),
+  )
   const sortField = fields.find((field) => field.key === sortBy)
   // Description is a long text field; it is offered last, not first.
   const listedFields = [
@@ -1251,27 +1345,22 @@ export default function MediaBrowser({
               )}
               {view === 'table' && (
                 <BrowseColumnsSection>
-                  {listedFields.map((field) => (
-                    <label className="ds-checkrow" key={field.key}>
-                      <input
-                        type="checkbox"
-                        className="ds-check"
-                        checked={
-                          field.key === 'title' ||
-                          columnKeys.includes(field.key)
-                        }
-                        disabled={field.key === 'title'}
-                        onChange={() =>
-                          setParams({
-                            columns: toggleColumn(columnKeys, field.key).join(
-                              ',',
-                            ),
-                          })
-                        }
-                      />
-                      {field.label}
-                    </label>
-                  ))}
+                  <ColumnChoices
+                    fields={orderedFields}
+                    selected={columnKeys}
+                    required="title"
+                    onChange={(keys) => setParams({ columns: keys.join(',') })}
+                    onOrderChange={(keys) =>
+                      setParams({
+                        columnOrder: columnOrderParam(keys, columnFields),
+                      })
+                    }
+                    onResetOrder={
+                      hasCustomColumnOrder(orderedFields, columnFields, 'title')
+                        ? () => setParams({ columnOrder: null })
+                        : undefined
+                    }
+                  />
                 </BrowseColumnsSection>
               )}
             </>
@@ -1289,7 +1378,7 @@ export default function MediaBrowser({
                 Retry count
               </Button>
             ) : !query.isCounting ? (
-              formatItemCount(total, noun)
+              formatItemCount(total, noun, query.unfilteredTotal)
             ) : query.isPending ? (
               'Loading...'
             ) : (

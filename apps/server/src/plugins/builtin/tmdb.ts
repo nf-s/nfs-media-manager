@@ -1,3 +1,4 @@
+import { z } from 'zod'
 import {
   JsonValueSchema,
   type MediaProviderPlugin,
@@ -14,6 +15,53 @@ import {
 
 const TMDB_API_URL = 'https://api.themoviedb.org/3'
 const TMDB_TEST_MOVIE_ID = '550'
+
+const TmdbSearchSchema = z.object({
+  page: z.number().int().positive(),
+  total_pages: z.number().int().nonnegative(),
+  total_results: z.number().int().nonnegative().optional(),
+  results: z
+    .array(
+      z.object({
+        id: z.number().int().positive().safe(),
+        title: z.string().min(1),
+        original_title: z.string().optional(),
+        release_date: z
+          .string()
+          .regex(/^(?:\d{4}-\d{2}-\d{2})?$/)
+          .optional(),
+        poster_path: z
+          .string()
+          .regex(/^\/[A-Za-z0-9._-]+$/)
+          .nullable()
+          .optional(),
+      }),
+    )
+    .max(20),
+})
+
+/** One page of TMDb's film search, as Add film and Find match show it. */
+export async function searchTmdbMovies(
+  { secrets, request }: MediaPluginTestContext,
+  query: string,
+  page: number,
+) {
+  const url = new URL(`${TMDB_API_URL}/search/movie`)
+  url.search = new URLSearchParams({
+    api_key: secrets['apiKey'] ?? '',
+    query,
+    page: String(page),
+    include_adult: 'false',
+  }).toString()
+  const response = await request(url)
+  if (!response.ok)
+    throw new Error(`TMDb search failed (HTTP ${response.status})`)
+  return TmdbSearchSchema.parse(await response.json())
+}
+
+export function tmdbPosterUrl(path: string | null | undefined) {
+  return path ? `https://image.tmdb.org/t/p/w185${path}` : undefined
+}
 
 function getTmdbReference(references: PluginReference[]): string | null {
   const reference = references.find((item) => item.referenceType === 'tmdb')
@@ -104,6 +152,7 @@ export const tmdbPlugin: MediaProviderPlugin = {
     id: 'tmdb',
     displayName: 'TMDb',
     description: 'Film metadata',
+    siteUrl: 'https://www.themoviedb.org',
     mediaTypes: ['film'],
     identifierTypes: ['tmdb', 'imdb'],
     rateLimit: {
@@ -120,6 +169,27 @@ export const tmdbPlugin: MediaProviderPlugin = {
     }
 
     await fetchTmdbMovieDetails(apiKey, TMDB_TEST_MOVIE_ID, request)
+  },
+  async searchMatchCandidates(context) {
+    if (context.mediaType !== 'film')
+      throw new Error('TMDb scraping only supports films.')
+    const page = await searchTmdbMovies(
+      context,
+      context.query ?? context.media.title,
+      1,
+    )
+    return page.results.map((item) => ({
+      referenceType: 'tmdb',
+      externalId: String(item.id),
+      title: item.title,
+      subtitle:
+        item.original_title && item.original_title !== item.title
+          ? item.original_title
+          : undefined,
+      releaseDate: item.release_date || undefined,
+      artworkUrl: tmdbPosterUrl(item.poster_path),
+      url: `https://www.themoviedb.org/movie/${item.id}`,
+    }))
   },
   async scrapeMediaItem(context) {
     if (context.mediaType !== 'film') {

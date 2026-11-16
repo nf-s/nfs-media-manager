@@ -7,6 +7,7 @@ import {
   batchStatus,
   batchTarget,
   formatWhen,
+  jobBatchHref,
   jobStatus,
 } from './job-entries'
 import {
@@ -141,4 +142,13 @@ test('provider health counts blocked queues and providers needing the owner', ()
     }),
     true,
   )
+})
+
+test('a job links to its batch only when it has one', () => {
+  assert.equal(
+    jobBatchHref({ options: { batchId: 'batch 1' } }),
+    '/jobs?batchId=batch%201',
+  )
+  assert.equal(jobBatchHref({ options: {} }), null)
+  assert.equal(jobBatchHref({ options: { batchId: 7 } }), null)
 })

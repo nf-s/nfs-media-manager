@@ -45,13 +45,14 @@ import {
   isArtistEnrichmentJob,
 } from '@/utils/job-selection'
 import { jobDetailOptions } from '@/utils/job-data'
-import { jobStatus, jobTitle } from '@/utils/job-entries'
+import { jobBatchHref, jobStatus, jobTitle } from '@/utils/job-entries'
 import {
   isBlockingWait,
   providerDisplayName,
   providerListOptions,
 } from '@/utils/provider-health'
 import { CreatorDetailState } from './creator-detail-state'
+import { DetailMore } from './detail-more'
 import { useDetailView } from './detail-inspector-context'
 import { DetailLink } from './detail-link'
 import JobBulkActions from './job-bulk-actions'
@@ -174,7 +175,12 @@ export function JobDetail({
     if (action === 'find-match')
       return target ? (
         <Button key={action} size="md" variant={variant} asChild>
-          <DetailLink kind={target.kind} id={target.id} tab="sources">
+          <DetailLink
+            kind={target.kind}
+            id={target.id}
+            tab="sources"
+            view={{ sourceProvider: job.provider, sourceMode: 'match' }}
+          >
             Find match
           </DetailLink>
         </Button>
@@ -244,6 +250,9 @@ export function JobDetail({
                 </DetailLink>
               </Button>
             )}
+            <DetailMore
+              crumb={{ title, batchHref: jobBatchHref(job) ?? undefined }}
+            />
           </>
         }
       />

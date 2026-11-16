@@ -12,6 +12,7 @@ import {
   SubscriptionFilterOptionSchema,
   SubscriptionItemPageSchema,
   SubscriptionItemParamsSchema,
+  SubscriptionItemPatchSchema,
   SubscriptionItemQuerySchema,
   SubscriptionItemSchema,
   SubscriptionSourceDetailSchema,
@@ -36,13 +37,14 @@ import {
 import { generateJsonResponse } from '@/lib/response'
 import { authMiddleware } from '@/middlewares/auth'
 import {
-  countSubscriptionBrowseItems,
+  subscriptionBrowseCounts,
   getSubscriptionItem,
   getSubscriptionSource,
   listSubscriptionBrowsePage,
   listSubscriptionFacets,
   listSubscriptionItems,
   listSubscriptionSources,
+  setSubscriptionItemWatched,
 } from '@/services/subscription-library'
 import {
   getSubscriptionSyncStatus,
@@ -121,7 +123,7 @@ app.openapi(
   async (c) =>
     generateJsonResponse(
       c,
-      await countSubscriptionBrowseItems(c.req.valid('query')),
+      await subscriptionBrowseCounts(c.req.valid('query')),
       200,
     ),
 )
@@ -343,6 +345,41 @@ app.openapi(
       throw new ServerError({ statusCode: 404, message: 'Item not found' })
     return generateJsonResponse(c, item, 200)
   },
+)
+
+app.openapi(
+  createRoute({
+    method: 'patch',
+    path: '/:id',
+    middleware: [authMiddleware(), sameOrigin],
+    request: {
+      params: SubscriptionItemParamsSchema,
+      body: {
+        required: true,
+        content: {
+          'application/json': { schema: SubscriptionItemPatchSchema },
+        },
+      },
+    },
+    responses: {
+      200: json(
+        'Set or clear the watched date of a stored video or episode',
+        SubscriptionItemSchema,
+      ),
+      401: jsonErrorResponse('Unauthorized'),
+      404: jsonErrorResponse('Item not found'),
+      422: validationErrorResponse,
+    },
+  }),
+  async (c) =>
+    generateJsonResponse(
+      c,
+      await setSubscriptionItemWatched(
+        c.req.valid('param').id,
+        c.req.valid('json'),
+      ),
+      200,
+    ),
 )
 
 app.onError((error, c) =>

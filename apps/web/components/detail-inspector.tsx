@@ -2,12 +2,21 @@
 
 import Link from 'next/link'
 import { usePathname, useSearchParams } from 'next/navigation'
-import { useEffect, useRef, type ComponentProps } from 'react'
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ComponentProps,
+  type MouseEvent,
+} from 'react'
 import { ChevronLeft, ChevronRight, Maximize2, X } from 'lucide-react'
 import { Button } from '@repo/ui/components/ui/button'
 import { MediaInspector } from './media-inspector'
 import {
   InspectorEntryContext,
+  InspectorPageContext,
   useDetailInspector,
   useDetailView,
 } from './detail-inspector-context'
@@ -25,12 +34,27 @@ import UserPageClient from './pages/user-page-client'
 import { libraryViewForPath } from '@/utils/media-scope'
 import {
   detailBrowseKind,
+  detailCrumbKey,
+  detailCrumbTrail,
   detailPageHref,
   parseTagDetailId,
   withoutDetailEntries,
+  type DetailCrumb,
   type DetailEntry,
 } from '@/utils/detail-inspector'
 import { parsePlaylistTab, type PlaylistTab } from '@/utils/playlist-links'
+
+/** Plain clicks step within the drawer; modified clicks follow the link. */
+function followsLink(event: MouseEvent<HTMLAnchorElement>) {
+  return (
+    event.defaultPrevented ||
+    event.button !== 0 ||
+    event.metaKey ||
+    event.altKey ||
+    event.ctrlKey ||
+    event.shiftKey
+  )
+}
 
 const labels = {
   album: 'Album details',
@@ -45,21 +69,6 @@ const labels = {
   job: 'Job details',
   user: 'User panel',
   tag: 'Tag details',
-}
-
-const kindNames = {
-  album: 'Album',
-  film: 'Film',
-  track: 'Track',
-  playlist: 'Playlist',
-  subscription: 'Subscription',
-  collection: 'Collection',
-  artist: 'Artist',
-  person: 'Person',
-  channel: 'Channel',
-  job: 'Job',
-  user: 'Account',
-  tag: 'Tag',
 }
 
 type InspectorOptions = {
@@ -87,6 +96,21 @@ export function DetailInspector(options: InspectorOptions) {
   const kind = target?.kind
   const id = target?.id
   const entryKey = nav?.entryKey
+  const [crumbs, setCrumbs] = useState<ReadonlyMap<string, DetailCrumb>>(
+    () => new Map(),
+  )
+  const [moreSlot, setMoreSlot] = useState<HTMLSpanElement | null>(null)
+  const activeKey = target ? detailCrumbKey(target) : ''
+  const setCrumb = useCallback(
+    (crumb: DetailCrumb) =>
+      setCrumbs((previous) => {
+        const known = previous.get(activeKey)
+        if (known?.title === crumb.title && known.batchHref === crumb.batchHref)
+          return previous
+        return new Map(previous).set(activeKey, crumb)
+      }),
+    [activeKey],
+  )
 
   useEffect(() => {
     if (id) inspector.current?.focus({ preventScroll: true })
@@ -138,6 +162,8 @@ export function DetailInspector(options: InspectorOptions) {
       'mediaType',
       libraryViewForPath(pathname, params.get('mediaType')),
     )
+  const pageHref = detailPageHref(target, pageParams)
+  const trail = detailCrumbTrail(pathname, nav.entries, crumbs)
 
   return (
     <>
@@ -162,26 +188,53 @@ export function DetailInspector(options: InspectorOptions) {
                   <ChevronLeft className="ds-i" aria-hidden="true" />
                 </Button>
               )}
-              <div className="ds-crumbs">
-                {nav.canGoBack && nav.root && (
-                  <>
-                    <span>{kindNames[nav.root.kind]}</span>
-                    <ChevronRight
-                      className="ds-i"
-                      data-size="sm"
-                      aria-hidden="true"
-                    />
-                  </>
+              <nav className="ds-crumbs dtl-crumbs" aria-label="Breadcrumb">
+                {trail.map((step, index) =>
+                  step.to === 'current' ? (
+                    <b key={index} title={step.label} aria-current="page">
+                      {step.label}
+                    </b>
+                  ) : (
+                    <Fragment key={index}>
+                      {step.to === 'href' ? (
+                        <Link
+                          href={step.href}
+                          prefetch={false}
+                          title={step.label}
+                        >
+                          {step.label}
+                        </Link>
+                      ) : (
+                        <a
+                          href={
+                            step.to === 'library'
+                              ? nav.closedHref
+                              : nav.hrefAt(step.index)
+                          }
+                          title={step.label}
+                          onClick={(event) => {
+                            if (followsLink(event)) return
+                            event.preventDefault()
+                            if (step.to === 'library') nav.close()
+                            else nav.backTo(step.index)
+                          }}
+                        >
+                          {step.label}
+                        </a>
+                      )}
+                      <ChevronRight
+                        className="ds-i"
+                        data-size="sm"
+                        aria-hidden="true"
+                      />
+                    </Fragment>
+                  ),
                 )}
-                <b>{kindNames[activeKind]}</b>
-              </div>
+              </nav>
             </div>
             <span className="dtl-bar-end">
-              <Button asChild variant="ghost">
-                <Link
-                  href={detailPageHref(target, pageParams)}
-                  prefetch={false}
-                >
+              <Button asChild variant="ghost" className="dtl-bar-open">
+                <Link href={pageHref} prefetch={false}>
                   <Maximize2
                     className="ds-i"
                     data-size="sm"
@@ -190,6 +243,7 @@ export function DetailInspector(options: InspectorOptions) {
                   Open page
                 </Link>
               </Button>
+              <span ref={setMoreSlot} className="dtl-bar-more" />
               <Button
                 variant="ghost"
                 icon
@@ -221,12 +275,16 @@ export function DetailInspector(options: InspectorOptions) {
         }}
       >
         <InspectorEntryContext.Provider value={nav}>
-          <InspectorContent
-            key={nav.entryKey}
-            target={target}
-            options={options}
-            onMerged={(id) => nav.replace({ kind: 'track', id })}
-          />
+          <InspectorPageContext.Provider
+            value={{ pageHref, setCrumb, moreSlot }}
+          >
+            <InspectorContent
+              key={nav.entryKey}
+              target={target}
+              options={options}
+              onMerged={(id) => nav.replace({ kind: 'track', id })}
+            />
+          </InspectorPageContext.Provider>
         </InspectorEntryContext.Provider>
       </MediaInspector>
     </>

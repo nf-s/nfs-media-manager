@@ -1313,6 +1313,7 @@ button.ds-pill:hover {
 }
 .ds-section {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--ds-4);
   padding: 14px 0;
   border-top: 1px solid var(--ds-line-soft);
@@ -1343,6 +1344,17 @@ button.ds-pill:hover {
   margin-left: auto;
   color: var(--ds-ink-3);
   font-size: var(--ds-text-sm);
+}
+/* Phone: a section's controls wrap under its title */
+@media (max-width: 700px) {
+  .ds-section-head,
+  .ds-section-aside {
+    flex-wrap: wrap;
+  }
+  .ds-section-aside {
+    justify-content: flex-end;
+    min-width: 0;
+  }
 }
 
 /* 15 Source row, coverage, progress ----------------------------------------- */
@@ -1382,6 +1394,10 @@ button.ds-pill:hover {
   align-items: center;
   gap: var(--ds-4);
   min-width: 0;
+}
+.ds-source > summary .ds-source-line {
+  flex-wrap: wrap;
+  row-gap: 0;
 }
 .ds-source-name {
   font-weight: 600;
@@ -1441,6 +1457,16 @@ button.ds-pill:hover {
 .ds-coverage-done {
   font-size: var(--ds-text-xs);
 }
+/* Phone: the action takes its own line under the bar */
+@media (max-width: 700px) {
+  .ds-coverage {
+    grid-template-columns: 112px minmax(0, 1fr) auto;
+  }
+  .ds-coverage > :nth-child(4) {
+    grid-column: 1 / -1;
+    justify-self: end;
+  }
+}
 .ds-meter {
   height: 6px;
   border-radius: 3px;
@@ -1498,13 +1524,17 @@ button.ds-pill:hover {
   border: 0;
   border-radius: var(--ds-r-sm);
   background: none;
+  color: var(--ds-ink);
   font-size: var(--ds-text-md);
   text-align: left;
+  text-decoration: none;
   cursor: pointer;
 }
+/* A link item looks like a button item: no underline on hover either. */
 .ds-menu-item:hover,
 .ds-menu-item[data-state='hover'] {
   background: var(--ds-hover);
+  text-decoration: none;
 }
 .ds-menu-item .ds-muted {
   margin-left: auto;

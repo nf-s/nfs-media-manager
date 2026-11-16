@@ -16,8 +16,85 @@ import { Button } from '@repo/ui/components/ui/button'
 import { Input } from '@repo/ui/components/ui/input'
 import { Label } from '@repo/ui/components/ui/label'
 import { fetchApiData } from '@/utils/api'
+import { FindMatch, type FindMatchContext } from './find-match'
 import { errorMessage } from './lastfm-sync'
 import { useConfig } from './providers'
+
+/** Stores an identifier for an album or film; it wins over scraped ones. */
+function saveMediaIdentifier(
+  apiBaseUrl: string,
+  item: AlbumDetail | FilmDetail,
+  override: z.infer<typeof ProviderReferenceOverrideSchema>,
+) {
+  return fetchApiData(
+    apiBaseUrl,
+    `/api/v1/${item.mediaType === 'film' ? 'films' : 'albums'}/${encodeURIComponent(item.id)}`,
+    z.union([AlbumDetailSchema, FilmDetailSchema]),
+    {
+      method: 'PATCH',
+      body: JSON.stringify({ referenceOverrides: [override] }),
+    },
+  )
+}
+
+/** Films share IMDb and TMDb identifiers across providers. */
+function identifierProvider(
+  item: AlbumDetail | FilmDetail,
+  id: string,
+  referenceType: string,
+) {
+  return item.mediaType === 'film' && ['imdb', 'tmdb'].includes(referenceType)
+    ? referenceType
+    : id
+}
+
+/**
+ * Find match for an album or film: choosing a candidate does what Save and
+ * refresh does with its identifier.
+ */
+export function MediaFindMatch({
+  item,
+  provider,
+  label,
+  context,
+  onSaved,
+  onRefresh,
+}: {
+  item: AlbumDetail | FilmDetail
+  provider: string
+  label: string
+  context: FindMatchContext
+  onSaved: () => Promise<void>
+  /** Queues a refresh after saving. Without it the ID is only saved. */
+  onRefresh?: () => Promise<unknown>
+}) {
+  const { apiBaseUrl } = useConfig()
+  return (
+    <FindMatch
+      scope={{ kind: item.mediaType, id: item.id }}
+      provider={provider}
+      label={label}
+      context={context}
+      onChoose={async (candidate) => {
+        await saveMediaIdentifier(
+          apiBaseUrl,
+          item,
+          ProviderReferenceOverrideSchema.parse({
+            provider: identifierProvider(
+              item,
+              provider,
+              candidate.referenceType,
+            ),
+            referenceType: candidate.referenceType,
+            externalId: candidate.externalId,
+          }),
+        )
+        await onSaved()
+        if (onRefresh) await onRefresh()
+      }}
+    />
+  )
+}
 
 export function IdentifierRow({
   item,
@@ -46,15 +123,7 @@ export function IdentifierRow({
     mutationFn: async (
       override: z.infer<typeof ProviderReferenceOverrideSchema>,
     ) => {
-      await fetchApiData(
-        apiBaseUrl,
-        `/api/v1/${item.mediaType === 'film' ? 'films' : 'albums'}/${encodeURIComponent(item.id)}`,
-        z.union([AlbumDetailSchema, FilmDetailSchema]),
-        {
-          method: 'PATCH',
-          body: JSON.stringify({ referenceOverrides: [override] }),
-        },
-      )
+      await saveMediaIdentifier(apiBaseUrl, item, override)
       await onSaved()
       if (onRefresh) await onRefresh()
     },
@@ -138,7 +207,7 @@ export function mediaProviderIdentifiers(
   return [...referenceTypes].map((referenceType) => {
     const shared =
       item.mediaType === 'film' && ['imdb', 'tmdb'].includes(referenceType)
-    const saveProvider = shared ? referenceType : id
+    const saveProvider = identifierProvider(item, id, referenceType)
     const current =
       item.providerReferences.find(
         (reference) =>

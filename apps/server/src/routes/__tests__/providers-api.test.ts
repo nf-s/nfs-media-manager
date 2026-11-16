@@ -3,6 +3,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 const listProviders = vi.fn()
 const getProviderActivity = vi.fn()
 const getProviderJobSummary = vi.fn()
+const getProviderRequestSeries = vi.fn()
+const getProviderLibraryCoverage = vi.fn()
 const clearProviderCooldown = vi.fn()
 const updateProviderBudget = vi.fn()
 const getProvidersOverview = vi.fn()
@@ -13,6 +15,10 @@ vi.mock('@/services/providers-overview', () => ({
 vi.mock('@/services/provider-activity', () => ({
   getProviderActivity: (...args: unknown[]) => getProviderActivity(...args),
   getProviderJobSummary: (...args: unknown[]) => getProviderJobSummary(...args),
+  getProviderRequestSeries: (...args: unknown[]) =>
+    getProviderRequestSeries(...args),
+  getProviderLibraryCoverage: (...args: unknown[]) =>
+    getProviderLibraryCoverage(...args),
   clearProviderCooldown: (...args: unknown[]) => clearProviderCooldown(...args),
 }))
 
@@ -23,6 +29,8 @@ describe('providers api', () => {
     listProviders.mockReset()
     getProviderActivity.mockReset()
     getProviderJobSummary.mockReset()
+    getProviderRequestSeries.mockReset()
+    getProviderLibraryCoverage.mockReset()
     clearProviderCooldown.mockReset()
     updateProviderBudget.mockReset()
     getProvidersOverview.mockReset()
@@ -75,6 +83,13 @@ describe('providers api', () => {
       ).status,
     ).toBe(401)
     expect(getProviderJobSummary).not.toHaveBeenCalled()
+    for (const path of ['requests/daily', 'coverage'])
+      expect(
+        (await app.request(`http://localhost/api/v1/providers/fixture/${path}`))
+          .status,
+      ).toBe(401)
+    expect(getProviderRequestSeries).not.toHaveBeenCalled()
+    expect(getProviderLibraryCoverage).not.toHaveBeenCalled()
     expect(
       (await app.request('http://localhost/api/v1/providers/overview')).status,
     ).toBe(401)
@@ -117,6 +132,7 @@ describe('providers api', () => {
         id: 'spotify',
         displayName: 'Spotify',
         description: 'Album metadata',
+        siteUrl: 'https://example.com',
         surface: 'provider',
         mediaTypes: ['album'],
         subscriptions: true,
@@ -181,6 +197,7 @@ describe('providers api', () => {
         {
           id: 'spotify',
           displayName: 'Spotify',
+          siteUrl: 'https://example.com',
           subscriptions: true,
           supportsJobDispatchControl: true,
         },
@@ -203,6 +220,35 @@ describe('providers api', () => {
     expect(jobs.status).toBe(200)
     expect(await jobs.json()).toMatchObject({ data: summary })
     expect(getProviderJobSummary).toHaveBeenCalledWith('fixture')
+    const series = {
+      provider: 'fixture',
+      recordedSince: '2026-09-01T00:00:00.000Z',
+      daysFrom: '2026-08-19',
+      daysTo: '2026-11-16',
+      total: 7,
+      days: [
+        { date: '2026-11-02', count: 3 },
+        { date: '2026-11-16', count: 4 },
+      ],
+    }
+    getProviderRequestSeries.mockResolvedValue(series)
+    const daily = await app.request(
+      'http://localhost/api/v1/providers/fixture/requests/daily',
+    )
+    expect(daily.status).toBe(200)
+    expect(await daily.json()).toMatchObject({ data: series })
+    expect(getProviderRequestSeries).toHaveBeenCalledWith('fixture')
+    const coverage = {
+      provider: 'fixture',
+      mediaTypes: [{ mediaType: 'album', covered: 96, total: 128 }],
+    }
+    getProviderLibraryCoverage.mockResolvedValue(coverage)
+    const covered = await app.request(
+      'http://localhost/api/v1/providers/fixture/coverage',
+    )
+    expect(covered.status).toBe(200)
+    expect(await covered.json()).toMatchObject({ data: coverage })
+    expect(getProviderLibraryCoverage).toHaveBeenCalledWith('fixture')
     const overview = {
       generatedAt: '2026-11-16T13:40:00.000Z',
       requestsFrom: '2026-11-15T13:40:00.000Z',

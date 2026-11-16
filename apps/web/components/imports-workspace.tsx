@@ -18,6 +18,7 @@ import {
 } from '@repo/schemas/imports'
 import { Button } from '@repo/ui/components/ui/button'
 import { Notice } from '@repo/ui/components/ds/feedback'
+import { formatCount } from '@repo/ui/lib/format'
 import { useConfig } from './providers'
 import { SectionSidebar, SectionWorkspace } from './section-sidebar'
 import { fetchApiData } from '@/utils/api'
@@ -118,6 +119,9 @@ export function ImportStatusNotice() {
           : activeRun?.mediaType === 'album'
             ? 'An album import is in progress.'
             : 'An import is in progress.'}{' '}
+        {activeRun?.total
+          ? `${formatCount(activeRun.processed)} of ${formatCount(activeRun.total)} processed. `
+          : ''}
         <Link href={scopedHref('/imports', activeRun?.mediaType ?? mediaType)}>
           Follow it in Recent imports
         </Link>

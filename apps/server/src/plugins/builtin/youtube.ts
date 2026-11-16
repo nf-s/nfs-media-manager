@@ -10,6 +10,7 @@ export const youtubePlugin: MediaProviderPlugin = {
     id: 'youtube',
     displayName: 'YouTube',
     description: 'Subscribed channels and their videos',
+    siteUrl: 'https://www.youtube.com',
     mediaTypes: [],
     rateLimit: {
       maxConcurrent: 1,

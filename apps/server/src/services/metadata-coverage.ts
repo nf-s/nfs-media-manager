@@ -2,10 +2,14 @@ import { and, eq, inArray, sql, type SQL } from 'drizzle-orm'
 import { z } from 'zod'
 import {
   COVERAGE_ITEM_ID_LIMIT,
+  CoverageEntriesSchema,
   CoverageSchema,
   type Coverage,
+  type CoverageEntries,
+  type CoverageEntriesQuery,
   type CoverageQuery,
   type CoverageUnavailableReason,
+  type EntryGap,
 } from '@repo/schemas/coverage'
 import { canIdentifyMedia } from '@repo/schemas/provider-identification'
 import type { ProviderSummary } from '@repo/schemas/provider'
@@ -19,8 +23,12 @@ import {
 import { requireCreator } from './creators'
 import { getPlaylistSummary, playlistAlbumMembers } from './playlist-directory'
 import { listProviders } from './providers'
+import { getPlaylistDetail } from './tracks'
 
 const AlbumRowsSchema = z.array(z.object({ id: z.string(), title: z.string() }))
+const EntryAlbumRowsSchema = z.array(
+  z.object({ id: z.string(), album_id: z.string() }),
+)
 
 const visibleAlbum = sql`m.media_type = 'album'
   and m.metadata->>'legacyHidden' is distinct from 'true'`
@@ -34,16 +42,26 @@ function unavailableReason(
   return null
 }
 
+type ProviderGaps = {
+  provider: ProviderSummary
+  covered: number
+  /** Eligible albums never scraped, by title. */
+  missing: string[]
+  /** Eligible albums scraped before the cutoff, oldest scrape first. */
+  stale: string[]
+}
+
 /**
  * Per-provider freshness for a set of albums. Uses the Metadata table's rule:
  * only a successful scrape sets `last_scraped_at`, and an album is stale when
- * that is older than `olderThanDays`. Reads stored state only.
+ * that is older than `olderThanDays`. Albums a provider cannot look up are
+ * neither missing nor stale. Reads stored state only.
  */
-async function albumCoverage(
+async function albumGaps(
   albumIds: SQL,
-  query: CoverageQuery,
+  olderThanDays: number,
   now = Date.now(),
-): Promise<Coverage> {
+): Promise<{ total: number; providers: ProviderGaps[] }> {
   const albums = AlbumRowsSchema.parse(
     (
       await db.execute(sql`
@@ -108,11 +126,10 @@ async function albumCoverage(
   }
   const referencesById = group(references)
   const artistsById = group(credits)
-  const cutoff = now - query.olderThanDays * 86400000
+  const cutoff = now - olderThanDays * 86400000
 
-  return CoverageSchema.parse({
+  return {
     total: albums.length,
-    olderThanDays: query.olderThanDays,
     providers: providers.map((provider) => {
       const missing: string[] = []
       const stale: Array<{ id: string; scrapedAt: number }> = []
@@ -138,32 +155,143 @@ async function albumCoverage(
           left.scrapedAt - right.scrapedAt || left.id.localeCompare(right.id),
       )
       return {
-        provider: provider.id,
-        displayName: provider.displayName,
-        eligible: covered + stale.length + missing.length,
+        provider,
         covered,
-        stale: stale.length,
-        missing: missing.length,
-        unavailableReason: unavailableReason(provider),
-        missingItemIds: missing.slice(0, COVERAGE_ITEM_ID_LIMIT),
-        staleItemIds: stale
-          .slice(0, COVERAGE_ITEM_ID_LIMIT)
-          .map((album) => album.id),
+        missing,
+        stale: stale.map((album) => album.id),
       }
     }),
+  }
+}
+
+async function albumCoverage(
+  albumIds: SQL,
+  query: CoverageQuery,
+): Promise<Coverage> {
+  const gaps = await albumGaps(albumIds, query.olderThanDays)
+  return CoverageSchema.parse({
+    total: gaps.total,
+    olderThanDays: query.olderThanDays,
+    providers: gaps.providers.map(({ provider, covered, missing, stale }) => ({
+      provider: provider.id,
+      displayName: provider.displayName,
+      eligible: covered + stale.length + missing.length,
+      covered,
+      stale: stale.length,
+      missing: missing.length,
+      unavailableReason: unavailableReason(provider),
+      missingItemIds: missing.slice(0, COVERAGE_ITEM_ID_LIMIT),
+      staleItemIds: stale.slice(0, COVERAGE_ITEM_ID_LIMIT),
+    })),
   })
 }
 
 // The albums the playlist's album count uses: album entries and the library
 // albums of its track entries.
+function playlistAlbums(id: string) {
+  return sql`select members.album_id from playlist p
+    cross join lateral (${playlistAlbumMembers}) members
+    where p.id = ${id}`
+}
+
 export async function getPlaylistCoverage(id: string, query: CoverageQuery) {
   await getPlaylistSummary(id)
-  return albumCoverage(
-    sql`select members.album_id from playlist p
-      cross join lateral (${playlistAlbumMembers}) members
-      where p.id = ${id}`,
-    query,
+  return albumCoverage(playlistAlbums(id), query)
+}
+
+/**
+ * A page of the playlist's entries whose albums have the gap, in the entry
+ * query's order, each with its gaps by provider. Uses the same albums and
+ * rules as the playlist's coverage, so the albums of all returned entries
+ * are the albums Coverage counts. An entry's albums are an album entry
+ * itself, a track's library album and the albums whose track list has it.
+ */
+export async function getPlaylistCoverageEntries(
+  id: string,
+  query: CoverageEntriesQuery,
+): Promise<CoverageEntries> {
+  const { gap, provider, olderThanDays, ...entryQuery } = query
+  const gaps = await albumGaps(playlistAlbums(id), olderThanDays)
+  const providers = gaps.providers.filter(
+    (row) => provider === undefined || row.provider.id === provider,
   )
+  const providersByAlbum = new Map<string, ProviderSummary[]>()
+  for (const row of providers)
+    for (const albumId of row[gap])
+      providersByAlbum.set(albumId, [
+        ...(providersByAlbum.get(albumId) ?? []),
+        row.provider,
+      ])
+  const gapAlbums = sql`${sql.param([...providersByAlbum.keys()])}::text[]`
+  const detail = await getPlaylistDetail(
+    id,
+    entryQuery,
+    sql`and (a.media_item_id = any(${gapAlbums})
+      or lt.album_media_item_id = any(${gapAlbums})
+      or exists (select 1 from track t
+        where t.track_media_item_id = lt.media_item_id
+          and t.album_media_item_id = any(${gapAlbums})))`,
+  )
+  const trackIds = detail.items.items.flatMap((entry) =>
+    entry.kind === 'track' ? [entry.track.id] : [],
+  )
+  const trackAlbums = trackIds.length
+    ? EntryAlbumRowsSchema.parse(
+        (
+          await db.execute(sql`
+            select lt.media_item_id as id, lt.album_media_item_id as album_id
+            from library_track lt
+            where lt.media_item_id = any(${sql.param(trackIds)}::text[])
+              and lt.album_media_item_id is not null
+            union
+            select t.track_media_item_id, t.album_media_item_id from track t
+            where t.track_media_item_id = any(${sql.param(trackIds)}::text[])
+            order by 1, 2`)
+        ).rows,
+      )
+    : []
+  const albumsByTrack = new Map<string, string[]>()
+  for (const row of trackAlbums)
+    albumsByTrack.set(row.id, [
+      ...(albumsByTrack.get(row.id) ?? []),
+      row.album_id,
+    ])
+
+  function entryGaps(albumIds: readonly string[]): EntryGap[] {
+    return providers.flatMap(({ provider: summary }) => {
+      const matching = albumIds.filter((albumId) =>
+        providersByAlbum
+          .get(albumId)
+          ?.some((candidate) => candidate.id === summary.id),
+      )
+      return matching.length
+        ? [
+            {
+              provider: summary.id,
+              displayName: summary.displayName,
+              albumIds: matching,
+            },
+          ]
+        : []
+    })
+  }
+
+  return CoverageEntriesSchema.parse({
+    ...detail.items,
+    items: detail.items.items.map((entry) => ({
+      entry,
+      gaps: entryGaps(
+        entry.kind === 'album'
+          ? [entry.album.id]
+          : (albumsByTrack.get(entry.track.id) ?? []),
+      ),
+    })),
+    name: detail.name,
+    gap,
+    provider: provider ?? null,
+    olderThanDays,
+    albumCount: providersByAlbum.size,
+  })
 }
 
 // The albums credited to the artist, as on the artist's Albums tab.

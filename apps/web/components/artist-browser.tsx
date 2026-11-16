@@ -27,6 +27,7 @@ import {
 } from '@repo/ui/components/ds/list-row'
 import { EmptyValue, Pill, PillLabel, Pills } from '@repo/ui/components/ds/pill'
 import { Skeleton } from '@repo/ui/components/ds/feedback'
+import { Sparkline } from '@repo/ui/components/ds/trend-chart'
 import { formatCount, formatItemCount } from '@repo/ui/lib/format'
 import {
   BrowseFieldSchema,
@@ -41,6 +42,7 @@ import {
   type ArtistSummary,
 } from '@repo/schemas/creators'
 import {
+  ARTIST_LISTENING_MONTHS,
   artistBrowseFields,
   getArtistBrowseValues,
 } from '@repo/schemas/artist-browse'
@@ -58,10 +60,14 @@ import {
   withArtistFilter,
 } from '@/utils/artist-browse'
 import {
+  columnOrderParam,
+  hasCustomColumnOrder,
   formatFieldValue,
   itemGridGeometry,
   nextSortDirection,
+  orderColumns,
   orderFields,
+  parseColumnOrder,
   sortedValueLabel,
   textValues,
 } from '@/utils/browse-items'
@@ -159,7 +165,11 @@ export default function ArtistBrowser() {
         defaultArtistColumns),
     ]),
   ]
-  const columns = fields.filter((field) => columnKeys.includes(field.key))
+  const columnOrder = parseColumnOrder(searchParams.get('columnOrder'))
+  const orderedFields = orderColumns(fields, columnOrder, 'name')
+  const columns = orderedFields.filter((field) =>
+    columnKeys.includes(field.key),
+  )
   const widths = useColumnWidths(collection, (field) =>
     field.key === 'name' ? 260 : field.type === 'text' ? 180 : 110,
   )
@@ -464,12 +474,16 @@ export default function ArtistBrowser() {
           {formatItemCount(item.albumCount, { one: 'album', other: 'albums' })}
         </span>
         <span>
-          {sortBy === 'albumCount' || !sorted
-            ? formatItemCount(item.trackCount, {
-                one: 'track',
-                other: 'tracks',
-              })
-            : sorted}
+          {sortBy !== 'albumCount' && sortBy !== 'scrobbles' && sorted ? (
+            sorted
+          ) : item.scrobbleCount === undefined ? (
+            <EmptyValue />
+          ) : (
+            formatItemCount(item.scrobbleCount, {
+              one: 'scrobble',
+              other: 'scrobbles',
+            })
+          )}
         </span>
       </>
     )
@@ -605,10 +619,18 @@ export default function ArtistBrowser() {
               {view === 'table' && (
                 <BrowseColumnsSection>
                   <ColumnChoices
-                    fields={fields}
+                    fields={orderedFields}
                     selected={columnKeys}
                     required="name"
                     onChange={(keys) => setParams({ columns: keys.join(',') })}
+                    onOrderChange={(keys) =>
+                      setParams({ columnOrder: columnOrderParam(keys, fields) })
+                    }
+                    onResetOrder={
+                      hasCustomColumnOrder(orderedFields, fields, 'name')
+                        ? () => setParams({ columnOrder: null })
+                        : undefined
+                    }
                   />
                 </BrowseColumnsSection>
               )}
@@ -616,7 +638,14 @@ export default function ArtistBrowser() {
           }
           view={view}
           onViewChange={(next) => setParams({ view: next })}
-          count={<BrowseItemsCount query={query} total={total} noun={noun} />}
+          count={
+            <BrowseItemsCount
+              query={query}
+              total={total}
+              unfiltered={query.unfilteredTotal}
+              noun={noun}
+            />
+          }
         />
         {filterPills && (
           <PlacedFilters railSlot={railSlot} onClear={clearFilters}>
@@ -687,8 +716,10 @@ export default function ArtistBrowser() {
                   meta={
                     <>
                       <RowValue kind="num">Albums</RowValue>
-                      <RowValue kind="num">Tracks</RowValue>
-                      <RowValue kind="num">Playlists</RowValue>
+                      <RowValue kind="num">Scrobbles</RowValue>
+                      <RowValue kind="spark">
+                        {`${ARTIST_LISTENING_MONTHS} months`}
+                      </RowValue>
                     </>
                   }
                 />
@@ -710,17 +741,26 @@ export default function ArtistBrowser() {
                     }
                     title={<RowTitle>{artistLink(item)}</RowTitle>}
                     by={country(item)}
-                    tags={artistTags(item)}
+                    tags={artistTags(item, 1)}
                     meta={
                       <>
                         <RowValue kind="num">
                           {formatCount(item.albumCount)}
                         </RowValue>
                         <RowValue kind="num">
-                          {formatCount(item.trackCount)}
+                          {item.scrobbleCount === undefined ? (
+                            <EmptyValue />
+                          ) : (
+                            formatCount(item.scrobbleCount)
+                          )}
                         </RowValue>
-                        <RowValue kind="num">
-                          {formatCount(item.playlistCount)}
+                        <RowValue kind="spark">
+                          {item.listeningMonths && (
+                            <Sparkline
+                              values={item.listeningMonths}
+                              label={`Scrobbles per month for ${item.name}, last ${ARTIST_LISTENING_MONTHS} months`}
+                            />
+                          )}
                         </RowValue>
                       </>
                     }

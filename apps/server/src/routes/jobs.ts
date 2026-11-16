@@ -8,6 +8,7 @@ import {
   BulkDismissJobsResultSchema,
   BulkCancelJobsSchema,
   BulkCancelJobsResultSchema,
+  CancelJobBatchSchema,
   JobSchema,
   JobDataSchema,
   JobPageSchema,
@@ -40,6 +41,7 @@ import {
   bulkRetryJobs,
   bulkDismissJobs,
   bulkCancelJobs,
+  cancelJobBatch,
   markJobErrorBenign,
   dismissJob,
 } from '@/services/jobs'
@@ -448,6 +450,43 @@ app.openapi(
         c.req.valid('param').id,
         c.get('user')?.id ?? null,
         c.req.valid('json').confirmBroadRun,
+      ),
+      200,
+    ),
+)
+app.openapi(
+  createRoute({
+    method: 'post',
+    path: '/batches/:id/cancel',
+    middleware: [authMiddleware()],
+    request: {
+      params: z.object({ id: z.string().min(1) }),
+      body: {
+        required: true,
+        content: { 'application/json': { schema: CancelJobBatchSchema } },
+      },
+    },
+    responses: {
+      200: {
+        description:
+          "Cancel a batch's queued jobs, and its running jobs when confirmed. Finished jobs are kept",
+        content: {
+          'application/json': {
+            schema: createResponseSchema(BulkCancelJobsResultSchema),
+          },
+        },
+      },
+      401: jsonErrorResponse('Unauthorized'),
+      422: validationErrorResponse,
+    },
+  }),
+  async (c) =>
+    generateJsonResponse(
+      c,
+      await cancelJobBatch(
+        c.req.valid('param').id,
+        c.req.valid('json'),
+        c.get('user')?.id ?? null,
       ),
       200,
     ),

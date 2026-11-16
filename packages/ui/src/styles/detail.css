@@ -21,6 +21,41 @@
   align-items: center;
   gap: var(--ds-2);
 }
+/* Drawer breadcrumbs: earlier crumbs shorten first, the current title last */
+.dtl-crumbs > a {
+  flex: 0 1000 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dtl-crumbs > svg {
+  flex: none;
+}
+.dtl-crumbs > b {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+/* On a phone the bar holds the item's More actions instead of the header;
+   Open page moves into that menu, so the bar keeps it while there is none */
+.dtl-bar-more {
+  display: none;
+}
+@media (max-width: 700px) {
+  .dtl-crumbs > :not(b),
+  .dtl-bar-end:has(> .dtl-bar-more:not(:empty)) > .ds-btn.dtl-bar-open,
+  .ds-btn.dtl-more {
+    display: none;
+  }
+  .dtl-bar-more {
+    display: contents;
+  }
+}
+/* More actions menu, placed beside its button */
+.dtl-more-pop {
+  position: fixed;
+  inset: auto;
+  margin: 0;
+}
 .inspector-scroll.dtl-body {
   padding: var(--ds-6);
   scrollbar-gutter: stable;

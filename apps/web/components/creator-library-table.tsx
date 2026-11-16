@@ -93,7 +93,7 @@ export function CreatorLibraryTable<Row extends { id: string }>({
   const { apiBaseUrl } = useConfig()
   const view = useDetailView()
   const scope = `creator-library-${kind}`
-  const table = useTableColumns(scope, columns)
+  const table = useTableColumns(scope, columns, { reorder: true })
   const [savedPresentation, setSavedPresentation] = useNestedMediaView(scope)
   const urlPresentation = view.params.get('view')
   const presentation = parseBrowseView(urlPresentation, savedPresentation)
@@ -140,7 +140,9 @@ export function CreatorLibraryTable<Row extends { id: string }>({
   const selectedId =
     workspace && inspector?.root?.kind === kind ? inspector.root.id : undefined
   const total = query.hasTotal ? query.total : undefined
-  const visible = columns.filter((column) => table.visible(column.key))
+  const visible = table
+    .order(columns)
+    .filter((column) => table.visible(column.key))
   const narrowed = Boolean(search || (filters && Object.keys(filters).length))
   const empty = narrowed ? `No matching ${label}.` : `No ${label} stored.`
 

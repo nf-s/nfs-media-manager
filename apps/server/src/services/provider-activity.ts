@@ -1,16 +1,24 @@
 import { randomUUID } from 'node:crypto'
-import { and, desc, eq, gte, lt, sql } from 'drizzle-orm'
+import { and, desc, eq, gte, inArray, lt, sql } from 'drizzle-orm'
 import { z } from 'zod'
-import type {
-  ProviderActivity,
-  ProviderActivityRange,
-  ProviderJobSummary,
+import {
+  PROVIDER_REQUEST_SERIES_DAYS,
+  ProviderLibraryCoverageSchema,
+  ProviderRequestSeriesSchema,
+  type ProviderActivity,
+  type ProviderActivityRange,
+  type ProviderJobSummary,
+  type ProviderLibraryCoverage,
+  type ProviderRequestSeries,
 } from '@repo/schemas/provider'
 import { JobErrorReviewSchema } from '@repo/schemas/job'
 import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
+import { DAY_MS } from '@/lib/request-policy'
 import { listProviderCatalog } from '@/plugins/registry'
 import {
+  mediaItem,
+  providerCurrentState,
   providerRequestState,
   providerRequestEvent,
   providerCooldownReset,
@@ -20,8 +28,103 @@ import {
 import { getProviderSafety } from './provider-requests'
 
 async function requireProvider(provider: string) {
-  if (!(await listProviderCatalog()).some((item) => item.id === provider))
+  const entry = (await listProviderCatalog()).find(
+    (item) => item.id === provider,
+  )
+  if (!entry)
     throw new ServerError({ statusCode: 404, message: 'Provider not found' })
+  return entry
+}
+
+const isoDate = (time: number) => new Date(time).toISOString().slice(0, 10)
+
+/**
+ * Request attempts per UTC day over the last 90 days, the longest range the
+ * provider page's chart offers. Request events are never pruned, so the window
+ * bounds the read; days with no requests are left out for the chart to zero.
+ */
+export async function getProviderRequestSeries(
+  provider: string,
+  now = new Date(),
+): Promise<ProviderRequestSeries> {
+  await requireProvider(provider)
+  const today = Date.UTC(
+    now.getUTCFullYear(),
+    now.getUTCMonth(),
+    now.getUTCDate(),
+  )
+  const from = today - (PROVIDER_REQUEST_SERIES_DAYS - 1) * DAY_MS
+  const day = sql<string>`to_char(${providerRequestEvent.requestedAt}, 'YYYY-MM-DD')`
+  const [rows, [state]] = await Promise.all([
+    db
+      .select({ date: day, count: sql<number>`count(*)::integer` })
+      .from(providerRequestEvent)
+      .where(
+        and(
+          eq(providerRequestEvent.provider, provider),
+          gte(providerRequestEvent.requestedAt, new Date(from)),
+          lt(providerRequestEvent.requestedAt, new Date(today + DAY_MS)),
+        ),
+      )
+      .groupBy(day)
+      .orderBy(day),
+    db
+      .select({ since: providerRequestState.historyStartedAt })
+      .from(providerRequestState)
+      .where(eq(providerRequestState.provider, provider)),
+  ])
+  return ProviderRequestSeriesSchema.parse({
+    provider,
+    recordedSince: state?.since.toISOString() ?? null,
+    daysFrom: isoDate(from),
+    daysTo: isoDate(today),
+    total: rows.reduce((sum, row) => sum + row.count, 0),
+    days: rows,
+  })
+}
+
+/**
+ * How many visible library items of each media type in the provider's
+ * manifest it has data for. As in Metadata, only a successful scrape sets
+ * `last_scraped_at`, so imports and overrides do not count.
+ */
+export async function getProviderLibraryCoverage(
+  provider: string,
+): Promise<ProviderLibraryCoverage> {
+  const entry = await requireProvider(provider)
+  if (!entry.mediaTypes.length) return { provider, mediaTypes: [] }
+  const rows = await db
+    .select({
+      mediaType: mediaItem.mediaType,
+      total: sql<number>`count(*)::integer`,
+      covered: sql<number>`count(${providerCurrentState.lastScrapedAt})::integer`,
+    })
+    .from(mediaItem)
+    .leftJoin(
+      providerCurrentState,
+      and(
+        eq(providerCurrentState.mediaItemId, mediaItem.id),
+        eq(providerCurrentState.provider, provider),
+      ),
+    )
+    .where(
+      and(
+        inArray(mediaItem.mediaType, entry.mediaTypes),
+        sql`${mediaItem.metadata}->>'legacyHidden' is distinct from 'true'`,
+      ),
+    )
+    .groupBy(mediaItem.mediaType)
+  return ProviderLibraryCoverageSchema.parse({
+    provider,
+    mediaTypes: entry.mediaTypes.map((mediaType) => {
+      const row = rows.find((item) => item.mediaType === mediaType)
+      return {
+        mediaType,
+        covered: row?.covered ?? 0,
+        total: row?.total ?? 0,
+      }
+    }),
+  })
 }
 
 export async function getProviderJobSummary(

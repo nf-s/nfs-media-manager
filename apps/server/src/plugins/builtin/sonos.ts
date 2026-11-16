@@ -10,6 +10,7 @@ export const sonosPlugin: MediaProviderPlugin = {
     id: 'sonos',
     displayName: 'Sonos',
     description: 'Sonos rooms and what they play',
+    siteUrl: 'https://www.sonos.com',
     mediaTypes: [],
     rateLimit: {
       maxConcurrent: 4,

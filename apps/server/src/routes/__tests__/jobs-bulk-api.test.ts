@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 const bulkRetryJobs = vi.fn()
 const bulkDismissJobs = vi.fn()
 const bulkCancelJobs = vi.fn()
+const cancelJobBatch = vi.fn()
 const createJob = vi.fn()
 
 function mockAppSession(authenticated: boolean) {
@@ -41,6 +42,7 @@ function mockAppSession(authenticated: boolean) {
     bulkRetryJobs,
     bulkDismissJobs,
     bulkCancelJobs,
+    cancelJobBatch,
   }))
 }
 
@@ -347,5 +349,84 @@ describe('bulk retry confirmation', () => {
     })
     expect(response.status).toBe(422)
     expect(bulkRetryJobs).not.toHaveBeenCalled()
+  })
+})
+
+describe('batch cancellation api', () => {
+  const path = '/api/v1/scrape/jobs/batches/batch-1/cancel'
+
+  it('requires authentication before cancelling a batch', async () => {
+    mockAppSession(false)
+    const { default: app } = await import('@/app')
+    const response = await app.request(path, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ confirmRunning: true }),
+    })
+    expect(response.status).toBe(401)
+    expect(cancelJobBatch).not.toHaveBeenCalled()
+  })
+
+  it.each(['true', 1])(
+    'rejects non-boolean running confirmation: %j',
+    async (confirmRunning) => {
+      mockAppSession(true)
+      const { default: app } = await import('@/app')
+      const response = await app.request(path, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ confirmRunning }),
+      })
+      expect(response.status).toBe(422)
+      expect(cancelJobBatch).not.toHaveBeenCalled()
+    },
+  )
+
+  it('uses the session actor and defaults to queued jobs only', async () => {
+    mockAppSession(true)
+    const result = {
+      cancelled: 1,
+      skipped: 1,
+      results: [
+        { jobId: 'job-1', status: 'cancelled' },
+        {
+          jobId: 'job-2',
+          status: 'skipped',
+          message: 'Job was already handled.',
+        },
+      ],
+    }
+    cancelJobBatch.mockResolvedValue(result)
+    const { default: app } = await import('@/app')
+    const response = await app.request(path, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ userId: 'forged-user' }),
+    })
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ data: result })
+    expect(cancelJobBatch).toHaveBeenCalledExactlyOnceWith(
+      'batch-1',
+      { confirmRunning: false },
+      'user-1',
+    )
+    expect(bulkCancelJobs).not.toHaveBeenCalled()
+  })
+
+  it('forwards explicit running confirmation', async () => {
+    mockAppSession(true)
+    cancelJobBatch.mockResolvedValue({ cancelled: 0, skipped: 0, results: [] })
+    const { default: app } = await import('@/app')
+    const response = await app.request(path, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ confirmRunning: true }),
+    })
+    expect(response.status).toBe(200)
+    expect(cancelJobBatch).toHaveBeenCalledExactlyOnceWith(
+      'batch-1',
+      { confirmRunning: true },
+      'user-1',
+    )
   })
 })

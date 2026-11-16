@@ -46,6 +46,7 @@ import {
   ArtistProfileSources,
 } from './artist-profile-sources'
 import { CreatorDetailState } from './creator-detail-state'
+import { DetailMore } from './detail-more'
 import {
   CreatorLibraryDate,
   CreatorLibraryTable,
@@ -505,6 +506,7 @@ export function ArtistDetail({ id }: { id: string }) {
               snapshots={artist.providers}
               identifiers={artist.identifiers}
             />
+            <DetailMore crumb={{ title: artist.name }} />
           </>
         }
       />

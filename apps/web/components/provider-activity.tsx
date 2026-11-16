@@ -1,18 +1,26 @@
 'use client'
 
-import { useState, type ReactNode } from 'react'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import Link from 'next/link'
+import type { ReactNode } from 'react'
+import {
+  useQuery,
+  useQueryClient,
+  type QueryClient,
+} from '@tanstack/react-query'
 import type { z } from 'zod'
 import type { JobActivitySchema } from '@repo/schemas/job'
 import {
   ProviderActivitySchema,
+  ProviderLibraryCoverageSchema,
+  ProviderRequestSeriesSchema,
   type ProviderActivityRange,
+  type ProviderRequestSeries,
   type ProviderSummary,
 } from '@repo/schemas/provider'
 import { Section } from '@repo/ui/components/ds/facts'
 import { Skeleton, State } from '@repo/ui/components/ds/feedback'
-import { Segmented } from '@repo/ui/components/ds/segmented'
-import { Sparkline } from '@repo/ui/components/ds/trend-chart'
+import { Coverage } from '@repo/ui/components/ds/meter'
+import { TrendChart } from '@repo/ui/components/ds/trend-chart'
 import { Button } from '@repo/ui/components/ui/button'
 import {
   Table,
@@ -21,20 +29,21 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-  TableSortButton,
-  TableState,
 } from '@repo/ui/components/ui/table'
-import { formatCount, formatDateTime } from '@repo/ui/lib/format'
+import { formatDateTime } from '@repo/ui/lib/format'
+import { DAY_MS, utcDay, type TrendRange } from '@repo/ui/lib/trend'
 import { fetchApiData } from '@/utils/api'
-import { sortTableRows } from '@/utils/secondary-table'
+import { scopedHref } from '@/utils/media-scope'
 import { DetailLink } from './detail-link'
 import { useConfig } from './providers'
 
-const ranges: Array<{ value: ProviderActivityRange; label: string }> = [
-  { value: '1h', label: '1 hour' },
-  { value: '24h', label: '24 hours' },
-  { value: '7d', label: '7 days' },
-]
+/** Refresh every 10 seconds while jobs are queued or running. */
+function whileJobsRun(client: QueryClient) {
+  const jobs = client.getQueryData<z.infer<typeof JobActivitySchema>>([
+    'job-activity',
+  ])
+  return jobs && jobs.queued + jobs.running > 0 ? 10000 : false
+}
 
 function useProviderActivity(
   provider: Pick<ProviderSummary, 'id'>,
@@ -50,72 +59,57 @@ function useProviderActivity(
         `/api/v1/providers/${encodeURIComponent(provider.id)}/activity?range=${range}`,
         ProviderActivitySchema,
       ),
-    refetchInterval: () => {
-      const jobs = client.getQueryData<z.infer<typeof JobActivitySchema>>([
-        'job-activity',
-      ])
-      return jobs && jobs.queued + jobs.running > 0 ? 10000 : false
-    },
+    refetchInterval: () => whileJobsRun(client),
   })
 }
 
-/** Request attempts over the last hour, day or week, with the counts behind the line. */
+function useProviderRequestSeries(provider: Pick<ProviderSummary, 'id'>) {
+  const { apiBaseUrl } = useConfig()
+  const client = useQueryClient()
+  return useQuery({
+    queryKey: ['provider-activity', provider.id, 'daily'],
+    queryFn: () =>
+      fetchApiData(
+        apiBaseUrl,
+        `/api/v1/providers/${encodeURIComponent(provider.id)}/requests/daily`,
+        ProviderRequestSeriesSchema,
+      ),
+    refetchInterval: () => whileJobsRun(client),
+  })
+}
+
+/**
+ * The ranges the stored history can fill. The server returns the last 90
+ * days; 90d is offered once complete recording began before the 30-day range.
+ */
+export function requestRanges(
+  series: Pick<ProviderRequestSeries, 'recordedSince' | 'daysTo'>,
+): TrendRange[] {
+  const thirtyDays = utcDay(series.daysTo) - 29 * DAY_MS
+  return series.recordedSince === null ||
+    Date.parse(series.recordedSince) < thirtyDays
+    ? ['30d', '90d']
+    : ['30d']
+}
+
+/** Request attempts per day as the shared trend chart. */
 export function ProviderRequests({
   provider,
 }: {
-  provider: Pick<ProviderSummary, 'id' | 'displayName'>
+  provider: Pick<ProviderSummary, 'id'>
 }) {
-  const [range, setRange] = useState<ProviderActivityRange>('24h')
-  const [sortBy, setSortBy] = useState<'start' | 'count'>('start')
-  const [direction, setDirection] = useState<'asc' | 'desc'>('asc')
-  const activity = useProviderActivity(provider, range)
-  const data = activity.data
-  const rangeLabel = ranges.find((item) => item.value === range)?.label
-  function sort(key: 'start' | 'count') {
-    setSortBy(key)
-    setDirection(sortBy === key && direction === 'asc' ? 'desc' : 'asc')
-  }
-  function header(key: 'start' | 'count', label: string) {
-    const active = sortBy === key
-    return (
-      <TableHead
-        align={key === 'count' ? 'end' : undefined}
-        sticky={key === 'start' ? 0 : undefined}
-        stickyEdge={key === 'start'}
-        aria-sort={
-          active ? (direction === 'asc' ? 'ascending' : 'descending') : 'none'
-        }
-      >
-        <TableSortButton
-          direction={active ? direction : undefined}
-          onClick={() => sort(key)}
-        >
-          {label}
-        </TableSortButton>
-      </TableHead>
-    )
-  }
+  const series = useProviderRequestSeries(provider)
+  const data = series.data
   return (
-    <Section
-      title="Requests"
-      note={data ? formatCount(data.total) : undefined}
-      aside={
-        <Segmented
-          label="Request history period"
-          value={range}
-          options={ranges}
-          onChange={setRange}
-        />
-      }
-    >
-      {activity.isPending && <Skeleton className="providers-chart" />}
-      {activity.isError && (
+    <Section title="Requests">
+      {series.isPending && <Skeleton className="providers-chart" />}
+      {series.isError && (
         <State
           size="sm"
           error
           title="Could not load request history"
           action={
-            <Button size="xs" onClick={() => activity.refetch()}>
+            <Button size="xs" onClick={() => series.refetch()}>
               Retry
             </Button>
           }
@@ -124,14 +118,16 @@ export function ProviderRequests({
       {data && (
         <>
           {data.total > 0 ? (
-            <div className="providers-chart">
-              <Sparkline
-                values={data.buckets.map((bucket) => bucket.count)}
-                label={`${provider.displayName}: ${formatCount(data.total)} API request attempts in the last ${rangeLabel}`}
-              />
-            </div>
+            <TrendChart
+              days={data.days}
+              unit="requests"
+              defaultRange="30d"
+              ranges={requestRanges(data)}
+              now={new Date(utcDay(data.daysTo))}
+              partialDay
+            />
           ) : (
-            <State size="sm" title="No recorded requests in this period" />
+            <State size="sm" title="No recorded requests in the last 90 days" />
           )}
           <p className="ds-help">
             {data.recordedSince
@@ -139,44 +135,78 @@ export function ProviderRequests({
               : 'History starts with the first API request.'}{' '}
             Includes failed attempts; blocked calls are not counted.
           </p>
-          <details className="providers-details">
-            <summary>Request counts</summary>
-            <Table
-              aria-label="Request counts"
-              containerClassName="providers-table-bounded"
-            >
-              <TableHeader>
-                <TableRow>
-                  {header('start', 'Interval start')}
-                  {header('count', 'Requests')}
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {!data.buckets.length && (
-                  <TableState colSpan={2}>
-                    No recorded requests in this period.
-                  </TableState>
-                )}
-                {sortTableRows(
-                  data.buckets,
-                  { key: sortBy, direction },
-                  (bucket, key) =>
-                    key === 'count' ? bucket.count : Date.parse(bucket.start),
-                ).map((bucket) => (
-                  <TableRow key={bucket.start}>
-                    <TableCell sticky={0} stickyEdge>
-                      {formatDateTime(bucket.start)}
-                    </TableCell>
-                    <TableCell align="end">
-                      {formatCount(bucket.count)}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </details>
         </>
       )}
+    </Section>
+  )
+}
+
+const libraryLabels = { album: 'Albums', film: 'Films' }
+
+/**
+ * How much of each library the provider has data for, with a link to the
+ * library's Metadata selection to fill the rest. Account-level providers have
+ * no media types and no coverage.
+ */
+export function ProviderCoverage({
+  provider,
+}: {
+  provider: Pick<ProviderSummary, 'id' | 'mediaTypes'>
+}) {
+  const { apiBaseUrl } = useConfig()
+  const applies = provider.mediaTypes.length > 0
+  const coverage = useQuery({
+    queryKey: ['provider-activity', provider.id, 'coverage'],
+    queryFn: () =>
+      fetchApiData(
+        apiBaseUrl,
+        `/api/v1/providers/${encodeURIComponent(provider.id)}/coverage`,
+        ProviderLibraryCoverageSchema,
+      ),
+    enabled: applies,
+  })
+  if (!applies) return null
+  const rows = coverage.data?.mediaTypes.filter((row) => row.total > 0) ?? []
+  return (
+    <Section title="Coverage" note="items with data from this provider">
+      {coverage.isPending && <Skeleton className="providers-field" />}
+      {coverage.isError && (
+        <State
+          size="sm"
+          error
+          title="Could not load coverage"
+          action={
+            <Button size="xs" onClick={() => coverage.refetch()}>
+              Retry
+            </Button>
+          }
+        />
+      )}
+      {coverage.data && !rows.length && (
+        <State
+          size="sm"
+          title={`No ${coverage.data.mediaTypes
+            .map((row) => libraryLabels[row.mediaType].toLowerCase())
+            .join(' or ')} in the library`}
+        />
+      )}
+      {rows.map((row) => (
+        <Coverage
+          key={row.mediaType}
+          label={libraryLabels[row.mediaType]}
+          have={row.covered}
+          total={row.total}
+          action={
+            row.covered < row.total ? (
+              <Button size="xs" asChild>
+                <Link href={scopedHref('/jobs/metadata', row.mediaType)}>
+                  Metadata
+                </Link>
+              </Button>
+            ) : undefined
+          }
+        />
+      ))}
     </Section>
   )
 }

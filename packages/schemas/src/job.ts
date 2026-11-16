@@ -430,6 +430,11 @@ export const BulkCancelJobsResultSchema = z.object({
 })
 export type BulkCancelJobsInput = z.infer<typeof BulkCancelJobsSchema>
 export type BulkCancelJobsResult = z.infer<typeof BulkCancelJobsResultSchema>
+/** Cancel every queued job in a batch, and its running jobs when confirmed. */
+export const CancelJobBatchSchema = z.object({
+  confirmRunning: z.boolean().default(false),
+})
+export type CancelJobBatchInput = z.infer<typeof CancelJobBatchSchema>
 
 export function isRetryableJobStatus(status: Job['status']): boolean {
   return status === 'failed' || status === 'cancelled' || status === 'running'

@@ -221,6 +221,24 @@ test('batches are one row with progress and the provider wait, and expand to the
   assert.match(html, />2 jobs and batches</)
 })
 
+test('a batch with unfinished jobs has a checkbox and Cancel; a finished batch keeps Retry', () => {
+  const html = render('', undefined, [batch])
+  const row = html.match(/<tr data-group="">.*?<\/tr>/)?.[0] ?? ''
+  assert.match(
+    row,
+    /type="checkbox" class="ds-check" aria-label="Select batch Batch · 240 albums"/,
+  )
+  assert.match(row, />Cancel<\/button>/)
+  assert.doesNotMatch(row, />Retry<\/button>/)
+  assert.match(html, /class="ds-selectbar"/)
+  const finished = render('', undefined, [
+    { ...batch, queued: 0, running: 0, succeeded: 238, waiting: null },
+  ])
+  const finishedRow = finished.match(/<tr data-group="">.*?<\/tr>/)?.[0] ?? ''
+  assert.doesNotMatch(finishedRow, /type="checkbox"|>Cancel<\/button>/)
+  assert.match(finishedRow, />Retry<\/button>/)
+})
+
 test('queued jobs show why they wait', () => {
   const queued = JobSchema.parse({
     ...job,

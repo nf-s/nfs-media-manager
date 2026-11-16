@@ -1,6 +1,5 @@
 'use client'
 
-import Link from 'next/link'
 import { DetailLink } from './detail-link'
 import { useDeferredValue } from 'react'
 import { useQuery } from '@tanstack/react-query'
@@ -42,6 +41,7 @@ import { clientQueryDefaults } from '@/utils/query-cache'
 import { fetchApiData } from '@/utils/api'
 import { useConfig } from './providers'
 import { CreatorDetailState } from './creator-detail-state'
+import { DetailMore } from './detail-more'
 import { DetailArt, DetailTabs, useDetailTab } from './detail-frame'
 import { ProviderSources } from './provider-sources'
 import BrowseToolbar, {
@@ -425,12 +425,16 @@ export function FilmCollectionEntries({ id }: { id: string }) {
         actions={
           summary && (
             <>
-              <Button asChild size="md">
-                <Link href={collectionFilmsHref(summary.name)}>
-                  Filter films
-                </Link>
-              </Button>
               <DetailActionsSpacer />
+              <DetailMore
+                crumb={{ title: summary.name }}
+                items={[
+                  {
+                    label: 'Filter films',
+                    href: collectionFilmsHref(summary.name),
+                  },
+                ]}
+              />
             </>
           )
         }

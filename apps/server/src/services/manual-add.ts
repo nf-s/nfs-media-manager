@@ -24,6 +24,7 @@ import {
 } from '@/lib/spotify-api'
 import { AlbumImportCandidateSchema } from '@/lib/album-import-candidates'
 import { spotifyClientToken } from '@/plugins/builtin/spotify'
+import { searchTmdbMovies, tmdbPosterUrl } from '@/plugins/builtin/tmdb'
 import { getScrapePlugin } from '@/plugins/registry'
 import { providerSecret } from '@/schemas/db'
 import { commitAlbumImportRecord, matchAlbumCandidates } from './album-imports'
@@ -37,32 +38,13 @@ import {
   recordProviderFailure,
   recordProviderSuccess,
 } from './provider-requests'
+import { getProviderTransport } from './provider-transport'
 
-const TmdbSearchSchema = z.object({
-  page: z.number().int().positive(),
-  total_pages: z.number().int().nonnegative(),
-  total_results: z.number().int().nonnegative().optional(),
-  results: z
-    .array(
-      z.object({
-        id: z.number().int().positive().safe(),
-        title: z.string().min(1),
-        original_title: z.string().optional(),
-        release_date: z
-          .string()
-          .regex(/^(?:\d{4}-\d{2}-\d{2})?$/)
-          .optional(),
-        poster_path: z
-          .string()
-          .regex(/^\/[A-Za-z0-9._-]+$/)
-          .nullable()
-          .optional(),
-      }),
-    )
-    .max(20),
-})
-
-async function manualProvider(providerId: 'spotify' | 'tmdb') {
+/**
+ * A provider and its stored credentials for a request made outside a job.
+ * A provider whose local worker is connected may hold its credentials there.
+ */
+async function manualProvider(providerId: string, action: string) {
   const plugin = await getScrapePlugin(providerId)
   if (!plugin)
     throw new ServerError({
@@ -78,32 +60,44 @@ async function manualProvider(providerId: 'spotify' | 'tmdb') {
     rows,
     plugin.manifest.secrets,
   )
+  const worker = plugin.manifest.localWorker
+    ? await getProviderTransport(plugin)
+    : null
   if (
+    !worker &&
     plugin.manifest.secrets.some(
       (field) => field.required && !secrets[field.key]?.trim(),
     )
   ) {
     throw new ServerError({
       statusCode: 422,
-      message: `Configure ${plugin.manifest.displayName} credentials in Providers before searching or adding items.`,
+      message: `Configure ${plugin.manifest.displayName} credentials in Providers before ${action}.`,
     })
   }
   return { plugin, secrets }
 }
 
 export async function prepareManualMediaSearch(mediaType: 'album' | 'film') {
-  await manualProvider(mediaType === 'album' ? 'spotify' : 'tmdb')
+  await manualProvider(
+    mediaType === 'album' ? 'spotify' : 'tmdb',
+    'searching or adding items',
+  )
 }
 
-async function providerOperation<T>(
-  providerId: 'spotify' | 'tmdb',
+/**
+ * Runs provider requests outside a job through the provider's request policy,
+ * recording the outcome. Policy refusals and provider errors become 422s.
+ */
+export async function providerOperation<T>(
+  providerId: string,
   execute: (
     context: MediaPluginTestContext,
     plugin: MediaProviderPlugin,
   ) => Promise<T>,
   assertActive?: () => Promise<void>,
+  action = 'searching or adding items',
 ): Promise<T> {
-  const { plugin, secrets } = await manualProvider(providerId)
+  const { plugin, secrets } = await manualProvider(providerId, action)
   try {
     await assertActive?.()
     const result = await execute(
@@ -222,19 +216,9 @@ export async function searchManualMedia(
         page.offset + page.items.length < page.total,
     })
   }
-  const page = await providerOperation('tmdb', async ({ secrets, request }) => {
-    const url = new URL('https://api.themoviedb.org/3/search/movie')
-    url.search = new URLSearchParams({
-      api_key: secrets['apiKey'] ?? '',
-      query: options.q,
-      page: String(options.page),
-      include_adult: 'false',
-    }).toString()
-    const response = await request(url)
-    if (!response.ok)
-      throw new Error(`TMDb search failed (HTTP ${response.status})`)
-    return TmdbSearchSchema.parse(await response.json())
-  })
+  const page = await providerOperation('tmdb', (context) =>
+    searchTmdbMovies(context, options.q, options.page),
+  )
   if (page.page !== options.page) {
     throw new ServerError({
       statusCode: 422,
@@ -253,9 +237,7 @@ export async function searchManualMedia(
           ? item.original_title
           : null,
       releaseDate: item.release_date || null,
-      artworkUrl: item.poster_path
-        ? `https://image.tmdb.org/t/p/w185${item.poster_path}`
-        : null,
+      artworkUrl: tmdbPosterUrl(item.poster_path) ?? null,
       url: `https://www.themoviedb.org/movie/${item.id}`,
       mediaItemId: matches[index]?.error ? null : (matches[index]?.id ?? null),
     })),

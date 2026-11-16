@@ -1107,6 +1107,8 @@ export const subscriptionItem = pgTable(
     live: text('live').notNull().default('none'),
     // Spotify episode artwork; YouTube thumbnails derive from the video ID.
     artworkUrl: text('artwork_url'),
+    // UTC. Set by the owner, never by a sync; null when not watched.
+    watchedAt: timestamp('watched_at', { mode: 'date', withTimezone: false }),
     // Title (A), source title and tags (B), description (D).
     search: tsvector('search').notNull(),
     ...timestampColumns,

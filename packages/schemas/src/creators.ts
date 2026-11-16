@@ -43,6 +43,10 @@ export const ArtistSummarySchema = CreatorIdentitySchema.extend({
   albumCount: CountSchema,
   trackCount: CountSchema,
   playlistCount: CountSchema,
+  /** Scrobbles linked to the artist's library albums and tracks; in browse rows. */
+  scrobbleCount: CountSchema.optional(),
+  /** Scrobbles per UTC month, oldest first, ending with the current month; in browse rows. */
+  listeningMonths: z.array(CountSchema).optional(),
   browse: BrowseValuesSchema.default({}),
 })
 export type ArtistSummary = z.infer<typeof ArtistSummarySchema>

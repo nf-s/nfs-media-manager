@@ -7,6 +7,8 @@ import {
   ProviderActivityQuerySchema,
   ProviderActivitySchema,
   ProviderJobSummarySchema,
+  ProviderLibraryCoverageSchema,
+  ProviderRequestSeriesSchema,
   ClearProviderCooldownSchema,
   ProviderSafetySchema,
   ProviderRequestBudgetSchema,
@@ -34,6 +36,8 @@ import {
 import {
   getProviderActivity,
   getProviderJobSummary,
+  getProviderLibraryCoverage,
+  getProviderRequestSeries,
   clearProviderCooldown,
 } from '@/services/provider-activity'
 import { getProvidersOverview } from '@/services/providers-overview'
@@ -261,6 +265,67 @@ app.openapi(
         c.req.valid('param').provider,
         c.req.valid('query').range,
       ),
+      200,
+    ),
+)
+
+app.openapi(
+  createRoute({
+    method: 'get',
+    path: '/:provider/requests/daily',
+    middleware: [authMiddleware()],
+    request: {
+      params: z.object({ provider: z.string().min(1) }),
+    },
+    responses: {
+      200: {
+        description: 'Provider request attempts per UTC day, last 90 days',
+        content: {
+          'application/json': {
+            schema: createResponseSchema(ProviderRequestSeriesSchema),
+          },
+        },
+      },
+      401: jsonErrorResponse('Unauthorized'),
+      404: jsonErrorResponse('Provider not found'),
+      422: validationErrorResponse,
+    },
+  }),
+  async (c) =>
+    generateJsonResponse(
+      c,
+      await getProviderRequestSeries(c.req.valid('param').provider),
+      200,
+    ),
+)
+
+app.openapi(
+  createRoute({
+    method: 'get',
+    path: '/:provider/coverage',
+    middleware: [authMiddleware()],
+    request: {
+      params: z.object({ provider: z.string().min(1) }),
+    },
+    responses: {
+      200: {
+        description:
+          'Library items of each media type the provider has data for',
+        content: {
+          'application/json': {
+            schema: createResponseSchema(ProviderLibraryCoverageSchema),
+          },
+        },
+      },
+      401: jsonErrorResponse('Unauthorized'),
+      404: jsonErrorResponse('Provider not found'),
+      422: validationErrorResponse,
+    },
+  }),
+  async (c) =>
+    generateJsonResponse(
+      c,
+      await getProviderLibraryCoverage(c.req.valid('param').provider),
       200,
     ),
 )

@@ -1,7 +1,6 @@
 'use client'
 
 import { useDeferredValue, useEffect, useState } from 'react'
-import Link from 'next/link'
 import { X } from 'lucide-react'
 import { useVirtualTable } from '@/hooks/useVirtualTable'
 import { TagDetailSchema, TagPageSchema, type Tag } from '@repo/schemas/tags'
@@ -22,6 +21,7 @@ import { useConfig } from './providers'
 import { fetchApiData } from '@/utils/api'
 import { tagDetailId } from '@/utils/detail-inspector'
 import { CreatorDetailState } from './creator-detail-state'
+import { DetailMore } from './detail-more'
 import { useDetailInspector } from './detail-inspector-context'
 import { DetailTabs, useDetailTab } from './detail-frame'
 import { MediaInspector } from './media-inspector'
@@ -220,14 +220,16 @@ export function TagDetail({
         ]}
         actions={
           <>
-            <Button asChild size="md">
-              <Link
-                href={`/${library}?${new URLSearchParams({ filters: JSON.stringify([{ field: 'genre', value: data.tag.name }]) })}`}
-              >
-                Browse {library} with this tag
-              </Link>
-            </Button>
             <DetailActionsSpacer />
+            <DetailMore
+              crumb={{ title: data.tag.name }}
+              items={[
+                {
+                  label: `Browse ${library} with this tag`,
+                  href: `/${library}?${new URLSearchParams({ filters: JSON.stringify([{ field: 'genre', value: data.tag.name }]) })}`,
+                },
+              ]}
+            />
           </>
         }
       />

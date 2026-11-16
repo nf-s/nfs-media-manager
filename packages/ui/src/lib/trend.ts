@@ -4,7 +4,7 @@
  */
 
 export type TrendGrain = 'day' | 'week' | 'month' | 'quarter' | 'year'
-export type TrendRange = '30d' | '1y' | '5y' | 'all'
+export type TrendRange = '30d' | '90d' | '1y' | '5y' | 'all'
 export type TrendSample = { t: number; v: number }
 export type TrendSeries = { grain: TrendGrain; points: TrendSample[] }
 
@@ -19,6 +19,7 @@ const GRAINS: readonly TrendGrain[] = [
 ]
 const RANGE_DAYS: Record<Exclude<TrendRange, 'all'>, number> = {
   '30d': 29,
+  '90d': 89,
   '1y': 364,
   '5y': 1825,
 }

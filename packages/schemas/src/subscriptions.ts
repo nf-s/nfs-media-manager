@@ -87,6 +87,8 @@ const itemShape = {
   /** Null when unknown, such as a live stream or premiere that has not finished. */
   durationSec: z.number().int().positive().nullable(),
   url: z.string().url(),
+  /** UTC. Set by the owner; null when not watched. */
+  watchedAt: z.string().datetime().nullable().default(null),
 }
 
 export const YoutubeSubscriptionItemSchema = z.object({
@@ -180,6 +182,9 @@ export const subscriptionBrowseFields: BrowseField[] = [
     format: 'seconds',
     filterable: true,
   },
+  /** Watched or not, as for films; `watchedAt` holds the date. */
+  { key: 'watched', label: 'Watched', type: 'text', filterable: true },
+  { key: 'watchedAt', label: 'Watched', type: 'date', filterable: true },
   {
     key: 'viewCount',
     label: 'Views',
@@ -215,6 +220,8 @@ export function getSubscriptionBrowseValues(
     description: item.description,
     publishedAt: Date.parse(item.publishedAt),
     durationSec: item.durationSec,
+    watched: item.watchedAt ? 'Yes' : 'No',
+    watchedAt: item.watchedAt ? Date.parse(item.watchedAt) : null,
     viewCount: item.type === 'youtube' ? item.viewCount : null,
     likeCount: item.type === 'youtube' ? item.likeCount : null,
     commentCount: item.type === 'youtube' ? item.commentCount : null,
@@ -226,10 +233,12 @@ export const SubscriptionTextFieldSchema = z.enum([
   'source',
   'type',
   'genre',
+  'watched',
 ])
 export const SubscriptionRangeFieldSchema = z.enum([
   'publishedAt',
   'durationSec',
+  'watchedAt',
   'viewCount',
   'likeCount',
   'commentCount',
@@ -240,6 +249,7 @@ export const SubscriptionSortSchema = z.enum([
   'title',
   'source',
   'durationSec',
+  'watchedAt',
   'viewCount',
   'likeCount',
   'commentCount',
@@ -283,9 +293,9 @@ export const SubscriptionItemQuerySchema = PaginationQuerySchema.extend({
   /** Web-search syntax: every word must match by its stem or as the start of a word; "quoted phrases", `or` and `-exclusions` are supported. */
   q: z.string().trim().max(200).optional(),
   fields: SubscriptionSearchFieldsSchema.default('all'),
-  /** JSON `BrowseFilter[]` over title, source, type and genre. */
+  /** JSON `BrowseFilter[]` over title, source, type, genre and watched (`Yes` or `No`). */
   filters: SubscriptionFiltersParamSchema,
-  /** JSON `BrowseRange[]`; publishedAt bounds are epoch milliseconds. */
+  /** JSON `BrowseRange[]`; publishedAt and watchedAt bounds are epoch milliseconds. */
   ranges: BrowseRangesParamSchema.refine(
     (ranges) => ranges.every((range) => rangeField(range.field)),
     'Unknown numeric filter',
@@ -302,6 +312,12 @@ export type SubscriptionItemQueryInput = z.input<
 export const SubscriptionItemParamsSchema = z.object({
   id: SubscriptionItemIdSchema,
 })
+
+/** Sets an item's watched date, or clears it with null. */
+export const SubscriptionItemPatchSchema = z
+  .object({ watchedAt: z.string().datetime().nullable() })
+  .strict()
+export type SubscriptionItemPatch = z.infer<typeof SubscriptionItemPatchSchema>
 
 /** A facet row: a filter with its label ("Channel: Name") and whole-library count. */
 export const SubscriptionFilterOptionSchema = BrowseFilterSchema.extend({

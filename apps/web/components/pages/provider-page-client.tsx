@@ -3,7 +3,7 @@
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { ChevronRight } from 'lucide-react'
+import { ChevronRight, ExternalLink } from 'lucide-react'
 import { z } from 'zod'
 import type { JobActivitySchema } from '@repo/schemas/job'
 import {
@@ -46,6 +46,7 @@ import {
 import { useConfig } from '../providers'
 import { JobsTable } from '../jobs-table'
 import {
+  ProviderCoverage,
   ProviderRecentActivity,
   ProviderRequests,
   ProviderReviewableErrors,
@@ -69,6 +70,7 @@ import {
   type ProviderDispatch,
 } from '../provider-job-dispatch'
 import ProviderJobSummary from '../provider-job-summary'
+import { DetailMore } from '../detail-more'
 import {
   ProviderLocalWorkerBadge,
   useProviderLocalWorker,
@@ -246,9 +248,26 @@ function ProviderDetail({
               </Button>
             )}
             <DetailActionsSpacer />
-            <Button size="md" variant="ghost" asChild>
-              <Link href={providerJobsHref(id)}>Open in Jobs</Link>
-            </Button>
+            {provider.siteUrl && (
+              <Button size="md" variant="ghost" asChild>
+                <a
+                  href={provider.siteUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label={`Open ${provider.displayName} site (opens in a new tab)`}
+                >
+                  Open site
+                  <ExternalLink
+                    className="ds-i"
+                    data-size="sm"
+                    aria-hidden="true"
+                  />
+                </a>
+              </Button>
+            )}
+            <DetailMore
+              items={[{ label: 'Open in Jobs', href: providerJobsHref(id) }]}
+            />
           </>
         }
       />
@@ -319,6 +338,7 @@ function ProviderDetail({
               )}
               <ProviderRequests provider={provider} />
               <ProviderRecentActivity provider={provider} />
+              <ProviderCoverage provider={provider} />
             </div>
             <div>
               <QueueSection

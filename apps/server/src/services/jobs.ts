@@ -3,6 +3,7 @@ import {
   BulkRetryJobsSchema,
   BulkDismissJobsSchema,
   BulkCancelJobsSchema,
+  CancelJobBatchSchema,
   JobScopeSchema,
   JobListQuerySchema,
   JobActivitySchema,
@@ -19,6 +20,7 @@ import {
   type BulkDismissJobsResult,
   type BulkCancelJobsInput,
   type BulkCancelJobsResult,
+  type CancelJobBatchInput,
   type Job,
   type JobPage,
   type JobProgress,
@@ -1182,7 +1184,12 @@ export async function createTaskJob(
           message: 'Job is not retryable',
         })
       if (original.status === 'running')
-        await cancelActiveJobInTransaction(tx, original.id, userId, 'running')
+        await cancelActiveJobsInTransaction(
+          tx,
+          [original.id],
+          userId,
+          'running',
+        )
     }
     // The indexed artist ID is also stored on jobs without a group key.
     const activeTarget =
@@ -1670,7 +1677,12 @@ export async function createJob(
           message: 'No unfinished work remains',
         })
       if (original.status === 'running')
-        await cancelActiveJobInTransaction(tx, original.id, userId, 'running')
+        await cancelActiveJobsInTransaction(
+          tx,
+          [original.id],
+          userId,
+          'running',
+        )
       await linkCreatedJobRetry(
         tx,
         original,
@@ -2249,12 +2261,14 @@ export async function cancelQueuedJobs(
   return { cancelled: jobs.length }
 }
 
-async function cancelActiveJobInTransaction(
+/** Cancels locked jobs that share one status, keeping their finished items. */
+async function cancelActiveJobsInTransaction(
   tx: JobTransaction,
-  jobId: string,
+  jobIds: string[],
   userId: string | null,
   status: 'queued' | 'running',
 ): Promise<void> {
+  if (!jobIds.length) return
   const reason =
     status === 'queued'
       ? 'Cancelled by user before execution. No requests scheduled.'
@@ -2269,7 +2283,7 @@ async function cancelActiveJobInTransaction(
       updatedAt: now,
       options: sql`${scrapeJob.options} || ${JSON.stringify({ cancellation: { requestedByUser: true, userId, cancelledAt: now.toISOString() } })}::jsonb`,
     })
-    .where(eq(scrapeJob.id, jobId))
+    .where(inArray(scrapeJob.id, jobIds))
   await tx
     .update(scrapeJobItem)
     .set({
@@ -2280,18 +2294,87 @@ async function cancelActiveJobInTransaction(
     })
     .where(
       and(
-        eq(scrapeJobItem.jobId, jobId),
+        inArray(scrapeJobItem.jobId, jobIds),
         inArray(scrapeJobItem.status, ['queued', 'running']),
       ),
     )
-  await logJob(jobId, 'warn', reason, { userId }, tx)
+  await tx.insert(scrapeJobLog).values(
+    jobIds.map((jobId) => ({
+      id: nanoid(),
+      jobId,
+      level: 'warn',
+      message: reason,
+      metadata: { userId },
+    })),
+  )
 }
 
-export async function bulkCancelJobs(
-  input: BulkCancelJobsInput,
+function cancellationSummary(
+  results: BulkCancelJobsResult['results'],
+): BulkCancelJobsResult {
+  return {
+    cancelled: results.filter((result) => result.status === 'cancelled').length,
+    skipped: results.filter((result) => result.status === 'skipped').length,
+    results,
+  }
+}
+
+const BATCH_CANCEL_CHUNK = 500
+
+/**
+ * Cancels a batch's unfinished jobs. Queued jobs are cancelled together;
+ * running jobs follow the bulk path and need `confirmRunning`. Finished jobs
+ * and their results are kept.
+ */
+export async function cancelJobBatch(
+  batchId: string,
+  input: CancelJobBatchInput,
   userId: string | null,
 ): Promise<BulkCancelJobsResult> {
-  const { jobIds, confirmRunning } = BulkCancelJobsSchema.parse(input)
+  const { confirmRunning } = CancelJobBatchSchema.parse(input)
+  const inBatch = sql`${scrapeJob.options}->>'batchId' = ${batchId}`
+  const results: BulkCancelJobsResult['results'] = []
+  for (;;) {
+    const ids = await db.transaction(async (tx) => {
+      const rows = await tx
+        .select({ id: scrapeJob.id })
+        .from(scrapeJob)
+        .where(and(inBatch, eq(scrapeJob.status, 'queued')))
+        .orderBy(asc(scrapeJob.id))
+        .limit(BATCH_CANCEL_CHUNK)
+        .for('update')
+      const jobIds = rows.map((row) => row.id)
+      await cancelActiveJobsInTransaction(tx, jobIds, userId, 'queued')
+      return jobIds
+    })
+    results.push(
+      ...ids.map((jobId): BulkCancelJobsResult['results'][number] => ({
+        jobId,
+        status: 'cancelled',
+      })),
+    )
+    if (ids.length < BATCH_CANCEL_CHUNK) break
+  }
+  const running = await db
+    .select({ id: scrapeJob.id })
+    .from(scrapeJob)
+    .where(and(inBatch, eq(scrapeJob.status, 'running')))
+    .orderBy(asc(scrapeJob.id))
+  results.push(
+    ...(await cancelEachJob(
+      running.map((row) => row.id),
+      confirmRunning,
+      userId,
+    )),
+  )
+  return cancellationSummary(results)
+}
+
+async function cancelEachJob(
+  jobIds: string[],
+  confirmRunning: boolean,
+  userId: string | null,
+): Promise<BulkCancelJobsResult['results']> {
   const results: BulkCancelJobsResult['results'] = []
   for (const jobId of jobIds) {
     try {
@@ -2311,18 +2394,24 @@ export async function bulkCancelJobs(
             statusCode: 409,
             message: 'Job is running. Confirm cancellation of in-flight work.',
           })
-        await cancelActiveJobInTransaction(tx, jobId, userId, job.status)
+        await cancelActiveJobsInTransaction(tx, [jobId], userId, job.status)
       })
       results.push({ jobId, status: 'cancelled' })
     } catch (error) {
       results.push(bulkJobFailure(jobId, error))
     }
   }
-  return {
-    cancelled: results.filter((result) => result.status === 'cancelled').length,
-    skipped: results.filter((result) => result.status === 'skipped').length,
-    results,
-  }
+  return results
+}
+
+export async function bulkCancelJobs(
+  input: BulkCancelJobsInput,
+  userId: string | null,
+): Promise<BulkCancelJobsResult> {
+  const { jobIds, confirmRunning } = BulkCancelJobsSchema.parse(input)
+  return cancellationSummary(
+    await cancelEachJob(jobIds, confirmRunning, userId),
+  )
 }
 
 export async function retryJob(

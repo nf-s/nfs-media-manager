@@ -28,7 +28,7 @@ Indexes are targeted at stored columns and query expressions. Generic JSON metad
 
 ## Browse pagination
 
-Albums, Films, Tracks, Artists and Subscriptions expose `/api/v1/{library}/browse-page` for rows and `/api/v1/{library}/browse-count` for the exact filtered total. The first returns `items`, `page`, `size` and `hasMore`. It reads one extra result to detect continuation and respects the result cap where the library supports one. The second returns `totalCount` from the same membership predicate and reuses the short-lived, database-versioned cache. The original paginated routes still return rows and totals together.
+Albums, Films, Tracks, Artists and Subscriptions expose `/api/v1/{library}/browse-page` for rows and `/api/v1/{library}/browse-count` for the exact filtered total. The first returns `items`, `page`, `size` and `hasMore`. It reads one extra result to detect continuation and respects the result cap where the library supports one. The second returns `totalCount` from the same membership predicate and reuses the short-lived, database-versioned cache. It also returns `unfilteredCount`, the library's total without search, filters or ranges, which the toolbar shows as `N of M` while a filter is active. The original paginated routes still return rows and totals together.
 
 `GET /api/v1/tracks/positions` returns the tracks at up to 50 given positions of a track query's order. It numbers the ordered rows once, as far as the deepest position asked for, and hydrates only the rows at those positions. Shuffled playback uses it because a page per random position orders the whole result again for every track; on a large list one such read costs about as much as a single deep page.
 

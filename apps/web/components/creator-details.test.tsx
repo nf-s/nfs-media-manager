@@ -626,6 +626,11 @@ test('channel details show saved podcast episodes and scope Browse to the exact 
     destination(html, 'Filter subscriptions').searchParams.get('sourceId'),
     id,
   )
+  assert.match(
+    html,
+    /<button[^>]*aria-pressed="true" aria-describedby="[^"]+" title="Follows the connected Spotify account\. Change it there\.">.*?Subscribed<\/button>/,
+  )
+  assert.match(html, /role="menuitem"[^>]*>Filter subscriptions</)
   const sources = render({
     pathname: `/channels/${id}`,
     search: 'tab=sources',

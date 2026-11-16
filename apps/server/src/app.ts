@@ -33,6 +33,7 @@ import media from '@/routes/media'
 import providers from '@/routes/providers'
 import tags from '@/routes/tags'
 import manualAdd from '@/routes/manual-add'
+import findMatch from '@/routes/find-match'
 import ai from '@/routes/ai'
 import user from '@/routes/user'
 import { z } from '@hono/zod-openapi'
@@ -115,6 +116,7 @@ v1ApiBase.route('/playback', playback)
 v1ApiBase.route('/subscriptions', subscriptions)
 v1ApiBase.route('/tags', tags)
 v1ApiBase.route('/manual-add', manualAdd)
+v1ApiBase.route('/find-match', findMatch)
 v1ApiBase.route('/ai', ai)
 v1ApiBase.route('/user', user)
 

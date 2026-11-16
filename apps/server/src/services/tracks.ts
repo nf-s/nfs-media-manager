@@ -387,11 +387,13 @@ function playlistEntrySortExpression(key: PlaylistEntrySort): SQL {
 
 /**
  * One playlist with its sync state and a page of its entries: tracks in
- * playlist order, then album members from the legacy import.
+ * playlist order, then album members from the legacy import. `restrict` is
+ * an extra condition on the entries, over `pi`, `lt` and `a`.
  */
 export async function getPlaylistDetail(
   id: string,
   query: PlaylistDetailQuery,
+  restrict: SQL = sql``,
 ): Promise<PlaylistDetail> {
   const summary = await getPlaylistSummary(id)
   const pattern = `%${(query.q ?? '').replace(/[\\%_]/g, '\\$&')}%`
@@ -415,7 +417,7 @@ export async function getPlaylistDetail(
     left join media_item am on am.id = lt.album_media_item_id
     where pi.playlist_id = ${id}
       and (lt.media_item_id is not null or a.media_item_id is not null)
-      ${kindFilter} ${searchFilter}`
+      ${kindFilter} ${searchFilter} ${restrict}`
   const [count] = CountRowsSchema.parse(
     (await db.execute(sql`select count(*) as count ${members}`)).rows,
   )

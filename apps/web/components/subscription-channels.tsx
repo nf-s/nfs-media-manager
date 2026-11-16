@@ -80,18 +80,17 @@ function replaceParams(updates: Record<string, string | string[] | null>) {
   )
 }
 
-function SourceRow({
+/** One cell of a channel row; the cells follow the table's column order. */
+function SourceCell({
   source,
-  visible,
-  selected,
+  column,
 }: {
   source: SubscriptionSource
-  visible: (key: string) => boolean
-  selected: boolean
+  column: SubscriptionSourceSort
 }) {
-  return (
-    <TableRow selected={selected}>
-      {visible('title') && (
+  switch (column) {
+    case 'title':
+      return (
         <TableCell sticky={0} stickyEdge>
           <span className="ds-cell-id">
             <MediaThumb kind="person" src={source.thumbnailUrl} />
@@ -105,11 +104,11 @@ function SourceRow({
             </DetailLink>
           </span>
         </TableCell>
-      )}
-      {visible('type') && (
-        <TableCell>{subscriptionTypeLabels[source.type]}</TableCell>
-      )}
-      {visible('storedItems') && (
+      )
+    case 'type':
+      return <TableCell>{subscriptionTypeLabels[source.type]}</TableCell>
+    case 'storedItems':
+      return (
         <TableCell align="end">
           <SecondaryCell
             details={!source.historyComplete ? 'Reading history' : undefined}
@@ -124,8 +123,9 @@ function SourceRow({
             </Link>
           </SecondaryCell>
         </TableCell>
-      )}
-      {visible('latestItemAt') && (
+      )
+    case 'latestItemAt':
+      return (
         <TableCell>
           {source.latestItemAt ? (
             <time dateTime={source.latestItemAt}>
@@ -135,13 +135,15 @@ function SourceRow({
             <EmptyValue />
           )}
         </TableCell>
-      )}
-      {visible('size') && (
+      )
+    case 'size':
+      return (
         <TableCell align="end">
           {formatSubscriptionSourceSize(source)}
         </TableCell>
-      )}
-      {visible('description') && (
+      )
+    case 'description':
+      return (
         <TableCell>
           <SecondaryCell
             text={source.description ?? undefined}
@@ -151,8 +153,9 @@ function SourceRow({
             {source.description ?? <EmptyValue />}
           </SecondaryCell>
         </TableCell>
-      )}
-      {visible('handle') && (
+      )
+    case 'handle':
+      return (
         <TableCell>
           <SecondaryCell
             text={
@@ -168,8 +171,9 @@ function SourceRow({
             )}
           </SecondaryCell>
         </TableCell>
-      )}
-      {visible('historyComplete') && (
+      )
+    case 'historyComplete':
+      return (
         <TableCell>
           {source.historyComplete ? (
             <Status state="done">Complete</Status>
@@ -177,7 +181,24 @@ function SourceRow({
             <Status state="running">Reading history</Status>
           )}
         </TableCell>
-      )}
+      )
+  }
+}
+
+function SourceRow({
+  source,
+  columns,
+  selected,
+}: {
+  source: SubscriptionSource
+  columns: readonly { key: SubscriptionSourceSort }[]
+  selected: boolean
+}) {
+  return (
+    <TableRow selected={selected}>
+      {columns.map((column) => (
+        <SourceCell key={column.key} source={source} column={column.key} />
+      ))}
     </TableRow>
   )
 }
@@ -186,7 +207,11 @@ export default function SubscriptionChannels() {
   const columns = useTableColumns(
     'subscription-channels',
     subscriptionSourceColumns,
+    { reorder: true },
   )
+  const shownColumns = columns
+    .order(subscriptionSourceColumns)
+    .filter((column) => columns.visible(column.key))
   const search = useSearchParams()
   const inspector = useDetailInspector()
   const selectedId =
@@ -265,51 +290,49 @@ export default function SubscriptionChannels() {
         <table className="ds-table" aria-label="Channels and podcasts">
           <TableHeader>
             <TableRow>
-              {subscriptionSourceColumns
-                .filter((column) => columns.visible(column.key))
-                .map((column) => (
-                  <SecondaryTableHead
-                    key={column.key}
-                    sortKey={column.key}
-                    label={column.label}
-                    sortBy={sortBy}
-                    direction={direction}
-                    onSort={sort}
-                    align={column.numeric ? 'end' : undefined}
-                    sticky={column.key === 'title' ? 0 : undefined}
-                    stickyEdge={column.key === 'title'}
-                    filter={
-                      column.key === 'type' ? (
-                        <SecondaryColumnFilter
-                          label="Type"
-                          options={SubscriptionTypeSchema.options.map(
-                            (value) => ({
-                              value,
-                              label: subscriptionTypeLabels[value],
-                            }),
-                          )}
-                          value={types}
-                          onChange={(next) =>
-                            replaceParams({
-                              type: null,
-                              types: next.length ? JSON.stringify(next) : null,
-                            })
-                          }
-                        />
-                      ) : column.key === 'historyComplete' ? (
-                        <SecondaryColumnFilter
-                          label="History"
-                          options={[
-                            { value: 'complete', label: 'Complete' },
-                            { value: 'reading', label: 'Reading history' },
-                          ]}
-                          value={history}
-                          onChange={(next) => replaceParams({ history: next })}
-                        />
-                      ) : undefined
-                    }
-                  />
-                ))}
+              {shownColumns.map((column) => (
+                <SecondaryTableHead
+                  key={column.key}
+                  sortKey={column.key}
+                  label={column.label}
+                  sortBy={sortBy}
+                  direction={direction}
+                  onSort={sort}
+                  align={column.numeric ? 'end' : undefined}
+                  sticky={column.key === 'title' ? 0 : undefined}
+                  stickyEdge={column.key === 'title'}
+                  filter={
+                    column.key === 'type' ? (
+                      <SecondaryColumnFilter
+                        label="Type"
+                        options={SubscriptionTypeSchema.options.map(
+                          (value) => ({
+                            value,
+                            label: subscriptionTypeLabels[value],
+                          }),
+                        )}
+                        value={types}
+                        onChange={(next) =>
+                          replaceParams({
+                            type: null,
+                            types: next.length ? JSON.stringify(next) : null,
+                          })
+                        }
+                      />
+                    ) : column.key === 'historyComplete' ? (
+                      <SecondaryColumnFilter
+                        label="History"
+                        options={[
+                          { value: 'complete', label: 'Complete' },
+                          { value: 'reading', label: 'Reading history' },
+                        ]}
+                        value={history}
+                        onChange={(next) => replaceParams({ history: next })}
+                      />
+                    ) : undefined
+                  }
+                />
+              ))}
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -355,7 +378,7 @@ export default function SubscriptionChannels() {
               <SourceRow
                 key={source.id}
                 source={source}
-                visible={columns.visible}
+                columns={shownColumns}
                 selected={source.id === selectedId}
               />
             ))}

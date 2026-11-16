@@ -8,8 +8,11 @@ import {
   type Job,
 } from '@repo/schemas/job'
 import {
+  dispatchBatchCancellation,
   dispatchJobAction,
   dispatchJobCancellation,
+  jobActionSummary,
+  jobReviewKey,
   type JobActionResult,
 } from './job-bulk-actions'
 
@@ -328,5 +331,123 @@ test('transport errors stop dispatch, retain prior results and distinguish unkno
       status: 'failed',
       message: 'Not submitted because the previous request failed.',
     })),
+  )
+})
+
+test('batch cancellation sends one request per batch and confirms running work only where the review showed it', async () => {
+  const sent: [string, boolean][] = []
+  const progress: number[] = []
+  const result = await dispatchBatchCancellation(
+    [
+      { batchId: 'with-running', running: 2 },
+      { batchId: 'queued-only', running: 0 },
+    ],
+    true,
+    async (batchId, input) => {
+      sent.push([batchId, input.confirmRunning])
+      return cancelled([`${batchId}-1`, `${batchId}-2`])
+    },
+    (processed) => progress.push(processed),
+  )
+  assert.deepEqual(sent, [
+    ['with-running', true],
+    ['queued-only', false],
+  ])
+  assert.deepEqual(progress, [2, 4])
+  assert.equal(result.results.length, 4)
+  const unconfirmed: boolean[] = []
+  await dispatchBatchCancellation(
+    [{ batchId: 'with-running', running: 2 }],
+    false,
+    async (_batchId, input) => {
+      unconfirmed.push(input.confirmRunning)
+      return cancelled([])
+    },
+    () => {},
+  )
+  assert.deepEqual(unconfirmed, [false])
+})
+
+test('a review resets when a selected batch starts or stops running jobs', () => {
+  const selected = [job('queued', 'queued')]
+  const key = (running: number) =>
+    jobReviewKey('cancel', selected, selected, [
+      { batchId: 'batch-1', running },
+    ])
+  // Opened with nothing running, Confirm must not stop jobs started since.
+  assert.notEqual(key(0), key(2))
+  assert.notEqual(key(2), key(1))
+  assert.equal(key(2), key(2))
+  assert.notEqual(
+    jobReviewKey('cancel', selected, selected, []),
+    jobReviewKey('cancel', [job('queued', 'running')], selected, []),
+  )
+  assert.notEqual(
+    jobReviewKey('cancel', selected, selected, []),
+    jobReviewKey('dismiss', selected, selected, []),
+  )
+})
+
+test('a failed batch request is reported and the remaining batches are still sent', async () => {
+  const sent: string[] = []
+  const progress: number[] = []
+  const outcome = await dispatchBatchCancellation(
+    [
+      { batchId: 'first', running: 0 },
+      { batchId: 'broken', running: 0 },
+      { batchId: 'last', running: 0 },
+    ],
+    false,
+    async (batchId) => {
+      sent.push(batchId)
+      if (batchId === 'broken') throw new Error('connection lost')
+      return cancelled([`${batchId}-1`])
+    },
+    (processed) => progress.push(processed),
+  )
+  assert.deepEqual(sent, ['first', 'broken', 'last'])
+  assert.deepEqual(progress, [1, 2])
+  assert.deepEqual(
+    outcome.results.map((entry) => entry.jobId),
+    ['first-1', 'last-1'],
+  )
+  assert.deepEqual(outcome.failedBatches, [
+    {
+      batchId: 'broken',
+      message:
+        'Could not confirm this action. Check batch status before trying again.',
+    },
+  ])
+})
+
+test('the result line counts each status and names batches that were not cancelled', () => {
+  assert.equal(
+    jobActionSummary({
+      results: [
+        { jobId: 'a', status: 'cancelled' },
+        { jobId: 'b', status: 'cancelled' },
+        { jobId: 'c', status: 'failed' },
+        { jobId: 'd', status: 'skipped' },
+      ],
+      failedBatches: [],
+    }),
+    '2 cancelled · 1 skipped · 1 need review.',
+  )
+  assert.equal(
+    jobActionSummary({
+      results: [{ jobId: 'a', status: 'cancelled' }],
+      failedBatches: [
+        { batchId: 'x', message: 'failed' },
+        { batchId: 'y', message: 'failed' },
+      ],
+    }),
+    '1 cancelled · 2 batches not cancelled.',
+  )
+  assert.equal(
+    jobActionSummary({
+      results: [],
+      failedBatches: [{ batchId: 'x', message: 'failed' }],
+    }),
+    '1 batch not cancelled.',
   )
 })

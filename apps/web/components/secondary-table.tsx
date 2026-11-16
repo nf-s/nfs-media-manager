@@ -40,6 +40,8 @@ import {
   type TableSort,
   type TableValue,
 } from '@/utils/secondary-table'
+import { orderColumns } from '@/utils/browse-items'
+import { ColumnOrderList } from './column-order'
 
 /** Column placement in the one table: right-aligned numbers and pinned identity. */
 export type ColumnLayout = {
@@ -555,7 +557,7 @@ export function SecondaryDataTable<T>({
     onChange: (next: { sort: TableSort; query: string }) => void
   }
 }) {
-  const visibility = useTableColumns(id, columns)
+  const visibility = useTableColumns(id, columns, { reorder: true })
   const [localSort, setLocalSort] = useState(defaultSort)
   const [localQuery, setLocalQuery] = useState('')
   const sort = view?.sort ?? localSort
@@ -575,7 +577,9 @@ export function SecondaryDataTable<T>({
           search.value(row).toLocaleLowerCase().includes(term),
         )
       : rows
-  const shown = columns.filter((column) => visibility.visible(column.key))
+  const shown = visibility
+    .order(columns)
+    .filter((column) => visibility.visible(column.key))
   const ordered = sortTableRows(matching, sort, (row, key) =>
     columns.find((column) => column.key === key)?.value(row),
   )
@@ -822,24 +826,63 @@ export type TableColumn = {
 
 const HiddenColumnsSchema = z.array(z.string())
 
+function readSavedKeys(key: string) {
+  try {
+    const raw = window.localStorage.getItem(key)
+    const parsed = HiddenColumnsSchema.safeParse(raw ? JSON.parse(raw) : null)
+    return parsed.success ? { key, keys: parsed.data } : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Which columns a table shows, kept in browser storage. With `reorder`, the
+ * picker also moves columns and `order` puts a table's columns in the chosen
+ * order; the first column is the identity column and stays first. A table
+ * that renders its cells one by one leaves `reorder` off.
+ */
 export function useTableColumns(
   storageKey: string,
   columns: readonly TableColumn[],
+  { reorder = false }: { reorder?: boolean } = {},
 ) {
   const configurable = columns.length > 3
   const key = `secondary-table:${storageKey}:hidden`
+  const orderKey = `secondary-table:${storageKey}:order`
   const [saved, setSaved] = useState<{ key: string; hidden: string[] } | null>(
     null,
   )
+  const [savedOrder, setSavedOrder] = useState<{
+    key: string
+    keys: string[]
+  } | null>(null)
   useEffect(() => {
-    try {
-      const raw = window.localStorage.getItem(key)
-      const parsed = HiddenColumnsSchema.safeParse(raw ? JSON.parse(raw) : null)
-      setSaved(parsed.success ? { key, hidden: parsed.data } : null)
-    } catch {
-      setSaved(null)
-    }
+    const read = readSavedKeys(key)
+    setSaved(read ? { key, hidden: read.keys } : null)
   }, [key])
+  useEffect(() => {
+    setSavedOrder(readSavedKeys(orderKey))
+  }, [orderKey])
+  const pinned = columns[0]?.key
+  const customOrder =
+    configurable && reorder && savedOrder?.key === orderKey
+      ? savedOrder.keys
+      : null
+  function order<Column extends { key: string }>(
+    items: readonly Column[],
+  ): Column[] {
+    return orderColumns(items, customOrder, pinned)
+  }
+  function saveOrder(next: string[] | null) {
+    setSavedOrder(next ? { key: orderKey, keys: next } : null)
+    try {
+      if (next) window.localStorage.setItem(orderKey, JSON.stringify(next))
+      else window.localStorage.removeItem(orderKey)
+    } catch {
+      // Column order remains usable when browser storage is unavailable.
+    }
+  }
   const defaults = columns
     .filter((column) => column.defaultVisible === false && !column.required)
     .map((column) => column.key)
@@ -864,26 +907,50 @@ export function useTableColumns(
       // Column controls remain usable when browser storage is unavailable.
     }
   }
+  const choice = (column: TableColumn) => (
+    <label key={column.key}>
+      <input
+        type="checkbox"
+        checked={visible(column.key)}
+        disabled={column.required || (count === 1 && visible(column.key))}
+        onChange={() =>
+          save(
+            visible(column.key)
+              ? [...hidden, column.key]
+              : hidden.filter((item) => item !== column.key),
+          )
+        }
+      />
+      {column.label}
+    </label>
+  )
   const options = configurable ? (
     <>
-      {columns.map((column) => (
-        <label key={column.key}>
-          <input
-            type="checkbox"
-            checked={visible(column.key)}
-            disabled={column.required || (count === 1 && visible(column.key))}
-            onChange={() =>
-              save(
-                visible(column.key)
-                  ? [...hidden, column.key]
-                  : hidden.filter((item) => item !== column.key),
-              )
-            }
-          />
-          {column.label}
-        </label>
-      ))}
-      <Button type="button" variant="ghost" onClick={() => save(defaults)}>
+      {reorder ? (
+        <ColumnOrderList
+          columns={order(columns)}
+          pinned={pinned}
+          onMove={(keys) =>
+            saveOrder(
+              keys.join(',') === columns.map((column) => column.key).join(',')
+                ? null
+                : keys,
+            )
+          }
+        >
+          {choice}
+        </ColumnOrderList>
+      ) : (
+        columns.map(choice)
+      )}
+      <Button
+        type="button"
+        variant="ghost"
+        onClick={() => {
+          save(defaults)
+          saveOrder(null)
+        }}
+      >
         Reset columns
       </Button>
     </>
@@ -891,6 +958,7 @@ export function useTableColumns(
   return {
     visible,
     count,
+    order,
     options,
     controls: options ? <TableColumns>{options}</TableColumns> : null,
   }

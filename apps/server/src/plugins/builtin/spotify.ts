@@ -18,6 +18,42 @@ const nameKey = (value: string) =>
   value.normalize('NFKC').trim().replace(/\s+/g, ' ').toLowerCase()
 const artistKey = (names: string[]) =>
   JSON.stringify([...new Set(names.map(nameKey))].sort())
+const quoteSearchValue = (value: string) => `"${value.replace(/["\\]/g, ' ')}"`
+
+function spotifyMarket(
+  secrets: Record<string, string>,
+): Record<string, string> {
+  const market = secrets['market']
+  if (market && !/^[A-Z]{2}$/.test(market))
+    throw new Error(
+      'Spotify market must be a two-letter uppercase country code',
+    )
+  return market ? { market } : {}
+}
+
+/** One page of Spotify's album search: the request the scrape uses by name. */
+async function searchSpotifyAlbums(
+  request: SpotifyRequest,
+  token: string,
+  params: Record<string, string>,
+  q: string,
+) {
+  return z
+    .object({
+      albums: z.object({
+        items: z.array(SpotifyAlbumSchema),
+        total: z.number().int().nonnegative(),
+      }),
+    })
+    .parse(
+      await spotifyJson(request, token, 'search', {
+        ...params,
+        q,
+        type: 'album',
+        limit: '10',
+      }),
+    ).albums
+}
 
 export async function spotifyClientToken(
   secrets: Record<string, string>,
@@ -44,6 +80,7 @@ export const spotifyPlugin: MediaProviderPlugin = {
     displayName: 'Spotify',
     description:
       'Album metadata and read-only saved album discovery; outbound links only',
+    siteUrl: 'https://open.spotify.com',
     mediaTypes: ['album'],
     identifierTypes: ['album', 'spotify', 'upc'],
     supportsNameLookup: true,
@@ -82,6 +119,28 @@ export const spotifyPlugin: MediaProviderPlugin = {
   async testConnection({ secrets, request }) {
     await spotifyClientToken(secrets, request)
   },
+  async searchMatchCandidates(context) {
+    if (context.mediaType !== 'album')
+      throw new Error('Spotify supports albums only')
+    const params = spotifyMarket(context.secrets)
+    const artist = context.media.artists.find((name) => name.trim())
+    const q =
+      context.query ??
+      (artist
+        ? `album:${quoteSearchValue(context.media.title)} artist:${quoteSearchValue(artist)}`
+        : context.media.title)
+    const token = await spotifyClientToken(context.secrets, context.request)
+    const found = await searchSpotifyAlbums(context.request, token, params, q)
+    return found.items.map((item) => ({
+      referenceType: 'album',
+      externalId: item.id,
+      title: item.name,
+      subtitle: item.artists.map((entry) => entry.name).join(', '),
+      releaseDate: item.release_date,
+      artworkUrl: item.images[0]?.url,
+      url: `https://open.spotify.com/album/${item.id}`,
+    }))
+  },
   async scrapeMediaItem(context) {
     if (context.mediaType !== 'album')
       throw new Error('Spotify supports albums only')
@@ -104,33 +163,13 @@ export const spotifyPlugin: MediaProviderPlugin = {
     const media = context.media
     if (!id && !upc && (!media?.title || !media.artists.length))
       throw new Error('Spotify requires an album ID, UPC, or title and artist')
-    const market = context.secrets['market']
-    if (market && !/^[A-Z]{2}$/.test(market))
-      throw new Error(
-        'Spotify market must be a two-letter uppercase country code',
-      )
-    const params: Record<string, string> = market ? { market } : {}
+    const params: Record<string, string> = spotifyMarket(context.secrets)
     const token = await spotifyClientToken(context.secrets, context.request)
     if (!id) {
-      const quote = (value: string) => `"${value.replace(/["\\]/g, ' ')}"`
       const q = upc
         ? `upc:${upc}`
-        : `album:${quote(media?.title ?? '')} artist:${quote(media?.artists[0] ?? '')}`
-      const found = z
-        .object({
-          albums: z.object({
-            items: z.array(SpotifyAlbumSchema),
-            total: z.number().int().nonnegative(),
-          }),
-        })
-        .parse(
-          await spotifyJson(context.request, token, 'search', {
-            ...params,
-            q,
-            type: 'album',
-            limit: '10',
-          }),
-        ).albums
+        : `album:${quoteSearchValue(media?.title ?? '')} artist:${quoteSearchValue(media?.artists[0] ?? '')}`
+      const found = await searchSpotifyAlbums(context.request, token, params, q)
       if (found.total > found.items.length)
         throw new Error(
           'Spotify lookup is ambiguous; set an album ID explicitly',

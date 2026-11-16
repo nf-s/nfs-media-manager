@@ -420,10 +420,12 @@ async function browseQueries(
   }
   // Cache the raw count by the actual predicate, including caller SQL options.
   // Page, ordering and result caps do not change membership; IDs stay uncached.
+  // A listening sort without a listening filter leaves the count alone.
+  const countedListening = listening?.condition ? listening : undefined
   async function readCount() {
     const total = await countCache(
       JSON.stringify(
-        dialect.sqlToQuery(sql`${listening?.source ?? sql``} ${where}`),
+        dialect.sqlToQuery(sql`${countedListening?.source ?? sql``} ${where}`),
       ),
       async () => {
         const query = database
@@ -436,9 +438,9 @@ async function browseQueries(
             ? query.innerJoin(libraryTrack, trackJoin)
             : query.leftJoin(libraryTrack, trackJoin)
         const rows = await (
-          listening
+          countedListening
             ? tracks.leftJoin(
-                listening.source,
+                countedListening.source,
                 sql`listening_counts.album_media_item_id = ${mediaItem.id}`,
               )
             : tracks
@@ -555,6 +557,49 @@ export async function queryBrowseCount(
 ) {
   const { readCount } = await browseQueries(mediaType, query)
   return { totalCount: await readCount() }
+}
+
+/**
+ * The query Clear filters leaves on a Browse page, or null when nothing is
+ * filtered. The archived toggle and navigation scopes such as a tag stay.
+ */
+function unfilteredBrowseQuery<Query extends BrowseQuery>(
+  query: Query,
+): Query | null {
+  const filtered =
+    Boolean(query.q) ||
+    query.filters.length > 0 ||
+    query.ranges.length > 0 ||
+    query.limitResults !== undefined ||
+    query.creatorId !== undefined ||
+    ('listening' in query && query.listening !== undefined)
+  if (!filtered) return null
+  return {
+    ...query,
+    q: undefined,
+    filters: [],
+    ranges: [],
+    limitResults: undefined,
+    creatorId: undefined,
+    creatorRole: undefined,
+    listening: undefined,
+  }
+}
+
+/** The filtered count and, for "N of M", the count without the page's filters. */
+export async function queryBrowseCounts(
+  mediaType: MediaType,
+  query: BrowseQuery,
+) {
+  const unfiltered = unfilteredBrowseQuery(query)
+  const [{ totalCount }, scope] = await Promise.all([
+    queryBrowseCount(mediaType, query),
+    unfiltered ? queryBrowseCount(mediaType, unfiltered) : undefined,
+  ])
+  return {
+    totalCount,
+    unfilteredCount: scope?.totalCount ?? totalCount,
+  }
 }
 
 function directSortExpression(key: string, mediaType: MediaType): SQL | null {

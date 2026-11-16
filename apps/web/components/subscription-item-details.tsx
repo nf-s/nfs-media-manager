@@ -1,9 +1,10 @@
 'use client'
 
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useRouter } from 'next/navigation'
 import type { BrowseFilter } from '@repo/schemas/browse'
 import {
+  SubscriptionItemPatchSchema,
   SubscriptionItemSchema,
   subscriptionTypeLabels,
   type SubscriptionItem,
@@ -15,9 +16,11 @@ import {
 } from '@repo/ui/components/ds/detail-header'
 import { Facts, Section, Stats } from '@repo/ui/components/ds/facts'
 import { TabsContent } from '@repo/ui/components/ui/tabs'
-import { EMPTY_VALUE, formatCount } from '@repo/ui/lib/format'
+import { EMPTY_VALUE, formatCount, formatDate } from '@repo/ui/lib/format'
 import { DetailLink } from './detail-link'
 import { CreatorDetailState } from './creator-detail-state'
+import { DetailMore } from './detail-more'
+import { WatchedToggle } from './watched-button'
 import {
   DetailArt,
   DetailTabs,
@@ -80,6 +83,41 @@ export function SubscriptionItemDetails({
   )
 }
 
+/** Marks a video or episode watched now, or unwatched, from its header. */
+function WatchedButton({ item }: { item: SubscriptionItem }) {
+  const { apiBaseUrl } = useConfig()
+  const client = useQueryClient()
+  const watched = item.watchedAt !== null
+  const mutation = useMutation({
+    mutationFn: (watchedAt: string | null) =>
+      fetchApiData(
+        apiBaseUrl,
+        `/api/v1/subscriptions/${encodeURIComponent(item.id)}`,
+        SubscriptionItemSchema,
+        {
+          method: 'PATCH',
+          body: JSON.stringify(
+            SubscriptionItemPatchSchema.parse({ watchedAt }),
+          ),
+        },
+      ),
+    onSuccess: (updated) => {
+      client.setQueryData(['subscriptions', 'item', item.id], updated)
+      return client.invalidateQueries({ queryKey: ['subscriptions'] })
+    },
+  })
+  return (
+    <WatchedToggle
+      watched={watched}
+      pending={mutation.isPending}
+      error={mutation.isError}
+      onToggle={() =>
+        mutation.mutate(watched ? null : new Date().toISOString())
+      }
+    />
+  )
+}
+
 function ItemDetails({
   item,
   onFilter,
@@ -127,11 +165,14 @@ function ItemDetails({
           item.type === 'youtube' && item.viewCount !== null
             ? `${formatCount(item.viewCount)} views`
             : null,
+          item.watchedAt ? `Watched ${formatDate(item.watchedAt)}` : null,
         ]}
         actions={
           <>
+            <WatchedButton item={item} />
             <DetailActionsSpacer />
             <OpenAtProvider label={provider} url={item.url} />
+            <DetailMore crumb={{ title: item.title }} />
           </>
         }
       />

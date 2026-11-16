@@ -137,22 +137,31 @@
   gap: var(--ds-3);
 }
 
-/* Filters drawer: the inspector surface as a modal sheet on the right */
-.browse-drawer {
-  position: fixed;
-  inset: var(--ds-4) var(--ds-4) var(--ds-4) auto;
-  width: min(calc(var(--ds-rail) * 2.15), calc(100vw - var(--ds-6)));
-  max-width: none;
-  height: auto;
-  max-height: none;
+/* Column picker: entries in column order, each with a drag handle */
+.column-order {
+  display: grid;
+  gap: var(--ds-1);
   margin: 0;
   padding: 0;
-  border: 0;
-  border-radius: var(--ds-r-lg);
-  color: var(--ds-ink);
+  list-style: none;
 }
-.browse-drawer::backdrop {
-  background: var(--ds-scrim);
+.column-order-item {
+  padding-left: 0;
+  cursor: default;
+}
+.column-order-handle {
+  touch-action: none;
+  cursor: grab;
+}
+.column-order-handle:disabled {
+  cursor: default;
+}
+
+/* Filters: the shared side panel, narrower beside a desktop page */
+@media (min-width: 701px) {
+  .sec-drawer.browse-drawer {
+    width: min(calc(var(--ds-rail) * 2.15), calc(100vw - var(--ds-3) * 2));
+  }
 }
 .browse-drawer-title {
   margin: 0 auto 0 var(--ds-3);
@@ -384,11 +393,5 @@
   .browse-order {
     flex: 1;
     max-width: none;
-  }
-  .browse-drawer {
-    inset: auto 0 0;
-    width: 100%;
-    max-height: 85dvh;
-    border-radius: var(--ds-r-lg) var(--ds-r-lg) 0 0;
   }
 }

@@ -2,6 +2,7 @@ import { z } from 'zod'
 import {
   ProviderLocalWorkerModeSchema,
   ProviderRequestDiagnosticsSchema,
+  ProviderSiteUrlSchema,
   type ProviderLocalWorkerMode,
   type ProviderRequestDiagnostics,
 } from '@repo/schemas/provider'
@@ -180,6 +181,27 @@ export const PluginResultSchema = z.object({
   normalized: PluginNormalizedResultSchema,
 })
 
+/** One provider record an item could be matched to, as a search lists it. */
+export const PluginMatchCandidateSchema = z.object({
+  /** The reference type stored when the owner chooses this candidate. */
+  referenceType: z.string().min(1).max(80),
+  externalId: z.string().trim().min(1).max(1000),
+  title: z.string().trim().min(1).max(500),
+  /** The artist, director or other creator. */
+  subtitle: z.string().trim().min(1).max(500).optional(),
+  /** A year or an ISO date. */
+  releaseDate: z.string().trim().min(1).max(40).optional(),
+  artworkUrl: ProviderSiteUrlSchema.optional(),
+  /** The candidate on the provider's own site. */
+  url: ProviderSiteUrlSchema.optional(),
+})
+export type PluginMatchCandidate = z.infer<typeof PluginMatchCandidateSchema>
+
+/** At most 20 candidates from one search. */
+export const PluginMatchCandidatesSchema = z
+  .array(PluginMatchCandidateSchema)
+  .max(20)
+
 export type PluginRateLimit = z.infer<typeof PluginRateLimitSchema>
 export type PluginSecretDescriptor = z.infer<
   typeof PluginSecretDescriptorSchema
@@ -228,6 +250,16 @@ export function recordPluginDiagnostic(
   }
 }
 
+export interface MediaPluginMatchSearchContext extends MediaPluginTestContext {
+  mediaType: PluginMediaType
+  media: { title: string; artists: string[]; releaseDate?: string }
+  /**
+   * Text the owner typed. Without it the plugin searches for `media` the way
+   * its scrape does.
+   */
+  query?: string
+}
+
 export interface MediaPluginLegacyImportContext {
   rawRecord: JsonValue
   mediaType: PluginMediaType
@@ -239,6 +271,8 @@ export interface MediaPluginManifest {
   id: string
   displayName: string
   description: string
+  /** The provider's own website (http or https), opened from its page. */
+  siteUrl?: string
   mediaTypes: PluginMediaType[]
   rateLimit: PluginRateLimit
   secrets: PluginSecretDescriptor[]
@@ -296,6 +330,13 @@ export interface MediaProviderPlugin {
   ) => Array<{ id: string; name: string }>
   testConnection?: (context: MediaPluginTestContext) => Promise<void>
   scrapeMediaItem?: (context: MediaPluginScrapeContext) => Promise<PluginResult>
+  /**
+   * Optional: one bounded search of the provider, through `context.request`,
+   * listing records the item could be matched to. Offered as Find match.
+   */
+  searchMatchCandidates?: (
+    context: MediaPluginMatchSearchContext,
+  ) => Promise<PluginMatchCandidate[]>
   importLegacyRecord?: (
     context: MediaPluginLegacyImportContext,
   ) => Promise<PluginResult | null>
@@ -362,6 +403,7 @@ export const MediaPluginManifestSchema = z
     id: z.string().regex(/^[a-z][a-z0-9-]*$/),
     displayName: z.string().min(1),
     description: z.string(),
+    siteUrl: ProviderSiteUrlSchema.optional(),
     mediaTypes: z.array(PluginMediaTypeSchema).min(1),
     rateLimit: PluginRateLimitSchema,
     secrets: z.array(PluginSecretDescriptorSchema),
@@ -481,6 +523,7 @@ export function isMediaProviderPlugin(
   for (const key of [
     'testConnection',
     'scrapeMediaItem',
+    'searchMatchCandidates',
     'importLegacyRecord',
     'importFileRecord',
     'readStoredCollections',

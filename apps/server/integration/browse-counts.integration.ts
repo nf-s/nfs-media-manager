@@ -1,0 +1,249 @@
+import { randomUUID } from 'node:crypto'
+import { sql } from 'drizzle-orm'
+import { drizzle } from 'drizzle-orm/node-postgres'
+import { migrate } from 'drizzle-orm/node-postgres/migrator'
+import pg from 'pg'
+import { afterAll, beforeAll, expect, it, vi } from 'vitest'
+import { ArtistQuerySchema } from '@repo/schemas/creators'
+import { AlbumQuerySchema } from '@repo/schemas/media'
+import { TrackQuerySchema } from '@repo/schemas/tracks'
+import { SubscriptionItemQuerySchema } from '@repo/schemas/subscriptions'
+import { env } from '@/env'
+import * as schema from '@/schemas/db'
+
+const name = 'browse_counts_' + randomUUID().replaceAll('-', '')
+const connection = {
+  host: env.DATABASE_HOST,
+  port: env.DATABASE_PORT,
+  user: env.DATABASE_USER,
+  password: env.DATABASE_PASSWORD,
+}
+const admin = new pg.Client({ ...connection, database: env.DATABASE_NAME })
+const pool = new pg.Pool({ ...connection, database: name })
+const logQuery = vi.fn<(query: string, params: unknown[]) => void>()
+const database = drizzle(pool, { schema, logger: { logQuery } })
+vi.mock('@/lib/db', () => ({
+  get db() {
+    return database
+  },
+}))
+vi.mock('@/plugins/registry', () => ({
+  listLoadedScrapePlugins: async () => [],
+}))
+let created = false
+const channel = (key: string) => `UC${key.padEnd(22, '0')}`
+const video = (key: string) => key.padEnd(11, '0')
+const FIXTURE = channel('fixture')
+const SECOND = channel('second')
+const RETIRED = channel('retired')
+
+const now = new Date()
+/** One second into the current and the previous UTC month. */
+const thisMonth = new Date(
+  Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 1),
+)
+const lastMonth = new Date(
+  Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1, 0, 0, 1),
+)
+const twoYearsAgo = new Date(
+  Date.UTC(now.getUTCFullYear() - 2, now.getUTCMonth(), 1, 0, 0, 1),
+)
+
+beforeAll(async () => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(() => {
+      throw new Error('Network forbidden')
+    }),
+  )
+  await admin.connect()
+  await admin.query('create database ' + name)
+  created = true
+  await migrate(database, { migrationsFolder: './drizzle' })
+  await pool.query(`
+    insert into artist (id, name) values
+      ('artist-a', 'Fixture artist A'),
+      ('artist-b', 'Fixture artist B'),
+      ('artist-c', 'Fixture artist without music');
+    insert into media_item (id, slug, media_type, title, metadata) values
+      ('album-1', 'album-1', 'album', 'Fixture album one', '{}'),
+      ('album-2', 'album-2', 'album', 'Fixture album two', '{}'),
+      ('album-3', 'album-3', 'album', 'Fixture album three', '{"legacyHidden": "true"}'),
+      ('track-1', 'track-1', 'track', 'Fixture track one', '{}'),
+      ('track-2', 'track-2', 'track', 'Fixture track two', '{}');
+    insert into album (media_item_id) values ('album-1'), ('album-2'), ('album-3');
+    insert into library_track (media_item_id, album_media_item_id) values
+      ('track-1', 'album-1'), ('track-2', null);
+    insert into media_credit (media_item_id, artist_id, role) values
+      ('album-1', 'artist-a', 'artist'),
+      ('track-1', 'artist-a', 'artist'),
+      ('album-2', 'artist-b', 'artist'),
+      ('album-3', 'artist-b', 'artist'),
+      ('track-2', 'artist-b', 'artist');
+    insert into lastfm_track_link (username, artist_key, track_key, track_media_item_id, strategy) values
+      ('listener', 'fixture artist a', 'fixture track one', 'track-1', 'exact'),
+      ('listener', 'fixture artist b', 'fixture track two', 'track-2', 'exact');
+  `)
+  const scrobble = (
+    id: string,
+    listenedAt: Date,
+    artist: string,
+    track: string,
+    albumId: string | null,
+  ) =>
+    pool.query(
+      `insert into lastfm_scrobble (id, username, listened_at, artist_name, track_name, artist_key, track_key, album_media_item_id)
+       values ($1, 'listener', $2, $3, $4, lower($3), lower($4), $5)`,
+      [id, listenedAt.toISOString(), artist, track, albumId],
+    )
+  // A scrobble linked through both the album and the track counts once.
+  await scrobble(
+    's1',
+    thisMonth,
+    'Fixture artist A',
+    'Fixture track one',
+    'album-1',
+  )
+  await scrobble('s2', thisMonth, 'Fixture artist A', 'Other song', 'album-1')
+  await scrobble('s3', lastMonth, 'Fixture artist A', 'Other song', 'album-1')
+  await scrobble('s4', thisMonth, 'Fixture artist B', 'Fixture track two', null)
+  await scrobble('s5', twoYearsAgo, 'Fixture artist B', 'Old song', 'album-2')
+  await database.insert(schema.subscriptionSource).values([
+    { id: FIXTURE, type: 'youtube', title: 'Fixture channel' },
+    { id: SECOND, type: 'youtube', title: 'Second channel' },
+    {
+      id: RETIRED,
+      type: 'youtube',
+      title: 'Unsubscribed channel',
+      subscribed: false,
+    },
+  ])
+  await database.insert(schema.subscriptionItem).values(
+    [
+      [video('orbits'), FIXTURE, 'Fixture video about orbits'],
+      [video('bread'), FIXTURE, 'Fixture video about bread'],
+      [video('second'), SECOND, 'Second channel video'],
+      [video('retired'), RETIRED, 'Unsubscribed video'],
+    ].map(([id, sourceId, title]) => ({
+      id,
+      sourceId,
+      type: 'youtube',
+      title,
+      publishedAt: thisMonth,
+      search: sql`to_tsvector('simple', ${title}::text)`,
+    })),
+  )
+}, 60000)
+
+afterAll(async () => {
+  await pool.end()
+  if (created) await admin.query('drop database ' + name)
+  await admin.end()
+  vi.unstubAllGlobals()
+})
+
+it('returns the unfiltered album and track totals in the same scope', async () => {
+  const { queryBrowseCounts } = await import('@/services/browse')
+  expect(await queryBrowseCounts('album', AlbumQuerySchema.parse({}))).toEqual({
+    totalCount: 2,
+    unfilteredCount: 2,
+  })
+  expect(
+    await queryBrowseCounts('album', AlbumQuerySchema.parse({ q: 'one' })),
+  ).toEqual({ totalCount: 1, unfilteredCount: 2 })
+  expect(
+    await queryBrowseCounts(
+      'album',
+      AlbumQuerySchema.parse({ q: 'one', includeArchived: 'true' }),
+    ),
+  ).toEqual({ totalCount: 1, unfilteredCount: 3 })
+  expect(
+    await queryBrowseCounts(
+      'album',
+      AlbumQuerySchema.parse({ creatorId: 'artist-b', limitResults: 1 }),
+    ),
+  ).toEqual({ totalCount: 1, unfilteredCount: 2 })
+  expect(
+    await queryBrowseCounts(
+      'track',
+      TrackQuerySchema.parse({ creatorId: 'artist-b' }),
+    ),
+  ).toEqual({ totalCount: 1, unfilteredCount: 2 })
+  expect(
+    await queryBrowseCounts(
+      'track',
+      TrackQuerySchema.parse({
+        filters: JSON.stringify([
+          { field: 'title', value: 'Fixture track two', mode: 'exclude' },
+        ]),
+      }),
+    ),
+  ).toEqual({ totalCount: 1, unfilteredCount: 2 })
+})
+
+it('returns the unfiltered artist total without search, filters or ranges', async () => {
+  const { artistBrowseCounts } = await import('@/services/artist-browse')
+  expect(await artistBrowseCounts(ArtistQuerySchema.parse({}))).toEqual({
+    totalCount: 2,
+    unfilteredCount: 2,
+  })
+  expect(
+    await artistBrowseCounts(ArtistQuerySchema.parse({ q: 'artist B' })),
+  ).toEqual({ totalCount: 1, unfilteredCount: 2 })
+  expect(
+    await artistBrowseCounts(
+      ArtistQuerySchema.parse({
+        ranges: JSON.stringify([{ field: 'scrobbles', min: 3 }]),
+      }),
+    ),
+  ).toEqual({ totalCount: 1, unfilteredCount: 2 })
+})
+
+it('lists artist scrobbles and monthly scrobbles from one grouped read', async () => {
+  const { listArtistBrowsePage } = await import('@/services/artist-browse')
+  const { getArtistListeningSeries } =
+    await import('@/services/listening-series')
+  logQuery.mockClear()
+  const page = await listArtistBrowsePage(
+    ArtistQuerySchema.parse({ sortBy: 'scrobbles', direction: 'desc' }),
+  )
+  expect(page.items.map((item) => item.id)).toEqual(['artist-a', 'artist-b'])
+  expect(
+    logQuery.mock.calls.filter(([query]) => query.includes('lastfm_scrobble')),
+  ).toHaveLength(2)
+  const [first, second] = page.items
+  expect(first?.scrobbleCount).toBe(3)
+  expect(first?.listeningMonths).toHaveLength(12)
+  expect(first?.listeningMonths?.slice(-2)).toEqual([1, 2])
+  expect(second?.scrobbleCount).toBe(2)
+  expect(second?.listeningMonths?.reduce((sum, count) => sum + count)).toBe(1)
+  for (const item of page.items)
+    expect(item.scrobbleCount).toBe(
+      (await getArtistListeningSeries(item.id, now)).total,
+    )
+  const ascending = await listArtistBrowsePage(
+    ArtistQuerySchema.parse({ sortBy: 'scrobbles', direction: 'asc' }),
+  )
+  expect(ascending.items.map((item) => item.id)).toEqual([
+    'artist-b',
+    'artist-a',
+  ])
+})
+
+it('returns the unfiltered subscription total of subscribed sources', async () => {
+  const { subscriptionBrowseCounts } =
+    await import('@/services/subscription-library')
+  expect(
+    await subscriptionBrowseCounts(SubscriptionItemQuerySchema.parse({})),
+  ).toEqual({ totalCount: 3, unfilteredCount: 3 })
+  expect(
+    await subscriptionBrowseCounts(
+      SubscriptionItemQuerySchema.parse({ sourceId: FIXTURE }),
+    ),
+  ).toEqual({ totalCount: 2, unfilteredCount: 3 })
+  expect(
+    await subscriptionBrowseCounts(
+      SubscriptionItemQuerySchema.parse({ q: 'bread' }),
+    ),
+  ).toEqual({ totalCount: 1, unfilteredCount: 3 })
+})

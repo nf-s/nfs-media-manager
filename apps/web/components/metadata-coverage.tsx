@@ -31,8 +31,28 @@ import { useConfig } from './providers'
 export type { MetadataCoverageKind }
 
 const albums = { one: 'album', other: 'albums' }
+const DEFAULT_OLDER_THAN_DAYS = 180
 
-type Review = { provider: ProviderCoverage; gap: CoverageGap }
+/** One provider's gap to queue: at most 100 album IDs of `count`. */
+export type CoverageRequest = {
+  provider: ProviderCoverage
+  gap: CoverageGap
+  ids: string[]
+  count: number
+}
+
+/** A Coverage line's whole gap, as its Queue and Refresh buttons send it. */
+export function coverageRequest(
+  provider: ProviderCoverage,
+  gap: CoverageGap,
+): CoverageRequest {
+  return {
+    provider,
+    gap,
+    ids: coverageGapIds(provider, gap),
+    count: gap === 'missing' ? provider.missing : provider.stale,
+  }
+}
 
 /** The review step before queueing one provider's gap. */
 export function CoverageReview({
@@ -42,15 +62,13 @@ export function CoverageReview({
   onConfirm,
   onCancel,
 }: {
-  review: Review
+  review: CoverageRequest
   olderThanDays: number
   pending: boolean
   onConfirm: () => void
   onCancel: () => void
 }) {
-  const { provider, gap } = review
-  const ids = coverageGapIds(provider, gap)
-  const count = gap === 'missing' ? provider.missing : provider.stale
+  const { provider, gap, ids, count } = review
   const jobs = formatItemCount(ids.length, {
     one: 'metadata job',
     other: 'metadata jobs',
@@ -93,32 +111,38 @@ export function CoverageReview({
   )
 }
 
-/** How many albums of a playlist or artist each provider has data for. */
-export function MetadataCoverage({
-  kind,
-  id,
-}: {
-  kind: MetadataCoverageKind
-  id: string
-}) {
+/** The coverage of a playlist or artist, shared by Coverage and the track list. */
+export function useCoverage(kind: MetadataCoverageKind, id: string) {
   const { apiBaseUrl } = useConfig()
-  const client = useQueryClient()
-  const coverage = useQuery({
+  return useQuery({
     queryKey: coverageKey(kind, id),
     queryFn: ({ signal }) =>
       fetchApiData(apiBaseUrl, coveragePath(kind, id), CoverageSchema, {
         signal,
       }),
   })
-  const [review, setReview] = useState<Review | null>(null)
+}
+
+/**
+ * The review and queueing of one provider's gap. Queueing reloads the
+ * coverage and everything under its key, such as the playlist's gap list.
+ */
+export function useCoverageQueue(
+  kind: MetadataCoverageKind,
+  id: string,
+  olderThanDays = DEFAULT_OLDER_THAN_DAYS,
+  onQueued?: () => void,
+) {
+  const { apiBaseUrl } = useConfig()
+  const client = useQueryClient()
+  const [review, setReview] = useState<CoverageRequest | null>(null)
   const [batchId, setBatchId] = useState('')
   const queue = useMutation({
-    mutationFn: async ({ provider, gap }: Review) => {
-      const olderThanDays = coverage.data?.olderThanDays ?? 180
+    mutationFn: async ({ provider, gap, ids }: CoverageRequest) => {
       const batch = crypto.randomUUID()
       setBatchId(batch)
       return dispatchFilmSelection(
-        coverageGapIds(provider, gap),
+        ids,
         (mediaItemIds) =>
           fetchApiData(
             apiBaseUrl,
@@ -142,7 +166,10 @@ export function MetadataCoverage({
         () => {},
       )
     },
-    onSuccess: () => setReview(null),
+    onSuccess: () => {
+      setReview(null)
+      onQueued?.()
+    },
     onSettled: async () => {
       await Promise.all([
         client.invalidateQueries({ queryKey: coverageKey(kind, id) }),
@@ -152,11 +179,88 @@ export function MetadataCoverage({
       ])
     },
   })
-  const data = coverage.data
-  function open(provider: ProviderCoverage, gap: CoverageGap) {
-    queue.reset()
-    setReview({ provider, gap })
+  return {
+    queue,
+    review,
+    batchId,
+    olderThanDays,
+    open(request: CoverageRequest) {
+      queue.reset()
+      setReview(request)
+    },
+    cancel() {
+      setReview(null)
+    },
   }
+}
+
+/** The review step, then the queue's error or result, under the control that opened it. */
+export function CoverageQueueStatus({
+  state,
+}: {
+  state: ReturnType<typeof useCoverageQueue>
+}) {
+  const { queue, review, batchId } = state
+  return (
+    <>
+      {review && (
+        <CoverageReview
+          review={review}
+          olderThanDays={state.olderThanDays}
+          pending={queue.isPending}
+          onConfirm={() => queue.mutate(review)}
+          onCancel={state.cancel}
+        />
+      )}
+      {queue.isError && (
+        <Notice tone="danger">
+          Could not queue the jobs. Check progress before retrying.
+        </Notice>
+      )}
+      {queue.data && (
+        <Notice
+          tone={queue.data.interrupted ? 'danger' : undefined}
+          action={
+            batchId ? (
+              <Button size="xs" asChild>
+                <Link
+                  href={scopedHref(
+                    `/jobs?batchId=${encodeURIComponent(batchId)}`,
+                    'album',
+                  )}
+                >
+                  View progress
+                </Link>
+              </Button>
+            ) : undefined
+          }
+        >
+          {formatCount(queue.data.queued)} queued ·{' '}
+          {formatCount(queue.data.skipped)} skipped
+          {queue.data.warnings.map((warning) => (
+            <p key={warning}>{warning}</p>
+          ))}
+        </Notice>
+      )}
+    </>
+  )
+}
+
+/** How many albums of a playlist or artist each provider has data for. */
+export function MetadataCoverage({
+  kind,
+  id,
+  onShowGap,
+}: {
+  kind: MetadataCoverageKind
+  id: string
+  /** Shows the track list's entries with this gap; the counts become links. */
+  onShowGap?: (provider: ProviderCoverage, gap: CoverageGap) => void
+}) {
+  const coverage = useCoverage(kind, id)
+  const data = coverage.data
+  const state = useCoverageQueue(kind, id, data?.olderThanDays)
+  const { queue } = state
   return (
     <Section
       title="Coverage"
@@ -198,6 +302,17 @@ export function MetadataCoverage({
           >
             {data.providers.map((provider) => {
               const needsId = data.total - provider.eligible
+              const show = (gap: CoverageGap, count: number) =>
+                onShowGap && (
+                  <Button
+                    size="xs"
+                    variant="link"
+                    aria-label={`Show the entries ${gap === 'missing' ? 'missing' : 'with stale'} ${provider.displayName}`}
+                    onClick={() => onShowGap(provider, gap)}
+                  >
+                    {formatCount(count)} {gap}
+                  </Button>
+                )
               return (
                 <div role="listitem" key={provider.provider}>
                   <Coverage
@@ -223,41 +338,62 @@ export function MetadataCoverage({
                     tone={provider.unavailableReason ? 'attention' : undefined}
                     action={
                       provider.unavailableReason ? (
-                        <Status
-                          state={
-                            provider.unavailableReason === 'halted'
-                              ? 'paused'
-                              : 'attention'
-                          }
-                        >
-                          {
-                            coverageUnavailableLabels[
-                              provider.unavailableReason
-                            ]
-                          }
-                        </Status>
+                        <span className="ds-actions">
+                          {provider.missing > 0 &&
+                            show('missing', provider.missing)}
+                          {provider.stale > 0 && show('stale', provider.stale)}
+                          <Status
+                            state={
+                              provider.unavailableReason === 'halted'
+                                ? 'paused'
+                                : 'attention'
+                            }
+                          >
+                            {
+                              coverageUnavailableLabels[
+                                provider.unavailableReason
+                              ]
+                            }
+                          </Status>
+                        </span>
                       ) : provider.missing || provider.stale ? (
                         <span className="ds-actions">
                           {provider.missing > 0 && (
-                            <Button
-                              size="xs"
-                              disabled={queue.isPending}
-                              aria-label={`Queue ${formatCount(provider.missing)} missing for ${provider.displayName}`}
-                              onClick={() => open(provider, 'missing')}
-                            >
-                              Queue {formatCount(provider.missing)} missing
-                            </Button>
+                            <>
+                              {show('missing', provider.missing)}
+                              <Button
+                                size="xs"
+                                disabled={queue.isPending}
+                                aria-label={`Queue ${formatCount(provider.missing)} missing for ${provider.displayName}`}
+                                onClick={() =>
+                                  state.open(
+                                    coverageRequest(provider, 'missing'),
+                                  )
+                                }
+                              >
+                                {onShowGap
+                                  ? 'Queue'
+                                  : `Queue ${formatCount(provider.missing)} missing`}
+                              </Button>
+                            </>
                           )}
                           {provider.stale > 0 && (
-                            <Button
-                              size="xs"
-                              variant="ghost"
-                              disabled={queue.isPending}
-                              aria-label={`Refresh ${formatCount(provider.stale)} stale for ${provider.displayName}`}
-                              onClick={() => open(provider, 'stale')}
-                            >
-                              Refresh {formatCount(provider.stale)} stale
-                            </Button>
+                            <>
+                              {show('stale', provider.stale)}
+                              <Button
+                                size="xs"
+                                variant="ghost"
+                                disabled={queue.isPending}
+                                aria-label={`Refresh ${formatCount(provider.stale)} stale for ${provider.displayName}`}
+                                onClick={() =>
+                                  state.open(coverageRequest(provider, 'stale'))
+                                }
+                              >
+                                {onShowGap
+                                  ? 'Refresh'
+                                  : `Refresh ${formatCount(provider.stale)} stale`}
+                              </Button>
+                            </>
                           )}
                         </span>
                       ) : undefined
@@ -267,45 +403,7 @@ export function MetadataCoverage({
               )
             })}
           </div>
-          {review && (
-            <CoverageReview
-              review={review}
-              olderThanDays={data.olderThanDays}
-              pending={queue.isPending}
-              onConfirm={() => queue.mutate(review)}
-              onCancel={() => setReview(null)}
-            />
-          )}
-          {queue.isError && (
-            <Notice tone="danger">
-              Could not queue the jobs. Check progress before retrying.
-            </Notice>
-          )}
-          {queue.data && (
-            <Notice
-              tone={queue.data.interrupted ? 'danger' : undefined}
-              action={
-                batchId ? (
-                  <Button size="xs" asChild>
-                    <Link
-                      href={scopedHref(
-                        `/jobs?batchId=${encodeURIComponent(batchId)}`,
-                        'album',
-                      )}
-                    >
-                      View progress
-                    </Link>
-                  </Button>
-                ) : undefined
-              }
-            >
-              {formatCount(queue.data.queued)} queued ·{' '}
-              {formatCount(queue.data.skipped)} skipped
-              {queue.data.warnings.map((warning) => (
-                <p key={warning}>{warning}</p>
-              ))}
-            </Notice>
-          )}
+          <CoverageQueueStatus state={state} />
         </>
       )}
     </Section>

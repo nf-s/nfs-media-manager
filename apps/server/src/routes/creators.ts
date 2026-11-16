@@ -53,6 +53,7 @@ import { FilmFilterOptionSchema } from '@repo/schemas/media'
 import { CoverageQuerySchema, CoverageSchema } from '@repo/schemas/coverage'
 import { ListeningSeriesSchema } from '@repo/schemas/lastfm'
 import {
+  artistBrowseCounts,
   countArtistBrowse,
   listArtistBrowsePage,
   listArtistBrowseFacets,
@@ -181,7 +182,7 @@ export const artists: OpenAPIHono<AppEnv> = createOpenAPIApp()
     async (c) =>
       generateJsonResponse(
         c,
-        await countArtistBrowse(c.req.valid('query')),
+        await artistBrowseCounts(c.req.valid('query')),
         200,
       ),
   )

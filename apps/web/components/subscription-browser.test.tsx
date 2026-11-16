@@ -29,6 +29,7 @@ const network = mock.method(globalThis, 'fetch', async () => {
   throw new Error('Network forbidden in UI tests')
 })
 
+const WATCHED_AT = '2026-09-21T10:00:00.000Z'
 const channelId = `UC${'c'.repeat(22)}`
 const showId = 's'.repeat(22)
 
@@ -166,7 +167,7 @@ test('the table view uses the one table with a pinned title, right-aligned numbe
   assert.doesNotMatch(html, /onDoubleClick|Open on Spotify|Open on YouTube/)
 })
 
-test('the default columns are Title, Channel, Published and Duration', async () => {
+test('the default columns are Title, Channel, Published, Duration and Watched', async () => {
   const { default: SubscriptionBrowser } =
     await import('./subscription-browser')
   const search = 'view=table'
@@ -174,7 +175,131 @@ test('the default columns are Title, Channel, Published and Duration', async () 
   const heads = [...html.matchAll(/aria-label="Resize ([^"]+)"/g)].map(
     ([, label]) => label,
   )
-  assert.deepEqual(heads, ['Title', 'Channel', 'Published', 'Duration'])
+  assert.deepEqual(heads, [
+    'Title',
+    'Channel',
+    'Published',
+    'Duration',
+    'Watched',
+  ])
+})
+
+test('the Watched column shows the ISO date or the empty value and sorts', async () => {
+  const { default: SubscriptionBrowser } =
+    await import('./subscription-browser')
+  const search = 'view=table&sortBy=watchedAt'
+  const { identity } = subscriptionBrowseQuery(
+    parseSubscriptionBrowseState(new URLSearchParams(search)),
+  )
+  const html = render(
+    <SubscriptionBrowser />,
+    [
+      ...browseData(search, 2),
+      [
+        ['subscriptions', 'browse', identity, 1],
+        {
+          page: 1,
+          size: 100,
+          totalCount: 2,
+          pageCount: 1,
+          items: [{ ...video, watchedAt: WATCHED_AT }, episode],
+        },
+      ],
+    ],
+    search,
+  )
+  assert.match(
+    html,
+    /<th scope="col" aria-sort="descending"><button type="button" class="ds-th-sort" title="Sort by Watched">Watched<svg/,
+  )
+  assert.match(html, /<td title="2026-09-21">2026-09-21<\/td>/)
+  assert.match(html, /<td title="–">–<\/td>/)
+  // Yes/No is a filter, not a second Watched column.
+  assert.equal((html.match(/aria-label="Resize Watched"/g) ?? []).length, 1)
+})
+
+test('the item header leads with a Watched toggle and shows the watched date', async () => {
+  const { SubscriptionItemDetails } =
+    await import('./subscription-item-details')
+  const noNavigation = () => {
+    throw new Error('Unexpected navigation')
+  }
+  const router = {
+    back: noNavigation,
+    forward: noNavigation,
+    refresh: noNavigation,
+    hmrRefresh: noNavigation,
+    push: noNavigation,
+    replace: noNavigation,
+    prefetch: noNavigation,
+  }
+  const unwatched = render(
+    <AppRouterContext.Provider value={router}>
+      <SubscriptionItemDetails id={video.id} initialItem={video} />
+    </AppRouterContext.Provider>,
+    [],
+    '',
+    `/subscriptions/${video.id}`,
+  )
+  assert.match(
+    unwatched,
+    /<button[^>]*aria-pressed="false"[^>]*>Watched<\/button>/,
+  )
+  assert.doesNotMatch(unwatched, /Watched 20/)
+  const watched = render(
+    <AppRouterContext.Provider value={router}>
+      <SubscriptionItemDetails
+        id={episode.id}
+        initialItem={{ ...episode, watchedAt: WATCHED_AT }}
+      />
+    </AppRouterContext.Provider>,
+    [],
+    '',
+    `/subscriptions/${episode.id}`,
+  )
+  assert.match(
+    watched,
+    /<button[^>]*aria-pressed="true"[^>]*><svg[^>]*class="lucide lucide-check[^"]*ds-i"[^>]*>.*?<\/svg>Watched<\/button>/,
+  )
+  assert.match(watched, /Watched 2026-09-21/)
+  // Watched leads the actions and More stays last.
+  const actions = watched.slice(
+    watched.indexOf('aria-pressed="true"'),
+    watched.indexOf('role="tablist"'),
+  )
+  const open = actions.indexOf('aria-label="Open at Spotify')
+  const more = actions.indexOf('aria-label="More actions"')
+  assert.ok(open > 0 && more > open)
+  assert.doesNotMatch(actions.slice(more), /aria-pressed|Open at/)
+})
+
+test('the table follows the chosen column order and a filtered count reads N of M', async () => {
+  const { default: SubscriptionBrowser } =
+    await import('./subscription-browser')
+  const search =
+    'view=table&q=bread&columns=title,source,durationSec&columnOrder=durationSec,source'
+  const { params } = subscriptionBrowseQuery(
+    parseSubscriptionBrowseState(new URLSearchParams(search)),
+  )
+  const countParams = new URLSearchParams(params)
+  for (const key of ['sortBy', 'direction']) countParams.delete(key)
+  countParams.sort()
+  const html = render(
+    <SubscriptionBrowser />,
+    [
+      ...browseData(search, 2),
+      [
+        ['subscriptions', 'browse-count', countParams.toString()],
+        { totalCount: 2, unfilteredCount: 64 },
+      ],
+    ],
+    search,
+  )
+  const heads = [...html.matchAll(/aria-label="Resize ([^"]+)"/g)].map(
+    ([, label]) => label,
+  )
+  assert.deepEqual(heads, ['Title', 'Duration', 'Channel'])
+  assert.match(html, /role="status">2 of 64 items<\/span>/)
 })
 
 test('the list view shows 48px rows with video thumbnails and all three view controls', async () => {

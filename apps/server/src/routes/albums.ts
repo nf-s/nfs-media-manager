@@ -4,7 +4,7 @@ import {
   BrowseFieldSchema,
   BrowsePageSliceSchema,
 } from '@repo/schemas/browse'
-import { listBrowseFields, queryBrowseCount } from '@/services/browse'
+import { listBrowseFields, queryBrowseCounts } from '@/services/browse'
 import { createRoute, type OpenAPIHono } from '@hono/zod-openapi'
 import { z } from 'zod'
 import {
@@ -100,7 +100,7 @@ app.openapi(
   async (c) =>
     generateJsonResponse(
       c,
-      await queryBrowseCount('album', c.req.valid('query')),
+      await queryBrowseCounts('album', c.req.valid('query')),
       200,
     ),
 )

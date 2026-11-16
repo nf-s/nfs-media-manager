@@ -7,12 +7,16 @@ import {
   SearchParamsContext,
 } from 'next/dist/shared/lib/hooks-client-context.shared-runtime'
 import {
+  ProviderLibraryCoverageSchema,
   ProviderLocalWorkerStatusSchema,
   ProviderOverviewSchema,
+  ProviderRequestSeriesSchema,
   ProviderSummarySchema,
   type ProviderOverviewItem,
+  type ProviderSummary,
 } from '@repo/schemas/provider'
 import ProviderPageClient from './pages/provider-page-client'
+import { requestRanges } from './provider-activity'
 
 const until = new Date(Date.now() + 40 * 60_000).toISOString()
 
@@ -20,6 +24,7 @@ const summary = ProviderSummarySchema.parse({
   id: 'fixture-ratings',
   displayName: 'Fixture Ratings',
   description: 'Album ratings',
+  siteUrl: 'https://example.com/ratings',
   surface: 'provider',
   mediaTypes: ['album'],
   rateLimit: { maxConcurrent: 1, minTimeMs: 1500 },
@@ -83,17 +88,47 @@ function overview(queue: ProviderOverviewItem['queue']) {
   })
 }
 
+const requests = ProviderRequestSeriesSchema.parse({
+  provider: summary.id,
+  recordedSince: '2026-07-01T00:00:00.000Z',
+  daysFrom: '2026-08-19',
+  daysTo: '2026-11-16',
+  total: 41,
+  days: [
+    { date: '2026-10-20', count: 12 },
+    { date: '2026-11-09', count: 20 },
+    { date: '2026-11-16', count: 9 },
+  ],
+})
+
+const coverage = ProviderLibraryCoverageSchema.parse({
+  provider: summary.id,
+  mediaTypes: [{ mediaType: 'album', covered: 96, total: 128 }],
+})
+
 function render(
   search = '',
   {
     id = summary.id,
     queue = waiting,
-  }: { id?: string; queue?: ProviderOverviewItem['queue'] } = {},
+    provider = summary,
+    libraryCoverage = coverage,
+  }: {
+    id?: string
+    queue?: ProviderOverviewItem['queue']
+    provider?: ProviderSummary
+    libraryCoverage?: typeof coverage
+  } = {},
 ) {
   const client = new QueryClient({
     defaultOptions: { queries: { enabled: false, retry: false } },
   })
-  client.setQueryData(['providers'], [summary])
+  client.setQueryData(['providers'], [provider])
+  client.setQueryData(['provider-activity', summary.id, 'daily'], requests)
+  client.setQueryData(
+    ['provider-activity', summary.id, 'coverage'],
+    libraryCoverage,
+  )
   client.setQueryData(['providers', 'overview', 'all'], overview(queue))
   client.setQueryData(
     ['providers', 'local-worker', summary.id],
@@ -159,6 +194,20 @@ test('the header names the provider with its queue, connection and worker', () =
     html,
     /href="\/jobs\?provider=fixture-ratings"[^>]*>Open in Jobs</,
   )
+  const site = html.match(/<a[^>]*>Open site<svg/)?.[0] ?? ''
+  assert.match(site, /href="https:\/\/example.com\/ratings"/)
+  assert.match(site, /target="_blank"/)
+  assert.match(site, /rel="noopener noreferrer"/)
+  assert.match(
+    site,
+    /aria-label="Open Fixture Ratings site \(opens in a new tab\)"/,
+  )
+})
+
+test('Open site is left out when the manifest names no site', () => {
+  const html = render('', { provider: { ...summary, siteUrl: undefined } })
+  assert.doesNotMatch(html, /Open site/)
+  assert.match(html, />Open in Jobs</)
 })
 
 test('tabs are Overview, Jobs and Settings and follow the URL', () => {
@@ -181,7 +230,6 @@ test('overview shows job figures, queue settings, budget, credentials and suppli
     /<span class="ds-stat-value">38<\/span><span class="ds-stat-label">Queued<\/span>/,
   )
   assert.match(html, /<h3>Requests<\/h3>/)
-  assert.match(html, /aria-label="Request history period"/)
   assert.match(html, /<h3>Recent activity<\/h3>/)
   assert.match(html, /<dt>Interval<\/dt><dd>1.5 s between requests<\/dd>/)
   assert.match(html, /<dt>Concurrency<\/dt><dd>1 at a time<\/dd>/)
@@ -192,6 +240,71 @@ test('overview shows job figures, queue settings, budget, credentials and suppli
     /<dt>API key<\/dt><dd><span class="ds-status" data-status="done">Set<\/span>/,
   )
   assert.match(html, />Albums<\/span>.*>Artists<\/span>/)
+})
+
+test('requests are the day-based trend chart with the ranges the history fills', () => {
+  const html = render()
+  const section = html.slice(
+    html.indexOf('<h3>Requests</h3>'),
+    html.indexOf('<h3>Recent activity</h3>'),
+  )
+  assert.match(section, />Requests per day</)
+  assert.match(section, /role="img" aria-label="41 requests, by day"/)
+  assert.deepEqual(
+    [...section.matchAll(/aria-pressed="(?:true|false)"[^>]*>([^<]+)</g)].map(
+      (match) => match[1],
+    ),
+    ['30d', '90d'],
+  )
+  assert.match(section, /aria-pressed="true"[^>]*>30d</)
+  assert.match(section, /stroke-dasharray="1 5"/)
+  assert.doesNotMatch(section, /ds-spark|<table/)
+  assert.match(
+    section,
+    /Includes failed attempts; blocked calls are not counted/,
+  )
+})
+
+test('request ranges offer 90 days only once recording began before the last 30', () => {
+  const series = { daysTo: '2026-11-16' }
+  assert.deepEqual(
+    requestRanges({ ...series, recordedSince: '2026-10-17T23:59:00.000Z' }),
+    ['30d', '90d'],
+  )
+  assert.deepEqual(
+    requestRanges({ ...series, recordedSince: '2026-10-18T00:00:00.000Z' }),
+    ['30d'],
+  )
+  assert.deepEqual(requestRanges({ ...series, recordedSince: null }), [
+    '30d',
+    '90d',
+  ])
+})
+
+test('coverage shows each library the provider applies to', () => {
+  const html = render()
+  const section = html.slice(html.indexOf('<h3>Coverage</h3>'))
+  assert.match(section, /items with data from this provider/)
+  assert.match(
+    section,
+    /<div class="ds-coverage"><span>Albums<\/span>.*96 of 128<\/span><a[^>]*href="\/jobs\/metadata\?mediaType=album"[^>]*>Metadata<\/a>/,
+  )
+  const complete = render('', {
+    libraryCoverage: {
+      ...coverage,
+      mediaTypes: [{ mediaType: 'album', covered: 128, total: 128 }],
+    },
+  })
+  assert.match(complete, /128 of 128<\/span><span[^>]*>Complete</)
+  const empty = render('', {
+    libraryCoverage: {
+      ...coverage,
+      mediaTypes: [{ mediaType: 'album', covered: 0, total: 0 }],
+    },
+  })
+  assert.match(empty, /No albums in the library/)
+  const account = render('', { provider: { ...summary, mediaTypes: [] } })
+  assert.doesNotMatch(account, /<h3>Coverage<\/h3>/)
 })
 
 test('the waiting reason shows on every tab with its action', () => {

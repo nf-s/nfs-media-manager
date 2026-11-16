@@ -27,6 +27,8 @@ vi.mock('@/lib/db', () => ({ db: {} }))
 vi.mock('@/lib/auth', () => ({ auth: { api: { getSession: mocks.session } } }))
 vi.mock('@/services/artist-enrichment', () => ({
   enqueueArtistEnrichment: mocks.enqueue,
+  prepareArtistEnrichment: vi.fn(),
+  runArtistEnrichment: vi.fn(),
 }))
 vi.mock('@/services/artist-selection', () => ({
   queueArtistSelection: mocks.selection,
@@ -37,6 +39,7 @@ vi.mock('@/services/artist-bulk-selection', () => ({
 }))
 vi.mock('@/services/artist-browse', () => ({
   listArtistBrowsePage: mocks.browse,
+  artistBrowseCounts: mocks.count,
   countArtistBrowse: mocks.count,
   listArtistBrowseFacets: mocks.facets,
   listArtistMetadataBrowsePage: mocks.metadataBrowse,

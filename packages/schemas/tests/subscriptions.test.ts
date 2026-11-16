@@ -11,6 +11,7 @@ import {
   SUBSCRIPTION_SYNC_TASKS,
   SubscriptionDaySchema,
   SubscriptionItemParamsSchema,
+  SubscriptionItemPatchSchema,
   SubscriptionItemQuerySchema,
   SubscriptionItemSchema,
   SubscriptionSourceIdSchema,
@@ -193,6 +194,7 @@ describe('subscription item query', () => {
         publishedPrecision: 'day',
         url: subscriptionItemUrl('spotify', EPISODE),
         artworkUrl: null,
+        watchedAt: null,
       }),
     ).toMatchObject({
       type: 'Podcast',
@@ -200,7 +202,63 @@ describe('subscription item query', () => {
       genre: ['fixture'],
       publishedAt: Date.parse('2026-03-01T00:00:00.000Z'),
       viewCount: null,
+      watched: 'No',
+      watchedAt: null,
     })
+  })
+
+  it('reads the watched date as Watched Yes or No and a date range in epoch milliseconds', () => {
+    const item = SubscriptionItemSchema.parse({
+      type: 'spotify',
+      id: EPISODE,
+      sourceId: SHOW,
+      ...shared,
+      url: subscriptionItemUrl('spotify', EPISODE),
+      artworkUrl: null,
+      watchedAt: '2026-09-21T18:30:00.000Z',
+    })
+    expect(getSubscriptionBrowseValues(item)).toMatchObject({
+      watched: 'Yes',
+      watchedAt: Date.parse('2026-09-21T18:30:00.000Z'),
+    })
+    expect(
+      SubscriptionItemSchema.parse({ ...item, watchedAt: undefined }).watchedAt,
+    ).toBeNull()
+    expect(
+      subscriptionBrowseFields
+        .filter((field) => field.key.startsWith('watched'))
+        .map(({ key, label, type }) => ({ key, label, type })),
+    ).toEqual([
+      { key: 'watched', label: 'Watched', type: 'text' },
+      { key: 'watchedAt', label: 'Watched', type: 'date' },
+    ])
+    expect(
+      SubscriptionItemQuerySchema.parse({
+        filters: JSON.stringify([{ field: 'watched', value: 'No' }]),
+        ranges: JSON.stringify([{ field: 'watchedAt', min: 0 }]),
+        sortBy: 'watchedAt',
+      }),
+    ).toMatchObject({
+      filters: [{ field: 'watched', value: 'No' }],
+      ranges: [{ field: 'watchedAt', min: 0 }],
+      sortBy: 'watchedAt',
+    })
+  })
+
+  it('sets or clears the watched date and nothing else', () => {
+    const watchedAt = '2026-09-21T18:30:00.000Z'
+    expect(SubscriptionItemPatchSchema.parse({ watchedAt })).toEqual({
+      watchedAt,
+    })
+    expect(SubscriptionItemPatchSchema.parse({ watchedAt: null })).toEqual({
+      watchedAt: null,
+    })
+    for (const input of [
+      {},
+      { watchedAt: '2026-09-21' },
+      { watchedAt, title: 'Changed' },
+    ])
+      expect(SubscriptionItemPatchSchema.safeParse(input).success).toBe(false)
   })
 })
 

@@ -6,18 +6,26 @@ import { detailPageHref, type DetailTarget } from '@/utils/detail-inspector'
 import { useDetailInspector } from './detail-inspector-context'
 
 type DetailLinkProps = DetailTarget &
-  Omit<ComponentProps<typeof Link>, 'id' | 'href'> & { tab?: string }
+  Omit<ComponentProps<typeof Link>, 'id' | 'href'> & {
+    tab?: string
+    /** Further view state for the open tab, such as an open source row. */
+    view?: Record<string, string>
+  }
 
 /** Normal clicks open the inspector; copied and modified clicks follow its URL. */
 export function DetailLink({
   kind,
   id,
   tab,
+  view: state,
   onClick,
   ...props
 }: DetailLinkProps) {
   const inspector = useDetailInspector()
-  const view = tab ? new URLSearchParams({ tab }) : undefined
+  const view =
+    tab || state
+      ? new URLSearchParams({ ...(tab ? { tab } : {}), ...state })
+      : undefined
   const target = { kind, id, view: view?.toString() }
   return (
     <Link

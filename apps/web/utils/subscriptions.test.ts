@@ -139,6 +139,7 @@ test('relevance applies only with a search and the API query follows the applied
     'title',
     'source',
     'durationSec',
+    'watchedAt',
     'viewCount',
     'likeCount',
     'commentCount',

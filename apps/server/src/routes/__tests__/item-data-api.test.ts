@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   provenance: vi.fn(),
   playlistCoverage: vi.fn(),
   artistCoverage: vi.fn(),
+  playlistCoverageEntries: vi.fn(),
 }))
 vi.mock('@/env', () => ({
   env: {
@@ -33,6 +34,7 @@ vi.mock('@/services/media-provenance', () => ({
 vi.mock('@/services/metadata-coverage', () => ({
   getPlaylistCoverage: mocks.playlistCoverage,
   getArtistCoverage: mocks.artistCoverage,
+  getPlaylistCoverageEntries: mocks.playlistCoverageEntries,
 }))
 
 const series = {
@@ -45,6 +47,18 @@ const series = {
   months: [{ month: '2026-11', count: 1 }],
 }
 const coverage = { total: 0, olderThanDays: 180, providers: [] }
+const coverageEntries = {
+  page: 1,
+  size: 100,
+  totalCount: 0,
+  pageCount: 0,
+  items: [],
+  name: 'Fixture playlist',
+  gap: 'missing',
+  provider: null,
+  olderThanDays: 180,
+  albumCount: 0,
+}
 const provenance = { mediaItemId: 'album-1', mediaType: 'album', fields: [] }
 
 const endpoints = [
@@ -55,6 +69,7 @@ const endpoints = [
   '/api/v1/media/album-1/provenance',
   '/api/v1/playlists/playlist-1/coverage',
   '/api/v1/artists/artist-1/coverage',
+  '/api/v1/playlists/playlist-1/coverage/entries',
 ]
 
 async function get(path: string) {
@@ -84,6 +99,7 @@ describe('item data api', () => {
     mocks.provenance.mockResolvedValue(provenance)
     mocks.playlistCoverage.mockResolvedValue(coverage)
     mocks.artistCoverage.mockResolvedValue(coverage)
+    mocks.playlistCoverageEntries.mockResolvedValue(coverageEntries)
   })
   afterEach(() => {
     vi.resetAllMocks()
@@ -153,5 +169,48 @@ describe('item data api', () => {
       expect(response.status, value).toBe(422)
     }
     expect(mocks.artistCoverage).toHaveBeenCalledTimes(1)
+  })
+
+  it('validates and forwards the gap filter of the coverage entries', async () => {
+    owner()
+    const response = await get('/api/v1/playlists/playlist-1/coverage/entries')
+    expect(response.status).toBe(200)
+    expect((await response.json()).data).toEqual(coverageEntries)
+    expect(mocks.playlistCoverageEntries).toHaveBeenLastCalledWith(
+      'playlist-1',
+      expect.objectContaining({
+        gap: 'missing',
+        olderThanDays: 180,
+        page: 1,
+        size: 100,
+        sortBy: 'position',
+        direction: 'asc',
+      }),
+    )
+    expect(
+      (
+        await get(
+          '/api/v1/playlists/playlist-1/coverage/entries?gap=stale&provider=fixture-a&olderThanDays=30&q=song&page=2&size=50',
+        )
+      ).status,
+    ).toBe(200)
+    expect(mocks.playlistCoverageEntries).toHaveBeenLastCalledWith(
+      'playlist-1',
+      expect.objectContaining({
+        gap: 'stale',
+        provider: 'fixture-a',
+        olderThanDays: 30,
+        q: 'song',
+        page: 2,
+        size: 50,
+      }),
+    )
+    for (const query of ['gap=old', 'provider=', 'olderThanDays=0', 'size=101'])
+      expect(
+        (await get(`/api/v1/playlists/playlist-1/coverage/entries?${query}`))
+          .status,
+        query,
+      ).toBe(422)
+    expect(mocks.playlistCoverageEntries).toHaveBeenCalledTimes(2)
   })
 })

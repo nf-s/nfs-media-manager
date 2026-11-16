@@ -1,7 +1,6 @@
 'use client'
 
-import Link from 'next/link'
-import { Tv } from 'lucide-react'
+import { Check, Tv } from 'lucide-react'
 import {
   SubscriptionSourceDetailSchema,
   subscriptionTypeLabels,
@@ -24,6 +23,7 @@ import {
   subscriptionSourceHref,
 } from '@/utils/subscriptions'
 import { CreatorDetailState } from './creator-detail-state'
+import { DetailMore } from './detail-more'
 import {
   CreatorLibraryTable,
   CreatorLibraryTitle,
@@ -110,6 +110,9 @@ export function ChannelDetail({ id }: { id: string }) {
     label: isVideo ? 'YouTube channel' : 'Spotify show',
     url: source.url,
   }
+  // Sync follows the account; the app has no way to unsubscribe one source.
+  const subscribedNote = `channel-subscribed-${source.id}`
+  const subscribedHelp = `Follows the connected ${isVideo ? 'YouTube' : 'Spotify'} account. Change it there.`
   return (
     <article className="dtl-detail">
       {query.isRefetchError && (
@@ -133,15 +136,32 @@ export function ChannelDetail({ id }: { id: string }) {
         ]}
         actions={
           <>
-            <Button asChild size="md">
-              <Link href={subscriptionSourceHref(source.id)}>
-                Filter subscriptions
-              </Link>
+            <Button
+              type="button"
+              size="md"
+              aria-pressed="true"
+              aria-describedby={subscribedNote}
+              title={subscribedHelp}
+            >
+              <Check className="ds-i" data-size="sm" aria-hidden="true" />
+              Subscribed
             </Button>
+            <span id={subscribedNote} className="sr-only">
+              {subscribedHelp}
+            </span>
             <DetailActionsSpacer />
             <OpenAtProvider
               label={isVideo ? 'YouTube' : 'Spotify'}
               url={source.url}
+            />
+            <DetailMore
+              crumb={{ title: source.title }}
+              items={[
+                {
+                  label: 'Filter subscriptions',
+                  href: subscriptionSourceHref(source.id),
+                },
+              ]}
             />
           </>
         }

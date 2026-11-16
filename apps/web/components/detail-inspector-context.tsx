@@ -15,6 +15,7 @@ import {
   detailLocation,
   sameDetail,
   withoutDetailEntries,
+  type DetailCrumb,
   type DetailEntry,
   type DetailTarget,
 } from '@/utils/detail-inspector'
@@ -94,13 +95,20 @@ function changeHistory(
 type Navigation = {
   root: DetailEntry | undefined
   active: DetailEntry | undefined
+  entries: DetailEntry[]
   canGoBack: boolean
   entryKey: string
   href: (target: DetailEntry) => string
+  /** The URL of the path up to and including the entry at `index`. */
+  hrefAt: (index: number) => string
+  /** The workspace URL with the drawer closed. */
+  closedHref: string
   open: (target: DetailEntry, trigger?: HTMLElement) => void
   replace: (target: DetailTarget) => void
   replaceView: (params: URLSearchParams) => void
   back: () => void
+  /** Steps back to the entry at `index`, as Back would one step at a time. */
+  backTo: (index: number) => void
   close: () => void
 }
 
@@ -124,6 +132,7 @@ export function DetailInspectorProvider({ children }: { children: ReactNode }) {
   const navigation: Navigation = {
     root,
     active,
+    entries,
     canGoBack: entries.length > 1,
     entryKey: JSON.stringify([
       pathname,
@@ -142,6 +151,15 @@ export function DetailInspectorProvider({ children }: { children: ReactNode }) {
             : [...entries, target],
         ),
       ),
+    hrefAt: (index) =>
+      detailLocation(
+        pathname,
+        detailEntryParams(pathname, params, entries.slice(0, index + 1)),
+      ),
+    closedHref: detailLocation(
+      pathname,
+      withoutDetailEntries(pathname, params),
+    ),
     open(target, opener) {
       const current = currentLocation().entries
       if (sameDetail(current.at(-1), target)) {
@@ -175,6 +193,13 @@ export function DetailInspectorProvider({ children }: { children: ReactNode }) {
       if (inspectorHistory()?.pushed) stepHistory(-1)
       else changeHistory('replaceState', current.slice(0, -1), null)
     },
+    backTo(index) {
+      const current = currentLocation().entries
+      const steps = current.length - 1 - index
+      if (index < 0 || steps < 1) return
+      if ((inspectorHistory()?.pushed ?? 0) >= steps) stepHistory(-steps)
+      else changeHistory('replaceState', current.slice(0, index + 1), null)
+    },
     close() {
       const history = inspectorHistory()
       if (history?.pushed && history.openedFromWorkspace)
@@ -194,6 +219,19 @@ export const InspectorEntryContext = createContext<Pick<
   Navigation,
   'active' | 'replaceView'
 > | null>(null)
+
+/** What the drawer offers the item it shows; absent on a standalone page. */
+export type InspectorPage = {
+  /** The item's own page, with its current view. */
+  pageHref: string
+  /** Names the item in the drawer's breadcrumbs once its details load. */
+  setCrumb: (crumb: DetailCrumb) => void
+  /** Where the item's More actions go in the drawer bar on a phone. */
+  moreSlot: HTMLElement | null
+}
+
+export const InspectorPageContext = createContext<InspectorPage | null>(null)
+export const useInspectorPage = () => useContext(InspectorPageContext)
 
 /** An inspector entry owns its view settings; a standalone detail uses its normal URL. */
 export function useDetailView() {

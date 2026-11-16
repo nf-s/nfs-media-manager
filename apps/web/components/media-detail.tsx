@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { usePathname, useSearchParams } from 'next/navigation'
 import { useState, type ReactNode } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Check, Disc3, Film } from 'lucide-react'
+import { Disc3, Film } from 'lucide-react'
 import { z } from 'zod'
 import { musicDisplayTags } from '@repo/schemas/music-tags'
 import {
@@ -71,6 +71,8 @@ import AlbumTracksTable from './album-tracks-table'
 import { FieldProvenance } from './field-provenance'
 import ServiceIconLinks, { serviceLinks } from './service-icon-links'
 import { AlbumHeaderPlay } from './detail-play'
+import { DetailMore } from './detail-more'
+import { WatchedToggle } from './watched-button'
 import {
   DetailArt,
   DetailTabs,
@@ -396,24 +398,12 @@ function WatchedButton({ item }: { item: FilmDetail }) {
     onSuccess: () => invalidateMediaItem(client, 'film', item.id),
   })
   return (
-    <>
-      <Button
-        size="md"
-        aria-pressed={item.watched}
-        disabled={mutation.isPending}
-        onClick={() => mutation.mutate(!item.watched)}
-      >
-        {item.watched && (
-          <Check className="ds-i" data-size="sm" aria-hidden="true" />
-        )}
-        Watched
-      </Button>
-      {mutation.isError && (
-        <span role="alert" className="ds-muted">
-          Could not save.
-        </span>
-      )}
-    </>
+    <WatchedToggle
+      watched={item.watched}
+      pending={mutation.isPending}
+      error={mutation.isError}
+      onToggle={() => mutation.mutate(!item.watched)}
+    />
   )
 }
 
@@ -623,6 +613,10 @@ export default function MediaDetail({
           {primaryLink && (
             <OpenAtProvider label={primaryLink.label} url={primaryLink.url} />
           )}
+          <DetailMore
+            crumb={{ title: item.title }}
+            items={[{ label: 'Edit', onSelect: () => setTab('edit') }]}
+          />
         </>
       }
     />

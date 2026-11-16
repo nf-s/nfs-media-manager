@@ -1,6 +1,7 @@
 'use client'
 
 import { useSearchParams } from 'next/navigation'
+import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { AudioLines, Disc3 } from 'lucide-react'
 import { musicDisplayTags } from '@repo/schemas/music-tags'
@@ -57,7 +58,8 @@ import {
 import { TrackHeaderPlay } from './detail-play'
 import { ListeningTrend } from './listening-trend'
 import ServiceIconLinks, { serviceLinks } from './service-icon-links'
-import TrackMerge from './track-merge'
+import { canMergeLastfmTrack, TrackMergePanel } from './track-merge'
+import { DetailMore } from './detail-more'
 import TrackPlaylistAdditions from './track-playlist-additions'
 
 type OnFilter = (filter: BrowseFilter, keepOpen?: boolean) => void
@@ -386,6 +388,7 @@ export default function TrackDetailView({
 }) {
   const { apiBaseUrl } = useConfig()
   const { tab, setTab } = useDetailTab(trackTabs, { aliases: trackTabAliases })
+  const [merging, setMerging] = useState(false)
   const detail = useQuery({
     queryKey: ['track', id],
     queryFn: () =>
@@ -457,15 +460,35 @@ export default function TrackDetailView({
         actions={
           <>
             <TrackHeaderPlay track={item} />
-            <TrackMerge track={item} onMerged={openResolvedTrack} />
             <DetailActionsSpacer />
             {otherLinks.length > 0 && <ServiceIconLinks links={otherLinks} />}
             {primaryLink && (
               <OpenAtProvider label={primaryLink.label} url={primaryLink.url} />
             )}
+            <DetailMore
+              crumb={{ title: item.title }}
+              items={
+                canMergeLastfmTrack(item)
+                  ? [
+                      {
+                        label: 'Merge with Spotify track',
+                        onSelect: () => setMerging(true),
+                      },
+                    ]
+                  : []
+              }
+            />
           </>
         }
       />
+      {merging && canMergeLastfmTrack(item) && (
+        <TrackMergePanel
+          key={item.id}
+          track={item}
+          onClose={() => setMerging(false)}
+          onMerged={openResolvedTrack}
+        />
+      )}
       <DetailTabs
         label="Track details"
         value={tab}

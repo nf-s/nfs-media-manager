@@ -1,6 +1,5 @@
 'use client'
 
-import Link from 'next/link'
 import { useQuery } from '@tanstack/react-query'
 import { UserRound } from 'lucide-react'
 import {
@@ -14,12 +13,12 @@ import {
   DetailHeader,
 } from '@repo/ui/components/ds/detail-header'
 import { Section, Stats } from '@repo/ui/components/ds/facts'
-import { Button } from '@repo/ui/components/ui/button'
 import { TabsContent } from '@repo/ui/components/ui/tabs'
 import { formatCount, formatRuntime } from '@repo/ui/lib/format'
 import { fetchApiData } from '@/utils/api'
 import { personFilmsHref, personRoleLabels } from '@/utils/creator-browse'
 import { CreatorDetailState } from './creator-detail-state'
+import { DetailMore } from './detail-more'
 import {
   CreatorLibraryDate,
   CreatorLibraryTable,
@@ -75,14 +74,14 @@ export function PersonDetail({ id }: { id: string }) {
         ]}
         actions={
           <>
-            {person.roles.map((role) => (
-              <Button key={role} asChild size="md">
-                <Link href={personFilmsHref(person.id, role)}>
-                  Filter films as {personRoleLabels[role].toLowerCase()}
-                </Link>
-              </Button>
-            ))}
             <DetailActionsSpacer />
+            <DetailMore
+              crumb={{ title: person.name }}
+              items={person.roles.map((role) => ({
+                label: `Filter films as ${personRoleLabels[role].toLowerCase()}`,
+                href: personFilmsHref(person.id, role),
+              }))}
+            />
           </>
         }
       />

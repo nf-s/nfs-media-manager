@@ -21,7 +21,11 @@ import { ListeningSources, useAlbumListening } from './album-listening'
 import { useMediaProvenance } from './field-provenance'
 import JsonTree from './json-tree'
 import { useConfig } from './providers'
-import { IdentifierRow, mediaProviderIdentifiers } from './provider-identifiers'
+import {
+  IdentifierRow,
+  MediaFindMatch,
+  mediaProviderIdentifiers,
+} from './provider-identifiers'
 import {
   ProviderSources,
   providerHref,
@@ -220,6 +224,15 @@ export default function MediaSources({
     const refresh = provider?.supportsScrape
       ? () => queueRefresh(id)
       : undefined
+    const refreshAndInvalidate = refresh
+      ? async () => {
+          await refresh()
+          await Promise.all([
+            client.invalidateQueries({ queryKey: ['jobs'] }),
+            client.invalidateQueries({ queryKey: ['job-activity'] }),
+          ])
+        }
+      : undefined
     return {
       id,
       label,
@@ -252,23 +265,23 @@ export default function MediaSources({
                   label={label}
                   {...identifier}
                   onSaved={onSaved}
-                  onRefresh={
-                    refresh && canRefresh
-                      ? async () => {
-                          await refresh()
-                          await Promise.all([
-                            client.invalidateQueries({ queryKey: ['jobs'] }),
-                            client.invalidateQueries({
-                              queryKey: ['job-activity'],
-                            }),
-                          ])
-                        }
-                      : undefined
-                  }
+                  onRefresh={canRefresh ? refreshAndInvalidate : undefined}
                   onCancel={close}
                 />
               ))}
             </div>
+          )
+        : undefined,
+      findMatch: provider?.supportsMatchSearch
+        ? (context) => (
+            <MediaFindMatch
+              item={item}
+              provider={id}
+              label={label}
+              context={context}
+              onSaved={onSaved}
+              onRefresh={context.canRefresh ? refreshAndInvalidate : undefined}
+            />
           )
         : undefined,
       blocks: scrobbles

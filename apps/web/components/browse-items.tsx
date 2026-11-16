@@ -24,6 +24,7 @@ import { itemGridHeight } from '@/utils/browse-items'
 import { DetailLink } from './detail-link'
 import { FilterPanelSection } from './browse-filter-panel'
 import { MediaArt, MediaThumb, type ArtworkKind } from './media-artwork'
+import { ColumnOrderList } from './column-order'
 
 const WidthsSchema = z.record(z.string(), z.number().min(70).max(650))
 const minWidth = 70
@@ -146,36 +147,61 @@ export function BrowseItemsHead({
   )
 }
 
-/** The Columns checkboxes, in column order. `required` cannot be hidden. */
+/**
+ * The Columns checkboxes, in column order, each with a handle that moves it.
+ * `required` is the identity column: it stays first and cannot be hidden.
+ * Reset order appears while the order is not the default one.
+ */
 export function ColumnChoices({
   fields,
   selected,
   required,
   onChange,
+  onOrderChange,
+  onResetOrder,
 }: {
   fields: readonly BrowseField[]
   selected: readonly string[]
   required: string
   onChange: (keys: string[]) => void
+  onOrderChange: (keys: string[]) => void
+  onResetOrder?: () => void
 }) {
-  return fields.map((field) => (
-    <label className="ds-checkrow" key={field.key}>
-      <input
-        type="checkbox"
-        className="ds-check"
-        checked={selected.includes(field.key)}
-        disabled={field.key === required}
-        onChange={() =>
-          onChange(
-            selected.includes(field.key)
-              ? selected.filter((key) => key !== field.key)
-              : [...selected, field.key],
-          )
-        }
-      />
-      {field.label}
-    </label>
-  ))
+  return (
+    <>
+      <ColumnOrderList
+        columns={fields}
+        pinned={required}
+        onMove={onOrderChange}
+      >
+        {(field) => (
+          <label className="ds-checkrow">
+            <input
+              type="checkbox"
+              className="ds-check"
+              checked={field.key === required || selected.includes(field.key)}
+              disabled={field.key === required}
+              onChange={() =>
+                onChange(
+                  selected.includes(field.key)
+                    ? selected.filter((key) => key !== field.key)
+                    : [...selected, field.key],
+                )
+              }
+            />
+            {field.label}
+          </label>
+        )}
+      </ColumnOrderList>
+      {onResetOrder && (
+        <div>
+          <Button variant="link" size="xs" onClick={onResetOrder}>
+            Reset order
+          </Button>
+        </div>
+      )}
+    </>
+  )
 }
 
 /** Active filter pills followed by Clear all. */
@@ -251,14 +277,19 @@ type CountQuery = {
   retryCount: () => void
 }
 
-/** The toolbar count: a skeleton while counting and Retry count when it fails. */
+/**
+ * The toolbar count: a skeleton while counting and Retry count when it fails.
+ * With `unfiltered`, a filtered count reads `12 of 128 albums`.
+ */
 export function BrowseItemsCount({
   query,
   total,
+  unfiltered,
   noun,
 }: {
   query: CountQuery
   total: number
+  unfiltered?: number
   noun: { one: string; other: string }
 }) {
   if (query.countError)
@@ -269,7 +300,7 @@ export function BrowseItemsCount({
     )
   if (query.isCounting)
     return <Skeleton className="bi-count-skeleton" width={64} height={10} />
-  return formatItemCount(total, noun)
+  return formatItemCount(total, noun, unfiltered)
 }
 
 export function RetryButton({ onClick }: { onClick: () => void }) {

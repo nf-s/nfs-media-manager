@@ -27,18 +27,16 @@ Each story gives the path before the design system, the path now and the mockup 
 > I want every table to look and behave the same, so I can read any of them without relearning it.
 
 - **Before.** Five table implementations with different row heights, alignment, sort headers and selection footers. Scrolling a wide table sideways loses the title column.
-- **Now.** One table. The title column is first and stays in view. Numbers align right. Columns follow one order on every resource. Selecting rows brings up one selection bar.
+- **Now.** One table. The title column is first and stays in view. Numbers align right. Columns follow one order on every resource until the owner moves one: each entry of the column picker has a handle to drag, or to move with the Up and Down keys, and Reset order restores the default. A filtered page counts "N of M". Selecting rows brings up one selection bar.
 - **See.** [Table](components.html#table), [Default columns](screens-browse.html#columns).
-- **Not built.** Dragging a column to reorder it. "N of M" counts while filtered on Tracks, Artists and Subscriptions, which need an unfiltered total from the API.
 
 ### 4. Use it on my phone
 
 > I want to browse, open and play from my phone with nothing cut off.
 
 - **Before.** The rail's status lines and filter chips disappear, and tables scroll sideways.
-- **Now.** A bottom tab bar, a two-column grid or list rows, Play and Queue always visible, toolbars that wrap with the search on its own line, and the drawer as a sheet.
+- **Now.** A bottom tab bar, a two-column grid or list rows, Play and Queue always visible, toolbars that wrap with the search on its own line, and the drawer as a sheet. Filters open in the same sheet. Jobs and Providers carry their counts on the corner of their tabs, and the Jobs count opens Activity above the bar.
 - **See.** [Phone](screens-browse.html#phone).
-- **Not built.** The activity popover and the rail counts on phones.
 
 ## Understand an item
 
@@ -63,9 +61,8 @@ Each story gives the path before the design system, the path now and the mockup 
 > From a track I want to reach its album, its artist and the artist's other albums, and step back the way I came.
 
 - **Before.** This works through the drawer, but relatives appear as pills, text links, table rows or filter buttons depending on the resource, and some tag pills leave the page.
-- **Now.** The creator is always the second line of the header and always a link. An item's lists are tabs holding the shared table. Tags filter in place. Back in the drawer retraces the path.
+- **Now.** The creator is always the second line of the header and always a link. An item's lists are tabs holding the shared table. Tags filter in place. Back in the drawer retraces the path, and its breadcrumbs name the library and each item on the path; any of them is a link. A job's breadcrumbs include its batch.
 - **See.** [Track, artist and film](screens-detail.html#others).
-- **Not built.** Breadcrumbs in the drawer; the job and provider pages have them.
 
 ### 8. See how much I have listened
 
@@ -92,9 +89,8 @@ Each story gives the path before the design system, the path now and the mockup 
 > An album is matched to the wrong release. I want to correct it and see the data update.
 
 - **Before.** Pencil icon, a form that appears below the table, Update, then a separate refresh. On artists, saving is the refresh. On films, the prompt to identify opens Edit instead of Sources.
-- **Now.** Open the provider row and edit its identifier (Add ID when there is none). Save and refresh stores it and refreshes that provider; the row then shows the new values and a history entry. The same steps on every resource.
+- **Now.** Open the provider row and edit its identifier. When the provider's last lookup found nothing or found several records, or the row has no ID, the row offers Find match: it searches the provider for the item, the search text can be changed, and Choose stores a candidate and refreshes that provider. The identifier form stays under the search for pasting an ID. The row then shows the new values and a history entry. The same steps on every resource.
 - **See.** [Source row states](screens-data.html#source-states).
-- **Not built.** Find match: searching the provider and picking from candidates. The app has no match search, so the identifier is pasted.
 
 ### 11. Link scrobble names
 
@@ -111,9 +107,8 @@ Each story gives the path before the design system, the path now and the mockup 
 > I am looking at a playlist and want its tracks and albums to have ratings and tags. I want to see what is missing and fetch it.
 
 - **Before.** Leave the playlist, open Jobs, then Metadata, rebuild the selection with filters, pick a provider, review and queue. Nothing on the playlist says what is missing.
-- **Now.** The playlist and artist overviews have Coverage: one line per provider with a count, Queue for what is missing and Refresh for what is stale. Either shows the review step, then a batch appears in Jobs and the coverage reloads.
+- **Now.** The playlist and artist overviews have Coverage: one line per provider with a count, Queue for what is missing and Refresh for what is stale. Either shows the review step, then a batch appears in Jobs and the coverage reloads. Each count links to the track list filtered to those rows: Missing data lists the entries with a gap and names it, and the selected rows are queued for one provider through the same review step.
 - **See.** [Filling in missing data](screens-data.html#coverage).
-- **Not built.** Filtering the track list to the rows with gaps.
 
 ### 13. Refresh stale data across a library
 
@@ -128,9 +123,8 @@ Each story gives the path before the design system, the path now and the mockup 
 > A film came in without an identifier. I want to find it and fix it.
 
 - **Before.** An amber pill on the card and in the header opens Edit.
-- **Now.** Needs ID is a status on the card, the row and the provider's source row. Add ID in Sources opens the identifier form.
+- **Now.** Needs ID is a status on the card, the row and the provider's source row. Find match in Sources searches the provider and lists candidates to choose from, with the identifier form under it; a provider without a search offers Add ID.
 - **See.** [Source row states](screens-data.html#source-states).
-- **Not built.** Find match, as in story 10.
 
 ### 15. Tidy tags
 
@@ -164,9 +158,8 @@ Each story gives the path before the design system, the path now and the mockup 
 > I want one screen that tells me which providers are healthy, which are waiting and which need me.
 
 - **Before.** One provider at a time, chosen from a list with one grey status line each.
-- **Now.** A table of all providers: connection, queue, queued and failed jobs, last success, requests over 24 hours and daily budget. Problems are notices at the top with the button that fixes them.
+- **Now.** A table of all providers: connection, queue, queued and failed jobs, last success, requests over 24 hours and daily budget. Problems are notices at the top with the button that fixes them. A provider's page adds Open site, requests per day as the trend chart over 30 or 90 days, and Coverage: how many albums and films have its data, with a link to fill the rest in Metadata.
 - **See.** [Providers · overview](screens-ops.html#providers).
-- **Not built.** A Coverage figure and Open site on the provider page. The request history is a sparkline with a table of counts, not the day-based trend chart.
 
 ### 19. Reconnect an account
 
@@ -181,9 +174,8 @@ Each story gives the path before the design system, the path now and the mockup 
 > After starting an import I want to watch it and open what it created.
 
 - **Before.** Import history and jobs are separate pages, joined by a link inside a popover.
-- **Now.** A batch of metadata jobs is one row in Jobs with a progress bar. Expanding it lists its jobs; each target opens the item. Recent imports stays under Imports with the same status words.
+- **Now.** A batch of metadata jobs is one row in Jobs with a progress bar. Expanding it lists its jobs; each target opens the item. Recent imports stays under Imports with the same status words and a count of how far each has got. A batch row has Cancel, which asks before it stops running jobs.
 - **See.** [Jobs](screens-ops.html#jobs).
-- **Not built.** Progress counts on imports, and Cancel on a batch row.
 
 ## The loop
 

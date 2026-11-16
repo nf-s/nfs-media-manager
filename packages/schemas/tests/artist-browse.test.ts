@@ -62,5 +62,14 @@ describe('artist browse query', () => {
       trackCount: 1,
       playlistCount: 0,
     })
+    expect(
+      getArtistBrowseValues(
+        ArtistSummarySchema.parse({
+          ...artist,
+          scrobbleCount: 42,
+          listeningMonths: [0, 3, 1],
+        }),
+      ),
+    ).toMatchObject({ scrobbles: 42 })
   })
 })

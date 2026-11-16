@@ -1,9 +1,9 @@
 'use client'
 
-import Link from 'next/link'
 import { useDeferredValue, useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ListMusic } from 'lucide-react'
+import { CoverageEntriesSchema } from '@repo/schemas/coverage'
 import { EnrichmentResultSchema } from '@repo/schemas/job'
 import {
   PlaylistDetailSchema,
@@ -29,9 +29,24 @@ import { Status } from '@repo/ui/components/ds/status'
 import { Select } from '@repo/ui/components/ds/toolbar'
 import { Button } from '@repo/ui/components/ui/button'
 import { TabsContent } from '@repo/ui/components/ui/tabs'
-import { formatCount, formatDate, formatDateTime } from '@repo/ui/lib/format'
+import {
+  formatCount,
+  formatDate,
+  formatDateTime,
+  formatItemCount,
+} from '@repo/ui/lib/format'
 import { useVirtualTable } from '@/hooks/useVirtualTable'
 import { fetchApiData } from '@/utils/api'
+import {
+  GAP_FILTER_PARAM,
+  coverageEntriesKey,
+  coverageEntriesPath,
+  gapFilter,
+  gapFilterParam,
+  gapFilterValue,
+  gapLabels,
+  type GapFilter,
+} from '@/utils/coverage-entries'
 import { parseBrowseView, type BrowseView } from '@/utils/media-grid'
 import {
   PlaylistTabSchema,
@@ -63,8 +78,10 @@ import { useDetailInspector, useDetailView } from './detail-inspector-context'
 import { DetailLink } from './detail-link'
 import { CreatorDetailState } from './creator-detail-state'
 import { DetailArt, DetailTabs, OpenAtProvider } from './detail-frame'
+import { DetailMore } from './detail-more'
 import { ListeningTrend } from './listening-trend'
 import { MetadataCoverage } from './metadata-coverage'
+import { GapFilterControls, GapSelection } from './playlist-gaps'
 import {
   TrackEntriesTable,
   trackEntryKey,
@@ -267,11 +284,50 @@ function PlaylistEntries({
         }),
       )
   }
+  const filter = gapFilter(detail.params.get(GAP_FILTER_PARAM), id)
+  function setFilter(next: GapFilter | null) {
+    const params = viewParams({})
+    if (next) params.set(GAP_FILTER_PARAM, gapFilterParam(id, next))
+    else params.delete(GAP_FILTER_PARAM)
+    detail.replace(params)
+  }
+  // Only the table can select rows, so Missing data shows it without the
+  // view switch; the owner's view returns when the filter is turned off.
+  const shownView: BrowseView = filter ? 'table' : presentation
+  const selectionKey = JSON.stringify([filter, q, kinds])
+  const [selection, setSelection] = useState({
+    key: '',
+    rows: new Map<string, IndexedTrackEntry>(),
+  })
+  const selected =
+    selection.key === selectionKey
+      ? selection.rows
+      : new Map<string, IndexedTrackEntry>()
+  const query = { sortBy, direction, q, kinds }
   const entries = useVirtualTable({
-    queryKey: ['playlist', id, 'entries', sortBy, direction, q, kinds],
+    queryKey: filter
+      ? coverageEntriesKey(id, query, filter)
+      : ['playlist', id, 'entries', sortBy, direction, q, kinds],
     pageSize: ENTRY_PAGE_SIZE,
-    presentation: { view: presentation, mediaType: 'album' },
+    presentation: { view: shownView, mediaType: 'album' },
     loadPage: async (page, size, signal) => {
+      if (filter) {
+        const result = await fetchApiData(
+          apiBaseUrl,
+          coverageEntriesPath(id, page, size, query, filter),
+          CoverageEntriesSchema,
+          { signal },
+        )
+        return {
+          ...result,
+          items: result.items.map(({ entry, gaps }, offset) => ({
+            entry,
+            gaps,
+            key: trackEntryKey(entry),
+            index: (page - 1) * size + offset,
+          })),
+        }
+      }
       const result = await fetchApiData(
         apiBaseUrl,
         playlistPath(id, page, size, sortBy, direction, q, kinds),
@@ -281,6 +337,7 @@ function PlaylistEntries({
       return {
         ...result.items,
         name: result.name,
+        albumCount: null,
         items: result.items.items.map((entry, offset) => ({
           entry,
           key: trackEntryKey(entry),
@@ -290,71 +347,124 @@ function PlaylistEntries({
     },
   })
   const total = entries.total
+  const albumCount = entries.firstPage?.albumCount
+  const matching = q || kinds.length
   return (
-    <TrackEntriesTable
-      scope="playlist"
-      window={{
-        slots: playlistWindowSlots(entries.slots),
-        total,
-        hasTotal: entries.hasTotal,
-        rowHeight: entries.rowHeight,
-        height: entries.height,
-        columns: entries.columns,
-        gap: entries.gap,
-        padTop: entries.padTop,
-        padBottom: entries.padBottom,
-        scroller: entries.scroller,
-        onScroll: entries.onScroll,
-      }}
-      view={presentation}
-      onViewChange={(next) => {
-        onPresentationChange(next)
-        detail.replace(viewParams({}, next))
-      }}
-      search={search}
-      onSearch={(search) => detail.replace(viewParams({ q: search }))}
-      sortBy={sortBy}
-      direction={direction}
-      onSort={onSort}
-      count={
-        entries.hasTotal
-          ? `${formatCount(total)} ${q || kinds.length ? 'matching ' : ''}entries`
-          : undefined
+    <Section
+      title="Tracks"
+      aside={
+        <GapFilterControls
+          playlistId={id}
+          filter={filter}
+          onChange={setFilter}
+        />
       }
-      pending={!entries.hasTotal}
-      empty={q || kinds.length ? 'No matching entries.' : 'No tracks.'}
-      error={
-        entries.isError ? (
-          <>
-            Could not load tracks.{' '}
-            <Button size="xs" onClick={entries.retry}>
-              Retry
-            </Button>
-          </>
-        ) : undefined
-      }
-      kindFilter={{
-        value: kinds,
-        onChange: (kinds) => detail.replace(viewParams({ kinds })),
-      }}
-      source={({ entry, index }) =>
-        createPlaylistPlaybackSource({
-          apiBaseUrl,
-          id,
-          params: new URLSearchParams({
-            sortBy,
-            direction,
-            q,
-            kinds: JSON.stringify(kinds),
-          }),
-          href: detail.href(viewParams({ q })),
-          label: entries.firstPage?.name ?? 'Playlist',
+    >
+      <TrackEntriesTable
+        scope="playlist"
+        window={{
+          slots: playlistWindowSlots(entries.slots),
           total,
-          startIndex: index,
-          initialEntry: entry,
-        })
-      }
-    />
+          hasTotal: entries.hasTotal,
+          rowHeight: entries.rowHeight,
+          height: entries.height,
+          columns: entries.columns,
+          gap: entries.gap,
+          padTop: entries.padTop,
+          padBottom: entries.padBottom,
+          scroller: entries.scroller,
+          onScroll: entries.onScroll,
+        }}
+        view={shownView}
+        onViewChange={
+          filter
+            ? undefined
+            : (next) => {
+                onPresentationChange(next)
+                detail.replace(viewParams({}, next))
+              }
+        }
+        search={search}
+        onSearch={(search) => detail.replace(viewParams({ q: search }))}
+        sortBy={sortBy}
+        direction={direction}
+        onSort={onSort}
+        count={
+          entries.hasTotal
+            ? `${formatCount(total)} ${matching ? 'matching ' : ''}entries${
+                filter && typeof albumCount === 'number'
+                  ? ` · ${formatItemCount(albumCount, { one: 'album', other: 'albums' })} ${filter.gap}`
+                  : ''
+              }`
+            : undefined
+        }
+        pending={!entries.hasTotal}
+        empty={
+          matching
+            ? 'No matching entries.'
+            : filter
+              ? `No entries with ${filter.gap} data.`
+              : 'No tracks.'
+        }
+        error={
+          entries.isError ? (
+            <>
+              Could not load tracks.{' '}
+              <Button size="xs" onClick={entries.retry}>
+                Retry
+              </Button>
+            </>
+          ) : undefined
+        }
+        kindFilter={{
+          value: kinds,
+          onChange: (kinds) => detail.replace(viewParams({ kinds })),
+        }}
+        gaps={
+          filter
+            ? {
+                label: gapLabels[filter.gap],
+                selected: new Set(selected.keys()),
+                onSelect: (row, checked) => {
+                  const rows = new Map(selected)
+                  if (checked) rows.set(row.key, row)
+                  else rows.delete(row.key)
+                  setSelection({ key: selectionKey, rows })
+                },
+              }
+            : undefined
+        }
+        source={
+          filter
+            ? undefined
+            : ({ entry, index }) =>
+                createPlaylistPlaybackSource({
+                  apiBaseUrl,
+                  id,
+                  params: new URLSearchParams({
+                    sortBy,
+                    direction,
+                    q,
+                    kinds: JSON.stringify(kinds),
+                  }),
+                  href: detail.href(viewParams({ q })),
+                  label: entries.firstPage?.name ?? 'Playlist',
+                  total,
+                  startIndex: index,
+                  initialEntry: entry,
+                })
+        }
+      />
+      {filter && (
+        <GapSelection
+          key={gapFilterValue(filter)}
+          playlistId={id}
+          filter={filter}
+          rows={[...selected.values()]}
+          onClear={() => setSelection({ key: selectionKey, rows: new Map() })}
+        />
+      )}
+    </Section>
   )
 }
 
@@ -575,28 +685,32 @@ export default function PlaylistDetailView({
               compact={false}
               presentation={presentation}
             />
-            {filterTracks ? (
-              <Button size="md" onClick={() => filterTracks(playlist)}>
-                Filter tracks
-              </Button>
-            ) : (
-              <Button asChild size="md">
-                <Link href={playlistTracksHref(playlist.name)}>
-                  Filter tracks
-                </Link>
-              </Button>
-            )}
-            {playlist.albumCount > 0 && (
-              <Button asChild size="md">
-                <Link href={playlistAlbumsHref(playlist.name)}>
-                  Filter albums
-                </Link>
-              </Button>
-            )}
             <DetailActionsSpacer />
             {playlist.spotifyUrl && (
               <OpenAtProvider label="Spotify" url={playlist.spotifyUrl} />
             )}
+            <DetailMore
+              crumb={{ title: playlist.name }}
+              items={[
+                filterTracks
+                  ? {
+                      label: 'Filter tracks',
+                      onSelect: () => filterTracks(playlist),
+                    }
+                  : {
+                      label: 'Filter tracks',
+                      href: playlistTracksHref(playlist.name),
+                    },
+                ...(playlist.albumCount > 0
+                  ? [
+                      {
+                        label: 'Filter albums',
+                        href: playlistAlbumsHref(playlist.name),
+                      },
+                    ]
+                  : []),
+              ]}
+            />
           </>
         }
       />
@@ -638,14 +752,24 @@ export default function PlaylistDetailView({
               <p className="dtl-text">{playlist.description}</p>
             </Section>
           )}
-          <MetadataCoverage kind="playlist" id={playlist.id} />
-          <Section title="Tracks">
-            <PlaylistEntries
-              id={id}
-              presentation={presentation}
-              onPresentationChange={setPresentation}
-            />
-          </Section>
+          <MetadataCoverage
+            kind="playlist"
+            id={playlist.id}
+            onShowGap={(provider, gap) => {
+              const params = new URLSearchParams(detail.params)
+              params.set(
+                GAP_FILTER_PARAM,
+                gapFilterParam(id, { gap, provider: provider.provider }),
+              )
+              params.delete('tab')
+              detail.replace(params)
+            }}
+          />
+          <PlaylistEntries
+            id={id}
+            presentation={presentation}
+            onPresentationChange={setPresentation}
+          />
         </TabsContent>
         <TabsContent value="listening">
           <ListeningTrend kind="playlist" id={playlist.id} />

@@ -1,0 +1,1 @@
+ALTER TABLE "subscription_item" ADD COLUMN "watched_at" timestamp;

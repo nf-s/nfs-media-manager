@@ -57,6 +57,40 @@ function groupMatches(
   )
 }
 
+/**
+ * Free text for a MusicBrainz search, with the query syntax characters
+ * escaped so that a title such as `Help!` is searched, not parsed.
+ */
+export function musicBrainzText(value: string) {
+  return value.replace(/[+\-&|!(){}[\]^"~*?:\\/]/g, '\\$&')
+}
+
+function releaseGroupQuery(names: { title: string; artist: string }) {
+  const quote = (value: string) => `"${musicBrainzText(value)}"`
+  return `releasegroup:${quote(names.title)} AND artist:${quote(names.artist)}`
+}
+
+/** The release-group search the scrape uses to match by name. */
+async function searchReleaseGroups(
+  context: MediaPluginTestContext,
+  query: string,
+) {
+  const payload = await musicBrainzRequest(context, 'release-group/', {
+    query,
+    limit: '5',
+  })
+  return z
+    .object({
+      count: z.number().int().nonnegative().optional(),
+      'release-groups': z.array(
+        GroupIdentitySchema.extend({
+          'first-release-date': z.string().optional(),
+        }),
+      ),
+    })
+    .parse(payload)
+}
+
 async function resolveReleaseGroup(
   context: MediaPluginScrapeContext,
 ): Promise<string> {
@@ -107,18 +141,7 @@ async function resolveReleaseGroup(
     }
   }
   const names = albumNames(context)
-  const quote = (value: string) =>
-    `"${value.replace(/[+\-&|!(){}[\]^"~*?:\\/]/g, '\\$&')}"`
-  const payload = await musicBrainzRequest(context, 'release-group/', {
-    query: `releasegroup:${quote(names.title)} AND artist:${quote(names.artist)}`,
-    limit: '5',
-  })
-  const result = z
-    .object({
-      count: z.number().int().nonnegative().optional(),
-      'release-groups': z.array(GroupIdentitySchema),
-    })
-    .parse(payload)
+  const result = await searchReleaseGroups(context, releaseGroupQuery(names))
   if (
     result.count !== undefined &&
     result.count > result['release-groups'].length
@@ -143,6 +166,7 @@ export const musicbrainzPlugin: MediaProviderPlugin = {
     id: 'musicbrainz',
     displayName: 'MusicBrainz',
     description: 'Album release groups, genres and public relationships',
+    siteUrl: 'https://musicbrainz.org',
     mediaTypes: ['album'],
     identifierTypes: ['release-group', 'upc'],
     supportsNameLookup: true,
@@ -168,6 +192,29 @@ export const musicbrainzPlugin: MediaProviderPlugin = {
         envVars: ['MB_CONTACT'],
       },
     ],
+  },
+  async searchMatchCandidates(context) {
+    if (context.mediaType !== 'album')
+      throw new Error('MusicBrainz scraping only supports albums.')
+    const artist = context.media.artists.find((name) => name.trim())?.trim()
+    const result = await searchReleaseGroups(
+      context,
+      context.query
+        ? musicBrainzText(context.query)
+        : artist
+          ? releaseGroupQuery({ title: context.media.title.trim(), artist })
+          : musicBrainzText(context.media.title),
+    )
+    return result['release-groups'].map((group) => ({
+      referenceType: 'release-group',
+      externalId: group.id,
+      title: group.title,
+      subtitle: group['artist-credit']
+        .map((credit) => credit.name ?? credit.artist.name)
+        .join(', '),
+      releaseDate: group['first-release-date'] || undefined,
+      url: `https://musicbrainz.org/release-group/${group.id}`,
+    }))
   },
   async scrapeMediaItem(context) {
     requireAlbum(context, 'MusicBrainz')

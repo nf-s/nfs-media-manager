@@ -110,6 +110,7 @@ export const lastfmPlugin: MediaProviderPlugin = {
     id: 'lastfm',
     displayName: 'Last.fm',
     description: 'Album listeners, personal scrobbles and tags',
+    siteUrl: 'https://www.last.fm',
     mediaTypes: ['album'],
     identifierTypes: ['mbid', 'url'],
     supportsNameLookup: true,

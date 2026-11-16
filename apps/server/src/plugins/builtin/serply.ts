@@ -1203,6 +1203,7 @@ export const serplyPlugin: MediaProviderPlugin = {
     displayName: 'Serply (Rate Your Music)',
     description:
       'RYM album ratings and genres from indexed Google search results',
+    siteUrl: 'https://serply.io',
     mediaTypes: ['album'],
     identifierTypes: ['rym-url'],
     supportsNameLookup: true,

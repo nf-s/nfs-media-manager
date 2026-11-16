@@ -7,6 +7,9 @@ import {
 } from './browse'
 import type { ArtistSummary } from './creators'
 
+/** Months in an artist row's listening sparkline, ending with the current month. */
+export const ARTIST_LISTENING_MONTHS = 12
+
 export const artistBrowseFields: BrowseField[] = [
   { key: 'name', label: 'Artist', type: 'text', filterable: true },
   { key: 'playlist', label: 'Playlists', type: 'text', filterable: true },
@@ -17,6 +20,7 @@ export const artistBrowseFields: BrowseField[] = [
   { key: 'createdAt', label: 'Added', type: 'date', filterable: true },
   { key: 'albumCount', label: 'Albums', type: 'number', filterable: true },
   { key: 'trackCount', label: 'Tracks', type: 'number', filterable: true },
+  { key: 'scrobbles', label: 'Scrobbles', type: 'number', filterable: true },
   {
     key: 'playlistCount',
     label: 'Playlists',
@@ -35,6 +39,7 @@ export const ArtistBrowseSortSchema = z.enum([
   'createdAt',
   'albumCount',
   'trackCount',
+  'scrobbles',
   'playlistCount',
 ])
 const textKeys = new Set(
@@ -80,6 +85,9 @@ export function getArtistBrowseValues(artist: ArtistSummary): BrowseValues {
     createdAt: Date.parse(artist.createdAt),
     albumCount: artist.albumCount,
     trackCount: artist.trackCount,
+    ...(artist.scrobbleCount === undefined
+      ? {}
+      : { scrobbles: artist.scrobbleCount }),
     playlistCount: artist.playlistCount,
   }
 }

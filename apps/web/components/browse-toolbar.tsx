@@ -62,7 +62,8 @@ export default function BrowseToolbar<Key extends string>({
   filters?: ReactNode
   filterCount?: number
   view: BrowseView
-  onViewChange: (view: BrowseView) => void
+  /** Absent on a list fixed to one view, which shows no view switch. */
+  onViewChange?: (view: BrowseView) => void
   count?: ReactNode
 }) {
   const nextDirection = sort.direction === 'asc' ? 'desc' : 'asc'
@@ -108,7 +109,7 @@ export default function BrowseToolbar<Key extends string>({
       {filters && (
         <BrowseFilterPanel count={filterCount}>{filters}</BrowseFilterPanel>
       )}
-      <BrowseViewSwitch view={view} onChange={onViewChange} />
+      {onViewChange && <BrowseViewSwitch view={view} onChange={onViewChange} />}
       {count != null && <ToolbarCount>{count}</ToolbarCount>}
     </Toolbar>
   )

@@ -74,6 +74,7 @@ export const mdblistPlugin: MediaProviderPlugin = {
     id: 'mdblist',
     displayName: 'MDBList',
     description: 'Film keywords with upstream provenance',
+    siteUrl: 'https://mdblist.com',
     mediaTypes: ['film'],
     identifierTypes: ['imdb', 'tmdb'],
     rateLimit: {

@@ -6,6 +6,7 @@ import { CoverageSchema } from '@repo/schemas/coverage'
 import {
   CoverageReview,
   MetadataCoverage,
+  coverageRequest,
   type MetadataCoverageKind,
 } from './metadata-coverage'
 import { ConfigContext } from './providers'
@@ -61,7 +62,12 @@ const coverage = CoverageSchema.parse({
   ],
 })
 
-function render(kind: MetadataCoverageKind, data?: unknown, failed = false) {
+function render(
+  kind: MetadataCoverageKind,
+  data?: unknown,
+  failed = false,
+  onShowGap?: () => void,
+) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false, retryOnMount: false } },
   })
@@ -85,7 +91,7 @@ function render(kind: MetadataCoverageKind, data?: unknown, failed = false) {
             apiBaseUrl: 'https://api.example.test',
           }}
         >
-          <MetadataCoverage kind={kind} id="set-1" />
+          <MetadataCoverage kind={kind} id="set-1" onShowGap={onShowGap} />
         </ConfigContext.Provider>
       </QueryClientProvider>,
     )
@@ -117,6 +123,40 @@ test('Coverage shows each provider with its gap actions and unavailable reason',
   }
 })
 
+test('with a track list, the gap counts link to it beside Queue and Refresh', () => {
+  const html = render('playlist', coverage, false, () => {})
+  assert.match(
+    html,
+    /data-variant="link"[^>]*aria-label="Show the entries missing Discogs"[^>]*>2 missing</,
+  )
+  assert.match(html, /aria-label="Queue 2 missing for Discogs"[^>]*>Queue</)
+  assert.match(
+    html,
+    /aria-label="Show the entries with stale Discogs"[^>]*>2 stale</,
+  )
+  assert.match(html, /aria-label="Refresh 2 stale for Discogs"[^>]*>Refresh</)
+  // An unavailable provider's gap can still be shown, not queued.
+  assert.match(html, /aria-label="Show the entries missing Rate Your Music"/)
+  assert.doesNotMatch(html, /Queue 32 missing for Rate Your Music/)
+  assert.doesNotMatch(render('artist', coverage), /data-variant="link"/)
+})
+
+test('a review of selected rows states the first 100 of the selected albums', () => {
+  const provider = coverage.providers[0]
+  assert.ok(provider)
+  const html = renderToStaticMarkup(
+    <CoverageReview
+      review={{ provider, gap: 'missing', ids: many.slice(0, 100), count: 120 }}
+      olderThanDays={180}
+      pending={false}
+      onConfirm={() => {}}
+      onCancel={() => {}}
+    />,
+  )
+  assert.match(html, /Queue 100 metadata jobs for Discogs/)
+  assert.match(html, /100 albums never fetched \(the first 100 of 120\)/)
+})
+
 test('Coverage shows a skeleton, empty states and a retryable error', () => {
   const loading = render('playlist')
   assert.match(loading, /aria-busy="true"/)
@@ -133,7 +173,7 @@ test('the review states the provider and the number of jobs and flags a broad ru
   assert.ok(missing)
   const small = renderToStaticMarkup(
     <CoverageReview
-      review={{ provider: missing, gap: 'missing' }}
+      review={coverageRequest(missing, 'missing')}
       olderThanDays={180}
       pending={false}
       onConfirm={() => {}}
@@ -148,10 +188,10 @@ test('the review states the provider and the number of jobs and flags a broad ru
   assert.doesNotMatch(small, /data-tone="attention"/)
   const broad = renderToStaticMarkup(
     <CoverageReview
-      review={{
-        provider: { ...missing, stale: 120, staleItemIds: many.slice(0, 100) },
-        gap: 'stale',
-      }}
+      review={coverageRequest(
+        { ...missing, stale: 120, staleItemIds: many.slice(0, 100) },
+        'stale',
+      )}
       olderThanDays={180}
       pending={false}
       onConfirm={() => {}}

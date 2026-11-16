@@ -4,11 +4,16 @@ import { trackBrowseFields, type BrowseField } from '@repo/schemas/browse'
 import { artistBrowseFields } from '@repo/schemas/artist-browse'
 import { subscriptionBrowseFields } from '@repo/schemas/subscriptions'
 import {
+  columnOrderParam,
   formatFieldValue,
+  hasCustomColumnOrder,
+  isBrowseCounting,
   itemGridGeometry,
   itemGridHeight,
   nextSortDirection,
+  orderColumns,
   orderFields,
+  parseColumnOrder,
   sortedValueLabel,
 } from './browse-items'
 import { defaultTrackColumns, trackFieldOrder } from './track-browse'
@@ -43,14 +48,14 @@ test('default columns follow the drawn order for each resource', () => {
       orderFields(artistBrowseFields, artistFieldOrder),
       defaultArtistColumns,
     ),
-    ['Artist', 'Country', 'Added', 'Albums', 'Tracks', 'Tags'],
+    ['Artist', 'Country', 'Added', 'Albums', 'Tracks', 'Scrobbles', 'Tags'],
   )
   assert.deepEqual(
     labels(
       orderFields(subscriptionBrowseFields, subscriptionFieldOrder),
       defaultSubscriptionColumns,
     ),
-    ['Title', 'Channel', 'Published', 'Duration'],
+    ['Title', 'Channel', 'Published', 'Duration', 'Watched'],
   )
 })
 
@@ -69,6 +74,80 @@ test('fields the order does not name keep their own order at the end', () => {
     ['zeta', 'alpha'],
   )
   assert.equal(ordered.length, plugin.length + trackBrowseFields.length)
+})
+
+test('a saved column order applies with the identity first and new fields in their default place', () => {
+  const columns = ['title', 'artist', 'album', 'durationSec', 'genre'].map(
+    (key) => ({ key }),
+  )
+  const keys = (saved: string[] | null) =>
+    orderColumns(columns, saved, 'title').map(({ key }) => key)
+  assert.deepEqual(keys(null), [
+    'title',
+    'artist',
+    'album',
+    'durationSec',
+    'genre',
+  ])
+  assert.deepEqual(keys(['genre', 'title', 'artist', 'album', 'durationSec']), [
+    'title',
+    'genre',
+    'artist',
+    'album',
+    'durationSec',
+  ])
+  // `album` is new since the order was saved: it follows `artist`, as by default.
+  assert.deepEqual(keys(['durationSec', 'artist', 'retired', 'genre']), [
+    'title',
+    'durationSec',
+    'artist',
+    'album',
+    'genre',
+  ])
+  assert.deepEqual(parseColumnOrder('tag,title,,tag'), ['genre', 'title'])
+  assert.equal(parseColumnOrder(''), null)
+  assert.equal(parseColumnOrder(null), null)
+  assert.equal(
+    columnOrderParam(
+      columns.map(({ key }) => key),
+      columns,
+    ),
+    null,
+  )
+  assert.equal(
+    columnOrderParam(
+      ['title', 'genre', 'artist', 'album', 'durationSec'],
+      columns,
+    ),
+    'title,genre,artist,album,durationSec',
+  )
+})
+
+test('a column order is custom only when it changes the shown order', () => {
+  const columns = ['title', 'artist', 'album'].map((key) => ({ key }))
+  const custom = (value: string | null) =>
+    hasCustomColumnOrder(
+      orderColumns(columns, parseColumnOrder(value), 'title'),
+      columns,
+      'title',
+    )
+  assert.equal(custom(null), false)
+  assert.equal(custom('title'), false)
+  assert.equal(custom('retired,unknown'), false)
+  assert.equal(custom('title,artist,album'), false)
+  assert.equal(custom('artist,title,album'), false, 'the title stays first')
+  assert.equal(custom('album'), false, 'unnamed columns keep their place')
+  assert.equal(custom('album,artist'), true)
+  assert.equal(custom('title,album,artist'), true)
+  assert.equal(
+    hasCustomColumnOrder(
+      orderColumns([{ key: 'artist' }, { key: 'title' }], null, 'title'),
+      [{ key: 'artist' }, { key: 'title' }],
+      'title',
+    ),
+    false,
+    'the default order is compared with the identity column leading',
+  )
 })
 
 test('a new sort starts ascending for text and descending otherwise; the same key flips', () => {
@@ -129,4 +208,24 @@ test('card grids keep two columns on phones and reserve the tags line', () => {
   assert.equal(desktop.cardHeight - untagged.cardHeight, 22)
   assert.equal(itemGridHeight(0), 0)
   assert.equal(itemGridHeight(400), 408)
+})
+
+test('the count waits for the count query even when page one gives the total', () => {
+  assert.equal(
+    isBrowseCounting({ hasTotal: true, conflict: false, countSettled: false }),
+    true,
+    'a filtered first page does not read 3 albums before 3 of 128 albums',
+  )
+  assert.equal(
+    isBrowseCounting({ hasTotal: true, conflict: false, countSettled: true }),
+    false,
+  )
+  assert.equal(
+    isBrowseCounting({ hasTotal: false, conflict: false, countSettled: true }),
+    true,
+  )
+  assert.equal(
+    isBrowseCounting({ hasTotal: true, conflict: true, countSettled: true }),
+    true,
+  )
 })

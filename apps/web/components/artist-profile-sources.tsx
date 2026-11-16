@@ -17,6 +17,7 @@ import { Input } from '@repo/ui/components/ui/input'
 import { Label } from '@repo/ui/components/ui/label'
 import { fetchApiData } from '@/utils/api'
 import { useDetailView } from './detail-inspector-context'
+import { FindMatch } from './find-match'
 import { errorMessage } from './lastfm-sync'
 import { useConfig } from './providers'
 import {
@@ -165,6 +166,7 @@ export function ArtistProfileSources({
   identifiers: ArtistIdentifier[]
 }) {
   const { apiBaseUrl } = useConfig()
+  const client = useQueryClient()
   const catalog = useSourceCatalog()
   const sourceUnavailable = useSourceAvailability(
     (catalog.data ?? []).filter(
@@ -217,6 +219,31 @@ export function ArtistProfileSources({
                 initial={externalId}
                 canRefresh={canRefresh}
                 onCancel={close}
+              />
+            )
+          : undefined,
+        findMatch: configured
+          ? (context) => (
+              <FindMatch
+                scope={{ kind: 'artist', id }}
+                provider={provider}
+                label={providerLabels[provider]}
+                context={context}
+                chooseUnavailable={
+                  context.canRefresh ? undefined : 'Cannot refresh now'
+                }
+                onChoose={async (candidate) => {
+                  await queueArtistRefresh(
+                    apiBaseUrl,
+                    id,
+                    provider,
+                    candidate.externalId,
+                  )
+                  await Promise.all([
+                    client.invalidateQueries({ queryKey: ['jobs'] }),
+                    client.invalidateQueries({ queryKey: ['job-activity'] }),
+                  ])
+                }}
               />
             )
           : undefined,

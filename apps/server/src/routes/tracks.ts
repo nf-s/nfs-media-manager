@@ -33,7 +33,7 @@ import {
 } from '@/lib/openapi'
 import { generateJsonResponse } from '@/lib/response'
 import { authMiddleware, mutationOriginMiddleware } from '@/middlewares/auth'
-import { listBrowseFields, queryBrowseCount } from '@/services/browse'
+import { listBrowseFields, queryBrowseCounts } from '@/services/browse'
 import {
   getTrackDetail,
   listTrackBrowsePage,
@@ -128,7 +128,7 @@ app.openapi(
   async (c) =>
     generateJsonResponse(
       c,
-      await queryBrowseCount('track', c.req.valid('query')),
+      await queryBrowseCounts('track', c.req.valid('query')),
       200,
     ),
 )

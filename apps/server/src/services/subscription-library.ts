@@ -21,6 +21,7 @@ import {
   subscriptionTypeLabels,
   type SubscriptionItem,
   type SubscriptionItemPage,
+  type SubscriptionItemPatch,
   type SubscriptionItemQuery,
   type SubscriptionSort,
   type SubscriptionType,
@@ -144,6 +145,7 @@ const ItemRowsSchema = z.array(
     comment_count: CountSchema,
     live: z.enum(['none', 'live', 'upcoming']).catch('none'),
     artwork_url: z.string().nullable(),
+    watched: z.coerce.number().nullable(),
     total: z.coerce.number().optional(),
   }),
 )
@@ -210,7 +212,8 @@ async function subscriptionSearchQueries(search: SubscriptionItemSearch) {
           s.thumbnail_url as source_thumbnail_url, i.title, i.description,
           i.tags, extract(epoch from i.published_at)::float8 as published,
           i.published_precision, i.duration_sec, i.view_count, i.like_count,
-          i.comment_count, i.live, i.artwork_url
+          i.comment_count, i.live, i.artwork_url,
+          extract(epoch from i.watched_at)::float8 as watched
           ${withCount ? sql`, count(*) over () as total` : sql``}
         ${members}
         order by ${search.order(ranked)}, i.id
@@ -245,6 +248,7 @@ function subscriptionItem(row: SubscriptionItemRow): SubscriptionItem {
     publishedPrecision: row.published_precision,
     durationSec: row.duration_sec > 0 ? row.duration_sec : null,
     url: subscriptionItemUrl(row.type, row.id),
+    watchedAt: isoSeconds(row.watched),
   }
   return SubscriptionItemSchema.parse(
     row.type === 'youtube'
@@ -275,6 +279,8 @@ const textValues: Record<z.infer<typeof SubscriptionTextFieldSchema>, SQL> = {
   source: sql`s.title`,
   type: typeLabel,
   genre: sql`tag.value`,
+  // Yes or No, as the film Watched field.
+  watched: sql`(case when i.watched_at is null then 'No'::text else 'Yes'::text end)`,
 }
 
 /** Exact, case-insensitive matches, as the other libraries' text filters. */
@@ -303,6 +309,11 @@ const rangeColumns: Record<
     value: sql`nullif(i.duration_sec, 0)`,
     bound: (value) => sql`${value}`,
   },
+  watchedAt: {
+    value: sql`i.watched_at`,
+    bound: (value) =>
+      sql`(to_timestamp(${value}::float8 / 1000) at time zone 'UTC')`,
+  },
   viewCount: { value: sql`i.view_count`, bound: (value) => sql`${value}` },
   likeCount: { value: sql`i.like_count`, bound: (value) => sql`${value}` },
   commentCount: {
@@ -327,6 +338,7 @@ function sortOrder(
     title: sql`lower(i.title) ${dir}`,
     source: sql`lower(s.title) ${dir}`,
     durationSec: sql`nullif(i.duration_sec, 0) ${dir} nulls last`,
+    watchedAt: sql`i.watched_at ${dir} nulls last`,
     viewCount: sql`i.view_count ${dir} nulls last`,
     likeCount: sql`i.like_count ${dir} nulls last`,
     commentCount: sql`i.comment_count ${dir} nulls last`,
@@ -426,6 +438,32 @@ export async function countSubscriptionBrowseItems(
   return { totalCount }
 }
 
+/**
+ * The filtered count and, for "N of M", the count Clear filters leaves:
+ * every stored item of a subscribed source, without search, filters, ranges
+ * or a channel.
+ */
+export async function subscriptionBrowseCounts(query: SubscriptionItemQuery) {
+  const filtered =
+    Boolean(query.q) ||
+    query.filters.length > 0 ||
+    query.ranges.length > 0 ||
+    query.sourceId !== undefined
+  const [{ totalCount }, unfiltered] = await Promise.all([
+    countSubscriptionBrowseItems(query),
+    filtered
+      ? countSubscriptionBrowseItems({
+          ...query,
+          q: undefined,
+          filters: [],
+          ranges: [],
+          sourceId: undefined,
+        })
+      : undefined,
+  ])
+  return { totalCount, unfilteredCount: unfiltered?.totalCount ?? totalCount }
+}
+
 /** One stored item of a subscribed source, for a link to a row outside the loaded pages. */
 export async function getSubscriptionItem(id: string) {
   const { rows } = await searchSubscriptionItemRows({
@@ -437,6 +475,35 @@ export async function getSubscriptionItem(id: string) {
   })
   const [row] = rows
   return row ? subscriptionItem(row) : null
+}
+
+const UpdatedRowsSchema = z.array(z.object({ id: z.string() }))
+
+/**
+ * Sets the watched date of a stored item of a subscribed source, or clears it
+ * with null. No provider supplies it and a sync never changes it.
+ */
+export async function setSubscriptionItemWatched(
+  id: string,
+  { watchedAt }: SubscriptionItemPatch,
+) {
+  const value =
+    watchedAt === null
+      ? sql`null`
+      : sql`(${watchedAt}::timestamptz at time zone 'UTC')`
+  const updated = UpdatedRowsSchema.parse(
+    (
+      await db.execute(sql`
+        update subscription_item i set watched_at = ${value}
+        from subscription_source s
+        where i.id = ${id} and s.id = i.source_id and s.subscribed
+        returning i.id`)
+    ).rows,
+  )
+  const item = updated.length ? await getSubscriptionItem(id) : null
+  if (!item)
+    throw new ServerError({ statusCode: 404, message: 'Item not found' })
+  return item
 }
 
 const SourceRowsSchema = z.array(

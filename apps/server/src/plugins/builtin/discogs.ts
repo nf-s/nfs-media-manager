@@ -34,9 +34,33 @@ const SearchSchema = z.object({
       type: z.enum(['master', 'release']),
       title: z.string().min(1),
       master_id: z.number().int().nonnegative().optional(),
+      // Shown by Find match only; never fails the scrape's parse.
+      year: z.union([z.string(), z.number()]).optional().catch(undefined),
+      thumb: z.string().optional().catch(undefined),
     }),
   ),
 })
+
+/** The bounded name search the scrape uses, for one Discogs type. */
+async function searchDiscogs(
+  context: MediaPluginTestContext,
+  type: 'master' | 'release',
+  terms: Record<string, string>,
+) {
+  return SearchSchema.parse(
+    await discogsRequest(context, 'database/search', {
+      type,
+      ...terms,
+      per_page: '5',
+      page: '1',
+    }),
+  )
+}
+
+const DiscogsThumbSchema = z
+  .string()
+  .url()
+  .refine((value) => value.startsWith('https://'))
 
 export async function discogsRequest(
   context: MediaPluginTestContext,
@@ -103,14 +127,10 @@ async function resolveDiscogsReference(
   for (const type of ['master', 'release'] satisfies Array<
     'master' | 'release'
   >) {
-    const payload = await discogsRequest(context, 'database/search', {
-      type,
+    const { results, pagination } = await searchDiscogs(context, type, {
       artist: names.artist,
       release_title: names.title,
-      per_page: '5',
-      page: '1',
     })
-    const { results, pagination } = SearchSchema.parse(payload)
     if (pagination && pagination.items > results.length)
       throw new Error(
         'Discogs search exceeds the bounded matching window. Set a master or release ID.',
@@ -147,6 +167,7 @@ export const discogsPlugin: MediaProviderPlugin = {
     displayName: 'Discogs',
     description:
       'Album metadata and single-release community ratings (no versions fanout)',
+    siteUrl: 'https://www.discogs.com',
     mediaTypes: ['album'],
     identifierTypes: ['master', 'release', 'upc'],
     supportsNameLookup: true,
@@ -188,6 +209,44 @@ export const discogsPlugin: MediaProviderPlugin = {
         filterable: true,
       },
     ],
+  },
+  async searchMatchCandidates(context) {
+    if (context.mediaType !== 'album')
+      throw new Error('Discogs scraping only supports albums.')
+    const artist = context.media.artists.find((name) => name.trim())?.trim()
+    const terms: Record<string, string> =
+      context.query === undefined && artist
+        ? { artist, release_title: context.media.title.trim() }
+        : { q: context.query ?? context.media.title }
+    const candidates = []
+    for (const type of ['master', 'release'] satisfies Array<
+      'master' | 'release'
+    >) {
+      const { results } = await searchDiscogs(context, type, terms)
+      for (const item of results) {
+        if (item.type !== type) continue
+        // Discogs titles read "Artist - Title".
+        const separator = item.title.indexOf(' - ')
+        const artistName =
+          separator > 0 ? item.title.slice(0, separator).trim() : ''
+        const title =
+          separator > 0 ? item.title.slice(separator + 3).trim() : ''
+        const thumb = DiscogsThumbSchema.safeParse(item.thumb)
+        candidates.push({
+          referenceType: type,
+          externalId: String(item.id),
+          title: (artistName && title) || item.title,
+          subtitle: (title && artistName) || undefined,
+          releaseDate:
+            item.year === undefined
+              ? undefined
+              : String(item.year).trim() || undefined,
+          artworkUrl: thumb.success ? thumb.data : undefined,
+          url: `https://www.discogs.com/${type}/${item.id}`,
+        })
+      }
+    }
+    return candidates
   },
   async scrapeMediaItem(context) {
     requireAlbum(context, 'Discogs')

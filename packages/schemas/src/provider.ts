@@ -114,6 +114,46 @@ export const ProviderActivitySchema = z.object({
     z.object({ clearedAt: z.string(), previousCooldownUntil: z.string() }),
   ),
 })
+/** Days in `ProviderRequestSeries.days`: today and the 89 UTC days before it. */
+export const PROVIDER_REQUEST_SERIES_DAYS = 90
+
+/** Request attempts per UTC day for the provider page's trend chart. */
+export const ProviderRequestSeriesSchema = z.object({
+  provider: z.string(),
+  /** When complete recording began; earlier days are partial. */
+  recordedSince: z.string().datetime().nullable(),
+  /** First day `days` covers. */
+  daysFrom: z.string().date(),
+  /** Last day `days` covers: the UTC date when the series was read. */
+  daysTo: z.string().date(),
+  total: z.number().int().nonnegative(),
+  /** Days from `daysFrom` to `daysTo` with at least one request, oldest first. */
+  days: z
+    .array(
+      z.object({
+        date: z.string().date(),
+        count: z.number().int().positive(),
+      }),
+    )
+    .max(PROVIDER_REQUEST_SERIES_DAYS),
+})
+
+/**
+ * Library items of one media type the provider applies to, and how many of
+ * them it has fetched data for: a current state with a successful scrape.
+ */
+export const ProviderLibraryCoverageSchema = z.object({
+  provider: z.string(),
+  /** One entry per media type in the provider's manifest; empty for account-level providers. */
+  mediaTypes: z.array(
+    z.object({
+      mediaType: z.enum(['album', 'film']),
+      covered: z.number().int().nonnegative(),
+      total: z.number().int().nonnegative(),
+    }),
+  ),
+})
+
 export const ClearProviderCooldownSchema = z.object({
   confirm: z.literal(true),
   expectedCooldownUntil: z.string().datetime(),
@@ -150,10 +190,20 @@ export const ProviderLocalWorkerControlResultSchema = z.object({
   status: ProviderLocalWorkerStatusSchema,
 })
 
+/** A provider's own website: an absolute http or https URL. */
+export const ProviderSiteUrlSchema = z
+  .string()
+  .url()
+  .refine((value) => /^https?:\/\//i.test(value), {
+    message: 'Use an http or https URL',
+  })
+
 export const ProviderSummarySchema = z.object({
   id: z.string(),
   displayName: z.string(),
   description: z.string(),
+  /** The provider's own website, from its manifest. */
+  siteUrl: ProviderSiteUrlSchema.optional(),
   surface: z.enum(['provider', 'import']),
   mediaTypes: z.array(z.enum(['album', 'film'])),
   /** The provider fills the Subscriptions library and is listed in its Providers. */
@@ -185,6 +235,8 @@ export const ProviderSummarySchema = z.object({
   requireExplicitSelection: z.boolean().optional(),
   identifierTypes: z.array(z.string()).default([]),
   supportsNameLookup: z.boolean().default(false),
+  /** Find match can search the provider for an item's candidates. */
+  supportsMatchSearch: z.boolean().default(false),
   supportsLegacyImport: z.boolean(),
   secrets: z.array(ProviderSecretFieldSchema),
   pluginPath: z.string().nullable(),
@@ -353,6 +405,10 @@ export type ProviderSummary = z.infer<typeof ProviderSummarySchema>
 export type ProviderSecrets = z.infer<typeof ProviderSecretsSchema>
 export type ProviderActivity = z.infer<typeof ProviderActivitySchema>
 export type ProviderJobSummary = z.infer<typeof ProviderJobSummarySchema>
+export type ProviderRequestSeries = z.infer<typeof ProviderRequestSeriesSchema>
+export type ProviderLibraryCoverage = z.infer<
+  typeof ProviderLibraryCoverageSchema
+>
 export type ProviderActivityRange = z.infer<
   typeof ProviderActivityQuerySchema
 >['range']

@@ -104,22 +104,22 @@ Search runs against stored videos and episodes only and makes no provider reques
 
 Filters follow the [browse filter rules](requirements/search.md) of the other libraries:
 
-- Text filters match a whole value, ignoring case: **Title**, **Channel** (a YouTube channel or podcast name), **Type** (`YouTube` or `Podcast`) and **Tags**. Each filter is Any, Required or Exclude; all Any filters form one either-or group.
-- Ranges include both bounds: **Published** (UTC), **Duration**, **Views**, **Likes** and **Comments**. Podcast episodes have no counts, and a live stream or premiere that has not finished has no duration; these match a range only when missing values are included.
-- Sorting is by relevance while searching and otherwise by newest first. It can also sort by published date, title, channel, duration, views, likes or comments, ascending or descending. Missing values sort last in both directions, and ties are ordered by ID.
+- Text filters match a whole value, ignoring case: **Title**, **Channel** (a YouTube channel or podcast name), **Type** (`YouTube` or `Podcast`), **Tags** and **Watched** (`Yes` or `No`). Each filter is Any, Required or Exclude; all Any filters form one either-or group.
+- Ranges include both bounds: **Published** (UTC), **Duration**, **Watched** (UTC), **Views**, **Likes** and **Comments**. Podcast episodes have no counts, and a live stream or premiere that has not finished has no duration; these match a range only when missing values are included. An item that has not been watched has no Watched date.
+- Sorting is by relevance while searching and otherwise by newest first. It can also sort by published date, title, channel, duration, watched date, views, likes or comments, ascending or descending. Missing values sort last in both directions, and ties are ordered by ID.
 
 ## Browse page
 
 `/subscriptions` lists YouTube videos and podcast episodes together and works like the Albums and Tracks pages:
 
 - The search box suggests titles, channels and podcasts, types and tags from the whole library, each with its count. Choosing a suggestion adds a filter chip; choosing a title opens it. Typed text applies on Enter as a search. **AI search** and dictation are in the same box. Filter chips cycle between Any, Required and Exclude.
-- **Filters** holds **Titles only**, the ranges (Published, Duration, Views, Likes, Comments) and the columns in Table view.
+- **Filters** holds **Titles only**, the ranges (Published, Duration, Watched, Views, Likes, Comments) and the columns in Table view.
 - **Grid** is the default: 16:9 thumbnails with the length (or Live, Upcoming) as a badge, then title, channel or podcast, the publish date with the view count or Podcast, and tags.
 - **List** shows 48px rows: thumbnail, title over channel, tags, and Published, Duration and Views on the right.
-- **Table** columns default to Title, Channel, Published and Duration; Type, Views, Likes, Comments and Tags can be added. Column widths are saved in the browser. Select a sortable column header to sort.
+- **Table** columns default to Title, Channel, Published, Duration and Watched (a date or an en dash); Type, Views, Likes, Comments and Tags can be added. Column widths are saved in the browser. Select a sortable column header to sort.
 - All three views reserve the height of every result and show a placeholder for unloaded items, with **Retry** for a failed page. Only the pages near the visible rows are requested, 100 items at a time.
 - A YouTube item shows its thumbnail with the length, or Live or Upcoming. An episode shows its own artwork, or the show's. Missing values show an en dash. Dates are ISO: `2024-03-01`, or `2024-03` / `2024` when the provider reported only the month or year.
-- Selecting an item opens details with its channel or podcast (which opens channel details), type, dates, length, counts, tags (each a filter), description and a link to YouTube or Spotify. `?item=<id>` opens an item directly, reading it on its own when it is outside the loaded rows.
+- Selecting an item opens details with its channel or podcast (which opens channel details), type, dates, length, counts, tags (each a filter), description and a link to YouTube or Spotify. The header leads with **Watched**: pressing it records the current time as the watched date, pressing it again clears it, and the date shows in the header facts. No provider supplies it and a sync never changes it. A channel's header leads with **Subscribed**, which shows that the connected account follows it; subscriptions are changed in YouTube or Spotify, not here. `?item=<id>` opens an item directly, reading it on its own when it is outside the loaded rows.
 - The URL carries `q`, `fields`, `filters`, `ranges`, `sortBy`, `direction`, `view` (`grid`, `list` or `table`), `columns` and `item`. The last view, search, filters and sort are remembered in the browser and restored when the page is opened without parameters.
 - With nothing synced, the page says "No subscriptions yet" with Open Imports.
 
@@ -127,7 +127,7 @@ Filters follow the [browse filter rules](requirements/search.md) of the other li
 
 ## API
 
-Every endpoint requires the owner session and reads stored rows only.
+Every endpoint requires the owner session. All read stored rows only, except the `PATCH`, which writes one item's watched date.
 
 | Endpoint                                                                                                   | Purpose                                                                                                               |
 | ---------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
@@ -136,6 +136,7 @@ Every endpoint requires the owner session and reads stored rows only.
 | `GET /api/v1/subscriptions/fields`                                                                         | The browse fields for the filter panel and columns.                                                                   |
 | `GET /api/v1/subscriptions/sources?type`                                                                   | Subscribed channels and podcasts with their stored item counts.                                                       |
 | `GET /api/v1/subscriptions/:id`                                                                            | One video or episode of a subscribed source.                                                                          |
+| `PATCH /api/v1/subscriptions/:id`                                                                          | Sets (`{"watchedAt": "<ISO time>"}`) or clears (`{"watchedAt": null}`) the watched date of one item.                  |
 | `GET` and `POST /api/v1/subscriptions/sync/:provider`, `PUT /api/v1/subscriptions/sync/:provider/settings` | Sync status, start or resume a sync, and the schedule, for `youtube` or `spotify`.                                    |
 
 `/api/v1/youtube` holds only the YouTube account connection: `POST /authorize`, the public `GET /callback`, `GET /complete` and `DELETE /account`.
@@ -145,7 +146,7 @@ Every endpoint requires the owner session and reads stored rows only.
 | Table                 | Rows                                                                                                                                                                                                                                                                                  |
 | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `subscription_source` | One per channel or podcast: provider ID, type, title, handle, description, avatar URL, subscriber count, the podcast's episode total or the channel's video count, the channel's video count at its last read, whether it is still subscribed, and whether its history has been read. |
-| `subscription_item`   | One per video or episode: provider ID, source, type, title, description, tags, publish time and its precision, duration, live status, the three counts, episode artwork URL and the search text.                                                                                      |
+| `subscription_item`   | One per video or episode: provider ID, source, type, title, description, tags, publish time and its precision, duration, live status, the three counts, episode artwork URL, the owner's watched date and the search text.                                                            |
 | `subscription_short`  | One per YouTube Short a sync has seen: video ID, channel and the run that first recorded it.                                                                                                                                                                                          |
 | `subscription_sync`   | One sync checkpoint per account and provider.                                                                                                                                                                                                                                         |
 

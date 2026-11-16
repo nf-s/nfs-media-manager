@@ -93,7 +93,10 @@ import {
   useDetailInspector,
 } from './detail-inspector-context'
 import { useConfig } from './providers'
-import JobBulkActions, { type JobActionRequest } from './job-bulk-actions'
+import JobBulkActions, {
+  unfinishedBatchJobs,
+  type JobActionRequest,
+} from './job-bulk-actions'
 import {
   SecondaryColumnFilter,
   SecondaryTableHead,
@@ -234,6 +237,7 @@ export function JobsTable({ provider }: { provider?: string }) {
   const [batchRetryConfirmed, setBatchRetryConfirmed] = useState(false)
   const reviewedBatch = batchId || retryBatchId
   const [checkedJobIds, setCheckedJobIds] = useState<string[]>([])
+  const [checkedBatchIds, setCheckedBatchIds] = useState<string[]>([])
   const [selectionAnchor, setSelectionAnchor] = useState<string | null>(null)
   const [bulkPending, setBulkPending] = useState(false)
   const [request, setRequest] = useState<JobActionRequest | null>(null)
@@ -390,6 +394,7 @@ export function JobsTable({ provider }: { provider?: string }) {
   }, [moved, entries])
   useEffect(() => {
     setCheckedJobIds([])
+    setCheckedBatchIds([])
     setSelectionAnchor(null)
     setRetryBatchId(null)
     setBatchRetryConfirmed(false)
@@ -414,24 +419,33 @@ export function JobsTable({ provider }: { provider?: string }) {
   })
   const providerName = (id: string) => providerDisplayName(providers.data, id)
   const orderedJobs: Job[] = []
+  /** Batches with unfinished jobs, which can be selected and cancelled. */
+  const cancellableBatches: JobBatchEntry[] = []
   for (const { entry } of [...entries.values()].sort(
     (a, b) => a.index - b.index,
   )) {
     if (entry.kind === 'job') orderedJobs.push(entry.job)
-    else orderedJobs.push(...(childPages.get(entry.batchId)?.data?.items ?? []))
+    else {
+      if (unfinishedBatchJobs(entry) > 0) cancellableBatches.push(entry)
+      orderedJobs.push(...(childPages.get(entry.batchId)?.data?.items ?? []))
+    }
   }
   const actionableJobs = orderedJobs.filter(
     (job) => canRetryJob(job) || canDismissJob(job) || canCancelJob(job),
   )
   const actionableIds = actionableJobs.map((job) => job.id)
   const selectedIds = checkedJobIds.filter((id) => actionableIds.includes(id))
+  const batchIds = cancellableBatches.map((batch) => batch.batchId)
+  const selectedBatchIds = checkedBatchIds.filter((id) => batchIds.includes(id))
+  const selectedCount = selectedIds.length + selectedBatchIds.length
   const allChecked =
-    actionableIds.length > 0 &&
-    actionableIds.every((id) => selectedIds.includes(id))
+    actionableIds.length + batchIds.length > 0 &&
+    actionableIds.every((id) => selectedIds.includes(id)) &&
+    batchIds.every((id) => selectedBatchIds.includes(id))
   useEffect(() => {
     if (selectAll.current)
-      selectAll.current.indeterminate = selectedIds.length > 0 && !allChecked
-  }, [selectedIds.length, allChecked])
+      selectAll.current.indeterminate = selectedCount > 0 && !allChecked
+  }, [selectedCount, allChecked])
   const busy = bulkPending || retryBatch.isPending
   function selectJobs(ids: string[]) {
     setCheckedJobIds(ids)
@@ -450,6 +464,13 @@ export function JobsTable({ provider }: { provider?: string }) {
     )
     if (!shift || !selectionAnchor || !actionableIds.includes(selectionAnchor))
       setSelectionAnchor(id)
+  }
+  function toggleBatchSelection(id: string, checked: boolean) {
+    setCheckedBatchIds((current) =>
+      checked
+        ? [...current.filter((other) => other !== id), id]
+        : current.filter((other) => other !== id),
+    )
   }
   function toggleBatch(id: string, index: number) {
     setExpanded((current) => {
@@ -578,6 +599,7 @@ export function JobsTable({ provider }: { provider?: string }) {
               size="xs"
               disabled={busy}
               onClick={() => {
+                setCheckedBatchIds([])
                 selectJobs([job.id])
                 setRequest({ action: rowAction, jobId: job.id, at: Date.now() })
               }}
@@ -597,13 +619,27 @@ export function JobsTable({ provider }: { provider?: string }) {
     const result = batchResult(batch, now)
     const page = childPages.get(batch.batchId)
     const href = `/jobs?batchId=${encodeURIComponent(batch.batchId)}`
+    const cancellable = batchIds.includes(batch.batchId)
     const retryable =
-      batch.failed + batch.cancelled > 0 && batch.queued + batch.running === 0
+      batch.failed + batch.cancelled > 0 && unfinishedBatchJobs(batch) === 0
     return (
       <Fragment key={`batch:${batch.batchId}`}>
-        <TableRow group>
+        <TableRow group selected={selectedBatchIds.includes(batch.batchId)}>
           <TableCell sticky={0}>
-            <span aria-hidden="true" />
+            {cancellable ? (
+              <input
+                type="checkbox"
+                className="ds-check"
+                aria-label={`Select batch ${title} · ${target}`}
+                disabled={busy}
+                checked={selectedBatchIds.includes(batch.batchId)}
+                onChange={(event) =>
+                  toggleBatchSelection(batch.batchId, event.target.checked)
+                }
+              />
+            ) : (
+              <span aria-hidden="true" />
+            )}
           </TableCell>
           {cells({
             title: (
@@ -666,6 +702,23 @@ export function JobsTable({ provider }: { provider?: string }) {
             ),
           })}
           <TableCell align="end">
+            {cancellable && (
+              <Button
+                size="xs"
+                disabled={busy}
+                onClick={() => {
+                  selectJobs([])
+                  setCheckedBatchIds([batch.batchId])
+                  setRequest({
+                    action: 'cancel',
+                    batchId: batch.batchId,
+                    at: Date.now(),
+                  })
+                }}
+              >
+                Cancel
+              </Button>
+            )}
             {retryable && (
               <Button
                 size="xs"
@@ -872,10 +925,13 @@ export function JobsTable({ provider }: { provider?: string }) {
                   className="ds-check"
                   aria-label="Select all loaded eligible jobs"
                   checked={allChecked}
-                  disabled={busy || !actionableIds.length}
-                  onChange={(event) =>
-                    selectJobs(event.target.checked ? actionableIds : [])
+                  disabled={
+                    busy || actionableIds.length + batchIds.length === 0
                   }
+                  onChange={(event) => {
+                    selectJobs(event.target.checked ? actionableIds : [])
+                    setCheckedBatchIds(event.target.checked ? batchIds : [])
+                  }}
                 />
               </TableHead>
               {shownColumns.map((column) => {
@@ -1006,11 +1062,11 @@ export function JobsTable({ provider }: { provider?: string }) {
           </tbody>
         </table>
       </SecondaryTableScroll>
-      {(actionableIds.length > 0 || bulkPending) && (
+      {(actionableIds.length + batchIds.length > 0 || bulkPending) && (
         <TableSelectionBar>
-          {selectedIds.length > 0 && (
+          {selectedCount > 0 && (
             <span role="status">
-              <b>{formatCount(selectedIds.length)} selected</b>
+              <b>{formatCount(selectedCount)} selected</b>
             </span>
           )}
           <JobBulkActions
@@ -1020,6 +1076,9 @@ export function JobsTable({ provider }: { provider?: string }) {
             onPending={setBulkPending}
             disabled={busy}
             request={request}
+            batches={cancellableBatches}
+            selectedBatchIds={selectedBatchIds}
+            onSelectBatches={setCheckedBatchIds}
           />
         </TableSelectionBar>
       )}

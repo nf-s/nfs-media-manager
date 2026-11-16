@@ -11,6 +11,7 @@ export const artistFieldOrder = [
   'createdAt',
   'albumCount',
   'trackCount',
+  'scrobbles',
   'playlistCount',
   'playlist',
   'genre',
@@ -22,6 +23,7 @@ export const defaultArtistColumns = [
   'createdAt',
   'albumCount',
   'trackCount',
+  'scrobbles',
   'genre',
 ]
 

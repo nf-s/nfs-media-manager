@@ -1,6 +1,7 @@
 'use client'
 
 import type { ReactNode } from 'react'
+import type { EntryGap } from '@repo/schemas/coverage'
 import {
   trackSourceLabels,
   trackSpotifyMatchLabels,
@@ -9,9 +10,11 @@ import {
 } from '@repo/schemas/tracks'
 import { Input } from '@repo/ui/components/ui/input'
 import { Notice } from '@repo/ui/components/ds/feedback'
+import { Pill, Pills } from '@repo/ui/components/ds/pill'
 import {
   TableBody,
   TableCell,
+  TableHead,
   TableHeader,
   TableRow,
   TableState,
@@ -48,6 +51,32 @@ export type IndexedTrackEntry = {
   key: string
   entry: PlaylistEntry
   index: number
+  /** The entry's metadata gaps, while the list shows only entries with gaps. */
+  gaps?: readonly EntryGap[]
+}
+
+/** The gap column and row selection of a list filtered to entries with gaps. */
+export type TrackEntryGaps = {
+  /** The column heading: Missing or Stale. */
+  label: string
+  selected: ReadonlySet<string>
+  onSelect: (row: IndexedTrackEntry, selected: boolean) => void
+}
+
+function entryTitle(entry: PlaylistEntry) {
+  return entry.kind === 'track' ? entry.track.title : entry.album.title
+}
+
+function GapPills({ gaps }: { gaps: readonly EntryGap[] }) {
+  return (
+    <Pills max={2}>
+      {gaps.map((gap) => (
+        <Pill key={gap.provider} tone="attention">
+          {gap.displayName}
+        </Pill>
+      ))}
+    </Pills>
+  )
 }
 
 const entryColumns: (TableColumn & { key: TrackEntryColumn })[] = [
@@ -254,34 +283,41 @@ function TrackEntryCell({
 function EntryRow({
   entry,
   index,
+  selected,
   children,
 }: {
   entry: PlaylistEntry
   index: number
+  selected?: boolean
   children: ReactNode
 }) {
   return entry.kind === 'track' ? (
-    <TrackEntryRow entry={entry} index={index}>
+    <TrackEntryRow entry={entry} index={index} selected={selected}>
       {children}
     </TrackEntryRow>
   ) : (
-    <TableRow aria-rowindex={index + 2}>{children}</TableRow>
+    <TableRow aria-rowindex={index + 2} selected={selected}>
+      {children}
+    </TableRow>
   )
 }
 
 function TrackEntryRow({
   entry,
   index,
+  selected,
   children,
 }: {
   entry: Extract<PlaylistEntry, { kind: 'track' }>
   index: number
+  selected?: boolean
   children: ReactNode
 }) {
   const playback = useTrackPlayback(entry.track)
   return (
     <TableRow
       aria-rowindex={index + 2}
+      selected={selected}
       data-state={playback.playing ? 'playing' : undefined}
     >
       {children}
@@ -306,11 +342,13 @@ export function TrackEntriesTable({
   source,
   fallbackArtworkUrl,
   kindFilter,
+  gaps,
 }: {
   scope: 'album' | 'playlist'
   window: NestedMediaWindow<IndexedTrackEntry> & { padBottom: number }
   view: BrowseView
-  onViewChange: (view: BrowseView) => void
+  /** Absent while the list is fixed to one view; the switch is not shown. */
+  onViewChange?: (view: BrowseView) => void
   sortBy: TrackEntryColumn
   direction: 'asc' | 'desc'
   onSort: (key: TrackEntryColumn, direction: 'asc' | 'desc') => void
@@ -323,6 +361,11 @@ export function TrackEntriesTable({
   source?: (row: IndexedTrackEntry) => PlaybackSource
   fallbackArtworkUrl?: string | null
   kindFilter?: { value: EntryKind[]; onChange: (kinds: EntryKind[]) => void }
+  /**
+   * Adds row selection and the gap column; the list holds only entries with
+   * gaps. The caller fixes the view to the table, the only view with selection.
+   */
+  gaps?: TrackEntryGaps
 }) {
   const playlist = scope === 'playlist'
   const labels = playlist
@@ -347,6 +390,7 @@ export function TrackEntriesTable({
     ...kindFilter,
   }
   const columnOptions = view === 'table' ? columns.options : null
+  const colSpan = columns.count + (gaps ? 2 : 0)
   return (
     <>
       <BrowseToolbar
@@ -416,6 +460,11 @@ export function TrackEntriesTable({
           >
             <TableHeader>
               <TableRow>
+                {gaps && (
+                  <TableHead className="sec-check-cell">
+                    <span className="sr-only">Select</span>
+                  </TableHead>
+                )}
                 {visible.map(({ key, label }) => (
                   <SecondaryTableHead
                     key={key}
@@ -436,18 +485,37 @@ export function TrackEntriesTable({
                     }
                   />
                 ))}
+                {gaps && <TableHead>{gaps.label}</TableHead>}
               </TableRow>
             </TableHeader>
             <TableBody>
               {!window.total && !pending && !error && (
-                <TableState colSpan={columns.count}>{empty}</TableState>
+                <TableState colSpan={colSpan}>{empty}</TableState>
               )}
               <SecondaryVirtualRows
                 window={window}
-                colSpan={columns.count}
+                colSpan={colSpan}
                 renderRow={(row, index) =>
                   row ? (
-                    <EntryRow key={row.key} entry={row.entry} index={index}>
+                    <EntryRow
+                      key={row.key}
+                      entry={row.entry}
+                      index={index}
+                      selected={gaps?.selected.has(row.key)}
+                    >
+                      {gaps && (
+                        <TableCell className="sec-check-cell">
+                          <input
+                            type="checkbox"
+                            className="ds-check"
+                            aria-label={`Select ${entryTitle(row.entry)}`}
+                            checked={gaps.selected.has(row.key)}
+                            onChange={(event) =>
+                              gaps.onSelect(row, event.target.checked)
+                            }
+                          />
+                        </TableCell>
+                      )}
                       {visible.map(({ key }) => (
                         <TableCell
                           key={key}
@@ -463,11 +531,16 @@ export function TrackEntriesTable({
                           />
                         </TableCell>
                       ))}
+                      {gaps && (
+                        <TableCell>
+                          <GapPills gaps={row.gaps ?? []} />
+                        </TableCell>
+                      )}
                     </EntryRow>
                   ) : (
                     <tr aria-hidden="true">
                       <td
-                        colSpan={columns.count}
+                        colSpan={colSpan}
                         style={{ height: window.rowHeight, padding: 0 }}
                       />
                     </tr>

@@ -15,6 +15,14 @@ export function jobTitle(job: Pick<Job, 'options' | 'items'>) {
   )
 }
 
+/** The Jobs list of a job's batch, where its siblings are; null outside a batch. */
+export function jobBatchHref(job: Pick<Job, 'options'>) {
+  const batchId = job.options.batchId
+  return typeof batchId === 'string'
+    ? `/jobs?batchId=${encodeURIComponent(batchId)}`
+    : null
+}
+
 const batchNouns: Record<string, { one: string; other: string }> = {
   album: { one: 'album', other: 'albums' },
   film: { one: 'film', other: 'films' },

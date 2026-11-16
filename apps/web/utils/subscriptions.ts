@@ -43,6 +43,7 @@ export const subscriptionFieldOrder = [
   'type',
   'publishedAt',
   'durationSec',
+  'watchedAt',
   'viewCount',
   'likeCount',
   'commentCount',
@@ -54,6 +55,7 @@ export const defaultSubscriptionColumns = [
   'source',
   'publishedAt',
   'durationSec',
+  'watchedAt',
 ]
 
 export type SubscriptionSearchFields = 'title' | 'all'
@@ -118,6 +120,7 @@ export const subscriptionSortLabels: Record<SubscriptionSort, string> = {
   title: 'Title',
   source: 'Channel',
   durationSec: 'Duration',
+  watchedAt: 'Watched',
   viewCount: 'Views',
   likeCount: 'Likes',
   commentCount: 'Comments',

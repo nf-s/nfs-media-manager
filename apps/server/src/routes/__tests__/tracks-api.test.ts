@@ -28,7 +28,7 @@ vi.mock('@/services/tracks', () => ({
 }))
 vi.mock('@/services/browse', () => ({
   listBrowseFields: vi.fn(),
-  queryBrowseCount: mocks.browseCount,
+  queryBrowseCounts: mocks.browseCount,
 }))
 vi.mock('@/services/track-merges', () => ({ mergeLastfmTrack: mocks.merge }))
 vi.mock('@/services/spotify-track-playlist-additions', () => ({
@@ -99,10 +99,15 @@ describe('tracks API', () => {
     )
     expect(mocks.browseCount).not.toHaveBeenCalled()
 
-    mocks.browseCount.mockResolvedValueOnce({ totalCount: 4 })
+    mocks.browseCount.mockResolvedValueOnce({
+      totalCount: 4,
+      unfilteredCount: 12,
+    })
     const count = await app.request(`/browse-count${query}`)
     expect(count.status).toBe(200)
-    expect(await count.json()).toMatchObject({ data: { totalCount: 4 } })
+    expect(await count.json()).toMatchObject({
+      data: { totalCount: 4, unfilteredCount: 12 },
+    })
     expect(mocks.browseCount).toHaveBeenCalledWith(
       'track',
       expect.objectContaining({ limitResults: 4, q: 'fixture' }),

@@ -232,6 +232,13 @@
       "when": 1794797741212,
       "tag": "0032_artist_browse_name_index",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1794821739468,
+      "tag": "0033_subscription_item_watched",
+      "breakpoints": true
     }
   ]
 }

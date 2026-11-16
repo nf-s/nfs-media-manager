@@ -17,6 +17,7 @@ import {
   virtualPageOptions,
 } from '@/utils/virtual-browse'
 import { clientQueryDefaults } from '@/utils/query-cache'
+import { isBrowseCounting } from '@/utils/browse-items'
 
 const DefaultItemSchema = z.union([AlbumListItemSchema, FilmListItemSchema])
 
@@ -115,7 +116,13 @@ function useBrowsePages<Item extends z.ZodTypeAny>(
   }, [enabled, conflict, count.isFetching, refetchCount])
   return {
     ...rows,
-    isCounting: !rows.hasTotal || conflict !== undefined,
+    isCounting: isBrowseCounting({
+      hasTotal: rows.hasTotal,
+      conflict: conflict !== undefined,
+      countSettled: !enabled || count.data !== undefined || count.isError,
+    }),
+    /** The count without the page's filters, for `12 of 128`. */
+    unfilteredTotal: count.data?.unfilteredCount,
     countError:
       !count.isFetching &&
       ((!rows.hasTotal && count.isError) ||
