@@ -73,11 +73,13 @@
     "bindings": [
       { "name": "PROVIDER_COORDINATORS", "class_name": "ProviderCoordinator" },
       { "name": "LOCAL_WORKERS", "class_name": "LocalRequestWorker" },
+      { "name": "PLAYBACK_SESSIONS", "class_name": "PlaybackSessionStore" },
     ],
   },
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["ProviderCoordinator"] },
     { "tag": "v2", "new_sqlite_classes": ["LocalRequestWorker"] },
+    { "tag": "v3", "new_sqlite_classes": ["PlaybackSessionStore"] },
   ],
   "triggers": { "crons": ["*/5 * * * *"] },
   "observability": { "enabled": true, "head_sampling_rate": 0.1 },

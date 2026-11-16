@@ -1,27 +1,18 @@
 import type { AlbumListItem } from '@repo/schemas/media'
 import type { TrackListItem } from '@repo/schemas/tracks'
+import type {
+  PlayableItem,
+  PlaybackSnapshot,
+  QueueEntry,
+  SourceDescriptor,
+} from '@repo/schemas/playback'
 import { albumSpotifyUri, spotifyTrackUri } from './album-links'
 
-export type PlayableItem = {
-  kind: 'album' | 'track'
-  /** `spotify:album:…` for an album, `spotify:track:…` for a single track. */
-  uri: string
-  /** An album played from a chosen track starts at this track URI. */
-  startUri?: string
-  title: string
-  artist: string
-  /** The library album; null for a library track not linked to one. */
-  albumId: string | null
-  albumTitle: string
-  artworkUrl: string | null
-  trackCount: number | null
-  /** The library track, when the item is one. */
-  trackId?: string
-  /** The credited artists with their library IDs, for links. */
-  credits?: Array<{ id: string | null; name: string }>
-}
-
-export type QueueEntry = { key: string; item: PlayableItem }
+export type {
+  PlayableItem,
+  PlaybackSnapshot,
+  QueueEntry,
+} from '@repo/schemas/playback'
 
 /** A captured view whose entries can still be read after navigating away. */
 export type PlaybackSource = {
@@ -41,6 +32,11 @@ export type PlaybackSource = {
    * in the order asked. Shuffled playback uses it where a source has it.
    */
   loadScattered?: (indexes: number[]) => Promise<PlayableItem[][]>
+  /**
+   * What the entries are read from, so the source can be saved with the
+   * shared session and read again after a reload or on another device.
+   */
+  descriptor?: SourceDescriptor
 }
 
 /** A track from the track library, with a Spotify ID only when matched. */
@@ -189,30 +185,6 @@ export function queueSummary(queue: readonly QueueEntry[]): string {
 export function formatClock(milliseconds: number): string {
   const seconds = Math.max(0, Math.floor(milliseconds / 1000))
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`
-}
-
-/** One observation of what a Spotify device is playing. */
-export type PlaybackSnapshot = {
-  trackUri: string | null
-  /** The requested track when Spotify substituted another recording for it. */
-  linkedFromUri: string | null
-  trackName: string
-  artists: string
-  albumName: string
-  /** `spotify:album:…` and `spotify:artist:…` references, where Spotify gives them. */
-  albumUri: string | null
-  artistLinks: Array<{ name: string; uri: string | null }>
-  artworkUrl: string | null
-  durationMs: number
-  positionMs: number
-  paused: boolean
-  contextUri: string | null
-  /** Whether more tracks follow in the context; null when the source cannot say. */
-  hasNext: boolean | null
-  trackNumber: number | null
-  discNumber: number | null
-  /** Local clock time of the observation. */
-  at: number
 }
 
 export function positionAt(snapshot: PlaybackSnapshot, now: number): number {

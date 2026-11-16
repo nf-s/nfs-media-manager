@@ -15,6 +15,7 @@ import {
   type PlaylistEntry,
   type TrackListItem,
 } from '@repo/schemas/tracks'
+import type { SavedSource } from '@repo/schemas/playback'
 import { fetchApiData } from './api'
 import {
   albumPlayable,
@@ -222,6 +223,7 @@ export function createBrowsePlaybackSource({
     length: total,
     startIndex,
     kind: collection === 'albums' ? 'album' : 'list',
+    descriptor: { type: 'browse', collection, params: captured.toString() },
     async load(index) {
       if (!validIndex(index, total)) return []
       return playables(
@@ -265,6 +267,7 @@ export function createPlaylistPlaybackSource({
     length: total,
     startIndex,
     kind: 'list',
+    descriptor: { type: 'playlist', id, params: captured.toString() },
     async load(index) {
       if (!validIndex(index, total)) return []
       const entry =
@@ -287,13 +290,51 @@ export function createAlbumPlaybackSource(
   href: string,
   selection?: readonly AlbumDetail['tracks'][number][],
 ): PlaybackSource {
-  const tracks = tracksInAlbum(album, selection)
+  return albumTracksSource(album.title, href, tracksInAlbum(album, selection))
+}
+
+function albumTracksSource(
+  label: string,
+  href: string,
+  tracks: PlayableItem[],
+): PlaybackSource {
   return {
-    label: album.title,
+    label,
     href,
     length: 1,
     startIndex: 0,
     kind: 'album',
+    descriptor: { type: 'album', tracks },
     load: async (index) => (index === 0 ? [...tracks] : []),
   }
+}
+
+/**
+ * Reads a saved source's entries again, for a session restored after a
+ * reload or taken over from another device.
+ */
+export function restorePlaybackSource(
+  apiBaseUrl: string,
+  saved: Pick<
+    SavedSource,
+    'descriptor' | 'label' | 'href' | 'length' | 'startIndex'
+  >,
+): PlaybackSource {
+  const { descriptor, label, href } = saved
+  if (descriptor.type === 'album')
+    return albumTracksSource(label, href, descriptor.tracks)
+  const options = {
+    apiBaseUrl,
+    params: new URLSearchParams(descriptor.params),
+    href,
+    label,
+    total: saved.length,
+    startIndex: saved.startIndex,
+  }
+  return descriptor.type === 'playlist'
+    ? createPlaylistPlaybackSource({ ...options, id: descriptor.id })
+    : createBrowsePlaybackSource({
+        ...options,
+        collection: descriptor.collection,
+      })
 }

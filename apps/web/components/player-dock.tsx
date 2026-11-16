@@ -540,9 +540,15 @@ function QueueContents({
   view: PlaybackView
   onNavigate: () => void
 }) {
-  const { target } = view
+  const { target, sharing } = view
   return (
     <div className="queue-contents">
+      {sharing.role === 'follower' && (
+        <p className="quiet">
+          This queue is run from {sharing.driverName ?? 'another browser'}. A
+          change made here moves it to this browser.
+        </p>
+      )}
       {(target.kind === 'restricted' ||
         (target.kind === 'sonos' && !target.group.playable)) && (
         <p className="quiet">

@@ -58,6 +58,9 @@ vi.mock('@/cloudflare/provider-coordinator', () => ({
 vi.mock('@/cloudflare/local-worker-coordinator', () => ({
   LocalRequestWorker: class {},
 }))
+vi.mock('@/cloudflare/playback-session-store', () => ({
+  PlaybackSessionStore: class {},
+}))
 vi.mock('@/services/provider-requests', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/services/provider-requests')>()),
   protectProviderFromLocalResponse: mocks.protect,

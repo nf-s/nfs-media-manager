@@ -14,6 +14,14 @@ import {
 import type { SpotifySdk, SpotifySdkPlayer } from './spotify-sdk'
 import type { SonosControlApi } from './sonos-player-api'
 import type { SonosGroupControl, SonosGroupState } from '@repo/schemas/sonos'
+import {
+  PLAYBACK_LEASE_MS,
+  SavedPlaybackSchema,
+  type PlaybackSyncResult,
+  type SavedPlayback,
+  type SavedSource,
+} from '@repo/schemas/playback'
+import { createPlaybackSync, type SessionApi } from './playback-sync'
 
 const album: PlayableItem = {
   kind: 'album',
@@ -94,13 +102,28 @@ function remoteSnapshot(values: Partial<PlaybackSnapshot>): PlaybackSnapshot {
 
 let clock = 0
 
+/** What Spotify reports for the account; pages of one account share it. */
+type SpotifyWorld = {
+  device: PlaybackDevice | null
+  restricted: RestrictedDevice | null
+  snapshot: PlaybackSnapshot | null
+  devices: PlaybackDevice[]
+  failures: Error[]
+}
+
 function harness(
   random?: () => number,
   sonos?: SonosControlApi,
   shuffle: Pick<
     PlaybackEngineOptions,
-    'initialShuffle' | 'onShuffle' | 'initialRoom' | 'onRoom'
+    | 'initialShuffle'
+    | 'onShuffle'
+    | 'initialRoom'
+    | 'onRoom'
+    | 'browserId'
+    | 'restoreSource'
   > = {},
+  world?: SpotifyWorld,
 ) {
   const calls: string[] = []
   /** Tracks whose details were read from Spotify. */
@@ -109,13 +132,7 @@ function harness(
   const page = { visible: true }
   const listeners = new Map<string, Array<(payload: unknown) => void>>()
   const local: { state: unknown } = { state: null }
-  const remote: {
-    device: PlaybackDevice | null
-    restricted: RestrictedDevice | null
-    snapshot: PlaybackSnapshot | null
-    devices: PlaybackDevice[]
-    failures: Error[]
-  } = {
+  const remote: SpotifyWorld = world ?? {
     device: null,
     restricted: null,
     snapshot: null,
@@ -2589,4 +2606,751 @@ test('a change Sonos refuses is reported and the room keeps playing what it has'
   assert.equal(sonos.loads.length, attempts)
   assert.equal(setup.engine.getState().current?.uri, sourceTrack(0).uri)
   setup.engine.dispose()
+})
+
+/** A source that can be saved with a session and read again on another page. */
+function savedFixtureSource(length: number, startIndex = 0): PlaybackSource {
+  return {
+    ...fixtureSource(length, startIndex),
+    descriptor: {
+      type: 'browse',
+      collection: 'tracks',
+      params: 'sortBy=title&direction=asc',
+    },
+  }
+}
+
+const restoreSource = (saved: SavedSource) =>
+  savedFixtureSource(saved.length, saved.startIndex)
+
+/** A saved session as another page receives it from the server. */
+function transferred(saved: SavedPlayback | null) {
+  return SavedPlaybackSchema.parse(JSON.parse(JSON.stringify(saved)))
+}
+
+function playing(index: number, positionMs: number) {
+  return remoteSnapshot({
+    trackUri: sourceTrack(index).uri,
+    contextUri: null,
+    positionMs,
+  })
+}
+
+test('nothing is saved until something is played or queued here', async () => {
+  const setup = harness()
+  assert.equal(setup.engine.saved(), null)
+  setup.remote.device = { ...speaker, active: true }
+  setup.remote.snapshot = remoteSnapshot({})
+  setup.engine.watch()
+  await advance(100)
+  // Playback started elsewhere is shown, but it is not this app's session.
+  assert.ok(setup.engine.getState().snapshot)
+  assert.equal(setup.engine.saved(), null)
+  setup.engine.enqueue(track)
+  assert.equal(setup.engine.saved()?.queue.length, 1)
+  setup.engine.dispose()
+})
+
+test('a saved session is picked up on another page from the track the device has reached', async () => {
+  const first = harness(undefined, undefined, { browserId: 'page-one' })
+  await playSource(first, savedFixtureSource(40))
+  first.remote.snapshot = playing(0, 1_000)
+  await advance(700)
+  first.engine.enqueue(track)
+  const saved = transferred(first.engine.saved())
+  assert.equal(saved.current?.uri, sourceTrack(0).uri)
+  assert.equal(saved.session?.sent.length, 31)
+  assert.deepEqual(saved.source?.remaining, [[1, 40]])
+  assert.deepEqual(saved.target, {
+    kind: 'spotify',
+    device: {
+      id: 'speaker',
+      name: 'Fixture speaker',
+      type: 'speaker',
+      volume: 0.4,
+    },
+    browser: null,
+  })
+  first.engine.dispose()
+
+  // The device played on with nothing open and is two tracks further.
+  const second = harness(undefined, undefined, {
+    browserId: 'page-two',
+    restoreSource,
+  })
+  second.remote.device = { ...speaker, active: true }
+  second.remote.snapshot = playing(2, 5_000)
+  await second.engine.restore(saved)
+  await settle()
+  const state = second.engine.getState()
+  assert.equal(state.current?.uri, sourceTrack(2).uri)
+  assert.equal(state.snapshot?.trackUri, sourceTrack(2).uri)
+  assert.equal(state.upcoming[0]?.uri, sourceTrack(3).uri)
+  assert.equal(state.source?.label, 'Tracks')
+  assert.equal(state.target.kind, 'remote')
+  assert.equal(state.starting, false)
+  assert.deepEqual(
+    state.queue.map((entry) => entry.item.uri),
+    [track.uri],
+  )
+  // Nothing was sent to the device: it kept playing what it had.
+  assert.deepEqual(second.sent('play'), [])
+  assert.deepEqual(second.sent('transfer'), [])
+
+  // It is followed from there like a session started on this page.
+  second.remote.snapshot = playing(2, 198_000)
+  await advance(3_000)
+  second.remote.snapshot = playing(3, 500)
+  await advance(3_000)
+  assert.equal(second.engine.getState().current?.uri, track.uri)
+  assert.match(
+    second.sent('play')[0] ?? '',
+    /^play speaker \{"uris":\["spotify:track:single","spotify:track:source-3"/,
+  )
+  second.engine.dispose()
+})
+
+test('a restored queue and source are kept when other playback has taken the device', async () => {
+  const first = harness()
+  await playSource(first, savedFixtureSource(10))
+  first.remote.snapshot = playing(0, 1_000)
+  await advance(700)
+  first.engine.enqueue(track)
+  const saved = transferred(first.engine.saved())
+  first.engine.dispose()
+
+  const second = harness(undefined, undefined, { restoreSource })
+  second.remote.device = { ...speaker, active: true }
+  second.remote.snapshot = remoteSnapshot({
+    trackUri: 'spotify:track:something-else',
+    contextUri: 'spotify:playlist:other',
+  })
+  await second.engine.restore(saved)
+  await settle()
+  const state = second.engine.getState()
+  assert.equal(state.current, null)
+  assert.equal(state.snapshot?.trackUri, 'spotify:track:something-else')
+  assert.equal(state.queue.length, 1)
+  assert.equal(state.source?.label, 'Tracks')
+  assert.deepEqual(second.sent('play'), [])
+  // The queue is still there to carry on with.
+  second.engine.next()
+  await settle()
+  assert.equal(second.engine.getState().current?.uri, track.uri)
+  second.engine.dispose()
+})
+
+test('a page reloaded while it was playing starts again where it stopped', async () => {
+  const first = harness(undefined, undefined, { browserId: 'the-tab' })
+  await playLocally(first, track, {
+    context: '',
+    track: track.uri,
+    position: 30_000,
+  })
+  first.engine.enqueue(album)
+  const saved = transferred(first.engine.saved())
+  assert.deepEqual(saved.target, {
+    kind: 'spotify',
+    device: {
+      id: 'browser',
+      name: 'Fixture player',
+      type: 'computer',
+      volume: 0.8,
+    },
+    browser: 'the-tab',
+  })
+  const position = saved.snapshot?.positionMs ?? 0
+  assert.ok(position >= 30_000)
+  first.engine.dispose()
+
+  // The reloaded page is the same client with a new browser player.
+  const second = harness(undefined, undefined, { browserId: 'the-tab' })
+  second.engine.prepare()
+  await settle()
+  await advance(2_000)
+  await second.engine.restore(saved)
+  await settle()
+  second.emit('ready', { device_id: 'browser-reloaded' })
+  await settle()
+  assert.deepEqual(second.sent('play'), [
+    `play browser-reloaded {"uris":["spotify:track:single"],"position_ms":${Math.round(position)}}`,
+  ])
+  assert.equal(second.engine.getState().current?.uri, track.uri)
+  assert.equal(second.engine.getState().queue.length, 1)
+  second.engine.dispose()
+})
+
+test('a session whose browser has gone is shown paused and starts again on Play', async () => {
+  const first = harness(undefined, undefined, { browserId: 'old-tab' })
+  await playLocally(first, track, {
+    context: '',
+    track: track.uri,
+    position: 30_000,
+  })
+  const saved = transferred(first.engine.saved())
+  const position = saved.snapshot?.positionMs ?? 0
+  first.engine.dispose()
+
+  // Another client: the browser that played is gone, so nothing starts by itself.
+  const second = harness(undefined, undefined, { browserId: 'new-tab' })
+  second.engine.prepare()
+  await settle()
+  second.emit('ready', { device_id: 'browser-new' })
+  await second.engine.restore(saved)
+  await settle()
+  let state = second.engine.getState()
+  assert.deepEqual(second.sent('play'), [])
+  assert.equal(state.target.kind, 'local')
+  assert.equal(state.current?.uri, track.uri)
+  assert.equal(state.snapshot?.paused, true)
+  assert.equal(state.snapshot?.positionMs, position)
+  assert.equal(state.starting, false)
+  // The paused item is still the session, so it is saved the same again.
+  assert.equal(second.engine.saved()?.snapshot?.positionMs, position)
+
+  second.engine.seek(60_000)
+  assert.equal(second.engine.getState().snapshot?.positionMs, 60_000)
+  second.engine.toggle()
+  await settle()
+  assert.deepEqual(second.sent('play'), [
+    'play browser-new {"uris":["spotify:track:single"],"position_ms":60000}',
+  ])
+  state = second.engine.getState()
+  assert.equal(state.current?.uri, track.uri)
+  second.engine.dispose()
+})
+
+test('a reload long after the page stopped playing does not start by itself', async () => {
+  const first = harness(undefined, undefined, { browserId: 'the-tab' })
+  await playLocally(first, track, {
+    context: '',
+    track: track.uri,
+    position: 30_000,
+  })
+  const saved = transferred(first.engine.saved())
+  first.engine.dispose()
+  const second = harness(undefined, undefined, { browserId: 'the-tab' })
+  second.engine.prepare()
+  await settle()
+  second.emit('ready', { device_id: 'browser-reloaded' })
+  await advance(61_000)
+  await second.engine.restore(saved)
+  await settle()
+  assert.deepEqual(second.sent('play'), [])
+  assert.equal(second.engine.getState().snapshot?.paused, true)
+  second.engine.dispose()
+})
+
+test('a device that has gone leaves the restored session to start in this browser', async () => {
+  const first = harness()
+  await playSource(first, savedFixtureSource(10))
+  first.remote.snapshot = playing(0, 40_000)
+  await advance(700)
+  const saved = transferred(first.engine.saved())
+  first.engine.dispose()
+
+  const second = harness(undefined, undefined, { restoreSource })
+  second.remote.devices = []
+  await second.engine.restore(saved)
+  await settle()
+  const state = second.engine.getState()
+  assert.equal(state.target.kind, 'local')
+  assert.equal(state.current?.uri, sourceTrack(0).uri)
+  assert.equal(state.snapshot?.paused, true)
+  assert.deepEqual(second.sent('play'), [])
+  second.engine.dispose()
+})
+
+test("a Sonos room's session is carried on by another page without restarting the room", async () => {
+  const sonos = fakeSonos()
+  const first = await sourceOnRoom(sonos)
+  const saved = transferred(first.engine.saved())
+  assert.deepEqual(saved.target, { kind: 'room', room: kitchen })
+  assert.equal(saved.source, null)
+  first.engine.dispose()
+  const loaded = sonos.loads.length
+
+  // The room moved on to the third track while no page was open.
+  sonos.room.state = roomState(sourceTrack(2).uri, {
+    positionMs: 9_000,
+    hasNext: true,
+  })
+  const second = harness(undefined, sonos.api, { browserId: 'page-two' })
+  await second.engine.restore(saved)
+  await settle()
+  const state = second.engine.getState()
+  assert.deepEqual(state.target, { kind: 'room', room: kitchen })
+  assert.equal(state.current?.uri, sourceTrack(2).uri)
+  assert.equal(state.snapshot?.trackUri, sourceTrack(2).uri)
+  assert.equal(state.volume, 0.2)
+  await advance(3_000)
+  assert.equal(
+    sonos.loads.slice(loaded).filter((load) => load.includes(' replace '))
+      .length,
+    0,
+  )
+  assert.deepEqual(sonos.commands, [])
+  second.engine.dispose()
+})
+
+test('a released session leaves the device playing and drops the queue here', async () => {
+  const setup = harness()
+  await playSource(setup, savedFixtureSource(10))
+  setup.remote.snapshot = playing(0, 1_000)
+  await advance(700)
+  setup.engine.enqueue(track)
+  const calls = setup.calls.filter((call) => call !== 'state').length
+  setup.engine.release()
+  const state = setup.engine.getState()
+  assert.equal(state.current, null)
+  assert.deepEqual(state.queue, [])
+  assert.equal(state.source, null)
+  assert.deepEqual(state.upcoming, [])
+  assert.equal(state.snapshot?.trackUri, sourceTrack(0).uri)
+  assert.equal(setup.engine.saved(), null)
+  // The device is still followed, as playback another client runs.
+  setup.remote.snapshot = playing(1, 500)
+  await advance(3_000)
+  assert.equal(setup.engine.getState().snapshot?.trackUri, sourceTrack(1).uri)
+  assert.equal(setup.engine.getState().current, null)
+  assert.equal(setup.calls.filter((call) => call !== 'state').length, calls)
+  setup.engine.dispose()
+})
+
+/** The server's session record, with the lease rules of the real one. */
+function fakeSessions() {
+  const record: {
+    revision: number
+    state: SavedPlayback | null
+    driver: { clientId: string; name: string; expiresAt: number } | null
+  } = { revision: 0, state: null, driver: null }
+  const down = { is: false }
+  const api: SessionApi = {
+    async sync(input) {
+      if (down.is) throw new Error('unreachable')
+      const live =
+        record.driver && record.driver.expiresAt > clock ? record.driver : null
+      const holds = input.claim || !live || live.clientId === input.clientId
+      record.driver = holds
+        ? {
+            clientId: input.clientId,
+            name: input.clientName,
+            expiresAt: clock + PLAYBACK_LEASE_MS,
+          }
+        : live
+      const role: PlaybackSyncResult['role'] = holds ? 'driver' : 'follower'
+      const base = {
+        role,
+        driver: record.driver && {
+          clientId: record.driver.clientId,
+          name: record.driver.name,
+        },
+      }
+      if (
+        holds &&
+        input.state !== undefined &&
+        input.revision === record.revision
+      ) {
+        record.state = transferredOrNull(input.state)
+        record.revision += 1
+        const saved: PlaybackSyncResult = {
+          ...base,
+          revision: record.revision,
+          changed: false,
+          state: null,
+        }
+        return saved
+      }
+      const changed = input.revision !== record.revision
+      return {
+        ...base,
+        revision: record.revision,
+        changed,
+        state: changed ? record.state : null,
+      }
+    },
+    release(input) {
+      if (record.driver?.clientId !== input.clientId) return
+      if (input.state !== undefined && input.revision === record.revision) {
+        record.state = transferredOrNull(input.state)
+        record.revision += 1
+      }
+      record.driver = null
+    },
+  }
+  return { api, record, down }
+}
+
+function transferredOrNull(saved: SavedPlayback | null) {
+  return saved ? transferred(saved) : null
+}
+
+/** One open page of the account: its engine with the shared session around it. */
+function page(
+  name: string,
+  sessions: ReturnType<typeof fakeSessions>,
+  world?: SpotifyWorld,
+  sonos?: SonosControlApi,
+) {
+  const setup = harness(
+    undefined,
+    sonos,
+    { browserId: `client-${name}`, restoreSource },
+    world,
+  )
+  const sync = createPlaybackSync({
+    engine: setup.engine,
+    api: sessions.api,
+    clientId: `client-${name}`,
+    clientName: name,
+    now: () => clock,
+    visible: () => setup.page.visible,
+  })
+  return {
+    ...setup,
+    sync,
+    close() {
+      sync.dispose()
+      setup.engine.dispose()
+    },
+  }
+}
+
+/** Plays a saved source on the speaker from a page and lets it save. */
+async function driveSource(one: ReturnType<typeof page>, length = 40) {
+  one.sync.start()
+  await settle()
+  await one.engine.selectDevice({ kind: 'remote', device: speaker })
+  one.sync.play(sourceTrack(0), savedFixtureSource(length))
+  await settle()
+  one.remote.device = { ...speaker, active: true }
+  one.remote.snapshot = playing(0, 1_000)
+  await advance(1_000)
+}
+
+test('the first page drives the session and a second page shows its queue', async () => {
+  const sessions = fakeSessions()
+  const one = page('Chrome on Mac', sessions)
+  await driveSource(one)
+  one.sync.enqueue(track)
+  await advance(1_000)
+  assert.equal(one.sync.getState().sharing.role, 'driver')
+  assert.equal(sessions.record.driver?.name, 'Chrome on Mac')
+  assert.equal(sessions.record.state?.current?.uri, sourceTrack(0).uri)
+
+  const two = page('Safari on iPhone', sessions, one.remote)
+  two.engine.watch()
+  two.sync.start()
+  await advance(500)
+  const shown = two.sync.getState()
+  assert.deepEqual(shown.sharing, {
+    role: 'follower',
+    driverName: 'Chrome on Mac',
+  })
+  assert.equal(shown.current?.uri, sourceTrack(0).uri)
+  assert.deepEqual(
+    shown.queue.map((entry) => entry.item.uri),
+    [track.uri],
+  )
+  assert.equal(shown.upcoming[0]?.uri, sourceTrack(1).uri)
+  assert.equal(shown.source?.label, 'Tracks')
+  assert.equal(shown.snapshot?.trackUri, sourceTrack(0).uri)
+  // The follower has no queue of its own and has sent the device nothing.
+  assert.deepEqual(two.engine.getState().queue, [])
+  assert.deepEqual(two.sent('play'), [])
+
+  // A change on the driver reaches the follower with its next exchange.
+  one.sync.enqueue(album)
+  await advance(4_000)
+  assert.equal(two.sync.getState().queue.length, 2)
+
+  // Pause goes straight to the device and does not take the session over.
+  two.sync.toggle()
+  await settle()
+  assert.deepEqual(two.sent('pause'), ['pause speaker'])
+  assert.equal(two.sync.getState().sharing.role, 'follower')
+  one.close()
+  two.close()
+})
+
+test('a queue change on a follower moves the session to that page', async () => {
+  const sessions = fakeSessions()
+  const one = page('Chrome on Mac', sessions)
+  await driveSource(one)
+  const two = page('Safari on iPhone', sessions, one.remote)
+  two.engine.watch()
+  two.sync.start()
+  await advance(500)
+  assert.equal(two.sync.getState().sharing.role, 'follower')
+  const played = one.sent('play').length
+
+  two.sync.enqueue(track)
+  await advance(500)
+  const taken = two.sync.getState()
+  assert.equal(taken.sharing.role, 'driver')
+  assert.equal(taken.current?.uri, sourceTrack(0).uri)
+  assert.deepEqual(
+    taken.queue.map((entry) => entry.item.uri),
+    [track.uri],
+  )
+  assert.equal(taken.upcoming[0]?.uri, sourceTrack(1).uri)
+  // Taking over restarted nothing on the device.
+  assert.deepEqual(two.sent('play'), [])
+
+  // The first page finds out with its next exchange and shows the same queue.
+  await advance(4_000)
+  const left = one.sync.getState()
+  assert.deepEqual(left.sharing, {
+    role: 'follower',
+    driverName: 'Safari on iPhone',
+  })
+  assert.deepEqual(
+    left.queue.map((entry) => entry.item.uri),
+    [track.uri],
+  )
+  assert.deepEqual(one.engine.getState().queue, [])
+  assert.equal(one.sent('play').length, played)
+
+  // The new driver runs the queue: the queued track is due after this one.
+  two.remote.snapshot = playing(0, 198_000)
+  await advance(3_000)
+  two.remote.snapshot = playing(1, 500)
+  await advance(3_000)
+  assert.equal(two.sync.getState().current?.uri, track.uri)
+  assert.equal(one.sent('play').length, played)
+  assert.equal(two.sent('play').length, 1)
+  one.close()
+  two.close()
+})
+
+test('a follower takes the session over when the driver goes away', async () => {
+  const sessions = fakeSessions()
+  const one = page('Chrome on Mac', sessions)
+  await driveSource(one)
+  const two = page('Safari on iPhone', sessions, one.remote)
+  two.engine.watch()
+  two.sync.start()
+  await advance(500)
+  assert.equal(two.sync.getState().sharing.role, 'follower')
+
+  // The driver's computer sleeps: it stops renewing its lease without a word.
+  one.close()
+  two.remote.snapshot = playing(1, 2_000)
+  await advance(PLAYBACK_LEASE_MS + 4_000)
+  const state = two.sync.getState()
+  assert.equal(state.sharing.role, 'driver')
+  assert.equal(sessions.record.driver?.name, 'Safari on iPhone')
+  assert.equal(state.current?.uri, sourceTrack(1).uri)
+  assert.equal(state.upcoming[0]?.uri, sourceTrack(2).uri)
+  assert.deepEqual(two.sent('play'), [])
+  // What it took over is saved under its own name.
+  await advance(1_000)
+  assert.equal(sessions.record.state?.current?.uri, sourceTrack(1).uri)
+  two.close()
+})
+
+test('a hidden follower does not take over or keep asking', async () => {
+  const sessions = fakeSessions()
+  const one = page('Chrome on Mac', sessions)
+  await driveSource(one)
+  const two = page('Safari on iPhone', sessions, one.remote)
+  two.sync.start()
+  await advance(500)
+  two.page.visible = false
+  one.close()
+  await advance(PLAYBACK_LEASE_MS + 10_000)
+  assert.equal(two.sync.getState().sharing.role, 'follower')
+  // Shown again, it asks at once and carries the session on.
+  two.page.visible = true
+  two.sync.refresh()
+  await advance(500)
+  assert.equal(two.sync.getState().sharing.role, 'driver')
+  two.close()
+})
+
+test('a closed page gives the session up and its reload carries it on', async () => {
+  const sessions = fakeSessions()
+  const one = page('Chrome on Mac', sessions)
+  await driveSource(one)
+  one.sync.enqueue(track)
+  one.sync.close()
+  one.close()
+  assert.equal(sessions.record.driver, null)
+  assert.equal(sessions.record.state?.queue.length, 1)
+
+  const again = page('Chrome on Mac', sessions, one.remote)
+  again.remote.snapshot = playing(0, 20_000)
+  again.sync.start()
+  await advance(500)
+  const state = again.sync.getState()
+  assert.equal(state.sharing.role, 'driver')
+  assert.equal(state.current?.uri, sourceTrack(0).uri)
+  assert.equal(state.queue.length, 1)
+  assert.equal(state.upcoming[0]?.uri, sourceTrack(1).uri)
+  assert.deepEqual(again.sent('play'), [])
+  again.close()
+})
+
+test('playback works alone while the session cannot be reached', async () => {
+  const sessions = fakeSessions()
+  sessions.down.is = true
+  const one = page('Chrome on Mac', sessions)
+  one.sync.start()
+  await settle()
+  await one.engine.selectDevice({ kind: 'remote', device: speaker })
+  one.sync.play(track)
+  await settle()
+  assert.deepEqual(one.sent('play'), [
+    'play speaker {"uris":["spotify:track:single"]}',
+  ])
+  assert.equal(one.sync.getState().sharing.role, 'driver')
+  // Once it answers again, the session is saved.
+  sessions.down.is = false
+  await advance(4_000)
+  assert.equal(sessions.record.state?.current?.uri, track.uri)
+  one.close()
+})
+
+test('what was started while the session could not be reached replaces the older session', async () => {
+  const sessions = fakeSessions()
+  const one = page('Chrome on Mac', sessions)
+  await driveSource(one)
+  one.sync.close()
+  one.close()
+  assert.equal(sessions.record.state?.current?.uri, sourceTrack(0).uri)
+
+  sessions.down.is = true
+  const two = page('Safari on iPhone', sessions)
+  two.sync.start()
+  await settle()
+  await two.engine.selectDevice({ kind: 'remote', device: speaker })
+  two.sync.play(track)
+  two.sync.enqueue(sourceTrack(5))
+  await settle()
+  two.remote.device = { ...speaker, active: true }
+  two.remote.snapshot = remoteSnapshot({
+    trackUri: track.uri,
+    contextUri: null,
+    positionMs: 1_000,
+  })
+  await advance(1_000)
+
+  sessions.down.is = false
+  await advance(8_000)
+  const shown = two.sync.getState()
+  assert.equal(shown.current?.uri, track.uri)
+  assert.deepEqual(
+    shown.queue.map((entry) => entry.item.uri),
+    [sourceTrack(5).uri],
+  )
+  assert.equal(shown.source, null)
+  assert.equal(sessions.record.state?.current?.uri, track.uri)
+  assert.deepEqual(
+    sessions.record.state?.queue.map((entry) => entry.item.uri),
+    [sourceTrack(5).uri],
+  )
+  assert.equal(sessions.record.state?.source, null)
+  two.close()
+})
+
+test('a reloaded driver takes the session back from the lease it left behind', async () => {
+  const sessions = fakeSessions()
+  const one = page('Chrome on Mac', sessions)
+  await driveSource(one)
+  // The page goes without giving its lease up, and loads again at once.
+  one.close()
+  const again = harness(
+    undefined,
+    undefined,
+    { browserId: 'client-Chrome on Mac', restoreSource },
+    one.remote,
+  )
+  const sync = createPlaybackSync({
+    engine: again.engine,
+    api: sessions.api,
+    clientId: 'client-reloaded',
+    clientName: 'Chrome on Mac',
+    now: () => clock,
+    resuming: true,
+  })
+  sync.start()
+  await advance(500)
+  assert.equal(sessions.record.driver?.clientId, 'client-reloaded')
+  assert.equal(sync.getState().sharing.role, 'driver')
+  assert.equal(sync.getState().current?.uri, sourceTrack(0).uri)
+  assert.deepEqual(again.sent('play'), [])
+  sync.dispose()
+  again.engine.dispose()
+})
+
+test('a second load of the same tab does not run the queue beside the first', async () => {
+  const sessions = fakeSessions()
+  const one = page('Chrome on Mac', sessions)
+  await driveSource(one)
+  // A duplicated tab has the first tab's storage, so the same browser ID.
+  const copy = harness(
+    undefined,
+    undefined,
+    { browserId: 'client-Chrome on Mac', restoreSource },
+    one.remote,
+  )
+  const sync = createPlaybackSync({
+    engine: copy.engine,
+    api: sessions.api,
+    clientId: 'client-copy',
+    clientName: 'Chrome on Mac',
+    now: () => clock,
+  })
+  copy.engine.watch()
+  sync.start()
+  await advance(4_000)
+  assert.equal(sync.getState().sharing.role, 'follower')
+  assert.equal(one.sync.getState().sharing.role, 'driver')
+  assert.equal(copy.engine.saved(), null)
+  sync.dispose()
+  copy.engine.dispose()
+  one.close()
+})
+
+test('a session on a Sonos room is shown and taken over on another page', async () => {
+  const sessions = fakeSessions()
+  const sonos = fakeSonos()
+  const one = page('Chrome on Mac', sessions, undefined, sonos.api)
+  one.sync.start()
+  await settle()
+  await one.sync.selectDevice({ kind: 'room', room: kitchen })
+  one.sync.play(sourceTrack(0), savedFixtureSource(40))
+  await settle()
+  sonos.room.state = roomState(sourceTrack(0).uri, {
+    positionMs: 2_000,
+    hasNext: true,
+  })
+  await advance(4_000)
+  assert.equal(sessions.record.state?.target.kind, 'room')
+  const loaded = sonos.loads.length
+
+  const two = page('Safari on iPhone', sessions, undefined, sonos.api)
+  two.engine.watch()
+  two.sync.start()
+  await advance(1_000)
+  let shown = two.sync.getState()
+  assert.equal(shown.sharing.role, 'follower')
+  assert.deepEqual(shown.target, { kind: 'room', room: kitchen })
+  assert.equal(shown.snapshot?.trackUri, sourceTrack(0).uri)
+  assert.equal(shown.current?.uri, sourceTrack(0).uri)
+
+  two.sync.next()
+  await advance(1_000)
+  shown = two.sync.getState()
+  assert.equal(shown.sharing.role, 'driver')
+  assert.equal(shown.current?.uri, sourceTrack(1).uri)
+  // The room skipped in its own queue; nothing was started again.
+  assert.deepEqual(sonos.commands, ['RINCON_FIXTURE:1 next'])
+  assert.equal(
+    sonos.loads.slice(loaded).filter((load) => load.includes(' replace '))
+      .length,
+    0,
+  )
+  one.close()
+  two.close()
 })

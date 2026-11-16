@@ -1,0 +1,231 @@
+import { z } from 'zod'
+
+/**
+ * The player's shared session: what one signed-in account is playing and has
+ * queued, saved so a reload or another device can carry on with it.
+ */
+
+const UriSchema = z.string().min(1).max(200)
+const TextSchema = z.string().max(2000)
+const LinkSchema = z.string().max(8000)
+
+export const PlayableItemSchema = z.object({
+  kind: z.enum(['album', 'track']),
+  /** `spotify:album:…` for an album, `spotify:track:…` for a single track. */
+  uri: UriSchema,
+  /** An album played from a chosen track starts at this track URI. */
+  startUri: UriSchema.optional(),
+  title: TextSchema,
+  artist: TextSchema,
+  /** The library album; null for a library track not linked to one. */
+  albumId: z.string().max(200).nullable(),
+  albumTitle: TextSchema,
+  artworkUrl: LinkSchema.nullable(),
+  trackCount: z.number().int().nonnegative().nullable(),
+  /** The library track, when the item is one. */
+  trackId: z.string().max(200).optional(),
+  /** The credited artists with their library IDs, for links. */
+  credits: z
+    .array(z.object({ id: z.string().max(200).nullable(), name: TextSchema }))
+    .max(200)
+    .optional(),
+})
+export type PlayableItem = z.infer<typeof PlayableItemSchema>
+
+export const QueueEntrySchema = z.object({
+  key: z.string().min(1).max(100),
+  item: PlayableItemSchema,
+})
+export type QueueEntry = z.infer<typeof QueueEntrySchema>
+
+/** One observation of what a device is playing. */
+export const PlaybackSnapshotSchema = z.object({
+  trackUri: UriSchema.nullable(),
+  /** The requested track when Spotify substituted another recording for it. */
+  linkedFromUri: UriSchema.nullable(),
+  trackName: TextSchema,
+  artists: TextSchema,
+  albumName: TextSchema,
+  albumUri: UriSchema.nullable(),
+  artistLinks: z
+    .array(z.object({ name: TextSchema, uri: UriSchema.nullable() }))
+    .max(200),
+  artworkUrl: LinkSchema.nullable(),
+  durationMs: z.number().nonnegative(),
+  positionMs: z.number().nonnegative(),
+  paused: z.boolean(),
+  contextUri: UriSchema.nullable(),
+  /** Whether more tracks follow in the context; null when the source cannot say. */
+  hasNext: z.boolean().nullable(),
+  trackNumber: z.number().int().nullable(),
+  discNumber: z.number().int().nullable(),
+  /** Clock time of the observation, in milliseconds. */
+  at: z.number().nonnegative(),
+})
+export type PlaybackSnapshot = z.infer<typeof PlaybackSnapshotSchema>
+
+/** One track of a source entry: the entry's index and the track's place in it. */
+export const SourceTrackSchema = z.object({
+  index: z.number().int().nonnegative(),
+  position: z.number().int().nonnegative(),
+  item: PlayableItemSchema,
+})
+export type SourceTrack = z.infer<typeof SourceTrackSchema>
+
+/** Enough to read a playback source's entries again from the library. */
+export const SourceDescriptorSchema = z.discriminatedUnion('type', [
+  z.object({
+    type: z.literal('browse'),
+    collection: z.enum(['albums', 'tracks']),
+    /** The captured browse query string. */
+    params: LinkSchema,
+  }),
+  z.object({
+    type: z.literal('playlist'),
+    id: z.string().min(1).max(200),
+    params: LinkSchema,
+  }),
+  /** An opened album, or the chosen rows of its track table. */
+  z.object({
+    type: z.literal('album'),
+    tracks: z.array(PlayableItemSchema).max(2000),
+  }),
+])
+export type SourceDescriptor = z.infer<typeof SourceDescriptorSchema>
+
+const SOURCE_PROGRESS_MAX = 50_000
+
+export const SavedSourceSchema = z.object({
+  descriptor: SourceDescriptorSchema,
+  label: TextSchema,
+  href: LinkSchema,
+  length: z.number().int().nonnegative(),
+  startIndex: z.number().int().nonnegative(),
+  kind: z.enum(['album', 'list']),
+  /** Entries not yet used up, as ascending `[from, to)` index ranges. */
+  remaining: z
+    .array(
+      z.tuple([z.number().int().nonnegative(), z.number().int().nonnegative()]),
+    )
+    .max(SOURCE_PROGRESS_MAX),
+  /** `index:position` of the tracks played, and of those passed over. */
+  played: z.array(z.string().max(40)).max(SOURCE_PROGRESS_MAX),
+  skipped: z.array(z.string().max(40)).max(SOURCE_PROGRESS_MAX),
+  exhausted: z.array(z.number().int().nonnegative()).max(SOURCE_PROGRESS_MAX),
+  upcoming: z.array(SourceTrackSchema).max(100),
+  history: z.array(SourceTrackSchema).max(100),
+})
+export type SavedSource = z.infer<typeof SavedSourceSchema>
+
+/** Where the playback is, in terms any signed-in browser can resolve. */
+export const SavedTargetSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('room'),
+    room: z.object({
+      id: z.string().min(1).max(200),
+      name: TextSchema,
+      household: z.string().min(1).max(200),
+    }),
+  }),
+  z.object({
+    kind: z.literal('spotify'),
+    /** The Spotify device; null for one Spotify gives no usable ID for. */
+    device: z
+      .object({
+        id: z.string().min(1).max(200),
+        name: TextSchema,
+        type: z.string().max(100),
+        volume: z.number().min(0).max(1).nullable(),
+      })
+      .nullable(),
+    /** The client whose own browser player is that device, if it is one. */
+    browser: z.string().max(100).nullable(),
+  }),
+])
+export type SavedTarget = z.infer<typeof SavedTargetSchema>
+
+export const SavedPlaybackSchema = z.object({
+  version: z.literal(1),
+  /** Clock time of the save, in milliseconds. */
+  savedAt: z.number().nonnegative(),
+  queue: z.array(QueueEntrySchema).max(2000),
+  /** The number the next queue entry's key is made from. */
+  sequence: z.number().int().nonnegative(),
+  current: PlayableItemSchema.nullable(),
+  currentFromSource: z.boolean(),
+  /** The item being followed and the tracks the device was given with it. */
+  session: z
+    .object({
+      item: PlayableItemSchema,
+      sent: z.array(PlayableItemSchema).max(200),
+      index: z.number().int().nonnegative(),
+      anchorUri: UriSchema.nullable(),
+    })
+    .nullable(),
+  /** What the device was playing at the save, with its position then. */
+  snapshot: PlaybackSnapshotSchema.nullable(),
+  shuffle: z.boolean(),
+  target: SavedTargetSchema,
+  source: SavedSourceSchema.nullable(),
+})
+export type SavedPlayback = z.infer<typeof SavedPlaybackSchema>
+
+const ClientIdSchema = z.string().regex(/^[A-Za-z0-9_-]{8,64}$/)
+
+export const PlaybackClientSchema = z.object({
+  clientId: ClientIdSchema,
+  /** How the client is named to the account's other clients. */
+  name: z.string().max(80),
+})
+export type PlaybackClient = z.infer<typeof PlaybackClientSchema>
+
+/**
+ * One exchange with the shared session. Exactly one client at a time runs the
+ * queue (the driver); it holds a short lease that each exchange renews.
+ */
+export const PlaybackSyncInputSchema = z
+  .object({
+    clientId: ClientIdSchema,
+    clientName: z.string().max(80),
+    /** The session revision the client has; 0 when it has none. */
+    revision: z.number().int().nonnegative(),
+    /** Take the lease from the client holding it. Otherwise it is taken only when free. */
+    claim: z.boolean(),
+    /**
+     * The state to save. It is stored only when the client holds the lease
+     * and `revision` is the stored one. Null clears the session.
+     */
+    state: SavedPlaybackSchema.nullable().optional(),
+  })
+  .strict()
+export type PlaybackSyncInput = z.infer<typeof PlaybackSyncInputSchema>
+
+export const PlaybackSyncResultSchema = z.object({
+  revision: z.number().int().nonnegative(),
+  /** Whether the client holds the lease after this exchange. */
+  role: z.enum(['driver', 'follower']),
+  driver: PlaybackClientSchema.nullable(),
+  /** The stored state differs from the revision the client sent. */
+  changed: z.boolean(),
+  /** The stored state when `changed`; otherwise null. */
+  state: SavedPlaybackSchema.nullable(),
+})
+export type PlaybackSyncResult = z.infer<typeof PlaybackSyncResultSchema>
+
+/** Gives the lease up when a client closes, with its last state. */
+export const PlaybackReleaseInputSchema = z
+  .object({
+    clientId: ClientIdSchema,
+    revision: z.number().int().nonnegative(),
+    state: SavedPlaybackSchema.nullable().optional(),
+  })
+  .strict()
+export type PlaybackReleaseInput = z.infer<typeof PlaybackReleaseInputSchema>
+
+export const PlaybackReleaseResultSchema = z.object({
+  released: z.boolean(),
+  revision: z.number().int().nonnegative(),
+})
+
+/** How long a lease lasts without being renewed. */
+export const PLAYBACK_LEASE_MS = 12_000

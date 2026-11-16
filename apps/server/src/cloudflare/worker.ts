@@ -7,6 +7,10 @@ import {
   CloudDispatchStatusSchema,
 } from '@repo/schemas/job'
 import {
+  PlaybackReleaseResultSchema,
+  PlaybackSyncResultSchema,
+} from '@repo/schemas/playback'
+import {
   ProviderLocalWorkerControlResultSchema,
   ProviderLocalWorkerControlSchema,
 } from '@repo/schemas/provider'
@@ -30,6 +34,7 @@ import {
 } from '@/lib/workers-ai'
 import { withCloudDatabase } from './db'
 import { withProviderTransport } from '@/services/provider-transport'
+import { withPlaybackSessions } from '@/services/playback-session-store'
 import {
   configureLocalWorker,
   getLocalWorkerStatus,
@@ -38,6 +43,7 @@ import {
 } from './local-worker'
 export { ProviderCoordinator } from './provider-coordinator'
 export { LocalRequestWorker } from './local-worker-coordinator'
+export { PlaybackSessionStore } from './playback-session-store'
 
 const ImportMessageSchema = z
   .object({ type: z.literal('import'), importId: z.string().min(1) })
@@ -220,7 +226,24 @@ export default {
             transcribe: (input, signal) =>
               bindings.AI.run(AI_TRANSCRIPTION_MODEL, input, { signal }),
           },
-          () => run(bindings, async () => app.fetch(request)),
+          () =>
+            withPlaybackSessions(
+              {
+                sync: async (userId, input) =>
+                  PlaybackSyncResultSchema.parse(
+                    await bindings.PLAYBACK_SESSIONS.getByName(userId).sync(
+                      input,
+                    ),
+                  ),
+                release: async (userId, input) =>
+                  PlaybackReleaseResultSchema.parse(
+                    await bindings.PLAYBACK_SESSIONS.getByName(userId).release(
+                      input,
+                    ),
+                  ),
+              },
+              () => run(bindings, async () => app.fetch(request)),
+            ),
         ),
       )
     } catch {
