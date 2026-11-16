@@ -1,16 +1,36 @@
 'use client'
 
-import { useDeferredValue, useEffect, useId, useRef, useState } from 'react'
+import { useDeferredValue, useEffect, useState } from 'react'
 import Link from 'next/link'
-import { useVirtualTable } from '@/hooks/useVirtualTable'
 import { X } from 'lucide-react'
+import { useVirtualTable } from '@/hooks/useVirtualTable'
 import { TagDetailSchema, TagPageSchema, type Tag } from '@repo/schemas/tags'
+import {
+  DetailActionsSpacer,
+  DetailHeader,
+} from '@repo/ui/components/ds/detail-header'
+import { Section } from '@repo/ui/components/ds/facts'
+import { Notice } from '@repo/ui/components/ds/feedback'
+import { Pill, Pills } from '@repo/ui/components/ds/pill'
+import { Status } from '@repo/ui/components/ds/status'
+import { Button } from '@repo/ui/components/ui/button'
 import { Input } from '@repo/ui/components/ui/input'
+import { TableBody, TableCell, TableRow } from '@repo/ui/components/ui/table'
+import { TabsContent } from '@repo/ui/components/ui/tabs'
+import { formatCount } from '@repo/ui/lib/format'
 import { useConfig } from './providers'
 import { fetchApiData } from '@/utils/api'
+import { tagDetailId } from '@/utils/detail-inspector'
+import { CreatorDetailState } from './creator-detail-state'
+import { useDetailInspector } from './detail-inspector-context'
+import { DetailTabs, useDetailTab } from './detail-frame'
+import { MediaInspector } from './media-inspector'
 import { VirtualTagSources } from './metadata-source-list'
 import { SecondaryTableScroll, SecondaryVirtualRows } from './secondary-table'
 import TagActions from './tag-actions'
+
+type TagTab = 'overview' | 'sources'
+const tagTabs: readonly [TagTab, ...TagTab[]] = ['overview', 'sources']
 
 function TagManagement({ tag }: { tag: Tag }) {
   const { apiBaseUrl } = useConfig()
@@ -36,15 +56,14 @@ function TagManagement({ tag }: { tag: Tag }) {
       ),
   })
   return (
-    <section className="space-y-3" aria-label="Manage tag">
-      <h2 className="font-semibold">Manage tag</h2>
-      <p className="quiet text-sm">
+    <Section title="Manage tag">
+      <p className="ds-help">
         {tag.hidden
           ? 'Hidden from normal browsing. Unhide to restore it.'
           : 'Hiding removes this tag from normal browsing, not its source data.'}
       </p>
-      <label className="block text-sm">
-        Find another tag to merge
+      <label className="ds-field">
+        <span className="ds-label">Find another tag to merge</span>
         <Input
           aria-label="Find tag to merge"
           placeholder="Search tags..."
@@ -58,23 +77,23 @@ function TagManagement({ tag }: { tag: Tag }) {
         />
       </label>
       {query && !candidate && !pending && (
-        <div>
+        <>
           {matches.isError && (
-            <p className="p-2" role="alert">
-              Could not find tags.{' '}
-              <button
-                type="button"
-                className="underline"
-                onClick={matches.retry}
-              >
-                Retry
-              </button>
-            </p>
+            <Notice
+              tone="danger"
+              action={
+                <Button size="xs" onClick={matches.retry}>
+                  Retry
+                </Button>
+              }
+            >
+              Could not find tags.
+            </Notice>
           )}
           <SecondaryTableScroll
             ref={matches.scroller}
             onScroll={matches.onScroll}
-            className="max-h-40"
+            className="dtl-matches"
             role="region"
             aria-label="Tags to merge"
             aria-busy={matches.isFetching}
@@ -84,46 +103,52 @@ function TagManagement({ tag }: { tag: Tag }) {
               aria-label="Tags to merge"
               aria-rowcount={matches.hasTotal ? matches.total : undefined}
             >
-              <tbody>
+              <TableBody>
+                {matches.hasTotal && !matches.total && (
+                  <TableRow>
+                    <TableCell className="ds-muted">
+                      No matching tags.
+                    </TableCell>
+                  </TableRow>
+                )}
                 <SecondaryVirtualRows
                   window={matches}
                   colSpan={1}
                   renderRow={(item, index) => (
-                    <tr key={item.id} aria-rowindex={index + 1}>
-                      <td>
-                        <button
-                          type="button"
-                          className="block w-full truncate text-left hover:underline"
+                    <TableRow key={item.id} aria-rowindex={index + 1}>
+                      <TableCell>
+                        <Button
+                          variant="link"
+                          size="xs"
                           disabled={pending || item.id === tag.id}
                           onClick={() => setCandidate(item)}
                         >
                           {item.name}
                           {item.hidden ? ' (hidden)' : ''}
                           {item.id === tag.id ? ' (current tag)' : ''}
-                        </button>
-                      </td>
-                    </tr>
+                        </Button>
+                      </TableCell>
+                    </TableRow>
                   )}
                 />
-              </tbody>
+              </TableBody>
             </table>
-            {matches.hasTotal && !matches.total && (
-              <p className="p-2">No matching tags.</p>
-            )}
           </SecondaryTableScroll>
-        </div>
+        </>
       )}
       {candidate && (
-        <p className="text-sm">
-          Merge with: <strong>{candidate.name}</strong>{' '}
-          <button
-            type="button"
-            className="underline"
+        <p className="ds-actions">
+          <span>
+            Merge with: <strong>{candidate.name}</strong>
+          </span>
+          <Button
+            variant="link"
+            size="xs"
             disabled={pending}
             onClick={() => setCandidate(null)}
           >
             Remove
-          </button>
+          </Button>
         </p>
       )}
       <TagActions
@@ -136,27 +161,30 @@ function TagManagement({ tag }: { tag: Tag }) {
           setOutcome({ message, interrupted })
         }}
       />
-      {outcome && (
-        <p className="text-xs" role={outcome.interrupted ? 'alert' : 'status'}>
-          {outcome.message}
-        </p>
-      )}
-    </section>
+      {outcome &&
+        (outcome.interrupted ? (
+          <Notice tone="attention">{outcome.message}</Notice>
+        ) : (
+          <p role="status" className="ds-help">
+            {outcome.message}
+          </p>
+        ))}
+    </Section>
   )
 }
 
-export default function TagDetailModal({
+/** A tag in the shared detail drawer: its use, management and sources. */
+export function TagDetail({
   id,
   mediaType,
-  onClose,
 }: {
   id: string
   mediaType: 'album' | 'film'
-  onClose: () => void
 }) {
   const { apiBaseUrl } = useConfig()
-  const dialog = useRef<HTMLDialogElement>(null)
-  const titleId = useId()
+  const { tab, setTab } = useDetailTab(tagTabs, {
+    aliases: { provenance: 'sources' },
+  })
   const detail = useVirtualTable({
     queryKey: ['tag-detail', mediaType, id],
     loadPage: async (page, size, signal) => {
@@ -170,93 +198,136 @@ export default function TagDetailModal({
     },
   })
   const data = detail.firstPage?.summary
-  useEffect(() => {
-    const element = dialog.current
-    const previous = document.activeElement
-    if (!element?.open) element?.showModal()
-    return () => {
-      element?.close()
-      if (previous instanceof HTMLElement && previous.isConnected)
-        previous.focus({ preventScroll: true })
-    }
-  }, [])
+  if (!data)
+    return (
+      <CreatorDetailState
+        pending={!detail.isError}
+        retry={detail.retry}
+        subject="tag"
+      />
+    )
+  const library = data.tag.mediaType === 'album' ? 'albums' : 'films'
   return (
-    <dialog
-      ref={dialog}
-      className="tag-drawer"
-      aria-labelledby={titleId}
-      onCancel={(event) => {
-        event.preventDefault()
-        event.stopPropagation()
-        onClose()
-      }}
-      onClick={(event) => {
-        event.stopPropagation()
-        if (event.target === event.currentTarget) onClose()
-      }}
-      onKeyDown={(event) => event.stopPropagation()}
-    >
-      <div className="tag-drawer-inner">
-        <div className="detail-topbar">
-          <span>Tag details</span>
-          <button
-            type="button"
-            aria-label="Close tag details"
-            onClick={onClose}
-          >
-            <X size={20} />
-          </button>
-        </div>
-        <div className="tag-drawer-body">
-          <h1 id={titleId}>{data?.tag.name ?? 'Tag details'}</h1>
-          {detail.isError && (
-            <p role="alert">
-              Could not load tag details.{' '}
-              <button className="underline" onClick={detail.retry}>
-                Retry
-              </button>
-            </p>
-          )}
-          {data && (
-            <div className="tag-drawer-sections">
-              <p className="quiet text-sm">
-                {data.tag.mediaCount.toLocaleString()} items ·{' '}
-                {data.tag.sourceCount.toLocaleString()} sources
-                {data.tag.hidden ? ' · Hidden' : ''}
-              </p>
-              <div className="flex flex-wrap gap-3 text-sm">
-                <Link
-                  className="underline"
-                  href={`/${data.tag.mediaType === 'album' ? 'albums' : 'films'}?${new URLSearchParams({ filters: JSON.stringify([{ field: 'genre', value: data.tag.name }]) })}`}
-                >
-                  Browse {data.tag.mediaType === 'album' ? 'albums' : 'films'}{' '}
-                  with this tag
-                </Link>
-              </div>
-              <TagManagement key={data.tag.id} tag={data.tag} />
-              <section>
-                <h2 className="mb-2 font-semibold">Merged names</h2>
-                {data.aliases.length ? (
-                  <ul className="flex flex-wrap gap-2">
-                    {data.aliases.map((alias) => (
-                      <li key={alias.id} className="metadata-tag">
-                        {alias.name}{' '}
-                        <span className="quiet text-xs">({alias.kind})</span>
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <p className="quiet text-sm">No merged aliases.</p>
-                )}
-              </section>
-            </div>
-          )}
-          <section>
-            <h2 className="mb-3 font-semibold">Detailed provenance</h2>
+    <article className="dtl-detail">
+      <DetailHeader
+        kind="Tag"
+        title={data.tag.name}
+        by={data.tag.mediaType === 'album' ? 'Album tag' : 'Film tag'}
+        facts={[
+          `${formatCount(data.tag.mediaCount)} items`,
+          `${formatCount(data.tag.sourceCount)} sources`,
+          data.tag.hidden ? <Status state="paused">Hidden</Status> : null,
+        ]}
+        actions={
+          <>
+            <Button asChild size="md">
+              <Link
+                href={`/${library}?${new URLSearchParams({ filters: JSON.stringify([{ field: 'genre', value: data.tag.name }]) })}`}
+              >
+                Browse {library} with this tag
+              </Link>
+            </Button>
+            <DetailActionsSpacer />
+          </>
+        }
+      />
+      <DetailTabs
+        label="Tag details"
+        value={tab}
+        onChange={setTab}
+        tabs={[
+          { value: 'overview', label: 'Overview' },
+          { value: 'sources', label: 'Sources' },
+        ]}
+      >
+        <TabsContent value="overview">
+          <Section title="Merged names" flush>
+            {data.aliases.length ? (
+              <Pills wrap label="Merged names">
+                {data.aliases.map((alias) => (
+                  <Pill key={alias.id} size="md" title={alias.kind}>
+                    {alias.name}
+                  </Pill>
+                ))}
+              </Pills>
+            ) : (
+              <p className="ds-help">No merged aliases.</p>
+            )}
+          </Section>
+          <TagManagement key={data.tag.id} tag={data.tag} />
+        </TabsContent>
+        <TabsContent value="sources">
+          <Section title="Detailed provenance" flush>
             <VirtualTagSources query={detail} label="Detailed provenance" />
-          </section>
+          </Section>
+        </TabsContent>
+      </DetailTabs>
+    </article>
+  )
+}
+
+/**
+ * Opens a tag in the shared detail drawer. Inside the app the tag joins the
+ * drawer's history, so Back returns to the item it was opened from; without
+ * the drawer's navigation it is shown in a drawer of its own.
+ */
+export default function TagDetailModal({
+  id,
+  mediaType,
+  onClose,
+}: {
+  id: string
+  mediaType: 'album' | 'film'
+  onClose: () => void
+}) {
+  const nav = useDetailInspector()
+  useEffect(() => {
+    if (!nav) return
+    nav.open({ kind: 'tag', id: tagDetailId(mediaType, id) })
+    onClose()
+  }, [nav, id, mediaType, onClose])
+  useEffect(() => {
+    if (nav) return
+    function onEscape(event: KeyboardEvent) {
+      if (event.key !== 'Escape' || event.defaultPrevented) return
+      event.preventDefault()
+      onClose()
+    }
+    document.addEventListener('keydown', onEscape)
+    return () => document.removeEventListener('keydown', onEscape)
+  }, [nav, onClose])
+  if (nav) return null
+  return (
+    <>
+      <div className="inspector-backdrop" onClick={onClose} />
+      <MediaInspector
+        aria-label="Tag details"
+        onDismiss={onClose}
+        headerClassName="ds-inspector-bar dtl-bar"
+        header={
+          <>
+            <div className="dtl-bar-start">
+              <div className="ds-crumbs">
+                <b>Tag</b>
+              </div>
+            </div>
+            <span className="dtl-bar-end">
+              <Button
+                variant="ghost"
+                icon
+                aria-label="Close tag details"
+                onClick={onClose}
+              >
+                <X className="ds-i" aria-hidden="true" />
+              </Button>
+            </span>
+          </>
+        }
+      >
+        <div className="inspector-scroll dtl-body">
+          <TagDetail id={id} mediaType={mediaType} />
         </div>
-      </div>
-    </dialog>
+      </MediaInspector>
+    </>
   )
 }

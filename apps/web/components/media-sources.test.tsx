@@ -14,6 +14,9 @@ import {
   ProviderSummarySchema,
   type ProviderLocalWorkerStatus,
 } from '@repo/schemas/provider'
+import { AlbumListeningSchema } from '@repo/schemas/lastfm'
+import { MediaProvenanceSchema } from '@repo/schemas/provenance'
+import { InspectorEntryContext } from './detail-inspector-context'
 import MediaSources from './media-sources'
 import { ConfigContext } from './providers'
 
@@ -78,10 +81,13 @@ function renderSources(
   source = provider,
   worker?: ProviderLocalWorkerStatus,
   media: AlbumDetail | FilmDetail = item,
+  view = '',
+  seed: Array<[unknown[], unknown]> = [],
 ) {
   const client = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
+    defaultOptions: { queries: { retry: false, retryOnMount: false } },
   })
+  for (const [key, value] of seed) client.setQueryData(key, value)
   client.setQueryData(
     ['history', media.id, 'sources'],
     MediaSourcesSchema.parse({
@@ -116,7 +122,14 @@ function renderSources(
             apiBaseUrl: 'https://api.example.test',
           }}
         >
-          <MediaSources item={media} onSaved={async () => {}} />
+          <InspectorEntryContext.Provider
+            value={{
+              active: { kind: media.mediaType, id: media.id, view },
+              replaceView: () => {},
+            }}
+          >
+            <MediaSources item={media} onSaved={async () => {}} />
+          </InspectorEntryContext.Provider>
         </ConfigContext.Provider>
       </QueryClientProvider>,
     )
@@ -129,14 +142,13 @@ function renderSources(
 test('Sources keeps archived snapshots and shared film identifiers accessible with refresh restricted to eligible rows', () => {
   const html = renderSources()
   assert.match(html, /Google Custom Search \(legacy\)/)
-  assert.match(
-    html,
-    /aria-label="Google Custom Search \(legacy\) history" aria-expanded="false"/,
-  )
+  assert.match(html, /title="Google Custom Search \(legacy\)">GC</)
+  assert.doesNotMatch(html, /<details class="ds-source" open/)
   assert.match(html, /tt1234567/)
   assert.match(html, /aria-label="Edit Example provider identifier"/)
-  assert.match(html, /aria-label="Select Example provider"/)
-  assert.match(html, /<button[^>]*>Refresh all eligible<\/button>/)
+  assert.match(html, /aria-label="Refresh Example provider"/)
+  assert.match(html, /href="\/providers\/example"/)
+  assert.match(html, /<button[^>]*>.*Refresh all<\/button>/)
   assert.doesNotMatch(
     html,
     /Stored response|View snapshot|youtube-trailer|Fixture trailer/,
@@ -168,7 +180,7 @@ const workerProvider = ProviderSummarySchema.parse({
   ],
 })
 const selectedProviderDisabled =
-  /aria-label="Select Example provider" disabled=""/
+  /disabled=""[^>]*aria-label="Refresh Example provider"/
 
 test('Sources requires a configured, paired, online and unblocked local worker', () => {
   assert.doesNotMatch(
@@ -245,4 +257,93 @@ test('Sources can refresh an album by a barcode supplied by another provider', (
   )
   assert.doesNotMatch(html, selectedProviderDisabled)
   assert.doesNotMatch(html, /Identifier required/)
+})
+
+test('the Last.fm row of an album holds its scrobble names and each row lists what it supplies', () => {
+  const album = AlbumDetailSchema.parse({
+    ...item,
+    mediaType: 'album',
+    id: 'album-1',
+    dateAdded: null,
+    durationSec: null,
+    spotifyUrl: null,
+    trackCount: 0,
+    tracks: [],
+    providerReferences: [],
+  })
+  const albumProvider = ProviderSummarySchema.parse({
+    ...provider,
+    mediaTypes: ['album'],
+  })
+  const listening = AlbumListeningSchema.parse({
+    total: 4,
+    firstListenedAt: createdAt,
+    lastListenedAt: createdAt,
+    months: [{ month: '2026-01', count: 4 }],
+    tracks: [],
+    sources: [
+      { artistName: 'Artist fixture', albumName: 'Album fixture', count: 4 },
+    ],
+    similarUnlinked: [
+      {
+        artistName: 'Artist fixture',
+        albumName: 'Album fixture (Live)',
+        count: 1,
+      },
+    ],
+  })
+  const provenance = MediaProvenanceSchema.parse({
+    mediaItemId: 'album-1',
+    mediaType: 'album',
+    fields: [
+      {
+        key: 'title',
+        label: 'Title',
+        value: 'Fixture film',
+        override: null,
+        sources: [
+          {
+            provider: 'example',
+            scrapedAt: createdAt,
+            snapshotId: 'snap-1',
+            snapshotSource: 'scrape-job',
+            jobId: 'job-1',
+            value: 'Fixture film',
+            matchesCurrent: true,
+          },
+        ],
+      },
+    ],
+  })
+  const seed: Array<[unknown[], unknown]> = [
+    [['album-listening', 'album-1', ''], listening],
+    [['history', 'album-1', 'provenance'], provenance],
+  ]
+  const closed = renderSources(albumProvider, undefined, album, '', seed)
+  assert.match(closed, /title="Last.fm">LF</)
+  assert.match(closed, /1 name linked · 1 similar name not linked/)
+  assert.match(closed, /data-status="done">Matched by name</)
+  const lastfm = renderSources(
+    albumProvider,
+    undefined,
+    album,
+    'sourceProvider=lastfm',
+    seed,
+  )
+  assert.match(lastfm, /<h4>Scrobble names<\/h4>/)
+  assert.match(lastfm, /aria-label="Unlink Artist fixture — Album fixture"/)
+  assert.match(
+    lastfm,
+    /aria-label="Link Artist fixture — Album fixture \(Live\)"/,
+  )
+  const example = renderSources(
+    albumProvider,
+    undefined,
+    album,
+    'sourceProvider=example',
+    seed,
+  )
+  assert.match(example, /<h4>Provides<\/h4>/)
+  assert.match(example, />Title</)
+  assert.match(example, /<h4>History<\/h4>/)
 })

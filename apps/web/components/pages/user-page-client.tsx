@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { z } from 'zod'
 import {
@@ -11,9 +11,16 @@ import {
 } from '@repo/schemas/api-key'
 import { Button } from '@repo/ui/components/ui/button'
 import { Input } from '@repo/ui/components/ui/input'
+import { Label } from '@repo/ui/components/ui/label'
+import { Section } from '@repo/ui/components/ds/facts'
+import { Notice, Skeleton } from '@repo/ui/components/ds/feedback'
+import { Status } from '@repo/ui/components/ds/status'
+import { PageHead, Select } from '@repo/ui/components/ds/toolbar'
+import { formatDateTime } from '@repo/ui/lib/format'
 import { useConfig } from '../providers'
 import ExternalLink from '../external-link'
 import { SecondaryCell, SecondaryDataTable } from '../secondary-table'
+import { ConfirmAction } from '../confirm-action'
 import { fetchApiData } from '@/utils/api'
 import { apiKeyStatus, createAgentInstructions } from '@/utils/agent-access'
 
@@ -21,8 +28,9 @@ type CreatedKey = z.infer<typeof CreatedApiKeySchema> & {
   instructions: string | null
 }
 
+/** A date and time, or Never for a key without an expiry or use. */
 function dateLabel(value: string | null) {
-  return value ? new Date(value).toLocaleString() : 'Never'
+  return value ? formatDateTime(value) : 'Never'
 }
 
 function CreatedKeyDetails({
@@ -56,12 +64,10 @@ function CreatedKeyDetails({
     }
   }
   return (
-    <section
-      className="grid gap-2 border-y border-slate-200 py-4"
-      aria-label="Created API key"
+    <Section
+      title={created.instructions ? 'Agent instructions' : 'New API key'}
     >
-      <h2>{created.instructions ? 'Agent instructions' : 'New API key'}</h2>
-      <p className="muted">
+      <p className="ds-help">
         Copy this now. The key cannot be shown again after you close it.
       </p>
       <p role="status">
@@ -70,7 +76,7 @@ function CreatedKeyDetails({
           ? ` · ${remaining} minutes remaining`
           : ''}
       </p>
-      <label className="grid gap-1">
+      <label className="ds-field">
         <span className="sr-only">
           {created.instructions ? 'Agent instructions' : 'API key'}
         </span>
@@ -79,12 +85,12 @@ function CreatedKeyDetails({
           readOnly
           spellCheck={false}
           autoComplete="off"
-          className="w-full resize-y rounded-md border border-slate-300 bg-slate-50 p-3 font-mono text-xs leading-relaxed"
+          className="ds-input sec-textarea"
           rows={created.instructions ? 13 : 3}
           value={value}
         />
       </label>
-      <div className="flex flex-wrap items-center gap-2">
+      <span className="sec-line">
         <Button variant="primary" type="button" onClick={() => void copy()}>
           {created.instructions ? 'Copy agent instructions' : 'Copy API key'}
         </Button>
@@ -92,8 +98,8 @@ function CreatedKeyDetails({
           Done
         </Button>
         {copyStatus && <span role="status">{copyStatus}</span>}
-      </div>
-    </section>
+      </span>
+    </Section>
   )
 }
 
@@ -105,6 +111,8 @@ export default function UserPageClient() {
   const [created, setCreated] = useState<CreatedKey | null>(null)
   const [now, setNow] = useState(() => Date.now())
   const [notice, setNotice] = useState('')
+  const nameId = useId()
+  const expiryId = useId()
   const keys = useQuery({
     queryKey: ['user-api-keys'],
     queryFn: ({ signal }) =>
@@ -188,208 +196,232 @@ export default function UserPageClient() {
   })
   const creating = create.isPending || created !== null
   return (
-    <section className="admin-page grid min-w-0 gap-4" aria-label="User">
-      <header className="flex flex-wrap items-center justify-between gap-2">
-        <h1>User</h1>
-        <Button asChild>
-          <ExternalLink href={`${apiBaseUrl}/api/v1/scalar`}>
-            API documentation
-          </ExternalLink>
-        </Button>
-      </header>
-      <div className="grid gap-2">
-        <p className="muted">
-          API keys allow reads and writes as your user. Key management requires
-          browser sign-in.
-        </p>
-        <div className="flex flex-wrap items-center gap-3">
-          <Button
-            variant="primary"
-            type="button"
-            disabled={creating}
-            onClick={() => create.mutate('agent')}
-          >
-            {create.isPending && create.variables === 'agent'
-              ? 'Granting access...'
-              : 'Grant Agent Access'}
+    <section className="sec-user" aria-label="User">
+      <PageHead
+        title="User"
+        actions={
+          <Button asChild>
+            <ExternalLink href={`${apiBaseUrl}/api/v1/scalar`}>
+              API documentation
+            </ExternalLink>
           </Button>
-          <span className="muted">
-            Creates a key that expires in 60 minutes, with instructions to paste
-            into an agent.
-          </span>
-        </div>
-      </div>
-      {created && (
-        <CreatedKeyDetails
-          key={created.apiKey.id}
-          created={created}
-          now={now}
-          onDone={() => setCreated(null)}
-        />
-      )}
-      {notice && <p role="status">{notice}</p>}
-      {(create.isError || revoke.isError) && (
-        <p role="alert">
-          Could not {create.isError ? 'create' : 'revoke'} the key. Try again.
-        </p>
-      )}
-      <form
-        className="grid gap-2 border-t border-slate-200 pt-3"
-        onSubmit={(event) => {
-          event.preventDefault()
-          create.mutate('manual')
-        }}
-      >
-        <h2>Create API key</h2>
-        <div className="flex flex-wrap items-end gap-2">
-          <label className="grid min-w-0 flex-1 gap-1 sm:max-w-xs">
-            <span>Name</span>
-            <Input
-              name="name"
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-              maxLength={100}
-              required
-              autoComplete="off"
-              placeholder="Key name"
-              disabled={creating}
-            />
-          </label>
-          <label className="grid gap-1">
-            <span>Expires in</span>
-            <select
-              className="h-9 rounded-md border border-slate-300 bg-white px-2"
-              value={expiry}
-              onChange={(event) => setExpiry(event.target.value)}
-              disabled={creating}
-            >
-              <option value="3600">60 minutes</option>
-              <option value="86400">1 day</option>
-              <option value="2592000">30 days</option>
-              <option value="7776000">90 days</option>
-              <option value="31536000">1 year</option>
-              <option value="never">Never</option>
-            </select>
-          </label>
-          <Button
-            size="md"
-            variant="primary"
-            type="submit"
-            disabled={creating || !name.trim()}
-          >
-            {create.isPending && create.variables === 'manual'
-              ? 'Creating...'
-              : 'Create key'}
-          </Button>
-        </div>
-      </form>
-      <section className="grid min-w-0 gap-2" aria-label="API keys">
-        <h2>API keys</h2>
-        {keys.isError && keys.data && (
-          <p role="alert">
-            Could not refresh API keys.{' '}
-            <button type="button" onClick={() => void keys.refetch()}>
-              Retry
-            </button>
+        }
+      />
+      <div className="ds-panelpad sec-stack">
+        <Section title="Agent access" flush>
+          <p className="ds-help">
+            API keys allow reads and writes as your user. Key management
+            requires browser sign-in.
           </p>
+          <span className="sec-line">
+            <Button
+              variant={created ? 'default' : 'primary'}
+              type="button"
+              disabled={creating}
+              onClick={() => create.mutate('agent')}
+            >
+              {create.isPending && create.variables === 'agent'
+                ? 'Granting access...'
+                : 'Grant Agent Access'}
+            </Button>
+            <span className="ds-help">
+              Creates a key that expires in 60 minutes, with instructions to
+              paste into an agent.
+            </span>
+          </span>
+        </Section>
+        {created && (
+          <CreatedKeyDetails
+            key={created.apiKey.id}
+            created={created}
+            now={now}
+            onDone={() => setCreated(null)}
+          />
         )}
-        <SecondaryDataTable
-          id="user-api-keys"
-          label="API keys"
-          rows={keys.data ?? []}
-          rowKey={(key) => key.id}
-          defaultSort={{ key: 'createdAt', direction: 'desc' }}
-          search={{
-            label: 'Search API keys',
-            value: (key) => `${key.name} ${key.start}`,
-          }}
-          countLabel="keys"
-          busy={keys.isPending}
-          error={keys.isError}
-          empty={
-            keys.isPending ? (
-              'Loading API keys...'
-            ) : keys.isError ? (
-              <>
-                Could not load API keys.{' '}
-                <button type="button" onClick={() => void keys.refetch()}>
-                  Retry
-                </button>
-              </>
-            ) : (
-              'No API keys.'
-            )
-          }
-          columns={[
-            {
-              key: 'name',
-              label: 'Name',
-              required: true,
-              value: (key) => key.name,
-            },
-            {
-              key: 'start',
-              label: 'Prefix',
-              value: (key) => key.start,
-              render: (key) => (
-                <SecondaryCell>
-                  <code>{key.start}…</code>
-                </SecondaryCell>
-              ),
-            },
-            {
-              key: 'status',
-              label: 'Status',
-              value: (key) => apiKeyStatus(key, now),
-            },
-            {
-              key: 'createdAt',
-              label: 'Created',
-              value: (key) => Date.parse(key.createdAt),
-              render: (key) => (
-                <SecondaryCell>{dateLabel(key.createdAt)}</SecondaryCell>
-              ),
-            },
-            {
-              key: 'expiresAt',
-              label: 'Expires',
-              value: (key) =>
-                key.expiresAt ? Date.parse(key.expiresAt) : null,
-              render: (key) => (
-                <SecondaryCell>{dateLabel(key.expiresAt)}</SecondaryCell>
-              ),
-            },
-            {
-              key: 'lastRequest',
-              label: 'Last used',
-              value: (key) =>
-                key.lastRequest ? Date.parse(key.lastRequest) : null,
-              render: (key) => (
-                <SecondaryCell>{dateLabel(key.lastRequest)}</SecondaryCell>
-              ),
-            },
-            {
-              key: 'actions',
-              label: 'Actions',
-              sortable: false,
-              required: true,
-              value: () => null,
-              render: (key) => (
-                <Button
-                  type="button"
-                  disabled={!key.enabled || revoke.isPending}
-                  aria-label={`Revoke ${key.name}`}
-                  onClick={() => revoke.mutate(key.id)}
+        {notice && <Notice>{notice}</Notice>}
+        {(create.isError || revoke.isError) && (
+          <Notice tone="danger">
+            Could not {create.isError ? 'create' : 'revoke'} the key. Try again.
+          </Notice>
+        )}
+        <Section title="Create API key">
+          <form
+            className="sec-form-row"
+            onSubmit={(event) => {
+              event.preventDefault()
+              create.mutate('manual')
+            }}
+          >
+            <div className="ds-field">
+              <Label htmlFor={nameId}>Name</Label>
+              <Input
+                id={nameId}
+                controlSize="md"
+                name="name"
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+                maxLength={100}
+                required
+                autoComplete="off"
+                placeholder="Key name"
+                disabled={creating}
+              />
+            </div>
+            <div className="ds-field">
+              <Label htmlFor={expiryId}>Expires in</Label>
+              <Select
+                id={expiryId}
+                controlSize="md"
+                value={expiry}
+                onChange={(event) => setExpiry(event.target.value)}
+                disabled={creating}
+              >
+                <option value="3600">60 minutes</option>
+                <option value="86400">1 day</option>
+                <option value="2592000">30 days</option>
+                <option value="7776000">90 days</option>
+                <option value="31536000">1 year</option>
+                <option value="never">Never</option>
+              </Select>
+            </div>
+            <Button size="md" type="submit" disabled={creating || !name.trim()}>
+              {create.isPending && create.variables === 'manual'
+                ? 'Creating...'
+                : 'Create key'}
+            </Button>
+          </form>
+        </Section>
+      </div>
+      <div className="ds-section-head sec-pad">
+        <h3>API keys</h3>
+      </div>
+      {keys.isError && keys.data && (
+        <div className="sec-notices">
+          <Notice
+            tone="danger"
+            action={
+              <Button size="xs" onClick={() => void keys.refetch()}>
+                Retry
+              </Button>
+            }
+          >
+            Could not refresh API keys.
+          </Notice>
+        </div>
+      )}
+      <SecondaryDataTable
+        id="user-api-keys"
+        label="API keys"
+        rows={keys.data ?? []}
+        rowKey={(key) => key.id}
+        defaultSort={{ key: 'createdAt', direction: 'desc' }}
+        search={{
+          label: 'Search API keys',
+          value: (key) => `${key.name} ${key.start}`,
+        }}
+        countLabel="keys"
+        busy={keys.isPending}
+        error={keys.isError}
+        empty={
+          keys.isPending ? (
+            <Skeleton width="40%" height={12} />
+          ) : keys.isError ? (
+            <>
+              Could not load API keys.{' '}
+              <Button size="xs" onClick={() => void keys.refetch()}>
+                Retry
+              </Button>
+            </>
+          ) : (
+            'No API keys.'
+          )
+        }
+        columns={[
+          {
+            key: 'name',
+            label: 'Name',
+            required: true,
+            sticky: 0,
+            stickyEdge: true,
+            value: (key) => key.name,
+          },
+          {
+            key: 'start',
+            label: 'Prefix',
+            value: (key) => key.start,
+            render: (key) => (
+              <SecondaryCell>
+                <code className="ds-mono">{key.start}…</code>
+              </SecondaryCell>
+            ),
+          },
+          {
+            key: 'status',
+            label: 'Status',
+            value: (key) => apiKeyStatus(key, now),
+            render: (key) => {
+              const status = apiKeyStatus(key, now)
+              return (
+                <Status
+                  state={status === 'Active' ? 'done' : 'cancelled'}
+                  title={status}
                 >
-                  {revoke.isPending && revoke.variables === key.id
-                    ? 'Revoking...'
-                    : 'Revoke'}
-                </Button>
-              ),
+                  {status}
+                </Status>
+              )
             },
-          ]}
-        />
-      </section>
+          },
+          {
+            key: 'createdAt',
+            label: 'Created',
+            value: (key) => Date.parse(key.createdAt),
+            render: (key) => (
+              <SecondaryCell>{dateLabel(key.createdAt)}</SecondaryCell>
+            ),
+          },
+          {
+            key: 'expiresAt',
+            label: 'Expires',
+            value: (key) => (key.expiresAt ? Date.parse(key.expiresAt) : null),
+            render: (key) => (
+              <SecondaryCell>{dateLabel(key.expiresAt)}</SecondaryCell>
+            ),
+          },
+          {
+            key: 'lastRequest',
+            label: 'Last used',
+            value: (key) =>
+              key.lastRequest ? Date.parse(key.lastRequest) : null,
+            render: (key) => (
+              <SecondaryCell>{dateLabel(key.lastRequest)}</SecondaryCell>
+            ),
+          },
+          {
+            key: 'actions',
+            label: 'Actions',
+            sortable: false,
+            required: true,
+            align: 'end',
+            value: () => null,
+            render: (key) => (
+              <ConfirmAction
+                size="xs"
+                confirmVariant="danger"
+                ariaLabel={`Revoke ${key.name}`}
+                question={`Revoke ${key.name}?`}
+                details="Requests that use this key stop working at once."
+                confirmLabel="Revoke"
+                disabled={!key.enabled || revoke.isPending}
+                onConfirm={() => revoke.mutate(key.id)}
+              >
+                {revoke.isPending && revoke.variables === key.id
+                  ? 'Revoking...'
+                  : 'Revoke'}
+              </ConfirmAction>
+            ),
+          },
+        ]}
+      />
     </section>
   )
 }

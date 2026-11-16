@@ -1,1 +1,123 @@
 /* Providers overview and provider page layout. Tokens only. */
+
+/* Overview */
+.providers-notices {
+  display: grid;
+  gap: var(--ds-3);
+}
+.providers-overview > .providers-notices {
+  padding: 0 var(--ds-gutter) var(--ds-4);
+}
+.providers-row-skeleton {
+  height: var(--ds-h-xs);
+}
+.ds-table td.providers-row-notes {
+  height: auto;
+  padding-top: var(--ds-3);
+  padding-bottom: var(--ds-3);
+  white-space: normal;
+}
+
+/* Confirmations and reviews in the flow of a row or the page */
+.providers-confirm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ds-3) var(--ds-5);
+}
+.providers-confirm > p {
+  margin: 0;
+}
+
+/* Provider page */
+.providers-crumbs {
+  margin-bottom: var(--ds-5);
+}
+.providers-crumbs-skeleton {
+  width: calc(var(--ds-9) * 5);
+  height: var(--ds-6);
+  margin-bottom: var(--ds-5);
+}
+.providers-head-skeleton {
+  height: calc(var(--ds-9) * 3);
+}
+.providers-tabs {
+  margin-top: var(--ds-6);
+}
+.providers-tabs > .providers-notices:not(:empty) {
+  margin-top: var(--ds-5);
+}
+.providers-stats,
+.providers-chart {
+  height: calc(var(--ds-h-md) * 2);
+}
+.providers-chart .ds-spark {
+  width: 100%;
+  height: 100%;
+}
+.providers-field {
+  height: var(--ds-h-md);
+}
+.providers-details > summary {
+  color: var(--ds-ink-2);
+  font-size: var(--ds-text-sm);
+  cursor: pointer;
+}
+.providers-details[open] > summary {
+  margin-bottom: var(--ds-4);
+}
+.providers-table-bounded {
+  max-height: calc(var(--ds-row) * 12);
+}
+.providers-list {
+  display: grid;
+  gap: var(--ds-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.providers-form {
+  display: grid;
+  gap: var(--ds-5);
+}
+.providers-form p {
+  margin: 0;
+}
+.providers-fields {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: var(--ds-4);
+}
+
+/* The Jobs tab gives the jobs table the remaining height of the panel */
+.providers-page[data-tab='jobs'] {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  max-width: none;
+  padding-bottom: 0;
+}
+.providers-page[data-tab='jobs'] > .providers-tabs {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+.providers-jobs[data-state='active'] {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+@media (max-width: 700px) {
+  .ds-page.providers-page {
+    padding: var(--ds-5) var(--ds-6) var(--ds-8);
+  }
+  .providers-cols {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
+}

@@ -1,19 +1,21 @@
 import type { SubscriptionSyncStatus } from '@repo/schemas/subscriptions'
 import type { YoutubeSyncSchedule } from '@repo/schemas/youtube'
+import { syncStatusLabel } from './run-status'
 
 /** How often the page re-reads status while a sync job is queued or running. */
 export const YOUTUBE_SYNC_POLL_MS = 3000
 
+/** Sync states in the shared status vocabulary. */
 export const youtubeSyncStateLabels: Record<
   SubscriptionSyncStatus['state'],
   string
 > = {
-  never: 'Not synced',
-  running: 'Running',
-  paused: 'Paused',
-  stopped: 'Stopped',
-  failed: 'Failed',
-  complete: 'Complete',
+  never: syncStatusLabel('never'),
+  running: syncStatusLabel('running'),
+  paused: syncStatusLabel('paused'),
+  stopped: syncStatusLabel('stopped'),
+  failed: syncStatusLabel('failed'),
+  complete: syncStatusLabel('complete'),
 }
 
 export const youtubeScheduleLabels: Record<YoutubeSyncSchedule, string> = {

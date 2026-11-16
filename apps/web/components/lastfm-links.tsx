@@ -11,7 +11,21 @@ import {
   type LastfmLinkGroup,
 } from '@repo/schemas/lastfm'
 import { Button } from '@repo/ui/components/ui/button'
-import { Input } from '@repo/ui/components/ui/input'
+import { Section } from '@repo/ui/components/ds/facts'
+import { Notice, Skeleton } from '@repo/ui/components/ds/feedback'
+import { Status } from '@repo/ui/components/ds/status'
+import {
+  Toolbar,
+  ToolbarCount,
+  ToolbarEnd,
+} from '@repo/ui/components/ds/toolbar'
+import {
+  EMPTY_VALUE,
+  formatCount,
+  formatDate,
+  formatDateTime,
+  formatItemCount,
+} from '@repo/ui/lib/format'
 import {
   TableBody,
   TableCell,
@@ -55,15 +69,20 @@ import { useConfig } from './providers'
 import {
   SecondaryColumnFilter,
   SecondaryTableFrame,
-  SecondaryTableFooter,
   SecondaryCell,
   SecondaryDataTable,
-  SecondaryTableToolbar,
+  SecondaryTableSearch,
+  SecondaryTableSelectionBar,
   SecondaryVirtualRows,
   SecondaryTableScroll,
   SecondaryTableHead,
   useTableColumns,
 } from './secondary-table'
+import { runStatusStates } from '@/utils/run-status'
+
+const NAMES = { one: 'name', other: 'names' }
+/** Width of the selection column; the artist name is pinned after it. */
+const CHECK_WIDTH = 36
 
 function LinkRow({
   group,
@@ -89,13 +108,14 @@ function LinkRow({
     linked && group.album
       ? group.album.title
       : group.candidates.length
-        ? `${group.candidates.length} possible albums`
-        : '-'
+        ? `${formatCount(group.candidates.length)} possible albums`
+        : EMPTY_VALUE
   return (
-    <TableRow data-selected={checked || undefined}>
-      <TableCell className="table-selection-cell">
+    <TableRow selected={checked}>
+      <TableCell className="sec-check-cell" sticky={0}>
         <input
           type="checkbox"
+          className="ds-check"
           aria-label={`Select ${group.artistName} — ${group.albumName ?? 'No album'}`}
           checked={checked}
           disabled={disabled || !canSearchLastfmGroup(group)}
@@ -109,7 +129,7 @@ function LinkRow({
         />
       </TableCell>
       {visible('artistName') && (
-        <TableCell>
+        <TableCell sticky={CHECK_WIDTH} stickyEdge>
           <SecondaryCell text={group.artistName}>
             {group.artistName}
           </SecondaryCell>
@@ -117,20 +137,19 @@ function LinkRow({
       )}
       {visible('albumName') && (
         <TableCell>
-          <SecondaryCell text={group.albumName ?? '-'}>
-            {group.albumName ?? '-'}
-          </SecondaryCell>
+          <SecondaryCell>{group.albumName ?? EMPTY_VALUE}</SecondaryCell>
         </TableCell>
       )}
       {visible('scrobbles') && (
-        <TableCell className="tabular-nums">
-          {group.scrobbles.toLocaleString()}
-        </TableCell>
+        <TableCell align="end">{formatCount(group.scrobbles)}</TableCell>
       )}
       {visible('lastListenedAt') && (
-        <TableCell className="whitespace-nowrap">
-          <time dateTime={group.lastListenedAt}>
-            {new Date(group.lastListenedAt).toLocaleDateString()}
+        <TableCell>
+          <time
+            dateTime={group.lastListenedAt}
+            title={formatDateTime(group.lastListenedAt)}
+          >
+            {formatDate(group.lastListenedAt)}
           </time>
         </TableCell>
       )}
@@ -149,14 +168,14 @@ function LinkRow({
         <TableCell>
           <SecondaryCell text={libraryAlbum}>
             {linked && group.album ? (
-              <span className="inline-flex items-center gap-1.5">
+              <span className="ds-cell-id">
+                <DetailLink kind="album" id={group.album.id}>
+                  {group.album.title}
+                </DetailLink>
                 <AlbumReferencePlayButton
                   id={group.album.id}
                   title={group.album.title}
                 />
-                <DetailLink kind="album" id={group.album.id}>
-                  {group.album.title}
-                </DetailLink>
               </span>
             ) : (
               libraryAlbum
@@ -172,45 +191,46 @@ function LinkRow({
             details={group.spotifySearch?.errorMessage}
           >
             {group.spotifySearch ? (
-              <DetailLink
-                className="job-status underline underline-offset-2"
-                data-status={group.spotifySearch.status}
-                kind="job"
-                id={group.spotifySearch.jobId}
-              >
-                {lastfmSpotifySearchLabel(group.spotifySearch)}
+              <DetailLink kind="job" id={group.spotifySearch.jobId}>
+                <Status state={runStatusStates[group.spotifySearch.status]}>
+                  {lastfmSpotifySearchLabel(group.spotifySearch)}
+                </Status>
               </DetailLink>
             ) : (
-              <span className="muted">{lastfmSpotifySearchLabel(null)}</span>
+              <Status state="never">{lastfmSpotifySearchLabel(null)}</Status>
             )}
           </SecondaryCell>
         </TableCell>
       )}
       {visible('actions') && (
-        <TableCell>
+        <TableCell align="end">
           {group.albumName !== null && (
-            <div className="flex items-center gap-1 whitespace-nowrap">
+            <span className="ds-cell-actions">
               <Button
-                className="secondary-cell-action"
+                variant="ghost"
+                size="xs"
+                icon
                 aria-label={linked ? 'Change album link' : 'Link album'}
                 title={linked ? 'Change album link' : 'Link album'}
                 aria-haspopup="dialog"
                 onClick={() => onOpen('library')}
               >
-                <Link2 size={14} aria-hidden="true" />
+                <Link2 className="ds-i" aria-hidden="true" />
               </Button>
               {!linked && (
                 <Button
-                  className="secondary-cell-action"
+                  variant="ghost"
+                  size="xs"
+                  icon
                   aria-label="Add new album"
                   title="Add new album"
                   aria-haspopup="dialog"
                   onClick={() => onOpen('new')}
                 >
-                  <Plus size={14} aria-hidden="true" />
+                  <Plus className="ds-i" aria-hidden="true" />
                 </Button>
               )}
-            </div>
+            </span>
           )}
         </TableCell>
       )}
@@ -341,120 +361,124 @@ export default function LastfmLinks() {
   const summary = links.firstPage?.summary
   const running = status.data?.state === 'running'
   return (
-    <section aria-labelledby="scrobble-links-heading">
-      <h2 id="scrobble-links-heading">Scrobble links</h2>
-      <p className="muted">
-        A scrobbled artist and album name links to one library album by title,
-        credited artist and shared track titles. Edition, disc and format
-        qualifiers are ignored. Link, Unlink and Change are kept across syncs;
-        Automatic returns a name to automatic matching.
-      </p>
-      {summary && (
-        <SecondaryDataTable
-          id="lastfm-link-summary"
-          label="Scrobble link summary"
-          rows={lastfmLinkSummaryRows(summary)}
-          rowKey={(row) => row.reason}
-          defaultSort={{ key: 'reason', direction: 'asc' }}
-          columns={[
-            {
-              key: 'reason',
-              label: 'Status',
-              value: (row) => lastfmLinkReasonLabels[row.reason],
-              render: (row) => (
-                <button
-                  type="button"
-                  className="underline underline-offset-2"
-                  aria-pressed={reasons.includes(row.reason)}
-                  disabled={queuePending}
-                  onClick={() =>
-                    setReasons(
-                      reasons.includes(row.reason)
-                        ? reasons.filter((reason) => reason !== row.reason)
-                        : [...reasons, row.reason],
-                    )
-                  }
-                >
-                  {lastfmLinkReasonLabels[row.reason]}
-                </button>
-              ),
-            },
-            {
-              key: 'groups',
-              label: 'Scrobbled names',
-              value: (row) => row.groups,
-              render: (row) => row.groups.toLocaleString(),
-              className: 'numeric',
-            },
-            {
-              key: 'scrobbles',
-              label: 'Scrobbles',
-              value: (row) => row.scrobbles,
-              render: (row) => row.scrobbles.toLocaleString(),
-              className: 'numeric',
-            },
-          ]}
-        />
-      )}
-      <div className="form-actions my-3">
-        <Button
-          disabled={relink.isPending || running || queuePending}
-          onClick={() => relink.mutate()}
-        >
-          {relink.isPending ? 'Relinking...' : 'Relink'}
-        </Button>
-        <span className="muted">
-          Links are recomputed after every sync. Relink applies library changes
-          without contacting Last.fm.
-        </span>
-        {relink.isError && (
-          <p role="alert">
-            {errorMessage(relink.error, 'Could not relink scrobbles.')}
+    <>
+      <div className="ds-panelpad">
+        <Section title="Scrobble links">
+          <p className="ds-help">
+            A scrobbled artist and album name links to one library album by
+            title, credited artist and shared track titles. Edition, disc and
+            format qualifiers are ignored. Link, Unlink and Change are kept
+            across syncs; Automatic returns a name to automatic matching.
           </p>
-        )}
+          {summary && (
+            <SecondaryDataTable
+              id="lastfm-link-summary"
+              label="Scrobble link summary"
+              rows={lastfmLinkSummaryRows(summary)}
+              rowKey={(row) => row.reason}
+              defaultSort={{ key: 'reason', direction: 'asc' }}
+              columns={[
+                {
+                  key: 'reason',
+                  label: 'Status',
+                  value: (row) => lastfmLinkReasonLabels[row.reason],
+                  render: (row) => (
+                    <Button
+                      variant="link"
+                      size="xs"
+                      type="button"
+                      disabled={queuePending}
+                      onClick={() =>
+                        setReasons(
+                          reasons.includes(row.reason)
+                            ? reasons.filter((reason) => reason !== row.reason)
+                            : [...reasons, row.reason],
+                        )
+                      }
+                      aria-pressed={reasons.includes(row.reason)}
+                    >
+                      {lastfmLinkReasonLabels[row.reason]}
+                    </Button>
+                  ),
+                },
+                {
+                  key: 'groups',
+                  label: 'Scrobbled names',
+                  align: 'end',
+                  value: (row) => row.groups,
+                  render: (row) => formatCount(row.groups),
+                },
+                {
+                  key: 'scrobbles',
+                  label: 'Scrobbles',
+                  align: 'end',
+                  value: (row) => row.scrobbles,
+                  render: (row) => formatCount(row.scrobbles),
+                },
+              ]}
+            />
+          )}
+          <span className="sec-line">
+            <Button
+              disabled={relink.isPending || running || queuePending}
+              onClick={() => relink.mutate()}
+            >
+              {relink.isPending ? 'Relinking...' : 'Relink'}
+            </Button>
+            <span className="ds-help">
+              Links are recomputed after every sync. Relink applies library
+              changes without contacting Last.fm.
+            </span>
+          </span>
+          {relink.isError && (
+            <Notice tone="danger">
+              {errorMessage(relink.error, 'Could not relink scrobbles.')}
+            </Notice>
+          )}
+          {links.isError && links.total > 0 && (
+            <Notice
+              tone="danger"
+              action={
+                <Button size="xs" onClick={links.retry}>
+                  Retry
+                </Button>
+              }
+            >
+              Could not load scrobble links.
+            </Notice>
+          )}
+        </Section>
       </div>
-      {links.isError && links.total > 0 && (
-        <p role="alert">
-          Could not load scrobble links.{' '}
-          <button type="button" onClick={links.retry}>
-            Retry
-          </button>
-        </p>
-      )}
       <LastfmLinkWorkflow
         selection={selected}
         onSelectionChange={setSelected}
       />
-      <SecondaryTableToolbar
-        search={
-          <Input
-            type="search"
-            aria-label="Search scrobbled names"
-            placeholder="Search artists or albums"
-            value={draft}
-            disabled={queuePending}
-            maxLength={200}
-            onChange={(event) => {
-              setDraft(event.target.value)
-              clearSelection()
-            }}
-          />
-        }
-        count={
-          <>
-            {links.total.toLocaleString()} names
-            {(links.isPending || draft.trim() !== query) && (
-              <span role="status"> · Loading...</span>
-            )}
-          </>
-        }
-        columns={columns.controls}
-      />
+      <Toolbar>
+        <SecondaryTableSearch
+          label="Search scrobbled names"
+          placeholder="Search artists or albums"
+          value={draft}
+          disabled={queuePending}
+          maxLength={200}
+          onChange={(value) => {
+            setDraft(value)
+            clearSelection()
+          }}
+        />
+        <ToolbarCount>
+          {links.isPending || draft.trim() !== query ? (
+            <Skeleton width={64} height={12} />
+          ) : (
+            formatItemCount(links.total, NAMES)
+          )}
+        </ToolbarCount>
+        {columns.controls && <ToolbarEnd>{columns.controls}</ToolbarEnd>}
+      </Toolbar>
       <SecondaryTableFrame>
         <SecondaryTableScroll
           ref={links.scroller}
           onScroll={links.onScroll}
-          className="table-scroll-bounded"
+          className="sec-bounded"
           role="region"
           aria-label="Scrobble links"
           aria-busy={links.isFetching}
@@ -462,10 +486,11 @@ export default function LastfmLinks() {
           <table className="ds-table" aria-label="Scrobble links">
             <TableHeader>
               <TableRow>
-                <TableHead className="table-selection-cell">
+                <TableHead className="sec-check-cell" sticky={0}>
                   <input
                     ref={all}
                     type="checkbox"
+                    className="ds-check"
                     aria-label="Select all loaded unlinked albums"
                     checked={allChecked}
                     disabled={selectionDisabled || !ids.length}
@@ -486,6 +511,11 @@ export default function LastfmLinks() {
                       key={column.key}
                       sortKey={column.key}
                       label={column.label}
+                      align={column.key === 'scrobbles' ? 'end' : undefined}
+                      sticky={
+                        column.key === 'artistName' ? CHECK_WIDTH : undefined
+                      }
+                      stickyEdge={column.key === 'artistName'}
                       filter={
                         column.key === 'reason' ? (
                           <SecondaryColumnFilter
@@ -510,25 +540,27 @@ export default function LastfmLinks() {
                       disabled={queuePending}
                     />
                   ))}
-                {columns.visible('actions') && <TableHead>Actions</TableHead>}
+                {columns.visible('actions') && (
+                  <TableHead align="end">
+                    <span className="sr-only">Actions</span>
+                  </TableHead>
+                )}
               </TableRow>
             </TableHeader>
             <TableBody>
               {!links.total && (
                 <TableState colSpan={columns.count + 1} error={links.isError}>
-                  {links.isPending
-                    ? 'Loading scrobble links...'
-                    : links.isError
-                      ? 'Could not load scrobble links.'
-                      : 'No matching scrobbled names.'}
-                  {links.isError && (
-                    <button
-                      type="button"
-                      className="ml-1 underline"
-                      onClick={links.retry}
-                    >
-                      Retry
-                    </button>
+                  {links.isPending ? (
+                    <Skeleton width="40%" height={12} />
+                  ) : links.isError ? (
+                    <>
+                      Could not load scrobble links.{' '}
+                      <Button size="xs" onClick={links.retry}>
+                        Retry
+                      </Button>
+                    </>
+                  ) : (
+                    'No scrobbled names match.'
                   )}
                 </TableState>
               )}
@@ -565,7 +597,11 @@ export default function LastfmLinks() {
             </TableBody>
           </table>
         </SecondaryTableScroll>
-        <SecondaryTableFooter selectedCount={selectedIds.length}>
+        <SecondaryTableSelectionBar
+          selectedCount={selectedIds.length}
+          total={ids.length}
+          hideWhenEmpty
+        >
           <LastfmSearchActions
             groups={items}
             selectedIds={selectedIds}
@@ -573,8 +609,8 @@ export default function LastfmLinks() {
             onPending={setQueuePending}
             disabled={selectionDisabled}
           />
-        </SecondaryTableFooter>
+        </SecondaryTableSelectionBar>
       </SecondaryTableFrame>
-    </section>
+    </>
   )
 }

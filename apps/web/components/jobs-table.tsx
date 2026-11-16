@@ -1,11 +1,24 @@
 'use client'
 
 import Link from 'next/link'
-import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  Fragment,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react'
 import { useSearchParams } from 'next/navigation'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { z } from 'zod'
-import { ProviderSummarySchema } from '@repo/schemas/provider'
+import {
+  queryOptions,
+  useMutation,
+  useQueries,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query'
+import { ChevronDown, ChevronRight } from 'lucide-react'
 import { ArtistProfileProviderSchema } from '@repo/schemas/artist-profiles'
 import {
   JobSortKeySchema,
@@ -13,16 +26,43 @@ import {
   jobStatusFilters,
   type JobSortKey,
   JobPageSchema,
+  JobEntryPageSchema,
   EnrichmentResultSchema,
   getJobDismissal,
   type Job,
+  type JobBatchEntry,
+  type JobEntry,
+  type JobEntryPage,
+  type JobPage,
 } from '@repo/schemas/job'
-import { TableState } from '@repo/ui/components/ui/table'
+import { Notice } from '@repo/ui/components/ds/feedback'
+import { Progress } from '@repo/ui/components/ds/meter'
+import { Status, statusLabels } from '@repo/ui/components/ds/status'
+import {
+  Select,
+  Toolbar,
+  ToolbarCount,
+  ToolbarEnd,
+} from '@repo/ui/components/ds/toolbar'
+import {
+  TableHead,
+  TableRow,
+  TableCell,
+  TableSelectionBar,
+  TableState,
+} from '@repo/ui/components/ui/table'
 import { Button } from '@repo/ui/components/ui/button'
-import { Input } from '@repo/ui/components/ui/input'
+import {
+  EMPTY_VALUE,
+  formatCount,
+  formatDateTime,
+  formatElapsed,
+  formatItemCount,
+  formatUntil,
+} from '@repo/ui/lib/format'
 import { fetchApiData } from '@/utils/api'
 import { useVirtualTable } from '@/hooks/useVirtualTable'
-import { scopedHref, type WorkspaceScope } from '@/utils/media-scope'
+import { systemLibraryFilter, type WorkspaceScope } from '@/utils/media-scope'
 import {
   activeJobProgressLabel,
   canCancelJob,
@@ -31,65 +71,125 @@ import {
   jobTaskTitle,
   updateJobSelection,
 } from '@/utils/job-selection'
+import {
+  batchDone,
+  batchResult,
+  batchStatus,
+  batchTarget,
+  batchTitle,
+  entryKey,
+  formatWhen,
+  jobResult,
+  jobStatus,
+  jobTitle,
+} from '@/utils/job-entries'
+import {
+  providerDisplayName,
+  providerListOptions,
+} from '@/utils/provider-health'
 import { DetailLink } from './detail-link'
 import {
   replaceWorkspaceUrl,
   useDetailInspector,
-  useDetailView,
 } from './detail-inspector-context'
 import { useConfig } from './providers'
-import { useWorkspaceScope } from './media-scope'
-import JobBulkActions from './job-bulk-actions'
+import JobBulkActions, { type JobActionRequest } from './job-bulk-actions'
 import {
   SecondaryColumnFilter,
-  SecondaryTableFrame,
-  SecondaryTableFooter,
-  SecondaryCell,
-  SecondaryTableScroll,
-  SecondaryTableToolbar,
   SecondaryTableHead,
+  SecondaryTableScroll,
+  SecondaryTableSearch,
   SecondaryVirtualRows,
   useTableColumns,
 } from './secondary-table'
 
-const jobsHeadings: Record<WorkspaceScope, string> = {
-  album: 'Album jobs',
-  artist: 'Artist jobs',
-  film: 'Film jobs',
-  subscription: 'Subscription jobs',
-}
-const jobColumns: {
-  key: JobSortKey
-  label: string
-  defaultVisible?: boolean
-}[] = [
-  { key: 'provider', label: 'Provider' },
-  { key: 'title', label: 'Job' },
-  { key: 'status', label: 'Status' },
-  { key: 'createdAt', label: 'Created' },
-  { key: 'startedAt', label: 'Started', defaultVisible: false },
-  { key: 'finishedAt', label: 'Finished', defaultVisible: false },
-  { key: 'result', label: 'Result', defaultVisible: false },
+const rowHeight = 32
+const headerHeight = 28
+/** Width of the selection column, which the job column is pinned after. */
+const selectionWidth = 36
+const batchPageSize = 25
+
+const libraryOptions: { value: WorkspaceScope | ''; label: string }[] = [
+  { value: '', label: 'All libraries' },
+  { value: 'album', label: 'Albums' },
+  { value: 'film', label: 'Films' },
+  { value: 'artist', label: 'Artists' },
+  { value: 'subscription', label: 'Subscriptions' },
 ]
 
-type JobsTableProps = { provider?: string } & (
-  | { mediaItemId: string; artistId?: never }
-  | { artistId: string; mediaItemId?: never }
-  | { mediaItemId?: never; artistId?: never }
-)
+type ColumnKey =
+  | 'title'
+  | 'status'
+  | 'provider'
+  | 'progress'
+  | 'createdAt'
+  | 'startedAt'
+  | 'finishedAt'
+  | 'duration'
+  | 'result'
 
-export function JobsTable({ provider, mediaItemId, artistId }: JobsTableProps) {
+const jobColumns: {
+  key: ColumnKey
+  label: string
+  sort?: JobSortKey
+  align?: 'end'
+  defaultVisible?: boolean
+  required?: boolean
+}[] = [
+  { key: 'title', label: 'Job', sort: 'title', required: true },
+  { key: 'status', label: 'Status', sort: 'status' },
+  { key: 'provider', label: 'Provider', sort: 'provider' },
+  { key: 'progress', label: 'Progress' },
+  { key: 'createdAt', label: 'Created', sort: 'createdAt' },
+  {
+    key: 'startedAt',
+    label: 'Started',
+    sort: 'startedAt',
+    defaultVisible: false,
+  },
+  {
+    key: 'finishedAt',
+    label: 'Finished',
+    sort: 'finishedAt',
+    defaultVisible: false,
+  },
+  { key: 'duration', label: 'Duration', align: 'end' },
+  { key: 'result', label: 'Result', sort: 'result' },
+]
+
+type RowItem = Job | JobEntry
+
+function asEntry(item: RowItem): JobEntry {
+  return 'kind' in item ? item : { kind: 'job', job: item }
+}
+
+function elapsed(
+  startedAt: string | null,
+  finishedAt: string | null,
+  now: Date,
+) {
+  if (!startedAt) return EMPTY_VALUE
+  const end = finishedAt ? Date.parse(finishedAt) : now.getTime()
+  return formatElapsed(end - Date.parse(startedAt))
+}
+
+function When({ value, now }: { value: string | null; now: Date }) {
+  if (!value) return <span className="ds-muted">{EMPTY_VALUE}</span>
+  return (
+    <time dateTime={value} title={formatDateTime(value)}>
+      {formatWhen(value, now)}
+    </time>
+  )
+}
+
+/** The System jobs list, or one provider's jobs when `provider` is set. */
+export function JobsTable({ provider }: { provider?: string }) {
   const { apiBaseUrl } = useConfig()
   const client = useQueryClient()
-  const workspaceSearch = useSearchParams()
-  const detail = useDetailView()
+  const search = useSearchParams()
   const inspector = useDetailInspector()
-  const history = Boolean(mediaItemId || artistId)
-  const search = history ? detail.params : workspaceSearch
-  const paramKey = (key: string) =>
-    history ? `jobs${key[0]?.toUpperCase()}${key.slice(1)}` : key
-  const param = (key: string) => search.get(paramKey(key))
-  const mediaType = useWorkspaceScope()
+  const param = (key: string) => search.get(key)
+  const library = provider ? null : systemLibraryFilter(param('mediaType'))
   const query = param('q')?.slice(0, 200) ?? ''
   const [draft, setDraft] = useState(query)
   useEffect(() => setDraft(query), [query])
@@ -118,7 +218,9 @@ export function JobsTable({ provider, mediaItemId, artistId }: JobsTableProps) {
         : []
   const statusesKey = JSON.stringify(statuses)
   const providersKey = JSON.stringify(selectedProviders)
-  const batchId = provider || history ? '' : (param('batchId') ?? '')
+  const batchId = provider ? '' : (param('batchId') ?? '')
+  /** Batches are one row that expands; a single batch lists its jobs. */
+  const grouped = !batchId
   const parsedSort = JobSortKeySchema.safeParse(param('sortBy'))
   const sortBy = parsedSort.success ? parsedSort.data : 'createdAt'
   const direction = param('direction') === 'asc' ? 'asc' : 'desc'
@@ -126,129 +228,201 @@ export function JobsTable({ provider, mediaItemId, artistId }: JobsTableProps) {
   const shownColumns = jobColumns.filter((column) =>
     columns.visible(column.key),
   )
+  const colSpan = shownColumns.length + 2
   const selectAll = useRef<HTMLInputElement>(null)
-  const [retryConfirmed, setRetryConfirmed] = useState(false)
+  const [retryBatchId, setRetryBatchId] = useState<string | null>(null)
+  const [batchRetryConfirmed, setBatchRetryConfirmed] = useState(false)
+  const reviewedBatch = batchId || retryBatchId
   const [checkedJobIds, setCheckedJobIds] = useState<string[]>([])
   const [selectionAnchor, setSelectionAnchor] = useState<string | null>(null)
   const [bulkPending, setBulkPending] = useState(false)
+  const [request, setRequest] = useState<JobActionRequest | null>(null)
+  const [expanded, setExpanded] = useState<Map<string, number>>(() => new Map())
+  const now = new Date()
   function setParams(updates: Record<string, string>) {
-    const params = new URLSearchParams(
-      history ? detail.params : window.location.search,
-    )
+    const params = new URLSearchParams(window.location.search)
     for (const [key, value] of Object.entries(updates)) {
-      if (value) params.set(paramKey(key), value)
-      else params.delete(paramKey(key))
+      if (value) params.set(key, value)
+      else params.delete(key)
     }
-    if (history) detail.replace(params)
-    else
-      replaceWorkspaceUrl(
-        `${window.location.pathname}?${params}${window.location.hash}`,
-        true,
-      )
+    replaceWorkspaceUrl(
+      `${window.location.pathname}?${params}${window.location.hash}`,
+      true,
+    )
   }
-  const providers = useQuery({
-    queryKey: ['providers'],
-    queryFn: () =>
-      fetchApiData(
-        apiBaseUrl,
-        '/api/v1/providers',
-        z.array(ProviderSummarySchema),
-      ),
-  })
+  const providers = useQuery(providerListOptions(apiBaseUrl))
   const providerOptions = (providers.data ?? []).filter((item) =>
-    mediaType === 'subscription'
+    library === 'subscription'
       ? item.subscriptions
-      : mediaType === 'artist'
+      : library === 'artist'
         ? ArtistProfileProviderSchema.safeParse(item.id).success
-        : item.mediaTypes.some((kind) => kind === mediaType),
+        : library
+          ? item.mediaTypes.some((kind) => kind === library)
+          : item.surface === 'provider',
   )
-  const jobsKey = history
-    ? [
-        'jobs',
-        'media-history',
-        'table',
-        mediaItemId,
-        artistId,
-        providersKey,
-        sortBy,
-        direction,
-        deferredQuery,
-        statusesKey,
-      ]
-    : [
-        'jobs',
-        'table',
-        provider ? null : mediaType,
-        statusesKey,
-        batchId,
-        deferredQuery,
-        providersKey,
-        sortBy,
-        direction,
-      ]
+  const filters = {
+    ...(library ? { mediaType: library } : {}),
+    sortBy,
+    direction,
+    statuses: statusesKey,
+    providers: providersKey,
+    ...(deferredQuery ? { q: deferredQuery } : {}),
+  }
+  const jobsKey = [
+    'jobs',
+    grouped ? 'entries' : 'table',
+    library,
+    statusesKey,
+    batchId,
+    deferredQuery,
+    providersKey,
+    sortBy,
+    direction,
+  ]
   const identity = JSON.stringify(jobsKey)
+  const expandedIds = [...expanded.keys()]
+  const children = useQueries({
+    queries: expandedIds.map((id) =>
+      queryOptions({
+        queryKey: [
+          'jobs',
+          'batch-children',
+          id,
+          library,
+          statusesKey,
+          deferredQuery,
+          providersKey,
+          sortBy,
+          direction,
+        ],
+        queryFn: ({ signal }) =>
+          fetchApiData(
+            apiBaseUrl,
+            `/api/v1/scrape/jobs?${new URLSearchParams({
+              ...filters,
+              batchId: id,
+              page: '1',
+              size: String(batchPageSize),
+            })}`,
+            JobPageSchema,
+            { signal },
+          ),
+        refetchInterval: (state) =>
+          state.state.data?.items.some(canCancelJob) ? 3000 : false,
+      }),
+    ),
+  })
+  const childPages = new Map(
+    expandedIds.map((id, index) => [id, children[index]]),
+  )
+  // Expanded batches add their child rows to the virtual height.
+  const extraRowHeights = new Map<number, number>()
+  for (const [id, index] of expanded) {
+    const page = childPages.get(id)?.data
+    const rows = page
+      ? Math.max(1, page.items.length) +
+        (page.totalCount > page.items.length ? 1 : 0)
+      : 1
+    extraRowHeights.set(index, rows * rowHeight)
+  }
   const jobs = useVirtualTable({
     queryKey: jobsKey,
     pageSize: 25,
-    loadPage: (page, size, signal) =>
-      fetchApiData(
-        apiBaseUrl,
-        `/api/v1/scrape/jobs?${new URLSearchParams({
-          ...(!provider && !history ? { mediaType } : {}),
-          ...(mediaItemId ? { mediaItemId } : {}),
-          ...(artistId ? { artistId } : {}),
-          sortBy,
-          direction,
-          page: String(page),
-          size: String(size),
-          statuses: statusesKey,
-          providers: providersKey,
-          ...(batchId ? { batchId } : {}),
-          ...(deferredQuery ? { q: deferredQuery } : {}),
-        })}`,
-        JobPageSchema,
-        { signal },
-      ),
-    refetchInterval: (page) => (page?.items.some(canCancelJob) ? 3000 : false),
+    rowHeight,
+    headerHeight,
+    extraRowHeights,
+    loadPage: (page, size, signal): Promise<JobPage | JobEntryPage> => {
+      const params = new URLSearchParams({
+        ...filters,
+        ...(batchId ? { batchId } : {}),
+        page: String(page),
+        size: String(size),
+      })
+      return grouped
+        ? fetchApiData(
+            apiBaseUrl,
+            `/api/v1/scrape/jobs/entries?${params}`,
+            JobEntryPageSchema,
+            { signal },
+          )
+        : fetchApiData(
+            apiBaseUrl,
+            `/api/v1/scrape/jobs?${params}`,
+            JobPageSchema,
+            { signal },
+          )
+    },
+    refetchInterval: (page) =>
+      page?.items.some((item) => {
+        const entry = asEntry(item)
+        return entry.kind === 'batch'
+          ? entry.queued + entry.running > 0
+          : canCancelJob(entry.job)
+      })
+        ? 3000
+        : false,
   })
+  const loadedSlots = jobs.loadedSlots
+  // New jobs can move offset boundaries between reads. Rows stay keyed by ID.
+  const entries = useMemo(() => {
+    const indexed = new Map<string, { entry: JobEntry; index: number }>()
+    for (const slot of loadedSlots) {
+      const entry = asEntry(slot.item)
+      const key = entryKey(entry)
+      if (!indexed.has(key)) indexed.set(key, { entry, index: slot.index })
+    }
+    return indexed
+  }, [loadedSlots])
+  // Keep each open batch's extra height on its current row as entries move.
+  const moved = [...expanded].some(
+    ([id, index]) => entries.get(`batch:${id}`)?.index !== index,
+  )
+  useEffect(() => {
+    if (!moved) return
+    setExpanded((current) => {
+      const next = new Map<string, number>()
+      for (const id of current.keys()) {
+        const index = entries.get(`batch:${id}`)?.index
+        if (index !== undefined) next.set(id, index)
+      }
+      return next
+    })
+  }, [moved, entries])
   useEffect(() => {
     setCheckedJobIds([])
     setSelectionAnchor(null)
-    setRetryConfirmed(false)
+    setRetryBatchId(null)
+    setBatchRetryConfirmed(false)
+    setExpanded(new Map())
   }, [identity])
   const retryBatch = useMutation({
-    mutationFn: () =>
+    mutationFn: ({ id, confirmed }: { id: string; confirmed: boolean }) =>
       fetchApiData(
         apiBaseUrl,
-        `/api/v1/scrape/jobs/batches/${batchId}/retry`,
+        `/api/v1/scrape/jobs/batches/${encodeURIComponent(id)}/retry`,
         EnrichmentResultSchema,
         {
           method: 'POST',
-          body: JSON.stringify({ confirmBroadRun: retryConfirmed }),
+          body: JSON.stringify({ confirmBroadRun: confirmed }),
         },
       ),
     onSuccess: async () => {
       await client.invalidateQueries({ queryKey: ['jobs'] })
       await client.invalidateQueries({ queryKey: ['job-activity'] })
-      setRetryConfirmed(false)
+      setRetryBatchId(null)
     },
   })
-  const providerName = (id: string) =>
-    providers.data?.find((item) => item.id === id)?.displayName ??
-    (id === 'google-custom-search' ? 'Google Custom Search (legacy)' : id)
-  // New jobs can move offset boundaries between reads. Loaded selection stays by job ID.
-  const loadedSlots = jobs.loadedSlots
-  const jobsById = useMemo(() => {
-    const indexed = new Map<string, { item: Job; index: number }>()
-    for (const slot of loadedSlots)
-      if (!indexed.has(slot.item.id)) indexed.set(slot.item.id, slot)
-    return indexed
-  }, [loadedSlots])
-  const actionableJobs = [...jobsById.values()]
-    .map(({ item }) => item)
-    .filter(
-      (job) => canRetryJob(job) || canDismissJob(job) || canCancelJob(job),
-    )
+  const providerName = (id: string) => providerDisplayName(providers.data, id)
+  const orderedJobs: Job[] = []
+  for (const { entry } of [...entries.values()].sort(
+    (a, b) => a.index - b.index,
+  )) {
+    if (entry.kind === 'job') orderedJobs.push(entry.job)
+    else orderedJobs.push(...(childPages.get(entry.batchId)?.data?.items ?? []))
+  }
+  const actionableJobs = orderedJobs.filter(
+    (job) => canRetryJob(job) || canDismissJob(job) || canCancelJob(job),
+  )
   const actionableIds = actionableJobs.map((job) => job.id)
   const selectedIds = checkedJobIds.filter((id) => actionableIds.includes(id))
   const allChecked =
@@ -258,6 +432,7 @@ export function JobsTable({ provider, mediaItemId, artistId }: JobsTableProps) {
     if (selectAll.current)
       selectAll.current.indeterminate = selectedIds.length > 0 && !allChecked
   }, [selectedIds.length, allChecked])
+  const busy = bulkPending || retryBatch.isPending
   function selectJobs(ids: string[]) {
     setCheckedJobIds(ids)
     setSelectionAnchor(null)
@@ -276,64 +451,60 @@ export function JobsTable({ provider, mediaItemId, artistId }: JobsTableProps) {
     if (!shift || !selectionAnchor || !actionableIds.includes(selectionAnchor))
       setSelectionAnchor(id)
   }
-  function renderJobRow(job: Job, index: number) {
-    const dismissal = getJobDismissal(job.options)
-    const taskTitle = jobTaskTitle(job)
-    const progress = activeJobProgressLabel(job)
-    const title =
-      taskTitle ??
-      (job.items
-        .map((item) => item.mediaTitle ?? 'Unavailable item')
-        .join(', ') ||
-        'Job')
-    const item = mediaItemId
-      ? job.items.find((candidate) => candidate.mediaItemId === mediaItemId)
-      : undefined
-    const message =
-      item?.message ??
-      job.errorMessage ??
-      (job.items
-        .map((item) => item.message)
-        .filter(Boolean)
-        .join(' · ') ||
-        '-')
-    const result =
-      item && item.status !== job.status
-        ? `This item: ${item.status} · ${message}`
-        : message
-    return (
-      <tr
-        key={job.id}
-        className="cursor-pointer"
-        aria-rowindex={index + 2}
-        data-selected={
-          selectedIds.includes(job.id) ||
-          (inspector?.active?.kind === 'job' &&
-            inspector.active.id === job.id) ||
-          undefined
-        }
-        onClick={(event) => {
-          if (
-            event.target instanceof Element &&
-            event.target.closest('a, button, input, select, textarea')
-          )
-            return
-          inspector?.open(
-            { kind: 'job', id: job.id },
-            event.currentTarget.querySelector<HTMLElement>('a') ?? undefined,
-          )
-        }}
+  function toggleBatch(id: string, index: number) {
+    setExpanded((current) => {
+      const next = new Map(current)
+      if (next.has(id)) next.delete(id)
+      else next.set(id, index)
+      return next
+    })
+  }
+  function cells(values: Record<ColumnKey, ReactNode>) {
+    return shownColumns.map((column) => (
+      <TableCell
+        key={column.key}
+        align={column.align}
+        sticky={column.key === 'title' ? selectionWidth : undefined}
+        stickyEdge={column.key === 'title'}
       >
-        <td className="table-selection-cell">
-          {actionableIds.includes(job.id) ? (
+        {values[column.key]}
+      </TableCell>
+    ))
+  }
+  function renderJobRow(job: Job, options: { child?: boolean } = {}) {
+    const dismissal = getJobDismissal(job.options)
+    const title = jobTitle(job)
+    const state = jobStatus(job)
+    const result = jobResult(job, undefined, now)
+    const progressLabel = activeJobProgressLabel(job)
+    const actionable = actionableIds.includes(job.id)
+    const rowAction: JobActionRequest['action'] | null = !actionable
+      ? null
+      : canCancelJob(job) && job.status !== 'running'
+        ? 'cancel'
+        : canRetryJob(job)
+          ? 'retry'
+          : canCancelJob(job)
+            ? 'cancel'
+            : null
+    return (
+      <TableRow
+        key={job.id}
+        child={options.child}
+        selected={
+          selectedIds.includes(job.id) ||
+          (inspector?.active?.kind === 'job' && inspector.active.id === job.id)
+        }
+      >
+        <TableCell sticky={0}>
+          {actionable ? (
             <input
               type="checkbox"
-              className="job-select"
-              aria-label={`Select ${providerName(job.provider)} job for ${taskTitle ?? job.items[0]?.mediaTitle ?? 'unavailable item'}`}
+              className="ds-check"
+              aria-label={`Select ${providerName(job.provider)} job for ${jobTaskTitle(job) ?? job.items[0]?.mediaTitle ?? 'unavailable item'}`}
               title="Shift-click to select a range"
-              disabled={bulkPending || retryBatch.isPending}
+              disabled={busy}
               checked={selectedIds.includes(job.id)}
-              onClick={(event) => event.stopPropagation()}
               onChange={(event) =>
                 toggleJob(
                   job.id,
@@ -346,206 +517,384 @@ export function JobsTable({ provider, mediaItemId, artistId }: JobsTableProps) {
           ) : (
             <span aria-hidden="true" />
           )}
-        </td>
-        <td>
-          <DetailLink
-            kind="job"
-            id={job.id}
-            className="underline underline-offset-2"
-            aria-label={`View ${providerName(job.provider)} job from ${new Date(job.createdAt).toLocaleString()}`}
-          >
-            View
-          </DetailLink>
-        </td>
-        {columns.visible('provider') && (
-          <td>
-            <SecondaryCell text={providerName(job.provider)}>
-              {providerName(job.provider)}
-            </SecondaryCell>
-          </td>
-        )}
-        {columns.visible('title') && (
-          <td>
-            <SecondaryCell text={`${title}${progress ? ` · ${progress}` : ''}`}>
-              <DetailLink kind="job" id={job.id} className="table-title">
+        </TableCell>
+        {cells({
+          title: (
+            <span className="ds-cell-id">
+              <DetailLink
+                kind="job"
+                id={job.id}
+                className="ds-cell-title"
+                title={title}
+                aria-label={`View ${providerName(job.provider)} job from ${formatDateTime(job.createdAt)}`}
+              >
                 {title}
               </DetailLink>
-              {progress && <span className="quiet"> · {progress}</span>}
-            </SecondaryCell>
-          </td>
-        )}
-        {columns.visible('status') && (
-          <td>
-            <SecondaryCell
-              text={`${job.status}${dismissal ? ' · dismissed' : ''}`}
+            </span>
+          ),
+          status: (
+            <Status
+              state={state}
+              title={job.status === 'queued' ? job.waiting?.detail : undefined}
             >
-              <span className="job-status" data-status={job.status}>
-                {job.status}
-                {dismissal ? ' · dismissed' : ''}
-              </span>
-            </SecondaryCell>
-          </td>
-        )}
-        {columns.visible('createdAt') && (
-          <td className="whitespace-nowrap">
-            <SecondaryCell text={new Date(job.createdAt).toLocaleString()}>
-              <time dateTime={job.createdAt}>
-                {new Date(job.createdAt).toLocaleString()}
-              </time>
-            </SecondaryCell>
-          </td>
-        )}
-        {columns.visible('startedAt') && (
-          <td className="whitespace-nowrap">
-            <SecondaryCell>
-              {job.startedAt ? new Date(job.startedAt).toLocaleString() : '-'}
-            </SecondaryCell>
-          </td>
-        )}
-        {columns.visible('finishedAt') && (
-          <td className="whitespace-nowrap">
-            <SecondaryCell>
-              {job.finishedAt ? new Date(job.finishedAt).toLocaleString() : '-'}
-            </SecondaryCell>
-          </td>
-        )}
-        {columns.visible('result') && (
-          <td>
-            <SecondaryCell text={result}>{result}</SecondaryCell>
-          </td>
-        )}
-      </tr>
-    )
-  }
-  return (
-    <section
-      className={history ? undefined : 'admin-page jobs-page'}
-      aria-label={history ? 'Jobs' : undefined}
-    >
-      {history ? (
-        <h2 className="text-sm font-semibold">Jobs</h2>
-      ) : (
-        !provider && <h1>{jobsHeadings[mediaType]}</h1>
-      )}
-      {batchId && (
-        <div className="batch-actions">
-          <strong>Import / refresh jobs</strong>
-          <Link href={scopedHref('/jobs', mediaType)}>All jobs</Link>
-          {!retryConfirmed && (
+              {state === 'waiting' && job.waiting?.until
+                ? `Until ${formatUntil(job.waiting.until, now)}`
+                : statusLabels[state]}
+              {dismissal ? ' · dismissed' : ''}
+            </Status>
+          ),
+          provider: (
+            <Link href={`/providers/${encodeURIComponent(job.provider)}`}>
+              {providerName(job.provider)}
+            </Link>
+          ),
+          progress: job.progress?.total ? (
+            <Progress
+              done={job.progress.done}
+              total={job.progress.total}
+              compact
+            />
+          ) : progressLabel ? (
+            <span className="ds-muted">{progressLabel}</span>
+          ) : null,
+          createdAt: <When value={job.createdAt} now={now} />,
+          startedAt: <When value={job.startedAt} now={now} />,
+          finishedAt: <When value={job.finishedAt} now={now} />,
+          duration: elapsed(job.startedAt, job.finishedAt, now),
+          result: result ? (
+            <span
+              className={job.status === 'failed' ? 'ops-danger' : undefined}
+              title={result}
+            >
+              {result}
+            </span>
+          ) : (
+            <span className="ds-muted">{EMPTY_VALUE}</span>
+          ),
+        })}
+        <TableCell align="end">
+          {rowAction && (
             <Button
-              disabled={retryBatch.isPending || bulkPending}
-              onClick={() => setRetryConfirmed(true)}
+              size="xs"
+              disabled={busy}
+              onClick={() => {
+                selectJobs([job.id])
+                setRequest({ action: rowAction, jobId: job.id, at: Date.now() })
+              }}
             >
-              Review batch retry
+              {rowAction === 'retry' ? 'Retry' : 'Cancel'}
             </Button>
           )}
-          {retryConfirmed && (
-            <div
-              className="job-action-review"
-              role="region"
-              aria-label="Review batch retry"
-            >
-              <p>
-                Queue all unfinished work in this batch, including jobs beyond
-                the loaded list. Provider limits and cooldowns apply.
-              </p>
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="primary"
-                  disabled={retryBatch.isPending || bulkPending}
-                  onClick={() => retryBatch.mutate()}
-                >
-                  Confirm retry entire batch
-                </Button>
+        </TableCell>
+      </TableRow>
+    )
+  }
+  function renderBatchRows(batch: JobBatchEntry, index: number) {
+    const open = expanded.has(batch.batchId)
+    const state = batchStatus(batch)
+    const title = batchTitle(batch)
+    const target = batchTarget(batch)
+    const result = batchResult(batch, now)
+    const page = childPages.get(batch.batchId)
+    const href = `/jobs?batchId=${encodeURIComponent(batch.batchId)}`
+    const retryable =
+      batch.failed + batch.cancelled > 0 && batch.queued + batch.running === 0
+    return (
+      <Fragment key={`batch:${batch.batchId}`}>
+        <TableRow group>
+          <TableCell sticky={0}>
+            <span aria-hidden="true" />
+          </TableCell>
+          {cells({
+            title: (
+              <span className="ds-cell-id">
                 <Button
                   variant="ghost"
-                  disabled={retryBatch.isPending}
-                  onClick={() => setRetryConfirmed(false)}
+                  size="xs"
+                  icon
+                  aria-expanded={open}
+                  aria-label={`${open ? 'Hide' : 'Show'} jobs in ${title} · ${target}`}
+                  onClick={() => toggleBatch(batch.batchId, index)}
                 >
-                  Back
+                  {open ? (
+                    <ChevronDown className="ds-i" aria-hidden="true" />
+                  ) : (
+                    <ChevronRight className="ds-i" aria-hidden="true" />
+                  )}
                 </Button>
-              </div>
-            </div>
+                <Link href={href} className="ds-cell-title">
+                  {title}
+                </Link>
+                <span className="ds-cell-sub">{target}</span>
+              </span>
+            ),
+            status: (
+              <Status state={state} title={batch.waiting?.detail}>
+                {state === 'waiting' && batch.waiting?.until
+                  ? `Until ${formatUntil(batch.waiting.until, now)}`
+                  : statusLabels[state]}
+              </Status>
+            ),
+            provider: batch.provider ? (
+              <Link href={`/providers/${encodeURIComponent(batch.provider)}`}>
+                {providerName(batch.provider)}
+              </Link>
+            ) : (
+              <span
+                className="ds-muted"
+                title={batch.providers.map(providerName).join(', ')}
+              >
+                {formatCount(batch.providers.length)} providers
+              </span>
+            ),
+            progress: (
+              <Progress done={batchDone(batch)} total={batch.total} compact />
+            ),
+            createdAt: <When value={batch.createdAt} now={now} />,
+            startedAt: <When value={batch.startedAt} now={now} />,
+            finishedAt: <When value={batch.finishedAt} now={now} />,
+            duration: elapsed(batch.startedAt, batch.finishedAt, now),
+            result: result ? (
+              <span
+                className={batch.failed ? 'ops-danger' : undefined}
+                title={batch.waiting?.detail ?? result}
+              >
+                {result}
+              </span>
+            ) : (
+              <span className="ds-muted">{EMPTY_VALUE}</span>
+            ),
+          })}
+          <TableCell align="end">
+            {retryable && (
+              <Button
+                size="xs"
+                disabled={busy}
+                onClick={() => {
+                  retryBatch.reset()
+                  setRetryBatchId(batch.batchId)
+                  setBatchRetryConfirmed(false)
+                }}
+              >
+                Retry
+              </Button>
+            )}
+          </TableCell>
+        </TableRow>
+        {open &&
+          (page?.data ? (
+            <>
+              {page.data.items.map((job) => renderJobRow(job, { child: true }))}
+              {!page.data.items.length && (
+                <TableRow child>
+                  <TableCell colSpan={colSpan} className="ds-muted">
+                    No matching jobs in this batch.
+                  </TableCell>
+                </TableRow>
+              )}
+              {page.data.totalCount > page.data.items.length && (
+                <TableRow child>
+                  <TableCell colSpan={colSpan} className="ds-muted">
+                    Showing {formatCount(page.data.items.length)} of{' '}
+                    {formatCount(page.data.totalCount)} ·{' '}
+                    <Link href={href}>Open batch</Link>
+                  </TableCell>
+                </TableRow>
+              )}
+            </>
+          ) : (
+            <TableRow child>
+              <TableCell colSpan={colSpan} className="ds-muted">
+                {page?.isError ? (
+                  <span role="alert">
+                    Could not load jobs.{' '}
+                    <Button
+                      variant="link"
+                      size="xs"
+                      onClick={() => page.refetch()}
+                    >
+                      Retry
+                    </Button>
+                  </span>
+                ) : (
+                  <span role="status">Loading jobs...</span>
+                )}
+              </TableCell>
+            </TableRow>
+          ))}
+      </Fragment>
+    )
+  }
+  const countLabel = grouped
+    ? formatItemCount(jobs.total, {
+        one: 'job or batch',
+        other: 'jobs and batches',
+      })
+    : formatItemCount(jobs.total, { one: 'job', other: 'jobs' })
+  const table = (
+    <>
+      {reviewedBatch && (
+        <Toolbar className="ops-batch">
+          {batchId && (
+            <>
+              <strong>Import / refresh jobs</strong>
+              <Link href="/jobs">All jobs</Link>
+            </>
           )}
-          {retryBatch.isError && <p role="alert">{retryBatch.error.message}</p>}
-          {retryBatch.data && (
-            <p role="status">
-              {retryBatch.data.queued} queued, {retryBatch.data.skipped}{' '}
-              skipped.
+          {retryBatch.data ? (
+            <span role="status">
+              {formatCount(retryBatch.data.queued)} queued,{' '}
+              {formatCount(retryBatch.data.skipped)} skipped.
               {retryBatch.data.warnings.map((warning) => (
                 <span className="block" key={warning}>
                   {warning}
                 </span>
               ))}
-            </p>
+            </span>
+          ) : !batchRetryConfirmed ? (
+            <Button
+              disabled={busy}
+              onClick={() => setBatchRetryConfirmed(true)}
+            >
+              Review batch retry
+            </Button>
+          ) : (
+            <div
+              className="ops-review"
+              role="region"
+              aria-label="Review batch retry"
+            >
+              <Notice
+                tone="attention"
+                action={
+                  <span className="ds-actions">
+                    <Button
+                      variant="primary"
+                      size="xs"
+                      disabled={busy}
+                      onClick={() =>
+                        retryBatch.mutate({
+                          id: reviewedBatch,
+                          confirmed: true,
+                        })
+                      }
+                    >
+                      Confirm retry entire batch
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="xs"
+                      disabled={retryBatch.isPending}
+                      onClick={() => {
+                        setBatchRetryConfirmed(false)
+                        if (!batchId) setRetryBatchId(null)
+                      }}
+                    >
+                      Back
+                    </Button>
+                  </span>
+                }
+              >
+                Queue all unfinished work in this batch, including jobs beyond
+                the loaded list. Provider limits and cooldowns apply.
+              </Notice>
+            </div>
           )}
+          {retryBatch.isError && (
+            <span role="alert" className="ops-danger">
+              {retryBatch.error.message}
+            </span>
+          )}
+        </Toolbar>
+      )}
+      <Toolbar>
+        <SecondaryTableSearch
+          label="Search jobs"
+          placeholder="Search titles or providers"
+          maxLength={200}
+          value={draft}
+          disabled={bulkPending}
+          onChange={(value) => {
+            setDraft(value)
+            setParams({ q: value, page: '' })
+          }}
+        />
+        {!provider && (
+          <Select
+            aria-label="Library"
+            value={library ?? ''}
+            disabled={bulkPending}
+            onChange={(event) =>
+              setParams({
+                mediaType: systemLibraryFilter(event.target.value) ?? '',
+                page: '',
+              })
+            }
+          >
+            {libraryOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </Select>
+        )}
+        <ToolbarCount>{countLabel}</ToolbarCount>
+        {columns.controls && <ToolbarEnd>{columns.controls}</ToolbarEnd>}
+      </Toolbar>
+      {jobs.isError && jobs.hasTotal && (
+        <div className="ops-notice">
+          <Notice
+            tone="danger"
+            action={
+              <Button size="xs" onClick={jobs.retry}>
+                Retry
+              </Button>
+            }
+          >
+            Could not load jobs.
+          </Notice>
         </div>
       )}
-      <SecondaryTableToolbar
-        search={
-          <Input
-            type="search"
-            aria-label={history ? 'Search job history' : 'Search jobs'}
-            placeholder="Search titles or providers"
-            maxLength={200}
-            value={draft}
-            disabled={bulkPending}
-            onChange={(event) => {
-              setDraft(event.target.value)
-              setParams({ q: event.target.value, page: '' })
-            }}
-          />
-        }
-        count={`${jobs.total.toLocaleString()} jobs`}
-        columns={columns.controls}
-      />
-      {jobs.isError && jobs.hasTotal && (
-        <p role="alert">
-          Could not load jobs.{' '}
-          <button type="button" onClick={jobs.retry}>
-            Retry
-          </button>
-        </p>
-      )}
-      <SecondaryTableFrame>
-        <SecondaryTableScroll
-          className={history ? 'table-scroll-bounded' : 'jobs-scroll'}
-          ref={jobs.scroller}
-          onScroll={jobs.onScroll}
-          data-inspector-scroll={history || undefined}
-          role="region"
-          aria-label={history ? 'Job history' : 'Jobs'}
-          aria-busy={jobs.isFetching}
-        >
-          <table
-            className="ds-table"
-            aria-label={history ? 'Job history' : 'Jobs'}
-          >
-            <thead>
-              <tr>
-                <th scope="col" className="table-selection-cell">
-                  <input
-                    ref={selectAll}
-                    type="checkbox"
-                    aria-label="Select all loaded eligible jobs"
-                    checked={allChecked}
-                    disabled={
-                      bulkPending ||
-                      retryBatch.isPending ||
-                      !actionableIds.length
-                    }
-                    onChange={(event) =>
-                      selectJobs(event.target.checked ? actionableIds : [])
-                    }
-                  />
-                </th>
-                <th scope="col">
-                  <span className="sr-only">Details</span>
-                </th>
-                {shownColumns.map((column) => (
+      <SecondaryTableScroll
+        ref={jobs.scroller}
+        onScroll={jobs.onScroll}
+        role="region"
+        aria-label="Jobs"
+        aria-busy={jobs.isFetching}
+      >
+        <table className="ds-table ops-jobs-table" aria-label="Jobs">
+          <thead>
+            <tr>
+              <TableHead sticky={0} style={{ width: selectionWidth }}>
+                <input
+                  ref={selectAll}
+                  type="checkbox"
+                  className="ds-check"
+                  aria-label="Select all loaded eligible jobs"
+                  checked={allChecked}
+                  disabled={busy || !actionableIds.length}
+                  onChange={(event) =>
+                    selectJobs(event.target.checked ? actionableIds : [])
+                  }
+                />
+              </TableHead>
+              {shownColumns.map((column) => {
+                const layout = {
+                  align: column.align,
+                  sticky: column.key === 'title' ? selectionWidth : undefined,
+                  stickyEdge: column.key === 'title',
+                }
+                if (!column.sort)
+                  return (
+                    <TableHead key={column.key} {...layout}>
+                      {column.label}
+                    </TableHead>
+                  )
+                return (
                   <SecondaryTableHead
                     key={column.key}
-                    sortKey={column.key}
+                    {...layout}
+                    sortKey={column.sort}
                     label={column.label}
                     filter={
                       column.key === 'status' ? (
@@ -598,7 +947,7 @@ export function JobsTable({ provider, mediaItemId, artistId }: JobsTableProps) {
                     }
                     sortBy={sortBy}
                     direction={direction}
-                    disabled={bulkPending || retryBatch.isPending}
+                    disabled={busy}
                     onSort={(key) =>
                       setParams({
                         sortBy: key,
@@ -609,68 +958,72 @@ export function JobsTable({ provider, mediaItemId, artistId }: JobsTableProps) {
                       })
                     }
                   />
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {!jobs.total && (
-                <TableState colSpan={columns.count + 2} error={jobs.isError}>
-                  {jobs.isPending
-                    ? 'Loading jobs...'
-                    : jobs.isError
-                      ? 'Jobs unavailable.'
-                      : deferredQuery ||
-                          statuses.length ||
-                          selectedProviders.length ||
-                          !history
-                        ? 'No matching jobs.'
-                        : 'No jobs yet.'}
-                  {jobs.isError && (
-                    <button
-                      type="button"
-                      className="ml-1 underline"
-                      onClick={jobs.retry}
-                    >
-                      Retry
-                    </button>
-                  )}
-                </TableState>
-              )}
-              {(!jobs.isError || jobs.hasTotal) && (
-                <SecondaryVirtualRows
-                  window={jobs}
-                  colSpan={columns.count + 2}
-                  renderRow={(job, index) =>
-                    jobsById.get(job.id)?.index === index ? (
-                      renderJobRow(job, index)
+                )
+              })}
+              <TableHead align="end">
+                <span className="sr-only">Actions</span>
+              </TableHead>
+            </tr>
+          </thead>
+          <tbody>
+            {!jobs.total && (
+              <TableState colSpan={colSpan} error={jobs.isError}>
+                {jobs.isPending
+                  ? 'Loading jobs...'
+                  : jobs.isError
+                    ? 'Jobs unavailable.'
+                    : 'No matching jobs.'}
+                {jobs.isError && (
+                  <Button variant="link" size="xs" onClick={jobs.retry}>
+                    Retry
+                  </Button>
+                )}
+              </TableState>
+            )}
+            {(!jobs.isError || jobs.hasTotal) && (
+              <SecondaryVirtualRows
+                window={jobs}
+                colSpan={colSpan}
+                renderRow={(item, index) => {
+                  const entry = asEntry(item)
+                  return entries.get(entryKey(entry))?.index === index ? (
+                    entry.kind === 'batch' ? (
+                      renderBatchRows(entry, index)
                     ) : (
-                      <tr aria-hidden="true">
-                        <td
-                          colSpan={columns.count + 2}
-                          style={{
-                            height: jobs.rowHeight,
-                            padding: 0,
-                            border: 0,
-                          }}
-                        />
-                      </tr>
+                      renderJobRow(entry.job)
                     )
-                  }
-                />
-              )}
-            </tbody>
-          </table>
-        </SecondaryTableScroll>
-        <SecondaryTableFooter selectedCount={selectedIds.length}>
+                  ) : (
+                    <tr aria-hidden="true">
+                      <td
+                        colSpan={colSpan}
+                        style={{ height: rowHeight, padding: 0, border: 0 }}
+                      />
+                    </tr>
+                  )
+                }}
+              />
+            )}
+          </tbody>
+        </table>
+      </SecondaryTableScroll>
+      {(actionableIds.length > 0 || bulkPending) && (
+        <TableSelectionBar>
+          {selectedIds.length > 0 && (
+            <span role="status">
+              <b>{formatCount(selectedIds.length)} selected</b>
+            </span>
+          )}
           <JobBulkActions
             jobs={actionableJobs}
             selectedIds={selectedIds}
             onSelect={selectJobs}
             onPending={setBulkPending}
-            disabled={bulkPending || retryBatch.isPending}
+            disabled={busy}
+            request={request}
           />
-        </SecondaryTableFooter>
-      </SecondaryTableFrame>
-    </section>
+        </TableSelectionBar>
+      )}
+    </>
   )
+  return <section className="ops-jobs">{table}</section>
 }

@@ -19,7 +19,11 @@ test('renders route destinations with only the current page marked active', () =
       ]}
     />,
   )
-  assert.match(html, /aria-label="Jobs navigation"/)
+  assert.match(
+    html,
+    /<nav class="ds-tabs shell-section-tabs" aria-label="Jobs navigation"/,
+  )
+  assert.match(html, /<a class="ds-tab" aria-current="page"/)
   assert.equal((html.match(/aria-current=/g) ?? []).length, 1)
   assert.match(html, /aria-current="page"[^>]*href="\/jobs\/metadata"/)
   assert.match(html, /href="\/jobs"/)
@@ -45,8 +49,11 @@ test('supports provider selection without submitting forms or invoking actions o
       ]}
     />,
   )
-  assert.match(html, /<button type="button" aria-current="true"/)
-  assert.match(html, /<span>Scraping enabled<\/span>/)
+  assert.match(html, /<button type="button" class="ds-tab" aria-current="true"/)
+  assert.match(
+    html,
+    /<span class="ds-muted ds-truncate">Scraping enabled<\/span>/,
+  )
   assert.equal(selected, false)
   assert.doesNotMatch(html, /href=/)
 })

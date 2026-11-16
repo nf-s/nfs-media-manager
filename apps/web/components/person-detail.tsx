@@ -2,13 +2,21 @@
 
 import Link from 'next/link'
 import { useQuery } from '@tanstack/react-query'
+import { UserRound } from 'lucide-react'
 import {
   PersonDetailSchema,
   PersonFilmPageSchema,
   type PersonDetail as Person,
 } from '@repo/schemas/creators'
 import type { FilmListItem } from '@repo/schemas/media'
+import {
+  DetailActionsSpacer,
+  DetailHeader,
+} from '@repo/ui/components/ds/detail-header'
+import { Section, Stats } from '@repo/ui/components/ds/facts'
 import { Button } from '@repo/ui/components/ui/button'
+import { TabsContent } from '@repo/ui/components/ui/tabs'
+import { formatCount, formatRuntime } from '@repo/ui/lib/format'
 import { fetchApiData } from '@/utils/api'
 import { personFilmsHref, personRoleLabels } from '@/utils/creator-browse'
 import { CreatorDetailState } from './creator-detail-state'
@@ -18,12 +26,19 @@ import {
   CreatorLibraryTitle,
   type CreatorLibraryColumn,
 } from './creator-library-table'
+import { DetailArt, DetailTabs, useDetailTab } from './detail-frame'
 import { usePersonRoleFilter } from './person-role-filter'
+import { ProviderSources } from './provider-sources'
 import { useConfig } from './providers'
-import { DetailSourceTabs } from './detail-source-tabs'
+
+type PersonTab = 'overview' | 'sources'
+const personTabs: readonly [PersonTab, ...PersonTab[]] = ['overview', 'sources']
 
 export function PersonDetail({ id }: { id: string }) {
   const { apiBaseUrl } = useConfig()
+  const { tab, setTab } = useDetailTab(personTabs, {
+    aliases: { films: 'overview' },
+  })
   const path = `/api/v1/people/${encodeURIComponent(id)}`
   const query = useQuery({
     queryKey: ['person', id],
@@ -40,39 +55,70 @@ export function PersonDetail({ id }: { id: string }) {
     )
   const person = query.data
   return (
-    <article className="media-detail">
+    <article className="dtl-detail">
       {query.isRefetchError && (
         <CreatorDetailState stale retry={query.refetch} subject="person" />
       )}
-      <header className="mb-4">
-        <h1 className="mb-1 break-words text-xl font-semibold">
-          {person.name}
-        </h1>
-        {person.roles.length > 0 && (
-          <p className="detail-facts">
-            {person.roles.map((role) => personRoleLabels[role]).join(' · ')}
-          </p>
-        )}
-        <div className="form-actions mt-2">
-          {person.roles.map((role) => (
-            <Button key={role} asChild>
-              <Link href={personFilmsHref(person.id, role)}>
-                Filter films as {role}
-              </Link>
-            </Button>
-          ))}
-        </div>
-      </header>
-      <DetailSourceTabs
+      <DetailHeader
+        art={
+          <DetailArt
+            src={null}
+            ratio="round"
+            fallback={<UserRound className="ds-i" aria-hidden="true" />}
+          />
+        }
+        kind="Person"
+        title={person.name}
+        facts={[
+          person.roles.map((role) => personRoleLabels[role]).join(', '),
+          `${formatCount(person.filmCount)} ${person.filmCount === 1 ? 'film' : 'films'}`,
+        ]}
+        actions={
+          <>
+            {person.roles.map((role) => (
+              <Button key={role} asChild size="md">
+                <Link href={personFilmsHref(person.id, role)}>
+                  Filter films as {personRoleLabels[role].toLowerCase()}
+                </Link>
+              </Button>
+            ))}
+            <DetailActionsSpacer />
+          </>
+        }
+      />
+      <DetailTabs
         label="Person details"
-        overviewLabel="Films"
-        sources={{
-          rows: [],
-          unavailable: 'No provider sources are stored for this person.',
-        }}
+        value={tab}
+        onChange={setTab}
+        tabs={[
+          { value: 'overview', label: 'Overview' },
+          { value: 'sources', label: 'Sources' },
+        ]}
       >
-        <PersonFilms person={person} path={`${path}/films`} />
-      </DetailSourceTabs>
+        <TabsContent value="overview">
+          <Section flush>
+            <Stats
+              items={[
+                { label: 'films', value: formatCount(person.filmCount) },
+                {
+                  label: 'as director',
+                  value: formatCount(person.directorCount),
+                },
+                { label: 'as actor', value: formatCount(person.actorCount) },
+              ]}
+            />
+          </Section>
+          <Section title="Films" note={formatCount(person.filmCount)}>
+            <PersonFilms person={person} path={`${path}/films`} />
+          </Section>
+        </TabsContent>
+        <TabsContent value="sources">
+          <ProviderSources
+            rows={[]}
+            unavailable="No provider sources are stored for this person."
+          />
+        </TabsContent>
+      </DetailTabs>
     </article>
   )
 }
@@ -116,9 +162,8 @@ function PersonFilms({ person, path }: { person: Person; path: string }) {
     {
       key: 'runtimeMinutes',
       label: 'Runtime',
-      className: 'numeric',
-      render: (film) =>
-        film.runtimeMinutes === null ? '-' : `${film.runtimeMinutes} min`,
+      align: 'end',
+      render: (film) => formatRuntime(film.runtimeMinutes),
     },
     {
       key: 'watched',
@@ -147,7 +192,7 @@ function PersonFilms({ person, path }: { person: Person; path: string }) {
           film.releaseDate?.slice(0, 4),
           film.runtimeMinutes === null
             ? undefined
-            : `${film.runtimeMinutes} min`,
+            : formatRuntime(film.runtimeMinutes),
           film.watched ? 'Watched' : undefined,
         ]
           .filter(Boolean)

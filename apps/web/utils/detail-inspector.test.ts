@@ -4,6 +4,9 @@ import {
   detailEntries,
   detailEntryParams,
   detailPageHref,
+  detailTab,
+  parseTagDetailId,
+  tagDetailId,
   userDetailId,
   withoutDetailEntries,
   type DetailEntry,
@@ -159,4 +162,43 @@ test('job, retry and item navigation retain each parent view in the inspector st
   const back = detailEntryParams('/albums', params, entries.slice(0, -1))
   assert.deepEqual(detailEntries('/albums', back), entries.slice(0, -1))
   assert.deepEqual(withoutDetailEntries('/albums', back), workspace)
+})
+
+test('tags open in the drawer with their library and a Tags page link', () => {
+  const tag: DetailEntry = { kind: 'tag', id: tagDetailId('film', 'tag:7') }
+  assert.deepEqual(parseTagDetailId(tag.id), { mediaType: 'film', id: 'tag:7' })
+  assert.equal(parseTagDetailId('track:tag-1'), null)
+  assert.equal(parseTagDetailId('album:'), null)
+  const url = detailEntryParams('/albums', new URLSearchParams(), [tag])
+  assert.deepEqual(detailEntries('/albums', url), [tag])
+  assert.deepEqual(
+    detailEntries(
+      '/albums',
+      detailEntryParams('/albums', new URLSearchParams(), [
+        { kind: 'tag', id: 'unknown-tag' },
+      ]),
+    ),
+    [],
+  )
+  const page = new URL(detailPageHref(tag), 'http://localhost')
+  assert.equal(page.pathname, '/tags')
+  assert.equal(page.searchParams.get('mediaType'), 'film')
+  assert.equal(page.searchParams.get('tag'), 'tag:7')
+})
+
+test('detail tabs fall back to the first tab and map older tab values', () => {
+  const tabs: readonly ['overview', 'listening', 'sources'] = [
+    'overview',
+    'listening',
+    'sources',
+  ]
+  const aliases = { tracks: 'overview', history: 'sources' } satisfies Record<
+    string,
+    'overview' | 'sources'
+  >
+  assert.equal(detailTab(null, tabs, aliases), 'overview')
+  assert.equal(detailTab('listening', tabs, aliases), 'listening')
+  assert.equal(detailTab('history', tabs, aliases), 'sources')
+  assert.equal(detailTab('tracks', tabs, aliases), 'overview')
+  assert.equal(detailTab('unknown', tabs, aliases), 'overview')
 })

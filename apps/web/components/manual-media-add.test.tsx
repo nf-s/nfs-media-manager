@@ -44,9 +44,11 @@ test('stored provider results remain bounded even when their snapshot includes a
         </ConfigContext.Provider>
       </QueryClientProvider>,
     )
-    assert.match(html, /manual-add-results-scroll/)
-    assert.doesNotMatch(html, /height:43120px/)
-    assert.equal((html.match(/manual-add-result-slot/g) ?? []).length, 10)
+    assert.match(html, /class="sec-bounded sec-results"/)
+    assert.doesNotMatch(html, /height:24010px/)
+    assert.equal((html.match(/class="sec-result-slot"/g) ?? []).length, 10)
+    assert.match(html, /class="ds-list" data-compact=""/)
+    assert.match(html, /aria-label="Add Synthetic result 0"/)
     assert.match(html, />Next</)
     assert.equal(network.mock.callCount(), 0)
   } finally {

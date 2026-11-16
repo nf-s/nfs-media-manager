@@ -44,6 +44,27 @@ export function providerIconUrl(
   )
 }
 
+const ratingSources: Record<string, string> = {
+  rym: 'RYM',
+  imdb: 'IMDb',
+  tmdb: 'TMDb',
+  metacritic: 'Metacritic',
+  metacriticuser: 'MC users',
+  rottentomatoes: 'RT',
+  'rottentomatoes-audience': 'RT audience',
+  discogs: 'Discogs',
+  trakt: 'Trakt',
+  letterboxd: 'Letterboxd',
+}
+
+/** The short, neutral source label shown beside a score and on its column. */
+export function ratingSource(
+  display: Pick<ProviderRating['display'], 'provider' | 'shortLabel'>,
+  label: string,
+): string {
+  return display.shortLabel ?? ratingSources[display.provider] ?? label
+}
+
 export function isCompactRating(
   rating: Pick<ProviderRating, 'display'>,
 ): boolean {
@@ -239,11 +260,13 @@ export function metascoreTone(
   return score >= 61 ? 'positive' : score >= 40 ? 'mixed' : 'negative'
 }
 
+/** The score in the source's precision: a decimal on scales up to 10, whole numbers above. */
 export function ratingScore(rating: ProviderRating): string {
   if (rating.score === undefined) return ''
-  return new Intl.NumberFormat('en', { maximumFractionDigits: 2 }).format(
-    rating.score,
-  )
+  return new Intl.NumberFormat('en', {
+    minimumFractionDigits: rating.display.scale <= 10 ? 1 : 0,
+    maximumFractionDigits: 2,
+  }).format(rating.score)
 }
 
 export function ratingDescription(rating: ProviderRating): string {

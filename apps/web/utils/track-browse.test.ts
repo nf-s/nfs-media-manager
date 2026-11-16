@@ -69,7 +69,7 @@ test('filter links round-trip through the URL parameter', () => {
 })
 
 test('durations use minutes and seconds', () => {
-  assert.equal(formatTrackDuration(null), '-')
+  assert.equal(formatTrackDuration(null), '–')
   assert.equal(formatTrackDuration(5), '0:05')
   assert.equal(formatTrackDuration(245), '4:05')
 })

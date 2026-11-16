@@ -11,6 +11,7 @@ import type {
   ProviderSummary,
 } from '@repo/schemas/provider'
 import { Button } from '@repo/ui/components/ui/button'
+import { formatUntil } from '@repo/ui/lib/format'
 import { fetchApiData } from '@/utils/api'
 import {
   createProviderDispatchInput,
@@ -18,15 +19,19 @@ import {
   type ProviderDispatchAction,
 } from '@/utils/provider-job-dispatch'
 import { useConfig } from './providers'
-import { useProviderLocalWorkerMode } from './provider-local-worker'
+import type { useProviderLocalWorkerMode } from './provider-local-worker'
 
-export default function ProviderJobDispatch({
-  provider,
-  worker,
-}: {
-  provider: ProviderSummary
-  worker?: ProviderLocalWorkerStatus
-}) {
+type DispatchProvider = Pick<
+  ProviderSummary,
+  'id' | 'displayName' | 'supportsJobDispatchControl' | 'safety'
+>
+
+/**
+ * The cloud dispatcher of one provider: its status, and Pause, Resume and
+ * Restart behind a review step. Every action is reviewed against the status
+ * it was started from; a change in between asks for a new review.
+ */
+export function useProviderDispatch(provider: DispatchProvider) {
   const { apiBaseUrl } = useConfig()
   const client = useQueryClient()
   const [review, setReview] = useState<{
@@ -78,9 +83,6 @@ export default function ProviderJobDispatch({
       await client.invalidateQueries({ queryKey: ['providers'] })
     },
   })
-  const changeMode = useProviderLocalWorkerMode(provider.id)
-  const busy = update.isPending || changeMode.isPending
-  if (!provider.supportsJobDispatchControl) return null
   const resumeLabel =
     data?.paused || data?.stopped
       ? restricted
@@ -89,169 +91,174 @@ export default function ProviderJobDispatch({
       : restricted
         ? 'Restart selected jobs'
         : 'Restart queue'
-  const actionLabel =
-    reviewing === 'pause'
-      ? 'Pause queue'
-      : reviewing === 'resume-all'
-        ? 'Resume all queued jobs'
-        : resumeLabel
-  const cooldownUntil = provider.safety?.cooldownUntil
-  const nextMode = worker?.mode === 'local' ? 'cloud' : 'local'
-  const switchRestriction = worker?.blocked
-    ? 'Review the local request before switching.'
-    : !data?.paused || active > 0 || worker?.active
-      ? 'Pause the queue and wait for active work to finish.'
-      : null
-  function startReview(action: ProviderDispatchAction) {
-    if (!data) return
-    update.reset()
-    setReview({
-      action,
-      state,
-      input: createProviderDispatchInput(action, data),
-    })
+  return {
+    provider,
+    status,
+    data,
+    restricted,
+    active,
+    waitingToResume,
+    reviewing,
+    update,
+    resumeLabel,
+    actionLabel:
+      reviewing === 'pause'
+        ? 'Pause queue'
+        : reviewing === 'resume-all'
+          ? 'Resume all queued jobs'
+          : resumeLabel,
+    startReview(action: ProviderDispatchAction) {
+      if (!data) return
+      update.reset()
+      setReview({
+        action,
+        state,
+        input: createProviderDispatchInput(action, data),
+      })
+    },
+    cancelReview() {
+      setReview(null)
+    },
   }
+}
+
+export type ProviderDispatch = ReturnType<typeof useProviderDispatch>
+
+/** One line naming the dispatcher state. */
+export function dispatchStateLabel(dispatch: ProviderDispatch) {
+  const { data, active } = dispatch
+  if (!dispatch.provider.supportsJobDispatchControl || !data) return null
+  const state = data.stopped
+    ? data.paused
+      ? 'Paused and stopped'
+      : 'Stopped'
+    : data.paused
+      ? 'Paused'
+      : 'Enabled'
+  return active > 0
+    ? `${state} · ${active} active ${active === 1 ? 'dispatch' : 'dispatches'}`
+    : state
+}
+
+/**
+ * Resume or restart, Resume all and Pause; each opens the review. `compact`
+ * (table rows) offers only Resume for a held queue and Pause for a running one.
+ */
+export function ProviderDispatchActions({
+  dispatch,
+  compact = false,
+  busy = false,
+}: {
+  dispatch: ProviderDispatch
+  compact?: boolean
+  busy?: boolean
+}) {
+  const { data, reviewing, update, waitingToResume, restricted, active } =
+    dispatch
+  if (!dispatch.provider.supportsJobDispatchControl || !data || reviewing)
+    return null
+  const disabled = busy || update.isPending
+  const size = compact ? 'xs' : 'md'
+  const held = data.paused || data.stopped
   return (
-    <section className="grid shrink-0 gap-2" aria-label="Job dispatch">
-      {status.isPending && <p role="status">Loading queue status...</p>}
+    <>
+      {(!compact || held) && (
+        <Button
+          size={size}
+          disabled={disabled || waitingToResume}
+          onClick={() => dispatch.startReview('resume')}
+        >
+          {dispatch.resumeLabel}
+        </Button>
+      )}
+      {restricted && !compact && (
+        <Button
+          size={size}
+          disabled={disabled || active > 0}
+          onClick={() => dispatch.startReview('resume-all')}
+        >
+          Resume all queued jobs
+        </Button>
+      )}
+      {!data.paused && (
+        <Button
+          size={size}
+          variant="ghost"
+          disabled={disabled}
+          onClick={() => dispatch.startReview('pause')}
+        >
+          Pause queue
+        </Button>
+      )}
+    </>
+  )
+}
+
+/** What the reviewed action does, with Confirm and Back, and its result. */
+export function ProviderDispatchReview({
+  dispatch,
+  busy = false,
+}: {
+  dispatch: ProviderDispatch
+  busy?: boolean
+}) {
+  const {
+    provider,
+    status,
+    reviewing,
+    restricted,
+    update,
+    waitingToResume,
+    active,
+  } = dispatch
+  if (!provider.supportsJobDispatchControl) return null
+  return (
+    <>
       {status.isError && (
         <p role="alert">
           Could not load queue status.{' '}
-          <Button variant="ghost" onClick={() => status.refetch()}>
+          <Button size="xs" variant="ghost" onClick={() => status.refetch()}>
             Retry
           </Button>
         </p>
       )}
-      {status.isSuccess && !data && <p>Queue status is unavailable.</p>}
-      {data && (
-        <>
+      {reviewing && (
+        <div
+          className="providers-confirm"
+          role="region"
+          aria-label="Review queue action"
+        >
           <p>
-            <strong>
-              {data.stopped
-                ? data.paused
-                  ? 'Queue paused and stopped'
-                  : 'Queue stopped'
-                : data.paused
-                  ? 'Queue paused'
-                  : 'Queue enabled'}
-            </strong>
-            {active > 0 &&
-              ` · ${active} active ${active === 1 ? 'dispatch' : 'dispatches'}`}
+            {reviewing === 'pause'
+              ? 'Stop starting queued jobs. Active requests may finish.'
+              : reviewing === 'resume-all' || !restricted
+                ? `Resume all queued ${provider.displayName} jobs across libraries. Failed jobs still need Retry. Provider limits, cooldowns and access blocks apply.`
+                : `Resume only the previously selected ${provider.displayName} jobs. Other queued jobs will wait. Provider limits, cooldowns and access blocks apply.`}
           </p>
-          {(data.failures > 0 || data.infrastructureFailures > 0) && (
-            <p className="muted">
-              {data.failures} job failures · {data.infrastructureFailures} queue
-              errors. Review failed job details before restarting.
-            </p>
-          )}
-          {restricted && (
-            <p className="muted">
-              Dispatch is limited to {data.allowedJobIds?.length ?? 0}{' '}
-              previously selected{' '}
-              {data.allowedJobIds?.length === 1 ? 'job' : 'jobs'}. Other queued
-              jobs will wait.
-            </p>
-          )}
-          {waitingToResume && (
-            <p className="muted">
-              Waiting for active work to finish before restarting.
-            </p>
-          )}
-          {provider.safety?.halted ? (
-            <p className="muted">
-              Provider access is blocked. Restarting the queue does not clear
-              this block.
-            </p>
-          ) : cooldownUntil && Date.parse(cooldownUntil) > Date.now() ? (
-            <p className="muted">
-              Provider cooldown until {new Date(cooldownUntil).toLocaleString()}
-              .
-            </p>
-          ) : null}
-          {reviewing ? (
-            <div
-              className="grid gap-2"
-              role="region"
-              aria-label="Review queue action"
+          <span className="ds-actions">
+            <Button
+              size="xs"
+              variant="primary"
+              disabled={
+                busy ||
+                update.isPending ||
+                (reviewing !== 'pause' && waitingToResume) ||
+                (reviewing === 'resume-all' && active > 0)
+              }
+              onClick={() => update.mutate(reviewing)}
             >
-              <p>
-                {reviewing === 'pause'
-                  ? 'Stop starting queued jobs. Active requests may finish.'
-                  : reviewing === 'resume-all' || !restricted
-                    ? `Resume all queued ${provider.displayName} jobs across libraries. Failed jobs still need Retry. Provider limits, cooldowns and access blocks apply.`
-                    : `Resume only the previously selected ${provider.displayName} jobs. Other queued jobs will wait. Provider limits, cooldowns and access blocks apply.`}
-              </p>
-              <div className="form-actions">
-                <Button
-                  variant="primary"
-                  disabled={
-                    busy ||
-                    (reviewing !== 'pause' && waitingToResume) ||
-                    (reviewing === 'resume-all' && active > 0)
-                  }
-                  onClick={() => update.mutate(reviewing)}
-                >
-                  Confirm {actionLabel.toLowerCase()}
-                </Button>
-                <Button
-                  variant="ghost"
-                  disabled={busy}
-                  onClick={() => setReview(null)}
-                >
-                  Back
-                </Button>
-              </div>
-            </div>
-          ) : (
-            <div className="form-actions">
-              <Button
-                disabled={busy || waitingToResume}
-                onClick={() => startReview('resume')}
-              >
-                {resumeLabel}
-              </Button>
-              {restricted && (
-                <Button
-                  disabled={busy || active > 0}
-                  onClick={() => startReview('resume-all')}
-                >
-                  Resume all queued jobs
-                </Button>
-              )}
-              {!data.paused && (
-                <Button
-                  variant="ghost"
-                  disabled={busy}
-                  onClick={() => startReview('pause')}
-                >
-                  Pause queue
-                </Button>
-              )}
-            </div>
-          )}
-        </>
-      )}
-      {worker?.supportsModeSwitch && (
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-          <Button
-            disabled={
-              busy || !!reviewing || !!switchRestriction || status.isError
-            }
-            onClick={() => changeMode.mutate(nextMode)}
-          >
-            {changeMode.isPending
-              ? 'Switching...'
-              : nextMode === 'cloud'
-                ? 'Switch to Cloudflare'
-                : 'Switch to Local'}
-          </Button>
-          {switchRestriction && <p className="muted">{switchRestriction}</p>}
+              Confirm {dispatch.actionLabel.toLowerCase()}
+            </Button>
+            <Button
+              size="xs"
+              variant="ghost"
+              disabled={busy || update.isPending}
+              onClick={dispatch.cancelReview}
+            >
+              Back
+            </Button>
+          </span>
         </div>
-      )}
-      {changeMode.isError && (
-        <p role="alert">
-          {changeMode.error.message || 'Could not switch transport.'}
-        </p>
       )}
       {update.isError && <p role="alert">{update.error.message}</p>}
       {update.isSuccess && (
@@ -261,6 +268,100 @@ export default function ProviderJobDispatch({
             : 'Queue restart requested. Provider limits remain enforced.'}
         </p>
       )}
-    </section>
+    </>
+  )
+}
+
+/** Failures, a restricted selection and blocks that a restart does not clear. */
+export function ProviderDispatchNotes({
+  dispatch,
+}: {
+  dispatch: ProviderDispatch
+}) {
+  const { provider, status, data, restricted, waitingToResume } = dispatch
+  if (!provider.supportsJobDispatchControl) return null
+  if (status.isSuccess && !data)
+    return <p className="ds-help">Queue status is unavailable.</p>
+  if (!data) return null
+  const cooldownUntil = provider.safety?.cooldownUntil
+  return (
+    <>
+      {(data.failures > 0 || data.infrastructureFailures > 0) && (
+        <p className="ds-help">
+          {data.failures} job failures · {data.infrastructureFailures} queue
+          errors. Review failed job details before restarting.
+        </p>
+      )}
+      {restricted && (
+        <p className="ds-help">
+          Dispatch is limited to {data.allowedJobIds?.length ?? 0} previously
+          selected {data.allowedJobIds?.length === 1 ? 'job' : 'jobs'}. Other
+          queued jobs will wait.
+        </p>
+      )}
+      {waitingToResume && (
+        <p className="ds-help">
+          Waiting for active work to finish before restarting.
+        </p>
+      )}
+      {provider.safety?.halted ? (
+        <p className="ds-help">
+          Provider access is blocked. Restarting the queue does not clear this
+          block.
+        </p>
+      ) : cooldownUntil && Date.parse(cooldownUntil) > Date.now() ? (
+        <p className="ds-help">
+          Provider cooldown until {formatUntil(cooldownUntil)}.
+        </p>
+      ) : null}
+    </>
+  )
+}
+
+/** Moves the provider between the cloud and its local worker once the queue is paused and drained. */
+export function ProviderWorkerModeSwitch({
+  worker,
+  dispatch,
+  changeMode,
+}: {
+  worker?: ProviderLocalWorkerStatus
+  dispatch: ProviderDispatch
+  changeMode: ReturnType<typeof useProviderLocalWorkerMode>
+}) {
+  if (!worker?.supportsModeSwitch) return null
+  const { data, active, reviewing, update, status } = dispatch
+  const nextMode = worker.mode === 'local' ? 'cloud' : 'local'
+  const restriction = worker.blocked
+    ? 'Review the local request before switching.'
+    : !data?.paused || active > 0 || worker.active
+      ? 'Pause the queue and wait for active work to finish.'
+      : null
+  return (
+    <>
+      <span className="ds-actions">
+        <Button
+          disabled={
+            update.isPending ||
+            changeMode.isPending ||
+            !!reviewing ||
+            !!restriction ||
+            status.isError
+          }
+          onClick={() => changeMode.mutate(nextMode)}
+        >
+          {changeMode.isPending
+            ? 'Switching...'
+            : nextMode === 'cloud'
+              ? 'Switch to Cloudflare'
+              : 'Switch to Local'}
+        </Button>
+        {restriction && <span className="ds-help">{restriction}</span>}
+      </span>
+      {changeMode.isError && (
+        <p role="alert">
+          {changeMode.error.message || 'Could not switch transport.'}
+        </p>
+      )}
+    </>
   )
 }

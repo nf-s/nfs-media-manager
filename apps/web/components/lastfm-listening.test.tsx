@@ -8,18 +8,14 @@ import {
   SearchParamsContext,
 } from 'next/dist/shared/lib/hooks-client-context.shared-runtime'
 import {
-  AlbumListeningSchema,
   LastfmLinkReportSchema,
   LastfmSyncStatusSchema,
 } from '@repo/schemas/lastfm'
 import ImportsWorkspace from './imports-workspace'
 import LastfmSyncPageClient from './pages/lastfm-sync-page-client'
-import AlbumListening from './album-listening'
 import LastfmLinkPanel from './lastfm-link-panel'
 import LastfmSearchActions from './lastfm-search-actions'
-import { ListeningChart } from './listening-chart'
 import { ConfigContext } from './providers'
-import { monthBars, yearBars } from '@/utils/listening-chart'
 import { lastfmLinkKey } from '@/utils/lastfm-sync'
 
 const network = mock.method(globalThis, 'fetch', async () => {
@@ -188,12 +184,12 @@ test('Last.fm page is an album import destination and only shows stored status',
     /aria-current="page"[^>]*href="\/imports\/lastfm\?mediaType=album"/,
   )
   assert.match(html, /Last\.fm scrobbles/)
-  assert.match(html, /Not synced/)
+  assert.match(html, /data-status="never">Never</)
   assert.match(html, />Sync now</)
   assert.match(html, /runs as a background job; this page can be closed/)
   assert.doesNotMatch(
     html,
-    /<progress|>Stop<|Resume sync|View (current|last) job/,
+    /role="progressbar"|>Stop<|Resume sync|View (current|last) job/,
   )
   assert.doesNotMatch(html, /provider settings/)
 })
@@ -207,40 +203,21 @@ test('Last.fm sync retains cached status after a failed background refresh', () 
     'mediaType=album',
     [['lastfm-sync']],
   )
-  assert.match(html, /Not synced/)
+  assert.match(html, /data-status="never">Never</)
   assert.match(html, />Sync now</)
-})
-
-test('album listening retains cached scrobbles after a failed background refresh', () => {
-  const html = render(
-    [
-      [
-        ['album-listening', 'one', ''],
-        AlbumListeningSchema.parse({
-          total: 12,
-          firstListenedAt: '2026-01-01T00:00:00Z',
-          lastListenedAt: '2026-01-02T00:00:00Z',
-          months: [{ month: '2026-01', count: 12 }],
-          tracks: [],
-        }),
-      ],
-    ],
-    <AlbumListening albumId="one" />,
-    'mediaType=album',
-    [['album-listening', 'one', '']],
-  )
-  assert.match(html, /<dd>12<\/dd>/)
-  assert.match(html, /aria-label="Scrobbles by month"/)
 })
 
 test('unconfigured Last.fm links to provider settings and disables sync and schedule', () => {
   const html = syncPage({ ...idle, configured: false })
   assert.match(
     html,
-    /href="\/providers\?provider=lastfm&amp;mediaType=album">Last\.fm provider settings/,
+    /href="\/providers\/lastfm">Last\.fm provider settings/,
   )
   assert.match(html, /disabled=""[^>]*>Sync now/)
-  assert.match(html, /<select disabled=""><option value="off" selected="">Off/)
+  assert.match(
+    html,
+    /<select class="ds-select"[^>]*disabled=""><option value="off" selected="">Off/,
+  )
 })
 
 test('running sync shows progress, the current job and Stop', () => {
@@ -255,7 +232,10 @@ test('running sync shows progress, the current job and Stop', () => {
     matchedScrobbles: 1800,
     startedAt: '2026-01-01T00:00:00Z',
   })
-  assert.match(html, /<progress[^>]*value="12"[^>]*max="340"/)
+  assert.match(
+    html,
+    /role="progressbar" aria-valuemin="0" aria-valuemax="340" aria-valuenow="12"/,
+  )
   assert.match(html, /<dt>Pages fetched<\/dt><dd>12 of 340<\/dd>/)
   assert.match(html, /<dt>New scrobbles this run<\/dt><dd>2,400<\/dd>/)
   assert.match(html, /1,800 of 2,400/)
@@ -302,7 +282,7 @@ test('failed and stopped syncs offer Resume sync with the stored error', () => {
     errorMessage: 'Last.fm returned an error',
   })
   assert.match(failed, />Resume sync</)
-  assert.match(failed, /role="alert">Last\.fm returned an error/)
+  assert.match(failed, /role="alert">.*<span>Last\.fm returned an error/)
   assert.match(syncPage({ ...idle, state: 'stopped' }), />Resume sync</)
 })
 
@@ -363,8 +343,11 @@ test('scrobble links show reason totals and link library albums', () => {
     /aria-label="Select Artist fixture — Album fixture" disabled=""/,
   )
   assert.match(html, /aria-label="Select Artist fixture — Shared title"\/>/)
-  assert.match(html, /href="\/jobs\/search-fixture">2 matches/)
-  assert.match(html, /Shift-click to select a range/)
+  assert.match(
+    html,
+    /href="\/jobs\/search-fixture"><span class="ds-status" data-status="done">2 matches/,
+  )
+  assert.doesNotMatch(html, /0 selected/)
 })
 
 test('scrobble matching explanations are in a detail popup rather than a second row line', () => {
@@ -394,13 +377,13 @@ test('scrobble links use one ordered toolbar and keep the three-column summary s
   const filter = html.indexOf('aria-label="Filter Link status"')
   const count = html.indexOf('5 names')
   const columns = html.indexOf('class="table-column-controls"')
-  const actions = html.indexOf('class="job-selection-toolbar"')
+  const bar = html.indexOf('class="ds-selectbar sec-selectbar"')
   assert.ok(search > -1)
   assert.ok(search < count && count < columns && columns < filter)
-  assert.ok(filter < actions)
-  assert.ok(html.lastIndexOf('</table>') < actions)
+  assert.ok(filter < bar)
+  assert.ok(html.lastIndexOf('</table>') < bar)
   assert.equal(html.match(/class="table-column-controls"/g)?.length, 1)
-  assert.equal(html.match(/class="secondary-table-toolbar"/g)?.length, 1)
+  assert.equal(html.match(/class="ds-toolbar"/g)?.length, 1)
   const summary = html.slice(0, search)
   assert.match(summary, /aria-sort="ascending"><div[^>]*><button[^>]*>Status/)
   assert.match(
@@ -428,8 +411,11 @@ test('bulk Spotify search requires confirmation above five explicit unlinked alb
     />,
   )
   assert.doesNotMatch(html, />Clear</)
-  assert.match(html, /Confirm 6 Spotify album searches/)
-  assert.match(html, /disabled=""[^>]*>Search Spotify albums/)
+  assert.match(
+    html,
+    /aria-haspopup="dialog" aria-expanded="false"[^>]*>Search Spotify albums/,
+  )
+  assert.doesNotMatch(html, /disabled=""[^>]*>Search Spotify albums/)
   const small = render(
     [],
     <LastfmSearchActions
@@ -442,7 +428,7 @@ test('bulk Spotify search requires confirmation above five explicit unlinked alb
   )
   assert.doesNotMatch(
     small,
-    /Confirm \d+ Spotify|disabled=""[^>]*>Search Spotify albums/,
+    /aria-haspopup="dialog"[^>]*>Search Spotify albums|disabled=""[^>]*>Search Spotify albums/,
   )
 })
 
@@ -450,9 +436,9 @@ test('scrobble link panel shows current album, library search and manual control
   const group = report.items.find((item) => item.reason === 'manual')
   assert.ok(group)
   const html = render([], <LastfmLinkPanel group={group} onClose={() => {}} />)
-  assert.match(html, /<dialog[^>]*class="tag-drawer"[^>]*aria-labelledby=/)
+  assert.match(html, /<dialog[^>]*class="sec-drawer"[^>]*aria-labelledby=/)
   assert.match(html, /aria-label="Close scrobble link"/)
-  assert.match(html, />Chosen title<\/h1>/)
+  assert.match(html, />Chosen title<\/span><\/h2>/)
   assert.match(html, /Library album:/)
   assert.match(html, /href="\/albums\/album-1">Album fixture — Artist fixture/)
   assert.match(html, />Unlink</)
@@ -494,174 +480,4 @@ test('scrobble link filter is read from the URL', () => {
   assert.match(html, /type="checkbox" checked=""\/><span>Unlinked<\/span>/)
   const unknown = syncPage(idle, 'mediaType=album&reason=unknown')
   assert.match(unknown, /disabled="">All values<\/button>/)
-})
-
-test('listening tab summarises scrobbles with a year chart and track selector', () => {
-  const listening = AlbumListeningSchema.parse({
-    total: 12,
-    firstListenedAt: '2019-11-02T10:00:00Z',
-    lastListenedAt: '2022-01-05T10:00:00Z',
-    months: [
-      { month: '2019-11', count: 4 },
-      { month: '2022-01', count: 8 },
-    ],
-    tracks: [
-      {
-        key: 'opening',
-        title: 'Opening',
-        position: 1,
-        count: 12,
-        lastListenedAt: '2022-01-05T10:00:00Z',
-      },
-    ],
-    sources: [
-      { artistName: 'Artist fixture', albumName: 'Album fixture', count: 9 },
-      {
-        artistName: 'Second artist',
-        albumName: 'Other title',
-        count: 3,
-        manual: true,
-      },
-    ],
-  })
-  const html = render(
-    [[['album-listening', 'one', ''], listening]],
-    <AlbumListening albumId="one" />,
-  )
-  assert.match(html, /<dd>12<\/dd>/)
-  assert.match(html, /<option value="" selected="">All tracks<\/option>/)
-  assert.match(html, /<option value="opening">1\. Opening \(12\)<\/option>/)
-  assert.match(html, /aria-label="Scrobbles by month"/)
-  for (const label of [
-    '2019-11: 4 scrobbles',
-    '2019-12: 0 scrobbles',
-    '2021-12: 0 scrobbles',
-    '2022-01: 8 scrobbles',
-  ])
-    assert.ok(html.includes(label), label)
-  assert.match(html, /aria-pressed="true"[^>]*>Month</)
-  assert.match(html, /<polyline/)
-  assert.match(html, /Linked scrobble names/)
-  assert.match(
-    html,
-    /aria-label="Remove Artist fixture — Album fixture"[^>]*>Remove</,
-  )
-  assert.match(html, /Artist fixture — Album fixture ·/)
-  assert.match(html, /Second artist — Other title ·.*Linked manually/)
-  assert.match(html, />Add scrobbled name</)
-  assert.doesNotMatch(html, /Similar unlinked names/)
-  assert.doesNotMatch(html, /Loading/)
-})
-
-test('albums without linked scrobbles show a plain empty state', () => {
-  const html = render(
-    [
-      [
-        ['album-listening', 'one', ''],
-        AlbumListeningSchema.parse({
-          total: 0,
-          firstListenedAt: null,
-          lastListenedAt: null,
-          months: [],
-          tracks: [],
-        }),
-      ],
-    ],
-    <AlbumListening albumId="one" />,
-  )
-  assert.match(html, /No scrobbles linked to this album\./)
-  assert.doesNotMatch(html, /<select|Scrobbles by|Linked scrobble names/)
-  assert.doesNotMatch(html, /Similar unlinked names/)
-})
-
-test('albums without linked scrobbles list similar unlinked names', () => {
-  const html = render(
-    [
-      [
-        ['album-listening', 'one', ''],
-        AlbumListeningSchema.parse({
-          total: 0,
-          firstListenedAt: null,
-          lastListenedAt: null,
-          months: [],
-          tracks: [],
-          similarUnlinked: [
-            {
-              artistName: 'Artist fixture',
-              albumName: 'Album fixture (Deluxe)',
-              count: 3,
-            },
-          ],
-        }),
-      ],
-    ],
-    <AlbumListening albumId="one" />,
-  )
-  assert.match(html, /No scrobbles linked to this album\./)
-  assert.match(html, /Similar unlinked names/)
-  assert.match(html, /Artist fixture — Album fixture \(Deluxe\) ·/)
-  assert.match(
-    html,
-    /aria-label="Add Artist fixture — Album fixture \(Deluxe\)"[^>]*>Add</,
-  )
-  assert.match(
-    html,
-    /href="\/imports\/lastfm\?mediaType=album&amp;reason=unlinked">Review scrobble links/,
-  )
-})
-
-test('chart lists every period for assistive technology without count labels on bars', () => {
-  const html = renderToStaticMarkup(
-    <ListeningChart
-      period="year"
-      style="bar"
-      bars={yearBars([{ month: '2024-03', count: 1 }])}
-    />,
-  )
-  assert.match(html, /aria-label="Scrobbles by year"/)
-  assert.match(html, /tabindex="0"/)
-  assert.match(html, /<li>2024: 1 scrobble<\/li>/)
-  assert.match(html, /<rect /)
-  assert.doesNotMatch(html, /<polyline/)
-  assert.doesNotMatch(html, />0\.5</)
-})
-
-test('line chart draws a polyline with markers and labels January years in month view', () => {
-  const html = renderToStaticMarkup(
-    <ListeningChart
-      period="month"
-      style="line"
-      bars={monthBars([
-        { month: '2019-11', count: 3 },
-        { month: '2020-02', count: 4 },
-      ])}
-    />,
-  )
-  assert.match(html, /aria-label="Scrobbles by month"/)
-  assert.match(html, /<polyline /)
-  assert.match(html, /<polygon /)
-  assert.equal(html.match(/<circle /g)?.length, 4)
-  assert.match(html, /<li>2019-12: 0 scrobbles<\/li>/)
-  assert.match(html, />2020<\/text>/)
-})
-
-test('listening tab offers bar and line chart styles', () => {
-  const html = render(
-    [
-      [
-        ['album-listening', 'one', ''],
-        AlbumListeningSchema.parse({
-          total: 2,
-          firstListenedAt: '2024-03-02T10:00:00Z',
-          lastListenedAt: '2024-03-05T10:00:00Z',
-          months: [{ month: '2024-03', count: 2 }],
-          tracks: [],
-        }),
-      ],
-    ],
-    <AlbumListening albumId="one" />,
-  )
-  assert.match(html, /role="group" aria-label="Chart style"/)
-  assert.match(html, /aria-pressed="false"[^>]*>Bar</)
-  assert.match(html, /aria-pressed="true"[^>]*>Line</)
 })

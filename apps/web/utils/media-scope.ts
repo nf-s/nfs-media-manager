@@ -17,6 +17,8 @@ const trackImportPaths = [
   '/imports/lastfm',
 ]
 const trackUnsupportedPaths = ['/tags', '/jobs', '/providers']
+/** Jobs and Providers sit once under System and filter by library. */
+const systemPaths = ['/jobs', '/providers']
 const subscriptionPaths = [
   '/subscriptions',
   '/channels',
@@ -26,6 +28,26 @@ const subscriptionPaths = [
 
 function isUnder(path: string, root: string) {
   return path === root || path.startsWith(`${root}/`)
+}
+
+export function isSystemPath(path: string) {
+  return systemPaths.some((root) => isUnder(path, root))
+}
+
+/** The library filter of a System page; null means every library. */
+export function systemLibraryFilter(
+  value: string | null,
+): WorkspaceScope | null {
+  return value === 'album' ||
+    value === 'film' ||
+    value === 'artist' ||
+    value === 'subscription'
+    ? value
+    : null
+}
+
+export function parseLibraryView(value: string | null): LibraryView | null {
+  return value === 'track' ? value : systemLibraryFilter(value)
 }
 
 export function mediaScope(value: string | null): MediaScope {
@@ -108,14 +130,16 @@ export function scopedHref(href: string, mediaType: LibraryView) {
   return `${path}?${params}${hash}`
 }
 
-function libraryHome(scope: WorkspaceScope) {
-  return scope === 'artist'
-    ? '/artists'
-    : scope === 'album'
-      ? '/albums'
-      : scope === 'film'
-        ? '/films'
-        : '/subscriptions'
+function libraryHome(scope: LibraryView) {
+  return scope === 'track'
+    ? '/tracks'
+    : scope === 'artist'
+      ? '/artists'
+      : scope === 'album'
+        ? '/albums'
+        : scope === 'film'
+          ? '/films'
+          : '/subscriptions'
 }
 
 export function switchMediaScopeHref(
@@ -178,6 +202,8 @@ export function switchLibraryHref(
   search: string,
   view: LibraryView,
 ) {
+  // System pages are not part of a library: choosing one opens its home.
+  if (isSystemPath(path)) return libraryHome(view)
   const current = new URLSearchParams(search)
   const shown = libraryViewForPath(path, current.get('mediaType'))
   if (shown === view) return `${path}${current.size ? `?${current}` : ''}`

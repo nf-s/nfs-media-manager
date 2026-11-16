@@ -8,25 +8,27 @@ export function parseGridDensity(value: unknown): GridDensity {
   return result.success ? result.data : 'standard'
 }
 
-const ArtworkOverlaySchema = z.enum(['ratings', 'sort', 'tags'])
-export type ArtworkOverlay = z.infer<typeof ArtworkOverlaySchema>
-export const artworkOverlays = ArtworkOverlaySchema.options
+const CardDetailSchema = z.enum(['ratings', 'sort', 'tags'])
+/**
+ * What a grid card shows under its title and creator: `ratings` puts the
+ * headline rating on the meta line, `sort` puts the sorted value there, and
+ * `tags` adds the tags line. Stored in the `overlays` URL parameter, which
+ * held the same three options when they sat on the artwork.
+ */
+export type CardDetail = z.infer<typeof CardDetailSchema>
+export const cardDetails = CardDetailSchema.options
 
-/** Albums show tags on artwork unless a saved preference says otherwise. */
-export function parseArtworkOverlays(
-  value: string | null,
-  mediaType: 'album' | 'film',
-): ArtworkOverlay[] {
-  if (value === null)
-    return mediaType === 'album' ? [...artworkOverlays] : ['ratings', 'sort']
+/** Every detail is shown unless a saved preference says otherwise. */
+export function parseCardDetails(value: string | null): CardDetail[] {
+  if (value === null) return [...cardDetails]
   return value.split(',').flatMap((key) => {
-    const result = ArtworkOverlaySchema.safeParse(key)
+    const result = CardDetailSchema.safeParse(key)
     return result.success ? [result.data] : []
   })
 }
 
-export function formatArtworkOverlays(overlays: ArtworkOverlay[]): string {
-  return overlays.length ? overlays.join(',') : 'none'
+export function formatCardDetails(details: CardDetail[]): string {
+  return details.length ? details.join(',') : 'none'
 }
 
 const BrowseViewSchema = z.enum(['grid', 'list', 'table'])
@@ -52,6 +54,29 @@ export function preserveGridScroll(
   return (Math.floor(firstItem / next.columns) + (row % 1)) * next.rowHeight
 }
 
+/*
+ * Card grid geometry. These mirror the design system so the virtual grid
+ * reserves exactly what the cards draw: `.ds-grid` gaps (--ds-7 rows,
+ * --ds-6 columns), its padding (--ds-2 top, --ds-gutter sides, --ds-8
+ * bottom), and the card's lines (artwork margin --ds-3, 2px between lines,
+ * 18px title, 16px creator, 18px meta line, 20px tags line).
+ */
+export const cardGrid = {
+  rowGap: 20,
+  columnGap: 16,
+  gutter: 12,
+  paddingTop: 4,
+  paddingBottom: 24,
+}
+
+const cardLines = { art: 6, line: 2, title: 18, by: 16, meta: 18, tags: 20 }
+
+/** Smallest card width per density, in px, as in `CardGrid min`. */
+const cardMin = {
+  album: { compact: 104, standard: 164, roomy: 220 },
+  film: { compact: 96, standard: 118, roomy: 160 },
+}
+
 export function mediaGridGeometry({
   width,
   mediaType,
@@ -62,22 +87,41 @@ export function mediaGridGeometry({
   width: number
   mediaType: 'album' | 'film'
   density: GridDensity
-  /** Whether tiles keep a row under the byline for a sort value or links. */
+  /** Whether cards show the meta line (year and one value). */
   extraRow?: boolean
+  /** Whether cards show the tags line. */
   tagsBelowArtwork?: boolean
 }) {
   const mobile = width <= 700
-  const gap = mobile ? 8 : 12
-  const targetWidths = {
-    compact: mobile ? 84 : mediaType === 'album' ? 138 : 122,
-    standard: mobile ? 112 : mediaType === 'album' ? 182 : 152,
-    roomy: mediaType === 'album' ? 236 : 202,
-  }
-  const columns = Math.max(2, Math.floor(width / targetWidths[density]))
-  const artworkWidth = Math.max(0, (width - (columns - 1) * gap) / columns)
+  const inner = Math.max(0, width - cardGrid.gutter * 2)
+  const minimum = cardMin[mediaType][density]
+  const columns = Math.max(
+    2,
+    Math.floor((inner + cardGrid.columnGap) / (minimum + cardGrid.columnGap)),
+  )
+  const artworkWidth = Math.max(
+    0,
+    (inner - (columns - 1) * cardGrid.columnGap) / columns,
+  )
   const artworkHeight = artworkWidth * (mediaType === 'album' ? 1 : 1.5)
-  // Match the fixed metadata rows in media-browser.module.css and global tile styles.
-  const cardHeight =
-    artworkHeight + (extraRow ? 64 : 44) + (tagsBelowArtwork ? 22 : 0)
-  return { mobile, gap, columns, cardHeight, rowHeight: cardHeight + gap }
+  const lines =
+    cardLines.art +
+    cardLines.line +
+    cardLines.title +
+    cardLines.line +
+    cardLines.by +
+    (extraRow ? cardLines.line + cardLines.meta : 0) +
+    (tagsBelowArtwork ? cardLines.line + cardLines.tags : 0)
+  const cardHeight = artworkHeight + lines
+  return {
+    mobile,
+    /** The gap between rows; columns use `columnGap`. */
+    gap: cardGrid.rowGap,
+    columnGap: cardGrid.columnGap,
+    columns,
+    cardHeight,
+    rowHeight: cardHeight + cardGrid.rowGap,
+    /** The grid's own top and bottom padding, outside the virtual rows. */
+    padding: cardGrid.paddingTop + cardGrid.paddingBottom,
+  }
 }

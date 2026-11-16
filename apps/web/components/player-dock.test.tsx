@@ -101,7 +101,7 @@ test('the bar asks to connect Spotify until playback is connected, then always s
   const unconfigured = render({ ...off, connection: 'unconfigured' })
   assert.match(
     unconfigured,
-    /href="\/providers\?provider=spotify&amp;mediaType=album&amp;section=credentials"/,
+    /href="\/providers\/spotify\?tab=settings"/,
   )
   assert.doesNotMatch(unconfigured, />Connect Spotify</)
   const idle = render(on)

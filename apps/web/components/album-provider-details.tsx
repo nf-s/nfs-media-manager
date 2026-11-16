@@ -1,6 +1,6 @@
 import React from 'react'
 import type { AlbumProviderDetails as ProviderDetails } from '@repo/schemas/album-provider-details'
-import ServiceIconLinks from './service-icon-links'
+import { formatCount } from '@repo/ui/lib/format'
 
 const names = {
   musicbrainz: 'MusicBrainz',
@@ -8,6 +8,20 @@ const names = {
   lastfm: 'Last.fm',
 }
 
+function ProviderLink({ url, children }: { url: string; children: string }) {
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noopener noreferrer"
+      aria-label={`${children} (opens in a new tab)`}
+    >
+      {children}
+    </a>
+  )
+}
+
+/** Album information a provider returned that has no field of its own. */
 export default function AlbumProviderDetails({
   details,
 }: {
@@ -15,69 +29,66 @@ export default function AlbumProviderDetails({
 }) {
   if (!details.length) return null
   return (
-    <details className="mt-5 text-sm">
+    <details className="data-disclosure">
       <summary>More album info</summary>
-      <div className="mt-3 space-y-5">
+      <div className="data-stack">
         {details.map((source) => (
-          <section key={source.provider}>
-            <h2 className="mb-2 flex items-center gap-1.5 font-semibold">
-              {names[source.provider]}
-              {source.url && (
-                <ServiceIconLinks
-                  links={[
-                    {
-                      provider: source.provider,
-                      label: names[source.provider],
-                      url: source.url,
-                    },
-                  ]}
-                />
-              )}
-            </h2>
+          <section
+            key={source.provider}
+            className="data-stack"
+            aria-label={names[source.provider]}
+          >
+            {source.url && (
+              <span>
+                <ProviderLink url={source.url}>
+                  {`Open on ${names[source.provider]}`}
+                </ProviderLink>
+              </span>
+            )}
             {source.facts.length > 0 && (
-              <dl className="detail-metrics">
+              <dl className="ds-kv">
                 {source.facts.map((fact, index) => (
-                  <div key={`${fact.label}-${index}`}>
+                  <React.Fragment key={`${fact.label}-${index}`}>
                     <dt>{fact.label}</dt>
                     <dd>{fact.value}</dd>
-                  </div>
+                  </React.Fragment>
                 ))}
               </dl>
             )}
             {source.notes.map((note, index) => (
-              <details key={`${note.label}-${index}`} className="my-2">
+              <details
+                key={`${note.label}-${index}`}
+                className="data-disclosure"
+              >
                 <summary>{note.label}</summary>
-                <p className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words">
-                  {note.text}
-                </p>
+                <p className="data-prose">{note.text}</p>
               </details>
             ))}
             {source.credits.length > 0 && (
-              <details className="my-2">
+              <details className="data-disclosure">
                 <summary>Credits ({source.credits.length})</summary>
-                <dl className="mt-2 grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)] gap-x-3 gap-y-1">
+                <dl className="ds-kv">
                   {source.credits.map((credit, index) => (
                     <React.Fragment
                       key={`${credit.name}-${credit.role}-${index}`}
                     >
-                      <dt className="quiet break-words">{credit.role}</dt>
-                      <dd className="break-words">{credit.name}</dd>
+                      <dt>{credit.role}</dt>
+                      <dd>{credit.name}</dd>
                     </React.Fragment>
                   ))}
                 </dl>
               </details>
             )}
             {source.tags.length > 0 && (
-              <details className="my-2">
+              <details className="data-disclosure">
                 <summary>Original tags ({source.tags.length})</summary>
-                <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
+                <ul className="data-picker">
                   {source.tags.map((tag, index) => (
                     <li key={`${tag.kind}-${tag.name}-${index}`}>
                       {tag.name}
                       {tag.count !== undefined && (
-                        <span className="quiet">
-                          {' '}
-                          · {tag.count}
+                        <span className="ds-muted">
+                          {formatCount(tag.count)}
                           {tag.countLabel ? ` ${tag.countLabel}` : ''}
                         </span>
                       )}
@@ -87,25 +98,20 @@ export default function AlbumProviderDetails({
               </details>
             )}
             {source.tracks.length > 0 && (
-              <details className="my-2">
+              <details className="data-disclosure">
                 <summary>Source tracklist ({source.tracks.length})</summary>
-                <ol className="mt-2 space-y-1">
+                <ol className="data-picker">
                   {source.tracks.map((track, index) => (
                     <li key={`${track.position}-${index}`}>
-                      <span className="quiet mr-2">
+                      <span className="ds-muted ds-num">
                         {track.position ?? index + 1}
                       </span>
-                      {track.title}
-                      {track.url && (
-                        <ServiceIconLinks
-                          links={[
-                            {
-                              provider: source.provider,
-                              label: names[source.provider],
-                              url: track.url,
-                            },
-                          ]}
-                        />
+                      {track.url ? (
+                        <ProviderLink url={track.url}>
+                          {track.title}
+                        </ProviderLink>
+                      ) : (
+                        track.title
                       )}
                     </li>
                   ))}
@@ -113,25 +119,13 @@ export default function AlbumProviderDetails({
               </details>
             )}
             {source.links.length > 0 && (
-              <div className="mt-2 flex flex-wrap gap-x-4 gap-y-2">
+              <ul className="data-picker">
                 {source.links.map((link, index) => (
-                  <span
-                    key={`${link.url}-${index}`}
-                    className="inline-flex items-center gap-1.5"
-                  >
-                    {link.label}
-                    <ServiceIconLinks
-                      links={[
-                        {
-                          provider: source.provider,
-                          label: link.label,
-                          url: link.url,
-                        },
-                      ]}
-                    />
-                  </span>
+                  <li key={`${link.url}-${index}`}>
+                    <ProviderLink url={link.url}>{link.label}</ProviderLink>
+                  </li>
                 ))}
-              </div>
+              </ul>
             )}
           </section>
         ))}

@@ -3,6 +3,7 @@
 import type { ReactNode } from 'react'
 import { ArrowDown, ArrowUp, Columns3, Filter } from 'lucide-react'
 import { Button } from '@repo/ui/components/ui/button'
+import { Select, Toolbar, ToolbarCount } from '@repo/ui/components/ds/toolbar'
 import type { BrowseView } from '@/utils/media-grid'
 import { BrowseViewSwitch } from './browse-controls'
 import BrowseFilterPanel, { FilterPanelSection } from './browse-filter-panel'
@@ -16,10 +17,14 @@ export type BrowseSort<Key extends string> = {
   onDirectionChange: (direction: 'asc' | 'desc') => void
 }
 
+/** The column picker in the Filters drawer: one checkbox per column. */
 export function BrowseColumnsSection({ children }: { children: ReactNode }) {
   return children ? (
-    <FilterPanelSection title="Columns" icon={<Columns3 size={16} />}>
-      <div className="filter-panel-columns">{children}</div>
+    <FilterPanelSection
+      title="Columns"
+      icon={<Columns3 className="ds-i" data-size="sm" aria-hidden />}
+    >
+      <div className="browse-check-list">{children}</div>
     </FilterPanelSection>
   ) : null
 }
@@ -28,12 +33,19 @@ export function BrowseColumnFilterSection<Value extends string>(
   props: ColumnFilterProps<Value>,
 ) {
   return (
-    <FilterPanelSection title={props.label} icon={<Filter size={16} />}>
+    <FilterPanelSection
+      title={props.label}
+      icon={<Filter className="ds-i" data-size="sm" aria-hidden />}
+    >
       <ColumnFilterOptions {...props} showLegend={false} />
     </FilterPanelSection>
   )
 }
 
+/**
+ * The browse toolbar. Order: actions, search, sort, direction, filters,
+ * view, count.
+ */
 export default function BrowseToolbar<Key extends string>({
   actions,
   search,
@@ -58,55 +70,46 @@ export default function BrowseToolbar<Key extends string>({
     nextDirection === 'asc' ? 'Sort ascending' : 'Sort descending'
 
   return (
-    <div className="browse-toolbar">
+    <Toolbar>
       {actions}
-      <div className="browse-toolbar-search">{search}</div>
-      <div className="browse-controls">
-        <div className="browse-sort">
-          <select
-            aria-label="Sort by"
-            value={sort.key}
-            onChange={(event) => {
-              const option = sort.options.find(
-                ({ key }) => key === event.target.value,
-              )
-              if (option) sort.onChange(option.key)
-            }}
-          >
-            {sort.options.map(({ key, label }) => (
-              <option key={key} value={key}>
-                {label}
-              </option>
-            ))}
-          </select>
-          {sort.direction && (
-            <Button
-              size="md"
-              type="button"
-              variant="ghost"
-              className="browse-sort-direction"
-              aria-label={directionLabel}
-              title={directionLabel}
-              onClick={() => sort.onDirectionChange(nextDirection)}
-            >
-              {sort.direction === 'asc' ? (
-                <ArrowUp size={16} aria-hidden="true" />
-              ) : (
-                <ArrowDown size={16} aria-hidden="true" />
-              )}
-            </Button>
+      <div className="browse-find">{search}</div>
+      <Select
+        aria-label="Sort by"
+        className="browse-order"
+        value={sort.key}
+        onChange={(event) => {
+          const option = sort.options.find(
+            ({ key }) => key === event.target.value,
+          )
+          if (option) sort.onChange(option.key)
+        }}
+      >
+        {sort.options.map(({ key, label }) => (
+          <option key={key} value={key}>
+            {label}
+          </option>
+        ))}
+      </Select>
+      {sort.direction && (
+        <Button
+          type="button"
+          icon
+          aria-label={directionLabel}
+          title={directionLabel}
+          onClick={() => sort.onDirectionChange(nextDirection)}
+        >
+          {sort.direction === 'asc' ? (
+            <ArrowUp className="ds-i" data-size="sm" aria-hidden />
+          ) : (
+            <ArrowDown className="ds-i" data-size="sm" aria-hidden />
           )}
-        </div>
-        {filters && (
-          <BrowseFilterPanel count={filterCount}>{filters}</BrowseFilterPanel>
-        )}
-        <BrowseViewSwitch view={view} onChange={onViewChange} />
-        {count != null && (
-          <span className="browse-count" role="status">
-            {count}
-          </span>
-        )}
-      </div>
-    </div>
+        </Button>
+      )}
+      {filters && (
+        <BrowseFilterPanel count={filterCount}>{filters}</BrowseFilterPanel>
+      )}
+      <BrowseViewSwitch view={view} onChange={onViewChange} />
+      {count != null && <ToolbarCount>{count}</ToolbarCount>}
+    </Toolbar>
   )
 }

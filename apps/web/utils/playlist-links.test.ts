@@ -55,24 +55,26 @@ test('track links encode the track ID as one path segment', () => {
 test('playlist drawer links open the Playlists page on a tab', () => {
   assert.equal(playlistHref('playlist-1'), '/playlists?playlist=playlist-1')
   assert.equal(
-    playlistHref('playlist-1', 'sync'),
-    '/playlists?playlist=playlist-1&tab=sync',
+    playlistHref('playlist-1', 'sources'),
+    '/playlists?playlist=playlist-1&tab=sources',
   )
-  const url = new URL(playlistHref('a/b&c', 'sync'), 'http://localhost')
+  const url = new URL(playlistHref('a/b&c', 'listening'), 'http://localhost')
   assert.equal(url.searchParams.get('playlist'), 'a/b&c')
-  assert.equal(url.searchParams.get('tab'), 'sync')
+  assert.equal(url.searchParams.get('tab'), 'listening')
   assert.deepEqual(playlistDrawerParams('p1'), { playlist: 'p1', tab: null })
-  assert.deepEqual(playlistDrawerParams('p1', 'sync'), {
+  assert.deepEqual(playlistDrawerParams('p1', 'sources'), {
     playlist: 'p1',
-    tab: 'sync',
+    tab: 'sources',
   })
 })
 
-test('an unknown or missing drawer tab reads as Tracks', () => {
-  assert.equal(parsePlaylistTab('sync'), 'sync')
-  assert.equal(parsePlaylistTab('tracks'), 'tracks')
-  assert.equal(parsePlaylistTab(null), 'tracks')
-  assert.equal(parsePlaylistTab('history'), 'tracks')
+test('an unknown or missing drawer tab reads as Overview, and old tabs still open', () => {
+  assert.equal(parsePlaylistTab('sources'), 'sources')
+  assert.equal(parsePlaylistTab('listening'), 'listening')
+  assert.equal(parsePlaylistTab('sync'), 'sources')
+  assert.equal(parsePlaylistTab('tracks'), 'overview')
+  assert.equal(parsePlaylistTab(null), 'overview')
+  assert.equal(parsePlaylistTab('history'), 'overview')
 })
 
 test('the playlist filter is required, as the playlist links apply it', () => {

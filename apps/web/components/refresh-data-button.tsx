@@ -21,9 +21,8 @@ export default function RefreshDataButton() {
 
   return (
     <Button
-      size="md"
+      variant="ghost"
       type="button"
-      className="gap-1.5"
       aria-label="Refresh cached data"
       title="Refresh cached data"
       aria-busy={refreshing}
@@ -31,9 +30,10 @@ export default function RefreshDataButton() {
       onClick={() => void refresh()}
     >
       <RefreshCw
-        size={14}
         aria-hidden="true"
-        className={refreshing ? 'animate-spin motion-reduce:animate-none' : ''}
+        className={
+          refreshing ? 'ds-i animate-spin motion-reduce:animate-none' : 'ds-i'
+        }
       />
       <span className="hidden min-[701px]:inline">Refresh</span>
     </Button>

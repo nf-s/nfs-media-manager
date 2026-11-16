@@ -7,7 +7,11 @@ import {
   FilmCollectionBrowsePageSchema,
   type FilmCollectionBrowseSort,
 } from '@repo/schemas/film-collections'
-import { Input } from '@repo/ui/components/ui/input'
+import { Button } from '@repo/ui/components/ui/button'
+import { Notice } from '@repo/ui/components/ds/feedback'
+import { EmptyValue } from '@repo/ui/components/ds/pill'
+import { PageHead } from '@repo/ui/components/ds/toolbar'
+import { formatCount, formatDate, formatItemCount } from '@repo/ui/lib/format'
 import {
   TableBody,
   TableCell,
@@ -25,6 +29,7 @@ import {
   SecondaryCell,
   SecondaryTableHead,
   SecondaryTableScroll,
+  SecondaryTableSearch,
   SecondaryTableToolbar,
   SecondaryVirtualRows,
   useTableColumns,
@@ -89,32 +94,41 @@ export default function FilmCollectionsWorkspace() {
       )
     },
   })
+  /** A new sort starts ascending for names and descending for counts and dates. */
   function onSort(key: FilmCollectionBrowseSort) {
-    setDirection(sortBy === key && direction === 'asc' ? 'desc' : 'asc')
+    setDirection(
+      sortBy === key
+        ? direction === 'asc'
+          ? 'desc'
+          : 'asc'
+        : key === 'name'
+          ? 'asc'
+          : 'desc',
+    )
     setSortBy(key)
   }
   return (
-    <section className="admin-page table-workspace">
-      <h1>Collections</h1>
+    <section className="browse-workspace" aria-label="Collections">
+      <PageHead title="Collections" />
       <SecondaryTableToolbar
         search={
-          <Input
-            type="search"
-            aria-label="Search collections"
-            placeholder="Search collections"
+          <SecondaryTableSearch
+            label="Search collections"
             value={search}
             maxLength={200}
-            onChange={(event) => setSearch(event.target.value)}
-            className="max-w-xs"
+            onChange={setSearch}
           />
         }
         count={
           countError ? (
-            <button type="button" className="underline" onClick={retryCount}>
+            <Button type="button" variant="link" size="xs" onClick={retryCount}>
               Retry count
-            </button>
+            </Button>
           ) : !isCounting ? (
-            `${query.total.toLocaleString()} ${query.total === 1 ? 'collection' : 'collections'}`
+            formatItemCount(query.total, {
+              one: 'collection',
+              other: 'collections',
+            })
           ) : query.isPending ? (
             'Loading collections...'
           ) : (
@@ -124,12 +138,16 @@ export default function FilmCollectionsWorkspace() {
         columns={table.controls}
       />
       {query.isError && (
-        <p className="quiet" role="alert">
-          Could not load collections.{' '}
-          <button type="button" className="underline" onClick={query.retry}>
-            Retry
-          </button>
-        </p>
+        <Notice
+          tone="danger"
+          action={
+            <Button type="button" size="xs" onClick={query.retry}>
+              Retry
+            </Button>
+          }
+        >
+          Could not load collections.
+        </Notice>
       )}
       <SecondaryTableScroll
         ref={query.scroller}
@@ -158,9 +176,9 @@ export default function FilmCollectionsWorkspace() {
                       sortBy={sortBy}
                       direction={direction}
                       onSort={onSort}
-                      className={
-                        column.key === 'filmCount' ? 'numeric' : undefined
-                      }
+                      align={column.key === 'filmCount' ? 'end' : undefined}
+                      sticky={column.key === 'name' ? 0 : undefined}
+                      stickyEdge={column.key === 'name'}
                     />
                   ),
                 )}
@@ -179,16 +197,16 @@ export default function FilmCollectionsWorkspace() {
                 <TableRow
                   key={row.id}
                   data-selected={row.id === selectedId || undefined}
+                  selected={row.id === selectedId}
                   aria-rowindex={index + 2}
-                  style={{ height: query.rowHeight }}
                 >
                   {table.visible('name') && (
-                    <TableCell>
+                    <TableCell sticky={0} stickyEdge>
                       <SecondaryCell text={row.name}>
                         <DetailLink
                           kind="collection"
                           id={row.id}
-                          className="table-title hover:underline"
+                          className="ds-cell-title"
                         >
                           {row.name}
                         </DetailLink>
@@ -196,12 +214,12 @@ export default function FilmCollectionsWorkspace() {
                     </TableCell>
                   )}
                   {table.visible('filmCount') && (
-                    <TableCell className="numeric">
+                    <TableCell align="end">
                       <Link
                         href={collectionFilmsHref(row.name)}
                         title={`Filter films by ${row.name}`}
                       >
-                        {row.filmCount.toLocaleString()}
+                        {formatCount(row.filmCount)}
                       </Link>
                     </TableCell>
                   )}
@@ -216,14 +234,14 @@ export default function FilmCollectionsWorkspace() {
                           }))}
                         />
                       ) : (
-                        '-'
+                        <EmptyValue />
                       )}
                     </TableCell>
                   )}
                   {table.visible('createdAt') && (
-                    <TableCell className="whitespace-nowrap">
+                    <TableCell>
                       <time dateTime={row.createdAt}>
-                        {new Date(row.createdAt).toLocaleDateString()}
+                        {formatDate(row.createdAt)}
                       </time>
                     </TableCell>
                   )}

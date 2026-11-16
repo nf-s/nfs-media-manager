@@ -1,1 +1,394 @@
 /* Layout for the browse screens. Tokens only; visual patterns belong in the design system. */
+
+/* Page frame: the browse column beside the detail drawer */
+.browse-page {
+  display: flex;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+.browse-column,
+.browse-workspace {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+.browse-workspace {
+  height: 100%;
+}
+.browse-workspace > .ds-notice,
+.browse-notice {
+  margin: 0 var(--ds-gutter) var(--ds-4);
+}
+.browse-notice {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  margin-top: var(--ds-4);
+}
+
+/* Toolbar: the search grows, sort keeps a readable width */
+.browse-find {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+}
+.browse-order {
+  max-width: calc(var(--ds-rail) - var(--ds-6));
+}
+
+/* Search with autocomplete */
+.browse-combobox {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-width: 0;
+}
+.browse-search-actions {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  gap: var(--ds-1);
+  margin-right: calc(var(--ds-3) * -1);
+}
+.browse-menu {
+  position: absolute;
+  top: calc(100% + var(--ds-2));
+  left: 0;
+  z-index: 20;
+  width: max(100%, calc(var(--ds-rail) * 1.8));
+  max-width: calc(100vw - var(--ds-8));
+}
+.browse-menu [role='listbox'] {
+  max-height: min(calc(var(--ds-rail) * 1.7), 60dvh);
+  overflow: auto;
+}
+.browse-menu .ds-menu-item[aria-disabled='true'] {
+  color: var(--ds-ink-4);
+  cursor: not-allowed;
+}
+.browse-filter-mark {
+  color: var(--ds-ink-3);
+}
+
+/* Toolbar popovers: a button that opens a panel below it */
+.browse-popover {
+  position: relative;
+  flex: none;
+}
+.browse-popover > summary {
+  list-style: none;
+}
+.browse-popover > summary::-webkit-details-marker {
+  display: none;
+}
+.browse-popover[open] > summary {
+  background: var(--ds-selected);
+}
+.browse-popover-panel {
+  position: absolute;
+  top: calc(100% + var(--ds-2));
+  right: 0;
+  z-index: 20;
+  width: calc(var(--ds-rail) * 1.5);
+  max-height: min(calc(var(--ds-rail) * 2.5), 70dvh);
+  overflow: auto;
+}
+
+/* Forms inside the Filters drawer and popovers */
+.browse-form {
+  display: grid;
+  gap: var(--ds-5);
+  min-width: 0;
+}
+.browse-form-split {
+  padding-top: var(--ds-5);
+  border-top: 1px solid var(--ds-line-soft);
+}
+.browse-form-pair {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--ds-4);
+}
+.browse-form .ds-select,
+.browse-form .ds-input {
+  width: 100%;
+}
+.browse-form-error {
+  color: var(--ds-danger);
+  font-size: var(--ds-text-sm);
+}
+.browse-fieldset {
+  display: grid;
+  gap: var(--ds-4);
+  min-width: 0;
+  margin: 0;
+  padding: var(--ds-4) 0 0;
+  border: 0;
+  border-top: 1px solid var(--ds-line-soft);
+}
+.browse-start {
+  justify-self: start;
+}
+.browse-check-list {
+  display: grid;
+  gap: var(--ds-3);
+}
+
+/* Filters drawer: the inspector surface as a modal sheet on the right */
+.browse-drawer {
+  position: fixed;
+  inset: var(--ds-4) var(--ds-4) var(--ds-4) auto;
+  width: min(calc(var(--ds-rail) * 2.15), calc(100vw - var(--ds-6)));
+  max-width: none;
+  height: auto;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--ds-r-lg);
+  color: var(--ds-ink);
+}
+.browse-drawer::backdrop {
+  background: var(--ds-scrim);
+}
+.browse-drawer-title {
+  margin: 0 auto 0 var(--ds-3);
+  font-size: var(--ds-text-lg);
+  font-weight: 600;
+}
+.browse-drawer-body {
+  display: grid;
+  align-content: start;
+  padding-top: 0;
+  overscroll-behavior: contain;
+}
+.browse-drawer-active {
+  display: grid;
+  gap: var(--ds-4);
+  padding: var(--ds-5) 0;
+  border-bottom: 1px solid var(--ds-line-soft);
+}
+.browse-drawer-active h3 {
+  margin: 0;
+  color: var(--ds-ink-3);
+  font-size: var(--ds-text-xs);
+  font-weight: 500;
+}
+
+/* A section of the Filters drawer that opens and closes */
+.browse-disclosure {
+  border-bottom: 1px solid var(--ds-line-soft);
+}
+.browse-disclosure > summary {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-4);
+  min-height: calc(var(--ds-h-sm) + var(--ds-6));
+  font-weight: 600;
+  list-style: none;
+  cursor: pointer;
+}
+.browse-disclosure > summary::-webkit-details-marker {
+  display: none;
+}
+.browse-disclosure > summary > .ds-i:first-child {
+  color: var(--ds-ink-3);
+}
+.browse-disclosure-chevron {
+  margin-left: auto;
+  color: var(--ds-ink-3);
+}
+.browse-disclosure[open] .browse-disclosure-chevron {
+  transform: rotate(180deg);
+}
+.browse-disclosure-body {
+  padding-bottom: var(--ds-6);
+}
+
+/* Filter pills: the label cycles the mode, the cross removes */
+.browse-filter-pill {
+  padding-right: var(--ds-2);
+}
+.browse-pill-action {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.browse-filter-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ds-2);
+}
+
+/* Play pairs: the row number before a pair, and pairs outside a row stay shown */
+.browse-play-position {
+  min-width: var(--ds-6);
+  color: var(--ds-ink-3);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.ds-play[data-place='row']:not(tr .ds-play, .ds-row .ds-play) {
+  visibility: visible;
+}
+
+/* Artwork */
+.browse-art-link {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.browse-art-link:focus-visible,
+.browse-thumb-link:focus-visible {
+  outline: 2px solid var(--ds-accent);
+  outline-offset: 2px;
+}
+.browse-thumb-link {
+  display: block;
+  flex: none;
+  border-radius: var(--ds-r-xs);
+}
+.browse-artwork {
+  overflow: hidden;
+  background: var(--ds-chip);
+}
+.browse-artwork-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ds-ink-2);
+  font-size: var(--ds-text-xs);
+}
+
+/* Open-item buttons that sit where a link would: no button chrome */
+.browse-open {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.browse-open:hover {
+  text-decoration: underline;
+}
+
+/* Virtual windows: the extent sets the scroll height; the slots sit at the offset */
+.browse-scroller {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: none;
+  overflow-anchor: none;
+  scrollbar-gutter: stable;
+}
+.browse-scroller:focus-visible {
+  outline: 2px solid var(--ds-accent);
+  outline-offset: -2px;
+}
+.browse-extent {
+  position: relative;
+}
+.browse-slots {
+  position: absolute;
+  left: 0;
+  right: 0;
+}
+.browse-spacer td {
+  padding: 0;
+  border: 0;
+}
+.browse-nested-item {
+  min-width: 0;
+}
+.browse-row-actions,
+.browse-card-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ds-2);
+  min-width: 0;
+}
+
+/* Table headers: the width handle on the right edge of each sortable header */
+.browse-th .browse-resizer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: var(--ds-3);
+  height: 100%;
+  cursor: col-resize;
+  touch-action: none;
+}
+.browse-th .browse-resizer:hover,
+.browse-th .browse-resizer:focus-visible {
+  outline: 0;
+  box-shadow: inset -2px 0 0 var(--ds-line);
+}
+
+/* Ratings: inline marks in rows, cards in the detail overview */
+.browse-ratings {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ds-2) var(--ds-5);
+  min-width: 0;
+}
+.browse-rating {
+  display: inline-flex;
+  min-width: 0;
+}
+
+/* The rating popover tooltip on the inverse surface */
+.browse-tooltip {
+  position: fixed;
+  inset: auto;
+  max-width: calc(var(--ds-rail) * 1.4);
+  margin: 0;
+  padding: var(--ds-3) var(--ds-4);
+  border: 0;
+  border-radius: var(--ds-r-sm);
+  background: var(--ds-inverse);
+  color: var(--ds-on-inverse);
+  font-size: var(--ds-text-xs);
+  line-height: var(--ds-leading);
+}
+.browse-rating-link {
+  color: inherit;
+  text-decoration: none;
+}
+.browse-rating-link:hover .ds-rating {
+  color: var(--ds-ink);
+}
+
+/* Phone: the search takes its own line; the controls wrap below it */
+@media (max-width: 700px) {
+  .browse-find,
+  .ds-toolbar > .browse-combobox {
+    flex-basis: 100%;
+  }
+  .browse-order {
+    flex: 1;
+    max-width: none;
+  }
+  .browse-drawer {
+    inset: auto 0 0;
+    width: 100%;
+    max-height: 85dvh;
+    border-radius: var(--ds-r-lg) var(--ds-r-lg) 0 0;
+  }
+}

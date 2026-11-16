@@ -1,5 +1,5 @@
-import Link from 'next/link'
 import { PersonDetail } from '@/components/person-detail'
+import { DetailPage } from '@/components/detail-frame'
 
 export default async function PersonPage({
   params,
@@ -8,9 +8,8 @@ export default async function PersonPage({
 }) {
   const { personId } = await params
   return (
-    <div className="detail-page">
-      <Link href="/people">Back to people</Link>
+    <DetailPage back={{ href: '/people', label: 'Back to people' }}>
       <PersonDetail id={personId} />
-    </div>
+    </DetailPage>
   )
 }

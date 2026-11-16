@@ -13,6 +13,9 @@ import {
 } from '@repo/schemas/manual-add'
 import { Button } from '@repo/ui/components/ui/button'
 import { Input } from '@repo/ui/components/ui/input'
+import { Label } from '@repo/ui/components/ui/label'
+import { Notice, Skeleton, State } from '@repo/ui/components/ds/feedback'
+import { List, ListRow, RowTitle } from '@repo/ui/components/ds/list-row'
 import { fetchApiData } from '@/utils/api'
 import {
   addManualMediaItem,
@@ -21,9 +24,12 @@ import {
 } from '@/utils/manual-media-add'
 import { useConfig } from './providers'
 import { errorMessage } from './lastfm-sync'
-import MediaArtwork from './media-artwork'
+import { MediaThumb } from './media-artwork'
 import ServiceIconLinks from './service-icon-links'
 import { DetailLink } from './detail-link'
+
+/** One result row: the 48px list row with its bottom border. */
+const RESULT_ROW_HEIGHT = 49
 
 export function ManualMediaSearch({
   mediaType,
@@ -128,17 +134,19 @@ export function ManualMediaSearch({
   }
 
   return (
-    <div className="manual-add-search">
+    <div className="sec-stack">
       <form
+        className="sec-form-row"
         onSubmit={(event) => {
           event.preventDefault()
           find()
         }}
       >
-        <label htmlFor={inputId}>Search {provider}</label>
-        <div className="manual-add-search-row">
+        <div className="ds-field">
+          <Label htmlFor={inputId}>Search {provider}</Label>
           <Input
             id={inputId}
+            controlSize="md"
             value={query}
             maxLength={200}
             placeholder={
@@ -152,25 +160,25 @@ export function ManualMediaSearch({
               add.reset()
             }}
           />
-          <Button
-            size="md"
-            variant="primary"
-            type="submit"
-            disabled={busy || !query.trim()}
-          >
-            {search.isPending ? 'Searching…' : 'Search'}
-          </Button>
         </div>
+        <Button
+          size="md"
+          variant="primary"
+          type="submit"
+          disabled={busy || !query.trim()}
+        >
+          {search.isPending ? 'Searching…' : 'Search'}
+        </Button>
       </form>
       {search.isError && (
-        <p role="alert">
+        <Notice tone="danger">
           {errorMessage(search.error, `Could not search ${provider}.`)}
-        </p>
+        </Notice>
       )}
       {add.isError && (
-        <p role="alert">
+        <Notice tone="danger">
           {errorMessage(add.error, `Could not add ${mediaType}.`)}
-        </p>
+        </Notice>
       )}
       {(result || search.isPending || search.isError) && (
         <>
@@ -189,63 +197,66 @@ export function ManualMediaSearch({
               const pending =
                 add.isPending && add.variables?.externalId === item.externalId
               return (
-                <div className="manual-add-result">
-                  <MediaArtwork
-                    src={item.artworkUrl}
-                    alt=""
-                    fallbackLabel="No art"
-                    containerClassName={`manual-add-artwork ${mediaType === 'film' ? 'manual-add-poster' : ''}`}
-                    imageClassName="manual-add-image"
-                    fallbackClassName="manual-add-image"
-                  />
-                  <div
-                    className="manual-add-description"
-                    title={[item.title, item.subtitle]
-                      .filter(Boolean)
-                      .join(' — ')}
-                  >
-                    <div className="flex items-center gap-1.5">
+                <ListRow
+                  title={
+                    <RowTitle>
                       {item.mediaItemId ? (
-                        <DetailLink kind={mediaType} id={item.mediaItemId}>
+                        <DetailLink
+                          kind={mediaType}
+                          id={item.mediaItemId}
+                          title={item.title}
+                        >
                           {item.title}
                         </DetailLink>
                       ) : (
-                        <span>{item.title}</span>
+                        <span title={item.title}>{item.title}</span>
                       )}
+                    </RowTitle>
+                  }
+                  thumb={
+                    <MediaThumb
+                      kind={mediaType}
+                      src={item.artworkUrl}
+                      size={40}
+                    />
+                  }
+                  by={[
+                    item.subtitle,
+                    item.releaseDate?.slice(0, 4),
+                    inLibrary ? 'In library' : null,
+                  ]
+                    .filter(Boolean)
+                    .join(' · ')}
+                  play={
+                    <span className="ds-actions">
                       <ServiceIconLinks
                         links={[{ provider, label: provider, url: item.url }]}
                       />
-                    </div>
-                    {item.subtitle && <p className="quiet">{item.subtitle}</p>}
-                    <p className="quiet">
-                      {item.releaseDate?.slice(0, 4)}
-                      {inLibrary && (
-                        <span>{item.releaseDate ? ' · ' : ''}In library</span>
-                      )}
-                    </p>
-                  </div>
-                  <Button
-                    type="button"
-                    disabled={busy}
-                    aria-label={`${inLibrary ? existingActionLabel : 'Add'} ${item.title}`}
-                    onClick={() =>
-                      onChoose ? onChoose(item) : add.mutate(item)
-                    }
-                  >
-                    {pending
-                      ? 'Saving…'
-                      : inLibrary
-                        ? existingActionLabel
-                        : 'Add'}
-                  </Button>
-                </div>
+                      <Button
+                        type="button"
+                        size="xs"
+                        disabled={busy}
+                        aria-label={`${inLibrary ? existingActionLabel : 'Add'} ${item.title}`}
+                        onClick={() =>
+                          onChoose ? onChoose(item) : add.mutate(item)
+                        }
+                      >
+                        {pending
+                          ? 'Saving…'
+                          : inLibrary
+                            ? existingActionLabel
+                            : 'Add'}
+                      </Button>
+                    </span>
+                  }
+                />
               )
             }}
           />
           {result &&
             (result.totalCount === undefined || !liveSearch) &&
             (result.page > 1 || result.hasMore) && (
-              <div className="manual-add-pagination">
+              <span className="sec-line">
                 <Button
                   type="button"
                   disabled={busy || result.page <= 1}
@@ -253,7 +264,7 @@ export function ManualMediaSearch({
                 >
                   Previous
                 </Button>
-                <span>Page {result.page}</span>
+                <span className="ds-muted">Page {result.page}</span>
                 <Button
                   type="button"
                   disabled={busy || !result.hasMore || result.page >= 50}
@@ -261,7 +272,7 @@ export function ManualMediaSearch({
                 >
                   Next
                 </Button>
-              </div>
+              </span>
             )}
         </>
       )}
@@ -291,7 +302,7 @@ function ManualSearchResults({
 }) {
   const { apiBaseUrl } = useConfig()
   const pageSize = mediaType === 'album' ? 10 : 20
-  const rowHeight = mediaType === 'album' ? 88 : 106
+  const rowHeight = RESULT_ROW_HEIGHT
   const storedOnly = Boolean(
     result && !loading && (!liveSearch || result.totalCount === undefined),
   )
@@ -331,54 +342,58 @@ function ManualSearchResults({
       <div
         ref={window.scroller}
         onScroll={window.onScroll}
-        className="manual-add-results-scroll"
+        className="sec-bounded sec-results"
         role="region"
         aria-label={`${mediaType === 'album' ? 'Spotify' : 'TMDb'} results`}
         aria-busy={!storedOnly && (loading || results.isFetching)}
         tabIndex={0}
       >
         {!loading && (storedOnly || results.hasTotal) && window.total === 0 && (
-          <p role="status">
-            No matching {mediaType === 'album' ? 'albums' : 'films'}.
-          </p>
+          <State
+            size="sm"
+            title={`No ${mediaType === 'album' ? 'albums' : 'films'} match`}
+          />
         )}
-        <ul className="manual-add-results">
+        <List compact>
           {window.padTop > 0 && (
-            <li aria-hidden="true" style={{ height: window.padTop }} />
+            <div aria-hidden="true" style={{ height: window.padTop }} />
           )}
-          {window.slots.map(({ item, index }) => (
-            <li
-              key={index}
-              className="manual-add-result-slot"
-              style={{ height: rowHeight }}
-            >
-              {item ? (
-                renderItem(item)
-              ) : (
-                <div
-                  className="manual-add-result virtual-browse-placeholder"
-                  aria-hidden="true"
-                >
-                  <div className="manual-add-artwork virtual-browse-shimmer" />
-                  <div className="manual-add-description">
-                    <div className="virtual-browse-line virtual-browse-shimmer" />
-                  </div>
-                </div>
-              )}
-            </li>
-          ))}
+          {window.slots.map(({ item, index }) =>
+            item ? (
+              <div
+                key={index}
+                className="sec-result-slot"
+                style={{ height: RESULT_ROW_HEIGHT }}
+              >
+                {renderItem(item)}
+              </div>
+            ) : (
+              <div
+                key={index}
+                className="sec-result-slot"
+                style={{ height: RESULT_ROW_HEIGHT }}
+                aria-hidden="true"
+              >
+                <Skeleton height={RESULT_ROW_HEIGHT - 16} />
+              </div>
+            ),
+          )}
           {window.padBottom > 0 && (
-            <li aria-hidden="true" style={{ height: window.padBottom }} />
+            <div aria-hidden="true" style={{ height: window.padBottom }} />
           )}
-        </ul>
+        </List>
       </div>
       {!storedOnly && results.isError && (
-        <p role="alert">
-          Could not load results.{' '}
-          <button className="underline" onClick={results.retry}>
-            Retry
-          </button>
-        </p>
+        <Notice
+          tone="danger"
+          action={
+            <Button size="xs" onClick={results.retry}>
+              Retry
+            </Button>
+          }
+        >
+          Could not load results.
+        </Notice>
       )}
     </>
   )
@@ -410,7 +425,7 @@ export default function ManualMediaAdd({
   return (
     <dialog
       ref={dialog}
-      className="tag-drawer manual-add-drawer"
+      className="sec-drawer"
       aria-labelledby={titleId}
       onCancel={(event) => {
         event.preventDefault()
@@ -423,19 +438,22 @@ export default function ManualMediaAdd({
       }}
       onKeyDown={(event) => event.stopPropagation()}
     >
-      <div className="tag-drawer-inner">
-        <div className="detail-topbar">
-          <h1 id={titleId}>Add {mediaType}</h1>
-          <button
-            type="button"
+      <div className="ds-inspector">
+        <div className="ds-inspector-bar">
+          <h2 id={titleId} className="ds-crumbs">
+            <b>Add {mediaType}</b>
+          </h2>
+          <Button
+            variant="ghost"
+            icon
             aria-label={`Close add ${mediaType}`}
             disabled={pending}
             onClick={onClose}
           >
-            <X size={20} />
-          </button>
+            <X className="ds-i" aria-hidden="true" />
+          </Button>
         </div>
-        <div className="tag-drawer-body">
+        <div className="ds-inspector-body">
           <ManualMediaSearch
             mediaType={mediaType}
             onAdded={onAdded}

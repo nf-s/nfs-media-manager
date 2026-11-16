@@ -4,6 +4,7 @@ import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { ChevronDown, SlidersHorizontal, X } from 'lucide-react'
 import { Button } from '@repo/ui/components/ui/button'
+import { Count } from '@repo/ui/components/ds/pill'
 
 export function FilterPanelSection({
   title,
@@ -21,17 +22,21 @@ export function FilterPanelSection({
   const [open, setOpen] = useState(defaultOpen)
   return (
     <details
-      className="filter-panel-section"
+      className="browse-disclosure"
       open={open}
       onToggle={(event) => setOpen(event.currentTarget.open)}
     >
       <summary>
         {icon}
         <span>{title}</span>
-        {Boolean(count) && <span className="filter-panel-count">{count}</span>}
-        <ChevronDown size={15} className="filter-panel-chevron" />
+        {Boolean(count) && <Count>{count}</Count>}
+        <ChevronDown
+          className="ds-i browse-disclosure-chevron"
+          data-size="sm"
+          aria-hidden
+        />
       </summary>
-      <div className="filter-panel-section-body">{children}</div>
+      <div className="browse-disclosure-body">{children}</div>
     </details>
   )
 }
@@ -66,7 +71,7 @@ function FilterDialog({
     <dialog
       id={id}
       ref={dialog}
-      className="tag-drawer browse-filter-panel"
+      className="ds-inspector browse-drawer"
       aria-labelledby={titleId}
       onCancel={(event) => {
         event.preventDefault()
@@ -79,20 +84,21 @@ function FilterDialog({
       }}
       onKeyDown={(event) => event.stopPropagation()}
     >
-      <div className="filter-panel-inner">
-        <div className="detail-topbar filter-panel-header">
-          <h2 id={titleId}>Filters</h2>
-          <Button
-            type="button"
-            variant="ghost"
-            aria-label="Close filters"
-            onClick={onClose}
-          >
-            <X size={18} />
-          </Button>
-        </div>
-        <div className="filter-panel-body">{children}</div>
+      <div className="ds-inspector-bar">
+        <h2 id={titleId} className="browse-drawer-title">
+          Filters
+        </h2>
+        <Button
+          type="button"
+          variant="ghost"
+          icon
+          aria-label="Close filters"
+          onClick={onClose}
+        >
+          <X className="ds-i" aria-hidden />
+        </Button>
       </div>
+      <div className="ds-inspector-body browse-drawer-body">{children}</div>
     </dialog>,
     document.body,
   )
@@ -112,17 +118,17 @@ export default function BrowseFilterPanel({
     <>
       <Button
         type="button"
-        className="filter-panel-trigger gap-1"
         aria-haspopup="dialog"
         aria-expanded={open}
         aria-controls={open ? id : undefined}
+        aria-label={count > 0 ? `Filters, ${count} active` : undefined}
         onClick={() => {
           setMounted(true)
           setOpen(true)
         }}
       >
-        <SlidersHorizontal size={15} /> Filters
-        {count > 0 && <span className="filter-panel-count">{count}</span>}
+        <SlidersHorizontal className="ds-i" data-size="sm" aria-hidden />
+        {count > 0 ? `Filters · ${count}` : 'Filters'}
       </Button>
       {mounted && (
         <FilterDialog id={id} open={open} onClose={() => setOpen(false)}>

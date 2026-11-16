@@ -8,21 +8,41 @@ import {
   type AlbumListening as AlbumListeningData,
   type ListeningSource,
 } from '@repo/schemas/lastfm'
+import { Section, Stats } from '@repo/ui/components/ds/facts'
+import { Notice, State } from '@repo/ui/components/ds/feedback'
+import { Meter } from '@repo/ui/components/ds/meter'
+import { EmptyValue, Pill } from '@repo/ui/components/ds/pill'
+import { Select } from '@repo/ui/components/ds/toolbar'
+import { TrendChart } from '@repo/ui/components/ds/trend-chart'
 import { Button } from '@repo/ui/components/ui/button'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@repo/ui/components/ui/table'
+import { formatCount, formatDate } from '@repo/ui/lib/format'
 import { useConfig } from './providers'
 import {
   ScrobbledNamePicker,
   useLastfmLinkUpdate,
 } from './lastfm-link-controls'
 import { errorMessage } from './lastfm-sync'
-import { ListeningChart } from './listening-chart'
+import {
+  ListeningDate,
+  ListeningSkeleton,
+  useListeningSeries,
+} from './listening-trend'
 import { fetchApiData } from '@/utils/api'
 import {
   albumListeningPath,
-  listeningBars,
-  type ListeningChartStyle,
-  type ListeningPeriod,
-} from '@/utils/listening-chart'
+  busiestMonth,
+  formatListeningMonth,
+} from '@/utils/listening-series'
+
+const TOP_TRACKS = 6
 
 export function useAlbumListening(
   albumId: string,
@@ -45,53 +65,12 @@ export function useAlbumListening(
   })
 }
 
-function formatDate(value: string | null) {
-  return value ? new Date(value).toLocaleDateString() : '-'
-}
+type ScrobbleName = ListeningSource & { linked: boolean }
 
-function SourceList({
-  label,
-  sources,
-  action,
-  disabled,
-  onAction,
-}: {
-  label: string
-  sources: ListeningSource[]
-  action: string
-  disabled: boolean
-  onAction: (source: ListeningSource) => void
-}) {
-  return (
-    <section aria-label={label} className="text-sm">
-      <h3 className="font-semibold">{label}</h3>
-      <ul className="grid gap-1">
-        {sources.map((source) => (
-          <li
-            key={`${source.artistName}\u0000${source.albumName}`}
-            className="flex items-center gap-2"
-          >
-            <Button
-              disabled={disabled}
-              aria-label={`${action} ${source.artistName} — ${source.albumName}`}
-              onClick={() => onAction(source)}
-            >
-              {action}
-            </Button>
-            <span>
-              {source.artistName} — {source.albumName} ·{' '}
-              <span className="tabular-nums">
-                {source.count.toLocaleString()}
-              </span>
-              {source.manual ? ' · Linked manually' : ''}
-            </span>
-          </li>
-        ))}
-      </ul>
-    </section>
-  )
-}
-
+/**
+ * Scrobbled artist and album names linked to the album, then similar names
+ * that are not, each with its scrobble count and Link or Unlink.
+ */
 export function ListeningSources({
   albumId,
   data,
@@ -101,156 +80,287 @@ export function ListeningSources({
 }) {
   const update = useLastfmLinkUpdate()
   const [adding, setAdding] = useState(false)
-  const add = (name: { artistName: string; albumName: string }) =>
+  const link = (name: { artistName: string; albumName: string }) =>
     update.mutate({
       action: 'link',
       artistName: name.artistName,
       albumName: name.albumName,
       albumId,
     })
+  const names: ScrobbleName[] = [
+    ...data.sources.map((source) => ({ ...source, linked: true })),
+    ...data.similarUnlinked.map((source) => ({ ...source, linked: false })),
+  ]
   return (
-    <div className="mt-4 grid gap-3">
-      {data.sources.length > 0 && (
-        <SourceList
-          label="Linked scrobble names"
-          sources={data.sources}
-          action="Remove"
-          disabled={update.isPending}
-          onAction={(source) =>
-            update.mutate({
-              action: 'unlink',
-              artistName: source.artistName,
-              albumName: source.albumName,
-            })
-          }
-        />
+    <div className="data-stack">
+      {names.length > 0 && (
+        <Table aria-label="Scrobble names" layout="fixed">
+          <TableHeader>
+            <TableRow>
+              <TableHead sticky={0} stickyEdge>
+                Scrobbled as
+              </TableHead>
+              <TableHead>Artist</TableHead>
+              <TableHead align="end" style={{ width: 88 }}>
+                Scrobbles
+              </TableHead>
+              <TableHead align="end" style={{ width: 84 }}>
+                <span className="sr-only">Actions</span>
+              </TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {names.map((name) => {
+              const label = `${name.artistName} — ${name.albumName}`
+              return (
+                <TableRow key={`${name.linked}\u0000${label}`}>
+                  <TableCell sticky={0} stickyEdge>
+                    <span className="ds-cell-id">
+                      <span className="ds-cell-title" title={label}>
+                        {name.albumName}
+                      </span>
+                      {name.manual && (
+                        <Pill tone="outline">Linked manually</Pill>
+                      )}
+                    </span>
+                  </TableCell>
+                  <TableCell>{name.artistName}</TableCell>
+                  <TableCell align="end" className="ds-num">
+                    {formatCount(name.count)}
+                  </TableCell>
+                  <TableCell align="end">
+                    <Button
+                      size="xs"
+                      variant={name.linked ? 'ghost' : 'default'}
+                      disabled={update.isPending}
+                      aria-label={`${name.linked ? 'Unlink' : 'Link'} ${label}`}
+                      onClick={() =>
+                        name.linked
+                          ? update.mutate({
+                              action: 'unlink',
+                              artistName: name.artistName,
+                              albumName: name.albumName,
+                            })
+                          : link(name)
+                      }
+                    >
+                      {name.linked ? 'Unlink' : 'Link'}
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              )
+            })}
+          </TableBody>
+        </Table>
       )}
-      {data.similarUnlinked.length > 0 && (
-        <SourceList
-          label="Similar unlinked names"
-          sources={data.similarUnlinked}
-          action="Add"
-          disabled={update.isPending}
-          onAction={add}
-        />
-      )}
-      <div className="grid gap-1 text-sm">
-        <div className="flex flex-wrap items-center gap-3">
-          <Button aria-expanded={adding} onClick={() => setAdding(!adding)}>
-            Add scrobbled name
-          </Button>
-          <Link
-            className="underline underline-offset-2"
-            href="/imports/lastfm?mediaType=album&reason=unlinked"
-          >
+      <div className="ds-actions">
+        <Button
+          size="xs"
+          aria-expanded={adding}
+          onClick={() => setAdding(!adding)}
+        >
+          Add scrobbled name
+        </Button>
+        <Button size="xs" variant="link" asChild>
+          <Link href="/imports/lastfm?mediaType=album&reason=unlinked">
             Review scrobble links
           </Link>
-        </div>
-        {adding && (
-          <ScrobbledNamePicker disabled={update.isPending} onPick={add} />
-        )}
-        {update.isError && (
-          <p role="alert">
-            {errorMessage(update.error, 'Could not update the link.')}
-          </p>
-        )}
+        </Button>
       </div>
+      {adding && (
+        <ScrobbledNamePicker disabled={update.isPending} onPick={link} />
+      )}
+      {update.isError && (
+        <Notice tone="danger">
+          {errorMessage(update.error, 'Could not update the link.')}
+        </Notice>
+      )}
     </div>
   )
 }
 
-export default function AlbumListening({ albumId }: { albumId: string }) {
+/** One line per scrobbled track, most played first. */
+function TracksByScrobbles({
+  tracks,
+}: {
+  tracks: AlbumListeningData['tracks']
+}) {
+  const [all, setAll] = useState(false)
+  if (!tracks.length) return null
+  const ranked = [...tracks].sort((left, right) => right.count - left.count)
+  const shown = all ? ranked : ranked.slice(0, TOP_TRACKS)
+  const most = ranked[0]?.count ?? 1
+  return (
+    <Section
+      title="By track"
+      aside={
+        tracks.length > TOP_TRACKS && (
+          <Button
+            size="xs"
+            variant="link"
+            aria-expanded={all}
+            onClick={() => setAll(!all)}
+          >
+            {all ? `Top ${TOP_TRACKS}` : `All ${formatCount(tracks.length)}`}
+          </Button>
+        )
+      }
+    >
+      <Table aria-label="Scrobbles by track" layout="fixed">
+        <TableHeader>
+          <TableRow>
+            <TableHead align="end" style={{ width: 40 }}>
+              #
+            </TableHead>
+            <TableHead>Title</TableHead>
+            <TableHead align="end" style={{ width: 88 }}>
+              Scrobbles
+            </TableHead>
+            <TableHead style={{ width: 120 }}>
+              <span className="sr-only">Share</span>
+            </TableHead>
+            <TableHead style={{ width: 104 }}>Last played</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {shown.map((track) => (
+            <TableRow key={track.key}>
+              <TableCell align="end" className="ds-muted ds-num">
+                {track.position ?? <EmptyValue />}
+              </TableCell>
+              <TableCell>
+                <span className="ds-cell-title" title={track.title}>
+                  {track.title}
+                </span>
+              </TableCell>
+              <TableCell align="end" className="ds-num">
+                {formatCount(track.count)}
+              </TableCell>
+              <TableCell>
+                <Meter value={(track.count / most) * 100} />
+              </TableCell>
+              <TableCell className="ds-num">
+                {formatDate(track.lastListenedAt)}
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </Section>
+  )
+}
+
+export default function AlbumListening({
+  albumId,
+  onOpenSources,
+}: {
+  albumId: string
+  /** Opens the Last.fm row in Sources, where scrobble names are matched. Without it the names are listed here. */
+  onOpenSources?: () => void
+}) {
   const [track, setTrack] = useState('')
-  const [period, setPeriod] = useState<ListeningPeriod>('month')
-  const [chartStyle, setChartStyle] = useState<ListeningChartStyle>('line')
+  const series = useListeningSeries('album', albumId)
   const listening = useAlbumListening(albumId, track)
-  if (listening.isPending) return <p>Loading listening history...</p>
-  if (!listening.data)
-    return (
-      <p role="alert">
-        Listening history unavailable.{' '}
-        <Button size="md" variant="primary" onClick={() => listening.refetch()}>
-          Retry
-        </Button>
-      </p>
-    )
+  const summary = series.data
   const data = listening.data
-  if (!track && data.total === 0)
+  if (!summary || !data) {
+    if ((series.isError && !summary) || (listening.isError && !data))
+      return (
+        <State
+          title="Could not load listening history"
+          error
+          action={
+            <Button
+              onClick={() => {
+                if (series.isError) void series.refetch()
+                if (listening.isError) void listening.refetch()
+              }}
+            >
+              Retry
+            </Button>
+          }
+        />
+      )
+    return <ListeningSkeleton />
+  }
+  const busiest = busiestMonth(summary.months)
+  const names = onOpenSources ? (
+    <Notice
+      action={
+        <Button size="xs" onClick={onOpenSources}>
+          Open Sources
+        </Button>
+      }
+    >
+      Scrobble names are matched in Sources, under Last.fm.
+    </Notice>
+  ) : (
+    <Section title="Scrobble names">
+      <ListeningSources albumId={albumId} data={data} />
+    </Section>
+  )
+  if (summary.total === 0)
     return (
       <div>
-        <p className="quiet">No scrobbles linked to this album.</p>
-        <ListeningSources albumId={albumId} data={data} />
+        <Section flush>
+          <State title="No scrobbles yet" size="sm" />
+        </Section>
+        {names}
       </div>
     )
-  const bars = listeningBars(data.months, period)
   return (
     <div>
-      <dl className="detail-metrics">
-        <div>
-          <dt>Scrobbles</dt>
-          <dd>{data.total.toLocaleString()}</dd>
+      <Section flush>
+        <Stats
+          items={[
+            { label: 'scrobbles', value: formatCount(summary.total) },
+            {
+              label: 'first played',
+              value: <ListeningDate value={summary.firstDate} />,
+            },
+            {
+              label: 'last played',
+              value: <ListeningDate value={summary.lastDate} />,
+            },
+            {
+              label: 'busiest month',
+              value: busiest ? (
+                formatListeningMonth(busiest.month)
+              ) : (
+                <EmptyValue />
+              ),
+            },
+          ]}
+        />
+      </Section>
+      <Section title="Over time">
+        <div aria-busy={listening.isPlaceholderData}>
+          <TrendChart
+            key={track}
+            days={track ? [] : summary.days}
+            months={track ? data.months : summary.months}
+            monthsOnly={Boolean(track)}
+            ranges={track ? ['1y', '5y', 'all'] : undefined}
+            extra={
+              <Select
+                aria-label="Track"
+                value={track}
+                onChange={(event) => setTrack(event.target.value)}
+              >
+                <option value="">All tracks</option>
+                {data.tracks.map((item) => (
+                  <option key={item.key} value={item.key}>
+                    {item.position === null ? '' : `${item.position}. `}
+                    {item.title} ({formatCount(item.count)})
+                  </option>
+                ))}
+              </Select>
+            }
+          />
         </div>
-        <div>
-          <dt>First listened</dt>
-          <dd>{formatDate(data.firstListenedAt)}</dd>
-        </div>
-        <div>
-          <dt>Last listened</dt>
-          <dd>{formatDate(data.lastListenedAt)}</dd>
-        </div>
-      </dl>
-      <div className="mb-4 flex flex-wrap items-center gap-3 text-sm">
-        <label className="flex items-center gap-2">
-          Track
-          <select
-            value={track}
-            onChange={(event) => setTrack(event.target.value)}
-          >
-            <option value="">All tracks</option>
-            {data.tracks.map((item) => (
-              <option key={item.key} value={item.key}>
-                {item.position === null ? '' : `${item.position}. `}
-                {item.title} ({item.count.toLocaleString()})
-              </option>
-            ))}
-          </select>
-        </label>
-        <div role="group" aria-label="Chart period" className="flex gap-1">
-          {(['year', 'month'] satisfies ListeningPeriod[]).map((value) => (
-            <Button
-              key={value}
-              variant={period === value ? 'primary' : 'default'}
-              aria-pressed={period === value}
-              onClick={() => setPeriod(value)}
-            >
-              {value === 'year' ? 'Year' : 'Month'}
-            </Button>
-          ))}
-        </div>
-        <div role="group" aria-label="Chart style" className="flex gap-1">
-          {(['bar', 'line'] satisfies ListeningChartStyle[]).map((value) => (
-            <Button
-              key={value}
-              variant={chartStyle === value ? 'primary' : 'default'}
-              aria-pressed={chartStyle === value}
-              onClick={() => setChartStyle(value)}
-            >
-              {value === 'bar' ? 'Bar' : 'Line'}
-            </Button>
-          ))}
-        </div>
-        {listening.isPlaceholderData && (
-          <span role="status" className="quiet">
-            Loading...
-          </span>
-        )}
-      </div>
-      {bars.length ? (
-        <ListeningChart bars={bars} period={period} style={chartStyle} />
-      ) : (
-        <p className="quiet">No scrobbles for this track.</p>
-      )}
-      <ListeningSources albumId={albumId} data={data} />
+      </Section>
+      <TracksByScrobbles tracks={data.tracks} />
+      {names}
     </div>
   )
 }

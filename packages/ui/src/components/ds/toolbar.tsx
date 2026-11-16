@@ -1,4 +1,4 @@
-import type { HTMLAttributes, ReactNode, SelectHTMLAttributes } from 'react'
+import type { ComponentProps, ReactNode, SelectHTMLAttributes } from 'react'
 import { cn } from '../../lib/utils'
 
 /**
@@ -6,10 +6,7 @@ import { cn } from '../../lib/utils'
  * count. Table-only order: search, count, then Columns at the far end
  * (`ToolbarEnd`).
  */
-export function Toolbar({
-  className,
-  ...props
-}: HTMLAttributes<HTMLDivElement>) {
+export function Toolbar({ className, ...props }: ComponentProps<'div'>) {
   return <div className={cn('ds-toolbar', className)} {...props} />
 }
 

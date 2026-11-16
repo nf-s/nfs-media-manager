@@ -3,6 +3,7 @@
 import { Button } from '@repo/ui/components/ui/button'
 import { Input } from '@repo/ui/components/ui/input'
 import { Label } from '@repo/ui/components/ui/label'
+import { Notice } from '@repo/ui/components/ds/feedback'
 import { useMutation } from '@tanstack/react-query'
 import { useRouter } from 'next/navigation'
 import { useState } from 'react'
@@ -33,17 +34,18 @@ export default function LoginForm() {
 
   return (
     <form
-      className="space-y-5"
+      className="sec-stack"
       onSubmit={(event) => {
         event.preventDefault()
         loginMutation.mutate()
       }}
     >
-      <div className="space-y-2">
+      <div className="ds-field">
         <Label htmlFor="email">Email</Label>
         <Input
           id="email"
           type="email"
+          controlSize="md"
           value={email}
           onChange={(event) => setEmail(event.target.value)}
           autoComplete="email"
@@ -51,11 +53,12 @@ export default function LoginForm() {
         />
       </div>
 
-      <div className="space-y-2">
+      <div className="ds-field">
         <Label htmlFor="password">Password</Label>
         <Input
           id="password"
           type="password"
+          controlSize="md"
           value={password}
           onChange={(event) => setPassword(event.target.value)}
           autoComplete="current-password"
@@ -63,16 +66,21 @@ export default function LoginForm() {
         />
       </div>
 
+      {loginMutation.isError && (
+        <Notice tone="danger">
+          Could not sign in. Check the email and password.
+        </Notice>
+      )}
+
       <Button
         size="md"
         variant="primary"
         type="submit"
-        className="w-full"
         disabled={
           loginMutation.isPending || email.length === 0 || password.length === 0
         }
       >
-        {loginMutation.isPending ? 'Signing in...' : 'Sign In'}
+        {loginMutation.isPending ? 'Signing in...' : 'Sign in'}
       </Button>
     </form>
   )

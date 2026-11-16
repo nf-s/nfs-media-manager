@@ -3,7 +3,8 @@
 import Link from 'next/link'
 import { usePathname, useSearchParams } from 'next/navigation'
 import { useEffect, useRef, type ComponentProps } from 'react'
-import { ArrowLeft, X } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Maximize2, X } from 'lucide-react'
+import { Button } from '@repo/ui/components/ui/button'
 import { MediaInspector } from './media-inspector'
 import {
   InspectorEntryContext,
@@ -19,11 +20,13 @@ import { ArtistDetail } from './artist-detail'
 import { PersonDetail } from './person-detail'
 import { ChannelDetail } from './channel-detail'
 import { JobDetail } from './job-detail'
+import { TagDetail } from './tag-detail-modal'
 import UserPageClient from './pages/user-page-client'
 import { libraryViewForPath } from '@/utils/media-scope'
 import {
   detailBrowseKind,
   detailPageHref,
+  parseTagDetailId,
   withoutDetailEntries,
   type DetailEntry,
 } from '@/utils/detail-inspector'
@@ -41,6 +44,22 @@ const labels = {
   channel: 'Channel details',
   job: 'Job details',
   user: 'User panel',
+  tag: 'Tag details',
+}
+
+const kindNames = {
+  album: 'Album',
+  film: 'Film',
+  track: 'Track',
+  playlist: 'Playlist',
+  subscription: 'Subscription',
+  collection: 'Collection',
+  artist: 'Artist',
+  person: 'Person',
+  channel: 'Channel',
+  job: 'Job',
+  user: 'Account',
+  tag: 'Tag',
 }
 
 type InspectorOptions = {
@@ -128,33 +147,59 @@ export function DetailInspector(options: InspectorOptions) {
         tabIndex={-1}
         aria-label={labels[activeKind]}
         onDismiss={nav.close}
+        headerClassName="ds-inspector-bar dtl-bar"
         header={
           <>
-            <div className="flex items-center gap-3">
+            <div className="dtl-bar-start">
               {nav.canGoBack && (
-                <button
-                  type="button"
-                  className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 hover:bg-[var(--chip)]"
+                <Button
+                  variant="ghost"
+                  icon
+                  aria-label="Back"
+                  title="Back"
                   onClick={nav.back}
                 >
-                  <ArrowLeft size={14} aria-hidden="true" /> Back
-                </button>
+                  <ChevronLeft className="ds-i" aria-hidden="true" />
+                </Button>
               )}
-              <Link
-                className="hover:underline"
-                href={detailPageHref(target, pageParams)}
-                prefetch={false}
-              >
-                Open page
-              </Link>
+              <div className="ds-crumbs">
+                {nav.canGoBack && nav.root && (
+                  <>
+                    <span>{kindNames[nav.root.kind]}</span>
+                    <ChevronRight
+                      className="ds-i"
+                      data-size="sm"
+                      aria-hidden="true"
+                    />
+                  </>
+                )}
+                <b>{kindNames[activeKind]}</b>
+              </div>
             </div>
-            <button
-              type="button"
-              aria-label="Close details"
-              onClick={nav.close}
-            >
-              <X size={18} aria-hidden="true" />
-            </button>
+            <span className="dtl-bar-end">
+              <Button asChild variant="ghost">
+                <Link
+                  href={detailPageHref(target, pageParams)}
+                  prefetch={false}
+                >
+                  <Maximize2
+                    className="ds-i"
+                    data-size="sm"
+                    aria-hidden="true"
+                  />
+                  Open page
+                </Link>
+              </Button>
+              <Button
+                variant="ghost"
+                icon
+                aria-label="Close details"
+                title="Close"
+                onClick={nav.close}
+              >
+                <X className="ds-i" aria-hidden="true" />
+              </Button>
+            </span>
           </>
         }
         onScrollCapture={(event) => {
@@ -197,22 +242,19 @@ function InspectorContent({
   options: InspectorOptions
   onMerged: (id: string) => void
 }) {
-  if (target.kind === 'playlist' || target.kind === 'collection')
-    return (
-      <div className="flex min-h-0 flex-1 flex-col gap-3 px-3.5 pb-3.5 pt-3">
-        {target.kind === 'playlist' ? (
-          <PlaylistInspectorContent id={target.id} {...options.playlist} />
-        ) : (
-          <FilmCollectionEntries id={target.id} />
-        )}
-      </div>
-    )
+  const tag = target.kind === 'tag' ? parseTagDetailId(target.id) : null
   return (
-    <div className="inspector-scroll">
+    <div className="inspector-scroll dtl-body">
       {target.kind === 'user' ? (
         <UserPageClient />
       ) : target.kind === 'job' ? (
         <JobDetail id={target.id} />
+      ) : target.kind === 'tag' ? (
+        tag && <TagDetail id={tag.id} mediaType={tag.mediaType} />
+      ) : target.kind === 'playlist' ? (
+        <PlaylistInspectorContent id={target.id} {...options.playlist} />
+      ) : target.kind === 'collection' ? (
+        <FilmCollectionEntries id={target.id} />
       ) : target.kind === 'artist' ? (
         <ArtistDetail id={target.id} />
       ) : target.kind === 'person' ? (
@@ -240,9 +282,10 @@ export function PlaylistInspectorContent({
 }: { id: string } & InspectorOptions['playlist']) {
   const detail = useDetailView()
   function onTabChange(tab: PlaylistTab) {
-    if (tab === 'tracks') detail.params.delete('tab')
-    else detail.params.set('tab', tab)
-    detail.replace(detail.params)
+    const params = new URLSearchParams(detail.params)
+    if (tab === 'overview') params.delete('tab')
+    else params.set('tab', tab)
+    detail.replace(params)
   }
   return (
     <PlaylistDetail

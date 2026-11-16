@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { Headphones, Plus, X } from 'lucide-react'
 import { Button } from '@repo/ui/components/ui/button'
+import { Select } from '@repo/ui/components/ds/toolbar'
 import { FilterPanelSection } from './browse-filter-panel'
 import {
   defaultListeningPeriod,
@@ -43,10 +44,10 @@ function PeriodInputs({
   onChange: (value: ListeningPeriodDraft) => void
 }) {
   return (
-    <div className="grid gap-2">
-      <label>
-        Period
-        <select
+    <div className="browse-form">
+      <label className="ds-field">
+        <span className="ds-label">Period</span>
+        <Select
           aria-label={`${label} period`}
           value={value.kind}
           onChange={(event) => {
@@ -58,13 +59,14 @@ function PeriodInputs({
           <option value="rolling">In the last</option>
           <option value="dates">Date range</option>
           <option value="all">All time</option>
-        </select>
+        </Select>
       </label>
       {value.kind === 'rolling' && (
-        <div className="range-inputs">
-          <label>
-            Amount
+        <div className="browse-form-pair">
+          <label className="ds-field">
+            <span className="ds-label">Amount</span>
             <input
+              className="ds-input"
               aria-label={`${label} period amount`}
               type="number"
               min="1"
@@ -77,9 +79,9 @@ function PeriodInputs({
               }
             />
           </label>
-          <label>
-            Unit
-            <select
+          <label className="ds-field">
+            <span className="ds-label">Unit</span>
+            <Select
               aria-label={`${label} period unit`}
               value={value.unit}
               onChange={(event) => {
@@ -97,15 +99,16 @@ function PeriodInputs({
               <option value="weeks">Weeks</option>
               <option value="months">Months</option>
               <option value="years">Years</option>
-            </select>
+            </Select>
           </label>
         </div>
       )}
       {value.kind === 'dates' && (
-        <div className="range-inputs">
-          <label>
-            From
+        <div className="browse-form-pair">
+          <label className="ds-field">
+            <span className="ds-label">From</span>
             <input
+              className="ds-input"
               aria-label={`${label} from date`}
               type="date"
               value={value.from}
@@ -114,9 +117,10 @@ function PeriodInputs({
               }
             />
           </label>
-          <label>
-            Through
+          <label className="ds-field">
+            <span className="ds-label">Through</span>
             <input
+              className="ds-input"
               aria-label={`${label} through date`}
               type="date"
               value={value.to}
@@ -143,7 +147,7 @@ function ListeningFilterEditor({
 
   return (
     <form
-      className="grid gap-3"
+      className="browse-form"
       onSubmit={(event) => {
         event.preventDefault()
         if (rules.length === 0) {
@@ -162,9 +166,9 @@ function ListeningFilterEditor({
         onFilterChange(parsed.data)
       }}
     >
-      <label>
-        Match
-        <select
+      <label className="ds-field">
+        <span className="ds-label">Match</span>
+        <Select
           aria-label="Match listening rules"
           value={match}
           onChange={(event) =>
@@ -173,14 +177,11 @@ function ListeningFilterEditor({
         >
           <option value="all">All rules</option>
           <option value="any">Any rule</option>
-        </select>
+        </Select>
       </label>
       {rules.map((rule, index) => (
-        <fieldset
-          className="grid min-w-0 gap-2 border-t border-slate-200 pt-2"
-          key={rule.id}
-        >
-          <legend className="text-xs font-medium">Rule {index + 1}</legend>
+        <fieldset className="browse-fieldset" key={rule.id}>
+          <legend className="ds-label">Rule {index + 1}</legend>
           <PeriodInputs
             label={`Rule ${index + 1}`}
             value={rule.period}
@@ -192,11 +193,14 @@ function ListeningFilterEditor({
               )
             }
           />
-          <div className="range-inputs">
+          <div className="browse-form-pair">
             {countBounds.map((bound) => (
-              <label key={bound}>
-                {bound === 'min' ? 'Minimum' : 'Maximum'}
+              <label className="ds-field" key={bound}>
+                <span className="ds-label">
+                  {bound === 'min' ? 'Minimum' : 'Maximum'}
+                </span>
                 <input
+                  className="ds-input"
                   aria-label={`Rule ${index + 1} ${bound === 'min' ? 'minimum' : 'maximum'} scrobbles`}
                   type="number"
                   min="0"
@@ -220,7 +224,7 @@ function ListeningFilterEditor({
           <Button
             type="button"
             variant="ghost"
-            className="justify-self-start gap-1"
+            className="browse-start"
             aria-label={`Remove listening rule ${index + 1}`}
             onClick={() =>
               setRules((current) =>
@@ -228,13 +232,13 @@ function ListeningFilterEditor({
               )
             }
           >
-            <X size={12} /> Remove rule
+            <X className="ds-i" data-size="sm" aria-hidden /> Remove rule
           </Button>
         </fieldset>
       ))}
       <Button
         type="button"
-        className="justify-self-start gap-1"
+        className="browse-start"
         disabled={rules.length >= 10}
         onClick={() =>
           setRules((current) => [
@@ -246,10 +250,14 @@ function ListeningFilterEditor({
           ])
         }
       >
-        <Plus size={12} /> Add rule
+        <Plus className="ds-i" data-size="sm" aria-hidden /> Add rule
       </Button>
-      {filterError && <p role="alert">{filterError}</p>}
-      <div className="flex flex-wrap gap-2">
+      {filterError && (
+        <p role="alert" className="browse-form-error">
+          {filterError}
+        </p>
+      )}
+      <div className="ds-actions">
         <Button variant="primary" type="submit">
           Apply rules
         </Button>
@@ -279,7 +287,7 @@ function ListeningSortEditor({
 
   return (
     <form
-      className="grid gap-3 border-t border-slate-200 pt-3"
+      className="browse-form browse-form-split"
       onSubmit={(event) => {
         event.preventDefault()
         const parsed = parseListeningPeriodDraft(sortDraft)
@@ -291,14 +299,20 @@ function ListeningSortEditor({
         onSortChange(parsed.data)
       }}
     >
-      <fieldset className="grid min-w-0 gap-2">
-        <legend className="mb-2 text-xs font-medium">Sort period</legend>
+      <fieldset className="browse-fieldset">
+        <legend className="ds-label">Sort period</legend>
         <PeriodInputs label="Sort" value={sortDraft} onChange={setSortDraft} />
       </fieldset>
-      {sortError && <p role="alert">{sortError}</p>}
-      <Button variant="primary" type="submit">
-        {sorting ? 'Update sort period' : 'Sort by scrobbles'}
-      </Button>
+      {sortError && (
+        <p role="alert" className="browse-form-error">
+          {sortError}
+        </p>
+      )}
+      <div>
+        <Button variant="primary" type="submit">
+          {sorting ? 'Update sort period' : 'Sort by scrobbles'}
+        </Button>
+      </div>
     </form>
   )
 }
@@ -308,11 +322,11 @@ export function ListeningControls(props: ListeningControlsProps) {
     <div
       className={
         props.presentation === 'panel'
-          ? 'range-editor'
-          : 'popover-panel range-editor'
+          ? 'browse-form'
+          : 'browse-form ds-pop browse-popover-panel'
       }
     >
-      <p className="quiet text-xs">
+      <p className="ds-help">
         Counts synced, linked Last.fm track scrobbles, not full album plays.
         Bounds are inclusive; dates use UTC.
       </p>
@@ -332,16 +346,16 @@ export function ListeningControls(props: ListeningControlsProps) {
   return props.presentation === 'panel' ? (
     <FilterPanelSection
       title="Listening"
-      icon={<Headphones size={16} />}
+      icon={<Headphones className="ds-i" data-size="sm" aria-hidden />}
       count={props.filter?.rules.length}
       defaultOpen={Boolean(props.filter?.rules.length)}
     >
       {editor}
     </FilterPanelSection>
   ) : (
-    <details className="toolbar-popover">
-      <summary>
-        <Headphones size={15} /> Listening
+    <details className="browse-popover">
+      <summary className="ds-btn">
+        <Headphones className="ds-i" data-size="sm" aria-hidden /> Listening
         {props.filter?.rules.length ? ` (${props.filter.rules.length})` : ''}
       </summary>
       {editor}

@@ -19,6 +19,12 @@ import {
   type SubscriptionType,
 } from '@repo/schemas/subscriptions'
 import { youtubeThumbnailUrl } from '@repo/schemas/youtube'
+import {
+  EMPTY_VALUE,
+  formatCount,
+  formatDate,
+  formatDateTime,
+} from '@repo/ui/lib/format'
 import type { TitleSuggestion } from './browse-suggestions'
 import { parseBrowseView, type BrowseView } from './media-grid'
 import { formatVideoDuration } from './youtube'
@@ -30,13 +36,24 @@ export const subscriptionImportsHref = '/imports/youtube?mediaType=subscription'
 /** URL parameters of the open drawer; changing them keeps the page and is not saved. */
 export const subscriptionDrawerParams = ['item']
 
-export const defaultSubscriptionColumns = [
+/** Column, picker and sort order: identity, creator, properties, dates, counts, pills. */
+export const subscriptionFieldOrder = [
   'title',
   'source',
   'type',
   'publishedAt',
   'durationSec',
   'viewCount',
+  'likeCount',
+  'commentCount',
+  'genre',
+]
+
+export const defaultSubscriptionColumns = [
+  'title',
+  'source',
+  'publishedAt',
+  'durationSec',
 ]
 
 export type SubscriptionSearchFields = 'title' | 'all'
@@ -192,42 +209,40 @@ export function subscriptionArtworkUrl(item: SubscriptionItem) {
     : (item.artworkUrl ?? item.sourceThumbnailUrl)
 }
 
-/** Live and upcoming streams instead of a length; a dash when unknown. */
+/** Live and upcoming streams instead of a length; an en dash when unknown. */
 export function formatSubscriptionDuration(item: SubscriptionItem) {
   if (item.type === 'youtube' && item.live === 'live') return 'Live'
   if (item.type === 'youtube' && item.live === 'upcoming') return 'Upcoming'
-  return item.durationSec === null ? '-' : formatVideoDuration(item.durationSec)
+  return item.durationSec === null
+    ? EMPTY_VALUE
+    : formatVideoDuration(item.durationSec)
 }
 
 /**
- * A publish date shown only as precisely as the provider reported it. Dates
- * without a time are UTC days; `detail` adds the time when there is one.
+ * A publish date in ISO form, only as precise as the provider reported it:
+ * `2024`, `2024-03` or `2024-03-01`. Dates without a time are UTC days; a
+ * timed date is the local day, and `detail` adds the time.
  */
 export function formatSubscriptionPublished(
   publishedAt: string,
   precision: SubscriptionPublishedPrecision,
-  { detail = false, locale }: { detail?: boolean; locale?: string } = {},
+  { detail = false }: { detail?: boolean } = {},
 ) {
   const date = new Date(publishedAt)
-  if (Number.isNaN(date.getTime())) return '-'
-  if (precision === 'year') return String(date.getUTCFullYear())
-  if (precision === 'month')
-    return date.toLocaleDateString(locale, {
-      timeZone: 'UTC',
-      year: 'numeric',
-      month: 'short',
-    })
-  if (precision === 'day')
-    return date.toLocaleDateString(locale, { timeZone: 'UTC' })
-  return detail ? date.toLocaleString(locale) : date.toLocaleDateString(locale)
+  if (Number.isNaN(date.getTime())) return EMPTY_VALUE
+  const day = date.toISOString().slice(0, 10)
+  if (precision === 'year') return day.slice(0, 4)
+  if (precision === 'month') return day.slice(0, 7)
+  if (precision === 'day') return day
+  return detail ? formatDateTime(date) : formatDate(date)
 }
 
-/** "12K" style counts for the grid; a dash when hidden or absent. */
+/** "12K" style counts for the grid; an en dash when hidden or absent. */
 export function formatCompactSubscriptionCount(
   value: number | null,
-  locale?: string,
+  locale = 'en',
 ) {
-  if (value === null) return '-'
+  if (value === null) return EMPTY_VALUE
   return new Intl.NumberFormat(locale, {
     notation: 'compact',
     maximumFractionDigits: 1,
@@ -276,7 +291,7 @@ export function subscriptionTitleSuggestions(
     }))
 }
 
-/** Height of a grid card under the thumbnail; matches `.cardBody` in subscription-browser.module.css. */
+/** Height of a nested subscription card under its thumbnail. */
 export const subscriptionCardBodyHeight = 72
 
 /** Grid geometry: 16:9 thumbnails over a fixed-height body. */
@@ -351,8 +366,8 @@ export function subscriptionSourceSize(source: SubscriptionSource) {
 
 export function formatSubscriptionSourceSize(source: SubscriptionSource) {
   const size = subscriptionSourceSize(source)
-  if (size === null) return source.type === 'youtube' ? 'Hidden' : '-'
-  return `${size.toLocaleString()} ${
+  if (size === null) return source.type === 'youtube' ? 'Hidden' : EMPTY_VALUE
+  return `${formatCount(size)} ${
     source.type === 'youtube'
       ? size === 1
         ? 'subscriber'

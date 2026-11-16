@@ -117,8 +117,12 @@ test('album playlists list memberships without a duplicate track library section
       }),
     ],
   ])
-  assert.ok(html.includes('class="metadata-tag" href="/playlists/p1"'))
-  assert.match(html, /2 tracks/)
+  assert.match(html, /<h3>Playlists<\/h3><span class="ds-muted">2<\/span>/)
+  assert.match(
+    html,
+    /<a title="Synthetic mix · 2 tracks" class="ds-pill" data-size="md" href="\/playlists\/p1"><span class="ds-pill-label">Synthetic mix</,
+  )
+  assert.match(html, /title="Old list"/)
   assert.doesNotMatch(html, /0 tracks/)
   assert.doesNotMatch(html, /Tracks in the track library/)
   assert.doesNotMatch(html, /href="\/tracks\/track-1"/)
@@ -131,10 +135,13 @@ test('add to playlist offers only playlists that accept albums, even with no mem
     [['playlist-additions', 'album-1'], noAdditions],
     [['album-playlists', 'album-1'], empty],
   ])
-  assert.match(html, /aria-label="Playlist memberships"/)
-  assert.match(html, /popoverTarget="[^"]+"[^>]*>Add to playlist</)
-  assert.match(html, /popover="auto"/)
-  assert.match(html, />Synthetic mix<span class="quiet"> · 12 tracks/)
+  assert.match(html, /No playlist memberships\./)
+  assert.match(html, /popoverTarget="[^"]+"[^>]*>.*Add to playlist</)
+  assert.match(html, /popover="auto" role="region"[^>]*class="ds-pop dtl-pop"/)
+  assert.match(
+    html,
+    /class="ds-menu-item"[^>]*><span class="ds-truncate">Synthetic mix<\/span><span class="ds-muted">12 tracks/,
+  )
   assert.match(html, />Second mix</)
   assert.doesNotMatch(html, /Followed list/)
   assert.doesNotMatch(html, /Filter playlists/)
@@ -172,7 +179,7 @@ test('a long picker keeps server-backed scroll space and an empty picker explain
       [['playlist-additions', 'album-1'], noAdditions],
       [['album-playlists', 'album-1'], empty],
     ]),
-    /virtual-browse-placeholder/,
+    /class="dtl-pop-placeholder"[^>]*><div class="ds-skel"/,
   )
   assert.match(
     render([
@@ -263,20 +270,23 @@ test('additions show queued, adding with progress, added and failed states', () 
       }),
     ],
   ])
+  const status = (name: string, state: string, label: string) =>
+    new RegExp(
+      `<li class="dtl-addition"><span>${name}</span><a[^>]*><span class="ds-status" data-status="${state}">${label}</span></a>`,
+    )
+  assert.match(html, status('Synthetic mix', 'queued', 'Queued'))
+  assert.match(html, status('Second mix', 'running', 'Adding'))
+  assert.match(html, /Adding<\/span><\/a><span class="ds-muted">1 of 2 pages/)
+  assert.match(html, status('Followed list', 'done', 'Added'))
   assert.match(
     html,
-    /<li>Synthetic mix <a[^>]*data-status="queued"[^>]*>Queued</,
+    /Added<\/span><\/a><time class="ds-muted" dateTime="2026-01-02T00:00:00.000Z">2026-01-0\d \d\d:\d\d</,
   )
-  assert.match(
-    html,
-    /<li>Second mix <a[^>]*data-status="running"[^>]*>Adding<\/a><span class="quiet"> 1 of 2 pages/,
-  )
-  assert.match(
-    html,
-    /<li>Followed list <a[^>]*data-status="succeeded"[^>]*>Added<\/a><span class="quiet"> <time dateTime="2026-01-02T00:00:00.000Z">/,
-  )
-  assert.match(html, /<li>Playlist <a[^>]*data-status="failed"[^>]*>Failed</)
+  assert.match(html, status('Playlist', 'failed', 'Failed'))
   assert.match(html, /role="alert">The album has no Spotify album reference\./)
   assert.match(html, /href="\/jobs\/a2"/)
-  assert.match(html, /disabled=""[^>]*>Synthetic mix</)
+  assert.match(
+    html,
+    /disabled=""[^>]*><span class="ds-truncate">Synthetic mix</,
+  )
 })

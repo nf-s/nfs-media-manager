@@ -86,32 +86,83 @@ test('Artists Browse has the shared full search, voice, filters, sorts and view 
   assert.match(html, /aria-label="Record search"/)
   assert.match(html, /aria-label="Sort by"/)
   assert.match(html, /aria-label="Sort descending"/)
-  assert.match(html, / Filters<\/button>/)
+  assert.match(html, /Filters/)
   for (const view of ['Grid', 'List', 'Table'])
     assert.match(html, new RegExp(`aria-label="${view} view"`))
   for (const field of artistBrowseFields)
     assert.ok(html.includes(`<option value="${field.key}"`))
   assert.match(html, /250 artists/)
   assert.match(html, /data-view="list"/)
-  assert.match(html, />Example Artist<\/button>/)
-  assert.match(html, /4 albums · 12 tracks · 2 playlists/)
-  assert.match(html, /title="Tag: Jazz">Jazz<\/button>/)
-  assert.ok((html.match(/virtual-browse-placeholder/g) ?? []).length > 0)
 })
 
-test('Artists grid uses artwork cards and Table has sortable required name and selected columns', async () => {
+test('Artists list uses 48px rows: round thumbnail, title, country, tag pills and counts', async () => {
+  const html = await render()
+  assert.match(html, /class="ds-listhead"/)
+  assert.match(
+    html,
+    /<div class="ds-row" data-item-index="0"><a class="bi-thumb-link" aria-label="Open details for Example Artist" tabindex="-1" href="\/artists\/artist-example"><span class="ds-thumb" data-ratio="round">/,
+  )
+  assert.match(
+    html,
+    /<a class="ds-row-title" title="Example Artist" href="\/artists\/artist-example">Example Artist<\/a><span class="ds-row-by">GB<\/span>/,
+  )
+  assert.match(html, /title="Tag: Jazz" class="ds-pill"/)
+  assert.match(
+    html,
+    /<span class="ds-w-num">4<\/span><span class="ds-w-num">12<\/span><span class="ds-w-num">2<\/span>/,
+  )
+  assert.ok((html.match(/data-placeholder=""/g) ?? []).length > 0)
+  assert.doesNotMatch(html, /onDoubleClick|media-tile|list-row|browse-table/)
+})
+
+test('Artists grid uses clean round artwork cards with a meta line and tags', async () => {
   const grid = await render('view=grid')
   assert.match(grid, /data-view="grid"/)
-  assert.match(grid, /class="media-tile"/)
+  assert.match(grid, /<article class="ds-card" data-item-index="0">/)
+  assert.match(grid, /<span class="ds-art" data-ratio="round">/)
   assert.match(grid, /aria-label="Open details for Example Artist"/)
+  assert.match(grid, /<span class="ds-card-by">GB<\/span>/)
+  assert.match(
+    grid,
+    /<span class="ds-card-meta"><span>4 albums<\/span><span>12 tracks<\/span><\/span>/,
+  )
+  assert.match(grid, /title="Tag: Jazz"/)
+  assert.doesNotMatch(grid, /ds-play/)
+  const sorted = await render('view=grid&sortBy=createdAt&direction=desc')
+  assert.match(sorted, /<span>Added 2026-03-0[12]<\/span>/)
+})
+
+test('Artists Table pins the name, right-aligns counts and sorts through the shared header', async () => {
   const table = await render(
     'view=table&columns=country,albumCount&sortBy=albumCount&direction=desc',
   )
-  assert.match(table, /<table class="browse-table"/)
-  assert.match(table, /aria-sort="descending"><button>Albums ↓<\/button>/)
-  assert.match(table, />Artist<\/button>/)
-  assert.match(table, /title="Filter Country: GB">GB<\/button>/)
+  assert.match(table, /<table class="ds-table" data-layout="fixed"/)
+  assert.match(
+    table,
+    /<th scope="col" data-sticky="edge" style="--ds-sticky-left:0px"><button type="button" class="ds-th-sort" title="Sort by Artist">Artist<\/button>/,
+  )
+  assert.match(
+    table,
+    /data-align="end" aria-sort="descending"><button type="button" class="ds-th-sort" title="Sort by Albums">Albums<svg/,
+  )
+  assert.doesNotMatch(table, /[↑↓]/)
+  assert.match(table, /title="Filter Country: GB"/)
+  assert.match(table, /<td data-align="end" title="4">4<\/td>/)
+  assert.match(table, /aria-label="Resize Albums"/)
   assert.doesNotMatch(table, /Resize Tracks/)
+  const defaults = await render('view=table')
+  const heads = [...defaults.matchAll(/title="Sort by ([^"]+)"/g)].map(
+    ([, label]) => label,
+  )
+  assert.deepEqual(heads, [
+    'Artist',
+    'Country',
+    'Added',
+    'Albums',
+    'Tracks',
+    'Tags',
+  ])
+  assert.match(defaults, /<td title="2026-03-01">2026-03-01<\/td>/)
 })
 
 test('mixed filters, ranges, limits and legacy playlist scopes stay visible with no results', async () => {
@@ -129,10 +180,18 @@ test('mixed filters, ranges, limits and legacy playlist scopes stay visible with
   }).toString()
   const html = await render(search, 0)
   assert.match(html, /Search: rare artist/)
-  assert.match(html, /filter-exclude/)
-  assert.match(html, /filter-required/)
+  assert.match(html, /data-mode="exclude"/)
+  assert.match(html, /data-mode="required"/)
   assert.match(html, /Albums: 2 to \*/)
   assert.match(html, /Playlists: 1 selected/)
   assert.match(html, /Limit: 30/)
-  assert.match(html, /No matches/)
+  assert.match(html, /No artists match/)
+  assert.match(html, />Clear filters</)
+  assert.match(html, />Clear all</)
+})
+
+test('an empty library says so without offering to clear filters', async () => {
+  const html = await render('', 0)
+  assert.match(html, /<strong>No artists yet<\/strong>/)
+  assert.doesNotMatch(html, /Clear filters/)
 })

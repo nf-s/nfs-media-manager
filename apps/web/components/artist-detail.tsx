@@ -1,28 +1,46 @@
 'use client'
 
 import Link from 'next/link'
+import type { ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import type { z } from 'zod'
+import { Disc3, UserRound } from 'lucide-react'
 import {
   ArtistAlbumPageSchema,
   ArtistDetailSchema,
   ArtistPlaylistPageSchema,
   ArtistTrackPageSchema,
   type ArtistDetail as Artist,
-  type ArtistPlaylist,
 } from '@repo/schemas/creators'
 import type { AlbumListItem } from '@repo/schemas/media'
 import type { TrackListItem } from '@repo/schemas/tracks'
+import { Art, ArtFallback } from '@repo/ui/components/ds/artwork'
+import { Card, CardGrid, CardTitle } from '@repo/ui/components/ds/card'
+import {
+  DetailActionsSpacer,
+  DetailHeader,
+} from '@repo/ui/components/ds/detail-header'
+import { Section, Stats } from '@repo/ui/components/ds/facts'
+import { Notice, Skeleton } from '@repo/ui/components/ds/feedback'
 import { Button } from '@repo/ui/components/ui/button'
 import {
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
-} from '@repo/ui/components/ui/tabs'
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@repo/ui/components/ui/table'
+import { TabsContent } from '@repo/ui/components/ui/tabs'
+import {
+  EMPTY_VALUE,
+  formatCount,
+  formatDate,
+  formatTrackLength,
+} from '@repo/ui/lib/format'
 import { fetchApiData } from '@/utils/api'
 import { artistBrowseHref, artistTagBrowseHref } from '@/utils/creator-browse'
 import { safeRatingHref } from '@/utils/provider-ratings'
-import { formatTrackDuration } from '@/utils/track-browse'
 import {
   ArtistProfileLinks,
   ArtistProfileSources,
@@ -31,17 +49,64 @@ import { CreatorDetailState } from './creator-detail-state'
 import {
   CreatorLibraryDate,
   CreatorLibraryTable,
-  CreatorLibraryTitle,
   type CreatorLibraryColumn,
 } from './creator-library-table'
-import { useDetailView } from './detail-inspector-context'
-import MediaArtwork from './media-artwork'
+import { DetailLink } from './detail-link'
 import {
-  AlbumInlinePlayButton,
-  LibraryTrackInlinePlayButtons,
-} from './play-controls'
-import { PlaylistPlayButton } from './playlist-detail'
+  DetailArt,
+  DetailTabs,
+  FilterPill,
+  PlaylistPills,
+  useDetailTab,
+} from './detail-frame'
+import { AlbumPlay, TrackRowPlay } from './detail-play'
+import { ListeningTrend } from './listening-trend'
+import { MetadataCoverage } from './metadata-coverage'
 import { useConfig } from './providers'
+
+type ArtistTab = 'overview' | 'albums' | 'tracks' | 'listening' | 'sources'
+const artistTabs: readonly [ArtistTab, ...ArtistTab[]] = [
+  'overview',
+  'albums',
+  'tracks',
+  'listening',
+  'sources',
+]
+/** Playlists were a tab before they joined the Overview. */
+const artistTabAliases = {
+  playlists: 'overview',
+  history: 'sources',
+} satisfies Record<string, ArtistTab>
+/** Table settings that belong to the Albums and Tracks tabs. */
+const tabViewKeys = ['q', 'sortBy', 'direction', 'view']
+
+/** A title cell: the link, then the play pair at its end. */
+function TitleCell({
+  kind,
+  id,
+  title,
+  context,
+  play,
+}: {
+  kind: 'album' | 'track'
+  id: string
+  title: string
+  context?: string
+  play: ReactNode
+}) {
+  return (
+    <span
+      className="ds-cell-id"
+      title={context ? `${title} · ${context}` : title}
+    >
+      <DetailLink className="ds-cell-title" kind={kind} id={id}>
+        {title}
+      </DetailLink>
+      {context && <span className="ds-cell-sub ds-truncate">{context}</span>}
+      {play}
+    </span>
+  )
+}
 
 const albumColumns: CreatorLibraryColumn<AlbumListItem>[] = [
   {
@@ -49,11 +114,11 @@ const albumColumns: CreatorLibraryColumn<AlbumListItem>[] = [
     label: 'Album',
     required: true,
     render: (album) => (
-      <CreatorLibraryTitle
+      <TitleCell
         kind="album"
         id={album.id}
         title={album.title}
-        action={<AlbumInlinePlayButton album={album} />}
+        play={<AlbumPlay album={album} place="row" />}
       />
     ),
   },
@@ -75,27 +140,29 @@ const trackColumns: CreatorLibraryColumn<TrackListItem>[] = [
     label: 'Track',
     required: true,
     render: (track) => (
-      <CreatorLibraryTitle
+      <TitleCell
         kind="track"
         id={track.id}
         title={track.title}
         context={track.album?.title ?? track.albumName ?? undefined}
-        action={<LibraryTrackInlinePlayButtons track={track} />}
+        play={<TrackRowPlay track={track} />}
       />
     ),
   },
   {
     key: 'durationSec',
     label: 'Duration',
-    className: 'numeric',
+    align: 'end',
     render: (track) =>
-      track.durationSec === null ? '-' : formatTrackDuration(track.durationSec),
+      formatTrackLength(
+        track.durationSec === null ? null : track.durationSec * 1000,
+      ),
   },
   {
     key: 'scrobbles',
     label: 'Scrobbles',
-    className: 'numeric',
-    render: (track) => track.scrobbles.toLocaleString(),
+    align: 'end',
+    render: (track) => formatCount(track.scrobbles),
   },
   {
     key: 'releaseDate',
@@ -110,110 +177,266 @@ const trackColumns: CreatorLibraryColumn<TrackListItem>[] = [
   },
 ]
 
-const playlistColumns: CreatorLibraryColumn<ArtistPlaylist>[] = [
-  {
-    key: 'name',
-    label: 'Playlist',
-    required: true,
-    render: (playlist) => (
-      <CreatorLibraryTitle
-        kind="playlist"
-        id={playlist.id}
-        title={playlist.name}
-        action={<PlaylistPlayButton playlist={playlist} />}
-      />
-    ),
-  },
-  {
-    key: 'trackCount',
-    label: 'Artist tracks',
-    className: 'numeric',
-    render: (playlist) => playlist.trackCount.toLocaleString(),
-  },
-  {
-    key: 'albumCount',
-    label: 'Artist albums',
-    className: 'numeric',
-    render: (playlist) => playlist.albumCount.toLocaleString(),
-  },
-  {
-    key: 'createdAt',
-    label: 'Added',
-    defaultVisible: false,
-    render: (playlist) => <CreatorLibraryDate value={playlist.createdAt} />,
-  },
-]
+/** A short list for the Overview, read from the same endpoint as its tab. */
+function useOverviewList<Schema extends z.ZodTypeAny>(
+  path: string,
+  key: string,
+  params: Record<string, string>,
+  schema: Schema,
+) {
+  const { apiBaseUrl } = useConfig()
+  const search = new URLSearchParams({ page: '1', ...params })
+  return useQuery({
+    queryKey: ['artist-overview', path, key, search.toString()],
+    queryFn: ({ signal }) =>
+      fetchApiData(apiBaseUrl, `${path}/${key}?${search}`, schema, { signal }),
+  })
+}
 
-const tabs = [
-  { value: 'overview', label: 'Overview' },
-  { value: 'albums', label: 'Albums' },
-  { value: 'tracks', label: 'Tracks' },
-  { value: 'playlists', label: 'Playlists' },
-  { value: 'sources', label: 'Sources' },
-]
+function ListState({
+  pending,
+  label,
+  retry,
+}: {
+  pending: boolean
+  label: string
+  retry: () => void
+}) {
+  if (pending) return <Skeleton height={64} />
+  return (
+    <Notice
+      tone="danger"
+      action={
+        <Button size="xs" onClick={retry}>
+          Retry
+        </Button>
+      }
+    >
+      Could not load {label}.
+    </Notice>
+  )
+}
 
-function ArtistOverview({ artist }: { artist: Artist }) {
+function ArtistOverview({
+  artist,
+  path,
+  showTab,
+}: {
+  artist: Artist
+  path: string
+  showTab: (tab: ArtistTab) => void
+}) {
   const { profile } = artist
+  const albums = useOverviewList(
+    path,
+    'albums',
+    { size: '6', sortBy: 'releaseDate', direction: 'desc' },
+    ArtistAlbumPageSchema,
+  )
+  const tracks = useOverviewList(
+    path,
+    'tracks',
+    { size: '5', sortBy: 'scrobbles', direction: 'desc' },
+    ArtistTrackPageSchema,
+  )
+  const playlists = useOverviewList(
+    path,
+    'playlists',
+    { size: '24', sortBy: 'name', direction: 'asc' },
+    ArtistPlaylistPageSchema,
+  )
+  const library = artist.albumCount > 0 ? 'albums' : 'tracks'
   return (
     <>
+      <Section flush>
+        <Stats
+          items={[
+            { label: 'albums', value: formatCount(artist.albumCount) },
+            { label: 'tracks', value: formatCount(artist.trackCount) },
+            { label: 'playlists', value: formatCount(artist.playlistCount) },
+            { label: 'added', value: formatDate(artist.createdAt) },
+          ]}
+        />
+      </Section>
+      <MetadataCoverage kind="artist" id={artist.id} />
       {profile.summary && (
-        <p className="detail-summary whitespace-pre-line break-words">
-          {profile.summary}
-        </p>
+        <Section title="About">
+          <p className="dtl-text">{profile.summary}</p>
+        </Section>
       )}
-      <dl className="detail-metrics">
-        <div>
-          <dt>Albums</dt>
-          <dd>{artist.albumCount.toLocaleString()}</dd>
-        </div>
-        <div>
-          <dt>Tracks</dt>
-          <dd>{artist.trackCount.toLocaleString()}</dd>
-        </div>
-        <div>
-          <dt>Playlists</dt>
-          <dd>{artist.playlistCount.toLocaleString()}</dd>
-        </div>
-        {profile.name && profile.name !== artist.name && (
-          <div>
-            <dt>Profile name</dt>
-            <dd>{profile.name}</dd>
-          </div>
-        )}
-        {profile.country && (
-          <div>
-            <dt>Country</dt>
-            <dd>{profile.country}</dd>
-          </div>
-        )}
-        {profile.type && (
-          <div>
-            <dt>Type</dt>
-            <dd>{profile.type}</dd>
-          </div>
-        )}
-      </dl>
+      {artist.albumCount > 0 && (
+        <Section
+          title="Albums"
+          note={formatCount(artist.albumCount)}
+          aside={
+            <>
+              <Button
+                variant="link"
+                size="xs"
+                onClick={() => showTab('albums')}
+              >
+                All albums
+              </Button>
+              <Link href={artistBrowseHref('albums', artist.id)}>
+                Show in Albums
+              </Link>
+            </>
+          }
+        >
+          {albums.data ? (
+            <CardGrid min={112}>
+              {albums.data.items.map((album) => (
+                <Card
+                  key={album.id}
+                  art={
+                    <Art overlay={<AlbumPlay album={album} place="tile" />}>
+                      <DetailLink
+                        kind="album"
+                        id={album.id}
+                        tabIndex={-1}
+                        aria-hidden="true"
+                      >
+                        {album.artworkUrl ? (
+                          <img
+                            className="ds-artimg"
+                            src={album.artworkUrl}
+                            alt=""
+                          />
+                        ) : (
+                          <ArtFallback>
+                            <Disc3 className="ds-i" aria-hidden="true" />
+                          </ArtFallback>
+                        )}
+                      </DetailLink>
+                    </Art>
+                  }
+                  title={
+                    <CardTitle>
+                      <DetailLink kind="album" id={album.id}>
+                        {album.title}
+                      </DetailLink>
+                    </CardTitle>
+                  }
+                  meta={
+                    <>
+                      <span>
+                        {album.releaseDate?.slice(0, 4) ?? EMPTY_VALUE}
+                      </span>
+                      {album.listeningScrobbles !== undefined && (
+                        <span>
+                          {formatCount(album.listeningScrobbles)} scrobbles
+                        </span>
+                      )}
+                    </>
+                  }
+                />
+              ))}
+            </CardGrid>
+          ) : (
+            <ListState
+              pending={albums.isPending}
+              label="albums"
+              retry={() => albums.refetch()}
+            />
+          )}
+        </Section>
+      )}
+      {artist.trackCount > 0 && (
+        <Section
+          title="Top tracks"
+          note={formatCount(artist.trackCount)}
+          aside={
+            <>
+              <Button
+                variant="link"
+                size="xs"
+                onClick={() => showTab('tracks')}
+              >
+                All tracks
+              </Button>
+              <Link href={artistBrowseHref('tracks', artist.id)}>
+                Show in Tracks
+              </Link>
+            </>
+          }
+        >
+          {tracks.data ? (
+            <Table aria-label="Top tracks">
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Title</TableHead>
+                  <TableHead>Album</TableHead>
+                  <TableHead align="end">Scrobbles</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {tracks.data.items.map((track) => (
+                  <TableRow key={track.id}>
+                    <TableCell>
+                      <TitleCell
+                        kind="track"
+                        id={track.id}
+                        title={track.title}
+                        play={<TrackRowPlay track={track} />}
+                      />
+                    </TableCell>
+                    <TableCell>
+                      {track.album ? (
+                        <DetailLink kind="album" id={track.album.id}>
+                          {track.album.title}
+                        </DetailLink>
+                      ) : (
+                        (track.albumName ?? EMPTY_VALUE)
+                      )}
+                    </TableCell>
+                    <TableCell align="end">
+                      {formatCount(track.scrobbles)}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          ) : (
+            <ListState
+              pending={tracks.isPending}
+              label="tracks"
+              retry={() => tracks.refetch()}
+            />
+          )}
+        </Section>
+      )}
+      {artist.playlistCount > 0 && (
+        <Section title="Playlists" note={formatCount(artist.playlistCount)}>
+          {playlists.data ? (
+            <PlaylistPills
+              playlists={playlists.data.items.map((playlist) => ({
+                id: playlist.id,
+                name: playlist.name,
+                title: `${playlist.name} · ${formatCount(playlist.trackCount)} artist ${playlist.trackCount === 1 ? 'track' : 'tracks'}`,
+              }))}
+            />
+          ) : (
+            <ListState
+              pending={playlists.isPending}
+              label="playlists"
+              retry={() => playlists.refetch()}
+            />
+          )}
+        </Section>
+      )}
       {profile.tags.length > 0 && (
-        <div className="detail-metadata">
-          <section>
-            <h2>Artist tags</h2>
-            <div className="detail-tags detail-tags-scroll">
-              {profile.tags.map((tag) => {
-                const library = artist.albumCount > 0 ? 'albums' : 'tracks'
-                return (
-                  <Link
-                    className="metadata-tag"
-                    key={tag}
-                    href={artistTagBrowseHref(library, tag)}
-                    title={`Filter ${library} by artist tag ${tag}`}
-                  >
-                    {tag}
-                  </Link>
-                )
-              })}
-            </div>
-          </section>
-        </div>
+        <Section title="Tags">
+          <span className="ds-pills" data-wrap="">
+            {profile.tags.map((tag) => (
+              <FilterPill
+                key={tag}
+                label={tag}
+                href={artistTagBrowseHref(library, tag)}
+                title={`Filter ${library} by artist tag ${tag}`}
+              />
+            ))}
+          </span>
+        </Section>
       )}
     </>
   )
@@ -221,10 +444,10 @@ function ArtistOverview({ artist }: { artist: Artist }) {
 
 export function ArtistDetail({ id }: { id: string }) {
   const { apiBaseUrl } = useConfig()
-  const view = useDetailView()
-  const activeTab =
-    view.params.get('tab') === 'history' ? 'sources' : view.params.get('tab')
-  const tab = tabs.find(({ value }) => value === activeTab)?.value ?? 'overview'
+  const { tab, setTab } = useDetailTab(artistTabs, {
+    aliases: artistTabAliases,
+    reset: tabViewKeys,
+  })
   const path = `/api/v1/artists/${encodeURIComponent(id)}`
   const query = useQuery({
     queryKey: ['artist', id],
@@ -248,66 +471,61 @@ export function ArtistDetail({ id }: { id: string }) {
   const artwork = safeRatingHref(
     artist.profile.artworkUrl ?? artist.artworkUrl ?? undefined,
   )
-
-  function setTab(next: string) {
-    if (next === 'overview') view.params.delete('tab')
-    else view.params.set('tab', next)
-    for (const key of ['q', 'sortBy', 'direction', 'view'])
-      view.params.delete(key)
-    view.replace(view.params)
-  }
-
+  const { profile } = artist
   return (
-    <article className="media-detail">
+    <article className="dtl-detail">
       {query.isRefetchError && (
         <CreatorDetailState stale retry={query.refetch} subject="artist" />
       )}
-      <header className={artwork ? 'detail-heading' : 'mb-4'}>
-        {artwork && (
-          <MediaArtwork
+      <DetailHeader
+        art={
+          <DetailArt
             src={artwork}
-            alt=""
-            fallbackLabel="No artist artwork"
-            containerClassName="detail-art"
-            imageClassName="aspect-square w-full object-cover"
-            fallbackClassName="aspect-square"
+            ratio="round"
+            fallback={<UserRound className="ds-i" aria-hidden="true" />}
           />
-        )}
-        <div className="min-w-0">
-          <h1 className="break-words text-xl font-semibold">
-            {artist.name}{' '}
+        }
+        kind="Artist"
+        title={artist.name}
+        by={
+          profile.name && profile.name !== artist.name
+            ? `Profile: ${profile.name}`
+            : undefined
+        }
+        facts={[
+          profile.country,
+          profile.type,
+          `${formatCount(artist.albumCount)} ${artist.albumCount === 1 ? 'album' : 'albums'}`,
+          `${formatCount(artist.trackCount)} ${artist.trackCount === 1 ? 'track' : 'tracks'}`,
+        ]}
+        actions={
+          <>
+            <DetailActionsSpacer />
             <ArtistProfileLinks
               snapshots={artist.providers}
               identifiers={artist.identifiers}
             />
-          </h1>
-          <div className="form-actions mt-2">
-            <Button asChild>
-              <Link href={artistBrowseHref('albums', artist.id)}>
-                Filter albums
-              </Link>
-            </Button>
-            <Button asChild>
-              <Link href={artistBrowseHref('tracks', artist.id)}>
-                Filter tracks
-              </Link>
-            </Button>
-          </div>
-        </div>
-      </header>
-      <Tabs value={tab} onValueChange={setTab}>
-        <TabsList
-          aria-label="Artist details"
-          className="max-w-full justify-start overflow-x-auto"
-        >
-          {tabs.map(({ value, label }) => (
-            <TabsTrigger key={value} value={value}>
-              {label}
-            </TabsTrigger>
-          ))}
-        </TabsList>
+          </>
+        }
+      />
+      <DetailTabs
+        label="Artist details"
+        value={tab}
+        onChange={setTab}
+        tabs={[
+          { value: 'overview', label: 'Overview' },
+          { value: 'albums', label: 'Albums', count: artist.albumCount },
+          { value: 'tracks', label: 'Tracks', count: artist.trackCount },
+          { value: 'listening', label: 'Listening' },
+          { value: 'sources', label: 'Sources' },
+        ]}
+      >
         <TabsContent value="overview">
-          <ArtistOverview artist={artist} />
+          <ArtistOverview
+            artist={artist}
+            path={path}
+            showTab={(next) => setTab(next)}
+          />
         </TabsContent>
         <TabsContent value="albums">
           <CreatorLibraryTable
@@ -322,7 +540,7 @@ export function ArtistDetail({ id }: { id: string }) {
               metadata: album.releaseDate && (
                 <CreatorLibraryDate value={album.releaseDate} />
               ),
-              actions: <AlbumInlinePlayButton album={album} />,
+              actions: <AlbumPlay album={album} place="row" />,
             })}
             label="albums"
             defaultSort={{ key: 'title', direction: 'asc' }}
@@ -341,38 +559,15 @@ export function ArtistDetail({ id }: { id: string }) {
               subtitle: track.album?.title ?? track.albumName ?? undefined,
               metadata:
                 track.durationSec !== null &&
-                formatTrackDuration(track.durationSec),
-              actions: <LibraryTrackInlinePlayButtons track={track} />,
+                formatTrackLength(track.durationSec * 1000),
+              actions: <TrackRowPlay track={track} />,
             })}
             label="tracks"
             defaultSort={{ key: 'title', direction: 'asc' }}
           />
         </TabsContent>
-        <TabsContent value="playlists">
-          <CreatorLibraryTable
-            kind="playlist"
-            queryKey={['artist', id, 'playlists']}
-            path={`${path}/playlists`}
-            schema={ArtistPlaylistPageSchema}
-            columns={playlistColumns}
-            card={(playlist) => ({
-              title: playlist.name,
-              artworkUrl: playlist.artworkUrl,
-              metadata: [
-                playlist.trackCount
-                  ? `${playlist.trackCount.toLocaleString()} artist ${playlist.trackCount === 1 ? 'track' : 'tracks'}`
-                  : undefined,
-                playlist.albumCount
-                  ? `${playlist.albumCount.toLocaleString()} artist ${playlist.albumCount === 1 ? 'album' : 'albums'}`
-                  : undefined,
-              ]
-                .filter(Boolean)
-                .join(' · '),
-              actions: <PlaylistPlayButton playlist={playlist} />,
-            })}
-            label="playlists"
-            defaultSort={{ key: 'name', direction: 'asc' }}
-          />
+        <TabsContent value="listening">
+          <ListeningTrend kind="artist" id={artist.id} />
         </TabsContent>
         <TabsContent value="sources">
           <ArtistProfileSources
@@ -381,7 +576,7 @@ export function ArtistDetail({ id }: { id: string }) {
             identifiers={artist.identifiers}
           />
         </TabsContent>
-      </Tabs>
+      </DetailTabs>
     </article>
   )
 }

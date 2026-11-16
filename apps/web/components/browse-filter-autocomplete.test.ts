@@ -112,8 +112,9 @@ test('input actions and interpretation content share the search root without ope
   const html = renderToStaticMarkup(
     React.createElement(BrowseFilterAutocomplete, props),
   )
-  assert.match(html, /class="search-input-wrap has-actions"/)
-  assert.match(html, /class="search-input-actions"/)
+  assert.match(html, /<div class="ds-search" data-actions="">/)
+  assert.match(html, /role="combobox"/)
+  assert.match(html, /<span class="browse-search-actions">/)
   assert.match(html, /aria-expanded="false"/)
   assert.match(html, /disabled=""/)
   assert.match(html, /Microphone/)

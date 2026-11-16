@@ -2,7 +2,6 @@ import AppNavigation from './app-navigation'
 import SignOutButton from './sign-out-button'
 import UserLink from './user-link'
 import RefreshDataButton from './refresh-data-button'
-import JobActivity from './job-activity'
 import { LibrarySelector, MediaScopeContent } from './media-scope'
 import PlaybackProvider from './playback-provider'
 import PlayerDock from './player-dock'
@@ -23,7 +22,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             <AppNavigation />
             <div className="rail-section" id={railSlotId} />
             <div className="rail-foot">
-              <JobActivity />
               <RefreshDataButton />
               <PlayerPromptRestore />
               <div className="rail-user-actions">

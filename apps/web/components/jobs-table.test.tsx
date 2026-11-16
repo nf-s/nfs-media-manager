@@ -7,7 +7,12 @@ import {
   PathnameContext,
   SearchParamsContext,
 } from 'next/dist/shared/lib/hooks-client-context.shared-runtime'
-import { JobPageSchema, JobSchema } from '@repo/schemas/job'
+import {
+  JobEntryPageSchema,
+  JobPageSchema,
+  JobSchema,
+  type JobEntry,
+} from '@repo/schemas/job'
 import { ARTIST_ENRICHMENT_TASK } from '@repo/schemas/artist-profiles'
 import JobsPageClient, { JobsTable } from './pages/jobs-page-client'
 import { DetailInspectorProvider } from './detail-inspector-context'
@@ -28,39 +33,92 @@ const job = JobSchema.parse({
   logs: [],
 })
 
-function render(search = 'mediaType=film', provider?: string, row = job) {
+const batch: JobEntry = {
+  kind: 'batch',
+  batchId: 'batch-1',
+  provider: 'example-provider',
+  providers: ['example-provider'],
+  mediaType: 'album',
+  label: null,
+  importId: null,
+  total: 240,
+  matching: 240,
+  queued: 142,
+  running: 0,
+  succeeded: 96,
+  failed: 2,
+  cancelled: 0,
+  createdAt: '2026-01-02T00:00:00.000Z',
+  startedAt: '2026-01-02T00:02:00.000Z',
+  finishedAt: null,
+  waiting: {
+    reason: 'cooldown',
+    until: '2099-01-02T14:20:00.000Z',
+    detail: 'Cooling down: Provider rate limit reached (HTTP 429)',
+  },
+}
+
+function key(params: URLSearchParams, provider?: string) {
+  const providers = provider
+    ? [provider]
+    : params.get('provider')
+      ? [params.get('provider')]
+      : []
+  const batchId = provider ? '' : (params.get('batchId') ?? '')
+  return [
+    'jobs',
+    batchId ? 'table' : 'entries',
+    provider
+      ? null
+      : (['album', 'film', 'artist', 'subscription'].find(
+          (value) => value === params.get('mediaType'),
+        ) ?? null),
+    '[]',
+    batchId,
+    params.get('q') ?? '',
+    JSON.stringify(providers),
+    params.get('sortBy') ?? 'createdAt',
+    params.get('direction') === 'asc' ? 'asc' : 'desc',
+    1,
+  ]
+}
+
+function render(
+  search = 'mediaType=film',
+  provider?: string,
+  entries: JobEntry[] = [{ kind: 'job', job }],
+) {
   const client = new QueryClient({
     defaultOptions: { queries: { enabled: false, retry: false } },
   })
   const params = new URLSearchParams(search)
-  const items = !provider || provider === row.provider ? [row] : []
-  client.setQueryData(
-    [
-      'jobs',
-      'table',
-      provider ? null : (params.get('mediaType') ?? 'film'),
-      '[]',
-      '',
-      params.get('q') ?? '',
-      JSON.stringify(
-        provider
-          ? [provider]
-          : params.get('provider')
-            ? [params.get('provider')]
-            : [],
-      ),
-      params.get('sortBy') ?? 'createdAt',
-      params.get('direction') === 'asc' ? 'asc' : 'desc',
-      1,
-    ],
-    JobPageSchema.parse({
-      page: 1,
-      size: 25,
-      totalCount: items.length,
-      pageCount: 1,
-      items,
-    }),
+  const items = entries.filter(
+    (entry) =>
+      !provider ||
+      (entry.kind === 'job' ? entry.job.provider : entry.provider) === provider,
   )
+  if (params.get('batchId') && !provider)
+    client.setQueryData(
+      key(params),
+      JobPageSchema.parse({
+        page: 1,
+        size: 25,
+        totalCount: 1,
+        pageCount: 1,
+        items: [job],
+      }),
+    )
+  else
+    client.setQueryData(
+      key(params, provider),
+      JobEntryPageSchema.parse({
+        page: 1,
+        size: 25,
+        totalCount: items.length,
+        pageCount: 1,
+        items,
+      }),
+    )
   try {
     return renderToStaticMarkup(
       <QueryClientProvider client={client}>
@@ -93,26 +151,30 @@ function firstJobHref(html: string) {
   )
 }
 
-test('job monitor has shared sortable columns, selection and links to details', () => {
+test('job monitor is the one table: pinned job column, sortable headers, selection and links to details', () => {
   const html = render()
-  assert.match(html, /table-scroll jobs-scroll secondary-table-scroll/)
-  assert.match(html, /<table class="ds-table" aria-label="Jobs"/)
-  for (const label of ['Provider', 'Job', 'Status', 'Created'])
+  assert.match(html, /<table class="ds-table ops-jobs-table" aria-label="Jobs"/)
+  for (const label of ['Job', 'Status', 'Provider', 'Created', 'Result'])
     assert.match(html, new RegExp(`title="Sort by ${label}"`))
+  assert.ok(html.indexOf('Sort by Job') < html.indexOf('Sort by Status'))
+  assert.match(html, /data-sticky="edge"/)
   assert.match(html, /aria-label="Select example-provider job/)
-  assert.match(html, /aria-label="View example-provider job from/)
-  assert.match(html, /aria-sort="descending"/)
-  assert.doesNotMatch(
+  assert.match(
     html,
-    /title="Sort by Finished"|job-content|Stored JSON|Expand example-provider/,
+    /class="ds-cell-title"[^>]*aria-label="View example-provider job from 2026-01-0[12] /,
   )
+  assert.match(html, /data-status="failed">Failed</)
+  assert.match(html, /class="ops-danger"[^>]*>Example failure</)
+  assert.match(html, /href="\/providers\/example-provider"/)
+  assert.match(html, /aria-sort="descending"/)
+  assert.doesNotMatch(html, />View<|job-status|underline/)
   const href = firstJobHref(html)
   assert.deepEqual(detailEntries(href.pathname, href.searchParams), [
     { kind: 'job', id: job.id },
   ])
 })
 
-test('Artist jobs use their scoped cache and open details without changing library', () => {
+test('the library is a filter on one Jobs page, opened by old scoped links', () => {
   const artistJob = JobSchema.parse({
     ...job,
     scope: { mediaType: 'album' },
@@ -122,16 +184,64 @@ test('Artist jobs use their scoped cache and open details without changing libra
       artistName: 'Fixture artist',
     },
   })
-  const html = render('mediaType=artist', undefined, artistJob)
-  assert.match(html, /<h1>Artist jobs<\/h1>/)
+  const html = render('mediaType=artist', undefined, [
+    { kind: 'job', job: artistJob },
+  ])
+  assert.doesNotMatch(html, /Artist jobs/)
+  assert.match(html, /<select class="ds-select" aria-label="Library">/)
+  assert.match(html, /<option value="artist" selected="">Artists<\/option>/)
   assert.match(html, /Artist enrichment · Fixture artist/)
   assert.match(html, /aria-label="Filter Job status"/)
   assert.match(html, /aria-label="Filter Job provider"/)
-  const href = firstJobHref(html)
-  assert.equal(href.searchParams.get('mediaType'), 'artist')
-  assert.deepEqual(detailEntries(href.pathname, href.searchParams), [
-    { kind: 'job', id: artistJob.id },
-  ])
+  const all = render('')
+  assert.match(all, /<option value="" selected="">All libraries<\/option>/)
+})
+
+test('the health strip counts queued, running, waiting and attention and links to filters', () => {
+  const html = render('mediaType=film')
+  assert.match(html, /class="ds-stats"/)
+  for (const label of ['queued', 'running', 'waiting', 'need attention'])
+    assert.match(html, new RegExp(`class="ds-stat-label">${label}<`))
+})
+
+test('batches are one row with progress and the provider wait, and expand to their jobs', () => {
+  const html = render('', undefined, [batch, { kind: 'job', job }])
+  assert.match(html, /<tr data-group="">/)
+  assert.match(
+    html,
+    /aria-expanded="false" aria-label="Show jobs in Batch · 240 albums"/,
+  )
+  assert.match(html, /href="\/jobs\?batchId=batch-1"/)
+  assert.match(html, /role="progressbar"[^>]*aria-valuenow="98"/)
+  assert.match(
+    html,
+    /data-status="waiting" title="Cooling down: Provider rate limit reached \(HTTP 429\)">Until 2099-01-0[23] [0-9:]+</,
+  )
+  assert.match(html, /Resumes 2099-01-0[23] [0-9:]+ · 2 failed/)
+  assert.match(html, />2 jobs and batches</)
+})
+
+test('queued jobs show why they wait', () => {
+  const queued = JobSchema.parse({
+    ...job,
+    status: 'queued',
+    errorMessage: null,
+    waiting: {
+      reason: 'budget',
+      until: null,
+      detail: 'Daily request budget used',
+    },
+  })
+  const html = render('', undefined, [{ kind: 'job', job: queued }])
+  assert.match(
+    html,
+    /data-status="waiting" title="Daily request budget used">Waiting</,
+  )
+  assert.match(
+    html,
+    /title="Daily request budget used">Daily request budget used</,
+  )
+  assert.match(html, />Cancel<\/button>/)
 })
 
 test('job filters retain a deep-linked provider in the header and actions follow the table', () => {
@@ -141,13 +251,19 @@ test('job filters retain a deep-linked provider in the header and actions follow
   const search = html.indexOf('aria-label="Search jobs"')
   const status = html.indexOf('aria-label="Filter Job status"')
   const provider = html.indexOf('aria-label="Filter Job provider"')
-  const count = html.indexOf('>1 jobs<')
+  const count = html.indexOf('>1 job or batch<')
   const columns = html.indexOf('table-columns-trigger')
-  const actions = html.indexOf('secondary-table-footer')
+  const actions = html.indexOf('ds-selectbar')
   assert.ok(search < count && count < columns)
-  assert.ok(columns < provider && provider < status && status < actions)
+  assert.ok(columns < status && status < provider && provider < actions)
   assert.ok(html.indexOf('</table>') < actions)
-  assert.doesNotMatch(html, /Select loaded|>Clear</)
+})
+
+test('a batch link lists its jobs with the batch retry review', () => {
+  const html = render('batchId=batch-1')
+  assert.match(html, /Import \/ refresh jobs/)
+  assert.match(html, />Review batch retry</)
+  assert.match(html, />1 job</)
 })
 
 test('job sort state follows the URL and legacy selected jobs do not expand the table', () => {
@@ -158,10 +274,7 @@ test('job sort state follows the URL and legacy selected jobs do not expand the 
     html,
     /aria-sort="ascending"><div[^>]*><button[^>]+title="Sort by Status"/,
   )
-  assert.doesNotMatch(
-    html,
-    /Collapse example-provider|job-details-example-job|Stored JSON|Example failure/,
-  )
+  assert.doesNotMatch(html, /Collapse example-provider|Request and response/)
   const href = firstJobHref(html)
   assert.equal(href.searchParams.get('sortBy'), 'status')
   assert.deepEqual(detailEntries(href.pathname, href.searchParams), [
@@ -169,18 +282,19 @@ test('job sort state follows the URL and legacy selected jobs do not expand the 
   ])
 })
 
-test('provider jobs reuse the full table across libraries and pin the provider', () => {
+test('provider jobs reuse the full table and pin the provider', () => {
   const html = render(
     'mediaType=album&provider=example-provider&providers=["other-provider"]&jobId=example-job&batchId=unrelated-batch',
     'example-provider',
   )
-  assert.match(html, />1 jobs</)
+  assert.match(html, /<section class="ops-jobs">/)
+  assert.match(html, />1 job or batch</)
   assert.match(html, /aria-label="Filter Job status"/)
   assert.match(html, /aria-label="View example-provider job from/)
-  assert.match(html, /secondary-table-footer/)
+  assert.match(html, /ds-selectbar/)
   assert.doesNotMatch(
     html,
-    /Album jobs|Film jobs|Filter Job provider|Review batch retry|another library|Stored JSON/,
+    /aria-label="Library"|Filter Job provider|Review batch retry|ds-stats/,
   )
 })
 
@@ -190,10 +304,7 @@ test('provider tables never pin a job from another provider', () => {
     'another-provider',
   )
   assert.match(html, /No matching jobs/)
-  assert.doesNotMatch(
-    html,
-    /View example-provider job|Selected job|another provider/,
-  )
+  assert.doesNotMatch(html, /View example-provider job|Selected job/)
 })
 
 test('job links retain workspace filters and append to the inspector history', () => {

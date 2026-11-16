@@ -1,7 +1,7 @@
 'use client'
 
-import Link from 'next/link'
 import { FilmCollectionEntries } from '../film-collection-detail'
+import { DetailPage } from '../detail-frame'
 
 export default function FilmCollectionPageClient({
   collectionId,
@@ -9,9 +9,8 @@ export default function FilmCollectionPageClient({
   collectionId: string
 }) {
   return (
-    <div className="detail-page flex h-full min-h-0 w-full max-w-none flex-1 flex-col gap-3">
-      <Link href="/collections">Back to collections</Link>
+    <DetailPage back={{ href: '/collections', label: 'Back to collections' }}>
       <FilmCollectionEntries id={collectionId} />
-    </div>
+    </DetailPage>
   )
 }

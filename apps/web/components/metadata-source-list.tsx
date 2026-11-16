@@ -17,9 +17,9 @@ export function MetadataSourceLinks({
 }) {
   const sources = relevantTagSources(items)
   if (!sources.length)
-    return <p className="quiet text-xs">No source links available.</p>
+    return <p className="ds-muted">No source links available.</p>
   return (
-    <ul className="flex flex-wrap gap-x-3 gap-y-2" aria-label="Source links">
+    <ul className="flex flex-wrap gap-3" aria-label="Source links">
       {sources.map((source) => {
         if (!source.link) return null
         const description =
@@ -28,10 +28,7 @@ export function MetadataSourceLinks({
             : `View ${source.itemTitle ?? 'film'} on ${source.link.providerLabel}${source.linkKind === 'provider-item' ? ' (import provider)' : ''}`
         return (
           <li key={source.link.url}>
-            <span
-              className="inline-flex items-center gap-1 text-xs"
-              title={description}
-            >
+            <span className="ds-cell-id" title={description}>
               {source.link.providerLabel}
               <ServiceIconLinks
                 links={[
@@ -56,7 +53,7 @@ export default function MetadataSourceList({
   items: TagProvenancePage['items']
 }) {
   return (
-    <ul className="grid gap-2.5">
+    <ul className="data-stack">
       {items.map((source) => (
         <li
           key={JSON.stringify([
@@ -67,8 +64,8 @@ export default function MetadataSourceList({
             source.kind,
           ])}
         >
-          <div className="break-words font-medium">{source.rawName}</div>
-          <div className="quiet text-xs">
+          <strong className="data-wrap">{source.rawName}</strong>
+          <div className="ds-muted">
             {source.source && source.source !== 'unknown'
               ? source.source
               : (source.providerLabel ?? 'Unknown source')}
@@ -82,10 +79,10 @@ export default function MetadataSourceList({
             {source.onMedia === false && ' · Elsewhere in library'}
           </div>
           {source.sourceId && (
-            <div className="quiet break-all text-xs">ID: {source.sourceId}</div>
+            <div className="ds-muted data-wrap">ID: {source.sourceId}</div>
           )}
           {source.link ? (
-            <span className="inline-flex items-center gap-1 text-xs">
+            <span className="ds-cell-id">
               {source.linkKind === 'tag'
                 ? `View tag on ${source.link.providerLabel}`
                 : `View ${source.itemTitle ?? 'film'} on ${source.link.providerLabel}${source.linkKind === 'provider-item' ? ' (import provider)' : ''}`}
@@ -100,13 +97,11 @@ export default function MetadataSourceList({
               />
             </span>
           ) : (
-            <span className="quiet text-xs">
+            <span className="ds-muted">
               Source cannot be identified from this import.
             </span>
           )}
-          {source.linkNote && (
-            <div className="quiet text-xs">{source.linkNote}</div>
-          )}
+          {source.linkNote && <div className="ds-muted">{source.linkNote}</div>}
         </li>
       ))}
     </ul>

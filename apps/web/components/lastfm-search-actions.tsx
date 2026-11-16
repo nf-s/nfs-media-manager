@@ -1,19 +1,22 @@
 'use client'
 
 import Link from 'next/link'
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { EnrichmentResultSchema } from '@repo/schemas/job'
 import {
   LastfmSpotifySearchInputSchema,
   type LastfmLinkGroup,
 } from '@repo/schemas/lastfm'
-import { Button } from '@repo/ui/components/ui/button'
+import { formatCount, formatItemCount } from '@repo/ui/lib/format'
 import { fetchApiData } from '@/utils/api'
 import { dispatchFilmSelection } from '@/utils/film-selection'
 import { canSearchLastfmGroup, lastfmLinkKey } from '@/utils/lastfm-sync'
 import { scopedHref } from '@/utils/media-scope'
 import { useConfig } from './providers'
+import { ConfirmAction } from './confirm-action'
+
+const ALBUMS = { one: 'album', other: 'albums' }
 
 export default function LastfmSearchActions({
   groups,
@@ -30,7 +33,6 @@ export default function LastfmSearchActions({
 }) {
   const { apiBaseUrl } = useConfig()
   const client = useQueryClient()
-  const [confirmedKey, setConfirmedKey] = useState('')
   const [batchId, setBatchId] = useState('')
   const [progress, setProgress] = useState(0)
   const targets = groups.filter(
@@ -38,11 +40,8 @@ export default function LastfmSearchActions({
       selectedIds.includes(lastfmLinkKey(group)) && canSearchLastfmGroup(group),
   )
   const ids = targets.map(lastfmLinkKey)
-  const confirmationKey = JSON.stringify(ids)
-  const confirmed = confirmedKey === confirmationKey
-  useEffect(() => setConfirmedKey(''), [confirmationKey])
   const queue = useMutation({
-    mutationFn: () => {
+    mutationFn: (confirmed: boolean) => {
       if (ids.length > 5 && !confirmed)
         throw new Error('Confirm the selected searches before continuing.')
       const batch = crypto.randomUUID()
@@ -79,7 +78,6 @@ export default function LastfmSearchActions({
     },
     onSuccess: (result) => {
       onSelect(selectedIds.filter((id) => !result.completed.includes(id)))
-      setConfirmedKey('')
     },
     onSettled: async () => {
       try {
@@ -93,51 +91,30 @@ export default function LastfmSearchActions({
       }
     },
   })
+  if (
+    !selectedIds.length &&
+    !queue.isPending &&
+    !queue.isError &&
+    !queue.data
+  )
+    return null
   return (
-    <div className="job-selection-toolbar">
-      {selectedIds.length ? (
-        <>
-          {ids.length > 5 && (
-            <label className="check-label">
-              <input
-                type="checkbox"
-                checked={confirmed}
-                disabled={disabled || queue.isPending}
-                onChange={(event) =>
-                  setConfirmedKey(event.target.checked ? confirmationKey : '')
-                }
-              />
-              Confirm {ids.length} Spotify album searches
-            </label>
-          )}
-          <Button
-            variant="primary"
-            disabled={
-              disabled ||
-              queue.isPending ||
-              !ids.length ||
-              (ids.length > 5 && !confirmed)
-            }
-            onClick={() => queue.mutate()}
-          >
-            Search Spotify albums
-          </Button>
-          {selectedIds.length > ids.length && (
-            <span className="muted">
-              {selectedIds.length - ids.length} no longer eligible
-            </span>
-          )}
-        </>
-      ) : (
-        <span className="muted">Shift-click to select a range.</span>
+    <div className="sec-selectbar-actions">
+      {selectedIds.length > ids.length && (
+        <span className="ds-muted">
+          {formatCount(selectedIds.length - ids.length)} no longer eligible
+        </span>
       )}
       {queue.isPending && (
-        <span role="status">Queueing searches: {progress} confirmed...</span>
+        <span role="status">
+          Queueing searches: {formatCount(progress)} confirmed...
+        </span>
       )}
-      {queue.isError && <p role="alert">{queue.error.message}</p>}
+      {queue.isError && <span role="alert">{queue.error.message}</span>}
       {queue.data && (
-        <div role="status" className="w-full">
-          {queue.data.queued} queued · {queue.data.skipped} skipped.{' '}
+        <span role="status">
+          {formatCount(queue.data.queued)} queued ·{' '}
+          {formatCount(queue.data.skipped)} skipped.{' '}
           {batchId && (
             <Link
               href={scopedHref(
@@ -149,9 +126,26 @@ export default function LastfmSearchActions({
             </Link>
           )}
           {queue.data.warnings.map((warning) => (
-            <p key={warning}>{warning}</p>
+            <span key={warning} className="block">
+              {warning}
+            </span>
           ))}
-        </div>
+        </span>
+      )}
+      {selectedIds.length > 0 && (
+        <span className="ds-actions">
+          <ConfirmAction
+            variant="primary"
+            confirm={ids.length > 5}
+            question={`Search Spotify for ${formatItemCount(ids.length, ALBUMS)}?`}
+            details="Each search is a Spotify request; provider pacing applies."
+            confirmLabel="Search"
+            disabled={disabled || queue.isPending || !ids.length}
+            onConfirm={() => queue.mutate(ids.length > 5)}
+          >
+            Search Spotify albums
+          </ConfirmAction>
+        </span>
       )}
     </div>
   )

@@ -337,7 +337,7 @@ test('preserves real zero scores and vote counts', () => {
   assert.equal(result.votes, 0)
   assert.equal(
     ratingDescription(result),
-    'Example provider: 0 out of 10. 0 votes.',
+    'Example provider: 0.0 out of 10. 0 votes.',
   )
 })
 

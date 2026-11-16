@@ -94,7 +94,10 @@ test('podcast sync names podcasts and episodes and links to its job', () => {
   assert.match(html, /<dt>Podcasts read<\/dt><dd>3 of 8<\/dd>/)
   assert.match(html, /<dt>New episodes this run<\/dt>/)
   assert.match(html, /<dt>Stored episodes<\/dt><dd>240<\/dd>/)
-  assert.match(html, /<progress[^>]+value="3"[^>]+max="8"/)
+  assert.match(
+    html,
+    /role="progressbar" aria-valuemin="0" aria-valuemax="8" aria-valuenow="3"/,
+  )
   assert.match(html, /href="\/jobs\/job-5">View current job/)
   assert.match(html, />Reconnect Spotify</)
   assert.match(html, /href="\/subscriptions\/channels\?type=spotify"/)
@@ -119,7 +122,7 @@ test('reading the saved podcast list is shown before podcasts are counted', () =
   )
   assert.equal(
     subscriptionSourceProgress({ ...sync, state: 'never', phase: null }),
-    '-',
+    '–',
   )
 })
 
@@ -140,14 +143,14 @@ test('an unconnected or unconfigured account says so and offers Connect', () => 
     },
     account(true, false),
   )
-  assert.match(unconnected, /Spotify is not connected\./)
+  assert.match(unconnected, /data-status="attention">Needs sign-in</)
   assert.match(unconnected, /<button[^>]*>Connect Spotify<\/button>/)
   assert.match(unconnected, /<button[^>]*disabled=""[^>]*>Sync now<\/button>/)
   const unconfigured = render(null, account(false, false))
   assert.match(unconfigured, /Spotify is not configured\./)
   assert.match(
     unconfigured,
-    /href="\/providers\?provider=spotify&amp;section=credentials&amp;mediaType=subscription"/,
+    /href="\/providers\/spotify\?tab=settings"/,
   )
   assert.match(
     unconfigured,
@@ -158,10 +161,10 @@ test('an unconnected or unconfigured account says so and offers Connect', () => 
 test('the Spotify OAuth return is confirmed or reported', () => {
   assert.match(
     render(sync, account(true, true), 'spotify=connected'),
-    /<p role="status">Spotify connected\.<\/p>/,
+    /role="status">.*<span>Spotify connected\.<\/span>/,
   )
   assert.match(
     render(sync, account(true, false), 'spotify=error'),
-    /<p role="alert">Spotify did not connect\. Try again\.<\/p>/,
+    /role="alert">.*<span>Spotify did not connect\. Try again\.<\/span>/,
   )
 })

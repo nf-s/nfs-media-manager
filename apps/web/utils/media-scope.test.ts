@@ -5,7 +5,10 @@ import { ARTIST_ENRICHMENT_TASK } from '@repo/schemas/artist-profiles'
 import { SPOTIFY_PODCAST_SYNC_TASK } from '@repo/schemas/subscriptions'
 import { YOUTUBE_SYNC_TASK } from '@repo/schemas/youtube'
 import {
+  isSystemPath,
   libraryViewForPath,
+  parseLibraryView,
+  systemLibraryFilter,
   mediaScope,
   mediaScopeForPath,
   scopedHref,
@@ -14,7 +17,11 @@ import {
   trackScopeRedirect,
   workspaceScopeForPath,
 } from './media-scope'
-import { jobMatchesScope, jobMediaScope } from './job-media-scope'
+import {
+  jobMatchesScope,
+  jobMediaScope,
+  metadataLibrary,
+} from './job-media-scope'
 
 test('scope defaults to films and preserves existing deep-link parameters', () => {
   assert.equal(mediaScope(null), 'film')
@@ -53,17 +60,20 @@ test('Artists has independent browse and metadata destinations across library sw
     assert.equal(libraryViewForPath(path, 'track'), 'artist')
     assert.equal(switchLibraryHref(path, 'mediaType=track', 'track'), '/tracks')
   }
-  for (const path of ['/jobs', '/jobs/metadata']) {
+  // Jobs and Providers belong to no library: choosing one opens its home.
+  for (const path of ['/jobs', '/jobs/metadata', '/jobs/one', '/providers']) {
     assert.equal(workspaceScopeForPath(path, 'artist'), 'artist')
-    assert.equal(libraryViewForPath(path, 'artist'), 'artist')
     assert.equal(
       switchLibraryHref(path, 'mediaType=album', 'artist'),
-      `${path}?mediaType=artist`,
+      '/artists',
     )
     assert.equal(
       switchLibraryHref(path, 'mediaType=artist', 'album'),
-      `${path}?mediaType=album`,
+      '/albums',
     )
+    assert.equal(switchLibraryHref(path, 'mediaType=film', 'film'), '/films')
+    assert.equal(switchLibraryHref(path, '', 'track'), '/tracks')
+    assert.equal(switchLibraryHref(path, '', 'subscription'), '/subscriptions')
   }
   for (const path of [
     '/albums',
@@ -78,26 +88,6 @@ test('Artists has independent browse and metadata destinations across library sw
       switchLibraryHref(path, 'mediaType=track&q=fixture', 'artist'),
       '/artists',
     )
-  assert.equal(
-    switchLibraryHref(
-      '/jobs/one',
-      'mediaType=album&provider=fixture',
-      'artist',
-    ),
-    '/jobs?mediaType=artist',
-  )
-  assert.equal(
-    switchLibraryHref('/jobs/one', 'mediaType=artist', 'film'),
-    '/jobs?mediaType=film',
-  )
-  assert.equal(
-    switchLibraryHref(
-      '/jobs',
-      'mediaType=album&status=failed&artistId=one',
-      'artist',
-    ),
-    '/jobs?status=failed&mediaType=artist',
-  )
   assert.equal(
     switchLibraryHref('/artists', 'playlistIds=["one"]', 'artist'),
     '/artists?playlistIds=%5B%22one%22%5D',
@@ -371,10 +361,6 @@ test('the library selector moves between albums, tracks and films', () => {
     '/tracks?q=title&sortBy=scrobbles',
   )
   assert.equal(
-    switchLibraryHref('/jobs', 'mediaType=film&status=failed', 'album'),
-    '/jobs?status=failed&mediaType=album',
-  )
-  assert.equal(
     switchLibraryHref('/imports/spotify-playlists', '', 'film'),
     '/imports?mediaType=film',
   )
@@ -411,7 +397,7 @@ test('Subscriptions is a separate library scoped by path or mediaType', () => {
   )
 })
 
-test('switching to Subscriptions keeps Imports, Jobs and Providers and otherwise browses', () => {
+test('switching to Subscriptions keeps Imports and otherwise browses', () => {
   for (const path of [
     '/albums',
     '/films/one',
@@ -432,22 +418,6 @@ test('switching to Subscriptions keeps Imports, Jobs and Providers and otherwise
     '/imports/youtube?mediaType=subscription',
   )
   assert.equal(
-    switchLibraryHref(
-      '/jobs/metadata',
-      'mediaType=album&status=failed&jobId=one',
-      'subscription',
-    ),
-    '/jobs?status=failed&mediaType=subscription',
-  )
-  assert.equal(
-    switchLibraryHref(
-      '/providers',
-      'mediaType=film&provider=cinema',
-      'subscription',
-    ),
-    '/providers?mediaType=subscription',
-  )
-  assert.equal(
     switchLibraryHref('/subscriptions', 'q=talk&view=list', 'subscription'),
     '/subscriptions?q=talk&view=list',
   )
@@ -457,7 +427,7 @@ test('switching to Subscriptions keeps Imports, Jobs and Providers and otherwise
   )
 })
 
-test('switching from Subscriptions keeps Imports, Jobs and Providers and otherwise browses', () => {
+test('switching from Subscriptions keeps Imports and otherwise browses', () => {
   assert.equal(
     switchLibraryHref('/subscriptions', 'q=talk', 'album'),
     '/albums',
@@ -473,18 +443,6 @@ test('switching from Subscriptions keeps Imports, Jobs and Providers and otherwi
   assert.equal(
     switchLibraryHref('/imports/youtube', 'mediaType=subscription', 'album'),
     '/imports?mediaType=album',
-  )
-  assert.equal(
-    switchLibraryHref('/jobs', 'mediaType=subscription&status=queued', 'film'),
-    '/jobs?status=queued&mediaType=film',
-  )
-  assert.equal(
-    switchLibraryHref(
-      '/providers',
-      'mediaType=subscription&provider=youtube',
-      'album',
-    ),
-    '/providers?mediaType=album',
   )
 })
 
@@ -568,4 +526,25 @@ test('artist jobs belong only to Artists even when stored with legacy album scop
     jobMatchesScope(taskJob(YOUTUBE_SYNC_TASK, 'album'), 'artist'),
     false,
   )
+})
+
+test('Jobs and Providers are System pages with a library filter', () => {
+  for (const path of ['/jobs', '/jobs/metadata', '/jobs/one', '/providers'])
+    assert.equal(isSystemPath(path), true)
+  for (const path of ['/jobsite', '/albums', '/imports', '/provider'])
+    assert.equal(isSystemPath(path), false)
+  assert.equal(systemLibraryFilter(null), null)
+  assert.equal(systemLibraryFilter('track'), null)
+  assert.equal(systemLibraryFilter('unsupported'), null)
+  for (const value of ['album', 'film', 'artist', 'subscription'])
+    assert.equal(systemLibraryFilter(value), value)
+  assert.equal(parseLibraryView('track'), 'track')
+  assert.equal(parseLibraryView('other'), null)
+})
+
+test('Metadata selects from the linked library, then the rail, then Albums', () => {
+  assert.equal(metadataLibrary('film', 'artist'), 'film')
+  assert.equal(metadataLibrary('subscription', 'artist'), 'artist')
+  assert.equal(metadataLibrary(null, 'track'), 'album')
+  assert.equal(metadataLibrary(null), 'album')
 })

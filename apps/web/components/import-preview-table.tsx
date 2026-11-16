@@ -2,13 +2,14 @@
 
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import {
+  formatTableValue,
   SecondaryCell,
   SecondaryColumnFilter,
   SecondaryTableFrame,
-  SecondaryTableFooter,
-  SecondaryTableScroll,
   SecondaryTableHead,
-  SecondaryTableToolbar,
+  SecondaryTableScroll,
+  SecondaryTableSearch,
+  SecondaryTableSelectionBar,
   SecondaryVirtualRows,
   useTableColumns,
 } from './secondary-table'
@@ -17,10 +18,24 @@ import {
   type TableSort,
   type TableValue,
 } from '@/utils/secondary-table'
-import { Input } from '@repo/ui/components/ui/input'
-import { TableState } from '@repo/ui/components/ui/table'
+import {
+  TableCell,
+  TableHead,
+  TableRow,
+  TableState,
+} from '@repo/ui/components/ui/table'
+import {
+  Toolbar,
+  ToolbarCount,
+  ToolbarEnd,
+} from '@repo/ui/components/ds/toolbar'
+import { formatItemCount } from '@repo/ui/lib/format'
 import { useVirtualRows } from '@/hooks/useVirtualTable'
 import { updateJobSelection } from '@/utils/job-selection'
+
+const ITEMS = { one: 'item', other: 'items' }
+/** Width of the selection column; the first data column is pinned after it. */
+const CHECK_WIDTH = 36
 
 export type ImportPreviewFilter<Item> = {
   key: string
@@ -78,6 +93,7 @@ export default function ImportPreviewTable<
     value: (item: Item) => TableValue
     render?: (item: Item) => ReactNode
     defaultVisible?: boolean
+    align?: 'end'
   }[]
 }) {
   const visibility = useTableColumns(storageKey, columns)
@@ -115,40 +131,39 @@ export default function ImportPreviewTable<
     onChange([])
     setAnchor(null)
   }
+  const shown = columns.filter((column) => visibility.visible(column.key))
   return (
     <>
-      <SecondaryTableToolbar
-        search={
-          <Input
-            type="search"
-            aria-label="Search preview"
-            placeholder="Search preview"
-            value={search}
-            disabled={disabled}
-            onChange={(event) => {
-              setSearch(event.target.value)
-              clearSelection()
-            }}
-          />
-        }
-        count={`${filtered.length.toLocaleString()} of ${items.length.toLocaleString()} items`}
-        columns={visibility.controls}
-      />
+      <Toolbar>
+        <SecondaryTableSearch
+          label="Search preview"
+          value={search}
+          disabled={disabled}
+          onChange={(value) => {
+            setSearch(value)
+            clearSelection()
+          }}
+        />
+        <ToolbarCount>
+          {formatItemCount(filtered.length, ITEMS, items.length)}
+        </ToolbarCount>
+        {visibility.controls && <ToolbarEnd>{visibility.controls}</ToolbarEnd>}
+      </Toolbar>
       <SecondaryTableFrame>
         <SecondaryTableScroll
           ref={preview.scroller}
           onScroll={preview.onScroll}
-          className="import-preview-scroll"
           role="region"
           aria-label="Import preview"
         >
           <table className="ds-table" aria-label="Import preview">
             <thead>
               <tr>
-                <th scope="col" className="table-selection-cell">
+                <TableHead className="sec-check-cell" sticky={0}>
                   <input
                     ref={all}
                     type="checkbox"
+                    className="ds-check"
                     aria-label="Select all preview items"
                     checked={checked}
                     disabled={disabled || !ids.length}
@@ -157,64 +172,66 @@ export default function ImportPreviewTable<
                       setAnchor(null)
                     }}
                   />
-                </th>
-                {columns
-                  .filter((column) => visibility.visible(column.key))
-                  .map((column) => (
-                    <SecondaryTableHead
-                      key={column.key}
-                      sortKey={column.key}
-                      label={column.label}
-                      filter={
-                        column.key === filterColumn && filters.length ? (
-                          <SecondaryColumnFilter
-                            label="Import status"
-                            options={filters.map((option) => ({
-                              value: option.key,
-                              label: option.label,
-                            }))}
-                            value={filter}
-                            disabled={disabled}
-                            onChange={(value) => {
-                              setFilter(value)
-                              clearSelection()
-                            }}
-                          />
-                        ) : undefined
-                      }
-                      sortBy={sort.key}
-                      direction={sort.direction}
-                      onSort={(key) => {
-                        setSort({
-                          key,
-                          direction:
-                            key === sort.key && sort.direction === 'asc'
-                              ? 'desc'
-                              : 'asc',
-                        })
-                        setAnchor(null)
-                      }}
-                    />
-                  ))}
+                </TableHead>
+                {shown.map((column, index) => (
+                  <SecondaryTableHead
+                    key={column.key}
+                    sortKey={column.key}
+                    label={column.label}
+                    align={column.align}
+                    sticky={index === 0 ? CHECK_WIDTH : undefined}
+                    stickyEdge={index === 0}
+                    filter={
+                      column.key === filterColumn && filters.length ? (
+                        <SecondaryColumnFilter
+                          label="Import status"
+                          options={filters.map((option) => ({
+                            value: option.key,
+                            label: option.label,
+                          }))}
+                          value={filter}
+                          disabled={disabled}
+                          onChange={(value) => {
+                            setFilter(value)
+                            clearSelection()
+                          }}
+                        />
+                      ) : undefined
+                    }
+                    sortBy={sort.key}
+                    direction={sort.direction}
+                    onSort={(key) => {
+                      setSort({
+                        key,
+                        direction:
+                          key === sort.key && sort.direction === 'asc'
+                            ? 'desc'
+                            : 'asc',
+                      })
+                      setAnchor(null)
+                    }}
+                  />
+                ))}
               </tr>
             </thead>
             <tbody>
               {!ordered.length && (
                 <TableState colSpan={visibility.count + 1}>
-                  {items.length ? 'No matching items.' : 'No items to import.'}
+                  {items.length ? 'No items match.' : 'No items to import.'}
                 </TableState>
               )}
               <SecondaryVirtualRows
                 window={preview}
                 colSpan={visibility.count + 1}
                 renderRow={(item) => (
-                  <tr
+                  <TableRow
                     key={item.row}
-                    data-selected={selected.includes(item.row) || undefined}
+                    selected={selected.includes(item.row)}
                   >
-                    <td className="table-selection-cell">
+                    <TableCell className="sec-check-cell" sticky={0}>
                       <input
                         type="checkbox"
+                        className="ds-check"
                         aria-label={`Import ${item.title}`}
                         checked={selected.includes(item.row)}
                         disabled={disabled || !actionable(item)}
@@ -233,31 +250,35 @@ export default function ImportPreviewTable<
                           setAnchor(String(item.row))
                         }}
                       />
-                    </td>
-                    {columns
-                      .filter((column) => visibility.visible(column.key))
-                      .map((column) => (
-                        <td key={column.key}>
-                          {column.render ? (
-                            column.render(item)
-                          ) : (
-                            <SecondaryCell
-                              text={String(column.value(item) ?? '-')}
-                            >
-                              {String(column.value(item) ?? '-')}
-                            </SecondaryCell>
-                          )}
-                        </td>
-                      ))}
-                  </tr>
+                    </TableCell>
+                    {shown.map((column, index) => (
+                      <TableCell
+                        key={column.key}
+                        align={column.align}
+                        sticky={index === 0 ? CHECK_WIDTH : undefined}
+                        stickyEdge={index === 0}
+                      >
+                        {column.render ? (
+                          column.render(item)
+                        ) : (
+                          <SecondaryCell>
+                            {formatTableValue(column.value(item))}
+                          </SecondaryCell>
+                        )}
+                      </TableCell>
+                    ))}
+                  </TableRow>
                 )}
               />
             </tbody>
           </table>
         </SecondaryTableScroll>
-        <SecondaryTableFooter selectedCount={selected.length}>
+        <SecondaryTableSelectionBar
+          selectedCount={selected.length}
+          total={ids.length}
+        >
           {footer}
-        </SecondaryTableFooter>
+        </SecondaryTableSelectionBar>
       </SecondaryTableFrame>
     </>
   )

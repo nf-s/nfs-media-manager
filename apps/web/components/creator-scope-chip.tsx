@@ -1,7 +1,6 @@
 'use client'
 
 import { useQuery } from '@tanstack/react-query'
-import { X } from 'lucide-react'
 import {
   ArtistDetailSchema,
   PersonDetailSchema,
@@ -13,7 +12,7 @@ import {
   personRoleLabels,
   type CreatorBrowseScope,
 } from '@/utils/creator-browse'
-import { FilterButton } from './filter-affordance'
+import { BrowseFilterPill } from './browse-controls'
 import { useConfig } from './providers'
 
 export function CreatorScopeChip({
@@ -49,13 +48,12 @@ export function CreatorScopeChip({
       ? 'Person'
       : 'Artist'
   return (
-    <FilterButton
-      className="filter-pill filter-required"
-      aria-label={`Remove ${label.toLowerCase()} filter`}
-      onClick={onRemove}
+    <BrowseFilterPill
+      mode="required"
+      removeLabel={`Remove ${label.toLowerCase()} filter`}
+      onRemove={onRemove}
     >
-      {query.data ? `${label}: ${query.data.name}` : label}{' '}
-      <X size={12} aria-hidden="true" />
-    </FilterButton>
+      {query.data ? `${label}: ${query.data.name}` : label}
+    </BrowseFilterPill>
   )
 }

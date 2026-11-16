@@ -200,7 +200,7 @@ test('connections show Spotify and the Sonos status with its next step', () => {
   })
   assert.match(
     unset,
-    /<dd>Not set up<\/dd><a class="underline" href="\/providers\?provider=sonos&amp;section=credentials">Add credentials<\/a>/,
+    /<dd>Not set up<\/dd><a class="underline" href="\/providers\/sonos\?tab=settings">Add credentials<\/a>/,
   )
   assert.match(render(<PlayerConnections />), /<dd>Checking…<\/dd>/)
 })

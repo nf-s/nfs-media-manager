@@ -11,6 +11,8 @@ import {
   type Job,
 } from '@repo/schemas/job'
 import { Button } from '@repo/ui/components/ui/button'
+import { Select } from '@repo/ui/components/ds/toolbar'
+import { formatCount } from '@repo/ui/lib/format'
 import { useConfig } from './providers'
 import { fetchApiData } from '@/utils/api'
 import {
@@ -29,6 +31,15 @@ import {
 } from '@/utils/job-bulk-actions'
 
 const ActionSchema = z.enum(['retry', 'dismiss', 'cancel'])
+type JobAction = z.infer<typeof ActionSchema>
+
+/** A row's Retry or Cancel: choose that action for the job and review it. */
+export type JobActionRequest = {
+  action: 'retry' | 'cancel'
+  jobId: string
+  /** Distinguishes repeated requests for the same job. */
+  at: number
+}
 
 function jobActionTitle(job: Job | undefined) {
   if (!job) return 'View job'
@@ -42,6 +53,7 @@ export default function JobBulkActions({
   onPending,
   single = false,
   disabled = false,
+  request = null,
 }: {
   jobs: Job[]
   selectedIds: string[]
@@ -49,6 +61,7 @@ export default function JobBulkActions({
   onPending: (pending: boolean) => void
   single?: boolean
   disabled?: boolean
+  request?: JobActionRequest | null
 }) {
   const { apiBaseUrl } = useConfig()
   const client = useQueryClient()
@@ -61,14 +74,15 @@ export default function JobBulkActions({
   const cancelJobs = selectedJobs.filter(canCancelJob)
   const parsedAction = ActionSchema.safeParse(kind)
   const selectedAction = parsedAction.success ? parsedAction.data : null
-  const targetJobs =
-    selectedAction === 'retry'
+  const targetsFor = (next: JobAction | null) =>
+    next === 'retry'
       ? retryJobs
-      : selectedAction === 'dismiss'
+      : next === 'dismiss'
         ? dismissJobs
-        : selectedAction === 'cancel'
+        : next === 'cancel'
           ? cancelJobs
           : []
+  const targetJobs = targetsFor(selectedAction)
   const runningJobs = targetJobs.filter((job) => job.status === 'running')
   const retriesRunning = selectedAction === 'retry' && runningJobs.length > 0
   const itemCount = retryJobs.reduce(
@@ -78,11 +92,24 @@ export default function JobBulkActions({
   const syncRetries = retryJobs.filter(isScrobbleSyncJob).length
   const searchRetries = retryJobs.filter(isScrobbleSpotifySearchJob).length
   const subscriptionRetries = retryJobs.filter(isSubscriptionSyncJob).length
-  const selectionKey = JSON.stringify([
-    selectedAction,
-    selectedJobs.map((job) => [job.id, job.status, unfinishedJobItems(job)]),
-    targetJobs.map((job) => job.id),
-  ])
+  const reviewKey = (next: JobAction | null) =>
+    JSON.stringify([
+      next,
+      selectedJobs.map((job) => [job.id, job.status, unfinishedJobItems(job)]),
+      targetsFor(next).map((job) => job.id),
+    ])
+  const selectionKey = reviewKey(selectedAction)
+  // A row's Retry or Cancel picks that action and opens its review.
+  const [appliedRequest, setAppliedRequest] = useState<number | null>(null)
+  if (
+    request &&
+    appliedRequest !== request.at &&
+    selectedIds.includes(request.jobId)
+  ) {
+    setAppliedRequest(request.at)
+    setKind(request.action)
+    setReviewedSelection(reviewKey(request.action))
+  }
   const reviewing = reviewedSelection === selectionKey && targetJobs.length > 0
   const runningConfirmed = reviewing && runningJobs.length > 0
   const confirmed =
@@ -169,11 +196,18 @@ export default function JobBulkActions({
   })
   if (single && !retryJobs.length && !dismissJobs.length && !cancelJobs.length)
     return null
+  if (
+    !selectedIds.length &&
+    !action.isPending &&
+    !action.isError &&
+    !action.data
+  )
+    return null
   return (
-    <div className="job-selection-toolbar">
+    <div className="ops-bulk">
       {selectedIds.length > 0 ? (
         <>
-          <select
+          <Select
             aria-label={single ? 'Job action' : 'Selected job action'}
             value={kind}
             disabled={disabled || action.isPending}
@@ -197,7 +231,7 @@ export default function JobBulkActions({
             {dismissJobs.length > 0 && (
               <option value="dismiss">Dismiss ({dismissJobs.length})</option>
             )}
-          </select>
+          </Select>
           {!reviewing && (
             <Button
               disabled={disabled || action.isPending || !targetJobs.length}
@@ -208,7 +242,7 @@ export default function JobBulkActions({
           )}
           {reviewing && (
             <div
-              className="job-action-review"
+              className="ops-review"
               role="region"
               aria-label="Review job action"
             >
@@ -264,7 +298,7 @@ export default function JobBulkActions({
                   retry or provider safety reset.
                 </p>
               )}
-              <div className="flex items-center gap-2">
+              <div className="ds-actions">
                 <Button
                   variant="primary"
                   disabled={disabled || action.isPending || !selectedAction}
@@ -285,19 +319,17 @@ export default function JobBulkActions({
             </div>
           )}
         </>
-      ) : jobs.length > 0 ? (
-        <span className="muted">Shift-click to select a range.</span>
       ) : null}
       {action.isPending && (
-        <span role="status">Processing {progress} jobs...</span>
+        <span role="status">Processing {formatCount(progress)} jobs...</span>
       )}
       {action.isError && (
-        <p className="w-full" role="alert">
+        <p className="ops-wide" role="alert">
           {action.error.message}
         </p>
       )}
       {action.data && (
-        <div className="w-full" role="status">
+        <div className="ops-wide" role="status">
           {['queued', 'dismissed', 'cancelled', 'skipped', 'failed']
             .flatMap((status) => {
               const count = action.data.results.filter(

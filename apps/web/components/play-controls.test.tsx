@@ -6,10 +6,8 @@ import {
   AlbumPlayButtons,
   LibraryTrackPlayButton,
   LibraryTrackPlayButtons,
-  LibraryTrackQueueButton,
   TilePlayControls,
   TrackPlayButton,
-  TrackQueueButton,
 } from './play-controls'
 import { PlaybackViewContext, type PlaybackView } from './playback-provider'
 import {
@@ -75,7 +73,6 @@ function controls() {
       <TilePlayControls album={album} />
       <AlbumPlayButtons album={album} />
       <TrackPlayButton album={album} track={track} />
-      <TrackQueueButton album={album} track={track} />
     </>
   )
 }
@@ -84,13 +81,28 @@ test('play controls remain visible with a connection explanation while playback 
   const html = render(controls())
   assert.match(
     html,
-    /Play Fixture album: Connect Spotify playback in the player/,
+    /aria-label="Play Fixture album: Connect Spotify playback in the player\."/,
   )
   assert.match(
     html,
-    /Play Second track: Connect Spotify playback in the player/,
+    /aria-label="Add Fixture album to queue: Connect Spotify playback in the player\."/,
   )
-  assert.equal((html.match(/disabled=""/g) ?? []).length, 3)
+  assert.match(
+    html,
+    /aria-label="Play Second track: Connect Spotify playback in the player\."/,
+  )
+  // Tile pair, header pair and track pair: Play and Queue each, all disabled.
+  assert.equal((html.match(/disabled=""/g) ?? []).length, 6)
+})
+
+test('every control is the shared play pair: Play immediately followed by Queue', () => {
+  const html = render(controls(), on)
+  assert.match(html, /<span class="ds-play" data-place="tile">/)
+  assert.match(html, /<span class="ds-play" data-place="row">/)
+  for (const pair of html.match(/<span class="ds-play"[^>]*>.*?<\/span>/g) ??
+    [])
+    assert.match(pair, /aria-label="(Play|Pause) [^"]+".*aria-label="Add /)
+  assert.match(html, />Play<\/button><button[^>]*>.*?Queue<\/button>/)
 })
 
 test('play controls name the album and track they act on', () => {
@@ -98,9 +110,10 @@ test('play controls name the album and track they act on', () => {
   assert.match(html, /aria-label="Play Fixture album"/)
   assert.match(html, /aria-label="Add Fixture album to queue"/)
   assert.match(html, />Play<\/button>/)
-  assert.match(html, />Add to queue<\/button>/)
+  assert.match(html, />Queue<\/button>/)
   assert.match(html, /aria-label="Play Second track"/)
   assert.match(html, /aria-label="Add Second track to queue"/)
+  assert.match(html, /class="browse-play-position">2<\/span>/)
   assert.doesNotMatch(html, /Pause/)
 })
 
@@ -111,11 +124,12 @@ test('the playing album and track offer pause', () => {
     current: albumPlayable(album),
     snapshot,
   })
-  assert.match(html, /class="tile-play" data-current="true"/)
-  assert.match(html, /aria-label="Pause Fixture album"/)
+  assert.match(
+    html,
+    /data-place="tile"><button type="button" aria-label="Pause Fixture album"[^>]*aria-pressed="true"/,
+  )
   assert.match(html, />Pause<\/button>/)
-  assert.match(html, /class="track-play" data-current="true"/)
-  assert.match(html, /aria-label="Pause Second track"/)
+  assert.match(html, /aria-label="Pause Second track"[^>]*aria-pressed="true"/)
   const paused = render(controls(), {
     ...on,
     active: true,
@@ -134,13 +148,15 @@ test('albums and tracks without Spotify identifiers keep disabled play controls'
       <TilePlayControls album={unlinked} />
       <AlbumPlayButtons album={unlinked} />
       <TrackPlayButton album={album} track={untracked} />
-      <TrackQueueButton album={album} track={untracked} />
     </>,
     on,
   )
   assert.match(html, /No Spotify recording is available/)
-  assert.equal((html.match(/disabled=""/g) ?? []).length, 3)
-  assert.doesNotMatch(html, /Add .* to queue/)
+  assert.equal((html.match(/disabled=""/g) ?? []).length, 6)
+  assert.match(
+    html,
+    /aria-label="Add Fixture album to queue: No Spotify recording is available\."[^>]*disabled=""/,
+  )
 })
 
 const libraryTrack = {
@@ -157,7 +173,6 @@ function libraryControls(track: LibraryTrackSource = libraryTrack) {
     <>
       <LibraryTrackPlayButton track={track} />
       <LibraryTrackPlayButton track={track} position={7} />
-      <LibraryTrackQueueButton track={track} />
       <LibraryTrackPlayButtons track={track} />
     </>
   )
@@ -166,31 +181,37 @@ function libraryControls(track: LibraryTrackSource = libraryTrack) {
 test('library track controls explain disconnected playback and retain the row number', () => {
   const html = render(libraryControls())
   assert.match(html, /Connect Spotify playback in the player/)
-  assert.match(html, /class="track-number">7<\/span>/)
-  assert.equal((html.match(/disabled=""/g) ?? []).length, 3)
+  assert.match(html, /class="browse-play-position">7<\/span>/)
+  assert.equal((html.match(/disabled=""/g) ?? []).length, 6)
 })
 
 test('library track controls play, number and queue the track', () => {
   const html = render(libraryControls(), on)
   assert.equal(
     (html.match(/aria-label="Play Playlist track"/g) ?? []).length,
-    2,
+    3,
   )
-  assert.match(html, /class="track-number[^"]*">7<\/span>/)
   assert.match(
     html,
-    /class="track-queue[^"]*" aria-label="Add Playlist track to queue"/,
+    /class="browse-play-position">7<\/span><span class="ds-play"/,
+  )
+  assert.equal(
+    (html.match(/aria-label="Add Playlist track to queue"/g) ?? []).length,
+    3,
   )
   assert.match(html, />Play<\/button>/)
-  assert.match(html, />Add to queue<\/button>/)
+  assert.match(html, />Queue<\/button>/)
   assert.doesNotMatch(html, /Pause/)
 })
 
 test('the playing library track offers pause', () => {
   const html = render(libraryControls(), { ...on, active: true, snapshot })
   assert.equal(
-    (html.match(/data-current="true" aria-label="Pause Playlist track"/g) ?? [])
-      .length,
+    (
+      html.match(
+        /aria-label="Pause Playlist track"[^>]*aria-pressed="true"/g,
+      ) ?? []
+    ).length,
     2,
   )
   assert.match(html, />Pause<\/button>/)
@@ -203,7 +224,27 @@ test('library tracks without a Spotify track ID explain why playback is disabled
       on,
     )
     assert.match(html, /No Spotify recording is available/)
-    assert.equal((html.match(/disabled=""/g) ?? []).length, 3)
-    assert.doesNotMatch(html, /Add .* to queue/)
+    assert.equal((html.match(/disabled=""/g) ?? []).length, 6)
   }
+})
+
+test("a library track pair can sit on a card's artwork", () => {
+  const html = render(
+    <LibraryTrackPlayButton track={libraryTrack} place="tile" />,
+    on,
+  )
+  assert.match(
+    html,
+    /^<span class="ds-play" data-place="tile"><button type="button" aria-label="Play Playlist track"/,
+  )
+  assert.match(html, /aria-label="Add Playlist track to queue"/)
+  const off = render(
+    <LibraryTrackPlayButton
+      track={{ ...libraryTrack, spotifyTrackId: null }}
+      place="tile"
+    />,
+    on,
+  )
+  assert.match(off, /data-place="tile"/)
+  assert.equal((off.match(/disabled=""/g) ?? []).length, 2)
 })

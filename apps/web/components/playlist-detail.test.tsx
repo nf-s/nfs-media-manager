@@ -236,10 +236,10 @@ test('a nested deep link renders only its active detail and places Back before O
   const html = await render(search.toString())
   assert.match(html, /aria-label="Track details"/)
   assert.doesNotMatch(html, /aria-label="Playlist details"/)
-  const back = html.indexOf(' Back</button>')
-  const open = html.indexOf('>Open page</a>')
+  const back = html.indexOf('aria-label="Back"')
+  const open = html.indexOf('Open page</a>')
   assert.ok(back >= 0 && back < open)
-  assert.match(html, /href="\/tracks\/track-1"[^>]*>Open page/)
+  assert.match(html, /href="\/tracks\/track-1"><svg[\s\S]*?<\/svg>Open page/)
 })
 
 test('no drawer opens without the playlist parameter', async () => {
@@ -248,7 +248,7 @@ test('no drawer opens without the playlist parameter', async () => {
 
 test('the drawer lists entries in playlist order in the shared table', async () => {
   const html = drawerOf(await render('playlist=playlist-1'))
-  assert.match(html, /<h1[^>]*>Synthetic mix /)
+  assert.match(html, /<h2 class="ds-detail-title">Synthetic mix<\/h2>/)
   assert.match(html, /Example owner/)
   assert.match(html, /2 tracks/)
   assert.match(
@@ -293,7 +293,12 @@ test('the drawer lists entries in playlist order in the shared table', async () 
     table,
     /aria-label="Play Opening track: Connect Spotify playback in the player\."[^>]*disabled=/,
   )
-  assert.match(html, /aria-selected="true"[^>]*>Tracks</)
+  assert.match(html, /aria-selected="true"[^>]*>Overview</)
+  const tabs = [...html.matchAll(/role="tab"[^>]*>([^<]+)</g)].map(
+    (match) => match[1],
+  )
+  assert.deepEqual(tabs, ['Overview', 'Listening', 'Sources'])
+  assert.match(html, /aria-label="Play Synthetic mix"[^>]*>.*Play<\/button>/)
 })
 
 test('track rows have play and queue buttons while playback is on', async () => {
@@ -307,7 +312,8 @@ test('track rows have play and queue buttons while playback is on', async () => 
   assert.match(html, /aria-label="Play Opening track"/)
   assert.match(html, /aria-label="Play Closing track"/)
   assert.match(html, /aria-label="Add Closing track to queue"/)
-  assert.match(html, /aria-label="Play Member album"/)
+  // Albums inside a playlist open first; only their own detail plays them.
+  assert.doesNotMatch(html, /aria-label="Play Member album"/)
 })
 
 test('the sync tab shows the schedule, progress and the latest job', async () => {
@@ -323,15 +329,18 @@ test('the sync tab shows the schedule, progress and the latest job', async () =>
     'Weekly',
   ])
     assert.match(html, new RegExp(`>${label}</option>`))
-  assert.match(html, /2 of 5 pages/)
+  assert.match(html, /aria-valuenow="2" aria-valuetext="2 of 5"/)
   assert.match(html, /Import in progress/)
-  assert.match(html, /data-status="running"[^>]*>Importing</)
-  assert.deepEqual(linkTargets(html, 'View job'), [
+  assert.match(html, /data-status="running">Running</)
+  const job = html.match(/title="View job" href="([^"]+)"/)?.[1]
+  assert.ok(job)
+  const jobUrl = new URL(job.replaceAll('&amp;', '&'), 'http://localhost')
+  assert.deepEqual(detailEntries(jobUrl.pathname, jobUrl.searchParams), [
     { kind: 'playlist', id: 'playlist-1', view: 'tab=sync' },
     { kind: 'job', id: 'job-1' },
   ])
   assert.match(html, /disabled=""[^>]*>Sync now</)
-  assert.match(html, /<progress[^>]*value="2"[^>]*max="5"/)
+  assert.match(html, /role="progressbar"/)
 })
 
 test('the sync tab explains a missing next sync after a failed import', async () => {
@@ -354,9 +363,9 @@ test('the sync tab explains a missing next sync after a failed import', async ()
   assert.match(html, /2 pages</)
   assert.doesNotMatch(html, /2 of/)
   assert.match(html, /the last import failed\. Sync now to resume\./)
-  assert.match(html, /role="alert">Spotify refused the playlist\./)
+  assert.match(html, /role="alert">[\s\S]*?Spotify refused the playlist\./)
   assert.doesNotMatch(html, /disabled=""[^>]*>Sync now</)
-  assert.doesNotMatch(html, /<progress/)
+  assert.doesNotMatch(html, /role="progressbar"/)
 })
 
 test('a legacy playlist says in one line that it is not synced', async () => {
@@ -384,7 +393,10 @@ test('the Tracks browser opens the same drawer and filters itself by the playlis
       '/tracks',
     ),
   )
-  assert.match(html, /href="\/playlists\/playlist-1"[^>]*>Open page/)
+  assert.match(
+    html,
+    /href="\/playlists\/playlist-1"><svg[\s\S]*?<\/svg>Open page/,
+  )
   assert.match(html, /<button[^>]*>Filter tracks<\/button>/)
   assert.deepEqual(linkTargets(html, 'Opening track').at(-1), {
     kind: 'track',
@@ -417,9 +429,12 @@ test('playlist entries expose sorting for every data column', async () => {
     assert.ok(html.includes(`aria-label="${view} view"`))
   for (const label of ['Title', 'Artists', 'Album', 'Duration', 'Added'])
     assert.match(html, new RegExp(`<button[^>]*>[^<]*${label}`))
-  assert.match(html, / Filters<\/button>/)
-  assert.match(html, /class="browse-toolbar"/)
-  assert.match(html, /browse-sort-direction"[^>]*aria-label="Sort descending"/)
+  assert.match(html, />Filters(?: · \d+)?<\/button>/)
+  assert.match(html, /class="ds-toolbar"/)
+  assert.match(
+    html,
+    /<button class="ds-btn" data-icon="" type="button" aria-label="Sort descending"/,
+  )
   assert.ok(
     html.indexOf('aria-label="Search playlist entries"') <
       html.indexOf('<thead>'),
@@ -473,20 +488,19 @@ test('playlist grid and list keep artwork, playback, navigation, and the visible
     const cards = html.slice(0, html.indexOf('aria-label="Playlist details"'))
     assert.match(
       cards,
-      new RegExp(`aria-label="${label} view" aria-pressed="true"`),
+      new RegExp(`aria-pressed="true" aria-label="${label} view"`),
     )
     assert.match(
       cards,
       /aria-label="Search playlist entries"[^>]*value="Fixture"/,
     )
     assert.match(cards, /aria-label="Sort by"/)
-    assert.match(cards, / Filters<\/button>/)
+    assert.match(cards, />Filters(?: · \d+)?<\/button>/)
     assert.match(cards, /aria-posinset="3" aria-setsize="684"/)
-    assert.match(cards, /virtual-browse-placeholder/)
+    assert.match(cards, /class="ds-(?:card|row)" aria-hidden="true"/)
     assert.doesNotMatch(cards, /<table|Visible columns/)
     assert.match(cards, /src="https:\/\/example\.test\/track-0\.jpg"/)
     assert.match(cards, /src="https:\/\/example\.test\/album-2\.jpg"/)
-    assert.match(cards, /Open Last\.fm \(opens in a new tab\)/)
     const play = cards.indexOf('Play Opening track')
     assert.ok(play >= 0 && play < cards.indexOf('Add Opening track to queue'))
     assert.deepEqual(linkTargets(cards, 'Opening track'), [
@@ -536,7 +550,7 @@ test('a playlist inspector link restores Details independently of the workspace 
     [entry],
   )
   const html = drawerOf(await render(params.toString()))
-  assert.match(html, /aria-label="List view" aria-pressed="true"/)
+  assert.match(html, /aria-pressed="true" aria-label="List view"/)
   assert.match(html, /<option value="title" selected="">Title<\/option>/)
   assert.deepEqual(linkTargets(html, 'Opening track'), [
     entry,

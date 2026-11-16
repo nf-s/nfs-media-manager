@@ -221,3 +221,49 @@ test('loading and read errors are distinct, and a refresh error preserves cached
   assert.match(stale, /Could not refresh this job/)
   assert.match(stale, /Synthetic film/)
 })
+
+test('overview leads with the summary headline, code, retry time and its actions in order', () => {
+  const { html } = render({
+    job: {
+      ...fixture,
+      summary: {
+        headline: 'No matching item at the provider',
+        code: 'request-failed',
+        retryAt: '2099-01-02T14:20:00.000Z',
+        actions: ['find-match', 'retry', 'open-provider'],
+      },
+    },
+  })
+  assert.match(html, /<h2 class="ds-detail-title">Synthetic film<\/h2>/)
+  assert.match(html, /class="ops-headline">No matching item at the provider</)
+  assert.match(html, /Code request-failed/)
+  assert.match(html, /Can retry after 2099-01-0[23] /)
+  const find = html.indexOf('>Find match<')
+  const retry = html.indexOf('>Retry</button>')
+  const provider = html.indexOf('>Open provider<')
+  assert.ok(find > -1 && find < retry && retry < provider)
+  assert.match(html, /data-variant="primary"[^>]*href="[^"]*"[^>]*>Find match</)
+  assert.match(html, /href="\/providers\/example-provider">Open provider</)
+  assert.match(html, /Request and response/)
+  assert.match(html, /aria-label="Job items"/)
+})
+
+test('a waiting job says why and when it resumes', () => {
+  const { html } = render({
+    job: {
+      ...fixture,
+      status: 'queued',
+      errorMessage: null,
+      waiting: {
+        reason: 'cooldown',
+        until: '2099-01-02T14:20:00.000Z',
+        detail: 'Cooling down: provider rate limit',
+      },
+    },
+  })
+  assert.match(html, /data-status="waiting"[^>]*>Waiting until 2099-01-0[23] /)
+  assert.match(
+    html,
+    /data-tone="attention"[\s\S]*Cooling down: provider rate limit/,
+  )
+})

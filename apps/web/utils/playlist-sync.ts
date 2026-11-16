@@ -12,7 +12,7 @@ import {
 /** How often a playlist is read again while its import is queued or running. */
 export const PLAYLIST_SYNC_POLL_MS = 2000
 
-export const playlistSourceLabels: Record<PlaylistSource, string> = {
+const playlistSourceLabels: Record<PlaylistSource, string> = {
   spotify: 'Spotify',
   'spotify-liked': 'Liked Songs',
 }
@@ -20,14 +20,6 @@ export const playlistSourceLabels: Record<PlaylistSource, string> = {
 /** Null source: a playlist from the legacy album import. */
 export function playlistSourceLabel(source: PlaylistSource | null) {
   return source ? playlistSourceLabels[source] : 'Library'
-}
-
-export const playlistJobLabels: Record<SpotifyPlaylistJob['status'], string> = {
-  queued: 'Queued',
-  running: 'Importing',
-  succeeded: 'Imported',
-  failed: 'Failed',
-  cancelled: 'Cancelled',
 }
 
 /** Refreshes playlists and everything their tracks appear in. */

@@ -3,35 +3,31 @@ import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import MediaArtwork from './media-artwork'
+import MediaArtwork, { MediaArt, MediaThumb } from './media-artwork'
 import { BrowseTagBadges } from './browse-controls'
 
-test('all artwork tags render as keyboard-accessible badges in a bounded strip', () => {
-  const css = readFileSync(
-    new URL('../../../packages/ui/src/styles/legacy.css', import.meta.url),
-    'utf8',
-  )
+test('tags render as filter pills: the first three and a count, never clipped or scrolled', () => {
   const tags = ['Tag one', 'Tag two', 'Tag three', 'Tag four', 'Tag five']
   const html = renderToStaticMarkup(
-    <BrowseTagBadges tags={tags} className="tile-tags" onFilter={() => {}} />,
+    <BrowseTagBadges tags={tags} onFilter={() => {}} />,
   )
-  assert.match(
-    html,
-    /class="browse-tag-badges tile-tags" role="group" aria-label="Tags"/,
-  )
-  for (const tag of tags)
+  assert.match(html, /<span class="ds-pills" role="group" aria-label="Tags">/)
+  for (const tag of tags.slice(0, 3))
     assert.ok(
       html.includes(
-        `<button type="button" title="Tag: ${tag}">${tag}</button>`,
+        `<button type="button" title="Tag: ${tag}" class="ds-pill"><span class="ds-pill-label">${tag}</span></button>`,
       ),
     )
-  assert.match(
-    css,
-    /\.browse-tag-badges\s*\{[^}]+max-width:\s*100%[^}]+overflow-x:\s*auto/,
+  assert.doesNotMatch(html, /Tag four|Tag five/)
+  assert.match(html, /<span class="ds-more" title="2 more">\+2<\/span>/)
+  const two = renderToStaticMarkup(
+    <BrowseTagBadges tags={tags} onFilter={() => {}} max={2} />,
   )
+  assert.match(two, />\+3</)
+  assert.doesNotMatch(html, /browse-tag-badges|overflow/)
 })
 
-test('artwork distinguishes artist tag fallbacks from album tags', () => {
+test('artist tags shown in place of album tags use the outline pill', () => {
   const html = renderToStaticMarkup(
     <BrowseTagBadges
       tags={['Album tag']}
@@ -39,10 +35,10 @@ test('artwork distinguishes artist tag fallbacks from album tags', () => {
       onFilter={() => {}}
     />,
   )
-  assert.match(html, /title="Tag: Album tag">Album tag<\/button>/)
+  assert.match(html, /title="Tag: Album tag" class="ds-pill">/)
   assert.match(
     html,
-    /title="Artist tag: Artist tag">Artist tag<span[^>]*>Artist<\/span><\/button>/,
+    /title="Artist tag: Artist tag" class="ds-pill" data-tone="outline"><span class="ds-pill-label">Artist tag<\/span><span class="sr-only">, artist tag<\/span>/,
   )
   const complete = renderToStaticMarkup(
     <BrowseTagBadges
@@ -85,9 +81,31 @@ function luminance(hex: string) {
   return red * 0.2126 + green * 0.7152 + blue * 0.0722
 }
 
-test('grid fallback text has small-text contrast on an opaque surface without gradients', () => {
+test('cards and rows without artwork show the kind placeholder in its shape', () => {
+  for (const src of [null, undefined, '']) {
+    const card = renderToStaticMarkup(<MediaArt kind="film" src={src} />)
+    assert.match(card, /^<span class="ds-art" data-ratio="poster">/)
+    assert.match(card, /<span class="ds-art-fallback"><svg/)
+    assert.doesNotMatch(card, /<img/)
+    const thumb = renderToStaticMarkup(
+      <MediaThumb kind="artist" src={src} size={40} />,
+    )
+    assert.match(thumb, /class="ds-thumb" data-ratio="round"/)
+    assert.match(thumb, /--ds-thumb:40px/)
+    assert.doesNotMatch(thumb, /<img/)
+  }
+  const image = renderToStaticMarkup(
+    <MediaArt kind="album" src="https://example.test/cover.jpg" alt="" />,
+  )
+  assert.match(
+    image,
+    /<img class="ds-artimg" src="https:\/\/example.test\/cover.jpg"/,
+  )
+})
+
+test('legacy artwork fallback text has small-text contrast on an opaque surface', () => {
   const css = readFileSync(
-    new URL('./media-browser.module.css', import.meta.url),
+    new URL('../../../packages/ui/src/styles/browse.css', import.meta.url),
     'utf8',
   )
   const tokens = readFileSync(
@@ -101,18 +119,21 @@ test('grid fallback text has small-text contrast on an opaque surface without gr
     name
       ? new RegExp(`${name}:\\s*#([a-f0-9]{6});`, 'i').exec(tokens)?.[1]
       : undefined
-  const fallback = /\.grid \.fallback\s*\{([^}]+)\}/.exec(css)?.[1]
+  const rule = (selector: string) =>
+    new RegExp(`\\.${selector}\\s*\\{([^}]+)\\}`).exec(css)?.[1]
+  const fallback = rule('browse-artwork-fallback')
+  const surface = rule('browse-artwork')
   assert.ok(fallback)
+  assert.ok(surface)
   const foreground = token(
     /(?:^|;)\s*color:\s*var\((--ds-[a-z0-9-]+)\);/i.exec(fallback)?.[1],
   )
   const background = token(
-    /background:\s*var\((--ds-[a-z0-9-]+)\);/i.exec(fallback)?.[1],
+    /background:\s*var\((--ds-[a-z0-9-]+)\);/i.exec(surface)?.[1],
   )
   assert.ok(foreground)
   assert.ok(background)
   const ratio = (luminance(background) + 0.05) / (luminance(foreground) + 0.05)
   assert.ok(ratio >= 4.5, `Fallback contrast is ${ratio}:1`)
-  assert.match(fallback, /overflow-wrap: anywhere/)
   assert.doesNotMatch(css, /gradient\(/)
 })

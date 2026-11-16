@@ -1,9 +1,8 @@
 'use client'
 
-import { AudioLines, ListPlus, Pause, Play } from 'lucide-react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { AlbumDetailSchema } from '@repo/schemas/media'
-import { Button } from '@repo/ui/components/ui/button'
+import { PlayHeaderButtons, PlayPair } from '@repo/ui/components/ds/play'
 import { fetchApiData } from '@/utils/api'
 import { useConfig } from './providers'
 import {
@@ -27,7 +26,27 @@ type Track = { position: number; externalId: string | null; title: string }
 type PlaybackSourceFactory = () => PlaybackSource | Promise<PlaybackSource>
 const playRequests = new WeakMap<PlaybackControls, object>()
 
-export function UnavailablePlayButton({
+/** Why a play pair is disabled, in the words shown on the buttons. */
+export function unavailableReason(available: boolean, enabled: boolean) {
+  return !available
+    ? 'No Spotify recording is available.'
+    : !enabled
+      ? 'Connect Spotify playback in the player.'
+      : 'No playable tracks are available.'
+}
+
+/** A row number shown before a row's play pair. */
+function Position({ value }: { value?: number }) {
+  return value === undefined ? null : (
+    <span className="browse-play-position">{value}</span>
+  )
+}
+
+/**
+ * A disabled play pair that says why the item cannot be played. `compact`
+ * is the row pair; otherwise the labelled header buttons.
+ */
+function UnavailablePlayButton({
   title,
   available,
   position,
@@ -39,30 +58,33 @@ export function UnavailablePlayButton({
   compact?: boolean
 }) {
   const playback = usePlayback()
-  const reason = !available
-    ? 'No Spotify recording is available.'
-    : !playback.enabled
-      ? 'Connect Spotify playback in the player.'
-      : 'No playable tracks are available.'
+  const reason = unavailableReason(available, playback.enabled)
+  if (!compact)
+    return (
+      <PlayHeaderButtons
+        title={title}
+        disabled
+        disabledReason={reason}
+        onPlay={() => undefined}
+        onQueue={() => undefined}
+      />
+    )
   return (
-    <button
-      type="button"
-      className={
-        compact ? 'track-play' : 'inline-flex items-center gap-1.5 text-sm'
-      }
-      aria-label={`Play ${title}: ${reason}`}
-      title={reason}
-      disabled
-    >
-      {position !== undefined && (
-        <span className="track-number">{position}</span>
-      )}
-      <Play size={compact ? 12 : 14} aria-hidden="true" />
-      {!compact && 'Play'}
-    </button>
+    <>
+      <Position value={position} />
+      <PlayPair
+        place="row"
+        title={title}
+        disabled
+        disabledReason={reason}
+        onPlay={() => undefined}
+        onQueue={() => undefined}
+      />
+    </>
   )
 }
 
+/** Play and queue at the end of an album's title in a row or table cell. */
 export function AlbumInlinePlayButton({
   album,
   source,
@@ -70,36 +92,7 @@ export function AlbumInlinePlayButton({
   album: AlbumSource
   source?: PlaybackSourceFactory
 }) {
-  const playback = useAlbumPlayback(album)
-  if (!playback)
-    return (
-      <UnavailablePlayButton
-        title={album.title}
-        available={albumPlayable(album) !== null}
-      />
-    )
-  const Icon = playback.playing ? Pause : Play
-  return (
-    <span className="inline-flex shrink-0 items-center">
-      <button
-        type="button"
-        className="track-play"
-        data-current={playback.current}
-        aria-label={`${playback.playing ? 'Pause' : 'Play'} ${album.title}`}
-        onClick={() => playback.play(source)}
-      >
-        <Icon size={12} aria-hidden="true" />
-      </button>
-      <button
-        type="button"
-        className="track-queue"
-        aria-label={`Add ${album.title} to queue`}
-        onClick={() => playback.controls.enqueue(playback.item)}
-      >
-        <ListPlus size={14} aria-hidden="true" />
-      </button>
-    </span>
-  )
+  return <AlbumPair album={album} source={source} place="row" />
 }
 
 /** Related albums expose playback without fetching each album on render. */
@@ -141,45 +134,33 @@ export function AlbumReferencePlayButton({
     return (
       <UnavailablePlayButton title={title} available={playback.data !== null} />
     )
-  const Icon = playing ? Pause : Play
   return (
-    <span className="inline-flex shrink-0 items-center">
-      <button
-        type="button"
-        className="track-play"
+    <>
+      <PlayPair
+        place="row"
+        title={title}
+        playing={playing}
         disabled={playback.isPending}
-        data-current={current}
-        aria-label={`${playing ? 'Pause' : 'Play'} ${title}`}
-        title={
-          playback.isError
-            ? 'Could not load album playback. Try again.'
-            : undefined
-        }
-        onClick={() =>
+        disabledReason="Loading album playback."
+        onPlay={() =>
           current && !source ? controls.toggle() : playback.mutate('play')
         }
-      >
-        <Icon size={12} aria-hidden="true" />
-      </button>
-      <button
-        type="button"
-        className="track-queue"
-        aria-label={`Add ${title} to queue`}
-        disabled={playback.isPending}
-        title={
-          playback.isError
-            ? 'Could not load album playback. Try again.'
-            : undefined
-        }
-        onClick={() => playback.mutate('queue')}
-      >
-        <ListPlus size={14} aria-hidden="true" />
-      </button>
-    </span>
+        onQueue={() => playback.mutate('queue')}
+      />
+      {playback.isError && (
+        <span className="sr-only" role="status">
+          Could not load album playback. Try again.
+        </span>
+      )}
+    </>
   )
 }
 
-function playFromView(
+/**
+ * Pauses what is playing, resumes the same source, or starts this item from
+ * `source`. Only the latest request starts once a source resolves.
+ */
+export function playFromView(
   controls: PlaybackControls,
   view: PlaybackView,
   item: PlayableItem,
@@ -220,7 +201,44 @@ function useAlbumPlayback(album: AlbumSource) {
   }
 }
 
-/** Play and queue buttons over a grid tile's artwork. */
+function AlbumPair({
+  album,
+  source,
+  place,
+}: {
+  album: AlbumSource
+  source?: PlaybackSourceFactory
+  place: 'tile' | 'row'
+}) {
+  const view = usePlayback()
+  const playback = useAlbumPlayback(album)
+  if (!playback)
+    return (
+      <PlayPair
+        place={place}
+        title={album.title}
+        disabled
+        disabledReason={unavailableReason(
+          albumPlayable(album) !== null,
+          view.enabled,
+        )}
+        onPlay={() => undefined}
+        onQueue={() => undefined}
+      />
+    )
+  const { item, playing, controls, play } = playback
+  return (
+    <PlayPair
+      place={place}
+      title={album.title}
+      playing={playing}
+      onPlay={() => play(source)}
+      onQueue={() => controls.enqueue(item)}
+    />
+  )
+}
+
+/** Play and queue on a grid card's artwork. */
 export function TilePlayControls({
   album,
   source,
@@ -228,49 +246,10 @@ export function TilePlayControls({
   album: AlbumSource
   source?: PlaybackSourceFactory
 }) {
-  const playback = useAlbumPlayback(album)
-  if (!playback)
-    return (
-      <div className="tile-play">
-        <UnavailablePlayButton
-          title={album.title}
-          available={albumPlayable(album) !== null}
-        />
-      </div>
-    )
-  const { item, current, playing, controls, play } = playback
-  return (
-    <div className="tile-play" data-current={current}>
-      <button
-        type="button"
-        aria-label={`${playing ? 'Pause' : 'Play'} ${album.title}`}
-        onClick={() => play(source)}
-      >
-        {playing ? (
-          <>
-            <AudioLines
-              size={14}
-              aria-hidden="true"
-              className="tile-play-marker"
-            />
-            <Pause size={14} aria-hidden="true" className="tile-play-action" />
-          </>
-        ) : (
-          <Play size={14} aria-hidden="true" />
-        )}
-      </button>
-      <button
-        type="button"
-        aria-label={`Add ${album.title} to queue`}
-        onClick={() => controls.enqueue(item)}
-      >
-        <ListPlus size={14} aria-hidden="true" />
-      </button>
-    </div>
-  )
+  return <AlbumPair album={album} source={source} place="tile" />
 }
 
-/** Play and queue buttons in the album drawer's heading. */
+/** Play and queue in the album drawer's heading. */
 export function AlbumPlayButtons({
   album,
   source,
@@ -281,34 +260,27 @@ export function AlbumPlayButtons({
   const playback = useAlbumPlayback(album)
   if (!playback)
     return (
-      <div className="detail-play">
-        <UnavailablePlayButton
-          title={album.title}
-          available={albumPlayable(album) !== null}
-          compact={false}
-        />
-      </div>
+      <UnavailablePlayButton
+        title={album.title}
+        available={albumPlayable(album) !== null}
+        compact={false}
+      />
     )
   const { item, playing, controls, play } = playback
   return (
-    <div className="detail-play">
-      <Button variant="primary" type="button" onClick={() => play(source)}>
-        {playing ? (
-          <Pause size={14} aria-hidden="true" />
-        ) : (
-          <Play size={14} aria-hidden="true" />
-        )}
-        {playing ? 'Pause' : 'Play'}
-      </Button>
-      <Button type="button" onClick={() => controls.enqueue(item)}>
-        <ListPlus size={14} aria-hidden="true" />
-        Add to queue
-      </Button>
-    </div>
+    <PlayHeaderButtons
+      title={album.title}
+      playing={playing}
+      onPlay={() => play(source)}
+      onQueue={() => controls.enqueue(item)}
+    />
   )
 }
 
-/** A track's number, which plays the album from that track when playback is on. */
+/**
+ * A track's number followed by its play pair. Play starts the album from
+ * this track; Add to queue queues the track alone.
+ */
 export function TrackPlayButton({
   album,
   track,
@@ -321,11 +293,15 @@ export function TrackPlayButton({
   const view = usePlayback()
   const controls = usePlaybackControls()
   const item = view.enabled ? albumPlayable(album, track) : null
-  if (!item)
+  const queued = view.enabled ? trackPlayable(album, track) : null
+  if (!item || !queued)
     return (
       <UnavailablePlayButton
         title={track.title}
-        available={albumPlayable(album, track) !== null}
+        available={
+          albumPlayable(album, track) !== null &&
+          trackPlayable(album, track) !== null
+        }
         position={track.position}
       />
     )
@@ -336,43 +312,16 @@ export function TrackPlayButton({
     (snapshot.trackUri === uri || snapshot.linkedFromUri === uri)
   const playing = current && !snapshot.paused
   return (
-    <button
-      type="button"
-      className="track-play"
-      data-current={current}
-      aria-label={`${playing ? 'Pause' : 'Play'} ${track.title}`}
-      onClick={() => playFromView(controls, view, item, current, source)}
-    >
-      <span className="track-number">{track.position}</span>
-      {playing ? (
-        <Pause size={12} aria-hidden="true" />
-      ) : (
-        <Play size={12} aria-hidden="true" />
-      )}
-    </button>
-  )
-}
-
-export function TrackQueueButton({
-  album,
-  track,
-}: {
-  album: AlbumSource
-  track: Track
-}) {
-  const view = usePlayback()
-  const controls = usePlaybackControls()
-  const item = view.enabled ? trackPlayable(album, track) : null
-  if (!item) return null
-  return (
-    <button
-      type="button"
-      className="track-queue"
-      aria-label={`Add ${track.title} to queue`}
-      onClick={() => controls.enqueue(item)}
-    >
-      <ListPlus size={14} aria-hidden="true" />
-    </button>
+    <>
+      <Position value={track.position} />
+      <PlayPair
+        place="row"
+        title={track.title}
+        playing={playing}
+        onPlay={() => playFromView(controls, view, item, current, source)}
+        onQueue={() => controls.enqueue(queued)}
+      />
+    </>
   )
 }
 
@@ -397,58 +346,56 @@ function useLibraryTrackPlayback(track: LibraryTrackSource) {
 }
 
 /**
- * Plays one library track. With a position it is the track number of a
- * playlist row. The play icon remains visible beside the position.
+ * Play and queue for one library track. With a position, the row number
+ * comes first, as in a playlist. `place="tile"` floats the pair on a card's
+ * artwork.
  */
 export function LibraryTrackPlayButton({
   track,
   position,
   source,
+  place = 'row',
 }: {
   track: LibraryTrackSource
   position?: number
   source?: PlaybackSourceFactory
+  place?: 'tile' | 'row'
 }) {
+  const view = usePlayback()
   const playback = useLibraryTrackPlayback(track)
   if (!playback)
     return (
-      <UnavailablePlayButton
-        title={track.title}
-        available={libraryTrackPlayable(track) !== null}
-        position={position}
-      />
+      <>
+        <Position value={position} />
+        <PlayPair
+          place={place}
+          title={track.title}
+          disabled
+          disabledReason={unavailableReason(
+            libraryTrackPlayable(track) !== null,
+            view.enabled,
+          )}
+          onPlay={() => undefined}
+          onQueue={() => undefined}
+        />
+      </>
     )
-  const { current, playing, play } = playback
-  const Icon = playing ? Pause : Play
-  const label = `${playing ? 'Pause' : 'Play'} ${track.title}`
-  const onClick = () => play(source)
-  if (position === undefined)
-    return (
-      <button
-        type="button"
-        className="inline-flex size-5 items-center justify-center rounded-[5px] align-middle hover:bg-[var(--chip)] data-[current=true]:bg-[var(--chip)]"
-        data-current={current}
-        aria-label={label}
-        onClick={onClick}
-      >
-        <Icon size={12} aria-hidden="true" />
-      </button>
-    )
+  const { item, playing, controls, play } = playback
   return (
-    <button
-      type="button"
-      className="track-play"
-      data-current={current}
-      aria-label={label}
-      onClick={onClick}
-    >
-      <span className="track-number">{position}</span>
-      <Icon size={12} aria-hidden="true" />
-    </button>
+    <>
+      <Position value={position} />
+      <PlayPair
+        place={place}
+        title={track.title}
+        playing={playing}
+        onPlay={() => play(source)}
+        onQueue={() => controls.enqueue(item)}
+      />
+    </>
   )
 }
 
-/** Keeps compact playback actions together in rows and related-item lists. */
+/** Play and queue for one library track in rows and related-item lists. */
 export function LibraryTrackInlinePlayButtons({
   track,
   position,
@@ -459,39 +406,11 @@ export function LibraryTrackInlinePlayButtons({
   source?: PlaybackSourceFactory
 }) {
   return (
-    <span className="inline-flex shrink-0 items-center">
-      <LibraryTrackPlayButton
-        track={track}
-        position={position}
-        source={source}
-      />
-      <LibraryTrackQueueButton track={track} />
-    </span>
+    <LibraryTrackPlayButton track={track} position={position} source={source} />
   )
 }
 
-/** Adds one library track to the queue. */
-export function LibraryTrackQueueButton({
-  track,
-}: {
-  track: LibraryTrackSource
-}) {
-  const playback = useLibraryTrackPlayback(track)
-  if (!playback) return null
-  const { item, controls } = playback
-  return (
-    <button
-      type="button"
-      className="track-queue"
-      aria-label={`Add ${track.title} to queue`}
-      onClick={() => controls.enqueue(item)}
-    >
-      <ListPlus size={14} aria-hidden="true" />
-    </button>
-  )
-}
-
-/** Play and queue buttons in the track drawer's heading. */
+/** Play and queue in the track drawer's heading. */
 export function LibraryTrackPlayButtons({
   track,
 }: {
@@ -500,33 +419,19 @@ export function LibraryTrackPlayButtons({
   const playback = useLibraryTrackPlayback(track)
   if (!playback)
     return (
-      <div className="detail-play">
-        <UnavailablePlayButton
-          title={track.title}
-          available={libraryTrackPlayable(track) !== null}
-          compact={false}
-        />
-      </div>
+      <UnavailablePlayButton
+        title={track.title}
+        available={libraryTrackPlayable(track) !== null}
+        compact={false}
+      />
     )
   const { item, current, playing, controls } = playback
   return (
-    <div className="detail-play">
-      <Button
-        variant="primary"
-        type="button"
-        onClick={() => (current ? controls.toggle() : controls.play(item))}
-      >
-        {playing ? (
-          <Pause size={14} aria-hidden="true" />
-        ) : (
-          <Play size={14} aria-hidden="true" />
-        )}
-        {playing ? 'Pause' : 'Play'}
-      </Button>
-      <Button type="button" onClick={() => controls.enqueue(item)}>
-        <ListPlus size={14} aria-hidden="true" />
-        Add to queue
-      </Button>
-    </div>
+    <PlayHeaderButtons
+      title={track.title}
+      playing={playing}
+      onPlay={() => (current ? controls.toggle() : controls.play(item))}
+      onQueue={() => controls.enqueue(item)}
+    />
   )
 }

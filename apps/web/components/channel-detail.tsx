@@ -1,12 +1,20 @@
 'use client'
 
 import Link from 'next/link'
+import { Tv } from 'lucide-react'
 import {
   SubscriptionSourceDetailSchema,
   subscriptionTypeLabels,
   type SubscriptionItem,
 } from '@repo/schemas/subscriptions'
+import {
+  DetailActionsSpacer,
+  DetailHeader,
+} from '@repo/ui/components/ds/detail-header'
+import { Section } from '@repo/ui/components/ds/facts'
 import { Button } from '@repo/ui/components/ui/button'
+import { TabsContent } from '@repo/ui/components/ui/tabs'
+import { EMPTY_VALUE, formatCount } from '@repo/ui/lib/format'
 import { useSubscriptionSource } from '@/hooks/useSubscriptionSource'
 import {
   formatSubscriptionDuration,
@@ -21,9 +29,19 @@ import {
   CreatorLibraryTitle,
   type CreatorLibraryColumn,
 } from './creator-library-table'
-import ServiceIconLinks from './service-icon-links'
-import { SourceAvatar } from './subscription-item-details'
-import { DetailSourceTabs } from './detail-source-tabs'
+import {
+  DetailArt,
+  DetailTabs,
+  OpenAtProvider,
+  useDetailTab,
+} from './detail-frame'
+import { ProviderSources } from './provider-sources'
+
+type ChannelTab = 'overview' | 'sources'
+const channelTabs: readonly [ChannelTab, ...ChannelTab[]] = [
+  'overview',
+  'sources',
+]
 
 const itemPageSchema = SubscriptionSourceDetailSchema.transform(
   ({ items }) => items,
@@ -54,7 +72,7 @@ const itemColumns: CreatorLibraryColumn<SubscriptionItem>[] = [
   {
     key: 'durationSec',
     label: 'Duration',
-    className: 'numeric',
+    align: 'end',
     render: formatSubscriptionDuration,
   },
 ]
@@ -63,14 +81,19 @@ const videoColumns: CreatorLibraryColumn<SubscriptionItem>[] = [
   {
     key: 'viewCount',
     label: 'Views',
-    className: 'numeric',
+    align: 'end',
     render: (item) =>
-      item.type === 'youtube' ? (item.viewCount?.toLocaleString() ?? '-') : '-',
+      item.type === 'youtube' && item.viewCount !== null
+        ? formatCount(item.viewCount)
+        : EMPTY_VALUE,
   },
 ]
 
 export function ChannelDetail({ id }: { id: string }) {
   const path = `/api/v1/subscriptions/sources/${encodeURIComponent(id)}`
+  const { tab, setTab } = useDetailTab(channelTabs, {
+    aliases: { videos: 'overview', episodes: 'overview' },
+  })
   const query = useSubscriptionSource(id)
   if (!query.data)
     return (
@@ -88,77 +111,94 @@ export function ChannelDetail({ id }: { id: string }) {
     url: source.url,
   }
   return (
-    <article className="media-detail">
+    <article className="dtl-detail">
       {query.isRefetchError && (
         <CreatorDetailState stale retry={query.refetch} subject="channel" />
       )}
-      <header className="mb-4">
-        <div className="flex items-start gap-3">
-          <SourceAvatar src={source.thumbnailUrl} size="large" />
-          <div className="min-w-0">
-            <h1 className="break-words text-xl font-semibold">
-              {source.title} <ServiceIconLinks links={[sourceLink]} />
-            </h1>
-            <div className="detail-facts mt-1">
-              <span>{subscriptionTypeLabels[source.type]}</span>
-              {source.type === 'youtube' && source.handle && (
-                <span>{source.handle}</span>
-              )}
-              <span>{formatSubscriptionSourceSize(source)}</span>
-              {!source.historyComplete && <span>Reading history</span>}
-            </div>
-          </div>
-        </div>
-        {source.description && (
-          <p className="detail-summary mt-3 whitespace-pre-line break-words">
-            {source.description}
-          </p>
-        )}
-        <div className="form-actions mt-2">
-          <Button asChild>
-            <Link href={subscriptionSourceHref(source.id)}>
-              Filter subscriptions
-            </Link>
-          </Button>
-        </div>
-      </header>
-      <DetailSourceTabs
+      <DetailHeader
+        art={
+          <DetailArt
+            src={source.thumbnailUrl}
+            ratio="round"
+            fallback={<Tv className="ds-i" aria-hidden="true" />}
+          />
+        }
+        kind="Channel"
+        title={source.title}
+        facts={[
+          subscriptionTypeLabels[source.type],
+          source.type === 'youtube' ? source.handle : null,
+          formatSubscriptionSourceSize(source),
+          source.historyComplete ? null : 'Reading history',
+        ]}
+        actions={
+          <>
+            <Button asChild size="md">
+              <Link href={subscriptionSourceHref(source.id)}>
+                Filter subscriptions
+              </Link>
+            </Button>
+            <DetailActionsSpacer />
+            <OpenAtProvider
+              label={isVideo ? 'YouTube' : 'Spotify'}
+              url={source.url}
+            />
+          </>
+        }
+      />
+      <DetailTabs
         label="Channel details"
-        overviewLabel={isVideo ? 'Videos' : 'Episodes'}
-        sources={{
-          rows: [
-            {
-              id: source.type,
-              label: isVideo ? 'YouTube' : 'Spotify',
-              identifier: source.id,
-              links: [sourceLink],
-            },
-          ],
-        }}
+        value={tab}
+        onChange={setTab}
+        tabs={[
+          { value: 'overview', label: 'Overview' },
+          { value: 'sources', label: 'Sources' },
+        ]}
       >
-        <CreatorLibraryTable
-          kind="subscription"
-          queryKey={['subscriptions', 'source', id, 'items']}
-          path={path}
-          schema={itemPageSchema}
-          columns={isVideo ? videoColumns : itemColumns}
-          card={(item) => ({
-            title: item.title,
-            artworkUrl: subscriptionArtworkUrl(item),
-            subtitle: formatSubscriptionPublished(
-              item.publishedAt,
-              item.publishedPrecision,
-            ),
-            metadata:
-              item.durationSec !== null ||
-              (item.type === 'youtube' && item.live !== 'none')
-                ? formatSubscriptionDuration(item)
-                : undefined,
-          })}
-          label={isVideo ? 'videos' : 'episodes'}
-          defaultSort={{ key: 'publishedAt', direction: 'desc' }}
-        />
-      </DetailSourceTabs>
+        <TabsContent value="overview">
+          {source.description && (
+            <Section title="About" flush>
+              <p className="dtl-text">{source.description}</p>
+            </Section>
+          )}
+          <Section title={isVideo ? 'Videos' : 'Episodes'}>
+            <CreatorLibraryTable
+              kind="subscription"
+              queryKey={['subscriptions', 'source', id, 'items']}
+              path={path}
+              schema={itemPageSchema}
+              columns={isVideo ? videoColumns : itemColumns}
+              card={(item) => ({
+                title: item.title,
+                artworkUrl: subscriptionArtworkUrl(item),
+                subtitle: formatSubscriptionPublished(
+                  item.publishedAt,
+                  item.publishedPrecision,
+                ),
+                metadata:
+                  item.durationSec !== null ||
+                  (item.type === 'youtube' && item.live !== 'none')
+                    ? formatSubscriptionDuration(item)
+                    : undefined,
+              })}
+              label={isVideo ? 'videos' : 'episodes'}
+              defaultSort={{ key: 'publishedAt', direction: 'desc' }}
+            />
+          </Section>
+        </TabsContent>
+        <TabsContent value="sources">
+          <ProviderSources
+            rows={[
+              {
+                id: source.type,
+                label: isVideo ? 'YouTube' : 'Spotify',
+                identifier: source.id,
+                links: [sourceLink],
+              },
+            ]}
+          />
+        </TabsContent>
+      </DetailTabs>
     </article>
   )
 }

@@ -62,16 +62,17 @@ export function FilmProviderSelection({
   disabled?: boolean
 }) {
   return (
-    <fieldset className="enrichment-providers" disabled={disabled}>
-      <legend>Fetch metadata from</legend>
+    <fieldset className="ops-providers" disabled={disabled}>
+      <legend className="ds-label">Fetch metadata from</legend>
       {providers.map((provider) => {
         const missing = provider.secrets.some(
           (field) => field.required && !field.configured,
         )
         return (
-          <label className="check-label" key={provider.id}>
+          <label className="ds-checkrow" key={provider.id}>
             <input
               type="checkbox"
+              className="ds-check"
               checked={selected.includes(provider.id)}
               disabled={missing || provider.safety?.halted}
               onChange={(event) =>
@@ -94,7 +95,9 @@ export function FilmProviderSelection({
         )
       })}
       {!providers.length && (
-        <span className="muted">No scrapers configured for this library.</span>
+        <span className="ds-muted">
+          No scrapers configured for this library.
+        </span>
       )}
     </fieldset>
   )

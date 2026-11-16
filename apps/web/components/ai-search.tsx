@@ -4,6 +4,7 @@ import { useEffect, useId, useRef, useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { Eye, LoaderCircle, Mic, Square, X } from 'lucide-react'
 import { Button } from '@repo/ui/components/ui/button'
+import { Notice } from '@repo/ui/components/ds/feedback'
 import {
   AI_AUDIO_MAX_SECONDS,
   AI_SEARCH_MAX_TEXT,
@@ -267,16 +268,16 @@ export default function AiSearch<Plan>({
         <>
           {working || microphone.phase === 'requesting' ? (
             <LoaderCircle
-              size={15}
-              className={styles.spinner}
-              aria-hidden="true"
+              className={`ds-i ${styles.spinner}`}
+              data-size="sm"
+              aria-hidden
             />
           ) : (
             <Button
-              size="md"
               type="button"
+              size="xs"
               variant="ghost"
-              className="icon-button"
+              icon
               aria-label={
                 recording ? 'Stop recording and search' : 'Record search'
               }
@@ -292,52 +293,63 @@ export default function AiSearch<Plan>({
                 }
               }}
             >
-              {recording ? <Square size={14} /> : <Mic size={15} />}
+              {recording ? (
+                <Square className="ds-i" data-size="sm" aria-hidden />
+              ) : (
+                <Mic className="ds-i" data-size="sm" aria-hidden />
+              )}
             </Button>
           )}
           {recording || working ? (
             <Button
-              size="md"
               type="button"
+              size="xs"
               variant="ghost"
-              className="icon-button"
+              icon
               aria-label={recording ? 'Cancel recording' : 'Cancel AI search'}
               title={recording ? 'Cancel recording' : 'Cancel AI search'}
               onClick={cancel}
             >
-              <X size={15} />
+              <X className="ds-i" data-size="sm" aria-hidden />
             </Button>
           ) : hasDetails ? (
             <details
               open={open}
-              className={`toolbar-popover ${styles.popover}`}
+              className="browse-popover"
               onToggle={(event) => setOpen(event.currentTarget.open)}
             >
               <summary
+                className="ds-btn"
+                data-variant="ghost"
+                data-size="xs"
+                data-icon=""
                 aria-label="Show AI search interpretation"
                 title="Show AI search interpretation"
                 aria-controls={`${id}-interpretation`}
               >
-                <Eye size={15} />
+                <Eye className="ds-i" data-size="sm" aria-hidden />
               </summary>
               <div
                 id={`${id}-interpretation`}
-                className={`popover-panel ${styles.panel}`}
+                className={`ds-pop browse-popover-panel ${styles.panel}`}
                 role="region"
                 aria-label="AI search interpretation"
               >
                 {status.isError && (
-                  <div role="alert">
-                    <p>Could not check AI availability.</p>
-                    <Button
-                      size="md"
-                      type="button"
-                      variant="ghost"
-                      onClick={() => void status.refetch()}
-                    >
-                      Retry
-                    </Button>
-                  </div>
+                  <Notice
+                    tone="danger"
+                    action={
+                      <Button
+                        type="button"
+                        size="xs"
+                        onClick={() => void status.refetch()}
+                      >
+                        Retry
+                      </Button>
+                    }
+                  >
+                    Could not check AI availability.
+                  </Notice>
                 )}
                 {status.data && !available && (
                   <p role="status">

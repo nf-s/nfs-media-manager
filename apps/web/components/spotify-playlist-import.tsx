@@ -19,7 +19,23 @@ import {
   type SpotifyPlaylistStoredMetadata,
 } from '@repo/schemas/tracks'
 import { Button } from '@repo/ui/components/ui/button'
-import { Input } from '@repo/ui/components/ui/input'
+import { Section } from '@repo/ui/components/ds/facts'
+import { Notice, Skeleton } from '@repo/ui/components/ds/feedback'
+import { EmptyValue } from '@repo/ui/components/ds/pill'
+import { Status } from '@repo/ui/components/ds/status'
+import {
+  Toolbar,
+  ToolbarCount,
+  ToolbarEnd,
+} from '@repo/ui/components/ds/toolbar'
+import {
+  EMPTY_VALUE,
+  formatCount,
+  formatDate,
+  formatDateTime,
+  formatItemCount,
+  formatRuntime,
+} from '@repo/ui/lib/format'
 import {
   TableBody,
   TableCell,
@@ -34,42 +50,41 @@ import {
   SecondaryCell,
   SecondaryColumnFilter,
   SecondaryTableFrame,
-  SecondaryTableFooter,
   SecondaryTableHead,
   SecondaryTableScroll,
-  SecondaryTableToolbar,
+  SecondaryTableSearch,
+  SecondaryTableSelectionBar,
   useTableColumns,
   type TableColumn,
 } from './secondary-table'
+import { ConfirmAction } from './confirm-action'
 import { sortTableRows } from '@/utils/secondary-table'
-import MediaArtwork from './media-artwork'
+import { MediaThumb } from './media-artwork'
 import { errorMessage } from './lastfm-sync'
 import AllowPlaylistChanges from './spotify-playlist-changes'
 import { fetchApiData } from '@/utils/api'
 import { scopedHref } from '@/utils/media-scope'
 import {
-  formatPlaylistDuration,
   invalidatePlaylists,
   playlistJobActive,
-  playlistJobLabels,
   playlistJobProgress,
 } from '@/utils/playlist-sync'
+import { runStatusLabel, runStatusStates } from '@/utils/run-status'
 import { spotifyAuthorizationUrl } from '@/utils/spotify-authorize'
 import { spotifyCallbackSetup } from '@/utils/spotify-setup'
 import { youtubeScheduleLabels } from '@/utils/youtube'
 
-type JobLabels = Record<SpotifyPlaylistJob['status'], string>
-
 const spotifyListingKey = ['playlists', 'spotify-listing']
+/** Width of the selection column; the playlist name is pinned after it. */
+const CHECK_WIDTH = 36
+const NUMERIC = new Set<string>([
+  'tracks',
+  'storedTracks',
+  'linkedTracks',
+  'albums',
+  'duration',
+])
 const spotifyImportsKey = ['playlists', 'spotify-imports']
-
-const listingLabels: JobLabels = {
-  queued: 'Queued',
-  running: 'Listing',
-  succeeded: 'Listed',
-  failed: 'Failed',
-  cancelled: 'Cancelled',
-}
 
 export type ImportPlaylistSortKey =
   | 'name'
@@ -92,12 +107,11 @@ export type ImportPlaylistSortKey =
 type ImportColumn = TableColumn &
   (
     | { key: ImportPlaylistSortKey; sortable: true }
-    | { key: 'selection' | 'artwork'; sortable: false }
+    | { key: 'selection'; sortable: false }
   )
 
 const importColumns: readonly ImportColumn[] = [
   { key: 'selection', sortable: false, label: 'Selection', required: true },
-  { key: 'artwork', sortable: false, label: 'Artwork' },
   { key: 'name', sortable: true, label: 'Playlist', required: true },
   { key: 'owner', sortable: true, label: 'Owner' },
   { key: 'tracks', sortable: true, label: 'Tracks' },
@@ -205,7 +219,7 @@ export function importPlaylistSortValue(
       return playlist.trackTotal
     case 'status':
       return playlist.job && playlist.job.status !== 'succeeded'
-        ? playlistJobLabels[playlist.job.status]
+        ? runStatusLabel(playlist.job.status)
         : playlist.stored
           ? playlist.current
             ? 'Imported'
@@ -248,49 +262,34 @@ export function importPlaylistSortValue(
   }
 }
 
-function formatDateTime(value: string | null) {
-  return value ? new Date(value).toLocaleString() : '-'
-}
-
-function tracksLabel(count: number) {
-  return `${count.toLocaleString()} ${count === 1 ? 'track' : 'tracks'}`
-}
+const TRACKS = { one: 'track', other: 'tracks' }
+const PLAYLISTS = { one: 'playlist', other: 'playlists' }
 
 function JobStatus({
   job,
-  labels,
+  labels = {},
 }: {
   job: SpotifyPlaylistJob
-  labels: JobLabels
+  labels?: Partial<Record<SpotifyPlaylistJob['status'], string>>
 }) {
   return (
-    <DetailLink
-      className="job-status underline underline-offset-2"
-      data-status={job.status}
-      kind="job"
-      id={job.jobId}
-      title={job.errorMessage ?? undefined}
-    >
-      {labels[job.status]}
+    <DetailLink kind="job" id={job.jobId} title={job.errorMessage ?? undefined}>
+      <Status state={runStatusStates[job.status]}>
+        {labels[job.status] ?? runStatusLabel(job.status)}
+      </Status>
     </DetailLink>
   )
 }
 
 /** Status, page progress and failure message of a playlist job. */
-function JobState({
-  job,
-  labels,
-}: {
-  job: SpotifyPlaylistJob
-  labels: JobLabels
-}) {
+function JobState({ job }: { job: SpotifyPlaylistJob }) {
   const progress = playlistJobActive(job)
     ? playlistJobProgress(job.progress)
     : null
   return (
     <>
-      <JobStatus job={job} labels={labels} />
-      {progress && <span className="muted"> {progress}</span>}
+      <JobStatus job={job} />
+      {progress && <span className="ds-muted"> {progress}</span>}
       {job.status === 'failed' && job.errorMessage && (
         <span className="block whitespace-normal">{job.errorMessage}</span>
       )}
@@ -299,7 +298,20 @@ function JobState({
 }
 
 function storedLabel(stored: NonNullable<SpotifyPlaylist['stored']>) {
-  return `Imported ${formatDateTime(stored.importedAt)} · ${tracksLabel(stored.trackCount)}`
+  return `Imported ${formatDateTime(stored.importedAt)} · ${formatItemCount(stored.trackCount, TRACKS)}`
+}
+
+/** The stored state of a playlist without a job in progress. */
+function StoredStatus({ playlist }: { playlist: SpotifyPlaylist }) {
+  return playlist.stored ? (
+    playlist.current ? (
+      <Status state="done">Imported</Status>
+    ) : (
+      <Status state="attention">Needs update</Status>
+    )
+  ) : (
+    <Status state="never">Not imported</Status>
+  )
 }
 
 function ImportState({ playlist }: { playlist: SpotifyPlaylist }) {
@@ -311,7 +323,7 @@ function ImportState({ playlist }: { playlist: SpotifyPlaylist }) {
     ((playlistJobActive(job) && playlistJobProgress(job.progress)) ||
       (job.status === 'failed' && job.errorMessage))
   const label = showJob
-    ? playlistJobLabels[job.status]
+    ? runStatusLabel(job.status)
     : stored
       ? playlist.current
         ? 'Imported'
@@ -326,7 +338,7 @@ function ImportState({ playlist }: { playlist: SpotifyPlaylist }) {
           <>
             {hasJobDetails && (
               <p>
-                <JobState job={job} labels={playlistJobLabels} />
+                <JobState job={job} />
               </p>
             )}
             {stored && (
@@ -340,7 +352,7 @@ function ImportState({ playlist }: { playlist: SpotifyPlaylist }) {
         ) : undefined
       }
     >
-      {showJob ? <JobStatus job={job} labels={playlistJobLabels} /> : label}
+      {showJob ? <JobStatus job={job} /> : <StoredStatus playlist={playlist} />}
     </SecondaryCell>
   )
 }
@@ -350,11 +362,10 @@ function ScheduleCell({
 }: {
   summary: SpotifyPlaylistStoredMetadata | undefined
 }) {
-  if (!summary?.sync.syncable) return <>-</>
+  if (!summary?.sync.syncable) return <EmptyValue />
   const { schedule, nextScheduledAt } = summary.sync
   return (
     <DetailLink
-      className="underline underline-offset-2"
       kind="playlist"
       id={summary.id}
       tab="sync"
@@ -369,6 +380,16 @@ function ScheduleCell({
   )
 }
 
+function DateCell({ value }: { value: string | null | undefined }) {
+  return value ? (
+    <time dateTime={value} title={formatDateTime(value)}>
+      {formatDate(value)}
+    </time>
+  ) : (
+    <EmptyValue />
+  )
+}
+
 function overItemLimit(playlist: SpotifyPlaylist) {
   return playlist.trackTotal > SPOTIFY_PLAYLIST_ITEM_LIMIT
 }
@@ -376,7 +397,7 @@ function overItemLimit(playlist: SpotifyPlaylist) {
 function cannotImportReason(playlist: SpotifyPlaylist) {
   if (playlist.notImportableReason) return playlist.notImportableReason
   if (overItemLimit(playlist))
-    return `Over ${SPOTIFY_PLAYLIST_ITEM_LIMIT.toLocaleString()} tracks, cannot be imported.`
+    return `Over ${formatCount(SPOTIFY_PLAYLIST_ITEM_LIMIT)} tracks, cannot be imported.`
   return null
 }
 
@@ -419,7 +440,6 @@ export default function SpotifyPlaylistImport() {
   }
   const sorting = { sortBy, direction, onSort }
   const [selected, setSelected] = useState<string[]>([])
-  const [confirmedKey, setConfirmedKey] = useState('')
   const account = useQuery({
     queryKey: ['spotify-account'],
     staleTime: 0,
@@ -494,7 +514,6 @@ export default function SpotifyPlaylistImport() {
     onSuccess: (_result, request) => {
       if (!request.likedSongs) {
         setSelected([])
-        setConfirmedKey('')
       }
     },
     onSettled: async () => {
@@ -563,19 +582,16 @@ export default function SpotifyPlaylistImport() {
     if (selectAll.current)
       selectAll.current.indeterminate = !allSelected && targets.length > 0
   }, [allSelected, targets.length])
-  const confirmationKey = JSON.stringify(
-    targets.map((playlist) => playlist.spotifyId),
-  )
   const broad = targets.length > 5
-  const confirmed = confirmedKey === confirmationKey
   const tooMany = targets.length > 100
   const liked = imports.data?.likedSongs
   const likedSummary = liked?.stored?.summary
   const likedResult = queue.variables?.likedSongs === true
   const listedAt = listing.data?.listedAt ?? null
   const result = queue.data && (
-    <div role="status">
-      {queue.data.queued} queued · {queue.data.skipped} skipped.{' '}
+    <Notice>
+      {formatCount(queue.data.queued)} queued ·{' '}
+      {formatCount(queue.data.skipped)} skipped.{' '}
       <Link
         href={scopedHref(
           `/jobs?batchId=${encodeURIComponent(queue.data.batchId)}`,
@@ -585,50 +601,72 @@ export default function SpotifyPlaylistImport() {
         {trackLibrary ? 'View import jobs in Albums' : 'View import jobs'}
       </Link>
       {queue.data.warnings.map((warning) => (
-        <p key={warning}>{warning}</p>
+        <span key={warning} className="block">
+          {warning}
+        </span>
       ))}
-    </div>
+    </Notice>
   )
   const queueError = queue.isError && (
-    <p role="alert">
+    <Notice tone="danger">
       {errorMessage(queue.error, 'Could not queue the import.')}
-    </p>
+    </Notice>
   )
+  const shown = importColumns.filter((column) => columns.visible(column.key))
 
   return (
-    <section className="film-import-workflow table-workspace">
+    <div className="sec-fill">
+      <div className="sec-notices">
+        {account.isError && (
+          <Notice
+            tone="danger"
+            action={
+              <Button size="xs" onClick={() => account.refetch()}>
+                Retry
+              </Button>
+            }
+          >
+            Could not load Spotify connection.
+          </Notice>
+        )}
+        {outcome === 'error' && (
+          <Notice tone="danger">
+            Spotify connection was not completed. Try connecting again.
+          </Notice>
+        )}
+        {outcome === 'connected' && ready && (
+          <Notice>Spotify connected.</Notice>
+        )}
+        {status && !status.configured && (
+          <Notice tone="attention">
+            Configure Client ID and Redirect URI in{' '}
+            <Link href="/providers/spotify">
+              {trackLibrary
+                ? 'Spotify provider settings in Albums'
+                : 'Spotify provider settings'}
+            </Link>
+            .
+          </Notice>
+        )}
+        {ready && !status?.playlistChanges && (
+          <Notice
+            action={
+              <AllowPlaylistChanges
+                playlistLibrary={trackLibrary ? 'track' : 'album'}
+              />
+            }
+          >
+            Adding albums to playlists needs playlist change access.
+          </Notice>
+        )}
+      </div>
       {account.isPending && (
-        <p className="muted">Loading Spotify connection...</p>
-      )}
-      {account.isError && (
-        <p role="alert">
-          Could not load Spotify connection.{' '}
-          <button onClick={() => account.refetch()}>Retry</button>
-        </p>
-      )}
-      {outcome === 'error' && (
-        <p role="alert">
-          Spotify connection was not completed. Try connecting again.
-        </p>
-      )}
-      {outcome === 'connected' && ready && (
-        <p role="status" className="muted">
-          Spotify connected.
-        </p>
-      )}
-      {status && !status.configured && (
-        <p role="alert">
-          Configure Client ID and Redirect URI in{' '}
-          <Link href="/providers?provider=spotify&mediaType=album">
-            {trackLibrary
-              ? 'Spotify provider settings in Albums'
-              : 'Spotify provider settings'}
-          </Link>
-          .
-        </p>
+        <div className="ds-panelpad">
+          <Skeleton width="50%" height={16} />
+        </div>
       )}
       {status && !ready && (
-        <>
+        <div className="ds-panelpad sec-form">
           {setup && (
             <details>
               <summary>Spotify connection setup</summary>
@@ -643,21 +681,23 @@ export default function SpotifyPlaylistImport() {
                 </a>
                 :
               </p>
-              <code className="block break-all">{setup.callbackUrl}</code>
-              <p className="muted">
+              <code className="ds-mono block break-all">
+                {setup.callbackUrl}
+              </code>
+              <p className="ds-help">
                 Keep using this app address. The callback returns to your
                 signed-in session automatically.
               </p>
             </details>
           )}
           {status.configured && (
-            <p className="muted">
+            <p className="ds-help">
               {status.connected
                 ? 'The Spotify connection does not include playlist access. Reconnect to grant it.'
                 : 'Playlist import needs a Spotify connection with playlist access.'}
             </p>
           )}
-          <div className="form-actions">
+          <span className="ds-actions">
             <Button
               size="md"
               variant="primary"
@@ -670,97 +710,112 @@ export default function SpotifyPlaylistImport() {
                   ? 'Reconnect Spotify'
                   : 'Connect Spotify'}
             </Button>
-          </div>
-          {authorize.isError && (
-            <p role="alert">
-              {errorMessage(authorize.error, 'Could not start the connection.')}
-            </p>
-          )}
-        </>
-      )}
-      {ready && !status?.playlistChanges && (
-        <div className="form-actions">
-          <span className="muted">
-            Adding albums to playlists needs playlist change access.
           </span>
-          <AllowPlaylistChanges
-            playlistLibrary={trackLibrary ? 'track' : 'album'}
-          />
+          {authorize.isError && (
+            <Notice tone="danger">
+              {errorMessage(authorize.error, 'Could not start the connection.')}
+            </Notice>
+          )}
         </div>
       )}
       {ready && (
-        <section aria-labelledby="liked-songs-heading">
-          <h2 id="liked-songs-heading">Liked Songs</h2>
-          {imports.isPending && (
-            <p className="muted">Loading import state...</p>
-          )}
-          {imports.isError && (
-            <p role="alert">
-              Could not load import state.{' '}
-              <button onClick={() => imports.refetch()}>Retry</button>
-            </p>
-          )}
-          {liked !== undefined && (
-            <div className="form-actions">
-              {liked.job && liked.job.status !== 'succeeded' && (
-                <span>
-                  <JobState job={liked.job} labels={playlistJobLabels} />
-                </span>
-              )}
-              {!playlistJobActive(liked.job) && (
-                <span>
-                  {liked.stored ? storedLabel(liked.stored) : 'Not imported'}
-                </span>
-              )}
-              {likedSummary?.sync.syncable && (
-                <span>
-                  Schedule: <ScheduleCell summary={likedSummary} />
-                  {likedSummary.sync.lastCheckedAt &&
-                    ` · Last checked ${formatDateTime(likedSummary.sync.lastCheckedAt)}`}
-                </span>
-              )}
-              <Button
-                variant="primary"
-                disabled={queue.isPending || playlistJobActive(liked.job)}
-                onClick={() =>
-                  queue.mutate({
-                    playlists: [],
-                    likedSongs: true,
-                    confirmBroadRun: false,
-                  })
+        <div className="ds-panelpad">
+          <Section
+            title="Liked Songs"
+            flush
+            aside={
+              liked !== undefined && (
+                <Button
+                  disabled={queue.isPending || playlistJobActive(liked.job)}
+                  onClick={() =>
+                    queue.mutate({
+                      playlists: [],
+                      likedSongs: true,
+                      confirmBroadRun: false,
+                    })
+                  }
+                >
+                  {liked.stored ? 'Import again' : 'Import'}
+                </Button>
+              )
+            }
+          >
+            {imports.isPending && <Skeleton width="40%" height={16} />}
+            {imports.isError && (
+              <Notice
+                tone="danger"
+                action={
+                  <Button size="xs" onClick={() => imports.refetch()}>
+                    Retry
+                  </Button>
                 }
               >
-                {liked.stored ? 'Import again' : 'Import'}
-              </Button>
-            </div>
-          )}
-          {likedResult && result}
-          {likedResult && queueError}
-        </section>
+                Could not load import state.
+              </Notice>
+            )}
+            {liked !== undefined && (
+              <span className="sec-line">
+                {liked.job && liked.job.status !== 'succeeded' && (
+                  <span>
+                    <JobState job={liked.job} />
+                  </span>
+                )}
+                {!playlistJobActive(liked.job) && (
+                  <span>
+                    {liked.stored ? (
+                      storedLabel(liked.stored)
+                    ) : (
+                      <Status state="never">Not imported</Status>
+                    )}
+                  </span>
+                )}
+                {likedSummary?.sync.syncable && (
+                  <span>
+                    Schedule: <ScheduleCell summary={likedSummary} />
+                    {likedSummary.sync.lastCheckedAt &&
+                      ` · Last checked ${formatDateTime(likedSummary.sync.lastCheckedAt)}`}
+                  </span>
+                )}
+              </span>
+            )}
+            {likedResult && result}
+            {likedResult && queueError}
+          </Section>
+        </div>
       )}
       {ready && (
         <>
-          <h2>Playlists</h2>
-          {list.isError && (
-            <p role="alert">
-              {errorMessage(list.error, 'Could not list playlists.')}
-            </p>
-          )}
-          {listingJob &&
-            (listingJob.status === 'failed' ||
-              listingJob.status === 'cancelled') && (
-              <p role="alert">
-                The last listing{' '}
-                {listingJob.status === 'failed' ? 'failed' : 'was cancelled'}
-                {listingJob.errorMessage
-                  ? `: ${listingJob.errorMessage}`
-                  : '.'}{' '}
-                <DetailLink kind="job" id={listingJob.jobId}>
-                  View job
-                </DetailLink>
-              </p>
+          <div className="ds-section-head sec-pad">
+            <h3>Playlists</h3>
+          </div>
+          <div className="sec-notices">
+            {list.isError && (
+              <Notice tone="danger">
+                {errorMessage(list.error, 'Could not list playlists.')}
+              </Notice>
             )}
-          <div className="secondary-table-actions">
+            {listingJob &&
+              (listingJob.status === 'failed' ||
+                listingJob.status === 'cancelled') && (
+                <Notice
+                  tone="danger"
+                  action={
+                    <Button size="xs" asChild>
+                      <DetailLink kind="job" id={listingJob.jobId}>
+                        View job
+                      </DetailLink>
+                    </Button>
+                  }
+                >
+                  The last listing{' '}
+                  {listingJob.status === 'failed' ? 'failed' : 'was cancelled'}
+                  {listingJob.errorMessage
+                    ? `: ${listingJob.errorMessage}`
+                    : '.'}
+                </Notice>
+              )}
+          </div>
+          <Toolbar>
             <Button
               variant={listedAt ? 'default' : 'primary'}
               disabled={listingActive || list.isPending || listing.isPending}
@@ -774,39 +829,34 @@ export default function SpotifyPlaylistImport() {
             </Button>
             {listingJob && listingActive ? (
               <span>
-                <JobState job={listingJob} labels={listingLabels} />
+                <JobState job={listingJob} />
               </span>
             ) : (
               listing.data && (
-                <span className="muted">
+                <span className="ds-muted">
                   {listedAt
                     ? `Listed ${formatDateTime(listedAt)}`
                     : 'Reads the playlist list from Spotify; nothing is imported.'}
                 </span>
               )
             )}
-          </div>
-          <SecondaryTableToolbar
-            search={
-              <Input
-                type="search"
-                aria-label="Search playlists"
-                placeholder="Search playlists or owners"
-                value={search}
-                disabled={queue.isPending}
-                onChange={(event) => {
-                  setSearch(event.target.value)
-                  setSelected([])
-                  setConfirmedKey('')
-                }}
-              />
-            }
-            count={`${visible.length.toLocaleString()} of ${playlists.length.toLocaleString()} playlists`}
-            columns={columns.controls}
-          />
+            <SecondaryTableSearch
+              label="Search playlists"
+              placeholder="Search playlists or owners"
+              value={search}
+              disabled={queue.isPending}
+              onChange={(value) => {
+                setSearch(value)
+                setSelected([])
+              }}
+            />
+            <ToolbarCount>
+              {formatItemCount(visible.length, PLAYLISTS, playlists.length)}
+            </ToolbarCount>
+            {columns.controls && <ToolbarEnd>{columns.controls}</ToolbarEnd>}
+          </Toolbar>
           <SecondaryTableFrame>
             <SecondaryTableScroll
-              className="tags-scroll"
               role="region"
               aria-label="Spotify playlists"
               aria-busy={listing.isFetching}
@@ -814,102 +864,79 @@ export default function SpotifyPlaylistImport() {
               <table className="ds-table" aria-label="Spotify playlists">
                 <TableHeader>
                   <TableRow>
-                    {importColumns
-                      .filter((column) => columns.visible(column.key))
-                      .map((column) =>
-                        !column.sortable ? (
-                          <TableHead
-                            key={column.key}
-                            className={
-                              column.key === 'selection'
-                                ? 'table-selection-cell'
-                                : undefined
+                    {shown.map((column) =>
+                      !column.sortable ? (
+                        <TableHead
+                          key={column.key}
+                          className="sec-check-cell"
+                          sticky={0}
+                        >
+                          <input
+                            ref={selectAll}
+                            type="checkbox"
+                            className="ds-check"
+                            aria-label="Select all importable playlists"
+                            checked={allSelected}
+                            disabled={queue.isPending || !selectableIds.length}
+                            onChange={(event) =>
+                              setSelected(
+                                event.target.checked ? selectableIds : [],
+                              )
                             }
-                          >
-                            {column.key === 'selection' ? (
-                              <input
-                                ref={selectAll}
-                                type="checkbox"
-                                aria-label="Select all importable playlists"
-                                checked={allSelected}
-                                disabled={
-                                  queue.isPending || !selectableIds.length
-                                }
-                                onChange={(event) => {
-                                  setSelected(
-                                    event.target.checked ? selectableIds : [],
-                                  )
-                                  setConfirmedKey('')
+                          />
+                        </TableHead>
+                      ) : (
+                        <SecondaryTableHead
+                          key={column.key}
+                          sortKey={column.key}
+                          label={column.label}
+                          align={NUMERIC.has(column.key) ? 'end' : undefined}
+                          sticky={
+                            column.key === 'name' ? CHECK_WIDTH : undefined
+                          }
+                          stickyEdge={column.key === 'name'}
+                          filter={
+                            column.key === 'status' ? (
+                              <SecondaryColumnFilter
+                                label="Import status"
+                                options={importStatusOptions}
+                                value={importStatus}
+                                disabled={queue.isPending}
+                                onChange={(value) => {
+                                  setImportStatus(value)
+                                  setSelected([])
                                 }}
                               />
-                            ) : (
-                              <span className="sr-only">{column.label}</span>
-                            )}
-                          </TableHead>
-                        ) : (
-                          <SecondaryTableHead
-                            key={column.key}
-                            sortKey={column.key}
-                            label={column.label}
-                            filter={
-                              column.key === 'status' ? (
-                                <SecondaryColumnFilter
-                                  label="Import status"
-                                  options={importStatusOptions}
-                                  value={importStatus}
-                                  disabled={queue.isPending}
-                                  onChange={(value) => {
-                                    setImportStatus(value)
-                                    setSelected([])
-                                    setConfirmedKey('')
-                                  }}
-                                />
-                              ) : column.key === 'owner' ? (
-                                <SecondaryColumnFilter
-                                  label="Owner"
-                                  options={ownerOptions}
-                                  value={owners}
-                                  disabled={queue.isPending}
-                                  onChange={(value) => {
-                                    setOwners(value)
-                                    setSelected([])
-                                    setConfirmedKey('')
-                                  }}
-                                />
-                              ) : undefined
-                            }
-                            className={
-                              [
-                                'tracks',
-                                'storedTracks',
-                                'linkedTracks',
-                                'albums',
-                                'duration',
-                              ].includes(column.key)
-                                ? 'numeric'
-                                : undefined
-                            }
-                            {...sorting}
-                          />
-                        ),
-                      )}
+                            ) : column.key === 'owner' ? (
+                              <SecondaryColumnFilter
+                                label="Owner"
+                                options={ownerOptions}
+                                value={owners}
+                                disabled={queue.isPending}
+                                onChange={(value) => {
+                                  setOwners(value)
+                                  setSelected([])
+                                }}
+                              />
+                            ) : undefined
+                          }
+                          {...sorting}
+                        />
+                      ),
+                    )}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {!visible.length && (
                     <TableState colSpan={columns.count} error={listing.isError}>
                       {listing.isPending ? (
-                        'Loading playlists...'
+                        <Skeleton width="40%" height={12} />
                       ) : listing.isError ? (
                         <>
                           Could not load playlists.{' '}
-                          <button
-                            type="button"
-                            className="underline"
-                            onClick={() => listing.refetch()}
-                          >
+                          <Button size="xs" onClick={() => listing.refetch()}>
                             Retry
-                          </button>
+                          </Button>
                         </>
                       ) : playlists.length ? (
                         'No playlists match this filter.'
@@ -928,14 +955,12 @@ export default function SpotifyPlaylistImport() {
                       selectable(playlist)
                     const summary = playlist.stored?.summary
                     return (
-                      <TableRow
-                        key={playlist.spotifyId}
-                        data-selected={checked || undefined}
-                      >
+                      <TableRow key={playlist.spotifyId} selected={checked}>
                         {columns.visible('selection') && (
-                          <TableCell className="table-selection-cell">
+                          <TableCell className="sec-check-cell" sticky={0}>
                             <input
                               type="checkbox"
+                              className="ds-check"
                               aria-label={`Select ${playlist.name}`}
                               checked={checked}
                               disabled={
@@ -953,106 +978,92 @@ export default function SpotifyPlaylistImport() {
                             />
                           </TableCell>
                         )}
-                        {columns.visible('artwork') && (
-                          <TableCell className="w-10">
-                            {playlist.artworkUrl && (
-                              <MediaArtwork
-                                src={playlist.artworkUrl}
-                                alt=""
-                                fallbackLabel=""
-                                containerClassName="size-6 rounded"
-                                imageClassName="size-6 object-cover"
-                                fallbackClassName="size-6"
-                              />
-                            )}
-                          </TableCell>
-                        )}
                         {columns.visible('name') && (
-                          <TableCell>
-                            <SecondaryCell text={playlist.name}>
-                              {playlist.stored ? (
-                                <DetailLink
-                                  className="font-medium hover:underline"
-                                  kind="playlist"
-                                  id={playlist.stored.playlistId}
-                                >
-                                  {playlist.name}
-                                </DetailLink>
-                              ) : (
-                                playlist.name
-                              )}
-                            </SecondaryCell>
+                          <TableCell sticky={CHECK_WIDTH} stickyEdge>
+                            <span className="ds-cell-id">
+                              <MediaThumb
+                                kind="playlist"
+                                src={playlist.artworkUrl}
+                              />
+                              <SecondaryCell text={playlist.name}>
+                                {playlist.stored ? (
+                                  <DetailLink
+                                    className="ds-cell-title"
+                                    kind="playlist"
+                                    id={playlist.stored.playlistId}
+                                  >
+                                    {playlist.name}
+                                  </DetailLink>
+                                ) : (
+                                  playlist.name
+                                )}
+                              </SecondaryCell>
+                            </span>
                           </TableCell>
                         )}
                         {columns.visible('owner') && (
                           <TableCell>
-                            <SecondaryCell text={playlist.ownerName ?? '-'}>
-                              {playlist.ownerName ?? '-'}
+                            <SecondaryCell>
+                              {playlist.ownerName ?? EMPTY_VALUE}
                             </SecondaryCell>
                           </TableCell>
                         )}
                         {columns.visible('tracks') && (
-                          <TableCell className="numeric">
-                            {playlist.trackTotal.toLocaleString()}
+                          <TableCell align="end">
+                            {formatCount(playlist.trackTotal)}
                           </TableCell>
                         )}
                         {columns.visible('status') && (
-                          <TableCell className="max-w-sm">
+                          <TableCell>
                             <ImportState playlist={playlist} />
                           </TableCell>
                         )}
                         {columns.visible('schedule') && (
-                          <TableCell className="whitespace-nowrap">
+                          <TableCell>
                             <ScheduleCell summary={summary} />
                           </TableCell>
                         )}
                         {columns.visible('checked') && (
-                          <TableCell className="whitespace-nowrap">
-                            {summary?.sync.lastCheckedAt ? (
-                              <time dateTime={summary.sync.lastCheckedAt}>
-                                {formatDateTime(summary.sync.lastCheckedAt)}
-                              </time>
-                            ) : (
-                              '-'
-                            )}
+                          <TableCell>
+                            <DateCell value={summary?.sync.lastCheckedAt} />
                           </TableCell>
                         )}
                         {columns.visible('added') && (
-                          <TableCell
-                            className="whitespace-nowrap"
-                            title="When the playlist was added to this library. Spotify does not provide the date a playlist was saved."
-                          >
-                            {formatDateTime(summary?.createdAt ?? null)}
+                          <TableCell title="When the playlist was added to this library. Spotify does not provide the date a playlist was saved.">
+                            <DateCell value={summary?.createdAt} />
                           </TableCell>
                         )}
                         {columns.visible('imported') && (
-                          <TableCell className="whitespace-nowrap">
-                            {formatDateTime(
-                              playlist.stored?.importedAt ?? null,
-                            )}
+                          <TableCell>
+                            <DateCell value={playlist.stored?.importedAt} />
                           </TableCell>
                         )}
                         {columns.visible('storedTracks') && (
-                          <TableCell className="numeric">
-                            {playlist.stored?.trackCount.toLocaleString() ??
-                              '-'}
+                          <TableCell align="end">
+                            {playlist.stored
+                              ? formatCount(playlist.stored.trackCount)
+                              : EMPTY_VALUE}
                           </TableCell>
                         )}
                         {columns.visible('linkedTracks') && (
-                          <TableCell className="numeric">
-                            {summary?.linkedTrackCount.toLocaleString() ?? '-'}
+                          <TableCell align="end">
+                            {summary
+                              ? formatCount(summary.linkedTrackCount)
+                              : EMPTY_VALUE}
                           </TableCell>
                         )}
                         {columns.visible('albums') && (
-                          <TableCell className="numeric">
-                            {summary?.albumCount.toLocaleString() ?? '-'}
+                          <TableCell align="end">
+                            {summary
+                              ? formatCount(summary.albumCount)
+                              : EMPTY_VALUE}
                           </TableCell>
                         )}
                         {columns.visible('duration') && (
-                          <TableCell className="numeric">
+                          <TableCell align="end">
                             {summary
-                              ? formatPlaylistDuration(summary.durationSec)
-                              : '-'}
+                              ? formatRuntime(summary.durationSec / 60)
+                              : EMPTY_VALUE}
                           </TableCell>
                         )}
                         {columns.visible('current') && (
@@ -1061,7 +1072,7 @@ export default function SpotifyPlaylistImport() {
                               ? playlist.current
                                 ? 'Yes'
                                 : 'No'
-                              : '-'}
+                              : EMPTY_VALUE}
                           </TableCell>
                         )}
                         {columns.visible('importable') && (
@@ -1073,16 +1084,14 @@ export default function SpotifyPlaylistImport() {
                           </TableCell>
                         )}
                         {columns.visible('nextSync') && (
-                          <TableCell className="whitespace-nowrap">
-                            {formatDateTime(
-                              summary?.sync.nextScheduledAt ?? null,
-                            )}
+                          <TableCell>
+                            {formatDateTime(summary?.sync.nextScheduledAt)}
                           </TableCell>
                         )}
                         {columns.visible('description') && (
                           <TableCell>
-                            <SecondaryCell text={summary?.description ?? '-'}>
-                              {summary?.description ?? '-'}
+                            <SecondaryCell>
+                              {summary?.description ?? EMPTY_VALUE}
                             </SecondaryCell>
                           </TableCell>
                         )}
@@ -1092,54 +1101,47 @@ export default function SpotifyPlaylistImport() {
                 </TableBody>
               </table>
             </SecondaryTableScroll>
-            <SecondaryTableFooter selectedCount={targets.length}>
-              {broad && !tooMany && (
-                <label className="check-label">
-                  <input
-                    type="checkbox"
-                    checked={confirmed}
-                    disabled={queue.isPending}
-                    onChange={(event) =>
-                      setConfirmedKey(
-                        event.target.checked ? confirmationKey : '',
-                      )
-                    }
-                  />
-                  Confirm {targets.length} playlist imports
-                </label>
-              )}
-              <Button
-                variant="primary"
-                disabled={
-                  queue.isPending ||
-                  !targets.length ||
-                  tooMany ||
-                  (broad && !confirmed)
-                }
-                onClick={() =>
-                  queue.mutate({
-                    playlists: targets.map(({ spotifyId, name }) => ({
-                      spotifyId,
-                      name,
-                    })),
-                    likedSongs: false,
-                    confirmBroadRun: broad && confirmed,
-                  })
-                }
-              >
-                {queue.isPending && !likedResult
-                  ? 'Queueing...'
-                  : 'Import selected'}
-              </Button>
+            <SecondaryTableSelectionBar
+              selectedCount={targets.length}
+              total={selectableIds.length}
+            >
               {tooMany && (
                 <span role="alert">Import up to 100 playlists at a time.</span>
               )}
-              {!likedResult && result}
-              {!likedResult && queueError}
-            </SecondaryTableFooter>
+              <span className="ds-actions ds-toolbar-end">
+                <ConfirmAction
+                  variant="primary"
+                  confirm={broad}
+                  question={`Import ${formatItemCount(targets.length, PLAYLISTS)}?`}
+                  details="Each playlist is read from Spotify and its tracks are imported."
+                  confirmLabel="Import"
+                  disabled={queue.isPending || !targets.length || tooMany}
+                  onConfirm={() =>
+                    queue.mutate({
+                      playlists: targets.map(({ spotifyId, name }) => ({
+                        spotifyId,
+                        name,
+                      })),
+                      likedSongs: false,
+                      confirmBroadRun: broad,
+                    })
+                  }
+                >
+                  {queue.isPending && !likedResult
+                    ? 'Queueing...'
+                    : 'Import selected'}
+                </ConfirmAction>
+              </span>
+            </SecondaryTableSelectionBar>
+            {!likedResult && (result || queueError) && (
+              <div className="sec-notices">
+                {result}
+                {queueError}
+              </div>
+            )}
           </SecondaryTableFrame>
         </>
       )}
-    </section>
+    </div>
   )
 }

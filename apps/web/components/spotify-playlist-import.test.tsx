@@ -183,18 +183,18 @@ test('the stored list renders in the shared table without a listing request', ()
   ])
   assert.match(
     html,
-    /class="ds-table-wrap table-scroll tags-scroll secondary-table-scroll" role="region" aria-label="Spotify playlists"/,
+    /class="ds-table-wrap table-scroll secondary-table-scroll" role="region" aria-label="Spotify playlists"/,
   )
   assert.match(html, /<table class="ds-table" aria-label="Spotify playlists"/)
   assert.equal((html.match(/<table/g) ?? []).length, 1)
-  assert.match(html, /film-import-workflow table-workspace/)
+  assert.match(html, /^<div class="sec-fill">/)
   assert.match(html, />List again</)
   assert.doesNotMatch(html, /disabled=""[^>]*>List again/)
   assert.match(html, /Listed /)
   assert.match(html, /40 tracks/)
   assert.match(html, /href="\/playlists\/liked\?tab=sync"[^>]*>Daily</)
   assert.match(html, />Import again</)
-  assert.match(html, /5 of 5 playlists/)
+  assert.match(html, /5 playlists/)
   assert.match(html, /0 selected/)
   assert.doesNotMatch(html, /Allow playlist changes/)
 })
@@ -207,7 +207,7 @@ test('compact import states preserve progress, reasons, schedules and drawer lin
   ])
   assert.match(
     html,
-    /data-status="running"[^>]*>Importing<\/a><span class="muted"> 2 of 5 pages/,
+    /data-status="running">Running<\/span><\/a><span class="ds-muted"> 2 of 5 pages/,
   )
   assert.match(html, /data-status="failed"[^>]*>Failed</)
   assert.match(html, /Spotify refused the fixture request\./)
@@ -217,10 +217,10 @@ test('compact import states preserve progress, reasons, schedules and drawer lin
   assert.match(html, /Imported [^<]* · 5 tracks · Changed on Spotify/)
   assert.match(
     html,
-    /<a class="font-medium hover:underline" href="\/playlists\/p4">Stored<\/a>/,
+    /<a class="ds-cell-title" href="\/playlists\/p4">Stored<\/a>/,
   )
   assert.match(html, /href="\/playlists\/p4\?tab=sync"[^>]*>Daily</)
-  assert.match(html, /<time dateTime="2026-01-04T00:00:00.000Z">/)
+  assert.match(html, /<time dateTime="2026-01-04T00:00:00.000Z" title="/)
   assert.match(html, />Not imported</)
   assert.match(html, />Needs update</)
   for (const name of ['Running', 'Followed', 'Huge', 'Stored', 'Broken'])
@@ -298,7 +298,7 @@ test('a listing in progress shows its page, polls and disables the button', () =
   assert.match(html, /disabled=""[^>]*>List again/)
   assert.match(
     html,
-    /data-status="running"[^>]*>Listing<\/a><span class="muted"> 1 page</,
+    /data-status="running">Running<\/span><\/a><span class="ds-muted"> 1 page</,
   )
   assert.match(
     render([
@@ -339,7 +339,7 @@ test('a failed listing shows its message and keeps the stored list', () => {
   ])
   assert.match(
     html,
-    /role="alert">The last listing failed: Spotify is cooling down\./,
+    /role="alert">.*<span>The last listing failed: Spotify is cooling down\./,
   )
   assert.match(html, /href="\/jobs\/listing-2">View job/)
   assert.doesNotMatch(html, /disabled=""[^>]*>List again/)
@@ -485,20 +485,17 @@ test('playlist import places filters in headers and selected actions in the atta
   assert.match(html, /Needs update<\/span>/)
   assert.match(html, /aria-label="Select all importable playlists"/)
   assert.match(html, /aria-label="Filter Owner"/)
-  assert.doesNotMatch(
-    html,
-    /<select|>Select all importable<|>Clear<|secondary-table-toolbar-filters/,
-  )
+  assert.doesNotMatch(html, /<select|>Select all importable<|>Clear</)
   const positions = [
-    'class="secondary-table-actions"',
+    'class="ds-section-head sec-pad"',
     '>List again<',
     'aria-label="Search playlists"',
-    '5 of 5 playlists',
+    '5 playlists',
     '> Columns',
     'aria-label="Select all importable playlists"',
     'aria-label="Filter Import status"',
     '</table>',
-    'class="ds-selectbar secondary-table-footer"',
+    'class="ds-selectbar sec-selectbar"',
     '>Import selected<',
   ].map((text) => html.indexOf(text))
   assert.ok(positions.every((position) => position >= 0))

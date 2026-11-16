@@ -5,6 +5,10 @@ import { useSearchParams } from 'next/navigation'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { SpotifyAccountStatusSchema } from '@repo/schemas/spotify'
 import { Button } from '@repo/ui/components/ui/button'
+import { KeyValues, Section } from '@repo/ui/components/ds/facts'
+import { Notice, Skeleton } from '@repo/ui/components/ds/feedback'
+import { Status } from '@repo/ui/components/ds/status'
+import { PageHead } from '@repo/ui/components/ds/toolbar'
 import { useConfig } from '@/components/providers'
 import { errorMessage } from '@/components/lastfm-sync'
 import SubscriptionSyncPanel from '@/components/subscription-sync'
@@ -12,7 +16,7 @@ import { fetchApiData } from '@/utils/api'
 import { spotifyAuthorizationUrl } from '@/utils/spotify-authorize'
 
 export const SPOTIFY_PODCAST_SETTINGS_HREF =
-  '/providers?provider=spotify&section=credentials&mediaType=subscription'
+  '/providers/spotify?tab=settings'
 
 export function SpotifyPodcastAccount() {
   const { apiBaseUrl } = useConfig()
@@ -34,37 +38,45 @@ export function SpotifyPodcastAccount() {
   })
   const status = account.data
   return (
-    <section
-      className="film-import-workflow"
-      aria-labelledby="spotify-podcast-account"
-    >
-      <h2 id="spotify-podcast-account">Account</h2>
-      {account.isPending && (
-        <p role="status" className="muted">
-          Loading Spotify account...
-        </p>
-      )}
+    <Section title="Account" flush>
+      {account.isPending && <Skeleton width="40%" height={16} />}
       {account.isError && (
-        <p role="alert">
-          Could not load the Spotify account.{' '}
-          <button onClick={() => account.refetch()}>Retry</button>
-        </p>
+        <Notice
+          tone="danger"
+          action={
+            <Button size="xs" onClick={() => account.refetch()}>
+              Retry
+            </Button>
+          }
+        >
+          Could not load the Spotify account.
+        </Notice>
       )}
       {status && !status.configured && (
-        <p role="alert">
+        <Notice tone="attention">
           Spotify is not configured. Add the Client ID and Redirect URI in{' '}
           <Link href={SPOTIFY_PODCAST_SETTINGS_HREF}>
             Spotify provider settings
           </Link>
           .
-        </p>
+        </Notice>
       )}
-      {status?.configured && !status.connected && (
-        <p className="muted">Spotify is not connected.</p>
+      {status?.configured && (
+        <KeyValues
+          items={[
+            {
+              label: 'Spotify',
+              value: status.connected ? (
+                <Status state="done">Connected</Status>
+              ) : (
+                <Status state="attention">Needs sign-in</Status>
+              ),
+            },
+          ]}
+        />
       )}
       {status && (
-        <div className="form-actions">
-          {status.connected && <span>Connected.</span>}
+        <span className="ds-actions">
           <Button
             size="md"
             variant={status.connected ? 'default' : 'primary'}
@@ -77,33 +89,39 @@ export function SpotifyPodcastAccount() {
                 ? 'Reconnect Spotify'
                 : 'Connect Spotify'}
           </Button>
-        </div>
+        </span>
       )}
       {authorize.isError && (
-        <p role="alert">
+        <Notice tone="danger">
           {errorMessage(authorize.error, 'Could not start the connection.')}
-        </p>
+        </Notice>
       )}
-      {outcome === 'connected' && <p role="status">Spotify connected.</p>}
+      {outcome === 'connected' && <Notice>Spotify connected.</Notice>}
       {outcome === 'error' && (
-        <p role="alert">Spotify did not connect. Try again.</p>
+        <Notice tone="danger">Spotify did not connect. Try again.</Notice>
       )}
-    </section>
+    </Section>
   )
 }
 
 export default function SpotifyPodcastsPageClient() {
   return (
-    <section className="admin-page imports-page">
-      <h1>Spotify podcasts</h1>
-      <div className="min-h-0 flex-1 overflow-auto">
-        <SpotifyPodcastAccount />
+    <section className="sec-page">
+      <PageHead
+        title="Spotify podcasts"
+        actions={
+          <Button variant="link" asChild>
+            <Link href="/subscriptions/channels?type=spotify">
+              Saved podcasts
+            </Link>
+          </Button>
+        }
+      />
+      <div className="sec-scroll">
+        <div className="ds-panelpad">
+          <SpotifyPodcastAccount />
+        </div>
         <SubscriptionSyncPanel provider="spotify" />
-        <p>
-          <Link href="/subscriptions/channels?type=spotify">
-            Saved podcasts
-          </Link>
-        </p>
       </div>
     </section>
   )

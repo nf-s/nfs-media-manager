@@ -1,1 +1,242 @@
 /* Imports, Playlists, Tags and account pages layout. Tokens only. */
+
+/* A page whose table fills the height left under its head and toolbar */
+.section-content:has(> .sec-page) {
+  overflow: hidden;
+  scrollbar-gutter: auto;
+}
+.sec-page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+.sec-page > *,
+.sec-fill > * {
+  flex-shrink: 0;
+}
+.sec-fill {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+:is(.sec-page, .sec-fill) > :is(.sec-fill, .secondary-table-frame),
+:is(.sec-page, .sec-fill) > .ds-table-wrap {
+  flex: 1 1 0%;
+  min-height: 0;
+}
+/* A page of forms and sections that scrolls as one */
+.sec-scroll {
+  flex: 1 1 0%;
+  min-height: 0;
+  overflow: auto;
+  scrollbar-gutter: stable;
+}
+/* A table inside a page that scrolls as one keeps a bounded height */
+.sec-bounded {
+  max-height: 50dvh;
+}
+@media (max-width: 700px), (max-height: 500px) {
+  .sec-page:has(.sec-review) {
+    overflow-y: auto;
+  }
+  .sec-page:has(.sec-review) :is(.sec-fill, .secondary-table-frame) {
+    flex: 0 0 auto;
+  }
+  .sec-review .ds-table-wrap {
+    flex: 0 0 auto;
+    height: 50dvh;
+  }
+}
+
+/* Notices and short blocks inset to the panel gutter */
+.sec-notices {
+  display: grid;
+  gap: var(--ds-3);
+  padding: var(--ds-3) var(--ds-gutter) 0;
+}
+.sec-notices:empty {
+  display: none;
+}
+.sec-pad {
+  padding: 0 var(--ds-gutter);
+}
+.sec-stack {
+  display: grid;
+  align-content: start;
+  gap: var(--ds-5);
+  min-width: 0;
+}
+/* A line of short states and actions */
+.sec-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ds-3) var(--ds-5);
+  min-width: 0;
+}
+
+/* Forms: fields stacked, a row of controls, actions at the end */
+.sec-form {
+  display: grid;
+  gap: var(--ds-5);
+  max-width: var(--ds-inspector);
+}
+.sec-form-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--ds-4);
+}
+.sec-form-row > .ds-field {
+  flex: 1 1 calc(var(--ds-inspector) / 3);
+  min-width: 0;
+}
+.sec-form fieldset {
+  display: contents;
+}
+
+/* File drop target: a field that also accepts a dropped file */
+.sec-drop {
+  display: grid;
+  gap: var(--ds-3);
+  padding: var(--ds-6);
+  border: 1px dashed var(--ds-line);
+  border-radius: var(--ds-r-md);
+  background: var(--ds-sunken);
+  color: var(--ds-ink-2);
+  font-size: var(--ds-text-md);
+}
+.sec-drop[data-dragging] {
+  border-color: var(--ds-accent);
+  background: var(--ds-selected);
+}
+
+/* Table cells and headers */
+.ds-table [data-align='end'] > .secondary-table-heading {
+  justify-content: flex-end;
+}
+.ds-toolbar .table-column-controls {
+  margin: 0;
+}
+.sec-check-cell {
+  width: calc(var(--ds-gutter) * 3);
+}
+.sec-selectbar {
+  flex-wrap: wrap;
+}
+.sec-selectbar-actions {
+  display: flex;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ds-3) var(--ds-4);
+  min-width: 0;
+}
+.sec-selectbar-actions > .ds-actions {
+  margin-left: auto;
+}
+
+/* Confirmation popover on the button that started the action */
+.sec-confirm {
+  position: fixed;
+  margin: 0;
+  width: calc(var(--ds-inspector) / 2);
+  max-width: calc(100vw - var(--ds-gutter) * 2);
+  padding: var(--ds-5);
+  color: var(--ds-ink);
+}
+.sec-confirm > strong {
+  display: block;
+  font-weight: 600;
+}
+.sec-confirm > .ds-help {
+  margin: var(--ds-2) 0 0;
+}
+.sec-confirm > .ds-actions {
+  margin-top: var(--ds-5);
+}
+
+/* A modal side panel built from the inspector parts */
+.sec-drawer {
+  position: fixed;
+  inset: var(--ds-3) var(--ds-3) var(--ds-3) auto;
+  width: min(var(--ds-inspector), calc(100vw - var(--ds-3) * 2));
+  max-width: none;
+  height: auto;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  overflow: visible;
+  border: 0;
+  background: none;
+}
+.sec-drawer::backdrop {
+  background: var(--ds-scrim);
+}
+.sec-drawer > .ds-inspector {
+  width: 100%;
+  height: 100%;
+  border-radius: var(--ds-r-lg);
+}
+
+/* Provider search results inside a panel */
+.sec-results {
+  overflow: auto;
+  min-height: 0;
+}
+.sec-result-slot {
+  overflow: hidden;
+}
+
+/* Read-only key and instructions output */
+.sec-textarea {
+  height: auto;
+  padding: var(--ds-4);
+  resize: vertical;
+  font-family: var(--ds-mono);
+  font-size: var(--ds-text-sm);
+  line-height: var(--ds-leading);
+}
+
+/* Sign-in page: one panel centred on the page */
+.sec-login {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100dvh;
+  padding: var(--ds-8) var(--ds-6);
+  background: var(--ds-page);
+}
+.sec-login-panel {
+  display: grid;
+  gap: var(--ds-6);
+  width: 100%;
+  max-width: calc(var(--ds-inspector) * 0.6);
+  padding: var(--ds-7);
+  border-radius: var(--ds-r-lg);
+  background: var(--ds-surface);
+  box-shadow: inset 0 0 0 1px var(--ds-line);
+}
+.sec-login-panel .ds-btn {
+  justify-content: center;
+}
+
+/* Pages that render as a panel or a page: head, then inset content */
+.sec-user {
+  display: grid;
+  align-content: start;
+  gap: var(--ds-4);
+  min-width: 0;
+}
+
+@media (max-width: 700px) {
+  .sec-drawer {
+    inset: var(--ds-8) 0 0;
+    width: 100%;
+  }
+  .sec-drawer > .ds-inspector {
+    border-radius: var(--ds-r-lg) var(--ds-r-lg) 0 0;
+  }
+}

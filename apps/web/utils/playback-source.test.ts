@@ -7,9 +7,7 @@ import {
   type PlaylistEntry,
 } from '@repo/schemas/tracks'
 import {
-  albumDetailTab,
   albumTrackView,
-  albumTrackViewHref,
   createAlbumPlaybackSource,
   createBrowsePlaybackSource,
   createPlaylistPlaybackSource,
@@ -340,31 +338,25 @@ test('album table playback preserves its selected rows and order instead of re-s
   assert.deepEqual(await empty.load(0), [])
 })
 
-test('album return links restore the track table search, order and tab only for that album', () => {
-  const view = albumTrackView(
-    JSON.stringify({
-      id: album.id,
-      q: 'Fixture ',
-      sortBy: 'duration',
-      direction: 'desc',
-    }),
-    album.id,
-  )
-  const previous = new URLSearchParams({
-    item: album.id,
-    q: 'Browse search',
-    view: 'table',
+test('album track views restore search and order only for that album', () => {
+  const saved = JSON.stringify({
+    id: album.id,
+    q: 'Fixture ',
+    sortBy: 'duration',
+    direction: 'desc',
   })
-  const href = albumTrackViewHref('/albums', previous, view)
-  const params = new URL(href, 'http://localhost').searchParams
-  assert.equal(params.get('item'), album.id)
-  assert.equal(params.get('q'), 'Browse search')
-  assert.equal(params.get('view'), 'table')
-  assert.equal(albumDetailTab(params, album.id), 'tracks')
-  assert.equal(albumDetailTab(params, 'another-album'), 'overview')
-  assert.deepEqual(albumTrackView(params.get('albumTrackView'), album.id), view)
-  assert.equal(view.q, 'Fixture ')
-  assert.equal(previous.has('albumTrackView'), false)
+  assert.deepEqual(albumTrackView(saved, album.id), {
+    id: album.id,
+    q: 'Fixture ',
+    sortBy: 'duration',
+    direction: 'desc',
+  })
+  assert.deepEqual(albumTrackView(saved, 'another-album'), {
+    id: 'another-album',
+    q: '',
+    sortBy: 'position',
+    direction: 'asc',
+  })
   for (const invalid of [
     null,
     '{',

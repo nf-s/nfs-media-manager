@@ -11,28 +11,90 @@ import {
   type ReactNode,
 } from 'react'
 import { z } from 'zod'
-import { Columns3, Eye, Filter, Info, TriangleAlert } from 'lucide-react'
-import { Button } from '@repo/ui/components/ui/button'
-import { Input } from '@repo/ui/components/ui/input'
 import {
+  Columns3,
+  Eye,
+  Filter,
+  Info,
+  Search,
+  TriangleAlert,
+} from 'lucide-react'
+import { Button } from '@repo/ui/components/ui/button'
+import {
+  TableCell,
   TableHead,
+  TableRow,
   TableScroll,
   TableSelectionBar,
   TableSortButton,
   TableState,
 } from '@repo/ui/components/ui/table'
 import {
+  Toolbar,
+  ToolbarCount,
+  ToolbarEnd,
+} from '@repo/ui/components/ds/toolbar'
+import { EMPTY_VALUE, formatCount } from '@repo/ui/lib/format'
+import {
   sortTableRows,
   type TableSort,
   type TableValue,
 } from '@/utils/secondary-table'
 
-export type DataColumn<T> = TableColumn & {
-  value: (row: T) => TableValue
-  sortable?: boolean
-  render?: (row: T, orderedRows: readonly T[]) => ReactNode
-  className?: string
-  filter?: ReactNode
+/** Column placement in the one table: right-aligned numbers and pinned identity. */
+export type ColumnLayout = {
+  align?: 'end'
+  sticky?: number
+  stickyEdge?: boolean
+}
+
+type DataColumn<T> = TableColumn &
+  ColumnLayout & {
+    value: (row: T) => TableValue
+    sortable?: boolean
+    render?: (row: T, orderedRows: readonly T[]) => ReactNode
+    className?: string
+    filter?: ReactNode
+  }
+
+/** The plain value of a cell: counts with separators, an en dash when empty. */
+export function formatTableValue(value: TableValue): string {
+  if (value == null || value === '') return EMPTY_VALUE
+  if (typeof value === 'number')
+    return Number.isFinite(value) ? formatCount(value) : EMPTY_VALUE
+  return String(value)
+}
+
+/** The design-system search field for table toolbars. */
+export function SecondaryTableSearch({
+  label,
+  placeholder,
+  value,
+  onChange,
+  disabled,
+  maxLength,
+}: {
+  label: string
+  placeholder?: string
+  value: string
+  onChange: (value: string) => void
+  disabled?: boolean
+  maxLength?: number
+}) {
+  return (
+    <label className="ds-search">
+      <Search className="ds-i" data-size="sm" aria-hidden="true" />
+      <input
+        type="search"
+        aria-label={label}
+        placeholder={placeholder ?? label}
+        maxLength={maxLength}
+        value={value}
+        disabled={disabled}
+        onChange={(event) => onChange(event.target.value)}
+      />
+    </label>
+  )
 }
 
 /** A compact value with a full-text reveal when it is clipped. */
@@ -91,7 +153,7 @@ export function SecondaryCell({
 }
 
 /** Native top-layer detail surface, usable by mouse, keyboard and touch. */
-export function SecondaryCellDetails({
+function SecondaryCellDetails({
   children,
   label,
   tone = 'info',
@@ -217,18 +279,31 @@ export function SecondaryTableFrame({ children }: { children: ReactNode }) {
   return <div className="secondary-table-frame">{children}</div>
 }
 
-export function SecondaryTableFooter({
+/**
+ * The design-system selection bar under a table: the count on the left and
+ * the actions after it. Children use the shared buttons, which the bar
+ * restyles for the inverse surface.
+ */
+export function SecondaryTableSelectionBar({
   children,
   selectedCount,
+  total,
+  hideWhenEmpty = false,
 }: {
-  children: ReactNode
-  selectedCount?: number
+  children?: ReactNode
+  selectedCount: number
+  total?: number
+  /** Leave out the count at zero, so a bar with nothing else in it is hidden. */
+  hideWhenEmpty?: boolean
 }) {
   return (
-    <TableSelectionBar className="secondary-table-footer">
-      {selectedCount !== undefined && (
-        <span className="secondary-table-selected" role="status">
-          {selectedCount.toLocaleString()} selected
+    <TableSelectionBar className="sec-selectbar">
+      {(selectedCount > 0 || !hideWhenEmpty) && (
+        <span role="status">
+          <b>{formatCount(selectedCount)} selected</b>
+          {total !== undefined && (
+            <span className="ds-muted"> of {formatCount(total)}</span>
+          )}
         </span>
       )}
       {children}
@@ -398,7 +473,7 @@ export function SecondaryTableToolbar({
     function openPopovers() {
       return [
         ...(toolbar.current?.querySelectorAll<HTMLDetailsElement>(
-          'details.toolbar-popover[open]',
+          'details.browse-popover[open]',
         ) ?? []),
       ]
     }
@@ -427,24 +502,12 @@ export function SecondaryTableToolbar({
   }, [])
   if (!search && !filters && count == null && !columns) return null
   return (
-    <div className="secondary-table-toolbar" ref={toolbar}>
-      <div className="secondary-table-toolbar-main">
-        {search && (
-          <div className="secondary-table-toolbar-search">{search}</div>
-        )}
-        {filters && (
-          <div className="secondary-table-toolbar-filters">{filters}</div>
-        )}
-        {count != null && (
-          <span className="secondary-table-toolbar-count" role="status">
-            {count}
-          </span>
-        )}
-      </div>
-      {columns && (
-        <div className="secondary-table-toolbar-columns">{columns}</div>
-      )}
-    </div>
+    <Toolbar ref={toolbar}>
+      {search}
+      {filters}
+      {count != null && <ToolbarCount>{count}</ToolbarCount>}
+      {columns && <ToolbarEnd>{columns}</ToolbarEnd>}
+    </Toolbar>
   )
 }
 
@@ -516,29 +579,40 @@ export function SecondaryDataTable<T>({
   const ordered = sortTableRows(matching, sort, (row, key) =>
     columns.find((column) => column.key === key)?.value(row),
   )
+  const total = totalCount ?? rows.length
+  const hasToolbar =
+    Boolean(search) ||
+    Boolean(filters) ||
+    Boolean(countLabel) ||
+    Boolean(visibility.controls)
   return (
     <>
-      <SecondaryTableToolbar
-        search={
-          search && (
-            <Input
-              type="search"
-              aria-label={search.label}
-              placeholder={search.placeholder ?? search.label}
+      {hasToolbar && (
+        <Toolbar>
+          {search && (
+            <SecondaryTableSearch
+              label={search.label}
+              placeholder={search.placeholder}
               maxLength={search.maxLength}
               value={query}
-              onChange={(event) => setQuery(event.target.value)}
+              onChange={setQuery}
             />
-          )
-        }
-        filters={filters}
-        count={
-          countLabel
-            ? `${matching.length.toLocaleString()}${matching.length !== (totalCount ?? rows.length) ? ` of ${(totalCount ?? rows.length).toLocaleString()}` : ''} ${countLabel}`
-            : undefined
-        }
-        columns={visibility.controls}
-      />
+          )}
+          {filters}
+          {countLabel && (
+            <ToolbarCount>
+              {formatCount(matching.length)}
+              {matching.length !== total
+                ? ` of ${formatCount(total)}`
+                : ''}{' '}
+              {countLabel}
+            </ToolbarCount>
+          )}
+          {visibility.controls && (
+            <ToolbarEnd>{visibility.controls}</ToolbarEnd>
+          )}
+        </Toolbar>
+      )}
       <SecondaryTableScroll
         className={className}
         role="region"
@@ -550,7 +624,13 @@ export function SecondaryDataTable<T>({
             <tr>
               {shown.map((column) =>
                 column.sortable === false ? (
-                  <TableHead key={column.key} className={column.className}>
+                  <TableHead
+                    key={column.key}
+                    className={column.className}
+                    align={column.align}
+                    sticky={column.sticky}
+                    stickyEdge={column.stickyEdge}
+                  >
                     {column.label}
                   </TableHead>
                 ) : (
@@ -561,6 +641,9 @@ export function SecondaryDataTable<T>({
                     sortBy={sort.key}
                     direction={sort.direction}
                     className={column.className}
+                    align={column.align}
+                    sticky={column.sticky}
+                    stickyEdge={column.stickyEdge}
                     filter={column.filter}
                     onSort={(key) =>
                       setSort({
@@ -583,19 +666,25 @@ export function SecondaryDataTable<T>({
               </TableState>
             )}
             {ordered.map((row) => (
-              <tr key={rowKey(row)}>
+              <TableRow key={rowKey(row)}>
                 {shown.map((column) => (
-                  <td key={column.key} className={column.className}>
+                  <TableCell
+                    key={column.key}
+                    className={column.className}
+                    align={column.align}
+                    sticky={column.sticky}
+                    stickyEdge={column.stickyEdge}
+                  >
                     {column.render ? (
                       column.render(row, ordered)
                     ) : (
                       <SecondaryCell>
-                        {String(column.value(row) ?? '-')}
+                        {formatTableValue(column.value(row))}
                       </SecondaryCell>
                     )}
-                  </td>
+                  </TableCell>
                 ))}
-              </tr>
+              </TableRow>
             ))}
           </tbody>
         </table>
@@ -683,6 +772,9 @@ export function SecondaryTableHead<Key extends string>({
   disabled,
   children,
   filter,
+  align,
+  sticky,
+  stickyEdge,
 }: {
   sortKey: Key
   label: string
@@ -693,11 +785,14 @@ export function SecondaryTableHead<Key extends string>({
   disabled?: boolean
   children?: ReactNode
   filter?: ReactNode
-}) {
+} & ColumnLayout) {
   const active = sortKey === sortBy
   return (
     <TableHead
       className={className}
+      align={align}
+      sticky={sticky}
+      stickyEdge={stickyEdge}
       aria-sort={
         active ? (direction === 'asc' ? 'ascending' : 'descending') : 'none'
       }

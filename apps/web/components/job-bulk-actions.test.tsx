@@ -68,12 +68,8 @@ function button(html: string, text: string) {
   return value
 }
 
-test('empty selection keeps a range hint without duplicating the header checkbox', () => {
-  const html = render([job('running', 'running')], [])
-  assert.doesNotMatch(html, /Select all loaded|Select loaded|>Clear</)
-  assert.doesNotMatch(html, /disabled/)
-  assert.match(html, /Shift-click to select a range/)
-  assert.doesNotMatch(html, /Choose action|Review action|Confirm/)
+test('empty selection renders nothing, so the selection bar stays hidden', () => {
+  assert.equal(render([job('running', 'running')], []), '')
 })
 
 test('queued selection offers only cancellation and requires action review', () => {
@@ -172,6 +168,31 @@ test('single-job actions use the same review flow without another selection chec
   assert.match(button(html, 'Review action'), / disabled=""/)
 })
 
+test('a row action chooses its action and opens the review for that job', () => {
+  const cases: {
+    status: Job['status']
+    action: 'retry' | 'cancel'
+    label: string
+  }[] = [
+    { status: 'failed', action: 'retry', label: 'Confirm retry' },
+    { status: 'queued', action: 'cancel', label: 'Confirm cancel jobs' },
+  ]
+  for (const { status, action, label } of cases) {
+    const html = renderControl(
+      <JobBulkActions
+        jobs={[job('row', status)]}
+        selectedIds={['row']}
+        request={{ action, jobId: 'row', at: 1 }}
+        onSelect={() => {}}
+        onPending={() => {}}
+      />,
+    )
+    assert.match(html, new RegExp(`<option value="${action}" selected=""`))
+    assert.match(html, /role="region" aria-label="Review job action"/)
+    assert.match(html, new RegExp(`>${label}</button>`))
+  }
+})
+
 test('successful single jobs render no unavailable action controls', () => {
   const html = renderControl(
     <JobBulkActions
@@ -201,7 +222,10 @@ test('job diagnostics are optional, collapsed and do not render payloads on page
     })
     const html = renderControl(<JobLogEntry log={log} jobId="job" />)
     if (metadata && 'diagnostics' in metadata && metadata.diagnostics !== null)
-      assert.match(html, /<details><summary>Diagnostics<\/summary><\/details>/)
+      assert.match(
+        html,
+        /<details class="ops-disclosure"><summary>Diagnostics<\/summary><\/details>/,
+      )
     else assert.doesNotMatch(html, /Diagnostics/)
     assert.doesNotMatch(html, /onerror|<img|Raw JSON/)
   }
@@ -241,16 +265,16 @@ test('request errors show actual response status, receipt time, retry policy and
   assert.match(html, /Provider response · HTTP 429/)
   assert.match(html, /Received/)
   assert.match(html, /2026-01-01T00:00:00.000Z/)
-  assert.match(html, /Retry-After: 60 seconds/)
+  assert.match(html, /<dt>Retry-After<\/dt><dd>60 seconds<\/dd>/)
   assert.match(html, /Request retry time/)
   assert.match(
     html,
     /Provider cooldowns and dispatch pauses can delay execution/,
   )
   assert.match(html, /2026-01-01T00:01:00.000Z/)
-  assert.match(html, /<dt>Discogs limit:<\/dt><dd>60<\/dd>/)
-  assert.match(html, /<dt>Discogs used:<\/dt><dd>60<\/dd>/)
-  assert.match(html, /<dt>Discogs remaining:<\/dt><dd>0<\/dd>/)
+  assert.match(html, /<dt>Discogs limit<\/dt><dd>60<\/dd>/)
+  assert.match(html, /<dt>Discogs used<\/dt><dd>60<\/dd>/)
+  assert.match(html, /<dt>Discogs remaining<\/dt><dd>0<\/dd>/)
 })
 
 test('local safety errors explicitly identify that no outgoing request occurred', () => {

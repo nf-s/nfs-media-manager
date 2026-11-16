@@ -1,24 +1,29 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
-  formatArtworkOverlays,
+  cardGrid,
+  formatCardDetails,
   mediaGridGeometry,
-  parseArtworkOverlays,
+  parseCardDetails,
   parseBrowseView,
   parseGridDensity,
   preserveGridScroll,
 } from './media-grid'
 import { browseWindow } from './virtual-browse'
 
-test('tiles are shorter when the sort value and links sit on the artwork', () => {
-  const tile = (extraRow: boolean) =>
+test('cards reserve the meta line and the tags line under the creator', () => {
+  const card = (extraRow: boolean, tagsBelowArtwork: boolean) =>
     mediaGridGeometry({
       width: 1000,
       mediaType: 'album',
       density: 'standard',
       extraRow,
+      tagsBelowArtwork,
     }).cardHeight
-  assert.equal(tile(true) - tile(false), 20)
+  // 2px line gap and an 18px meta line (2px margin and 16px line height).
+  assert.ok(Math.abs(card(true, false) - card(false, false) - 20) < 1e-9)
+  // 2px line gap and a 20px pill row.
+  assert.ok(Math.abs(card(true, true) - card(true, false) - 22) < 1e-9)
 })
 
 test('density accepts only known URL or persisted preference values', () => {
@@ -42,22 +47,24 @@ test('density accepts only known URL or persisted preference values', () => {
     assert.equal(parseGridDensity(value), 'standard')
 })
 
-test('standard desktop geometry preserves existing album and film layouts', () => {
+test('standard desktop geometry follows the design system card grid', () => {
   for (const mediaType of ['album', 'film'] satisfies Array<'album' | 'film'>) {
+    const minimum = mediaType === 'album' ? 164 : 118
     for (const width of [701, 1000, 1440]) {
       const grid = mediaGridGeometry({ width, mediaType, density: 'standard' })
-      const columns = Math.max(
-        2,
-        Math.floor(width / (mediaType === 'album' ? 182 : 152)),
-      )
+      const inner = width - cardGrid.gutter * 2
+      const columns = Math.max(2, Math.floor((inner + 16) / (minimum + 16)))
       assert.equal(grid.columns, columns)
-      assert.equal(grid.gap, 12)
+      assert.equal(grid.gap, 20)
+      assert.equal(grid.columnGap, 16)
+      assert.equal(grid.padding, 28)
       assert.equal(grid.mobile, false)
-      assert.equal(
-        grid.rowHeight,
-        ((width - (columns - 1) * 12) / columns) *
-          (mediaType === 'album' ? 1 : 1.5) +
-          76,
+      const artwork = (inner - (columns - 1) * 16) / columns
+      assert.ok(artwork >= minimum)
+      assert.ok(
+        Math.abs(
+          grid.rowHeight - (artwork * (mediaType === 'album' ? 1 : 1.5) + 84),
+        ) < 1e-9,
       )
     }
   }
@@ -72,7 +79,7 @@ test('browse view accepts grid, list and table and falls back to grid', () => {
   assert.equal(parseBrowseView('grid', 'list'), 'grid')
 })
 
-test('moving album tags off artwork reserves one badge row in the virtual grid', () => {
+test('the tags line reserves one pill row in the virtual grid', () => {
   const grid = {
     width: 390,
     density: parseGridDensity(null),
@@ -85,48 +92,32 @@ test('moving album tags off artwork reserves one badge row in the virtual grid',
   )
 })
 
-test('artwork overlays default per library and round-trip saved preferences', () => {
-  assert.deepEqual(parseArtworkOverlays(null, 'album'), [
+test('card details default to all shown and round-trip saved preferences', () => {
+  assert.deepEqual(parseCardDetails(null), ['ratings', 'sort', 'tags'])
+  assert.deepEqual(parseCardDetails('tags,unknown,sort'), ['tags', 'sort'])
+  // An explicit empty choice must not fall back to the default.
+  assert.equal(formatCardDetails([]), 'none')
+  assert.deepEqual(parseCardDetails(formatCardDetails([])), [])
+  assert.deepEqual(parseCardDetails(formatCardDetails(['ratings', 'tags'])), [
     'ratings',
-    'sort',
     'tags',
   ])
-  assert.deepEqual(parseArtworkOverlays(null, 'film'), ['ratings', 'sort'])
-  for (const mediaType of ['album', 'film'] satisfies Array<'album' | 'film'>) {
-    assert.deepEqual(parseArtworkOverlays('tags,unknown,sort', mediaType), [
-      'tags',
-      'sort',
-    ])
-    // An explicit empty choice must not fall back to the library default.
-    assert.equal(formatArtworkOverlays([]), 'none')
-    assert.deepEqual(
-      parseArtworkOverlays(formatArtworkOverlays([]), mediaType),
-      [],
-    )
-    assert.deepEqual(
-      parseArtworkOverlays(
-        formatArtworkOverlays(['ratings', 'tags']),
-        mediaType,
-      ),
-      ['ratings', 'tags'],
-    )
-  }
 })
 
-test('mobile density supports four compact, three standard and at least two roomy columns with bounded metadata', () => {
+test('a phone shows two standard columns, three compact and at least two roomy, filling the width', () => {
   for (const mediaType of ['album', 'film'] satisfies Array<'album' | 'film'>) {
     const compact = mediaGridGeometry({
-      width: 350,
+      width: 375,
       mediaType,
       density: 'compact',
     })
     const standard = mediaGridGeometry({
-      width: 350,
+      width: 375,
       mediaType,
       density: 'standard',
     })
-    assert.equal(compact.columns, 4)
-    assert.equal(standard.columns, 3)
+    assert.equal(compact.columns, 3)
+    assert.equal(standard.columns, 2)
     assert.ok(compact.rowHeight < standard.rowHeight)
     for (const width of [280, 350, 390, 600, 700]) {
       for (const density of ['compact', 'standard', 'roomy']) {
@@ -136,13 +127,15 @@ test('mobile density supports four compact, three standard and at least two room
           density: parseGridDensity(density),
         })
         assert.equal(grid.mobile, true)
-        assert.equal(grid.gap, 8)
         assert.ok(grid.columns >= 2)
         const artworkWidth =
           (grid.cardHeight - 64) / (mediaType === 'album' ? 1 : 1.5)
         assert.ok(
           Math.abs(
-            artworkWidth * grid.columns + grid.gap * (grid.columns - 1) - width,
+            artworkWidth * grid.columns +
+              grid.columnGap * (grid.columns - 1) +
+              cardGrid.gutter * 2 -
+              width,
           ) < 0.000001,
         )
         assert.equal(grid.rowHeight, grid.cardHeight + grid.gap)

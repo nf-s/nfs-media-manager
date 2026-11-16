@@ -1,7 +1,6 @@
 'use client'
 
 import type { ReactNode } from 'react'
-import { X } from 'lucide-react'
 import {
   formatBrowseValue,
   type BrowseField,
@@ -10,10 +9,18 @@ import {
 } from '@repo/schemas/browse'
 import type { ListeningFilter } from '@repo/schemas/listening'
 import { formatListeningRule } from '@/utils/listening-filters'
-import { BrowseFilterChips, RangeEditor } from './browse-controls'
+import {
+  Toolbar,
+  ToolbarCount,
+  ToolbarEnd,
+} from '@repo/ui/components/ds/toolbar'
+import { Button } from '@repo/ui/components/ui/button'
+import {
+  BrowseFilterChips,
+  BrowseFilterPill,
+  RangeEditor,
+} from './browse-controls'
 import BrowseFilterPanel from './browse-filter-panel'
-import { FilterButton } from './filter-affordance'
-import { SecondaryTableToolbar } from './secondary-table'
 
 export type MetadataSelectionFilters = {
   q: string
@@ -23,7 +30,10 @@ export type MetadataSelectionFilters = {
   listening?: ListeningFilter
 }
 
-/** One metadata-table layout: active filters, then search/count/Columns. */
+/**
+ * One metadata-table layout: active filters, then search, the page's own
+ * filters, the count, and Filters and Columns at the end.
+ */
 export default function MetadataSelectionToolbar({
   fields,
   value,
@@ -33,7 +43,9 @@ export default function MetadataSelectionToolbar({
   providerFilters = [],
   disabled = false,
   search,
+  filters,
   count,
+  actions,
   columns,
   children,
 }: {
@@ -45,7 +57,11 @@ export default function MetadataSelectionToolbar({
   providerFilters?: { key: string; label: string; remove: () => void }[]
   disabled?: boolean
   search: ReactNode
+  /** Controls placed after the search, such as the library. */
+  filters?: ReactNode
   count: ReactNode
+  /** Actions on the whole result, placed after the count. */
+  actions?: ReactNode
   columns: ReactNode
   children?: ReactNode
 }) {
@@ -61,17 +77,14 @@ export default function MetadataSelectionToolbar({
   }
   const activeFilters =
     activeCount > 0 || otherFiltersActive ? (
-      <div
-        className="metadata-selection-filters flex flex-wrap items-center gap-2"
-        aria-label="Active filters"
-      >
+      <div className="ops-chips" role="group" aria-label="Active filters">
         {value.q && (
-          <FilterButton
-            className="filter-pill"
-            onClick={() => change({ ...value, q: '' })}
+          <BrowseFilterPill
+            onRemove={() => change({ ...value, q: '' })}
+            removeLabel="Remove search"
           >
-            Search: {value.q} <X size={12} />
-          </FilterButton>
+            Search: {value.q}
+          </BrowseFilterPill>
         )}
         <BrowseFilterChips
           filters={value.filters}
@@ -86,11 +99,11 @@ export default function MetadataSelectionToolbar({
               : field
                 ? formatBrowseValue(field, number)
                 : number
+          const label = field?.label ?? range.field
           return (
-            <FilterButton
+            <BrowseFilterPill
               key={range.field}
-              className="filter-pill"
-              onClick={() =>
+              onRemove={() =>
                 change({
                   ...value,
                   ranges: value.ranges.filter(
@@ -98,19 +111,18 @@ export default function MetadataSelectionToolbar({
                   ),
                 })
               }
+              removeLabel={`Remove ${label} range`}
             >
-              {field?.label ?? range.field}: {bound(range.min)} to{' '}
-              {bound(range.max)}
-              {range.includeMissing ? ' + missing' : ''} <X size={12} />
-            </FilterButton>
+              {label}: {bound(range.min)} to {bound(range.max)}
+              {range.includeMissing ? ' + missing' : ''}
+            </BrowseFilterPill>
           )
         })}
         {value.listening?.rules.map((rule, index) => (
-          <FilterButton
+          <BrowseFilterPill
             key={`listening:${index}`}
-            className="filter-pill"
-            aria-label={`Remove listening rule: ${formatListeningRule(rule)}`}
-            onClick={() => {
+            removeLabel={`Remove listening rule: ${formatListeningRule(rule)}`}
+            onRemove={() => {
               if (!value.listening) return
               const rules = value.listening.rules.filter((_, i) => i !== index)
               change({
@@ -122,62 +134,61 @@ export default function MetadataSelectionToolbar({
             }}
           >
             {value.listening?.match === 'all' ? 'Required' : 'Any'} ·{' '}
-            {formatListeningRule(rule)} <X size={12} />
-          </FilterButton>
+            {formatListeningRule(rule)}
+          </BrowseFilterPill>
         ))}
         {value.limitResults !== undefined && (
-          <FilterButton
-            className="filter-pill"
-            onClick={() => change({ ...value, limitResults: undefined })}
+          <BrowseFilterPill
+            onRemove={() => change({ ...value, limitResults: undefined })}
+            removeLabel="Remove limit"
           >
-            Limit: {value.limitResults} <X size={12} />
-          </FilterButton>
+            Limit: {value.limitResults}
+          </BrowseFilterPill>
         )}
         {providerFilters.map(({ key, label, remove }) => (
-          <FilterButton
+          <BrowseFilterPill
             key={key}
-            className="filter-pill"
-            aria-label={`Remove ${label} filter`}
-            onClick={() => {
+            removeLabel={`Remove ${label} filter`}
+            onRemove={() => {
               if (!disabled) remove()
             }}
           >
-            {label} <X size={12} />
-          </FilterButton>
+            {label}
+          </BrowseFilterPill>
         ))}
-        <button
-          type="button"
-          className="clear-filters"
+        <Button
+          variant="link"
+          size="xs"
           onClick={() => {
             if (!disabled) onClear()
           }}
         >
           Clear all
-        </button>
+        </Button>
       </div>
     ) : null
   return (
-    <fieldset disabled={disabled} className="film-selection-controls">
+    <fieldset disabled={disabled} className="ops-selection-controls">
       {activeFilters}
-      <SecondaryTableToolbar
-        search={search}
-        count={count}
-        columns={
-          <>
-            <BrowseFilterPanel count={activeCount}>
-              {activeFilters}
-              <RangeEditor
-                presentation="panel"
-                fields={fields.filter((field) => field.filterable)}
-                ranges={value.ranges}
-                onChange={(ranges) => change({ ...value, ranges })}
-              />
-              {children}
-            </BrowseFilterPanel>
-            {columns}
-          </>
-        }
-      />
+      <Toolbar>
+        {search}
+        {filters}
+        <ToolbarCount>{count}</ToolbarCount>
+        {actions}
+        <ToolbarEnd>
+          <BrowseFilterPanel count={activeCount}>
+            {activeFilters}
+            <RangeEditor
+              presentation="panel"
+              fields={fields.filter((field) => field.filterable)}
+              ranges={value.ranges}
+              onChange={(ranges) => change({ ...value, ranges })}
+            />
+            {children}
+          </BrowseFilterPanel>
+          {columns}
+        </ToolbarEnd>
+      </Toolbar>
     </fieldset>
   )
 }

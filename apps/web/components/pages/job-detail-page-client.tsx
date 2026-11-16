@@ -2,28 +2,40 @@
 
 import Link from 'next/link'
 import { useQuery } from '@tanstack/react-query'
+import { ChevronRight } from 'lucide-react'
 import { JobDetail } from '../job-detail'
-import { useWorkspaceScope } from '../media-scope'
 import { jobMediaScope } from '@/utils/job-media-scope'
 import { scopedHref } from '@/utils/media-scope'
 import { jobDetailOptions } from '@/utils/job-data'
+import { jobTitle } from '@/utils/job-entries'
 import { useConfig } from '../providers'
 
 export default function JobDetailPageClient({ jobId }: { jobId: string }) {
   const { apiBaseUrl } = useConfig()
-  const scope = useWorkspaceScope()
   const job = useQuery(jobDetailOptions(apiBaseUrl, jobId))
+  const library = job.data ? jobMediaScope(job.data) : null
+  const batchId =
+    typeof job.data?.options.batchId === 'string'
+      ? job.data.options.batchId
+      : null
   return (
-    <div className="detail-page">
-      <Link
-        href={scopedHref(
-          '/jobs',
-          job.data ? (jobMediaScope(job.data) ?? scope) : scope,
+    <div className="ds-page">
+      <nav className="ds-crumbs ops-crumbs" aria-label="Breadcrumb">
+        <Link href={library ? scopedHref('/jobs', library) : '/jobs'}>
+          Jobs
+        </Link>
+        <ChevronRight className="ds-i" data-size="sm" aria-hidden="true" />
+        {batchId && (
+          <>
+            <Link href={`/jobs?batchId=${encodeURIComponent(batchId)}`}>
+              Batch
+            </Link>
+            <ChevronRight className="ds-i" data-size="sm" aria-hidden="true" />
+          </>
         )}
-      >
-        Back to jobs
-      </Link>
-      <JobDetail id={jobId} />
+        <b>{job.data ? jobTitle(job.data) : 'Job'}</b>
+      </nav>
+      <JobDetail id={jobId} headingLevel={1} />
     </div>
   )
 }

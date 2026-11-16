@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { JobSchema } from '@repo/schemas/job'
 import { canIdentifyMedia } from '@repo/schemas/provider-identification'
 import {
@@ -10,13 +10,21 @@ import {
   type FilmDetail,
   type MediaHistory,
 } from '@repo/schemas/media'
+import { KeyValues } from '@repo/ui/components/ds/facts'
+import { Notice, Skeleton } from '@repo/ui/components/ds/feedback'
+import { Button } from '@repo/ui/components/ui/button'
+import { formatDateTime } from '@repo/ui/lib/format'
 import { fetchApiData } from '@/utils/api'
+import { IDENTIFIER_REQUIRED } from '@/utils/source-rows'
 import AlbumProviderDetails from './album-provider-details'
+import { ListeningSources, useAlbumListening } from './album-listening'
+import { useMediaProvenance } from './field-provenance'
 import JsonTree from './json-tree'
 import { useConfig } from './providers'
 import { IdentifierRow, mediaProviderIdentifiers } from './provider-identifiers'
 import {
   ProviderSources,
+  providerHref,
   useSourceAvailability,
   useSourceCatalog,
   type ProviderSourceRow,
@@ -40,16 +48,18 @@ function useMediaSourceSummary(id: string, enabled = true) {
 function SourceChanges({ changes }: { changes: MediaHistory['events'] }) {
   if (!changes.length) return null
   return (
-    <div className="history-list">
+    <div className="data-stack">
       {changes.map((change) => (
-        <details key={change.id}>
+        <details key={change.id} className="data-disclosure">
           <summary>
-            <span>{change.title}</span>
-            <time dateTime={change.createdAt}>
-              {new Date(change.createdAt).toLocaleString()}
-            </time>
+            <time className="ds-num" dateTime={change.createdAt}>
+              {formatDateTime(change.createdAt)}
+            </time>{' '}
+            {change.title}
           </summary>
-          {change.description && <p className="quiet">{change.description}</p>}
+          {change.description && (
+            <p className="ds-muted">{change.description}</p>
+          )}
           <JsonTree value={change.data} />
         </details>
       ))}
@@ -63,31 +73,41 @@ export function MediaEditHistory({ id }: { id: string }) {
   const changes =
     summary.data?.changes.filter((change) => !change.provider) ?? []
   return (
-    <details onToggle={(event) => setOpen(event.currentTarget.open)}>
-      <summary className="cursor-pointer text-sm">Edit history</summary>
+    <details
+      className="data-disclosure"
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+    >
+      <summary>Edit history</summary>
       {open &&
         (summary.isPending ? (
-          <p role="status" className="quiet">
-            Loading changes...
-          </p>
+          <Skeleton height={56} />
         ) : summary.isError && !summary.data ? (
-          <p role="alert">
-            Could not load changes.{' '}
-            <button
-              type="button"
-              className="underline"
-              onClick={() => summary.refetch()}
-            >
-              Retry
-            </button>
-          </p>
+          <Notice
+            tone="danger"
+            action={
+              <Button size="xs" onClick={() => summary.refetch()}>
+                Retry
+              </Button>
+            }
+          >
+            Could not load changes.
+          </Notice>
         ) : changes.length ? (
           <SourceChanges changes={changes} />
         ) : (
-          <p className="quiet">No edits.</p>
+          <p className="ds-muted">No edits.</p>
         ))}
     </details>
   )
+}
+
+function scrobbleNamesSummary(linked: number, similar: number) {
+  return [
+    `${linked} ${linked === 1 ? 'name' : 'names'} linked`,
+    ...(similar
+      ? [`${similar} similar ${similar === 1 ? 'name' : 'names'} not linked`]
+      : []),
+  ].join(' · ')
 }
 
 export default function MediaSources({
@@ -98,8 +118,12 @@ export default function MediaSources({
   onSaved: () => Promise<void>
 }) {
   const { apiBaseUrl } = useConfig()
+  const client = useQueryClient()
   const summary = useMediaSourceSummary(item.id)
   const catalog = useSourceCatalog()
+  const provenance = useMediaProvenance(item.id)
+  const isAlbum = item.mediaType === 'album'
+  const listening = useAlbumListening(item.id, '', isAlbum)
   const supported = (catalog.data ?? []).filter(
     (provider) =>
       provider.surface === 'provider' &&
@@ -135,88 +159,147 @@ export default function MediaSources({
     ...(summary.data?.providers.map((provider) => provider.id) ?? []),
     ...details.map((detail) => detail.provider),
     ...(nfoPath ? ['nfo'] : []),
+    // Scrobble names are matched under Last.fm.
+    ...(isAlbum ? ['lastfm'] : []),
   ])
-  const rows = [...ids]
-    .map<ProviderSourceRow>((id) => {
-      const provider = supported.find((provider) => provider.id === id)
-      const providerDetails = details.filter((detail) => detail.provider === id)
-      const label =
-        provider?.displayName ??
-        (id === 'google-custom-search'
-          ? 'Google Custom Search (legacy)'
-          : id === 'nfo'
-            ? 'NFO'
+  function queueRefresh(id: string) {
+    return fetchApiData(
+      apiBaseUrl,
+      `/api/v1/media/${encodeURIComponent(item.id)}/rescrape`,
+      JobSchema,
+      { method: 'POST', body: JSON.stringify({ provider: id }) },
+    )
+  }
+  const rows = [...ids].map<ProviderSourceRow>((id) => {
+    const provider = supported.find((provider) => provider.id === id)
+    const providerDetails = details.filter((detail) => detail.provider === id)
+    const label =
+      provider?.displayName ??
+      (id === 'google-custom-search'
+        ? 'Google Custom Search (legacy)'
+        : id === 'nfo'
+          ? 'NFO'
+          : id === 'lastfm'
+            ? 'Last.fm'
             : serviceLinks.find((link) => link.provider === id)?.label || id)
-      const identifiers = mediaProviderIdentifiers(item, id, provider)
-      const changes =
-        summary.data?.changes.filter((change) => change.provider === id) ?? []
-      const links = [
-        ...serviceLinks.filter((link) => link.provider === id),
-        ...providerDetails.flatMap((detail) =>
-          detail.url ? [{ provider: id, label, url: detail.url }] : [],
-        ),
-      ]
-      return {
-        id,
-        label,
-        identifier:
-          identifiers
-            .map(({ current }) => current)
-            .filter(Boolean)
-            .join(' · ') || undefined,
-        updatedAt: summary.data?.providers.find((row) => row.id === id)
-          ?.latestSnapshot?.createdAt,
-        links,
-        unavailable: provider?.supportsScrape
-          ? (sourceUnavailable(provider) ??
-            (canIdentifyMedia(provider, identity)
-              ? undefined
-              : 'Identifier required'))
+    const identifiers = mediaProviderIdentifiers(item, id, provider)
+    const changes =
+      summary.data?.changes.filter((change) => change.provider === id) ?? []
+    const links = [
+      ...serviceLinks.filter((link) => link.provider === id),
+      ...providerDetails.flatMap((detail) =>
+        detail.url ? [{ provider: id, label, url: detail.url }] : [],
+      ),
+    ].filter(
+      (link, index, all) =>
+        all.findIndex((other) => other.url === link.url) === index,
+    )
+    const provides = [
+      ...new Set(
+        (provenance.data?.fields ?? [])
+          .filter((field) =>
+            field.sources.some((source) => source.provider === id),
+          )
+          .map((field) => field.label),
+      ),
+    ]
+    const scrobbles =
+      isAlbum && id === 'lastfm' && listening.data ? listening.data : undefined
+    const stored = identifiers
+      .map(({ current }) => current)
+      .filter(Boolean)
+      .join(' · ')
+    const identifier =
+      stored ||
+      (scrobbles
+        ? scrobbleNamesSummary(
+            scrobbles.sources.length,
+            scrobbles.similarUnlinked.length,
+          )
+        : undefined)
+    const refresh = provider?.supportsScrape
+      ? () => queueRefresh(id)
+      : undefined
+    return {
+      id,
+      label,
+      href: provider ? providerHref(id) : undefined,
+      identifier,
+      match:
+        scrobbles && !stored
+          ? scrobbles.sources.length
+            ? { state: 'done', label: 'Matched by name' }
+            : { state: 'attention', label: 'No names linked' }
           : undefined,
-        refresh: provider?.supportsScrape
-          ? () =>
-              fetchApiData(
-                apiBaseUrl,
-                `/api/v1/media/${encodeURIComponent(item.id)}/rescrape`,
-                JobSchema,
-                { method: 'POST', body: JSON.stringify({ provider: id }) },
-              )
-          : undefined,
-        editor: identifiers.length
-          ? () => (
-              <section
-                className="provider-identifiers"
-                aria-label={`${label} identifiers`}
-              >
-                {identifiers.map((identifier) => (
-                  <IdentifierRow
-                    key={`${identifier.referenceType}:${identifier.current}`}
-                    item={item}
-                    label={label}
-                    {...identifier}
-                    onSaved={onSaved}
-                  />
-                ))}
-              </section>
-            )
-          : undefined,
-        details: (
-          <>
+      updatedAt: summary.data?.providers.find((row) => row.id === id)
+        ?.latestSnapshot?.createdAt,
+      links,
+      provides,
+      unavailable: provider?.supportsScrape
+        ? (sourceUnavailable(provider) ??
+          (canIdentifyMedia(provider, identity)
+            ? undefined
+            : IDENTIFIER_REQUIRED))
+        : undefined,
+      refresh,
+      editor: identifiers.length
+        ? (canRefresh, close) => (
+            <div className="data-stack" aria-label={`${label} identifiers`}>
+              {identifiers.map((identifier) => (
+                <IdentifierRow
+                  key={`${identifier.referenceType}:${identifier.current}`}
+                  item={item}
+                  label={label}
+                  {...identifier}
+                  onSaved={onSaved}
+                  onRefresh={
+                    refresh && canRefresh
+                      ? async () => {
+                          await refresh()
+                          await Promise.all([
+                            client.invalidateQueries({ queryKey: ['jobs'] }),
+                            client.invalidateQueries({
+                              queryKey: ['job-activity'],
+                            }),
+                          ])
+                        }
+                      : undefined
+                  }
+                  onCancel={close}
+                />
+              ))}
+            </div>
+          )
+        : undefined,
+      blocks: scrobbles
+        ? [
+            {
+              title: 'Scrobble names',
+              content: <ListeningSources albumId={item.id} data={scrobbles} />,
+            },
+          ]
+        : undefined,
+      details:
+        (id === 'nfo' && nfoPath) ||
+        providerDetails.length ||
+        changes.length ? (
+          <div className="data-stack">
             {id === 'nfo' && nfoPath && (
-              <dl className="my-3 text-sm">
-                <dt className="quiet">NFO file</dt>
-                <dd className="break-all select-text font-mono text-xs">
-                  {nfoPath}
-                </dd>
-              </dl>
+              <KeyValues
+                items={[
+                  {
+                    label: 'NFO file',
+                    value: <span className="ds-mono">{nfoPath}</span>,
+                  },
+                ]}
+              />
             )}
             <AlbumProviderDetails details={providerDetails} />
             <SourceChanges changes={changes} />
-          </>
-        ),
-      }
-    })
-    .sort((left, right) => left.label.localeCompare(right.label))
+          </div>
+        ) : undefined,
+    }
+  })
   const unavailable =
     summary.isError && !summary.data
       ? 'Could not load source history.'

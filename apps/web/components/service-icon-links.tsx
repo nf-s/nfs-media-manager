@@ -108,25 +108,15 @@ const serviceSites = [
   },
 ]
 
-export default function ServiceIconLinks({
-  links,
-  item,
-  hideSpotify = false,
-  itemTitle,
-}: {
-  links?: AlbumListItem['links']
-  item?: AlbumListItem | FilmListItem
-  hideSpotify?: boolean
-  itemTitle?: string
-}) {
-  const spotify =
-    item?.mediaType === 'album' ? albumSpotifyDestination(item) : undefined
-  const candidates = [
-    ...(spotify
-      ? [{ provider: 'spotify', label: 'Spotify', url: spotify }]
-      : []),
-    ...(links ?? item?.links ?? []),
-  ]
+/**
+ * One link per service, in order, with the service's own name: an adapter
+ * may supply destinations on several services, and a service may appear
+ * under several providers.
+ */
+export function serviceLinks(
+  candidates: readonly AlbumListItem['links'][number][],
+  { hideSpotify = false }: { hideSpotify?: boolean } = {},
+) {
   const unique = new Map<string, AlbumListItem['links'][number]>()
   for (const link of candidates) {
     const url = safeRatingHref(link.url)
@@ -140,15 +130,39 @@ export default function ServiceIconLinks({
     const provider = service?.provider ?? link.provider
     if (hideSpotify && service?.provider === 'spotify') continue
     const label = service?.label ?? link.label
-    // One adapter may supply destinations on several independent services.
     const key = service ? `service:${service.provider}` : `host:${host}`
     if (!unique.has(key)) unique.set(key, { ...link, provider, label, url })
   }
-  if (!unique.size) return null
+  return [...unique.values()]
+}
+
+export default function ServiceIconLinks({
+  links,
+  item,
+  hideSpotify = false,
+  itemTitle,
+}: {
+  links?: AlbumListItem['links']
+  item?: AlbumListItem | FilmListItem
+  hideSpotify?: boolean
+  itemTitle?: string
+}) {
+  const spotify =
+    item?.mediaType === 'album' ? albumSpotifyDestination(item) : undefined
+  const unique = serviceLinks(
+    [
+      ...(spotify
+        ? [{ provider: 'spotify', label: 'Spotify', url: spotify }]
+        : []),
+      ...(links ?? item?.links ?? []),
+    ],
+    { hideSpotify },
+  )
+  if (!unique.length) return null
   return (
     <span className="service-links" role="group" aria-label="Service links">
-      {[...unique].map(([key, link]) => (
-        <ServiceAnchor key={key} link={link} itemTitle={itemTitle} />
+      {unique.map((link) => (
+        <ServiceAnchor key={link.url} link={link} itemTitle={itemTitle} />
       ))}
     </span>
   )

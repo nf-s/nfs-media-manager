@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { before, mock, test } from 'node:test'
-import React, { type ReactNode } from 'react'
+import type { ReactNode } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import {
@@ -37,13 +37,11 @@ require.extensions['.css'] = (module) => {
 let FilmSelectionTable: typeof import('./film-selection-table').default
 let updateProviderFreshness: typeof import('./film-selection-table').updateProviderFreshness
 let NewScrapePageClient: typeof import('./pages/new-scrape-page-client').default
-let FilmRefresh: typeof import('./film-refresh').default
 before(async () => {
   const selection = await import('./film-selection-table')
   FilmSelectionTable = selection.default
   updateProviderFreshness = selection.updateProviderFreshness
   NewScrapePageClient = (await import('./pages/new-scrape-page-client')).default
-  FilmRefresh = (await import('./film-refresh')).default
 })
 
 const network = mock.method(globalThis, 'fetch', async () => {
@@ -219,12 +217,9 @@ test('album selection renders artists and provider freshness with no initial sel
   assert.match(html, /Select all loaded albums/)
   assert.match(html, /href="\/albums\/album-1"/)
   assert.match(html, /Needs ID for Music metadata/)
-  assert.match(html, /0 selected/)
   assert.doesNotMatch(html, /aria-label="Select First album" checked/)
-  assert.match(
-    html,
-    /disabled=""[^>]*>Launch metadata jobs for 0 selected albums/,
-  )
+  // The selection bar, with providers and Review, appears once rows are selected.
+  assert.doesNotMatch(html, /ds-selectbar|metadata jobs/)
 })
 
 test('both metadata tables distinguish legacy imports and offer a multiselect header filter', () => {
@@ -265,8 +260,10 @@ test('both metadata tables distinguish legacy imports and offer a multiselect he
     assert.match(rows[1] ?? '', /<td>Yes<\/td>/)
     assert.match(rows[2] ?? '', /<td>No<\/td>/)
     for (const row of rows.slice(1))
-      assert.match(row, /<td title="No successful scrape">Never/)
-    assert.match(html, /0 selected/)
+      assert.match(
+        row,
+        /title="No successful [^"]+ scrape"><span class="ds-status" data-status="never">Never</,
+      )
   }
 })
 
@@ -300,16 +297,14 @@ test('failed metadata attempts show the error and scoped job link instead of Nev
     ],
   )
   assert.match(html, /href="\/jobs\/failed%2Fjob"/)
-  assert.match(html, />Failed<\/a>/)
-  assert.match(html, /class="job-status [^"]*" data-status="failed"/)
+  assert.match(html, /data-status="failed">Failed<\/span><\/a>/)
+  assert.match(html, /data-layout="fixed"/)
+  assert.ok(html.includes(`title="${error}"`))
   assert.match(
     html,
-    /class="flex w-full min-w-0 max-w-full [^"]*overflow-hidden"/,
+    /class="ds-cell-sub ops-danger"[^>]*>Provider request failed/,
   )
-  assert.match(html, /table-layout:fixed/)
-  assert.ok(html.includes(`title="${error}"`))
-  assert.match(html, /class="[^"]*truncate[^"]*"[^>]*>Provider request failed/)
-  assert.doesNotMatch(html, /<td[^>]*>Never/)
+  assert.doesNotMatch(html, /data-status="never"/)
 })
 
 function renderFreshness(
@@ -350,7 +345,7 @@ test('both libraries reserve Never for no attempt and no success, and offer dist
     hasProviderIdentifier: true,
     lastAttempt: null,
   })) {
-    assert.match(html, /<td title="No successful scrape">Never<\/td>/)
+    assert.match(html, /data-status="never">Never</)
     assert.match(html, /disabled="">All values<\/button>/)
     for (const label of [
       'Never attempted',
@@ -390,14 +385,16 @@ test('latest failed, running and cancelled attempts take precedence over success
             : status === 'running'
               ? 'Running'
               : 'Cancelled'
-        assert.ok(html.includes(`>${label}</a>`))
-        assert.doesNotMatch(
-          html,
-          /<td[^>]*>Never|<time[^>]*aria-label="Last successful/,
-        )
-        if (lastScrapedAt)
-          assert.ok(html.includes(`Last successful scrape: ${lastScrapedAt}`))
-        else assert.match(html, /No successful scrape/)
+        assert.ok(html.includes(`>${label}</span></a>`))
+        assert.doesNotMatch(html, /data-status="never"/)
+        if (lastScrapedAt) {
+          assert.match(html, /Last successful [^"]+ scrape: 2026-01-01 /)
+          assert.ok(
+            html.includes(
+              `<time dateTime="${lastScrapedAt}" class="ds-cell-sub">`,
+            ),
+          )
+        } else assert.match(html, /No successful [^"]+ scrape/)
         if (status === 'failed')
           assert.match(
             html,
@@ -425,10 +422,12 @@ test('successful attempts and retained legacy successes display the successful d
     }).music
     assert.ok(state)
     for (const { html } of renderFreshness(state)) {
-      assert.ok(
-        html.includes(`<time dateTime="${date}" aria-label="Last successful`),
+      assert.ok(html.includes(`<time dateTime="${date}">`))
+      assert.match(html, /title="Last successful [^"]+ scrape: 2026-01-01 /)
+      assert.doesNotMatch(
+        html,
+        /data-status="never"|>Failed<|>Running<|>Cancelled</,
       )
-      assert.doesNotMatch(html, /<td[^>]*>Never|>Failed<|>Running<|>Cancelled</)
     }
   }
 })
@@ -445,9 +444,9 @@ test('failed attempts without an error still show a job link and do not claim Ne
       jobId: 'failed',
     },
   })) {
-    assert.match(html, />Failed<\/a>/)
+    assert.match(html, />Failed<\/span><\/a>/)
     assert.match(html, /Needs ID/)
-    assert.doesNotMatch(html, /<td[^>]*>Never|title="null"/)
+    assert.doesNotMatch(html, /data-status="never"|title="null"/)
   }
 })
 
@@ -533,51 +532,63 @@ test('film import links preserve catalog format deep links and NFO destination',
   assert.doesNotMatch(html, /Spotify saved albums|Album CSV/)
 })
 
-test('provider workspace filters actual media capabilities', () => {
+test('provider overview reads the selected library from the URL', () => {
   const html = render('/providers', 'mediaType=album', <ProvidersPageClient />)
-  assert.match(html, /Music metadata/)
-  assert.doesNotMatch(html, /Film metadata/)
+  assert.match(html, /<option value="album" selected="">Albums<\/option>/)
+  assert.match(html, /<h1>Providers<\/h1>/)
 })
+
+/** Navigation markup without icons, so links read as label text. */
+function renderNavigation(path: string, search: string) {
+  return render(path, search, <AppNavigation />)
+    .replace(/<svg.*?<\/svg>/g, '')
+    .replace(/<span>([^<]*)<\/span>/g, '$1')
+}
+
+/** The rail's own links, without the activity popover's links. */
+function navLinks(html: string) {
+  return html.match(/<a class="ds-nav-item"/g) ?? []
+}
 
 test('main navigation retains library scope including Tags and direct Spotify links', () => {
   for (const path of ['/albums', '/imports/spotify']) {
-    const html = render(path, '', <AppNavigation />)
-    for (const section of ['tags', 'imports', 'jobs', 'providers'])
+    const html = renderNavigation(path, '')
+    for (const section of ['tags', 'imports'])
       assert.ok(html.includes(`href="/${section}?mediaType=album"`))
+    // Jobs and Providers appear once, under System, for every library.
+    assert.match(html, /System<\/div>/)
+    assert.match(html, /href="\/jobs">Jobs</)
+    assert.match(html, /href="\/providers">Providers</)
   }
 })
 
 test('main navigation has one Browse destination and preserves current browse filters', () => {
-  const html = render(
-    '/albums',
-    'q=artist&view=table&filters=%5B%5D',
-    <AppNavigation />,
-  )
+  const html = renderNavigation('/albums', 'q=artist&view=table&filters=%5B%5D')
   assert.match(
     html,
     /aria-current="page" href="\/albums\?q=artist&amp;view=table&amp;filters=%5B%5D">Browse/,
   )
-  assert.equal((html.match(/<a /g) ?? []).length, 6)
+  assert.equal(navLinks(html).length, 6)
   assert.doesNotMatch(html, /href="\/artists/)
   assert.match(html, /href="\/playlists\?mediaType=album">Playlists/)
   assert.doesNotMatch(
     html,
     />Albums<|>Films<|>Collections<|href="\/(films|collections)/,
   )
-  const detail = render('/films/one', '', <AppNavigation />)
+  const detail = renderNavigation('/films/one', '')
   assert.match(detail, /aria-current="page" href="\/films">Browse/)
-  assert.equal((detail.match(/<a /g) ?? []).length, 7)
+  assert.equal(navLinks(detail).length, 7)
   assert.match(detail, /href="\/people\?mediaType=film">People/)
   assert.match(detail, /href="\/collections\?mediaType=film">Collections/)
   assert.doesNotMatch(detail, />Playlists</)
 })
 
 test('main navigation browses tracks from the track and playlist pages', () => {
-  const tracks = render('/tracks', 'q=title', <AppNavigation />)
+  const tracks = renderNavigation('/tracks', 'q=title')
   assert.match(tracks, /aria-current="page" href="\/tracks\?q=title">Browse/)
   assert.match(tracks, /href="\/playlists\?mediaType=track">Playlists/)
   assert.doesNotMatch(tracks, />Collections<|href="\/collections/)
-  const playlists = render('/playlists', '', <AppNavigation />)
+  const playlists = renderNavigation('/playlists', '')
   assert.match(playlists, /href="\/tracks">Browse/)
   assert.match(
     playlists,
@@ -615,29 +626,17 @@ test('library selector reflects explicit and route-implied scope without duplica
 })
 
 test('active administration links retain context but do not leak filters to other sections', () => {
-  const html = render(
+  const html = renderNavigation(
     '/jobs',
     'mediaType=album&status=attention&jobId=one',
-    <AppNavigation />,
   )
   assert.match(
     html,
-    /href="\/jobs\?mediaType=album&amp;status=attention&amp;jobId=one"/,
+    /aria-current="page" href="\/jobs\?mediaType=album&amp;status=attention&amp;jobId=one">Jobs/,
   )
-  assert.match(html, /href="\/providers\?mediaType=album"/)
-  assert.match(html, /href="\/albums"/)
+  assert.match(html, /href="\/providers">Providers/)
+  assert.match(html, /href="\/albums">Browse/)
   assert.doesNotMatch(html, /\/providers\?[^"]*(?:jobId|status)=/)
-})
-
-test('legacy album refresh component renders the same unchecked metadata workspace', () => {
-  const html = render('/jobs/refresh', 'mediaType=album', <FilmRefresh />)
-  assert.match(html, /Album metadata/)
-  assert.match(html, /Example artist/)
-  assert.doesNotMatch(html, /value="180" selected=""/)
-  assert.match(
-    html,
-    /disabled=""[^>]*>Launch metadata jobs for 0 selected albums/,
-  )
 })
 
 test('album CSV alias offers catalog formats without film upload or NFO actions', () => {
@@ -788,18 +787,21 @@ test('main navigation preserves explicit scope across administration and route-i
     '/providers',
   ]) {
     for (const scope of ['album', 'film']) {
-      const html = render(path, `mediaType=${scope}`, <AppNavigation />)
-      for (const target of ['tags', 'imports', 'jobs', 'providers'])
-        assert.ok(html.includes(`href="/${target}?mediaType=${scope}"`))
+      const html = renderNavigation(path, `mediaType=${scope}`)
+      // Jobs and Providers keep the library open before them in the rail.
+      const shown =
+        path.startsWith('/jobs') || path === '/providers' ? 'album' : scope
+      for (const target of ['tags', 'imports'])
+        assert.ok(html.includes(`href="/${target}?mediaType=${shown}"`))
     }
   }
   assert.match(
-    render('/albums/first', 'mediaType=film', <AppNavigation />),
-    /href="\/jobs\?mediaType=album"/,
+    renderNavigation('/albums/first', 'mediaType=film'),
+    /href="\/tags\?mediaType=album"/,
   )
   assert.match(
-    render('/films/first', 'mediaType=album', <AppNavigation />),
-    /href="\/jobs\?mediaType=film"/,
+    renderNavigation('/films/first', 'mediaType=album'),
+    /href="\/tags\?mediaType=film"/,
   )
 })
 
@@ -823,8 +825,8 @@ test('Spotify configuration names exact API callback without switching the signe
 })
 
 test('Subscriptions navigation has Browse, Channels, Imports, Jobs and Providers', () => {
-  const html = render('/subscriptions', 'q=talk', <AppNavigation />)
-  assert.equal((html.match(/<a /g) ?? []).length, 5)
+  const html = renderNavigation('/subscriptions', 'q=talk')
+  assert.equal(navLinks(html).length, 5)
   assert.match(
     html,
     /aria-current="page" href="\/subscriptions\?q=talk">Browse/,
@@ -834,28 +836,24 @@ test('Subscriptions navigation has Browse, Channels, Imports, Jobs and Providers
     html,
     /href="\/imports\/youtube\?mediaType=subscription">Imports/,
   )
-  assert.match(html, /href="\/jobs\?mediaType=subscription">Jobs/)
-  assert.match(html, /href="\/providers\?mediaType=subscription">Providers/)
+  assert.match(html, /href="\/jobs">Jobs/)
+  assert.match(html, /href="\/providers">Providers/)
   assert.doesNotMatch(
     html,
     /Tags|Playlists|Collections|href="\/(albums|films|tags|collections)/,
   )
-  const channels = render('/subscriptions/channels', '', <AppNavigation />)
+  const channels = renderNavigation('/subscriptions/channels', '')
   assert.match(
     channels,
     /aria-current="page" href="\/subscriptions\/channels">Channels/,
   )
   assert.doesNotMatch(channels, /aria-current="page" href="\/subscriptions">/)
-  const jobs = render(
-    '/jobs',
-    'mediaType=subscription&status=failed',
-    <AppNavigation />,
-  )
+  const jobs = renderNavigation('/jobs', 'mediaType=subscription&status=failed')
   assert.match(
     jobs,
     /aria-current="page" href="\/jobs\?mediaType=subscription&amp;status=failed">Jobs/,
   )
-  const podcasts = render('/imports/spotify-podcasts', '', <AppNavigation />)
+  const podcasts = renderNavigation('/imports/spotify-podcasts', '')
   assert.match(
     podcasts,
     /aria-current="page" href="\/imports\/youtube\?mediaType=subscription">Imports/,
@@ -868,7 +866,7 @@ test('library selector lists Subscriptions and selects it on its pages', () => {
   }
   for (const { path, search } of [
     { path: '/imports/youtube', search: '' },
-    { path: '/jobs', search: 'mediaType=subscription' },
+    { path: '/subscriptions/channels', search: '' },
   ]) {
     const html = render(
       path,
@@ -910,7 +908,7 @@ test('Subscriptions imports list the YouTube and Spotify podcast syncs only', ()
   assert.doesNotMatch(html, /Recent imports|Spotify saved albums|Album CSV/)
 })
 
-test('Subscriptions jobs offer only job history under their own heading', () => {
+test('Jobs has one heading and its tabs, with Subscriptions as a library filter', () => {
   const html = render(
     '/jobs',
     'mediaType=subscription',
@@ -918,33 +916,30 @@ test('Subscriptions jobs offer only job history under their own heading', () => 
       <JobsPageClient />
     </JobsWorkspace>,
   )
-  assert.match(html, /<h1>Subscription jobs<\/h1>/)
-  assert.match(html, /href="\/jobs\?mediaType=subscription"/)
-  assert.doesNotMatch(html, /href="\/jobs\/metadata/)
+  assert.match(html, /<div class="ds-pagehead"><h1>Jobs<\/h1><\/div>/)
+  assert.match(
+    html,
+    /<a class="ds-tab" aria-current="page" href="\/jobs\?mediaType=subscription">Activity<\/a>/,
+  )
+  // Subscriptions have no metadata; the tab opens the rail's library.
+  assert.match(html, /href="\/jobs\/metadata\?mediaType=album">Metadata</)
+  assert.match(
+    html,
+    /<option value="subscription" selected="">Subscriptions<\/option>/,
+  )
+  assert.doesNotMatch(html, /Subscription jobs/)
 })
 
-test('providers are listed by library: subscription providers leave albums and films', () => {
-  const subscriptions = render(
-    '/providers',
-    'mediaType=subscription',
-    <ProvidersPageClient />,
+test('providers are listed by library: the server filters each library', () => {
+  for (const library of ['subscription', 'album', 'film'])
+    assert.match(
+      render('/providers', `mediaType=${library}`, <ProvidersPageClient />),
+      new RegExp(`<option value="${library}" selected="">`),
+    )
+  assert.match(
+    render('/providers', '', <ProvidersPageClient />),
+    /<option value="" selected="">All libraries<\/option>/,
   )
-  assert.match(subscriptions, /YouTube/)
-  assert.match(subscriptions, /Spotify/)
-  assert.doesNotMatch(subscriptions, /Music metadata|Film metadata|Scrobble/)
-  const albums = render(
-    '/providers',
-    'mediaType=album',
-    <ProvidersPageClient />,
-  )
-  assert.match(albums, /Music metadata/)
-  assert.match(albums, /Spotify/)
-  assert.match(albums, /Scrobble history/)
-  assert.doesNotMatch(albums, /YouTube|Film metadata/)
-  const films = render('/providers', 'mediaType=film', <ProvidersPageClient />)
-  assert.match(films, /Film metadata/)
-  assert.match(films, /Scrobble history/)
-  assert.doesNotMatch(films, /YouTube|Spotify|Music metadata/)
 })
 
 test('metadata table keeps search, count and columns above header filters and footer actions', () => {
@@ -953,7 +948,7 @@ test('metadata table keeps search, count and columns above header filters and fo
     'mediaType=album',
     <FilmSelectionTable mediaType="album" providers={[albumProvider]} />,
   )
-  const toolbar = html.indexOf('class="secondary-table-toolbar"')
+  const toolbar = html.indexOf('class="ds-toolbar"')
   const search = html.indexOf('Search albums or add a filter')
   const filters = html.indexOf('aria-label="Filter Legacy import"')
   const count = html.indexOf('1 albums')
@@ -968,8 +963,11 @@ test('metadata table keeps search, count and columns above header filters and fo
   assert.match(header, /aria-label="Filter Legacy import"/)
   assert.match(header, /aria-label="Filter Music metadata freshness"/)
   assert.match(header, /range/)
-  assert.ok(html.indexOf('</table>') < html.indexOf('secondary-table-footer'))
-  assert.doesNotMatch(html, /Clear selection/)
+  assert.match(html, /data-sticky="edge"/)
+  assert.doesNotMatch(
+    html,
+    /Clear selection|film-selection|secondary-table-footer/,
+  )
 })
 
 test('the shared metadata toolbar places active chips above search and count', async () => {
@@ -1003,7 +1001,7 @@ test('the shared metadata toolbar places active chips above search and count', a
   const freshness = html.indexOf(
     'aria-label="Remove Fixture provider · Never attempted filter"',
   )
-  const toolbar = html.indexOf('class="secondary-table-toolbar"')
+  const toolbar = html.indexOf('class="ds-toolbar"')
   const search = html.indexOf('aria-label="Search metadata"')
   const count = html.indexOf('10 albums')
   assert.ok(chips > -1 && chips < freshness && freshness < toolbar)

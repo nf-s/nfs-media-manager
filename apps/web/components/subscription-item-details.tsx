@@ -4,16 +4,29 @@ import { useQuery } from '@tanstack/react-query'
 import { useRouter } from 'next/navigation'
 import type { BrowseFilter } from '@repo/schemas/browse'
 import {
-  subscriptionSourceUrl,
   SubscriptionItemSchema,
   subscriptionTypeLabels,
   type SubscriptionItem,
 } from '@repo/schemas/subscriptions'
-import ServiceIconLinks from './service-icon-links'
+import { Tv } from 'lucide-react'
+import {
+  DetailActionsSpacer,
+  DetailHeader,
+} from '@repo/ui/components/ds/detail-header'
+import { Facts, Section, Stats } from '@repo/ui/components/ds/facts'
+import { TabsContent } from '@repo/ui/components/ui/tabs'
+import { EMPTY_VALUE, formatCount } from '@repo/ui/lib/format'
 import { DetailLink } from './detail-link'
-import { DetailSourceTabs } from './detail-source-tabs'
-import MediaArtwork from './media-artwork'
-import { formatCount } from '@/utils/youtube'
+import { CreatorDetailState } from './creator-detail-state'
+import {
+  DetailArt,
+  DetailTabs,
+  FilterPill,
+  OpenAtProvider,
+  useDetailTab,
+} from './detail-frame'
+import { ProviderSources } from './provider-sources'
+import { formatCount as formatYoutubeCount } from '@/utils/youtube'
 import {
   formatSubscriptionDuration,
   formatSubscriptionPublished,
@@ -23,60 +36,9 @@ import {
 } from '@/utils/subscriptions'
 import { fetchApiData } from '@/utils/api'
 import { useConfig } from './providers'
-import styles from './subscription-browser.module.css'
 
-export function SourceAvatar({
-  src,
-  size = 'small',
-}: {
-  src: string | null
-  size?: 'small' | 'large'
-}) {
-  return (
-    <MediaArtwork
-      src={src}
-      alt=""
-      fallbackLabel=""
-      containerClassName={`${styles.avatar} ${size === 'large' ? styles.avatarLarge : ''}`}
-      imageClassName={styles.avatarImage ?? ''}
-      fallbackClassName={styles.avatarImage ?? ''}
-    />
-  )
-}
-
-/** A 16:9 frame with the video thumbnail or episode artwork; badges show the type and the length or live state. */
-export function SubscriptionThumbnail({
-  item,
-  badges = true,
-}: {
-  item: SubscriptionItem
-  badges?: boolean
-}) {
-  const duration = formatSubscriptionDuration(item)
-  return (
-    <span className={styles.thumb}>
-      <MediaArtwork
-        src={subscriptionArtworkUrl(item)}
-        alt=""
-        fallbackLabel=""
-        containerClassName={styles.fill}
-        imageClassName={
-          (item.type === 'spotify' ? styles.thumbContain : styles.thumbImage) ??
-          ''
-        }
-        fallbackClassName={styles.thumbImage ?? ''}
-      />
-      {badges && (
-        <span className={styles.typeLabel}>
-          {subscriptionTypeLabels[item.type]}
-        </span>
-      )}
-      {badges && duration !== '-' && (
-        <span className={styles.badge}>{duration}</span>
-      )}
-    </span>
-  )
-}
+type ItemTab = 'overview' | 'sources'
+const itemTabs: readonly [ItemTab, ...ItemTab[]] = ['overview', 'sources']
 
 export function SubscriptionItemDetails({
   id,
@@ -109,23 +71,12 @@ export function SubscriptionItemDetails({
         }
       />
     )
-  if (query.isError)
-    return (
-      <p className="browse-empty" role="alert">
-        Could not load this item.{' '}
-        <button
-          type="button"
-          className="underline"
-          onClick={() => query.refetch()}
-        >
-          Retry
-        </button>
-      </p>
-    )
   return (
-    <p className="browse-empty" role="status">
-      Loading...
-    </p>
+    <CreatorDetailState
+      pending={!query.isError}
+      retry={() => query.refetch()}
+      subject="item"
+    />
   )
 }
 
@@ -136,118 +87,139 @@ function ItemDetails({
   item: SubscriptionItem
   onFilter: (filter: BrowseFilter) => void
 }) {
+  const { tab, setTab } = useDetailTab(itemTabs)
   const typeLabel = subscriptionTypeLabels[item.type]
   const provider = item.type === 'youtube' ? 'YouTube' : 'Spotify'
   const itemLink = { provider: item.type, label: provider, url: item.url }
-  const sourceLink = {
-    provider: item.type,
-    label: item.type === 'youtube' ? 'YouTube channel' : 'Spotify show',
-    url: subscriptionSourceUrl(item.type, item.sourceId),
-  }
-  const overview = (
-    <>
-      <dl className="detail-metrics">
-        <div>
-          <dt>Type</dt>
-          <dd>
-            <button
-              type="button"
-              className="metadata-tag"
-              title={`Filter Type: ${typeLabel}`}
-              onClick={() => onFilter(subscriptionTypeFilter(item.type))}
-            >
-              {typeLabel}
-            </button>
-          </dd>
-        </div>
-        <div>
-          <dt>Published</dt>
-          <dd>
-            <time dateTime={item.publishedAt}>
-              {formatSubscriptionPublished(
-                item.publishedAt,
-                item.publishedPrecision,
-                { detail: true },
-              )}
-            </time>
-          </dd>
-        </div>
-        <div>
-          <dt>Duration</dt>
-          <dd>{formatSubscriptionDuration(item)}</dd>
-        </div>
-        {item.type === 'youtube' && (
-          <>
-            <div>
-              <dt>Views</dt>
-              <dd>{formatCount(item.viewCount)}</dd>
-            </div>
-            <div>
-              <dt>Likes</dt>
-              <dd>{formatCount(item.likeCount)}</dd>
-            </div>
-            <div>
-              <dt>Comments</dt>
-              <dd>{formatCount(item.commentCount)}</dd>
-            </div>
-          </>
-        )}
-      </dl>
-      {item.tags.length > 0 && (
-        <div
-          className={`detail-tags ${styles.detailTags}`}
-          aria-label="Tags"
-          role="group"
-        >
-          {item.tags.map((tag) => (
-            <button
-              type="button"
-              key={tag}
-              className="metadata-tag"
-              title={`Filter Tags: ${tag}`}
-              onClick={() => onFilter({ field: 'genre', value: tag })}
-            >
-              {tag}
-            </button>
-          ))}
-        </div>
-      )}
-      {item.description && (
-        <p className={styles.description}>{item.description}</p>
-      )}
-    </>
+  const duration = formatSubscriptionDuration(item)
+  const published = (
+    <time dateTime={item.publishedAt}>
+      {formatSubscriptionPublished(item.publishedAt, item.publishedPrecision, {
+        detail: true,
+      })}
+    </time>
   )
   return (
-    <article className={styles.details}>
-      <div className={styles.detailThumb}>
-        <SubscriptionThumbnail item={item} />
-      </div>
-      <h1 className={styles.detailTitle}>
-        {item.title} <ServiceIconLinks links={[itemLink]} />
-      </h1>
-      <div className={styles.detailChannel}>
-        <SourceAvatar src={item.sourceThumbnailUrl} size="large" />
-        <DetailLink kind="channel" id={item.sourceId} className="metadata-tag">
-          {item.sourceTitle}
-        </DetailLink>
-        <ServiceIconLinks links={[sourceLink]} />
-      </div>
-      <DetailSourceTabs
+    <article className="dtl-detail">
+      <DetailHeader
+        art={
+          <DetailArt
+            src={subscriptionArtworkUrl(item)}
+            ratio="video"
+            badge={duration !== '-' ? duration : undefined}
+            fallback={<Tv className="ds-i" aria-hidden="true" />}
+          />
+        }
+        kind={item.type === 'youtube' ? 'Video' : 'Episode'}
+        title={item.title}
+        by={
+          <>
+            from{' '}
+            <DetailLink kind="channel" id={item.sourceId}>
+              {item.sourceTitle}
+            </DetailLink>
+          </>
+        }
+        facts={[
+          typeLabel,
+          published,
+          duration !== '-' ? duration : null,
+          item.type === 'youtube' && item.viewCount !== null
+            ? `${formatCount(item.viewCount)} views`
+            : null,
+        ]}
+        actions={
+          <>
+            <DetailActionsSpacer />
+            <OpenAtProvider label={provider} url={item.url} />
+          </>
+        }
+      />
+      <DetailTabs
         label="Subscription details"
-        overviewLabel="Overview"
-        sources={{
-          rows: [
-            {
-              id: item.type,
-              label: provider,
-              identifier: item.id,
-              links: [itemLink],
-            },
-          ],
-        }}
+        value={tab}
+        onChange={setTab}
+        tabs={[
+          { value: 'overview', label: 'Overview' },
+          { value: 'sources', label: 'Sources' },
+        ]}
       >
-        {overview}
-      </DetailSourceTabs>
+        <TabsContent value="overview">
+          {item.type === 'youtube' && (
+            <Section flush>
+              <Stats
+                items={[
+                  { label: 'views', value: formatYoutubeCount(item.viewCount) },
+                  { label: 'likes', value: formatYoutubeCount(item.likeCount) },
+                  {
+                    label: 'comments',
+                    value: formatYoutubeCount(item.commentCount),
+                  },
+                ]}
+              />
+            </Section>
+          )}
+          {item.description && (
+            <Section title="About">
+              <p className="dtl-text">{item.description}</p>
+            </Section>
+          )}
+          {item.tags.length > 0 && (
+            <Section title="Tags">
+              <span
+                className="ds-pills"
+                data-wrap=""
+                role="group"
+                aria-label="Tags"
+              >
+                {item.tags.map((tag) => (
+                  <FilterPill
+                    key={tag}
+                    label={tag}
+                    title={`Filter Tags: ${tag}`}
+                    onClick={() => onFilter({ field: 'genre', value: tag })}
+                  />
+                ))}
+              </span>
+            </Section>
+          )}
+          <Section title="Details">
+            <Facts
+              items={[
+                {
+                  label: 'Type',
+                  value: (
+                    <FilterPill
+                      label={typeLabel}
+                      title={`Filter Type: ${typeLabel}`}
+                      onClick={() =>
+                        onFilter(subscriptionTypeFilter(item.type))
+                      }
+                    />
+                  ),
+                },
+                { label: 'Published', value: published },
+                {
+                  label: 'Duration',
+                  value: duration !== '-' ? duration : EMPTY_VALUE,
+                },
+              ]}
+            />
+          </Section>
+        </TabsContent>
+        <TabsContent value="sources">
+          <ProviderSources
+            rows={[
+              {
+                id: item.type,
+                label: provider,
+                identifier: item.id,
+                links: [itemLink],
+              },
+            ]}
+          />
+        </TabsContent>
+      </DetailTabs>
     </article>
   )
 }

@@ -7,6 +7,8 @@ import {
   SetTagVisibilityResultSchema,
   type Tag,
 } from '@repo/schemas/tags'
+import { Notice } from '@repo/ui/components/ds/feedback'
+import { Select } from '@repo/ui/components/ds/toolbar'
 import { Button } from '@repo/ui/components/ui/button'
 import { useConfig } from './providers'
 import { fetchApiData } from '@/utils/api'
@@ -91,8 +93,8 @@ export default function TagActions({
   })
   const pending = merge.isPending || visibility.isPending
   return (
-    <div className="space-y-2" aria-label="Tag management">
-      <div className="flex flex-wrap items-center gap-2">
+    <div className="dtl-stack" aria-label="Tag management">
+      <div className="ds-actions dtl-wrap">
         <Button
           disabled={pending || !mediaType || !tags.some((tag) => !tag.hidden)}
           onClick={() => visibility.mutate(true)}
@@ -107,9 +109,8 @@ export default function TagActions({
         </Button>
         {tags.length > 1 && (
           <>
-            <select
+            <Select
               aria-label="Tag name to keep"
-              className="h-7 max-w-64 border px-2 text-xs"
               value={target?.id ?? ''}
               disabled={pending}
               onChange={(event) => {
@@ -124,7 +125,7 @@ export default function TagActions({
                   {tag.name}
                 </option>
               ))}
-            </select>
+            </Select>
             <Button
               variant="primary"
               disabled={!target || !mediaType || tags.length > 101 || pending}
@@ -136,17 +137,13 @@ export default function TagActions({
         )}
       </div>
       {tags.length > 101 && (
-        <p className="quiet text-xs">
+        <p className="ds-help">
           Merge supports up to 101 tags at a time. Hide and unhide apply to the
           entire selection.
         </p>
       )}
       {confirming && target && (
-        <div
-          className="space-y-2 text-sm"
-          role="group"
-          aria-label="Confirm tag merge"
-        >
+        <div className="dtl-stack" role="group" aria-label="Confirm tag merge">
           <p>
             Merge {tags.length - 1} tags into <strong>{target.name}</strong> in
             the {mediaType === 'album' ? 'album' : 'film'} library only?
@@ -155,7 +152,7 @@ export default function TagActions({
             {tags.some((tag) => tag.hidden) &&
               'The merged tag will stay hidden until explicitly unhidden.'}
           </p>
-          <div className="flex gap-2">
+          <div className="ds-actions">
             <Button
               variant="primary"
               disabled={pending}
@@ -170,12 +167,14 @@ export default function TagActions({
         </div>
       )}
       {pending && (
-        <p role="status" className="quiet text-xs">
+        <p role="status" className="ds-help">
           Updating tags...
         </p>
       )}
-      {merge.isError && <p role="alert">{merge.error.message}</p>}
-      {visibility.isError && <p role="alert">{visibility.error.message}</p>}
+      {merge.isError && <Notice tone="danger">{merge.error.message}</Notice>}
+      {visibility.isError && (
+        <Notice tone="danger">{visibility.error.message}</Notice>
+      )}
     </div>
   )
 }

@@ -9,19 +9,21 @@ import {
   type LastfmSyncSchedule,
   type LastfmSyncStatus,
 } from '@repo/schemas/lastfm'
+import { syncStatusLabel } from './run-status'
 
 /** How often the page re-reads status while a sync job is queued or running. */
 export const LASTFM_SYNC_POLL_MS = 3000
 
 export const LASTFM_LINKS_PAGE_SIZE = 100
 
+/** Sync states in the shared status vocabulary. */
 export const lastfmSyncStateLabels: Record<LastfmSyncStatus['state'], string> =
   {
-    never: 'Not synced',
-    running: 'Running',
-    stopped: 'Stopped',
-    failed: 'Failed',
-    complete: 'Complete',
+    never: syncStatusLabel('never'),
+    running: syncStatusLabel('running'),
+    stopped: syncStatusLabel('stopped'),
+    failed: syncStatusLabel('failed'),
+    complete: syncStatusLabel('complete'),
   }
 
 export const lastfmScheduleLabels: Record<LastfmSyncSchedule, string> = {
@@ -117,7 +119,7 @@ export function lastfmSpotifySearchLabel(
   }
   const labels = {
     queued: 'Queued',
-    running: 'Searching...',
+    running: 'Running',
     failed: 'Failed',
     cancelled: 'Cancelled',
   }

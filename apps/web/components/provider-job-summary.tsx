@@ -1,8 +1,11 @@
 'use client'
 
 import type { ProviderJobSummary as ProviderJobSummaryData } from '@repo/schemas/provider'
+import { Section, Stats } from '@repo/ui/components/ds/facts'
 import { Button } from '@repo/ui/components/ui/button'
+import { formatCount } from '@repo/ui/lib/format'
 
+/** The provider's jobs across every library, as headline figures. */
 export default function ProviderJobSummary({
   summary,
   onOpenJobs,
@@ -10,31 +13,34 @@ export default function ProviderJobSummary({
   summary: ProviderJobSummaryData
   onOpenJobs: () => void
 }) {
-  const counts = [
-    { label: 'Queued', count: summary.queued },
-    { label: 'Running', count: summary.running },
-    { label: 'Succeeded', count: summary.succeeded },
-    { label: 'Failed', count: summary.failed },
-    { label: 'Cancelled', count: summary.cancelled },
-  ]
   return (
-    <section aria-label="Provider jobs" className="mb-4">
-      <div className="provider-activity-heading">
-        <h2>Jobs · {summary.total.toLocaleString()}</h2>
-        {summary.total > 0 && (
-          <Button variant="ghost" onClick={onOpenJobs}>
+    <Section
+      title="Jobs"
+      note={
+        summary.cancelled > 0
+          ? `${formatCount(summary.total)} · ${formatCount(summary.cancelled)} cancelled`
+          : formatCount(summary.total)
+      }
+      aside={
+        summary.total > 0 && (
+          <Button variant="link" onClick={onOpenJobs}>
             View jobs
           </Button>
-        )}
-      </div>
-      <dl className="flex flex-wrap gap-x-6 gap-y-2">
-        {counts.map(({ label, count }) => (
-          <div key={label}>
-            <dt className="muted">{label}</dt>
-            <dd className="font-mono tabular-nums">{count.toLocaleString()}</dd>
-          </div>
-        ))}
-      </dl>
-    </section>
+        )
+      }
+    >
+      <Stats
+        items={[
+          { label: 'Queued', value: formatCount(summary.queued) },
+          { label: 'Running', value: formatCount(summary.running) },
+          {
+            label: 'Failed',
+            value: formatCount(summary.failed),
+            tone: summary.failed > 0 ? 'danger' : undefined,
+          },
+          { label: 'Succeeded', value: formatCount(summary.succeeded) },
+        ]}
+      />
+    </Section>
   )
 }

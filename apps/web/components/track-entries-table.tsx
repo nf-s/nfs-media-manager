@@ -8,6 +8,7 @@ import {
   type PlaylistEntrySort,
 } from '@repo/schemas/tracks'
 import { Input } from '@repo/ui/components/ui/input'
+import { Notice } from '@repo/ui/components/ds/feedback'
 import {
   TableBody,
   TableCell,
@@ -15,8 +16,8 @@ import {
   TableRow,
   TableState,
 } from '@repo/ui/components/ui/table'
+import { EMPTY_VALUE, formatCount, formatDate } from '@repo/ui/lib/format'
 import { formatTrackDuration } from '@/utils/track-browse'
-import { trackServiceLinks } from '@/utils/track-links'
 import type { BrowseView } from '@/utils/media-grid'
 import type { PlaybackSource } from '@/utils/playback'
 import BrowseToolbar, {
@@ -25,11 +26,7 @@ import BrowseToolbar, {
 } from './browse-toolbar'
 import { TrackArtistLinks } from './creator-links'
 import { DetailLink } from './detail-link'
-import {
-  AlbumReferencePlayButton,
-  LibraryTrackInlinePlayButtons,
-} from './play-controls'
-import ServiceIconLinks from './service-icon-links'
+import { TrackRowPlay, useTrackPlayback } from './detail-play'
 import {
   SecondaryCell,
   SecondaryColumnFilter,
@@ -123,27 +120,7 @@ export function trackEntryMatches(entry: PlaylistEntry, text: string) {
 }
 
 function DateCell({ value }: { value?: string | null }) {
-  return value ? (
-    <time dateTime={value}>{new Date(value).toLocaleDateString()}</time>
-  ) : (
-    '-'
-  )
-}
-
-function TrackEntryServices({ entry }: { entry: PlaylistEntry }) {
-  const links =
-    entry.kind === 'track'
-      ? trackServiceLinks(entry.track)
-      : entry.album.spotifyUrl
-        ? [
-            {
-              provider: 'spotify',
-              label: 'Spotify',
-              url: entry.album.spotifyUrl,
-            },
-          ]
-        : []
-  return <ServiceIconLinks links={links} />
+  return value ? <time dateTime={value}>{formatDate(value)}</time> : EMPTY_VALUE
 }
 
 function TrackEntryCard({
@@ -178,30 +155,13 @@ function TrackEntryCard({
           {entry.kind === 'track' && entry.track.durationSec !== null && (
             <span> · {formatTrackDuration(entry.track.durationSec)}</span>
           )}
-          {item.releaseDate && (
-            <span>
-              {' · '}
-              <DateCell value={item.releaseDate} />
-            </span>
-          )}
+          {item.releaseDate && <span> · {item.releaseDate.slice(0, 4)}</span>}
         </>
       }
       actions={
-        <>
-          {entry.kind === 'track' ? (
-            <LibraryTrackInlinePlayButtons
-              track={entry.track}
-              source={source}
-            />
-          ) : (
-            <AlbumReferencePlayButton
-              id={item.id}
-              title={item.title}
-              source={source}
-            />
-          )}
-          <TrackEntryServices entry={entry} />
-        </>
+        entry.kind === 'track' && (
+          <TrackRowPlay track={entry.track} source={source} />
+        )
       }
     />
   )
@@ -211,54 +171,31 @@ function TrackEntryCell({
   column,
   entry,
   source,
-  playInTitle,
 }: {
   column: TrackEntryColumn
   entry: PlaylistEntry
   source?: () => PlaybackSource
-  playInTitle: boolean
 }) {
   const track = entry.kind === 'track' ? entry.track : null
   const album = entry.kind === 'album' ? entry.album : null
   const albumName = track?.albumName ?? track?.album?.title
   switch (column) {
     case 'position':
-      return track ? (
-        <LibraryTrackInlinePlayButtons
-          track={track}
-          position={entry.position}
-          source={source}
-        />
-      ) : (
-        entry.position
-      )
+      return entry.position
     case 'title':
       return track ? (
-        <div className="secondary-cell-actions">
-          {playInTitle && (
-            <LibraryTrackInlinePlayButtons track={track} source={source} />
-          )}
-          <SecondaryCell text={track.title}>
-            <DetailLink kind="track" id={track.id} className="table-title">
-              {track.title}
-            </DetailLink>
-          </SecondaryCell>
-          <TrackEntryServices entry={entry} />
-        </div>
+        <span className="ds-cell-id">
+          <DetailLink kind="track" id={track.id} className="ds-cell-title">
+            {track.title}
+          </DetailLink>
+          <TrackRowPlay track={track} source={source} />
+        </span>
       ) : album ? (
-        <div className="secondary-cell-actions">
-          <AlbumReferencePlayButton
-            id={album.id}
-            title={album.title}
-            source={source}
-          />
-          <SecondaryCell text={album.title}>
-            <DetailLink kind="album" id={album.id} className="table-title">
-              {album.title}
-            </DetailLink>
-          </SecondaryCell>
-          <TrackEntryServices entry={entry} />
-        </div>
+        <span className="ds-cell-id">
+          <DetailLink kind="album" id={album.id} className="ds-cell-title">
+            {album.title}
+          </DetailLink>
+        </span>
       ) : null
     case 'artists': {
       const text = (track?.artists ?? album?.artists ?? []).join(', ')
@@ -267,27 +204,21 @@ function TrackEntryCell({
           {track?.artists.length ? (
             <TrackArtistLinks track={track} />
           ) : (
-            text || '-'
+            text || EMPTY_VALUE
           )}
         </SecondaryCell>
       )
     }
     case 'album':
-      return track?.album ? (
-        <div className="secondary-cell-actions">
-          <AlbumReferencePlayButton
-            id={track.album.id}
-            title={track.album.title}
-          />
-          <SecondaryCell text={albumName ?? undefined}>
+      return (
+        <SecondaryCell text={albumName ?? undefined}>
+          {track?.album ? (
             <DetailLink kind="album" id={track.album.id}>
               {albumName}
             </DetailLink>
-          </SecondaryCell>
-        </div>
-      ) : (
-        <SecondaryCell text={albumName ?? undefined}>
-          {albumName ?? '-'}
+          ) : (
+            (albumName ?? EMPTY_VALUE)
+          )}
         </SecondaryCell>
       )
     case 'duration':
@@ -297,7 +228,7 @@ function TrackEntryCell({
     case 'releaseDate':
       return <DateCell value={track?.releaseDate ?? album?.releaseDate} />
     case 'scrobbles':
-      return track?.scrobbles.toLocaleString() ?? '-'
+      return track ? formatCount(track.scrobbles) : EMPTY_VALUE
     case 'lastListened':
       return <DateCell value={track?.lastListenedAt} />
     case 'kind':
@@ -306,17 +237,56 @@ function TrackEntryCell({
       const text = track?.sources
         .map((source) => trackSourceLabels[source])
         .join(', ')
-      return <SecondaryCell text={text}>{text || '-'}</SecondaryCell>
+      return <SecondaryCell text={text}>{text || EMPTY_VALUE}</SecondaryCell>
     }
     case 'spotifyMatch':
-      return track ? trackSpotifyMatchLabels[track.spotifyMatch] : '-'
+      return track ? trackSpotifyMatchLabels[track.spotifyMatch] : EMPTY_VALUE
     case 'externalId':
       return (
         <SecondaryCell text={track?.spotifyTrackId ?? undefined}>
-          {track?.spotifyTrackId ?? '-'}
+          {track?.spotifyTrackId ?? EMPTY_VALUE}
         </SecondaryCell>
       )
   }
+}
+
+/** A table row that shows when the player is on its track. */
+function EntryRow({
+  entry,
+  index,
+  children,
+}: {
+  entry: PlaylistEntry
+  index: number
+  children: ReactNode
+}) {
+  return entry.kind === 'track' ? (
+    <TrackEntryRow entry={entry} index={index}>
+      {children}
+    </TrackEntryRow>
+  ) : (
+    <TableRow aria-rowindex={index + 2}>{children}</TableRow>
+  )
+}
+
+function TrackEntryRow({
+  entry,
+  index,
+  children,
+}: {
+  entry: Extract<PlaylistEntry, { kind: 'track' }>
+  index: number
+  children: ReactNode
+}) {
+  const playback = useTrackPlayback(entry.track)
+  return (
+    <TableRow
+      aria-rowindex={index + 2}
+      data-state={playback.playing ? 'playing' : undefined}
+    >
+      {children}
+    </TableRow>
+  )
 }
 
 export function TrackEntriesTable({
@@ -367,9 +337,7 @@ export function TrackEntriesTable({
   )
   const visible = available.filter(({ key }) => columns.visible(key))
   const numeric = ['position', 'duration', 'scrobbles']
-  const scrollClassName = playlist
-    ? 'min-h-0 flex-1'
-    : 'max-h-[min(420px,50dvh)]'
+  const scrollClassName = 'dtl-entries'
   const typeFilter = kindFilter && {
     label: 'Type',
     options: [
@@ -412,11 +380,7 @@ export function TrackEntriesTable({
         }
         count={count}
       />
-      {error && (
-        <div role="alert" className="quiet">
-          {error}
-        </div>
-      )}
+      {error && <Notice tone="danger">{error}</Notice>}
       {view !== 'table' ? (
         <NestedMediaCards
           window={window}
@@ -465,7 +429,7 @@ export function TrackEntriesTable({
                         key === sortBy && direction === 'asc' ? 'desc' : 'asc',
                       )
                     }
-                    className={numeric.includes(key) ? 'numeric' : undefined}
+                    align={numeric.includes(key) ? 'end' : undefined}
                     filter={
                       key === 'kind' &&
                       typeFilter && <SecondaryColumnFilter {...typeFilter} />
@@ -483,27 +447,23 @@ export function TrackEntriesTable({
                 colSpan={columns.count}
                 renderRow={(row, index) =>
                   row ? (
-                    <TableRow
-                      key={row.key}
-                      className="group"
-                      aria-rowindex={index + 2}
-                    >
+                    <EntryRow key={row.key} entry={row.entry} index={index}>
                       {visible.map(({ key }) => (
                         <TableCell
                           key={key}
+                          align={numeric.includes(key) ? 'end' : undefined}
                           className={
-                            numeric.includes(key) ? 'numeric' : undefined
+                            key === 'position' ? 'ds-muted' : undefined
                           }
                         >
                           <TrackEntryCell
                             column={key}
                             entry={row.entry}
                             source={source ? () => source(row) : undefined}
-                            playInTitle={!columns.visible('position')}
                           />
                         </TableCell>
                       ))}
-                    </TableRow>
+                    </EntryRow>
                   ) : (
                     <tr aria-hidden="true">
                       <td

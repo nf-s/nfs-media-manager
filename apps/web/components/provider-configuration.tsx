@@ -7,8 +7,11 @@ import {
   ProviderRequestBudgetSchema,
   type ProviderSummary,
 } from '@repo/schemas/provider'
+import { KeyValues, Section } from '@repo/ui/components/ds/facts'
+import { Select } from '@repo/ui/components/ds/toolbar'
 import { Button } from '@repo/ui/components/ui/button'
 import { Input } from '@repo/ui/components/ui/input'
+import { formatCount, formatUntil } from '@repo/ui/lib/format'
 import { useConfig } from './providers'
 import { fetchApiData } from '@/utils/api'
 
@@ -43,86 +46,88 @@ function RequestBudgetForm({ provider }: { provider: ProviderSummary }) {
     },
   })
   return (
-    <form
-      className="provider-budget"
-      onSubmit={(event) => {
-        event.preventDefault()
-        if (parsed.success) update.mutate()
-      }}
-    >
-      <h2>Request budget</h2>
-      {provider.budgetStatus && (
-        <p>
-          <strong>
-            {provider.budgetStatus.used.toLocaleString()} /{' '}
-            {provider.budgetStatus.budget.limit.toLocaleString()}
-          </strong>{' '}
-          requests{' '}
-          {provider.budgetStatus.budget.period === 'day'
-            ? 'today (UTC)'
-            : 'in the last hour'}{' '}
-          · resets {new Date(provider.budgetStatus.resetsAt).toLocaleString()}
-        </p>
-      )}
-      <div className="provider-budget-fields">
-        <label>
-          Period
-          <select
-            aria-label="Budget period"
-            value={period}
-            disabled={update.isPending}
-            onChange={(event) => {
-              const value = event.target.value
-              if (value === 'hour' || value === 'day') {
-                setPeriod(value)
+    <Section title="Request budget">
+      <form
+        className="providers-form"
+        onSubmit={(event) => {
+          event.preventDefault()
+          if (parsed.success) update.mutate()
+        }}
+      >
+        {provider.budgetStatus && (
+          <p>
+            <strong>
+              {formatCount(provider.budgetStatus.used)} /{' '}
+              {formatCount(provider.budgetStatus.budget.limit)}
+            </strong>{' '}
+            requests{' '}
+            {provider.budgetStatus.budget.period === 'day'
+              ? 'today (UTC)'
+              : 'in the last hour'}{' '}
+            · resets {formatUntil(provider.budgetStatus.resetsAt)}
+          </p>
+        )}
+        <div className="providers-fields">
+          <label className="ds-field">
+            <span className="ds-label">Period</span>
+            <Select
+              aria-label="Budget period"
+              controlSize="md"
+              value={period}
+              disabled={update.isPending}
+              onChange={(event) => {
+                const value = event.target.value
+                if (value === 'hour' || value === 'day') {
+                  setPeriod(value)
+                  update.reset()
+                }
+              }}
+            >
+              <option value="day">Daily (UTC)</option>
+              <option value="hour">Rolling hour</option>
+            </Select>
+          </label>
+          <label className="ds-field">
+            <span className="ds-label">Request cap</span>
+            <Input
+              aria-label="Request cap"
+              controlSize="md"
+              type="number"
+              min={1}
+              max={100000}
+              step={1}
+              value={limit}
+              disabled={update.isPending}
+              onChange={(event) => {
+                setLimit(event.target.value)
                 update.reset()
-              }
-            }}
+              }}
+            />
+          </label>
+          <Button
+            size="md"
+            type="submit"
+            disabled={update.isPending || !parsed.success}
           >
-            <option value="day">Daily (UTC)</option>
-            <option value="hour">Rolling hour</option>
-          </select>
-        </label>
-        <label>
-          Request cap
-          <Input
-            aria-label="Request cap"
-            className="w-28"
-            type="number"
-            min={1}
-            max={100000}
-            step={1}
-            value={limit}
-            disabled={update.isPending}
-            onChange={(event) => {
-              setLimit(event.target.value)
-              update.reset()
-            }}
-          />
-        </label>
-        <Button
-          size="md"
-          variant="primary"
-          type="submit"
-          disabled={update.isPending || !parsed.success}
-        >
-          {update.isPending ? 'Saving...' : 'Update budget'}
-        </Button>
-      </div>
-      <p className="muted">
-        {period === 'day'
-          ? `Resets at midnight UTC.${provider.rateLimit.maxRequestsPerHour === undefined ? ' No additional hourly cap.' : ''}`
-          : 'Counts requests in the preceding 60 minutes.'}{' '}
-        Spacing, service quotas and cooldowns still apply. Changing the budget
-        does not reset usage.
-      </p>
-      {update.isError && <p role="alert">{update.error.message}</p>}
-      {update.isSuccess && <p role="status">Request budget updated.</p>}
-    </form>
+            {update.isPending ? 'Saving...' : 'Update budget'}
+          </Button>
+        </div>
+        <p className="ds-help">
+          {period === 'day'
+            ? `Resets at midnight UTC.${provider.rateLimit.maxRequestsPerHour === undefined ? ' No additional hourly cap.' : ''}`
+            : 'Counts requests in the preceding 60 minutes.'}{' '}
+          Spacing, service quotas and cooldowns still apply. Changing the budget
+          does not reset usage.
+        </p>
+        {update.isError && <p role="alert">{update.error.message}</p>}
+        {update.isSuccess && <p role="status">Request budget updated.</p>}
+      </form>
+    </Section>
   )
 }
 
-const duration = (ms: number | undefined) =>
+/** A request limit's duration: `1.5 s`, `60 min`, Disabled or Not configured. */
+export const formatLimitDuration = (ms: number | undefined) =>
   ms === undefined
     ? 'Not configured'
     : ms === 0
@@ -138,81 +143,81 @@ export default function ProviderConfiguration({
 }: {
   provider: ProviderSummary
 }) {
-  const requestLimits = [
-    ['Minimum spacing', duration(provider.rateLimit.minTimeMs)],
-    [
-      'Concurrent requests',
-      String(
+  const requestLimits: { label: string; value: string }[] = [
+    {
+      label: 'Minimum spacing',
+      value: formatLimitDuration(provider.rateLimit.minTimeMs),
+    },
+    {
+      label: 'Concurrent requests',
+      value: String(
         provider.rateLimit.concurrentRequests
           ? provider.rateLimit.maxConcurrent
           : 1,
       ),
-    ],
+    },
     ...(provider.rateLimit.fixedWindow
       ? [
-          [
-            'Fixed window',
-            `${provider.rateLimit.fixedWindow.reads.toLocaleString()} reads / ${provider.rateLimit.fixedWindow.writes.toLocaleString()} writes per ${duration(provider.rateLimit.fixedWindow.durationMs)}`,
-          ],
+          {
+            label: 'Fixed window',
+            value: `${formatCount(provider.rateLimit.fixedWindow.reads)} reads / ${formatCount(provider.rateLimit.fixedWindow.writes)} writes per ${formatLimitDuration(provider.rateLimit.fixedWindow.durationMs)}`,
+          },
         ]
       : []),
     ...(provider.rateLimit.maxRequestsPerHour
       ? [
-          [
-            'Hourly cap',
-            `${provider.safety?.requestsLastHour ?? 0} / ${provider.rateLimit.maxRequestsPerHour.toLocaleString()} requests`,
-          ],
+          {
+            label: 'Hourly cap',
+            value: `${formatCount(provider.safety?.requestsLastHour ?? 0)} / ${formatCount(provider.rateLimit.maxRequestsPerHour)} requests`,
+          },
         ]
       : []),
     ...(!provider.rateLimit.configurableRequestBudget && provider.budgetStatus
       ? [
-          [
-            'Request budget',
-            `${provider.budgetStatus.used.toLocaleString()} / ${provider.budgetStatus.budget.limit.toLocaleString()} ${provider.budgetStatus.budget.period === 'day' ? 'today (UTC)' : 'in the last hour'}; resets ${new Date(provider.budgetStatus.resetsAt).toLocaleString()}`,
-          ],
+          {
+            label: 'Request budget',
+            value: `${formatCount(provider.budgetStatus.used)} / ${formatCount(provider.budgetStatus.budget.limit)} ${provider.budgetStatus.budget.period === 'day' ? 'today (UTC)' : 'in the last hour'}; resets ${formatUntil(provider.budgetStatus.resetsAt)}`,
+          },
         ]
       : []),
-    [
-      'Rate-limit cooldown',
-      provider.rateLimit.retryAfterIsAuthoritative
-        ? `Retry-After (${duration(provider.rateLimit.rateLimitCooldownMs)} fallback)`
-        : duration(provider.rateLimit.rateLimitCooldownMs),
-    ],
-    ['HTTP error backoff', duration(provider.rateLimit.errorBackoffMs)],
-    ['Repeated-error cooldown', duration(provider.rateLimit.failureCooldownMs)],
+    {
+      label: 'Rate-limit cooldown',
+      value: provider.rateLimit.retryAfterIsAuthoritative
+        ? `Retry-After (${formatLimitDuration(provider.rateLimit.rateLimitCooldownMs)} fallback)`
+        : formatLimitDuration(provider.rateLimit.rateLimitCooldownMs),
+    },
+    {
+      label: 'HTTP error backoff',
+      value: formatLimitDuration(provider.rateLimit.errorBackoffMs),
+    },
+    {
+      label: 'Repeated-error cooldown',
+      value: formatLimitDuration(provider.rateLimit.failureCooldownMs),
+    },
   ]
   const capabilities = [
     provider.supportsScrape ? 'Scraping' : null,
     provider.supportsLegacyImport ? 'Legacy imports' : null,
   ].filter((value) => value !== null)
   return (
-    <section className="provider-settings">
+    <>
       {provider.rateLimit.configurableRequestBudget && (
         <RequestBudgetForm
           key={`${provider.id}:${provider.rateLimit.requestBudget?.period}:${provider.rateLimit.requestBudget?.limit}`}
           provider={provider}
         />
       )}
-      <section className="provider-settings-group">
-        <h2>Request limits</h2>
-        <dl className="provider-config-grid">
-          {requestLimits.map(([label, value]) => (
-            <div key={label}>
-              <dt>{label}</dt>
-              <dd>{value}</dd>
-            </div>
-          ))}
-        </dl>
-        <p className="muted">
+      <Section title="Request limits">
+        <KeyValues items={requestLimits} />
+        <p className="ds-help">
           Five consecutive unexpected failures stop queued work. Serial metadata
           GET requests can make up to three attempts total on HTTP 502, 503 or
           504. Requests time out after 15 seconds by default and responses are
           limited to 10 MiB.
         </p>
-      </section>
+      </Section>
       {provider.mediaTypes.length > 0 && (
-        <section className="provider-settings-group">
-          <h2>Lookup rules</h2>
+        <Section title="Lookup rules">
           <p>
             {provider.requireExplicitSelection
               ? 'Exact-item lookups only. Select an item in the library to request an update.'
@@ -221,7 +226,7 @@ export default function ProviderConfiguration({
               ? ` Up to ${provider.maxItemsPerJob} items per job.`
               : ''}
           </p>
-          <p className="muted">
+          <p className="ds-help">
             Identifiers:{' '}
             {provider.identifierTypes.join(', ') || 'None declared'}.
             {provider.supportsNameLookup
@@ -229,50 +234,61 @@ export default function ProviderConfiguration({
               : ''}
             {!provider.supportsScrape ? ' No executable scraper loaded.' : ''}
           </p>
-        </section>
+        </Section>
       )}
-      <details className="import-notes">
-        <summary>Integration details</summary>
-        <p>
-          Supports: {capabilities.join(', ') || 'No executable capabilities'} ·{' '}
-          {provider.mediaTypes.join(', ') || 'Account level'}
-        </p>
-        <p>
-          Provider ID: <code>{provider.id}</code>
-        </p>
-        {provider.pluginPath && (
-          <p>
-            Local package: <code>{provider.pluginPath}</code>
-          </p>
-        )}
-        <h4>File imports</h4>
-        {provider.fileImports.length ? (
-          <ul>
-            {provider.fileImports.map((item) => (
-              <li key={item.id}>
-                {item.label} · {item.requiredColumns.join(', ')}
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="muted">None declared.</p>
-        )}
-        <h4>Browse fields</h4>
-        {provider.browseFields.length ? (
-          <ul>
-            {provider.browseFields.map((field) => (
-              <li key={field.key}>
-                {field.label} · {field.type}
-                {field.format ? ` / ${field.format}` : ''} ·{' '}
-                {field.filterable ? 'Filterable' : 'Display only'}
-                <code>{field.key}</code>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="muted">No additional fields declared.</p>
-        )}
-      </details>
-    </section>
+      <Section title="Integration details">
+        <details className="providers-details">
+          <summary>Show integration details</summary>
+          <KeyValues
+            items={[
+              {
+                label: 'Supports',
+                value: `${capabilities.join(', ') || 'No executable capabilities'} · ${provider.mediaTypes.join(', ') || 'Account level'}`,
+              },
+              { label: 'Provider ID', value: <code>{provider.id}</code> },
+              ...(provider.pluginPath
+                ? [
+                    {
+                      label: 'Local package',
+                      value: <code>{provider.pluginPath}</code>,
+                    },
+                  ]
+                : []),
+              {
+                label: 'File imports',
+                value: provider.fileImports.length ? (
+                  <ul className="providers-list">
+                    {provider.fileImports.map((item) => (
+                      <li key={item.id}>
+                        {item.label} · {item.requiredColumns.join(', ')}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  'None declared.'
+                ),
+              },
+              {
+                label: 'Browse fields',
+                value: provider.browseFields.length ? (
+                  <ul className="providers-list">
+                    {provider.browseFields.map((field) => (
+                      <li key={field.key}>
+                        {field.label} · {field.type}
+                        {field.format ? ` / ${field.format}` : ''} ·{' '}
+                        {field.filterable ? 'Filterable' : 'Display only'}{' '}
+                        <code>{field.key}</code>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  'No additional fields declared.'
+                ),
+              },
+            ]}
+          />
+        </details>
+      </Section>
+    </>
   )
 }

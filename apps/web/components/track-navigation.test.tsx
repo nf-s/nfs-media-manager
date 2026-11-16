@@ -28,6 +28,12 @@ const router = {
 }
 
 function render(path: string, search: string, children: ReactNode) {
+  return renderMarkup(path, search, children)
+    .replace(/<svg.*?<\/svg>/g, '')
+    .replace(/<span>([^<]*)<\/span>/g, '$1')
+}
+
+function renderMarkup(path: string, search: string, children: ReactNode) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
@@ -65,11 +71,14 @@ test('Tracks navigation offers only supported destinations without changing libr
   assert.match(html, /aria-current="page" href="\/tracks\?q=fixture">Browse/)
   assert.match(html, /href="\/playlists\?mediaType=track">Playlists/)
   assert.match(html, /href="\/imports\?mediaType=track">Imports/)
-  assert.doesNotMatch(html, />Tags<|>Jobs<|>Providers<|mediaType=album/)
+  assert.doesNotMatch(html, />Tags<|mediaType=album/)
   assert.doesNotMatch(html, /href="\/artists/)
+  // Jobs and Providers sit once under System for every library.
+  assert.match(html, /href="\/jobs">Jobs</)
+  assert.match(html, /href="\/providers">Providers</)
 })
 
-test('Artists is a library choice with Browse and scoped Jobs, including legacy artist links', () => {
+test('Artists is a library choice with Browse, including legacy artist links', () => {
   for (const search of ['', 'mediaType=album', 'mediaType=track']) {
     const html = render(
       '/artists',
@@ -80,12 +89,12 @@ test('Artists is a library choice with Browse and scoped Jobs, including legacy 
       </>,
     )
     assert.match(html, /<option value="artist" selected="">Artists<\/option>/)
-    assert.match(html, /href="\/jobs\?mediaType=artist">Jobs/)
+    assert.match(html, /href="\/jobs">Jobs/)
     assert.match(
       html,
       /aria-current="page" href="\/artists(?:\?mediaType=(?:album|track))?">Browse/,
     )
-    assert.doesNotMatch(html, />Tags<|>Imports<|>Playlists<|>Providers</)
+    assert.doesNotMatch(html, />Tags<|>Imports<|>Playlists</)
   }
   const albums = render('/albums', '', <AppNavigation />)
   assert.doesNotMatch(albums, /href="\/artists|>Artists</)
@@ -93,7 +102,7 @@ test('Artists is a library choice with Browse and scoped Jobs, including legacy 
   assert.match(films, /href="\/people\?mediaType=film">People/)
 })
 
-test('Artist Jobs exposes its metadata subpage and preserves the selected library', () => {
+test('Jobs opened with the Artists filter links its Metadata tab to artists', () => {
   const html = render(
     '/jobs/metadata',
     'mediaType=artist',
@@ -105,13 +114,11 @@ test('Artist Jobs exposes its metadata subpage and preserves the selected librar
       </JobsWorkspace>
     </>,
   )
-  assert.match(html, /<option value="artist" selected="">Artists<\/option>/)
-  assert.match(html, /aria-current="page" href="\/jobs\?mediaType=artist">Jobs/)
   assert.match(
     html,
-    /href="\/jobs\?mediaType=artist"><strong>Jobs &amp; history/,
+    /aria-current="page" href="\/jobs\/metadata\?mediaType=artist">Metadata/,
   )
-  assert.match(html, /href="\/jobs\/metadata\?mediaType=artist"/)
+  assert.match(html, /class="ds-tab" href="\/jobs\?mediaType=artist">Activity/)
   assert.match(html, /Artist metadata content/)
 })
 
@@ -131,7 +138,7 @@ test('shared track import pages retain Tracks in the selector and navigation', (
       html,
       /aria-current="page" href="\/imports\?mediaType=track">Imports/,
     )
-    assert.doesNotMatch(html, />Tags<|>Jobs<|>Providers<|mediaType=album/)
+    assert.doesNotMatch(html, />Tags<|mediaType=album/)
   }
 })
 

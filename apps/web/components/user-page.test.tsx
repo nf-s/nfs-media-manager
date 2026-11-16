@@ -73,7 +73,12 @@ test('User renders key actions, table metadata and documentation without making 
     assert.doesNotMatch(html, /title="Sort by Actions"/)
     assert.match(html, />mm_active…<\/code>/)
     for (const status of ['Active', 'Expired', 'Revoked']) {
-      assert.ok(html.includes(`title="${status}">${status}</div>`))
+      assert.match(
+        html,
+        new RegExp(
+          `class="ds-status" data-status="[a-z]+" title="${status}">${status}</span>`,
+        ),
+      )
     }
     assert.match(html, /<button[^>]*aria-label="Revoke Fixture active"[^>]*>/)
     assert.match(

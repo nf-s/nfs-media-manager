@@ -7,47 +7,46 @@ import React, {
   useState,
   type ReactNode,
 } from 'react'
+import { Youtube } from 'lucide-react'
+import { EMPTY_VALUE } from '@repo/ui/lib/format'
+import { Rating } from '@repo/ui/components/ds/pill'
 import {
-  metascoreTone,
   isCompactRating,
-  providerIconUrl,
   ratingDescription,
   ratingScore,
+  ratingSource,
   safeRatingHref,
   type ProviderRating,
 } from '../utils/provider-ratings'
 import { youtubeTrailerUrl } from '@repo/schemas/trailer'
 
-function ProviderMark({ rating }: { rating: ProviderRating }) {
-  const [failedIcon, setFailedIcon] = useState<string>()
-  const provider = rating.display.provider
-  const icon = providerIconUrl(provider, rating.display.iconUrl)
-  if (icon && failedIcon !== icon)
-    return (
-      <img
-        className={`rating-icon ${provider === 'imdb' ? 'rating-imdb' : ''}`}
-        src={icon}
-        alt=""
-        width={provider === 'imdb' ? 26 : 14}
-        height={14}
-        onError={() => setFailedIcon(icon)}
-      />
-    )
-  return (
-    <span className="rating-label">
-      {rating.display.shortLabel ?? (provider === 'rym' ? 'RYM' : rating.label)}
-    </span>
-  )
+const percentScales = new Set([
+  'rottentomatoes',
+  'rottentomatoes-audience',
+  'trakt',
+])
+
+/** The score as shown: the source's own scale, with % where it is a percentage. */
+function shownScore(rating: ProviderRating) {
+  if (rating.score === undefined) return null
+  return `${ratingScore(rating)}${percentScales.has(rating.display.provider) ? '%' : ''}`
 }
 
+/**
+ * One provider rating. Inline it is a neutral `Rating` (short source and
+ * score); `card` is the detail overview's rating card. Hover or focus shows
+ * the score, scale and vote count; a stored link opens the provider.
+ */
 export function ProviderRatingBadge({
   rating,
-  stacked = false,
   highlighted = false,
+  card = false,
 }: {
   rating: ProviderRating
+  /** Kept for existing callers; the poster strip is no longer drawn. */
   stacked?: boolean
   highlighted?: boolean
+  card?: boolean
 }) {
   const id = useId()
   const trigger = useRef<HTMLSpanElement>(null)
@@ -58,33 +57,19 @@ export function ProviderRatingBadge({
   const open = (hovered || focused) && !dismissed
   const description = `${ratingDescription(rating)}${rating.homepageLink ? ' No film URL stored; opens the provider homepage.' : ''}`
   const href = safeRatingHref(rating.href)
-  const metascore =
-    rating.display.provider === 'metacritic' && rating.score !== undefined
-  const toneClasses = {
-    positive: 'rating-positive',
-    mixed: 'rating-mixed',
-    negative: 'rating-negative',
-  }
-  const metascoreClassName = `rating-metascore ${toneClasses[metascoreTone(rating.score ?? 0)]}`
-  const badgeClassName = `rating-badge ${metascore && !href && !stacked ? metascoreClassName : ''}${href ? ' cursor-pointer' : ''}`
-  const badgeContent = (
-    <>
-      {(!metascore || stacked) && <ProviderMark rating={rating} />}
-      {(rating.score !== undefined || stacked) && (
-        <span
-          className={`rating-score ${metascore && (href || stacked) ? `inline-flex items-center justify-center ${metascoreClassName}` : ''}`}
-          aria-hidden="true"
-        >
-          {rating.score === undefined ? '—' : ratingScore(rating)}
-          {rating.score !== undefined &&
-          ['rottentomatoes', 'rottentomatoes-audience', 'trakt'].includes(
-            rating.display.provider,
-          )
-            ? '%'
-            : ''}
-        </span>
-      )}
-    </>
+  const source = ratingSource(rating.display, rating.label)
+  const score = shownScore(rating)
+  const content = card ? (
+    <span className="ds-ratingcard">
+      <b>{score ?? EMPTY_VALUE}</b>
+      <span>{rating.label}</span>
+    </span>
+  ) : score === null ? (
+    <span className="ds-rating">
+      <i>{source}</i>
+    </span>
+  ) : (
+    <Rating source={source} value={score} sorted={highlighted} />
   )
 
   useEffect(() => {
@@ -121,7 +106,7 @@ export function ProviderRatingBadge({
   return (
     <span
       ref={trigger}
-      className="rating-anchor"
+      className="browse-rating"
       data-sorted={highlighted || undefined}
       onFocus={() => {
         setFocused(true)
@@ -147,18 +132,17 @@ export function ProviderRatingBadge({
           href={href}
           target="_blank"
           rel="noopener noreferrer"
-          className={badgeClassName}
+          className="browse-rating-link"
           aria-label={`${description} Opens in a new tab.`}
           aria-describedby={open ? id : undefined}
           onClick={(event) => event.stopPropagation()}
-          onDoubleClick={(event) => event.stopPropagation()}
         >
-          {badgeContent}
+          {content}
         </a>
       ) : (
         <button
           type="button"
-          className={badgeClassName}
+          className="browse-open"
           aria-label={description}
           aria-describedby={open ? id : undefined}
           onClick={(event) => {
@@ -166,9 +150,8 @@ export function ProviderRatingBadge({
             event.currentTarget.focus()
             setDismissed(false)
           }}
-          onDoubleClick={(event) => event.stopPropagation()}
         >
-          {badgeContent}
+          {content}
         </button>
       )}
       <span
@@ -176,7 +159,7 @@ export function ProviderRatingBadge({
         id={id}
         role="tooltip"
         popover="manual"
-        className="rating-tooltip"
+        className="browse-tooltip"
       >
         {description}
       </span>
@@ -184,6 +167,10 @@ export function ProviderRatingBadge({
   )
 }
 
+/**
+ * Provider ratings. In cards and rows only the compact sources appear, as
+ * neutral inline ratings; the detail overview shows every rating as a card.
+ */
 export default function ProviderRatings({
   ratings,
   context,
@@ -198,19 +185,13 @@ export default function ProviderRatings({
   /** Additional provider links shown alongside ratings. */
   children?: ReactNode
 }) {
-  const visibleRatings =
-    context === 'detail' ? ratings : ratings.filter(isCompactRating)
-  const trailer =
-    context === 'detail' ? youtubeTrailerUrl(trailerUrl) : undefined
+  const detail = context === 'detail'
+  const visibleRatings = detail ? ratings : ratings.filter(isCompactRating)
+  const trailer = detail ? youtubeTrailerUrl(trailerUrl) : undefined
   if (!visibleRatings.length && !trailer && !children) return null
-  const contextClasses = {
-    poster: 'ratings-poster',
-    table: 'ratings-table',
-    detail: 'ratings-detail',
-  }
   return (
     <div
-      className={`provider-ratings ${contextClasses[context]}`}
+      className={detail ? 'ds-ratings' : 'browse-ratings'}
       role="group"
       aria-label={children ? 'Provider ratings and links' : 'Provider ratings'}
     >
@@ -218,7 +199,7 @@ export default function ProviderRatings({
         <ProviderRatingBadge
           key={rating.key}
           rating={rating}
-          stacked={context === 'poster'}
+          card={detail}
           highlighted={rating.key === highlightKey}
         />
       ))}
@@ -227,17 +208,17 @@ export default function ProviderRatings({
           href={trailer}
           target="_blank"
           rel="noopener noreferrer"
-          className="rating-badge cursor-pointer"
+          className="ds-btn"
           aria-label="Watch trailer on YouTube. Opens in a new tab."
           title="Watch trailer on YouTube"
           onClick={(event) => event.stopPropagation()}
-          onDoubleClick={(event) => event.stopPropagation()}
           onKeyDown={(event) => {
             if (event.key === 'Enter' || event.key === ' ')
               event.stopPropagation()
           }}
         >
-          <img src="/icons/ratings/youtube.svg" alt="" width={20} height={14} />
+          <Youtube className="ds-i" data-size="sm" aria-hidden />
+          Trailer
         </a>
       )}
       {children}

@@ -95,7 +95,7 @@ TableRow.displayName = 'TableRow'
 
 export const TableHead = React.forwardRef<
   HTMLTableCellElement,
-  React.ThHTMLAttributes<HTMLTableCellElement> & CellLayout
+  Omit<React.ThHTMLAttributes<HTMLTableCellElement>, 'align'> & CellLayout
 >(({ className, align, sticky, stickyEdge, style, ...props }, ref) => (
   <th
     ref={ref}
@@ -109,7 +109,7 @@ TableHead.displayName = 'TableHead'
 
 export const TableCell = React.forwardRef<
   HTMLTableCellElement,
-  React.TdHTMLAttributes<HTMLTableCellElement> & CellLayout
+  Omit<React.TdHTMLAttributes<HTMLTableCellElement>, 'align'> & CellLayout
 >(({ className, align, sticky, stickyEdge, style, ...props }, ref) => (
   <td
     ref={ref}

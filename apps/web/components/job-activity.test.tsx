@@ -3,13 +3,12 @@ import { mock, test } from 'node:test'
 import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { JobActivitySchema } from '@repo/schemas/job'
-import JobActivity, { MediaJobActivity } from './job-activity'
+import { JobActivitySchema, JobSchema, type JobEntry } from '@repo/schemas/job'
+import JobActivity, { ActivityEntry } from './job-activity'
 
 const network = mock.method(globalThis, 'fetch', async () => {
   throw new Error('Network forbidden in activity tests')
 })
-const empty = { queued: 0, running: 0, failed: 0, imports: 0 }
 const activity = JobActivitySchema.parse({
   queued: 2,
   running: 2,
@@ -19,7 +18,6 @@ const activity = JobActivitySchema.parse({
   completedImports: 0,
   libraries: [
     { mediaType: 'album', queued: 2, running: 1, failed: 4, imports: 1 },
-    { mediaType: 'film', queued: 0, running: 1, failed: 8, imports: 0 },
   ],
 })
 
@@ -49,121 +47,133 @@ function renderActivity(data: unknown, error = false) {
   }
 }
 
-test('activity groups link each running, queued, attention and import count to its library', () => {
-  const html = renderToStaticMarkup(
-    <MediaJobActivity mediaType="album" counts={activity.libraries[0]} />,
-  )
-  for (const status of ['running', 'queued', 'attention'])
-    assert.ok(
-      html.includes(`href="/jobs?status=${status}&amp;mediaType=album"`),
-    )
-  assert.match(html, /aria-label="Albums: 4 needs attention"/)
-  assert.match(html, /aria-label="Albums: 2 queued"/)
-  assert.match(html, /href="\/imports\?mediaType=album"/)
-  assert.match(html, /aria-label="Albums jobs and history"/)
-  assert.doesNotMatch(html, /mediaType=film/)
-})
-
-test('idle libraries retain a jobs history link without zero-count status badges', () => {
-  const html = renderToStaticMarkup(
-    <MediaJobActivity mediaType="album" counts={empty} />,
-  )
-  assert.match(html, /No active jobs or issues/)
-  assert.match(html, /href="\/jobs\?mediaType=album"/)
-  assert.doesNotMatch(html, /status=|<strong>0/)
-})
-
-test('one compact trigger exposes all library links inside an accessible native popover', () => {
+test('the Jobs item carries one compact trigger for an accessible native popover', () => {
   const html = renderActivity(activity)
-  assert.equal((html.match(/popoverTarget=/gi) ?? []).length, 1)
-  assert.match(html, /aria-label="Job activity: 6 active, 12 issues"/)
-  assert.match(html, /aria-expanded="false"/)
   assert.match(
     html,
-    /popover="auto" role="region" tabindex="-1" aria-labelledby=/,
+    /<button type="button" popoverTarget="[^"]+" aria-label="Job activity: 6 active, 12 issues"/,
   )
+  assert.match(html, /class="ds-count" data-tone="danger">12</)
+  assert.match(html, /popover="auto" role="region" tabindex="-1"/)
+  assert.match(html, /class="ds-pop ops-activity"/)
+  assert.match(html, /<h2 id="[^"]+">Activity<\/h2>/)
   assert.match(html, /aria-label="Close job activity"/)
-  assert.doesNotMatch(html.slice(0, html.indexOf('popover="auto"')), /href=/)
-  assert.match(html, /aria-label="Albums: 4 needs attention"/)
-  assert.match(html, /aria-label="Films: 8 needs attention"/)
-  assert.match(html, /href="\/jobs\?status=attention&amp;mediaType=album"/)
-  assert.match(html, /href="\/jobs\?status=attention&amp;mediaType=film"/)
-  assert.match(html, /Shared \/ unclassified imports <strong>1<\/strong>/)
 })
 
-test('global legacy counts are not assigned to either library', () => {
-  const html = renderActivity({ ...activity, libraries: undefined })
-  assert.match(html, /6 active, 12 needing attention across all libraries/)
-  assert.match(html, /Per-library counts unavailable/)
-  assert.match(html, /href="\/jobs\?mediaType=album"/)
-  assert.match(html, /href="\/jobs\?mediaType=film"/)
-  assert.doesNotMatch(html, /Albums: 12|Films: 12|No active jobs or issues/)
+test('counts link to the filtered Jobs page and All jobs shows what runs', () => {
+  const html = renderActivity(activity)
+  assert.match(
+    html,
+    /href="\/jobs\?status=queued"><span class="ds-status" data-status="queued">2 queued/,
+  )
+  assert.match(
+    html,
+    /href="\/jobs\?status=attention"><span class="ds-status" data-status="failed">12 need attention/,
+  )
+  assert.match(
+    html,
+    /href="\/imports"><span class="ds-status" data-status="running">2 importing/,
+  )
+  assert.match(
+    html,
+    /class="ds-menu-item" href="\/jobs">[\s\S]*All jobs<span class="ds-muted">2 running/,
+  )
+})
+
+test('active work without failures shows the active count in attention tone', () => {
+  const html = renderActivity({ ...activity, failed: 0 })
+  assert.match(html, /class="ds-count" data-tone="attention">6</)
+  assert.doesNotMatch(html, /need attention/)
 })
 
 test('loading and unavailable status never claim that jobs are idle', () => {
-  const loading = renderActivity(undefined)
-  assert.match(loading, /Checking jobs/)
-  assert.match(loading, /Loading activity/)
-  assert.doesNotMatch(loading, /Jobs idle|No active jobs or issues/)
-  const offline = renderActivity(undefined, true)
-  assert.match(offline, /Status offline/)
-  assert.match(offline, /Status unavailable/)
-  assert.match(offline, />Retry<\/button>/)
-  assert.doesNotMatch(offline, /Jobs idle|No active jobs or issues/)
-  const stale = renderActivity(activity, true)
-  assert.match(stale, /Showing last known counts/)
-  assert.match(stale, /Albums: 4 needs attention/)
+  assert.match(renderActivity(null), /Job activity: Checking jobs/)
+  const offline = renderActivity(null, true)
+  assert.match(offline, /Job activity: Status offline/)
+  assert.match(offline, /Status unavailable\./)
+  assert.match(offline, />Retry</)
+  assert.doesNotMatch(offline, /Jobs idle/)
 })
 
-test('idle activity remains accessible and does not invent shared imports', () => {
+test('idle activity says so without zero-count badges', () => {
   const html = renderActivity({
     ...activity,
-    ...empty,
-    libraries: [
-      { ...empty, mediaType: 'album' },
-      { ...empty, mediaType: 'film' },
-    ],
+    queued: 0,
+    running: 0,
+    failed: 0,
+    imports: 0,
+    libraries: [],
   })
-  assert.match(html, /aria-label="Job activity: Jobs idle"/)
-  assert.equal((html.match(/No active jobs or issues/g) ?? []).length, 2)
-  assert.doesNotMatch(
-    html,
-    /Shared \/ unclassified imports|motion-safe:animate-spin/,
+  assert.match(html, /Job activity: Jobs idle/)
+  assert.match(html, /No active jobs or issues\./)
+  assert.doesNotMatch(html, /ds-count|0 queued|importing/)
+})
+
+test('a waiting batch names its provider, progress and when it resumes', () => {
+  const batch: JobEntry = {
+    kind: 'batch',
+    batchId: 'batch-1',
+    provider: 'fixture-ratings',
+    providers: ['fixture-ratings'],
+    mediaType: 'album',
+    label: 'Library import',
+    importId: null,
+    total: 10,
+    matching: 10,
+    queued: 6,
+    running: 0,
+    succeeded: 4,
+    failed: 0,
+    cancelled: 0,
+    createdAt: '2026-01-02T00:00:00.000Z',
+    startedAt: null,
+    finishedAt: null,
+    waiting: {
+      reason: 'cooldown',
+      until: '2026-01-02T14:20:00.000Z',
+      detail: 'Cooling down',
+    },
+  }
+  const html = renderToStaticMarkup(
+    <ActivityEntry
+      entry={batch}
+      providers={undefined}
+      now={new Date('2026-01-02T14:00:00.000Z')}
+    />,
   )
-})
-
-test('subscription syncs have their own group linking to Subscriptions jobs', () => {
-  const html = renderActivity({
-    ...activity,
-    libraries: [
-      ...activity.libraries,
-      { ...empty, mediaType: 'subscription', running: 1, failed: 2 },
-    ],
-  })
-  assert.match(html, /aria-label="Subscriptions jobs and history"/)
-  assert.match(html, /href="\/jobs\?mediaType=subscription"/)
   assert.match(
     html,
-    /aria-label="Subscriptions: 1 running" href="\/jobs\?status=running&amp;mediaType=subscription"/,
+    /href="\/jobs\?batchId=batch-1"[^>]*>Library import · 10 albums</,
   )
-  assert.match(html, /aria-label="Subscriptions: 2 needs attention"/)
-  assert.doesNotMatch(html, /imports\?mediaType=subscription/)
-})
-
-test('artist enrichment has its own activity group and scoped history links', () => {
-  const html = renderActivity({
-    ...activity,
-    libraries: [
-      ...activity.libraries,
-      { ...empty, mediaType: 'artist', queued: 2, failed: 1 },
-    ],
-  })
-  assert.match(html, /aria-label="Artists jobs and history"/)
-  assert.match(html, /href="\/jobs\?mediaType=artist"/)
+  assert.match(html, /fixture-ratings/)
+  assert.match(html, /aria-valuenow="4"/)
   assert.match(
     html,
-    /aria-label="Artists: 2 queued" href="\/jobs\?status=queued&amp;mediaType=artist"/,
+    /data-status="waiting" title="Cooling down">Waiting until /,
   )
-  assert.match(html, /aria-label="Artists: 1 needs attention"/)
-  assert.doesNotMatch(html, /imports\?mediaType=artist/)
+})
+
+test('a running task job links to its page and shows its pages read', () => {
+  const job = JobSchema.parse({
+    id: 'job-1',
+    provider: 'fixture-scrobbles',
+    status: 'running',
+    createdAt: '2026-01-02T00:00:00Z',
+    startedAt: '2026-01-02T00:00:00Z',
+    finishedAt: null,
+    errorMessage: null,
+    scope: {},
+    options: { task: 'lastfm-scrobble-sync' },
+    confirmBroadRun: false,
+    items: [],
+    logs: [],
+    waiting: null,
+    progress: { done: 3, total: 12 },
+  })
+  const html = renderToStaticMarkup(
+    <ActivityEntry entry={{ kind: 'job', job }} providers={undefined} />,
+  )
+  assert.match(html, /href="\/jobs\/job-1"[^>]*>Scrobble sync</)
+  assert.match(html, /aria-valuenow="3"/)
+  assert.doesNotMatch(html, /Waiting/)
 })

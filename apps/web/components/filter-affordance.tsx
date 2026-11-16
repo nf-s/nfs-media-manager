@@ -3,11 +3,7 @@ import { Filter } from 'lucide-react'
 
 export function FilterIndicator() {
   return (
-    <Filter
-      size={11}
-      className="mr-1 inline-block shrink-0 align-middle opacity-60"
-      aria-hidden="true"
-    />
+    <Filter className="ds-i browse-filter-mark" data-size="sm" aria-hidden />
   )
 }
 

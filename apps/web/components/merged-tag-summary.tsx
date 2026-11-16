@@ -15,22 +15,21 @@ export default function MergedTagSummary({
   const remaining = names.slice(3)
 
   return (
-    <div className="min-w-0 break-words">
-      <div className="font-medium">{tag.name}</div>
+    <div className="dtl-identity">
+      <strong>{tag.name}</strong>
       {names.length > 0 && (
-        <div className="text-xs">
-          <span className="muted">Merged from: </span>
+        <div className="ds-help">
+          <span>Merged from: </span>
           {preview.join(', ')}
           {remaining.length > 0 && (
-            <details className="mt-0.5">
+            <details>
               <summary
-                className="cursor-pointer underline decoration-neutral-300 underline-offset-2"
                 aria-label={`Show ${remaining.length} more merged tags for ${tag.name}`}
               >
                 {remaining.length} more
               </summary>
               <ul
-                className="my-1 max-h-32 overflow-y-auto overscroll-contain pl-3"
+                className="dtl-merged-list"
                 aria-label={`Additional tags merged into ${tag.name}`}
               >
                 {remaining.map((name) => (

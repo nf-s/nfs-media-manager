@@ -2,16 +2,21 @@
 
 import { useQuery } from '@tanstack/react-query'
 import { AlbumPlaylistsSchema } from '@repo/schemas/tracks'
+import { Notice } from '@repo/ui/components/ds/feedback'
+import { Section } from '@repo/ui/components/ds/facts'
+import { Button } from '@repo/ui/components/ui/button'
+import { formatCount } from '@repo/ui/lib/format'
 import { useConfig } from './providers'
 import { fetchApiData } from '@/utils/api'
-import { DetailLink } from './detail-link'
-import { PlaylistPlayButton } from './playlist-detail'
+import { PlaylistPills } from './detail-frame'
 import {
   AddToPlaylist,
+  AdditionList,
   AdditionState,
   usePlaylistAdditions,
 } from './playlist-addition-controls'
 
+/** The album's playlists, with the control that adds it to another. */
 export default function AlbumPlaylists({ albumId }: { albumId: string }) {
   const { apiBaseUrl } = useConfig()
   const { additionList, playlists, following } = usePlaylistAdditions(
@@ -34,59 +39,45 @@ export default function AlbumPlaylists({ albumId }: { albumId: string }) {
   )
   const memberships = query.data?.playlists ?? []
   return (
-    <div className="detail-metadata mt-6">
-      <section aria-label="Playlist memberships">
-        {query.isError && (
-          <p role="alert">
-            Playlists unavailable.{' '}
-            <button className="underline" onClick={() => query.refetch()}>
+    <Section
+      title="Playlists"
+      note={memberships.length ? formatCount(memberships.length) : undefined}
+    >
+      {query.isError && (
+        <Notice
+          tone="danger"
+          action={
+            <Button size="xs" onClick={() => query.refetch()}>
               Retry
-            </button>
-          </p>
-        )}
-        {memberships.length > 0 && (
-          <div className="detail-tags">
-            {memberships.map((playlist) => (
-              <span
-                key={playlist.id}
-                className="inline-flex items-center gap-1"
-              >
-                <PlaylistPlayButton playlist={playlist} />
-                <DetailLink
-                  className="metadata-tag"
-                  kind="playlist"
-                  id={playlist.id}
-                >
-                  {playlist.name}
-                  {playlist.trackCount > 0 && (
-                    <span className="quiet">
-                      {' '}
-                      · {playlist.trackCount}{' '}
-                      {playlist.trackCount === 1 ? 'track' : 'tracks'}
-                    </span>
-                  )}
-                </DetailLink>
-              </span>
-            ))}
-          </div>
-        )}
-        <AddToPlaylist
-          mediaType="album"
-          id={albumId}
-          additions={additionList}
+            </Button>
+          }
+        >
+          Playlists unavailable.
+        </Notice>
+      )}
+      {query.data && (
+        <PlaylistPills
+          playlists={memberships.map((playlist) => ({
+            ...playlist,
+            title:
+              playlist.trackCount > 0
+                ? `${playlist.name} · ${formatCount(playlist.trackCount)} ${playlist.trackCount === 1 ? 'track' : 'tracks'}`
+                : playlist.name,
+          }))}
         />
-        {additionList.length > 0 && (
-          <ul className="mt-2 grid gap-1 text-sm" aria-label="Additions">
-            {additionList.map((addition) => (
-              <AdditionState
-                key={addition.job.jobId}
-                addition={addition}
-                name={names.get(addition.playlistId) ?? 'Playlist'}
-              />
-            ))}
-          </ul>
-        )}
-      </section>
-    </div>
+      )}
+      <AddToPlaylist mediaType="album" id={albumId} additions={additionList} />
+      {additionList.length > 0 && (
+        <AdditionList>
+          {additionList.map((addition) => (
+            <AdditionState
+              key={addition.job.jobId}
+              addition={addition}
+              name={names.get(addition.playlistId) ?? 'Playlist'}
+            />
+          ))}
+        </AdditionList>
+      )}
+    </Section>
   )
 }

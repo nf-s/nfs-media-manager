@@ -11,7 +11,7 @@ test('distinguishes the canonical name from visible merged names', () => {
       mergedNames={['art-history', 'history of art', 'Art History']}
     />,
   )
-  assert.match(html, /font-medium">Art history<\/div>/)
+  assert.match(html, /<strong>Art history<\/strong>/)
   assert.match(
     html,
     /Merged from: <\/span>art-history, history of art, Art History/,
@@ -30,7 +30,7 @@ test('shows three names before a closed native disclosure for the rest', () => {
   assert.match(html, /aria-label="Show 2 more merged tags for History"/)
   assert.match(html, /<li>four<\/li><li>five<\/li>/)
   assert.doesNotMatch(html, /<details[^>]*open/)
-  assert.match(html, /max-h-32 overflow-y-auto overscroll-contain/)
+  assert.match(html, /class="dtl-merged-list"/)
 })
 
 test('deduplicates exact names and excludes empty or canonical names without mutating input', () => {

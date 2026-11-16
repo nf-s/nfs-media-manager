@@ -61,25 +61,31 @@ export function trackHref(id: string) {
   return `/tracks/${encodeURIComponent(id)}`
 }
 
-/** Tabs of the playlist drawer; `tracks` is the default and is left out of URLs. */
-export const PlaylistTabSchema = z.enum(['tracks', 'sync'])
+/** Tabs of the playlist drawer; `overview` is the default and is left out of URLs. */
+export const PlaylistTabSchema = z.enum(['overview', 'listening', 'sources'])
 export type PlaylistTab = z.infer<typeof PlaylistTabSchema>
 
-/** The `tab` URL parameter of the playlist drawer, defaulting to Tracks. */
+/**
+ * The `tab` URL parameter of the playlist drawer, defaulting to Overview.
+ * Older links used `tracks` for the contents and `sync` for Sources.
+ */
 export function parsePlaylistTab(value: string | null): PlaylistTab {
-  if (value === 'sources') return 'sync'
+  if (value === 'sync') return 'sources'
   const parsed = PlaylistTabSchema.safeParse(value)
-  return parsed.success ? parsed.data : 'tracks'
+  return parsed.success ? parsed.data : 'overview'
 }
 
 /** The URL parameters that open the playlist drawer on a tab. */
-export function playlistDrawerParams(id: string, tab: PlaylistTab = 'tracks') {
-  return { playlist: id, tab: tab === 'tracks' ? null : tab }
+export function playlistDrawerParams(
+  id: string,
+  tab: PlaylistTab = 'overview',
+) {
+  return { playlist: id, tab: tab === 'overview' ? null : tab }
 }
 
 /** The Playlists page with one playlist's drawer open. */
-export function playlistHref(id: string, tab: PlaylistTab = 'tracks') {
+export function playlistHref(id: string, tab: PlaylistTab = 'overview') {
   const params = new URLSearchParams({ playlist: id })
-  if (tab !== 'tracks') params.set('tab', tab)
+  if (tab !== 'overview') params.set('tab', tab)
   return `/playlists?${params}`
 }

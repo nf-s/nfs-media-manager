@@ -283,7 +283,7 @@ export function PlayerConnections() {
           {status && !status.configured && (
             <Link
               className="underline"
-              href="/providers?provider=sonos&section=credentials"
+              href="/providers/sonos?tab=settings"
             >
               Add credentials
             </Link>
@@ -340,7 +340,7 @@ export function ConnectPrompt({ configured }: { configured: boolean }) {
           ) : (
             <Link
               className="underline"
-              href="/providers?provider=spotify&mediaType=album&section=credentials"
+              href="/providers/spotify?tab=settings"
             >
               Spotify credentials
             </Link>

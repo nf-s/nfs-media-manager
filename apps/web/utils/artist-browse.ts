@@ -2,14 +2,27 @@ import { sameBrowseFilter, type BrowseFilter } from '@repo/schemas/browse'
 import { ArtistQuerySchema, type ArtistSummary } from '@repo/schemas/creators'
 import type { TitleSuggestion } from './browse-suggestions'
 
-export const defaultArtistColumns = [
+/** Column, picker and sort order: identity, properties, dates, counts, pills. */
+export const artistFieldOrder = [
   'name',
+  'country',
+  'type',
+  'provider',
+  'createdAt',
   'albumCount',
   'trackCount',
   'playlistCount',
+  'playlist',
   'genre',
+]
+
+export const defaultArtistColumns = [
+  'name',
   'country',
   'createdAt',
+  'albumCount',
+  'trackCount',
+  'genre',
 ]
 
 export function parseArtistFilters(value: string | null): BrowseFilter[] {

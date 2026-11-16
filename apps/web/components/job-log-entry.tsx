@@ -10,7 +10,10 @@ import {
   type Job,
   type JobErrorDetails,
 } from '@repo/schemas/job'
+import { KeyValues } from '@repo/ui/components/ds/facts'
+import { Status } from '@repo/ui/components/ds/status'
 import { Button } from '@repo/ui/components/ui/button'
+import { formatCount, formatDateTime } from '@repo/ui/lib/format'
 import { fetchApiData } from '@/utils/api'
 import { useConfig } from './providers'
 import JsonTree from './json-tree'
@@ -35,72 +38,81 @@ function JobRequestError({
     'x-discogs-ratelimit-used': 'Discogs used',
     'x-discogs-ratelimit-remaining': 'Discogs remaining',
   }
+  const source =
+    diagnostics?.source === 'provider-response'
+      ? `Provider response${diagnostics.httpStatus !== undefined ? ` · HTTP ${diagnostics.httpStatus}` : ''}`
+      : diagnostics?.source === 'local-cooldown'
+        ? 'Local cooldown · No outgoing request'
+        : diagnostics?.source === 'local-budget'
+          ? 'Local request budget · No outgoing request'
+          : diagnostics?.source === 'local-access-halt'
+            ? 'Local access block · No outgoing request'
+            : 'Provider request error'
+  const items = [
+    ...(code ? [{ label: 'Code', value: code }] : []),
+    ...(diagnostics?.quotaError
+      ? [{ label: 'Quota', value: 'Provider reported a quota error.' }]
+      : []),
+    ...(diagnostics?.responseReceivedAt
+      ? [
+          {
+            label: 'Received',
+            value: (
+              <time dateTime={diagnostics.responseReceivedAt}>
+                {formatDateTime(diagnostics.responseReceivedAt)}
+              </time>
+            ),
+          },
+        ]
+      : []),
+    ...(diagnostics?.retryAfter
+      ? [
+          {
+            label: 'Retry-After',
+            value:
+              'seconds' in diagnostics.retryAfter ? (
+                `${formatCount(diagnostics.retryAfter.seconds)} seconds`
+              ) : (
+                <time dateTime={diagnostics.retryAfter.at}>
+                  {formatDateTime(diagnostics.retryAfter.at)}
+                </time>
+              ),
+          },
+        ]
+      : []),
+    ...(retryAt !== undefined && retryAt !== null
+      ? [
+          {
+            label:
+              diagnostics?.source === 'provider-response'
+                ? 'Request retry time'
+                : diagnostics
+                  ? 'Local retry time'
+                  : 'Recorded retry time',
+            value: (
+              <time dateTime={new Date(retryAt).toISOString()}>
+                {formatDateTime(retryAt)}
+              </time>
+            ),
+          },
+        ]
+      : []),
+    ...Object.entries(diagnostics?.quotaHeaders ?? {}).map(([name, value]) => ({
+      label: quotaLabels[name] ?? name,
+      value: value === undefined ? '' : formatCount(value),
+    })),
+  ]
   return (
-    <div className="grid gap-1" aria-label="Request error details">
-      <p>
-        <strong>
-          {diagnostics?.source === 'provider-response'
-            ? `Provider response${diagnostics.httpStatus !== undefined ? ` · HTTP ${diagnostics.httpStatus}` : ''}`
-            : diagnostics?.source === 'local-cooldown'
-              ? 'Local cooldown · No outgoing request'
-              : diagnostics?.source === 'local-budget'
-                ? 'Local request budget · No outgoing request'
-                : diagnostics?.source === 'local-access-halt'
-                  ? 'Local access block · No outgoing request'
-                  : 'Provider request error'}
-        </strong>
-      </p>
-      {code && <p>Code: {code}</p>}
-      {diagnostics?.quotaError && <p>Provider reported a quota error.</p>}
-      {diagnostics?.responseReceivedAt && (
-        <p>
-          Received{' '}
-          <time dateTime={diagnostics.responseReceivedAt}>
-            {new Date(diagnostics.responseReceivedAt).toLocaleString()}
-          </time>
-        </p>
-      )}
-      {diagnostics?.retryAfter && (
-        <p>
-          Retry-After:{' '}
-          {'seconds' in diagnostics.retryAfter ? (
-            `${diagnostics.retryAfter.seconds} seconds`
-          ) : (
-            <time dateTime={diagnostics.retryAfter.at}>
-              {new Date(diagnostics.retryAfter.at).toLocaleString()}
-            </time>
-          )}
-        </p>
-      )}
-      {retryAt !== undefined && retryAt !== null && (
-        <>
-          <p>
-            {diagnostics?.source === 'provider-response'
-              ? 'Request retry time'
-              : diagnostics
-                ? 'Local retry time'
-                : 'Recorded retry time'}{' '}
-            <time dateTime={new Date(retryAt).toISOString()}>
-              {new Date(retryAt).toLocaleString()}
-            </time>
+    <div className="ops-log-block" aria-label="Request error details">
+      <strong>{source}</strong>
+      {items.length > 0 && <KeyValues items={items} />}
+      {retryAt !== undefined &&
+        retryAt !== null &&
+        diagnostics?.source === 'provider-response' && (
+          <p className="ds-help">
+            Provider cooldowns and dispatch pauses can delay execution.
           </p>
-          {diagnostics?.source === 'provider-response' && (
-            <p className="muted">
-              Provider cooldowns and dispatch pauses can delay execution.
-            </p>
-          )}
-        </>
-      )}
-      {diagnostics?.quotaHeaders && (
-        <dl className="flex flex-wrap gap-x-4 gap-y-1">
-          {Object.entries(diagnostics.quotaHeaders).map(([name, value]) => (
-            <div key={name} className="flex gap-1" title={name}>
-              <dt>{quotaLabels[name] ?? name}:</dt>
-              <dd>{value?.toLocaleString()}</dd>
-            </div>
-          ))}
-        </dl>
-      )}
+        )}
     </div>
   )
 }
@@ -148,33 +160,35 @@ export function JobLogEntry({
   }
   const diagnosticMetadata = DiagnosticMetadataSchema.safeParse(log.metadata)
   return (
-    <li className="job-log" data-level={log.level}>
-      <time dateTime={log.createdAt}>
-        {new Date(log.createdAt).toLocaleTimeString()}
+    <li className="ops-log-entry" data-level={log.level}>
+      <time className="ds-muted ds-num" dateTime={log.createdAt}>
+        {formatDateTime(log.createdAt)}
       </time>
-      <span className="job-log-level">{log.level}</span>
-      <div>
-        <p>{log.message}</p>
-        {LegacyJobContextSchema.safeParse(log.metadata).success && (
-          <p className="muted">
-            Original batch context, not an item-specific event.
-          </p>
-        )}
+      <Status
+        state={
+          log.level === 'error'
+            ? 'failed'
+            : log.level === 'warn'
+              ? 'attention'
+              : 'done'
+        }
+      >
+        {log.level === 'error'
+          ? 'Error'
+          : log.level === 'warn'
+            ? 'Warning'
+            : 'Info'}
+      </Status>
+      <span className="ops-log-message">{log.message}</span>
+      <span className="ds-actions">
         {log.benignReview ? (
-          <p className="muted">
-            Marked benign ·{' '}
-            {new Date(log.benignReview.reviewedAt).toLocaleString()}
-          </p>
+          <span className="ds-muted">
+            Marked benign · {formatDateTime(log.benignReview.reviewedAt)}
+          </span>
         ) : log.canMarkBenign ? (
-          <div>
-            {confirming && (
-              <p className="muted">
-                Only this error will be dismissed. No retry, limit reset or rule
-                for future errors.
-              </p>
-            )}
+          <>
             <Button
-              size="md"
+              size="xs"
               disabled={review.isPending}
               onClick={() =>
                 confirming ? review.mutate() : setConfirming(true)
@@ -188,7 +202,7 @@ export function JobLogEntry({
             </Button>
             {confirming && (
               <Button
-                size="md"
+                size="xs"
                 variant="ghost"
                 disabled={review.isPending}
                 onClick={() => setConfirming(false)}
@@ -196,14 +210,31 @@ export function JobLogEntry({
                 Cancel
               </Button>
             )}
-            {review.isError && <p role="alert">{review.error.message}</p>}
-          </div>
+          </>
         ) : null}
+      </span>
+      <div className="ops-log-detail">
+        {LegacyJobContextSchema.safeParse(log.metadata).success && (
+          <p className="ds-help">
+            Original batch context, not an item-specific event.
+          </p>
+        )}
+        {confirming && (
+          <p className="ds-help">
+            Only this error will be dismissed. No retry, limit reset or rule for
+            future errors.
+          </p>
+        )}
+        {review.isError && (
+          <p role="alert" className="ops-danger">
+            {review.error.message}
+          </p>
+        )}
         {[...requestErrors].map(([identity, entry]) => (
           <JobRequestError key={identity} error={entry} />
         ))}
         {error ? (
-          <pre className="job-error">
+          <pre className="ops-pre">
             {[
               error.stack ?? `${error.name}: ${error.message}`,
               ...error.causes.map(
@@ -213,13 +244,14 @@ export function JobLogEntry({
             ].join('\n\n')}
           </pre>
         ) : log.level === 'error' ? (
-          <p className="muted">
+          <p className="ds-help">
             No error details were recorded for this entry.
           </p>
         ) : null}
         {diagnosticMetadata.success &&
           diagnosticMetadata.data.diagnostics !== null && (
             <details
+              className="ops-disclosure"
               onToggle={(event) => setDiagnosticsOpen(event.currentTarget.open)}
             >
               <summary>Diagnostics</summary>

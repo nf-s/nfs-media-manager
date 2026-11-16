@@ -6,12 +6,15 @@ import { X } from 'lucide-react'
 import { BrowseCountSchema } from '@repo/schemas/browse'
 import { ArtistQuerySchema } from '@repo/schemas/creators'
 import { PlaylistBrowsePageSchema } from '@repo/schemas/tracks'
-import { Input } from '@repo/ui/components/ui/input'
+import { Pill, PillLabel } from '@repo/ui/components/ds/pill'
+import { Notice, Skeleton, State } from '@repo/ui/components/ds/feedback'
+import { formatItemCount } from '@repo/ui/lib/format'
 import { useCountedVirtualTable } from '@/hooks/useVirtualTable'
 import { fetchApiData } from '@/utils/api'
 import { useDetailView } from './detail-inspector-context'
 import { useConfig } from './providers'
-import { SecondaryHeaderFilter } from './secondary-table'
+import { SecondaryHeaderFilter, SecondaryTableSearch } from './secondary-table'
+import { RetryButton } from './browse-items'
 
 const pageSize = 25
 
@@ -116,78 +119,76 @@ function ArtistPlaylistChoices({
   const failed = choices.isError || countError
 
   return (
-    <div className="grid w-64 max-w-full gap-2 text-sm">
-      <Input
-        type="search"
-        aria-label="Search playlist filters"
+    <div className="grid w-64 max-w-full gap-2">
+      <SecondaryTableSearch
+        label="Search playlist filters"
         placeholder="Search playlists"
-        className="h-7 text-xs"
         maxLength={200}
         value={search}
-        onChange={(event) => setSearch(event.target.value)}
+        onChange={setSearch}
         disabled={disabled}
       />
       {selected.length > 0 && (
         <div
-          className="flex max-h-28 flex-wrap gap-1 overflow-auto"
+          className="ds-pills max-h-28 overflow-auto"
+          data-wrap=""
+          role="group"
           aria-label="Selected playlists"
         >
           {selected.map((id) => {
             const title = names.get(id) ?? 'Selected playlist'
             return (
-              <button
-                key={id}
-                type="button"
-                className="filter-pill filter-required max-w-full"
-                aria-label={`Remove playlist filter: ${title}`}
-                title={title}
-                disabled={disabled}
-                onClick={() =>
-                  onChange(selected.filter((value) => value !== id))
-                }
-              >
-                <span className="truncate">{title}</span>
-                <X size={12} className="shrink-0" aria-hidden="true" />
-              </button>
+              <Pill asChild mode="required" key={id}>
+                <button
+                  type="button"
+                  aria-label={`Remove playlist filter: ${title}`}
+                  title={title}
+                  disabled={disabled}
+                  onClick={() =>
+                    onChange(selected.filter((value) => value !== id))
+                  }
+                >
+                  <PillLabel>{title}</PillLabel>
+                  <X className="ds-i" aria-hidden="true" />
+                </button>
+              </Pill>
             )
           })}
         </div>
       )}
       {selectedNames.isError && selected.length > 0 && (
-        <p role="alert" className="quiet">
-          Could not load selected playlist names.{' '}
-          <button
-            type="button"
-            className="underline"
-            onClick={() => selectedNames.refetch()}
-          >
-            Retry
-          </button>
-        </p>
+        <Notice
+          tone="danger"
+          action={<RetryButton onClick={() => selectedNames.refetch()} />}
+        >
+          Could not load selected playlist names.
+        </Notice>
       )}
       {failed && (
-        <p role="alert" className="quiet">
-          Could not load playlists.{' '}
-          <button
-            type="button"
-            className="underline"
-            onClick={() => {
-              choices.retry()
-              if (countError) retryCount()
-            }}
-          >
-            Retry
-          </button>
-        </p>
+        <Notice
+          tone="danger"
+          action={
+            <RetryButton
+              onClick={() => {
+                choices.retry()
+                if (countError) retryCount()
+              }}
+            />
+          }
+        >
+          Could not load playlists.
+        </Notice>
       )}
       {choices.hasTotal && (
-        <span className="quiet">
-          {choices.total.toLocaleString()}{' '}
-          {choices.total === 1 ? 'playlist' : 'playlists'}
+        <span className="ds-muted">
+          {formatItemCount(choices.total, {
+            one: 'playlist',
+            other: 'playlists',
+          })}
         </span>
       )}
       {choices.hasTotal && choices.total === 0 ? (
-        <p className="quiet">No matching playlists.</p>
+        <State size="sm" title="No playlists match" />
       ) : (
         <div
           ref={choices.scroller}
@@ -212,11 +213,12 @@ function ArtistPlaylistChoices({
                   aria-setsize={choices.hasTotal ? choices.total : undefined}
                 >
                   <label
-                    className="flex h-full min-w-0 items-center gap-2 px-1"
+                    className="ds-checkrow flex h-full min-w-0"
                     title={item.name}
                   >
                     <input
                       type="checkbox"
+                      className="ds-check"
                       checked={selected.includes(item.id)}
                       disabled={
                         disabled ||
@@ -236,11 +238,11 @@ function ArtistPlaylistChoices({
               ) : (
                 <li
                   key={index}
-                  className="virtual-browse-placeholder"
+                  className="flex items-center"
                   aria-hidden="true"
                   style={{ height: choices.rowHeight }}
                 >
-                  <div className="virtual-browse-line virtual-browse-shimmer" />
+                  <Skeleton height={10} width="70%" />
                 </li>
               ),
             )}

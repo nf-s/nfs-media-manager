@@ -99,9 +99,13 @@ test('retained snapshots and diagnostics reuse the bounded JSON tree for any out
     })
     assert.match(html, /Snapshots \(1\)/)
     assert.match(html, /Diagnostics \(1\)/)
-    assert.match(html, /Raw JSON/)
-    assert.match(html, /max-h-\[60vh\]/)
-    assert.doesNotMatch(html, /No response JSON|<pre|href=/)
+    // Each saved payload is collapsed, with Copy, until it is opened.
+    assert.match(html, /serply · 2026-10-28[^<]*<\/span><button[^>]*>Copy</)
+    assert.equal(
+      (html.match(/class="ops-disclosure ops-payload"/g) ?? []).length,
+      2,
+    )
+    assert.doesNotMatch(html, /No response JSON|<pre|href=|results/)
   }
 })
 
@@ -116,7 +120,7 @@ test('a retained empty response is still data and legacy success fallback is lab
   })
   assert.match(html, /Legacy item payloads \(1\)/)
   assert.match(html, /no linked snapshot/)
-  assert.match(html, /Raw JSON/)
+  assert.match(html, />Copy</)
   assert.doesNotMatch(html, /No response JSON/)
 })
 
@@ -135,13 +139,13 @@ test('diagnostics alone remain viewable without claiming a response snapshot exi
   })
   assert.match(html, /Snapshots \(0\)/)
   assert.match(html, /Diagnostics \(1\)/)
-  assert.match(html, /Raw JSON/)
+  assert.match(html, />Copy</)
   assert.doesNotMatch(html, /No response JSON|cannot be recovered|<pre/)
 })
 
 test('read errors offer an explicit stored-data reload, not a scrape retry', () => {
   const html = render({ error: true })
-  assert.match(html, /role="alert">Could not load stored JSON/)
+  assert.match(html, /role="alert">[\s\S]*Could not load stored JSON/)
   assert.match(html, /Reload stored data/)
   assert.doesNotMatch(html, /No response JSON|Retry job|href=/)
 })

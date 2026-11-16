@@ -16,6 +16,8 @@ import {
   ImportStatusSchema,
   type ImportRun,
 } from '@repo/schemas/imports'
+import { Button } from '@repo/ui/components/ui/button'
+import { Notice } from '@repo/ui/components/ds/feedback'
 import { useConfig } from './providers'
 import { SectionSidebar, SectionWorkspace } from './section-sidebar'
 import { fetchApiData } from '@/utils/api'
@@ -97,20 +99,20 @@ export function ImportStatusNotice() {
   if (view === 'track') return null
   if (status.isError && !status.data)
     return (
-      <p role="alert">
-        Could not load imports.{' '}
-        <button onClick={() => status.refetch()}>Retry</button>
-      </p>
-    )
-  if (status.isPending)
-    return (
-      <p role="status" className="muted">
-        Loading imports...
-      </p>
+      <Notice
+        tone="danger"
+        action={
+          <Button size="xs" onClick={() => status.refetch()}>
+            Retry
+          </Button>
+        }
+      >
+        Could not load imports.
+      </Notice>
     )
   if (running)
     return (
-      <p role="status" className="muted">
+      <Notice>
         {activeRun?.mediaType === 'film'
           ? 'A film import is in progress.'
           : activeRun?.mediaType === 'album'
@@ -120,7 +122,7 @@ export function ImportStatusNotice() {
           Follow it in Recent imports
         </Link>
         .
-      </p>
+      </Notice>
     )
   return null
 }

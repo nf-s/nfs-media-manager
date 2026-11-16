@@ -25,8 +25,16 @@ import {
 } from '@repo/schemas/creators'
 import { artistBrowseFields } from '@repo/schemas/artist-browse'
 import { BrowseCountSchema, BrowsePageSliceSchema } from '@repo/schemas/browse'
+import { Notice } from '@repo/ui/components/ds/feedback'
 import { Button } from '@repo/ui/components/ui/button'
-import { TableState } from '@repo/ui/components/ui/table'
+import {
+  TableCell,
+  TableHead,
+  TableRow,
+  TableSelectionBar,
+  TableState,
+} from '@repo/ui/components/ui/table'
+import { formatCount, formatDateTime } from '@repo/ui/lib/format'
 import { useCountedVirtualTable } from '@/hooks/useVirtualTable'
 import { useBrowseFacets } from '@/hooks/useBrowseFacets'
 import { fetchApiData } from '@/utils/api'
@@ -44,8 +52,10 @@ import {
   CreatorLibraryDate,
   CreatorLibraryTitle,
 } from './creator-library-table'
+import type { ReactNode } from 'react'
 import { useDetailView } from './detail-inspector-context'
 import {
+  FreshnessState,
   updateProviderFreshness,
   providerFreshnessLabel,
   providerFreshnessOptions,
@@ -56,23 +66,28 @@ import { useSourceAvailability, useSourceCatalog } from './provider-sources'
 import AiSearch from './ai-search'
 import MetadataSelectionToolbar from './metadata-selection-toolbar'
 import {
-  SecondaryCell,
   SecondaryColumnFilter,
-  SecondaryTableFooter,
-  SecondaryTableFrame,
   SecondaryTableHead,
   SecondaryTableScroll,
   SecondaryVirtualRows,
   useTableColumns,
 } from './secondary-table'
 
-const artistColumns = [
+const artistColumns: {
+  key: string
+  label: string
+  required?: boolean
+  defaultVisible?: boolean
+  align?: 'end'
+}[] = [
   { key: 'name', label: 'Artist', required: true },
-  { key: 'albumCount', label: 'Albums', defaultVisible: false },
-  { key: 'trackCount', label: 'Tracks', defaultVisible: false },
-  { key: 'playlistCount', label: 'Playlists' },
+  { key: 'albumCount', label: 'Albums', defaultVisible: false, align: 'end' },
+  { key: 'trackCount', label: 'Tracks', defaultVisible: false, align: 'end' },
+  { key: 'playlistCount', label: 'Playlists', align: 'end' },
   { key: 'createdAt', label: 'Added', defaultVisible: false },
 ]
+/** Width of the selection column, which the name is pinned after. */
+const selectionWidth = 28
 const providers = ArtistProfileProviderSchema.options
 const queueKey = ['metadata-selection-queue', 'artist']
 const snapshotKey = ['artist-selection-snapshot']
@@ -96,46 +111,22 @@ export function ArtistScrapeState({
   state: ArtistProviderMetadata | undefined
   label: string
 }) {
-  const date = state?.lastScrapedAt
-  const status = state?.lastJobStatus
-  const pending = status === 'queued' || status === 'running'
-  const statusLabel = status ? status[0]?.toUpperCase() + status.slice(1) : ''
-  const text = date
-    ? new Date(date).toLocaleString()
-    : pending
-      ? statusLabel
-      : state?.lastAttemptAt
-        ? 'Not scraped'
-        : 'Never'
   return (
-    <SecondaryCell
-      text={text}
-      label={`${label} scrape details`}
-      tone={status === 'failed' ? 'warning' : 'info'}
-      details={
-        state && (date || status || state.lastAttemptAt) ? (
-          <div className="space-y-1">
-            <p>
-              Last successful scrape:{' '}
-              {date ? <CreatorLibraryDate value={date} withTime /> : 'Never'}
-            </p>
-            {status && <p>Latest job: {statusLabel}</p>}
-            {state.lastAttemptAt && (
-              <p>
-                Last attempted:{' '}
-                <CreatorLibraryDate value={state.lastAttemptAt} withTime />
-              </p>
-            )}
-          </div>
-        ) : undefined
-      }
-    >
-      {date ? <CreatorLibraryDate value={date} /> : text}
-    </SecondaryCell>
+    <FreshnessState
+      label={label}
+      lastSuccess={state?.lastScrapedAt}
+      attempt={state?.lastJobStatus}
+      attempted={Boolean(state?.lastAttemptAt)}
+    />
   )
 }
 
-export default function ArtistMetadataTable() {
+export default function ArtistMetadataTable({
+  filters,
+}: {
+  /** Controls placed after the search, such as the library. */
+  filters?: ReactNode
+} = {}) {
   const { apiBaseUrl } = useConfig()
   const client = useQueryClient()
   const view = useDetailView()
@@ -417,7 +408,7 @@ export default function ArtistMetadataTable() {
       ? `provider-${query.provider}`
       : query.sortBy
   return (
-    <>
+    <div className="ops-fill">
       <MetadataSelectionToolbar
         disabled={pending}
         fields={artistBrowseFields}
@@ -499,416 +490,447 @@ export default function ArtistMetadataTable() {
             }}
           />
         }
+        filters={filters}
+        actions={
+          snapshot ? (
+            <span className="ds-actions">
+              <span
+                className="ds-muted"
+                title={`Selection expires ${formatDateTime(snapshot.expiresAt)}`}
+              >
+                Matching artists selected
+                {excluded.length
+                  ? ` · ${formatCount(excluded.length)} excluded`
+                  : ''}
+                {processed.length
+                  ? ` · ${formatCount(processed.length)} processed`
+                  : ''}
+              </span>
+              <Button
+                type="button"
+                variant="ghost"
+                disabled={pending}
+                onClick={() => {
+                  setSnapshot(null)
+                  setExcluded([])
+                  setProcessed([])
+                  setReview('')
+                }}
+              >
+                Clear selection
+              </Button>
+            </span>
+          ) : (
+            <Button
+              type="button"
+              variant="ghost"
+              disabled={pending || (artists.hasTotal && artists.total === 0)}
+              onClick={() =>
+                createSnapshot.mutate({
+                  identity,
+                  generation: generation.current,
+                  query,
+                })
+              }
+            >
+              {snapshotPending
+                ? 'Selecting matching artists...'
+                : `Select all${artists.hasTotal ? ` ${formatCount(artists.total)}` : ''} matching artists`}
+            </Button>
+          )
+        }
         count={
           counted.countError ? (
-            <button
-              type="button"
-              className="underline"
-              onClick={counted.retryCount}
-            >
+            <Button variant="link" size="xs" onClick={counted.retryCount}>
               Retry count
-            </button>
+            </Button>
           ) : !counted.isCounting ? (
-            `${artists.total.toLocaleString()} ${artists.total === 1 ? 'artist' : 'artists'}`
+            `${formatCount(artists.total)} ${artists.total === 1 ? 'artist' : 'artists'}`
           ) : (
             'Counting...'
           )
         }
         columns={columns.controls}
       />
-      {artists.isError && (
-        <p role="alert">
-          Could not load artists.{' '}
-          <button type="button" className="underline" onClick={artists.retry}>
-            Retry
-          </button>
-        </p>
+      {(artists.isError ||
+        catalog.isError ||
+        createSnapshot.isError ||
+        (snapshot && (members.isFetching || members.isError))) && (
+        <div className="ops-notice">
+          {artists.isError && (
+            <Notice
+              tone="danger"
+              action={
+                <Button size="xs" onClick={artists.retry}>
+                  Retry
+                </Button>
+              }
+            >
+              Could not load artists.
+            </Notice>
+          )}
+          {catalog.isError && (
+            <Notice
+              tone="danger"
+              action={
+                <Button size="xs" onClick={() => catalog.refetch()}>
+                  Retry
+                </Button>
+              }
+            >
+              Could not load providers.
+            </Notice>
+          )}
+          {createSnapshot.isError && (
+            <Notice tone="danger">
+              Could not select matching artists. Try Select all matching again.
+            </Notice>
+          )}
+          {snapshot && members.isFetching && (
+            <p className="ds-help" role="status">
+              Checking selection for visible rows...
+            </p>
+          )}
+          {snapshot && members.isError && (
+            <Notice
+              tone="danger"
+              action={
+                <Button size="xs" onClick={() => members.refetch()}>
+                  Retry
+                </Button>
+              }
+            >
+              Could not check the selected rows. If the selection expired, clear
+              it and select matching artists again.
+            </Notice>
+          )}
+        </div>
       )}
-      {catalog.isError && (
-        <p role="alert">
-          Could not load providers.{' '}
-          <button
-            type="button"
-            className="underline"
-            onClick={() => catalog.refetch()}
-          >
-            Retry
-          </button>
-        </p>
-      )}
-      <SecondaryTableFrame>
-        <SecondaryTableScroll
-          ref={artists.scroller}
-          onScroll={artists.onScroll}
-          role="region"
+      <SecondaryTableScroll
+        ref={artists.scroller}
+        onScroll={artists.onScroll}
+        role="region"
+        aria-label="Artist metadata"
+        aria-busy={artists.isFetching}
+      >
+        <table
+          className="ds-table"
           aria-label="Artist metadata"
-          aria-busy={artists.isFetching}
+          aria-rowcount={artists.hasTotal ? artists.total + 1 : undefined}
         >
-          <table
-            className="ds-table"
-            aria-label="Artist metadata"
-            aria-rowcount={artists.hasTotal ? artists.total + 1 : undefined}
-          >
-            <thead>
-              <tr>
-                <th className="table-selection-cell">
+          <thead>
+            <tr>
+              <TableHead sticky={0} style={{ width: selectionWidth }}>
+                <input
+                  type="checkbox"
+                  className="ds-check"
+                  ref={selectAll}
+                  aria-label={
+                    snapshot
+                      ? 'Select all matching artists'
+                      : 'Select all loaded artists'
+                  }
+                  checked={allChecked}
+                  disabled={!ids.length || pending}
+                  onChange={() => {
+                    if (snapshot) {
+                      if (allChecked) {
+                        setSnapshot(null)
+                        setProcessed([])
+                      }
+                      setExcluded([])
+                    } else
+                      setSelected(
+                        allChecked ? [] : [...new Set([...selected, ...ids])],
+                      )
+                    setReview('')
+                  }}
+                />
+              </TableHead>
+              {visible.map((column) => (
+                <SecondaryTableHead
+                  key={column.key}
+                  sortKey={column.key}
+                  label={column.label}
+                  sortBy={sortKey}
+                  direction={query.direction}
+                  onSort={(key) => sort(key)}
+                  disabled={pending}
+                  align={column.align}
+                  sticky={column.key === 'name' ? selectionWidth : undefined}
+                  stickyEdge={column.key === 'name'}
+                  filter={
+                    column.key === 'playlistCount'
+                      ? playlist.control
+                      : undefined
+                  }
+                />
+              ))}
+              {visibleProviders.map((provider) => (
+                <SecondaryTableHead
+                  key={provider}
+                  sortKey={`provider-${provider}`}
+                  label={`${artistProviderLabels[provider]} · Last scraped`}
+                  sortBy={sortKey}
+                  direction={query.direction}
+                  onSort={() => sort('lastScrapedAt', provider)}
+                  disabled={pending}
+                  filter={
+                    <SecondaryColumnFilter
+                      label={`${artistProviderLabels[provider]} freshness`}
+                      disabled={pending}
+                      options={providerFreshnessOptions}
+                      value={query.freshness
+                        .filter((filter) => filter.provider === provider)
+                        .map(providerFreshnessValue)}
+                      onChange={(next) =>
+                        setParams({
+                          freshness: JSON.stringify(
+                            updateProviderFreshness(
+                              query.freshness,
+                              provider,
+                              next,
+                            ),
+                          ),
+                        })
+                      }
+                    />
+                  }
+                />
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {artists.hasTotal && artists.total === 0 && (
+              <TableState colSpan={columns.count + 1}>
+                No matching artists.
+              </TableState>
+            )}
+            <SecondaryVirtualRows
+              window={artists}
+              colSpan={columns.count + 1}
+              renderRow={(artist, index) => (
+                <TableRow
+                  key={artist.id}
+                  aria-rowindex={index + 2}
+                  selected={isSelected(artist.id)}
+                >
+                  <TableCell sticky={0}>
+                    <input
+                      type="checkbox"
+                      className="ds-check"
+                      aria-label={`Select ${artist.name}`}
+                      checked={isSelected(artist.id)}
+                      aria-busy={snapshot ? members.isFetching : undefined}
+                      disabled={
+                        pending ||
+                        Boolean(
+                          snapshot &&
+                          (!snapshotMembers.includes(artist.id) ||
+                            processed.includes(artist.id)),
+                        )
+                      }
+                      onChange={(event) => {
+                        const shift =
+                          'shiftKey' in event.nativeEvent &&
+                          event.nativeEvent.shiftKey === true
+                        if (snapshot)
+                          setExcluded(
+                            updateJobSelection(
+                              excluded,
+                              ids.filter(
+                                (id) =>
+                                  snapshotMembers.includes(id) &&
+                                  !processed.includes(id),
+                              ),
+                              artist.id,
+                              anchor,
+                              shift,
+                              !event.target.checked,
+                            ),
+                          )
+                        else
+                          setSelected(
+                            updateJobSelection(
+                              selected,
+                              ids,
+                              artist.id,
+                              anchor,
+                              shift,
+                              event.target.checked,
+                            ),
+                          )
+                        setAnchor(artist.id)
+                        setReview('')
+                      }}
+                    />
+                  </TableCell>
+                  {visible.map((column) => (
+                    <TableCell
+                      key={column.key}
+                      align={column.align}
+                      sticky={
+                        column.key === 'name' ? selectionWidth : undefined
+                      }
+                      stickyEdge={column.key === 'name'}
+                    >
+                      {column.key === 'name' ? (
+                        <CreatorLibraryTitle
+                          kind="artist"
+                          id={artist.id}
+                          title={artist.name}
+                        />
+                      ) : column.key === 'createdAt' ? (
+                        <CreatorLibraryDate value={artist.createdAt} />
+                      ) : (
+                        formatCount(
+                          column.key === 'albumCount'
+                            ? artist.albumCount
+                            : column.key === 'trackCount'
+                              ? artist.trackCount
+                              : artist.playlistCount,
+                        )
+                      )}
+                    </TableCell>
+                  ))}
+                  {visibleProviders.map((provider) => (
+                    <TableCell key={provider}>
+                      <ArtistScrapeState
+                        state={artist.providers.find(
+                          (state) => state.provider === provider,
+                        )}
+                        label={artistProviderLabels[provider]}
+                      />
+                    </TableCell>
+                  ))}
+                </TableRow>
+              )}
+            />
+          </tbody>
+        </table>
+      </SecondaryTableScroll>
+      {(selectionCount > 0 || pending) && (
+        <TableSelectionBar className="ops-selectbar">
+          <span role="status">
+            <b>{formatCount(selectionCount)} selected</b>
+          </span>
+          <fieldset className="ops-providers" disabled={pending}>
+            <legend className="ds-label">Fetch metadata from</legend>
+            {providers.map((provider) => {
+              const reason = catalog.isPending
+                ? 'Loading providers...'
+                : unavailable(available.find((item) => item.id === provider))
+              return (
+                <label className="ds-checkrow" key={provider} title={reason}>
                   <input
                     type="checkbox"
-                    ref={selectAll}
-                    aria-label={
-                      snapshot
-                        ? 'Select all matching artists'
-                        : 'Select all loaded artists'
-                    }
-                    checked={allChecked}
-                    disabled={!ids.length || pending}
-                    onChange={() => {
-                      if (snapshot) {
-                        if (allChecked) {
-                          setSnapshot(null)
-                          setProcessed([])
-                        }
-                        setExcluded([])
-                      } else
-                        setSelected(
-                          allChecked ? [] : [...new Set([...selected, ...ids])],
-                        )
+                    className="ds-check"
+                    checked={launchProviders.includes(provider)}
+                    disabled={Boolean(reason)}
+                    onChange={(event) => {
+                      setSelectedProviders((current) =>
+                        event.target.checked
+                          ? [...current, provider]
+                          : current.filter((id) => id !== provider),
+                      )
                       setReview('')
                     }}
                   />
-                </th>
-                {visible.map((column) => (
-                  <SecondaryTableHead
-                    key={column.key}
-                    sortKey={column.key}
-                    label={column.label}
-                    sortBy={sortKey}
-                    direction={query.direction}
-                    onSort={(key) => sort(key)}
-                    disabled={pending}
-                    filter={
-                      column.key === 'playlistCount'
-                        ? playlist.control
-                        : undefined
+                  {artistProviderLabels[provider]}
+                  {reason ? ` (${reason})` : ''}
+                </label>
+              )
+            })}
+          </fieldset>
+          <span className="ds-actions ds-toolbar-end">
+            {!reviewed ? (
+              <Button
+                variant="primary"
+                type="button"
+                disabled={pending || !operations}
+                onClick={() => setReview(confirmationKey)}
+              >
+                Review {formatCount(operations)} metadata jobs
+              </Button>
+            ) : (
+              <span
+                className="ops-review"
+                role="region"
+                aria-label="Review artist metadata jobs"
+              >
+                <span>
+                  <b>Queue up to {formatCount(operations)} metadata jobs</b> ·{' '}
+                  {formatCount(selectionCount)} artists ×{' '}
+                  {launchProviders.length}{' '}
+                  {launchProviders.length === 1 ? 'provider' : 'providers'}.
+                  Only selected artists are queued. Active jobs are skipped;
+                  provider limits and cooldowns apply.
+                </span>
+                <span className="ds-actions">
+                  <Button
+                    variant="primary"
+                    type="button"
+                    disabled={pending || !operations}
+                    onClick={() =>
+                      queue.mutate({
+                        selectionKey,
+                        snapshot,
+                        selected: [...selected],
+                        omitted,
+                        providers: [...launchProviders],
+                        freshness: query.freshness.filter((filter) =>
+                          launchProviders.some(
+                            (provider) => provider === filter.provider,
+                          ),
+                        ),
+                        confirmBroadRun: operations > 5 && reviewed,
+                      })
                     }
-                  />
-                ))}
-                {visibleProviders.map((provider) => (
-                  <SecondaryTableHead
-                    key={provider}
-                    sortKey={`provider-${provider}`}
-                    label={`${artistProviderLabels[provider]} · Last scraped`}
-                    sortBy={sortKey}
-                    direction={query.direction}
-                    onSort={() => sort('lastScrapedAt', provider)}
-                    disabled={pending}
-                    filter={
-                      <SecondaryColumnFilter
-                        label={`${artistProviderLabels[provider]} freshness`}
-                        disabled={pending}
-                        options={providerFreshnessOptions}
-                        value={query.freshness
-                          .filter((filter) => filter.provider === provider)
-                          .map(providerFreshnessValue)}
-                        onChange={(next) =>
-                          setParams({
-                            freshness: JSON.stringify(
-                              updateProviderFreshness(
-                                query.freshness,
-                                provider,
-                                next,
-                              ),
-                            ),
-                          })
-                        }
-                      />
-                    }
-                  />
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {artists.hasTotal && artists.total === 0 && (
-                <TableState colSpan={columns.count + 1}>
-                  No matching artists.
-                </TableState>
-              )}
-              <SecondaryVirtualRows
-                window={artists}
-                colSpan={columns.count + 1}
-                renderRow={(artist, index) => (
-                  <tr
-                    key={artist.id}
-                    aria-rowindex={index + 2}
-                    data-selected={isSelected(artist.id) || undefined}
                   >
-                    <td className="table-selection-cell">
-                      <input
-                        type="checkbox"
-                        aria-label={`Select ${artist.name}`}
-                        checked={isSelected(artist.id)}
-                        aria-busy={snapshot ? members.isFetching : undefined}
-                        disabled={
-                          pending ||
-                          Boolean(
-                            snapshot &&
-                            (!snapshotMembers.includes(artist.id) ||
-                              processed.includes(artist.id)),
-                          )
-                        }
-                        onChange={(event) => {
-                          const shift =
-                            'shiftKey' in event.nativeEvent &&
-                            event.nativeEvent.shiftKey === true
-                          if (snapshot)
-                            setExcluded(
-                              updateJobSelection(
-                                excluded,
-                                ids.filter(
-                                  (id) =>
-                                    snapshotMembers.includes(id) &&
-                                    !processed.includes(id),
-                                ),
-                                artist.id,
-                                anchor,
-                                shift,
-                                !event.target.checked,
-                              ),
-                            )
-                          else
-                            setSelected(
-                              updateJobSelection(
-                                selected,
-                                ids,
-                                artist.id,
-                                anchor,
-                                shift,
-                                event.target.checked,
-                              ),
-                            )
-                          setAnchor(artist.id)
-                          setReview('')
-                        }}
-                      />
-                    </td>
-                    {visible.map((column) => (
-                      <td key={column.key}>
-                        {column.key === 'name' ? (
-                          <CreatorLibraryTitle
-                            kind="artist"
-                            id={artist.id}
-                            title={artist.name}
-                          />
-                        ) : column.key === 'createdAt' ? (
-                          <CreatorLibraryDate value={artist.createdAt} />
-                        ) : (
-                          <SecondaryCell>
-                            {(column.key === 'albumCount'
-                              ? artist.albumCount
-                              : column.key === 'trackCount'
-                                ? artist.trackCount
-                                : artist.playlistCount
-                            ).toLocaleString()}
-                          </SecondaryCell>
-                        )}
-                      </td>
-                    ))}
-                    {visibleProviders.map((provider) => (
-                      <td key={provider}>
-                        <ArtistScrapeState
-                          state={artist.providers.find(
-                            (state) => state.provider === provider,
-                          )}
-                          label={artistProviderLabels[provider]}
-                        />
-                      </td>
-                    ))}
-                  </tr>
-                )}
-              />
-            </tbody>
-          </table>
-        </SecondaryTableScroll>
-        <SecondaryTableFooter selectedCount={selectionCount}>
-          <div className="film-selection-footer">
-            <div className="job-selection-toolbar">
-              {snapshot ? (
-                <>
-                  <span
-                    title={`Selection expires ${new Date(snapshot.expiresAt).toLocaleString()}`}
-                  >
-                    Matching artists selected
-                    {excluded.length
-                      ? ` · ${excluded.length.toLocaleString()} excluded`
-                      : ''}
-                    {processed.length
-                      ? ` · ${processed.length.toLocaleString()} processed`
-                      : ''}
-                  </span>
+                    {pending
+                      ? `Queueing ${progress}/${selectionCount} artists...`
+                      : `Confirm ${formatCount(operations)} metadata jobs`}
+                  </Button>
                   <Button
                     type="button"
                     variant="ghost"
                     disabled={pending}
-                    onClick={() => {
-                      setSnapshot(null)
-                      setExcluded([])
-                      setProcessed([])
-                      setReview('')
-                    }}
+                    onClick={() => setReview('')}
                   >
-                    Clear selection
+                    Back
                   </Button>
-                </>
-              ) : (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  disabled={
-                    pending || (artists.hasTotal && artists.total === 0)
-                  }
-                  onClick={() =>
-                    createSnapshot.mutate({
-                      identity,
-                      generation: generation.current,
-                      query,
-                    })
-                  }
-                >
-                  {snapshotPending
-                    ? 'Selecting matching artists...'
-                    : `Select all${artists.hasTotal ? ` ${artists.total.toLocaleString()}` : ''} matching artists`}
+                </span>
+              </span>
+            )}
+          </span>
+        </TableSelectionBar>
+      )}
+      {(queue.isError || queue.data) && (
+        <div className="ops-notice">
+          {queue.isError && (
+            <Notice tone="danger">
+              Could not queue selection. Check artist jobs before retrying.
+            </Notice>
+          )}
+          {queue.data && (
+            <Notice
+              action={
+                <Button asChild size="xs">
+                  <Link href="/jobs?mediaType=artist">View artist jobs</Link>
                 </Button>
-              )}
-            </div>
-            <fieldset className="enrichment-providers" disabled={pending}>
-              <legend>Fetch metadata from</legend>
-              {providers.map((provider) => {
-                const reason = catalog.isPending
-                  ? 'Loading providers...'
-                  : unavailable(available.find((item) => item.id === provider))
-                return (
-                  <label className="check-label" key={provider} title={reason}>
-                    <input
-                      type="checkbox"
-                      checked={launchProviders.includes(provider)}
-                      disabled={Boolean(reason)}
-                      onChange={(event) => {
-                        setSelectedProviders((current) =>
-                          event.target.checked
-                            ? [...current, provider]
-                            : current.filter((id) => id !== provider),
-                        )
-                        setReview('')
-                      }}
-                    />
-                    {artistProviderLabels[provider]}
-                    {reason ? ` (${reason})` : ''}
-                  </label>
-                )
-              })}
-            </fieldset>
-            <div className="job-selection-toolbar">
-              {!reviewed ? (
-                <Button
-                  variant="primary"
-                  type="button"
-                  disabled={pending || !operations}
-                  onClick={() => setReview(confirmationKey)}
-                >
-                  Review {operations} metadata jobs
-                </Button>
-              ) : (
-                <div
-                  className="job-action-review"
-                  role="region"
-                  aria-label="Review artist metadata jobs"
-                >
-                  <p>
-                    <strong>Queue up to {operations} metadata jobs</strong> ·{' '}
-                    {selectionCount} artists × {launchProviders.length}{' '}
-                    {launchProviders.length === 1 ? 'provider' : 'providers'}
-                  </p>
-                  <p>
-                    Only selected artists are queued. Active jobs are skipped;
-                    provider limits and cooldowns apply.
-                  </p>
-                  <div className="flex items-center gap-2">
-                    <Button
-                      variant="primary"
-                      type="button"
-                      disabled={pending || !operations}
-                      onClick={() =>
-                        queue.mutate({
-                          selectionKey,
-                          snapshot,
-                          selected: [...selected],
-                          omitted,
-                          providers: [...launchProviders],
-                          freshness: query.freshness.filter((filter) =>
-                            launchProviders.some(
-                              (provider) => provider === filter.provider,
-                            ),
-                          ),
-                          confirmBroadRun: operations > 5 && reviewed,
-                        })
-                      }
-                    >
-                      {pending
-                        ? `Queueing ${progress}/${selectionCount} artists...`
-                        : `Confirm ${operations} metadata jobs`}
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      disabled={pending}
-                      onClick={() => setReview('')}
-                    >
-                      Back
-                    </Button>
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-        </SecondaryTableFooter>
-      </SecondaryTableFrame>
-      {createSnapshot.isError && (
-        <p role="alert">
-          Could not select matching artists. Try Select all matching again.
-        </p>
-      )}
-      {snapshot && members.isFetching && (
-        <p role="status">Checking selection for visible rows...</p>
-      )}
-      {snapshot && members.isError && (
-        <p role="alert">
-          Could not check the selected rows. If the selection expired, clear it
-          and select matching artists again.{' '}
-          <button
-            type="button"
-            className="underline"
-            onClick={() => members.refetch()}
-          >
-            Retry
-          </button>
-        </p>
-      )}
-      {queue.isError && (
-        <p role="alert">
-          Could not queue selection. Check artist jobs before retrying.
-        </p>
-      )}
-      {queue.data && (
-        <div role="status">
-          {queue.data.queued} jobs queued · {queue.data.skipped} skipped.{' '}
-          <Link href="/jobs?mediaType=artist" className="underline">
-            View artist jobs
-          </Link>
-          {queue.data.warnings.map((warning) => (
-            <p key={warning}>{warning}</p>
-          ))}
+              }
+            >
+              {formatCount(queue.data.queued)} jobs queued ·{' '}
+              {formatCount(queue.data.skipped)} skipped.
+              {queue.data.warnings.map((warning) => (
+                <span className="block" key={warning}>
+                  {warning}
+                </span>
+              ))}
+            </Notice>
+          )}
         </div>
       )}
-    </>
+    </div>
   )
 }

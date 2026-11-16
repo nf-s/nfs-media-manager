@@ -1,33 +1,28 @@
-.popover .panel {
-  width: min(430px, calc(100vw - 36px));
-  gap: 10px;
-  line-height: 1.5;
+.panel {
+  width: min(calc(var(--ds-rail) * 2), calc(100vw - var(--ds-9)));
+  font-size: var(--ds-text-sm);
+  line-height: var(--ds-leading);
   white-space: normal;
   overflow-wrap: anywhere;
 }
 
-.popover > summary {
-  justify-content: center;
-  padding: 5px;
-}
-
 .result {
   display: grid;
-  gap: 10px;
+  gap: var(--ds-4);
 }
 
 .result ul {
-  padding-left: 18px;
+  padding-left: var(--ds-7);
   list-style: disc;
 }
 
 .result li + li {
-  margin-top: 3px;
+  margin-top: var(--ds-1);
 }
 
 .note {
   color: var(--ds-ink-3);
-  font-size: 11px;
+  font-size: var(--ds-text-xs);
 }
 
 .error {
@@ -35,7 +30,8 @@
 }
 
 .spinner {
-  margin: 0 6px;
+  margin: 0 var(--ds-3);
+  color: var(--ds-ink-3);
   animation: spin 1s linear infinite;
 }
 
@@ -48,11 +44,5 @@
 @media (prefers-reduced-motion: reduce) {
   .spinner {
     animation: none;
-  }
-}
-
-@media (max-width: 700px) {
-  .popover .panel {
-    width: auto;
   }
 }

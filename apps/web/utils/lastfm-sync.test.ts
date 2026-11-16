@@ -149,7 +149,7 @@ test('stored search status distinguishes missing, active, empty and failed searc
   )
   assert.equal(
     lastfmSpotifySearchLabel({ ...summary, status: 'running' }),
-    'Searching...',
+    'Running',
   )
   assert.equal(
     lastfmSpotifySearchLabel({ ...summary, status: 'failed' }),

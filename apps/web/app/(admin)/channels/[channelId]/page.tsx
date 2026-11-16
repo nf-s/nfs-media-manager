@@ -1,5 +1,5 @@
-import Link from 'next/link'
 import { ChannelDetail } from '@/components/channel-detail'
+import { DetailPage } from '@/components/detail-frame'
 
 export default async function ChannelPage({
   params,
@@ -8,9 +8,10 @@ export default async function ChannelPage({
 }) {
   const { channelId } = await params
   return (
-    <div className="detail-page">
-      <Link href="/subscriptions/channels">Back to channels</Link>
+    <DetailPage
+      back={{ href: '/subscriptions/channels', label: 'Back to channels' }}
+    >
       <ChannelDetail id={channelId} />
-    </div>
+    </DetailPage>
   )
 }

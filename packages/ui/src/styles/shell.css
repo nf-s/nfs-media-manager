@@ -1,1 +1,158 @@
 /* Layout for the shell screens. Tokens only; visual patterns belong in the design system. */
+
+/* Frame: cool grey page, rail, one white panel */
+.app-shell {
+  background-color: var(--ds-page);
+  background-image: none;
+}
+@media (min-width: 701px) {
+  .app-shell {
+    grid-template-columns: var(--ds-rail) minmax(0, 1fr);
+  }
+  .app-rail {
+    gap: var(--ds-1);
+    padding: var(--ds-4);
+  }
+  .app-main {
+    margin: var(--ds-4) var(--ds-4) var(--ds-4) 0;
+    border: 0;
+    border-radius: var(--ds-r-lg);
+  }
+  .rail-head {
+    padding-bottom: var(--ds-1);
+  }
+  .rail-section {
+    padding-top: var(--ds-4);
+    border-top: 0;
+  }
+  .rail-foot {
+    gap: var(--ds-1);
+    padding-top: var(--ds-4);
+    border-top: 0;
+  }
+}
+/* Pages built from the design system pad themselves with the gutter. */
+.app-main:has(.ds-pagehead, .ds-page) {
+  padding: 0;
+}
+.ds-library {
+  margin-bottom: 0;
+}
+
+/* Main navigation: the library's pages, then System */
+.shell-nav {
+  display: grid;
+  flex-shrink: 0;
+  gap: var(--ds-1);
+}
+.shell-nav .ds-nav-item:hover,
+.shell-section-nav .ds-nav-item:hover,
+.shell-section-tabs .ds-tab:hover {
+  text-decoration: none;
+}
+.shell-nav-row {
+  position: relative;
+  display: grid;
+}
+.shell-nav-row > .ds-nav-item {
+  padding-right: calc(var(--ds-h-xs) + var(--ds-5));
+}
+.shell-activity {
+  position: absolute;
+  top: 0;
+  right: var(--ds-2);
+  bottom: 0;
+  display: flex;
+  align-items: center;
+}
+.shell-activity-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--ds-h-xs);
+  height: var(--ds-h-xs);
+  padding: 0 var(--ds-1);
+  border: 0;
+  border-radius: var(--ds-r-sm);
+  background: none;
+  color: var(--ds-ink-3);
+  cursor: pointer;
+}
+.shell-activity-trigger:hover {
+  background: var(--ds-chip);
+}
+
+/* Second-level navigation: in the rail, or as tabs above the page */
+.shell-section-nav {
+  display: grid;
+  gap: var(--ds-1);
+}
+.shell-section-nav .ds-nav-item {
+  width: 100%;
+  height: auto;
+  min-height: var(--ds-h-sm);
+  padding-top: var(--ds-2);
+  padding-bottom: var(--ds-2);
+  border: 0;
+  background: none;
+  font-size: var(--ds-text-md);
+  text-align: left;
+  cursor: pointer;
+}
+.shell-section-nav .ds-nav-item:hover {
+  background: var(--ds-rail-hover);
+}
+.shell-section-nav .ds-nav-item[aria-current] {
+  background: var(--ds-surface);
+}
+.shell-section-text {
+  display: grid;
+  min-width: 0;
+}
+.shell-section-text .ds-muted {
+  font-size: var(--ds-text-xs);
+}
+.shell-section-tabs {
+  flex: none;
+  margin: 0 var(--ds-gutter);
+}
+.shell-section-tabs .shell-section-text .ds-muted {
+  display: none;
+}
+
+@media (max-width: 700px) {
+  .shell-nav {
+    grid-area: 3 / 1 / 4 / -1;
+    display: flex;
+    gap: var(--ds-1);
+    padding: var(--ds-2) var(--ds-3)
+      calc(var(--ds-2) + env(safe-area-inset-bottom));
+    border-top: 1px solid var(--ds-line);
+    background: var(--ds-surface);
+  }
+  .app-shell:has(> .player-dock) .shell-nav {
+    grid-area: 4 / 1 / 5 / -1;
+  }
+  .shell-nav-row {
+    display: contents;
+  }
+  .shell-nav .ds-nav-item {
+    flex: 1;
+    flex-direction: column;
+    justify-content: center;
+    gap: var(--ds-1);
+    min-width: 0;
+    height: var(--ds-h-touch);
+    padding: 0;
+    font-size: var(--ds-text-xs);
+  }
+  .shell-nav .ds-nav-item[aria-current] {
+    background: var(--ds-chip);
+    box-shadow: none;
+  }
+  .shell-nav-label,
+  .shell-activity,
+  .shell-nav .ds-count {
+    display: none;
+  }
+}

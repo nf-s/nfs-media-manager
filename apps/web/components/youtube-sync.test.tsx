@@ -90,11 +90,14 @@ test('an unconfigured account links to the YouTube credentials and cannot sync',
   )
   assert.match(
     html,
-    /href="\/providers\?provider=youtube&amp;section=credentials&amp;mediaType=subscription"/,
+    /href="\/providers\/youtube\?tab=settings"/,
   )
   assert.doesNotMatch(html, /Connect YouTube|Reconnect|Disconnect/)
   assert.match(button(html, 'Sync now'), / disabled=""/)
-  assert.match(html, /<dd>Not synced<\/dd>/)
+  assert.match(
+    html,
+    /<dd><span class="ds-status" data-status="never">Never<\/span><\/dd>/,
+  )
   assert.doesNotMatch(html, /View last job/)
 })
 
@@ -105,7 +108,7 @@ test('a configured account offers to connect and shows the redirect URI', () => 
   assert.doesNotMatch(button(html, 'Connect YouTube'), / disabled=""/)
   assert.match(
     html,
-    /Redirect URI: <code>https:\/\/media\.example\.test\/api\/v1\/youtube\/callback<\/code>/,
+    /Redirect URI: <code class="ds-mono">https:\/\/media\.example\.test\/api\/v1\/youtube\/callback<\/code>/,
   )
   assert.match(button(html, 'Sync now'), / disabled=""/)
 })
@@ -119,9 +122,15 @@ test('a running sync shows channel progress, stop and the current job', () => {
       sourcesTotal: 6,
     }),
   )
-  assert.match(html, /<dd>Running<\/dd>/)
+  assert.match(
+    html,
+    /<dd><span class="ds-status" data-status="running">Running<\/span><\/dd>/,
+  )
   assert.match(html, /<dd>2 of 6<\/dd>/)
-  assert.match(html, /<progress[^>]+value="2"[^>]+max="6"/)
+  assert.match(
+    html,
+    /role="progressbar" aria-valuemin="0" aria-valuemax="6" aria-valuenow="2"/,
+  )
   assert.match(button(html, 'Sync now'), / disabled=""/)
   assert.doesNotMatch(button(html, 'Stop'), / disabled=""/)
   assert.match(html, /href="\/jobs\/job-2">View current job/)
@@ -140,7 +149,7 @@ test('reading the subscription list is shown before channels are counted', () =>
     }),
   )
   assert.match(html, /<dd>Reading subscriptions<\/dd>/)
-  assert.doesNotMatch(html, /<progress[^>]+value=/)
+  assert.doesNotMatch(html, /role="progressbar"/)
 })
 
 test('a paused sync explains the quota and can be resumed', () => {
@@ -151,7 +160,10 @@ test('a paused sync explains the quota and can be resumed', () => {
       resumeAfter: '2026-11-14T08:00:00.000Z',
     }),
   )
-  assert.match(html, /<dd>Paused<\/dd>/)
+  assert.match(
+    html,
+    /<dd><span class="ds-status" data-status="paused">Paused<\/span><\/dd>/,
+  )
   assert.match(html, /Paused: the daily YouTube API quota is used up\./)
   assert.match(html, /The schedule resumes it after /)
   assert.doesNotMatch(button(html, 'Resume sync'), / disabled=""/)
@@ -174,7 +186,7 @@ test('a failed sync shows its error and offers to resume', () => {
       errorMessage: 'Access was revoked',
     }),
   )
-  assert.match(html, /<p role="alert">Access was revoked<\/p>/)
+  assert.match(html, /role="alert">.*<span>Access was revoked<\/span>/)
   assert.match(button(html, 'Resume sync'), /<button/)
   assert.match(html, /View last job/)
 })
@@ -182,11 +194,11 @@ test('a failed sync shows its error and offers to resume', () => {
 test('the OAuth return is confirmed or reported', () => {
   assert.match(
     render(status(), 'youtube=connected'),
-    /<p role="status">YouTube connected\.<\/p>/,
+    /role="status">.*<span>YouTube connected\.<\/span>/,
   )
   assert.match(
     render(status({ account: { connected: false } }), 'youtube=error'),
-    /<p role="alert">YouTube did not connect\. Try again\.<\/p>/,
+    /role="alert">.*<span>YouTube did not connect\. Try again\.<\/span>/,
   )
 })
 

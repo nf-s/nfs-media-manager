@@ -1,5 +1,7 @@
+import { Notice, Skeleton, State } from '@repo/ui/components/ds/feedback'
 import { Button } from '@repo/ui/components/ui/button'
 
+/** Loading, failed and stale states of a detail drawer or page. */
 export function CreatorDetailState({
   pending,
   retry,
@@ -13,22 +15,37 @@ export function CreatorDetailState({
 }) {
   if (pending)
     return (
-      <p className="browse-empty" role="status">
-        Loading {subject}...
-      </p>
+      <div
+        className="dtl-loading"
+        role="status"
+        aria-label={`Loading ${subject}`}
+      >
+        <Skeleton width={112} height={112} />
+        <div className="dtl-loading-lines">
+          <Skeleton width="30%" height={12} />
+          <Skeleton width="60%" height={20} />
+          <Skeleton width="45%" height={12} />
+        </div>
+      </div>
     )
   if (stale)
     return (
-      <p className="quiet mb-2" role="alert">
-        Could not refresh this {subject}.{' '}
-        <button type="button" className="underline" onClick={retry}>
-          Retry
-        </button>
-      </p>
+      <Notice
+        tone="attention"
+        action={
+          <Button size="xs" onClick={retry}>
+            Retry
+          </Button>
+        }
+      >
+        Could not refresh this {subject}.
+      </Notice>
     )
   return (
-    <p className="browse-empty" role="alert">
-      Could not load this {subject}. <Button onClick={retry}>Retry</Button>
-    </p>
+    <State
+      title={`Could not load this ${subject}`}
+      error
+      action={<Button onClick={retry}>Retry</Button>}
+    />
   )
 }

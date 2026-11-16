@@ -17,6 +17,7 @@ import TrackMerge, {
 } from './track-merge'
 import { errorMessage, invalidateScrobbleLinks } from './lastfm-sync'
 import { ConfigContext } from './providers'
+import { listeningSeriesKey } from '@/utils/listening-series'
 
 const source = TrackListItemSchema.parse({
   id: 'lastfm/fixture',
@@ -128,11 +129,12 @@ test('the side panel starts with the recorded track and stored Spotify choices w
     />,
     [target, source, albumMatched],
   )
-  assert.match(html, /<dialog[^>]*class="tag-drawer"/)
-  assert.match(html, /class="tag-drawer-body"/)
-  assert.match(html, />Track match<\/span>/)
-  assert.match(html, /<h1>Fixture Song<\/h1>/)
-  assert.match(html, /Recorded Album · 3 scrobbles/)
+  assert.match(html, /<dialog[^>]*class="dtl-dialog"/)
+  assert.match(html, /class="dtl-dialog-body"/)
+  assert.match(html, />Track match<\/b>/)
+  assert.match(html, /<strong>Fixture Song<\/strong>/)
+  assert.match(html, /Recorded Album<\/span>/)
+  assert.match(html, />3 scrobbles</)
   assert.match(html, /Search Spotify library tracks/)
   assert.match(
     html,
@@ -376,6 +378,21 @@ test('merge invalidation cancels a pending source detail read without starting a
     assert.equal(client.getQueryState(queryKey)?.isInvalidated, true)
   } finally {
     stop()
+    client.clear()
+  }
+})
+
+test('scrobble invalidation refreshes artist listening charts but not artist details', async () => {
+  const client = new QueryClient()
+  const series = listeningSeriesKey('artist', 'artist-1')
+  const detail = ['artist', 'artist-1']
+  client.setQueryData(series, 'stored')
+  client.setQueryData(detail, 'stored')
+  try {
+    await invalidateScrobbleLinks(client)
+    assert.equal(client.getQueryState(series)?.isInvalidated, true)
+    assert.equal(client.getQueryState(detail)?.isInvalidated, false)
+  } finally {
     client.clear()
   }
 })

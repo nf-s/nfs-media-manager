@@ -2,6 +2,7 @@
 
 import React, { useState } from 'react'
 import type { JsonValue } from '@repo/schemas/common'
+import { Button } from '@repo/ui/components/ui/button'
 
 const PAGE_SIZE = 50
 
@@ -19,16 +20,18 @@ function JsonNode({
   const prefix = label === undefined ? '' : `${JSON.stringify(label)}: `
 
   if (value === null || typeof value !== 'object') {
-    const color =
+    const kind =
       typeof value === 'string'
-        ? 'text-slate-700'
+        ? 'string'
         : typeof value === 'number'
-          ? 'text-blue-700'
-          : 'text-amber-800'
+          ? 'number'
+          : 'literal'
     return (
-      <div className="break-words py-0.5 [overflow-wrap:anywhere]">
+      <div className="ops-json-line">
         {prefix}
-        <span className={color}>{JSON.stringify(value)}</span>
+        <span className="ops-json-value" data-kind={kind}>
+          {JSON.stringify(value)}
+        </span>
       </div>
     )
   }
@@ -48,30 +51,27 @@ function JsonNode({
       open={open}
       onToggle={(event) => setOpen(event.currentTarget.open)}
     >
-      <summary
-        className="break-words py-0.5 [overflow-wrap:anywhere]"
-        style={{ display: 'list-item', fontSize: 'inherit' }}
-      >
+      <summary className="ops-json-line">
         {prefix}
-        <span className="text-neutral-500">
+        <span className="ds-muted">
           {array ? '[' : '{'} {count} {array ? 'items' : 'keys'}{' '}
           {array ? ']' : '}'}
         </span>
       </summary>
       {open && (
-        <div className="ml-3 border-l border-neutral-200 pl-3">
+        <div className="ops-json-children">
           {entries.map((entry) => (
             <JsonNode key={entry.key} label={entry.key} value={entry.value} />
           ))}
           {count > visible && (
-            <button
-              type="button"
-              className="py-1 text-slate-700 underline underline-offset-2"
+            <Button
+              variant="link"
+              size="xs"
               onClick={() => setVisible((current) => current + PAGE_SIZE)}
             >
               Show {Math.min(PAGE_SIZE, count - visible)} more (
               {count - visible} remaining)
-            </button>
+            </Button>
           )}
         </div>
       )}
@@ -82,21 +82,19 @@ function JsonNode({
 export default function JsonTree({ value }: { value: JsonValue }) {
   const [rawOpen, setRawOpen] = useState(false)
   return (
-    <div className="json-tree min-w-0 space-y-2 py-2">
-      <div className="json-tree-body max-h-[60vh] overflow-auto px-3 py-2 font-mono text-xs leading-5">
+    <div className="ops-json">
+      <div className="ops-json-body">
         <JsonNode value={value} initiallyOpen />
       </div>
       <details
+        className="ops-disclosure"
         open={rawOpen}
         onToggle={(event) => setRawOpen(event.currentTarget.open)}
       >
-        <summary
-          className="text-xs text-neutral-500"
-          style={{ display: 'list-item' }}
-        >
-          Raw JSON
-        </summary>
-        {rawOpen && <pre>{JSON.stringify(value, null, 2)}</pre>}
+        <summary>Raw JSON</summary>
+        {rawOpen && (
+          <pre className="ops-pre">{JSON.stringify(value, null, 2)}</pre>
+        )}
       </details>
     </div>
   )

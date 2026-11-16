@@ -14,6 +14,9 @@ import {
   trackSpotifyMatchLabels,
   type TrackListItem,
 } from '@repo/schemas/tracks'
+import { Stats } from '@repo/ui/components/ds/facts'
+import { Notice, Skeleton } from '@repo/ui/components/ds/feedback'
+import { formatCount } from '@repo/ui/lib/format'
 import { Button } from '@repo/ui/components/ui/button'
 import { Input } from '@repo/ui/components/ui/input'
 import {
@@ -181,7 +184,7 @@ export function LastfmTrackMatchList() {
         columns={columns.controls}
       />
       {matchedId && (
-        <p role="status" className="muted">
+        <p role="status" className="ds-muted">
           Track matched.{' '}
           <DetailLink kind="track" id={matchedId}>
             Open track
@@ -189,12 +192,16 @@ export function LastfmTrackMatchList() {
         </p>
       )}
       {tracks.isError && tracks.total > 0 && (
-        <p role="alert">
-          Could not load Last.fm tracks.{' '}
-          <button type="button" onClick={tracks.retry}>
-            Retry
-          </button>
-        </p>
+        <Notice
+          tone="danger"
+          action={
+            <Button size="xs" onClick={tracks.retry}>
+              Retry
+            </Button>
+          }
+        >
+          Could not load Last.fm tracks.
+        </Notice>
       )}
       {selected && (
         <TrackMergePanel
@@ -221,6 +228,7 @@ export function LastfmTrackMatchList() {
                     key={column.key}
                     sortKey={column.key}
                     label={column.label}
+                    align={column.key === 'scrobbles' ? 'end' : undefined}
                     sortBy={sortBy}
                     direction={direction}
                     onSort={sort}
@@ -248,13 +256,9 @@ export function LastfmTrackMatchList() {
                     ? 'Could not load Last.fm tracks.'
                     : 'No matching Last.fm tracks.'}
                 {tracks.isError && (
-                  <button
-                    type="button"
-                    className="ml-1 underline"
-                    onClick={tracks.retry}
-                  >
+                  <Button size="xs" variant="link" onClick={tracks.retry}>
                     Retry
-                  </button>
+                  </Button>
                 )}
               </TableState>
             )}
@@ -293,8 +297,8 @@ export function LastfmTrackMatchList() {
                       </TableCell>
                     )}
                     {columns.visible('scrobbles') && (
-                      <TableCell className="tabular-nums">
-                        {track.scrobbles.toLocaleString()}
+                      <TableCell align="end" className="ds-num">
+                        {formatCount(track.scrobbles)}
                       </TableCell>
                     )}
                     {columns.visible('spotifyMatch') && (
@@ -370,47 +374,50 @@ export default function LastfmTrackMatches() {
     mutationFn: () => refreshScrobbleLinks(apiBaseUrl, client),
   })
   return (
-    <section
-      className="film-import-workflow"
-      aria-label="Last.fm track matches"
-    >
+    <section className="data-stack" aria-label="Last.fm track matches">
       <h2>Track matches</h2>
       {counts.isPending ? (
-        <p role="status">Loading track matches...</p>
+        <Skeleton height={40} width="50%" />
       ) : !counts.data ? (
-        <p role="alert">
-          Could not load track matches.{' '}
-          <Button variant="ghost" onClick={() => counts.refetch()}>
-            Retry
-          </Button>
-        </p>
+        <Notice
+          tone="danger"
+          action={
+            <Button size="xs" onClick={() => counts.refetch()}>
+              Retry
+            </Button>
+          }
+        >
+          Could not load track matches.
+        </Notice>
       ) : (
-        <dl className="detail-metrics">
-          <div>
-            <dt>Last.fm tracks in library</dt>
-            <dd>
-              <Link href={tracksHref([source])}>
-                {counts.data.total.toLocaleString()}
-              </Link>
-            </dd>
-          </div>
-          <div>
-            <dt>No Spotify match</dt>
-            <dd>
-              <Link href={tracksHref([source, unmatched])}>
-                {counts.data.withoutSpotify.toLocaleString()}
-              </Link>
-            </dd>
-          </div>
-        </dl>
+        <Stats
+          items={[
+            {
+              label: 'Last.fm tracks in library',
+              value: (
+                <Link href={tracksHref([source])}>
+                  {formatCount(counts.data.total)}
+                </Link>
+              ),
+            },
+            {
+              label: 'No Spotify match',
+              value: (
+                <Link href={tracksHref([source, unmatched])}>
+                  {formatCount(counts.data.withoutSpotify)}
+                </Link>
+              ),
+            },
+          ]}
+        />
       )}
-      <p className="muted">
+      <p className="ds-muted">
         Spotify links come from existing Spotify imports or a unique title in
         the linked album’s stored track list. Open a track to see which applies
         and the names recorded by Last.fm. Spotify has not been searched for
         unmatched tracks.
       </p>
-      <div className="form-actions">
+      <span className="ds-actions">
         <Button
           disabled={
             !status.data?.configured ||
@@ -422,16 +429,16 @@ export default function LastfmTrackMatches() {
         >
           {refresh.isPending ? 'Refreshing...' : 'Refresh matches'}
         </Button>
-      </div>
-      <p className="muted">
+      </span>
+      <p className="ds-muted">
         Use stored history to update matches after library metadata changes.
         This makes no Last.fm or Spotify requests.
       </p>
       {refresh.isSuccess && <p role="status">Track matches refreshed.</p>}
       {refresh.isError && (
-        <p role="alert">
+        <Notice tone="danger">
           {errorMessage(refresh.error, 'Could not refresh track matches.')}
-        </p>
+        </Notice>
       )}
       <LastfmTrackMatchList />
     </section>

@@ -1,17 +1,18 @@
 'use client'
-import { CreatorLinks } from './creator-links'
-import { musicDisplayTags } from '@repo/schemas/music-tags'
 
 import Link from 'next/link'
 import { usePathname, useSearchParams } from 'next/navigation'
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Check, Disc3, Film } from 'lucide-react'
 import { z } from 'zod'
+import { musicDisplayTags } from '@repo/schemas/music-tags'
 import {
   AlbumDetailSchema,
   FilmDetailSchema,
   AlbumPatchSchema,
   FilmPatchSchema,
+  parseAlbumBrowseFiltersParam,
   type AlbumDetail,
   type FilmDetail,
 } from '@repo/schemas/media'
@@ -25,99 +26,194 @@ import {
   sameBrowseFilter,
   type BrowseField,
   type BrowseFilter,
+  type BrowseValues,
 } from '@repo/schemas/browse'
-import { Button } from '@repo/ui/components/ui/button'
 import {
-  Tabs,
-  TabsList,
-  TabsTrigger,
-  TabsContent,
-} from '@repo/ui/components/ui/tabs'
+  DetailHeader,
+  DetailActionsSpacer,
+} from '@repo/ui/components/ds/detail-header'
+import { Notice } from '@repo/ui/components/ds/feedback'
+import {
+  Facts,
+  KeyValues,
+  Section,
+  Stats,
+  type StatItem,
+} from '@repo/ui/components/ds/facts'
+import { Status } from '@repo/ui/components/ds/status'
+import { Button } from '@repo/ui/components/ui/button'
 import { Input } from '@repo/ui/components/ui/input'
+import { TabsContent } from '@repo/ui/components/ui/tabs'
+import {
+  EMPTY_VALUE,
+  formatCount,
+  formatDate,
+  formatRuntime,
+  formatTrackLength,
+} from '@repo/ui/lib/format'
 import { useConfig } from './providers'
 import { fetchApiData } from '@/utils/api'
 import { invalidateMediaItem } from '@/utils/query-cache'
-import MediaArtwork from './media-artwork'
-import MediaSources, { MediaEditHistory } from './media-sources'
-import { FilterButton, FilterIndicator } from './filter-affordance'
-import { BrowseFilterChips, filterModeClass } from './browse-controls'
-import { parseAlbumBrowseFiltersParam } from '@repo/schemas/media'
-import DetailProviderLinks from './detail-provider-links'
-import { AlbumSpotifyLink } from './service-icon-links'
-import { useDetailView } from './detail-inspector-context'
 import { withoutDetailEntries } from '@/utils/detail-inspector'
-import { AlbumPlayButtons } from './play-controls'
-import {
-  albumDetailTab,
-  albumTrackView,
-  createAlbumPlaybackSource,
-} from '@/utils/playback-source'
-import AlbumTracksTable from './album-tracks-table'
 import { scopedHref } from '@/utils/media-scope'
-import MetadataSourceControl from './metadata-source-control'
+import { createAlbumPlaybackSource } from '@/utils/playback-source'
+import { getDetailProviderLinks, ratingScore } from '@/utils/provider-ratings'
+import { albumSpotifyDestination } from '@/utils/album-links'
+import MediaSources, { MediaEditHistory } from './media-sources'
+import { BrowseFilterChips } from './browse-controls'
+import { FilterIndicator } from './filter-affordance'
+import { CreatorLinks } from './creator-links'
+import { CreatorDetailState } from './creator-detail-state'
 import { FilmCollectionLinks } from './film-collection-links'
 import AlbumListening from './album-listening'
 import AlbumPlaylists from './album-playlists'
-import type { SourceNavigationLink } from '@repo/schemas/tags'
+import AlbumTracksTable from './album-tracks-table'
+import { FieldProvenance } from './field-provenance'
+import ServiceIconLinks, { serviceLinks } from './service-icon-links'
+import { AlbumHeaderPlay } from './detail-play'
+import {
+  DetailArt,
+  DetailTabs,
+  FilterPill,
+  OpenAtProvider,
+  RatingCards,
+  ratingSource,
+  useDetailTab,
+} from './detail-frame'
 
 const DetailSchema = z.union([AlbumDetailSchema, FilmDetailSchema])
+type OnFilter = (filter: BrowseFilter, keepOpen?: boolean) => void
 
-function FilterBadge({
-  field,
-  value,
-  label = value,
-  onFilter,
-}: {
-  field: string
-  value: string
-  label?: string
-  onFilter: (filter: BrowseFilter, keepOpen?: boolean) => void
-}) {
-  const params = useSearchParams()
-  const active = parseAlbumBrowseFiltersParam(params.get('filters')).find(
-    (filter) => sameBrowseFilter(filter, { field, value }),
-  )
-  return (
-    <FilterButton
-      className={`metadata-tag ${active ? filterModeClass(active.mode) : ''}`}
-      title={`Filter ${field}: ${value}. Shift-click to keep details open.`}
-      onClick={(event) => onFilter({ field, value }, event.shiftKey)}
-    >
-      {label}
-    </FilterButton>
-  )
+type AlbumTab = 'overview' | 'listening' | 'sources' | 'edit'
+type FilmTab = 'overview' | 'sources' | 'edit'
+const albumTabs: readonly [AlbumTab, ...AlbumTab[]] = [
+  'overview',
+  'listening',
+  'sources',
+  'edit',
+]
+const filmTabs: readonly [FilmTab, ...FilmTab[]] = [
+  'overview',
+  'sources',
+  'edit',
+]
+/** Older links opened the album's contents on their own tabs. */
+const tabAliases = {
+  history: 'sources',
+  tracks: 'overview',
+  playlists: 'overview',
+} satisfies Record<string, 'overview' | 'sources'>
+
+/** Release dates are calendar days; they are shown as stored. */
+function releaseDay(value: string | null) {
+  return value ? value.slice(0, 10) : null
 }
 
-function FilterValues({
+function fieldValue(
+  field: BrowseField,
+  value: BrowseValues[string] | undefined,
+) {
+  const formatted = formatBrowseValue(field, value)
+  return formatted === '-' ? EMPTY_VALUE : formatted
+}
+
+/** Values that filter the library when clicked; shift-click keeps details open. */
+function FilterPills({
   field,
   values,
   onFilter,
-  mediaId,
-  collectionSources,
+  selected,
+  max,
 }: {
   field: string
-  values: string[]
-  onFilter: (filter: BrowseFilter, keepOpen?: boolean) => void
-  mediaId?: string
-  collectionSources?: SourceNavigationLink[]
+  values: readonly string[]
+  onFilter: OnFilter
+  selected: readonly BrowseFilter[]
+  /** Shows this many, then a button for the rest. */
+  max?: number
 }) {
+  const [all, setAll] = useState(false)
+  const shown = max === undefined || all ? values : values.slice(0, max)
+  const hidden = values.length - shown.length
   return (
-    <div className="detail-tags detail-tags-scroll">
-      {values.map((value) => (
-        <span key={value} className="inline-flex items-center">
-          <FilterBadge field={field} value={value} onFilter={onFilter} />
-          {mediaId && (
-            <MetadataSourceControl
-              field={field}
-              name={value}
-              mediaId={mediaId}
-              collectionSources={collectionSources}
-            />
-          )}
-        </span>
-      ))}
-    </div>
+    <span className="ds-pills" data-wrap="">
+      {shown.map((value) => {
+        const active = selected.find((filter) =>
+          sameBrowseFilter(filter, { field, value }),
+        )
+        return (
+          <FilterPill
+            key={value}
+            label={value}
+            mode={active ? (active.mode ?? 'any') : undefined}
+            title={`Filter ${field}: ${value}. Shift-click to keep details open.`}
+            onClick={(event) => onFilter({ field, value }, event.shiftKey)}
+          />
+        )
+      })}
+      {hidden > 0 && (
+        <Button variant="link" size="xs" onClick={() => setAll(true)}>
+          +{formatCount(hidden)} more
+        </Button>
+      )}
+    </span>
   )
+}
+
+/** Six facts and an "All fields" disclosure with the source of every field. */
+function DetailsSection({
+  mediaItemId,
+  facts,
+}: {
+  mediaItemId: string
+  facts: readonly { label: string; value: ReactNode }[]
+}) {
+  const [open, setOpen] = useState(false)
+  return (
+    <Section
+      title="Details"
+      aside={
+        <Button
+          variant="link"
+          size="xs"
+          aria-expanded={open}
+          onClick={() => setOpen((value) => !value)}
+        >
+          {open ? 'Hide fields' : 'All fields'}
+        </Button>
+      }
+    >
+      <Facts items={facts.slice(0, 6)} />
+      {open && <FieldProvenance mediaItemId={mediaItemId} />}
+    </Section>
+  )
+}
+
+/**
+ * Pins the browse sort field first among the facts, when it is not already
+ * shown, so the value the list is ordered by is visible.
+ */
+function withSortedFact(
+  facts: { key: string; label: string; value: ReactNode }[],
+  fields: readonly BrowseField[],
+  values: BrowseValues,
+  highlightField: string | undefined,
+  shown: readonly string[],
+) {
+  const field = fields.find((item) => item.key === highlightField)
+  const value = field ? values[field.key] : undefined
+  if (
+    !field ||
+    value === undefined ||
+    value === null ||
+    shown.includes(field.key) ||
+    facts.some((fact) => fact.key === field.key)
+  )
+    return facts
+  return [
+    { key: field.key, label: field.label, value: fieldValue(field, value) },
+    ...facts,
+  ]
 }
 
 function EditMedia({
@@ -175,7 +271,7 @@ function EditMedia({
   })
   return (
     <form
-      className="media-edit"
+      className="dtl-form"
       onSubmit={(event) => {
         event.preventDefault()
         setError('')
@@ -213,7 +309,7 @@ function EditMedia({
         mutation.mutate(patch)
       }}
     >
-      <div className="edit-grid">
+      <div className="dtl-form-grid">
         {fields.map((field) => {
           const raw = baseline[field.key]
           const value =
@@ -223,11 +319,12 @@ function EditMedia({
                 ? raw.slice(0, 10)
                 : String(raw)
           return (
-            <label key={field.key}>
-              {field.label}
+            <label key={field.key} className="ds-field">
+              <span className="ds-label">{field.label}</span>
               <Input
                 name={field.key}
                 type={field.type}
+                controlSize="md"
                 required={field.key === 'title'}
                 min={field.type === 'number' ? 0 : undefined}
                 defaultValue={value}
@@ -237,26 +334,36 @@ function EditMedia({
         })}
       </div>
       {item.mediaType === 'album' && (
-        <p className="quiet text-sm">
+        <p className="ds-help">
           An earlier first Last.fm scrobble is used for Added in the library.
           The stored date is kept.
         </p>
       )}
-      <label>
-        Summary
-        <textarea name="summary" defaultValue={item.summary ?? ''} rows={3} />
+      <label className="ds-field">
+        <span className="ds-label">Summary</span>
+        <textarea
+          className="ds-input dtl-textarea"
+          name="summary"
+          defaultValue={item.summary ?? ''}
+          rows={3}
+        />
       </label>
       {item.mediaType === 'film' && (
-        <label className="check-label">
-          <input type="checkbox" name="watched" defaultChecked={item.watched} />{' '}
+        <label className="ds-checkrow">
+          <input
+            className="ds-check"
+            type="checkbox"
+            name="watched"
+            defaultChecked={item.watched}
+          />
           Watched
         </label>
       )}
-      <label>
-        Note
-        <Input name="note" />
+      <label className="ds-field">
+        <span className="ds-label">Note</span>
+        <Input name="note" controlSize="md" />
       </label>
-      <div className="form-actions">
+      <div className="ds-actions">
         <Button
           size="md"
           variant="primary"
@@ -265,12 +372,48 @@ function EditMedia({
         >
           {mutation.isPending ? 'Saving...' : 'Save changes'}
         </Button>
-        <span role="status">{mutation.isSuccess ? 'Saved' : error}</span>
+        <span role="status" className="ds-muted">
+          {mutation.isSuccess ? 'Saved' : error}
+        </span>
         {mutation.isError && (
           <span role="alert">Could not save. Check the values and retry.</span>
         )}
       </div>
     </form>
+  )
+}
+
+/** Marks a film watched or unwatched from its header. */
+function WatchedButton({ item }: { item: FilmDetail }) {
+  const { apiBaseUrl } = useConfig()
+  const client = useQueryClient()
+  const mutation = useMutation({
+    mutationFn: (watched: boolean) =>
+      fetchApiData(apiBaseUrl, `/api/v1/films/${item.id}`, DetailSchema, {
+        method: 'PATCH',
+        body: JSON.stringify(FilmPatchSchema.parse({ watched })),
+      }),
+    onSuccess: () => invalidateMediaItem(client, 'film', item.id),
+  })
+  return (
+    <>
+      <Button
+        size="md"
+        aria-pressed={item.watched}
+        disabled={mutation.isPending}
+        onClick={() => mutation.mutate(!item.watched)}
+      >
+        {item.watched && (
+          <Check className="ds-i" data-size="sm" aria-hidden="true" />
+        )}
+        Watched
+      </Button>
+      {mutation.isError && (
+        <span role="alert" className="ds-muted">
+          Could not save.
+        </span>
+      )}
+    </>
   )
 }
 
@@ -284,9 +427,9 @@ export default function MediaDetail({
 }: {
   mediaType: 'album' | 'film'
   id: string
-  onFilter?: (filter: BrowseFilter, keepOpen?: boolean) => void
+  onFilter?: OnFilter
   onFiltersChange?: (filters: BrowseFilter[]) => void
-  /** Browse sort field, pinned first among the metrics. */
+  /** Browse sort field, pinned first among the details. */
   highlightField?: string
   /** Query-specific metric supplied by the browse result, including real zero. */
   browseMetric?: { field: BrowseField; value: number }
@@ -304,26 +447,9 @@ export default function MediaDetail({
     browseParams.get('filters'),
   )
   const queryClient = useQueryClient()
-  const view = useDetailView()
-  const activeTab = view.params.get('tab')
-  const tab =
-    mediaType === 'album'
-      ? albumDetailTab(view.params, id)
-      : activeTab === 'sources' || activeTab === 'history'
-        ? 'sources'
-        : activeTab === 'edit'
-          ? 'edit'
-          : 'overview'
-  function setTab(next: string) {
-    if (mediaType === 'album')
-      view.params.set(
-        'albumTrackView',
-        JSON.stringify(albumTrackView(view.params.get('albumTrackView'), id)),
-      )
-    if (next === 'overview') view.params.delete('tab')
-    else view.params.set('tab', next)
-    view.replace(view.params)
-  }
+  const albumTab = useDetailTab(albumTabs, { aliases: tabAliases })
+  const filmTab = useDetailTab(filmTabs, { aliases: tabAliases })
+  const { tab, setTab } = mediaType === 'album' ? albumTab : filmTab
   const [saved, setSaved] = useState(false)
   const detail = useQuery({
     queryKey: [mediaType, id],
@@ -378,24 +504,17 @@ export default function MediaDetail({
       `${window.location.pathname}${params.size ? `?${params}` : ''}`,
     )
   }
-  if (detail.isPending) return <p className="browse-empty">Loading...</p>
+  const subject = mediaType === 'album' ? 'album' : 'film'
   if (!detail.data)
     return (
-      <p role="alert">
-        Could not load this item.{' '}
-        <Button size="md" variant="primary" onClick={() => detail.refetch()}>
-          Retry
-        </Button>
-      </p>
+      <CreatorDetailState
+        pending={detail.isPending}
+        retry={() => detail.refetch()}
+        subject={subject}
+      />
     )
   const item = detail.data
-  const fallbackArtistTags = musicDisplayTags(
-    item.tags.map((tag) => tag.name),
-    item.mediaType === 'album' ? item.artistTags : [],
-  )
-    .filter((tag) => tag.source === 'artist')
-    .map((tag) => tag.name)
-  const values = {
+  const values: BrowseValues = {
     ...getBrowseValues(item),
     ...(browseMetric ? { [browseMetric.field.key]: browseMetric.value } : {}),
   }
@@ -408,90 +527,81 @@ export default function MediaDetail({
         ...baseFields.filter((field) => field.key !== browseMetric.field.key),
       ]
     : baseFields
-  const creatorField = mediaType === 'album' ? 'artist' : 'director'
-  return (
-    <div className="media-detail">
-      <header className="detail-heading">
-        <MediaArtwork
+  const providers = getDetailProviderLinks(
+    browseFields,
+    values,
+    item.links,
+    item.mediaType === 'album' ? albumSpotifyDestination(item) : undefined,
+    item.providerReferences,
+  )
+  const [primaryLink, ...otherLinks] = serviceLinks(providers.links)
+  const creators = item.credits.filter(
+    (credit) => credit.role === (mediaType === 'album' ? 'artist' : 'director'),
+  )
+  const needsId =
+    item.mediaType === 'film' &&
+    filmIdentificationStatus(item.providerReferences) === 'Needs ID'
+  const textValues = (key: string) => {
+    const value = values[key]
+    return Array.isArray(value)
+      ? value
+      : typeof value === 'string' && value
+        ? [value]
+        : []
+  }
+
+  const header = (
+    <DetailHeader
+      art={
+        <DetailArt
           src={item.artworkUrl}
-          alt={item.title}
-          fallbackLabel="No artwork"
-          containerClassName="detail-art"
-          imageClassName={
-            mediaType === 'album'
-              ? 'aspect-square object-cover w-full'
-              : 'aspect-[2/3] object-cover w-full'
-          }
-          fallbackClassName={
-            mediaType === 'album' ? 'aspect-square' : 'aspect-[2/3]'
+          ratio={item.mediaType === 'film' ? 'poster' : undefined}
+          fallback={
+            item.mediaType === 'film' ? (
+              <Film className="ds-i" aria-hidden="true" />
+            ) : (
+              <Disc3 className="ds-i" aria-hidden="true" />
+            )
           }
         />
-        <div>
-          <h1>
-            {item.title}
-            {item.mediaType === 'album' && (
-              <>
-                {' '}
-                <AlbumSpotifyLink item={item} />
-              </>
-            )}
-          </h1>
-          {item.mediaType === 'film' &&
-            filmIdentificationStatus(item.providerReferences) ===
-              'Needs ID' && (
-              <button className="needs-id" onClick={() => setTab('edit')}>
-                Needs ID · Identify film
-              </button>
-            )}
-          {item.originalTitle && item.originalTitle !== item.title && (
-            <p className="quiet">{item.originalTitle}</p>
-          )}
-          <CreatorLinks
-            creators={item.credits.filter(
-              (credit) => credit.role === creatorField,
-            )}
-            kind={mediaType === 'album' ? 'artist' : 'person'}
-            pills
-          />
-          <div className="detail-facts">
-            <span>{item.releaseDate?.slice(0, 10)}</span>
-            <span>
-              {item.mediaType === 'album'
-                ? item.durationSec !== null
-                  ? `${Math.round(item.durationSec / 60)} min`
-                  : ''
-                : item.runtimeMinutes
-                  ? `${item.runtimeMinutes} min`
-                  : ''}
-            </span>
-            {typeof values.source === 'string' && values.source && (
-              <FilterBadge
-                field="source"
-                value={values.source}
-                onFilter={filter}
-              />
-            )}
-            {item.mediaType === 'film' && (
-              <FilterBadge
-                field="watched"
-                value={item.watched ? 'Yes' : 'No'}
-                label={item.watched ? 'Watched' : 'Unwatched'}
-                onFilter={filter}
-              />
-            )}
-          </div>
-          <DetailProviderLinks
-            hideSpotify={item.mediaType === 'album'}
-            references={item.providerReferences}
-            fields={browseFields}
-            values={values}
-            links={item.links}
-            spotifyUrl={
-              item.mediaType === 'album' ? item.spotifyUrl : undefined
-            }
-          />
-          {item.mediaType === 'album' && (
-            <AlbumPlayButtons
+      }
+      kind={item.mediaType === 'album' ? 'Album' : 'Film'}
+      title={item.title}
+      by={
+        creators.length > 0 && (
+          <>
+            {item.mediaType === 'album' ? 'by ' : 'directed by '}
+            <CreatorLinks
+              creators={creators}
+              kind={item.mediaType === 'album' ? 'artist' : 'person'}
+            />
+          </>
+        )
+      }
+      facts={[
+        item.originalTitle && item.originalTitle !== item.title
+          ? item.originalTitle
+          : null,
+        releaseDay(item.releaseDate),
+        item.mediaType === 'album'
+          ? item.trackCount
+            ? `${formatCount(item.trackCount)} ${item.trackCount === 1 ? 'track' : 'tracks'}`
+            : null
+          : null,
+        item.mediaType === 'album'
+          ? item.durationSec === null
+            ? null
+            : formatTrackLength(item.durationSec * 1000)
+          : item.runtimeMinutes
+            ? formatRuntime(item.runtimeMinutes)
+            : null,
+        item.mediaType === 'film' ? textValues('country')[0] : null,
+        needsId ? <Status state="attention">Needs ID</Status> : null,
+      ]}
+      actions={
+        <>
+          {item.mediaType === 'album' ? (
+            <AlbumHeaderPlay
               album={item}
               source={() =>
                 createAlbumPlaybackSource(
@@ -500,11 +610,319 @@ export default function MediaDetail({
                 )
               }
             />
+          ) : (
+            <WatchedButton item={item} />
+          )}
+          {needsId && (
+            <Button size="md" onClick={() => setTab('sources')}>
+              Identify film
+            </Button>
+          )}
+          <DetailActionsSpacer />
+          {otherLinks.length > 0 && <ServiceIconLinks links={otherLinks} />}
+          {primaryLink && (
+            <OpenAtProvider label={primaryLink.label} url={primaryLink.url} />
+          )}
+        </>
+      }
+    />
+  )
+
+  const tagSection = (
+    sections: {
+      label: string
+      field: string
+      values: string[]
+      max?: number
+    }[],
+  ) => {
+    const shown = sections.filter((section) => section.values.length > 0)
+    return (
+      shown.length > 0 && (
+        <Section
+          title="Tags"
+          aside={
+            <Link href={scopedHref('/tags', item.mediaType)}>Manage tags</Link>
+          }
+        >
+          <KeyValues
+            items={shown.map((section) => ({
+              label: section.label,
+              value: (
+                <FilterPills
+                  field={section.field}
+                  values={section.values}
+                  max={section.max}
+                  onFilter={filter}
+                  selected={selectedFilters}
+                />
+              ),
+            }))}
+          />
+        </Section>
+      )
+    )
+  }
+
+  let overview: ReactNode
+  if (item.mediaType === 'album') {
+    const ratings = providers.ratings.filter(
+      (rating) => rating.score !== undefined,
+    )
+    const scrobbles = values.scrobbles
+    const lastListened = values.lastListenedAt
+    const stats: StatItem[] = [
+      ...(browseMetric && browseMetric.field.key !== 'scrobbles'
+        ? [
+            {
+              label: browseMetric.field.label,
+              value: fieldValue(browseMetric.field, browseMetric.value),
+            },
+          ]
+        : []),
+      {
+        label: 'scrobbles',
+        value: typeof scrobbles === 'number' ? formatCount(scrobbles) : '0',
+      },
+      ...ratings.slice(0, 2).map((rating) => ({
+        label: ratingSource(rating),
+        value: ratingScore(rating),
+      })),
+      {
+        label: 'last played',
+        value:
+          typeof lastListened === 'number'
+            ? formatDate(lastListened)
+            : EMPTY_VALUE,
+      },
+    ]
+    const artistTags = musicDisplayTags(
+      item.tags.map((tag) => tag.name),
+      item.artistTags,
+    )
+      .filter((tag) => tag.source === 'artist')
+      .map((tag) => tag.name)
+    const dateAdded = values.dateAdded
+    const source = textValues('source')[0]
+    const facts = withSortedFact(
+      [
+        {
+          key: 'releaseDate',
+          label: 'Released',
+          value: releaseDay(item.releaseDate) ?? EMPTY_VALUE,
+        },
+        {
+          key: 'dateAdded',
+          label: 'Added',
+          value: (
+            <span title={item.dateAddedSource}>
+              {typeof dateAdded === 'number'
+                ? formatDate(dateAdded)
+                : EMPTY_VALUE}
+            </span>
+          ),
+        },
+        {
+          key: 'source',
+          label: 'Source',
+          value: source ? (
+            <FilterPills
+              field="source"
+              values={[source]}
+              onFilter={filter}
+              selected={selectedFilters}
+            />
+          ) : (
+            EMPTY_VALUE
+          ),
+        },
+        {
+          key: 'country',
+          label: 'Country',
+          value: textValues('country').join(', ') || EMPTY_VALUE,
+        },
+        {
+          key: 'durationSec',
+          label: 'Duration',
+          value: formatTrackLength(
+            item.durationSec === null ? null : item.durationSec * 1000,
+          ),
+        },
+        {
+          key: 'trackCount',
+          label: 'Tracks',
+          value: formatCount(item.trackCount),
+        },
+      ],
+      browseFields,
+      values,
+      highlightField,
+      [
+        'scrobbles',
+        'lastListenedAt',
+        ...ratings.slice(0, 2).map((rating) => rating.key),
+      ],
+    )
+    overview = (
+      <div className="dtl-overview">
+        <div className="dtl-main">
+          <Section flush>
+            <Stats items={stats.slice(0, 4)} />
+          </Section>
+          {item.summary && (
+            <Section title="About">
+              <p className="dtl-text">{item.summary}</p>
+            </Section>
+          )}
+          <Section
+            title="Tracks"
+            note={[
+              formatCount(item.tracks.length),
+              item.durationSec === null
+                ? null
+                : formatTrackLength(item.durationSec * 1000),
+            ]
+              .filter(Boolean)
+              .join(' · ')}
+          >
+            <AlbumTracksTable album={item} />
+          </Section>
+        </div>
+        <div className="dtl-side">
+          {tagSection([
+            {
+              label: 'Album tags',
+              field: 'genre',
+              values: item.tags.map((tag) => tag.name),
+            },
+            { label: 'Artist tags', field: 'artistTag', values: artistTags },
+          ])}
+          <AlbumPlaylists key={item.id} albumId={item.id} />
+          <DetailsSection mediaItemId={item.id} facts={facts} />
+        </div>
+      </div>
+    )
+  } else {
+    const credited = (role: string) =>
+      item.credits.filter((credit) => credit.role === role)
+    const cast: { label: string; role: string; max?: number }[] = [
+      { label: 'Directors', role: 'director' },
+      { label: 'Writers', role: 'writer' },
+      { label: 'Cast', role: 'actor', max: 8 },
+    ]
+    const people = cast
+      .map((group) => ({ ...group, credits: credited(group.role) }))
+      .filter((group) => group.credits.length > 0)
+    const genres = item.tags
+      .filter((tag) => tag.kind === 'genre')
+      .map((tag) => tag.name)
+    const keywords = item.tags
+      .filter((tag) => tag.kind !== 'genre')
+      .map((tag) => tag.name)
+    const dateAdded = values.dateAdded
+    const facts = withSortedFact(
+      [
+        {
+          key: 'releaseDate',
+          label: 'Released',
+          value: releaseDay(item.releaseDate) ?? EMPTY_VALUE,
+        },
+        {
+          key: 'runtimeMinutes',
+          label: 'Runtime',
+          value: formatRuntime(item.runtimeMinutes),
+        },
+        {
+          key: 'country',
+          label: 'Country',
+          value: textValues('country').join(', ') || EMPTY_VALUE,
+        },
+        {
+          key: 'language',
+          label: 'Language',
+          value: textValues('language').join(', ') || EMPTY_VALUE,
+        },
+        {
+          key: 'dateAdded',
+          label: 'Added',
+          value: (
+            <span title={item.dateAddedSource}>
+              {typeof dateAdded === 'number'
+                ? formatDate(dateAdded)
+                : EMPTY_VALUE}
+            </span>
+          ),
+        },
+        {
+          key: 'watched',
+          label: 'Watched',
+          value: item.watched ? 'Yes' : 'No',
+        },
+      ],
+      browseFields,
+      values,
+      highlightField,
+      providers.ratings.map((rating) => rating.key),
+    )
+    const collections = item.playlists.filter(
+      (playlist) => playlist.kind === 'collection',
+    )
+    overview = (
+      <div className="dtl-overview">
+        <div className="dtl-main">
+          {providers.ratings.some((rating) => rating.score !== undefined) && (
+            <Section title="Ratings" flush>
+              <RatingCards ratings={providers.ratings} />
+            </Section>
+          )}
+          {item.summary && (
+            <Section title="Synopsis">
+              <p className="dtl-text">{item.summary}</p>
+            </Section>
+          )}
+          {people.length > 0 && (
+            <Section title="Cast and crew">
+              <KeyValues
+                items={people.map((group) => ({
+                  label: group.label,
+                  value: <CastPills credits={group.credits} max={group.max} />,
+                }))}
+              />
+            </Section>
           )}
         </div>
-      </header>
+        <div className="dtl-side">
+          {tagSection([
+            { label: 'Genres', field: 'genre', values: genres },
+            { label: 'Keywords', field: 'genre', values: keywords, max: 6 },
+          ])}
+          <DetailsSection mediaItemId={item.id} facts={facts} />
+          {collections.length > 0 && (
+            <Section title="Collections">
+              <FilmCollectionLinks
+                item={item}
+                activeFilters={selectedFilters}
+                pills
+              />
+            </Section>
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <article className="dtl-detail">
+      {detail.isRefetchError && (
+        <CreatorDetailState
+          stale
+          retry={() => detail.refetch()}
+          subject={subject}
+        />
+      )}
+      {header}
       {selectedFilters.length > 0 && (
-        <div className="detail-filter-selection">
+        <div className="dtl-filters">
           <Link href={`/${collection}?${browseParams}`}>
             <FilterIndicator />
             Browse with {selectedFilters.length} filters
@@ -516,158 +934,25 @@ export default function MediaDetail({
           />
         </div>
       )}
-      <Tabs value={tab} onValueChange={setTab}>
-        <TabsList>
-          <TabsTrigger value="overview">Overview</TabsTrigger>
-          {item.mediaType === 'album' && (
-            <TabsTrigger value="playlists">Playlists</TabsTrigger>
-          )}
-          {item.mediaType === 'album' && (
-            <TabsTrigger value="tracks">
-              Tracks ({item.tracks.length})
-            </TabsTrigger>
-          )}
-          {item.mediaType === 'album' && (
-            <TabsTrigger value="listening">Listening</TabsTrigger>
-          )}
-          <TabsTrigger value="sources">Sources</TabsTrigger>
-          <TabsTrigger value="edit">Edit</TabsTrigger>
-        </TabsList>
-        <TabsContent value="overview">
-          {item.summary && <p className="detail-summary">{item.summary}</p>}
-          <dl className="detail-metrics">
-            {browseFields
-              .filter((field) => field.type !== 'text' && !field.rating)
-              .map((field) => {
-                const value = values[field.key]
-                return value === undefined || value === null ? null : (
-                  <div
-                    key={field.key}
-                    data-sorted={field.key === highlightField || undefined}
-                  >
-                    <dt>{field.label}</dt>
-                    <dd>
-                      {formatBrowseValue(field, value)}
-                      {field.key === 'dateAdded' && item.dateAddedSource && (
-                        <small className="quiet block">
-                          {item.dateAddedSource}
-                        </small>
-                      )}
-                    </dd>
-                  </div>
-                )
-              })}
-          </dl>
-          <div className="detail-metadata">
-            {fields.data
-              ?.filter(
-                (field) =>
-                  field.type === 'text' &&
-                  ![
-                    'title',
-                    'summary',
-                    creatorField,
-                    'source',
-                    'watched',
-                    'provider',
-                    'keyword',
-                    'albumTag',
-                    'artistTag',
-                    // Albums list their playlists below, with the add control.
-                    ...(item.mediaType === 'album' ? ['playlist'] : []),
-                  ].includes(field.key),
-              )
-              .map((field) => {
-                const value = values[field.key]
-                if (
-                  value === undefined ||
-                  value === null ||
-                  (Array.isArray(value) && value.length === 0)
-                )
-                  return null
-                return (
-                  <section key={field.key}>
-                    <h2>
-                      {field.label}
-                      {field.key === 'genre' && (
-                        <Link
-                          className="ml-3 text-xs font-normal underline"
-                          href={scopedHref('/tags', item.mediaType)}
-                        >
-                          Manage tags
-                        </Link>
-                      )}
-                    </h2>
-                    {['actor', 'director'].includes(field.key) ? (
-                      <CreatorLinks
-                        creators={item.credits.filter(
-                          (credit) => credit.role === field.key,
-                        )}
-                        kind="person"
-                        pills
-                      />
-                    ) : field.key === 'genre' && item.mediaType === 'album' ? (
-                      <>
-                        <FilterValues
-                          field="genre"
-                          mediaId={item.id}
-                          values={item.tags.map((tag) => tag.name)}
-                          onFilter={filter}
-                        />
-                        {fallbackArtistTags.length > 0 && (
-                          <div className="mt-2">
-                            <p className="quiet mb-1">Artist tags</p>
-                            <FilterValues
-                              field="artistTag"
-                              values={fallbackArtistTags}
-                              onFilter={filter}
-                            />
-                          </div>
-                        )}
-                      </>
-                    ) : field.key === 'collection' &&
-                      item.mediaType === 'film' ? (
-                      <FilmCollectionLinks
-                        item={item}
-                        activeFilters={selectedFilters}
-                        pills
-                      />
-                    ) : field.filterable ? (
-                      <FilterValues
-                        field={field.key}
-                        mediaId={item.id}
-                        collectionSources={item.collectionSources}
-                        values={Array.isArray(value) ? value : [String(value)]}
-                        onFilter={filter}
-                      />
-                    ) : (
-                      <p>{String(value)}</p>
-                    )}
-                  </section>
-                )
-              })}
-          </div>
-        </TabsContent>
-        {item.mediaType === 'album' && (
-          <TabsContent value="playlists">
-            <AlbumPlaylists key={item.id} albumId={item.id} />
-          </TabsContent>
-        )}
-        {item.mediaType === 'album' && (
-          <TabsContent value="tracks">
-            <AlbumTracksTable album={item} />
-          </TabsContent>
-        )}
+      <DetailTabs
+        label={item.mediaType === 'album' ? 'Album details' : 'Film details'}
+        value={tab}
+        onChange={setTab}
+        tabs={[
+          { value: 'overview', label: 'Overview' },
+          ...(item.mediaType === 'album'
+            ? [{ value: 'listening', label: 'Listening' }]
+            : []),
+          { value: 'sources', label: 'Sources' },
+          { value: 'edit', label: 'Edit' },
+        ]}
+      >
+        <TabsContent value="overview">{overview}</TabsContent>
         {item.mediaType === 'album' && (
           <TabsContent value="listening">
             <AlbumListening key={item.id} albumId={item.id} />
           </TabsContent>
         )}
-        <TabsContent value="edit" onInputCapture={() => setSaved(false)}>
-          <EditMedia key={item.updatedAt} item={item} onSaved={onSaved} />
-          {saved && <p role="status">Changes saved.</p>}
-          <MediaEditHistory id={item.id} />
-        </TabsContent>
         <TabsContent value="sources">
           <MediaSources
             key={item.id}
@@ -677,7 +962,35 @@ export default function MediaDetail({
             }}
           />
         </TabsContent>
-      </Tabs>
-    </div>
+        <TabsContent value="edit" onInputCapture={() => setSaved(false)}>
+          <EditMedia key={item.updatedAt} item={item} onSaved={onSaved} />
+          {saved && <Notice>Changes saved.</Notice>}
+          <MediaEditHistory id={item.id} />
+        </TabsContent>
+      </DetailTabs>
+    </article>
+  )
+}
+
+/** People credited in one role; a long cast shows the first few and a button. */
+function CastPills({
+  credits,
+  max,
+}: {
+  credits: FilmDetail['credits']
+  max?: number
+}) {
+  const [all, setAll] = useState(false)
+  const shown = max === undefined || all ? credits : credits.slice(0, max)
+  const hidden = credits.length - shown.length
+  return (
+    <span className="dtl-pillrow">
+      <CreatorLinks creators={shown} kind="person" pills />
+      {hidden > 0 && (
+        <Button variant="link" size="xs" onClick={() => setAll(true)}>
+          +{formatCount(hidden)} more
+        </Button>
+      )}
+    </span>
   )
 }

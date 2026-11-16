@@ -120,111 +120,130 @@ function browseData(search: string, total: number) {
   ] satisfies Array<[unknown[], unknown]>
 }
 
-test('the table view uses the compact shared table and virtual placeholder rows', async () => {
+test('the table view uses the one table with a pinned title, right-aligned numbers and ISO dates', async () => {
   const { default: SubscriptionBrowser } =
     await import('./subscription-browser')
   const search = 'view=table&columns=title,source,type,publishedAt,durationSec'
   const html = render(<SubscriptionBrowser />, browseData(search, 250), search)
   assert.match(
     html,
-    /class="ds-table-wrap table-scroll browse-scroll"[^>]*data-view="table"/,
+    /class="ds-table-wrap table-scroll browse-scroll bi-scroll" data-view="table"/,
   )
-  assert.match(html, /<table class="ds-table[^"]*" aria-label="Subscriptions"/)
+  assert.match(
+    html,
+    /<table class="ds-table" data-layout="fixed" aria-label="Subscriptions"/,
+  )
   assert.equal((html.match(/<table/g) ?? []).length, 1)
   assert.match(
     html,
-    /<th scope="col" class="numeric" aria-sort="descending"><button type="button">Published ↓/,
+    /<th scope="col" aria-sort="descending"><button type="button" class="ds-th-sort" title="Sort by Published">Published<svg/,
   )
-  assert.match(html, /<th scope="col" class="" aria-sort="none">Type</)
-  assert.match(html, /<button type="button">Channel</)
+  // Type is not a sort key, so its header is plain text.
+  assert.match(html, /<th scope="col">Type<span class="bi-resizer"/)
+  assert.match(html, /<th scope="col" data-align="end"><button[^>]*>Duration/)
+  assert.doesNotMatch(html, /[↑↓]/)
   // Two loaded rows; the rest of the visible window waits for its page.
   assert.equal((html.match(/data-item-index=/g) ?? []).length, 2)
-  assert.ok(
-    (html.match(/class="virtual-browse-placeholder"/g) ?? []).length > 10,
-  )
+  assert.ok((html.match(/data-placeholder=""/g) ?? []).length > 10)
   assert.match(html, /250 items/)
   assert.match(html, /placeholder="Search titles, channels, podcasts, tags..."/)
   assert.match(html, /aria-label="Record search"/)
-  assert.match(html, />Bread basics</)
-  assert.match(html, /title="Filter Type: YouTube">YouTube</)
-  assert.match(html, /title="Filter Type: Podcast">Podcast</)
+  assert.match(
+    html,
+    /<td data-sticky="edge" style="--ds-sticky-left:0px" title="Bread basics"><span class="ds-cell-id">/,
+  )
+  assert.match(html, /title="Filter Type: YouTube"/)
+  assert.match(html, /title="Filter Type: Podcast"/)
   assert.match(
     html,
     new RegExp(`href="/channels/${showId}">Example Science Hour</a>`),
   )
-  assert.match(html, />12:34</)
+  assert.match(html, /<td data-align="end" title="12:34">12:34<\/td>/)
   // A year-precision episode shows only the year.
-  assert.match(html, /title="2024"><div class="browse-cell">2024</)
-  assert.match(
-    html,
-    /aria-label="Open on Spotify: Orbits \(opens in a new tab\)"/,
-  )
-  assert.match(html, /src="\/icons\/services\/spotify\.svg"/)
-  assert.match(html, /<button[^>]+aria-label="Open details for Orbits"/)
+  assert.match(html, /<td title="2024">2024<\/td>/)
+  assert.match(html, /<td data-align="end" title="–">–<\/td>/)
+  assert.match(html, /aria-label="Open details for Orbits"/)
+  assert.doesNotMatch(html, /onDoubleClick|Open on Spotify|Open on YouTube/)
 })
 
-test('the list view shows compact thumbnail rows and has all three view controls', async () => {
+test('the default columns are Title, Channel, Published and Duration', async () => {
+  const { default: SubscriptionBrowser } =
+    await import('./subscription-browser')
+  const search = 'view=table'
+  const html = render(<SubscriptionBrowser />, browseData(search, 250), search)
+  const heads = [...html.matchAll(/aria-label="Resize ([^"]+)"/g)].map(
+    ([, label]) => label,
+  )
+  assert.deepEqual(heads, ['Title', 'Channel', 'Published', 'Duration'])
+})
+
+test('the list view shows 48px rows with video thumbnails and all three view controls', async () => {
   const { default: SubscriptionBrowser } =
     await import('./subscription-browser')
   const search = 'view=list'
   const html = render(<SubscriptionBrowser />, browseData(search, 250), search)
   assert.match(html, /data-view="list"/)
   assert.doesNotMatch(html, /<table/)
-  assert.equal((html.match(/<article /g) ?? []).length, 2)
+  assert.equal(
+    (html.match(/<div class="ds-row" data-item-index/g) ?? []).length,
+    2,
+  )
   for (const view of ['Grid', 'Table'])
     assert.match(
       html,
-      new RegExp(`aria-label="${view} view" aria-pressed="false"`),
+      new RegExp(`aria-pressed="false" aria-label="${view} view"`),
     )
-  assert.match(html, /aria-label="List view" aria-pressed="true"/)
-  assert.match(html, />Bread basics<\/button>/)
+  assert.match(html, /aria-pressed="true" aria-label="List view"/)
+  assert.match(html, /<span class="ds-thumb" data-ratio="video">/)
+  assert.match(
+    html,
+    /<a class="ds-row-title" title="Bread basics" href="\/subscriptions\/abcdefghijk">Bread basics<\/a>/,
+  )
   assert.match(
     html,
     new RegExp(`href="/channels/${channelId}">Example Cooking</a>`),
   )
   assert.match(
     html,
-    /aria-label="Open on YouTube: Bread basics \(opens in a new tab\)"/,
+    /<span class="ds-w-date">2026-03-0[45]<\/span><span class="ds-w-num">12:34<\/span><span class="ds-w-num">1,200<\/span>/,
   )
-  assert.match(html, /src="\/icons\/ratings\/youtube\.svg"/)
+  assert.match(html, /data-fit="contain" aria-label="Open details for Orbits"/)
 })
 
-test('the grid view shows type labels on cards and placeholder cards', async () => {
+test('the grid view shows clean video cards with a duration badge, meta line and tags', async () => {
   const { default: SubscriptionBrowser } =
     await import('./subscription-browser')
   const html = render(<SubscriptionBrowser />, browseData('', 120))
   assert.match(html, /data-view="grid"/)
   assert.doesNotMatch(html, /<table/)
-  assert.match(html, />YouTube<\/span>/)
-  assert.match(html, />Podcast<\/span>/)
+  assert.match(html, /<span class="ds-art" data-ratio="video">/)
+  assert.match(html, /<span class="ds-art-badge">12:34<\/span>/)
+  assert.equal((html.match(/ds-art-badge/g) ?? []).length, 1)
   assert.match(
     html,
     new RegExp(`href="/channels/${channelId}">Example Cooking</a>`),
   )
-  assert.match(html, />1.2K views · /)
-  assert.ok(
-    (html.match(/class="virtual-browse-placeholder"/g) ?? []).length > 0,
-  )
-  assert.match(
-    html,
-    /aria-pressed="true" aria-label="Grid view"|aria-label="Grid view"[^>]*aria-pressed="true"/,
-  )
+  assert.match(html, /<span>1.2K views<\/span>/)
+  assert.match(html, /<span>2024<\/span><span>Podcast<\/span>/)
+  assert.match(html, /title="Tag: baking"/)
+  assert.ok((html.match(/data-placeholder=""/g) ?? []).length > 0)
+  assert.doesNotMatch(html, /ds-play/)
 })
 
 test('an empty library points to Imports and a search without results offers to clear it', async () => {
   const { default: SubscriptionBrowser } =
     await import('./subscription-browser')
   const empty = render(<SubscriptionBrowser />, browseData('', 0))
-  assert.match(empty, /Nothing synced yet/)
+  assert.match(empty, /<strong>No subscriptions yet<\/strong>/)
   assert.match(empty, /href="\/imports\/youtube\?mediaType=subscription"/)
   const noMatches = render(
     <SubscriptionBrowser />,
     browseData('q=nothing', 0),
     'q=nothing',
   )
-  assert.match(noMatches, /No matches/)
+  assert.match(noMatches, /No subscriptions match/)
   assert.match(noMatches, /Search: nothing/)
-  assert.doesNotMatch(noMatches, /Nothing synced yet/)
+  assert.doesNotMatch(noMatches, /No subscriptions yet/)
 })
 
 test('subscription Sources uses the stored provider ID and destination', async () => {
@@ -251,11 +270,12 @@ test('subscription Sources uses the stored provider ID and destination', async (
       'tab=sources',
       `/subscriptions/${item.id}`,
     )
-    const table = html.slice(html.indexOf('<table'))
-    assert.match(table, /aria-label="Sources"/)
+    assert.match(html, /role="tab" aria-selected="true"[^>]*>Sources/)
+    const table = html.slice(html.indexOf('aria-label="Sources"'))
+    assert.ok(html.includes('aria-label="Sources"'))
     assert.ok(table.includes(item.id))
     assert.ok(table.includes(item.url))
-    assert.doesNotMatch(table, /Refresh (all eligible|selected)/)
+    assert.doesNotMatch(table, /Refresh/)
   }
 })
 
@@ -297,22 +317,24 @@ test('the channels list links names to details and counts to filtered Browse', a
     '',
     '/subscriptions/channels',
   )
-  assert.match(
-    html,
-    /class="ds-table-wrap table-scroll tags-scroll min-h-0 flex-1 secondary-table-scroll"/,
-  )
+  assert.match(html, /<h1>Channels<\/h1>/)
   assert.match(html, /<table class="ds-table"/)
   assert.match(
     html,
     /aria-sort="ascending"><div class="secondary-table-heading"><button[^>]*title="Sort by Name">Name<svg/,
   )
+  assert.match(
+    html,
+    /<td data-sticky="edge" style="--ds-sticky-left:0px"><span class="ds-cell-id">/,
+  )
   assert.match(html, /<td>YouTube<\/td>/)
   assert.match(html, /<td>Podcast<\/td>/)
-  assert.match(html, /12,000 subscribers/)
+  assert.match(html, /2 channels/)
+  assert.match(html, /<td data-align="end">12,000 subscribers<\/td>/)
   assert.match(html, /240 episodes/)
-  assert.match(html, /Reading history/)
+  assert.match(html, /2026-03-0[45]/)
   assert.match(html, /History for Example Science Hour/)
-  assert.doesNotMatch(html, /<div class="muted">Reading history<\/div>/)
+  assert.doesNotMatch(html, /Loading channels/)
   assert.ok(html.includes(`href="/channels/${channelId}"`))
   assert.ok(html.includes(`href="/channels/${showId}"`))
   assert.ok(html.includes(`href="/subscriptions?sourceId=${channelId}"`))
@@ -344,10 +366,9 @@ test('source-scoped Browse shows a removable exact channel filter even with no m
     ],
     search,
   )
-  assert.match(
-    html,
-    /aria-label="Remove channel filter">Channel: Example Cooking/,
-  )
-  assert.match(html, /No matches/)
-  assert.doesNotMatch(html, /Nothing synced yet/)
+  assert.match(html, /Channel: Example Cooking/)
+  assert.match(html, /aria-label="Remove channel filter"/)
+  assert.match(html, /data-mode="required"/)
+  assert.match(html, /No subscriptions match/)
+  assert.doesNotMatch(html, /No subscriptions yet/)
 })

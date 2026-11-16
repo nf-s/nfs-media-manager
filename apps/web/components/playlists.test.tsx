@@ -100,7 +100,7 @@ test('playlists table links tracks and albums filtered by playlist', () => {
   assert.ok(html.includes(`href="/tracks?${filterParam('Synthetic mix')}"`))
   assert.ok(html.includes(`href="/albums?${filterParam('Synthetic mix')}"`))
   assert.match(html, /7 of 12/)
-  assert.match(html, /1 h 5 min/)
+  assert.match(html, /1h 5m/)
   assert.equal((html.match(/aria-label="Remove /g) ?? []).length, 1)
   assert.match(html, /title="Remove Synthetic mix"/)
   assert.doesNotMatch(html, />Remove<\/button>/)
@@ -134,10 +134,10 @@ test('playlist rows open the drawer and show the sync schedule and last check', 
     /<button[^>]*title="Sort by Last checked"[^>]*>Last checked<\/button>/,
   )
   assert.match(html, />Every 6 hours</)
-  assert.match(html, /<time dateTime="2026-01-03T00:00:00.000Z">/)
+  assert.match(html, /<time dateTime="2026-01-03T00:00:00.000Z" title="[^"]+">/)
   assert.match(
     html,
-    /<a class="table-title[^"]*" href="\/playlists\/playlist-1"[^>]*>Synthetic mix<\/a>/,
+    /<a class="ds-cell-title" href="\/playlists\/playlist-1"[^>]*>Synthetic mix<\/a>/,
   )
   assert.doesNotMatch(html, /Playlist details/)
 })

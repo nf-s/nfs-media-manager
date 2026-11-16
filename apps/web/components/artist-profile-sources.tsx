@@ -11,16 +11,20 @@ import {
   type ArtistProviderSnapshot,
 } from '@repo/schemas/artist-profiles'
 import { JobSchema } from '@repo/schemas/job'
+import { Notice } from '@repo/ui/components/ds/feedback'
 import { Button } from '@repo/ui/components/ui/button'
 import { Input } from '@repo/ui/components/ui/input'
+import { Label } from '@repo/ui/components/ui/label'
 import { fetchApiData } from '@/utils/api'
 import { useDetailView } from './detail-inspector-context'
 import { errorMessage } from './lastfm-sync'
 import { useConfig } from './providers'
 import {
   ProviderSources,
+  providerHref,
   useSourceAvailability,
   useSourceCatalog,
+  type ProviderSourceRow,
 } from './provider-sources'
 import ServiceIconLinks from './service-icon-links'
 import {
@@ -82,11 +86,13 @@ function ArtistIdentifierEditor({
   provider,
   initial,
   canRefresh,
+  onCancel,
 }: {
   id: string
   provider: ArtistProfileProvider
   initial?: string
   canRefresh: boolean
+  onCancel?: () => void
 }) {
   const { apiBaseUrl } = useConfig()
   const client = useQueryClient()
@@ -103,39 +109,47 @@ function ArtistIdentifierEditor({
   })
   const value = identifier.trim()
   const label = providerLabels[provider]
+  const inputId = `artist-identifier-${provider}`
   return (
     <form
-      className="flex flex-wrap items-end gap-2"
+      className="data-identifier"
       onSubmit={(event) => {
         event.preventDefault()
         if (value && canRefresh && !refresh.isPending) refresh.mutate(value)
       }}
     >
-      <label className="grid min-w-0 gap-1 text-sm">
-        {label} artist ID
-        <Input
-          value={identifier}
-          maxLength={1000}
-          onChange={(event) => setIdentifier(event.target.value)}
-        />
-      </label>
-      <Button
-        type="submit"
-        disabled={!value || !canRefresh || refresh.isPending}
-      >
-        {refresh.isPending ? 'Queuing...' : 'Refresh with ID'}
-      </Button>
+      <Label htmlFor={inputId}>{label} artist ID</Label>
+      <Input
+        id={inputId}
+        value={identifier}
+        maxLength={1000}
+        onChange={(event) => setIdentifier(event.target.value)}
+      />
+      <span className="ds-actions">
+        <Button
+          variant="primary"
+          type="submit"
+          disabled={!value || !canRefresh || refresh.isPending}
+        >
+          {refresh.isPending ? 'Queuing...' : 'Save and refresh'}
+        </Button>
+        {onCancel && (
+          <Button type="button" onClick={onCancel}>
+            Cancel
+          </Button>
+        )}
+      </span>
       {refresh.isError && (
-        <p role="alert" className="quiet w-full">
+        <Notice tone="danger" className="data-identifier-wide">
           {errorMessage(refresh.error, 'Could not queue the refresh.')}
-        </p>
+        </Notice>
       )}
       {refresh.data && (
-        <p role="status" className="quiet w-full">
-          <DetailLink className="underline" kind="job" id={refresh.data.id}>
+        <span role="status" className="data-identifier-wide">
+          <DetailLink kind="job" id={refresh.data.id}>
             View refresh job
           </DetailLink>
-        </p>
+        </span>
       )}
     </form>
   )
@@ -161,47 +175,59 @@ export function ArtistProfileSources({
   const initialProvider = ArtistProfileProviderSchema.safeParse(
     view.params.get('provider'),
   )
-  const rows = ArtistProfileProviderSchema.options.map((provider) => {
-    const configured = catalog.data?.find((entry) => entry.id === provider)
-    const current = snapshots.find((snapshot) => snapshot.provider === provider)
-    const identifier = identifiers.find((entry) => entry.provider === provider)
-    const externalId = identifier
-      ? (identifier.externalId ?? undefined)
-      : current?.profile.externalId
-    return {
-      id: provider,
-      label: providerLabels[provider],
-      identifier:
-        identifier?.status === 'conflict' ? 'Conflicting IDs' : externalId,
-      identifierDetails:
-        identifier && identifier.status !== 'missing'
-          ? () => <ArtistIdentifierSources id={id} identifier={identifier} />
+  const rows = ArtistProfileProviderSchema.options.map(
+    (provider): ProviderSourceRow => {
+      const configured = catalog.data?.find((entry) => entry.id === provider)
+      const current = snapshots.find(
+        (snapshot) => snapshot.provider === provider,
+      )
+      const identifier = identifiers.find(
+        (entry) => entry.provider === provider,
+      )
+      const externalId = identifier
+        ? (identifier.externalId ?? undefined)
+        : current?.profile.externalId
+      return {
+        id: provider,
+        label: providerLabels[provider],
+        identifier:
+          identifier?.status === 'conflict' ? 'Conflicting IDs' : externalId,
+        identifierDetails:
+          identifier && identifier.status !== 'missing'
+            ? () => <ArtistIdentifierSources id={id} identifier={identifier} />
+            : undefined,
+        updatedAt: current?.createdAt,
+        links: identifier?.url
+          ? [{ provider, label: providerLabels[provider], url: identifier.url }]
+          : current
+            ? profileLinks([current])
+            : undefined,
+        unavailable: catalog.isPending
+          ? undefined
+          : sourceUnavailable(configured),
+        refresh: configured
+          ? () => queueArtistRefresh(apiBaseUrl, id, provider)
           : undefined,
-      updatedAt: current?.createdAt,
-      links: identifier?.url
-        ? [{ provider, label: providerLabels[provider], url: identifier.url }]
-        : current
-          ? profileLinks([current])
+        editor: configured
+          ? (canRefresh: boolean, close: () => void) => (
+              <ArtistIdentifierEditor
+                key={`${provider}:${externalId}`}
+                id={id}
+                provider={provider}
+                initial={externalId}
+                canRefresh={canRefresh}
+                onCancel={close}
+              />
+            )
           : undefined,
-      unavailable: catalog.isPending
-        ? undefined
-        : sourceUnavailable(configured),
-      refresh: configured
-        ? () => queueArtistRefresh(apiBaseUrl, id, provider)
-        : undefined,
-      editor: configured
-        ? (canRefresh: boolean) => (
-            <ArtistIdentifierEditor
-              key={`${provider}:${externalId}`}
-              id={id}
-              provider={provider}
-              initial={externalId}
-              canRefresh={canRefresh}
-            />
-          )
-        : undefined,
-    }
-  })
+        href: configured ? providerHref(provider) : undefined,
+        match:
+          identifier?.status === 'conflict'
+            ? { state: 'attention', label: 'Conflicting IDs' }
+            : undefined,
+      }
+    },
+  )
   return (
     <ProviderSources
       rows={rows}

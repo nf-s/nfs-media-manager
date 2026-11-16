@@ -1,6 +1,10 @@
 'use client'
 
 import { useSearchParams } from 'next/navigation'
+import Link from 'next/link'
+import { Button } from '@repo/ui/components/ui/button'
+import { Notice } from '@repo/ui/components/ds/feedback'
+import { PageHead } from '@repo/ui/components/ds/toolbar'
 import FilmImportWorkflow from '@/components/film-import-workflow'
 import {
   ImportStatusNotice,
@@ -9,7 +13,6 @@ import {
 import { resolveCsvFormat } from '@/utils/import-navigation'
 import { useMediaScope } from '@/components/media-scope'
 import AlbumImportPageClient from './album-import-page-client'
-import Link from 'next/link'
 
 export default function FileImportPageClient({
   kind,
@@ -26,40 +29,54 @@ export default function FileImportPageClient({
     return kind === 'csv' ? (
       <AlbumImportPageClient kind="csv" />
     ) : (
-      <section className="admin-page">
-        <h1>NFO films</h1>
-        <p>
-          NFO import is available for films only.{' '}
-          <Link href="/imports/nfo?mediaType=film">Open film NFO import</Link>
-        </p>
+      <section className="sec-page">
+        <PageHead title="NFO films" />
+        <div className="sec-notices">
+          <Notice
+            action={
+              <Button size="xs" asChild>
+                <Link href="/imports/nfo?mediaType=film">
+                  Open film NFO import
+                </Link>
+              </Button>
+            }
+          >
+            NFO import is available for films only.
+          </Notice>
+        </div>
       </section>
     )
   return (
-    <section className="admin-page imports-page">
-      <h1>
-        {kind === 'nfo'
-          ? 'Find new NFO films'
-          : (format?.label ?? 'Import CSV')}
-      </h1>
-      <ImportStatusNotice />
-      {kind === 'csv' && formats.isPending && (
-        <p role="status" className="muted">
-          Loading CSV formats...
-        </p>
-      )}
-      {kind === 'csv' && formats.isError && (
-        <p role="alert">
-          Could not load CSV formats.{' '}
-          <button onClick={() => formats.refetch()}>Retry</button>
-        </p>
-      )}
-      {kind === 'csv' && formats.isSuccess && !format && (
-        <p role="alert">
-          {requested === null
-            ? 'No CSV formats are available.'
-            : 'This CSV format is unavailable. Choose another format from Imports navigation.'}
-        </p>
-      )}
+    <section className="sec-page">
+      <PageHead
+        title={
+          kind === 'nfo'
+            ? 'Find new NFO films'
+            : (format?.label ?? 'Import CSV')
+        }
+      />
+      <div className="sec-notices">
+        <ImportStatusNotice />
+        {kind === 'csv' && formats.isError && (
+          <Notice
+            tone="danger"
+            action={
+              <Button size="xs" onClick={() => formats.refetch()}>
+                Retry
+              </Button>
+            }
+          >
+            Could not load CSV formats.
+          </Notice>
+        )}
+        {kind === 'csv' && formats.isSuccess && !format && (
+          <Notice tone="danger">
+            {requested === null
+              ? 'No CSV formats are available.'
+              : 'This CSV format is unavailable. Choose another format from Imports navigation.'}
+          </Notice>
+        )}
+      </div>
       {ready && (
         <FilmImportWorkflow
           key={kind === 'csv' ? format?.id : 'nfo'}

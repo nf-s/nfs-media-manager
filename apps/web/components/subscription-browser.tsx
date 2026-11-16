@@ -2,24 +2,31 @@
 
 import Link from 'next/link'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
 import { useSearchParams } from 'next/navigation'
 import { useQuery } from '@tanstack/react-query'
 import { z } from 'zod'
-import { Search, X } from 'lucide-react'
+import { Search } from 'lucide-react'
 import { Button } from '@repo/ui/components/ui/button'
 import {
   TableBody,
   TableCell,
-  TableHead,
   TableHeader,
   TableRow,
   TableScroll,
 } from '@repo/ui/components/ui/table'
+import { Card, CardTitle } from '@repo/ui/components/ds/card'
+import {
+  ListHead,
+  ListRow,
+  RowTitle,
+  RowValue,
+} from '@repo/ui/components/ds/list-row'
+import { EmptyValue, Pill, PillLabel, Pills } from '@repo/ui/components/ds/pill'
+import { Skeleton, State } from '@repo/ui/components/ds/feedback'
+import { EMPTY_VALUE, formatCount } from '@repo/ui/lib/format'
 import {
   BrowseFieldSchema,
   canonicalBrowseKey,
-  formatBrowseValue,
   type BrowseField,
   type BrowseFilter,
 } from '@repo/schemas/browse'
@@ -52,9 +59,10 @@ import {
   isSubscriptionSort,
   parseSubscriptionBrowseState,
   savedSubscriptionSearch,
+  subscriptionArtworkUrl,
   subscriptionBrowseQuery,
   subscriptionCollection,
-  subscriptionGridGeometry,
+  subscriptionFieldOrder,
   subscriptionImportsHref,
   subscriptionRangeLabel,
   subscriptionSortLabels,
@@ -64,32 +72,55 @@ import {
   updateSubscriptionSearch,
   withSubscriptionFilter,
 } from '@/utils/subscriptions'
+import {
+  formatFieldValue,
+  itemGridGeometry,
+  nextSortDirection,
+  orderFields,
+  sortedValueLabel,
+  textValues,
+} from '@/utils/browse-items'
 import { DetailInspector } from './detail-inspector'
 import { DetailLink } from './detail-link'
 import {
   replaceWorkspaceUrl,
   useDetailInspector,
 } from './detail-inspector-context'
-import ServiceIconLinks from './service-icon-links'
 import { sameDetail, withoutDetailEntries } from '@/utils/detail-inspector'
 import AiSearch from './ai-search'
-import { BrowseFilterChips, RangeEditor } from './browse-controls'
+import {
+  BrowseFilterChips,
+  BrowseFilterPill,
+  BrowseTagBadges,
+  RangeEditor,
+} from './browse-controls'
 import BrowseToolbar, { BrowseColumnsSection } from './browse-toolbar'
 import { FilterPanelSection } from './browse-filter-panel'
-import { FilterButton } from './filter-affordance'
 import {
-  SourceAvatar,
-  SubscriptionThumbnail,
-} from './subscription-item-details'
-import styles from './subscription-browser.module.css'
+  ActiveFiltersSection,
+  BrowseItemsCount,
+  BrowseItemsHead,
+  BrowseItemsStates,
+  CardSkeleton,
+  ColumnChoices,
+  ItemArt,
+  ItemThumb,
+  PlacedFilters,
+  RowSkeleton,
+  VirtualCards,
+  VirtualRows,
+  useColumnWidths,
+} from './browse-items'
 
 const collection = subscriptionCollection
-const WidthsSchema = z.record(z.string(), z.number().min(70).max(650))
-/** `.browse-cell` height plus the row divider. */
-const tableRowHeight = 36
-const listRowHeight = 62
-const headerHeight = 24
-const thumbColumnWidth = 70
+/** --ds-head, --ds-row-media and --ds-row. */
+const headerHeight = 28
+const listRowHeight = 48
+const tableRowHeight = 32
+const cardMinWidth = 200
+const noun = { one: 'item', other: 'items' }
+/** Sorts whose value the card does not already show. */
+const cardSortKeys = new Set(['likeCount', 'commentCount'])
 const searchFieldOptions: Array<{ value: 'all' | 'title'; label: string }> = [
   { value: 'all', label: 'Titles and descriptions' },
   { value: 'title', label: 'Titles only' },
@@ -107,11 +138,9 @@ export default function SubscriptionBrowser() {
     rowHeight: number
   } | null>(null)
   const [viewport, setViewport] = useState({ width: 1000, height: 800 })
-  const [widths, setWidths] = useState<Record<string, number>>({})
   const scroller = useRef<HTMLDivElement>(null)
   const inspector = useDetailInspector()
   const railSlot = useRailSlot()
-  const resize = useRef<{ key: string; x: number; width: number } | null>(null)
   const state = parseSubscriptionBrowseState(new URLSearchParams(searchParams))
   const { q, filters, ranges, view, sourceId } = state
   const { identity, params, sortBy, direction } = subscriptionBrowseQuery(state)
@@ -127,12 +156,36 @@ export default function SubscriptionBrowser() {
         z.array(BrowseFieldSchema),
       ),
   })
-  const fields = fieldsQuery.data ?? subscriptionBrowseFields
+  const fields = orderFields(
+    fieldsQuery.data ?? subscriptionBrowseFields,
+    subscriptionFieldOrder,
+  )
+  const sortField = fields.find((field) => field.key === sortBy)
   const columnFields = fields.filter((field) => field.key !== 'description')
-  const columnKeys =
-    state.columns?.map(canonicalBrowseKey) ?? defaultSubscriptionColumns
+  const columnKeys = [
+    ...new Set([
+      'title',
+      ...(state.columns?.map(canonicalBrowseKey) ?? defaultSubscriptionColumns),
+    ]),
+  ]
   const columns = columnFields.filter((field) => columnKeys.includes(field.key))
-  const grid = subscriptionGridGeometry(viewport.width)
+  const widths = useColumnWidths(collection, (field) =>
+    field.key === 'title'
+      ? 340
+      : field.key === 'source'
+        ? 200
+        : field.key === 'genre'
+          ? 220
+          : field.type === 'text'
+            ? 100
+            : 110,
+  )
+  const mobile = viewport.width <= 700
+  const grid = itemGridGeometry({
+    width: viewport.width,
+    min: cardMinWidth,
+    ratio: 9 / 16,
+  })
   const scrollIdentity = `${collection}:${identity}:${view}`
   const previousScrollTop = scroll.identity === scrollIdentity ? scroll.top : 0
   const scrollTop =
@@ -180,16 +233,8 @@ export default function SubscriptionBrowser() {
   function sort(key: string) {
     setParams({
       sortBy: key,
-      direction: sortBy === key && direction === 'desc' ? 'asc' : 'desc',
+      direction: nextSortDirection(fields, key, { sortBy, direction }),
     })
-  }
-  function saveWidths(next: Record<string, number>) {
-    setWidths(next)
-    try {
-      localStorage.setItem(`widths:${collection}`, JSON.stringify(next))
-    } catch {
-      /* Width changes remain usable for this session. */
-    }
   }
 
   useEffect(() => {
@@ -197,10 +242,6 @@ export default function SubscriptionBrowser() {
       const saved = window.localStorage.getItem(`browse:${collection}`)
       if (!window.location.search && saved)
         window.history.replaceState(null, '', `${subscriptionsPath}?${saved}`)
-      const parsed = WidthsSchema.safeParse(
-        JSON.parse(window.localStorage.getItem(`widths:${collection}`) ?? '{}'),
-      )
-      if (parsed.success) setWidths(parsed.data)
     } catch {
       /* Ignore unavailable storage or malformed saved preferences. */
     }
@@ -252,7 +293,7 @@ export default function SubscriptionBrowser() {
   useEffect(() => {
     if (selectedId)
       scroller.current
-        ?.querySelector('[data-selected="true"]')
+        ?.querySelector('[aria-selected="true"]')
         ?.scrollIntoView({ block: 'nearest' })
   }, [selectedId])
 
@@ -271,7 +312,8 @@ export default function SubscriptionBrowser() {
           : tableRowHeight,
     scrollTop,
     viewportHeight: viewport.height,
-    headerHeight: view === 'table' ? headerHeight : 0,
+    headerHeight:
+      view === 'table' || (view === 'list' && !mobile) ? headerHeight : 0,
     itemSchema: SubscriptionItemSchema,
   })
   const { total, slots, padTop, padBottom } = query
@@ -352,79 +394,108 @@ export default function SubscriptionBrowser() {
     document.addEventListener('keydown', onKeyDown)
     return () => document.removeEventListener('keydown', onKeyDown)
   })
-  const widthFor = (field: BrowseField) =>
-    widths[field.key] ??
-    (field.key === 'title'
-      ? 340
-      : field.key === 'source'
-        ? 200
-        : field.key === 'genre'
-          ? 220
-          : field.type === 'text'
-            ? 100
-            : 110)
+
+  function published(item: SubscriptionItem) {
+    return formatSubscriptionPublished(
+      item.publishedAt,
+      item.publishedPrecision,
+    )
+  }
 
   function cellText(item: SubscriptionItem, field: BrowseField) {
-    if (field.key === 'publishedAt')
-      return formatSubscriptionPublished(
-        item.publishedAt,
-        item.publishedPrecision,
-      )
+    if (field.key === 'publishedAt') return published(item)
     if (field.key === 'durationSec') return formatSubscriptionDuration(item)
-    return formatBrowseValue(
-      field,
-      getSubscriptionBrowseValues(item)[field.key],
+    return formatFieldValue(field, getSubscriptionBrowseValues(item)[field.key])
+  }
+
+  function itemLink(item: SubscriptionItem, className?: string) {
+    return (
+      <DetailLink
+        kind="subscription"
+        id={item.id}
+        className={className}
+        title={item.title}
+      >
+        {item.title}
+      </DetailLink>
+    )
+  }
+
+  function channelLink(item: SubscriptionItem) {
+    return (
+      <DetailLink kind="channel" id={item.sourceId}>
+        {item.sourceTitle}
+      </DetailLink>
+    )
+  }
+
+  function itemTags(item: SubscriptionItem) {
+    return <BrowseTagBadges tags={item.tags} onFilter={addFilter} max={2} />
+  }
+
+  function thumb(item: SubscriptionItem) {
+    return (
+      <ItemThumb
+        kind="video"
+        src={subscriptionArtworkUrl(item)}
+        title={item.title}
+        target={{ kind: 'subscription', id: item.id }}
+        contain={item.type === 'spotify'}
+      />
     )
   }
 
   function renderValue(item: SubscriptionItem, field: BrowseField) {
     if (field.key === 'title')
       return (
-        <div className={styles.tableTitle}>
-          <button
-            type="button"
-            className="table-title"
-            onClick={(event) => openDetail(item.id, event.currentTarget)}
-          >
-            {item.title}
-          </button>
-          <SubscriptionOpenLink item={item} />
-        </div>
+        <span className="ds-cell-id">
+          {thumb(item)}
+          {itemLink(item, 'ds-cell-title')}
+        </span>
       )
-    if (field.key === 'source') {
-      return (
-        <DetailLink
-          className="hover:underline"
-          kind="channel"
-          id={item.sourceId}
-        >
-          {item.sourceTitle}
-        </DetailLink>
-      )
-    }
+    if (field.key === 'source') return channelLink(item)
+    if (field.key === 'genre')
+      return item.tags.length ? itemTags(item) : <EmptyValue />
     const value = getSubscriptionBrowseValues(item)[field.key]
     if (field.type === 'text' && field.filterable) {
-      const values = Array.isArray(value)
-        ? value
-        : typeof value === 'string'
-          ? [value]
-          : []
-      if (!values.length) return '-'
+      const values = textValues(value)
+      if (!values.length) return <EmptyValue />
       return (
-        <span className="inline-values">
+        <Pills max={2} label={field.label}>
           {values.map((value) => (
-            <FilterButton
-              key={value}
-              onClick={() => addFilter({ field: field.key, value })}
-              title={`Filter ${field.label}: ${value}`}
-            >
-              {value}
-            </FilterButton>
+            <Pill asChild key={value}>
+              <button
+                type="button"
+                title={`Filter ${field.label}: ${value}`}
+                onClick={() => addFilter({ field: field.key, value })}
+              >
+                <PillLabel>{value}</PillLabel>
+              </button>
+            </Pill>
           ))}
-        </span>
+        </Pills>
       )
     }
     return cellText(item, field)
+  }
+
+  function cardMeta(item: SubscriptionItem) {
+    const sorted = cardSortKeys.has(sortBy)
+      ? sortedValueLabel(sortField, getSubscriptionBrowseValues(item)[sortBy])
+      : null
+    return (
+      <>
+        <span>{published(item)}</span>
+        <span>
+          {sorted ??
+            (item.type === 'youtube'
+              ? item.viewCount === null
+                ? 'Views hidden'
+                : `${formatCompactSubscriptionCount(item.viewCount)} views`
+              : subscriptionTypeLabels[item.type])}
+        </span>
+      </>
+    )
   }
 
   const showFieldsChip = Boolean(q) && state.fields === 'title'
@@ -434,62 +505,60 @@ export default function SubscriptionBrowser() {
     Number(Boolean(sourceId)) +
     filters.length +
     ranges.length
-  const activeFilters =
+  const filterPills =
     activeFilterCount > 0 ? (
-      <div className="active-filters">
+      <>
         {sourceId && (
-          <FilterButton
-            className="filter-pill filter-required"
-            aria-label="Remove channel filter"
-            onClick={() => setParams({ sourceId: null })}
+          <BrowseFilterPill
+            mode="required"
+            removeLabel="Remove channel filter"
+            onRemove={() => setParams({ sourceId: null })}
           >
-            {sourceTitle ? `Channel: ${sourceTitle}` : 'Channel'}{' '}
-            <X size={12} aria-hidden="true" />
-          </FilterButton>
+            {sourceTitle ? `Channel: ${sourceTitle}` : 'Channel'}
+          </BrowseFilterPill>
         )}
         {q && (
-          <FilterButton
-            className="filter-pill"
-            onClick={() => setParams({ q: null })}
+          <BrowseFilterPill
+            removeLabel="Remove search"
+            onRemove={() => setParams({ q: null })}
           >
-            Search: {q} <X size={12} />
-          </FilterButton>
+            Search: {q}
+          </BrowseFilterPill>
         )}
         {showFieldsChip && (
-          <FilterButton
-            className="filter-pill"
-            onClick={() => setParams({ fields: null })}
+          <BrowseFilterPill
+            removeLabel="Search titles and descriptions"
+            onRemove={() => setParams({ fields: null })}
           >
-            Titles only <X size={12} />
-          </FilterButton>
+            Titles only
+          </BrowseFilterPill>
         )}
         <BrowseFilterChips
           filters={filters}
           fields={fields}
           onChange={changeFilters}
         />
-        {ranges.map((range) => (
-          <FilterButton
-            key={range.field}
-            className="filter-pill"
-            onClick={() =>
-              setParams({
-                ranges: JSON.stringify(
-                  ranges.filter((item) => item.field !== range.field),
-                ),
-              })
-            }
-          >
-            {subscriptionRangeLabel(range, fields)} <X size={12} />
-          </FilterButton>
-        ))}
-        <button className="clear-filters" onClick={clearFilters}>
-          Clear all
-        </button>
-      </div>
+        {ranges.map((range) => {
+          const label = subscriptionRangeLabel(range, fields)
+          return (
+            <BrowseFilterPill
+              key={range.field}
+              removeLabel={`Remove ${label}`}
+              onRemove={() =>
+                setParams({
+                  ranges: JSON.stringify(
+                    ranges.filter((item) => item.field !== range.field),
+                  ),
+                })
+              }
+            >
+              {label}
+            </BrowseFilterPill>
+          )
+        })}
+      </>
     ) : null
 
-  const empty = query.hasTotal && !query.isError && total === 0
   return (
     <section className="media-browser" aria-label="Subscriptions">
       <div className="browse-main">
@@ -535,26 +604,26 @@ export default function SubscriptionBrowser() {
           filterCount={activeFilterCount}
           filters={
             <>
-              {activeFilters && (
-                <section
-                  className="filter-panel-active"
-                  aria-label="Active filters"
+              {filterPills && (
+                <ActiveFiltersSection
+                  count={activeFilterCount}
+                  onClear={clearFilters}
                 >
-                  <h3>Active filters</h3>
-                  {activeFilters}
-                </section>
+                  {filterPills}
+                </ActiveFiltersSection>
               )}
               <FilterPanelSection
                 title="Search"
-                icon={<Search size={16} />}
+                icon={<Search className="ds-i" data-size="sm" aria-hidden />}
                 count={state.fields === 'title' ? 1 : 0}
               >
-                <fieldset className="filter-panel-fields">
+                <fieldset className="grid gap-2">
                   <legend className="sr-only">Search in</legend>
                   {searchFieldOptions.map(({ value, label }) => (
-                    <label className="check-label" key={value}>
+                    <label className="ds-checkrow" key={value}>
                       <input
                         type="radio"
+                        className="ds-check"
                         name="subscription-search-fields"
                         checked={state.fields === value}
                         onChange={() =>
@@ -578,59 +647,46 @@ export default function SubscriptionBrowser() {
               />
               {view === 'table' && (
                 <BrowseColumnsSection>
-                  {columnFields.map((field) => (
-                    <label className="check-label" key={field.key}>
-                      <input
-                        type="checkbox"
-                        checked={columnKeys.includes(field.key)}
-                        disabled={field.key === 'title'}
-                        onChange={() =>
-                          setParams({
-                            columns: (columnKeys.includes(field.key)
-                              ? columnKeys.filter((key) => key !== field.key)
-                              : [...columnKeys, field.key]
-                            ).join(','),
-                          })
-                        }
-                      />
-                      {field.label}
-                    </label>
-                  ))}
+                  <ColumnChoices
+                    fields={columnFields}
+                    selected={columnKeys}
+                    required="title"
+                    onChange={(keys) => setParams({ columns: keys.join(',') })}
+                  />
                 </BrowseColumnsSection>
               )}
             </>
           }
           view={view}
           onViewChange={(next) => setParams({ view: next })}
-          count={
-            query.countError ? (
-              <button
-                type="button"
-                className="underline"
-                onClick={query.retryCount}
-              >
-                Retry count
-              </button>
-            ) : !query.isCounting ? (
-              `${total.toLocaleString()} ${total === 1 ? 'item' : 'items'}`
-            ) : query.isPending ? (
-              'Loading...'
-            ) : (
-              'Counting...'
-            )
+          count={<BrowseItemsCount query={query} total={total} noun={noun} />}
+        />
+        {filterPills && (
+          <PlacedFilters railSlot={railSlot} onClear={clearFilters}>
+            {filterPills}
+          </PlacedFilters>
+        )}
+        <BrowseItemsStates
+          query={query}
+          total={total}
+          noun="subscriptions"
+          filtered={hasSubscriptionFilters(state)}
+          onClear={clearFilters}
+          empty={
+            <State
+              title="No subscriptions yet"
+              action={
+                <Button asChild>
+                  <Link href={subscriptionImportsHref}>Open Imports</Link>
+                </Button>
+              }
+            >
+              Sync channels and podcasts in Imports.
+            </State>
           }
         />
-        {railSlot && activeFilters
-          ? createPortal(
-              <>
-                <h2 className="rail-heading">Filters</h2>
-                {activeFilters}
-              </>,
-              railSlot,
-            )
-          : activeFilters}
         <TableScroll
-          className="browse-scroll"
+          className="browse-scroll bi-scroll"
           data-view={view}
           ref={scroller}
           role="region"
@@ -642,275 +698,149 @@ export default function SubscriptionBrowser() {
             })
           }
         >
-          {query.isError && (
-            <div className="virtual-browse-error">
-              <div role="alert" className="virtual-browse-error-message">
-                Could not load this section.{' '}
-                <Button size="md" variant="primary" onClick={query.retry}>
-                  Retry
-                </Button>
-              </div>
-            </div>
-          )}
-          <span className="sr-only" role="status">
-            {query.isFetching ? 'Loading items' : ''}
-          </span>
-          {empty &&
-            (hasSubscriptionFilters(state) ? (
-              <div className="browse-empty">
-                No matches.{' '}
-                <button onClick={clearFilters}>Clear filters</button>
-              </div>
-            ) : (
-              <div className="browse-empty">
-                Nothing synced yet. Sync channels and podcasts in{' '}
-                <Link className="underline" href={subscriptionImportsHref}>
-                  Imports
-                </Link>
-                .
-              </div>
-            ))}
           {view === 'grid' ? (
-            <div
-              className="virtual-browse-grid"
-              style={{ height: Math.max(0, query.height - grid.gap) }}
+            <VirtualCards
+              height={query.height}
+              padTop={padTop}
+              columns={grid.columns}
+              cardHeight={grid.cardHeight}
             >
-              <div
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: `repeat(${grid.columns}, minmax(0, 1fr))`,
-                  gap: grid.gap,
-                  gridAutoRows: grid.cardHeight,
-                  position: 'absolute',
-                  top: padTop,
-                  left: 0,
-                  right: 0,
-                }}
-              >
-                {slots.map(({ item, index }) =>
-                  item ? (
-                    <SubscriptionCard
-                      key={item.id}
-                      item={item}
-                      index={index}
-                      height={grid.cardHeight}
-                      selected={item.id === selectedId}
-                      onOpen={(trigger) => openDetail(item.id, trigger)}
-                    />
-                  ) : (
-                    <div
-                      key={`slot-${index}`}
-                      className="virtual-browse-placeholder"
-                      aria-hidden="true"
-                      style={{ height: grid.cardHeight }}
-                    >
-                      <div
-                        className={`${styles.thumb} virtual-browse-shimmer`}
+              {slots.map(({ item, index }) => {
+                if (!item)
+                  return <CardSkeleton key={`slot-${index}`} ratio="video" />
+                const duration = formatSubscriptionDuration(item)
+                return (
+                  <Card
+                    key={item.id}
+                    data-item-index={index}
+                    selected={item.id === selectedId}
+                    art={
+                      <ItemArt
+                        kind="video"
+                        src={subscriptionArtworkUrl(item)}
+                        title={item.title}
+                        target={{ kind: 'subscription', id: item.id }}
+                        contain={item.type === 'spotify'}
+                        badge={duration === EMPTY_VALUE ? undefined : duration}
                       />
-                      <div className={styles.placeholderBody}>
-                        <div className="virtual-browse-line virtual-browse-shimmer" />
-                        <div className="virtual-browse-line virtual-browse-line-short virtual-browse-shimmer" />
-                      </div>
-                    </div>
-                  ),
-                )}
-              </div>
-            </div>
+                    }
+                    title={<CardTitle>{itemLink(item)}</CardTitle>}
+                    by={channelLink(item)}
+                    meta={cardMeta(item)}
+                    tags={itemTags(item)}
+                  />
+                )
+              })}
+            </VirtualCards>
           ) : view === 'list' ? (
-            <div
-              className="virtual-browse-grid"
-              style={{ height: query.height }}
+            <VirtualRows
+              height={query.height}
+              padTop={padTop}
+              compact={mobile}
+              head={
+                <ListHead
+                  title="Title"
+                  tags="Tags"
+                  playWidth={0}
+                  meta={
+                    <>
+                      <RowValue kind="date">Published</RowValue>
+                      <RowValue kind="num">Duration</RowValue>
+                      <RowValue kind="num">Views</RowValue>
+                    </>
+                  }
+                />
+              }
             >
-              <div className="media-list" style={{ top: padTop }}>
-                {slots.map(({ item, index }) =>
-                  item ? (
-                    <SubscriptionCard
-                      key={item.id}
-                      item={item}
-                      index={index}
-                      height={listRowHeight}
-                      selected={item.id === selectedId}
-                      onOpen={(trigger) => openDetail(item.id, trigger)}
-                      layout="list"
-                    />
-                  ) : (
-                    <div
-                      key={`slot-${index}`}
-                      className={`list-row ${styles.listRow} virtual-browse-placeholder`}
-                      aria-hidden="true"
-                      style={{ height: listRowHeight }}
-                    >
-                      <div
-                        className={`${styles.thumb} virtual-browse-shimmer`}
-                      />
-                      <div className="virtual-browse-line virtual-browse-shimmer" />
-                    </div>
-                  ),
-                )}
-              </div>
-            </div>
+              {slots.map(({ item, index }) =>
+                item ? (
+                  <ListRow
+                    key={item.id}
+                    data-item-index={index}
+                    selected={item.id === selectedId}
+                    thumb={thumb(item)}
+                    title={<RowTitle>{itemLink(item)}</RowTitle>}
+                    by={channelLink(item)}
+                    tags={itemTags(item)}
+                    meta={
+                      <>
+                        <RowValue kind="date">{published(item)}</RowValue>
+                        <RowValue kind="num">
+                          {formatSubscriptionDuration(item)}
+                        </RowValue>
+                        <RowValue kind="num">
+                          {item.type === 'youtube' && item.viewCount !== null
+                            ? formatCount(item.viewCount)
+                            : EMPTY_VALUE}
+                        </RowValue>
+                      </>
+                    }
+                  />
+                ) : (
+                  <RowSkeleton key={`slot-${index}`} ratio="video" />
+                ),
+              )}
+            </VirtualRows>
           ) : (
             <table
-              className={`ds-table ${styles.table}`}
+              className="ds-table"
+              data-layout="fixed"
               aria-label="Subscriptions"
               aria-rowcount={query.hasTotal ? total + 1 : undefined}
               style={{
                 width: columns.reduce(
-                  (sum, field) => sum + widthFor(field),
-                  thumbColumnWidth,
+                  (sum, field) => sum + widths.widthFor(field),
+                  0,
                 ),
               }}
             >
               <colgroup>
-                <col style={{ width: thumbColumnWidth }} />
                 {columns.map((field) => (
-                  <col key={field.key} style={{ width: widthFor(field) }} />
+                  <col
+                    key={field.key}
+                    style={{ width: widths.widthFor(field) }}
+                  />
                 ))}
               </colgroup>
               <TableHeader>
                 <TableRow>
-                  <TableHead>
-                    <span className="sr-only">Open</span>
-                  </TableHead>
-                  {columns.map((field) => {
-                    const sortable = isSubscriptionSort(field.key)
-                    return (
-                      <TableHead
-                        key={field.key}
-                        className={field.type === 'text' ? '' : 'numeric'}
-                        aria-sort={
-                          sortBy === field.key
-                            ? direction === 'asc'
-                              ? 'ascending'
-                              : 'descending'
-                            : 'none'
-                        }
-                      >
-                        {sortable ? (
-                          <button type="button" onClick={() => sort(field.key)}>
-                            {field.label}
-                            {sortBy === field.key
-                              ? direction === 'asc'
-                                ? ' ↑'
-                                : ' ↓'
-                              : ''}
-                          </button>
-                        ) : (
-                          field.label
-                        )}
-                        <span
-                          className="column-resizer"
-                          role="separator"
-                          aria-label={`Resize ${field.label}`}
-                          aria-orientation="vertical"
-                          tabIndex={0}
-                          onKeyDown={(event) => {
-                            if (
-                              event.key === 'ArrowLeft' ||
-                              event.key === 'ArrowRight'
-                            ) {
-                              event.preventDefault()
-                              saveWidths({
-                                ...widths,
-                                [field.key]: Math.max(
-                                  70,
-                                  Math.min(
-                                    650,
-                                    widthFor(field) +
-                                      (event.key === 'ArrowRight' ? 10 : -10),
-                                  ),
-                                ),
-                              })
-                            }
-                          }}
-                          onPointerDown={(event) => {
-                            event.currentTarget.setPointerCapture(
-                              event.pointerId,
-                            )
-                            resize.current = {
-                              key: field.key,
-                              x: event.clientX,
-                              width: widthFor(field),
-                            }
-                          }}
-                          onPointerMove={(event) => {
-                            if (resize.current?.key === field.key)
-                              setWidths({
-                                ...widths,
-                                [field.key]: Math.max(
-                                  70,
-                                  Math.min(
-                                    650,
-                                    resize.current.width +
-                                      event.clientX -
-                                      resize.current.x,
-                                  ),
-                                ),
-                              })
-                          }}
-                          onPointerUp={() => {
-                            resize.current = null
-                            saveWidths(widths)
-                          }}
-                        />
-                      </TableHead>
-                    )
-                  })}
+                  {columns.map((field) => (
+                    <BrowseItemsHead
+                      key={field.key}
+                      field={field}
+                      identity={field.key === 'title'}
+                      sortable={isSubscriptionSort(field.key)}
+                      sortBy={sortBy}
+                      direction={sortBy === 'relevance' ? undefined : direction}
+                      onSort={sort}
+                      resizer={widths.resizer(field)}
+                    />
+                  ))}
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {padTop > 0 && (
-                  <TableRow aria-hidden="true">
-                    <TableCell
-                      colSpan={columns.length + 1}
-                      style={{ height: padTop, padding: 0, border: 0 }}
-                    />
-                  </TableRow>
+                  <tr className="bi-spacer" aria-hidden="true">
+                    <td colSpan={columns.length} style={{ height: padTop }} />
+                  </tr>
                 )}
                 {slots.map(({ item, index }) =>
                   item ? (
                     <TableRow
                       key={item.id}
                       data-item-index={index}
-                      data-selected={item.id === selectedId}
+                      selected={item.id === selectedId}
                       aria-rowindex={index + 2}
-                      onDoubleClick={(event) => {
-                        if (
-                          event.target instanceof Element &&
-                          event.target.closest(
-                            'a, button, input, select, textarea',
-                          )
-                        )
-                          return
-                        openDetail(
-                          item.id,
-                          event.currentTarget.querySelector<HTMLElement>(
-                            '.table-title',
-                          ) ?? undefined,
-                        )
-                      }}
                     >
-                      <TableCell>
-                        <button
-                          type="button"
-                          className={styles.rowThumb}
-                          aria-label={`Open details for ${item.title}`}
-                          onClick={(event) =>
-                            openDetail(item.id, event.currentTarget)
-                          }
-                        >
-                          <SubscriptionThumbnail item={item} badges={false} />
-                        </button>
-                      </TableCell>
                       {columns.map((field) => (
                         <TableCell
                           key={field.key}
-                          className={field.type === 'text' ? '' : 'numeric'}
+                          align={field.type === 'number' ? 'end' : undefined}
+                          sticky={field.key === 'title' ? 0 : undefined}
+                          stickyEdge={field.key === 'title'}
                           title={cellText(item, field)}
                         >
-                          <div className="browse-cell">
-                            {renderValue(item, field)}
-                          </div>
+                          {renderValue(item, field)}
                         </TableCell>
                       ))}
                     </TableRow>
@@ -918,33 +848,23 @@ export default function SubscriptionBrowser() {
                     <TableRow
                       key={`slot-${index}`}
                       aria-hidden="true"
-                      className="virtual-browse-placeholder"
+                      data-placeholder=""
                     >
-                      <TableCell>
-                        <div className={styles.placeholderCell}>
-                          <div
-                            className={`${styles.thumb} virtual-browse-shimmer`}
-                            style={{ width: 50 }}
-                          />
-                        </div>
-                      </TableCell>
                       {columns.map((field) => (
                         <TableCell key={field.key}>
-                          <div className={styles.placeholderCell}>
-                            <div className="virtual-browse-line virtual-browse-shimmer" />
-                          </div>
+                          <Skeleton height={10} width="70%" />
                         </TableCell>
                       ))}
                     </TableRow>
                   ),
                 )}
                 {padBottom > 0 && (
-                  <TableRow aria-hidden="true">
-                    <TableCell
-                      colSpan={columns.length + 1}
-                      style={{ height: padBottom, padding: 0, border: 0 }}
+                  <tr className="bi-spacer" aria-hidden="true">
+                    <td
+                      colSpan={columns.length}
+                      style={{ height: padBottom }}
                     />
-                  </TableRow>
+                  </tr>
                 )}
               </TableBody>
             </table>
@@ -955,87 +875,5 @@ export default function SubscriptionBrowser() {
         subscription={{ initialItem: activeItem, onFilter: addFilter }}
       />
     </section>
-  )
-}
-
-function SubscriptionCard({
-  item,
-  index,
-  height,
-  selected,
-  onOpen,
-  layout = 'grid',
-}: {
-  item: SubscriptionItem
-  index: number
-  height: number
-  selected: boolean
-  onOpen: (trigger: HTMLElement) => void
-  layout?: 'grid' | 'list'
-}) {
-  const published = formatSubscriptionPublished(
-    item.publishedAt,
-    item.publishedPrecision,
-  )
-  const meta =
-    item.type === 'youtube'
-      ? `${item.viewCount === null ? 'Views hidden' : `${formatCompactSubscriptionCount(item.viewCount)} views`} · ${published}`
-      : `${subscriptionTypeLabels[item.type]} · ${published}`
-  return (
-    <article
-      className={layout === 'list' ? `list-row ${styles.listRow}` : styles.card}
-      data-item-index={index}
-      data-selected={selected}
-      style={{ height }}
-    >
-      <button
-        type="button"
-        className={styles.cardThumb}
-        tabIndex={-1}
-        aria-hidden="true"
-        onClick={(event) => onOpen(event.currentTarget)}
-      >
-        <SubscriptionThumbnail item={item} badges={layout === 'grid'} />
-      </button>
-      <div className={styles.cardBody}>
-        <SourceAvatar src={item.sourceThumbnailUrl} />
-        <div className="min-w-0">
-          <button
-            type="button"
-            className={styles.title}
-            title={item.title}
-            onClick={(event) => onOpen(event.currentTarget)}
-          >
-            {item.title}
-          </button>
-          <DetailLink
-            kind="channel"
-            id={item.sourceId}
-            className={styles.channel}
-          >
-            {item.sourceTitle}
-          </DetailLink>
-          <div className={styles.meta}>{meta}</div>
-        </div>
-        <SubscriptionOpenLink item={item} />
-      </div>
-    </article>
-  )
-}
-
-function SubscriptionOpenLink({ item }: { item: SubscriptionItem }) {
-  return (
-    <span className={styles.openLink}>
-      <ServiceIconLinks
-        links={[
-          {
-            provider: item.type,
-            label: item.type === 'youtube' ? 'YouTube' : 'Spotify',
-            url: item.url,
-          },
-        ]}
-        itemTitle={item.title}
-      />
-    </span>
   )
 }

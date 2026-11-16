@@ -1,1 +1,278 @@
 /* Layout for the ops screens. Tokens only; visual patterns belong in the design system. */
+
+/* Jobs and Metadata: head, tabs, then a table that fills the panel */
+.app-main:has(.ops-page) {
+  overflow: hidden;
+}
+.ops-page,
+.ops-fill,
+.ops-jobs {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+.ops-page {
+  height: 100%;
+}
+/* Embedded on a provider page, the jobs table still fills its column. */
+.ops-jobs {
+  flex: 1 1 0%;
+  height: 100%;
+}
+.ops-page > *,
+.ops-fill > *,
+.ops-jobs > * {
+  flex-shrink: 0;
+}
+.ops-page > :is(.ops-fill, .ops-jobs),
+.ops-fill > :is(.ops-fill, .ds-table-wrap),
+.ops-jobs > .ds-table-wrap {
+  flex: 1 1 0%;
+  min-height: 0;
+}
+.ops-tabs {
+  margin: var(--ds-3) var(--ds-gutter) 0;
+}
+.ops-tabs .ds-tab:hover {
+  text-decoration: none;
+}
+.ops-health .ds-stat-value a {
+  color: inherit;
+}
+.ops-notice {
+  display: grid;
+  gap: var(--ds-3);
+  padding: 0 var(--ds-gutter) var(--ds-4);
+}
+
+/* Jobs table: batch rows keep the row height the virtual list measures */
+.ops-jobs-table tr[data-group] td {
+  height: var(--ds-row);
+}
+.ops-danger {
+  color: var(--ds-danger);
+}
+.ops-batch {
+  flex-wrap: wrap;
+}
+.ops-review {
+  display: flex;
+  flex: 1 1 100%;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ds-3) var(--ds-5);
+}
+.ops-review p {
+  margin: 0;
+}
+.ops-bulk {
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ds-3) var(--ds-4);
+  min-width: 0;
+}
+.ops-wide {
+  flex: 1 1 100%;
+  margin: 0;
+}
+.ops-wide details > summary {
+  cursor: pointer;
+}
+
+/* Metadata selection */
+.ops-selection-controls {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.ops-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ds-2);
+  padding: var(--ds-4) var(--ds-gutter) 0;
+}
+.ops-selectbar {
+  flex-wrap: wrap;
+}
+.ops-providers {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ds-2) var(--ds-5);
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.ops-providers legend {
+  float: left;
+  margin-right: var(--ds-2);
+}
+.ds-selectbar .ops-providers .ds-label {
+  color: var(--ds-on-inverse-2);
+}
+.ops-rules {
+  flex: 1 1 100%;
+  font-size: var(--ds-text-xs);
+}
+.ops-rules > summary {
+  width: max-content;
+  cursor: pointer;
+}
+.ops-rules p {
+  margin: var(--ds-2) 0 0;
+}
+
+/* Activity popover */
+.ops-activity {
+  position: fixed;
+  inset: auto;
+  width: calc(var(--ds-rail) + var(--ds-9) * 4);
+  max-width: calc(100vw - var(--ds-4) * 2);
+  margin: 0;
+  padding: var(--ds-2);
+}
+.ops-activity-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.ops-activity-head h2 {
+  margin: 0;
+  font: inherit;
+}
+.ops-activity-body {
+  display: grid;
+  gap: var(--ds-5);
+  padding: var(--ds-2) var(--ds-4) var(--ds-5);
+}
+.ops-activity-list {
+  display: grid;
+  gap: var(--ds-5);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.ops-activity-entry {
+  display: grid;
+  gap: var(--ds-1);
+  min-width: 0;
+}
+
+/* Job detail */
+.ops-job .ds-tabs {
+  margin-top: var(--ds-6);
+}
+.ops-job .ds-notice + .ds-notice {
+  margin-top: var(--ds-3);
+}
+.ops-headline {
+  color: inherit;
+  font-weight: 500;
+}
+.ops-crumbs {
+  margin-bottom: var(--ds-5);
+}
+.ops-log li.ops-log-entry {
+  padding: var(--ds-2) 0;
+}
+.ops-log-message {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.ops-log-detail {
+  display: grid;
+  grid-column: 1 / -1;
+  gap: var(--ds-3);
+  min-width: 0;
+}
+.ops-log-detail:empty {
+  display: none;
+}
+.ops-log-detail p {
+  margin: 0;
+}
+.ops-log-block {
+  display: grid;
+  gap: var(--ds-2);
+}
+.ops-pre {
+  max-height: calc(var(--ds-row) * 10);
+  margin: 0;
+  padding: var(--ds-4);
+  overflow: auto;
+  border-radius: var(--ds-r-sm);
+  background: var(--ds-sunken);
+  font: 400 var(--ds-text-xs) / var(--ds-leading) var(--ds-mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.ops-disclosure > summary {
+  cursor: pointer;
+  color: var(--ds-ink-2);
+  font-size: var(--ds-text-sm);
+}
+.ops-data {
+  display: grid;
+  gap: var(--ds-3);
+  min-width: 0;
+}
+.ops-payload {
+  border-top: 1px solid var(--ds-line-soft);
+}
+.ops-payload > summary {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-4);
+  min-height: var(--ds-h-sm);
+}
+.ops-payload-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* JSON viewer */
+.ops-json {
+  display: grid;
+  gap: var(--ds-3);
+  min-width: 0;
+  padding: var(--ds-3) 0;
+}
+.ops-json-body {
+  max-height: 60vh;
+  padding: var(--ds-3) var(--ds-4);
+  overflow: auto;
+  border-radius: var(--ds-r-sm);
+  background: var(--ds-sunken);
+  font: 400 var(--ds-text-xs) / var(--ds-leading) var(--ds-mono);
+}
+.ops-json-line {
+  padding: var(--ds-1) 0;
+  overflow-wrap: anywhere;
+}
+summary.ops-json-line {
+  display: list-item;
+  cursor: pointer;
+}
+.ops-json-children {
+  margin-left: var(--ds-4);
+  padding-left: var(--ds-4);
+  border-left: 1px solid var(--ds-line);
+}
+.ops-json-value[data-kind='string'] {
+  color: var(--ds-ink);
+}
+.ops-json-value[data-kind='number'] {
+  color: var(--ds-info);
+}
+.ops-json-value[data-kind='literal'] {
+  color: var(--ds-ink-2);
+}

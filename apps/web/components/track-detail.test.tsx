@@ -5,7 +5,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { SearchParamsContext } from 'next/dist/shared/lib/hooks-client-context.shared-runtime'
 import { TrackDetailSchema, type TrackDetail } from '@repo/schemas/tracks'
-import TrackDetailView, { TrackSources, TrackListening } from './track-detail'
+import TrackDetailView, { TrackSources } from './track-detail'
 import { ConfigContext } from './providers'
 import { PlaybackViewContext } from './playback-provider'
 import { idlePlaybackState } from '@/utils/playback-engine'
@@ -64,7 +64,7 @@ const scrobbled = TrackDetailSchema.parse({
 function render(
   item: TrackDetail,
   filters = '',
-  view: 'detail' | 'sources' | 'listening' = 'detail',
+  view: 'detail' | 'sources' = 'detail',
 ) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -89,8 +89,6 @@ function render(
             >
               {view === 'sources' ? (
                 <TrackSources item={item} />
-              ) : view === 'listening' ? (
-                <TrackListening listening={item.listening} />
               ) : (
                 <TrackDetailView id={item.id} />
               )}
@@ -105,37 +103,54 @@ function render(
   }
 }
 
+function pillHref(html: string, label: string) {
+  const href = new RegExp(
+    `href="([^"]+)"[^>]*><span class="ds-pill-label">${label}<`,
+  ).exec(html)?.[1]
+  assert.ok(href, `Expected a pill link for ${label}`)
+  return JSON.parse(
+    new URL(href.replaceAll('&amp;', '&'), 'http://localhost').searchParams.get(
+      'filters',
+    ) ?? '[]',
+  )
+}
+
 test('unmatched Last.fm tracks show recorded metadata, listening and an actionable source filter', () => {
   const html = render(scrobbled)
-  assert.match(html, /Synthetic track/)
-  assert.match(html, /Example artist/)
-  assert.match(html, /href="\/artists\/fixture-artist">Example artist<\/a>/)
-  assert.match(html, /Recorded album/)
-  assert.match(html, /role="tab"[^>]*>Overview/)
-  assert.match(html, /role="tab"[^>]*>Playlists/)
-  assert.match(html, /role="tab"[^>]*>Listening/)
-  assert.match(html, /role="tab"[^>]*>Sources/)
+  assert.match(html, /<h2 class="ds-detail-title">Synthetic track<\/h2>/)
+  assert.match(
+    html,
+    /by <span class="inline-values"><a[^>]*href="\/artists\/fixture-artist">Example artist<\/a>/,
+  )
+  assert.match(html, /<\/span> · on Recorded album<\/div>/)
+  const tabs = [...html.matchAll(/role="tab"[^>]*>([^<]+)</g)].map(
+    (match) => match[1],
+  )
+  assert.deepEqual(tabs, ['Overview', 'Sources'])
+  assert.match(html, /<h3>Listening<\/h3>/)
+  assert.match(html, /<h3>Appears on<\/h3>/)
+  assert.match(html, /No playlist memberships\./)
+  assert.match(html, /Match this track to Spotify to add it to a playlist/)
   assert.match(
     html,
     /href="https:\/\/www.last.fm\/music\/Example%20artist\/_\/Synthetic%20track"/,
   )
-  assert.match(
-    render(scrobbled, 'tab=playlists'),
-    /Match this track to Spotify to add it to a playlist/,
-  )
   assert.doesNotMatch(html, /Recorded by Last.fm|Spotify has not been searched/)
   assert.match(
     html,
-    /aria-label="Play Synthetic track: No Spotify recording is available\."[^>]*disabled=/,
+    /aria-label="Play Synthetic track"[^>]*disabled=""[^>]*title="No Spotify recording is available\."|disabled=""[^>]*title="No Spotify recording is available\."[^>]*aria-label="Play Synthetic track"/,
   )
-  assert.doesNotMatch(html, />Add to queue<\/button>/)
-  assert.match(html, /<dt>Scrobbles<\/dt><dd>3<\/dd>/)
-  const sourceLink = html.match(/href="([^"]+)">Last.fm<\/a>/)?.[1]
-  assert.ok(sourceLink)
-  const params = new URL(sourceLink, 'http://localhost').searchParams
-  assert.deepEqual(JSON.parse(params.get('filters') ?? '[]'), [
+  assert.match(
+    html,
+    /<span class="ds-stat-value">3<\/span><span class="ds-stat-label">scrobbles</,
+  )
+  assert.deepEqual(pillHref(html, 'Last.fm'), [
     { field: 'source', value: 'Last.fm' },
   ])
+  assert.match(
+    render(scrobbled, 'tab=playlists'),
+    /role="tab" aria-selected="true"[^>]*>Overview/,
+  )
 })
 
 test('tracks with a Spotify match keep album metadata, playback and every source', () => {
@@ -153,33 +168,23 @@ test('tracks with a Spotify match keep album metadata, playback and every source
   })
   const html = render(matched)
   assert.match(html, /href="\/albums\/album-1">Library album<\/a>/)
-  assert.match(html, /Electronic/)
-  const albumTagHref = html.match(/href="([^"]+)"[^>]*>Electronic<\/a>/)?.[1]
-  assert.ok(albumTagHref)
-  assert.deepEqual(
-    JSON.parse(
-      new URL(albumTagHref, 'http://localhost').searchParams.get('filters') ??
-        '[]',
-    ),
-    [{ field: 'albumTag', value: 'Electronic' }],
-  )
-  assert.match(html, /<h2>Artist tags<\/h2>/)
-  const artistTagHref = html.match(/href="([^"]+)"[^>]*>Synth-pop<\/a>/)?.[1]
-  assert.ok(artistTagHref)
-  assert.deepEqual(
-    JSON.parse(
-      new URL(artistTagHref, 'http://localhost').searchParams.get('filters') ??
-        '[]',
-    ),
-    [{ field: 'artistTag', value: 'Synth-pop' }],
-  )
+  assert.deepEqual(pillHref(html, 'Electronic'), [
+    { field: 'albumTag', value: 'Electronic' },
+  ])
+  assert.match(html, /<dt>Artist tags<\/dt>/)
+  assert.deepEqual(pillHref(html, 'Synth-pop'), [
+    { field: 'artistTag', value: 'Synth-pop' },
+  ])
   assert.match(html, /4:03/)
-  assert.match(html, />Play<\/button>/)
-  assert.match(html, />Add to queue<\/button>/)
-  assert.match(html, />Last.fm<\/a>/)
-  assert.match(html, />Spotify playlists<\/a>/)
-  assert.match(html, />Liked Songs<\/a>/)
+  assert.match(html, /aria-label="Play Synthetic track">.*Play<\/button>/)
+  assert.match(
+    html,
+    /aria-label="Add Synthetic track to queue">.*Queue<\/button>/,
+  )
+  for (const source of ['Last.fm', 'Spotify playlists', 'Liked Songs'])
+    assert.ok(pillHref(html, source).length)
   assert.doesNotMatch(html, /No Spotify match/)
+  assert.match(html, /aria-label="Open at Spotify \(opens in a new tab\)"/)
   assert.match(
     html,
     /href="https:\/\/open.spotify.com\/track\/1234567890ABCDEFGHIJKL"/,
@@ -232,14 +237,15 @@ test('source metadata reflects an active exclusion filter', () => {
   })
   assert.match(
     render(scrobbled, filters.toString()),
-    /class="metadata-tag[^"]*exclude[^"]*"[^>]*>Last.fm<\/a>/,
+    /class="ds-pill" data-mode="exclude"[^>]*><span class="ds-pill-label">Last.fm</,
   )
 })
 
-test('listening keeps totals and provides the recorded Last.fm names as links', () => {
-  const html = render(scrobbled, '', 'listening')
-  assert.match(html, /<dt>Scrobbles<\/dt><dd>3<\/dd>/)
-  assert.match(html, /Scrobbled names/)
+test('Sources lists the recorded and scrobbled Last.fm names in tables', () => {
+  const html = render(scrobbled, '', 'sources')
+  assert.match(html, /<h3>Recorded by Last.fm<\/h3>/)
+  assert.match(html, /<table class="ds-table" aria-label="Scrobbled names">/)
+  assert.match(html, /Example artist — Synthetic track/)
   assert.match(
     html,
     /https:\/\/www.last.fm\/music\/Example%20artist\/_\/Synthetic%20track/,

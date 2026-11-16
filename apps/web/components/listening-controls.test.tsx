@@ -46,7 +46,8 @@ test('initial draft does not apply a filter before explicit submission', () => {
       onSortChange={() => assert.fail('Rendering must not change sorting')}
     />,
   )
-  assert.match(html, /class="toolbar-popover"/)
+  assert.match(html, /<details class="browse-popover">/)
+  assert.match(html, /class="browse-form ds-pop browse-popover-panel"/)
   assert.match(html, /aria-label="Rule 1 period amount"[^>]+value="2"/)
   assert.match(html, /aria-label="Rule 1 maximum scrobbles"[^>]+value="10"/)
   assert.match(html, />Sort by scrobbles<\/button>/)

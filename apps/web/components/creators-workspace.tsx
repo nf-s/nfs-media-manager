@@ -1,8 +1,9 @@
 'use client'
 
 import { PersonPageSchema, type PersonSummary } from '@repo/schemas/creators'
+import { PageHead } from '@repo/ui/components/ds/toolbar'
+import { formatCount, formatDate } from '@repo/ui/lib/format'
 import {
-  CreatorLibraryDate,
   CreatorLibraryTable,
   CreatorLibraryTitle,
   type CreatorLibraryColumn,
@@ -29,31 +30,33 @@ export function PeopleWorkspace() {
     {
       key: 'filmCount',
       label: 'Films',
-      className: 'numeric',
-      render: (person) => person.filmCount.toLocaleString(),
+      align: 'end',
+      render: (person) => formatCount(person.filmCount),
     },
     {
       key: 'directorCount',
       label: 'As director',
-      className: 'numeric',
-      render: (person) => person.directorCount.toLocaleString(),
+      align: 'end',
+      render: (person) => formatCount(person.directorCount),
     },
     {
       key: 'actorCount',
       label: 'As actor',
-      className: 'numeric',
-      render: (person) => person.actorCount.toLocaleString(),
+      align: 'end',
+      render: (person) => formatCount(person.actorCount),
     },
     {
       key: 'createdAt',
       label: 'Added',
       defaultVisible: false,
-      render: (person) => <CreatorLibraryDate value={person.createdAt} />,
+      render: (person) => (
+        <time dateTime={person.createdAt}>{formatDate(person.createdAt)}</time>
+      ),
     },
   ]
   return (
-    <section className="admin-page table-workspace">
-      <h1>People</h1>
+    <section className="bi-workspace" aria-label="People">
+      <PageHead title="People" />
       <CreatorLibraryTable
         workspace
         kind="person"

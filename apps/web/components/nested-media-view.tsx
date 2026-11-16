@@ -1,11 +1,18 @@
 'use client'
 
 import { useEffect, useState, type ReactNode, type UIEvent } from 'react'
-import { TableScroll } from '@repo/ui/components/ui/table'
-import { parseBrowseView, type BrowseView } from '@/utils/media-grid'
+import { Card, CardGrid, CardTitle } from '@repo/ui/components/ds/card'
+import { List, ListRow, RowTitle } from '@repo/ui/components/ds/list-row'
+import { Skeleton, State } from '@repo/ui/components/ds/feedback'
+import { cardGrid, parseBrowseView, type BrowseView } from '@/utils/media-grid'
 import type { DetailTarget } from '@/utils/detail-inspector'
 import { DetailLink } from './detail-link'
-import MediaArtwork from './media-artwork'
+import {
+  MediaArt,
+  MediaThumb,
+  artworkRatio,
+  type ArtworkKind,
+} from './media-artwork'
 
 type CardView = Exclude<BrowseView, 'table'>
 type ArtworkType = 'album' | 'film' | 'subscription'
@@ -53,6 +60,28 @@ export type NestedMediaWindow<Item> = {
   onScroll: (event: UIEvent<HTMLDivElement>) => void
 }
 
+/** The artwork shape and placeholder for an item kind in a nested list. */
+function artworkKind(
+  kind: DetailTarget['kind'],
+  mediaType: ArtworkType,
+): ArtworkKind {
+  if (mediaType === 'subscription' || kind === 'subscription') return 'video'
+  if (mediaType === 'film' || kind === 'film') return 'film'
+  switch (kind) {
+    case 'track':
+    case 'playlist':
+    case 'artist':
+    case 'person':
+      return kind
+    default:
+      return 'album'
+  }
+}
+
+/**
+ * A virtual window of nested items as cards or list rows. The window's
+ * geometry comes from `useVirtualTable` with a `presentation`.
+ */
 export function NestedMediaCards<Item>({
   window,
   view,
@@ -72,74 +101,108 @@ export function NestedMediaCards<Item>({
   renderItem: (item: Item, index: number) => ReactNode
   className?: string
 }) {
+  const grid = view === 'grid'
+  const placeholder = (index: number) =>
+    grid ? (
+      <div key={index} className="ds-card" aria-hidden="true">
+        <span
+          className="ds-art"
+          data-ratio={artworkRatio(artworkKind('album', mediaType))}
+        >
+          <Skeleton width="100%" height="100%" />
+        </span>
+        <Skeleton height={12} width="80%" />
+        <Skeleton height={10} width="55%" />
+      </div>
+    ) : (
+      <div key={index} className="ds-row" aria-hidden="true">
+        <Skeleton width={40} height={40} />
+        <div className="ds-row-main">
+          <Skeleton height={12} width="60%" />
+          <Skeleton height={10} width="40%" />
+        </div>
+      </div>
+    )
+  const slots = window.slots.map(({ index, item }) =>
+    item == null ? (
+      placeholder(index)
+    ) : (
+      <div
+        key={index}
+        className="browse-nested-item"
+        role="listitem"
+        aria-posinset={index + 1}
+        aria-setsize={window.hasTotal === false ? undefined : window.total}
+      >
+        {renderItem(item, index)}
+      </div>
+    ),
+  )
   return (
-    <TableScroll
+    <div
       ref={window.scroller}
       onScroll={window.onScroll}
-      className={`nested-media-scroll ${className}`}
+      className={`browse-scroller ${className}`.trim()}
       role="region"
       aria-label={label}
       aria-busy={busy}
+      tabIndex={0}
       data-inspector-scroll=""
     >
       {window.height ? (
         <div
-          className="nested-media-extent"
+          className="browse-extent"
           role="list"
-          style={{ height: window.height - window.gap }}
+          style={{
+            height: grid
+              ? window.height -
+                window.gap +
+                cardGrid.paddingTop +
+                cardGrid.paddingBottom
+              : window.height,
+          }}
         >
-          <div
-            className="nested-media-slots"
-            role="presentation"
-            style={{
-              top: window.padTop,
-              gridTemplateColumns: `repeat(${window.columns}, minmax(0, 1fr))`,
-              gridAutoRows: window.rowHeight - window.gap,
-              gap: window.gap,
-            }}
-          >
-            {window.slots.map(({ index, item }) =>
-              item == null ? (
-                <div
-                  key={index}
-                  className="nested-media-card virtual-browse-placeholder"
-                  data-view={view}
-                  data-media-type={mediaType}
-                  aria-hidden="true"
-                >
-                  <div className="nested-media-artwork virtual-browse-shimmer" />
-                  <div className="nested-media-summary">
-                    <div className="virtual-browse-line virtual-browse-shimmer" />
-                    <div className="virtual-browse-line virtual-browse-line-short virtual-browse-shimmer" />
-                  </div>
-                </div>
-              ) : (
-                <div
-                  key={index}
-                  className="nested-media-item"
-                  role="listitem"
-                  aria-posinset={index + 1}
-                  aria-setsize={
-                    window.hasTotal === false ? undefined : window.total
-                  }
-                >
-                  {renderItem(item, index)}
-                </div>
-              ),
-            )}
-          </div>
+          {grid ? (
+            <CardGrid
+              className="browse-slots"
+              role="presentation"
+              style={{
+                top: window.padTop,
+                gridTemplateColumns: `repeat(${window.columns}, minmax(0, 1fr))`,
+                gridAutoRows: window.rowHeight - window.gap,
+                rowGap: window.gap,
+              }}
+            >
+              {slots}
+            </CardGrid>
+          ) : (
+            <List
+              className="browse-slots"
+              role="presentation"
+              style={{ top: window.padTop }}
+            >
+              {slots}
+            </List>
+          )}
         </div>
       ) : (
-        empty && (
-          <div className="nested-media-empty" role="status">
+        empty &&
+        (typeof empty === 'string' ? (
+          <State title={empty} size="sm" />
+        ) : (
+          <div className="ds-state" data-size="sm" role="status">
             {empty}
           </div>
-        )
+        ))
       )}
-    </TableScroll>
+    </div>
   )
 }
 
+/**
+ * One nested item: a card in Grid, a 48px row in List. The artwork and
+ * title open the item; `actions` holds its play pair.
+ */
 export function NestedMediaCard({
   view,
   kind,
@@ -159,45 +222,61 @@ export function NestedMediaCard({
   metadata?: ReactNode
   actions?: ReactNode
 }) {
+  const artwork = artworkKind(kind, mediaType)
+  const titleLink = (
+    <DetailLink kind={kind} id={id} title={title}>
+      {title}
+    </DetailLink>
+  )
+  if (view === 'list')
+    return (
+      <ListRow
+        thumb={
+          <DetailLink
+            className="browse-thumb-link"
+            kind={kind}
+            id={id}
+            tabIndex={-1}
+            aria-hidden="true"
+          >
+            <MediaThumb kind={artwork} src={artworkUrl} size={40} />
+          </DetailLink>
+        }
+        title={<RowTitle>{titleLink}</RowTitle>}
+        by={subtitle}
+        play={
+          actions ? (
+            <span className="browse-row-actions">{actions}</span>
+          ) : undefined
+        }
+        meta={metadata}
+      />
+    )
   return (
-    <article
-      className="nested-media-card"
-      data-view={view}
-      data-media-type={mediaType}
-    >
-      <DetailLink
-        className="nested-media-artwork"
-        kind={kind}
-        id={id}
-        tabIndex={-1}
-        aria-hidden="true"
-      >
-        <MediaArtwork
-          alt=""
-          src={artworkUrl}
-          fallbackLabel={view === 'grid' ? 'No artwork' : ''}
-          containerClassName="nested-media-image-container"
-          imageClassName="nested-media-image"
-          fallbackClassName="nested-media-image"
-        />
-      </DetailLink>
-      <div className="nested-media-summary">
-        <DetailLink
-          className="nested-media-title"
-          kind={kind}
-          id={id}
-          title={title}
-        >
-          {title}
-        </DetailLink>
-        {subtitle && <div className="nested-media-line">{subtitle}</div>}
-        {(metadata || actions) && (
-          <div className="nested-media-byline">
-            {metadata && <div className="nested-media-line">{metadata}</div>}
-            {actions && <div className="nested-media-actions">{actions}</div>}
-          </div>
-        )}
-      </div>
-    </article>
+    <Card
+      art={
+        <MediaArt kind={artwork} src={artworkUrl}>
+          {(image) => (
+            <DetailLink
+              className="browse-art-link"
+              kind={kind}
+              id={id}
+              tabIndex={-1}
+              aria-hidden="true"
+            >
+              {image}
+            </DetailLink>
+          )}
+        </MediaArt>
+      }
+      title={<CardTitle>{titleLink}</CardTitle>}
+      by={subtitle ?? ''}
+      meta={metadata ?? ''}
+      tags={
+        actions ? (
+          <span className="browse-card-actions">{actions}</span>
+        ) : undefined
+      }
+    />
   )
 }

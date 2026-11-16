@@ -9,7 +9,15 @@ import {
   ProviderSummarySchema,
   type ProviderLocalWorkerStatus,
 } from '@repo/schemas/provider'
-import ProviderJobDispatch from './provider-job-dispatch'
+import {
+  ProviderDispatchActions,
+  ProviderDispatchNotes,
+  ProviderDispatchReview,
+  ProviderWorkerModeSwitch,
+  dispatchStateLabel,
+  useProviderDispatch,
+} from './provider-job-dispatch'
+import { useProviderLocalWorkerMode } from './provider-local-worker'
 
 const provider = ProviderSummarySchema.parse({
   id: 'fixture',
@@ -33,6 +41,32 @@ const stopped = CloudDispatchStatusSchema.parse({
   slots: [],
 })
 
+function Dispatch({
+  provider: configuration,
+  worker,
+}: {
+  provider: typeof provider
+  worker?: ProviderLocalWorkerStatus
+}) {
+  const dispatch = useProviderDispatch(configuration)
+  const changeMode = useProviderLocalWorkerMode(configuration.id)
+  return (
+    <>
+      <p>{dispatchStateLabel(dispatch)}</p>
+      <ProviderDispatchActions dispatch={dispatch} />
+      <ProviderDispatchNotes dispatch={dispatch} />
+      <ProviderDispatchReview dispatch={dispatch} />
+      {configuration.supportsJobDispatchControl && (
+        <ProviderWorkerModeSwitch
+          worker={worker}
+          dispatch={dispatch}
+          changeMode={changeMode}
+        />
+      )}
+    </>
+  )
+}
+
 function render(
   data: unknown = stopped,
   configuration = provider,
@@ -49,7 +83,7 @@ function render(
   try {
     return renderToStaticMarkup(
       <QueryClientProvider client={client}>
-        <ProviderJobDispatch provider={configuration} worker={worker} />
+        <Dispatch provider={configuration} worker={worker} />
       </QueryClientProvider>,
     )
   } finally {
@@ -69,7 +103,7 @@ function button(html: string, text: string) {
 
 test('stopped queues expose restart without inventing a failure count', () => {
   const html = render()
-  assert.match(html, /Queue stopped/)
+  assert.match(html, /<p>Stopped<\/p>/)
   assert.match(html, /Resume queue/)
   assert.doesNotMatch(
     html,
@@ -83,7 +117,7 @@ test('pause, stop and restricted selection remain visible together', () => {
     paused: true,
     allowedJobIds: ['previously-selected'],
   })
-  assert.match(html, /Queue paused and stopped/)
+  assert.match(html, /Paused and stopped/)
   assert.match(html, /limited to 1 previously selected job/)
   assert.match(html, /Other queued jobs will wait/)
   assert.match(button(html, 'Resume selected jobs'), /<button/)
@@ -99,7 +133,7 @@ test('active stopped work prevents restart or expanding a dispatch selection', (
       { jobId: 'active-job', phase: 'running', expiresAt: 1700000000000 },
     ],
   })
-  assert.match(html, /1 active dispatch/)
+  assert.match(html, /Stopped · 1 active dispatch/)
   assert.match(html, /Waiting for active work to finish/)
   assert.match(button(html, 'Resume selected jobs'), /disabled=""/)
   assert.match(button(html, 'Resume all queued jobs'), /disabled=""/)
@@ -129,7 +163,7 @@ test('queue errors and provider access blocks remain separate from queue state',
 test('unsupported runtimes hide dispatch controls and missing status is explicit', () => {
   assert.equal(
     render(stopped, { ...provider, supportsJobDispatchControl: false }),
-    '',
+    '<p></p>',
   )
   const unavailable = render(null)
   assert.match(unavailable, /Queue status is unavailable/)

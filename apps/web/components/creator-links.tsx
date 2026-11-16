@@ -2,6 +2,7 @@
 
 import type { TrackListItem } from '@repo/schemas/tracks'
 import { Fragment } from 'react'
+import { Pill, PillLabel, Pills } from '@repo/ui/components/ds/pill'
 import { DetailLink } from './detail-link'
 
 export function CreatorLinks({
@@ -13,14 +14,36 @@ export function CreatorLinks({
   kind: 'artist' | 'person'
   pills?: boolean
 }) {
+  if (pills)
+    return (
+      <Pills wrap>
+        {creators.map((creator) =>
+          creator.id ? (
+            <Pill asChild size="md" key={creator.id}>
+              <DetailLink
+                kind={kind}
+                id={creator.id}
+                title={`Open ${creator.name}`}
+              >
+                <PillLabel>{creator.name}</PillLabel>
+              </DetailLink>
+            </Pill>
+          ) : (
+            <Pill size="md" key={creator.name}>
+              {creator.name}
+            </Pill>
+          ),
+        )}
+      </Pills>
+    )
   return (
-    <span className={pills ? 'detail-tags' : 'inline-values'}>
+    <span className="inline-values">
       {creators.map((creator, index) => (
         <Fragment key={creator.id ?? creator.name}>
-          {!pills && index > 0 && ', '}
+          {index > 0 && ', '}
           {creator.id ? (
             <DetailLink
-              className={pills ? 'metadata-tag' : 'hover:underline'}
+              className="hover:underline"
               kind={kind}
               id={creator.id}
               title={`Open ${creator.name}`}

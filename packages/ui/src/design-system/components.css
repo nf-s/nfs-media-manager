@@ -519,7 +519,9 @@ button.ds-pill:hover {
 .ds-tab:hover {
   color: var(--ds-ink);
 }
-.ds-tab[aria-selected='true'] {
+.ds-tab[aria-selected='true'],
+.ds-tab[aria-current='page'],
+.ds-tab[aria-current='true'] {
   border-bottom-color: var(--ds-accent);
   color: var(--ds-ink);
 }
@@ -662,6 +664,15 @@ button.ds-pill:hover {
 }
 .ds-toolbar-end {
   margin-left: auto;
+}
+/* Phone: the search takes its own line and the controls wrap below it */
+@media (max-width: 700px) {
+  .ds-toolbar {
+    flex-wrap: wrap;
+  }
+  .ds-toolbar > .ds-search {
+    flex-basis: 100%;
+  }
 }
 .ds-pagehead {
   display: flex;
@@ -858,6 +869,10 @@ button.ds-pill:hover {
   background: var(--ds-inverse);
   color: var(--ds-on-inverse);
   font-size: var(--ds-text-sm);
+}
+/* The bar appears with a selection or a result to report, never empty */
+.ds-selectbar:empty {
+  display: none;
 }
 .ds-selectbar .ds-muted {
   color: var(--ds-on-inverse-2);
@@ -1228,6 +1243,7 @@ button.ds-pill:hover {
   stroke-width: 1.5;
   stroke-linecap: round;
   stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
 }
 .ds-spark path[data-area] {
   fill: var(--ds-ink-3);
@@ -1455,6 +1471,10 @@ button.ds-pill:hover {
 
 /* 16 Popover, notice, states -------------------------------------------------- */
 
+/* A closed native popover stays hidden whatever layout class it also carries */
+[popover]:not(:popover-open) {
+  display: none;
+}
 .ds-pop {
   min-width: 200px;
   padding: var(--ds-3);

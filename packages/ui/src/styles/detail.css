@@ -1,1 +1,255 @@
 /* Layout for the detail screens. Tokens only; visual patterns belong in the design system. */
+
+/* Drawer frame: the shared top bar and the scrolling body */
+.detail-topbar.dtl-bar {
+  justify-content: flex-start;
+  height: calc(var(--ds-9) + var(--ds-4));
+  padding: 0 var(--ds-4) 0 var(--ds-3);
+  border-bottom: 1px solid var(--ds-line-soft);
+  font-size: var(--ds-text-md);
+}
+.dtl-bar-start {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: var(--ds-2);
+  min-width: 0;
+}
+.dtl-bar-end {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--ds-2);
+}
+.inspector-scroll.dtl-body {
+  padding: var(--ds-6);
+  scrollbar-gutter: stable;
+}
+
+/* One detail: header, tabs, panels */
+.dtl-detail {
+  display: grid;
+  gap: var(--ds-6);
+  min-width: 0;
+}
+.dtl-tabs {
+  min-width: 0;
+}
+.dtl-body .dtl-tabs > .ds-tabs {
+  position: sticky;
+  top: calc(var(--ds-6) * -1);
+  z-index: 3;
+  background: var(--ds-surface);
+}
+.dtl-text {
+  margin: 0;
+  color: var(--ds-ink-2);
+  overflow-wrap: anywhere;
+  white-space: pre-line;
+}
+.dtl-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ds-3) var(--ds-4);
+  font-size: var(--ds-text-sm);
+}
+.dtl-pillrow {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ds-2) var(--ds-4);
+}
+.dtl-stack {
+  display: grid;
+  gap: var(--ds-4);
+}
+.dtl-wrap {
+  flex-wrap: wrap;
+}
+
+/* Loading: a skeleton the size of the header */
+.dtl-loading {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--ds-6);
+}
+.dtl-loading-lines {
+  display: grid;
+  align-content: start;
+  gap: var(--ds-4);
+}
+
+/* Overview: one column in the drawer, a main and a side column on the page */
+.dtl-main,
+.dtl-side {
+  min-width: 0;
+}
+.dtl-side > .ds-section:first-child {
+  border-top: 1px solid var(--ds-line-soft);
+}
+.dtl-main:empty + .dtl-side > .ds-section:first-child {
+  border-top: 0;
+}
+@media (min-width: 1000px) {
+  .ds-page .dtl-overview {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) calc(var(--ds-9) * 10);
+    align-items: start;
+    gap: var(--ds-9);
+  }
+  .ds-page .dtl-side > .ds-section:first-child {
+    border-top: 0;
+  }
+}
+
+/* Bounded scroll areas for long tables inside an overview */
+.dtl-entries {
+  max-height: min(calc(var(--ds-row) * 16), 70dvh);
+}
+.dtl-bounded {
+  max-height: min(calc(var(--ds-row) * 10), 50dvh);
+}
+.dtl-matches {
+  max-height: calc(var(--ds-row) * 5);
+}
+
+/* Edit form */
+.dtl-form {
+  display: grid;
+  gap: var(--ds-6);
+  margin-bottom: var(--ds-6);
+}
+.dtl-form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(calc(var(--ds-9) * 7), 1fr));
+  gap: var(--ds-5) var(--ds-6);
+}
+.dtl-textarea {
+  height: auto;
+  padding: var(--ds-3) var(--ds-4);
+  resize: vertical;
+}
+
+/* Playlist additions */
+.dtl-add {
+  display: grid;
+  justify-items: start;
+  gap: var(--ds-3);
+}
+.dtl-additions {
+  display: grid;
+  gap: var(--ds-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--ds-text-sm);
+}
+.dtl-addition {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ds-2) var(--ds-4);
+}
+.dtl-addition-error {
+  flex-basis: 100%;
+  color: var(--ds-danger);
+}
+.dtl-pop {
+  position: fixed;
+  inset: auto;
+  width: min(calc(var(--ds-9) * 11), calc(100vw - var(--ds-6)));
+  max-height: min(calc(var(--ds-9) * 16), calc(100dvh - var(--ds-9) * 3));
+  margin: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.dtl-pop:focus-visible {
+  outline: none;
+}
+.dtl-pop-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ds-4);
+}
+.dtl-pop-head h2 {
+  margin: 0;
+}
+.dtl-pop-list {
+  max-height: min(calc(var(--ds-9) * 9), 45dvh);
+  overflow: auto;
+  overflow-anchor: none;
+  overscroll-behavior: contain;
+}
+.dtl-pop-list ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.dtl-pop-placeholder {
+  display: flex;
+  align-items: center;
+  padding: 0 var(--ds-4);
+}
+
+/* Track merge dialog */
+.dtl-dialog {
+  width: min(calc(var(--ds-9) * 20), calc(100vw - var(--ds-8)));
+  max-height: calc(100dvh - var(--ds-9) * 2);
+  padding: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  border: 0;
+  border-radius: var(--ds-r-lg);
+  background: var(--ds-surface);
+  color: var(--ds-ink);
+  box-shadow: var(--ds-shadow-drawer);
+}
+.dtl-dialog::backdrop {
+  background: var(--ds-scrim);
+}
+.dtl-dialog-inner > .ds-inspector-bar {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--ds-surface);
+}
+.dtl-dialog-body {
+  display: grid;
+  gap: var(--ds-4);
+  padding: var(--ds-5) var(--ds-6) var(--ds-7);
+}
+.dtl-identity {
+  display: grid;
+  gap: var(--ds-1);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* Standalone page */
+.dtl-page {
+  display: grid;
+  align-content: start;
+  gap: var(--ds-5);
+}
+.dtl-back {
+  justify-self: start;
+}
+@media (max-width: 700px) {
+  .dtl-page {
+    padding: var(--ds-5) var(--ds-6) var(--ds-8);
+  }
+  .dtl-loading {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Merged tag names in the Tags table */
+.dtl-merged-list {
+  max-height: calc(var(--ds-9) * 4);
+  margin: var(--ds-1) 0;
+  padding-left: var(--ds-5);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}

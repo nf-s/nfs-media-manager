@@ -2,8 +2,16 @@
 
 import { DetailLink } from './detail-link'
 import Link from 'next/link'
-import { useDeferredValue, useEffect, useId, useRef, useState } from 'react'
+import {
+  useDeferredValue,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Plus } from 'lucide-react'
 import { BrowseCountSchema } from '@repo/schemas/browse'
 import { SpotifyAccountStatusSchema } from '@repo/schemas/spotify'
 import {
@@ -16,6 +24,9 @@ import {
 } from '@repo/schemas/tracks'
 import { Button } from '@repo/ui/components/ui/button'
 import { Input } from '@repo/ui/components/ui/input'
+import { Notice, Skeleton } from '@repo/ui/components/ds/feedback'
+import { Status, type StatusState } from '@repo/ui/components/ds/status'
+import { formatCount, formatDateTime } from '@repo/ui/lib/format'
 import { useConfig } from './providers'
 import { errorMessage, invalidateScrobbleLinks } from './lastfm-sync'
 import AllowPlaylistChanges from './spotify-playlist-changes'
@@ -47,6 +58,13 @@ const additionLabels: Record<SpotifyPlaylistJob['status'], string> = {
   succeeded: 'Added',
   failed: 'Failed',
   cancelled: 'Cancelled',
+}
+const additionStates: Record<SpotifyPlaylistJob['status'], StatusState> = {
+  queued: 'queued',
+  running: 'running',
+  succeeded: 'done',
+  failed: 'failed',
+  cancelled: 'cancelled',
 }
 
 /** Playlists re-imported after an item was added to them, while that import runs. */
@@ -240,31 +258,34 @@ export function AdditionState({
     ? playlistJobProgress(job.progress)
     : null
   return (
-    <li>
-      {name}{' '}
-      <DetailLink
-        className="job-status underline underline-offset-2"
-        data-status={job.status}
-        kind="job"
-        id={job.jobId}
-      >
-        {additionLabels[job.status]}
+    <li className="dtl-addition">
+      <span>{name}</span>
+      <DetailLink kind="job" id={job.jobId} title="Open job">
+        <Status state={additionStates[job.status]}>
+          {additionLabels[job.status]}
+        </Status>
       </DetailLink>
-      {progress && <span className="quiet"> {progress}</span>}
+      {progress && <span className="ds-muted">{progress}</span>}
       {job.status === 'succeeded' && job.finishedAt && (
-        <span className="quiet">
-          {' '}
-          <time dateTime={job.finishedAt}>
-            {new Date(job.finishedAt).toLocaleString()}
-          </time>
-        </span>
+        <time className="ds-muted" dateTime={job.finishedAt}>
+          {formatDateTime(job.finishedAt)}
+        </time>
       )}
       {job.status === 'failed' && job.errorMessage && (
-        <span className="block" role="alert">
+        <span className="dtl-addition-error" role="alert">
           {job.errorMessage}
         </span>
       )}
     </li>
+  )
+}
+
+/** The list of additions under a playlist control. */
+export function AdditionList({ children }: { children: ReactNode }) {
+  return (
+    <ul className="dtl-additions" aria-label="Additions">
+      {children}
+    </ul>
   )
 }
 
@@ -333,31 +354,35 @@ export function AddToPlaylist({
   const status = account.data
   if (account.isError)
     return (
-      <p role="alert" className="quiet mt-2">
-        Could not load the Spotify connection.{' '}
-        <button className="underline" onClick={() => account.refetch()}>
-          Retry
-        </button>
-      </p>
+      <Notice
+        tone="danger"
+        action={
+          <Button size="xs" onClick={() => account.refetch()}>
+            Retry
+          </Button>
+        }
+      >
+        Could not load the Spotify connection.
+      </Notice>
     )
   if (!status) return null
   if (!status.connected || !status.playlists)
     return (
-      <p className="quiet mt-2">
-        Adding to a playlist needs a connected Spotify account.{' '}
-        <Link className="underline" href={importHref}>
-          Connect Spotify
-        </Link>
-      </p>
+      <Notice
+        action={
+          <Button asChild size="xs">
+            <Link href={importHref}>Connect Spotify</Link>
+          </Button>
+        }
+      >
+        Adding to a playlist needs a connected Spotify account.
+      </Notice>
     )
   if (!status.playlistChanges)
     return (
-      <div className="mt-2 flex flex-wrap items-center gap-2">
-        <span className="quiet">
-          The Spotify connection does not allow playlist changes.
-        </span>
-        <AllowPlaylistChanges playlistLibrary={mediaType} />
-      </div>
+      <Notice action={<AllowPlaylistChanges playlistLibrary={mediaType} />}>
+        The Spotify connection does not allow playlist changes.
+      </Notice>
     )
   const active = new Set(
     additions
@@ -365,19 +390,19 @@ export function AddToPlaylist({
       .map((addition) => addition.playlistId),
   )
   return (
-    <div className="mt-2 grid gap-1">
+    <div className="dtl-add">
       <PlaylistPicker
         mediaType={mediaType}
         busy={(playlistId) => add.isPending || active.has(playlistId)}
         onChoose={(playlistId) => add.mutate(playlistId)}
       />
       {add.isError && (
-        <p role="alert">
+        <Notice tone="danger">
           {errorMessage(
             add.error,
             `Could not add the ${mediaType} to the playlist.`,
           )}
-        </p>
+        </Notice>
       )}
     </div>
   )
@@ -479,11 +504,12 @@ function PlaylistPicker({
       <Button
         ref={trigger}
         type="button"
-        className="w-max"
+        size="xs"
         popoverTarget={id}
         aria-expanded={open}
         aria-controls={id}
       >
+        <Plus className="ds-i" data-size="sm" aria-hidden="true" />
         Add to playlist
       </Button>
       <div
@@ -493,7 +519,7 @@ function PlaylistPicker({
         role="region"
         tabIndex={-1}
         aria-labelledby={titleId}
-        className="player-popover"
+        className="ds-pop dtl-pop"
         onToggle={(event) => setOpen(event.newState === 'open')}
         onKeyDown={(event) => {
           if (event.key !== 'Escape') return
@@ -502,54 +528,56 @@ function PlaylistPicker({
           close()
         }}
       >
-        <div className="player-popover-heading">
-          <h2 id={titleId}>Add to playlist</h2>
-          <button type="button" className="quiet" onClick={close}>
+        <div className="dtl-pop-head">
+          <h2 className="ds-pop-head" id={titleId}>
+            Add to playlist
+          </h2>
+          <Button variant="ghost" size="xs" onClick={close}>
             Close
-          </button>
+          </Button>
         </div>
         {(search || choices.total > FILTER_THRESHOLD || !choices.hasTotal) && (
           <Input
             aria-label="Filter playlists"
             placeholder="Filter playlists..."
-            className="mb-2 h-7 text-xs"
             value={search}
             maxLength={200}
             onChange={(event) => setSearch(event.target.value)}
           />
         )}
         {failed && (
-          <p role="alert">
-            Could not load playlists.{' '}
-            <button
-              type="button"
-              className="underline"
-              onClick={() => {
-                choices.retry()
-                if (countError) void count.refetch()
-              }}
-            >
-              Retry
-            </button>
-          </p>
+          <Notice
+            tone="danger"
+            action={
+              <Button
+                size="xs"
+                onClick={() => {
+                  choices.retry()
+                  if (countError) void count.refetch()
+                }}
+              >
+                Retry
+              </Button>
+            }
+          >
+            Could not load playlists.
+          </Notice>
         )}
         {choices.hasTotal && choices.total === 0 && !failed ? (
           name ? (
-            <p className="quiet">No playlists match this filter.</p>
+            <p className="ds-help">No playlists match this filter.</p>
           ) : (
-            <p className="quiet">
+            <p className="ds-help">
               No imported playlist accepts{' '}
               {mediaType === 'album' ? 'albums' : 'tracks'}.{' '}
               {mediaType === 'album' ? 'Albums' : 'Tracks'} can be added to
               imported Spotify playlists the account owns or collaborates on.{' '}
-              <Link className="underline" href={importHref}>
-                Import playlists
-              </Link>
+              <Link href={importHref}>Import playlists</Link>
             </p>
           )
         ) : (
           <div
-            className="max-h-[min(288px,45dvh)] overflow-auto overscroll-contain [overflow-anchor:none]"
+            className="dtl-pop-list"
             ref={choices.scroller}
             onScroll={choices.onScroll}
             role="region"
@@ -558,7 +586,7 @@ function PlaylistPicker({
             tabIndex={0}
             data-inspector-scroll=""
           >
-            <ul role="list" className="grid">
+            <ul role="list">
               {choices.padTop > 0 && (
                 <li aria-hidden="true" style={{ height: choices.padTop }} />
               )}
@@ -572,7 +600,7 @@ function PlaylistPicker({
                   >
                     <button
                       type="button"
-                      className="h-full w-full truncate rounded-md px-2 text-left hover:bg-slate-100 disabled:opacity-50"
+                      className="ds-menu-item"
                       disabled={busy(playlist.id)}
                       title={playlist.name}
                       onClick={() => {
@@ -580,10 +608,9 @@ function PlaylistPicker({
                         onChoose(playlist.id)
                       }}
                     >
-                      {playlist.name}
-                      <span className="quiet">
-                        {' '}
-                        · {playlist.trackCount.toLocaleString()}{' '}
+                      <span className="ds-truncate">{playlist.name}</span>
+                      <span className="ds-muted">
+                        {formatCount(playlist.trackCount)}{' '}
                         {playlist.trackCount === 1 ? 'track' : 'tracks'}
                       </span>
                     </button>
@@ -591,11 +618,11 @@ function PlaylistPicker({
                 ) : (
                   <li
                     key={index}
-                    className="virtual-browse-placeholder"
+                    className="dtl-pop-placeholder"
                     aria-hidden="true"
                     style={{ height: choices.rowHeight }}
                   >
-                    <div className="virtual-browse-line virtual-browse-shimmer" />
+                    <Skeleton width="70%" height={12} />
                   </li>
                 ),
               )}

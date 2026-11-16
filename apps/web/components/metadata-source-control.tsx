@@ -14,6 +14,8 @@ import {
 } from '@repo/schemas/tags'
 import { fetchApiData } from '@/utils/api'
 import { useVirtualTable } from '@/hooks/useVirtualTable'
+import { Notice } from '@repo/ui/components/ds/feedback'
+import { Button } from '@repo/ui/components/ui/button'
 import { useConfig } from './providers'
 import ServiceIconLinks from './service-icon-links'
 import styles from './metadata-source-control.module.css'
@@ -50,26 +52,30 @@ function TagSources({
   return (
     <>
       {query.isError && (
-        <p role="alert">
-          Could not load sources.{' '}
-          <button type="button" onClick={query.retry} className="underline">
-            Retry
-          </button>
-        </p>
+        <Notice
+          tone="danger"
+          action={
+            <Button size="xs" onClick={query.retry}>
+              Retry
+            </Button>
+          }
+        >
+          Could not load sources.
+        </Notice>
       )}
       <VirtualTagSources query={query} label="Source links" linksOnly />
-      <div className="mt-3 border-t pt-2">
-        <button
-          type="button"
-          className="text-xs underline disabled:opacity-50"
+      <span>
+        <Button
+          size="xs"
+          variant="link"
           disabled={!canonicalId || !scope}
           onClick={() => {
             if (canonicalId && scope) onManage(canonicalId, scope)
           }}
         >
           Manage tag
-        </button>
-      </div>
+        </Button>
+      </span>
     </>
   )
 }
@@ -109,9 +115,12 @@ function SourcePopover({
   }, [open])
   return (
     <>
-      <button
+      <Button
         type="button"
         ref={trigger}
+        size="xs"
+        variant="ghost"
+        icon
         className={styles.control}
         popoverTarget={id}
         aria-label={`Sources for ${name}`}
@@ -130,8 +139,8 @@ function SourcePopover({
           }
         }}
       >
-        <Layers3 size={12} aria-hidden="true" />
-      </button>
+        <Layers3 className="ds-i" data-size="sm" aria-hidden="true" />
+      </Button>
       <div
         ref={panel}
         id={id}
@@ -139,7 +148,7 @@ function SourcePopover({
         role="region"
         tabIndex={-1}
         aria-labelledby={titleId}
-        className={styles.panel}
+        className={`ds-pop data-stack ${styles.panel}`}
         onToggle={(event) => setOpen(event.newState === 'open')}
         onClick={(event) => event.stopPropagation()}
         onDoubleClick={(event) => event.stopPropagation()}
@@ -152,21 +161,21 @@ function SourcePopover({
           }
         }}
       >
-        <div className="mb-2 flex items-start justify-between gap-3">
-          <h3 id={titleId} className="break-words font-semibold">
-            {name}
-          </h3>
-          <button
-            type="button"
-            className="quiet text-xs"
-            aria-label={`Close sources for ${name}`}
-            onClick={() => {
-              panel.current?.hidePopover()
-              trigger.current?.focus()
-            }}
-          >
-            Close
-          </button>
+        <div className="ds-section-head">
+          <h3 id={titleId}>{name}</h3>
+          <span className="ds-section-aside">
+            <Button
+              size="xs"
+              variant="ghost"
+              aria-label={`Close sources for ${name}`}
+              onClick={() => {
+                panel.current?.hidePopover()
+                trigger.current?.focus()
+              }}
+            >
+              Close
+            </Button>
+          </span>
         </div>
         {open &&
           (typeof children === 'function'
@@ -219,10 +228,10 @@ export default function MetadataSourceControl({
     return (
       <SourcePopover name={name}>
         {links.length ? (
-          <ul className={styles.sources}>
+          <ul className="data-picker">
             {links.map((link) => (
               <li key={link.url}>
-                <span className="inline-flex items-center gap-1">
+                <span className="ds-cell-id">
                   {link.providerLabel}
                   <ServiceIconLinks
                     links={[
@@ -238,7 +247,7 @@ export default function MetadataSourceControl({
             ))}
           </ul>
         ) : (
-          <p className="quiet">No source link was saved.</p>
+          <p className="ds-muted">No source link was saved.</p>
         )}
       </SourcePopover>
     )

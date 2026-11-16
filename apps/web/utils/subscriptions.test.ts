@@ -215,32 +215,20 @@ test('range chip labels format dates, durations and missing values', () => {
   )
 })
 
-test('published dates show only the precision the provider reported', () => {
+test('published dates are ISO and show only the precision the provider reported', () => {
   const at = '2024-03-01T00:00:00.000Z'
-  assert.equal(
-    formatSubscriptionPublished(at, 'year', { locale: 'en-US' }),
-    '2024',
+  assert.equal(formatSubscriptionPublished(at, 'year'), '2024')
+  assert.equal(formatSubscriptionPublished(at, 'month'), '2024-03')
+  assert.equal(formatSubscriptionPublished(at, 'day'), '2024-03-01')
+  assert.match(
+    formatSubscriptionPublished(video.publishedAt, 'time'),
+    /^\d{4}-\d{2}-\d{2}$/,
   )
-  assert.equal(
-    formatSubscriptionPublished(at, 'month', { locale: 'en-US' }),
-    'Mar 2024',
+  assert.match(
+    formatSubscriptionPublished(video.publishedAt, 'time', { detail: true }),
+    /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/,
   )
-  assert.equal(
-    formatSubscriptionPublished(at, 'day', { locale: 'en-US' }),
-    '3/1/2024',
-  )
-  assert.equal(
-    formatSubscriptionPublished(video.publishedAt, 'time', { locale: 'en-US' }),
-    new Date(video.publishedAt).toLocaleDateString('en-US'),
-  )
-  assert.equal(
-    formatSubscriptionPublished(video.publishedAt, 'time', {
-      detail: true,
-      locale: 'en-US',
-    }),
-    new Date(video.publishedAt).toLocaleString('en-US'),
-  )
-  assert.equal(formatSubscriptionPublished('not a date', 'day'), '-')
+  assert.equal(formatSubscriptionPublished('not a date', 'day'), '–')
 })
 
 test('durations show live state, length or a dash; artwork falls back to the show', () => {
@@ -260,7 +248,7 @@ test('durations show live state, length or a dash; artwork falls back to the sho
   )
   assert.equal(
     formatSubscriptionDuration({ ...episode, durationSec: null }),
-    '-',
+    '–',
   )
   assert.equal(
     subscriptionArtworkUrl(video),

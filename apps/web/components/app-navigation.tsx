@@ -1,188 +1,224 @@
 'use client'
 import Link from 'next/link'
 import { usePathname, useSearchParams } from 'next/navigation'
+import { useQuery } from '@tanstack/react-query'
 import {
-  Cog,
+  Activity,
   Download,
   LayoutGrid,
-  ListChecks,
+  Layers,
   ListMusic,
   Tag,
   Users,
+  type LucideIcon,
 } from 'lucide-react'
-import { scopedHref } from '@/utils/media-scope'
-import { useLibraryView, useMediaScope } from './media-scope'
+import { Count } from '@repo/ui/components/ds/pill'
+import { scopedHref, type LibraryView } from '@/utils/media-scope'
+import {
+  providerNeedsAttention,
+  providerOverviewOptions,
+} from '@/utils/provider-health'
+import { useRailLibraryView } from './media-scope'
+import { useConfig } from './providers'
+import JobActivity from './job-activity'
 
-const items = [
-  { href: '/browse', label: 'Browse', Icon: LayoutGrid },
-  { href: '/artists', label: 'Artists', Icon: Users },
-  { href: '/playlists', label: 'Playlists', Icon: ListMusic },
-  { href: '/tags', label: 'Tags', Icon: Tag },
-  { href: '/imports', label: 'Imports', Icon: Download },
-  { href: '/jobs', label: 'Jobs', Icon: ListChecks },
-  { href: '/providers', label: 'Providers', Icon: Cog },
-]
-const trackItems = [
-  { href: '/tracks', label: 'Browse', Icon: LayoutGrid },
-  { href: '/playlists', label: 'Playlists', Icon: ListMusic },
-  { href: '/imports', label: 'Imports', Icon: Download },
-]
-const artistItems = [
-  { href: '/artists', label: 'Browse', Icon: LayoutGrid },
-  { href: '/jobs', label: 'Jobs', Icon: ListChecks },
-]
-/** `section` is the path prefix that marks the link active; scoped links carry `mediaType`. */
-const subscriptionItems = [
-  {
-    href: '/subscriptions',
-    section: null,
-    scoped: false,
-    label: 'Browse',
-    Icon: LayoutGrid,
-  },
-  {
-    href: '/subscriptions/channels',
-    section: '/subscriptions/channels',
-    scoped: false,
-    label: 'Channels',
-    Icon: Users,
-  },
-  {
-    href: '/imports/youtube',
-    section: '/imports',
-    scoped: true,
-    label: 'Imports',
-    Icon: Download,
-  },
-  {
-    href: '/jobs',
-    section: '/jobs',
-    scoped: true,
-    label: 'Jobs',
-    Icon: ListChecks,
-  },
-  {
-    href: '/providers',
-    section: '/providers',
-    scoped: true,
-    label: 'Providers',
-    Icon: Cog,
-  },
-]
+type NavItem = {
+  /** Destination without the current page's query. */
+  href: string
+  label: string
+  Icon: LucideIcon
+  /** Path prefix that marks the item current. */
+  section: string
+  /** Only the exact path marks the item current. */
+  exact?: boolean
+}
 
-function isUnder(path: string, root: string) {
-  return path === root || path.startsWith(`${root}/`)
+/** Each library's own pages. Jobs and Providers sit once, under System. */
+export function libraryNavigation(view: LibraryView): NavItem[] {
+  if (view === 'track')
+    return [
+      {
+        href: '/tracks',
+        label: 'Browse',
+        Icon: LayoutGrid,
+        section: '/tracks',
+      },
+      {
+        href: scopedHref('/playlists', 'track'),
+        label: 'Playlists',
+        Icon: ListMusic,
+        section: '/playlists',
+      },
+      {
+        href: scopedHref('/imports', 'track'),
+        label: 'Imports',
+        Icon: Download,
+        section: '/imports',
+      },
+    ]
+  if (view === 'artist')
+    return [
+      {
+        href: '/artists',
+        label: 'Browse',
+        Icon: LayoutGrid,
+        section: '/artists',
+      },
+    ]
+  if (view === 'subscription')
+    return [
+      {
+        href: '/subscriptions',
+        label: 'Browse',
+        Icon: LayoutGrid,
+        section: '/subscriptions',
+        exact: true,
+      },
+      {
+        href: '/subscriptions/channels',
+        label: 'Channels',
+        Icon: Users,
+        section: '/subscriptions/channels',
+      },
+      {
+        href: scopedHref('/imports/youtube', 'subscription'),
+        label: 'Imports',
+        Icon: Download,
+        section: '/imports',
+      },
+    ]
+  const film = view === 'film'
+  return [
+    {
+      href: film ? '/films' : '/albums',
+      label: 'Browse',
+      Icon: LayoutGrid,
+      section: film ? '/films' : '/albums',
+    },
+    ...(film
+      ? [
+          {
+            href: scopedHref('/people', 'film'),
+            label: 'People',
+            Icon: Users,
+            section: '/people',
+          },
+        ]
+      : []),
+    film
+      ? {
+          href: scopedHref('/collections', 'film'),
+          label: 'Collections',
+          Icon: ListMusic,
+          section: '/collections',
+        }
+      : {
+          href: scopedHref('/playlists', 'album'),
+          label: 'Playlists',
+          Icon: ListMusic,
+          section: '/playlists',
+        },
+    {
+      href: scopedHref('/tags', view),
+      label: 'Tags',
+      Icon: Tag,
+      section: '/tags',
+    },
+    {
+      href: scopedHref('/imports', view),
+      label: 'Imports',
+      Icon: Download,
+      section: '/imports',
+    },
+  ]
+}
+
+function isCurrent(path: string, item: Pick<NavItem, 'section' | 'exact'>) {
+  return item.exact
+    ? path === item.section
+    : path === item.section || path.startsWith(`${item.section}/`)
+}
+
+function NavLink({
+  item,
+  path,
+  params,
+  children,
+}: {
+  item: NavItem
+  path: string
+  params: URLSearchParams
+  children?: React.ReactNode
+}) {
+  const current = isCurrent(path, item)
+  const destination = item.href.split('?')[0] ?? item.href
+  // Choosing the open page again keeps its filters.
+  const href =
+    path === destination && params.size ? `${path}?${params}` : item.href
+  return (
+    <Link
+      href={href}
+      className="ds-nav-item"
+      aria-current={current ? 'page' : undefined}
+    >
+      <item.Icon className="ds-i" aria-hidden="true" />
+      <span>{item.label}</span>
+      {children}
+    </Link>
+  )
+}
+
+function ProviderAttentionCount() {
+  const { apiBaseUrl } = useConfig()
+  const overview = useQuery(providerOverviewOptions(apiBaseUrl))
+  const count =
+    overview.data?.providers.filter(providerNeedsAttention).length ?? 0
+  if (!count) return null
+  return (
+    <>
+      <Count tone="danger">{count}</Count>
+      <span className="sr-only">
+        {count === 1 ? 'provider needs' : 'providers need'} attention
+      </span>
+    </>
+  )
 }
 
 export default function AppNavigation() {
   const path = usePathname()
-  const params = useSearchParams()
-  const scope = useMediaScope()
-  const view = useLibraryView()
-  if (view === 'artist')
-    return (
-      <nav className="app-navigation" aria-label="Main navigation">
-        {artistItems.map((item) => {
-          const href =
-            path === item.href && params.size
-              ? `${item.href}?${params}`
-              : item.href
-          return (
-            <Link
-              href={
-                item.href === '/artists' ? href : scopedHref(href, 'artist')
-              }
-              key={item.href}
-              aria-current={isUnder(path, item.href) ? 'page' : undefined}
-            >
-              {item.label}
-              <item.Icon size={16} aria-hidden="true" />
-            </Link>
-          )
-        })}
-      </nav>
-    )
-  if (view === 'track')
-    return (
-      <nav className="app-navigation" aria-label="Main navigation">
-        {trackItems.map((item) => {
-          const href =
-            path === item.href && params.size
-              ? `${item.href}?${params}`
-              : item.href
-          return (
-            <Link
-              href={item.href === '/tracks' ? href : scopedHref(href, 'track')}
-              key={item.href}
-              aria-current={isUnder(path, item.href) ? 'page' : undefined}
-            >
-              {item.label}
-              <item.Icon size={16} aria-hidden="true" />
-            </Link>
-          )
-        })}
-      </nav>
-    )
-  if (view === 'subscription')
-    return (
-      <nav className="app-navigation" aria-label="Main navigation">
-        {subscriptionItems.map((item) => {
-          const active = item.section
-            ? isUnder(path, item.section)
-            : path === item.href
-          const href =
-            path === item.href && params.size
-              ? `${item.href}?${params}`
-              : item.href
-          return (
-            <Link
-              href={item.scoped ? scopedHref(href, 'subscription') : href}
-              key={item.href}
-              aria-current={active ? 'page' : undefined}
-            >
-              {item.label}
-              <item.Icon size={16} aria-hidden="true" />
-            </Link>
-          )
-        })}
-      </nav>
-    )
+  const params = new URLSearchParams(useSearchParams())
+  const view = useRailLibraryView()
   return (
-    <nav className="app-navigation" aria-label="Main navigation">
-      {items
-        .filter((item) => scope === 'film' || item.href !== '/artists')
-        .map((item) => {
-          const destination =
-            item.href === '/browse'
-              ? scope === 'album'
-                ? '/albums'
-                : '/films'
-              : item.href === '/artists' && scope === 'film'
-                ? '/people'
-                : item.href === '/playlists' && scope === 'film'
-                  ? '/collections'
-                  : item.href
-          const active =
-            path === destination || path.startsWith(`${destination}/`)
-          const href =
-            path === destination && params.size
-              ? `${destination}?${params}`
-              : destination
-          return (
-            <Link
-              href={item.href === '/browse' ? href : scopedHref(href, scope)}
-              key={item.href}
-              aria-current={active ? 'page' : undefined}
-            >
-              {item.href === '/artists' && scope === 'film'
-                ? 'People'
-                : item.href === '/playlists' && scope === 'film'
-                  ? 'Collections'
-                  : item.label}
-              <item.Icon size={16} aria-hidden="true" />
-            </Link>
-          )
-        })}
+    <nav className="shell-nav" aria-label="Main navigation">
+      {libraryNavigation(view).map((item) => (
+        <NavLink key={item.href} item={item} path={path} params={params} />
+      ))}
+      <div className="ds-rail-label shell-nav-label">System</div>
+      <div className="shell-nav-row">
+        <NavLink
+          item={{
+            href: '/jobs',
+            label: 'Jobs',
+            Icon: Activity,
+            section: '/jobs',
+          }}
+          path={path}
+          params={params}
+        />
+        <JobActivity />
+      </div>
+      <NavLink
+        item={{
+          href: '/providers',
+          label: 'Providers',
+          Icon: Layers,
+          section: '/providers',
+        }}
+        path={path}
+        params={params}
+      >
+        <ProviderAttentionCount />
+      </NavLink>
     </nav>
   )
 }

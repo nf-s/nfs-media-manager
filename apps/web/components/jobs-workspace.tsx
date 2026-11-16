@@ -1,46 +1,54 @@
 'use client'
 
-import { usePathname } from 'next/navigation'
-import { SectionSidebar, SectionWorkspace } from './section-sidebar'
-import { useWorkspaceScope } from './media-scope'
-import { scopedHref } from '@/utils/media-scope'
+import Link from 'next/link'
+import { usePathname, useSearchParams } from 'next/navigation'
+import { PageHead } from '@repo/ui/components/ds/toolbar'
+import { metadataLibrary } from '@/utils/job-media-scope'
+import { scopedHref, systemLibraryFilter } from '@/utils/media-scope'
+import { useRailLibraryView } from './media-scope'
 
-const history = { id: '/jobs', href: '/jobs', label: 'Jobs & history' }
-const destinations = [
-  history,
-  {
-    id: '/jobs/metadata',
-    href: '/jobs/metadata',
-    label: 'Metadata',
-  },
-]
-
+/** Jobs and Metadata share the Jobs heading and its tabs; job pages do not. */
 export default function JobsWorkspace({
   children,
 }: {
   children: React.ReactNode
 }) {
   const path = usePathname()
-  const mediaType = useWorkspaceScope()
-  // Subscriptions has no media items to scrape.
-  const items = mediaType === 'subscription' ? [history] : destinations
+  const params = useSearchParams()
+  const rail = useRailLibraryView()
+  if (path !== '/jobs' && path !== '/jobs/metadata') return children
+  const filter = systemLibraryFilter(params.get('mediaType'))
+  const tabs = [
+    {
+      href: filter ? scopedHref('/jobs', filter) : '/jobs',
+      label: 'Activity',
+      current: path === '/jobs',
+    },
+    {
+      href: scopedHref(
+        '/jobs/metadata',
+        metadataLibrary(params.get('mediaType'), rail),
+      ),
+      label: 'Metadata',
+      current: path === '/jobs/metadata',
+    },
+  ]
   return (
-    <SectionWorkspace
-      key={mediaType}
-      sidebar={
-        <div className="min-h-0 overflow-auto">
-          <SectionSidebar
-            label="Jobs navigation"
-            items={items.map((item) => ({
-              ...item,
-              href: scopedHref(item.href, mediaType),
-            }))}
-            activeId={path}
-          />
-        </div>
-      }
-    >
+    <div className="ops-page">
+      <PageHead title="Jobs" />
+      <nav className="ds-tabs ops-tabs" aria-label="Jobs">
+        {tabs.map((tab) => (
+          <Link
+            key={tab.label}
+            href={tab.href}
+            className="ds-tab"
+            aria-current={tab.current ? 'page' : undefined}
+          >
+            {tab.label}
+          </Link>
+        ))}
+      </nav>
       {children}
-    </SectionWorkspace>
+    </div>
   )
 }

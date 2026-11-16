@@ -1,14 +1,17 @@
 'use client'
 
 import Link from 'next/link'
-import { useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import type { SubscriptionSyncStatus } from '@repo/schemas/subscriptions'
 import { YoutubeDisconnectResultSchema } from '@repo/schemas/youtube'
 import { Button } from '@repo/ui/components/ui/button'
+import { KeyValues, Section } from '@repo/ui/components/ds/facts'
+import { Notice } from '@repo/ui/components/ds/feedback'
+import { Status } from '@repo/ui/components/ds/status'
 import { useConfig } from './providers'
 import { errorMessage } from './lastfm-sync'
+import { ConfirmAction } from './confirm-action'
 import SubscriptionSyncPanel, {
   subscriptionSyncQueryKey,
 } from './subscription-sync'
@@ -16,13 +19,12 @@ import { fetchApiData } from '@/utils/api'
 import { youtubeAuthorizationUrl } from '@/utils/youtube-authorize'
 
 export const YOUTUBE_PROVIDER_SETTINGS_HREF =
-  '/providers?provider=youtube&section=credentials&mediaType=subscription'
+  '/providers/youtube?tab=settings'
 
 export function YoutubeAccount({ status }: { status: SubscriptionSyncStatus }) {
   const { apiBaseUrl } = useConfig()
   const client = useQueryClient()
   const outcome = useSearchParams().get('youtube')
-  const [confirmingDisconnect, setConfirmingDisconnect] = useState(false)
   const authorize = useMutation({
     mutationFn: () => youtubeAuthorizationUrl(apiBaseUrl),
     onSuccess: (url) => window.location.assign(url),
@@ -36,7 +38,6 @@ export function YoutubeAccount({ status }: { status: SubscriptionSyncStatus }) {
         { method: 'DELETE' },
       ),
     onSettled: async () => {
-      setConfirmingDisconnect(false)
       await client.invalidateQueries({
         queryKey: subscriptionSyncQueryKey('youtube'),
       })
@@ -44,19 +45,32 @@ export function YoutubeAccount({ status }: { status: SubscriptionSyncStatus }) {
   })
   const { account } = status
   return (
-    <section className="film-import-workflow" aria-labelledby="youtube-account">
-      <h2 id="youtube-account">Account</h2>
+    <Section title="Account" flush>
       {!account.configured && (
-        <p role="alert">
+        <Notice tone="attention">
           Add the OAuth client ID, client secret and redirect URI in{' '}
           <Link href={YOUTUBE_PROVIDER_SETTINGS_HREF}>
             YouTube provider settings
           </Link>
           .
-        </p>
+        </Notice>
+      )}
+      {account.configured && (
+        <KeyValues
+          items={[
+            {
+              label: 'YouTube',
+              value: account.connected ? (
+                <Status state="done">Connected</Status>
+              ) : (
+                <Status state="attention">Needs sign-in</Status>
+              ),
+            },
+          ]}
+        />
       )}
       {account.configured && !account.connected && (
-        <div className="form-actions">
+        <span className="sec-line">
           <Button
             size="md"
             variant="primary"
@@ -65,78 +79,53 @@ export function YoutubeAccount({ status }: { status: SubscriptionSyncStatus }) {
           >
             {authorize.isPending ? 'Opening Google...' : 'Connect YouTube'}
           </Button>
-          <span className="muted">
+          <span className="ds-help">
             Requests read-only access to your subscriptions.
           </span>
-        </div>
+        </span>
       )}
       {account.connected && (
-        <div className="form-actions">
-          <span>Connected.</span>
-          {!confirmingDisconnect && (
-            <>
-              <Button
-                size="md"
-                disabled={authorize.isPending || disconnect.isPending}
-                onClick={() => authorize.mutate()}
-              >
-                {authorize.isPending ? 'Opening Google...' : 'Reconnect'}
-              </Button>
-              <Button
-                size="md"
-                disabled={authorize.isPending || disconnect.isPending}
-                onClick={() => setConfirmingDisconnect(true)}
-              >
-                Disconnect
-              </Button>
-            </>
-          )}
-          {confirmingDisconnect && (
-            <>
-              <span>
-                Disconnect YouTube? Stored channels and videos are kept.
-              </span>
-              <Button
-                size="md"
-                disabled={disconnect.isPending}
-                onClick={() => disconnect.mutate()}
-              >
-                {disconnect.isPending
-                  ? 'Disconnecting...'
-                  : 'Confirm disconnect'}
-              </Button>
-              <Button
-                size="md"
-                variant="ghost"
-                disabled={disconnect.isPending}
-                onClick={() => setConfirmingDisconnect(false)}
-              >
-                Back
-              </Button>
-            </>
-          )}
-        </div>
+        <span className="ds-actions">
+          <Button
+            size="md"
+            disabled={authorize.isPending || disconnect.isPending}
+            onClick={() => authorize.mutate()}
+          >
+            {authorize.isPending ? 'Opening Google...' : 'Reconnect'}
+          </Button>
+          <ConfirmAction
+            size="md"
+            confirmVariant="danger"
+            question="Disconnect YouTube?"
+            details="Stored channels and videos are kept."
+            confirmLabel="Disconnect"
+            disabled={authorize.isPending || disconnect.isPending}
+            onConfirm={() => disconnect.mutate()}
+          >
+            {disconnect.isPending ? 'Disconnecting...' : 'Disconnect'}
+          </ConfirmAction>
+        </span>
       )}
       {account.configured && account.redirectUri && !account.connected && (
-        <p className="muted">
-          Redirect URI: <code>{account.redirectUri}</code>
+        <p className="ds-help">
+          Redirect URI: <code className="ds-mono">{account.redirectUri}</code>
         </p>
       )}
       {authorize.isError && (
-        <p role="alert">
+        <Notice tone="danger">
           {errorMessage(authorize.error, 'Could not start the connection.')}
-        </p>
+        </Notice>
       )}
       {disconnect.isError && (
-        <p role="alert">
+        <Notice tone="danger">
           {errorMessage(disconnect.error, 'Could not disconnect YouTube.')}
-        </p>
+        </Notice>
       )}
-      {outcome === 'connected' && <p role="status">YouTube connected.</p>}
+      {outcome === 'connected' && <Notice>YouTube connected.</Notice>}
       {outcome === 'error' && (
-        <p role="alert">YouTube did not connect. Try again.</p>
+        <Notice tone="danger">YouTube did not connect. Try again.</Notice>
       )}
-    </section>
+    </Section>
   )
 }
 

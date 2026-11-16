@@ -48,6 +48,7 @@ export function TrendChart({
   height = 168,
   now,
   extra,
+  monthsOnly = false,
 }: {
   days: readonly TrendDay[]
   months?: readonly TrendMonth[]
@@ -59,6 +60,8 @@ export function TrendChart({
   now?: Date
   /** Controls shown beside the caption, before the range switch. */
   extra?: ReactNode
+  /** Only `months` is known: chart months and coarser in every range. */
+  monthsOnly?: boolean
 }) {
   const box = useRef<HTMLDivElement>(null)
   const tip = useRef<HTMLDivElement>(null)
@@ -90,9 +93,10 @@ export function TrendChart({
       v: month.count,
     }))
     const older =
-      range === 'all' &&
-      monthly.length > 0 &&
-      (monthly[0]?.t ?? today) < today - FIVE_YEARS_MS
+      monthsOnly ||
+      (range === 'all' &&
+        monthly.length > 0 &&
+        (monthly[0]?.t ?? today) < today - FIVE_YEARS_MS)
     /* No more than one point every 8px, so a narrow chart takes a coarser grain */
     const maxPoints = Math.min(120, Math.max(12, Math.floor(innerWidth / 8)))
     return bucketTrend(older ? monthly : daily, range, {
@@ -100,7 +104,7 @@ export function TrendChart({
       maxPoints,
       finest: older ? 'month' : 'day',
     })
-  }, [days, months, range, today, innerWidth])
+  }, [days, months, monthsOnly, range, today, innerWidth])
 
   const { grain, points } = series
   const ticks = trendTicks(Math.max(1, ...points.map((point) => point.v)))

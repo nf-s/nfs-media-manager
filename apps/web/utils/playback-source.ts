@@ -37,14 +37,6 @@ const AlbumTrackViewSchema = z.object({
   ),
   direction: z.enum(['asc', 'desc']).default('asc'),
 })
-const AlbumDetailTabSchema = z.enum([
-  'overview',
-  'tracks',
-  'playlists',
-  'listening',
-  'edit',
-  'sources',
-])
 
 function savedAlbumTrackView(value: string | null, id: string) {
   try {
@@ -59,27 +51,6 @@ function savedAlbumTrackView(value: string | null, id: string) {
 /** Table settings are scoped to one album so another drawer starts normally. */
 export function albumTrackView(value: string | null, id: string) {
   return savedAlbumTrackView(value, id) ?? AlbumTrackViewSchema.parse({ id })
-}
-
-export function albumDetailTab(params: URLSearchParams, id: string) {
-  if (params.get('tab') === 'history' || params.get('tab') === 'sources')
-    return 'sources'
-  if (!savedAlbumTrackView(params.get('albumTrackView'), id)) return 'overview'
-  const tab = AlbumDetailTabSchema.safeParse(params.get('tab'))
-  return tab.success ? tab.data : 'overview'
-}
-
-/** Restores the table and its tab without dropping the surrounding browse URL. */
-export function albumTrackViewHref(
-  pathname: string,
-  params: URLSearchParams,
-  view: z.infer<typeof AlbumTrackViewSchema>,
-  tab = 'tracks',
-) {
-  const next = new URLSearchParams(params)
-  next.set('albumTrackView', JSON.stringify(view))
-  next.set('tab', tab)
-  return `${pathname}?${next}`
 }
 
 type SourceOptions = {

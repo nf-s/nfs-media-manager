@@ -22,6 +22,12 @@ import {
   type VirtualPageOptions,
 } from './useVirtualBrowse'
 
+/** The one table's row and header heights (--ds-row, --ds-head). */
+export const tableRowHeight = 32
+export const tableHeaderHeight = 28
+/** A list row with 40px artwork (--ds-row-media). */
+export const listRowHeight = 48
+
 type TableGeometry = {
   rowHeight?: number
   headerHeight?: number
@@ -40,8 +46,8 @@ type VirtualTableOptions<Page extends VirtualPageData> = Omit<
 
 function useTableViewport(
   identity: string,
-  tableRowHeight: number,
-  tableHeaderHeight: number,
+  tableRows: number,
+  tableHeader: number,
   presentation: TableGeometry['presentation'],
 ) {
   const [element, scroller] = useState<HTMLDivElement | null>(null)
@@ -56,12 +62,14 @@ function useTableViewport(
             width: viewport.width,
             mediaType: presentation.mediaType,
             density: 'standard',
+            tagsBelowArtwork: true,
           })
       : undefined
   const columns = grid?.columns ?? 1
   const gap = grid?.gap ?? 0
-  const rowHeight = grid?.rowHeight ?? (view === 'list' ? 64 : tableRowHeight)
-  const headerHeight = view === 'table' ? tableHeaderHeight : 0
+  const rowHeight =
+    grid?.rowHeight ?? (view === 'list' ? listRowHeight : tableRows)
+  const headerHeight = view === 'table' ? tableHeader : 0
   const previousLayout = useRef({ columns, rowHeight, headerHeight })
   const prior = previousLayout.current
   const resized =
@@ -136,8 +144,8 @@ function useTableViewport(
 
 /** Server-paged table backed by the same independent page queries as Browse. */
 export function useVirtualTable<Page extends VirtualPageData>({
-  rowHeight = 32,
-  headerHeight = 24,
+  rowHeight = tableRowHeight,
+  headerHeight = tableHeaderHeight,
   pageSize = browsePageSize,
   extraRowHeights,
   presentation,
@@ -249,8 +257,8 @@ export function useCountedVirtualTable<
 export function useVirtualRows<Item>({
   rows,
   identity,
-  rowHeight = 32,
-  headerHeight = 24,
+  rowHeight = tableRowHeight,
+  headerHeight = tableHeaderHeight,
   extraRowHeights,
   presentation,
 }: TableGeometry & { rows: readonly Item[]; identity: string }) {

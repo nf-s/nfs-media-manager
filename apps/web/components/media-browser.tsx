@@ -15,14 +15,43 @@ import {
 import { sameDetail, withoutDetailEntries } from '@/utils/detail-inspector'
 
 import Link from 'next/link'
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react'
 import { createPortal } from 'react-dom'
 import { useSearchParams } from 'next/navigation'
 import { useQuery } from '@tanstack/react-query'
 import { z } from 'zod'
-import { ListMusic, Settings2, X } from 'lucide-react'
+import { ListMusic, Settings2 } from 'lucide-react'
 import { Button } from '@repo/ui/components/ui/button'
-import { TableScroll } from '@repo/ui/components/ui/table'
+import {
+  TableBody,
+  TableCell,
+  TableHeader,
+  TableRow,
+} from '@repo/ui/components/ui/table'
+import { Card, CardGrid, CardTitle } from '@repo/ui/components/ds/card'
+import {
+  List,
+  ListHead,
+  ListRow,
+  RowTitle,
+  RowValue,
+} from '@repo/ui/components/ds/list-row'
+import {
+  EmptyValue,
+  Pill,
+  PillLabel,
+  Pills,
+  Rating,
+} from '@repo/ui/components/ds/pill'
+import { Notice, Skeleton, State } from '@repo/ui/components/ds/feedback'
+import { Select } from '@repo/ui/components/ds/toolbar'
+import { formatItemCount, formatRuntime } from '@repo/ui/lib/format'
 import { SavedViewSchema } from '@repo/schemas/imports'
 import {
   ListeningFilterParamSchema,
@@ -49,19 +78,27 @@ import {
   sameBrowseFilter,
   type BrowseField,
   type BrowseFilter,
+  type BrowseValues,
 } from '@repo/schemas/browse'
 import { useConfig } from './providers'
+import { usePlayback } from './playback-provider'
 import { fetchApiData } from '@/utils/api'
 import { useVirtualBrowse } from '@/hooks/useVirtualBrowse'
 import { useBrowseFacets } from '@/hooks/useBrowseFacets'
+import {
+  listRowHeight,
+  tableHeaderHeight,
+  tableRowHeight,
+} from '@/hooks/useVirtualTable'
 import AiSearch from './ai-search'
 import { aiSearchParams, mediaAiSearchTarget } from '@/utils/ai-search'
-import MediaArtwork from './media-artwork'
+import { MediaArt, MediaThumb } from './media-artwork'
 import { AlbumInlinePlayButton, TilePlayControls } from './play-controls'
 import { createBrowsePlaybackSource } from '@/utils/playback-source'
 import ManualMediaAdd from './manual-media-add'
 import {
   BrowseFilterChips,
+  BrowseFilterPill,
   BrowseTagBadges,
   RangeEditor,
 } from './browse-controls'
@@ -69,58 +106,84 @@ import { ListeningControls } from './listening-controls'
 import BrowseToolbar, { BrowseColumnsSection } from './browse-toolbar'
 import { FilterPanelSection } from './browse-filter-panel'
 import {
+  BrowsePlaceholderRow,
+  BrowseSortHead,
+  BrowseSpacerRow,
+} from './browse-table'
+import { DetailLink } from './detail-link'
+import {
   formatListeningPeriod,
   formatListeningRule,
 } from '@/utils/listening-filters'
-import { AlbumSpotifyLink } from './service-icon-links'
-import AlbumTitle from './album-title'
-import { albumSpotifyDestination } from '@/utils/album-links'
 import {
-  artworkOverlays,
-  formatArtworkOverlays,
+  cardDetails,
+  cardGrid,
+  formatCardDetails,
   mediaGridGeometry,
-  parseArtworkOverlays,
   parseBrowseView,
+  parseCardDetails,
   parseGridDensity,
   preserveGridScroll,
 } from '@/utils/media-grid'
 import { useRailSlot } from '@/hooks/useRailSlot'
-import styles from './media-browser.module.css'
-import { FilterButton } from './filter-affordance'
-import DetailProviderLinks from './detail-provider-links'
 import {
-  compactRatingStripWidth,
-  isCompactRating,
+  getProviderRating,
+  ratingScore,
+  ratingSource,
 } from '@/utils/provider-ratings'
 import {
   matchingTitleFilters,
   titleSuggestions,
 } from '@/utils/browse-suggestions'
 
+type MediaItem = AlbumListItem | FilmListItem
+
 const PageSchema = PaginatedDataSchema(
   z.union([AlbumListItemSchema, FilmListItemSchema]),
 )
 const WidthsSchema = z.record(z.string(), z.number().min(70).max(650))
-const defaultAlbumColumns = [
+
+/** Default table columns, in the design library's one order. */
+export const defaultAlbumColumns = [
   'title',
   'artist',
   'releaseDate',
   'dateAdded',
-  'genre',
-  'ratingRymValue',
+  'trackCount',
   'scrobbles',
+  'ratingRymValue',
+  'genre',
 ]
-const defaultFilmColumns = [
+export const defaultFilmColumns = [
   'title',
   'director',
   'releaseDate',
-  'dateAdded',
-  'genre',
-  'source',
+  'runtimeMinutes',
   'watched',
+  'dateAdded',
+  'ratingImdbValue',
+  'ratingMetascore',
+  'ratingRt',
+  'genre',
 ]
+/** Columns of pills absorb spare width, so a new column goes before them. */
+const pillColumns = new Set([
+  'genre',
+  'albumTag',
+  'artistTag',
+  'playlist',
+  'collection',
+])
+/** The one rating a card shows when the grid is not sorted by another. */
+const headlineRating = { album: 'ratingRymValue', film: 'ratingImdbValue' }
+/** Sorts whose value already sits on the card (title, creator, year). */
+const sortsShownOnCard = new Set(['title', 'artist', 'director', 'releaseDate'])
 
-const overlayLabels = { ratings: 'Ratings', sort: 'Sort value', tags: 'Tags' }
+const cardDetailLabels = {
+  ratings: 'Rating',
+  sort: 'Sorted value',
+  tags: 'Tags',
+}
 
 function parseFilters(value: string | null): BrowseFilter[] {
   try {
@@ -133,18 +196,48 @@ function parseFilters(value: string | null): BrowseFilter[] {
   }
 }
 
+/** Adds a column before the trailing pill columns, or removes it. */
+export function toggleColumn(keys: string[], key: string): string[] {
+  if (keys.includes(key)) return keys.filter((item) => item !== key)
+  if (pillColumns.has(key)) return [...keys, key]
+  const firstPill = keys.findIndex((item) => pillColumns.has(item))
+  return firstPill < 0
+    ? [...keys, key]
+    : [...keys.slice(0, firstPill), key, ...keys.slice(firstPill)]
+}
+
+function isMissing(value: BrowseValues[string] | undefined) {
+  return (
+    value === null ||
+    value === undefined ||
+    value === '' ||
+    (Array.isArray(value) && value.length === 0)
+  )
+}
+
+/** A field's header and rating label: ratings use their short source. */
+function columnLabel(field: BrowseField) {
+  return field.rating ? ratingSource(field.rating, field.label) : field.label
+}
+
 export default function MediaBrowser({
   mediaType,
 }: {
   mediaType: 'album' | 'film'
 }) {
   const collection = mediaType === 'album' ? 'albums' : 'films'
+  const noun =
+    mediaType === 'album'
+      ? { one: 'album', other: 'albums' }
+      : { one: 'film', other: 'films' }
   const { apiBaseUrl } = useConfig()
+  const playback = usePlayback()
   const searchParams = useSearchParams()
   const [ready, setReady] = useState(false)
   const [draft, setDraft] = useState('')
   const [adding, setAdding] = useState(false)
   const [scroll, setScroll] = useState({ identity: '', top: 0 })
+  const [scrolledSideways, setScrolledSideways] = useState(false)
   const [gridLayout, setGridLayout] = useState<{
     identity: string
     columns: number
@@ -156,7 +249,6 @@ export default function MediaBrowser({
   const browser = useRef<HTMLElement>(null)
   const inspector = useDetailInspector()
   const railSlot = useRailSlot()
-  const resize = useRef<{ key: string; x: number; width: number } | null>(null)
   const filters = parseFilters(searchParams.get('filters'))
   const creator = parseCreatorBrowseScope(searchParams, mediaType)
   const rangesResult = BrowseRangesParamSchema.safeParse(
@@ -197,7 +289,7 @@ export default function MediaBrowser({
   )
   const direction = searchParams.get('direction') === 'asc' ? 'asc' : 'desc'
   const view = parseBrowseView(searchParams.get('view'))
-  const overlays = parseArtworkOverlays(searchParams.get('overlays'), mediaType)
+  const details = parseCardDetails(searchParams.get('overlays'))
   const density = parseGridDensity(searchParams.get('density'))
   const selectedId =
     inspector?.root?.kind === mediaType ? inspector.root.id : null
@@ -228,8 +320,17 @@ export default function MediaBrowser({
   const columnKeys =
     searchParams.get('columns')?.split(',').map(canonicalBrowseKey) ??
     (mediaType === 'album' ? defaultAlbumColumns : defaultFilmColumns)
-  const columns = fields.filter((field) => columnKeys.includes(field.key))
+  // Columns keep the order they were chosen in; the title always leads.
+  const columns = [
+    'title',
+    ...columnKeys.filter((key) => key !== 'title'),
+  ].flatMap((key) => fields.filter((field) => field.key === key))
   const sortField = fields.find((field) => field.key === sortBy)
+  // Description is a long text field; it is offered last, not first.
+  const listedFields = [
+    ...fields.filter((field) => field.key !== 'summary'),
+    ...fields.filter((field) => field.key === 'summary'),
+  ]
   const requestedListeningPeriod =
     mediaType === 'album' &&
     (sortBy === 'listeningScrobbles' ||
@@ -248,16 +349,12 @@ export default function MediaBrowser({
     listeningSort: requestedListeningPeriod,
     ...creator,
   })
-  // With both overlays on, the sort value and provider marks sit on the artwork.
-  const tileExtraRow =
-    !overlays.includes('sort') || !overlays.includes('ratings')
-  const tagsBelowArtwork = mediaType === 'album' && !overlays.includes('tags')
+  const showTags = details.includes('tags')
   const grid = mediaGridGeometry({
     width: viewport.width,
     mediaType,
     density,
-    extraRow: tileExtraRow,
-    tagsBelowArtwork,
+    tagsBelowArtwork: showTags,
   })
   const scrollIdentity = `${collection}:${queryKey}:${view}`
   const previousScrollTop = scroll.identity === scrollIdentity ? scroll.top : 0
@@ -307,10 +404,19 @@ export default function MediaBrowser({
   function openDetail(id: string, trigger?: HTMLElement) {
     inspector?.open({ kind: mediaType, id }, trigger)
   }
+  /** A new sort starts descending, except text, which starts ascending. */
   function sort(key: string) {
+    const text = fields.find((field) => field.key === key)?.type === 'text'
     setParams({
       sortBy: key,
-      direction: sortBy === key && direction === 'desc' ? 'asc' : 'desc',
+      direction:
+        sortBy === key
+          ? direction === 'desc'
+            ? 'asc'
+            : 'desc'
+          : text
+            ? 'asc'
+            : 'desc',
     })
   }
   function saveWidths(next: Record<string, number>) {
@@ -389,15 +495,9 @@ export default function MediaBrowser({
   const gridColumns = grid.columns
   const rowHeight =
     view === 'table'
-      ? 36
+      ? tableRowHeight
       : view === 'list'
-        ? grid.mobile
-          ? mediaType === 'album'
-            ? 84
-            : 64
-          : mediaType === 'album'
-            ? 64
-            : 48
+        ? listRowHeight
         : grid.rowHeight
   const params = new URLSearchParams({
     q,
@@ -422,7 +522,12 @@ export default function MediaBrowser({
     rowHeight,
     scrollTop,
     viewportHeight: viewport.height,
-    headerHeight: view === 'table' ? 34 : 0,
+    headerHeight:
+      view === 'grid'
+        ? cardGrid.paddingTop
+        : view === 'list' && grid.mobile
+          ? 0
+          : tableHeaderHeight,
   })
   const { total, slots, padTop, padBottom } = query
   const selectedItem = slots.find(({ item }) => item?.id === selectedId)?.item
@@ -478,7 +583,7 @@ export default function MediaBrowser({
     function openPopovers() {
       return [
         ...(browser.current?.querySelectorAll<HTMLDetailsElement>(
-          '.toolbar-popover[open]',
+          '.browse-popover[open]',
         ) ?? []),
       ]
     }
@@ -512,7 +617,7 @@ export default function MediaBrowser({
       if (
         target &&
         target !== document.body &&
-        !target.closest('.browse-scroll, .detail-topbar') &&
+        !target.closest('.browse-scroller, .detail-topbar') &&
         !target.matches('.media-inspector')
       )
         return
@@ -529,136 +634,162 @@ export default function MediaBrowser({
       document.removeEventListener('keydown', onKeyDown)
     }
   })
-  const columnCount = columns.length + 1
-  const providersWidth = compactRatingStripWidth(fields) + 72
   const widthFor = (field: BrowseField) =>
     widths[field.key] ??
-    (field.key === 'title' ? 260 : field.type === 'text' ? 180 : 115)
+    (field.key === 'title'
+      ? 280
+      : pillColumns.has(field.key)
+        ? 220
+        : field.type === 'text'
+          ? 180
+          : field.rating
+            ? 84
+            : 110)
 
-  function renderValue(item: AlbumListItem | FilmListItem, field: BrowseField) {
+  function filterValues(field: BrowseField, value: BrowseValues[string]) {
+    const values = Array.isArray(value)
+      ? value
+      : typeof value === 'string'
+        ? [value]
+        : []
+    if (values.length === 1)
+      return (
+        <button
+          type="button"
+          className="browse-open"
+          onClick={() =>
+            addFilter({ field: field.key, value: values[0] ?? '' })
+          }
+          title={`Filter ${field.label}: ${values[0]}`}
+        >
+          {values[0]}
+        </button>
+      )
+    return (
+      <Pills max={2} label={field.label}>
+        {values.map((value) => (
+          <Pill asChild key={value}>
+            <button
+              type="button"
+              onClick={() => addFilter({ field: field.key, value })}
+              title={`Filter ${field.label}: ${value}`}
+            >
+              <PillLabel>{value}</PillLabel>
+            </button>
+          </Pill>
+        ))}
+      </Pills>
+    )
+  }
+
+  function renderValue(item: MediaItem, field: BrowseField) {
     if (item.mediaType === 'film' && field.key === 'collection')
       return <FilmCollectionLinks item={item} />
     const values = getBrowseValues(item)
     const value = values[field.key]
-    if (['artist', 'director', 'actor'].includes(field.key))
-      return (
+    if (['artist', 'director', 'actor', 'writer'].includes(field.key))
+      return item.credits.some((credit) => credit.role === field.key) ? (
         <CreatorLinks
           creators={item.credits.filter((credit) => credit.role === field.key)}
           kind={field.key === 'artist' ? 'artist' : 'person'}
         />
+      ) : (
+        <EmptyValue />
       )
-    if (
-      item.mediaType === 'album' &&
-      ['genre', 'albumTag', 'artistTag'].includes(field.key)
-    )
-      return (
+    if (['genre', 'albumTag', 'artistTag'].includes(field.key)) {
+      const tags =
+        field.key === 'genre'
+          ? item.tags.map((tag) => tag.name)
+          : Array.isArray(value)
+            ? value
+            : []
+      const artistTags =
+        field.key === 'genre' && item.mediaType === 'album'
+          ? item.artistTags
+          : undefined
+      return tags.length || artistTags?.length ? (
         <BrowseTagBadges
           field={field.key}
-          tags={
-            field.key === 'genre'
-              ? item.tags.map((tag) => tag.name)
-              : Array.isArray(value)
-                ? value
-                : []
-          }
-          artistTags={field.key === 'genre' ? item.artistTags : undefined}
+          tags={tags}
+          artistTags={artistTags}
           onFilter={addFilter}
+          max={2}
         />
-      )
-    if (field.type === 'text' && field.filterable && field.key !== 'title') {
-      const values = Array.isArray(value)
-        ? value
-        : typeof value === 'string'
-          ? [value]
-          : []
-      return (
-        <span className="inline-values">
-          {values.map((value) => (
-            <FilterButton
-              type="button"
-              key={value}
-              onClick={() => addFilter({ field: field.key, value })}
-              title={`Filter ${field.label}: ${value}`}
-            >
-              {value}
-            </FilterButton>
-          ))}
-        </span>
+      ) : (
+        <EmptyValue />
       )
     }
+    if (value === undefined || isMissing(value)) return <EmptyValue />
+    if (field.rating && typeof value === 'number') {
+      const rating = getProviderRating(field, values)
+      return rating ? (
+        <span className="ds-mono">{ratingScore(rating)}</span>
+      ) : (
+        <EmptyValue />
+      )
+    }
+    if (field.type === 'text' && field.filterable && field.key !== 'title')
+      return filterValues(field, value)
+    if (field.key === 'runtimeMinutes' && typeof value === 'number')
+      return formatRuntime(value)
     return formatBrowseValue(field, value)
   }
 
-  const sortRating =
-    sortField?.rating && isCompactRating({ display: sortField.rating })
-      ? sortField.key
-      : undefined
-  const showsSortValue =
-    sortField !== undefined &&
-    sortRating === undefined &&
-    !['title', 'artist', 'director', 'releaseDate'].includes(sortBy)
-  function sortValue(item: AlbumListItem | FilmListItem, className?: string) {
-    if (!sortField || !showsSortValue) return null
+  /** The rating a card or row shows: the sorted one, or the headline one. */
+  function shownRating(item: MediaItem) {
+    const values = getBrowseValues(item)
+    const sorted = sortField?.rating ? sortField : undefined
+    const field =
+      sorted ?? fields.find((field) => field.key === headlineRating[mediaType])
+    if (!field?.rating) return null
+    const rating = getProviderRating(field, values)
+    return (
+      <Rating
+        source={ratingSource(field.rating, field.label)}
+        value={rating ? ratingScore(rating) : null}
+        sorted={Boolean(sorted)}
+        title={field.label}
+      />
+    )
+  }
+
+  /** The sorted value, when the card does not already show it. */
+  function sortedValue(item: MediaItem) {
+    if (!sortField || sortField.rating || sortsShownOnCard.has(sortBy))
+      return null
+    const value = getBrowseValues(item)[sortBy]
     return (
       <span
-        className={className}
         title={sortBy === 'dateAdded' ? item.dateAddedSource : sortField.label}
       >
         {sortBy === 'dateAdded' ? 'Added ' : ''}
         {item.mediaType === 'film' && sortBy === 'collection' ? (
           <FilmCollectionLinks item={item} />
+        ) : value === undefined || isMissing(value) ? (
+          <EmptyValue />
         ) : (
-          formatBrowseValue(sortField, getBrowseValues(item)[sortBy])
+          formatBrowseValue(sortField, value)
         )}
       </span>
     )
   }
-  function providerGroup(
-    item: AlbumListItem | FilmListItem,
-    context: 'poster' | 'table',
-    highlightKey?: string,
-    hideSpotify = false,
-  ) {
+
+  function cardMeta(item: MediaItem) {
+    const year = item.releaseDate?.slice(0, 4)
+    const value =
+      (details.includes('sort') && sortedValue(item)) ||
+      (details.includes('ratings') ||
+      (details.includes('sort') && sortField?.rating)
+        ? shownRating(item)
+        : null)
     return (
-      <DetailProviderLinks
-        fields={fields}
-        values={getBrowseValues(item)}
-        links={item.links}
-        references={item.providerReferences}
-        spotifyUrl={
-          item.mediaType === 'album' ? albumSpotifyDestination(item) : undefined
-        }
-        hideSpotify={hideSpotify}
-        context={context}
-        highlightKey={highlightKey}
-      />
+      <>
+        <span>{year ?? <EmptyValue />}</span>
+        {value}
+      </>
     )
   }
-  function titleControl(item: AlbumListItem | FilmListItem, className: string) {
-    return item.mediaType === 'album' ? (
-      <div
-        className={`${styles.itemTitleRow} ${className === 'tile-title' ? styles.tileTitleRow : ''}`}
-      >
-        <AlbumTitle
-          item={item}
-          className={className}
-          onOpenDetails={(event) => openDetail(item.id, event.currentTarget)}
-        />
-        <AlbumSpotifyLink item={item} />
-      </div>
-    ) : (
-      <button
-        className={className}
-        onClick={(event) => openDetail(item.id, event.currentTarget)}
-        title={item.title}
-      >
-        {item.title}
-        {filmIdentificationStatus(item.providerReferences) === 'Needs ID' && (
-          <span className="needs-id">Needs ID</span>
-        )}
-      </button>
-    )
-  }
+
   function albumPlaybackSource(item: AlbumListItem, index: number) {
     const source = (length: number) =>
       createBrowsePlaybackSource({
@@ -675,15 +806,112 @@ export default function MediaBrowser({
       ? query.resolveTotal(index).then(source)
       : source(total)
   }
-  function creatorButtons(item: AlbumListItem | FilmListItem) {
-    const creatorField = item.mediaType === 'album' ? 'artist' : 'director'
-    return (
+  function creators(item: MediaItem) {
+    const role = item.mediaType === 'album' ? 'artist' : 'director'
+    const credits = item.credits.filter((credit) => credit.role === role)
+    return credits.length ? (
       <CreatorLinks
-        creators={item.credits.filter((credit) => credit.role === creatorField)}
+        creators={credits}
         kind={item.mediaType === 'album' ? 'artist' : 'person'}
       />
+    ) : null
+  }
+  function needsId(item: MediaItem) {
+    return (
+      item.mediaType === 'film' &&
+      filmIdentificationStatus(item.providerReferences) === 'Needs ID'
     )
   }
+  function isPlaying(item: MediaItem) {
+    return (
+      item.mediaType === 'album' &&
+      playback.current?.albumId === item.id &&
+      playback.snapshot !== null &&
+      !playback.snapshot.paused
+    )
+  }
+  function titleLink(item: MediaItem, className?: string) {
+    return (
+      <DetailLink
+        kind={mediaType}
+        id={item.id}
+        className={className}
+        title={item.title}
+      >
+        {item.title}
+      </DetailLink>
+    )
+  }
+  function thumbLink(item: MediaItem, size?: number) {
+    return (
+      <DetailLink
+        kind={mediaType}
+        id={item.id}
+        className="browse-thumb-link"
+        tabIndex={-1}
+        aria-hidden="true"
+      >
+        <MediaThumb kind={mediaType} src={item.artworkUrl} size={size} />
+      </DetailLink>
+    )
+  }
+
+  /** The list's trailing values: rating, one number and one date. */
+  const listNumberField =
+    sortField &&
+    sortField.type === 'number' &&
+    !sortField.rating &&
+    sortField.key !== 'runtimeMinutes'
+      ? sortField
+      : fields.find(
+          (field) =>
+            field.key ===
+            (mediaType === 'album' ? 'scrobbles' : 'runtimeMinutes'),
+        )
+  const listDateField =
+    sortField && sortField.type === 'date' && sortField.key !== 'releaseDate'
+      ? sortField
+      : fields.find((field) => field.key === 'dateAdded')
+  const listRatingField = sortField?.rating
+    ? sortField
+    : fields.find((field) => field.key === headlineRating[mediaType])
+  function listMeta(item: MediaItem) {
+    const values = getBrowseValues(item)
+    const number = listNumberField ? values[listNumberField.key] : undefined
+    const date = listDateField ? values[listDateField.key] : undefined
+    return (
+      <>
+        <RowValue kind="rating">{shownRating(item)}</RowValue>
+        <RowValue kind="num">
+          {listNumberField && typeof number === 'number' ? (
+            listNumberField.key === 'runtimeMinutes' ? (
+              formatRuntime(number)
+            ) : (
+              formatBrowseValue(listNumberField, number)
+            )
+          ) : (
+            <EmptyValue />
+          )}
+        </RowValue>
+        <RowValue kind="date">
+          {listDateField && typeof date === 'number' ? (
+            <span
+              title={
+                listDateField.key === 'dateAdded'
+                  ? item.dateAddedSource
+                  : undefined
+              }
+            >
+              {formatBrowseValue(listDateField, date)}
+            </span>
+          ) : (
+            <EmptyValue />
+          )}
+        </RowValue>
+      </>
+    )
+  }
+
   const activeFilterCount =
     Number(Boolean(q)) +
     Number(Boolean(creator)) +
@@ -692,8 +920,8 @@ export default function MediaBrowser({
     (listening?.rules.length ?? 0) +
     Number(Boolean(limitResults))
   const hasActiveFilters = activeFilterCount > 0
-  const activeFilters = hasActiveFilters ? (
-    <div className="active-filters">
+  const activeFilters: ReactNode = hasActiveFilters ? (
+    <>
       {creator && (
         <CreatorScopeChip
           scope={creator}
@@ -702,20 +930,20 @@ export default function MediaBrowser({
         />
       )}
       {limitResults && (
-        <FilterButton
-          className="filter-pill"
-          onClick={() => setParams({ limitResults: null })}
+        <BrowseFilterPill
+          removeLabel={`Remove limit of ${limitResults}`}
+          onRemove={() => setParams({ limitResults: null })}
         >
-          Top {limitResults} <X size={12} />
-        </FilterButton>
+          Top {limitResults}
+        </BrowseFilterPill>
       )}
       {q && (
-        <FilterButton
-          className="filter-pill"
-          onClick={() => setParams({ q: null })}
+        <BrowseFilterPill
+          removeLabel="Remove search"
+          onRemove={() => setParams({ q: null })}
         >
-          Search: {q} <X size={12} />
-        </FilterButton>
+          Search: {q}
+        </BrowseFilterPill>
       )}
       <BrowseFilterChips
         filters={filters}
@@ -730,11 +958,13 @@ export default function MediaBrowser({
             : field?.type === 'date'
               ? formatBrowseValue(field, value)
               : value
+        const label = `${field?.label ?? range.field}: ${bound(range.min)} to ${bound(range.max)}${range.includeMissing ? ' + missing' : ''}`
         return (
-          <FilterButton
+          <BrowseFilterPill
             key={range.field}
-            className="filter-pill"
-            onClick={() =>
+            mode="required"
+            removeLabel={`Remove range ${label}`}
+            onRemove={() =>
               setParams({
                 ranges: JSON.stringify(
                   ranges.filter((item) => item.field !== range.field),
@@ -742,17 +972,16 @@ export default function MediaBrowser({
               })
             }
           >
-            {field?.label}: {bound(range.min)} to {bound(range.max)}
-            {range.includeMissing ? ' + missing' : ''} <X size={12} />
-          </FilterButton>
+            {label}
+          </BrowseFilterPill>
         )
       })}
       {listening?.rules.map((rule, index) => (
-        <FilterButton
+        <BrowseFilterPill
           key={`listening:${index}`}
-          className="filter-pill"
-          aria-label={`Remove listening rule: ${formatListeningRule(rule)}`}
-          onClick={() => {
+          mode={listening.match === 'all' ? 'required' : 'any'}
+          removeLabel={`Remove listening rule: ${formatListeningRule(rule)}`}
+          onRemove={() => {
             const rules = listening.rules.filter((_, i) => i !== index)
             setParams({
               listening: rules.length
@@ -762,22 +991,41 @@ export default function MediaBrowser({
           }}
         >
           {listening.match === 'all' ? 'Required' : 'Any'} ·{' '}
-          {formatListeningRule(rule)} <X size={12} />
-        </FilterButton>
+          {formatListeningRule(rule)}
+        </BrowseFilterPill>
       ))}
-      <button className="clear-filters" onClick={clearFilters}>
+      <Button type="button" variant="link" size="xs" onClick={clearFilters}>
         Clear all
-      </button>
-    </div>
+      </Button>
+    </>
   ) : null
 
+  const emptyState =
+    query.hasTotal && !query.isError && total === 0 ? (
+      hasActiveFilters ? (
+        <State
+          title={`No ${noun.other} match`}
+          action={
+            <Button type="button" onClick={clearFilters}>
+              Clear filters
+            </Button>
+          }
+        />
+      ) : (
+        <State
+          title={`No ${noun.other} yet`}
+          action={
+            <Button type="button" onClick={() => setAdding(true)}>
+              Add {mediaType}
+            </Button>
+          }
+        />
+      )
+    ) : null
+
   return (
-    <section
-      className={`media-browser ${styles.browser}`}
-      aria-label={collection}
-      ref={browser}
-    >
-      <div className="browse-main">
+    <section className="browse-page" aria-label={collection} ref={browser}>
+      <div className="browse-column">
         <BrowseToolbar
           actions={
             <>
@@ -785,9 +1033,9 @@ export default function MediaBrowser({
                 Add {mediaType}
               </Button>
               {mediaType === 'film' && (
-                <Link className="browse-refresh" href="/jobs?refresh=films">
-                  Refresh
-                </Link>
+                <Button asChild variant="ghost">
+                  <Link href="/jobs?refresh=films">Refresh</Link>
+                </Button>
               )}
             </>
           }
@@ -804,7 +1052,7 @@ export default function MediaBrowser({
                   (titleFilters.length > 0 && titleMatches.isError),
                 onOpenItem: openDetail,
                 options,
-                placeholder: 'Search titles, people, tags, sources...',
+                placeholder: `Search ${collection}`,
                 value: draft,
                 onFocus: facets.activate,
                 onValueChange: setDraft,
@@ -823,7 +1071,7 @@ export default function MediaBrowser({
           sort={{
             key: sortBy,
             direction,
-            options: fields,
+            options: listedFields,
             onChange: sort,
             onDirectionChange: (direction) => setParams({ direction }),
           }}
@@ -832,23 +1080,23 @@ export default function MediaBrowser({
             <>
               {hasActiveFilters && (
                 <section
-                  className="filter-panel-active"
+                  className="browse-drawer-active"
                   aria-label="Active filters"
                 >
                   <h3>Active filters</h3>
-                  {activeFilters}
+                  <div className="browse-filter-group">{activeFilters}</div>
                 </section>
               )}
               <FilterPanelSection
                 title="Views"
-                icon={<Settings2 size={16} />}
+                icon={<Settings2 className="ds-i" data-size="sm" aria-hidden />}
                 defaultOpen
               >
-                <div className="filter-panel-fields">
+                <div className="browse-form">
                   {view === 'grid' && (
-                    <label>
-                      Grid density
-                      <select
+                    <label className="ds-field">
+                      <span className="ds-label">Grid density</span>
+                      <Select
                         aria-label="Grid density"
                         value={density}
                         onChange={(event) =>
@@ -860,37 +1108,39 @@ export default function MediaBrowser({
                         <option value="compact">Compact</option>
                         <option value="standard">Standard</option>
                         <option value="roomy">Roomy</option>
-                      </select>
+                      </Select>
                     </label>
                   )}
                   {view === 'grid' && (
-                    <fieldset className="overlay-options">
-                      <legend>On artwork</legend>
-                      {artworkOverlays.map((overlay) => (
-                        <label className="check-label" key={overlay}>
+                    <fieldset className="browse-fieldset">
+                      <legend className="ds-label">On cards</legend>
+                      {cardDetails.map((detail) => (
+                        <label className="ds-checkrow" key={detail}>
                           <input
                             type="checkbox"
-                            checked={overlays.includes(overlay)}
+                            className="ds-check"
+                            checked={details.includes(detail)}
                             onChange={(event) =>
                               setParams({
-                                overlays: formatArtworkOverlays(
-                                  artworkOverlays.filter((key) =>
-                                    key === overlay
+                                overlays: formatCardDetails(
+                                  cardDetails.filter((key) =>
+                                    key === detail
                                       ? event.target.checked
-                                      : overlays.includes(key),
+                                      : details.includes(key),
                                   ),
                                 ),
                               })
                             }
                           />
-                          {overlayLabels[overlay]}
+                          {cardDetailLabels[detail]}
                         </label>
                       ))}
                     </fieldset>
                   )}
-                  <label className="check-label">
+                  <label className="ds-checkrow">
                     <input
                       type="checkbox"
+                      className="ds-check"
                       checked={includeArchived}
                       onChange={(event) =>
                         setParams({
@@ -905,57 +1155,69 @@ export default function MediaBrowser({
               {mediaType === 'album' && (
                 <FilterPanelSection
                   title="Smart playlists"
-                  icon={<ListMusic size={16} />}
+                  icon={
+                    <ListMusic className="ds-i" data-size="sm" aria-hidden />
+                  }
                 >
-                  <label>
-                    Saved view
-                    <select
-                      aria-label="Smart playlist"
-                      value=""
-                      onChange={(event) => {
-                        const view = savedViews.data?.find(
-                          (view) => view.name === event.target.value,
-                        )
-                        if (view)
-                          setParams({
-                            ...clearCreatorScope,
-                            filters: JSON.stringify(view.filters),
-                            ranges: JSON.stringify(view.ranges),
-                            sortBy: view.sortBy,
-                            direction: view.direction,
-                            limitResults: view.limit
-                              ? String(view.limit)
-                              : null,
-                            q: null,
-                            listening: view.listening
-                              ? JSON.stringify(view.listening)
-                              : null,
-                            listeningSort: view.listeningSort
-                              ? JSON.stringify(view.listeningSort)
-                              : null,
-                          })
-                      }}
-                    >
-                      <option value="">
-                        {savedViews.isPending
-                          ? 'Loading...'
-                          : 'Choose a saved view'}
-                      </option>
-                      {savedViews.data?.map((view) => (
-                        <option key={view.name} value={view.name}>
-                          {view.name}
+                  <div className="browse-form">
+                    <label className="ds-field">
+                      <span className="ds-label">Saved view</span>
+                      <Select
+                        aria-label="Smart playlist"
+                        value=""
+                        onChange={(event) => {
+                          const view = savedViews.data?.find(
+                            (view) => view.name === event.target.value,
+                          )
+                          if (view)
+                            setParams({
+                              ...clearCreatorScope,
+                              filters: JSON.stringify(view.filters),
+                              ranges: JSON.stringify(view.ranges),
+                              sortBy: view.sortBy,
+                              direction: view.direction,
+                              limitResults: view.limit
+                                ? String(view.limit)
+                                : null,
+                              q: null,
+                              listening: view.listening
+                                ? JSON.stringify(view.listening)
+                                : null,
+                              listeningSort: view.listeningSort
+                                ? JSON.stringify(view.listeningSort)
+                                : null,
+                            })
+                        }}
+                      >
+                        <option value="">
+                          {savedViews.isPending
+                            ? 'Loading...'
+                            : 'Choose a saved view'}
                         </option>
-                      ))}
-                    </select>
-                  </label>
-                  {savedViews.isError && (
-                    <p role="alert">
-                      Saved views unavailable.{' '}
-                      <button onClick={() => savedViews.refetch()}>
-                        Retry
-                      </button>
-                    </p>
-                  )}
+                        {savedViews.data?.map((view) => (
+                          <option key={view.name} value={view.name}>
+                            {view.name}
+                          </option>
+                        ))}
+                      </Select>
+                    </label>
+                    {savedViews.isError && (
+                      <Notice
+                        tone="danger"
+                        action={
+                          <Button
+                            type="button"
+                            size="xs"
+                            onClick={() => savedViews.refetch()}
+                          >
+                            Retry
+                          </Button>
+                        }
+                      >
+                        Saved views unavailable.
+                      </Notice>
+                    )}
+                  </div>
                 </FilterPanelSection>
               )}
               <RangeEditor
@@ -989,18 +1251,21 @@ export default function MediaBrowser({
               )}
               {view === 'table' && (
                 <BrowseColumnsSection>
-                  {fields.map((field) => (
-                    <label className="check-label" key={field.key}>
+                  {listedFields.map((field) => (
+                    <label className="ds-checkrow" key={field.key}>
                       <input
                         type="checkbox"
-                        checked={columnKeys.includes(field.key)}
+                        className="ds-check"
+                        checked={
+                          field.key === 'title' ||
+                          columnKeys.includes(field.key)
+                        }
                         disabled={field.key === 'title'}
                         onChange={() =>
                           setParams({
-                            columns: (columnKeys.includes(field.key)
-                              ? columnKeys.filter((key) => key !== field.key)
-                              : [...columnKeys, field.key]
-                            ).join(','),
+                            columns: toggleColumn(columnKeys, field.key).join(
+                              ',',
+                            ),
                           })
                         }
                       />
@@ -1015,15 +1280,16 @@ export default function MediaBrowser({
           onViewChange={(next) => setParams({ view: next })}
           count={
             query.countError ? (
-              <button
+              <Button
                 type="button"
-                className="underline"
+                variant="link"
+                size="xs"
                 onClick={query.retryCount}
               >
                 Retry count
-              </button>
+              </Button>
             ) : !query.isCounting ? (
-              `${total.toLocaleString()} ${collection}`
+              formatItemCount(total, noun)
             ) : query.isPending ? (
               'Loading...'
             ) : (
@@ -1034,59 +1300,70 @@ export default function MediaBrowser({
         {railSlot && activeFilters
           ? createPortal(
               <>
-                <h2 className="rail-heading">Filters</h2>
-                {activeFilters}
+                <h2 className="ds-rail-label">Filters</h2>
+                <div className="ds-rail-chips">{activeFilters}</div>
               </>,
               railSlot,
             )
-          : activeFilters}
-        <TableScroll
-          className="browse-scroll"
+          : activeFilters && (
+              <div
+                className="ds-strip"
+                role="group"
+                aria-label="Active filters"
+              >
+                {activeFilters}
+              </div>
+            )}
+        <div
+          className="browse-scroller"
           data-view={view}
+          data-touch={grid.mobile ? '' : undefined}
           ref={scroller}
           role="region"
           aria-label={`${collection} ${view}`}
-          onScroll={(event) =>
+          tabIndex={0}
+          onScroll={(event) => {
             setScroll({
               identity: scrollIdentity,
               top: event.currentTarget.scrollTop,
             })
-          }
+            const sideways = event.currentTarget.scrollLeft > 0
+            if (sideways !== scrolledSideways) setScrolledSideways(sideways)
+          }}
         >
           {query.isError && (
-            <div className="virtual-browse-error">
-              <div role="alert" className="virtual-browse-error-message">
-                Could not load this section.{' '}
-                <Button size="md" variant="primary" onClick={query.retry}>
-                  Retry
-                </Button>
-              </div>
+            <div className="browse-notice">
+              <Notice
+                tone="danger"
+                action={
+                  <Button type="button" size="xs" onClick={query.retry}>
+                    Retry
+                  </Button>
+                }
+              >
+                Could not load {collection}.
+              </Notice>
             </div>
           )}
           <span className="sr-only" role="status">
             {query.isFetching ? 'Loading items' : ''}
           </span>
-          {query.hasTotal && !query.isError && total === 0 && (
-            <div className="browse-empty">
-              No matches. <button onClick={clearFilters}>Clear filters</button>
-            </div>
-          )}
+          {emptyState}
           {view === 'grid' ? (
             <div
-              className="virtual-browse-grid"
-              style={{ height: Math.max(0, query.height - grid.gap) }}
+              className="browse-extent"
+              style={{
+                height:
+                  query.height > 0 ? query.height - grid.gap + grid.padding : 0,
+              }}
             >
-              <div
-                className={`media-grid ${mediaType} ${styles.grid}`}
-                data-mobile={grid.mobile}
+              <CardGrid
+                className="browse-slots"
+                data-density={density}
                 style={{
-                  gridTemplateColumns: `repeat(${gridColumns}, minmax(0, 1fr))`,
-                  gap: grid.gap,
-                  gridAutoRows: grid.cardHeight,
-                  position: 'absolute',
                   top: padTop,
-                  left: 0,
-                  right: 0,
+                  gridTemplateColumns: `repeat(${gridColumns}, minmax(0, 1fr))`,
+                  gridAutoRows: grid.cardHeight,
                 }}
               >
                 {slots.map(({ item, index }) => {
@@ -1094,51 +1371,60 @@ export default function MediaBrowser({
                     return (
                       <div
                         key={`slot-${index}`}
-                        className="virtual-browse-placeholder"
+                        className="ds-card"
                         aria-hidden="true"
-                        style={{ height: grid.cardHeight }}
                       >
-                        <div
-                          className={`virtual-browse-shimmer ${mediaType === 'album' ? 'aspect-square' : 'aspect-[2/3]'}`}
-                        />
-                        <div className="virtual-browse-line virtual-browse-shimmer" />
-                        <div className="virtual-browse-line virtual-browse-line-short virtual-browse-shimmer" />
+                        <span
+                          className="ds-art"
+                          data-ratio={
+                            mediaType === 'film' ? 'poster' : undefined
+                          }
+                        >
+                          <Skeleton width="100%" height="100%" />
+                        </span>
+                        <Skeleton height={12} width="80%" />
+                        <Skeleton height={10} width="55%" />
                       </div>
                     )
-                  const hideSpotify =
-                    item.mediaType === 'album' &&
-                    Boolean(albumSpotifyDestination(item))
                   return (
-                    <article
-                      className="media-tile"
+                    <Card
                       key={item.id}
                       data-item-index={index}
                       data-selected={item.id === selectedId}
-                      style={{ height: grid.cardHeight }}
-                    >
-                      <div className="tile-artwork">
-                        <button
-                          className="art-button"
-                          aria-label={`Open details for ${item.title}`}
-                          onClick={(event) =>
-                            openDetail(item.id, event.currentTarget)
+                      selected={item.id === selectedId}
+                      playing={isPlaying(item)}
+                      art={
+                        <MediaArt
+                          kind={mediaType}
+                          src={item.artworkUrl}
+                          badge={needsId(item) ? 'Needs ID' : undefined}
+                          overlay={
+                            item.mediaType === 'album' ? (
+                              <TilePlayControls
+                                album={item}
+                                source={() => albumPlaybackSource(item, index)}
+                              />
+                            ) : undefined
                           }
                         >
-                          <MediaArtwork
-                            src={item.artworkUrl}
-                            alt={item.title}
-                            fallbackLabel={item.title}
-                            imageClassName={
-                              mediaType === 'album'
-                                ? 'aspect-square object-cover w-full'
-                                : 'aspect-[2/3] object-cover w-full'
-                            }
-                            fallbackClassName={`${mediaType === 'album' ? 'aspect-square' : 'aspect-[2/3]'} ${styles.fallback}`}
-                          />
-                        </button>
-                        {overlays.includes('sort') &&
-                          sortValue(item, 'tile-sort')}
-                        {overlays.includes('tags') && (
+                          {(image) => (
+                            <DetailLink
+                              kind={mediaType}
+                              id={item.id}
+                              className="browse-art-link"
+                              tabIndex={-1}
+                              aria-hidden="true"
+                            >
+                              {image}
+                            </DetailLink>
+                          )}
+                        </MediaArt>
+                      }
+                      title={<CardTitle>{titleLink(item)}</CardTitle>}
+                      by={creators(item) ?? <EmptyValue />}
+                      meta={cardMeta(item)}
+                      tags={
+                        showTags ? (
                           <BrowseTagBadges
                             tags={item.tags.map((tag) => tag.name)}
                             artistTags={
@@ -1146,123 +1432,83 @@ export default function MediaBrowser({
                                 ? item.artistTags
                                 : undefined
                             }
-                            className="tile-tags"
                             onFilter={addFilter}
+                            max={mediaType === 'film' ? 1 : 2}
                           />
-                        )}
-                        {overlays.includes('ratings') &&
-                          providerGroup(
-                            item,
-                            'poster',
-                            overlays.includes('sort') ? sortRating : undefined,
-                            hideSpotify,
-                          )}
-                        {item.mediaType === 'album' && (
-                          <TilePlayControls
-                            album={item}
-                            source={() => albumPlaybackSource(item, index)}
-                          />
-                        )}
-                      </div>
-                      {titleControl(item, 'tile-title')}
-                      <div className="tile-byline">
-                        <span>{creatorButtons(item)}</span>
-                        <span>{item.releaseDate?.slice(0, 4)}</span>
-                      </div>
-                      {tagsBelowArtwork && (
-                        <BrowseTagBadges
-                          tags={item.tags.map((tag) => tag.name)}
-                          artistTags={
-                            item.mediaType === 'album'
-                              ? item.artistTags
-                              : undefined
-                          }
-                          onFilter={addFilter}
-                        />
-                      )}
-                      {tileExtraRow && (
-                        <div className="tile-extra">
-                          {!overlays.includes('sort') && sortValue(item)}
-                          {!overlays.includes('ratings') &&
-                            providerGroup(
-                              item,
-                              'table',
-                              sortRating,
-                              hideSpotify,
-                            )}
-                        </div>
-                      )}
-                    </article>
+                        ) : undefined
+                      }
+                    />
                   )
                 })}
-              </div>
+              </CardGrid>
             </div>
           ) : view === 'list' ? (
-            <div
-              className="virtual-browse-grid"
-              style={{ height: query.height }}
-            >
-              <div
-                className={`media-list ${mediaType} ${styles.mediaRows}`}
-                data-mobile={grid.mobile}
-                style={{ top: padTop }}
-              >
-                {slots.map(({ item, index }) => {
-                  if (!item)
-                    return (
-                      <div
-                        key={`slot-${index}`}
-                        className="list-row virtual-browse-placeholder"
-                        aria-hidden="true"
-                        style={{ height: rowHeight }}
-                      >
-                        <div className="list-thumb virtual-browse-shimmer" />
-                        <div className="virtual-browse-line virtual-browse-shimmer" />
-                      </div>
-                    )
-                  return (
-                    <article
-                      className="list-row"
-                      key={item.id}
-                      data-item-index={index}
-                      data-selected={item.id === selectedId}
-                      style={{ height: rowHeight }}
-                    >
-                      <button
-                        className="list-thumb art-button"
-                        aria-label={`Open details for ${item.title}`}
-                        onClick={(event) =>
-                          openDetail(item.id, event.currentTarget)
+            <List compact={grid.mobile}>
+              {!grid.mobile && (
+                <ListHead
+                  title={mediaType === 'album' ? 'Album' : 'Film'}
+                  tags="Tags"
+                  playWidth={mediaType === 'album' ? 50 : 0}
+                  meta={
+                    <>
+                      <RowValue kind="rating">
+                        {listRatingField?.rating
+                          ? ratingSource(
+                              listRatingField.rating,
+                              listRatingField.label,
+                            )
+                          : ''}
+                      </RowValue>
+                      <RowValue kind="num">{listNumberField?.label}</RowValue>
+                      <RowValue kind="date">{listDateField?.label}</RowValue>
+                    </>
+                  }
+                />
+              )}
+              <div className="browse-extent" style={{ height: query.height }}>
+                <div className="browse-slots" style={{ top: padTop }}>
+                  {slots.map(({ item, index }) =>
+                    item ? (
+                      <ListRow
+                        key={item.id}
+                        data-item-index={index}
+                        data-selected={item.id === selectedId}
+                        selected={item.id === selectedId}
+                        playing={isPlaying(item)}
+                        thumb={thumbLink(item, 40)}
+                        title={<RowTitle>{titleLink(item)}</RowTitle>}
+                        by={
+                          <>
+                            {creators(item)}
+                            {item.credits.some(
+                              (credit) =>
+                                credit.role ===
+                                (mediaType === 'album' ? 'artist' : 'director'),
+                            ) && item.releaseDate
+                              ? ' · '
+                              : ''}
+                            {item.releaseDate?.slice(0, 4)}
+                            {sortField?.type === 'text' &&
+                              !sortsShownOnCard.has(sortBy) && (
+                                <> · {sortedValue(item)}</>
+                              )}
+                            {needsId(item) && (
+                              <>
+                                {' '}
+                                <Pill tone="attention">Needs ID</Pill>
+                              </>
+                            )}
+                          </>
                         }
-                      >
-                        <MediaArtwork
-                          src={item.artworkUrl}
-                          alt=""
-                          fallbackLabel=""
-                          imageClassName="list-thumb-image"
-                          fallbackClassName="list-thumb-image"
-                        />
-                      </button>
-                      <div className={styles.listContent}>
-                        <div className={styles.listTitle}>
-                          {item.mediaType === 'album' && (
+                        play={
+                          item.mediaType === 'album' ? (
                             <AlbumInlinePlayButton
                               album={item}
                               source={() => albumPlaybackSource(item, index)}
                             />
-                          )}
-                          {titleControl(item, 'table-title')}
-                        </div>
-                        <div className="list-byline">
-                          <span className="inline-values">
-                            {creatorButtons(item)}
-                          </span>
-                          <span className="list-year">
-                            {item.releaseDate?.slice(0, 4)}
-                          </span>
-                          {sortValue(item, 'list-sort')}
-                        </div>
-                        {item.mediaType === 'album' && (
+                          ) : undefined
+                        }
+                        tags={
                           <BrowseTagBadges
                             tags={item.tags.map((tag) => tag.name)}
                             artistTags={
@@ -1271,236 +1517,142 @@ export default function MediaBrowser({
                                 : undefined
                             }
                             onFilter={addFilter}
+                            max={3}
                           />
-                        )}
+                        }
+                        meta={listMeta(item)}
+                      />
+                    ) : (
+                      <div
+                        key={`slot-${index}`}
+                        className="ds-row"
+                        aria-hidden="true"
+                      >
+                        <Skeleton width={40} height={40} />
+                        <div className="ds-row-main">
+                          <Skeleton height={12} width="60%" />
+                          <Skeleton height={10} width="40%" />
+                        </div>
                       </div>
-                      <div className={styles.listProviders}>
-                        {providerGroup(
-                          item,
-                          'table',
-                          sortRating,
-                          item.mediaType === 'album' &&
-                            Boolean(albumSpotifyDestination(item)),
-                        )}
-                      </div>
-                    </article>
-                  )
-                })}
+                    ),
+                  )}
+                </div>
               </div>
-            </div>
+            </List>
           ) : (
             <table
-              className="browse-table"
+              className="ds-table"
+              data-layout="fixed"
+              data-scrolled={scrolledSideways ? '' : undefined}
               aria-rowcount={query.hasTotal ? total + 1 : undefined}
               style={{
-                width: columns.reduce(
+                minWidth: columns.reduce(
                   (sum, field) => sum + widthFor(field),
-                  providersWidth,
+                  0,
                 ),
               }}
             >
               <colgroup>
-                {columns.map((field) => (
-                  <col key={field.key} style={{ width: widthFor(field) }} />
+                {columns.map((field, column) => (
+                  <col
+                    key={field.key}
+                    style={{
+                      width:
+                        column === columns.length - 1 &&
+                        pillColumns.has(field.key) &&
+                        widths[field.key] === undefined
+                          ? undefined
+                          : widthFor(field),
+                    }}
+                  />
                 ))}
-                <col style={{ width: providersWidth }} />
               </colgroup>
-              <thead>
-                <tr>
-                  {columns.map((field) => (
-                    <th
+              <TableHeader>
+                <TableRow>
+                  {columns.map((field, column) => (
+                    <BrowseSortHead
                       key={field.key}
-                      aria-sort={
-                        sortBy === field.key
-                          ? direction === 'asc'
-                            ? 'ascending'
-                            : 'descending'
-                          : 'none'
+                      label={columnLabel(field)}
+                      active={sortBy === field.key}
+                      direction={direction}
+                      onSort={() => sort(field.key)}
+                      width={widthFor(field)}
+                      onWidthChange={(width) =>
+                        setWidths({ ...widths, [field.key]: width })
                       }
-                    >
-                      <button onClick={() => sort(field.key)}>
-                        {field.label}
-                        {sortBy === field.key
-                          ? direction === 'asc'
-                            ? ' ↑'
-                            : ' ↓'
-                          : ''}
-                      </button>
-                      <span
-                        className="column-resizer"
-                        role="separator"
-                        aria-label={`Resize ${field.label}`}
-                        aria-orientation="vertical"
-                        tabIndex={0}
-                        onKeyDown={(event) => {
-                          if (
-                            event.key === 'ArrowLeft' ||
-                            event.key === 'ArrowRight'
-                          ) {
-                            event.preventDefault()
-                            saveWidths({
-                              ...widths,
-                              [field.key]: Math.max(
-                                70,
-                                Math.min(
-                                  650,
-                                  widthFor(field) +
-                                    (event.key === 'ArrowRight' ? 10 : -10),
-                                ),
-                              ),
-                            })
-                          }
-                        }}
-                        onPointerDown={(event) => {
-                          event.currentTarget.setPointerCapture(event.pointerId)
-                          resize.current = {
-                            key: field.key,
-                            x: event.clientX,
-                            width: widthFor(field),
-                          }
-                        }}
-                        onPointerMove={(event) => {
-                          if (resize.current?.key === field.key)
-                            setWidths({
-                              ...widths,
-                              [field.key]: Math.max(
-                                70,
-                                Math.min(
-                                  650,
-                                  resize.current.width +
-                                    event.clientX -
-                                    resize.current.x,
-                                ),
-                              ),
-                            })
-                        }}
-                        onPointerUp={() => {
-                          resize.current = null
-                          saveWidths(widths)
-                        }}
-                      />
-                    </th>
-                  ))}
-                  <th>Providers</th>
-                </tr>
-              </thead>
-              <tbody>
-                {padTop > 0 && (
-                  <tr aria-hidden="true">
-                    <td
-                      colSpan={columnCount}
-                      style={{ height: padTop, padding: 0, border: 0 }}
+                      onWidthCommit={(width) =>
+                        saveWidths({ ...widths, [field.key]: width })
+                      }
+                      align={field.type === 'text' ? undefined : 'end'}
+                      sticky={column === 0 ? 0 : undefined}
+                      stickyEdge={column === 0}
                     />
-                  </tr>
-                )}
+                  ))}
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                <BrowseSpacerRow columns={columns.length} height={padTop} />
                 {slots.map(({ item, index }) =>
                   item ? (
-                    <tr
+                    <TableRow
                       key={item.id}
                       data-item-index={index}
                       data-selected={item.id === selectedId}
+                      selected={item.id === selectedId}
+                      data-state={isPlaying(item) ? 'playing' : undefined}
                       aria-rowindex={index + 2}
-                      onDoubleClick={(event) => {
-                        if (
-                          event.target instanceof Element &&
-                          event.target.closest(
-                            'a, button, input, select, textarea',
-                          )
-                        )
-                          return
-                        openDetail(
-                          item.id,
-                          event.currentTarget.querySelector<HTMLElement>(
-                            '.table-title',
-                          ) ?? undefined,
-                        )
-                      }}
                     >
-                      {columns.map((field) => (
-                        <td
-                          key={field.key}
-                          className={field.type === 'text' ? '' : 'numeric'}
-                          title={
-                            field.key === 'dateAdded'
-                              ? item.dateAddedSource
-                              : formatBrowseValue(
-                                  field,
-                                  getBrowseValues(item)[field.key],
-                                )
-                          }
-                        >
-                          <div
-                            className={`browse-cell ${item.mediaType === 'album' && (field.key === 'title' || field.key === 'genre') ? 'flex items-center gap-2' : ''}`}
+                      {columns.map((field, column) =>
+                        field.key === 'title' ? (
+                          <TableCell
+                            key={field.key}
+                            sticky={column === 0 ? 0 : undefined}
+                            stickyEdge={column === 0}
                           >
-                            {field.key === 'title' &&
-                            item.mediaType === 'album' ? (
-                              <>
+                            <span className="ds-cell-id">
+                              {thumbLink(item)}
+                              {titleLink(item, 'ds-cell-title')}
+                              {needsId(item) && (
+                                <Pill tone="attention">Needs ID</Pill>
+                              )}
+                              {item.mediaType === 'album' && (
                                 <AlbumInlinePlayButton
                                   album={item}
                                   source={() =>
                                     albumPlaybackSource(item, index)
                                   }
                                 />
-                                {titleControl(item, 'table-title')}
-                              </>
-                            ) : field.key === 'title' ? (
-                              <button
-                                className="table-title"
-                                onClick={(event) =>
-                                  openDetail(item.id, event.currentTarget)
-                                }
-                              >
-                                {item.title}
-                                {item.mediaType === 'film' &&
-                                  filmIdentificationStatus(
-                                    item.providerReferences,
-                                  ) === 'Needs ID' && (
-                                    <span className="needs-id">Needs ID</span>
-                                  )}
-                              </button>
-                            ) : (
-                              renderValue(item, field)
-                            )}
-                          </div>
-                        </td>
-                      ))}
-                      <td>
-                        {providerGroup(
-                          item,
-                          'table',
-                          sortRating,
-                          item.mediaType === 'album' &&
-                            columns.some((field) => field.key === 'title') &&
-                            Boolean(albumSpotifyDestination(item)),
-                        )}
-                      </td>
-                    </tr>
+                              )}
+                            </span>
+                          </TableCell>
+                        ) : (
+                          <TableCell
+                            key={field.key}
+                            align={field.type === 'text' ? undefined : 'end'}
+                            title={
+                              field.key === 'dateAdded'
+                                ? item.dateAddedSource
+                                : undefined
+                            }
+                          >
+                            {renderValue(item, field)}
+                          </TableCell>
+                        ),
+                      )}
+                    </TableRow>
                   ) : (
-                    <tr
+                    <BrowsePlaceholderRow
                       key={`slot-${index}`}
-                      aria-hidden="true"
-                      className="virtual-browse-placeholder"
-                    >
-                      {Array.from({ length: columnCount }, (_, column) => (
-                        <td key={column}>
-                          <div className="virtual-browse-line virtual-browse-shimmer" />
-                        </td>
-                      ))}
-                    </tr>
+                      columns={columns.length}
+                      sticky
+                    />
                   ),
                 )}
-                {padBottom > 0 && (
-                  <tr aria-hidden="true">
-                    <td
-                      colSpan={columnCount}
-                      style={{ height: padBottom, padding: 0, border: 0 }}
-                    />
-                  </tr>
-                )}
-              </tbody>
+                <BrowseSpacerRow columns={columns.length} height={padBottom} />
+              </TableBody>
             </table>
           )}
-        </TableScroll>
+        </div>
       </div>
       {adding && (
         <ManualMediaAdd

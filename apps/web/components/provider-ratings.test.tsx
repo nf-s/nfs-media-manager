@@ -68,7 +68,7 @@ test('cards and rows only show selected public ratings and explicitly opted-in r
   assert.equal((detail.match(/<a /g) ?? []).length, ratings.length)
 })
 
-test('trailer uses a local YouTube logo and safe external anchor even without ratings', () => {
+test('trailer is a neutral link with a safe external anchor even without ratings', () => {
   const html = renderToStaticMarkup(
     <ProviderRatings
       ratings={[]}
@@ -77,7 +77,8 @@ test('trailer uses a local YouTube logo and safe external anchor even without ra
     />,
   )
   assert.match(html, /href="https:\/\/www.youtube.com\/watch\?v=Abc_123-xyz"/)
-  assert.match(html, /\/icons\/ratings\/youtube.svg/)
+  assert.match(html, />Trailer<\/a>/)
+  assert.doesNotMatch(html, /<img/)
   assert.match(html, /Watch trailer on YouTube/)
   assert.match(html, /target="_blank"/)
   assert.match(html, /rel="noopener noreferrer"/)
@@ -129,18 +130,18 @@ test('rating anchors open the source without external arrows or nested buttons',
   assert.doesNotMatch(html, /<button|<svg|arrow-up-right/)
 })
 
-test('missing score renders only the provider mark, not a placeholder or zero', () => {
+test('missing score renders only the neutral source label, not a placeholder or zero', () => {
   const html = renderToStaticMarkup(
     <ProviderRatingBadge
       rating={{ ...rating, score: undefined, votes: undefined }}
     />,
   )
-  assert.match(html, /letterboxd.svg/)
+  assert.match(html, /<span class="ds-rating"><i>Letterboxd<\/i><\/span>/)
   assert.match(html, /No rating available/)
-  assert.doesNotMatch(html, /class="rating-score|<button|arrow-up-right/)
+  assert.doesNotMatch(html, /<img|<button|arrow-up-right/)
 })
 
-test('missing Metascore has a real icon rather than a colored zero', () => {
+test('a missing Metascore has no coloured badge', () => {
   const html = renderToStaticMarkup(
     <ProviderRatingBadge
       rating={{
@@ -150,24 +151,45 @@ test('missing Metascore has a real icon rather than a colored zero', () => {
       }}
     />,
   )
-  assert.match(html, /metacritic.svg/)
-  assert.doesNotMatch(html, /rating-negative|rating-positive|rating-mixed/)
+  assert.match(html, /<i>Metacritic<\/i>/)
+  assert.doesNotMatch(html, /<img|rating-negative|rating-positive|rating-mixed/)
 })
 
-test('all new ratings have local marks, including audience popcorn', () => {
-  for (const [provider, icon] of [
-    ['metacriticuser', 'metacritic'],
-    ['trakt', 'trakt'],
-    ['letterboxd', 'letterboxd'],
-    ['rottentomatoes-audience', 'popcorn'],
+test('ratings show a neutral short source and the score, never a brand mark', () => {
+  for (const [provider, source] of [
+    ['metacriticuser', 'MC users'],
+    ['trakt', 'Trakt'],
+    ['letterboxd', 'Letterboxd'],
+    ['rottentomatoes-audience', 'RT audience'],
+    ['imdb', 'IMDb'],
+    ['rym', 'RYM'],
   ]) {
-    if (!provider || !icon) throw new Error('Incomplete icon fixture')
+    if (!provider || !source) throw new Error('Incomplete label fixture')
     const html = renderToStaticMarkup(
       <ProviderRatingBadge
         rating={{ ...rating, display: { provider, scale: 100 } }}
       />,
     )
-    assert.ok(html.includes(`/icons/ratings/${icon}.svg`))
-    assert.doesNotMatch(html, /rating-label/)
+    assert.ok(html.includes(`<span class="ds-rating"><i>${source}</i>4.2`))
+    assert.doesNotMatch(html, /<img|rating-label|rating-badge/)
   }
+  const sorted = renderToStaticMarkup(
+    <ProviderRatingBadge rating={rating} highlighted />,
+  )
+  assert.match(sorted, /class="ds-rating" data-sorted=""/)
+})
+
+test('the detail overview shows each rating as a card with its score and source', () => {
+  const html = renderToStaticMarkup(
+    <ProviderRatings
+      ratings={[rating, { ...rating, key: 'empty', score: undefined }]}
+      context="detail"
+    />,
+  )
+  assert.match(html, /class="ds-ratings"/)
+  assert.match(
+    html,
+    /<span class="ds-ratingcard"><b>4\.2<\/b><span>Letterboxd<\/span><\/span>/,
+  )
+  assert.match(html, /<span class="ds-ratingcard"><b>–<\/b>/)
 })

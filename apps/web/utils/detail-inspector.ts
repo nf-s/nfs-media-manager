@@ -22,6 +22,7 @@ const DetailTargetSchema = z.object({
     'channel',
     'job',
     'user',
+    'tag',
   ]),
   id: z.string().min(1).max(500),
 })
@@ -29,8 +30,39 @@ export type DetailTarget = z.infer<typeof DetailTargetSchema>
 
 const DetailEntrySchema = DetailTargetSchema.extend({
   view: z.string().max(4000).optional(),
-}).refine(({ kind, id }) => kind !== 'user' || id === userDetailId)
+})
+  .refine(({ kind, id }) => kind !== 'user' || id === userDetailId)
+  .refine(({ kind, id }) => kind !== 'tag' || parseTagDetailId(id) !== null)
 export type DetailEntry = z.infer<typeof DetailEntrySchema>
+
+/** A tag's drawer entry carries its library, because tag IDs are per library. */
+export function tagDetailId(mediaType: 'album' | 'film', id: string) {
+  return `${mediaType}:${id}`
+}
+
+export function parseTagDetailId(
+  value: string,
+): { mediaType: 'album' | 'film'; id: string } | null {
+  const match = /^(album|film):(.+)$/s.exec(value)
+  const mediaType = match?.[1]
+  const id = match?.[2]
+  if (!id || (mediaType !== 'album' && mediaType !== 'film')) return null
+  return { mediaType, id }
+}
+
+/**
+ * The open tab of a detail: one of `tabs`, an older tab value mapped by
+ * `aliases`, or else the first tab.
+ */
+export function detailTab<Tab extends string>(
+  value: string | null,
+  tabs: readonly [Tab, ...Tab[]],
+  aliases: Readonly<Record<string, Tab>> = {},
+): Tab {
+  const direct = tabs.find((tab) => tab === value)
+  if (direct) return direct
+  return (value === null ? undefined : aliases[value]) ?? tabs[0]
+}
 
 export function sameDetail(
   a: DetailTarget | undefined,
@@ -83,6 +115,7 @@ function legacyDetail(pathname: string, params: URLSearchParams) {
     channel: [],
     job: ['jobId', 'tab'],
     user: [],
+    tag: [],
   }[parsed.data.kind]
   const view = new URLSearchParams()
   for (const key of keys) {
@@ -143,6 +176,15 @@ export function detailEntryParams(
 export function detailPageHref(target: DetailTarget, view?: URLSearchParams) {
   if (target.kind === 'user')
     return detailLocation('/user', new URLSearchParams(view))
+  if (target.kind === 'tag') {
+    const tag = parseTagDetailId(target.id)
+    const params = new URLSearchParams(view)
+    if (tag) {
+      params.set('mediaType', tag.mediaType)
+      params.set('tag', tag.id)
+    }
+    return detailLocation('/tags', params)
+  }
   const id = encodeURIComponent(target.id)
   const collection = target.kind === 'person' ? 'people' : `${target.kind}s`
   return detailLocation(`/${collection}/${id}`, new URLSearchParams(view))

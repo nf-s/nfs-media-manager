@@ -97,7 +97,10 @@ function render({
 }
 
 function collectionDestination(html: string) {
-  const href = /href="([^"]+)"[^>]*>Synthetic collection<\/a>/.exec(html)?.[1]
+  const href =
+    /href="([^"]+)"[^>]*><span class="ds-pill-label">Synthetic collection</.exec(
+      html,
+    )?.[1] ?? /href="([^"]+)"[^>]*>Synthetic collection<\/a>/.exec(html)?.[1]
   assert.ok(href, 'Expected the collection name to link to its inspector')
   return new URL(href.replaceAll('&amp;', '&'), 'http://localhost')
 }
@@ -124,8 +127,13 @@ test('film details open the stored collection on top of the current inspector en
     entry,
     { kind: 'collection', id: collection.id },
   ])
-  assert.ok(html.includes(`href="${sourceUrl}"`))
-  assert.match(html, /<span class="metadata-tag">Name-only collection<\/span>/)
+  // Where a collection comes from is answered in Sources, not beside the pill.
+  assert.ok(!html.includes(`href="${sourceUrl}"`))
+  assert.match(
+    html,
+    /<span class="ds-pill" data-size="md"><span class="ds-pill-label">Name-only collection<\/span><\/span>/,
+  )
+  assert.match(html, /<h3>Collections<\/h3>/)
 })
 
 for (const view of ['table', 'list', 'grid']) {

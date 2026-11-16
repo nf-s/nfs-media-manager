@@ -14,6 +14,10 @@ import type {
   ManualMediaSearchResult,
 } from '@repo/schemas/manual-add'
 import { Button } from '@repo/ui/components/ui/button'
+import { DetailHeader } from '@repo/ui/components/ds/detail-header'
+import { Section } from '@repo/ui/components/ds/facts'
+import { Notice, Skeleton } from '@repo/ui/components/ds/feedback'
+import { formatItemCount } from '@repo/ui/lib/format'
 import {
   Tabs,
   TabsContent,
@@ -35,6 +39,9 @@ import { invalidateManualMediaAddition } from '@/utils/manual-media-add'
 import { addAndLinkLastfmAlbum } from '@/utils/lastfm-album-add'
 
 export type LastfmLinkPanelMode = 'library' | 'new'
+
+const SCROBBLES = { one: 'scrobble', other: 'scrobbles' }
+const ALBUMS = { one: 'album', other: 'albums' }
 
 type SearchSnapshot = {
   query: string
@@ -98,21 +105,21 @@ function ScrobbleSpotifySearch({
   const result = matchingCache?.result ?? stored.data?.result ?? undefined
   return (
     <>
-      {stored.isPending && <p role="status">Loading saved Spotify search…</p>}
+      {stored.isPending && <Skeleton width="60%" height={16} />}
       {stored.isError && (
-        <p role="alert">
-          Could not load the saved Spotify search.{' '}
-          <button
-            type="button"
-            className="underline"
-            onClick={() => stored.refetch()}
-          >
-            Retry
-          </button>
-        </p>
+        <Notice
+          tone="danger"
+          action={
+            <Button size="xs" onClick={() => stored.refetch()}>
+              Retry
+            </Button>
+          }
+        >
+          Could not load the saved Spotify search.
+        </Notice>
       )}
       {job && (
-        <p role={running ? 'status' : undefined} className="text-sm">
+        <p role={running ? 'status' : undefined} className="ds-help">
           {running
             ? `Spotify search ${job.status}. `
             : job.errorMessage
@@ -226,7 +233,7 @@ export default function LastfmLinkPanel({
   return (
     <dialog
       ref={dialog}
-      className="tag-drawer"
+      className="sec-drawer"
       aria-labelledby={titleId}
       onCancel={(event) => {
         event.preventDefault()
@@ -239,103 +246,117 @@ export default function LastfmLinkPanel({
       }}
       onKeyDown={(event) => event.stopPropagation()}
     >
-      <div className="tag-drawer-inner">
-        <div className="detail-topbar">
-          <span>Scrobble link</span>
-          <button
-            type="button"
+      <div className="ds-inspector">
+        <div className="ds-inspector-bar">
+          <span className="ds-crumbs">
+            <b>Scrobble link</b>
+          </span>
+          <Button
+            variant="ghost"
+            icon
             aria-label="Close scrobble link"
             disabled={locallyBusy}
             onClick={onClose}
           >
-            <X size={20} />
-          </button>
+            <X className="ds-i" aria-hidden="true" />
+          </Button>
         </div>
-        <div className="tag-drawer-body">
-          <h1 id={titleId}>{albumName ?? 'No album name'}</h1>
-          <p className="break-words">{group.artistName}</p>
-          <p className="quiet text-xs">
-            {group.scrobbles.toLocaleString()} scrobbles ·{' '}
-            {lastfmLinkReasonLabels[group.reason]}
-          </p>
-          {group.strategy && (
-            <p className="quiet text-xs">
-              {lastfmLinkStrategyLabels[group.strategy]}
-            </p>
-          )}
+        <div className="ds-inspector-body sec-stack">
+          <DetailHeader
+            kind="Scrobbled album"
+            title={<span id={titleId}>{albumName ?? 'No album name'}</span>}
+            by={group.artistName}
+            facts={[
+              formatItemCount(group.scrobbles, SCROBBLES),
+              lastfmLinkReasonLabels[group.reason],
+              group.strategy ? lastfmLinkStrategyLabels[group.strategy] : null,
+            ]}
+            actions={
+              albumName !== null &&
+              (linked ||
+                group.reason === 'manual' ||
+                group.reason === 'excluded') && (
+                <>
+                  {linked && (
+                    <Button
+                      size="md"
+                      disabled={busy}
+                      onClick={() =>
+                        update.mutate(
+                          {
+                            action: 'unlink',
+                            artistName: group.artistName,
+                            albumName,
+                          },
+                          { onSuccess: onClose },
+                        )
+                      }
+                    >
+                      Unlink
+                    </Button>
+                  )}
+                  {(group.reason === 'manual' ||
+                    group.reason === 'excluded') && (
+                    <Button
+                      size="md"
+                      disabled={busy}
+                      onClick={() =>
+                        update.mutate(
+                          {
+                            action: 'auto',
+                            artistName: group.artistName,
+                            albumName,
+                          },
+                          { onSuccess: onClose },
+                        )
+                      }
+                    >
+                      Automatic
+                    </Button>
+                  )}
+                </>
+              )
+            }
+          />
           {linked && group.album && (
-            <p className="text-sm">
+            <p className="sec-line">
               Library album:{' '}
-              <AlbumReferencePlayButton
-                id={group.album.id}
-                title={group.album.title}
-              />
-              <DetailLink
-                className="underline"
-                kind="album"
-                id={group.album.id}
-              >
+              <DetailLink kind="album" id={group.album.id}>
                 {group.album.title}
                 {group.album.artists.length
                   ? ` — ${group.album.artists.join(', ')}`
                   : ''}
               </DetailLink>
+              <AlbumReferencePlayButton
+                id={group.album.id}
+                title={group.album.title}
+              />
             </p>
           )}
           {albumName !== null && (
             <>
               {backgroundError && (
-                <div role="alert">
-                  <p>{backgroundError}</p>
-                  {onRetry && (
-                    <Button onClick={onRetry}>Retry add and link</Button>
-                  )}
-                </div>
+                <Notice
+                  tone="danger"
+                  action={
+                    onRetry && (
+                      <Button size="xs" onClick={onRetry}>
+                        Retry add and link
+                      </Button>
+                    )
+                  }
+                >
+                  {backgroundError}
+                </Notice>
               )}
               {backgroundPending && (
-                <p role="status">Adding and linking this album…</p>
+                <Notice>Adding and linking this album…</Notice>
               )}
-              <div className="flex flex-wrap gap-2">
-                {linked && (
-                  <Button
-                    disabled={busy}
-                    onClick={() =>
-                      update.mutate(
-                        {
-                          action: 'unlink',
-                          artistName: group.artistName,
-                          albumName,
-                        },
-                        { onSuccess: onClose },
-                      )
-                    }
-                  >
-                    Unlink
-                  </Button>
-                )}
-                {(group.reason === 'manual' || group.reason === 'excluded') && (
-                  <Button
-                    disabled={busy}
-                    onClick={() =>
-                      update.mutate(
-                        {
-                          action: 'auto',
-                          artistName: group.artistName,
-                          albumName,
-                        },
-                        { onSuccess: onClose },
-                      )
-                    }
-                  >
-                    Automatic
-                  </Button>
-                )}
-              </div>
               {update.isError &&
                 (mode === 'library' || update.variables?.action !== 'link') && (
-                  <p role="alert">
+                  <Notice tone="danger">
                     {errorMessage(update.error, 'Could not update the link.')}
-                  </p>
+                  </Notice>
                 )}
               <Tabs
                 value={mode}
@@ -356,30 +377,24 @@ export default function LastfmLinkPanel({
                     Add new album
                   </TabsTrigger>
                 </TabsList>
-                <TabsContent value="library" className="mt-3 space-y-4">
+                <TabsContent value="library" className="sec-stack">
                   {group.candidates.length > 0 && (
-                    <section aria-label="Possible library albums">
-                      <h2 className="mb-2 text-sm font-medium">
-                        Possible albums
-                      </h2>
-                      <ul className="space-y-2">
+                    <Section title="Possible albums" flush>
+                      <ul
+                        className="sec-stack"
+                        aria-label="Possible library albums"
+                      >
                         {group.candidates.map((album) => (
-                          <li
-                            key={album.id}
-                            className="flex items-center gap-2"
-                          >
+                          <li key={album.id} className="sec-line">
                             <Button
+                              size="xs"
                               disabled={busy}
                               onClick={() => chooseLibraryAlbum(album.id)}
                             >
                               Link
                             </Button>
-                            <AlbumReferencePlayButton
-                              id={album.id}
-                              title={album.title}
-                            />
                             <DetailLink
-                              className="min-w-0 break-words underline"
+                              className="min-w-0 break-words"
                               kind="album"
                               id={album.id}
                             >
@@ -388,10 +403,14 @@ export default function LastfmLinkPanel({
                                 ? ` — ${album.artists.join(', ')}`
                                 : ''}
                             </DetailLink>
+                            <AlbumReferencePlayButton
+                              id={album.id}
+                              title={album.title}
+                            />
                           </li>
                         ))}
                       </ul>
-                    </section>
+                    </Section>
                   )}
                   <AlbumPicker
                     label={`Album for ${group.artistName} — ${albumName}`}
@@ -403,7 +422,7 @@ export default function LastfmLinkPanel({
                 </TabsContent>
                 <TabsContent
                   value="new"
-                  className="mt-3"
+                  className="sec-stack"
                   forceMount
                   hidden={mode !== 'new'}
                 >
@@ -520,41 +539,51 @@ export function LastfmLinkWorkflow({
   const pendingCount = operations.filter(
     (operation) => operation.error === null,
   ).length
+  const failures = operations.filter((operation) => operation.error !== null)
   return (
     <>
-      {pendingCount > 0 && (
-        <p role="status" className="muted my-2">
-          Adding and linking {pendingCount}{' '}
-          {pendingCount === 1 ? 'album' : 'albums'} in the background…
-        </p>
-      )}
-      {operations
-        .filter((operation) => operation.error !== null)
-        .map((operation) => (
-          <div key={operation.key} role="alert" className="form-actions my-2">
-            <span>
+      {(pendingCount > 0 || failures.length > 0) && (
+        <div className="sec-notices">
+          {pendingCount > 0 && (
+            <Notice>
+              Adding and linking {formatItemCount(pendingCount, ALBUMS)} in the
+              background…
+            </Notice>
+          )}
+          {failures.map((operation) => (
+            <Notice
+              key={operation.key}
+              tone="danger"
+              action={
+                <span className="ds-actions">
+                  <Button
+                    size="xs"
+                    onClick={() =>
+                      onSelectionChange({ group: operation.group, mode: 'new' })
+                    }
+                  >
+                    Review
+                  </Button>
+                  <Button
+                    size="xs"
+                    variant="ghost"
+                    onClick={() =>
+                      setOperations((current) =>
+                        current.filter((item) => item.key !== operation.key),
+                      )
+                    }
+                  >
+                    Dismiss
+                  </Button>
+                </span>
+              }
+            >
               {operation.group.artistName} — {operation.group.albumName}:{' '}
               {operation.error}
-            </span>
-            <Button
-              onClick={() =>
-                onSelectionChange({ group: operation.group, mode: 'new' })
-              }
-            >
-              Review
-            </Button>
-            <Button
-              variant="ghost"
-              onClick={() =>
-                setOperations((current) =>
-                  current.filter((item) => item.key !== operation.key),
-                )
-              }
-            >
-              Dismiss
-            </Button>
-          </div>
-        ))}
+            </Notice>
+          ))}
+        </div>
+      )}
       {selection && (
         <LastfmLinkPanel
           key={lastfmLinkKey(selection.group)}

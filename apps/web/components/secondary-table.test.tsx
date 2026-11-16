@@ -3,8 +3,10 @@ import { test } from 'node:test'
 import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import {
+  formatTableValue,
   SecondaryCell,
   SecondaryDataTable,
+  SecondaryTableSelectionBar,
   SecondaryTableToolbar,
 } from './secondary-table'
 
@@ -70,7 +72,7 @@ test('empty small tables show all columns and use their full column count', () =
   assert.match(html, /colSpan="2" class="table-state"/)
   assert.match(html, /title="Sort by Optional"/)
   assert.doesNotMatch(html, /Visible columns|Reset columns/)
-  assert.doesNotMatch(html, /class="secondary-table-toolbar"/)
+  assert.doesNotMatch(html, /class="ds-toolbar"/)
   assert.match(html, /role="status">No items/)
 })
 
@@ -98,7 +100,7 @@ test('three-column tables keep every data column visible without a chooser', () 
   for (const value of ['Linked', '2', '7'])
     assert.ok(html.includes(`title="${value}">${value}</div>`))
   assert.doesNotMatch(html, /Visible columns|Reset columns/)
-  assert.doesNotMatch(html, /class="secondary-table-toolbar"/)
+  assert.doesNotMatch(html, /class="ds-toolbar"/)
 })
 
 test('a controlled table passes its filtered and ordered rows to playback renderers', () => {
@@ -206,10 +208,10 @@ test('secondary toolbars order search, filters, count and a separate columns slo
   const search = html.indexOf('aria-label="Search example"')
   const filters = html.indexOf('aria-label="Example status"')
   const count = html.indexOf('12 items')
-  const columns = html.indexOf('class="secondary-table-toolbar-columns"')
+  const columns = html.indexOf('class="ds-toolbar-end ds-actions"')
   assert.ok(search > -1)
   assert.ok(search < filters && filters < count && count < columns)
-  assert.match(html, /<\/div><div class="secondary-table-toolbar-columns">/)
+  assert.match(html, /^<div class="ds-toolbar">/)
   assert.match(html, /role="status">12 items<\/span>/)
 })
 
@@ -217,8 +219,65 @@ test('secondary toolbars omit empty controls and retain a zero result count', ()
   assert.equal(renderToStaticMarkup(<SecondaryTableToolbar />), '')
   const html = renderToStaticMarkup(<SecondaryTableToolbar count={0} />)
   assert.match(html, /role="status">0<\/span>/)
-  assert.doesNotMatch(
-    html,
-    /secondary-table-toolbar-search|secondary-table-toolbar-filters|secondary-table-toolbar-columns/,
+  assert.doesNotMatch(html, /ds-search|ds-toolbar-end/)
+})
+
+test('data tables right-align numbers, pin the identity column and format plain values', () => {
+  const html = renderToStaticMarkup(
+    <SecondaryDataTable
+      id="layout"
+      label="Layout rows"
+      rows={[{ id: 'a', name: 'Fixture', count: 12480, note: null }]}
+      rowKey={(row) => row.id}
+      defaultSort={{ key: 'name', direction: 'asc' }}
+      countLabel="rows"
+      search={{ label: 'Search rows', value: (row) => row.name }}
+      columns={[
+        {
+          key: 'name',
+          label: 'Name',
+          sticky: 0,
+          stickyEdge: true,
+          value: (row) => row.name,
+        },
+        {
+          key: 'count',
+          label: 'Count',
+          align: 'end',
+          value: (row) => row.count,
+        },
+        { key: 'note', label: 'Note', value: (row) => row.note },
+      ]}
+    />,
   )
+  assert.match(html, /<div class="ds-toolbar">/)
+  assert.match(html, /<label class="ds-search">/)
+  assert.match(html, /class="ds-toolbar-count" role="status">1 rows</)
+  assert.match(
+    html,
+    /<th scope="col" data-sticky="edge" style="--ds-sticky-left:0px"/,
+  )
+  assert.match(html, /<th scope="col" data-align="end"/)
+  assert.match(html, /<td data-align="end">.*12,480/)
+  assert.match(html, /title="–">–<\/div>/)
+})
+
+test('the selection bar shows the count and the selectable total', () => {
+  const html = renderToStaticMarkup(
+    <SecondaryTableSelectionBar selectedCount={2} total={128}>
+      <button type="button">Act</button>
+    </SecondaryTableSelectionBar>,
+  )
+  assert.match(
+    html,
+    /^<div class="ds-selectbar sec-selectbar"><span role="status"><b>2 selected<\/b><span class="ds-muted"> of 128<\/span><\/span><button/,
+  )
+})
+
+test('plain values use the shared formats', () => {
+  assert.equal(formatTableValue(1234), '1,234')
+  assert.equal(formatTableValue(null), '–')
+  assert.equal(formatTableValue(''), '–')
+  assert.equal(formatTableValue(Number.NaN), '–')
+  assert.equal(formatTableValue('Text'), 'Text')
 })

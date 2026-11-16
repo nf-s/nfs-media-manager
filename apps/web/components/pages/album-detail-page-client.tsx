@@ -1,7 +1,9 @@
 'use client'
-import MediaDetail from '../media-detail'
-import Link from 'next/link'
+
 import { useSearchParams } from 'next/navigation'
+import MediaDetail from '../media-detail'
+import { DetailPage } from '../detail-frame'
+
 export default function AlbumDetailPageClient({
   albumId,
 }: {
@@ -9,11 +11,13 @@ export default function AlbumDetailPageClient({
 }) {
   const params = useSearchParams()
   return (
-    <div className="detail-page">
-      <Link href={`/albums${params.size ? `?${params}` : ''}`}>
-        Back to albums
-      </Link>
+    <DetailPage
+      back={{
+        href: `/albums${params.size ? `?${params}` : ''}`,
+        label: 'Back to albums',
+      }}
+    >
       <MediaDetail mediaType="album" id={albumId} />
-    </div>
+    </DetailPage>
   )
 }

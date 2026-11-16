@@ -1,13 +1,21 @@
 'use client'
 
-import { Fragment, useEffect, type ReactNode } from 'react'
+import {
+  Fragment,
+  useEffect,
+  useSyncExternalStore,
+  type ReactNode,
+} from 'react'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import {
+  isSystemPath,
   libraryViewForPath,
   mediaScopeForPath,
+  parseLibraryView,
   switchLibraryHref,
   trackScopeRedirect,
   workspaceScopeForPath,
+  type LibraryView,
 } from '@/utils/media-scope'
 
 export function useMediaScope() {
@@ -29,26 +37,74 @@ export function useLibraryView() {
   return libraryViewForPath(path, params.get('mediaType'))
 }
 
+const lastLibraryKey = 'media-manager:library'
+const lastLibraryListeners = new Set<() => void>()
+let lastLibrary: LibraryView | null = null
+
+function readLastLibrary(): LibraryView {
+  if (lastLibrary === null) {
+    try {
+      lastLibrary =
+        parseLibraryView(window.sessionStorage.getItem(lastLibraryKey)) ??
+        'album'
+    } catch {
+      lastLibrary = 'album'
+    }
+  }
+  return lastLibrary
+}
+
+function rememberLibrary(view: LibraryView) {
+  if (readLastLibrary() === view) return
+  lastLibrary = view
+  try {
+    window.sessionStorage.setItem(lastLibraryKey, view)
+  } catch {
+    // The rail still remembers the library for this page load.
+  }
+  for (const listener of lastLibraryListeners) listener()
+}
+
+function subscribeLastLibrary(listener: () => void) {
+  lastLibraryListeners.add(listener)
+  return () => {
+    lastLibraryListeners.delete(listener)
+  }
+}
+
+/**
+ * The library the rail shows. Jobs and Providers belong to no library, so the
+ * rail keeps the library that was open before them.
+ */
+export function useRailLibraryView(): LibraryView {
+  const path = usePathname()
+  const view = useLibraryView()
+  const system = isSystemPath(path)
+  const last = useSyncExternalStore<LibraryView>(
+    subscribeLastLibrary,
+    readLastLibrary,
+    () => 'album',
+  )
+  useEffect(() => {
+    if (!system) rememberLibrary(view)
+  }, [system, view])
+  return system ? last : view
+}
+
 export function LibrarySelector() {
   const router = useRouter()
   const path = usePathname()
   const params = useSearchParams()
-  const view = useLibraryView()
+  const view = useRailLibraryView()
   return (
     <select
       aria-label="Library"
-      className="library-selector"
+      className="ds-select ds-library"
+      data-size="md"
       value={view}
       onChange={(event) => {
-        const next = event.target.value
-        if (
-          next !== 'album' &&
-          next !== 'track' &&
-          next !== 'artist' &&
-          next !== 'film' &&
-          next !== 'subscription'
-        )
-          return
+        const next = parseLibraryView(event.target.value)
+        if (!next) return
         router.push(switchLibraryHref(path, params.toString(), next))
       }}
     >
@@ -71,5 +127,8 @@ export function MediaScopeContent({ children }: { children: ReactNode }) {
     if (destination) router.replace(destination)
   }, [destination, router])
   if (destination) return null
-  return <Fragment key={scope}>{children}</Fragment>
+  // A System page keeps its state when its library filter changes.
+  return (
+    <Fragment key={isSystemPath(path) ? 'system' : scope}>{children}</Fragment>
+  )
 }

@@ -94,7 +94,7 @@ test('playlist filter uses a searchable bounded viewport and marks the selected 
   assert.match(html, /aria-label="Search playlist filters"/)
   assert.match(html, /data-active="true"[^>]*aria-label="Filter Playlists"/)
   assert.match(html, /aria-label="Remove playlist filter: Synthetic mix"/)
-  assert.match(html, /type="checkbox" checked=""/)
+  assert.match(html, /type="checkbox" class="ds-check" checked=""/)
   assert.match(html, /1,000 playlists/)
   assert.match(html, /aria-setsize="1000"/)
   assert.ok((html.match(/<li/g) ?? []).length < 100)
@@ -130,7 +130,7 @@ test('selected names outside the loaded directory remain removable and duplicate
     (html.match(/aria-label="Remove playlist filter:/g) ?? []).length,
     1,
   )
-  assert.doesNotMatch(html, /type="checkbox" checked=""/)
+  assert.doesNotMatch(html, /type="checkbox" class="ds-check" checked=""/)
 })
 
 test('malformed or oversized saved playlist filters do not reach the artist query', () => {
@@ -158,7 +158,7 @@ test('disabled playlist filters cannot alter a pending selection', () => {
     }).toString(),
   )
   assert.match(html, /disabled="" aria-label="Filter Playlists"/)
-  assert.match(html, /type="checkbox" disabled="" checked=""/)
+  assert.match(html, /type="checkbox" class="ds-check" disabled="" checked=""/)
   assert.match(
     html,
     /aria-label="Remove playlist filter: Synthetic mix"[^>]*disabled=""/,
@@ -188,5 +188,5 @@ test('artist Browse preserves legacy playlist selection in shared browse state',
   )
   assert.match(html, /Playlists: 1 selected/)
   assert.match(html, /0 artists/)
-  assert.match(html, /No matches/)
+  assert.match(html, /No artists match/)
 })

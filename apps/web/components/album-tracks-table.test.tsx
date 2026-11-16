@@ -9,7 +9,7 @@ import AlbumTracksTable from './album-tracks-table'
 import { ConfigContext } from './providers'
 import { PlaybackViewContext } from './playback-provider'
 import { idlePlaybackState } from '@/utils/playback-engine'
-import { albumTrackView, albumTrackViewHref } from '@/utils/playback-source'
+import { albumTrackView } from '@/utils/playback-source'
 
 // Detail components import CSS modules; class names are not under test.
 require.extensions['.css'] = (module) => {
@@ -129,51 +129,66 @@ function returnParams() {
     }),
     album.id,
   )
-  return new URL(
-    albumTrackViewHref(
-      '/albums',
-      new URLSearchParams({ item: album.id }),
-      view,
-    ),
-    'http://localhost',
-  ).searchParams
+  return new URLSearchParams({
+    item: album.id,
+    albumTrackView: JSON.stringify(view),
+    tab: 'tracks',
+  })
 }
 
-test('album track tables restore a playback source search and sort', async () => {
+test('album track tables are compact and restore a playback source sort', async () => {
   const html = await render(returnParams())
-  for (const view of ['Grid', 'List', 'Table'])
-    assert.ok(html.includes(`aria-label="${view} view"`))
-  assert.match(html, /class="browse-toolbar"/)
-  assert.match(html, /browse-sort-direction"[^>]*aria-label="Sort ascending"/)
-  assert.match(html, /value="Song "/)
-  assert.match(html, /aria-sort="descending"/)
-  assert.match(html, /2 of 3 tracks/)
-  assert.ok(html.indexOf('Play Song Z') < html.indexOf('Play Song A'))
-  assert.doesNotMatch(html, /Instrumental/)
-})
-
-test('returning to an album playback source opens Tracks with its saved table state', async () => {
-  const html = await render(returnParams(), true)
-  assert.match(html, /role="tab" aria-selected="true"[^>]*>Tracks/)
-  assert.match(html, /aria-label="Album tracks"/)
-  assert.match(html, /value="Song "/)
-  assert.doesNotMatch(html, /Instrumental/)
-  const other = returnParams()
-  other.set('albumTrackView', JSON.stringify({ id: 'another-album' }))
+  assert.doesNotMatch(html, /aria-label="(Grid|List|Table) view"|type="search"/)
+  assert.match(html, /<table class="ds-table" aria-label="Album tracks">/)
   assert.match(
-    await render(other, true),
-    /role="tab" aria-selected="true"[^>]*>Overview/,
+    html,
+    /<th scope="col" aria-sort="descending"><button type="button" class="ds-th-sort">Title/,
   )
+  assert.ok(html.indexOf('Play Song Z') < html.indexOf('Play Song A'))
+  assert.ok(html.indexOf('Play Song Z') < html.indexOf('Add Song Z to queue'))
+  assert.match(html, /Instrumental/)
+  assert.doesNotMatch(html, />Artists</)
+  assert.match(html, /<td data-align="end">3:20<\/td>/)
 })
 
-test('an album track URL restores Grid with its search and sort', async () => {
-  const params = returnParams()
-  params.set('view', 'grid')
-  const html = await render(params, true)
-  assert.match(html, /aria-label="Grid view" aria-pressed="true"/)
-  assert.match(html, /value="Song "/)
-  assert.match(html, /aria-label="Sort ascending"/)
-  assert.match(html, /<option value="title" selected="">Title<\/option>/)
+test('an old Tracks link opens the album Overview with its saved table order', async () => {
+  const html = await render(returnParams(), true)
+  const tabs = [...html.matchAll(/role="tab"[^>]*>([^<]+)</g)].map(
+    (match) => match[1],
+  )
+  assert.deepEqual(tabs, ['Overview', 'Listening', 'Sources', 'Edit'])
+  assert.match(html, /role="tab" aria-selected="true"[^>]*>Overview/)
+  assert.match(html, /<h3>Tracks<\/h3>/)
+  assert.match(html, /aria-label="Album tracks"/)
   assert.ok(html.indexOf('Play Song Z') < html.indexOf('Play Song A'))
-  assert.doesNotMatch(html, /<table|Instrumental/)
+  assert.match(html, /<h3>Playlists<\/h3>/)
+  assert.match(html, /aria-expanded="false"[^>]*>All fields</)
+})
+
+test('long albums show the first twenty tracks and compilations add Artists', async () => {
+  const tracks = Array.from({ length: 21 }, (_, index) => {
+    const entry = albumTrack(index + 1, `Track ${index + 1}`, null, 100)
+    return index === 3
+      ? { ...entry, track: { ...entry.track, artists: ['Guest artist'] } }
+      : entry
+  })
+  const long = AlbumDetailSchema.parse({
+    ...album,
+    credits: [
+      { id: 'a1', name: 'Fixture artist', role: 'artist', billingOrder: 0 },
+    ],
+    tracks,
+  })
+  const client = new QueryClient()
+  const html = renderToStaticMarkup(
+    <QueryClientProvider client={client}>
+      <SearchParamsContext.Provider value={new URLSearchParams()}>
+        <AlbumTracksTable album={long} />
+      </SearchParamsContext.Provider>
+    </QueryClientProvider>,
+  )
+  assert.match(html, />Artists</)
+  assert.match(html, />Track 20</)
+  assert.doesNotMatch(html, />Track 21</)
+  assert.match(html, /aria-expanded="false">Show all 21</)
 })

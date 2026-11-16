@@ -173,7 +173,7 @@ test('Films navigation exposes Collections and its shared sortable table control
   const html = await render('')
   assert.match(
     html,
-    /aria-current="page" href="\/collections\?mediaType=film">Collections/,
+    /aria-current="page" href="\/collections\?mediaType=film"><svg.*?<\/svg><span>Collections</,
   )
   assert.match(html, /aria-label="Search collections"/)
   assert.match(html, /secondary-table-scroll/)
@@ -203,7 +203,7 @@ test('collection deep links open members in source order without renumbering gap
   )
   assert.match(drawer, /aria-label="Resize details panel"/)
   assert.doesNotMatch(drawer, /href="https:\/\/example.test\/collections\/17"/)
-  assert.match(drawer, /aria-label="Table view" aria-pressed="true"/)
+  assert.match(drawer, /aria-pressed="true" aria-label="Table view"/)
   assert.match(
     drawer,
     /href="\/films\?filters=[^"]*Synthetic\+collection[^"]*">Filter films</,
@@ -213,8 +213,8 @@ test('collection deep links open members in source order without renumbering gap
     drawer,
     /aria-sort="ascending"><div[^>]*><button[^>]*title="Sort by Stored position"/,
   )
-  assert.match(drawer, /<td class="numeric">2<\/td>/)
-  assert.match(drawer, /<td class="numeric">8<\/td>/)
+  assert.match(drawer, /<td[^>]*data-align="end"[^>]*>2<\/td>/)
+  assert.match(drawer, /<td[^>]*data-align="end"[^>]*>8<\/td>/)
   assert.ok(drawer.indexOf('Z first film') < drawer.indexOf('A later film'))
   const memberHref = /href="([^"]+)">Z first film<\/a>/.exec(drawer)?.[1]
   assert.ok(memberHref)
@@ -267,19 +267,19 @@ test('collection card views retain filtering, nested links, and bounded renderin
     const drawer = html.slice(
       html.indexOf('aria-label="Film collection details"'),
     )
-    const cardCount = (drawer.match(/class="nested-media-card"/g) ?? []).length
+    const cardCount = (drawer.match(/class="browse-nested-item"/g) ?? []).length
     assert.ok(cardCount > 0 && cardCount < 40, `Rendered ${cardCount} cards`)
     assert.match(drawer, /305 films/)
     assert.match(drawer, /aria-posinset="1" aria-setsize="305"/)
     const label = view === 'grid' ? 'Grid' : 'List'
     assert.match(
       drawer,
-      new RegExp(`aria-label="${label} view" aria-pressed="true"`),
+      new RegExp(`aria-pressed="true" aria-label="${label} view"`),
     )
     assert.match(drawer, /aria-label="Sort by"/)
-    assert.match(drawer, / Filters(?:<span|<\/button)/)
+    assert.match(drawer, />Filters(?: · \d+)?<\/button>/)
     assert.match(drawer, /Position 2/)
-    assert.match(drawer, /90 min · Unwatched/)
+    assert.match(drawer, /1h 30m · Unwatched/)
     assert.doesNotMatch(drawer, /Fixture film 100|Visible columns/)
     const href = /<a[^>]* href="([^"]+)"[^>]*>Fixture film 1<\/a>/.exec(
       drawer,
@@ -298,8 +298,8 @@ test('collection Sources displays only saved collection destinations', async () 
   const drawer = html.slice(
     html.indexOf('aria-label="Film collection details"'),
   )
-  const table = drawer.slice(drawer.indexOf('<table'))
-  assert.match(table, /aria-label="Sources"/)
+  const table = drawer.slice(drawer.indexOf('aria-label="Sources"'))
+  assert.match(drawer, /role="tab" aria-selected="true"[^>]*>Sources/)
   assert.match(table, />Fixture</)
   assert.match(table, /href="https:\/\/example.test\/collections\/17"/)
   assert.doesNotMatch(drawer, /aria-label="Collection films"|Refresh selected/)
@@ -311,8 +311,8 @@ test('album and track navigation retain Playlists', async () => {
     assert.match(
       html,
       path === '/tracks'
-        ? /href="\/playlists\?mediaType=track">Playlists/
-        : /href="\/playlists\?mediaType=album">Playlists/,
+        ? /href="\/playlists\?mediaType=track"><svg.*?<\/svg><span>Playlists</
+        : /href="\/playlists\?mediaType=album"><svg.*?<\/svg><span>Playlists</,
     )
     assert.doesNotMatch(
       html.slice(0, html.indexOf('</nav>')),

@@ -25,6 +25,8 @@ interface InspectorStyle extends CSSProperties {
 
 type InspectorProps = ComponentPropsWithoutRef<'aside'> & {
   header: ReactNode
+  /** Classes added to the top bar that holds `header`. */
+  headerClassName?: string
   onDismiss: () => void
 }
 
@@ -37,7 +39,15 @@ function downwardDrag(x: number, y: number) {
 /** All detail drawers share a remembered, keyboard-adjustable desktop width. */
 export const MediaInspector = forwardRef<HTMLElement, InspectorProps>(
   function MediaInspector(
-    { children, className = '', header, onDismiss, style, ...props },
+    {
+      children,
+      className = '',
+      header,
+      headerClassName = '',
+      onDismiss,
+      style,
+      ...props
+    },
     ref,
   ) {
     const [width, setWidth] = useState(600)
@@ -170,7 +180,7 @@ export const MediaInspector = forwardRef<HTMLElement, InspectorProps>(
           }}
         />
         <div
-          className="detail-topbar"
+          className={`detail-topbar ${headerClassName}`.trim()}
           onPointerDown={startDrag}
           onPointerMove={moveDrag}
           onPointerUp={endDrag}

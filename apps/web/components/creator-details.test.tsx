@@ -138,7 +138,7 @@ function assertNestedViewControls(
     assert.match(
       html,
       new RegExp(
-        `aria-label="${label} view" aria-pressed="${label === active}"`,
+        `aria-pressed="${label === active}" aria-label="${label} view"|aria-label="${label} view" aria-pressed="${label === active}"`,
       ),
     )
 }
@@ -192,19 +192,32 @@ test('artist overview displays profile evidence and independent music filters wi
     cache: [[['artist', artist.id], artist]],
   })
   assert.match(html, /Synthetic biography\./)
-  assert.match(html, /<dt>Tracks<\/dt><dd>2<\/dd>/)
+  assert.match(
+    html,
+    /<span class="ds-stat-value">2<\/span><span class="ds-stat-label">tracks</,
+  )
+  const tabs = [...html.matchAll(/role="tab"[^>]*>([^<]+)</g)].map(
+    (match) => match[1],
+  )
+  assert.deepEqual(tabs, [
+    'Overview',
+    'Albums',
+    'Tracks',
+    'Listening',
+    'Sources',
+  ])
   assert.ok(html.includes(spotifyProfile.profile.url))
   assert.doesNotMatch(html, /Refresh profile/)
   for (const [label, path] of Object.entries({
-    'Filter albums': '/albums',
-    'Filter tracks': '/tracks',
+    'Show in Albums': '/albums',
+    'Show in Tracks': '/tracks',
   })) {
     const target = destination(html, label)
     assert.equal(target.pathname, path)
     assert.equal(target.searchParams.get('creatorId'), artist.id)
     assert.equal(target.searchParams.has('filters'), false)
   }
-  const tags = destination(html, 'Synth-pop')
+  const tags = destination(html, '<span class="ds-pill-label">Synth-pop</span>')
   assert.deepEqual(JSON.parse(tags.searchParams.get('filters') ?? '[]'), [
     { field: 'artistTag', value: 'Synth-pop', mode: 'required' },
   ])
@@ -246,7 +259,10 @@ test('copied artist album Grid preserves the parent detail and playback controls
   })
   assert.match(html, /aria-label="Play Synthetic album[^"]*"/)
   assertNestedViewControls(html, 'Grid')
-  assert.match(html, /data-view="grid" data-media-type="album"/)
+  assert.match(
+    html,
+    /class="browse-nested-item"[^>]*><article class="ds-card"><span class="ds-art">/,
+  )
   const target = destination(html, 'Synthetic album')
   assert.deepEqual(detailEntries(target.pathname, target.searchParams), [
     entry,
@@ -256,8 +272,8 @@ test('copied artist album Grid preserves the parent detail and playback controls
 
 test('artist tracks and playlists offer layout controls on their own result pages', () => {
   for (const { tab, sortBy } of [
+    { tab: 'albums', sortBy: 'title' },
     { tab: 'tracks', sortBy: 'title' },
-    { tab: 'playlists', sortBy: 'name' },
   ]) {
     const html = render({
       pathname: `/artists/${artist.id}`,
@@ -282,6 +298,17 @@ test('artist tracks and playlists offer layout controls on their own result page
   }
 })
 
+test('an old artist Playlists link opens the Overview with the playlists', () => {
+  const html = render({
+    pathname: `/artists/${artist.id}`,
+    search: 'tab=playlists',
+    children: <ArtistDetail id={artist.id} />,
+    cache: [[['artist', artist.id], artist]],
+  })
+  assert.match(html, /role="tab" aria-selected="true"[^>]*>Overview/)
+  assert.match(html, /<h3>Playlists<\/h3>/)
+})
+
 test('legacy artist History links reopen the provider in Sources and list summary records', () => {
   const oldSnapshot = {
     id: 'older-profile',
@@ -297,18 +324,26 @@ test('legacy artist History links reopen the provider in Sources and list summar
     cache: [
       [['artist', artist.id], artist],
       [
-        ['history', artist.id, 'artist', 'spotify', 'snapshots', 1],
-        { ...page(oldSnapshot), size: 20, pageCount: 2, totalCount: 21 },
+        ['history', artist.id, 'artist', 'spotify', 'snapshot-list'],
+        {
+          pages: [
+            { ...page(oldSnapshot), size: 10, pageCount: 3, totalCount: 21 },
+          ],
+          pageParams: [1],
+        },
+      ],
+      [
+        ['jobs', 'source-history', 'artist', artist.id, 'spotify'],
+        { pages: [page()], pageParams: [1] },
       ],
     ],
   })
-  assert.match(html, /aria-label="Spotify history" aria-expanded="true"/)
-  assert.match(html, /View snapshot/)
-  assert.match(html, /aria-rowcount="22"/)
-  assert.match(html, /virtual-browse-placeholder/)
-  assert.doesNotMatch(html, /Load more snapshots/)
+  assert.match(html, /<details class="ds-source" open="">/)
+  assert.match(html, /aria-label="Spotify history"/)
+  assert.match(html, /class="ds-timeline"/)
+  assert.match(html, />Show older</)
   assert.doesNotMatch(html, /Stored response/)
-  assert.equal(destination(html, 'View job').pathname, '/jobs/artist-job')
+  assert.equal(destination(html, 'Job').pathname, '/jobs/artist-job')
 })
 
 test('artist Sources offers selectable eligible providers and explicit refresh', () => {
@@ -337,9 +372,9 @@ test('artist Sources offers selectable eligible providers and explicit refresh',
       ],
     ],
   })
-  assert.match(html, /aria-label="Select Spotify"/)
+  assert.match(html, /aria-label="Refresh Spotify"/)
   assert.match(html, /aria-label="Edit Spotify identifier"/)
-  assert.match(html, /Refresh all eligible/)
+  assert.match(html, />Refresh all</)
   assert.match(html, /aria-label="Sources"/)
 })
 
@@ -369,16 +404,26 @@ test('artist Sources shows stored IDs and provenance controls before any artist 
     children: <ArtistDetail id={artist.id} />,
     cache: [[['artist', artist.id], ArtistDetailSchema.parse(known)]],
   })
-  assert.match(html, new RegExp(`>${spotifyArtistId}</div>`))
-  assert.match(html, /aria-label="Sources for Spotify identifier"/)
-  assert.match(html, /aria-label="Sources for Discogs identifier"/)
-  assert.match(html, /Conflicting IDs/)
-  assert.match(html, /lucide-eye/)
+  assert.match(
+    html,
+    new RegExp(`class="ds-source-id">${spotifyArtistId}</span>`),
+  )
+  assert.match(html, /data-status="attention">Conflicting IDs</)
   assert.match(
     html,
     new RegExp(`href="https://open.spotify.com/artist/${spotifyArtistId}"`),
   )
+  // Identifier provenance loads only when its row is opened.
   assert.doesNotMatch(html, /From stored sources|No stored identifier sources/)
+  const opened = render({
+    pathname: `/artists/${artist.id}`,
+    search: 'tab=sources&sourceProvider=spotify',
+    children: <ArtistDetail id={artist.id} />,
+    cache: [[['artist', artist.id], ArtistDetailSchema.parse(known)]],
+  })
+  assert.match(opened, /<h4>Identifier sources<\/h4>/)
+  assert.match(opened, /aria-label="Sources for Spotify identifier"/)
+  assert.match(opened, /From stored sources/)
 })
 
 test('identifier provenance names and links the actual album, provider and job', () => {
@@ -464,9 +509,12 @@ test('copied person film List keeps the stored paging and role filter', () => {
     ],
   })
   assertNestedViewControls(html, 'List')
-  assert.match(html, /data-view="list" data-media-type="film"/)
+  assert.match(
+    html,
+    /class="browse-nested-item"[^>]*><div class="ds-row">.*?class="ds-thumb" data-ratio="poster"/,
+  )
   assert.match(html, /aria-label="Sort by"/)
-  assert.match(html, / Filters<span class="filter-panel-count">1<\/span>/)
+  assert.match(html, />Filters · 1<\/button>/)
   assert.equal(destination(html, film.title).pathname, `/films/${film.id}`)
 })
 
@@ -479,7 +527,7 @@ test('person Sources reports the absence of a provider record', () => {
   })
   assert.match(html, /aria-label="Sources"/)
   assert.match(html, /No provider sources are stored for this person\./)
-  assert.doesNotMatch(html, /Refresh (all eligible|selected)/)
+  assert.doesNotMatch(html, /Refresh all/)
 })
 
 test('film Browse uses the creator scope for its query and names the removable role filter', async () => {
@@ -504,12 +552,10 @@ test('film Browse uses the creator scope for its query and names the removable r
       [['films', 'browse', identity, 1], page()],
     ],
   })
-  assert.match(
-    html,
-    /aria-label="Remove director filter">Director: Synthetic person/,
-  )
+  assert.match(html, /Director: Synthetic person/)
+  assert.match(html, /aria-label="Remove director filter"/)
   assert.match(html, /Clear all/)
-  assert.match(html, /No matches/)
+  assert.match(html, /No films match/)
 })
 
 test('channel details show saved podcast episodes and scope Browse to the exact channel ID', async () => {
@@ -567,8 +613,11 @@ test('channel details show saved podcast episodes and scope Browse to the exact 
   assert.match(html, /Synthetic description\./)
   assert.match(html, /Reading history/)
   assertNestedViewControls(html, 'Grid')
-  assert.match(html, /data-view="grid" data-media-type="subscription"/)
-  assert.match(html, /class="nested-media-line">2026<\/div>/)
+  assert.match(
+    html,
+    /<article class="ds-card"><span class="ds-art" data-ratio="video">/,
+  )
+  assert.match(html, /class="ds-card-by">2026<\/span>/)
   assert.equal(
     destination(html, 'Synthetic episode').pathname,
     `/subscriptions/${episodeId}`,
@@ -583,11 +632,9 @@ test('channel details show saved podcast episodes and scope Browse to the exact 
     children: <ChannelDetail id={id} />,
     cache: [[['subscriptions', 'source', id], data]],
   })
-  const table = sources.slice(sources.indexOf('<table'))
-  assert.match(table, /aria-label="Sources"/)
-  assert.match(table, /title="Sort by Provider"/)
-  assert.match(table, /title="Sort by Identifier"/)
+  const table = sources.slice(sources.indexOf('aria-label="Sources"'))
+  assert.match(table, /class="ds-source"/)
   assert.ok(table.includes(data.source.url))
   assert.ok(table.includes(id))
-  assert.doesNotMatch(table, /Refresh (all eligible|selected)/)
+  assert.doesNotMatch(table, /Refresh/)
 })

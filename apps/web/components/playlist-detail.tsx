@@ -1,10 +1,9 @@
 'use client'
 
-import { DetailLink } from './detail-link'
 import Link from 'next/link'
 import { useDeferredValue, useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ListPlus, Play } from 'lucide-react'
+import { ListMusic } from 'lucide-react'
 import { EnrichmentResultSchema } from '@repo/schemas/job'
 import {
   PlaylistDetailSchema,
@@ -18,13 +17,19 @@ import {
   type PlaylistSyncSchedule,
   type SpotifyPlaylistImportInput,
 } from '@repo/schemas/tracks'
-import { Button } from '@repo/ui/components/ui/button'
 import {
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
-} from '@repo/ui/components/ui/tabs'
+  DetailActionsSpacer,
+  DetailHeader,
+} from '@repo/ui/components/ds/detail-header'
+import { Facts, Section, Stats } from '@repo/ui/components/ds/facts'
+import { Notice } from '@repo/ui/components/ds/feedback'
+import { Progress } from '@repo/ui/components/ds/meter'
+import { PlayHeaderButtons, PlayPair } from '@repo/ui/components/ds/play'
+import { Status } from '@repo/ui/components/ds/status'
+import { Select } from '@repo/ui/components/ds/toolbar'
+import { Button } from '@repo/ui/components/ui/button'
+import { TabsContent } from '@repo/ui/components/ui/tabs'
+import { formatCount, formatDate, formatDateTime } from '@repo/ui/lib/format'
 import { useVirtualTable } from '@/hooks/useVirtualTable'
 import { fetchApiData } from '@/utils/api'
 import { parseBrowseView, type BrowseView } from '@/utils/media-grid'
@@ -43,20 +48,23 @@ import {
   invalidatePlaylists,
   playlistImportRequest,
   playlistJobActive,
-  playlistJobLabels,
   playlistJobProgress,
   playlistNextSync,
   playlistSourceLabel,
   spotifyPlaylistId,
 } from '@/utils/playlist-sync'
 import { createPlaylistPlaybackSource } from '@/utils/playback-source'
+import { runStatusLabel, runStatusStates } from '@/utils/run-status'
 import type { PlayableItem } from '@/utils/playback'
 import { youtubeScheduleLabels } from '@/utils/youtube'
 import { errorMessage } from './lastfm-sync'
-import MediaArtwork from './media-artwork'
-import { UnavailablePlayButton } from './play-controls'
 import { usePlayback, usePlaybackControls } from './playback-provider'
 import { useDetailInspector, useDetailView } from './detail-inspector-context'
+import { DetailLink } from './detail-link'
+import { CreatorDetailState } from './creator-detail-state'
+import { DetailArt, DetailTabs, OpenAtProvider } from './detail-frame'
+import { ListeningTrend } from './listening-trend'
+import { MetadataCoverage } from './metadata-coverage'
 import {
   TrackEntriesTable,
   trackEntryKey,
@@ -64,15 +72,10 @@ import {
   type TrackEntryColumn,
 } from './track-entries-table'
 import { useConfig } from './providers'
-import ServiceIconLinks from './service-icon-links'
 import { ProviderSources } from './provider-sources'
 import { useNestedMediaView } from './nested-media-view'
 
 const ENTRY_PAGE_SIZE = 100
-
-function formatDateTime(value: string | null) {
-  return value ? new Date(value).toLocaleString() : '-'
-}
 
 function playlistPath(
   id: string,
@@ -94,7 +97,7 @@ function playlistPath(
 }
 
 /** The playlist with its sync state, re-read while its import is queued or running. */
-export function usePlaylistSummary(id: string) {
+function usePlaylistSummary(id: string) {
   const { apiBaseUrl } = useConfig()
   return useQuery({
     queryKey: ['playlist', id],
@@ -116,6 +119,7 @@ export function PlaylistPlayButton({
   playlist: Pick<PlaylistSummary, 'id' | 'name'> &
     Partial<Pick<PlaylistSummary, 'trackCount' | 'albumCount'>>
   total?: number
+  /** The row pair; without it, the labelled buttons of a detail header. */
   compact?: boolean
   presentation?: BrowseView
 }) {
@@ -182,44 +186,32 @@ export function PlaylistPlayButton({
       setLoading(false)
     }
   }
-  if (!hasEntries || !view.enabled)
-    return (
-      <UnavailablePlayButton
-        title={playlist.name}
-        available={hasEntries}
-        compact={compact}
-      />
-    )
+  const disabled = !hasEntries || !view.enabled || loading
+  const reason = !hasEntries
+    ? 'No tracks.'
+    : !view.enabled
+      ? 'Connect Spotify playback in the player.'
+      : 'Loading tracks...'
+  const pair = {
+    title: playlist.name,
+    disabled,
+    disabledReason: reason,
+    onPlay: () => void play('play'),
+    onQueue: () => void play('queue'),
+  }
   return (
-    <span className="inline-flex shrink-0 items-center gap-1.5">
-      <button
-        type="button"
-        className="inline-flex items-center gap-1.5 rounded px-1 py-0.5 hover:bg-[var(--chip)]"
-        aria-label={`Play ${playlist.name}`}
-        title={`Play ${playlist.name}`}
-        disabled={loading}
-        onClick={() => play('play')}
-      >
-        <Play size={compact ? 12 : 14} aria-hidden="true" />
-        {!compact && (loading ? 'Loading tracks...' : 'Play')}
-      </button>
-      <button
-        type="button"
-        className="inline-flex items-center gap-1.5 rounded px-1 py-0.5 hover:bg-[var(--chip)]"
-        aria-label={`Add ${playlist.name} to queue`}
-        title={`Add ${playlist.name} to queue`}
-        disabled={loading}
-        onClick={() => play('queue')}
-      >
-        <ListPlus size={compact ? 12 : 14} aria-hidden="true" />
-        {!compact && 'Add to queue'}
-      </button>
+    <>
+      {compact ? (
+        <PlayPair place="row" {...pair} />
+      ) : (
+        <PlayHeaderButtons {...pair} />
+      )}
       {error && (
-        <span role="alert" className="text-xs">
+        <span role="alert" className="ds-muted">
           {error}
         </span>
       )}
-    </span>
+    </>
   )
 }
 
@@ -326,7 +318,7 @@ function PlaylistEntries({
       onSort={onSort}
       count={
         entries.hasTotal
-          ? `${total.toLocaleString()} ${q || kinds.length ? 'matching ' : ''}entries`
+          ? `${formatCount(total)} ${q || kinds.length ? 'matching ' : ''}entries`
           : undefined
       }
       pending={!entries.hasTotal}
@@ -335,9 +327,9 @@ function PlaylistEntries({
         entries.isError ? (
           <>
             Could not load tracks.{' '}
-            <button type="button" className="underline" onClick={entries.retry}>
+            <Button size="xs" onClick={entries.retry}>
               Retry
-            </button>
+            </Button>
           </>
         ) : undefined
       }
@@ -366,7 +358,7 @@ function PlaylistEntries({
   )
 }
 
-export function PlaylistSyncPanel({ playlist }: { playlist: PlaylistSummary }) {
+function PlaylistSyncPanel({ playlist }: { playlist: PlaylistSummary }) {
   const { apiBaseUrl } = useConfig()
   const client = useQueryClient()
   const { sync } = playlist
@@ -407,17 +399,22 @@ export function PlaylistSyncPanel({ playlist }: { playlist: PlaylistSummary }) {
     },
   })
   if (!sync.syncable)
-    return <p className="quiet">This playlist is not synced from Spotify.</p>
+    return (
+      <Section title="Sync">
+        <p className="ds-help">This playlist is not synced from Spotify.</p>
+      </Section>
+    )
   const { job } = sync
   const active = playlistJobActive(job)
   const progress = job ? playlistJobProgress(job.progress) : null
   const refused = queue.data?.queued === 0
   return (
-    <section className="film-import-workflow" aria-label="Sync">
-      <div className="form-actions">
-        <label className="flex items-center gap-2">
-          Schedule
-          <select
+    <Section
+      title="Sync"
+      aside={
+        <span className="ds-actions">
+          <Select
+            aria-label="Schedule"
             value={sync.schedule}
             disabled={schedule.isPending}
             onChange={(event) => {
@@ -432,82 +429,70 @@ export function PlaylistSyncPanel({ playlist }: { playlist: PlaylistSummary }) {
                 {youtubeScheduleLabels[value]}
               </option>
             ))}
-          </select>
-        </label>
-        <Button
-          variant="primary"
-          disabled={!request || active || queue.isPending}
-          onClick={() => request && queue.mutate(request)}
-        >
-          {queue.isPending ? 'Queueing...' : 'Sync now'}
-        </Button>
-      </div>
+          </Select>
+          <Button
+            disabled={!request || active || queue.isPending}
+            onClick={() => request && queue.mutate(request)}
+          >
+            {queue.isPending ? 'Queueing...' : 'Sync now'}
+          </Button>
+        </span>
+      }
+    >
       {schedule.isError && (
-        <p role="alert">
+        <Notice tone="danger">
           {errorMessage(schedule.error, 'Could not save the schedule.')}
-        </p>
+        </Notice>
       )}
       {queue.isError && (
-        <p role="alert">
+        <Notice tone="danger">
           {errorMessage(queue.error, 'Could not queue the import.')}
-        </p>
+        </Notice>
       )}
       {refused && (
-        <p role="alert">
+        <Notice tone="danger">
           {queue.data?.warnings.join(' ') || 'The import was not queued.'}
-        </p>
+        </Notice>
       )}
-      <dl className="detail-metrics">
-        <div>
-          <dt>Last checked</dt>
-          <dd>{formatDateTime(sync.lastCheckedAt)}</dd>
+      <Facts
+        items={[
+          { label: 'Last checked', value: formatDateTime(sync.lastCheckedAt) },
+          {
+            label: 'Contents stored',
+            value: formatDateTime(playlist.importedAt),
+          },
+          { label: 'Next sync', value: playlistNextSync(sync) },
+          {
+            label: 'Latest import',
+            value: job ? (
+              <DetailLink kind="job" id={job.jobId} title="View job">
+                <Status state={runStatusStates[job.status]}>
+                  {runStatusLabel(job.status)}
+                </Status>
+              </DetailLink>
+            ) : (
+              'No import job.'
+            ),
+          },
+          ...(job?.finishedAt
+            ? [{ label: 'Finished', value: formatDateTime(job.finishedAt) }]
+            : []),
+        ]}
+      />
+      {job && active && job.progress?.totalPages ? (
+        <div aria-label="Import progress">
+          <Progress
+            done={job.progress.pagesRead}
+            total={job.progress.totalPages}
+          />
         </div>
-        <div>
-          <dt>Contents stored</dt>
-          <dd>{formatDateTime(playlist.importedAt)}</dd>
-        </div>
-        <div>
-          <dt>Next sync</dt>
-          <dd>{playlistNextSync(sync)}</dd>
-        </div>
-      </dl>
-      <h2 className="text-xs font-semibold">Latest import</h2>
-      {job ? (
-        <>
-          <div className="form-actions">
-            <span className="job-status" data-status={job.status}>
-              {playlistJobLabels[job.status]}
-            </span>
-            {progress && <span>{progress}</span>}
-            {job.finishedAt && (
-              <span>Finished {formatDateTime(job.finishedAt)}</span>
-            )}
-            <DetailLink
-              className="underline underline-offset-2"
-              kind="job"
-              id={job.jobId}
-            >
-              View job
-            </DetailLink>
-          </div>
-          {active && (
-            <progress
-              className="w-full"
-              value={
-                job.progress?.totalPages ? job.progress.pagesRead : undefined
-              }
-              max={job.progress?.totalPages || undefined}
-              aria-label="Import progress"
-            />
-          )}
-          {job.status === 'failed' && job.errorMessage && (
-            <p role="alert">{job.errorMessage}</p>
-          )}
-        </>
       ) : (
-        <p className="muted">No import job.</p>
+        progress && <span className="ds-muted">{progress}</span>
       )}
-    </section>
+      {job?.status === 'failed' && job.errorMessage && (
+        <Notice tone="danger">{job.errorMessage}</Notice>
+      )}
+    </Section>
   )
 }
 
@@ -539,57 +524,51 @@ export default function PlaylistDetailView({
     wasActive.current = active
   }, [active, client])
 
-  if (summary.isPending) return <p className="browse-empty">Loading...</p>
   if (!summary.data)
     return (
-      <p role="alert">
-        {errorMessage(summary.error, 'Could not load this playlist.')}{' '}
-        <Button size="md" variant="primary" onClick={() => summary.refetch()}>
-          Retry
-        </Button>
-      </p>
+      <CreatorDetailState
+        pending={summary.isPending}
+        retry={() => summary.refetch()}
+        subject="playlist"
+      />
     )
   const playlist = summary.data
-  const facts = [
-    playlistSourceLabel(playlist.source),
-    playlist.ownerName,
-    `${playlist.trackCount.toLocaleString()} ${playlist.trackCount === 1 ? 'track' : 'tracks'}`,
-    formatPlaylistDuration(playlist.durationSec),
-  ].filter((fact): fact is string => Boolean(fact))
+  const sourceLabel = playlistSourceLabel(playlist.source)
   return (
-    <>
-      <header className="flex shrink-0 items-start gap-3">
-        {playlist.artworkUrl && (
-          <MediaArtwork
+    <article className="dtl-detail">
+      {summary.isRefetchError && (
+        <CreatorDetailState
+          stale
+          retry={() => summary.refetch()}
+          subject="playlist"
+        />
+      )}
+      <DetailHeader
+        art={
+          <DetailArt
             src={playlist.artworkUrl}
-            alt=""
-            fallbackLabel=""
-            containerClassName="size-16 shrink-0 rounded"
-            imageClassName="size-16 object-cover"
-            fallbackClassName="size-16"
+            fallback={<ListMusic className="ds-i" aria-hidden="true" />}
           />
-        )}
-        <div className="grid min-w-0 gap-1.5">
-          <h1 className="text-lg font-semibold leading-tight">
-            {playlist.name}{' '}
-            {playlist.spotifyUrl && (
-              <ServiceIconLinks
-                links={[
-                  {
-                    provider: 'spotify',
-                    label: 'Spotify',
-                    url: playlist.spotifyUrl,
-                  },
-                ]}
-              />
-            )}
-          </h1>
-          <div className="detail-facts">
-            {facts.map((fact) => (
-              <span key={fact}>{fact}</span>
-            ))}
-          </div>
-          <div className="form-actions">
+        }
+        kind="Playlist"
+        title={playlist.name}
+        by={
+          [
+            sourceLabel ? `from ${sourceLabel}` : null,
+            playlist.ownerName ? `by ${playlist.ownerName}` : null,
+          ]
+            .filter(Boolean)
+            .join(' · ') || undefined
+        }
+        facts={[
+          `${formatCount(playlist.trackCount)} ${playlist.trackCount === 1 ? 'track' : 'tracks'}`,
+          formatPlaylistDuration(playlist.durationSec),
+          playlist.importedAt
+            ? `Updated ${formatDate(playlist.importedAt)}`
+            : null,
+        ]}
+        actions={
+          <>
             <PlaylistPlayButton
               playlist={playlist}
               total={playlist.items.totalCount}
@@ -597,52 +576,81 @@ export default function PlaylistDetailView({
               presentation={presentation}
             />
             {filterTracks ? (
-              <Button onClick={() => filterTracks(playlist)}>
+              <Button size="md" onClick={() => filterTracks(playlist)}>
                 Filter tracks
               </Button>
             ) : (
-              <Button asChild>
+              <Button asChild size="md">
                 <Link href={playlistTracksHref(playlist.name)}>
                   Filter tracks
                 </Link>
               </Button>
             )}
             {playlist.albumCount > 0 && (
-              <Button asChild>
+              <Button asChild size="md">
                 <Link href={playlistAlbumsHref(playlist.name)}>
                   Filter albums
                 </Link>
               </Button>
             )}
-          </div>
-        </div>
-      </header>
-      <Tabs
+            <DetailActionsSpacer />
+            {playlist.spotifyUrl && (
+              <OpenAtProvider label="Spotify" url={playlist.spotifyUrl} />
+            )}
+          </>
+        }
+      />
+      <DetailTabs
+        label="Playlist details"
         value={tab}
-        onValueChange={(value) => {
+        onChange={(value) => {
           const parsed = PlaylistTabSchema.safeParse(value)
           if (parsed.success) onTabChange(parsed.data)
         }}
-        className="flex min-h-0 flex-1 flex-col"
+        tabs={[
+          { value: 'overview', label: 'Overview' },
+          { value: 'listening', label: 'Listening' },
+          { value: 'sources', label: 'Sources' },
+        ]}
       >
-        <TabsList className="self-start">
-          <TabsTrigger value="tracks">Tracks</TabsTrigger>
-          <TabsTrigger value="sync">Sources</TabsTrigger>
-        </TabsList>
-        <TabsContent
-          value="tracks"
-          className="mt-3 flex min-h-0 flex-1 flex-col data-[state=inactive]:hidden"
-        >
-          <PlaylistEntries
-            id={id}
-            presentation={presentation}
-            onPresentationChange={setPresentation}
-          />
+        <TabsContent value="overview">
+          <Section flush>
+            <Stats
+              items={[
+                { label: 'tracks', value: formatCount(playlist.trackCount) },
+                {
+                  label: 'library albums',
+                  value: formatCount(playlist.albumCount),
+                },
+                {
+                  label: 'linked tracks',
+                  value: formatCount(playlist.linkedTrackCount),
+                },
+                {
+                  label: 'last checked',
+                  value: formatDate(playlist.sync.lastCheckedAt),
+                },
+              ]}
+            />
+          </Section>
+          {playlist.description && (
+            <Section title="About">
+              <p className="dtl-text">{playlist.description}</p>
+            </Section>
+          )}
+          <MetadataCoverage kind="playlist" id={playlist.id} />
+          <Section title="Tracks">
+            <PlaylistEntries
+              id={id}
+              presentation={presentation}
+              onPresentationChange={setPresentation}
+            />
+          </Section>
         </TabsContent>
-        <TabsContent
-          value="sync"
-          className="mt-3 min-h-0 flex-1 space-y-4 overflow-auto"
-        >
+        <TabsContent value="listening">
+          <ListeningTrend kind="playlist" id={playlist.id} />
+        </TabsContent>
+        <TabsContent value="sources">
           <ProviderSources
             rows={[
               {
@@ -667,7 +675,7 @@ export default function PlaylistDetailView({
           />
           <PlaylistSyncPanel playlist={playlist} />
         </TabsContent>
-      </Tabs>
-    </>
+      </DetailTabs>
+    </article>
   )
 }

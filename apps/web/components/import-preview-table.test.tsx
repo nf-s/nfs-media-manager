@@ -52,7 +52,7 @@ test('shared preview preserves selected rows, bounded scrolling and escapes impo
   )
   assert.match(
     html,
-    /class="ds-table-wrap table-scroll import-preview-scroll secondary-table-scroll"/,
+    /class="ds-table-wrap table-scroll secondary-table-scroll"/,
   )
   assert.match(html, /aria-label="Import New album" disabled="" checked=""/)
   assert.match(html, /&lt;script&gt;title&lt;\/script&gt;/)
@@ -76,7 +76,8 @@ test('large previews reserve full result height and render just the viewport', (
   )
   const rendered = (html.match(/aria-label="Import Album/g) ?? []).length
   assert.ok(rendered > 0 && rendered < 50)
-  assert.match(html, /101 of 101 items/)
+  assert.match(html, /101 items/)
+  assert.match(html, /0 selected<\/b><span class="ds-muted"> of 101<\/span>/)
   assert.ok(
     html.includes(`height:${(101 - rendered) * 32}px;padding:0;border:0`),
   )
@@ -183,10 +184,10 @@ test('preview status choices live in the column header and row actions follow th
   assert.match(html, /Already imported<\/span>/)
   assert.ok(
     html.indexOf('</table>') <
-      html.indexOf('class="ds-selectbar secondary-table-footer"'),
+      html.indexOf('class="ds-selectbar sec-selectbar"'),
   )
   assert.ok(
-    html.indexOf('class="ds-selectbar secondary-table-footer"') <
+    html.indexOf('class="ds-selectbar sec-selectbar"') <
       html.indexOf('Import selected</button>'),
   )
   assert.match(html, /0 selected/)
@@ -196,7 +197,6 @@ test('preview status choices live in the column header and row actions follow th
       html.indexOf('aria-label="Filter Import status"'),
   )
   assert.ok(
-    html.indexOf('2 of 2 items') <
-      html.indexOf('aria-label="Filter Import status"'),
+    html.indexOf('2 items') < html.indexOf('aria-label="Filter Import status"'),
   )
 })

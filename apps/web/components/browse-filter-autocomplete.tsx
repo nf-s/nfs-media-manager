@@ -1,8 +1,8 @@
 'use client'
 
 import { useEffect, useId, useState, type ReactNode } from 'react'
-import { Sparkles } from 'lucide-react'
-import { Input } from '@repo/ui/components/ui/input'
+import { Search, Sparkles } from 'lucide-react'
+import { formatCount } from '@repo/ui/lib/format'
 import { FilterIndicator } from './filter-affordance'
 import type { BrowseFilter } from '@repo/schemas/browse'
 import {
@@ -136,7 +136,7 @@ export default function BrowseFilterAutocomplete({
   }
   return (
     <div
-      className="browse-search"
+      className="browse-combobox"
       onBlur={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget)) {
           setOpen(false)
@@ -144,9 +144,11 @@ export default function BrowseFilterAutocomplete({
         }
       }}
     >
-      <div className={`search-input-wrap${inputActions ? ' has-actions' : ''}`}>
-        <Input
+      <div className="ds-search" data-actions={inputActions ? '' : undefined}>
+        <Search className="ds-i" data-size="sm" aria-hidden />
+        <input
           id={`${id}-input`}
+          type="search"
           aria-label="Search and filter library"
           role="combobox"
           aria-expanded={menuVisible}
@@ -201,19 +203,19 @@ export default function BrowseFilterAutocomplete({
           }}
         />
         {inputActions && (
-          <div className="search-input-actions">{inputActions}</div>
+          <span className="browse-search-actions">{inputActions}</span>
         )}
       </div>
       {menuVisible && (
-        <div className="search-menu">
+        <div className="ds-pop browse-menu">
           <div id={`${id}-list`} role="listbox" aria-label="Filter suggestions">
             {titlesLoading && (
-              <p role="status" className="quiet search-status">
+              <p role="status" className="ds-pop-head">
                 Loading suggestions...
               </p>
             )}
             {titlesError && (
-              <p role="alert" className="quiet search-status">
+              <p role="alert" className="ds-pop-head">
                 Could not load suggestions. Try searching again.
               </p>
             )}
@@ -221,7 +223,7 @@ export default function BrowseFilterAutocomplete({
               !suggestions.length &&
               !titlesLoading &&
               !titlesError && (
-                <p className="quiet search-status">No matching suggestions.</p>
+                <p className="ds-pop-head">No matching suggestions.</p>
               )}
             {menuOptions.map((option, index) => (
               <button
@@ -232,41 +234,41 @@ export default function BrowseFilterAutocomplete({
                 key={option.key}
                 className={
                   option.kind === 'text'
-                    ? 'search-text-action'
+                    ? 'ds-menu-item search-text-action'
                     : option.kind === 'ai'
-                      ? 'search-ai-action'
-                      : undefined
+                      ? 'ds-menu-item search-ai-action'
+                      : 'ds-menu-item'
                 }
+                data-state={index === active ? 'hover' : undefined}
                 aria-disabled={
                   option.kind === 'ai' && option.disabled ? true : undefined
                 }
                 onMouseDown={(event) => event.preventDefault()}
                 onClick={() => selectMenuOption(option)}
               >
-                <span>
-                  {option.kind === 'suggestion' ? (
-                    <>
-                      {option.suggestion.kind === 'filter' && (
-                        <FilterIndicator />
-                      )}
+                {option.kind === 'suggestion' ? (
+                  <>
+                    {option.suggestion.kind === 'filter' && <FilterIndicator />}
+                    <span className="ds-truncate">
                       {option.suggestion.kind === 'item'
                         ? option.suggestion.item.label
                         : option.suggestion.filter.label}
-                    </>
-                  ) : option.kind === 'text' ? (
-                    <>Filter by text: "{value.trim()}"</>
-                  ) : (
-                    <>
-                      <Sparkles size={14} aria-hidden="true" /> AI search
-                    </>
-                  )}
-                </span>
-                {option.kind === 'suggestion' && (
-                  <small>
-                    {option.suggestion.kind === 'item'
-                      ? 'Open'
-                      : option.suggestion.filter.count.toLocaleString()}
-                  </small>
+                    </span>
+                    <span className="ds-muted">
+                      {option.suggestion.kind === 'item'
+                        ? 'Open'
+                        : formatCount(option.suggestion.filter.count)}
+                    </span>
+                  </>
+                ) : option.kind === 'text' ? (
+                  <span className="ds-truncate">
+                    Filter by text: "{value.trim()}"
+                  </span>
+                ) : (
+                  <>
+                    <Sparkles className="ds-i" data-size="sm" aria-hidden />
+                    AI search
+                  </>
                 )}
               </button>
             ))}

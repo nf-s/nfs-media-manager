@@ -15,7 +15,17 @@ import { Button } from '@repo/ui/components/ui/button'
 import { Input } from '@repo/ui/components/ui/input'
 import { fetchApiData } from '@/utils/api'
 import { useVirtualTable } from '@/hooks/useVirtualTable'
-import { TableState } from '@repo/ui/components/ui/table'
+import {
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+  TableState,
+} from '@repo/ui/components/ui/table'
+import { Notice } from '@repo/ui/components/ds/feedback'
+import { Section } from '@repo/ui/components/ds/facts'
+import { formatCount } from '@repo/ui/lib/format'
 import {
   SecondaryCell,
   SecondaryTableScroll,
@@ -86,13 +96,13 @@ export async function mergeLibraryTrack(
 
 function TrackIdentity({ track }: { track: TrackListItem }) {
   return (
-    <div className="min-w-0 break-words">
-      <div className="flex flex-wrap items-center gap-x-2">
+    <div className="dtl-identity">
+      <span className="ds-cell-id">
         <strong>{track.title}</strong>
         <ServiceIconLinks links={trackServiceLinks(track)} />
-      </div>
-      <p>{track.artists.join(', ') || 'Unknown artist'}</p>
-      <p className="quiet">{track.albumName ?? 'Album unknown'}</p>
+      </span>
+      <span>{track.artists.join(', ') || 'Unknown artist'}</span>
+      <span className="ds-muted">{track.albumName ?? 'Album unknown'}</span>
     </div>
   )
 }
@@ -111,26 +121,24 @@ export function TrackMergeReview({
   onBack: () => void
 }) {
   return (
-    <div
-      className="space-y-4 text-sm"
-      role="group"
-      aria-label="Confirm track merge"
-    >
-      <section aria-label="Last.fm record to merge">
-        <h3 className="mb-1 font-medium">Last.fm record to merge</h3>
+    <div role="group" aria-label="Confirm track merge">
+      <Section title="Last.fm record to merge" flush>
         <TrackIdentity track={source} />
-        <p className="quiet">{source.scrobbles.toLocaleString()} scrobbles</p>
-      </section>
-      <section aria-label="Spotify track to keep">
-        <h3 className="mb-1 font-medium">Spotify track to keep</h3>
+        <span className="ds-muted">
+          {formatCount(source.scrobbles)} scrobbles
+        </span>
+      </Section>
+      <Section title="Spotify track to keep">
         <TrackIdentity track={target} />
-      </section>
-      <p>
-        The Spotify track keeps its Spotify ID and playlists. The separate
-        Last.fm record is removed, and its recorded names and listening history
-        belong to the Spotify track. Later syncs keep this choice.
-      </p>
-      <div className="form-actions">
+      </Section>
+      <Section>
+        <p>
+          The Spotify track keeps its Spotify ID and playlists. The separate
+          Last.fm record is removed, and its recorded names and listening
+          history belong to the Spotify track. Later syncs keep this choice.
+        </p>
+      </Section>
+      <div className="ds-actions">
         <Button variant="primary" disabled={pending} onClick={onConfirm}>
           {pending ? 'Merging...' : 'Confirm merge'}
         </Button>
@@ -189,7 +197,7 @@ export function TrackMergePanel({
   return (
     <dialog
       ref={dialog}
-      className="tag-drawer"
+      className="dtl-dialog"
       aria-labelledby={titleId}
       onCancel={(event) => {
         event.preventDefault()
@@ -202,19 +210,22 @@ export function TrackMergePanel({
       }}
       onKeyDown={(event) => event.stopPropagation()}
     >
-      <div className="tag-drawer-inner">
-        <div className="detail-topbar">
-          <span id={titleId}>Track match</span>
-          <button
-            type="button"
+      <div className="dtl-dialog-inner">
+        <div className="ds-inspector-bar">
+          <div className="ds-crumbs">
+            <b id={titleId}>Track match</b>
+          </div>
+          <Button
+            variant="ghost"
+            icon
             aria-label="Close track merge"
             disabled={merge.isPending}
             onClick={onClose}
           >
-            <X size={18} />
-          </button>
+            <X className="ds-i" aria-hidden="true" />
+          </Button>
         </div>
-        <div className="tag-drawer-body">
+        <div className="dtl-dialog-body">
           {target ? (
             <TrackMergeReview
               source={track}
@@ -228,47 +239,44 @@ export function TrackMergePanel({
             />
           ) : (
             <>
-              <div className="flex flex-wrap items-center gap-x-2">
-                <h1>{track.title}</h1>
-                <ServiceIconLinks links={trackServiceLinks(track)} />
-              </div>
-              <p className="break-words">
-                {track.artists.join(', ') || 'Unknown artist'}
-              </p>
-              <p className="quiet text-xs">
-                {track.albumName ?? 'Album unknown'} ·{' '}
-                {track.scrobbles.toLocaleString()} scrobbles
-              </p>
-              <h2 className="mt-2 text-sm font-medium">
-                Spotify library track
-              </h2>
-              <Input
-                type="search"
-                aria-label="Search Spotify library tracks"
-                placeholder="Search library tracks"
-                maxLength={200}
-                value={draft}
-                onChange={(event) => setDraft(event.target.value)}
-              />
+              <TrackIdentity track={track} />
+              <span className="ds-muted">
+                {formatCount(track.scrobbles)} scrobbles
+              </span>
+              <label className="ds-field">
+                <span className="ds-label">Spotify library track</span>
+                <Input
+                  type="search"
+                  aria-label="Search Spotify library tracks"
+                  placeholder="Search library tracks"
+                  maxLength={200}
+                  value={draft}
+                  onChange={(event) => setDraft(event.target.value)}
+                />
+              </label>
               {query.length > 0 && (
                 <>
                   {candidates.hasTotal && (
-                    <p className="quiet">
-                      {candidates.total.toLocaleString()} matching tracks
-                    </p>
+                    <span className="ds-muted" role="status">
+                      {formatCount(candidates.total)} matching tracks
+                    </span>
                   )}
                   {candidates.isError && (
-                    <p role="alert">
-                      Could not search tracks.{' '}
-                      <Button variant="ghost" onClick={candidates.retry}>
-                        Retry
-                      </Button>
-                    </p>
+                    <Notice
+                      tone="danger"
+                      action={
+                        <Button size="xs" onClick={candidates.retry}>
+                          Retry
+                        </Button>
+                      }
+                    >
+                      Could not search tracks.
+                    </Notice>
                   )}
                   <SecondaryTableScroll
                     ref={candidates.scroller}
                     onScroll={candidates.onScroll}
-                    className="table-scroll-bounded"
+                    className="dtl-bounded"
                     role="region"
                     aria-label="Spotify library tracks"
                     aria-busy={candidates.isFetching}
@@ -277,15 +285,17 @@ export function TrackMergePanel({
                       className="ds-table"
                       aria-label="Spotify library tracks"
                     >
-                      <thead>
-                        <tr>
-                          <th>Track</th>
-                          <th>Artist</th>
-                          <th>Album</th>
-                          <th>Action</th>
-                        </tr>
-                      </thead>
-                      <tbody>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Track</TableHead>
+                          <TableHead>Artist</TableHead>
+                          <TableHead>Album</TableHead>
+                          <TableHead>
+                            <span className="sr-only">Action</span>
+                          </TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
                         {candidates.hasTotal && !candidates.total && (
                           <TableState colSpan={4}>
                             No imported Spotify tracks found.
@@ -309,9 +319,9 @@ export function TrackMergePanel({
                                   />
                                 </tr>
                               ) : (
-                                <tr key={item.id}>
-                                  <td>
-                                    <div className="secondary-cell-actions">
+                                <TableRow key={item.id}>
+                                  <TableCell>
+                                    <div className="ds-cell-id">
                                       <SecondaryCell text={item.title}>
                                         {item.title}
                                       </SecondaryCell>
@@ -319,37 +329,37 @@ export function TrackMergePanel({
                                         links={trackServiceLinks(item)}
                                       />
                                     </div>
-                                  </td>
-                                  <td>
+                                  </TableCell>
+                                  <TableCell>
                                     <SecondaryCell
                                       text={item.artists.join(', ')}
                                     >
                                       {item.artists.join(', ') ||
                                         'Unknown artist'}
                                     </SecondaryCell>
-                                  </td>
-                                  <td>
+                                  </TableCell>
+                                  <TableCell>
                                     <SecondaryCell
                                       text={item.albumName ?? undefined}
                                     >
                                       {item.albumName ?? 'Album unknown'}
                                     </SecondaryCell>
-                                  </td>
-                                  <td>
+                                  </TableCell>
+                                  <TableCell align="end">
                                     <Button
-                                      className="h-6"
+                                      size="xs"
                                       aria-label={`Merge with ${item.title} by ${item.artists.join(', ')}`}
                                       onClick={() => setTarget(item)}
                                     >
                                       Merge
                                     </Button>
-                                  </td>
-                                </tr>
+                                  </TableCell>
+                                </TableRow>
                               )
                             }
                           />
                         )}
-                      </tbody>
+                      </TableBody>
                     </table>
                   </SecondaryTableScroll>
                 </>
@@ -357,9 +367,9 @@ export function TrackMergePanel({
             </>
           )}
           {merge.isError && (
-            <p role="alert">
+            <Notice tone="danger">
               {errorMessage(merge.error, 'Could not merge these tracks.')}
-            </p>
+            </Notice>
           )}
         </div>
       </div>
@@ -378,7 +388,9 @@ export default function TrackMerge({
   if (!canMergeLastfmTrack(track)) return null
   return (
     <>
-      <Button onClick={() => setOpen(true)}>Merge with Spotify track</Button>
+      <Button size="md" onClick={() => setOpen(true)}>
+        Merge with Spotify track
+      </Button>
       {open && (
         <TrackMergePanel
           key={track.id}

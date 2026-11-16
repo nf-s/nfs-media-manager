@@ -27,11 +27,10 @@ export default function SignOutButton() {
   return (
     <Button
       size="md"
-      className="whitespace-nowrap"
       onClick={() => signOutMutation.mutate()}
       disabled={signOutMutation.isPending}
     >
-      {signOutMutation.isPending ? 'Signing out...' : 'Sign Out'}
+      {signOutMutation.isPending ? 'Signing out...' : 'Sign out'}
     </Button>
   )
 }

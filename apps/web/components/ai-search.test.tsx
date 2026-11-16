@@ -50,10 +50,9 @@ function render(path: string, search: string, children: ReactNode) {
 
 function assertAiSearchBox(html: string, placeholder: string) {
   const box = html.match(
-    /<div class="browse-search">[\s\S]*?<div class="search-input-actions">[\s\S]*?<\/div>/,
+    /<div class="ds-search" data-actions="">[\s\S]*?<span class="browse-search-actions">[\s\S]*?<\/span>/,
   )?.[0]
   assert.ok(box, 'search box with input actions')
-  assert.match(box, /class="search-input-wrap has-actions"/)
   assert.match(box, new RegExp(`placeholder="${placeholder}"`))
   assert.match(box, /aria-label="Record search"/)
 }

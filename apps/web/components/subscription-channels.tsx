@@ -10,7 +10,7 @@ import {
   subscriptionTypeLabels,
   type SubscriptionSource,
 } from '@repo/schemas/subscriptions'
-import { Input } from '@repo/ui/components/ui/input'
+import { Button } from '@repo/ui/components/ui/button'
 import {
   TableBody,
   TableCell,
@@ -18,13 +18,18 @@ import {
   TableRow,
   TableState,
 } from '@repo/ui/components/ui/table'
+import { EmptyValue } from '@repo/ui/components/ds/pill'
+import { Skeleton } from '@repo/ui/components/ds/feedback'
+import { Status } from '@repo/ui/components/ds/status'
+import { PageHead } from '@repo/ui/components/ds/toolbar'
+import { formatCount, formatDate, formatItemCount } from '@repo/ui/lib/format'
 import { useConfig } from './providers'
 import { DetailLink } from './detail-link'
+import { MediaThumb } from './media-artwork'
 import {
   replaceWorkspaceUrl,
   useDetailInspector,
 } from './detail-inspector-context'
-import { SourceAvatar } from './subscription-item-details'
 import { fetchApiData } from '@/utils/api'
 import {
   filterSubscriptionSources,
@@ -42,11 +47,13 @@ import {
   SecondaryColumnFilter,
   SecondaryTableScroll,
   SecondaryTableHead,
+  SecondaryTableSearch,
   SecondaryTableToolbar,
   useTableColumns,
 } from './secondary-table'
+import { RetryButton } from './browse-items'
 
-export function useSubscriptionSources() {
+function useSubscriptionSources() {
   const { apiBaseUrl } = useConfig()
   return useQuery({
     queryKey: ['subscriptions', 'sources'],
@@ -60,11 +67,12 @@ export function useSubscriptionSources() {
   })
 }
 
-function replaceParams(updates: Record<string, string | null>) {
+function replaceParams(updates: Record<string, string | string[] | null>) {
   const params = new URLSearchParams(window.location.search)
   for (const [key, value] of Object.entries(updates)) {
-    if (value) params.set(key, value)
-    else params.delete(key)
+    params.delete(key)
+    if (Array.isArray(value)) for (const item of value) params.append(key, item)
+    else if (value) params.set(key, value)
   }
   replaceWorkspaceUrl(
     `${window.location.pathname}${params.size ? `?${params}` : ''}`,
@@ -82,28 +90,27 @@ function SourceRow({
   selected: boolean
 }) {
   return (
-    <TableRow data-selected={selected || undefined}>
+    <TableRow selected={selected}>
       {visible('title') && (
-        <TableCell>
-          <div className="secondary-cell-actions">
-            <SourceAvatar src={source.thumbnailUrl} />
-            <SecondaryCell text={source.title}>
-              <DetailLink
-                kind="channel"
-                id={source.id}
-                className="table-title hover:underline"
-              >
-                {source.title}
-              </DetailLink>
-            </SecondaryCell>
-          </div>
+        <TableCell sticky={0} stickyEdge>
+          <span className="ds-cell-id">
+            <MediaThumb kind="person" src={source.thumbnailUrl} />
+            <DetailLink
+              kind="channel"
+              id={source.id}
+              className="ds-cell-title"
+              title={source.title}
+            >
+              {source.title}
+            </DetailLink>
+          </span>
         </TableCell>
       )}
       {visible('type') && (
         <TableCell>{subscriptionTypeLabels[source.type]}</TableCell>
       )}
       {visible('storedItems') && (
-        <TableCell className="numeric">
+        <TableCell align="end">
           <SecondaryCell
             details={!source.historyComplete ? 'Reading history' : undefined}
             label={`History for ${source.title}`}
@@ -113,24 +120,24 @@ function SourceRow({
               title={`Filter subscriptions by ${source.title}`}
               aria-label={`Filter subscriptions by ${source.title}`}
             >
-              {source.storedItems.toLocaleString()}
+              {formatCount(source.storedItems)}
             </Link>
           </SecondaryCell>
         </TableCell>
       )}
       {visible('latestItemAt') && (
-        <TableCell className="whitespace-nowrap">
+        <TableCell>
           {source.latestItemAt ? (
             <time dateTime={source.latestItemAt}>
-              {new Date(source.latestItemAt).toLocaleDateString()}
+              {formatDate(source.latestItemAt)}
             </time>
           ) : (
-            '-'
+            <EmptyValue />
           )}
         </TableCell>
       )}
       {visible('size') && (
-        <TableCell className="numeric whitespace-nowrap">
+        <TableCell align="end">
           {formatSubscriptionSourceSize(source)}
         </TableCell>
       )}
@@ -141,7 +148,7 @@ function SourceRow({
             details={source.description || undefined}
             label={`Description of ${source.title}`}
           >
-            {source.description ?? '-'}
+            {source.description ?? <EmptyValue />}
           </SecondaryCell>
         </TableCell>
       )}
@@ -154,13 +161,21 @@ function SourceRow({
                 : undefined
             }
           >
-            {source.type === 'youtube' ? (source.handle ?? '-') : '-'}
+            {source.type === 'youtube' && source.handle ? (
+              source.handle
+            ) : (
+              <EmptyValue />
+            )}
           </SecondaryCell>
         </TableCell>
       )}
       {visible('historyComplete') && (
         <TableCell>
-          {source.historyComplete ? 'Complete' : 'Reading history'}
+          {source.historyComplete ? (
+            <Status state="done">Complete</Status>
+          ) : (
+            <Status state="running">Reading history</Status>
+          )}
         </TableCell>
       )}
     </TableRow>
@@ -214,37 +229,35 @@ export default function SubscriptionChannels() {
     direction,
   })
   const narrowed = Boolean(q || types.length || history.length)
+  const noun = { one: 'channel', other: 'channels' }
   return (
-    <section
-      className="admin-page table-workspace"
-      aria-labelledby="subscription-channels"
-    >
-      <h1 id="subscription-channels">Channels</h1>
+    <section className="bi-workspace" aria-label="Channels">
+      <PageHead title="Channels" />
       <SecondaryTableToolbar
         search={
-          <Input
-            type="search"
-            aria-label="Filter by name"
-            placeholder="Filter by name"
+          <SecondaryTableSearch
+            label="Filter by name"
             value={draft}
             maxLength={200}
-            onChange={(event) => setDraft(event.target.value)}
+            onChange={setDraft}
           />
         }
         count={
-          <span aria-live="polite">
-            {sources.data
-              ? narrowed
-                ? `${items.length.toLocaleString()} of ${all.length.toLocaleString()}`
-                : `${all.length.toLocaleString()} ${all.length === 1 ? 'source' : 'sources'}`
-              : ''}
-          </span>
+          sources.data ? (
+            formatItemCount(
+              items.length,
+              noun,
+              narrowed ? all.length : undefined,
+            )
+          ) : (
+            <Skeleton className="bi-count-skeleton" width={64} height={10} />
+          )
         }
         columns={columns.controls}
       />
       {/* The table is the only scroller and takes the height the toolbar leaves. */}
       <SecondaryTableScroll
-        className="tags-scroll min-h-0 flex-1"
+        className="min-h-0 flex-1"
         role="region"
         aria-label="Channels and podcasts"
         aria-busy={sources.isFetching}
@@ -262,7 +275,9 @@ export default function SubscriptionChannels() {
                     sortBy={sortBy}
                     direction={direction}
                     onSort={sort}
-                    className={column.numeric ? 'numeric' : undefined}
+                    align={column.numeric ? 'end' : undefined}
+                    sticky={column.key === 'title' ? 0 : undefined}
+                    stickyEdge={column.key === 'title'}
                     filter={
                       column.key === 'type' ? (
                         <SecondaryColumnFilter
@@ -289,19 +304,7 @@ export default function SubscriptionChannels() {
                             { value: 'reading', label: 'Reading history' },
                           ]}
                           value={history}
-                          onChange={(next) => {
-                            const params = new URLSearchParams(
-                              window.location.search,
-                            )
-                            params.delete('history')
-                            for (const value of next)
-                              params.append('history', value)
-                            window.history.replaceState(
-                              null,
-                              '',
-                              `${window.location.pathname}?${params}`,
-                            )
-                          }}
+                          onChange={(next) => replaceParams({ history: next })}
                         />
                       ) : undefined
                     }
@@ -310,26 +313,39 @@ export default function SubscriptionChannels() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {!items.length && (
+            {sources.isPending &&
+              Array.from({ length: 8 }, (_, index) => (
+                <TableRow key={index} aria-hidden="true" data-placeholder="">
+                  {Array.from({ length: columns.count }, (_, cell) => (
+                    <TableCell key={cell}>
+                      <Skeleton height={10} width="70%" />
+                    </TableCell>
+                  ))}
+                </TableRow>
+              ))}
+            {!sources.isPending && !items.length && (
               <TableState colSpan={columns.count} error={sources.isError}>
-                {sources.isPending ? (
-                  'Loading channels...'
-                ) : sources.isError ? (
+                {sources.isError ? (
                   <>
                     Could not load channels.{' '}
-                    <button
-                      type="button"
-                      className="underline"
-                      onClick={() => sources.refetch()}
-                    >
-                      Retry
-                    </button>
+                    <RetryButton onClick={() => sources.refetch()} />
                   </>
                 ) : all.length ? (
-                  'No channels match.'
+                  <>
+                    No channels match.{' '}
+                    <Button
+                      size="xs"
+                      onClick={() => {
+                        setDraft('')
+                        replaceParams({ type: null, types: null, history: [] })
+                      }}
+                    >
+                      Clear filters
+                    </Button>
+                  </>
                 ) : (
                   <>
-                    Nothing synced yet. Sync channels and podcasts in{' '}
+                    No channels yet. Sync channels and podcasts in{' '}
                     <Link href={subscriptionImportsHref}>Imports</Link>.
                   </>
                 )}

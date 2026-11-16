@@ -67,6 +67,7 @@ export function useFilmSelection(
   const films = useVirtualTable({
     queryKey: [`${mediaType}-selection`, params],
     pageSize: 50,
+    headerHeight: 28,
     enabled: !paused,
     refetchInterval: 10_000,
     loadPage: (page, size, signal) =>

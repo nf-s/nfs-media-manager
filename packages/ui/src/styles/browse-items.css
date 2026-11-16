@@ -1,1 +1,100 @@
 /* Tracks, Artists, People and Subscriptions browse layout. Tokens only. */
+
+/* The scroller lays cards out itself; the card grid carries its own gutter. */
+.bi-scroll[data-view='grid'] {
+  padding: 0;
+}
+
+/* Virtual windows: the reserved height, with the mounted rows offset inside it */
+.bi-virtual {
+  position: relative;
+  flex-shrink: 0;
+}
+.bi-window {
+  position: absolute;
+  right: 0;
+  left: 0;
+}
+
+/* List column labels stay above the rows while they scroll */
+.bi-listhead {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--ds-surface);
+}
+
+/* Artwork and thumbnails are links that open the item */
+.bi-art-link,
+.bi-thumb-link {
+  display: block;
+  flex: none;
+}
+.bi-art-link {
+  width: 100%;
+  height: 100%;
+}
+.bi-art-link[data-fit='contain'] .ds-artimg,
+.bi-thumb-link[data-fit='contain'] .ds-artimg {
+  object-fit: contain;
+}
+
+/* Virtual table spacer rows hold the height of the rows above and below */
+.bi-spacer > td {
+  padding: 0;
+  border: 0;
+}
+
+/* Column resize handle on the header's right edge */
+.bi-resizer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: var(--ds-3);
+  cursor: col-resize;
+  touch-action: none;
+}
+.bi-resizer:hover,
+.bi-resizer:focus-visible {
+  background: var(--ds-line);
+  outline: 0;
+}
+
+.bi-notice {
+  margin: 0 var(--ds-gutter) var(--ds-4);
+}
+
+.bi-count-skeleton {
+  display: inline-block;
+  vertical-align: middle;
+}
+
+/* Phones: active filters scroll sideways in one row above the results */
+.bi-filter-row {
+  flex-wrap: nowrap;
+  padding: var(--ds-3) var(--ds-gutter);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.bi-filter-row > * {
+  flex-shrink: 0;
+}
+
+/* Channel and person tables fill the workspace below the page head */
+.bi-workspace {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+}
+.bi-workspace > .ds-table-wrap {
+  flex: 1;
+}
+
+/* Browse tables fill the panel; resized columns scroll sideways */
+.bi-scroll > .ds-table {
+  min-width: 100%;
+}

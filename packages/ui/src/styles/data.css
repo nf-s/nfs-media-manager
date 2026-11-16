@@ -1,1 +1,57 @@
 /* Layout for the data screens. Tokens only; visual patterns belong in the design system. */
+
+/* A vertical stack of blocks inside a section or source row */
+.data-stack {
+  display: grid;
+  gap: var(--ds-4);
+  min-width: 0;
+}
+
+/* Search results with one action each: the button, then the name */
+.data-picker {
+  display: grid;
+  gap: var(--ds-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.data-picker > li {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-4);
+  min-width: 0;
+  font-size: var(--ds-text-sm);
+}
+
+/* An identifier form inside an open source row: label, input, actions */
+.data-identifier {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--ds-3) var(--ds-4);
+}
+.data-identifier > label,
+.data-identifier-wide {
+  grid-column: 1 / -1;
+}
+
+/* Raw stored data opened inside a source row */
+.data-disclosure > summary {
+  color: var(--ds-ink-2);
+  font-size: var(--ds-text-sm);
+  cursor: pointer;
+}
+
+/* Provider prose kept as stored */
+.data-prose {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: var(--ds-text-sm);
+}
+
+/* Long names and identifiers wrap rather than overflow */
+.data-wrap {
+  display: block;
+  overflow-wrap: anywhere;
+}

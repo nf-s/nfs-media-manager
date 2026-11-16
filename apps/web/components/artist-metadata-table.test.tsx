@@ -105,24 +105,25 @@ test('artist metadata renders artist selection, playlist and freshness filters w
         </ConfigContext.Provider>
       </QueryClientProvider>,
     )
-    assert.match(html, /<h1>Artist metadata<\/h1>/)
+    assert.match(html, /aria-label="Artist metadata"/)
+    assert.match(html, /<option value="artist" selected="">Artists<\/option>/)
     assert.match(html, /Select all loaded artists/)
     assert.match(html, /Select all 1 matching artists/)
     assert.match(html, /Select Fixture artist/)
     assert.match(html, /Search artists/)
     assert.match(html, /role="combobox"/)
     assert.match(html, /Record search/)
-    assert.match(html, /> Filters/)
+    assert.match(html, /<\/svg>Filters<\/button>/)
     assert.match(html, /Filter Playlists/)
     assert.match(html, /Filter MusicBrainz freshness/)
     assert.match(html, /dateTime="2026-01-01T00:00:00.000Z"/)
-    assert.match(html, /disabled=""[^>]*>Review 0 metadata jobs/)
     assert.doesNotMatch(html, /Album metadata|Film metadata|Legacy import/)
     const providerControls = html.match(
-      /<fieldset class="enrichment-providers"[\s\S]*?<\/fieldset>/,
+      /<fieldset class="ops-providers"[\s\S]*?<\/fieldset>/,
     )?.[0]
-    assert.ok(providerControls)
-    assert.doesNotMatch(providerControls, /checked=""/)
+    // The selection bar, with providers and Review, appears once rows are selected.
+    assert.equal(providerControls, undefined)
+    assert.doesNotMatch(html, /Review 0 metadata jobs/)
   } finally {
     client.clear()
     assert.equal(network.mock.callCount(), 0)
@@ -143,7 +144,8 @@ test('artist freshness keeps a successful scrape date visible after a failed att
     />,
   )
   assert.match(html, /dateTime="2026-01-01T00:00:00.000Z"/)
-  assert.match(html, /MusicBrainz scrape details/)
+  assert.match(html, /data-status="failed">Failed</)
+  assert.match(html, /title="Last successful MusicBrainz scrape: 2026-01-01 /)
   assert.doesNotMatch(html, />Never</)
 })
 
@@ -165,6 +167,7 @@ test('artist freshness distinguishes unattempted, failed and queued without clai
       />,
     )
   assert.match(render(null, null), />Never</)
-  assert.match(render('failed', timestamp), />Not scraped</)
+  assert.match(render('failed', timestamp), /data-status="failed">Failed</)
+  assert.match(render(null, timestamp), /data-status="never">Not scraped</)
   assert.match(render('queued', null), />Queued</)
 })

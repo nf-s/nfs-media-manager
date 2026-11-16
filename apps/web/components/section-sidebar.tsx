@@ -24,19 +24,29 @@ export function SectionSidebar({
   activeId: string
 }) {
   const railSlot = useRailSlot()
+  // In the rail the items are second-level navigation; above the page they are tabs.
+  const itemClass = railSlot ? 'ds-nav-item' : 'ds-tab'
+  const level = railSlot ? '2' : undefined
   const navigation = (
-    <nav className="section-sidebar" aria-label={label}>
+    <nav
+      className={railSlot ? 'shell-section-nav' : 'ds-tabs shell-section-tabs'}
+      aria-label={label}
+    >
       {items.map((item) => {
         const content = (
-          <>
-            <strong>{item.label}</strong>
-            {item.description && <span>{item.description}</span>}
-          </>
+          <span className="shell-section-text">
+            <span className="ds-truncate">{item.label}</span>
+            {item.description && (
+              <span className="ds-muted ds-truncate">{item.description}</span>
+            )}
+          </span>
         )
         return item.href !== undefined ? (
           <Link
             key={item.id}
             href={item.href}
+            className={itemClass}
+            data-level={level}
             aria-current={item.id === activeId ? 'page' : undefined}
           >
             {content}
@@ -45,6 +55,8 @@ export function SectionSidebar({
           <button
             type="button"
             key={item.id}
+            className={itemClass}
+            data-level={level}
             aria-current={item.id === activeId ? 'true' : undefined}
             onClick={item.onSelect}
           >

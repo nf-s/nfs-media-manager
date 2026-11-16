@@ -80,7 +80,7 @@ test('the provider group displays rated and unrated services together and omits 
   )
   assert.match(
     html,
-    /class="provider-ratings ratings-detail"[^>]*aria-label="Provider ratings and links"[^>]*>.*RYM rating: 3\.65.*Open Last.fm/,
+    /class="ds-ratings"[^>]*aria-label="Provider ratings and links"[^>]*>.*RYM rating: 3\.65.*Open Last.fm/,
   )
   assert.equal(
     (html.match(/href="https:\/\/rateyourmusic.com/g) ?? []).length,

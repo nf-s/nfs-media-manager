@@ -4,16 +4,36 @@ import {
   type TrackListItem,
   type TrackScrobbleLinkStrategy,
 } from '@repo/schemas/tracks'
+import { formatTrackLength } from '@repo/ui/lib/format'
 import type { TitleSuggestion } from './browse-suggestions'
+
+/** Column, picker and sort order: identity, creator, parent, properties, dates, counts, pills. */
+export const trackFieldOrder = [
+  'title',
+  'artist',
+  'album',
+  'albumLink',
+  'source',
+  'spotifyMatch',
+  'durationSec',
+  'releaseDate',
+  'dateAdded',
+  'lastListenedAt',
+  'scrobbles',
+  'playlist',
+  'genre',
+  'albumTag',
+  'artistTag',
+]
 
 export const defaultTrackColumns = [
   'title',
   'artist',
   'album',
-  'playlist',
   'durationSec',
   'dateAdded',
   'scrobbles',
+  'playlist',
   'genre',
 ]
 
@@ -59,9 +79,9 @@ export function albumHref(albumId: string) {
   return `/albums/${encodeURIComponent(albumId)}`
 }
 
+/** `4:05`, or an en dash when the length is unknown. */
 export function formatTrackDuration(seconds: number | null) {
-  if (seconds === null) return '-'
-  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`
+  return formatTrackLength(seconds === null ? null : seconds * 1000)
 }
 
 export function trackTitleSuggestions(

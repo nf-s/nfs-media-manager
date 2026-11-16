@@ -11,9 +11,12 @@ import {
   type FilmDetail,
 } from '@repo/schemas/media'
 import { ProviderReferenceOverrideSchema } from '@repo/schemas/common'
+import { Notice } from '@repo/ui/components/ds/feedback'
 import { Button } from '@repo/ui/components/ui/button'
 import { Input } from '@repo/ui/components/ui/input'
+import { Label } from '@repo/ui/components/ui/label'
 import { fetchApiData } from '@/utils/api'
+import { errorMessage } from './lastfm-sync'
 import { useConfig } from './providers'
 
 export function IdentifierRow({
@@ -23,6 +26,8 @@ export function IdentifierRow({
   referenceType,
   current,
   onSaved,
+  onRefresh,
+  onCancel,
 }: {
   item: AlbumDetail | FilmDetail
   provider: string
@@ -30,13 +35,18 @@ export function IdentifierRow({
   referenceType: string
   current: string
   onSaved: () => Promise<void>
+  /** Queues a refresh after saving. Without it the ID is only saved. */
+  onRefresh?: () => Promise<unknown>
+  onCancel?: () => void
 }) {
   const { apiBaseUrl } = useConfig()
   const [value, setValue] = useState(current)
   const [error, setError] = useState('')
   const mutation = useMutation({
-    mutationFn: (override: z.infer<typeof ProviderReferenceOverrideSchema>) =>
-      fetchApiData(
+    mutationFn: async (
+      override: z.infer<typeof ProviderReferenceOverrideSchema>,
+    ) => {
+      await fetchApiData(
         apiBaseUrl,
         `/api/v1/${item.mediaType === 'film' ? 'films' : 'albums'}/${encodeURIComponent(item.id)}`,
         z.union([AlbumDetailSchema, FilmDetailSchema]),
@@ -44,12 +54,16 @@ export function IdentifierRow({
           method: 'PATCH',
           body: JSON.stringify({ referenceOverrides: [override] }),
         },
-      ),
-    onSuccess: onSaved,
+      )
+      await onSaved()
+      if (onRefresh) await onRefresh()
+    },
   })
+  const id = `identifier-${provider}-${referenceType}`
+  const action = onRefresh ? 'Save and refresh' : 'Save'
   return (
     <form
-      className="identifier-row"
+      className="data-identifier"
       onSubmit={(event) => {
         event.preventDefault()
         const result = ProviderReferenceOverrideSchema.safeParse({
@@ -65,16 +79,13 @@ export function IdentifierRow({
         mutation.mutate(result.data)
       }}
     >
-      <label htmlFor={`identifier-${provider}-${referenceType}`}>
-        <strong>{label}</strong>
-        <small>
-          {referenceType === 'imdb'
-            ? 'IMDb ID, shared across providers'
-            : `${referenceType} ID`}
-        </small>
-      </label>
+      <Label htmlFor={id}>
+        {referenceType === 'imdb'
+          ? 'IMDb ID, shared across providers'
+          : `${referenceType} ID`}
+      </Label>
       <Input
-        id={`identifier-${provider}-${referenceType}`}
+        id={id}
         aria-label={`${label} ID`}
         value={value}
         placeholder={
@@ -82,19 +93,32 @@ export function IdentifierRow({
         }
         onChange={(event) => setValue(event.target.value)}
       />
-      <Button
-        size="md"
-        type="submit"
-        disabled={
-          !value.trim() || value.trim() === current || mutation.isPending
-        }
-      >
-        {mutation.isPending ? 'Updating...' : 'Update'}
-      </Button>
+      <span className="ds-actions">
+        <Button
+          variant="primary"
+          type="submit"
+          disabled={
+            !value.trim() || value.trim() === current || mutation.isPending
+          }
+        >
+          {mutation.isPending ? 'Saving...' : action}
+        </Button>
+        {onCancel && (
+          <Button type="button" onClick={onCancel}>
+            Cancel
+          </Button>
+        )}
+      </span>
       {(error || mutation.isError) && (
-        <p role="alert">{error || mutation.error?.message}</p>
+        <Notice tone="danger" className="data-identifier-wide">
+          {error || errorMessage(mutation.error, 'Could not save the ID.')}
+        </Notice>
       )}
-      {mutation.isSuccess && <span role="status">Updated</span>}
+      {mutation.isSuccess && (
+        <span role="status" className="ds-muted data-identifier-wide">
+          {onRefresh ? 'Saved. Refresh queued.' : 'Saved'}
+        </span>
+      )}
     </form>
   )
 }

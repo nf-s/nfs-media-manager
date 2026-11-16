@@ -1,11 +1,10 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { ProviderJobSummarySchema } from '@repo/schemas/provider'
 import ProviderJobSummary from './provider-job-summary'
 
-test('provider job summary includes every status and opens the provider jobs', () => {
+test('provider job summary shows the headline counts and opens the provider jobs', () => {
   const summary = ProviderJobSummarySchema.parse({
     provider: 'fixture',
     total: 12,
@@ -18,9 +17,23 @@ test('provider job summary includes every status and opens the provider jobs', (
   const html = renderToStaticMarkup(
     <ProviderJobSummary summary={summary} onOpenJobs={() => {}} />,
   )
-  assert.match(html, /Jobs · 12/)
-  for (const label of ['Queued', 'Running', 'Succeeded', 'Failed', 'Cancelled'])
-    assert.match(html, new RegExp(`<dt[^>]*>${label}</dt>`))
+  assert.match(
+    html,
+    /<h3>Jobs<\/h3><span class="ds-muted">12 · 1 cancelled<\/span>/,
+  )
+  for (const [label, value] of [
+    ['Queued', '3'],
+    ['Running', '1'],
+    ['Failed', '2'],
+    ['Succeeded', '5'],
+  ])
+    assert.match(
+      html,
+      new RegExp(
+        `<span class="ds-stat-value">${value}</span><span class="ds-stat-label">${label}</span>`,
+      ),
+    )
+  assert.match(html, /data-tone="danger"><span class="ds-stat-value">2</)
   assert.match(html, />View jobs</)
 })
 
@@ -39,6 +52,6 @@ test('providers without jobs show zero counts and omit the jobs action', () => {
       onOpenJobs={() => {}}
     />,
   )
-  assert.match(html, /Jobs · 0/)
-  assert.doesNotMatch(html, /View jobs/)
+  assert.match(html, /<span class="ds-muted">0<\/span>/)
+  assert.doesNotMatch(html, /View jobs|data-tone="danger"/)
 })

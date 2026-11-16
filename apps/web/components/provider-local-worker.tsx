@@ -13,6 +13,7 @@ import {
   type ProviderLocalWorkerStatus,
   type ProviderSummary,
 } from '@repo/schemas/provider'
+import { Pill } from '@repo/ui/components/ds/pill'
 import { fetchApiData } from '@/utils/api'
 import { useConfig } from './providers'
 
@@ -81,22 +82,19 @@ export function ProviderLocalWorkerBadge({
   status: ProviderLocalWorkerStatus
 }) {
   return (
-    <div
-      className="inline-flex flex-wrap items-center gap-x-2 gap-y-1"
-      role="status"
-    >
-      <span className="rounded-full border border-slate-200 bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700">
-        {status.mode === 'local' ? 'Local' : 'Cloudflare'}
-      </span>
-      <span className="text-xs text-slate-600">
-        {status.blocked
-          ? 'Local worker needs review'
-          : !status.paired
-            ? 'Local worker not paired'
-            : status.online
-              ? 'Local worker online'
-              : 'Local worker offline'}
-      </span>
-    </div>
+    <span className="ds-actions" role="status">
+      <Pill>{status.mode === 'local' ? 'Local' : 'Cloudflare'}</Pill>
+      <span className="ds-help">{localWorkerLabel(status)}</span>
+    </span>
   )
+}
+
+export function localWorkerLabel(status: ProviderLocalWorkerStatus) {
+  return status.blocked
+    ? 'Local worker needs review'
+    : !status.paired
+      ? 'Local worker not paired'
+      : status.online
+        ? 'Local worker online'
+        : 'Local worker offline'
 }

@@ -1,19 +1,9 @@
 'use client'
 
-import { PlaylistPlayButton } from './playlist-detail'
-import { TrackArtistLinks } from './creator-links'
-import { musicDisplayTags } from '@repo/schemas/music-tags'
-
-import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
 import { useQuery } from '@tanstack/react-query'
-import { Button } from '@repo/ui/components/ui/button'
-import {
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
-} from '@repo/ui/components/ui/tabs'
+import { AudioLines, Disc3 } from 'lucide-react'
+import { musicDisplayTags } from '@repo/schemas/music-tags'
 import { sameBrowseFilter, type BrowseFilter } from '@repo/schemas/browse'
 import {
   TrackDetailSchema,
@@ -21,224 +11,364 @@ import {
   trackSpotifyMatchLabels,
   type TrackDetail,
 } from '@repo/schemas/tracks'
+import { Thumb } from '@repo/ui/components/ds/artwork'
+import {
+  DetailActionsSpacer,
+  DetailHeader,
+} from '@repo/ui/components/ds/detail-header'
+import { Facts, KeyValues, Section, Stats } from '@repo/ui/components/ds/facts'
+import { List, ListRow, RowTitle } from '@repo/ui/components/ds/list-row'
+import { Button } from '@repo/ui/components/ui/button'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@repo/ui/components/ui/table'
+import { TabsContent } from '@repo/ui/components/ui/tabs'
+import {
+  EMPTY_VALUE,
+  formatCount,
+  formatDate,
+  formatTrackLength,
+} from '@repo/ui/lib/format'
 import { useConfig } from './providers'
 import { fetchApiData } from '@/utils/api'
-import { monthBars } from '@/utils/listening-chart'
 import { lastfmTrackUrl, trackServiceLinks } from '@/utils/track-links'
 import {
-  formatTrackDuration,
   parseTrackFilters,
   trackFilter,
   trackScrobbleRuleLabels,
   tracksHref,
 } from '@/utils/track-browse'
-import { filterModeClass } from './browse-controls'
-import { FilterButton } from './filter-affordance'
-import { ListeningChart } from './listening-chart'
-import MediaArtwork from './media-artwork'
+import { TrackArtistLinks } from './creator-links'
+import { CreatorDetailState } from './creator-detail-state'
+import { DetailLink } from './detail-link'
 import {
-  AlbumReferencePlayButton,
-  LibraryTrackPlayButtons,
-} from './play-controls'
-import ServiceIconLinks from './service-icon-links'
+  DetailArt,
+  DetailTabs,
+  FilterPill,
+  OpenAtProvider,
+  PlaylistPills,
+  useDetailTab,
+} from './detail-frame'
+import { TrackHeaderPlay } from './detail-play'
+import { ListeningTrend } from './listening-trend'
+import ServiceIconLinks, { serviceLinks } from './service-icon-links'
 import TrackMerge from './track-merge'
 import TrackPlaylistAdditions from './track-playlist-additions'
-import { DetailLink } from './detail-link'
-import { useDetailView } from './detail-inspector-context'
 
 type OnFilter = (filter: BrowseFilter, keepOpen?: boolean) => void
+type TrackTab = 'overview' | 'sources'
+const trackTabs: readonly [TrackTab, ...TrackTab[]] = ['overview', 'sources']
+/** Playlists and Listening were tabs before they joined the Overview. */
+const trackTabAliases = {
+  playlists: 'overview',
+  listening: 'overview',
+  history: 'sources',
+} satisfies Record<string, TrackTab>
 
-function FilterValue({
-  field,
-  value,
-  onFilter,
-}: {
-  field: string
-  value: string
-  onFilter?: OnFilter
-}) {
-  const params = useSearchParams()
-  const filter = trackFilter({ field, value })
-  const active = parseTrackFilters(params.get('filters')).find((item) =>
-    sameBrowseFilter(item, filter),
-  )
-  const className = `metadata-tag ${active ? filterModeClass(active.mode) : ''}`
-  if (!onFilter)
-    return (
-      <Link className={className} href={tracksHref([filter])}>
-        {value}
-      </Link>
-    )
-  return (
-    <FilterButton
-      className={className}
-      title={`Filter ${field}: ${value}. Shift-click to keep details open.`}
-      onClick={(event) => onFilter(filter, event.shiftKey)}
-    >
-      {value}
-    </FilterButton>
-  )
-}
-
+/** Values that filter Tracks: in place inside a browser, otherwise as a link. */
 function FilterValues({
   field,
   values,
   onFilter,
 }: {
   field: string
-  values: string[]
+  values: readonly string[]
   onFilter?: OnFilter
 }) {
+  const params = useSearchParams()
+  const active = parseTrackFilters(params.get('filters'))
   return (
-    <div className="detail-tags">
-      {values.map((value) => (
-        <FilterValue
-          key={value}
-          field={field}
-          value={value}
-          onFilter={onFilter}
-        />
-      ))}
-    </div>
+    <span className="ds-pills" data-wrap="">
+      {values.map((value) => {
+        const filter = trackFilter({ field, value })
+        const current = active.find((item) => sameBrowseFilter(item, filter))
+        const mode = current ? (current.mode ?? 'any') : undefined
+        return onFilter ? (
+          <FilterPill
+            key={value}
+            label={value}
+            mode={mode}
+            title={`Filter ${field}: ${value}. Shift-click to keep details open.`}
+            onClick={(event) => onFilter(filter, event.shiftKey)}
+          />
+        ) : (
+          <FilterPill
+            key={value}
+            label={value}
+            mode={mode}
+            href={tracksHref([filter])}
+          />
+        )
+      })}
+    </span>
   )
 }
 
-/** The track's playlists; each opens the playlist drawer, which can filter by it. */
-function PlaylistValues({
-  playlists,
-}: {
-  playlists: TrackDetail['playlists']
-}) {
-  return (
-    <div className="detail-tags">
-      {playlists.map((playlist) => (
-        <span key={playlist.id} className="inline-flex items-center gap-1">
-          <PlaylistPlayButton playlist={playlist} />
-          <DetailLink kind="playlist" id={playlist.id} className="metadata-tag">
-            {playlist.name}
-          </DetailLink>
-        </span>
-      ))}
-    </div>
-  )
+/** Why the track has its Spotify ID, or why it has none. */
+function spotifyMatchNote(item: TrackDetail) {
+  if (item.spotifyMatch === 'spotify-import')
+    return item.lastfmSources.some((source) => source.manuallyMatched)
+      ? 'Imported from Spotify. The Last.fm names marked below were chosen manually for this recording.'
+      : item.sources.includes('lastfm')
+        ? 'Imported from Spotify. Last.fm was matched by a unique artist and title match, with compatible album information.'
+        : 'The Spotify ID came from a playlist or Liked Songs import.'
+  return item.spotifyMatch === 'album-track-list'
+    ? 'The linked album’s stored track list has exactly one track with the same title. This automatic match has not been checked against Spotify.'
+    : 'No Spotify match for playback. Choose an imported library track to merge into; Spotify has not been searched for this track.'
 }
 
-function formatDate(value: string | null) {
-  return value ? new Date(value).toLocaleDateString() : '-'
-}
-
-export function TrackListening({
-  listening,
-}: {
-  listening: TrackDetail['listening']
-}) {
-  if (listening.total === 0)
-    return <p className="quiet">No scrobbles linked to this track.</p>
-  const bars = monthBars(listening.months)
+/** The track's Spotify match and the Last.fm names that count towards it. */
+export function TrackSources({ item }: { item: TrackDetail }) {
   return (
     <>
-      <dl className="detail-metrics">
-        <div>
-          <dt>Scrobbles</dt>
-          <dd>{listening.total.toLocaleString()}</dd>
-        </div>
-        <div>
-          <dt>First listened</dt>
-          <dd>{formatDate(listening.firstListenedAt)}</dd>
-        </div>
-        <div>
-          <dt>Last listened</dt>
-          <dd>{formatDate(listening.lastListenedAt)}</dd>
-        </div>
-      </dl>
-      {bars.length > 0 && (
-        <ListeningChart bars={bars} period="month" style="bar" />
+      <Section title="Spotify match" flush>
+        <p>{trackSpotifyMatchLabels[item.spotifyMatch]}</p>
+        <p className="ds-help">{spotifyMatchNote(item)}</p>
+      </Section>
+      {item.lastfmSources.length > 0 && (
+        <Section
+          title="Recorded by Last.fm"
+          note={formatCount(item.lastfmSources.length)}
+        >
+          <Table aria-label="Recorded by Last.fm">
+            <TableHeader>
+              <TableRow>
+                <TableHead>Track</TableHead>
+                <TableHead>Artist</TableHead>
+                <TableHead>Albums</TableHead>
+                <TableHead align="end">Scrobbles</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {item.lastfmSources.map((source) => {
+                const url = lastfmTrackUrl(source.artistName, source.trackName)
+                return (
+                  <TableRow
+                    key={JSON.stringify([source.artistName, source.trackName])}
+                  >
+                    <TableCell>
+                      <span className="ds-cell-id">
+                        <span className="ds-cell-title">
+                          {source.trackName}
+                        </span>
+                        {url && (
+                          <ServiceIconLinks
+                            links={[
+                              { provider: 'lastfm', label: 'Last.fm', url },
+                            ]}
+                          />
+                        )}
+                      </span>
+                    </TableCell>
+                    <TableCell>{source.artistName}</TableCell>
+                    <TableCell>
+                      {source.albumNames.length
+                        ? source.albumNames.join(' · ')
+                        : 'Album not supplied'}
+                      {source.manuallyMatched && (
+                        <span className="ds-muted"> · Manually matched</span>
+                      )}
+                    </TableCell>
+                    <TableCell align="end">
+                      {formatCount(source.count)}
+                    </TableCell>
+                  </TableRow>
+                )
+              })}
+            </TableBody>
+          </Table>
+          <p className="ds-help">
+            These recorded names give this track its Last.fm source. Scrobbled
+            names below include any broader name matches.
+          </p>
+        </Section>
       )}
-      {listening.sources.length > 0 && (
-        <section aria-label="Scrobbled names" className="mt-4 text-sm">
-          <h3 className="font-semibold">Scrobbled names</h3>
-          <ul className="grid gap-1">
-            {listening.sources.map((source) => (
-              <li
-                className="flex flex-wrap items-center gap-x-2"
-                key={`${source.artistName}\u0000${source.trackName}`}
-              >
-                {source.artistName} — {source.trackName} ·{' '}
-                <span className="tabular-nums">
-                  {source.count.toLocaleString()}
-                </span>{' '}
-                <span className="quiet">
-                  · {trackScrobbleRuleLabels[source.strategy]}
-                </span>
-                <ServiceIconLinks
-                  links={trackServiceLinks({
-                    title: source.trackName,
-                    artists: [source.artistName],
-                    spotifyUrl: null,
-                  })}
-                />
-              </li>
-            ))}
-          </ul>
-        </section>
+      {item.listening.sources.length > 0 && (
+        <Section
+          title="Scrobbled names"
+          note={formatCount(item.listening.sources.length)}
+        >
+          <Table aria-label="Scrobbled names">
+            <TableHeader>
+              <TableRow>
+                <TableHead>Name</TableHead>
+                <TableHead>Match</TableHead>
+                <TableHead align="end">Scrobbles</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {item.listening.sources.map((source) => (
+                <TableRow key={`${source.artistName}\u0000${source.trackName}`}>
+                  <TableCell>
+                    <span className="ds-cell-id">
+                      <span className="ds-truncate">
+                        {source.artistName} — {source.trackName}
+                      </span>
+                      <ServiceIconLinks
+                        links={trackServiceLinks({
+                          title: source.trackName,
+                          artists: [source.artistName],
+                          spotifyUrl: null,
+                        })}
+                      />
+                    </span>
+                  </TableCell>
+                  <TableCell>
+                    {trackScrobbleRuleLabels[source.strategy]}
+                  </TableCell>
+                  <TableCell align="end">{formatCount(source.count)}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </Section>
       )}
     </>
   )
 }
 
-export function TrackSources({ item }: { item: TrackDetail }) {
+function TrackOverview({
+  item,
+  onFilter,
+  onResolved,
+  showSources,
+}: {
+  item: TrackDetail
+  onFilter?: OnFilter
+  onResolved: (id: string) => void
+  showSources: () => void
+}) {
+  const artistTags = musicDisplayTags(item.albumTags, item.artistTags)
+    .filter((tag) => tag.source === 'artist')
+    .map((tag) => tag.name)
+  const tags = [
+    { label: 'Album tags', field: 'albumTag', values: item.albumTags },
+    { label: 'Artist tags', field: 'artistTag', values: artistTags },
+  ].filter((group) => group.values.length > 0)
   return (
-    <div className="detail-metadata">
-      <section>
-        <h2>Spotify match</h2>
-        <p>{trackSpotifyMatchLabels[item.spotifyMatch]}</p>
-        <p className="quiet">
-          {item.spotifyMatch === 'spotify-import'
-            ? item.lastfmSources.some((source) => source.manuallyMatched)
-              ? 'Imported from Spotify. The Last.fm names marked below were chosen manually for this recording.'
-              : item.sources.includes('lastfm')
-                ? 'Imported from Spotify. Last.fm was matched by a unique artist and title match, with compatible album information.'
-                : 'The Spotify ID came from a playlist or Liked Songs import.'
-            : item.spotifyMatch === 'album-track-list'
-              ? 'The linked album’s stored track list has exactly one track with the same title. This automatic match has not been checked against Spotify.'
-              : 'No Spotify match for playback. Choose an imported library track to merge into; Spotify has not been searched for this track.'}
-        </p>
-      </section>
-      {item.lastfmSources.length > 0 && (
-        <section>
-          <h2>Recorded by Last.fm</h2>
-          <ul className="grid gap-3 text-sm">
-            {item.lastfmSources.map((source) => {
-              const url = lastfmTrackUrl(source.artistName, source.trackName)
-              return (
-                <li key={JSON.stringify([source.artistName, source.trackName])}>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <strong>{source.trackName}</strong>
-                    {url && (
-                      <ServiceIconLinks
-                        links={[{ provider: 'lastfm', label: 'Last.fm', url }]}
-                      />
+    <div className="dtl-overview">
+      <div className="dtl-main">
+        <Section flush>
+          <Stats
+            items={[
+              { label: 'scrobbles', value: formatCount(item.scrobbles) },
+              { label: 'last played', value: formatDate(item.lastListenedAt) },
+              { label: 'added', value: formatDate(item.dateAdded) },
+            ]}
+          />
+        </Section>
+        <ListeningTrend kind="track" id={item.id} />
+        <Section title="Appears on">
+          {(item.album || item.albumName) && (
+            <List compact>
+              <ListRow
+                thumb={
+                  <Thumb size={40}>
+                    {item.artworkUrl ? (
+                      <img className="ds-artimg" src={item.artworkUrl} alt="" />
+                    ) : (
+                      <Disc3 className="ds-i" aria-hidden="true" />
                     )}
-                  </div>
-                  <p>{source.artistName}</p>
-                  <p className="quiet">
-                    {source.albumNames.length
-                      ? source.albumNames.join(' · ')
-                      : 'Album not supplied'}
-                    {' · '}
-                    {source.count.toLocaleString()} scrobbles
-                    {source.manuallyMatched && ' · Manually matched'}
-                  </p>
-                </li>
-              )
-            })}
-          </ul>
-          <p className="quiet mt-3">
-            These recorded names give this track its Last.fm source. The
-            Listening tab also includes any broader name matches.
-          </p>
-        </section>
-      )}
+                  </Thumb>
+                }
+                title={
+                  item.album ? (
+                    <RowTitle>
+                      <DetailLink kind="album" id={item.album.id}>
+                        {item.album.title}
+                      </DetailLink>
+                    </RowTitle>
+                  ) : (
+                    <span className="ds-row-title">{item.albumName}</span>
+                  )
+                }
+                by={item.album ? 'Album' : 'Album, not in the library'}
+              />
+            </List>
+          )}
+          <PlaylistPills playlists={item.playlists} />
+          <TrackPlaylistAdditions track={item} onResolved={onResolved} />
+        </Section>
+      </div>
+      <div className="dtl-side">
+        {tags.length > 0 && (
+          <Section title="Tags">
+            <KeyValues
+              items={tags.map((group) => ({
+                label: group.label,
+                value: (
+                  <FilterValues
+                    field={group.field}
+                    values={group.values}
+                    onFilter={onFilter}
+                  />
+                ),
+              }))}
+            />
+          </Section>
+        )}
+        <Section
+          title="Details"
+          aside={
+            <Button variant="link" size="xs" onClick={showSources}>
+              View source details
+            </Button>
+          }
+        >
+          <Facts
+            items={[
+              {
+                label: 'Length',
+                value: formatTrackLength(
+                  item.durationSec === null ? null : item.durationSec * 1000,
+                ),
+              },
+              {
+                label: 'Released',
+                value: item.releaseDate?.slice(0, 10) ?? EMPTY_VALUE,
+              },
+              { label: 'Added', value: formatDate(item.dateAdded) },
+              {
+                label: 'ISRC',
+                value: item.isrc ? (
+                  <span className="ds-mono">{item.isrc}</span>
+                ) : (
+                  EMPTY_VALUE
+                ),
+              },
+              {
+                label: 'Source',
+                value: item.sources.length ? (
+                  <FilterValues
+                    field="source"
+                    values={item.sources.map(
+                      (source) => trackSourceLabels[source],
+                    )}
+                    onFilter={onFilter}
+                  />
+                ) : (
+                  EMPTY_VALUE
+                ),
+              },
+              {
+                label: 'Spotify match',
+                value: (
+                  <FilterValues
+                    field="spotifyMatch"
+                    values={[trackSpotifyMatchLabels[item.spotifyMatch]]}
+                    onFilter={onFilter}
+                  />
+                ),
+              },
+            ]}
+          />
+        </Section>
+      </div>
     </div>
   )
 }
@@ -255,19 +385,7 @@ export default function TrackDetailView({
   onMerged?: (targetId: string) => void
 }) {
   const { apiBaseUrl } = useConfig()
-  const view = useDetailView()
-  const activeTab = view.params.get('tab')
-  const tab =
-    activeTab === 'listening' ||
-    activeTab === 'sources' ||
-    activeTab === 'playlists'
-      ? activeTab
-      : 'overview'
-  function setTab(next: string) {
-    if (next === 'overview') view.params.delete('tab')
-    else view.params.set('tab', next)
-    view.replace(view.params)
-  }
+  const { tab, setTab } = useDetailTab(trackTabs, { aliases: trackTabAliases })
   const detail = useQuery({
     queryKey: ['track', id],
     queryFn: () =>
@@ -277,167 +395,98 @@ export default function TrackDetailView({
         TrackDetailSchema,
       ),
   })
-  if (detail.isPending) return <p className="browse-empty">Loading...</p>
   if (!detail.data)
     return (
-      <p role="alert">
-        Could not load this track.{' '}
-        <Button size="md" variant="primary" onClick={() => detail.refetch()}>
-          Retry
-        </Button>
-      </p>
+      <CreatorDetailState
+        pending={detail.isPending}
+        retry={() => detail.refetch()}
+        subject="track"
+      />
     )
   const item = detail.data
-  const fallbackArtistTags = musicDisplayTags(item.albumTags, item.artistTags)
-    .filter((tag) => tag.source === 'artist')
-    .map((tag) => tag.name)
   function openResolvedTrack(targetId: string) {
     if (onMerged) onMerged(targetId)
     else window.location.assign(`/tracks/${encodeURIComponent(targetId)}`)
   }
+  const [primaryLink, ...otherLinks] = serviceLinks(trackServiceLinks(item))
   return (
-    <div className="media-detail">
-      <header className="detail-heading">
-        <MediaArtwork
-          src={item.artworkUrl}
-          alt={item.title}
-          fallbackLabel="No artwork"
-          containerClassName="detail-art"
-          imageClassName="aspect-square object-cover w-full"
-          fallbackClassName="aspect-square"
+    <article className="dtl-detail">
+      {detail.isRefetchError && (
+        <CreatorDetailState
+          stale
+          retry={() => detail.refetch()}
+          subject="track"
         />
-        <div className="min-w-0">
-          <h1 className="break-words">
-            {item.title} <ServiceIconLinks links={trackServiceLinks(item)} />
-          </h1>
-          <TrackArtistLinks track={item} pills />
-          {item.album ? (
-            <div className="inline-flex items-center gap-1">
-              <AlbumReferencePlayButton
-                id={item.album.id}
-                title={item.album.title}
-              />
-              <DetailLink
-                className="text-sm underline underline-offset-2"
-                kind="album"
-                id={item.album.id}
-              >
-                {item.album.title}
-              </DetailLink>
-            </div>
-          ) : item.albumName ? (
-            <p className="text-sm">{item.albumName}</p>
-          ) : null}
-          <div className="detail-facts mt-2">
-            {item.releaseDate && <span>{item.releaseDate.slice(0, 10)}</span>}
-            {item.durationSec !== null && (
-              <span>{formatTrackDuration(item.durationSec)}</span>
+      )}
+      <DetailHeader
+        art={
+          <DetailArt
+            src={item.artworkUrl}
+            fallback={<AudioLines className="ds-i" aria-hidden="true" />}
+          />
+        }
+        kind="Track"
+        title={item.title}
+        by={
+          <>
+            {item.artists.length > 0 && (
+              <>
+                by <TrackArtistLinks track={item} />
+              </>
             )}
-          </div>
-          <LibraryTrackPlayButtons track={item} />
-          <div className="mt-2">
+            {(item.album || item.albumName) && (
+              <>
+                {item.artists.length > 0 ? ' · on ' : 'on '}
+                {item.album ? (
+                  <DetailLink kind="album" id={item.album.id}>
+                    {item.album.title}
+                  </DetailLink>
+                ) : (
+                  item.albumName
+                )}
+              </>
+            )}
+          </>
+        }
+        facts={[
+          item.durationSec === null
+            ? null
+            : formatTrackLength(item.durationSec * 1000),
+          item.releaseDate?.slice(0, 4),
+        ]}
+        actions={
+          <>
+            <TrackHeaderPlay track={item} />
             <TrackMerge track={item} onMerged={openResolvedTrack} />
-          </div>
-        </div>
-      </header>
-      <Tabs value={tab} onValueChange={setTab}>
-        <TabsList aria-label="Track details">
-          <TabsTrigger value="overview">Overview</TabsTrigger>
-          <TabsTrigger value="playlists">Playlists</TabsTrigger>
-          <TabsTrigger value="listening">Listening</TabsTrigger>
-          <TabsTrigger value="sources">Sources</TabsTrigger>
-        </TabsList>
+            <DetailActionsSpacer />
+            {otherLinks.length > 0 && <ServiceIconLinks links={otherLinks} />}
+            {primaryLink && (
+              <OpenAtProvider label={primaryLink.label} url={primaryLink.url} />
+            )}
+          </>
+        }
+      />
+      <DetailTabs
+        label="Track details"
+        value={tab}
+        onChange={setTab}
+        tabs={[
+          { value: 'overview', label: 'Overview' },
+          { value: 'sources', label: 'Sources' },
+        ]}
+      >
         <TabsContent value="overview">
-          <dl className="detail-metrics">
-            <div>
-              <dt>Scrobbles</dt>
-              <dd>{item.scrobbles.toLocaleString()}</dd>
-            </div>
-            {item.lastListenedAt && (
-              <div>
-                <dt>Last listened</dt>
-                <dd>{formatDate(item.lastListenedAt)}</dd>
-              </div>
-            )}
-            {item.dateAdded && (
-              <div>
-                <dt>Added</dt>
-                <dd>{formatDate(item.dateAdded)}</dd>
-              </div>
-            )}
-            {item.isrc && (
-              <div>
-                <dt>ISRC</dt>
-                <dd className="select-text">{item.isrc}</dd>
-              </div>
-            )}
-          </dl>
-          <div className="detail-metadata">
-            {item.sources.length > 0 && (
-              <section>
-                <h2>Source</h2>
-                <FilterValues
-                  field="source"
-                  values={item.sources.map(
-                    (source) => trackSourceLabels[source],
-                  )}
-                  onFilter={onFilter}
-                />
-              </section>
-            )}
-            <section>
-              <h2>Spotify match</h2>
-              <div className="flex flex-wrap items-center gap-2">
-                <FilterValues
-                  field="spotifyMatch"
-                  values={[trackSpotifyMatchLabels[item.spotifyMatch]]}
-                  onFilter={onFilter}
-                />
-                <button
-                  type="button"
-                  className="quiet underline underline-offset-2"
-                  onClick={() => setTab('sources')}
-                >
-                  View source details
-                </button>
-              </div>
-            </section>
-            {item.albumTags.length > 0 && (
-              <section>
-                <h2>Album tags</h2>
-                <FilterValues
-                  field="albumTag"
-                  values={item.albumTags}
-                  onFilter={onFilter}
-                />
-              </section>
-            )}
-            {fallbackArtistTags.length > 0 && (
-              <section>
-                <h2>Artist tags</h2>
-                <FilterValues
-                  field="artistTag"
-                  values={fallbackArtistTags}
-                  onFilter={onFilter}
-                />
-              </section>
-            )}
-          </div>
-        </TabsContent>
-        <TabsContent value="playlists">
-          <PlaylistValues playlists={item.playlists} />
-          {item.playlists.length === 0 && (
-            <p className="quiet">No playlist memberships.</p>
-          )}
-          <TrackPlaylistAdditions track={item} onResolved={openResolvedTrack} />
-        </TabsContent>
-        <TabsContent value="listening">
-          <TrackListening listening={item.listening} />
+          <TrackOverview
+            item={item}
+            onFilter={onFilter}
+            onResolved={openResolvedTrack}
+            showSources={() => setTab('sources')}
+          />
         </TabsContent>
         <TabsContent value="sources">
           <TrackSources item={item} />
         </TabsContent>
-      </Tabs>
-    </div>
+      </DetailTabs>
+    </article>
   )
 }

@@ -8,7 +8,10 @@ import {
   type ReactNode,
 } from 'react'
 import type { z } from 'zod'
-import { Input } from '@repo/ui/components/ui/input'
+import { Button } from '@repo/ui/components/ui/button'
+import { Notice } from '@repo/ui/components/ds/feedback'
+import { EmptyValue } from '@repo/ui/components/ds/pill'
+import { formatCount, formatDate, formatDateTime } from '@repo/ui/lib/format'
 import {
   TableBody,
   TableCell,
@@ -34,18 +37,21 @@ import {
   SecondaryCell,
   SecondaryTableHead,
   SecondaryTableScroll,
+  SecondaryTableSearch,
   SecondaryTableToolbar,
   SecondaryVirtualRows,
   useTableColumns,
+  type ColumnLayout,
   type TableColumn,
 } from './secondary-table'
 
-export type CreatorLibraryColumn<Row> = TableColumn & {
-  render: (row: Row) => ReactNode
-  className?: string
-  sortable?: false
-  filter?: ReactNode
-}
+export type CreatorLibraryColumn<Row> = TableColumn &
+  Pick<ColumnLayout, 'align'> & {
+    render: (row: Row) => ReactNode
+    className?: string
+    sortable?: false
+    filter?: ReactNode
+  }
 
 type CreatorLibraryPage<Row> = {
   items: Row[]
@@ -152,14 +158,11 @@ export function CreatorLibraryTable<Row extends { id: string }>({
   }
 
   const searchControl = (
-    <Input
-      type="search"
-      aria-label={`Search ${label}`}
-      placeholder={`Search ${label}`}
+    <SecondaryTableSearch
+      label={`Search ${label}`}
       value={draft}
       maxLength={200}
-      onChange={(event) => {
-        const next = event.target.value
+      onChange={(next) => {
         setDraft(next)
         if (next) view.params.set('q', next)
         else view.params.delete('q')
@@ -170,7 +173,7 @@ export function CreatorLibraryTable<Row extends { id: string }>({
   const count =
     total === undefined
       ? undefined
-      : `${total.toLocaleString()} ${total === 1 ? 'result' : 'results'}`
+      : `${formatCount(total)} ${total === 1 ? 'result' : 'results'}`
   const columnOptions = presentation === 'table' ? table.options : null
 
   return (
@@ -206,12 +209,16 @@ export function CreatorLibraryTable<Row extends { id: string }>({
         />
       )}
       {query.isError && (
-        <p className="quiet" role="alert">
-          Could not load {label}.{' '}
-          <button type="button" className="underline" onClick={query.retry}>
-            Retry
-          </button>
-        </p>
+        <Notice
+          tone="danger"
+          action={
+            <Button type="button" size="xs" onClick={query.retry}>
+              Retry
+            </Button>
+          }
+        >
+          Could not load {label}.
+        </Notice>
       )}
       {card && presentation !== 'table' ? (
         <NestedMediaCards
@@ -249,9 +256,15 @@ export function CreatorLibraryTable<Row extends { id: string }>({
           >
             <TableHeader>
               <TableRow>
-                {visible.map((column) =>
+                {visible.map((column, index) =>
                   column.sortable === false ? (
-                    <TableHead key={column.key} className={column.className}>
+                    <TableHead
+                      key={column.key}
+                      className={column.className}
+                      align={column.align}
+                      sticky={index === 0 ? 0 : undefined}
+                      stickyEdge={index === 0}
+                    >
                       <span className="sr-only">{column.label}</span>
                     </TableHead>
                   ) : (
@@ -264,12 +277,19 @@ export function CreatorLibraryTable<Row extends { id: string }>({
                       onSort={(key) =>
                         setSort(
                           key,
-                          sortBy === key && direction === 'asc'
-                            ? 'desc'
-                            : 'asc',
+                          sortBy === key
+                            ? direction === 'asc'
+                              ? 'desc'
+                              : 'asc'
+                            : column.align === 'end'
+                              ? 'desc'
+                              : 'asc',
                         )
                       }
                       className={column.className}
+                      align={column.align}
+                      sticky={index === 0 ? 0 : undefined}
+                      stickyEdge={index === 0}
                       filter={column.filter}
                     />
                   ),
@@ -287,10 +307,17 @@ export function CreatorLibraryTable<Row extends { id: string }>({
                   <TableRow
                     key={row.id}
                     data-selected={row.id === selectedId || undefined}
+                    selected={row.id === selectedId}
                     aria-rowindex={index + 2}
                   >
-                    {visible.map((column) => (
-                      <TableCell key={column.key} className={column.className}>
+                    {visible.map((column, columnIndex) => (
+                      <TableCell
+                        key={column.key}
+                        className={column.className}
+                        align={column.align}
+                        sticky={columnIndex === 0 ? 0 : undefined}
+                        stickyEdge={columnIndex === 0}
+                      >
                         {column.render(row)}
                       </TableCell>
                     ))}
@@ -314,17 +341,17 @@ export function CreatorLibraryTitle({
 }: DetailTarget & { title: string; context?: string; action?: ReactNode }) {
   const text = (
     <SecondaryCell text={context ? `${title} · ${context}` : title}>
-      <DetailLink className="table-title hover:underline" kind={kind} id={id}>
+      <DetailLink className="ds-cell-title" kind={kind} id={id}>
         {title}
       </DetailLink>
-      {context && <span className="quiet"> · {context}</span>}
+      {context && <span className="ds-muted"> · {context}</span>}
     </SecondaryCell>
   )
   return action ? (
-    <div className="secondary-cell-actions">
-      {action}
+    <span className="ds-cell-id">
       {text}
-    </div>
+      {action}
+    </span>
   ) : (
     text
   )
@@ -337,15 +364,14 @@ export function CreatorLibraryDate({
   value?: string | null
   withTime?: boolean
 }) {
-  if (!value) return <>-</>
+  if (!value) return <EmptyValue />
   return (
     <time dateTime={value}>
-      {withTime
-        ? new Date(value).toLocaleString()
-        : new Date(value).toLocaleDateString(
-            undefined,
-            value.length === 10 ? { timeZone: 'UTC' } : undefined,
-          )}
+      {value.length === 10 && /^\d{4}-\d{2}-\d{2}$/.test(value)
+        ? value
+        : withTime
+          ? formatDateTime(value)
+          : formatDate(value)}
     </time>
   )
 }

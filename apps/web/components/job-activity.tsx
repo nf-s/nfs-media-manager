@@ -2,82 +2,116 @@
 
 import Link from 'next/link'
 import { useEffect, useId, useRef, useState } from 'react'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Activity, AlertCircle, ChevronDown, LoaderCircle } from 'lucide-react'
-import { JobActivitySchema } from '@repo/schemas/job'
+import { queryOptions, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Activity, ChevronDown } from 'lucide-react'
+import {
+  JobActivitySchema,
+  JobEntryPageSchema,
+  type JobEntry,
+} from '@repo/schemas/job'
+import type { ProviderSummary } from '@repo/schemas/provider'
+import { Count } from '@repo/ui/components/ds/pill'
+import { Notice } from '@repo/ui/components/ds/feedback'
+import { Progress } from '@repo/ui/components/ds/meter'
+import { Status } from '@repo/ui/components/ds/status'
 import { Button } from '@repo/ui/components/ui/button'
-import type { z } from 'zod'
+import { formatCount, formatUntil } from '@repo/ui/lib/format'
 import { useConfig } from './providers'
 import { fetchApiData } from '@/utils/api'
 import {
   invalidateChangedJobActivity,
   jobActivityPollInterval,
 } from '@/utils/job-cache'
-import { scopedHref, type WorkspaceScope } from '@/utils/media-scope'
+import {
+  batchDone,
+  batchStatus,
+  batchTarget,
+  batchTitle,
+  jobStatus,
+  jobTitle,
+} from '@/utils/job-entries'
+import {
+  providerDisplayName,
+  providerListOptions,
+} from '@/utils/provider-health'
 
-type ActivityCounts = z.infer<typeof JobActivitySchema>
+const shownEntries = 4
 
-const libraryLabels: Record<WorkspaceScope, string> = {
-  album: 'Albums',
-  artist: 'Artists',
-  film: 'Films',
-  subscription: 'Subscriptions',
+function entryPageOptions(
+  apiBaseUrl: string,
+  status: 'running' | 'queued',
+  enabled: boolean,
+) {
+  const params = new URLSearchParams({
+    statuses: JSON.stringify([status]),
+    sortBy: status === 'running' ? 'startedAt' : 'createdAt',
+    direction: status === 'running' ? 'desc' : 'asc',
+    size: String(shownEntries),
+  })
+  return queryOptions({
+    queryKey: ['jobs', 'activity-entries', status],
+    queryFn: ({ signal }) =>
+      fetchApiData(
+        apiBaseUrl,
+        `/api/v1/scrape/jobs/entries?${params}`,
+        JobEntryPageSchema,
+        { signal },
+      ),
+    enabled,
+    refetchInterval: enabled ? 4000 : false,
+  })
 }
 
-export function MediaJobActivity({
-  mediaType,
-  counts,
+/** One running or queued entry: name, provider, progress and why it waits. */
+export function ActivityEntry({
+  entry,
+  providers,
+  now = new Date(),
 }: {
-  mediaType: WorkspaceScope
-  counts?: Pick<ActivityCounts, 'queued' | 'running' | 'failed' | 'imports'>
+  entry: JobEntry
+  providers: readonly ProviderSummary[] | undefined
+  now?: Date
 }) {
-  const label = libraryLabels[mediaType]
-  const statuses = counts
-    ? [
-        {
-          count: counts.running,
-          label: 'Running',
-          href: '/jobs?status=running',
-        },
-        { count: counts.queued, label: 'Queued', href: '/jobs?status=queued' },
-        {
-          count: counts.failed,
-          label: 'Needs attention',
-          href: '/jobs?status=attention',
-        },
-        { count: counts.imports, label: 'Importing', href: '/imports' },
-      ].filter((item) => item.count > 0)
-    : []
+  const provider =
+    entry.kind === 'batch'
+      ? entry.provider
+        ? providerDisplayName(providers, entry.provider)
+        : `${entry.providers.length} providers`
+      : providerDisplayName(providers, entry.job.provider)
+  const title =
+    entry.kind === 'batch'
+      ? `${batchTitle(entry)} · ${batchTarget(entry)}`
+      : jobTitle(entry.job)
+  const progress =
+    entry.kind === 'batch'
+      ? { done: batchDone(entry), total: entry.total }
+      : entry.job.progress?.total
+        ? { done: entry.job.progress.done, total: entry.job.progress.total }
+        : null
+  const state =
+    entry.kind === 'batch' ? batchStatus(entry) : jobStatus(entry.job)
+  const waiting = entry.kind === 'batch' ? entry.waiting : entry.job.waiting
+  const href =
+    entry.kind === 'batch'
+      ? `/jobs?batchId=${encodeURIComponent(entry.batchId)}`
+      : `/jobs/${encodeURIComponent(entry.job.id)}`
   return (
-    <section className="job-activity-library" aria-label={`${label} activity`}>
-      <h3>
-        <Link
-          href={scopedHref('/jobs', mediaType)}
-          aria-label={`${label} jobs and history`}
-        >
-          {label}
-          <span className="quiet">View jobs</span>
+    <li className="ops-activity-entry">
+      <div className="ds-source-line">
+        <Link href={href} className="ds-cell-title">
+          {title}
         </Link>
-      </h3>
-      {statuses.map((item) => (
-        <Link
-          key={item.href}
-          href={scopedHref(item.href, mediaType)}
-          className={
-            item.label === 'Needs attention' ? 'job-activity-error' : undefined
-          }
-          aria-label={`${label}: ${item.count} ${item.label.toLowerCase()}`}
-        >
-          <span>{item.label}</span>
-          <strong>{item.count}</strong>
-        </Link>
-      ))}
-      {!statuses.length && (
-        <p className="quiet">
-          {counts ? 'No active jobs or issues.' : 'Open jobs for details.'}
-        </p>
+        <span className="ds-muted">{provider}</span>
+      </div>
+      {progress && <Progress done={progress.done} total={progress.total} />}
+      {state === 'waiting' && waiting && (
+        <Status state="waiting" title={waiting.detail}>
+          {waiting.until
+            ? `Waiting until ${formatUntil(waiting.until, now)}`
+            : waiting.detail}
+        </Status>
       )}
-    </section>
+    </li>
   )
 }
 
@@ -100,6 +134,12 @@ export default function JobActivity() {
     refetchInterval: (query) => jobActivityPollInterval(query.state.data),
     staleTime: 0,
   })
+  const providers = useQuery({
+    ...providerListOptions(apiBaseUrl),
+    enabled: open,
+  })
+  const running = useQuery(entryPageOptions(apiBaseUrl, 'running', open))
+  const queued = useQuery(entryPageOptions(apiBaseUrl, 'queued', open))
   const previousActivity = useRef(activity.data)
   useEffect(() => {
     if (!activity.data) return
@@ -114,7 +154,7 @@ export default function JobActivity() {
       if (!trigger.current || !panel.current) return
       const rect = trigger.current.getBoundingClientRect()
       const box = panel.current.getBoundingClientRect()
-      panel.current.style.left = `${Math.max(8, Math.min(rect.right - box.width, window.innerWidth - box.width - 8))}px`
+      panel.current.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - box.width - 8))}px`
       panel.current.style.top = `${Math.max(8, Math.min(rect.bottom + 4, window.innerHeight - box.height - 8))}px`
     }
     position()
@@ -130,12 +170,6 @@ export default function JobActivity() {
   const counts = activity.data
   const active = counts ? counts.queued + counts.running + counts.imports : 0
   const failed = counts?.failed ?? 0
-  const libraries = counts?.libraries ?? []
-  const sharedImports = Math.max(
-    0,
-    (counts?.imports ?? 0) -
-      libraries.reduce((total, library) => total + library.imports, 0),
-  )
   const summary = activity.isError
     ? 'Status offline'
     : !counts
@@ -143,51 +177,38 @@ export default function JobActivity() {
       : [active ? `${active} active` : '', failed ? `${failed} issues` : '']
           .filter(Boolean)
           .join(', ') || 'Jobs idle'
+  const entries = [
+    ...(running.data?.items ?? []),
+    ...(queued.data?.items ?? []),
+  ]
   function close() {
     panel.current?.hidePopover()
     trigger.current?.focus()
   }
 
   return (
-    <div className="job-activity">
-      <Button
+    <div className="shell-activity">
+      <button
         type="button"
-        variant="ghost"
         ref={trigger}
         popoverTarget={id}
         aria-label={`Job activity: ${summary}`}
         aria-expanded={open}
         aria-controls={id}
-        className="job-activity-trigger"
+        title={summary}
+        className="shell-activity-trigger"
       >
-        {activity.isError || failed ? (
-          <AlertCircle
-            size={14}
-            aria-hidden="true"
-            className="job-activity-error"
-          />
-        ) : active ? (
-          <LoaderCircle
-            size={14}
-            aria-hidden="true"
-            className="motion-safe:animate-spin"
-          />
+        {failed > 0 ? (
+          <Count tone="danger">{formatCount(failed)}</Count>
+        ) : active > 0 ? (
+          <Count tone="attention">{formatCount(active)}</Count>
         ) : (
-          <Activity size={14} aria-hidden="true" />
+          <ChevronDown className="ds-i" data-size="sm" aria-hidden="true" />
         )}
-        <span
-          className="max-[420px]:sr-only"
-          aria-live="polite"
-          aria-atomic="true"
-        >
+        <span className="sr-only" aria-live="polite" aria-atomic="true">
           {summary}
         </span>
-        <ChevronDown
-          size={12}
-          aria-hidden="true"
-          className="max-[420px]:hidden"
-        />
-      </Button>
+      </button>
       <div
         id={id}
         ref={panel}
@@ -195,7 +216,7 @@ export default function JobActivity() {
         role="region"
         tabIndex={-1}
         aria-labelledby={titleId}
-        className="job-activity-panel"
+        className="ds-pop ops-activity"
         onToggle={(event) => setOpen(event.newState === 'open')}
         onKeyDown={(event) => {
           if (event.key === 'Escape') {
@@ -209,62 +230,85 @@ export default function JobActivity() {
             close()
         }}
       >
-        <div className="job-activity-heading">
+        <div className="ds-pop-head ops-activity-head">
           <h2 id={titleId}>Activity</h2>
           <Button
             type="button"
             variant="ghost"
+            size="xs"
             onClick={close}
             aria-label="Close job activity"
           >
             Close
           </Button>
         </div>
-        {activity.isError && (
-          <p role="alert">
-            Status unavailable.{counts ? ' Showing last known counts.' : ''}{' '}
-            <button
-              type="button"
-              className="underline"
-              onClick={() => activity.refetch()}
+        <div className="ops-activity-body">
+          {activity.isError && (
+            <Notice
+              tone="danger"
+              action={
+                <Button size="xs" onClick={() => activity.refetch()}>
+                  Retry
+                </Button>
+              }
             >
-              Retry
-            </button>
-          </p>
-        )}
-        {activity.isPending && <p role="status">Loading activity...</p>}
-        {counts && !libraries.length && (
-          <p className="quiet">
-            {active} active, {failed} needing attention across all libraries.
-            Per-library counts unavailable.
-          </p>
-        )}
-        <MediaJobActivity
-          mediaType="album"
-          counts={libraries.find((library) => library.mediaType === 'album')}
-        />
-        <MediaJobActivity
-          mediaType="artist"
-          counts={libraries.find((library) => library.mediaType === 'artist')}
-        />
-        <MediaJobActivity
-          mediaType="film"
-          counts={libraries.find((library) => library.mediaType === 'film')}
-        />
-        <MediaJobActivity
-          mediaType="subscription"
-          counts={libraries.find(
-            (library) => library.mediaType === 'subscription',
+              Status unavailable.{counts ? ' Showing last known counts.' : ''}
+            </Notice>
           )}
-        />
-        {sharedImports > 0 && (
-          <Link className="job-activity-shared" href="/imports">
-            {libraries.length
-              ? 'Shared / unclassified imports'
-              : 'Imports in progress'}{' '}
-            <strong>{sharedImports}</strong>
-          </Link>
-        )}
+          {entries.length > 0 && (
+            <ul className="ops-activity-list" aria-label="Running and queued">
+              {entries.map((entry) => (
+                <ActivityEntry
+                  key={
+                    entry.kind === 'batch'
+                      ? `batch:${entry.batchId}`
+                      : entry.job.id
+                  }
+                  entry={entry}
+                  providers={providers.data}
+                />
+              ))}
+            </ul>
+          )}
+          {counts && (
+            <div className="ds-source-line">
+              {counts.queued > 0 && (
+                <Link href="/jobs?status=queued">
+                  <Status state="queued">
+                    {formatCount(counts.queued)} queued
+                  </Status>
+                </Link>
+              )}
+              {failed > 0 && (
+                <Link href="/jobs?status=attention">
+                  <Status state="failed">
+                    {formatCount(failed)}{' '}
+                    {failed === 1 ? 'needs attention' : 'need attention'}
+                  </Status>
+                </Link>
+              )}
+              {counts.imports > 0 && (
+                <Link href="/imports">
+                  <Status state="running">
+                    {formatCount(counts.imports)} importing
+                  </Status>
+                </Link>
+              )}
+              {!active && !failed && (
+                <span className="ds-muted">No active jobs or issues.</span>
+              )}
+            </div>
+          )}
+        </div>
+        <Link href="/jobs" className="ds-menu-item">
+          <Activity className="ds-i" data-size="sm" aria-hidden="true" />
+          All jobs
+          {counts && counts.running > 0 && (
+            <span className="ds-muted">
+              {formatCount(counts.running)} running
+            </span>
+          )}
+        </Link>
       </div>
     </div>
   )
