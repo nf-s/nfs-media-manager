@@ -8,14 +8,14 @@ This project is a fork of [CSDR Cloud Spatial App](https://github.com/Sustainabl
 
 ## What it does
 
-- **Browse your collection.** Search titles, people and tags; filter and sort metadata; switch between grid and table views. Open details without losing your place.
+- **Browse your collection.** Search titles, people and tags; filter and sort metadata; switch between grid, list and table views. Open details without losing your place.
 - **Bring your own library.** Preview IMDb ratings/watchlist CSVs, album CSVs and local NFO files before importing. Spotify can import saved albums with your permission.
 - **Search your subscriptions.** Sync the YouTube channels you subscribe to and the Spotify podcasts you save, then search their videos and episodes by text, channel, type, length and date.
 - **Choose your metadata.** Configure providers independently and fetch only the films or albums you select. Ratings link back to their sources.
 - **Keep track of changes.** Inspect provider history, correct identifiers, manage tags and preserve personal ratings and manual edits.
 - **Control background work.** Review jobs before starting them, monitor progress, and retry unfinished work. Provider budgets and cooldowns stay in place.
 
-This is a self-hosted app for a personal collection. It runs a Next.js frontend, a Hono API and PostgreSQL. Spotify links open in Spotify. Optional [in-app playback](docs/spotify-playback.md) for Spotify Premium accounts is off until connected in Providers.
+This is a self-hosted app for a personal collection. It runs a Next.js frontend, a Hono API and PostgreSQL. Spotify links open in Spotify. Optional [in-app playback](docs/spotify-playback.md) for Spotify Premium accounts is off until you connect it from the player.
 
 ## Getting started
 
@@ -48,23 +48,23 @@ The [getting started guide](docs/getting-started.md) covers the full setup, envi
 | Films   | TMDb, OMDb, MDBList                                                |
 | Albums  | Spotify, MusicBrainz, Last.fm, Discogs, Serply for Rate Your Music |
 
-Choose **Providers → Credentials** to configure a service, **Activity** to inspect requests and **Settings** to see its limits. Only configure the services you want to use. Some services require an account or paid API access. Serply uses indexed search results, so its ratings can lag the source.
+Open a service from **Providers**: **Settings** holds its credentials and limits, and **Overview** shows its requests. Only configure the services you want to use. Some services require an account or paid API access. Serply uses indexed search results, so its ratings can lag the source.
 
 ![Album library](docs/screenshots/albums.jpg)
 
 ## Working with your library
 
-Use the Films/Albums selector to switch libraries. Filters, sorting, visible table columns and grid density are saved separately. **Filters** opens a panel from the right with collapsible **Views**, **Smart playlists** (albums), **Ranges**, **Listening** (albums) and **Columns** (table) sections. Search, sorting, the layout switcher and result count stay in the toolbar.
+Use the library selector to switch libraries. Filters, sorting, visible table columns and grid density are saved separately. **Filters** opens a panel from the right with collapsible **Views**, **Smart playlists** (albums), **Ranges**, **Listening** (albums) and **Columns** (table) sections. Search, sorting, the layout switcher and result count stay in the toolbar.
 
 Film and album details bring together ratings, credits, tags, provider links and history. Correct metadata in Edit; those overrides survive later imports and refreshes.
 
 ![Film details](docs/screenshots/film-details.jpg)
 
-**Jobs → Metadata** handles both first-time lookups and refreshes. Select items and providers, review the total, then confirm. In job history, select an action and review it before applying it. Viewing a page never starts a metadata job.
+**Jobs → Metadata** handles both first-time lookups and refreshes. Select items and providers, review the total, then confirm. On **Jobs**, select jobs, choose an action and review it before applying it. Viewing a page never starts a metadata job.
 
-![Job history](docs/screenshots/jobs.jpg)
+![Jobs](docs/screenshots/jobs.jpg)
 
-![Provider activity and settings navigation](docs/screenshots/providers.jpg)
+![Providers overview](docs/screenshots/providers.jpg)
 
 ## Documentation
 
