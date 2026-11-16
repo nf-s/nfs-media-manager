@@ -36,6 +36,11 @@ export type PlaybackSource = {
   kind: 'album' | 'list'
   /** One track row, or an album expanded to its playable tracks. */
   load: (index: number) => Promise<PlayableItem[]>
+  /**
+   * The same for entries spread over the source, read together and answered
+   * in the order asked. Shuffled playback uses it where a source has it.
+   */
+  loadScattered?: (indexes: number[]) => Promise<PlayableItem[][]>
 }
 
 /** A track from the track library, with a Spotify ID only when matched. */

@@ -190,13 +190,17 @@ type SourceSession = {
   initializing: boolean
   revision: number
   filling: Promise<void> | null
-  /** Random picks drawn ahead for a shuffled fill: the entry, then the track in it. */
-  draws: Array<{ entry: number; track: number }>
+  /**
+   * Random picks drawn ahead for a shuffled fill: the entry, then the track in
+   * it. A pick read together with others names its entry outright.
+   */
+  draws: Array<{ entry: number; track: number; index?: number }>
 }
 
 /** Source tracks resolved ahead: shown as upcoming and sent to Spotify with a track. */
 const SOURCE_AHEAD_SIZE = 30
-const SOURCE_CACHE_SIZE = 20
+/** Holds a whole round of shuffled picks beside the entries still in use. */
+const SOURCE_CACHE_SIZE = 60
 /** Source entries of a shuffled list loaded at the same time. */
 const SOURCE_PARALLEL = 6
 
@@ -608,18 +612,54 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       active.tracks.set(index, cached)
       return cached
     }
-    const loading: Promise<PlayableItem[]> = active.definition
-      .load(index)
-      .catch((error: unknown) => {
-        if (active.tracks.get(index) === loading) active.tracks.delete(index)
-        throw error
-      })
+    const scattered = state.shuffle
+      ? active.definition.loadScattered
+      : undefined
+    return rememberSourceEntry(
+      active,
+      index,
+      scattered
+        ? scattered([index]).then(([tracks]) => tracks ?? [])
+        : active.definition.load(index),
+    )
+  }
+
+  function rememberSourceEntry(
+    active: SourceSession,
+    index: number,
+    load: Promise<PlayableItem[]>,
+  ) {
+    const loading: Promise<PlayableItem[]> = load.catch((error: unknown) => {
+      if (active.tracks.get(index) === loading) active.tracks.delete(index)
+      throw error
+    })
     active.tracks.set(index, loading)
-    if (active.tracks.size > SOURCE_CACHE_SIZE) {
+    while (active.tracks.size > SOURCE_CACHE_SIZE) {
       const oldest = active.tracks.keys().next().value
-      if (oldest !== undefined) active.tracks.delete(oldest)
+      if (oldest === undefined) break
+      active.tracks.delete(oldest)
     }
     return loading
+  }
+
+  /** Reads entries spread over a shuffled source in one request. */
+  function loadSourceEntries(
+    active: SourceSession,
+    scattered: NonNullable<PlaybackSource['loadScattered']>,
+    indexes: number[],
+  ) {
+    const missing = [...new Set(indexes)].filter(
+      (index) => !active.tracks.has(index),
+    )
+    if (!missing.length) return
+    const batch = scattered(missing)
+    missing.forEach((index, at) => {
+      rememberSourceEntry(
+        active,
+        index,
+        batch.then((entries) => entries[at] ?? []),
+      ).catch(() => undefined)
+    })
   }
 
   /** Builds only the small preview; source pages are retained by their loader. */
@@ -627,7 +667,17 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     if (active.filling) return active.filling
     const revision = active.revision
     const shuffled = state.shuffle
+    const scattered = shuffled ? active.definition.loadScattered : undefined
     const upcoming = [...active.upcoming]
+    let shown = upcoming.length
+    /** Shows the tracks resolved so far and passes them on to a Sonos group. */
+    const show = () => {
+      if (source !== active || revision !== active.revision || disposed) return
+      active.upcoming = [...upcoming]
+      set({ upcoming: upcoming.map((entry) => entry.item) })
+      shown = upcoming.length
+      maintainRoom()
+    }
     set({ sourceLoading: true })
     const filling = (async () => {
       const used = new Set([...active.played, ...active.skipped])
@@ -635,21 +685,48 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
         used.add(sourceTrackKey(entry.index, entry.position))
       let candidates = [...active.remaining]
       while (upcoming.length < SOURCE_AHEAD_SIZE && candidates.length) {
-        // Shuffled entries are spread over the source, so the next few are
-        // loaded together instead of one request after another.
-        while (shuffled && active.draws.length < SOURCE_PARALLEL)
-          active.draws.push({ entry: random(), track: random() })
         const pick = (draw: number) =>
           candidates[shuffled ? Math.floor(draw * candidates.length) : 0]
-        for (const draw of active.draws) {
-          const ahead = pick(draw.entry)
-          if (ahead !== undefined)
-            loadSourceEntry(active, ahead).catch(() => undefined)
+        if (scattered && !active.draws.length) {
+          // Every track still wanted is drawn at once, each from a different
+          // entry, and the round is read in one request.
+          const pool = [...candidates]
+          const wanted = SOURCE_AHEAD_SIZE - upcoming.length
+          while (active.draws.length < wanted && pool.length) {
+            const [index] = pool.splice(Math.floor(random() * pool.length), 1)
+            active.draws.push({ entry: 0, track: random(), index })
+          }
+          loadSourceEntries(
+            active,
+            scattered,
+            active.draws.flatMap(({ index }) =>
+              index === undefined ? [] : [index],
+            ),
+          )
+        } else if (!scattered) {
+          // Shuffled entries are spread over the source, so the next few are
+          // loaded together instead of one request after another.
+          while (shuffled && active.draws.length < SOURCE_PARALLEL)
+            active.draws.push({ entry: random(), track: random() })
+          for (const draw of active.draws) {
+            const ahead = pick(draw.entry)
+            if (ahead !== undefined)
+              loadSourceEntry(active, ahead).catch(() => undefined)
+          }
         }
         const draw = active.draws.shift()
-        const index = pick(draw?.entry ?? 0)
+        const index =
+          (shuffled ? draw?.index : undefined) ?? pick(draw?.entry ?? 0)
         if (index === undefined) break
-        const tracks = await loadSourceEntry(active, index)
+        // An entry drawn earlier may have been used up since.
+        if (!candidates.includes(index)) continue
+        // Tracks already resolved are shown when the next one has to be
+        // waited for; an entry that is already loaded answers first.
+        const early =
+          shown === upcoming.length ? undefined : setTimeout(show, 0)
+        const tracks = await loadSourceEntry(active, index).finally(() =>
+          clearTimeout(early),
+        )
         if (source !== active || revision !== active.revision || disposed) {
           // The draw is kept for the fill that replaced this one.
           if (draw && source === active) active.draws.unshift(draw)
@@ -687,15 +764,12 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
         // A start made meanwhile sends the tracks resolved so far.
         active.upcoming = [...upcoming]
       }
-      if (source !== active || revision !== active.revision || disposed) return
-      active.upcoming = upcoming
-      set({ upcoming: upcoming.map((entry) => entry.item) })
+      show()
     })()
       .catch((error: unknown) => {
         if (source === active && revision === active.revision && !disposed) {
           // A failed later page must not hold back tracks already resolved.
-          active.upcoming = upcoming
-          set({ upcoming: upcoming.map((entry) => entry.item) })
+          show()
           throw error
         }
       })

@@ -1,4 +1,4 @@
-import { and, eq, inArray, sql, type SQL } from 'drizzle-orm'
+import { and, eq, inArray, lte, sql, type SQL } from 'drizzle-orm'
 import { alias, PgDialect } from 'drizzle-orm/pg-core'
 import { z } from 'zod'
 import {
@@ -386,11 +386,12 @@ async function browseQueries(
     mediaType === 'track'
       ? eq(libraryTrack.mediaItemId, mediaItem.id)
       : sql`false`
-  const base = () => {
+  const base = (rank: SQL<number> = sql<number>`0`) => {
     const query = database
       .select({
         id: mediaItem.id,
         listeningScrobbles: listening?.sort ?? sql<null>`null`,
+        rank: rank.as('rank'),
       })
       .from(mediaItem)
       .leftJoin(album, eq(album.mediaItemId, mediaItem.id))
@@ -466,7 +467,37 @@ async function browseQueries(
       hasMore: rows.length > query.size,
     }
   }
-  return { offset, readCount, readPage }
+  /**
+   * The IDs at the given zero-based positions of the ordered result. One pass
+   * numbers the rows as far as the deepest position, where a page for each
+   * position would order the result again every time.
+   */
+  async function readPositions(positions: number[]) {
+    const ranks = [...new Set(positions)]
+      .filter((position) => position < (query.limitResults ?? Infinity))
+      .map((position) => position + 1)
+    if (!ranks.length) return []
+    const ordering = sql.join(
+      [order, ...naturalOrder, sql`${mediaItem.id}`],
+      sql`, `,
+    )
+    const ranked = base(sql<number>`row_number() over (order by ${ordering})`)
+      .where(where)
+      .as('ranked')
+    const rows = await database
+      .select({ id: ranked.id, rank: sql<number>`${ranked.rank}::int` })
+      .from(ranked)
+      .where(
+        and(
+          // Compared uncast, the upper bound lets PostgreSQL stop numbering
+          // at the deepest rank.
+          lte(ranked.rank, Math.max(...ranks)),
+          inArray(ranked.rank, ranks),
+        ),
+      )
+    return rows.map((row) => ({ id: row.id, position: row.rank - 1 }))
+  }
+  return { offset, readCount, readPage, readPositions }
 }
 
 type BrowseQuery = AlbumQuery | FilmQuery | TrackQuery
@@ -506,6 +537,16 @@ export async function queryBrowsePageIds(
   if (!remaining)
     return { ids: [], listeningScrobbles: undefined, hasMore: false }
   return readPage(Math.min(query.size + 1, remaining))
+}
+
+/** The IDs at arbitrary positions of a browse query's order, in one read. */
+export async function queryBrowsePositions(
+  mediaType: MediaType,
+  query: BrowseQuery,
+  positions: number[],
+) {
+  const { readPositions } = await browseQueries(mediaType, query)
+  return readPositions(positions)
 }
 
 export async function queryBrowseCount(

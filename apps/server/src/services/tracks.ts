@@ -19,6 +19,7 @@ import {
   type PlaylistSyncSchedule,
   type TrackDetail,
   type TrackListItem,
+  type TrackPositionsQuery,
   type TrackQuery,
 } from '@repo/schemas/tracks'
 import { db } from '@/lib/db'
@@ -29,7 +30,12 @@ import {
   trackSpotifyMatchExpression,
 } from './track-values'
 import { playlist } from '@/schemas/db'
-import { listBrowseFacets, queryBrowseIds, queryBrowsePageIds } from './browse'
+import {
+  listBrowseFacets,
+  queryBrowseIds,
+  queryBrowsePageIds,
+  queryBrowsePositions,
+} from './browse'
 import { refreshTrackAddedDates } from './spotify-playlists'
 import {
   lockLibraryTrackWrites,
@@ -165,6 +171,23 @@ export async function listTrackBrowsePage(query: TrackQuery) {
     page: query.page,
     size: query.size,
     hasMore,
+  }
+}
+
+/** The tracks at the given positions of the query's order, in one read. */
+export async function listTracksAtPositions(query: TrackPositionsQuery) {
+  const rows = await queryBrowsePositions('track', query, query.positions)
+  const items = new Map(
+    (await loadTracks(rows.map((row) => row.id))).map((item) => [
+      item.id,
+      item,
+    ]),
+  )
+  return {
+    items: rows.flatMap(({ id, position }) => {
+      const item = items.get(id)
+      return item ? [{ position, item }] : []
+    }),
   }
 }
 

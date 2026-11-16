@@ -188,6 +188,88 @@ test('the clicked track starts without fetching and unplayable or missing rows a
   assert.equal(network.mock.callCount(), 1)
 })
 
+test('tracks spread over a list are read in one request for their positions', async (t) => {
+  const calls: URL[] = []
+  t.mock.method(globalThis, 'fetch', async (input: RequestInfo | URL) => {
+    const url = new URL(String(input))
+    calls.push(url)
+    const positions = (url.searchParams.get('positions') ?? '')
+      .split(',')
+      .map(Number)
+    return response({
+      items: positions
+        // Position 7 is past the end of the list on the server.
+        .filter((position) => position !== 7)
+        .map((position) => ({
+          position,
+          item: {
+            ...track,
+            id: `fixture-${position}`,
+            title: `Track ${position}`,
+            spotifyTrackId: position === 5 ? null : track.spotifyTrackId,
+          },
+        })),
+    })
+  })
+  const source = createBrowsePlaybackSource({
+    ...options,
+    collection: 'tracks',
+    params: new URLSearchParams({
+      q: 'Fixture',
+      sortBy: 'title',
+      direction: 'asc',
+      page: '3',
+      size: '100',
+    }),
+    startIndex: 2,
+    initialItem: track,
+  })
+  const loaded = await source.loadScattered?.([640, 2, 5, 7, 12, 640, -1, 1000])
+  assert.deepEqual(
+    loaded?.map((items) => items.map((item) => item.title)),
+    [
+      ['Track 640'],
+      ['Fixture track'],
+      [],
+      [],
+      ['Track 12'],
+      ['Track 640'],
+      [],
+      [],
+    ],
+  )
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0]?.pathname, '/api/v1/tracks/positions')
+  assert.equal(calls[0]?.searchParams.get('positions'), '640,5,7,12')
+  assert.equal(calls[0]?.searchParams.get('q'), 'Fixture')
+  assert.equal(calls[0]?.searchParams.get('sortBy'), 'title')
+  assert.equal(calls[0]?.searchParams.get('direction'), 'asc')
+  assert.equal(calls[0]?.searchParams.has('page'), false)
+  assert.equal(calls[0]?.searchParams.has('size'), false)
+
+  // More positions than one request takes are split between requests.
+  const many = Array.from({ length: 60 }, (_, index) => index + 100)
+  assert.equal((await source.loadScattered?.(many))?.length, 60)
+  assert.deepEqual(
+    calls
+      .slice(1)
+      .map((url) => url.searchParams.get('positions')?.split(',').length),
+    [50, 10],
+  )
+  // The clicked track alone needs no request.
+  assert.equal(
+    (await source.loadScattered?.([2]))?.[0]?.[0]?.title,
+    'Fixture track',
+  )
+  assert.equal(calls.length, 3)
+
+  const albums = createBrowsePlaybackSource({
+    ...options,
+    collection: 'albums',
+  })
+  assert.equal(albums.loadScattered, undefined)
+})
+
 test('album rows expand stored tracks in position order and cache their detail', async (t) => {
   const paths: string[] = []
   t.mock.method(globalThis, 'fetch', async (input: RequestInfo | URL) => {

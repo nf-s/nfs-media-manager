@@ -958,6 +958,37 @@ it('orders Tracks by artist, album, release and equal listening totals in album 
     'u',
     'q',
   ])
+
+  // Positions read in one pass name the same tracks as the ordered list.
+  const { queryBrowsePositions } = await import('@/services/browse')
+  const at = async (
+    sortBy: string,
+    direction: 'asc' | 'desc',
+    positions: number[],
+    limitResults?: number,
+  ) =>
+    (
+      await queryBrowsePositions(
+        'track',
+        TrackQuerySchema.parse({
+          q: 'natural-order-fixture',
+          sortBy,
+          direction,
+          limitResults,
+        }),
+        positions,
+      )
+    )
+      .sort((a, b) => a.position - b.position)
+      .map(({ id, position }) => `${position}:${id.replace('order-', '')}`)
+  expect(await at('album', 'desc', [7, 0, 2, 2, 99])).toEqual([
+    '0:z',
+    '2:a',
+    '7:q',
+  ])
+  expect(await at('scrobbles', 'asc', [1, 6])).toEqual(['1:z', '6:q'])
+  expect(await at('releaseDate', 'asc', [0, 4, 5], 5)).toEqual(['0:z', '4:b'])
+  expect(await at('artist', 'asc', [])).toEqual([])
 })
 
 it('returns the stored collection ID in film Browse and detail memberships', async () => {

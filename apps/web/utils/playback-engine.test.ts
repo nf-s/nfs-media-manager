@@ -1132,6 +1132,133 @@ test('shuffled songs span source albums and do not repeat after toggling shuffle
   setup.engine.dispose()
 })
 
+/** A random sequence that differs between tests only by its start. */
+function sequence(start = 0.137) {
+  let value = start
+  return () => {
+    value = (value + 0.618034) % 1
+    return value
+  }
+}
+
+/** A list whose entries can be read together; `reads` records each request. */
+function scatteredSource(
+  length: number,
+  read: (index: number) => PlayableItem[] = (index) => [sourceTrack(index)],
+) {
+  const reads: number[][] = []
+  const paged: number[] = []
+  const held: Array<() => void> = []
+  const hold = { rounds: false }
+  const source: PlaybackSource = {
+    ...fixtureSource(length),
+    load: async (index) => {
+      paged.push(index)
+      return read(index)
+    },
+    loadScattered: async (indexes) => {
+      reads.push(indexes)
+      if (hold.rounds && indexes.length > 1)
+        await new Promise<void>((resolve) => held.push(resolve))
+      return indexes.map(read)
+    },
+  }
+  return { source, reads, paged, held, hold }
+}
+
+test('a shuffled list reads the tracks kept ahead in one request', async () => {
+  const setup = harness(sequence(), undefined, { initialShuffle: true })
+  const list = scatteredSource(500)
+  await playSource(setup, list.source)
+  assert.equal(setup.engine.getState().shuffle, true)
+  assert.deepEqual(
+    list.reads.map((indexes) => indexes.length),
+    [1, 30],
+  )
+  assert.deepEqual(list.paged, [])
+  const round = list.reads[1] ?? []
+  assert.equal(new Set(round).size, 30)
+  const upcoming = setup.engine.getState().upcoming.map((item) => item.uri)
+  assert.deepEqual(
+    upcoming,
+    round.map((index) => sourceTrack(index).uri),
+  )
+  assert.equal(setup.engine.getState().sourceLoading, false)
+
+  // The next track is already resolved; one more is read to replace it.
+  setup.engine.next()
+  await settle()
+  assert.equal(setup.engine.getState().current?.uri, upcoming[0])
+  assert.deepEqual(
+    list.reads.map((indexes) => indexes.length),
+    [1, 30, 1],
+  )
+  assert.equal(setup.engine.getState().upcoming.length, 30)
+  assert.equal(
+    new Set(setup.engine.getState().upcoming.map((item) => item.uri)).size,
+    30,
+  )
+  setup.engine.dispose()
+})
+
+test('a list played in order is read by page, not by scattered positions', async () => {
+  const setup = harness()
+  const list = scatteredSource(500)
+  await playSource(setup, list.source)
+  assert.deepEqual(list.reads, [])
+  assert.equal(list.paged.length, 31)
+  setup.engine.dispose()
+})
+
+test('a short shuffled list ends without reading a track twice', async () => {
+  const setup = harness(sequence(), undefined, { initialShuffle: true })
+  const list = scatteredSource(8)
+  await playSource(setup, list.source)
+  assert.deepEqual(
+    setup.engine
+      .getState()
+      .upcoming.map((item) => item.uri)
+      .sort(),
+    [1, 2, 3, 4, 5, 6, 7].map((index) => sourceTrack(index).uri),
+  )
+  assert.equal(new Set(list.reads.flat()).size, list.reads.flat().length)
+  setup.engine.dispose()
+})
+
+test('tracks already read are shown while more of a shuffled list is read', async () => {
+  const setup = harness(sequence(), undefined, { initialShuffle: true })
+  // Every third entry has no playable track, so one round is not enough.
+  const list = scatteredSource(500, (index) =>
+    index % 3 === 1 ? [] : [sourceTrack(index)],
+  )
+  list.hold.rounds = true
+  await playSource(setup, list.source)
+  assert.equal(setup.engine.getState().upcoming.length, 0)
+  assert.equal(setup.engine.getState().sourceLoading, true)
+
+  list.held.shift()?.()
+  await settle()
+  // Nothing is shown until the second round turns out to need waiting for.
+  assert.equal(setup.engine.getState().upcoming.length, 0)
+  await advance(100)
+  const first = (list.reads[1] ?? []).filter((index) => index % 3 !== 1)
+  assert.ok(first.length > 0 && first.length < 30)
+  // The second round is still being read.
+  assert.equal(list.held.length, 1)
+  assert.equal(setup.engine.getState().sourceLoading, true)
+  assert.deepEqual(
+    setup.engine.getState().upcoming.map((item) => item.uri),
+    first.map((index) => sourceTrack(index).uri),
+  )
+
+  list.hold.rounds = false
+  list.held.shift()?.()
+  await advance(100)
+  assert.equal(setup.engine.getState().upcoming.length, 30)
+  assert.equal(setup.engine.getState().sourceLoading, false)
+  setup.engine.dispose()
+})
+
 test('an obsolete source load cannot replace newer playback', async () => {
   const setup = harness()
   let release: (items: PlayableItem[]) => void = () => undefined
@@ -1881,6 +2008,36 @@ async function sourceOnRoom(
   await advance(1_000)
   return setup
 }
+
+test('a Sonos room is given the next track as soon as it has been read', async () => {
+  const sonos = fakeSonos()
+  const setup = harness(sequence(), sonos.api, {
+    initialShuffle: true,
+    initialRoom: kitchen,
+  })
+  const list = scatteredSource(500)
+  list.hold.rounds = true
+  setup.engine.prepare()
+  await settle()
+  await setup.engine.selectDevice({ kind: 'room', room: kitchen })
+  setup.engine.play(sourceTrack(0), list.source)
+  await settle()
+  sonos.room.state = roomState(sourceTrack(0).uri, { positionMs: 1_000 })
+  await advance(3_000)
+  assert.equal(sonos.loads.length, 1)
+  assert.match(sonos.loads[0] ?? '', /replace spotify:track:source-0 play/)
+  assert.equal(setup.engine.getState().upcoming.length, 0)
+
+  const reads = sonos.reads.length
+  list.held.shift()?.()
+  await settle()
+  const next = setup.engine.getState().upcoming[0]
+  assert.ok(next)
+  // No report was read from the group in between.
+  assert.equal(sonos.reads.length, reads)
+  assert.equal(sonos.loads[1], `RINCON_FIXTURE:1 append ${next.uri} play`)
+  setup.engine.dispose()
+})
 
 test('choosing a Sonos room moves the track there with the tracks that follow it', async () => {
   const sonos = fakeSonos()

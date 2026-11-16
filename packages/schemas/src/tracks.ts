@@ -226,6 +226,29 @@ export const TrackQuerySchema = PaginationQuerySchema.extend({
 })
 export type TrackQuery = z.infer<typeof TrackQuerySchema>
 
+export const TRACK_POSITIONS_MAX = 50
+/**
+ * Zero-based positions in a track query's order, comma-separated. Shuffled
+ * playback reads tracks spread over a list this way instead of a page each.
+ */
+export const TrackPositionsQuerySchema = TrackQuerySchema.extend({
+  positions: z
+    .string()
+    .regex(/^\d{1,7}(,\d{1,7})*$/)
+    .transform((value) => [...new Set(value.split(',').map(Number))])
+    .pipe(z.array(z.number().int().nonnegative()).max(TRACK_POSITIONS_MAX)),
+})
+export type TrackPositionsQuery = z.infer<typeof TrackPositionsQuerySchema>
+
+export const TrackPositionsSchema = z.object({
+  items: z.array(
+    z.object({
+      position: z.number().int().nonnegative(),
+      item: TrackListItemSchema,
+    }),
+  ),
+})
+
 export const TrackFilterOptionSchema = BrowseFilterSchema.extend({
   label: z.string(),
   count: z.number().int().positive(),

@@ -24,7 +24,7 @@ A room can be chosen once the Spotify account its household plays with is known.
 ## Playing on a room
 
 - Playing an album, a track or a queue entry starts it on the room. The app loads it into the room's own Sonos queue with the household's Spotify account; no Spotify app or Spotify Connect session is involved.
-- A track is followed in the room's queue by the tracks due after it, up to 10 ahead, added one at a time as the source resolves them and topped up as the room plays. Sonos takes about a second for each track added. The room therefore keeps playing with the app closed until those tracks run out.
+- A track is followed in the room's queue by the tracks due after it, up to 10 ahead, added one at a time as soon as the source resolves them and topped up as the room plays. Sonos takes about a second for each track added. The room therefore keeps playing with the app closed until those tracks run out.
 - Next and Previous move within the room's queue. A Next sent while a track is still being added waits for it. A queue change made here (a track queued, removed or reordered, or shuffle switched) places the track now due directly after the current one. When the room's queue ends and more is due, the next item is started.
 - An album plays as an album on the room. Started from a chosen track, it is loaded and skipped forward to that track before it plays. Tracks queued meanwhile play after the album.
 - Sonos reports only the URI of a track loaded this way. The dock takes its name, artists, artwork and length from Spotify (one lookup for each track) and, until that answers, the name, artists and artwork from the queued item.

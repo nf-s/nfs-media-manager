@@ -9,7 +9,9 @@ import {
 import {
   PlaylistDetailSchema,
   PlaylistEntrySortSchema,
+  TRACK_POSITIONS_MAX,
   TrackListItemSchema,
+  TrackPositionsSchema,
   type PlaylistEntry,
   type TrackListItem,
 } from '@repo/schemas/tracks'
@@ -172,6 +174,48 @@ export function createBrowsePlaybackSource({
       return (await fetchApiData(apiBaseUrl, path, AlbumPageSchema)).items
     return (await fetchApiData(apiBaseUrl, path, TrackPageSchema)).items
   })
+  const playables = async (item: AlbumListItem | TrackListItem | undefined) => {
+    if (!item) return []
+    if (item.mediaType === 'album') return albums(item.id)
+    const playable = libraryTrackPlayable(item)
+    return playable ? [playable] : []
+  }
+  const initial = (index: number) =>
+    index === startIndex ? initialItem : undefined
+  /** Tracks anywhere in the list, in one request for each batch of positions. */
+  async function loadScattered(indexes: number[]) {
+    const wanted = [
+      ...new Set(
+        indexes.filter((index) => validIndex(index, total) && !initial(index)),
+      ),
+    ]
+    const batches: number[][] = []
+    for (let at = 0; at < wanted.length; at += TRACK_POSITIONS_MAX)
+      batches.push(wanted.slice(at, at + TRACK_POSITIONS_MAX))
+    const found = new Map<number, TrackListItem>()
+    const results = await Promise.all(
+      batches.map((positions) => {
+        const query = new URLSearchParams(captured)
+        query.delete('page')
+        query.delete('size')
+        query.set('positions', positions.join(','))
+        return fetchApiData(
+          apiBaseUrl,
+          `/api/v1/tracks/positions?${query}`,
+          TrackPositionsSchema,
+        )
+      }),
+    )
+    for (const result of results)
+      for (const { position, item } of result.items) found.set(position, item)
+    return Promise.all(
+      indexes.map((index) =>
+        validIndex(index, total)
+          ? playables(initial(index) ?? found.get(index))
+          : [],
+      ),
+    )
+  }
   return {
     label,
     href,
@@ -180,17 +224,14 @@ export function createBrowsePlaybackSource({
     kind: collection === 'albums' ? 'album' : 'list',
     async load(index) {
       if (!validIndex(index, total)) return []
-      const item =
-        index === startIndex && initialItem
-          ? initialItem
-          : (await pages(Math.floor(index / browsePageSize) + 1))[
-              index % browsePageSize
-            ]
-      if (!item) return []
-      if (item.mediaType === 'album') return albums(item.id)
-      const playable = libraryTrackPlayable(item)
-      return playable ? [playable] : []
+      return playables(
+        initial(index) ??
+          (await pages(Math.floor(index / browsePageSize) + 1))[
+            index % browsePageSize
+          ],
+      )
     },
+    ...(collection === 'tracks' ? { loadScattered } : {}),
   }
 }
 

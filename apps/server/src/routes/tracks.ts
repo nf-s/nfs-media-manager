@@ -13,6 +13,8 @@ import {
   TrackListItemSchema,
   TrackMergeInputSchema,
   TrackMergeResultSchema,
+  TrackPositionsQuerySchema,
+  TrackPositionsSchema,
   TrackQuerySchema,
 } from '@repo/schemas/tracks'
 import {
@@ -36,6 +38,7 @@ import {
   listTrackBrowsePage,
   listTrackFilterOptions,
   listTracks,
+  listTracksAtPositions,
 } from '@/services/tracks'
 import { mergeLastfmTrack } from '@/services/track-merges'
 import {
@@ -70,6 +73,33 @@ app.openapi(
     generateJsonResponse(
       c,
       await listTrackBrowsePage(c.req.valid('query')),
+      200,
+    ),
+)
+
+app.openapi(
+  createRoute({
+    method: 'get',
+    path: '/positions',
+    middleware: [authMiddleware()],
+    request: { query: TrackPositionsQuerySchema },
+    responses: {
+      200: {
+        description: 'Tracks at positions of the query order',
+        content: {
+          'application/json': {
+            schema: createResponseSchema(TrackPositionsSchema),
+          },
+        },
+      },
+      401: jsonErrorResponse('Unauthorized'),
+      422: validationErrorResponse,
+    },
+  }),
+  async (c) =>
+    generateJsonResponse(
+      c,
+      await listTracksAtPositions(c.req.valid('query')),
       200,
     ),
 )

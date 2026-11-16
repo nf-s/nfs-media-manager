@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   additions: vi.fn(),
   browsePage: vi.fn(),
   browseCount: vi.fn(),
+  positions: vi.fn(),
 }))
 vi.mock('@/env', () => ({
   env: {
@@ -23,6 +24,7 @@ vi.mock('@/services/tracks', () => ({
   listTrackBrowsePage: mocks.browsePage,
   listTrackFilterOptions: vi.fn(),
   listTracks: vi.fn(),
+  listTracksAtPositions: mocks.positions,
 }))
 vi.mock('@/services/browse', () => ({
   listBrowseFields: vi.fn(),
@@ -111,6 +113,33 @@ describe('tracks API', () => {
     )
     expect((await app.request(`/browse-count${query}`)).status).toBe(503)
     expect((await app.request(`/browse-page${query}`)).status).toBe(200)
+  })
+
+  it('authorizes and validates a read of tracks at positions', async () => {
+    mocks.session.mockResolvedValueOnce(null)
+    expect((await app.request('/positions?positions=1')).status).toBe(401)
+    const tooMany = Array.from({ length: 51 }, (_, index) => index).join(',')
+    for (const positions of ['', 'one', '1,,2', '-1', '1.5', tooMany])
+      expect(
+        (await app.request(`/positions?positions=${positions}`)).status,
+      ).toBe(422)
+    expect((await app.request('/positions')).status).toBe(422)
+    expect(mocks.positions).not.toHaveBeenCalled()
+
+    mocks.positions.mockResolvedValue({ items: [] })
+    const response = await app.request(
+      '/positions?positions=40,3,40&q=fixture&sortBy=artist&direction=asc',
+    )
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ data: { items: [] } })
+    expect(mocks.positions).toHaveBeenCalledWith(
+      expect.objectContaining({
+        positions: [40, 3],
+        q: 'fixture',
+        sortBy: 'artist',
+        direction: 'asc',
+      }),
+    )
   })
 
   it('requires owner authentication before merging', async () => {
