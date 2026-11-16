@@ -4243,8 +4243,15 @@ button.player-track:hover strong,
     border-width: 1px 0 0;
     border-radius: 0;
   }
+  /* The phone player is a detail drawer over the mini-player and the tab bar. */
+  .app-shell:has(> .player-dock) .media-inspector.player-sheet {
+    bottom: 0;
+  }
+  .player-sheet > .inspector-scroll {
+    padding: 0 0 env(safe-area-inset-bottom);
+  }
   /* The album sheet covers the tab bar, so the mini-player moves to the bottom edge. */
-  .app-shell:has(.media-inspector) > .player-dock {
+  .app-shell:has(.media-inspector:not(.player-sheet)) > .player-dock {
     position: fixed;
     right: 0;
     bottom: 0;

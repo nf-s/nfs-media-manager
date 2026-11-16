@@ -35,6 +35,7 @@ import {
 } from 'lucide-react'
 import { Button } from '@repo/ui/components/ui/button'
 import { DetailLink } from './detail-link'
+import { MediaInspector } from './media-inspector'
 import ServiceIconLinks from './service-icon-links'
 import MediaArtwork from './media-artwork'
 import {
@@ -842,89 +843,103 @@ function NowPlayingSheet({
   onClose: () => void
 }) {
   const controls = usePlaybackControls()
-  const dialog = useRef<HTMLDialogElement>(null)
-  const titleId = useId()
+  const panel = useRef<HTMLElement>(null)
   const [devicesOpen, setDevicesOpen] = useState(false)
   const shown = describe(view)
   useEffect(() => {
-    const element = dialog.current
     const previous = document.activeElement
-    if (!element?.open) element?.showModal()
+    panel.current?.focus({ preventScroll: true })
     return () => {
-      element?.close()
       if (previous instanceof HTMLElement && previous.isConnected)
         previous.focus({ preventScroll: true })
     }
   }, [])
+  useEffect(() => {
+    // Heard first, so Escape closes the player before a drawer beneath it.
+    function onEscape(event: KeyboardEvent) {
+      if (event.key !== 'Escape' || document.querySelector('dialog[open]'))
+        return
+      event.preventDefault()
+      event.stopPropagation()
+      onClose()
+    }
+    document.addEventListener('keydown', onEscape, true)
+    return () => document.removeEventListener('keydown', onEscape, true)
+  }, [onClose])
   return (
-    <dialog
-      ref={dialog}
-      className="tag-drawer player-sheet"
-      aria-labelledby={titleId}
-      onCancel={(event) => {
-        event.preventDefault()
-        event.stopPropagation()
-        onClose()
-      }}
-      onClick={(event) => {
-        event.stopPropagation()
-        if (event.target === event.currentTarget) onClose()
-      }}
-      onKeyDown={(event) => event.stopPropagation()}
-    >
-      <div className="tag-drawer-inner">
-        <div className="detail-topbar">
-          <span id={titleId}>Player</span>
-          <button type="button" aria-label="Close player" onClick={onClose}>
-            <X size={20} />
-          </button>
-        </div>
-        <div className="player-sheet-body">
-          <Artwork src={shown.artwork} className="player-sheet-art" />
-          <NowPlaying view={view} onNavigate={onClose} />
-          <Scrubber
-            snapshot={view.snapshot}
-            readOnly={!seekable(view.target)}
-          />
-          <Transport view={view} />
-          <div className="player-sheet-actions">
-            <button
-              type="button"
-              className="player-tool"
-              aria-expanded={devicesOpen}
-              data-highlighted={view.target.kind !== 'local'}
-              onClick={() => {
-                if (!devicesOpen) void controls.refreshDevices()
-                setDevicesOpen(!devicesOpen)
-              }}
-            >
-              <TargetIcon view={view} />
-              <span>{targetLabel(view.target)}</span>
+    <>
+      <div
+        className="inspector-backdrop player-sheet-backdrop"
+        onClick={(event) => {
+          event.stopPropagation()
+          onClose()
+        }}
+      />
+      <MediaInspector
+        ref={panel}
+        className="player-sheet"
+        tabIndex={-1}
+        aria-label="Player"
+        onDismiss={onClose}
+        onClick={(event) => event.stopPropagation()}
+        onKeyDown={(event) => event.stopPropagation()}
+        header={
+          <>
+            <span>Player</span>
+            <button type="button" aria-label="Close player" onClick={onClose}>
+              <X size={18} aria-hidden="true" />
             </button>
-            {shown.spotifyUrl && (
-              <ServiceIconLinks
-                links={[
-                  {
-                    provider: 'spotify',
-                    label: 'Spotify',
-                    url: shown.spotifyUrl,
-                  },
-                ]}
+          </>
+        }
+      >
+        <div className="inspector-scroll">
+          <div className="player-sheet-body">
+            <Artwork src={shown.artwork} className="player-sheet-art" />
+            <NowPlaying view={view} onNavigate={onClose} />
+            <Scrubber
+              snapshot={view.snapshot}
+              readOnly={!seekable(view.target)}
+            />
+            <Transport view={view} />
+            <div className="player-sheet-actions">
+              <button
+                type="button"
+                className="player-tool"
+                aria-expanded={devicesOpen}
+                data-highlighted={view.target.kind !== 'local'}
+                onClick={() => {
+                  if (!devicesOpen) void controls.refreshDevices()
+                  setDevicesOpen(!devicesOpen)
+                }}
+              >
+                <TargetIcon view={view} />
+                <span>{targetLabel(view.target)}</span>
+              </button>
+              {shown.spotifyUrl && (
+                <ServiceIconLinks
+                  links={[
+                    {
+                      provider: 'spotify',
+                      label: 'Spotify',
+                      url: shown.spotifyUrl,
+                    },
+                  ]}
+                />
+              )}
+            </div>
+            {devicesOpen && (
+              <DeviceList
+                view={view}
+                open
+                onChosen={() => setDevicesOpen(false)}
               />
             )}
+            <VolumeControl volume={view.volume} />
+            <QueueContents view={view} onNavigate={onClose} />
           </div>
-          {devicesOpen && (
-            <DeviceList
-              view={view}
-              open
-              onChosen={() => setDevicesOpen(false)}
-            />
-          )}
-          <VolumeControl volume={view.volume} />
-          <QueueContents view={view} onNavigate={onClose} />
         </div>
-      </div>
-    </dialog>
+      </MediaInspector>
+    </>
   )
 }
 
@@ -1089,7 +1104,9 @@ function Dock({ view }: { view: PlaybackView }) {
       <p className="sr-only" role="status">
         {view.announcement}
       </p>
-      {sheet && <NowPlayingSheet view={view} onClose={() => setSheet(false)} />}
+      {sheet && phone && (
+        <NowPlayingSheet view={view} onClose={() => setSheet(false)} />
+      )}
     </section>
   )
 }
