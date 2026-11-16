@@ -81,6 +81,9 @@ export class LocalRequestWorker extends DurableObject<CloudflareBindings> {
   disconnect(tokenHash: string) {
     return this.worker.disconnect(tokenHash)
   }
+  waitForTask(tokenHash: string, maxWaitMs?: number) {
+    return this.worker.waitForTask(tokenHash, maxWaitMs)
+  }
   take(tokenHash: string) {
     return this.worker.take(tokenHash)
   }

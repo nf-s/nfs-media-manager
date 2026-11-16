@@ -33,8 +33,8 @@ export function providerLocalWorkerQuery(apiBaseUrl: string, id: string) {
           signal,
         },
       ),
-    staleTime: 0,
-    refetchInterval: 5000,
+    staleTime: 5000,
+    refetchInterval: (query) => (query.state.data?.active ? 5000 : 30_000),
   })
 }
 
@@ -69,7 +69,7 @@ export function useProviderLocalWorkerMode(provider: string) {
       await client.cancelQueries({ queryKey })
       client.setQueryData(queryKey, status)
     },
-    onSettled: async () => {
+    onError: async () => {
       await client.invalidateQueries({ queryKey })
     },
   })

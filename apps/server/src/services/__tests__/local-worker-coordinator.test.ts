@@ -90,6 +90,229 @@ afterEach(() => {
 })
 
 describe('local worker coordinator', () => {
+  describe('waiting for tasks', () => {
+    beforeEach(() => vi.useFakeTimers())
+    afterEach(() => vi.useRealTimers())
+
+    it('waits ten seconds while idle without repeatedly reading storage', async () => {
+      const f = fixture()
+      await f.ready()
+      vi.mocked(f.dependencies.storage.load).mockClear()
+      vi.mocked(f.dependencies.storage.save).mockClear()
+      const completed = vi.fn()
+      const waiting = f.coordinator.waitForTask(hash).then(completed)
+      await vi.advanceTimersByTimeAsync(9999)
+      expect(completed).not.toHaveBeenCalled()
+      expect(f.dependencies.storage.load).toHaveBeenCalledOnce()
+      expect(f.dependencies.storage.save).not.toHaveBeenCalled()
+      await vi.advanceTimersByTimeAsync(1)
+      await waiting
+      expect(completed).toHaveBeenCalledExactlyOnceWith(false)
+      expect(f.dependencies.storage.load).toHaveBeenCalledTimes(2)
+      expect(vi.getTimerCount()).toBe(0)
+    })
+
+    it.each([
+      { maxWaitMs: 0, expectedWaitMs: 0 },
+      { maxWaitMs: 250, expectedWaitMs: 250 },
+      { maxWaitMs: 20000, expectedWaitMs: 10000 },
+    ])(
+      'bounds an idle wait of $maxWaitMs ms to $expectedWaitMs ms',
+      async ({ maxWaitMs, expectedWaitMs }) => {
+        const f = fixture()
+        await f.ready()
+        const completed = vi.fn()
+        const waiting = f.coordinator
+          .waitForTask(hash, maxWaitMs)
+          .then(completed)
+        if (expectedWaitMs > 0) {
+          await vi.advanceTimersByTimeAsync(expectedWaitMs - 1)
+          expect(completed).not.toHaveBeenCalled()
+          await vi.advanceTimersByTimeAsync(1)
+        } else await vi.advanceTimersByTimeAsync(0)
+        await waiting
+        expect(completed).toHaveBeenCalledExactlyOnceWith(false)
+        expect(vi.getTimerCount()).toBe(0)
+      },
+    )
+
+    it.each([-1, 0.5, NaN, Infinity, -Infinity])(
+      'rejects an invalid wait limit %s before registering a waiter',
+      async (maxWaitMs) => {
+        const f = fixture()
+        await expect(
+          f.coordinator.waitForTask(hash, maxWaitMs),
+        ).rejects.toThrow()
+        expect(f.dependencies.storage.load).not.toHaveBeenCalled()
+        expect(vi.getTimerCount()).toBe(0)
+      },
+    )
+
+    it('wakes immediately after enqueue commits without consuming the offer', async () => {
+      const f = fixture()
+      await f.ready()
+      const completed = vi.fn()
+      const waiting = f.coordinator.waitForTask(hash).then(completed)
+      await vi.advanceTimersByTimeAsync(0)
+      vi.mocked(f.dependencies.storage.save).mockImplementationOnce(
+        async (state) => {
+          await new Promise<void>((resolve) => setTimeout(resolve, 1000))
+          f.replaceStored(state)
+        },
+      )
+      const enqueued = f.coordinator.enqueue(f.task)
+      await vi.advanceTimersByTimeAsync(999)
+      expect(completed).not.toHaveBeenCalled()
+      await vi.advanceTimersByTimeAsync(1)
+      expect(await enqueued).toBe(true)
+      await waiting
+      expect(completed).toHaveBeenCalledExactlyOnceWith(true)
+      expect(f.stored()).toMatchObject({ active: { phase: 'offered' } })
+      expect(vi.getTimerCount()).toBe(0)
+      expect(await f.coordinator.take(hash)).toEqual(f.task)
+    })
+
+    it('does not miss an enqueue racing the initial check or consume for concurrent waiters', async () => {
+      const f = fixture()
+      await f.ready()
+      const first = f.coordinator.waitForTask(hash)
+      const second = f.coordinator.waitForTask(hash)
+      const unauthorized = f.coordinator.waitForTask(otherHash)
+      await f.coordinator.enqueue(f.task)
+      expect(await Promise.all([first, second, unauthorized])).toEqual([
+        true,
+        true,
+        false,
+      ])
+      expect(vi.getTimerCount()).toBe(0)
+      expect(
+        await Promise.all([f.coordinator.take(hash), f.coordinator.take(hash)]),
+      ).toEqual([f.task, null])
+    })
+
+    it('returns an existing eligible offer immediately without changing it', async () => {
+      const f = fixture()
+      await f.ready()
+      await f.coordinator.enqueue(f.task)
+      const stored = f.stored()
+      expect(await f.coordinator.waitForTask(hash)).toBe(true)
+      expect(f.stored()).toEqual(stored)
+      expect(vi.getTimerCount()).toBe(0)
+    })
+
+    it.each(['cloud', 'unpaired', 'offline', 'blocked'])(
+      'returns no task when the worker is %s',
+      async (state) => {
+        const f = fixture()
+        await f.ready()
+        if (state === 'cloud') await f.coordinator.setMode('cloud')
+        else if (state === 'unpaired') await f.coordinator.revoke()
+        else if (state === 'offline') await f.coordinator.disconnect(hash)
+        else {
+          await f.coordinator.enqueue(f.task)
+          await f.coordinator.take(hash)
+          await f.coordinator.result(hash, {
+            kind: 'error',
+            id,
+            error: 'interrupted',
+          })
+        }
+        const waiting = f.coordinator.waitForTask(hash)
+        await vi.advanceTimersByTimeAsync(10000)
+        expect(await waiting).toBe(false)
+        expect(vi.getTimerCount()).toBe(0)
+      },
+    )
+
+    it.each(['revoke', 'disconnect', 'take'])(
+      'revalidates eligibility after a wake racing %s',
+      async (operation) => {
+        const f = fixture()
+        await f.ready()
+        const waiting = f.coordinator.waitForTask(hash)
+        const enqueued = f.coordinator.enqueue(f.task)
+        const changed =
+          operation === 'revoke'
+            ? f.coordinator.revoke()
+            : operation === 'disconnect'
+              ? f.coordinator.disconnect(hash)
+              : f.coordinator.take(hash)
+        await enqueued
+        await changed
+        expect(await waiting).toBe(false)
+        expect(vi.getTimerCount()).toBe(0)
+      },
+    )
+
+    it('rechecks the dispatch deadline after enqueue storage completes', async () => {
+      const f = fixture()
+      await f.ready()
+      const waiting = f.coordinator.waitForTask(hash)
+      vi.mocked(f.dependencies.storage.save).mockImplementationOnce(
+        async (state) => {
+          f.replaceStored(state)
+          f.setNow(f.task.dispatchBefore)
+        },
+      )
+      await f.coordinator.enqueue(f.task)
+      expect(await waiting).toBe(false)
+      expect(f.stored()).toMatchObject({
+        blocked: true,
+        active: { phase: 'offered' },
+      })
+      expect(vi.getTimerCount()).toBe(0)
+    })
+
+    it('does not wake early after a rejected enqueue', async () => {
+      const f = fixture()
+      await f.ready()
+      const completed = vi.fn()
+      const waiting = f.coordinator.waitForTask(hash).then(completed)
+      vi.mocked(f.dependencies.storage.save).mockRejectedValueOnce(
+        new Error('Storage unavailable'),
+      )
+      await expect(f.coordinator.enqueue(f.task)).rejects.toThrow(
+        'Storage unavailable',
+      )
+      await vi.advanceTimersByTimeAsync(9999)
+      expect(completed).not.toHaveBeenCalled()
+      await vi.advanceTimersByTimeAsync(1)
+      await waiting
+      expect(completed).toHaveBeenCalledExactlyOnceWith(false)
+      expect(vi.getTimerCount()).toBe(0)
+    })
+
+    it('cleans up failed waits and leaves later waits usable', async () => {
+      const f = fixture()
+      await f.ready()
+      vi.mocked(f.dependencies.storage.load).mockRejectedValueOnce(
+        new Error('Storage unavailable'),
+      )
+      await expect(f.coordinator.waitForTask(hash)).rejects.toThrow(
+        'Storage unavailable',
+      )
+      expect(vi.getTimerCount()).toBe(0)
+      const waiting = f.coordinator.waitForTask(hash)
+      await f.coordinator.enqueue(f.task)
+      expect(await waiting).toBe(true)
+      expect(vi.getTimerCount()).toBe(0)
+    })
+
+    it('cleans up when the state check after a wake fails', async () => {
+      const f = fixture()
+      await f.ready()
+      const waiting = f.coordinator.waitForTask(hash)
+      await vi.advanceTimersByTimeAsync(0)
+      vi.mocked(f.dependencies.storage.load)
+        .mockImplementationOnce(async () => f.stored())
+        .mockRejectedValueOnce(new Error('Storage unavailable'))
+      const failed = expect(waiting).rejects.toThrow('Storage unavailable')
+      await f.coordinator.enqueue(f.task)
+      await failed
+      expect(vi.getTimerCount()).toBe(0)
+    })
+  })
+
   it('keeps local-by-default providers local while unpaired', async () => {
     const f = fixture()
     expect(await f.coordinator.status('local')).toMatchObject({

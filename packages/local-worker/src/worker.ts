@@ -357,7 +357,7 @@ export class LocalWorker {
         }
         backoff = 1000
         if (!poll.task) {
-          await this.runtime.sleep(250, signal)
+          await this.runtime.sleep(1000, signal)
           continue
         }
         const task = poll.task

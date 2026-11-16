@@ -1,6 +1,37 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { createProviderDispatchInput } from './provider-job-dispatch'
+import { CloudDispatchStatusSchema } from '@repo/schemas/job'
+import {
+  createProviderDispatchInput,
+  providerDispatchPollInterval,
+} from './provider-job-dispatch'
+
+test('dispatch status backs off without active slots, including paused and stopped queues', () => {
+  const idle = CloudDispatchStatusSchema.parse({
+    provider: 'fixture',
+    paused: false,
+    stopped: false,
+    failures: 0,
+    infrastructureFailures: 0,
+    slots: [],
+  })
+  assert.equal(providerDispatchPollInterval(undefined), 30_000)
+  assert.equal(providerDispatchPollInterval(null), 30_000)
+  for (const status of [
+    idle,
+    { ...idle, paused: true },
+    { ...idle, stopped: true },
+  ]) {
+    assert.equal(providerDispatchPollInterval(status), 30_000)
+    assert.equal(
+      providerDispatchPollInterval({
+        ...status,
+        slots: [{ jobId: 'fixture-job', phase: 'running', expiresAt: 1 }],
+      }),
+      3000,
+    )
+  }
+})
 
 test('resuming sends the exact reviewed selection even if the original state changes', () => {
   const status = { allowedJobIds: ['reviewed-job'] }

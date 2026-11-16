@@ -215,7 +215,7 @@ test('offline reconnect is bounded and successful empty polls reset its backoff'
   await h.run({ keepPolling: true })
   assert.deepEqual(
     h.sleeps,
-    [1000, 2000, 4000, 8000, 16000, 30000, 30000, 250, 1000],
+    [1000, 2000, 4000, 8000, 16000, 30000, 30000, 1000, 1000],
   )
   assert.equal(
     h.calls.some(({ method }) => method === 'GET'),
@@ -223,7 +223,7 @@ test('offline reconnect is bounded and successful empty polls reset its backoff'
   )
 })
 
-test('repeated empty long polls keep a fixed short idle delay within the heartbeat window', async (t) => {
+test('repeated empty long polls wait one second within the heartbeat window', async (t) => {
   const h = fixture(t)
   const pollTimes = []
   h.poll = () => {
@@ -236,11 +236,11 @@ test('repeated empty long polls keep a fixed short idle delay within the heartbe
     return json({ serverTime, policy: h.config.policy, task: null })
   }
   await h.run({ keepPolling: true })
-  assert.deepEqual(h.sleeps, Array(8).fill(250))
+  assert.deepEqual(h.sleeps, Array(8).fill(1000))
   assert.ok(h.sleeps.every((milliseconds) => milliseconds < 4000))
   for (let index = 1; index < pollTimes.length; index++) {
     const interval = pollTimes[index] - pollTimes[index - 1]
-    assert.equal(interval, 20_250)
+    assert.equal(interval, 21_000)
     assert.ok(interval < 35_000)
   }
   assert.equal(

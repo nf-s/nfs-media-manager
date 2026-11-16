@@ -23,6 +23,7 @@ import { withCloudDatabase } from './db'
 
 const pause = (ms: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, ms))
+const resultPollIntervalMs = 1000
 const hash = (token: string) => createHash('sha256').update(token).digest('hex')
 const IdSchema = z.object({ id: z.string().uuid() }).strict()
 const dispatchActiveMessage =
@@ -184,7 +185,6 @@ export async function localProviderTransport(
             )
           }
           if (Date.now() >= timing.expiresAt) {
-            await worker.expire(task.id)
             throw new ProviderRequestError(
               'Local worker interrupted; request outcome is uncertain. No automatic retry.',
               'request-failed',
@@ -192,7 +192,9 @@ export async function localProviderTransport(
               true,
             )
           }
-          await pause(Math.min(250, timing.expiresAt - Date.now()))
+          await pause(
+            Math.min(resultPollIntervalMs, timing.expiresAt - Date.now()),
+          )
         }
       } catch (error) {
         // An RPC can fail after its write committed. Keep the provider lock until
@@ -257,7 +259,8 @@ export async function handleLocalWorkerRequest(
   const worker = bindings.LOCAL_WORKERS.getByName(provider)
   const tokenHash = hash(token)
   // Authenticate before reading bodies or waking any dispatcher.
-  const before = await worker.status()
+  const before =
+    action === 'poll' || action === 'start' ? await worker.status() : null
   if (
     !(action === 'result'
       ? await worker.authorizeResult(tokenHash)
@@ -288,7 +291,7 @@ export async function handleLocalWorkerRequest(
     }
     if (!env.SCRAPING_ENABLED)
       return reply({ message: 'Scraping is disabled' }, 409)
-    if (before.blocked)
+    if (before?.blocked)
       return reply(
         { message: 'Local request outcome requires owner review' },
         409,
@@ -300,17 +303,21 @@ export async function handleLocalWorkerRequest(
         ? reply(permit)
         : reply({ message: 'Request permit expired or already consumed' }, 409)
     }
-    if (!before.online && before.mode === 'local')
+    if (before && !before.online && before.mode === 'local')
       await bindings.PROVIDER_COORDINATORS.getByName(provider).wake(provider)
     const policy = await worker.getPolicy()
     if (!policy) return reply({ message: 'Worker revoked' }, 401)
     const until = Date.now() + 20000
     for (;;) {
-      const task = await worker.take(tokenHash)
+      if (request.signal.aborted) return reply({ message: 'Disconnected' }, 408)
+      const available = await worker.waitForTask(
+        tokenHash,
+        Math.max(0, until - Date.now()),
+      )
+      if (request.signal.aborted) return reply({ message: 'Disconnected' }, 408)
+      const task = available ? await worker.take(tokenHash) : null
       if (task || Date.now() >= until)
         return reply({ serverTime: Date.now(), policy, task })
-      if (request.signal.aborted) return reply({ message: 'Disconnected' }, 408)
-      await pause(250)
     }
   } catch (error) {
     const invalid =

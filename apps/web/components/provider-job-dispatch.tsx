@@ -14,6 +14,7 @@ import { Button } from '@repo/ui/components/ui/button'
 import { fetchApiData } from '@/utils/api'
 import {
   createProviderDispatchInput,
+  providerDispatchPollInterval,
   type ProviderDispatchAction,
 } from '@/utils/provider-job-dispatch'
 import { useConfig } from './providers'
@@ -41,8 +42,8 @@ export default function ProviderJobDispatch({
       fetchApiData(apiBaseUrl, path, CloudDispatchStatusSchema.nullable(), {
         signal,
       }),
-    staleTime: 0,
-    refetchInterval: 3000,
+    staleTime: 3000,
+    refetchInterval: (query) => providerDispatchPollInterval(query.state.data),
   })
   const data = status.data
   const restricted =

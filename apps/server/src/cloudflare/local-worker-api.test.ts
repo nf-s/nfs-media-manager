@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   heartbeat: vi.fn(),
   authorizeResult: vi.fn(),
   getPolicy: vi.fn(),
+  waitForTask: vi.fn(),
   take: vi.fn(),
   confirmStart: vi.fn(),
   result: vi.fn(),
@@ -166,6 +167,7 @@ beforeEach(() => {
   mocks.heartbeat.mockResolvedValue(true)
   mocks.authorizeResult.mockResolvedValue(true)
   mocks.getPolicy.mockResolvedValue(policy)
+  mocks.waitForTask.mockResolvedValue(true)
   mocks.take.mockResolvedValue(task)
   mocks.confirmStart.mockResolvedValue(permit)
   mocks.result.mockResolvedValue(true)
@@ -189,6 +191,7 @@ beforeEach(() => {
     heartbeat: mocks.heartbeat,
     authorizeResult: mocks.authorizeResult,
     getPolicy: mocks.getPolicy,
+    waitForTask: mocks.waitForTask,
     take: mocks.take,
     confirmStart: mocks.confirmStart,
     result: mocks.result,
@@ -230,6 +233,10 @@ describe('dedicated local worker capability routes', () => {
       serverTime: expect.any(Number),
     })
     expect(mocks.heartbeat).toHaveBeenCalledExactlyOnceWith(tokenHash)
+    expect(mocks.waitForTask).toHaveBeenCalledExactlyOnceWith(
+      tokenHash,
+      expect.any(Number),
+    )
     expect(mocks.take).toHaveBeenCalledExactlyOnceWith(tokenHash)
     expect(mocks.getSession).not.toHaveBeenCalled()
     expect(mocks.wake).not.toHaveBeenCalled()
@@ -242,6 +249,96 @@ describe('dedicated local worker capability routes', () => {
     expect((await operation('poll')).status).toBe(200)
     expect(mocks.getCoordinator).toHaveBeenCalledExactlyOnceWith('fixture')
     expect(mocks.wake).toHaveBeenCalledExactlyOnceWith('fixture')
+  })
+
+  it('waits ten seconds between idle checks without taking nonexistent tasks', async () => {
+    vi.useFakeTimers()
+    mocks.waitForTask.mockImplementation(
+      () =>
+        new Promise<boolean>((resolve) =>
+          setTimeout(() => resolve(false), 10000),
+        ),
+    )
+    const pending = operation('poll')
+    await vi.advanceTimersByTimeAsync(0)
+    expect(mocks.waitForTask).toHaveBeenCalledOnce()
+    await vi.advanceTimersByTimeAsync(9999)
+    expect(mocks.waitForTask).toHaveBeenCalledOnce()
+    await vi.advanceTimersByTimeAsync(10001)
+    expect((await pending).status).toBe(200)
+    expect(mocks.waitForTask).toHaveBeenCalledTimes(2)
+    expect(mocks.take).not.toHaveBeenCalled()
+    expect(mocks.status).toHaveBeenCalledOnce()
+    expect(mocks.heartbeat).toHaveBeenCalledOnce()
+    expect(mocks.getPolicy).toHaveBeenCalledOnce()
+  })
+
+  it('does not consume a task after the polling client disconnects', async () => {
+    vi.useFakeTimers()
+    mocks.waitForTask.mockImplementation(
+      () =>
+        new Promise<boolean>((resolve) =>
+          setTimeout(() => resolve(true), 1000),
+        ),
+    )
+    const controller = new AbortController()
+    const pending = request('/api/v1/local-worker/fixture/poll', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}` },
+      body: '{}',
+      signal: controller.signal,
+    })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(mocks.waitForTask).toHaveBeenCalledOnce()
+    controller.abort()
+    await vi.advanceTimersByTimeAsync(1000)
+    expect((await pending).status).toBe(408)
+    expect(mocks.take).not.toHaveBeenCalled()
+  })
+
+  it('takes newly available work as soon as the idle wait wakes', async () => {
+    vi.useFakeTimers()
+    mocks.waitForTask.mockImplementation(
+      () =>
+        new Promise<boolean>((resolve) => setTimeout(() => resolve(true), 100)),
+    )
+    const pending = operation('poll')
+    await vi.advanceTimersByTimeAsync(99)
+    expect(mocks.take).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(1)
+    expect(await (await pending).json()).toMatchObject({ policy, task })
+    expect(mocks.waitForTask).toHaveBeenCalledOnce()
+    expect(mocks.take).toHaveBeenCalledExactlyOnceWith(tokenHash)
+  })
+
+  it('bounds a new idle wait by the remaining long-poll deadline', async () => {
+    vi.useFakeTimers()
+    mocks.waitForTask
+      .mockImplementationOnce(
+        () =>
+          new Promise<boolean>((resolve) =>
+            setTimeout(() => resolve(false), 10000),
+          ),
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise<boolean>((resolve) =>
+            setTimeout(() => resolve(false), 9500),
+          ),
+      )
+      .mockImplementation(
+        (_hash: string, maxWaitMs = 10000) =>
+          new Promise<boolean>((resolve) =>
+            setTimeout(() => resolve(false), Math.min(10000, maxWaitMs)),
+          ),
+      )
+    const pending = operation('poll')
+    await vi.advanceTimersByTimeAsync(19500)
+    expect(mocks.waitForTask).toHaveBeenLastCalledWith(tokenHash, 500)
+    await vi.advanceTimersByTimeAsync(500)
+    expect((await pending).status).toBe(200)
+    expect(mocks.waitForTask).toHaveBeenCalledTimes(3)
+    expect(mocks.take).not.toHaveBeenCalled()
   })
 
   it.each(['', 'Bearer short', `Basic ${token}`, `Bearer ${'a'.repeat(44)}`])(
@@ -294,6 +391,7 @@ describe('dedicated local worker capability routes', () => {
       expect(response.status).toBe(200)
       expect(await response.json()).toEqual({ accepted: true })
       expect(mocks.authorizeResult).toHaveBeenCalledExactlyOnceWith(tokenHash)
+      expect(mocks.status).not.toHaveBeenCalled()
       expect(mocks.heartbeat).not.toHaveBeenCalled()
       expect(mocks.result).toHaveBeenCalledExactlyOnceWith(tokenHash, submitted)
       expect(mocks.protect).toHaveBeenCalledExactlyOnceWith(
@@ -736,6 +834,27 @@ describe('local worker transport RPC boundary', () => {
       recorded: true,
     })
     expect(mocks.enqueue).toHaveBeenCalledOnce()
-    expect(mocks.expire).toHaveBeenCalled()
+    expect(mocks.readResult).toHaveBeenCalledTimes(20)
+    expect(mocks.expire).toHaveBeenCalledOnce()
+  })
+
+  it('checks results once a second and consumes a completed result once', async () => {
+    vi.useFakeTimers()
+    const selected = await transport()
+    if (!selected) throw new Error('Missing configured transport')
+    const completed = selected.execute(task.url, {
+      dispatchBefore: Date.now() + 4000,
+      expiresAt: Date.now() + 19000,
+    })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(mocks.readResult).toHaveBeenCalledOnce()
+    mocks.readResult.mockResolvedValue({ ...result, status: 200, body: '{}' })
+    await vi.advanceTimersByTimeAsync(999)
+    expect(mocks.readResult).toHaveBeenCalledOnce()
+    await vi.advanceTimersByTimeAsync(1)
+    expect(await (await completed).text()).toBe('{}')
+    expect(mocks.readResult).toHaveBeenCalledTimes(2)
+    expect(mocks.consumeResult).toHaveBeenCalledOnce()
+    expect(mocks.expire).not.toHaveBeenCalled()
   })
 })

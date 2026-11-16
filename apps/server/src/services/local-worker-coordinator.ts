@@ -97,6 +97,7 @@ function identicalResult(a: LocalWorkerResult, b: LocalWorkerResult): boolean {
 
 export class LocalWorkerCoordinator {
   private pending: Promise<unknown> = Promise.resolve()
+  private readonly taskWaiters = new Set<() => void>()
 
   constructor(
     private readonly dependencies: LocalWorkerCoordinatorDependencies,
@@ -149,6 +150,21 @@ export class LocalWorkerCoordinator {
       state.lastSeenAt <= now &&
       now - state.lastSeenAt < LOCAL_WORKER_HEARTBEAT_MS
     )
+  }
+
+  private availableTask(state: LocalWorkerCoordinatorState, hash: string) {
+    const active = state.active
+    if (
+      state.mode === 'cloud' ||
+      !matchesHash(state.tokenHash, hash) ||
+      !this.online(state) ||
+      state.blocked ||
+      !active ||
+      active.phase !== 'offered' ||
+      active.task.dispatchBefore <= this.now()
+    )
+      return null
+    return active
   }
 
   configure(
@@ -289,24 +305,45 @@ export class LocalWorkerCoordinator {
         result: null,
       }
       await this.dependencies.storage.save(state)
+      for (const wake of this.taskWaiters) wake()
       return true
     })
+  }
+
+  async waitForTask(hash: string, maxWaitMs = 10000): Promise<boolean> {
+    const waitMs = Math.min(
+      10000,
+      z.number().int().nonnegative().parse(maxWaitMs),
+    )
+    let cleanup: (() => void) | undefined
+    // Register before checking state so an enqueue cannot miss this waiter.
+    const changed = new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, waitMs)
+      this.taskWaiters.add(resolve)
+      cleanup = () => {
+        clearTimeout(timer)
+        this.taskWaiters.delete(resolve)
+      }
+    })
+    const available = () =>
+      this.exclusive(
+        async () => this.availableTask(await this.state(), hash) !== null,
+      )
+    try {
+      if (await available()) return true
+      // Never hold the serialization queue while waiting for another operation.
+      await changed
+      return await available()
+    } finally {
+      cleanup?.()
+    }
   }
 
   take(hash: string): Promise<LocalWorkerTask | null> {
     return this.exclusive(async () => {
       const state = await this.state()
-      const active = state.active
-      if (
-        state.mode === 'cloud' ||
-        !matchesHash(state.tokenHash, hash) ||
-        !this.online(state) ||
-        state.blocked ||
-        !active ||
-        active.phase !== 'offered' ||
-        active.task.dispatchBefore <= this.now()
-      )
-        return null
+      const active = this.availableTask(state, hash)
+      if (!active) return null
       active.phase = 'consumed'
       await this.dependencies.storage.save(state)
       return active.task.dispatchBefore > this.now() ? active.task : null
