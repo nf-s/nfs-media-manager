@@ -11,6 +11,7 @@ import {
   JobSchema,
   JobDataSchema,
   JobPageSchema,
+  JobEntryPageSchema,
   JobListQuerySchema,
   JobActivitySchema,
   EnrichmentResultSchema,
@@ -49,6 +50,7 @@ import {
 } from '@/services/film-enrichment'
 import { ServerError } from '@/lib/error'
 import { getJobData } from '@/services/job-data'
+import { listJobEntries } from '@/services/job-entries'
 import { QueueFilmSelectionSchema } from '@repo/schemas/film-selection'
 import { queueFilmSelection } from '@/services/film-selection'
 import { QueueAlbumSelectionSchema } from '@repo/schemas/album-selection'
@@ -331,6 +333,29 @@ app.openapi(
     },
   }),
   async (c) => generateJsonResponse(c, await getJobActivity(), 200),
+)
+app.openapi(
+  createRoute({
+    method: 'get',
+    path: '/entries',
+    middleware: [authMiddleware()],
+    request: { query: JobListQuerySchema },
+    responses: {
+      200: {
+        description:
+          'Jobs with each batch of several jobs as one row, filtered, sorted and paginated',
+        content: {
+          'application/json': {
+            schema: createResponseSchema(JobEntryPageSchema),
+          },
+        },
+      },
+      401: jsonErrorResponse('Unauthorized'),
+      422: validationErrorResponse,
+    },
+  }),
+  async (c) =>
+    generateJsonResponse(c, await listJobEntries(c.req.valid('query')), 200),
 )
 app.openapi(
   createRoute({

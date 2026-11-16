@@ -48,7 +48,7 @@ const PlaylistRowsSchema = z.array(
 
 const optionalDate = (value: string | null) => (value ? new Date(value) : null)
 
-const playlistAlbumMembers = sql`
+export const playlistAlbumMembers = sql`
   select pi.media_item_id as album_id from playlist_item pi
   join album a on a.media_item_id = pi.media_item_id
   where pi.playlist_id = p.id

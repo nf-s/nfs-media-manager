@@ -3,6 +3,8 @@ import type { Context } from 'hono'
 import { createMiddleware } from 'hono/factory'
 import { z } from 'zod'
 import { BrowseCountSchema } from '@repo/schemas/browse'
+import { CoverageQuerySchema, CoverageSchema } from '@repo/schemas/coverage'
+import { ListeningSeriesSchema } from '@repo/schemas/lastfm'
 import {
   PlaylistAlbumAdditionInputSchema,
   PlaylistAlbumAdditionSchema,
@@ -41,6 +43,8 @@ import {
   listSpotifyPlaylistAdditions,
   queueSpotifyPlaylistAddition,
 } from '@/services/spotify-playlist-additions'
+import { getPlaylistListeningSeries } from '@/services/listening-series'
+import { getPlaylistCoverage } from '@/services/metadata-coverage'
 
 function userId(c: Context<AppEnv>) {
   const user = c.get('user')
@@ -193,6 +197,65 @@ const app: OpenAPIHono<AppEnv> = createOpenAPIApp()
       generateJsonResponse(
         c,
         await getPlaylistDetail(c.req.valid('param').id, c.req.valid('query')),
+        200,
+      ),
+  )
+  .openapi(
+    createRoute({
+      method: 'get',
+      path: '/:id/listening/series',
+      middleware: [authMiddleware()],
+      request: { params: PlaylistParamsSchema },
+      responses: {
+        200: {
+          description:
+            'Stored scrobbles linked to the playlist entries, by day for five years and by month',
+          content: {
+            'application/json': {
+              schema: createResponseSchema(ListeningSeriesSchema),
+            },
+          },
+        },
+        401: jsonErrorResponse('Unauthorized'),
+        404: jsonErrorResponse('Playlist not found'),
+        422: validationErrorResponse,
+      },
+    }),
+    async (c) =>
+      generateJsonResponse(
+        c,
+        await getPlaylistListeningSeries(c.req.valid('param').id),
+        200,
+      ),
+  )
+  .openapi(
+    createRoute({
+      method: 'get',
+      path: '/:id/coverage',
+      middleware: [authMiddleware()],
+      request: { params: PlaylistParamsSchema, query: CoverageQuerySchema },
+      responses: {
+        200: {
+          description:
+            'Per metadata provider, how many of the playlist albums are scraped, stale or missing',
+          content: {
+            'application/json': {
+              schema: createResponseSchema(CoverageSchema),
+            },
+          },
+        },
+        401: jsonErrorResponse('Unauthorized'),
+        404: jsonErrorResponse('Playlist not found'),
+        422: validationErrorResponse,
+      },
+    }),
+    async (c) =>
+      generateJsonResponse(
+        c,
+        await getPlaylistCoverage(
+          c.req.valid('param').id,
+          c.req.valid('query'),
+        ),
         200,
       ),
   )

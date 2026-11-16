@@ -11,6 +11,8 @@ import {
   ProviderSafetySchema,
   ProviderRequestBudgetSchema,
   ProviderBudgetStatusSchema,
+  ProviderOverviewQuerySchema,
+  ProviderOverviewSchema,
 } from '@repo/schemas/provider'
 import { authMiddleware } from '@/middlewares/auth'
 import {
@@ -34,6 +36,7 @@ import {
   getProviderJobSummary,
   clearProviderCooldown,
 } from '@/services/provider-activity'
+import { getProvidersOverview } from '@/services/providers-overview'
 
 const browserSession = authMiddleware({ sessionOnly: true })
 
@@ -166,6 +169,37 @@ const app: OpenAPIHono<AppEnv> = createOpenAPIApp()
       return generateJsonResponse(c, result, 200, 'Provider test completed')
     },
   )
+
+app.openapi(
+  createRoute({
+    method: 'get',
+    path: '/overview',
+    middleware: [authMiddleware()],
+    request: { query: ProviderOverviewQuerySchema },
+    responses: {
+      200: {
+        description:
+          'Connection, queue, jobs and request use for every provider',
+        content: {
+          'application/json': {
+            schema: createResponseSchema(ProviderOverviewSchema),
+          },
+        },
+      },
+      401: jsonErrorResponse('Unauthorized'),
+      422: validationErrorResponse,
+    },
+  }),
+  async (c) =>
+    generateJsonResponse(
+      c,
+      await getProvidersOverview(
+        c.req.valid('query'),
+        c.get('user')?.id ?? null,
+      ),
+      200,
+    ),
+)
 
 app.openapi(
   createRoute({

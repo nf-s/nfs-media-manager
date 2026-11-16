@@ -1,6 +1,9 @@
 import { z } from 'zod'
 import { JsonValueSchema, PaginatedDataSchema } from './common'
-import { ProviderRequestDiagnosticsSchema } from './provider'
+import {
+  ProviderRequestDiagnosticsSchema,
+  ProviderWaitingSchema,
+} from './provider'
 
 export const JobStatusSchema = z.enum([
   'queued',
@@ -182,13 +185,19 @@ export const JobLogSchema = z.object({
   benignReview: JobErrorReviewSchema.nullable().default(null),
 })
 
+export const JobErrorCodeSchema = z.enum([
+  'rate-limit',
+  'cooldown',
+  'request-failed',
+  'access-denied',
+])
+export type JobErrorCode = z.infer<typeof JobErrorCodeSchema>
+
 const ErrorEntrySchema = z.object({
   name: z.string(),
   message: z.string(),
   stack: z.string().nullable(),
-  code: z
-    .enum(['rate-limit', 'cooldown', 'request-failed', 'access-denied'])
-    .optional(),
+  code: JobErrorCodeSchema.optional(),
   retryAt: z
     .number()
     .int()
@@ -204,6 +213,49 @@ export const JobErrorDetailsSchema = ErrorEntrySchema.extend({
 })
 export type JobErrorDetails = z.infer<typeof JobErrorDetailsSchema>
 
+/** Progress of a task job: pages read and, once known, the total. */
+export const JobProgressCountSchema = z.object({
+  done: z.number().int().nonnegative(),
+  total: z.number().int().nonnegative().nullable(),
+})
+export type JobProgressCount = z.infer<typeof JobProgressCountSchema>
+
+export function getJobProgressCount(
+  options: Record<string, unknown>,
+): JobProgressCount | null {
+  const progress = getJobProgress(options)
+  return progress
+    ? { done: progress.pagesRead, total: progress.totalPages }
+    : null
+}
+
+/**
+ * Next steps a job's summary can offer:
+ * - `retry`: queue a replacement for the unfinished work.
+ * - `find-match`: choose the item's identity at this provider.
+ * - `open-provider`: open the provider page.
+ * - `resume-provider`: resume a paused or stopped queue, or clear a cooldown.
+ * - `sign-in`: sign in to the provider's account again.
+ * - `add-key`: add or replace the provider's credentials.
+ */
+export const JobSummaryActionSchema = z.enum([
+  'retry',
+  'find-match',
+  'open-provider',
+  'resume-provider',
+  'sign-in',
+  'add-key',
+])
+export type JobSummaryAction = z.infer<typeof JobSummaryActionSchema>
+
+export const JobSummarySchema = z.object({
+  headline: z.string(),
+  code: JobErrorCodeSchema.nullable(),
+  retryAt: z.string().datetime().nullable(),
+  actions: z.array(JobSummaryActionSchema),
+})
+export type JobSummary = z.infer<typeof JobSummarySchema>
+
 export const JobSchema = z.object({
   id: z.string(),
   provider: z.string(),
@@ -217,12 +269,53 @@ export const JobSchema = z.object({
   confirmBroadRun: z.boolean(),
   items: z.array(JobItemSchema),
   logs: z.array(JobLogSchema),
+  /** Why a queued job has not started; null for other statuses. */
+  waiting: ProviderWaitingSchema.nullable().optional(),
+  progress: JobProgressCountSchema.nullable().optional(),
+  /** Returned by job detail only. */
+  summary: JobSummarySchema.nullable().optional(),
 })
 
 export type CreateJobInput = z.infer<typeof CreateJobSchema>
 export type Job = z.infer<typeof JobSchema>
 export const JobPageSchema = PaginatedDataSchema(JobSchema)
 export type JobPage = z.infer<typeof JobPageSchema>
+
+export const JobBatchEntrySchema = z.object({
+  kind: z.literal('batch'),
+  batchId: z.string(),
+  /** The only provider in the batch, or null when it has several. */
+  provider: z.string().nullable(),
+  providers: z.array(z.string()),
+  mediaType: z.enum(['album', 'film', 'artist', 'subscription']).nullable(),
+  /** Where the batch came from when known, such as a library import. */
+  label: z.string().nullable(),
+  importId: z.string().nullable(),
+  /** Counts cover every job in the batch, not only those matching filters. */
+  total: z.number().int().nonnegative(),
+  /** Jobs in the batch that match the list filters. */
+  matching: z.number().int().nonnegative(),
+  queued: z.number().int().nonnegative(),
+  running: z.number().int().nonnegative(),
+  succeeded: z.number().int().nonnegative(),
+  failed: z.number().int().nonnegative(),
+  cancelled: z.number().int().nonnegative(),
+  createdAt: z.string().datetime(),
+  /** Earliest start. */
+  startedAt: z.string().datetime().nullable(),
+  /** Latest finish once every job has finished. */
+  finishedAt: z.string().datetime().nullable(),
+  /** Set while nothing in the batch is running and work remains queued. */
+  waiting: ProviderWaitingSchema.nullable(),
+})
+export const JobEntrySchema = z.discriminatedUnion('kind', [
+  JobBatchEntrySchema,
+  z.object({ kind: z.literal('job'), job: JobSchema }),
+])
+export const JobEntryPageSchema = PaginatedDataSchema(JobEntrySchema)
+export type JobBatchEntry = z.infer<typeof JobBatchEntrySchema>
+export type JobEntry = z.infer<typeof JobEntrySchema>
+export type JobEntryPage = z.infer<typeof JobEntryPageSchema>
 
 export const JobDataSchema = z.object({
   jobId: z.string(),

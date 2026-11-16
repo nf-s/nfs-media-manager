@@ -3,9 +3,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 const listJobs = vi.fn()
 const dismissJob = vi.fn()
 const getJobData = vi.fn()
+const listJobEntries = vi.fn()
 
 function mockAppSession(authenticated: boolean) {
   vi.doMock('@/services/job-data', () => ({ getJobData }))
+  vi.doMock('@/services/job-entries', () => ({ listJobEntries }))
   vi.doMock('@/env', () => ({
     env: { TRUSTED_ORIGINS: ['http://localhost:3000'], NODE_ENV: 'test' },
   }))
@@ -157,6 +159,44 @@ describe('media job history api', () => {
     })
     expect(response.status).toBe(401)
     expect(dismissJob).not.toHaveBeenCalled()
+  })
+
+  it('lists grouped job entries with the jobs list filters', async () => {
+    mockAppSession(false)
+    const { default: unauthenticated } = await import('@/app')
+    expect(
+      (await unauthenticated.request('/api/v1/scrape/jobs/entries')).status,
+    ).toBe(401)
+    expect(listJobEntries).not.toHaveBeenCalled()
+    vi.resetModules()
+    mockAppSession(true)
+    listJobEntries.mockResolvedValue({
+      items: [],
+      totalCount: 0,
+      page: 1,
+      size: 50,
+      pageCount: 0,
+    })
+    const { default: app } = await import('@/app')
+    expect(
+      (
+        await app.request(
+          '/api/v1/scrape/jobs/entries?statuses=["active"]&size=50&sortBy=status',
+        )
+      ).status,
+    ).toBe(200)
+    expect(listJobEntries).toHaveBeenCalledExactlyOnceWith({
+      page: 1,
+      size: 50,
+      sortBy: 'status',
+      direction: 'desc',
+      statuses: ['active'],
+      providers: [],
+    })
+    expect(
+      (await app.request('/api/v1/scrape/jobs/entries?sortBy=batch')).status,
+    ).toBe(422)
+    expect(listJobEntries).toHaveBeenCalledTimes(1)
   })
 
   it('dismisses only the selected job using the authenticated actor', async () => {

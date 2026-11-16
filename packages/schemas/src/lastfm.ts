@@ -90,6 +90,34 @@ export const AlbumListeningSchema = z.object({
   similarUnlinked: z.array(ListeningSourceSchema).default([]),
 })
 
+/** Days in `ListeningSeries.days`: today and the 1,826 UTC days before it. */
+export const LISTENING_SERIES_DAYS = 1827
+
+export const ListeningDaySchema = z.object({
+  date: z.string().date(),
+  count: z.number().int().positive(),
+})
+
+/**
+ * Stored scrobbles linked to one album, track, artist or playlist, for the
+ * trend chart. Days and months are UTC, like `AlbumListening.months`.
+ */
+export const ListeningSeriesSchema = z.object({
+  total: z.number().int().nonnegative(),
+  /** UTC date of the first linked scrobble. */
+  firstDate: z.string().date().nullable(),
+  /** UTC date of the latest linked scrobble. */
+  lastDate: z.string().date().nullable(),
+  /** First day `days` covers. Days before it are only in `months`. */
+  daysFrom: z.string().date(),
+  /** Last day `days` covers: the UTC date when the series was read. */
+  daysTo: z.string().date(),
+  /** Days from `daysFrom` to `daysTo` with at least one scrobble, oldest first. */
+  days: z.array(ListeningDaySchema).max(LISTENING_SERIES_DAYS),
+  /** Months with at least one scrobble, all time, oldest first. */
+  months: z.array(ListeningMonthSchema),
+})
+
 /**
  * Whether a scrobbled artist and album name is linked to a library album.
  * `manual`: linked by the owner. `excluded`: the owner keeps it unlinked.
@@ -250,6 +278,8 @@ export const LastfmLinkReportSchema = PaginatedDataSchema(
 export type LastfmSyncStatus = z.infer<typeof LastfmSyncStatusSchema>
 export type AlbumListening = z.infer<typeof AlbumListeningSchema>
 export type ListeningMonth = z.infer<typeof ListeningMonthSchema>
+export type ListeningDay = z.infer<typeof ListeningDaySchema>
+export type ListeningSeries = z.infer<typeof ListeningSeriesSchema>
 export type ListeningTrack = z.infer<typeof ListeningTrackSchema>
 export type LastfmSyncSchedule = z.infer<typeof LastfmSyncScheduleSchema>
 export type LastfmLinkReason = z.infer<typeof LastfmLinkReasonSchema>

@@ -7,6 +7,7 @@ import {
   BrowsePageSliceSchema,
 } from '@repo/schemas/browse'
 import { PaginatedDataSchema } from '@repo/schemas/common'
+import { ListeningSeriesSchema } from '@repo/schemas/lastfm'
 import {
   TrackDetailSchema,
   TrackFilterOptionSchema,
@@ -41,6 +42,7 @@ import {
   listTracksAtPositions,
 } from '@/services/tracks'
 import { mergeLastfmTrack } from '@/services/track-merges'
+import { getTrackListeningSeries } from '@/services/listening-series'
 import {
   listSpotifyTrackPlaylistAdditions,
   queueSpotifyTrackPlaylistAddition,
@@ -311,6 +313,34 @@ app
       generateJsonResponse(
         c,
         await mergeLastfmTrack(c.req.valid('param').id, c.req.valid('json')),
+        200,
+      ),
+  )
+  .openapi(
+    createRoute({
+      method: 'get',
+      path: '/:id/listening/series',
+      middleware: [authMiddleware()],
+      request: { params: z.object({ id: z.string().min(1) }) },
+      responses: {
+        200: {
+          description:
+            'Stored scrobbles counted towards the track, by day for five years and by month',
+          content: {
+            'application/json': {
+              schema: createResponseSchema(ListeningSeriesSchema),
+            },
+          },
+        },
+        401: jsonErrorResponse('Unauthorized'),
+        404: jsonErrorResponse('Track not found'),
+        422: validationErrorResponse,
+      },
+    }),
+    async (c) =>
+      generateJsonResponse(
+        c,
+        await getTrackListeningSeries(c.req.valid('param').id),
         200,
       ),
   )

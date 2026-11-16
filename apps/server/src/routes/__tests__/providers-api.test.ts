@@ -5,7 +5,11 @@ const getProviderActivity = vi.fn()
 const getProviderJobSummary = vi.fn()
 const clearProviderCooldown = vi.fn()
 const updateProviderBudget = vi.fn()
+const getProvidersOverview = vi.fn()
 
+vi.mock('@/services/providers-overview', () => ({
+  getProvidersOverview: (...args: unknown[]) => getProvidersOverview(...args),
+}))
 vi.mock('@/services/provider-activity', () => ({
   getProviderActivity: (...args: unknown[]) => getProviderActivity(...args),
   getProviderJobSummary: (...args: unknown[]) => getProviderJobSummary(...args),
@@ -21,6 +25,7 @@ describe('providers api', () => {
     getProviderJobSummary.mockReset()
     clearProviderCooldown.mockReset()
     updateProviderBudget.mockReset()
+    getProvidersOverview.mockReset()
   })
 
   it('returns 401 when the request is unauthenticated', async () => {
@@ -70,6 +75,10 @@ describe('providers api', () => {
       ).status,
     ).toBe(401)
     expect(getProviderJobSummary).not.toHaveBeenCalled()
+    expect(
+      (await app.request('http://localhost/api/v1/providers/overview')).status,
+    ).toBe(401)
+    expect(getProvidersOverview).not.toHaveBeenCalled()
     expect(
       (await app.request('http://localhost/api/v1/providers/fixture/activity'))
         .status,
@@ -194,6 +203,29 @@ describe('providers api', () => {
     expect(jobs.status).toBe(200)
     expect(await jobs.json()).toMatchObject({ data: summary })
     expect(getProviderJobSummary).toHaveBeenCalledWith('fixture')
+    const overview = {
+      generatedAt: '2026-11-16T13:40:00.000Z',
+      requestsFrom: '2026-11-15T13:40:00.000Z',
+      providers: [],
+    }
+    getProvidersOverview.mockResolvedValue(overview)
+    const overviewResponse = await app.request(
+      'http://localhost/api/v1/providers/overview?mediaType=film',
+    )
+    expect(overviewResponse.status).toBe(200)
+    expect(await overviewResponse.json()).toMatchObject({ data: overview })
+    expect(getProvidersOverview).toHaveBeenCalledExactlyOnceWith(
+      { mediaType: 'film' },
+      'user-1',
+    )
+    expect(
+      (
+        await app.request(
+          'http://localhost/api/v1/providers/overview?mediaType=track',
+        )
+      ).status,
+    ).toBe(422)
+    expect(getProvidersOverview).toHaveBeenCalledTimes(1)
     for (const input of [
       { period: 'week', limit: 1000 },
       { period: 'day', limit: 0 },

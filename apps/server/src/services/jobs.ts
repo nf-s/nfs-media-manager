@@ -7,6 +7,7 @@ import {
   JobListQuerySchema,
   JobActivitySchema,
   getJobDismissal,
+  getJobProgressCount,
   getJobTask,
   isRetryableJobStatus,
   isUnfinishedJobItem,
@@ -50,7 +51,7 @@ import {
   isProviderItemNotFoundError,
   type MediaProviderPlugin,
 } from '@repo/media-plugin-sdk'
-import { and, eq, inArray, or, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray, or, sql } from 'drizzle-orm'
 import { nanoid } from 'nanoid'
 import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
@@ -87,6 +88,8 @@ import {
   wakeJobProvider,
 } from '@/services/job-dispatch-context'
 import type { CloudJobOutcome } from '@/services/cloud-job-contract'
+import { withJobWaiting } from '@/services/job-waiting'
+import { describeJob } from '@/services/job-summary'
 import {
   prepareLastfmSyncRun,
   runLastfmSyncJob,
@@ -217,6 +220,7 @@ function mapJob(
     scope: parsedScope,
     options: jobRecord.options,
     confirmBroadRun: jobRecord.confirmBroadRun,
+    progress: getJobProgressCount(jobRecord.options),
     items: jobRecord.items.map((item) => ({
       id: item.id,
       mediaItemId: item.mediaItemId ?? null,
@@ -1767,7 +1771,7 @@ export async function createRescrapeJob(
   )
 }
 
-function jobsNeedingAttention() {
+export function jobsNeedingAttention() {
   return and(
     inArray(scrapeJob.status, ['failed', 'cancelled']),
     sql`${scrapeJob.options}->>'retryJobId' is null`,
@@ -1792,10 +1796,10 @@ function jobsNeedingAttention() {
   )
 }
 
-export async function listJobs(
-  input: z.input<typeof JobListQuerySchema> = {},
-): Promise<JobPage> {
-  const query = JobListQuerySchema.parse(input)
+type JobListQuery = z.infer<typeof JobListQuerySchema>
+
+/** The jobs list filters as one condition on `scrape_job`. */
+export function jobListWhere(query: JobListQuery) {
   const pattern = `%${(query.q ?? '').replace(/[\\%_]/g, '\\$&')}%`
   const statuses = query.statuses.length
     ? query.statuses
@@ -1807,7 +1811,7 @@ export async function listJobs(
     : query.provider
       ? [query.provider]
       : []
-  const where = and(
+  return and(
     statuses.length
       ? or(
           ...statuses.map((status) =>
@@ -1844,63 +1848,64 @@ export async function listJobs(
     ))`
       : undefined,
   )
-  const [count] = await db
-    .select({ count: sql<number>`count(*)::int` })
-    .from(scrapeJob)
-    .where(where)
+}
+
+/** The value a `scrape_job` row sorts by for the list's sort key. */
+export async function jobSortField(query: JobListQuery) {
+  const table = scrapeJob
   const providerNames =
     query.sortBy === 'provider' && !query.mediaItemId
       ? await listLoadedScrapePlugins()
       : []
+  const title = sql`case ${table.options}->>'task'
+    when ${ARTIST_ENRICHMENT_TASK} then concat('Artist enrichment · ', ${table.options}->>'artistName')
+    when ${LASTFM_SCROBBLE_SYNC_TASK} then 'Scrobble sync'
+    when ${YOUTUBE_SYNC_TASK} then 'YouTube subscription sync'
+    when ${SPOTIFY_PODCAST_SYNC_TASK} then 'Spotify podcast sync'
+    when ${SPOTIFY_PLAYLIST_LISTING_TASK} then 'Spotify playlist list'
+    when ${SPOTIFY_PLAYLIST_IMPORT_TASK} then
+      case when ${table.options}->>'source' = 'spotify-liked' then 'Spotify Liked Songs import'
+      else concat('Spotify playlist import', case when nullif(btrim(${table.options}->>'name'), '') is not null then concat(' · ', ${table.options}->>'name') else '' end) end
+    when ${SPOTIFY_PLAYLIST_ADD_TRACK_TASK} then concat('Add track to Spotify playlist',
+      case when nullif(btrim(${table.options}->>'trackTitle'), '') is not null and nullif(btrim(${table.options}->>'playlistName'), '') is not null
+        then concat(' · ', ${table.options}->>'trackTitle', ' to ', ${table.options}->>'playlistName') else '' end)
+    when ${SPOTIFY_PLAYLIST_ADD_ALBUM_TASK} then concat('Add album to Spotify playlist',
+      case when nullif(btrim(${table.options}->>'albumTitle'), '') is not null and nullif(btrim(${table.options}->>'playlistName'), '') is not null
+        then concat(' · ', ${table.options}->>'albumTitle', ' to ', ${table.options}->>'playlistName') else '' end)
+    when ${LASTFM_SPOTIFY_SEARCH_TASK} then concat('Spotify album search',
+      case when nullif(btrim(concat_ws('', ${table.options}->>'artistName', ${table.options}->>'albumName')), '') is not null
+        then concat(' · ', concat_ws(' — ', nullif(btrim(${table.options}->>'artistName'), ''), nullif(btrim(${table.options}->>'albumName'), ''))) else '' end)
+    else (select m.title from scrape_job_item i join media_item m on m.id = i.media_item_id
+      where i.job_id = ${table.id} order by i.created_at, i.id limit 1) end`
+  const result = query.mediaItemId
+    ? sql`coalesce((select i.message from scrape_job_item i where i.job_id = ${table.id} and i.media_item_id = ${query.mediaItemId} order by i.created_at, i.id limit 1), ${table.errorMessage})`
+    : sql`coalesce(${table.errorMessage}, (select string_agg(nullif(i.message, ''), ' · ' order by i.created_at, i.id) from scrape_job_item i where i.job_id = ${table.id}))`
+  const fields = {
+    provider: sql`lower(case ${table.provider}
+      when 'google-custom-search' then 'Google Custom Search (legacy)'
+      ${sql.join(
+        providerNames.map(
+          (plugin) =>
+            sql`when ${plugin.manifest.id} then ${plugin.manifest.displayName}`,
+        ),
+        sql` `,
+      )}
+      else ${table.provider} end)`,
+    title: sql`lower(${title})`,
+    status: sql`${table.status}::text`,
+    createdAt: table.createdAt,
+    startedAt: table.startedAt,
+    finishedAt: table.finishedAt,
+    result: sql`lower(${result})`,
+  }
+  return fields[query.sortBy]
+}
+
+/** Loads jobs with their items and logs in the order of `ids`. */
+export async function loadListedJobs(ids: string[]): Promise<Job[]> {
+  if (!ids.length) return []
   const jobs = await db.query.scrapeJob.findMany({
-    where,
-    limit: query.size,
-    offset: (query.page - 1) * query.size,
-    orderBy: (table, operators) => {
-      const title = sql`case ${table.options}->>'task'
-        when ${ARTIST_ENRICHMENT_TASK} then concat('Artist enrichment · ', ${table.options}->>'artistName')
-        when ${LASTFM_SCROBBLE_SYNC_TASK} then 'Scrobble sync'
-        when ${YOUTUBE_SYNC_TASK} then 'YouTube subscription sync'
-        when ${SPOTIFY_PODCAST_SYNC_TASK} then 'Spotify podcast sync'
-        when ${SPOTIFY_PLAYLIST_LISTING_TASK} then 'Spotify playlist list'
-        when ${SPOTIFY_PLAYLIST_IMPORT_TASK} then
-          case when ${table.options}->>'source' = 'spotify-liked' then 'Spotify Liked Songs import'
-          else concat('Spotify playlist import', case when nullif(btrim(${table.options}->>'name'), '') is not null then concat(' · ', ${table.options}->>'name') else '' end) end
-        when ${SPOTIFY_PLAYLIST_ADD_TRACK_TASK} then concat('Add track to Spotify playlist',
-          case when nullif(btrim(${table.options}->>'trackTitle'), '') is not null and nullif(btrim(${table.options}->>'playlistName'), '') is not null
-            then concat(' · ', ${table.options}->>'trackTitle', ' to ', ${table.options}->>'playlistName') else '' end)
-        when ${SPOTIFY_PLAYLIST_ADD_ALBUM_TASK} then concat('Add album to Spotify playlist',
-          case when nullif(btrim(${table.options}->>'albumTitle'), '') is not null and nullif(btrim(${table.options}->>'playlistName'), '') is not null
-            then concat(' · ', ${table.options}->>'albumTitle', ' to ', ${table.options}->>'playlistName') else '' end)
-        when ${LASTFM_SPOTIFY_SEARCH_TASK} then concat('Spotify album search',
-          case when nullif(btrim(concat_ws('', ${table.options}->>'artistName', ${table.options}->>'albumName')), '') is not null
-            then concat(' · ', concat_ws(' — ', nullif(btrim(${table.options}->>'artistName'), ''), nullif(btrim(${table.options}->>'albumName'), ''))) else '' end)
-        else (select m.title from scrape_job_item i join media_item m on m.id = i.media_item_id
-          where i.job_id = ${table.id} order by i.created_at, i.id limit 1) end`
-      const result = query.mediaItemId
-        ? sql`coalesce((select i.message from scrape_job_item i where i.job_id = ${table.id} and i.media_item_id = ${query.mediaItemId} order by i.created_at, i.id limit 1), ${table.errorMessage})`
-        : sql`coalesce(${table.errorMessage}, (select string_agg(nullif(i.message, ''), ' · ' order by i.created_at, i.id) from scrape_job_item i where i.job_id = ${table.id}))`
-      const fields = {
-        provider: sql`lower(case ${table.provider}
-          when 'google-custom-search' then 'Google Custom Search (legacy)'
-          ${sql.join(
-            providerNames.map(
-              (plugin) =>
-                sql`when ${plugin.manifest.id} then ${plugin.manifest.displayName}`,
-            ),
-            sql` `,
-          )}
-          else ${table.provider} end)`,
-        title: sql`lower(${title})`,
-        status: sql`${table.status}::text`,
-        createdAt: table.createdAt,
-        startedAt: table.startedAt,
-        finishedAt: table.finishedAt,
-        result: sql`lower(${result})`,
-      }
-      const order = query.direction === 'asc' ? operators.asc : operators.desc
-      return [sql`${order(fields[query.sortBy])} nulls last`, order(table.id)]
-    },
+    where: inArray(scrapeJob.id, ids),
     with: {
       items: {
         columns: { payload: false },
@@ -1924,12 +1929,37 @@ export async function listJobs(
       },
     },
   })
+  const order = new Map(ids.map((id, index) => [id, index]))
+  const mapped = await Promise.all(
+    jobs.map(async (jobRecord) =>
+      mapJob(jobRecord, await getScrapePlugin(jobRecord.provider)),
+    ),
+  )
+  return mapped.sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0))
+}
+
+export async function listJobs(
+  input: z.input<typeof JobListQuerySchema> = {},
+): Promise<JobPage> {
+  const query = JobListQuerySchema.parse(input)
+  const where = jobListWhere(query)
+  const [count] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(scrapeJob)
+    .where(where)
+  const sortField = await jobSortField(query)
+  const order = query.direction === 'asc' ? asc : desc
+  const page = await db
+    .select({ id: scrapeJob.id })
+    .from(scrapeJob)
+    .where(where)
+    .orderBy(sql`${order(sortField)} nulls last`, order(scrapeJob.id))
+    .limit(query.size)
+    .offset((query.page - 1) * query.size)
 
   return {
-    items: await Promise.all(
-      jobs.map(async (jobRecord) =>
-        mapJob(jobRecord, await getScrapePlugin(jobRecord.provider)),
-      ),
+    items: await withJobWaiting(
+      await loadListedJobs(page.map((row) => row.id)),
     ),
     totalCount: count?.count ?? 0,
     page: query.page,
@@ -1939,7 +1969,8 @@ export async function listJobs(
 }
 
 export async function getJob(jobId: string): Promise<Job | null> {
-  return getJobRecord(jobId)
+  const job = await getJobRecord(jobId)
+  return job ? describeJob(job) : null
 }
 
 export async function markJobErrorBenign(

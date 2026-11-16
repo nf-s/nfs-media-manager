@@ -230,6 +230,125 @@ export const ProviderSecretsSchema = z.object({
   lastVerifiedStatus: z.string().nullable(),
 })
 
+/**
+ * Why a provider's queued work is not starting, in precedence order:
+ * - `access-denied`: requests are halted after the provider denied access.
+ * - `stopped`: the dispatcher stopped after repeated failures.
+ * - `paused`: the dispatcher is paused, scraping is disabled, or the job is
+ *   outside the jobs selected to run.
+ * - `not-configured`: no executable plugin is loaded for the provider.
+ * - `worker-offline`: the provider's local worker is unpaired, offline or
+ *   waiting for review.
+ * - `cooldown`: a cooldown after an error or rate limit is active.
+ * - `budget`: the provider's hourly or daily request budget is used up.
+ * - `rate-limit`: the hourly request cap or a fixed request window is full.
+ * - `concurrency`: every request slot is held by a running job.
+ * - `queued`: nothing blocks the provider; the job waits its turn.
+ */
+export const ProviderWaitReasonSchema = z.enum([
+  'access-denied',
+  'stopped',
+  'paused',
+  'not-configured',
+  'worker-offline',
+  'cooldown',
+  'budget',
+  'rate-limit',
+  'concurrency',
+  'queued',
+])
+export type ProviderWaitReason = z.infer<typeof ProviderWaitReasonSchema>
+
+export const ProviderWaitingSchema = z.object({
+  reason: ProviderWaitReasonSchema,
+  /** When the block lifts on its own; null when it needs action or is unknown. */
+  until: z.string().datetime().nullable(),
+  detail: z.string(),
+})
+export type ProviderWaiting = z.infer<typeof ProviderWaitingSchema>
+
+export const ProviderLibrarySchema = z.enum([
+  'album',
+  'film',
+  'artist',
+  'subscription',
+])
+
+export const ProviderOverviewQuerySchema = z.object({
+  /** Limits the list to the providers shown in that library's Providers. */
+  mediaType: ProviderLibrarySchema.optional(),
+})
+
+export const ProviderConnectionStateSchema = z.enum([
+  'connected',
+  'needs-sign-in',
+  'needs-key',
+  'not-required',
+  'unavailable',
+])
+export const ProviderQueueStateSchema = z.enum([
+  'running',
+  'idle',
+  'waiting',
+  'paused',
+  'stopped',
+])
+
+export const ProviderOverviewItemSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  description: z.string(),
+  /** Account providers sign in or sync an account; metadata providers fill items. */
+  group: z.enum(['account', 'metadata']),
+  /** Libraries the provider supplies, plus `account` for account-level syncs. */
+  roles: z.array(
+    z.enum(['album', 'film', 'artist', 'subscription', 'account']),
+  ),
+  connection: z.object({
+    state: ProviderConnectionStateSchema,
+    /** `account` signs in with OAuth; `key` uses stored credentials. */
+    method: z.enum(['account', 'key', 'none']),
+    detail: z.string().nullable(),
+  }),
+  queue: z.object({
+    state: ProviderQueueStateSchema,
+    reason: ProviderWaitReasonSchema.nullable(),
+    until: z.string().datetime().nullable(),
+    detail: z.string().nullable(),
+  }),
+  /** Counts across every library. `attention` matches the Needs attention filter. */
+  jobs: z.object({
+    queued: z.number().int().nonnegative(),
+    running: z.number().int().nonnegative(),
+    failed: z.number().int().nonnegative(),
+    attention: z.number().int().nonnegative(),
+  }),
+  lastSuccessAt: z.string().datetime().nullable(),
+  /** 24 hourly request counts, oldest first, starting at `requestsFrom`. */
+  requests24h: z.array(z.number().int().nonnegative()).length(24),
+  budget: z
+    .object({
+      used: z.number().int().nonnegative(),
+      limit: z.number().int().positive(),
+      period: z.enum(['hour', 'day']),
+      resetsAt: z.string().datetime(),
+    })
+    .nullable(),
+  runsOn: z.enum(['server', 'local-worker']),
+  worker: z
+    .object({ paired: z.boolean(), online: z.boolean(), blocked: z.boolean() })
+    .nullable(),
+  /** Jobs the provider runs at once; null without a loaded plugin. */
+  concurrency: z.number().int().positive().nullable(),
+})
+export const ProviderOverviewSchema = z.object({
+  generatedAt: z.string().datetime(),
+  requestsFrom: z.string().datetime(),
+  providers: z.array(ProviderOverviewItemSchema),
+})
+export type ProviderOverviewItem = z.infer<typeof ProviderOverviewItemSchema>
+export type ProviderOverview = z.infer<typeof ProviderOverviewSchema>
+
 export type ProviderSummary = z.infer<typeof ProviderSummarySchema>
 export type ProviderSecrets = z.infer<typeof ProviderSecretsSchema>
 export type ProviderActivity = z.infer<typeof ProviderActivitySchema>

@@ -16,6 +16,7 @@ import { generateJsonResponse } from '@/lib/response'
 import { getScrapePlugin, listLoadedScrapePlugins } from '@/plugins/registry'
 import { consumeCloudJobMessage } from '@/services/cloud-job-queue'
 import { withJobDispatchWakeup } from '@/services/job-dispatch-context'
+import { withDispatchStatusReader } from '@/services/dispatch-status'
 import { dispatchQueuedImports, executeQueuedImport } from '@/services/imports'
 import { queueDueLastfmSync } from '@/services/lastfm-sync-jobs'
 import { queueDueYoutubeSync } from '@/services/youtube-sync-jobs'
@@ -85,7 +86,21 @@ function run<T>(
                     ).resume(provider)
                 },
               },
-              execute,
+              () =>
+                withDispatchStatusReader(async (provider) => {
+                  const plugin = await getScrapePlugin(provider)
+                  return {
+                    dispatch:
+                      await bindings.PROVIDER_COORDINATORS.getByName(
+                        provider,
+                      ).getStatus(provider),
+                    worker: plugin?.manifest.localWorker
+                      ? await bindings.LOCAL_WORKERS.getByName(provider).status(
+                          plugin.manifest.localWorkerDefaultMode,
+                        )
+                      : null,
+                  }
+                }, execute),
             ),
         ),
       ),

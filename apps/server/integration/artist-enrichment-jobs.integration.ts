@@ -732,7 +732,7 @@ describe('artist enrichment through queued jobs and stored evidence', () => {
     })
     expect(
       (
-        await listJobs({ artistId, mediaType: 'album', sortBy: 'title' })
+        await listJobs({ artistId, mediaType: 'artist', sortBy: 'title' })
       ).items.map((item) => item.id),
     ).toEqual([queued.id])
     const [snapshot] = await databaseClient

@@ -295,7 +295,7 @@ export async function getPerson(id: string) {
 }
 
 /** Use the same library visibility for directory membership and related pages. */
-async function requireCreator(id: string, kind: 'artist' | 'person') {
+export async function requireCreator(id: string, kind: 'artist' | 'person') {
   const directory =
     kind === 'artist'
       ? artistDirectory(id).as('directory')

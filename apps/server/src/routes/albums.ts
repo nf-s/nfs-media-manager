@@ -40,8 +40,10 @@ import { listAlbumSelection } from '@/services/album-selection'
 import {
   AlbumListeningQuerySchema,
   AlbumListeningSchema,
+  ListeningSeriesSchema,
 } from '@repo/schemas/lastfm'
 import { getAlbumListening } from '@/services/lastfm-scrobbles'
+import { getAlbumListeningSeries } from '@/services/listening-series'
 import { AlbumPlaylistsSchema } from '@repo/schemas/tracks'
 import { getAlbumPlaylists } from '@/services/album-playlists'
 
@@ -271,6 +273,34 @@ app
           c.req.valid('param').id,
           c.req.valid('query').track,
         ),
+        200,
+      ),
+  )
+  .openapi(
+    createRoute({
+      method: 'get',
+      path: '/:id/listening/series',
+      middleware: [authMiddleware()],
+      request: { params: z.object({ id: z.string().min(1) }) },
+      responses: {
+        200: {
+          description:
+            'Stored scrobbles linked to the album, by day for five years and by month',
+          content: {
+            'application/json': {
+              schema: createResponseSchema(ListeningSeriesSchema),
+            },
+          },
+        },
+        401: jsonErrorResponse('Unauthorized'),
+        404: jsonErrorResponse('Album not found'),
+        422: validationErrorResponse,
+      },
+    }),
+    async (c) =>
+      generateJsonResponse(
+        c,
+        await getAlbumListeningSeries(c.req.valid('param').id),
         200,
       ),
   )

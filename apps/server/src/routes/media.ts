@@ -9,6 +9,7 @@ import {
   SourceSnapshotSchema,
 } from '@repo/schemas/media'
 import { JobSchema } from '@repo/schemas/job'
+import { MediaProvenanceSchema } from '@repo/schemas/provenance'
 import { authMiddleware } from '@/middlewares/auth'
 import {
   createOpenAPIApp,
@@ -25,6 +26,7 @@ import {
   listMediaSourceSnapshots,
 } from '@/services/history'
 import { createRescrapeJob } from '@/services/jobs'
+import { getMediaProvenance } from '@/services/media-provenance'
 
 const MediaParams = z.object({ id: z.string().min(1).max(500) })
 const SourceParams = MediaParams.extend({
@@ -106,6 +108,29 @@ app.openapi(
       200,
     )
   },
+)
+
+app.openapi(
+  createRoute({
+    method: 'get',
+    path: '/:id/provenance',
+    middleware: [authMiddleware()],
+    request: { params: MediaParams },
+    responses: {
+      ...protectedResponses,
+      200: json(
+        'Stored album or film fields with the providers that supply them',
+        MediaProvenanceSchema,
+      ),
+      404: jsonErrorResponse('Media item not found'),
+    },
+  }),
+  async (c) =>
+    generateJsonResponse(
+      c,
+      await getMediaProvenance(c.req.valid('param').id),
+      200,
+    ),
 )
 
 app.openapi(

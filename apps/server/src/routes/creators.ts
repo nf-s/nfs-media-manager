@@ -50,6 +50,8 @@ import {
   BrowsePageSliceSchema,
 } from '@repo/schemas/browse'
 import { FilmFilterOptionSchema } from '@repo/schemas/media'
+import { CoverageQuerySchema, CoverageSchema } from '@repo/schemas/coverage'
+import { ListeningSeriesSchema } from '@repo/schemas/lastfm'
 import {
   countArtistBrowse,
   listArtistBrowsePage,
@@ -89,6 +91,8 @@ import {
   listPeople,
   listPersonFilms,
 } from '@/services/creators'
+import { getArtistListeningSeries } from '@/services/listening-series'
+import { getArtistCoverage } from '@/services/metadata-coverage'
 
 const json = <T extends z.ZodTypeAny>(description: string, schema: T) => ({
   description,
@@ -415,6 +419,48 @@ export const artists: OpenAPIHono<AppEnv> = createOpenAPIApp()
           c.req.valid('param').id,
           c.req.valid('query'),
         ),
+        200,
+      ),
+  )
+  .openapi(
+    createRoute({
+      method: 'get',
+      path: '/:id/listening/series',
+      middleware: [authMiddleware()],
+      request: { params: CreatorParamsSchema },
+      responses: {
+        ...artistResponses,
+        200: json(
+          'Stored scrobbles linked to albums and tracks credited to this artist, by day for five years and by month',
+          ListeningSeriesSchema,
+        ),
+      },
+    }),
+    async (c) =>
+      generateJsonResponse(
+        c,
+        await getArtistListeningSeries(c.req.valid('param').id),
+        200,
+      ),
+  )
+  .openapi(
+    createRoute({
+      method: 'get',
+      path: '/:id/coverage',
+      middleware: [authMiddleware()],
+      request: { params: CreatorParamsSchema, query: CoverageQuerySchema },
+      responses: {
+        ...artistResponses,
+        200: json(
+          'Per metadata provider, how many albums credited to this artist are scraped, stale or missing',
+          CoverageSchema,
+        ),
+      },
+    }),
+    async (c) =>
+      generateJsonResponse(
+        c,
+        await getArtistCoverage(c.req.valid('param').id, c.req.valid('query')),
         200,
       ),
   )
