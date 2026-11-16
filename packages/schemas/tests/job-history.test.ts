@@ -79,8 +79,8 @@ describe('job history contracts', () => {
     ).toBe(false)
   })
 
-  it('scopes jobs to albums, films or the Subscriptions library', () => {
-    for (const mediaType of ['album', 'film', 'subscription'])
+  it('scopes jobs to albums, films, artists or the Subscriptions library', () => {
+    for (const mediaType of ['album', 'film', 'artist', 'subscription'])
       expect(JobListQuerySchema.parse({ mediaType }).mediaType).toBe(mediaType)
     expect(JobListQuerySchema.safeParse({ mediaType: 'youtube' }).success).toBe(
       false,
@@ -94,9 +94,15 @@ describe('job history contracts', () => {
         imports: 0,
         completed: 0,
         completedImports: 0,
-        libraries: [{ mediaType: 'subscription', ...counts }],
+        libraries: [
+          { mediaType: 'subscription', ...counts },
+          { mediaType: 'artist', ...counts },
+        ],
       }).libraries,
-    ).toEqual([{ mediaType: 'subscription', ...counts }])
+    ).toEqual([
+      { mediaType: 'subscription', ...counts },
+      { mediaType: 'artist', ...counts },
+    ])
   })
 
   it('reads dismissal metadata independently from benign error reviews', () => {

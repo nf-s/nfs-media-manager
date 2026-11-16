@@ -3,6 +3,8 @@ import {
   ArtistEnrichmentInputSchema,
   ArtistProfileProviderSchema,
   ArtistIdentifierSourcePageSchema,
+  ArtistEnrichmentResultSchema,
+  QueueArtistSelectionSchema,
 } from '@repo/schemas/artist-profiles'
 import { PaginationQuerySchema } from '@repo/schemas/common'
 import {
@@ -16,6 +18,8 @@ import {
   ArtistDetailQuerySchema,
   ArtistHistoryPageSchema,
   ArtistHistoryQuerySchema,
+  ArtistMetadataPageSchema,
+  ArtistMetadataQuerySchema,
   ArtistPageSchema,
   ArtistPlaylistPageSchema,
   ArtistPlaylistQuerySchema,
@@ -40,6 +44,7 @@ import {
 import { generateJsonResponse } from '@/lib/response'
 import { authMiddleware, requireOwnerUser } from '@/middlewares/auth'
 import { enqueueArtistEnrichment } from '@/services/artist-enrichment'
+import { queueArtistSelection } from '@/services/artist-selection'
 import { listArtistIdentifierSources } from '@/services/artist-provider-evidence'
 import {
   getArtistSourceSnapshot,
@@ -50,6 +55,7 @@ import {
   getArtistHistory,
   getPerson,
   listArtistAlbums,
+  listArtistMetadata,
   listArtistPlaylists,
   listArtists,
   listArtistTracks,
@@ -79,6 +85,55 @@ const ArtistSourceParams = CreatorParamsSchema.extend({
 })
 
 export const artists: OpenAPIHono<AppEnv> = createOpenAPIApp()
+  .openapi(
+    createRoute({
+      method: 'get',
+      path: '/metadata',
+      middleware: [authMiddleware()],
+      request: { query: ArtistMetadataQuerySchema },
+      responses: {
+        ...protectedResponses,
+        200: json(
+          'Artist enrichment status and scrape dates',
+          ArtistMetadataPageSchema,
+        ),
+      },
+    }),
+    async (c) =>
+      generateJsonResponse(
+        c,
+        await listArtistMetadata(c.req.valid('query')),
+        200,
+      ),
+  )
+  .openapi(
+    createRoute({
+      method: 'post',
+      path: '/enrichment',
+      middleware: [authMiddleware()],
+      request: {
+        body: {
+          required: true,
+          content: {
+            'application/json': { schema: QueueArtistSelectionSchema },
+          },
+        },
+      },
+      responses: {
+        ...protectedResponses,
+        200: json(
+          'Queue selected artist enrichment jobs',
+          ArtistEnrichmentResultSchema,
+        ),
+      },
+    }),
+    async (c) =>
+      generateJsonResponse(
+        c,
+        await queueArtistSelection(c.req.valid('json'), requireOwnerUser(c).id),
+        200,
+      ),
+  )
   .openapi(
     createRoute({
       method: 'get',

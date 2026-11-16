@@ -10,6 +10,8 @@ const mocks = vi.hoisted(() => ({
   albums: vi.fn(),
   playlists: vi.fn(),
   artists: vi.fn(),
+  metadata: vi.fn(),
+  selection: vi.fn(),
   tracks: vi.fn(),
   people: vi.fn(),
   films: vi.fn(),
@@ -20,6 +22,9 @@ vi.mock('@/lib/auth', () => ({ auth: { api: { getSession: mocks.session } } }))
 vi.mock('@/services/artist-enrichment', () => ({
   enqueueArtistEnrichment: mocks.enqueue,
 }))
+vi.mock('@/services/artist-selection', () => ({
+  queueArtistSelection: mocks.selection,
+}))
 vi.mock('@/services/creators', () => ({
   getArtist: mocks.artist,
   getArtistHistory: mocks.history,
@@ -27,6 +32,7 @@ vi.mock('@/services/creators', () => ({
   listArtistAlbums: mocks.albums,
   listArtistPlaylists: mocks.playlists,
   listArtists: mocks.artists,
+  listArtistMetadata: mocks.metadata,
   listArtistTracks: mocks.tracks,
   listPeople: mocks.people,
   listPersonFilms: mocks.films,
@@ -62,6 +68,7 @@ describe('creator API', () => {
     mocks.session.mockResolvedValue(null)
     for (const path of [
       '/artists',
+      '/artists/metadata',
       '/artists/fixture',
       '/artists/fixture/albums',
       '/artists/fixture/tracks',
@@ -73,10 +80,84 @@ describe('creator API', () => {
     ])
       expect((await app.request(path)).status).toBe(401)
     expect((await enqueue({ provider: 'spotify' })).status).toBe(401)
+    expect(
+      (
+        await app.request('/artists/enrichment', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            artistIds: ['fixture'],
+            providers: ['spotify'],
+          }),
+        })
+      ).status,
+    ).toBe(401)
     for (const mock of Object.values(mocks).filter(
       (mock) => mock !== mocks.session,
     ))
       expect(mock).not.toHaveBeenCalled()
+  })
+
+  it('validates metadata filters and routes the directory before artist IDs', async () => {
+    for (const query of [
+      'sortBy=lastScrapedAt',
+      'provider=youtube',
+      'playlistIds=invalid',
+      `freshness=${encodeURIComponent(JSON.stringify([{ provider: 'youtube', mode: 'never' }]))}`,
+    ])
+      expect((await app.request(`/artists/metadata?${query}`)).status).toBe(422)
+    mocks.metadata.mockResolvedValue({ items: [] })
+    const params = new URLSearchParams({
+      playlistIds: JSON.stringify(['playlist-a', 'playlist-b']),
+      freshness: JSON.stringify([{ provider: 'spotify', mode: 'never' }]),
+      provider: 'spotify',
+      sortBy: 'lastScrapedAt',
+      size: '2',
+    })
+    expect((await app.request(`/artists/metadata?${params}`)).status).toBe(200)
+    expect(mocks.artist).not.toHaveBeenCalled()
+    expect(mocks.metadata).toHaveBeenCalledExactlyOnceWith({
+      playlistIds: ['playlist-a', 'playlist-b'],
+      freshness: [{ provider: 'spotify', mode: 'never' }],
+      provider: 'spotify',
+      sortBy: 'lastScrapedAt',
+      size: 2,
+      page: 1,
+      direction: 'asc',
+    })
+  })
+
+  it('requires bounded explicit artist and provider selections', async () => {
+    const request = (body: unknown) =>
+      app.request('/artists/enrichment', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+    for (const body of [
+      { artistIds: [], providers: ['spotify'] },
+      { artistIds: ['fixture'], providers: ['youtube'] },
+      {
+        artistIds: Array.from({ length: 101 }, (_, i) => `artist-${i}`),
+        providers: ['spotify'],
+      },
+      { artistIds: ['fixture'], providers: ['spotify'], all: true },
+    ])
+      expect((await request(body)).status).toBe(422)
+    expect(mocks.selection).not.toHaveBeenCalled()
+    mocks.selection.mockResolvedValue({ jobs: [], skipped: [] })
+    expect(
+      (await request({ artistIds: ['fixture'], providers: ['spotify'] }))
+        .status,
+    ).toBe(200)
+    expect(mocks.selection).toHaveBeenCalledExactlyOnceWith(
+      {
+        artistIds: ['fixture'],
+        providers: ['spotify'],
+        confirmBroadRun: false,
+      },
+      'user-1',
+    )
   })
 
   it('validates the film role and uses scoped directory query defaults', async () => {

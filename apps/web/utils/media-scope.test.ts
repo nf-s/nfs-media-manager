@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { JobSchema } from '@repo/schemas/job'
+import { ARTIST_ENRICHMENT_TASK } from '@repo/schemas/artist-profiles'
 import { SPOTIFY_PODCAST_SYNC_TASK } from '@repo/schemas/subscriptions'
 import { YOUTUBE_SYNC_TASK } from '@repo/schemas/youtube'
 import {
@@ -34,15 +35,72 @@ test('scope defaults to films and preserves existing deep-link parameters', () =
 })
 
 test('creator and channel pages retain their own library context', () => {
-  assert.equal(libraryViewForPath('/artists/one', null), 'album')
-  assert.equal(libraryViewForPath('/artists/one', 'track'), 'track')
+  assert.equal(libraryViewForPath('/artists/one', null), 'artist')
+  assert.equal(libraryViewForPath('/artists/one', 'track'), 'artist')
   assert.equal(libraryViewForPath('/people/one', 'album'), 'film')
   assert.equal(libraryViewForPath('/channels/one', 'film'), 'subscription')
   assert.equal(switchLibraryHref('/artists/one', '', 'film'), '/films')
   assert.equal(switchLibraryHref('/people/one', '', 'album'), '/albums')
   assert.equal(
     switchLibraryHref('/artists/one', 'mediaType=track', 'album'),
-    '/artists/one?mediaType=album',
+    '/albums',
+  )
+})
+
+test('Artists has independent browse and metadata destinations across library switches', () => {
+  for (const path of ['/artists', '/artists/one']) {
+    assert.equal(workspaceScopeForPath(path, 'album'), 'artist')
+    assert.equal(libraryViewForPath(path, 'track'), 'artist')
+    assert.equal(switchLibraryHref(path, 'mediaType=track', 'track'), '/tracks')
+  }
+  for (const path of ['/jobs', '/jobs/metadata']) {
+    assert.equal(workspaceScopeForPath(path, 'artist'), 'artist')
+    assert.equal(libraryViewForPath(path, 'artist'), 'artist')
+    assert.equal(
+      switchLibraryHref(path, 'mediaType=album', 'artist'),
+      `${path}?mediaType=artist`,
+    )
+    assert.equal(
+      switchLibraryHref(path, 'mediaType=artist', 'album'),
+      `${path}?mediaType=album`,
+    )
+  }
+  for (const path of [
+    '/albums',
+    '/tracks',
+    '/imports',
+    '/imports/lastfm',
+    '/providers',
+    '/playlists',
+    '/tags',
+  ])
+    assert.equal(
+      switchLibraryHref(path, 'mediaType=track&q=fixture', 'artist'),
+      '/artists',
+    )
+  assert.equal(
+    switchLibraryHref(
+      '/jobs/one',
+      'mediaType=album&provider=fixture',
+      'artist',
+    ),
+    '/jobs?mediaType=artist',
+  )
+  assert.equal(
+    switchLibraryHref('/jobs/one', 'mediaType=artist', 'film'),
+    '/jobs?mediaType=film',
+  )
+  assert.equal(
+    switchLibraryHref(
+      '/jobs',
+      'mediaType=album&status=failed&artistId=one',
+      'artist',
+    ),
+    '/jobs?status=failed&mediaType=artist',
+  )
+  assert.equal(
+    switchLibraryHref('/artists', 'playlistIds=["one"]', 'artist'),
+    '/artists?playlistIds=%5B%22one%22%5D',
   )
 })
 
@@ -491,5 +549,23 @@ test('subscription syncs belong to Subscriptions, including ones stored as album
   assert.equal(
     jobMatchesScope(taskJob('lastfm-scrobble-sync', 'album'), 'album'),
     true,
+  )
+})
+
+test('artist jobs belong only to Artists even when stored with legacy album scope', () => {
+  for (const artistJob of [
+    taskJob(ARTIST_ENRICHMENT_TASK, 'album'),
+    taskJob(ARTIST_ENRICHMENT_TASK, null),
+  ]) {
+    assert.equal(jobMediaScope(artistJob), 'artist')
+    assert.equal(jobMatchesScope(artistJob, 'artist'), true)
+    assert.equal(jobMatchesScope(artistJob, 'album'), false)
+    assert.equal(jobMatchesScope(artistJob, 'film'), false)
+    assert.equal(jobMatchesScope(artistJob, 'subscription'), false)
+  }
+  assert.equal(jobMatchesScope(job('album'), 'artist'), false)
+  assert.equal(
+    jobMatchesScope(taskJob(YOUTUBE_SYNC_TASK, 'album'), 'artist'),
+    false,
   )
 })

@@ -52,7 +52,7 @@ Detail drawers use `MediaInspector` for a shared remembered desktop width. Drag 
 
 | Area      | Tables                                                                                                                                             |
 | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Jobs      | Job monitor, item job history, album/film metadata selection, provider request counts                                                              |
+| Jobs      | Job monitor, item job history, album/film/artist metadata selection, provider request counts                                                       |
 | Imports   | Recent import history, legacy sources, album file/Spotify previews, film CSV/NFO previews, Spotify playlists, Last.fm link summary and link report |
 | Libraries | Tags, playlists, playlist entries, album detail tracks, subscription channels/podcasts                                                             |
 | Films     | Collections and collection members                                                                                                                 |

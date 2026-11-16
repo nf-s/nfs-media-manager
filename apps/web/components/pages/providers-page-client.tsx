@@ -5,6 +5,7 @@ import { useSearchParams } from 'next/navigation'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { z } from 'zod'
 import type { JobActivitySchema } from '@repo/schemas/job'
+import { ArtistProfileProviderSchema } from '@repo/schemas/artist-profiles'
 import {
   ProviderSecretsSchema,
   ProviderSummarySchema,
@@ -76,8 +77,10 @@ export default function ProvidersPageClient() {
         provider.surface === 'provider' &&
         (mediaType === 'subscription'
           ? provider.subscriptions
-          : provider.mediaTypes.includes(mediaType) ||
-            (provider.mediaTypes.length === 0 && !provider.subscriptions)),
+          : mediaType === 'artist'
+            ? ArtistProfileProviderSchema.safeParse(provider.id).success
+            : provider.mediaTypes.includes(mediaType) ||
+              (provider.mediaTypes.length === 0 && !provider.subscriptions)),
     ) ?? []
   useEffect(() => {
     if (search.has('mediaType') || !targetScope) return

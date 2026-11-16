@@ -16,7 +16,7 @@ export function useMediaScope() {
   return mediaScopeForPath(path, params.get('mediaType'))
 }
 
-/** The library Imports, Jobs and Providers show: albums, films or subscriptions. */
+/** The active workspace, including artist enrichment jobs. */
 export function useWorkspaceScope() {
   const path = usePathname()
   const params = useSearchParams()
@@ -44,6 +44,7 @@ export function LibrarySelector() {
         if (
           next !== 'album' &&
           next !== 'track' &&
+          next !== 'artist' &&
           next !== 'film' &&
           next !== 'subscription'
         )
@@ -53,6 +54,7 @@ export function LibrarySelector() {
     >
       <option value="album">Albums</option>
       <option value="track">Tracks</option>
+      <option value="artist">Artists</option>
       <option value="film">Films</option>
       <option value="subscription">Subscriptions</option>
     </select>

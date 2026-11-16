@@ -10,6 +10,7 @@ import {
 import { AppRouterContext } from 'next/dist/shared/lib/app-router-context.shared-runtime'
 import AppNavigation from './app-navigation'
 import ImportsWorkspace, { ImportStatusNotice } from './imports-workspace'
+import JobsWorkspace from './jobs-workspace'
 import { LibrarySelector, MediaScopeContent } from './media-scope'
 import { ConfigContext } from './providers'
 
@@ -65,6 +66,53 @@ test('Tracks navigation offers only supported destinations without changing libr
   assert.match(html, /href="\/playlists\?mediaType=track">Playlists/)
   assert.match(html, /href="\/imports\?mediaType=track">Imports/)
   assert.doesNotMatch(html, />Tags<|>Jobs<|>Providers<|mediaType=album/)
+  assert.doesNotMatch(html, /href="\/artists/)
+})
+
+test('Artists is a library choice with Browse and scoped Jobs, including legacy artist links', () => {
+  for (const search of ['', 'mediaType=album', 'mediaType=track']) {
+    const html = render(
+      '/artists',
+      search,
+      <>
+        <LibrarySelector />
+        <AppNavigation />
+      </>,
+    )
+    assert.match(html, /<option value="artist" selected="">Artists<\/option>/)
+    assert.match(html, /href="\/jobs\?mediaType=artist">Jobs/)
+    assert.match(
+      html,
+      /aria-current="page" href="\/artists(?:\?mediaType=(?:album|track))?">Browse/,
+    )
+    assert.doesNotMatch(html, />Tags<|>Imports<|>Playlists<|>Providers</)
+  }
+  const albums = render('/albums', '', <AppNavigation />)
+  assert.doesNotMatch(albums, /href="\/artists|>Artists</)
+  const films = render('/films', '', <AppNavigation />)
+  assert.match(films, /href="\/people\?mediaType=film">People/)
+})
+
+test('Artist Jobs exposes its metadata subpage and preserves the selected library', () => {
+  const html = render(
+    '/jobs/metadata',
+    'mediaType=artist',
+    <>
+      <LibrarySelector />
+      <AppNavigation />
+      <JobsWorkspace>
+        <p>Artist metadata content</p>
+      </JobsWorkspace>
+    </>,
+  )
+  assert.match(html, /<option value="artist" selected="">Artists<\/option>/)
+  assert.match(html, /aria-current="page" href="\/jobs\?mediaType=artist">Jobs/)
+  assert.match(
+    html,
+    /href="\/jobs\?mediaType=artist"><strong>Jobs &amp; history/,
+  )
+  assert.match(html, /href="\/jobs\/metadata\?mediaType=artist"/)
+  assert.match(html, /Artist metadata content/)
 })
 
 test('shared track import pages retain Tracks in the selector and navigation', () => {

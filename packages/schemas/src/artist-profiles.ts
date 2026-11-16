@@ -1,5 +1,7 @@
 import { z } from 'zod'
-import { PaginatedDataSchema } from './common'
+import { CreatorIdSchema, PaginatedDataSchema } from './common'
+import { ProviderFreshnessFiltersSchema } from './film-selection'
+import { JobSchema } from './job'
 import { uniqueMusicTags } from './music-tags'
 import { SourceNavigationLinkSchema } from './tags'
 
@@ -74,3 +76,37 @@ export const ArtistEnrichmentInputSchema = z
   })
   .strict()
 export type ArtistEnrichmentInput = z.infer<typeof ArtistEnrichmentInputSchema>
+
+export const ArtistFreshnessFiltersSchema =
+  ProviderFreshnessFiltersSchema.refine(
+    (filters) =>
+      filters.every(
+        (filter) =>
+          ArtistProfileProviderSchema.safeParse(filter.provider).success,
+      ),
+    'Choose artist enrichment providers',
+  )
+
+export const QueueArtistSelectionSchema = z
+  .object({
+    artistIds: z.array(CreatorIdSchema).min(1).max(100),
+    providers: z.array(ArtistProfileProviderSchema).min(1).max(4),
+    freshness: ArtistFreshnessFiltersSchema.optional(),
+    confirmBroadRun: z.boolean().default(false),
+  })
+  .strict()
+export type QueueArtistSelection = z.infer<typeof QueueArtistSelectionSchema>
+
+export const ArtistEnrichmentResultSchema = z.object({
+  jobs: z.array(JobSchema),
+  skipped: z.array(
+    z.object({
+      artistId: CreatorIdSchema,
+      provider: ArtistProfileProviderSchema,
+      reason: z.string(),
+    }),
+  ),
+})
+export type ArtistEnrichmentResult = z.infer<
+  typeof ArtistEnrichmentResultSchema
+>

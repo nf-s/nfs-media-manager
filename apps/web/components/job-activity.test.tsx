@@ -149,3 +149,21 @@ test('subscription syncs have their own group linking to Subscriptions jobs', ()
   assert.match(html, /aria-label="Subscriptions: 2 needs attention"/)
   assert.doesNotMatch(html, /imports\?mediaType=subscription/)
 })
+
+test('artist enrichment has its own activity group and scoped history links', () => {
+  const html = renderActivity({
+    ...activity,
+    libraries: [
+      ...activity.libraries,
+      { ...empty, mediaType: 'artist', queued: 2, failed: 1 },
+    ],
+  })
+  assert.match(html, /aria-label="Artists jobs and history"/)
+  assert.match(html, /href="\/jobs\?mediaType=artist"/)
+  assert.match(
+    html,
+    /aria-label="Artists: 2 queued" href="\/jobs\?status=queued&amp;mediaType=artist"/,
+  )
+  assert.match(html, /aria-label="Artists: 1 needs attention"/)
+  assert.doesNotMatch(html, /imports\?mediaType=artist/)
+})

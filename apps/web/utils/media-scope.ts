@@ -1,14 +1,14 @@
 export type MediaScope = 'album' | 'film'
 /**
- * The library that metadata Jobs and Providers are scoped to. Subscriptions
+ * The library that Jobs and Providers are scoped to. Subscriptions
  * (YouTube channels and Spotify podcasts) has no media items or tags.
  */
-export type WorkspaceScope = MediaScope | 'subscription'
+export type WorkspaceScope = MediaScope | 'artist' | 'subscription'
 /**
  * What the library selector shows. Tracks has its own browse, playlists and
  * imports navigation; it has no tag management or per-track metadata jobs.
  */
-export type LibraryView = MediaScope | 'track' | 'subscription'
+export type LibraryView = WorkspaceScope | 'track'
 
 const trackViewPaths = ['/tracks', '/playlists']
 const trackImportPaths = [
@@ -64,11 +64,12 @@ export function workspaceScopeForPath(
   path: string,
   value: string | null,
 ): WorkspaceScope {
+  if (isUnder(path, '/artists')) return 'artist'
   if (subscriptionPaths.some((root) => isUnder(path, root)))
     return 'subscription'
   return (
     pathMediaScope(path) ??
-    (value === 'subscription' ? 'subscription' : mediaScope(value))
+    (value === 'subscription' || value === 'artist' ? value : mediaScope(value))
   )
 }
 
@@ -77,7 +78,7 @@ export function libraryViewForPath(
   value: string | null,
 ): LibraryView {
   if (isUnder(path, '/playlists') && value === 'album') return 'album'
-  if (isUnder(path, '/artists') && value === 'track') return 'track'
+  if (isUnder(path, '/artists')) return 'artist'
   return trackViewPaths.some((root) => isUnder(path, root)) ||
     (value === 'track' &&
       (isUnder(path, '/imports') ||
@@ -108,11 +109,13 @@ export function scopedHref(href: string, mediaType: LibraryView) {
 }
 
 function libraryHome(scope: WorkspaceScope) {
-  return scope === 'album'
-    ? '/albums'
-    : scope === 'film'
-      ? '/films'
-      : '/subscriptions'
+  return scope === 'artist'
+    ? '/artists'
+    : scope === 'album'
+      ? '/albums'
+      : scope === 'film'
+        ? '/films'
+        : '/subscriptions'
 }
 
 export function switchMediaScopeHref(
@@ -139,6 +142,21 @@ export function switchMediaScopeHref(
 
   const imports = isUnder(path, '/imports')
   let destination = imports ? '/imports' : path
+  // Artist enrichment shares Jobs, while artists have no imports or tags.
+  if (mediaType === 'artist') {
+    if (!isUnder(path, '/jobs')) return libraryHome(mediaType)
+    destination =
+      path === '/jobs/metadata' ||
+      path === '/jobs/new' ||
+      path === '/jobs/refresh'
+        ? '/jobs/metadata'
+        : '/jobs'
+  } else if (
+    isUnder(path, '/jobs') &&
+    !['/jobs', '/jobs/metadata', '/jobs/new', '/jobs/refresh'].includes(path)
+  ) {
+    destination = '/jobs'
+  }
   // Subscriptions has Imports, Jobs and Providers, but no Tags or metadata jobs.
   if (mediaType === 'subscription') {
     if (imports) destination = '/imports/youtube'
@@ -163,8 +181,7 @@ export function switchLibraryHref(
   const current = new URLSearchParams(search)
   const shown = libraryViewForPath(path, current.get('mediaType'))
   if (shown === view) return `${path}${current.size ? `?${current}` : ''}`
-  if (isUnder(path, '/artists') && (view === 'album' || view === 'track'))
-    return scopedHref(`${path}${current.size ? `?${current}` : ''}`, view)
+  if (view === 'artist') return switchMediaScopeHref(path, search, view)
   if (isUnder(path, '/playlists'))
     return view === 'album' || view === 'track'
       ? scopedHref(`${path}${current.size ? `?${current}` : ''}`, view)

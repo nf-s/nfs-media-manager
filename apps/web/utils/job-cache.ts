@@ -57,6 +57,7 @@ export function invalidateChangedJobActivity(
       'history',
       'album-selection',
       'film-selection',
+      'artist-selection',
       'tags',
       'tag-detail',
       'tag-provenance',

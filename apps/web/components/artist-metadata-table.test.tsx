@@ -1,0 +1,149 @@
+import assert from 'node:assert/strict'
+import { mock, test } from 'node:test'
+import { renderToStaticMarkup } from 'react-dom/server'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import {
+  PathnameContext,
+  SearchParamsContext,
+} from 'next/dist/shared/lib/hooks-client-context.shared-runtime'
+import { ArtistMetadataPageSchema } from '@repo/schemas/creators'
+import { ProviderSummarySchema } from '@repo/schemas/provider'
+import NewScrapePageClient from './pages/new-scrape-page-client'
+import { ArtistScrapeState } from './artist-metadata-table'
+import { ConfigContext } from './providers'
+
+const network = mock.method(globalThis, 'fetch', async () => {
+  throw new Error('Network forbidden in artist metadata tests')
+})
+const timestamp = '2026-01-01T00:00:00.000Z'
+
+test('artist metadata renders artist selection, playlist and freshness filters with explicit provider selection', () => {
+  const client = new QueryClient()
+  const params = new URLSearchParams({
+    q: '',
+    sortBy: 'name',
+    direction: 'asc',
+    freshness: '[]',
+  })
+  client.setQueryData(
+    ['artist-selection', params.toString(), 1],
+    ArtistMetadataPageSchema.parse({
+      page: 1,
+      size: 50,
+      pageCount: 1,
+      totalCount: 1,
+      items: [
+        {
+          id: 'fixture-artist',
+          name: 'Fixture artist',
+          sortName: null,
+          createdAt: timestamp,
+          artworkUrl: null,
+          albumCount: 2,
+          trackCount: 5,
+          playlistCount: 1,
+          providers: [
+            {
+              provider: 'musicbrainz',
+              lastScrapedAt: timestamp,
+              lastAttemptAt: timestamp,
+              lastJobStatus: 'succeeded',
+            },
+          ],
+        },
+      ],
+    }),
+  )
+  client.setQueryData(
+    ['providers'],
+    [
+      ProviderSummarySchema.parse({
+        id: 'musicbrainz',
+        displayName: 'MusicBrainz',
+        description: '',
+        surface: 'provider',
+        mediaTypes: ['album'],
+        supportsScrape: true,
+        supportsLegacyImport: false,
+        pluginPath: null,
+        secrets: [],
+        rateLimit: { minTimeMs: 0, maxConcurrent: 1 },
+      }),
+    ],
+  )
+  try {
+    const html = renderToStaticMarkup(
+      <QueryClientProvider client={client}>
+        <ConfigContext.Provider
+          value={{
+            appUrl: 'http://localhost:3000',
+            apiBaseUrl: 'http://localhost:4000',
+          }}
+        >
+          <PathnameContext.Provider value="/jobs/metadata">
+            <SearchParamsContext.Provider
+              value={new URLSearchParams({ mediaType: 'artist' })}
+            >
+              <NewScrapePageClient />
+            </SearchParamsContext.Provider>
+          </PathnameContext.Provider>
+        </ConfigContext.Provider>
+      </QueryClientProvider>,
+    )
+    assert.match(html, /<h1>Artist metadata<\/h1>/)
+    assert.match(html, /Select all loaded artists/)
+    assert.match(html, /Select Fixture artist/)
+    assert.match(html, /Search artists/)
+    assert.match(html, /Filter Playlists/)
+    assert.match(html, /Filter MusicBrainz freshness/)
+    assert.match(html, /dateTime="2026-01-01T00:00:00.000Z"/)
+    assert.match(html, /disabled=""[^>]*>Review 0 metadata jobs/)
+    assert.doesNotMatch(html, /Album metadata|Film metadata|Legacy import/)
+    const providerControls = html.match(
+      /<fieldset class="enrichment-providers"[\s\S]*?<\/fieldset>/,
+    )?.[0]
+    assert.ok(providerControls)
+    assert.doesNotMatch(providerControls, /checked=""/)
+  } finally {
+    client.clear()
+    assert.equal(network.mock.callCount(), 0)
+  }
+})
+
+test('artist freshness keeps a successful scrape date visible after a failed attempt', () => {
+  const html = renderToStaticMarkup(
+    <ArtistScrapeState
+      label="MusicBrainz"
+      state={{
+        provider: 'musicbrainz',
+        lastScrapedAt: timestamp,
+        lastAttemptAt: '2026-02-02T00:00:00.000Z',
+        lastJobStatus: 'failed',
+      }}
+    />,
+  )
+  assert.match(html, /dateTime="2026-01-01T00:00:00.000Z"/)
+  assert.match(html, /MusicBrainz scrape details/)
+  assert.doesNotMatch(html, />Never</)
+})
+
+test('artist freshness distinguishes unattempted, failed and queued without claiming success', () => {
+  const render = (
+    lastJobStatus: 'queued' | 'failed' | null,
+    lastAttemptAt: string | null,
+  ) =>
+    renderToStaticMarkup(
+      <ArtistScrapeState
+        label="Spotify"
+        state={{
+          provider: 'spotify',
+          lastScrapedAt: null,
+          lastAttemptAt,
+          lastJobStatus,
+        }}
+      />,
+    )
+  assert.match(render(null, null), />Never</)
+  assert.match(render('failed', timestamp), />Not scraped</)
+  assert.match(render('queued', null), />Queued</)
+})

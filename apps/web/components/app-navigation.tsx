@@ -24,9 +24,12 @@ const items = [
 ]
 const trackItems = [
   { href: '/tracks', label: 'Browse', Icon: LayoutGrid },
-  { href: '/artists', label: 'Artists', Icon: Users },
   { href: '/playlists', label: 'Playlists', Icon: ListMusic },
   { href: '/imports', label: 'Imports', Icon: Download },
+]
+const artistItems = [
+  { href: '/artists', label: 'Browse', Icon: LayoutGrid },
+  { href: '/jobs', label: 'Jobs', Icon: ListChecks },
 ]
 /** `section` is the path prefix that marks the link active; scoped links carry `mediaType`. */
 const subscriptionItems = [
@@ -76,6 +79,29 @@ export default function AppNavigation() {
   const params = useSearchParams()
   const scope = useMediaScope()
   const view = useLibraryView()
+  if (view === 'artist')
+    return (
+      <nav className="app-navigation" aria-label="Main navigation">
+        {artistItems.map((item) => {
+          const href =
+            path === item.href && params.size
+              ? `${item.href}?${params}`
+              : item.href
+          return (
+            <Link
+              href={
+                item.href === '/artists' ? href : scopedHref(href, 'artist')
+              }
+              key={item.href}
+              aria-current={isUnder(path, item.href) ? 'page' : undefined}
+            >
+              {item.label}
+              <item.Icon size={16} aria-hidden="true" />
+            </Link>
+          )
+        })}
+      </nav>
+    )
   if (view === 'track')
     return (
       <nav className="app-navigation" aria-label="Main navigation">
@@ -123,38 +149,40 @@ export default function AppNavigation() {
     )
   return (
     <nav className="app-navigation" aria-label="Main navigation">
-      {items.map((item) => {
-        const destination =
-          item.href === '/browse'
-            ? scope === 'album'
-              ? '/albums'
-              : '/films'
-            : item.href === '/artists' && scope === 'film'
-              ? '/people'
-              : item.href === '/playlists' && scope === 'film'
-                ? '/collections'
-                : item.href
-        const active =
-          path === destination || path.startsWith(`${destination}/`)
-        const href =
-          path === destination && params.size
-            ? `${destination}?${params}`
-            : destination
-        return (
-          <Link
-            href={item.href === '/browse' ? href : scopedHref(href, scope)}
-            key={item.href}
-            aria-current={active ? 'page' : undefined}
-          >
-            {item.href === '/artists' && scope === 'film'
-              ? 'People'
-              : item.href === '/playlists' && scope === 'film'
-                ? 'Collections'
-                : item.label}
-            <item.Icon size={16} aria-hidden="true" />
-          </Link>
-        )
-      })}
+      {items
+        .filter((item) => scope === 'film' || item.href !== '/artists')
+        .map((item) => {
+          const destination =
+            item.href === '/browse'
+              ? scope === 'album'
+                ? '/albums'
+                : '/films'
+              : item.href === '/artists' && scope === 'film'
+                ? '/people'
+                : item.href === '/playlists' && scope === 'film'
+                  ? '/collections'
+                  : item.href
+          const active =
+            path === destination || path.startsWith(`${destination}/`)
+          const href =
+            path === destination && params.size
+              ? `${destination}?${params}`
+              : destination
+          return (
+            <Link
+              href={item.href === '/browse' ? href : scopedHref(href, scope)}
+              key={item.href}
+              aria-current={active ? 'page' : undefined}
+            >
+              {item.href === '/artists' && scope === 'film'
+                ? 'People'
+                : item.href === '/playlists' && scope === 'film'
+                  ? 'Collections'
+                  : item.label}
+              <item.Icon size={16} aria-hidden="true" />
+            </Link>
+          )
+        })}
     </nav>
   )
 }

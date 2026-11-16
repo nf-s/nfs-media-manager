@@ -1052,17 +1052,17 @@ async function insertTaskJob(
   message: string,
 ): Promise<string> {
   const jobId = nanoid()
-  // Subscription syncs belong to the Subscriptions library, not to albums or films.
-  const subscriptionSync = SUBSCRIPTION_SYNC_TASKS.some(
-    (task) => task === options.task,
-  )
+  // Artist and subscription tasks have no album or film media item scope.
+  const nonMediaTask =
+    options.task === ARTIST_ENRICHMENT_TASK ||
+    SUBSCRIPTION_SYNC_TASKS.some((task) => task === options.task)
   await tx.insert(scrapeJob).values({
     id: jobId,
     provider,
     status: 'queued',
     scope: {
       mediaItemIds: [],
-      mediaType: subscriptionSync ? null : 'album',
+      mediaType: nonMediaTask ? null : 'album',
       limit: 1,
     },
     options,
@@ -2085,6 +2085,7 @@ export async function getJobActivity() {
 async function readJobActivity() {
   const albums = jobsInMediaScope('album')
   const films = jobsInMediaScope('film')
+  const artists = jobsInMediaScope('artist')
   const subscriptions = jobsInMediaScope('subscription')
   const importScope = importMediaTypeExpression(libraryImport.result)
   const [counts] = await db
@@ -2099,6 +2100,9 @@ async function readJobActivity() {
       filmQueued: sql<number>`count(*) filter (where status = 'queued' and ${films})::int`,
       filmRunning: sql<number>`count(*) filter (where status = 'running' and ${films})::int`,
       filmFailed: sql<number>`count(*) filter (where ${jobsNeedingAttention()} and ${films})::int`,
+      artistQueued: sql<number>`count(*) filter (where status = 'queued' and ${artists})::int`,
+      artistRunning: sql<number>`count(*) filter (where status = 'running' and ${artists})::int`,
+      artistFailed: sql<number>`count(*) filter (where ${jobsNeedingAttention()} and ${artists})::int`,
       subscriptionQueued: sql<number>`count(*) filter (where status = 'queued' and ${subscriptions})::int`,
       subscriptionRunning: sql<number>`count(*) filter (where status = 'running' and ${subscriptions})::int`,
       subscriptionFailed: sql<number>`count(*) filter (where ${jobsNeedingAttention()} and ${subscriptions})::int`,
@@ -2135,6 +2139,13 @@ async function readJobActivity() {
         imports: imports?.filmCount ?? 0,
       },
       {
+        mediaType: 'artist',
+        queued: counts?.artistQueued ?? 0,
+        running: counts?.artistRunning ?? 0,
+        failed: counts?.artistFailed ?? 0,
+        imports: 0,
+      },
+      {
         mediaType: 'subscription',
         queued: counts?.subscriptionQueued ?? 0,
         running: counts?.subscriptionRunning ?? 0,
@@ -2146,8 +2157,8 @@ async function readJobActivity() {
 }
 
 /**
- * Subscription sync jobs form their own library. Ones queued before it
- * existed are stored with the album scope, so the task decides.
+ * Artist enrichment and subscription syncs have their own libraries. Legacy
+ * jobs were stored with the album scope, so the task decides.
  */
 function jobsInMediaScope(
   mediaType: NonNullable<z.infer<typeof JobListQuerySchema>['mediaType']>,
@@ -2157,10 +2168,12 @@ function jobsInMediaScope(
     sql`, `,
   )})`
   if (mediaType === 'subscription') return subscriptionSync
+  const artistEnrichment = sql`coalesce(${scrapeJob.options}->>'task', '') = ${ARTIST_ENRICHMENT_TASK}`
+  if (mediaType === 'artist') return artistEnrichment
   return sql`((${scrapeJob.scope}->>'mediaType' = ${mediaType} or exists (
     select 1 from scrape_job_item scoped_item join media_item scoped_media on scoped_media.id = scoped_item.media_item_id
     where scoped_item.job_id = ${scrapeJob.id} and scoped_media.media_type = ${mediaType}
-  )) and not ${subscriptionSync})`
+  )) and not ${subscriptionSync} and not (${artistEnrichment}))`
 }
 
 export async function cancelQueuedJobs(

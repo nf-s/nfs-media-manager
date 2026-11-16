@@ -102,8 +102,8 @@ function parseFilterValues(value: unknown) {
 export const JobListQuerySchema = z.object({
   sortBy: JobSortKeySchema.default('createdAt'),
   direction: z.enum(['asc', 'desc']).default('desc'),
-  /** `subscription` lists the Subscriptions library's sync jobs; album and film leave them out. */
-  mediaType: z.enum(['album', 'film', 'subscription']).optional(),
+  /** Artist enrichment and subscription syncs each belong to their own library. */
+  mediaType: z.enum(['album', 'film', 'artist', 'subscription']).optional(),
   status: JobStatusFilterSchema.optional(),
   statuses: z
     .preprocess(parseFilterValues, z.array(JobStatusFilterSchema).max(7))
@@ -263,7 +263,7 @@ export const JobActivitySchema = z.object({
   libraries: z
     .array(
       z.object({
-        mediaType: z.enum(['album', 'film', 'subscription']),
+        mediaType: z.enum(['album', 'film', 'artist', 'subscription']),
         queued: z.number(),
         running: z.number(),
         failed: z.number(),

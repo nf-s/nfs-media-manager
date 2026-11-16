@@ -8,6 +8,7 @@ import {
   SearchParamsContext,
 } from 'next/dist/shared/lib/hooks-client-context.shared-runtime'
 import { JobPageSchema, JobSchema } from '@repo/schemas/job'
+import { ARTIST_ENRICHMENT_TASK } from '@repo/schemas/artist-profiles'
 import JobsPageClient, { JobsTable } from './pages/jobs-page-client'
 import { DetailInspectorProvider } from './detail-inspector-context'
 import { detailEntries } from '@/utils/detail-inspector'
@@ -27,17 +28,17 @@ const job = JobSchema.parse({
   logs: [],
 })
 
-function render(search = 'mediaType=film', provider?: string) {
+function render(search = 'mediaType=film', provider?: string, row = job) {
   const client = new QueryClient({
     defaultOptions: { queries: { enabled: false, retry: false } },
   })
   const params = new URLSearchParams(search)
-  const items = !provider || provider === job.provider ? [job] : []
+  const items = !provider || provider === row.provider ? [row] : []
   client.setQueryData(
     [
       'jobs',
       'table',
-      provider ? null : 'film',
+      provider ? null : (params.get('mediaType') ?? 'film'),
       '[]',
       '',
       params.get('q') ?? '',
@@ -108,6 +109,28 @@ test('job monitor has shared sortable columns, selection and links to details', 
   const href = firstJobHref(html)
   assert.deepEqual(detailEntries(href.pathname, href.searchParams), [
     { kind: 'job', id: job.id },
+  ])
+})
+
+test('Artist jobs use their scoped cache and open details without changing library', () => {
+  const artistJob = JobSchema.parse({
+    ...job,
+    scope: { mediaType: 'album' },
+    options: {
+      task: ARTIST_ENRICHMENT_TASK,
+      artistId: 'fixture-artist',
+      artistName: 'Fixture artist',
+    },
+  })
+  const html = render('mediaType=artist', undefined, artistJob)
+  assert.match(html, /<h1>Artist jobs<\/h1>/)
+  assert.match(html, /Artist enrichment · Fixture artist/)
+  assert.match(html, /aria-label="Filter Job status"/)
+  assert.match(html, /aria-label="Filter Job provider"/)
+  const href = firstJobHref(html)
+  assert.equal(href.searchParams.get('mediaType'), 'artist')
+  assert.deepEqual(detailEntries(href.pathname, href.searchParams), [
+    { kind: 'job', id: artistJob.id },
   ])
 })
 

@@ -14,6 +14,7 @@ import {
 } from './creator-library-table'
 import MediaArtwork from './media-artwork'
 import { usePersonRoleFilter } from './person-role-filter'
+import { useArtistPlaylistFilter } from './artist-playlist-filter'
 
 const artistColumns: CreatorLibraryColumn<ArtistSummary>[] = [
   {
@@ -67,6 +68,7 @@ const artistColumns: CreatorLibraryColumn<ArtistSummary>[] = [
 ]
 
 export function ArtistsWorkspace() {
+  const playlists = useArtistPlaylistFilter()
   return (
     <section className="admin-page table-workspace">
       <h1>Artists</h1>
@@ -76,9 +78,14 @@ export function ArtistsWorkspace() {
         queryKey={['artists']}
         path="/api/v1/artists"
         schema={ArtistPageSchema}
-        columns={artistColumns}
+        columns={artistColumns.map((column) =>
+          column.key === 'playlistCount'
+            ? { ...column, filter: playlists.control }
+            : column,
+        )}
         label="artists"
         defaultSort={{ key: 'name', direction: 'asc' }}
+        filters={playlists.filters}
       />
     </section>
   )

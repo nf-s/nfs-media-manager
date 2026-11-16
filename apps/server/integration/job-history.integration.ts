@@ -14,6 +14,7 @@ import {
 } from 'vitest'
 import type { MediaProviderPlugin } from '@repo/media-plugin-sdk'
 import { getJobDismissal, type Job } from '@repo/schemas/job'
+import { ARTIST_ENRICHMENT_TASK } from '@repo/schemas/artist-profiles'
 import { LASTFM_SCROBBLE_SYNC_TASK } from '@repo/schemas/lastfm'
 import { SPOTIFY_PODCAST_SYNC_TASK } from '@repo/schemas/subscriptions'
 import { YOUTUBE_SYNC_TASK } from '@repo/schemas/youtube'
@@ -666,6 +667,7 @@ describe('media job history and dismissal', () => {
     expect(activity.libraries).toEqual([
       { mediaType: 'album', queued: 0, running: 1, failed: 0, imports: 0 },
       { mediaType: 'film', queued: 0, running: 0, failed: 1, imports: 0 },
+      { mediaType: 'artist', queued: 0, running: 0, failed: 0, imports: 0 },
       {
         mediaType: 'subscription',
         queued: 1,
@@ -674,6 +676,88 @@ describe('media job history and dismissal', () => {
         imports: 0,
       },
     ])
+  })
+
+  it('lists legacy and current artist enrichment only in Artists and separates activity counts', async () => {
+    const { getJobActivity, listJobs } = await import('@/services/jobs')
+    await seedJob('film-job', 'failed')
+    await databaseClient.insert(schema.scrapeJob).values([
+      {
+        id: 'legacy-artist',
+        provider: 'spotify',
+        status: 'failed',
+        scope: { mediaType: 'album', mediaItemIds: [], limit: 1 },
+        options: {
+          task: ARTIST_ENRICHMENT_TASK,
+          artistId: 'fixture-artist',
+          artistName: 'Fixture artist',
+        },
+      },
+      {
+        id: 'current-artist',
+        provider: 'lastfm',
+        status: 'queued',
+        scope: { mediaType: null, mediaItemIds: [], limit: 1 },
+        options: {
+          task: ARTIST_ENRICHMENT_TASK,
+          artistId: 'other-artist',
+          artistName: 'Other artist',
+        },
+      },
+      {
+        id: 'album-task',
+        provider: 'lastfm',
+        status: 'running',
+        scope: { mediaType: 'album', mediaItemIds: [], limit: 1 },
+        options: { task: LASTFM_SCROBBLE_SYNC_TASK },
+      },
+    ])
+    expect(
+      (await listJobs({ mediaType: 'artist' })).items
+        .map((job) => job.id)
+        .sort(),
+    ).toEqual(['current-artist', 'legacy-artist'])
+    expect(
+      (await listJobs({ mediaType: 'album' })).items.map((job) => job.id),
+    ).toEqual(['album-task'])
+    expect(
+      (await listJobs({ mediaType: 'film' })).items.map((job) => job.id),
+    ).toEqual(['film-job'])
+    expect(
+      (
+        await listJobs({
+          mediaType: 'artist',
+          artistId: 'fixture-artist',
+          provider: 'spotify',
+          status: 'attention',
+        })
+      ).items.map((job) => job.id),
+    ).toEqual(['legacy-artist'])
+    expect(
+      (await listJobs({ mediaType: 'artist', q: 'Other' })).items.map(
+        (job) => job.id,
+      ),
+    ).toEqual(['current-artist'])
+    const activity = await getJobActivity()
+    expect(
+      activity.libraries.find((library) => library.mediaType === 'artist'),
+    ).toEqual({
+      mediaType: 'artist',
+      queued: 1,
+      running: 0,
+      failed: 1,
+      imports: 0,
+    })
+    expect(
+      activity.libraries.find((library) => library.mediaType === 'album'),
+    ).toEqual({
+      mediaType: 'album',
+      queued: 0,
+      running: 1,
+      failed: 0,
+      imports: 0,
+    })
+    expect(network).not.toHaveBeenCalled()
   })
 })
 

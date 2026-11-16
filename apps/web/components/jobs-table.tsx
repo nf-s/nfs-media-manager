@@ -6,6 +6,7 @@ import { useSearchParams } from 'next/navigation'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { z } from 'zod'
 import { ProviderSummarySchema } from '@repo/schemas/provider'
+import { ArtistProfileProviderSchema } from '@repo/schemas/artist-profiles'
 import {
   JobSortKeySchema,
   JobListQuerySchema,
@@ -53,6 +54,7 @@ import {
 
 const jobsHeadings: Record<WorkspaceScope, string> = {
   album: 'Album jobs',
+  artist: 'Artist jobs',
   film: 'Film jobs',
   subscription: 'Subscription jobs',
 }
@@ -156,7 +158,9 @@ export function JobsTable({ provider, mediaItemId, artistId }: JobsTableProps) {
   const providerOptions = (providers.data ?? []).filter((item) =>
     mediaType === 'subscription'
       ? item.subscriptions
-      : item.mediaTypes.some((kind) => kind === mediaType),
+      : mediaType === 'artist'
+        ? ArtistProfileProviderSchema.safeParse(item.id).success
+        : item.mediaTypes.some((kind) => kind === mediaType),
   )
   const jobsKey = history
     ? [

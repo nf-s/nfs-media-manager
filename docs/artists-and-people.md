@@ -1,6 +1,6 @@
 # Artists, people and channels
 
-Artists are shared by Albums and Tracks. People lists film directors and actors. Both use the existing creator identity and credit roles: a band is an artist without being treated as a person, and one film person can hold several roles. Channels retain the subscription source identity for YouTube channels and Spotify shows.
+Choose **Artists** in the library dropdown for **Browse** and **Jobs**. Artists share identities across Albums and Tracks; their directory is no longer duplicated in those libraries' navigation. People lists film directors and actors. Both use the existing creator identity and credit roles: a band is an artist without being treated as a person, and one film person can hold several roles. Channels retain the subscription source identity for YouTube channels and Spotify shows.
 
 Creator and channel names open details by default. Related albums, tracks, playlists, films and subscription items open in the same detail inspector, with Back preserving the previous entry and its tab. Open page provides a standalone URL. Each creator or channel detail has explicit actions to filter the relevant library.
 
@@ -9,6 +9,12 @@ Music details put playlist memberships in a Playlists tab. Artist details show t
 Related media tables offer Grid, Details and Table. Album and track artwork stays square, film posters stay portrait, and channel thumbnails use 16:9. Each nested list type remembers its view separately. Search, sorting, role filters and playback actions remain available in every mode. Keep each nested viewport bounded to the panel; the full result height belongs inside that scroller, not in the surrounding document. Only the visible pages and overscan load, including after changing view or resizing the panel.
 
 ## Artist enrichment
+
+**Artists → Jobs** lists artist enrichment jobs, including older jobs originally stored with the album scope. Provider, status and text filters use the same job history controls as the other libraries.
+
+Open **Jobs → Metadata** to select artists and providers for enrichment. Each provider column shows its last successful scrape date; the details control shows the latest job status and last attempted date separately. Column filters offer never attempted, latest attempt failed, no successful scrape, and no success or older than 30, 90, 180 or 365 days. Modes for one provider match with OR; filters for different providers combine with AND. Sorting a provider column puts artists without a successful scrape first in ascending order.
+
+The **Playlists** column filter is available in Browse and Metadata. Search stored playlists and select one or more; an artist matches any selected playlist through credited tracks or albums. Artist search, playlist selection, freshness and sort stay in the URL and apply before server pagination. Only checked artists are queued after reviewing the provider selection; the header checkbox selects loaded artists. Active jobs are skipped and freshness is rechecked before queueing, while provider request limits and cooldowns remain in force.
 
 Artist enrichment is an explicit job for one artist and one provider: Spotify, Last.fm, Discogs or MusicBrainz. It uses the existing provider dispatcher, request gate, budgets and cooldowns. Viewing details does not start a job. Provider identifiers are independent of the internal artist ID. An ambiguous name search needs an explicit provider artist identifier instead of silently selecting a namesake.
 

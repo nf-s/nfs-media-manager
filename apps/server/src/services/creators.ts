@@ -15,6 +15,7 @@ import type {
 import {
   ArtistDetailSchema,
   ArtistHistoryPageSchema,
+  ArtistMetadataPageSchema,
   ArtistPageSchema,
   ArtistPlaylistPageSchema,
   PersonPageSchema,
@@ -22,6 +23,7 @@ import {
   type ArtistAlbumQuery,
   type ArtistDetailQuery,
   type ArtistHistoryQuery,
+  type ArtistMetadataQuery,
   type ArtistPlaylistQuery,
   type ArtistQuery,
   type ArtistTrackQuery,
@@ -32,6 +34,7 @@ import {
 import { AlbumQuerySchema, FilmQuerySchema } from '@repo/schemas/media'
 import { uniqueMusicTags } from '@repo/schemas/music-tags'
 import { TrackQuerySchema } from '@repo/schemas/tracks'
+import type { ProviderFreshnessFilter } from '@repo/schemas/film-selection'
 import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
 import {
@@ -52,6 +55,11 @@ import { queryBrowseIds } from './browse'
 import { listAlbums, listFilms } from './media'
 import { loadTracks } from './tracks'
 import { listArtistIdentifiers } from './artist-provider-evidence'
+import {
+  artistFreshnessConditions,
+  artistLastScrapedAt,
+  loadArtistMetadata,
+} from './artist-metadata'
 
 const identityColumns = {
   id: artist.id,
@@ -176,7 +184,7 @@ function artistPlaylistMembership(artistId: string | SQLWrapper) {
     .groupBy(playlist.id)
 }
 
-function artistDirectory(q?: string, id?: string) {
+function artistDirectory(q?: string, id?: string, playlistIds: string[] = []) {
   return db
     .select({
       ...identityColumns,
@@ -198,6 +206,19 @@ function artistDirectory(q?: string, id?: string) {
         eq(mediaCredit.role, 'artist'),
         visible,
         sql`(${isAlbum} or ${isTrack})`,
+        playlistIds.length
+          ? inArray(
+              artist.id,
+              db
+                .select({ artistId: sql<string>`memberships.artist_id` })
+                .from(sql`(${artistPlaylistCredits()}) memberships`)
+                .innerJoin(
+                  playlist,
+                  sql`${playlist.id} = memberships.playlist_id`,
+                )
+                .where(and(visiblePlaylist, inArray(playlist.id, playlistIds))),
+            )
+          : undefined,
       ),
     )
     .groupBy(artist.id)
@@ -240,7 +261,7 @@ type ArtistDirectoryColumns = Record<
 
 function artistOrder(
   source: ArtistDirectoryColumns,
-  query: ArtistQuery,
+  query: ArtistQuery | ArtistMetadataQuery,
   playlistCount: SQLWrapper,
 ) {
   const sortColumns = {
@@ -249,16 +270,30 @@ function artistOrder(
     albumCount: source.albumCount,
     trackCount: source.trackCount,
     playlistCount,
+    lastScrapedAt:
+      'provider' in query && query.provider
+        ? artistLastScrapedAt(source.id, query.provider)
+        : sql`null`,
   }
   return [
-    order(sql`${sortColumns[query.sortBy]}`, query.direction),
+    query.sortBy === 'lastScrapedAt'
+      ? query.direction === 'asc'
+        ? sql`${sortColumns.lastScrapedAt} asc nulls first`
+        : sql`${sortColumns.lastScrapedAt} desc nulls last`
+      : order(sql`${sortColumns[query.sortBy]}`, query.direction),
     sql`lower(${source.name})`,
     asc(source.id),
   ]
 }
 
-export async function listArtists(query: ArtistQuery) {
-  const directory = artistDirectory(query.q).as('directory')
+async function listArtistDirectory(query: ArtistQuery | ArtistMetadataQuery) {
+  const directory = artistDirectory(query.q, undefined, query.playlistIds).as(
+    'directory',
+  )
+  const where =
+    'freshness' in query
+      ? and(...artistFreshnessConditions(directory.id, query.freshness))
+      : undefined
   const countBeforePaging = query.sortBy === 'playlistCount'
   const playlistCounts = artistPlaylistCounts().as('playlist_counts')
   const playlistCount = countBeforePaging
@@ -284,6 +319,7 @@ export async function listArtists(query: ArtistQuery) {
         )
       : candidates
   )
+    .where(where)
     .orderBy(...artistOrder(directory, query, playlistCount))
     .limit(query.size)
     .offset((query.page - 1) * query.size)
@@ -292,7 +328,7 @@ export async function listArtists(query: ArtistQuery) {
   // outer alias in the correlated subqueries, whose tables also have an id.
   const selectedArtistId = sql`"artist_page"."id"`
   const [[total], rows] = await Promise.all([
-    db.select({ value: count() }).from(directory),
+    db.select({ value: count() }).from(directory).where(where),
     db
       .select({
         id: selected.id,
@@ -316,6 +352,40 @@ export async function listArtists(query: ArtistQuery) {
       rows.map((row) => ({ ...row, createdAt: row.createdAt.toISOString() })),
     ),
   )
+}
+
+export function listArtists(query: ArtistQuery) {
+  return listArtistDirectory(query)
+}
+
+export async function listArtistMetadata(query: ArtistMetadataQuery) {
+  const result = await listArtistDirectory(query)
+  const metadata = await loadArtistMetadata(result.items.map((item) => item.id))
+  return ArtistMetadataPageSchema.parse({
+    ...result,
+    items: result.items.map((item) => ({
+      ...item,
+      providers: metadata.filter((row) => row.artistId === item.id),
+    })),
+  })
+}
+
+export async function matchingArtistSelection(
+  ids: string[],
+  freshness: ProviderFreshnessFilter[] = [],
+) {
+  if (!ids.length) return []
+  const directory = artistDirectory().as('directory')
+  const rows = await db
+    .select({ id: directory.id })
+    .from(directory)
+    .where(
+      and(
+        inArray(directory.id, ids),
+        ...artistFreshnessConditions(directory.id, freshness),
+      ),
+    )
+  return rows.map((row) => row.id)
 }
 
 function combineProfiles(providers: ArtistProviderSnapshot[]): ArtistProfile {

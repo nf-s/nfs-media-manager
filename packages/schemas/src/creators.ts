@@ -4,7 +4,9 @@ import {
   ArtistIdentifierSchema,
   ArtistProfileSchema,
   ArtistProviderSnapshotSchema,
+  ArtistFreshnessFiltersSchema,
 } from './artist-profiles'
+import { JobStatusSchema } from './job'
 import {
   CreatorIdSchema,
   DirectionSchema,
@@ -74,12 +76,67 @@ const CreatorQuerySchema = PaginationQuerySchema.extend({
   direction: DirectionSchema.default('asc'),
 })
 
+const ArtistSortKeySchema = z.enum([
+  'name',
+  'createdAt',
+  'albumCount',
+  'trackCount',
+  'playlistCount',
+])
 export const ArtistQuerySchema = CreatorQuerySchema.extend({
-  sortBy: z
-    .enum(['name', 'createdAt', 'albumCount', 'trackCount', 'playlistCount'])
-    .default('name'),
+  sortBy: ArtistSortKeySchema.default('name'),
+  playlistIds: z.preprocess(
+    (value) => {
+      if (value === undefined) return []
+      if (typeof value !== 'string') return value
+      try {
+        return JSON.parse(value)
+      } catch {
+        return value
+      }
+    },
+    z.array(z.string().min(1).max(200)).max(100),
+  ),
 })
 export type ArtistQuery = z.infer<typeof ArtistQuerySchema>
+
+export const ArtistMetadataQuerySchema = ArtistQuerySchema.extend({
+  sortBy: z
+    .enum([...ArtistSortKeySchema.options, 'lastScrapedAt'])
+    .default('name'),
+  provider: ArtistProfileProviderSchema.optional(),
+  freshness: z.preprocess((value) => {
+    if (value === undefined) return []
+    if (typeof value !== 'string') return value
+    try {
+      return JSON.parse(value)
+    } catch {
+      return value
+    }
+  }, ArtistFreshnessFiltersSchema),
+}).refine(
+  (query) => query.sortBy !== 'lastScrapedAt' || query.provider !== undefined,
+  'Choose a provider for last scraped sorting',
+)
+export type ArtistMetadataQuery = z.infer<typeof ArtistMetadataQuerySchema>
+
+export const ArtistProviderMetadataSchema = z.object({
+  provider: ArtistProfileProviderSchema,
+  lastScrapedAt: z.string().datetime().nullable(),
+  lastAttemptAt: z.string().datetime().nullable(),
+  lastJobStatus: JobStatusSchema.nullable(),
+})
+export type ArtistProviderMetadata = z.infer<
+  typeof ArtistProviderMetadataSchema
+>
+export const ArtistMetadataItemSchema = ArtistSummarySchema.extend({
+  providers: z.array(ArtistProviderMetadataSchema),
+})
+export type ArtistMetadataItem = z.infer<typeof ArtistMetadataItemSchema>
+export const ArtistMetadataPageSchema = PaginatedDataSchema(
+  ArtistMetadataItemSchema,
+)
+export type ArtistMetadataPage = z.infer<typeof ArtistMetadataPageSchema>
 
 export const PersonQuerySchema = CreatorQuerySchema.extend({
   sortBy: z

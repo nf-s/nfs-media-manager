@@ -111,6 +111,7 @@ test('completed or partially stopped work invalidates derived library views whil
       ['track', 'example-track'],
       ['artist', 'example-artist', 'history'],
       ['artists'],
+      ['artist-selection', 'fixture'],
       ['person', 'example-person'],
       ['people'],
       ['tags', 'infinite', 'album'],

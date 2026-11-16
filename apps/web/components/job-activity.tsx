@@ -19,6 +19,7 @@ type ActivityCounts = z.infer<typeof JobActivitySchema>
 
 const libraryLabels: Record<WorkspaceScope, string> = {
   album: 'Albums',
+  artist: 'Artists',
   film: 'Films',
   subscription: 'Subscriptions',
 }
@@ -243,6 +244,10 @@ export default function JobActivity() {
         <MediaJobActivity
           mediaType="album"
           counts={libraries.find((library) => library.mediaType === 'album')}
+        />
+        <MediaJobActivity
+          mediaType="artist"
+          counts={libraries.find((library) => library.mediaType === 'artist')}
         />
         <MediaJobActivity
           mediaType="film"
