@@ -1,0 +1,595 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Foundations · Media Manager design library</title>
+    <link rel="icon" href="data:," />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="assets/tokens.css" />
+    <link rel="stylesheet" href="assets/components.css" />
+    <link rel="stylesheet" href="assets/gallery.css" />
+  </head>
+  <body class="ds g" data-page="foundations.html">
+    <script src="assets/ds.js"></script>
+    <script>
+      const D = DS
+      const { g, btn, status, pill, icon } = D
+
+      const sw = (name, hex, use) =>
+        `<div class="g-swatch"><i style="background:var(--ds-${name})"></i><b>${name}</b><span>${hex} · ${use}</span></div>`
+      const swatches = (list) =>
+        `<div class="g-swatches">${list.map((s) => sw(...s)).join('')}</div>`
+      const scale = (rows) =>
+        `<div class="g-scale">${rows.map(([label, html]) => `<div><code>${label}</code>${html}</div>`).join('')}</div>`
+      const sample = (size, weight, text, extra = '') =>
+        `<span style="font-size:var(--ds-text-${size});font-weight:${weight};${extra}">${text}</span>`
+      const bar = (px) => `<div class="g-bar" style="width:${px}px"></div>`
+      const box = (style) => `<div class="g-box" style="${style}"></div>`
+      const control = (h, label) =>
+        `<span style="display:inline-grid;place-items:center;height:${h}px;padding:0 10px;border-radius:var(--ds-r-sm);box-shadow:inset 0 0 0 1px var(--ds-line);font-size:12px">${label}</span>`
+
+      D.page({
+        title: 'Foundations',
+        lede: 'The values every component is built from. They live in <code>assets/tokens.css</code> as <code>--ds-*</code> variables. Each scale is short on purpose: a value that is not listed here is not used.',
+        sections: [
+          {
+            id: 'principles',
+            title: 'Principles',
+            body: g.doc(
+              ['Principle', 'What it means in practice'],
+              [
+                [
+                  '<b>One of each</b>',
+                  'One table, one card, one list row, one pill, one status mark, one chart, one play control. A screen is assembled from these and adds no styles of its own.',
+                ],
+                [
+                  '<b>Nothing is cut off</b>',
+                  'Text that does not fit ends in an ellipsis and has the full value in its tooltip. Pills show what fits and a +N. Scroll areas reserve space for the scrollbar. Tables keep their first column in view when scrolled sideways.',
+                ],
+                [
+                  '<b>Colour means state</b>',
+                  'Surfaces are grey and white, text is dark, the accent is slate. Amber means in progress or needs attention. Red means failed or destructive. Nothing is green. Provider brand colours are not used.',
+                ],
+                [
+                  '<b>Same thing, same place</b>',
+                  'Identity first, creator second. Play, then Queue. Row actions at the right end. Page actions at the right of the header. Tabs in the same order for every resource.',
+                ],
+                [
+                  '<b>Titles open, buttons act</b>',
+                  'Clicking artwork or a title opens the item. Playing, queueing, refreshing and editing are buttons. Nothing depends on a double-click.',
+                ],
+                [
+                  '<b>Every value can say where it came from</b>',
+                  'Provider, match, fetch time and job are one click from the value, and each of those links back to the item.',
+                ],
+                [
+                  '<b>Quiet until needed</b>',
+                  'Row actions appear on hover and focus and are always present on touch. Space for them is reserved, so nothing moves when they appear.',
+                ],
+              ],
+            ),
+          },
+          {
+            id: 'colour',
+            title: 'Colour',
+            body:
+              g.sub('Surfaces and lines') +
+              g.spec(
+                swatches([
+                  ['page', '#e9ecf0', 'app background'],
+                  ['surface', '#ffffff', 'panels, drawers, popovers'],
+                  ['sunken', '#f4f6f9', 'table header, input fill, hover'],
+                  ['selected', '#e8edf3', 'selected row, current nav item'],
+                  [
+                    'chip',
+                    '#edf0f4',
+                    'pills, segmented track, artwork fallback',
+                  ],
+                  ['line', '#d9dee5', 'control and panel borders'],
+                  ['line-soft', '#eceff3', 'row dividers'],
+                ]),
+              ) +
+              g.sub('Ink and accent') +
+              g.spec(
+                swatches([
+                  ['ink', '#14171c', 'primary text'],
+                  ['ink-2', '#4a5261', 'secondary text'],
+                  ['ink-3', '#667080', 'labels, metadata'],
+                  ['ink-4', '#98a1b0', 'disabled, empty values'],
+                  [
+                    'accent',
+                    '#334155',
+                    'primary action, focus, selection, chart line',
+                  ],
+                  ['accent-strong', '#1e293b', 'primary action hover'],
+                  ['accent-soft', '#dfe5ec', 'meter track, chart area'],
+                  ['inverse', '#334155', 'selection bar and tooltip only'],
+                ]),
+              ) +
+              g.sub('State') +
+              g.spec(
+                swatches([
+                  [
+                    'attention',
+                    '#92500a',
+                    'running, queued, waiting, needs attention',
+                  ],
+                  [
+                    'attention-mark',
+                    '#c98a16',
+                    'status dot, budget meter near its limit',
+                  ],
+                  ['attention-bg', '#fff4de', 'attention notice'],
+                  ['danger', '#a32318', 'failed, destructive'],
+                  ['danger-bg', '#fbefed', 'danger notice, error log row'],
+                  ['info', '#19457c', 'filter mode: any'],
+                  ['info-bg', '#e3ecf8', 'filter mode: any'],
+                ]),
+              ) +
+              g.rules([
+                '<b>Four inks.</b> Primary, secondary, label and disabled. Text never uses a grey outside these four.',
+                '<b>One accent.</b> Slate marks the single primary action in a view, keyboard focus, selection and chart lines. A view has at most one filled slate button.',
+                '<b>One dark surface.</b> The selection bar and tooltips. Table footers, badges and toolbars are not dark.',
+                '<b>Success is not a colour.</b> Done is a filled slate dot. Attention and failure are the only states that take colour, so they are the only things that stand out.',
+                '<b>Artwork is the only saturated colour on a page.</b> Overlays on artwork are a white pill, not dark glass.',
+                '<b>Contrast.</b> All four inks, attention text and danger text meet 4.5:1 on white except ink-4, which is reserved for disabled and empty values.',
+              ]) +
+              g.note(
+                'Replaces',
+                'two parallel token sets, about 100 colour literals, five muted greys, two hover and two selected backgrounds, three reds, two ambers, a neutral black tooltip, yellow and green rating badges, and dark glass pills on artwork.',
+              ),
+          },
+          {
+            id: 'type',
+            title: 'Type',
+            body:
+              g.spec(
+                scale([
+                  ['2xl · 22 / 600', sample('2xl', 600, 'Harbour Lights')],
+                  ['xl · 18 / 600', sample('xl', 600, 'Harbour Lights')],
+                  ['lg · 15 / 600', sample('lg', 600, 'Albums')],
+                  ['md · 13 / 600', sample('md', 600, 'Harbour Lights')],
+                  [
+                    'md · 13 / 400',
+                    sample(
+                      'md',
+                      400,
+                      'Eleven tracks recorded over two winters on the coast.',
+                    ),
+                  ],
+                  [
+                    'sm · 12 / 400',
+                    sample(
+                      'sm',
+                      400,
+                      'Mira Kestrel · 2019 · 11 tracks',
+                      'color:var(--ds-ink-2)',
+                    ),
+                  ],
+                  [
+                    'xs · 11 / 500',
+                    sample('xs', 500, 'Released', 'color:var(--ds-ink-3)'),
+                  ],
+                  [
+                    'mono · 12',
+                    `<span class="ds-mono">3.71 &nbsp; 1,024 &nbsp; 4:18 &nbsp; 2026-11-16</span>`,
+                  ],
+                ]),
+              ) +
+              g.doc(
+                ['Size', 'Used for'],
+                [
+                  ['22', 'Title on a standalone page'],
+                  ['18', 'Title in the detail drawer, headline numbers'],
+                  [
+                    '15',
+                    'Page title in a panel, drawer section title on phone',
+                  ],
+                  [
+                    '13',
+                    'Body text, titles in rows and cards, buttons, inputs, table cells',
+                  ],
+                  ['12', 'Secondary lines, pills, facts, help text'],
+                  ['11', 'Column headers, field labels, captions, counts'],
+                ],
+              ) +
+              g.rules([
+                '<b>IBM Plex Sans</b> for everything. <b>IBM Plex Mono</b> for identifiers, logs, stored responses and rating values.',
+                '<b>Three weights:</b> 400 text, 500 labels and controls, 600 titles and the value being sorted.',
+                '<b>Numbers are tabular</b> in tables, stats and charts, and right-aligned in table columns.',
+                '<b>Section labels</b> are 11px, weight 600, label ink, sentence case. No uppercase, no letter-spacing.',
+                '<b>Sentence case everywhere:</b> "Add to queue", "Daily budget". Proper names keep their own capitals.',
+              ]) +
+              g.note(
+                'Replaces',
+                '13 font sizes, 7 weights, 17 line-heights, primitives that default to 14px and are overridden almost everywhere, and 8 different page title styles.',
+              ),
+          },
+          {
+            id: 'space',
+            title: 'Space and size',
+            body:
+              `<div class="g-cols">${g.spec(
+                g.label('Space') +
+                  scale([
+                    ['1 · 2', bar(2)],
+                    ['2 · 4', bar(4)],
+                    ['3 · 6', bar(6)],
+                    ['4 · 8', bar(8)],
+                    ['5 · 12', bar(12)],
+                    ['6 · 16', bar(16)],
+                    ['7 · 20', bar(20)],
+                    ['8 · 24', bar(24)],
+                    ['9 · 32', bar(32)],
+                  ]),
+              )}${g.spec(
+                g.label('Control height') +
+                  scale([
+                    ['xs · 24', control(24, 'In a table row')],
+                    ['sm · 28', control(28, 'Toolbar, default')],
+                    ['md · 32', control(32, 'Form, detail header')],
+                    ['touch · 40', control(40, 'Phone actions')],
+                  ]) +
+                  `<div style="height:16px"></div>` +
+                  g.label('Row height') +
+                  scale([
+                    ['head · 28', control(28, 'Table header')],
+                    ['row · 32', control(32, 'Table row')],
+                    ['media · 48', control(48, 'List row with artwork')],
+                  ]),
+              )}${g.spec(
+                g.label('Radius') +
+                  scale([
+                    ['xs · 4', box('border-radius:4px')],
+                    ['sm · 6', box('border-radius:6px')],
+                    ['md · 8', box('border-radius:8px')],
+                    ['lg · 12', box('border-radius:12px')],
+                    ['pill', box('border-radius:999px')],
+                  ]),
+              )}</div>` +
+              g.doc(
+                ['Step', 'Used for'],
+                [
+                  ['2, 4', 'Inside a control: icon to label, pill padding'],
+                  ['6, 8', 'Between controls in a row, cell padding'],
+                  [
+                    '12',
+                    'Panel inset, grid gutter, the space kept clear beside a scrollbar',
+                  ],
+                  ['16', 'Between blocks in a section, drawer padding'],
+                  ['24, 32', 'Between sections'],
+                  ['Radius 4', 'Thumbnails, checkboxes'],
+                  ['Radius 6', 'Controls, artwork'],
+                  ['Radius 8', 'Popovers, notices, cards'],
+                  ['Radius 12', 'Panels, the drawer, the player dock'],
+                ],
+              ) +
+              g.sub('Elevation') +
+              g.spec(
+                g.flow(
+                  [
+                    g.item(
+                      `<div style="width:160px;height:64px;border-radius:12px;background:var(--ds-surface);box-shadow:0 0 0 1px var(--ds-line)"></div>`,
+                      'Flat · panels and cards',
+                    ),
+                    g.item(
+                      `<div style="width:160px;height:64px;border-radius:8px;background:var(--ds-surface);box-shadow:var(--ds-shadow-pop)"></div>`,
+                      'Pop · popovers, menus, tooltips',
+                    ),
+                    g.item(
+                      `<div style="width:160px;height:64px;border-radius:12px 0 0 12px;background:var(--ds-surface);box-shadow:var(--ds-shadow-drawer)"></div>`,
+                      'Drawer · the detail drawer and sheets',
+                    ),
+                  ],
+                  { top: true },
+                ),
+                { style: 'padding:24px 28px 20px;background:var(--ds-sunken)' },
+              ) +
+              g.rules([
+                '<b>Panels are flat.</b> Hairlines separate; shadows are for things that float. No blur, no translucent surfaces.',
+                '<b>Layers:</b> content, sticky headers, selection bar, popover, drawer, player dock. One z-index per layer.',
+              ]) +
+              g.note(
+                'Replaces',
+                'about 60 padding values, control heights of 20, 22, 24, 26, 28, 30, 32, 36 and 40px, 15 radii, 25 shadows and four blur recipes.',
+              ),
+          },
+          {
+            id: 'layout',
+            title: 'Layout and overflow',
+            body:
+              g.doc(
+                ['Part', 'Measure', 'Behaviour'],
+                [
+                  [
+                    'Rail',
+                    '196px',
+                    'Library selector, navigation, then Jobs and Providers under System, then Account. Section navigation and filter chips no longer share one slot.',
+                  ],
+                  [
+                    'Main panel',
+                    'fills',
+                    'White, 12px radius. Header, toolbar and table header stay put; only the content scrolls.',
+                  ],
+                  [
+                    'Detail drawer',
+                    '600px, resizable',
+                    'Overlays the panel from the right. Full-height sheet on phone.',
+                  ],
+                  [
+                    'Standalone page',
+                    'max 1180px',
+                    'Two columns: content and a 320px side column. One column under 900px.',
+                  ],
+                  [
+                    'Player dock',
+                    '56px',
+                    'Bottom of the main column. Playback messages appear inside it.',
+                  ],
+                  [
+                    'Phone',
+                    'under 700px',
+                    'Navigation becomes a bottom tab bar. List is the default view; Table stays available with its title column pinned. Row actions are always visible.',
+                  ],
+                ],
+              ) +
+              g.rules([
+                '<b>Scrollbar space is reserved</b> on every scroll area, with a 12px gutter on the scrollbar side, so content never sits under the bar or shifts when it appears.',
+                '<b>One scroll area per view.</b> A table inside the drawer shows its rows in the flow of the drawer and ends in a "Show all" row when it is long. It does not become a second scroll area with its own height cap.',
+                '<b>Sideways scroll is a last resort.</b> A table first drops its lowest-priority columns into the column menu. When it must scroll sideways the checkbox and identity columns stay pinned and a soft edge shows there is more.',
+                '<b>Text</b> truncates with an ellipsis on one line (two lines for card titles) and never clips mid-glyph.',
+                '<b>Pills</b> never clip. A cell shows the pills that fit and +N for the rest. A single tag wider than its cell shortens with an ellipsis.',
+                '<b>Fixed-width columns</b> for dates, durations, counts and ratings, so values line up down the page.',
+              ]),
+          },
+          {
+            id: 'icons',
+            title: 'Icons',
+            body:
+              g.spec(
+                `<div class="g-icons">${Object.keys(D.ICON)
+                  .map((name) => `<span>${icon(name)}${name}</span>`)
+                  .join('')}</div>`,
+              ) +
+              g.rules([
+                '<b>One set:</b> lucide, 1.75 stroke. 14px inside controls and rows, 16px in navigation and headers. No other sizes.',
+                '<b>An icon-only button</b> always has a tooltip and an accessible name. Close is always the same 14px mark in a 28px button.',
+                '<b>Provider marks</b> are monochrome, drawn in label ink. In this library two-letter monograms stand in for them.',
+              ]) +
+              g.note(
+                'Replaces',
+                'close icons at four sizes, icon buttons at 20, 24, 26 and 28px with four radii, and brand-coloured rating badges.',
+              ),
+          },
+          {
+            id: 'formats',
+            title: 'Formats',
+            body:
+              g.doc(
+                ['Value', 'Format', 'Example', 'Where'],
+                [
+                  [
+                    'Date',
+                    'ISO',
+                    '<span class="ds-mono">2026-11-16</span>',
+                    'Tables, facts, edit forms',
+                  ],
+                  [
+                    'Date and time',
+                    'ISO date, 24-hour time',
+                    '<span class="ds-mono">2026-11-16 14:20</span>',
+                    'Job and source history',
+                  ],
+                  [
+                    'Time today',
+                    '24-hour',
+                    '<span class="ds-mono">14:20</span>',
+                    'Jobs started today, waiting until',
+                  ],
+                  [
+                    'Age',
+                    'One unit, in words',
+                    '6 min ago · 3 hours ago · 12 days ago',
+                    'Freshness and last success. Exact time in the tooltip. Older than 30 days shows the date.',
+                  ],
+                  ['Year', 'Four digits', '2019', 'Cards and list rows'],
+                  [
+                    'Track length',
+                    'm:ss',
+                    '<span class="ds-mono">4:18</span>',
+                    'Tracks, videos, the player',
+                  ],
+                  [
+                    'Total length',
+                    'h m',
+                    '42 min · 2h 51m',
+                    'Albums, playlists, films',
+                  ],
+                  [
+                    'Job duration',
+                    'Largest two units',
+                    '2s · 4m 12s · 1h 12m',
+                    'Jobs',
+                  ],
+                  ['Count', 'Thousands separator', '1,024', 'Everywhere'],
+                  [
+                    'Large count on a card',
+                    'Compact',
+                    '12.4k',
+                    'Cards only; exact value in the tooltip',
+                  ],
+                  [
+                    'Rating',
+                    "The provider's own scale and precision",
+                    'RYM 3.71 · IMDb 7.4 · MC 81',
+                    'Source label first, value in mono',
+                  ],
+                  [
+                    'Share',
+                    'Whole percent',
+                    '68%',
+                    'Budgets, coverage, progress',
+                  ],
+                  [
+                    'No value',
+                    'En dash in disabled ink',
+                    D.EMPTY,
+                    'Never blank, never "N/A", "-" or "Unknown"',
+                  ],
+                ],
+              ) +
+              g.rules([
+                '<b>One helper per format.</b> A date is formatted in one place and looks the same in every table and drawer.',
+                '<b>Times are local</b>; the tooltip carries the full timestamp with its zone.',
+              ]) +
+              g.note(
+                'Replaces',
+                'about eleven date helpers (four of them identical copies), five duration helpers, locale-dependent dates next to ISO slices, and "-", "Never", "Not scraped" and blank for a missing value.',
+              ),
+          },
+          {
+            id: 'wording',
+            title: 'Wording',
+            body:
+              g.sub('Status') +
+              g.doc(
+                ['State', 'Shown as', 'Use for', 'Replaces'],
+                [
+                  [
+                    status('queued'),
+                    'Hollow amber dot',
+                    'Accepted, not started',
+                    'queued',
+                  ],
+                  [
+                    status('running'),
+                    'Amber dot, bold',
+                    'Work in progress',
+                    'running · Importing · Listing · Searching...',
+                  ],
+                  [
+                    status('waiting', 'Waiting until 14:20'),
+                    'Hollow dot, always with a reason or time',
+                    'Held by a provider limit, a pause or missing credentials',
+                    'queued (with no reason shown)',
+                  ],
+                  [
+                    status('done'),
+                    'Slate dot',
+                    'Finished without error',
+                    'succeeded · Complete · Imported · Listed · a bare date',
+                  ],
+                  [
+                    status('failed'),
+                    'Red dot, bold',
+                    'Finished with an error',
+                    'failed · Latest attempt failed',
+                  ],
+                  [
+                    status('cancelled'),
+                    'Hollow grey dot',
+                    'Stopped by you',
+                    'cancelled · Stopped',
+                  ],
+                  [
+                    status('paused'),
+                    'Hollow grey dot',
+                    'A queue or schedule that is switched off',
+                    'Queue paused · Queue stopped · Paused',
+                  ],
+                  [
+                    status('never'),
+                    'Dash, disabled ink',
+                    'No attempt yet',
+                    'Never · Not scraped · Never attempted · Not synced',
+                  ],
+                  [
+                    status('attention', 'Needs sign-in'),
+                    'Amber dot and text',
+                    'Something only you can fix',
+                    'Needs credentials · (needs credentials) · Credentials required · Reconnect',
+                  ],
+                ],
+              ) +
+              g.sub('Counts, states and actions') +
+              g.doc(
+                ['Case', 'Wording', 'Notes'],
+                [
+                  [
+                    'Count',
+                    '128 albums · 1 album',
+                    'Always names the thing. Singular when it is one.',
+                  ],
+                  [
+                    'Filtered count',
+                    '6 of 128 albums',
+                    'Whenever a search or filter is active',
+                  ],
+                  [
+                    'Loading',
+                    'Skeleton rows',
+                    'No "Loading..." text. The count shows a skeleton too.',
+                  ],
+                  [
+                    'Nothing stored',
+                    'No albums yet · Import albums',
+                    'Says what to do next',
+                  ],
+                  [
+                    'Nothing matches',
+                    'No albums match · Clear filters',
+                    'Different from an empty library',
+                  ],
+                  [
+                    'Load error',
+                    'Could not load albums · Retry',
+                    'Retry is always a small default button',
+                  ],
+                  [
+                    'Saved',
+                    'Saved',
+                    'One word beside the control, cleared after a few seconds',
+                  ],
+                  [
+                    'Needs identifier',
+                    'Needs ID · Find match',
+                    'Find match opens Sources at that provider',
+                  ],
+                  [
+                    'Bulk action',
+                    'Refresh 12 albums',
+                    'The button names the action and the number',
+                  ],
+                  [
+                    'Confirmation',
+                    'Refresh 240 albums? · Refresh · Cancel',
+                    'One pattern: a popover on the button that started it',
+                  ],
+                  [
+                    'Destructive',
+                    'Remove playlist? · Remove · Cancel',
+                    'Red button, always confirmed, including Disconnect and Revoke',
+                  ],
+                ],
+              ) +
+              g.rules([
+                '<b>Buttons are verbs:</b> Play, Queue, Refresh, Find match, Retry, Remove. "View" and "Manage" are not button labels; the name of the thing is the link.',
+                '<b>One name per thing.</b> Scrobbles, not plays or listens. Sources, not history or sync. Refresh, not rescrape, enrich or fetch. Find match, not Identify.',
+                '<b>No instructions for things that are visible.</b> Help text appears only for a real limit, such as a provider that is waiting.',
+              ]) +
+              g.note(
+                'Replaces',
+                'eight status displays, 77 Retry controls in six styles, six confirmation patterns, counts that say "results", "sources" or omit the singular, and "Loading X..." in 51 places.',
+              ),
+          },
+        ],
+      })
+    </script>
+  </body>
+</html>

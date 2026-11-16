@@ -1,0 +1,108 @@
+/*
+ * Media Manager design tokens (proposal).
+ *
+ * One token set replaces the two in packages/ui/src/globals.css today
+ * (shadcn HSL triplets and the hex ink/line/chip set) and the untokenised
+ * literals used most often (#334155, #667080, #a32318).
+ * Every component in components.css reads only these variables.
+ */
+
+:root {
+  /* Surfaces: cool grey page, flat white panels */
+  --ds-page: #e9ecf0;
+  --ds-surface: #ffffff;
+  --ds-sunken: #f4f6f9; /* table headers, input fills, wells */
+  --ds-hover: #f4f6f9; /* row and control hover */
+  --ds-selected: #e8edf3; /* selected row, current nav item */
+  --ds-chip: #edf0f4; /* pills, segmented track, artwork fallback */
+  --ds-chip-hover: #e2e7ee;
+
+  /* Lines */
+  --ds-line: #d9dee5; /* control and panel borders */
+  --ds-line-soft: #eceff3; /* row dividers */
+
+  /* Ink: four steps, no other greys */
+  --ds-ink: #14171c; /* primary text */
+  --ds-ink-2: #4a5261; /* secondary text */
+  --ds-ink-3: #667080; /* labels, metadata, placeholder icons */
+  --ds-ink-4: #98a1b0; /* disabled, empty values */
+
+  /* Accent: slate. Used for the one primary action, focus and selection */
+  --ds-accent: #334155;
+  --ds-accent-strong: #1e293b;
+  --ds-accent-soft: #dfe5ec;
+
+  /* Inverse surface: selection bar and tooltips only */
+  --ds-inverse: #334155;
+  --ds-on-inverse: #ffffff;
+  --ds-on-inverse-2: #cbd5e1;
+
+  /* Status. Success is neutral slate; there is no green. */
+  --ds-attention: #92500a; /* running, queued, waiting, needs attention */
+  --ds-attention-mark: #c98a16;
+  --ds-attention-bg: #fff4de;
+  --ds-danger: #a32318; /* failed, destructive */
+  --ds-danger-bg: #fbefed;
+  --ds-info-bg: #e3ecf8; /* "any" filter mode */
+  --ds-info: #19457c;
+
+  /* Elevation: popover and drawer, plus three small shadows */
+  --ds-shadow-pop: 0 0 0 1px var(--ds-line), 0 8px 24px rgb(15 23 42 / 0.12);
+  --ds-shadow-drawer:
+    -1px 0 0 var(--ds-line), -12px 0 32px rgb(15 23 42 / 0.14);
+  --ds-scrim: rgb(15 23 42 / 0.28);
+  --ds-shadow-raise: 0 1px 2px rgb(15 23 42 / 0.12); /* selected segment, current nav item */
+  --ds-shadow-float: 0 1px 4px rgb(15 23 42 / 0.28); /* play pill and labels on artwork */
+  --ds-shadow-edge: 8px 0 8px -8px rgb(15 23 42 / 0.22); /* pinned table column */
+  --ds-on-inverse-line: rgb(
+    255 255 255 / 0.32
+  ); /* control outline on the inverse surface */
+  --ds-on-inverse-hover: rgb(255 255 255 / 0.12);
+  --ds-rail-hover: rgb(
+    255 255 255 / 0.55
+  ); /* nav item hover on the page background */
+
+  /* Type: IBM Plex Sans and Mono, six sizes */
+  --ds-font: 'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --ds-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+  --ds-text-xs: 11px; /* column headers, labels, metadata */
+  --ds-text-sm: 12px; /* secondary lines, pills, table cells in dense tables */
+  --ds-text-md: 13px; /* body, titles in rows and cards, controls */
+  --ds-text-lg: 15px; /* page and section titles */
+  --ds-text-xl: 18px; /* detail titles, headline numbers */
+  --ds-text-2xl: 22px; /* standalone page titles */
+  --ds-leading-tight: 1.25;
+  --ds-leading: 1.4;
+
+  /* Space: 2 4 6 8 12 16 20 24 32 */
+  --ds-1: 2px;
+  --ds-2: 4px;
+  --ds-3: 6px;
+  --ds-4: 8px;
+  --ds-5: 12px;
+  --ds-6: 16px;
+  --ds-7: 20px;
+  --ds-8: 24px;
+  --ds-9: 32px;
+
+  /* Control heights: three steps, plus touch */
+  --ds-h-xs: 24px; /* controls inside table rows */
+  --ds-h-sm: 28px; /* toolbars, default */
+  --ds-h-md: 32px; /* forms, detail headers */
+  --ds-h-touch: 40px; /* phone tab bar and sheet actions */
+
+  /* Radius: four steps and the pill */
+  --ds-r-xs: 4px; /* thumbnails, checkboxes */
+  --ds-r-sm: 6px; /* controls, artwork */
+  --ds-r-md: 8px; /* popovers, cards, banners */
+  --ds-r-lg: 12px; /* panels, drawers, player dock */
+  --ds-r-pill: 999px;
+
+  /* Layout */
+  --ds-rail: 196px;
+  --ds-gutter: 12px; /* panel inset; also the space reserved beside scrollbars */
+  --ds-row: 32px; /* table row */
+  --ds-row-media: 48px; /* list row with artwork */
+  --ds-head: 28px; /* table header */
+  --ds-inspector: 600px;
+}

@@ -1,0 +1,478 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Sources and listening · Media Manager design library</title>
+    <link rel="icon" href="data:," />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="assets/tokens.css" />
+    <link rel="stylesheet" href="assets/components.css" />
+    <link rel="stylesheet" href="assets/gallery.css" />
+  </head>
+  <body class="ds g" data-page="screens-data.html">
+    <script src="assets/ds.js"></script>
+    <script>
+      const D = DS
+      const {
+        g,
+        btn,
+        pill,
+        pills,
+        table,
+        section,
+        stats,
+        icon,
+        status,
+        mark,
+        source,
+      } = D
+      const { ALBUMS: A, TRACKS: T, PLAYLISTS: PL } = D.data
+      const inspectorFrame = (html, height) =>
+        `<div class="g-inspector" style="--g-h:${height || 760}px">${html}</div>`
+      const staticPills = (list) => pills(list, { pill: { static: true } })
+
+      const albumHead = D.detailHead({
+        item: A[0],
+        kind: 'Album',
+        by: 'by <a href="#">Mira Kestrel</a>',
+        facts: ['2019-03-08', '11 tracks', '42:18', 'Tidewater'],
+        actions: D.headActions({ open: 'Spotify' }),
+      })
+
+      const names = table(
+        [
+          {
+            h: 'Scrobbled as',
+            c: (r) => `<span class="ds-cell-title">${r[0]}</span>`,
+          },
+          { h: 'Artist', c: (r) => r[1] },
+          { h: 'Scrobbles', end: true, w: 80, c: (r) => r[2] },
+          {
+            h: '',
+            end: true,
+            w: 76,
+            c: (r) =>
+              r[3]
+                ? btn('Unlink', { size: 'xs', variant: 'ghost' })
+                : btn('Link', { size: 'xs' }),
+          },
+        ],
+        [
+          ['Harbour Lights', 'Mira Kestrel', 398, true],
+          ['Harbour Lights (Deluxe)', 'Mira Kestrel', 14, true],
+          ['Harbor Lights', 'Mira Kestrel', 9, false],
+          ['Harbour Lights - EP', 'Mira Kestrel', 3, false],
+        ],
+        { row: (r) => ({ 'data-state': r[3] ? undefined : 'hover' }) },
+      )
+
+      const sourceList =
+        source({
+          p: 'spotify',
+          match: ['done', 'Matched by ID'],
+          id: '4xkT9dQm2LrV7aPz1c',
+          when: '3 days ago',
+        }) +
+        source({
+          p: 'lastfm',
+          match: ['done', 'Matched by name'],
+          id: '2 names linked · 2 similar names not linked',
+          when: 'Today',
+          open: true,
+          body: `<div><h4>Provides</h4>${staticPills(['Scrobbles', 'Listeners', 'Tags'])}</div><div><h4>Scrobble names</h4><div class="ds-table-wrap">${names}</div></div><div><h4>History</h4>${D.timeline(
+            [
+              ['2026-11-16 06:00', ['done', 'Done'], '3 new scrobbles', 'Job'],
+              ['2026-11-09 06:00', ['done', 'Done'], '5 new scrobbles', 'Job'],
+              [
+                '2026-10-02 18:44',
+                ['done', 'Matched'],
+                'Linked by exact name',
+                'Job',
+              ],
+            ],
+          )}</div>`,
+        }) +
+        source({
+          p: 'discogs',
+          match: ['done', 'Matched by ID'],
+          id: 'release/14820377',
+          when: '12 days ago',
+        }) +
+        source({
+          p: 'rym',
+          match: ['done', 'Matched by search'],
+          id: 'release/album/mira-kestrel/harbour-lights',
+          when: '41 days ago',
+          state: status('waiting', 'Waiting until 14:20'),
+        }) +
+        source({
+          p: 'musicbrainz',
+          match: ['attention', 'Needs ID'],
+          id: 'No release linked',
+          when: 'Never',
+          actions: btn('Find match', { size: 'xs' }),
+        })
+
+      const sourcesBody = section(
+        '',
+        `<div class="ds-section-head"><span class="ds-muted">5 sources · 4 matched · 1 needs an ID</span><span class="ds-section-aside">${btn('Refresh all', { icon: 'refresh', size: 'xs' })}</span></div>${sourceList}`,
+        { flush: true },
+      )
+
+      const oldSources = `<div class="g-old"><div style="display:flex;gap:6px;margin-bottom:12px">${['Overview', 'Playlists', 'Tracks (11)', 'Listening', 'Sources', 'Edit'].map((t, i) => `<span class="g-old-pill" style="background:${i === 4 ? '#334155' : '#edf0f4'};color:${i === 4 ? '#fff' : '#171717'}">${t}</span>`).join('')}</div><div class="g-clip"><table class="g-old-table" style="min-width:470px"><thead><tr><th style="width:26px"></th><th>Provider</th><th>Identifier</th><th>Updated</th><th>Actions</th></tr></thead><tbody>${[
+        ['Spotify', '4xkT9dQm2LrV7aPz1c', '13/11/2026, 09:12:44'],
+        ['Last.fm', 'Harbour Lights', '16/11/2026, 06:00:02'],
+        ['Discogs', '14820377', '04/11/2026, 21:37:18'],
+        ['Rate Your Music', 'release/album/mira-kes…', '06/10/2026, 09:12:51'],
+        ['MusicBrainz', '', ''],
+      ]
+        .map(
+          (r) =>
+            `<tr><td><input type="checkbox" /></td><td><b>${r[0]}</b></td><td>${r[1]}</td><td>${r[2]}</td><td>${icon('pencil', { size: 'sm' })} ${icon('history', { size: 'sm' })}</td></tr>`,
+        )
+        .join(
+          '',
+        )}</tbody></table><div class="g-old-foot"><span>Refresh all eligible</span></div></div></div>`
+
+      /* Source row states */
+      const states = [
+        source({
+          p: 'spotify',
+          match: ['done', 'Matched by ID'],
+          id: '4xkT9dQm2LrV7aPz1c',
+          when: '3 days ago',
+        }),
+        source({
+          p: 'rym',
+          match: ['done', 'Matched by search'],
+          id: 'release/album/mira-kestrel/harbour-lights',
+          when: '41 days ago',
+        }),
+        source({
+          p: 'musicbrainz',
+          match: ['attention', 'Needs ID'],
+          id: 'No release linked',
+          when: 'Never',
+          actions: btn('Find match', { size: 'xs' }),
+        }),
+        source({
+          p: 'discogs',
+          match: ['attention', 'Two candidates'],
+          id: 'release/14820377 · release/9120044',
+          when: '12 days ago',
+          actions: btn('Choose', { size: 'xs' }),
+        }),
+        source({
+          p: 'rym',
+          match: ['done', 'Matched by search'],
+          id: 'release/album/mira-kestrel/harbour-lights',
+          when: '41 days ago',
+          state: status('waiting', 'Waiting until 14:20'),
+        }),
+        source({
+          p: 'discogs',
+          match: ['done', 'Matched by ID'],
+          id: 'release/14820377',
+          when: '12 days ago',
+          state: status('failed', 'Last fetch failed'),
+          actions: btn('Retry', { icon: 'refresh', size: 'xs' }),
+        }),
+        source({
+          p: 'tmdb',
+          match: ['never', 'Not used for albums'],
+          id: 'This provider covers films',
+          when: '',
+          actions: '<span></span>',
+        }),
+      ]
+      const editing = `<div class="ds-source"><div style="display:grid;grid-template-columns:14px 18px minmax(0,1fr) auto;gap:10px;align-items:center;min-height:48px">${icon('chevD')}${mark('musicbrainz')}<input class="ds-input" value="b7c1e2a4-5f0d-4a8e-9c31-0d6f2e7a1b44" aria-label="MusicBrainz release ID" /><span class="ds-actions">${btn('Save and refresh', { variant: 'primary' })}${btn('Cancel')}</span></div></div>`
+
+      /* Field provenance */
+      const edited = pill('Edited', { tone: 'outline', static: true })
+      const provenance = table(
+        [
+          {
+            h: 'Field',
+            w: 130,
+            c: (r) => `<span class="ds-muted">${r[0]}</span>`,
+          },
+          { h: 'Value', c: (r) => r[1] },
+          {
+            h: 'Source',
+            w: 170,
+            c: (r) => (r[2] === 'you' ? edited : D.provider(r[2])),
+          },
+          {
+            h: 'Updated',
+            w: 100,
+            c: (r) => `<span class="ds-muted">${r[3]}</span>`,
+          },
+          {
+            h: '',
+            w: 40,
+            end: true,
+            c: () =>
+              btn('', {
+                icon: 'pencil',
+                size: 'xs',
+                variant: 'ghost',
+                aria: 'Edit value',
+              }),
+          },
+        ],
+        [
+          ['Title', 'Harbour Lights', 'spotify', '3 days ago'],
+          ['Artists', D.link('Mira Kestrel'), 'spotify', '3 days ago'],
+          ['Release date', '2019-03-08', 'discogs', '12 days ago'],
+          ['Label', 'Tidewater', 'discogs', '12 days ago'],
+          ['Country', 'New Zealand', 'you', '2026-10-04'],
+          [
+            'Genres',
+            pills(['dream pop', 'shoegaze', 'ethereal wave'], {}),
+            'rym',
+            '41 days ago',
+          ],
+          [
+            'Descriptors',
+            pills(['nocturnal', 'lush', 'atmospheric'], { max: 3 }),
+            'rym',
+            '41 days ago',
+          ],
+          [
+            'Rating',
+            '<span class="ds-mono">3.71</span> <span class="ds-muted">from 4,218 votes</span>',
+            'rym',
+            '41 days ago',
+          ],
+          [
+            'Rating',
+            '<span class="ds-mono">4.4</span> <span class="ds-muted">from 312 votes</span>',
+            'discogs',
+            '12 days ago',
+          ],
+          ['Scrobbles', '412', 'lastfm', 'Today'],
+          ['Artwork', '640 × 640', 'spotify', '3 days ago'],
+        ],
+      )
+
+      /* Playlist coverage */
+      const playlistHead = D.detailHead({
+        item: PL[0],
+        kind: 'Playlist',
+        by: 'from <a href="#">Spotify</a>',
+        facts: ['42 tracks', '2h 51m', 'Updated 2026-11-09'],
+        actions: D.headActions({ open: 'Spotify' }),
+      })
+      const missing = [
+        [],
+        ['RYM rating'],
+        [],
+        ['RYM rating', 'MusicBrainz ID'],
+        ['MusicBrainz ID'],
+        ['Genres', 'RYM rating'],
+        [],
+        ['MusicBrainz ID'],
+      ]
+      const playlistBody =
+        section(
+          '',
+          stats([
+            ['42', 'tracks'],
+            ['2h 51m', 'length'],
+            ['1,284', 'scrobbles', { extra: D.sparkOf('playlist') }],
+          ]),
+          { flush: true },
+        ) +
+        section(
+          'Coverage',
+          D.coverage('Spotify', 42, 42) +
+            D.coverage('Last.fm match', 40, 42, { action: 'Review 2' }) +
+            D.coverage('Genres', 36, 42) +
+            D.coverage('RYM rating', 31, 42) +
+            D.coverage('MusicBrainz ID', 20, 42, { tone: 'attention' }),
+          {
+            note: '42 tracks and their albums',
+            aside: btn('Queue all missing', { size: 'xs' }),
+          },
+        ) +
+        section(
+          'Tracks',
+          `<div class="ds-table-wrap">${table(
+            [
+              D.checkCol((r, i) => missing[i].includes('RYM rating')),
+              { h: 'Title', c: (r) => D.idCell(r) },
+              { h: 'Artists', c: (r) => D.link(r.by) },
+              {
+                h: 'Missing',
+                c: (r, i) =>
+                  missing[i].length
+                    ? pills(missing[i], {
+                        pill: { tone: 'attention', static: true },
+                        max: 2,
+                      })
+                    : D.EMPTY,
+              },
+            ],
+            T.slice(0, 8),
+            {
+              row: (r, i) => ({
+                'aria-selected': missing[i].includes('RYM rating')
+                  ? 'true'
+                  : undefined,
+              }),
+            },
+          )}</div><div class="ds-selectbar"><span><b>3 selected</b> <span class="ds-muted">missing RYM rating</span></span><span class="ds-actions ds-toolbar-end">${btn('Fetch from Rate Your Music', { variant: 'primary' })}${btn('', { icon: 'x', aria: 'Clear selection' })}</span></div>`,
+          {
+            note: '42',
+            aside: D.seg(['All', 'Missing data'], 1, { label: 'Show' }),
+          },
+        )
+
+      const chartSpec = (set, where, o) =>
+        g.spec(`${D.chartBox(set, o)}<div class="g-cap">${where}</div>`)
+      const step = (title, text) =>
+        `<span>${title}<small>${text}</small></span>`
+      const arrow = icon('chevR')
+
+      D.page({
+        title: 'Sources and listening',
+        lede: 'Where each value comes from, how an item is matched to a provider, and how listening is charted. These screens cover the tasks of checking, fixing and filling in data.',
+        sections: [
+          {
+            id: 'sources',
+            title: 'Sources tab',
+            body:
+              `<p>Sources answers three questions about an item: which providers know it, how each was matched, and how fresh the data is. Each provider is one row that opens in place.</p>` +
+              `<div class="g-pair" data-split="narrow"><div>${g.label('Now')}${g.spec(oldSources)}${g.rules(
+                [
+                  'Timestamps to the second push the Actions column off the edge',
+                  'Nothing says how the item was matched, or that MusicBrainz is missing an identifier',
+                  'Edit and history open below the table as three more tables: snapshots, snapshot JSON, jobs',
+                  'A dark footer bar for one button; search appears only past three rows',
+                  "A track's Sources tab is a single sentence",
+                ],
+              )}</div><div>${g.label('Proposed', 'new')}${inspectorFrame(
+                D.inspector({
+                  crumbs: ['Albums', 'Harbour Lights'],
+                  head: albumHead,
+                  tabs: ['Overview', 'Listening', 'Sources', 'Edit'],
+                  tab: 2,
+                  body: sourcesBody,
+                }),
+                880,
+              )}</div></div>` +
+              g.rules([
+                '<b>Row, closed:</b> provider (a link to its page), match state, identifier, time since the last fetch, and the queue state when the provider is waiting or failed.',
+                '<b>Row, open:</b> what this provider supplies, one history list that merges snapshots and jobs, and a link to the raw payload. Each history line links to its job.',
+                '<b>Scrobble names live under Last.fm.</b> Linked names and similar unlinked names are one table with Link and Unlink, each with its scrobble count so the effect of a change is clear.',
+                '<b>The identifier is edited in the row.</b> Saving always refreshes from the provider, for every resource. Today saving an artist identifier refreshes and saving an album or film identifier does not.',
+                '<b>Refresh all</b> is an ordinary button in the summary line. The same component serves albums, tracks, artists, films, playlists and channels.',
+              ]),
+          },
+          {
+            id: 'source-states',
+            title: 'Source row states',
+            body:
+              g.spec(states.join('') + editing) +
+              g.rules([
+                '<b>Match states:</b> Matched by ID, Matched by name or search, Needs ID, Two candidates, Not used for this resource.',
+                '<b>The action follows the state:</b> Refresh and Open when matched, Find match when an identifier is missing, Choose when the provider returned more than one, Retry after a failure.',
+                '<b>Waiting and Failed</b> use the same status words as the Jobs page and link to the provider.',
+              ]),
+          },
+          {
+            id: 'provenance',
+            title: 'Where each value comes from',
+            body:
+              `<p>All fields, opened from Details in any overview, lists every stored value with the provider that supplied it. ${g.tag('api')}</p>` +
+              g.spec(`<div class="ds-table-wrap">${provenance}</div>`, {
+                flush: true,
+              }) +
+              g.rules([
+                '<b>One row per value.</b> Where two providers supply the same field, both are listed and the one in use comes first.',
+                '<b>An edited value</b> is marked Edited and wins over providers until it is cleared. This is what the Edit tab does today, shown next to what it overrides.',
+                '<b>Needs API:</b> tags already record their source; other fields would need the response to say which provider each value came from.',
+              ]),
+          },
+          {
+            id: 'listening',
+            title: 'Listening chart, everywhere',
+            body:
+              `<p>The same component in every place a count over time is shown. Use the range buttons and hover any chart.</p>` +
+              `<div class="g-cols">${chartSpec('album', 'Album · Listening tab and page', { range: 'All' })}${chartSpec('artist', 'Artist · Listening tab (new)', { range: '5y' })}${chartSpec('playlist', 'Playlist · Listening tab (new)', { range: '1y' })}${chartSpec('recent', 'An album with 14 scrobbles in its first 22 days', { ranges: ['30d', 'All'], range: 'All' })}${chartSpec('requests', 'Provider · API requests', { ranges: ['30d', '90d'], range: '30d', unit: 'requests' })}${chartSpec('jobs', 'Jobs · completed', { ranges: ['30d', '90d'], range: '90d', unit: 'jobs' })}</div>` +
+              g.spec(
+                g.doc(
+                  ['Situation', 'What the chart does'],
+                  [
+                    [
+                      'Plenty of plays',
+                      'Uses the finest of day, week, month, quarter or year that averages three or more per point and keeps points at least 8px apart.',
+                    ],
+                    [
+                      'Few plays over years',
+                      'Falls back to the coarsest bucket that still gives ten points, so the line has a shape.',
+                    ],
+                    [
+                      'Added this month',
+                      'Pads the range to 30 days and plots days. The API needs to return daily buckets for this.',
+                    ],
+                    [
+                      'No plays at all',
+                      'Shows the empty state in place of the chart: No scrobbles yet.',
+                    ],
+                    [
+                      'Current period',
+                      'Drawn dotted and labelled "so far" in the tooltip.',
+                    ],
+                  ],
+                ),
+                { flush: true },
+              ),
+          },
+          {
+            id: 'coverage',
+            title: 'Filling in missing data',
+            body:
+              `<p>A playlist, an artist or a whole library can show how complete its data is and queue what is missing, without leaving the item. ${g.tag('api')}</p>` +
+              `<div class="g-pair" data-split="narrow"><div>${g.spec(
+                g.rules([
+                  '<b>Coverage</b> counts, for the tracks in this playlist and their albums, how many have each source or field.',
+                  '<b>Queue</b> creates the metadata jobs for the missing ones, after the same review step the Metadata page uses.',
+                  '<b>Missing data</b> filters the track list to rows with gaps and names the gap in each row.',
+                  '<b>Selecting rows</b> offers the provider that would fill the selected gap.',
+                  '<b>Needs API:</b> a coverage summary per set. The Metadata page already computes freshness per provider for films and artists.',
+                ]),
+              )}<div class="g-flowline" style="margin-top:12px">${step('Playlist', 'Late shift')}${arrow}${step('Coverage', '11 without a rating')}${arrow}${step('Queue', 'review, confirm')}${arrow}${step('Jobs', 'batch of 11')}${arrow}${step('Playlist', 'coverage updates')}</div></div><div>${inspectorFrame(
+                D.inspector({
+                  crumbs: ['Playlists', 'Late shift'],
+                  head: playlistHead,
+                  tabs: ['Overview', 'Listening', 'Sources'],
+                  body: playlistBody,
+                }),
+                900,
+              )}</div></div>`,
+          },
+          {
+            id: 'trace',
+            title: 'From a value to its source and back',
+            body:
+              `<p>Every step is a link in both directions. Today the provider name on an item and on a job is plain text, so the trail stops there.</p>` +
+              `<div class="g-flowline">${step('Item', 'Overview · All fields')}${arrow}${step('Source row', 'match, identifier, history')}${arrow}${step('Provider page', 'health, queue, limits')}${arrow}${step('Job', 'request, response, log')}${arrow}${step('Item', 'what the job changed')}</div>` +
+              g.rules([
+                '<b>Item to provider:</b> the provider name in a source row opens the provider page.',
+                '<b>Provider to jobs:</b> the provider page lists its jobs with the shared table.',
+                '<b>Job to item:</b> the Target column and the job header link to the item, on its Sources tab.',
+                "<b>Job to provider:</b> the Provider column is a link, and shows the provider's state when it is waiting.",
+              ]),
+          },
+        ],
+      })
+    </script>
+  </body>
+</html>

@@ -1,0 +1,509 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Browse screens · Media Manager design library</title>
+    <link rel="icon" href="data:," />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="assets/tokens.css" />
+    <link rel="stylesheet" href="assets/components.css" />
+    <link rel="stylesheet" href="assets/gallery.css" />
+  </head>
+  <body class="ds g" data-page="screens-browse.html">
+    <script src="assets/ds.js"></script>
+    <script>
+      const D = DS
+      const { g, btn, pills, rating, table, card, row, icon, status } = D
+      const {
+        ALBUMS: A,
+        TRACKS: T,
+        ARTISTS: AR,
+        FILMS: F,
+        VIDEOS: V,
+        PLAYLISTS: PL,
+      } = D.data
+
+      const albumCard = (a, o = {}) =>
+        card(a, {
+          meta: [`<span>${a.year}</span>`, rating('RYM', a.rym)],
+          ...o,
+        })
+      const filmCard = (f, o = {}) =>
+        card(f, {
+          meta: [`<span>${f.year}</span>`, rating('IMDb', f.imdb)],
+          ...o,
+        })
+      const artistCard = (a) =>
+        card(a, {
+          meta: [
+            `<span>${a.albums} albums</span>`,
+            `<span>${a.plays} scrobbles</span>`,
+          ],
+        })
+      const albumRow = (a, o = {}) =>
+        row(a, {
+          by: `${a.by} · ${a.year}`,
+          meta: [
+            `<span class="ds-w-rating">${rating('RYM', a.rym)}</span>`,
+            `<span class="ds-w-num">${a.plays}</span>`,
+            `<span class="ds-w-date">${a.added}</span>`,
+          ],
+          ...o,
+        })
+      const albumListHead = D.listHead([
+        'Album',
+        'Tags',
+        '<span class="ds-w-rating">RYM</span>',
+        '<span class="ds-w-num">Scrobbles</span>',
+        '<span class="ds-w-date">Added</span>',
+      ])
+      const withSelect = (cols, checked) => [
+        D.checkCol(checked, { sticky: true }),
+        { ...cols[0], sticky: 36, edge: true },
+        ...cols.slice(1),
+      ]
+      const albumSort = [
+        'Added',
+        'Released',
+        'Scrobbles',
+        'RYM rating',
+        'Title',
+      ]
+      const panel = (html) => `<div class="g-panel">${html}</div>`
+      const fixed = (html, width) =>
+        `<div style="width:${width}px">${html}</div>`
+
+      const oldCard = `<div class="g-old g-old-card"><div class="g-old-art">${D.art(0)}<span class="g-old-added">Added 02/10/2026</span><span class="g-old-btns"><i>${icon('play', { size: 'sm' })}</i><i>${icon('queue', { size: 'sm' })}</i></span><span class="g-old-tags"><b>dream pop</b><b>shoegaze</b><b>ethereal</b><b>nocturnal</b></span><span class="g-old-strip"><u style="background:#1db954"></u><u style="background:#d51007"></u>3.71<u style="background:#2a6fdb"></u>4.4<u style="background:#333"></u></span></div><div class="g-old-title">Harbour Lights <u style="background:#1db954;border-radius:50%"></u></div><div class="g-old-by">Mira Kestrel · 2019</div></div>`
+
+      const oldRow = `<div class="g-old g-old-row">${D.thumb(A[0])}<div><div style="display:flex;align-items:center;gap:8px">${icon('play', { size: 'sm' })}${icon('queue', { size: 'sm' })}<b>Harbour Lights</b><span class="g-old-pill" style="background:#edf0f4">Added 02/10/2026</span></div><div class="g-old-by">Mira Kestrel · 2019</div><div style="display:flex;align-items:center;gap:6px;margin-top:4px"><u style="background:#d51007"></u>3.71<u style="background:#2a6fdb"></u>4.4<span class="g-old-pill" style="background:#edf0f4">dream pop</span><span class="g-old-pill" style="background:#edf0f4">shoegaze</span><span class="g-old-pill" style="background:#edf0f4">ethereal</span></div></div></div>`
+
+      const gridScreen = D.shell({
+        library: 'Albums',
+        nav: D.libraryNav('Browse'),
+        chips: [
+          ['dream pop', 'any'],
+          ['ambient', 'any'],
+          ['2012–2025', 'required'],
+        ],
+        main:
+          D.toolbar({
+            placeholder: 'Search albums',
+            sort: albumSort,
+            filterCount: 2,
+            view: 0,
+            count: '12 of 128 albums',
+          }) +
+          `<div class="ds-main-scroll"><div class="ds-grid">${A.map((a, i) => albumCard(a, { state: i === 1 ? 'hover' : i === 0 ? 'playing' : undefined, selected: i === 4 })).join('')}</div></div>`,
+      })
+
+      const phoneBar = `<div class="ds-toolbar">${D.search('Search albums', { ai: true })}${btn('', { icon: 'filter', aria: 'Filters' })}${btn('', { icon: 'grid', aria: 'View' })}</div>`
+      const phoneNow = `<div class="g-phone-now">${D.artBox(A[0])}<div class="ds-row-main"><span class="ds-row-title">Sodium Glow</span><span class="ds-row-by">Mira Kestrel · Kitchen</span></div><span class="ds-actions ds-toolbar-end">${btn('', { icon: 'pause', variant: 'ghost', aria: 'Pause' })}${btn('', { icon: 'next', variant: 'ghost', aria: 'Next' })}</span></div>`
+      const phoneTabs = `<div class="g-phone-tabs">${[
+        ['disc', 'Albums', true],
+        ['music', 'Tracks'],
+        ['user', 'Artists'],
+        ['film', 'Films'],
+        ['more', 'More'],
+      ]
+        .map(
+          ([ic, label, on]) =>
+            `<span${on ? ' aria-current="page"' : ''}>${icon(ic)}${label}</span>`,
+        )
+        .join('')}</div>`
+      const phone = (body) =>
+        `<div class="g-phone">${body}${phoneNow}${phoneTabs}</div>`
+
+      D.page({
+        title: 'Browse screens',
+        lede: 'How each resource appears in Grid, List and Table, rebuilt from the shared components. The first section sets the current album card beside the proposed one.',
+        sections: [
+          {
+            id: 'card',
+            title: 'Album card',
+            body:
+              `<p>The current card puts about fifteen elements on a 190px tile, most of them on top of the artwork, in four different surface treatments. The proposal moves everything off the artwork and keeps three lines of text.</p>` +
+              `<div class="g-pair" data-split="narrow"><div>${g.label('Now')}${g.spec(
+                oldCard +
+                  g.rules([
+                    'Dark Added pill and two dark circular buttons over the top of the artwork',
+                    'Tag pills over the artwork, cut off at the right edge',
+                    'A translucent strip with four coloured provider icons; scores follow only two of them',
+                    'A provider icon after the title, then artist and year',
+                  ]),
+              )}</div><div>${g.label('Proposed', 'new')}${g.spec(
+                g.flow(
+                  [
+                    g.item(fixed(albumCard(A[0]), 164), 'at rest'),
+                    g.item(
+                      fixed(albumCard(A[0], { state: 'hover' }), 164),
+                      'hover',
+                    ),
+                    g.item(
+                      fixed(
+                        card(A[0], {
+                          meta: [
+                            `<span>${A[0].year}</span>`,
+                            `<span>Added ${A[0].added}</span>`,
+                          ],
+                        }),
+                        164,
+                      ),
+                      'sorted by Added',
+                    ),
+                    g.item(
+                      fixed(albumCard(A[0], { tags: true }), 164),
+                      'tags on (View options)',
+                    ),
+                  ],
+                  { top: true },
+                ),
+              )}${g.spec(
+                g.doc(
+                  ['On the card today', 'Where it goes'],
+                  [
+                    [
+                      'Added date pill',
+                      'The right-hand meta value, when the grid is sorted by Added. Otherwise in List, Table and Details.',
+                    ],
+                    [
+                      'Play and Queue circles',
+                      'One pill on the artwork, shown on hover, focus and touch.',
+                    ],
+                    [
+                      'Tag pills over the artwork',
+                      'Off by default. View options adds one line: two pills and a count. All tags are in List, Table and the overview.',
+                    ],
+                    [
+                      'Provider icons and scores',
+                      'One headline rating as text. Every rating is in Table and in the overview. Which providers have data is in Sources.',
+                    ],
+                    [
+                      'Provider icon after the title',
+                      'Open in Spotify, in the detail header and the More menu.',
+                    ],
+                  ],
+                ),
+                { flush: true },
+              )}</div></div>`,
+          },
+          {
+            id: 'grid',
+            title: 'Albums · Grid',
+            body:
+              `<p>Wider gaps between rows than between columns, so each title reads with its own artwork. The first card is playing, the second is under the pointer and the fifth is selected.</p>` +
+              `<div class="g-scroll"><div class="g-screen" style="--g-h:720px">${gridScreen}</div></div>` +
+              g.rules([
+                '<b>Grid spacing:</b> 16px between columns, 20px between rows, 12px panel gutter on both sides. Columns fill the width; the last column is never tight against the edge.',
+                '<b>The last row is never covered.</b> Playback messages live in the dock, and the scroll area ends above it.',
+                '<b>Active filters</b> stay in the rail as removable pills, coloured by mode: any, required, excluded.',
+                '<b>Count</b> reads <code>12 of 128 albums</code> when filtered.',
+              ]),
+          },
+          {
+            id: 'list-table',
+            title: 'Albums · List and Table',
+            body:
+              `<div class="g-pair" data-split="narrow"><div>${g.label('Now · list row')}${g.spec(
+                oldRow +
+                  g.rules([
+                    'Three lines; ratings and tags run together on the third',
+                    'Play icons sit before the title here, over the artwork in Grid, and at the far right in the Tracks list',
+                    'Nothing lines up from row to row, and the right 40% is empty',
+                  ]),
+              )}</div><div>${g.label('Proposed · list', 'new')}${panel(
+                `<div class="ds-list">${albumListHead}${A.slice(0, 5)
+                  .map((a, i) =>
+                    albumRow(a, {
+                      state: i === 1 ? 'hover' : undefined,
+                      maxTags: 2,
+                    }),
+                  )
+                  .join('')}</div>`,
+              )}</div></div>` +
+              g.sub('Proposed · table') +
+              panel(
+                D.toolbar({
+                  placeholder: 'Search albums',
+                  sort: albumSort,
+                  view: 2,
+                  columns: true,
+                  count: '128 albums',
+                }) +
+                  `<div class="ds-table-wrap">${table(
+                    withSelect(D.COLS.albums, (r, i) => i === 2),
+                    A.slice(0, 8),
+                    {
+                      row: (r, i) => ({
+                        'aria-selected': i === 2 ? 'true' : undefined,
+                        'data-state': i === 4 ? 'hover' : undefined,
+                      }),
+                    },
+                  )}</div>`,
+              ) +
+              g.rules([
+                '<b>Table gains a thumbnail</b> in the title cell, so a row can be recognised without reading it.',
+                '<b>RYM appears once.</b> Today it is a column and also part of the Providers column, which is cut off at the panel edge. The Providers column is removed; match state belongs in Sources and in the Metadata page.',
+                '<b>Tags are the last column</b> and absorb spare width. Two pills and a count, never a cut pill.',
+                '<b>Scrolling sideways</b> keeps the checkbox and title in place.',
+              ]),
+          },
+          {
+            id: 'columns',
+            title: 'Default columns for every resource',
+            body:
+              `<p>One order everywhere: identity, creator, parent, properties, dates, counts, ratings, pills. A person who learns one table has learned them all.</p>` +
+              g.spec(
+                g.doc(
+                  ['Resource', 'Now', 'Proposed'],
+                  [
+                    [
+                      'Albums',
+                      'Title · Artists · Tags · Released · Added · Scrobbles · RYM rating · Providers',
+                      'Title · Artists · Released · Added · Tracks · Scrobbles · RYM · Tags',
+                    ],
+                    [
+                      'Tracks',
+                      'Artwork and playback · Title · Artists · Album · Playlists · Tags · Added · Duration · Scrobbles',
+                      'Title · Artists · Album · Duration · Added · Scrobbles · Playlists · Tags',
+                    ],
+                    [
+                      'Artists',
+                      'Artist · Tags · Country · Added · Albums · Tracks · Playlists',
+                      'Artist · Country · Added · Albums · Tracks · Scrobbles · Tags',
+                    ],
+                    [
+                      'Films',
+                      'Title · Directors · Tags · Source · Watched · Released · Added · Providers',
+                      'Title · Directors · Released · Runtime · Watched · Added · IMDb · Metacritic · RT · Tags',
+                    ],
+                    [
+                      'Videos',
+                      'Card grid only',
+                      'Title · Channel · Published · Duration · Watched',
+                    ],
+                    [
+                      'Playlists',
+                      'Playlist · three timestamp columns',
+                      'Playlist · Source · Tracks · Length · Updated · Sync',
+                    ],
+                  ],
+                ),
+                { flush: true },
+              ) +
+              g.rules([
+                '<b>The column picker lists fields in this same order</b> and lets columns be dragged to a new position. Today columns follow the field-definition order and cannot be moved.',
+                '<b>Films:</b> Description leaves the head of the sort and column lists. Ratings become separate sortable columns in place of one Providers cell.',
+                '<b>A new sort starts descending</b> for dates, counts and ratings and ascending for text, on every page.',
+              ]),
+          },
+          {
+            id: 'tracks',
+            title: 'Tracks',
+            body:
+              panel(
+                D.toolbar({
+                  placeholder: 'Search tracks',
+                  sort: ['Added', 'Scrobbles', 'Title', 'Duration'],
+                  view: 2,
+                  columns: true,
+                  count: '1,024 tracks',
+                }) +
+                  `<div class="ds-table-wrap">${table(
+                    withSelect(D.COLS.tracks, () => false),
+                    T.slice(0, 8),
+                    {
+                      row: (r, i) => ({
+                        'data-state':
+                          i === 1 ? 'playing' : i === 3 ? 'hover' : undefined,
+                      }),
+                    },
+                  )}</div>`,
+              ) +
+              g.rules([
+                '<b>The 96px Artwork and playback column is gone.</b> Artwork is the 24px thumbnail in the title cell and the play pair follows the title.',
+                '<b>Album and playlist names are plain links.</b> The extra play icons inside those cells are removed.',
+                '<b>No provider badge on every row.</b> A track without a Last.fm match shows in the Metadata page and in its Sources tab.',
+              ]),
+          },
+          {
+            id: 'artists',
+            title: 'Artists',
+            body:
+              `<div class="g-cols">${panel(
+                D.toolbar({
+                  placeholder: 'Search artists',
+                  sort: ['Scrobbles', 'Added', 'Name'],
+                  view: 0,
+                  filters: false,
+                  count: '256 artists',
+                }) +
+                  `<div class="ds-grid" style="--ds-card-min:120px">${AR.map(artistCard).join('')}</div>`,
+              )}${panel(
+                `<div class="ds-list">${D.listHead(['Artist', 'Tags', '<span class="ds-w-num">Albums</span>', '<span class="ds-w-num">Scrobbles</span>', '<span class="ds-w-spark">12 months</span>'])}${AR.slice(
+                  0,
+                  6,
+                )
+                  .map((a, i) =>
+                    row(a, {
+                      by: a.country,
+                      maxTags: 1,
+                      meta: [
+                        `<span class="ds-w-num">${a.albums}</span>`,
+                        `<span class="ds-w-num">${a.plays}</span>`,
+                        `<span class="ds-w-spark">${D.sparkSeed(i + 3)}</span>`,
+                      ],
+                    }),
+                  )
+                  .join('')}</div>`,
+              )}</div>` +
+              g.rules([
+                '<b>Round artwork</b> marks a person or group at a glance. Artists without an image get the neutral placeholder, not a grey tile with the name repeated.',
+                '<b>List rows are 48px,</b> down from 68px, and carry a 12-month listening sparkline.',
+                '<b>Artists is a primary Browse page</b> like the others: Grid, List, Table, the full search with field filters, and the same toolbar.',
+              ]),
+          },
+          {
+            id: 'films',
+            title: 'Films',
+            body:
+              `<div class="g-stack">${panel(
+                D.toolbar({
+                  placeholder: 'Search films',
+                  sort: ['Added', 'Released', 'IMDb'],
+                  view: 0,
+                  filters: false,
+                  count: '512 films',
+                }) +
+                  `<div class="ds-grid" style="--ds-card-min:118px">${F.map((f, i) => filmCard(f, { state: i === 1 ? 'hover' : undefined })).join('')}</div>`,
+              )}${panel(
+                `<div class="ds-table-wrap">${table(
+                  [
+                    { ...D.COLS.films[0], sticky: 0, edge: true },
+                    ...D.COLS.films.slice(1),
+                  ],
+                  F,
+                )}</div>`,
+              )}</div>` +
+              g.rules([
+                '<b>One rating on the poster card,</b> as text: the one the grid is sorted by, IMDb by default. The six or seven coloured badges per card move to Table and the overview.',
+                '<b>Tags are pills in the table,</b> as they are for music. Today they are comma-separated text here.',
+                '<b>Watched</b> is a date or an empty value. A film can be marked watched from the row menu and the detail header.',
+              ]),
+          },
+          {
+            id: 'videos',
+            title: 'Subscriptions and playlists',
+            body:
+              `<div class="g-cols">${panel(
+                D.toolbar({
+                  placeholder: 'Search videos',
+                  sort: ['Published', 'Channel'],
+                  view: 0,
+                  filters: false,
+                  count: '64 videos',
+                }) +
+                  `<div class="ds-grid" style="--ds-card-min:200px">${V.map((v) => card(v, { meta: [`<span>${v.published}</span>`], badge: v.duration })).join('')}</div>`,
+              )}${panel(
+                D.toolbar({
+                  placeholder: 'Search playlists',
+                  ai: false,
+                  filters: false,
+                  columns: true,
+                  count: '3 playlists',
+                }) +
+                  `<div class="ds-table-wrap">${table(
+                    [
+                      { h: 'Playlist', sort: '', c: (r) => D.idCell(r) },
+                      { h: 'Source', c: (r) => D.provider('spotify') },
+                      { h: 'Tracks', sort: '', end: true, c: (r) => r.tracks },
+                      {
+                        h: 'Length',
+                        sort: '',
+                        end: true,
+                        c: (r) => r.duration,
+                      },
+                      { h: 'Updated', sort: 'descending', c: (r) => r.updated },
+                      {
+                        h: 'Sync',
+                        c: (r, i) =>
+                          i === 2 ? status('failed') : status('done'),
+                      },
+                    ],
+                    PL,
+                  )}</div>`,
+              )}</div>` +
+              g.rules([
+                '<b>Playlists, Tags, People, Channels and Collections</b> use the same toolbar and the same table. Their items open in the shared drawer, including tags, which use a separate dialog today.',
+                '<b>One Updated date and one Sync status</b> replace the three timestamp columns in Playlists.',
+              ]),
+          },
+          {
+            id: 'phone',
+            title: 'Phone',
+            body:
+              `<p>At 375px the album grid currently shows five columns of thumbnails with the play circles covering most of each one. The proposal uses two columns, a persistent mini player and bottom navigation.</p>` +
+              g.flow(
+                [
+                  g.item(
+                    phone(
+                      `${phoneBar}<div class="g-phone-scroll" data-touch><div class="ds-grid">${A.slice(
+                        0,
+                        6,
+                      )
+                        .map((a) => albumCard(a))
+                        .join('')}</div></div>`,
+                    ),
+                    'Grid: two columns, play pair always visible',
+                  ),
+                  g.item(
+                    phone(
+                      `${phoneBar}<div class="g-phone-scroll" data-touch><div class="ds-list" data-compact>${A.slice(
+                        0,
+                        11,
+                      )
+                        .map((a) => albumRow(a))
+                        .join('')}</div></div>`,
+                    ),
+                    'List: artwork, two lines, play pair',
+                  ),
+                  g.item(
+                    phone(
+                      `<div class="ds-inspector-bar">${btn('', { icon: 'chevL', variant: 'ghost', aria: 'Back' })}<div class="ds-crumbs"><b>Harbour Lights</b></div>${btn('', { icon: 'more', variant: 'ghost', aria: 'More actions' })}</div><div class="g-phone-scroll" data-touch style="padding:12px">${D.detailHead(
+                        {
+                          item: A[0],
+                          kind: 'Album',
+                          size: 'sm',
+                          by: 'by <a href="#">Mira Kestrel</a>',
+                          facts: ['2019', '11 tracks', '42:18'],
+                          actions: D.play('header'),
+                        },
+                      )}${D.tabs(['Overview', 'Listening', 'Sources'], 0).replace('class="ds-tabs"', 'class="ds-tabs" style="margin-top:12px"')}${D.section(
+                        'Tracks',
+                        table(
+                          D.COLS.albumTracks.slice(0, 3),
+                          D.data.ALBUM_TRACKS.slice(0, 7),
+                        ),
+                        { note: '11 · 42:18', flush: true },
+                      )}</div>`,
+                    ),
+                    'Details: the same header, tabs and track table as the drawer',
+                  ),
+                ],
+                { top: true },
+              ) +
+              g.rules([
+                '<b>Controls are 40px tall</b> on touch; type sizes do not change.',
+                '<b>Tables keep the title column in place</b> and scroll the rest sideways, as on desktop.',
+              ]),
+          },
+        ],
+      })
+    </script>
+  </body>
+</html>

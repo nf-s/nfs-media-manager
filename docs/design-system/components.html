@@ -1,0 +1,736 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Components · Media Manager design library</title>
+    <link rel="icon" href="data:," />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="assets/tokens.css" />
+    <link rel="stylesheet" href="assets/components.css" />
+    <link rel="stylesheet" href="assets/gallery.css" />
+  </head>
+  <body class="ds g" data-page="components.html">
+    <script src="assets/ds.js"></script>
+    <script>
+      const D = DS
+      const {
+        g,
+        btn,
+        play,
+        pill,
+        pills,
+        count,
+        status,
+        mark,
+        rating,
+        tabs,
+        seg,
+        table,
+        card,
+        row,
+        section,
+        icon,
+      } = D
+      const A = D.data.ALBUMS
+      const F = D.data.FILMS
+      const albumMeta = (a) => [`<span>${a.year}</span>`, rating('RYM', a.rym)]
+      const rowMeta = (a) => [
+        `<span class="ds-w-rating">${rating('RYM', a.rym)}</span>`,
+        `<span class="ds-w-num">${a.plays}</span>`,
+        `<span class="ds-w-date">${a.added}</span>`,
+      ]
+      const fixed = (html, width) =>
+        `<div style="width:${width}px">${html}</div>`
+
+      D.page({
+        title: 'Components',
+        lede: 'Each component below replaces several variants in the app today. Class names are prefixed <code>ds-</code>; the markup comes from the template functions in <code>assets/ds.js</code>, which a React port should reproduce.',
+        sections: [
+          {
+            id: 'button',
+            title: 'Button',
+            body:
+              g.spec(
+                g.flow([
+                  g.item(
+                    btn('Play', {
+                      icon: 'play',
+                      variant: 'primary',
+                      size: 'md',
+                    }),
+                    'primary · 32',
+                  ),
+                  g.item(
+                    btn('Queue', { icon: 'queue', size: 'md' }),
+                    'default · 32',
+                  ),
+                  g.item(btn('Filters', { icon: 'filter' }), 'default · 28'),
+                  g.item(
+                    btn('Open page', { icon: 'expand', variant: 'ghost' }),
+                    'ghost · 28',
+                  ),
+                  g.item(
+                    btn('Retry', { icon: 'refresh', size: 'xs' }),
+                    'default · 24',
+                  ),
+                  g.item(btn('Disconnect', { variant: 'danger' }), 'danger'),
+                  g.item(btn('View all', { variant: 'link' }), 'link'),
+                  g.item(
+                    btn('', { icon: 'more', aria: 'More actions' }),
+                    'icon',
+                  ),
+                  g.item(
+                    btn('', { icon: 'x', variant: 'ghost', aria: 'Close' }),
+                    'icon ghost',
+                  ),
+                  g.item(
+                    btn('List', { icon: 'list', pressed: true }),
+                    'pressed',
+                  ),
+                  g.item(
+                    btn('Refresh', { icon: 'refresh', disabled: true }),
+                    'disabled',
+                  ),
+                ]),
+              ) +
+              g.rules([
+                '<b>Three heights.</b> 24 inside table rows, 28 in toolbars and panels, 32 in forms and detail headers. Icon buttons are square at the same heights.',
+                '<b>One primary per view.</b> Everything else is default or ghost. Slate fill is not used for anything except the primary action, the play toggle in the dock and the selection bar.',
+                '<b>Danger</b> is for actions that remove or disconnect. Each one asks for confirmation in a popover anchored to the button.',
+                '<b>Fixed wording.</b> Retry, Refresh, Cancel, Close and Open page keep the same label, icon and size wherever they appear.',
+              ]) +
+              g.note(
+                'Replaces',
+                'the shared Button plus about as many hand-styled buttons, in nine heights from 20 to 40px. Retry exists in six styles and Close at four sizes.',
+              ),
+          },
+          {
+            id: 'play',
+            title: 'Play control',
+            body:
+              `<p>Play and Add to queue are one control. Play is always first and Queue always follows it. Artwork and titles open the item; only this control plays.</p>` +
+              g.spec(
+                g.flow(
+                  [
+                    g.item(
+                      fixed(card(A[0], { meta: albumMeta(A[0]) }), 148),
+                      'tile · at rest',
+                    ),
+                    g.item(
+                      fixed(
+                        card(A[1], { meta: albumMeta(A[1]), state: 'hover' }),
+                        148,
+                      ),
+                      'tile · hover, focus, touch',
+                    ),
+                    g.item(
+                      fixed(
+                        card(A[2], { meta: albumMeta(A[2]), state: 'playing' }),
+                        148,
+                      ),
+                      'tile · playing',
+                    ),
+                    g.item(
+                      fixed(
+                        table(
+                          D.COLS.albumTracks.slice(0, 3),
+                          D.data.ALBUM_TRACKS.slice(0, 4),
+                          {
+                            row: (r, i) => ({
+                              'data-state':
+                                i === 1
+                                  ? 'playing'
+                                  : i === 2
+                                    ? 'hover'
+                                    : undefined,
+                            }),
+                          },
+                        ),
+                        330,
+                      ),
+                      'row · at rest, playing, hover',
+                    ),
+                    g.item(
+                      `<div class="ds-actions">${play('header')}</div>`,
+                      'header',
+                    ),
+                  ],
+                  { top: true },
+                ),
+              ) +
+              g.rules([
+                '<b>Tile.</b> One white pill at the bottom right of the artwork. Hidden at rest on pointer devices, shown on hover and keyboard focus, always shown on touch and while the item is playing.',
+                '<b>Row.</b> The same pair at the end of the title cell, in lists and tables alike. The space is reserved, so nothing moves when it appears.',
+                '<b>Header.</b> Labelled buttons: Play is the primary action, Queue sits beside it.',
+                '<b>No inline play icons</b> beside album or playlist names inside another row. Follow the link, then play.',
+                '<b>Playing state.</b> The pair stays visible and Play becomes Pause.',
+              ]) +
+              g.note(
+                'Replaces',
+                'nine play controls in four positions: dark circles over artwork, bare icons before the title, a dedicated playback column, and trailing icons at the far end of the row.',
+              ),
+          },
+          {
+            id: 'pill',
+            title: 'Pill, count and provider mark',
+            body:
+              g.spec(
+                g.flow([
+                  g.item(pill('dream pop'), 'tag · 20'),
+                  g.item(pill('dream pop', { size: 'md' }), 'tag · 24'),
+                  g.item(
+                    pill('shoegaze', { mode: 'any', remove: true }),
+                    'filter · any',
+                  ),
+                  g.item(
+                    pill('ethereal', { mode: 'required', remove: true }),
+                    'filter · required',
+                  ),
+                  g.item(
+                    pill('live', { mode: 'exclude', remove: true }),
+                    'filter · excluded',
+                  ),
+                  g.item(
+                    pill('Needs ID', { tone: 'attention', static: true }),
+                    'attention',
+                  ),
+                  g.item(
+                    pill('Metadata', { tone: 'outline', static: true }),
+                    'outline · role',
+                  ),
+                  g.item(
+                    `<span class="ds-actions">${count(12)}${count(3, 'attention')}${count(1, 'danger')}</span>`,
+                    'count',
+                  ),
+                  g.item(
+                    `<span class="ds-actions">${mark('spotify')}${mark('lastfm')}${mark('rym')}</span>`,
+                    'provider mark',
+                  ),
+                  g.item(
+                    fixed(pills(A[0].tags, { max: 2 }), 170),
+                    'overflow: what fits, then +N',
+                  ),
+                ]),
+              ) +
+              g.rules([
+                '<b>One shape.</b> Fully rounded, 20px in rows and cards, 24px in detail sections and filter rails.',
+                '<b>A pill is never cut off.</b> A row of pills shows the ones that fit and a <code>+N</code> count. The full set is in the detail panel.',
+                '<b>Clicking a tag filters</b> the current library by it, everywhere. Where a tag comes from is shown in Sources, not beside each pill.',
+                '<b>Provider marks</b> are neutral in rows, tables and cards. The placeholders here stand in for single-colour glyphs; brand colour is not used in repeated content.',
+              ]) +
+              g.note(
+                'Replaces',
+                'about ten pill styles, tags as pills in some tables and comma text in others, and three different click behaviours.',
+              ),
+          },
+          {
+            id: 'status',
+            title: 'Status',
+            body:
+              g.spec(
+                g.flow([
+                  status('queued'),
+                  status('running'),
+                  status('waiting', 'Waiting until 14:20'),
+                  status('done'),
+                  status('failed'),
+                  status('cancelled'),
+                  status('paused'),
+                  status('attention', 'Needs key'),
+                  status('never'),
+                ]),
+              ) +
+              g.rules([
+                '<b>One vocabulary</b> for jobs, imports, syncs, provider queues and metadata freshness: Queued, Running, Waiting, Done, Failed, Cancelled, Paused, Never.',
+                '<b>Colour means state.</b> Amber is in progress or needs attention, red is failed, slate is fine. Nothing is green.',
+                '<b>Waiting always says why</b> or until when: a provider cooldown, a rate limit, missing credentials.',
+              ]) +
+              g.spec(
+                g.doc(
+                  ['Today', 'Becomes'],
+                  [
+                    [
+                      'succeeded · Complete · Imported · Listed',
+                      status('done'),
+                    ],
+                    [
+                      'Needs credentials · (needs credentials) · Credentials required',
+                      `<span class="ds-actions">${status('attention', 'Needs sign-in')}${status('attention', 'Needs key')}</span>`,
+                    ],
+                    ['Never · Not scraped', status('never')],
+                    [
+                      'Cooldown · Halted · Rate limited',
+                      status('waiting', 'Waiting until 14:20'),
+                    ],
+                  ],
+                ),
+                { flush: true },
+              ),
+          },
+          {
+            id: 'tabs',
+            title: 'Tabs and segmented control',
+            body:
+              g.spec(
+                g.flow(
+                  [
+                    g.item(
+                      fixed(
+                        tabs(['Overview', 'Listening', 'Sources', 'Edit'], 0),
+                        320,
+                      ),
+                      'tabs: switch panel',
+                    ),
+                    g.item(
+                      seg(D.VIEWS, 0, { label: 'View' }),
+                      'segmented: view',
+                    ),
+                    g.item(
+                      seg(['30d', '1y', '5y', 'All'], 1, { label: 'Range' }),
+                      'segmented: range',
+                    ),
+                  ],
+                  { top: true },
+                ),
+              ) +
+              g.rules([
+                '<b>Tabs</b> move between panels of one item or page. They are underlined, in details and on provider pages alike.',
+                '<b>Segmented controls</b> change how the current panel is shown: view, range, density. They never navigate.',
+              ]) +
+              g.note(
+                'Replaces',
+                'segmented tabs in detail panels, underline tabs on provider pages and five separate segmented-control implementations.',
+              ),
+          },
+          {
+            id: 'inputs',
+            title: 'Inputs and toolbar',
+            body:
+              g.spec(
+                g.flow([
+                  g.item(
+                    D.search('Search albums', { ai: true, width: 240 }),
+                    'search with AI search',
+                  ),
+                  g.item(
+                    D.select(['Added', 'Released', 'Scrobbles', 'RYM rating'], {
+                      label: 'Sort',
+                    }),
+                    'select',
+                  ),
+                  g.item(
+                    '<input class="ds-input" value="4xkT9dQm2" aria-label="Identifier" />',
+                    'input',
+                  ),
+                  g.item(
+                    '<label class="ds-checkrow"><input type="checkbox" class="ds-check" checked /> Only missing</label>',
+                    'checkbox',
+                  ),
+                ]),
+              ) +
+              g.spec(
+                D.toolbar({
+                  placeholder: 'Search albums',
+                  sort: ['Added', 'Released', 'Scrobbles'],
+                  filterCount: 2,
+                  view: 0,
+                  count: '128 albums',
+                }),
+                { flush: true },
+              ) +
+              g.rules([
+                '<b>One toolbar order</b> on every browse page: search, sort, direction, filters, view, count. Table-only pages drop sort and view and add Columns.',
+                '<b>Every control is 28px.</b> Native selects use the same border, radius and chevron as buttons.',
+                '<b>The count reads the same everywhere:</b> <code>128 albums</code>, or <code>14 of 128 albums</code> when filtered.',
+              ]) +
+              g.note(
+                'Replaces',
+                'six search boxes, selects restyled nine times and count wording that changes by page.',
+              ),
+          },
+          {
+            id: 'table',
+            title: 'Table',
+            body:
+              `<p>One table for browse views, lists inside detail panels and the admin pages. The metadata table on the Jobs page is the starting point; this fixes its measurements and applies it everywhere.</p>` +
+              g.spec(
+                `<div class="ds-table-wrap">${table(
+                  [
+                    D.checkCol((r, i) => i === 1 || i === 2, { sticky: true }),
+                    { ...D.COLS.albums[0], sticky: 36, edge: true },
+                    ...D.COLS.albums.slice(1),
+                  ],
+                  A.slice(0, 6),
+                  {
+                    row: (r, i) => ({
+                      'aria-selected': i === 1 || i === 2 ? 'true' : undefined,
+                      'data-state': i === 4 ? 'hover' : undefined,
+                    }),
+                  },
+                )}</div><div class="ds-selectbar"><span><b>2 selected</b> <span class="ds-muted">of 128</span></span><span class="ds-actions ds-toolbar-end">${btn('Add to playlist')}${btn('Refresh metadata', { variant: 'primary' })}${btn('', { icon: 'x', aria: 'Clear selection' })}</span></div>`,
+                { flush: true },
+              ) +
+              g.rules([
+                '<b>Measurements.</b> Header 28px with 11px labels, rows 32px, cell padding 10px, and the panel gutter (12px) at both edges.',
+                '<b>Column order</b> is the same for every resource: identity, creator, parent, properties, dates, counts, ratings, then pill columns. See Browse screens for each resource.',
+                '<b>Identity cell.</b> Thumbnail, title, and the play pair at its end. The thumbnail is 24px; posters keep their shape.',
+                '<b>Numbers align right</b> in tabular figures. Dates are ISO (<code>2026-10-02</code>) so they sort and align as text.',
+                '<b>Nothing is clipped by the scrollbar.</b> The scroll area reserves its gutter and the last column keeps the 12px inset. When the table is wider than the panel the identity column stays in place and the rest scrolls beneath a soft edge.',
+                "<b>Inside another item</b> the table drops the columns that the parent already answers: no Album or Artist column in an album's track list.",
+                '<b>Selection</b> shows the one inverse bar, attached to the bottom of the table, with the count on the left and actions on the right.',
+              ]) +
+              g.note(
+                'Replaces',
+                'five table implementations with header heights of 24, 32, 34 and 35px and row heights of 28, 32 and 36px; numbers left-aligned in some and right-aligned in others; two sort-header designs.',
+              ),
+          },
+          {
+            id: 'card',
+            title: 'Card',
+            body:
+              g.spec(
+                g.flow(
+                  [
+                    g.item(
+                      fixed(card(A[0], { meta: albumMeta(A[0]) }), 164),
+                      'album',
+                    ),
+                    g.item(
+                      fixed(
+                        card(A[3], { meta: albumMeta(A[3]), selected: true }),
+                        164,
+                      ),
+                      'selected',
+                    ),
+                    g.item(
+                      fixed(card(A[7], { meta: albumMeta(A[7]) }), 164),
+                      'no artwork, no rating',
+                    ),
+                    g.item(
+                      fixed(
+                        card(A[6], { meta: albumMeta(A[6]), tags: true }),
+                        164,
+                      ),
+                      'with tags',
+                    ),
+                    g.item(
+                      fixed(
+                        card(F[0], {
+                          meta: [
+                            `<span>${F[0].year}</span>`,
+                            rating('IMDb', F[0].imdb),
+                          ],
+                        }),
+                        132,
+                      ),
+                      'film',
+                    ),
+                    g.item(
+                      fixed(
+                        card(D.data.ARTISTS[0], {
+                          meta: [
+                            '<span>3 albums</span>',
+                            '<span>902 scrobbles</span>',
+                          ],
+                        }),
+                        132,
+                      ),
+                      'artist',
+                    ),
+                    g.item(
+                      fixed(
+                        card(D.data.VIDEOS[0], {
+                          meta: [`<span>${D.data.VIDEOS[0].published}</span>`],
+                          badge: D.data.VIDEOS[0].duration,
+                        }),
+                        220,
+                      ),
+                      'video',
+                    ),
+                  ],
+                  { top: true },
+                ),
+              ) +
+              g.rules([
+                '<b>Artwork is left clean.</b> Nothing sits on it at rest. The play pair appears on hover; a duration badge is allowed on video.',
+                '<b>Three lines of text:</b> title, creator, then one meta line with the year on the left and one value on the right. That value is the headline rating by default, or whatever the grid is sorted by.',
+                '<b>Tags are optional</b> (View options) and take one extra line: two pills and a count.',
+                '<b>Same anatomy for every resource.</b> Only the artwork shape changes: square, poster, round, 16:9.',
+              ]),
+          },
+          {
+            id: 'row',
+            title: 'List row',
+            body:
+              g.spec(
+                `<div class="ds-list">${D.listHead(['Album', 'Tags', '<span class="ds-w-rating">RYM</span>', '<span class="ds-w-num">Scrobbles</span>', '<span class="ds-w-date">Added</span>'])}${A.slice(
+                  0,
+                  4,
+                )
+                  .map((a, i) =>
+                    row(a, {
+                      by: `${a.by} · ${a.year}`,
+                      meta: rowMeta(a),
+                      state: i === 1 ? 'hover' : undefined,
+                      selected: i === 2,
+                    }),
+                  )
+                  .join('')}</div>`,
+                { flush: true },
+              ) +
+              g.rules([
+                '<b>Two lines, 48px,</b> with 40px artwork. The same row serves albums, tracks, artists, films and videos.',
+                '<b>Trailing values sit in fixed tracks,</b> so ratings, counts and dates line up down the list and can carry one small header.',
+                '<b>List is for scanning with artwork;</b> Table is for comparing many fields. Both use the same play position and the same selection style.',
+              ]) +
+              g.note(
+                'Replaces',
+                'three-line album rows with a ragged rating line, 68px artist rows that hold one name, and track rows with the play icons at the far right.',
+              ),
+          },
+          {
+            id: 'rating',
+            title: 'Rating',
+            body:
+              g.spec(
+                g.flow(
+                  [
+                    g.item(rating('RYM', '3.71'), 'inline'),
+                    g.item(
+                      rating('IMDb', '7.4', { sorted: true }),
+                      'inline · sorted by',
+                    ),
+                    g.item(D.EMPTY, 'no value'),
+                    g.item(
+                      `<div class="ds-ratings">${[
+                        ['7.4', 'IMDb'],
+                        ['78', 'Metacritic'],
+                        ['91%', 'Rotten Tomatoes'],
+                        ['3.8', 'Letterboxd'],
+                      ]
+                        .map(
+                          ([v, l]) =>
+                            `<div class="ds-ratingcard"><b>${v}</b><span>${l}</span></div>`,
+                        )
+                        .join('')}</div>`,
+                      'detail overview',
+                    ),
+                  ],
+                  { top: true },
+                ),
+              ) +
+              g.rules([
+                '<b>In rows and cards</b> a rating is a short source label and the score in mono figures. No coloured badges.',
+                '<b>In a detail overview</b> each rating gets a small card with the score, the source and, on hover, the vote count and when it was fetched.',
+                '<b>Each source keeps its own scale.</b> Scores are not converted.',
+              ]) +
+              g.note(
+                'Replaces',
+                'six or seven brand-coloured badges on every film card, and a strip of provider icons with scores under only some of them on album cards.',
+              ),
+          },
+          {
+            id: 'chart',
+            title: 'Trend chart and sparkline',
+            body:
+              `<p>One line chart for anything counted over time: scrobbles for an album, track, artist or playlist, API requests for a provider, jobs completed. Hover the chart for values.</p>` +
+              `<div class="g-cols">${g.spec(D.chartBox('album', { range: '1y', unit: 'scrobbles' }))}${g.spec(D.chartBox('recent', { ranges: ['30d', 'All'], range: 'All', unit: 'scrobbles' }) + '<div class="g-cap">An album added 22 days ago: the chart switches to days and still draws a line.</div>')}</div>` +
+              g.spec(
+                g.flow([
+                  g.item(D.sparkOf('album'), 'sparkline · 12 months'),
+                  g.item(D.sparkOf('artist'), 'in table cells and stat tiles'),
+                  g.item(D.sparkOf('requests', '30d'), '30 days'),
+                ]),
+              ) +
+              g.rules([
+                '<b>A line with a light fill, no point markers.</b> A marker appears only under the pointer, with a crosshair and a tooltip that gives the value first.',
+                '<b>Granularity follows the data.</b> Of day, week, month, quarter and year, the chart takes the finest that averages three or more per point, with at least ten points on screen and no more than one point every 8px, so a narrow chart uses a coarser grain than a wide one. A sparse history falls back to the coarsest bucket that still gives ten points, and a short one is padded to 30 days, so one month of listening is thirty points, not one dot.',
+                '<b>Periods with no plays are zero,</b> so gaps read as gaps.',
+                '<b>The current, unfinished period</b> is dotted, so a part-month does not read as a drop.',
+                '<b>Ranges:</b> 30d, 1y, 5y, All. The caption states the measure and the granularity in use.',
+                '<b>Sparkline:</b> the same curve at 72 × 20px, without axes, for table cells and summaries.',
+              ]) +
+              g.note(
+                'Replaces',
+                'two hand-written charts (listening and provider requests): bars or a line with a hollow dot per point, Year and Month only, no tooltip, and no listening chart at all for artists or playlists. Daily granularity needs the listening endpoint to return day buckets.',
+              ),
+          },
+          {
+            id: 'facts',
+            title: 'Facts, stats and sections',
+            body:
+              g.spec(
+                section(
+                  'Details',
+                  D.facts([
+                    ['Released', '2019-03-08'],
+                    ['Added', '2026-10-02'],
+                    ['Label', 'Tidewater'],
+                    ['Format', 'Album'],
+                    ['Tracks', '11'],
+                    ['Length', '42:18'],
+                  ]),
+                  { aside: btn('All fields', { variant: 'link' }) },
+                ) +
+                  section(
+                    'Listening',
+                    D.stats([
+                      ['412', 'scrobbles', { extra: D.sparkOf('album') }],
+                      ['2019-04-02', 'first played'],
+                      ['2026-11-09', 'last played'],
+                    ]),
+                  ),
+              ) +
+              g.rules([
+                '<b>Section.</b> A 12px semibold title, an optional count or note, and one action on the right. Sections are separated by a hairline, not boxes.',
+                '<b>Facts.</b> Label above value, in a grid. Only fields a person reads; provider statistics live in Sources.',
+                '<b>Stat.</b> A large figure with its label beneath, optionally a sparkline beside it.',
+              ]) +
+              g.note(
+                'Replaces',
+                'seven definition-list layouts and about twelve heading styles.',
+              ),
+          },
+          {
+            id: 'source',
+            title: 'Source row, coverage and progress',
+            body:
+              g.spec(
+                D.source({
+                  p: 'spotify',
+                  match: ['done', 'Matched by ID'],
+                  id: '4xkT9dQm2LrV7aPz1c',
+                  when: '3 days ago',
+                }) +
+                  D.source({
+                    p: 'rym',
+                    match: ['done', 'Matched by search'],
+                    id: 'release/album/mira-kestrel/harbour-lights',
+                    when: '41 days ago',
+                    state: status('waiting', 'Waiting until 14:20'),
+                    open: true,
+                    body: `<div><h4>Provides</h4>${pills(['Rating', 'Votes', 'Genres', 'Descriptors'], { pill: { static: true } })}</div><div><h4>History</h4>${D.timeline(
+                      [
+                        [
+                          '2026-10-06 09:12',
+                          ['done', 'Fetched'],
+                          'Rating 3.69 → 3.71, 2 descriptors added',
+                          'Job',
+                        ],
+                        [
+                          '2026-08-18 21:40',
+                          ['failed', 'Failed'],
+                          'Search returned no result',
+                          'Job',
+                        ],
+                        [
+                          '2026-06-02 11:05',
+                          ['done', 'Matched'],
+                          'Identifier set from search',
+                          'Job',
+                        ],
+                      ],
+                    )}</div>`,
+                  }) +
+                  D.source({
+                    p: 'musicbrainz',
+                    match: ['attention', 'Needs ID'],
+                    id: 'No release linked',
+                    when: 'Never',
+                    actions: btn('Find match', { size: 'xs' }),
+                  }),
+              ) +
+              g.spec(
+                D.coverage('Spotify', 42, 42) +
+                  D.coverage('RYM rating', 31, 42) +
+                  D.coverage('MusicBrainz ID', 20, 42, { tone: 'attention' }) +
+                  `<div style="max-width:220px;margin-top:12px">${D.progress(96, 240)}</div>`,
+              ) +
+              g.rules([
+                '<b>Source row.</b> One provider per row: match state, identifier, when it was last fetched, and the queue state if it is not idle. Refresh and Open at provider are always the same two icons. The row opens in place.',
+                '<b>Coverage.</b> How many items in a set have a field or a source, with one button that queues the missing ones.',
+                '<b>Progress.</b> A bar with <code>done / total</code>. Used for jobs, imports and batches in place of text.',
+              ]),
+          },
+          {
+            id: 'feedback',
+            title: 'Notice, states and menu',
+            body:
+              g.spec(
+                `<div class="g-stack">${D.notice('Rate Your Music is waiting until 14:20 after a rate limit. 38 jobs are queued behind it.', { tone: 'attention', action: btn('Open provider', { size: 'xs' }) })}${D.notice('Spotify credentials were rejected. Playback and sync are stopped.', { tone: 'danger', action: btn('Reconnect', { size: 'xs' }) })}${D.notice('Scrobble names are linked in Sources, under Last.fm.')}</div>`,
+              ) +
+              `<div class="g-cols">${g.spec(D.state('No albums match', 'Remove a filter or clear the search.', { action: btn('Clear filters') }))}${g.spec(D.state('Could not load tracks', 'The request failed.', { action: btn('Retry', { icon: 'refresh' }) }))}${g.spec(
+                `<div class="g-stack">${[70, 52, 61].map((w) => `<div class="ds-skel" style="height:14px;width:${w}%"></div>`).join('')}</div>`,
+              )}${g.spec(
+                D.menu(
+                  [
+                    ['listMusic', 'Add to playlist'],
+                    ['refresh', 'Refresh metadata', '', true],
+                    ['external', 'Open in Spotify'],
+                    ['pencil', 'Edit'],
+                  ],
+                  'Harbour Lights',
+                ),
+              )}</div>` +
+              g.rules([
+                '<b>Notice.</b> One line, an optional single action. Neutral, attention or danger. It sits in the flow of the panel it concerns and never floats over content.',
+                '<b>Empty and error states</b> use the same block: what happened, what to do, one button. No illustrations.',
+                '<b>Loading</b> is a skeleton of the content that will appear, not a spinner or the word Loading.',
+                '<b>Popover and menu</b> share one shell: 8px radius, hairline, one shadow. Filters, columns, devices, activity and confirmations all use it.',
+              ]) +
+              g.note(
+                'Replaces',
+                'seven popover shells, six overlay mechanisms, five confirmation patterns and empty-state wording that varies by page.',
+              ),
+          },
+          {
+            id: 'detail',
+            title: 'Detail header',
+            body:
+              g.spec(
+                D.detailHead({
+                  item: A[0],
+                  kind: 'Album',
+                  by: 'by <a href="#">Mira Kestrel</a>',
+                  facts: ['2019-03-08', '11 tracks', '42:18', 'Tidewater'],
+                  actions: D.headActions({ open: 'Spotify' }),
+                }),
+                { style: 'max-width:600px' },
+              ) +
+              g.rules([
+                '<b>Same order for every resource:</b> artwork, kind, title, creator, one line of facts, actions.',
+                '<b>Title is 18px</b> in the drawer and 22px on the standalone page.',
+                '<b>Actions:</b> Play and Queue first where the item can be played, then item-specific actions, then Open at provider and More at the far end.',
+              ]) +
+              g.note(
+                'Replaces',
+                'four title sizes (18, 20, 22 and 28px) and five artwork treatments.',
+              ),
+          },
+          {
+            id: 'shell',
+            title: 'Rail and player dock',
+            body:
+              g.spec(
+                `<div style="width:196px;background:var(--ds-page);padding:8px;border-radius:8px;display:grid;gap:2px">${D.libraryNav('Browse').map(D.navItem).join('')}${D.navItem({ label: 'Jobs', icon: 'activity', count: 3, tone: 'attention' })}${D.navItem({ label: 'Providers', icon: 'layers', count: 1, tone: 'danger' })}</div>`,
+              ) +
+              g.spec(
+                `<div style="min-width:760px"><div style="background:var(--ds-page);padding:0 8px 8px 0;border-radius:12px">${D.dock()}</div><div class="g-cap">Playing</div><div style="background:var(--ds-page);padding:0 8px 8px 0;border-radius:12px;margin-top:12px">${D.dock({ needsDevice: true })}</div><div class="g-cap">No device: the message and its action are inside the dock</div></div>`,
+                { style: 'overflow-x:auto' },
+              ) +
+              g.rules([
+                '<b>Rail.</b> Jobs and Providers carry a count when something is running, waiting or failed, so their state is visible from every page.',
+                '<b>Dock.</b> Messages about playback belong in the dock beside the device button. The floating banner above the dock, which covers the last row of every list, goes away.',
+              ]),
+          },
+        ],
+      })
+    </script>
+  </body>
+</html>

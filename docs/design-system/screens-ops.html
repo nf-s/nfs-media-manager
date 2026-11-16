@@ -1,0 +1,703 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Jobs and providers · Media Manager design library</title>
+    <link rel="icon" href="data:," />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="assets/tokens.css" />
+    <link rel="stylesheet" href="assets/components.css" />
+    <link rel="stylesheet" href="assets/gallery.css" />
+  </head>
+  <body class="ds g" data-page="screens-ops.html">
+    <script src="assets/ds.js"></script>
+    <script>
+      const D = DS
+      const {
+        g,
+        btn,
+        pill,
+        pills,
+        table,
+        section,
+        stats,
+        kv,
+        icon,
+        status,
+        mark,
+      } = D
+      const { ALBUMS: A } = D.data
+      const inspectorFrame = (html, height) =>
+        `<div class="g-inspector" style="--g-h:${height || 720}px">${html}</div>`
+      const muted = (text) => `<span class="ds-muted">${text}</span>`
+      const roles = (list) =>
+        pills(list, { pill: { tone: 'outline', static: true } })
+      const health = (p, st) =>
+        `<span class="ds-health">${mark(p)}${D.PROVIDERS[p].name}${status(st[0], st[1])}</span>`
+      const pageTabs = (items, selected) =>
+        D.tabs(items, selected).replace(
+          'class="ds-tabs"',
+          'class="ds-tabs" style="margin:8px 12px 0"',
+        )
+
+      /* Jobs */
+      const jobs = [
+        {
+          open: true,
+          st: ['waiting'],
+          job: 'Refresh ratings',
+          target: '240 albums',
+          p: 'rym',
+          progress: [96, 240],
+          started: '13:02',
+          dur: '1h 12m',
+          result: 'Resumes 14:20 · 2 failed',
+          act: 'Cancel',
+        },
+        {
+          child: true,
+          st: ['done'],
+          job: 'Fetch rating',
+          target: 'Harbour Lights',
+          p: 'rym',
+          started: '13:04',
+          dur: '2s',
+          result: 'Rating 3.69 → 3.71',
+        },
+        {
+          child: true,
+          st: ['failed'],
+          job: 'Fetch rating',
+          target: 'Static Bloom',
+          p: 'rym',
+          started: '13:05',
+          dur: '4s',
+          result: 'No search result',
+          act: 'Retry',
+        },
+        {
+          child: true,
+          st: ['waiting'],
+          job: 'Fetch rating',
+          target: 'Salt Maps',
+          p: 'rym',
+          result: 'Resumes 14:20',
+        },
+        {
+          st: ['running'],
+          job: 'Sync scrobbles',
+          target: 'Library',
+          p: 'lastfm',
+          progress: [1180, 2400],
+          started: '14:10',
+          dur: '4m 12s',
+          act: 'Cancel',
+        },
+        {
+          st: ['done'],
+          job: 'Import playlist',
+          target: 'Late shift',
+          p: 'spotify',
+          started: '13:58',
+          dur: '12s',
+          result: '42 tracks · 3 new',
+        },
+        {
+          st: ['done'],
+          job: 'Fetch film',
+          target: 'Glass Orchard',
+          p: 'tmdb',
+          started: '13:40',
+          dur: '1s',
+          result: '12 fields updated',
+        },
+        {
+          st: ['queued'],
+          job: 'Fetch release',
+          target: 'Understory',
+          p: 'discogs',
+        },
+        {
+          st: ['failed'],
+          job: 'Fetch artist',
+          target: 'Hollow Coast',
+          p: 'musicbrainz',
+          started: '12:51',
+          dur: '3s',
+          result: 'Needs ID',
+          act: 'Find match',
+        },
+        {
+          st: ['cancelled'],
+          job: 'Fetch release',
+          target: 'Open Signal',
+          p: 'discogs',
+          started: '2026-11-15',
+          result: 'Cancelled by you',
+        },
+      ]
+      const jobCols = [
+        D.checkCol((r) => r.st[0] === 'failed' && !r.child),
+        { h: 'Status', w: 92, c: (r) => status(r.st[0], r.st[1]) },
+        {
+          h: 'Job and target',
+          c: (r) =>
+            `<span class="ds-cell-id"${r.child ? ' style="padding-left:22px"' : ''}>${r.open ? icon('chevD', { size: 'sm' }) : ''}<a class="ds-cell-title" style="flex:none" href="#">${r.job}</a><a class="ds-cell-sub" href="#">${r.target}</a></span>`,
+        },
+        { h: 'Provider', w: 108, c: (r) => D.provider(r.p, { short: true }) },
+        {
+          h: 'Progress',
+          w: 100,
+          c: (r) =>
+            r.progress
+              ? D.progress(r.progress[0], r.progress[1], { compact: true })
+              : '',
+        },
+        {
+          h: 'Started',
+          w: 96,
+          sort: 'descending',
+          c: (r) => r.started || D.EMPTY,
+        },
+        { h: 'Duration', w: 72, end: true, c: (r) => r.dur || D.EMPTY },
+        {
+          h: 'Result',
+          w: 160,
+          c: (r) =>
+            r.result
+              ? r.st[0] === 'failed'
+                ? `<span style="color:var(--ds-danger)">${r.result}</span>`
+                : r.result
+              : '',
+        },
+        {
+          h: '',
+          w: 104,
+          end: true,
+          c: (r) => (r.act ? btn(r.act, { size: 'xs' }) : ''),
+        },
+      ]
+      const jobsMain =
+        `<div class="ds-pagehead"><h1>Jobs</h1></div>` +
+        pageTabs(['Activity', 'Metadata'], 0) +
+        `<div class="ds-toolbar" style="min-height:64px">${stats([
+          ['3', 'running', { tone: 'attention' }],
+          ['128', 'queued'],
+          ['4', 'need attention', { tone: 'danger' }],
+          ['912', 'done today', { extra: D.sparkOf('jobs', '30d') }],
+        ])}</div>` +
+        `<div class="ds-strip">${health('spotify', ['done', 'Idle'])}${health('lastfm', ['running'])}${health('discogs', ['queued', '86 queued'])}${health('rym', ['waiting', 'Until 14:20'])}${health('musicbrainz', ['attention', '1 needs ID'])}${health('tmdb', ['done', 'Idle'])}</div>` +
+        `<div class="ds-toolbar">${D.search('Search jobs and targets')}${D.seg(['All', 'Active', 'Needs attention', 'Done'], 0, { label: 'Status' })}${D.select(['All providers'], { label: 'Provider' })}${D.select(['All libraries'], { label: 'Library' })}<span class="ds-toolbar-count">1,024 jobs</span></div>` +
+        `<div class="ds-main-scroll"><div class="ds-table-wrap">${table(jobCols, jobs, { layout: 'fixed' })}</div></div>`
+      const jobsScreen = D.shell({
+        library: 'Albums',
+        nav: D.libraryNav(''),
+        current: 'Jobs',
+        main: jobsMain,
+      })
+
+      const jobHead = (title, st, facts, actions) =>
+        `<header class="ds-detail-head" style="grid-template-columns:minmax(0,1fr)"><div><div class="ds-kicker">Job</div><h2 class="ds-detail-title">${title}</h2><div class="ds-detail-facts">${[status(st[0], st[1]), ...facts].map((f) => `<span>${f}</span>`).join('')}</div><div class="ds-detail-actions">${actions}</div></div></header>`
+      const jobFailed = D.inspector({
+        crumbs: ['Jobs', 'Refresh ratings', 'Fetch rating'],
+        head: jobHead(
+          'Fetch rating · Static Bloom',
+          ['failed'],
+          [
+            D.provider('rym'),
+            'Album · <a href="#">Static Bloom</a>',
+            'Started 13:05',
+            '4s',
+          ],
+          `${btn('Retry', { icon: 'refresh', size: 'md', variant: 'primary' })}${btn('Find match', { size: 'md' })}<span class="ds-spacer"></span>${btn('Open album', { end: 'chevR', variant: 'ghost', size: 'md' })}`,
+        ),
+        tabs: ['Overview', 'Request and response', 'Logs'],
+        body:
+          section(
+            '',
+            D.notice(
+              'Search returned no result for “Marlow Quay Static Bloom”. The album has no Rate Your Music identifier.',
+              { tone: 'danger' },
+            ),
+            { flush: true },
+          ) +
+          section(
+            'Attempts',
+            D.timeline([
+              [
+                '2026-11-16 13:05',
+                ['failed', 'Failed'],
+                'Search returned no result',
+                'Log',
+              ],
+              [
+                '2026-11-02 08:31',
+                ['failed', 'Failed'],
+                'Search returned no result',
+                'Log',
+              ],
+              [
+                '2026-10-19 08:30',
+                ['cancelled', 'Cancelled'],
+                'Provider was waiting after a rate limit',
+                'Log',
+              ],
+            ]),
+            { note: '3' },
+          ) +
+          section(
+            'Details',
+            kv([
+              ['Batch', '<a href="#">Refresh ratings · 240 albums</a>'],
+              ['Queued', '2026-11-16 13:02'],
+              ['Started', '2026-11-16 13:05'],
+              ['Finished', '2026-11-16 13:05'],
+              ['Job ID', '<span class="ds-mono">job_7f3a91c2</span>'],
+            ]),
+          ),
+      })
+      const jobDone = D.inspector({
+        crumbs: ['Jobs', 'Refresh ratings', 'Fetch rating'],
+        head: jobHead(
+          'Fetch rating · Harbour Lights',
+          ['done'],
+          [
+            D.provider('rym'),
+            'Album · <a href="#">Harbour Lights</a>',
+            'Started 13:04',
+            '2s',
+          ],
+          `${btn('Run again', { icon: 'refresh', size: 'md' })}<span class="ds-spacer"></span>${btn('Open album', { end: 'chevR', variant: 'ghost', size: 'md' })}`,
+        ),
+        tabs: ['Overview', 'Request and response', 'Logs'],
+        body:
+          section(
+            'Changes',
+            `<div class="ds-table-wrap">${table(
+              [
+                { h: 'Field', c: (r) => muted(r[0]) },
+                { h: 'Before', c: (r) => r[1] },
+                {
+                  h: 'After',
+                  c: (r) => `<span class="ds-cell-title">${r[2]}</span>`,
+                },
+              ],
+              [
+                ['Rating', '3.69', '3.71'],
+                ['Votes', '4,102', '4,218'],
+                ['Descriptors', '3', '5'],
+              ],
+            )}</div>`,
+            { note: '3 fields', flush: true },
+          ) +
+          section(
+            'Attempts',
+            D.timeline([
+              ['2026-11-16 13:04', ['done', 'Done'], '1 request · 1.8s', 'Log'],
+            ]),
+            { note: '1' },
+          ) +
+          section(
+            'Details',
+            kv([
+              ['Batch', '<a href="#">Refresh ratings · 240 albums</a>'],
+              ['Queued', '2026-11-16 13:02'],
+              ['Finished', '2026-11-16 13:04'],
+              ['Job ID', '<span class="ds-mono">job_7f3a8e55</span>'],
+            ]),
+          ),
+      })
+
+      const activity = `<div class="ds-pop" style="width:320px"><div class="ds-pop-head">Activity</div><div style="display:grid;gap:10px;padding:4px 8px 10px"><div><div class="ds-source-line"><b>Sync scrobbles</b>${muted('Last.fm')}</div>${D.progress(1180, 2400)}</div><div><div class="ds-source-line"><b>Refresh ratings</b>${muted('Rate Your Music')}</div>${D.progress(96, 240)}<div style="margin-top:2px">${status('waiting', 'Waiting until 14:20')}</div></div><div class="ds-source-line">${status('queued', '128 queued')}${status('failed', '4 need attention')}</div></div><button type="button" class="ds-menu-item">${icon('activity', { size: 'sm' })}All jobs${muted('3 running')}</button></div>`
+
+      /* Metadata selection */
+      const age = (text, stale) =>
+        text === 'Never'
+          ? status('never')
+          : stale
+            ? status('attention', text)
+            : muted(text)
+      const freshness = [
+        ['3 days', 'Today', '12 days', ['41 days', true], 'Never'],
+        ['3 days', 'Today', ['64 days', true], ['41 days', true], '9 days'],
+        ['5 days', 'Today', '12 days', 'Never', 'Never'],
+        ['5 days', 'Today', 'Never', ['58 days', true], '9 days'],
+        ['8 days', 'Yesterday', '20 days', '6 days', '9 days'],
+        ['8 days', 'Yesterday', '20 days', '6 days', 'Never'],
+      ]
+      const freshCol = (label, i) => ({
+        h: label,
+        sort: '',
+        c: (r, row) => age(...[].concat(freshness[row][i])),
+      })
+      const metadataPanel =
+        `<div class="ds-pagehead"><h1>Jobs</h1></div>` +
+        pageTabs(['Activity', 'Metadata'], 1) +
+        D.toolbar({
+          placeholder: 'Search albums',
+          sort: ['Added'],
+          filterCount: 1,
+          count: '6 of 128 albums',
+        }) +
+        `<div class="ds-table-wrap">${table(
+          [
+            D.checkCol((r, i) => i === 0 || i === 2 || i === 3),
+            { h: 'Title', sort: '', c: (r) => D.idCell(r, { play: false }) },
+            { h: 'Artists', sort: '', c: (r) => D.link(r.by) },
+            freshCol('Spotify', 0),
+            freshCol('Last.fm', 1),
+            freshCol('Discogs', 2),
+            freshCol('Rate Your Music', 3),
+            freshCol('MusicBrainz', 4),
+          ],
+          A.slice(0, 6),
+          {
+            row: (r, i) => ({
+              'aria-selected':
+                i === 0 || i === 2 || i === 3 ? 'true' : undefined,
+            }),
+          },
+        )}</div><div class="ds-selectbar"><span><b>3 selected</b></span>${D.select(['Rate Your Music', 'Discogs', 'MusicBrainz'], { label: 'Provider' })}<label class="ds-checkrow"><input type="checkbox" class="ds-check" checked /> Only missing or older than 30 days</label><span class="ds-actions ds-toolbar-end"><span class="ds-muted">3 jobs</span>${btn('Review and queue', { variant: 'primary' })}${btn('', { icon: 'x', aria: 'Clear selection' })}</span></div>`
+
+      /* Providers */
+      const budget = (used, total) =>
+        `<div class="ds-progress" title="${used.toLocaleString('en')} of ${total.toLocaleString('en')} requests today">${D.meter(Math.round((used / total) * 100), used / total > 0.8 ? 'attention' : undefined)}<span>${Math.round((used / total) * 100)}%</span></div>`
+      const prov = [
+        { _group: 'Accounts' },
+        {
+          p: 'spotify',
+          roles: 'Playback, library',
+          conn: ['done', 'Connected'],
+          queue: ['done', 'Idle'],
+          queued: 0,
+          failed: 0,
+          last: '6 min ago',
+          seed: 3,
+          budget: null,
+        },
+        {
+          p: 'lastfm',
+          roles: 'Scrobbles, tags',
+          conn: ['done', 'Connected'],
+          queue: ['running'],
+          queued: 1,
+          failed: 0,
+          last: '1 min ago',
+          seed: 5,
+          budget: null,
+        },
+        {
+          p: 'youtube',
+          roles: 'Subscriptions',
+          conn: ['attention', 'Needs sign-in'],
+          queue: ['paused'],
+          queued: 12,
+          failed: 3,
+          last: '2 days ago',
+          seed: 7,
+          budget: [8200, 10000],
+        },
+        {
+          p: 'sonos',
+          roles: 'Playback',
+          conn: ['done', 'Connected'],
+          queue: ['done', 'Idle'],
+          queued: 0,
+          failed: 0,
+          last: '6 min ago',
+          seed: 9,
+          budget: null,
+        },
+        { _group: 'Metadata' },
+        {
+          p: 'discogs',
+          roles: 'Albums, artists',
+          conn: ['done', 'Token set'],
+          queue: ['running'],
+          queued: 86,
+          failed: 0,
+          last: '2 min ago',
+          seed: 11,
+          budget: [41, 60],
+        },
+        {
+          p: 'musicbrainz',
+          roles: 'Albums, artists',
+          conn: ['never', 'Not required'],
+          queue: ['done', 'Idle'],
+          queued: 0,
+          failed: 1,
+          last: '1 hour ago',
+          seed: 13,
+          budget: null,
+        },
+        {
+          p: 'rym',
+          roles: 'Ratings, genres',
+          conn: ['done', 'Key set'],
+          queue: ['waiting', 'Waiting until 14:20'],
+          queued: 38,
+          failed: 2,
+          last: '1 hour ago',
+          seed: 15,
+          budget: [312, 1000],
+        },
+        {
+          p: 'tmdb',
+          roles: 'Films, people',
+          conn: ['done', 'Key set'],
+          queue: ['done', 'Idle'],
+          queued: 0,
+          failed: 0,
+          last: '34 min ago',
+          seed: 17,
+          budget: null,
+        },
+        {
+          p: 'omdb',
+          roles: 'Film ratings',
+          conn: ['attention', 'Needs key'],
+          queue: ['paused'],
+          queued: 0,
+          failed: 0,
+          last: 'Never',
+          seed: 19,
+          budget: [0, 1000],
+        },
+        {
+          p: 'mdblist',
+          roles: 'Film ratings',
+          conn: ['done', 'Key set'],
+          queue: ['done', 'Idle'],
+          queued: 0,
+          failed: 0,
+          last: '3 hours ago',
+          seed: 21,
+          budget: [640, 1000],
+        },
+      ]
+      const jobCount = (r) =>
+        [
+          r.queued ? `${r.queued} queued` : '',
+          r.failed
+            ? `<span style="color:var(--ds-danger);font-weight:600">${r.failed} failed</span>`
+            : '',
+        ]
+          .filter(Boolean)
+          .join(' · ') || D.EMPTY
+      const provCols = [
+        {
+          h: 'Provider',
+          c: (r) =>
+            `<span class="ds-cell-id">${mark(r.p)}<span class="ds-cell-two"><a class="ds-cell-title" href="#">${D.PROVIDERS[r.p].name}</a><span class="ds-cell-sub ds-muted">${r.roles}</span></span></span>`,
+        },
+        { h: 'Connection', w: 130, c: (r) => status(r.conn[0], r.conn[1]) },
+        { h: 'Queue', w: 162, c: (r) => status(r.queue[0], r.queue[1]) },
+        { h: 'Jobs', w: 140, c: jobCount },
+        {
+          h: 'Last success',
+          w: 96,
+          c: (r) => (r.last === 'Never' ? status('never') : muted(r.last)),
+        },
+        {
+          h: 'Requests · 24h',
+          w: 100,
+          c: (r) => (r.last === 'Never' ? '' : D.sparkSeed(r.seed)),
+        },
+        {
+          h: 'Daily budget',
+          w: 112,
+          c: (r) =>
+            r.budget ? budget(r.budget[0], r.budget[1]) : muted('No limit'),
+        },
+        {
+          h: '',
+          w: 92,
+          end: true,
+          c: (r) =>
+            r.conn[0] === 'attention'
+              ? btn(r.p === 'omdb' ? 'Add key' : 'Sign in', { size: 'xs' })
+              : btn(r.queue[0] === 'paused' ? 'Resume' : 'Pause', {
+                  size: 'xs',
+                  variant: 'ghost',
+                }),
+        },
+      ]
+      const providersMain =
+        `<div class="ds-pagehead"><h1>Providers</h1><p>10 providers · 3 need attention</p></div>` +
+        `<div style="padding:8px 12px 4px" class="g-stack">${D.notice('Rate Your Music is waiting until 14:20 after a rate limit. 38 jobs are queued behind it.', { tone: 'attention', action: btn('Open', { size: 'xs' }) })}${D.notice('YouTube needs you to sign in again. Subscriptions have not synced for 2 days.', { tone: 'danger', action: btn('Sign in', { size: 'xs' }) })}</div>` +
+        `<div class="ds-main-scroll"><div class="ds-table-wrap">${table(provCols, prov, { layout: 'fixed', rows: 'two' })}</div></div>`
+      const providersScreen = D.shell({
+        library: 'Albums',
+        nav: D.libraryNav(''),
+        current: 'Providers',
+        main: providersMain,
+      })
+
+      const providerPage = `<div class="ds-page"><div class="ds-crumbs" style="margin-bottom:12px"><a href="#">Providers</a>${icon('chevR', { size: 'sm' })}<b>Rate Your Music</b></div><header class="ds-detail-head" style="grid-template-columns:minmax(0,1fr)"><div><div class="ds-kicker">Provider</div><h2 class="ds-detail-title">Rate Your Music</h2><div class="ds-detail-facts"><span>${status('waiting', 'Waiting until 14:20')}</span><span>Ratings and genres for albums and artists</span><span>Key set</span></div><div class="ds-detail-actions">${btn('Pause queue', { size: 'md' })}${btn('Resume now', { size: 'md' })}<span class="ds-spacer"></span>${btn('Open site', { end: 'external', variant: 'ghost', size: 'md' })}</div></div></header>${D.tabs(['Overview', ['Jobs', 38], 'Settings'], 0).replace('class="ds-tabs"', 'class="ds-tabs" style="margin-top:16px"')}<div style="margin-top:12px">${D.notice('Rate limited at 13:20. The queue resumes at 14:20; 38 jobs are waiting.', { tone: 'attention', action: btn('Resume now', { size: 'xs' }) })}</div><div class="ds-page-cols"><div>${section(
+        '',
+        stats([
+          ['38', 'queued'],
+          ['2', 'failed', { tone: 'danger' }],
+          ['96', 'done today'],
+          ['2.1s', 'average request'],
+        ]),
+        { flush: true },
+      )}${section('Requests', D.chartBox('requests', { ranges: ['30d', '90d'], range: '30d', unit: 'requests' }))}${section(
+        'Recent failures',
+        `<div class="ds-table-wrap">${table(
+          [
+            {
+              h: 'Job',
+              c: (r) => `<a class="ds-cell-title" href="#">${r[0]}</a>`,
+            },
+            { h: 'Target', c: (r) => D.link(r[1]) },
+            { h: 'When', c: (r) => muted(r[2]) },
+            {
+              h: 'Error',
+              c: (r) => `<span style="color:var(--ds-danger)">${r[3]}</span>`,
+            },
+            {
+              h: '',
+              end: true,
+              c: () => btn('Retry', { icon: 'refresh', size: 'xs' }),
+            },
+          ],
+          [
+            [
+              'Fetch rating',
+              'Static Bloom',
+              '13:05',
+              'Search returned no result',
+            ],
+            ['Fetch rating', 'Field Notes Vol. 2', '13:18', 'Rate limited'],
+          ],
+        )}</div>`,
+        { note: '2', aside: btn('All jobs', { variant: 'link' }) },
+      )}${section('Coverage', D.coverage('Albums', 96, 128, { action: 'Queue 32' }) + D.coverage('Artists', 61, 256, { action: 'Queue 195' }), { note: 'items with data from this provider', aside: btn('Metadata', { variant: 'link' }) })}</div><div>${section(
+        'Queue',
+        kv([
+          ['State', status('waiting', 'Waiting until 14:20')],
+          ['Runs on', 'Local worker · online'],
+          ['Concurrency', '1 at a time'],
+          ['Interval', '6s between requests'],
+          ['After a limit', 'Wait 60 min'],
+          ['Daily budget', '312 of 1,000 requests'],
+        ]),
+        { flush: true, aside: btn('Edit limits', { variant: 'link' }) },
+      )}${section(
+        'Credentials',
+        kv([
+          ['API key', `${status('done', 'Set')}`],
+          ['Checked', 'Today 13:20'],
+        ]),
+        { aside: btn('Replace', { variant: 'link' }) },
+      )}${section(
+        'Supplies',
+        kv([
+          ['Albums', 'Rating, votes, genres, descriptors'],
+          ['Artists', 'Genres'],
+        ]),
+      )}</div></div></div>`
+
+      const confirm = `<div class="ds-pop" style="width:300px;padding:12px"><div style="font-weight:600">Disconnect Spotify?</div><div class="ds-help" style="margin:4px 0 12px">Playback and playlist sync stop until you reconnect. Imported albums and tracks stay.</div><div class="ds-actions">${btn('Disconnect', { variant: 'danger' })}${btn('Cancel')}</div></div>`
+
+      D.page({
+        title: 'Jobs and providers',
+        lede: 'The two operational areas, rebuilt on the shared table, status and chart components. The provider section changes most: from one provider at a time to an overview of all of them.',
+        sections: [
+          {
+            id: 'jobs',
+            title: 'Jobs',
+            body:
+              `<p>The page answers, in order: is anything running, is anything stuck, and what happened to a given item.</p>` +
+              `<div class="g-scroll"><div class="g-screen" style="--g-h:760px">${jobsScreen}</div></div>` +
+              g.rules([
+                '<b>Summary first:</b> running, queued, needing attention, done today. Each figure filters the table.',
+                '<b>Provider state is on this page.</b> One box per provider with its queue state, so a waiting provider explains a stalled batch without a trip to Providers. Each box links to the provider.',
+                '<b>Columns:</b> Status · Job and target · Provider · Progress · Started · Duration · Result. Target and Provider are links. Result says what changed, why it failed, or when a waiting job resumes. Progress shows a percentage; the counts are in its tooltip and in the target.',
+                '<b>Batches are one row</b> with a progress bar and expand to their jobs. Today every job of a batch is its own row.',
+                '<b>Every row has a checkbox</b> and the action that fits its state: Cancel, Retry, Find match. The underlined View column goes; the job name opens the job.',
+                '<b>Times</b> are clock time today and a date before that, with the full timestamp on hover. Today they are <code>DD/MM/YYYY, HH:MM:SS</code>.',
+                '<b>Title is Jobs,</b> not Album jobs; the library is a filter.',
+              ]),
+          },
+          {
+            id: 'job',
+            title: 'Job details',
+            body:
+              `<div class="g-inspectors">${inspectorFrame(jobFailed, 640)}${inspectorFrame(jobDone, 640)}</div>` +
+              g.rules([
+                '<b>A failed job leads with the reason</b> and the two things that fix it. A finished job leads with what it changed. ' +
+                  g.tag('api'),
+                "<b>Attempts</b> is the same timeline component as a source's history.",
+                '<b>Request and response</b> replaces Stored JSON: the saved request, response and snapshot, each collapsed, each with Copy.',
+                '<b>Breadcrumbs</b> show the batch, so one click returns to its siblings.',
+              ]),
+          },
+          {
+            id: 'activity',
+            title: 'Activity popover and Metadata',
+            body: `<div class="g-pair" data-split="narrow"><div>${g.spec(activity)}${g.rules(
+              [
+                '<b>Activity</b> opens from the Jobs item in the rail. It shows running work with progress and says when a provider is the reason something is waiting.',
+              ],
+            )}</div><div>${`<div class="g-panel">${metadataPanel}</div>`}${g.rules(
+              [
+                '<b>Metadata</b> keeps its approach: pick items, pick a provider, review, queue. It uses the same search and filters as Browse, for every library.',
+                '<b>Freshness cells</b> show age in words. Stale and missing values use the status colours, so the gaps stand out in a wall of dates.',
+                '<b>The selection bar</b> carries the provider, the only-missing rule and the number of jobs that would be created.',
+              ],
+            )}</div></div>`,
+          },
+          {
+            id: 'providers',
+            title: 'Providers · overview',
+            body:
+              `<p>Today the page shows one provider at a time, chosen from the rail, so finding the one that is stuck means opening each. The proposal opens on all of them.</p>` +
+              `<div class="g-scroll"><div class="g-screen" style="--g-h:800px">${providersScreen}</div></div>` +
+              g.rules([
+                '<b>One row per provider,</b> grouped into Accounts (things you sign in to) and Metadata (keys and public APIs).',
+                '<b>Columns:</b> connection, queue state, queued and failed jobs, last success, requests over 24 hours, daily budget. What the provider is used for sits under its name.',
+                '<b>Problems rise to the top</b> as notices with the action that fixes them.',
+                '<b>Pause, Resume, Sign in and Add key</b> are available from the row.',
+                '<b>Each provider appears once.</b> Sonos is listed under both Albums and Films today.',
+              ]),
+          },
+          {
+            id: 'provider',
+            title: 'Provider page',
+            body:
+              `<div class="g-scroll"><div class="g-panel" style="min-width:1040px">${providerPage}</div></div>` +
+              g.rules([
+                '<b>Queue controls are in the header,</b> once. Today they are repeated on two tabs.',
+                '<b>The waiting notice shows on every tab.</b> Today it is only on Activity.',
+                '<b>Three tabs:</b> Overview, Jobs (the shared jobs table, filtered), Settings (credentials, limits, schedule). Activity and Jobs merge; Credentials and Settings merge.',
+                '<b>Requests</b> is the shared line chart in place of the bar chart.',
+                '<b>Runs on</b> names the worker and whether it is online. Switching worker and reviewing error codes are in Settings.',
+                '<b>The page uses the full width</b> in two columns instead of a 960px column.',
+                '<b>Supplies and Coverage</b> say what this provider is for and how much of the library it has reached, with a link to queue the rest.',
+              ]),
+          },
+          {
+            id: 'connections',
+            title: 'Account connections',
+            body: `<div class="g-pair" data-split="narrow"><div>${g.spec(confirm)}</div><div>${g.rules(
+              [
+                "<b>One place to connect and disconnect:</b> the Accounts group in Providers. Import pages and the player's device popover show the state and link there. Today the controls are spread over five places.",
+                '<b>Disconnect, revoke and remove ask first,</b> in a popover on the button, and say what stops working. Several of these act immediately today.',
+                '<b>Connection wording:</b> Connected, Needs sign-in, Key set, Needs key, Not required.',
+              ],
+            )}</div></div>`,
+          },
+        ],
+      })
+    </script>
+  </body>
+</html>

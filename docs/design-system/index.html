@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Overview · Media Manager design library</title>
+    <link rel="icon" href="data:," />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="assets/tokens.css" />
+    <link rel="stylesheet" href="assets/components.css" />
+    <link rel="stylesheet" href="assets/gallery.css" />
+  </head>
+  <body class="ds g" data-page="index.html">
+    <script src="assets/ds.js"></script>
+    <script>
+      const D = DS
+      const { g, btn, play, pills, status, rating, card } = D
+      const A = D.data.ALBUMS
+      const to = (href, text) => `<a class="g-link" href="${href}">${text}</a>`
+      const ui = g.tag()
+      const api = g.tag('api')
+
+      D.page({
+        title: 'Media Manager design library',
+        lede: 'A proposal for one consistent interface. Nothing in the app has changed: these pages are static HTML and CSS with invented data. The stylesheets are written so the components can be ported to <code>packages/ui</code> one at a time.',
+        sections: [
+          {
+            id: 'contents',
+            title: 'Contents',
+            body:
+              g.doc(
+                ['Page', 'What it holds'],
+                [
+                  [
+                    to('foundations.html', 'Foundations'),
+                    'Principles, colour, type, spacing, sizes, icons, date and number formats, status and wording.',
+                  ],
+                  [
+                    to('components.html', 'Components'),
+                    'Sixteen components with their rules: button, play control, pill, status, tabs, inputs and toolbar, table, card, list row, rating, trend chart, facts, source row, notices and states, detail header, rail and dock.',
+                  ],
+                  [
+                    to('screens-browse.html', 'Browse screens'),
+                    'The album card redesign, Grid, List and Table for albums, default columns for every resource, tracks, artists, films, subscriptions, playlists and phone.',
+                  ],
+                  [
+                    to('screens-detail.html', 'Detail screens'),
+                    'One header and one tab order for every resource, the album overview redesign, the standalone page, and track, artist and film drawers.',
+                  ],
+                  [
+                    to('screens-data.html', 'Sources and listening'),
+                    'The Sources tab redesign, where each value comes from, the listening chart on every resource, and filling in missing data.',
+                  ],
+                  [
+                    to('screens-ops.html', 'Jobs and providers'),
+                    'Jobs, job details, the activity popover, Metadata, a providers overview, the provider page and account connections.',
+                  ],
+                  [
+                    '<code>audit.md</code>',
+                    'The inventory behind this proposal: what exists today, what is consistent and what is not, with counts.',
+                  ],
+                  [
+                    '<code>user-stories.md</code>',
+                    'The tasks the proposal is designed around, and the path through the interface for each.',
+                  ],
+                ],
+              ) +
+              g.rules([
+                '<b>Reading the mockups.</b> A frame labelled Now recreates the current interface from the code. A frame labelled Proposed is the redesign.',
+                `<b>Scope marks.</b> ${ui} can be built from data the app already serves. ${api} needs a new or changed endpoint before it can be built.`,
+              ]),
+          },
+          {
+            id: 'parts',
+            title: 'The parts',
+            body:
+              g.spec(
+                `<div class="g-flow" data-top>` +
+                  `<div style="width:168px">${card(A[0], { meta: [`<span>${A[0].year}</span>`, rating('RYM', A[0].rym)], tags: A[0].tags, state: 'hover' })}</div>` +
+                  `<div class="g-stack" style="flex:1;min-width:320px">` +
+                  `<div class="ds-actions">${play('header')}${btn('Refresh', { icon: 'refresh' })}${btn('Find match')}</div>` +
+                  `<div class="ds-actions">${['queued', 'running', 'done', 'failed'].map((s) => status(s)).join('')}${status('waiting', 'Waiting until 14:20')}${status('attention', 'Needs sign-in')}</div>` +
+                  `<div class="ds-actions">${pills(['Ambient', 'Field recording', 'Drone', 'Tape'], { max: 3 })}${rating('RYM', 3.71)}${rating('IMDb', 7.4)}<span class="ds-muted ds-num">1,024 scrobbles</span>${D.sparkOf('album')}</div>` +
+                  D.chartBox('album', { range: '5y', height: 150 }) +
+                  `</div></div>`,
+              ) +
+              g.note(
+                'One of each.',
+                `Every screen in this library is assembled from the components on the ${to('components.html', 'Components')} page and adds no styles of its own.`,
+              ),
+          },
+          {
+            id: 'findings',
+            title: 'What the review found',
+            body: g.doc(
+              ['Area', 'Now', 'Proposal', 'See'],
+              [
+                [
+                  '<b>Tables</b>',
+                  'Five implementations. The browse table is copied four times. Header 24 or 34px, rows 28, 32, 35 or 36px, numbers left in some and right in others, two hover and two selected colours, two sort headers, a dark footer.',
+                  'One table: 28px header, 32px rows, identity column first and pinned, numbers right-aligned, one sort header, a selection bar that appears only when rows are selected.',
+                  to('components.html#table', 'Table'),
+                ],
+                [
+                  '<b>Play controls</b>',
+                  'Nine visual variants in about 25 places: before the title, in its own column, replacing the track number, over the artwork, trailing the row, and inline beside album and playlist names inside other rows.',
+                  'One Play and Queue pair in three placements: on artwork, at the end of the title cell, in the detail header. Artwork and titles open the item; only the pair plays.',
+                  to('components.html#play', 'Play control'),
+                ],
+                [
+                  '<b>Album grid</b>',
+                  'Up to six layers per card: sort pill, tag badges, a ratings strip and play controls on the artwork, then title, service icon, byline, tags and an extra row beneath.',
+                  'Clean artwork, title, artist, one line with the year and one rating (or the value being sorted), and an optional line of two tags.',
+                  to('screens-browse.html#card', 'Album card'),
+                ],
+                [
+                  '<b>Column order</b>',
+                  'Columns render in field-definition order, not the chosen order, so Tags lands second and RYM appears twice by default. Films list Description first.',
+                  'One order for every resource: identity, creator, parent, properties, dates, counts, ratings, pills. Defaults listed per resource.',
+                  to('screens-browse.html#columns', 'Default columns'),
+                ],
+                [
+                  '<b>Detail overview</b>',
+                  'A grid of every stored field, then one section per text field. Tracks sit behind a tab with a full toolbar, in a box capped at 420px.',
+                  'Four headline figures, a compact tracks table, tags, playlists, six facts, and All fields for the rest.',
+                  to('screens-detail.html#album', 'Album overview'),
+                ],
+                [
+                  '<b>Detail headers and tabs</b>',
+                  'Titles at 28, 20, 18 and 18px in four styles. Artwork in five treatments. Ten resources have ten different tab sets; Sources is called sync on playlists.',
+                  'One header layout and one tab order. A tab exists only when it holds more than one block.',
+                  to('screens-detail.html#tabs', 'Tabs'),
+                ],
+                [
+                  '<b>Listening</b>',
+                  'Albums and tracks only. The album chart has Bar and Line toggles and dots on the line; the track chart is fixed bars. No range control, no tooltip, months only.',
+                  'One trend chart on albums, tracks, artists and playlists: a smooth line, no point markers, 30 days to all time, and a grain that follows how much data there is.',
+                  to('screens-data.html#listening', 'Listening chart'),
+                ],
+                [
+                  '<b>Sources</b>',
+                  'A table whose edit and history panels open below it, far from the row; history stacks three tables. Track sources are prose. Scrobble names are managed in Listening.',
+                  'One expandable row per provider with match, identifier, age and state. Opening a row shows what it provides and its history in place. Scrobble names live in the Last.fm row.',
+                  to('screens-data.html#sources', 'Sources tab'),
+                ],
+                [
+                  '<b>Jobs</b>',
+                  'Provider and target are plain text. A job held by a provider limit shows only as queued. Progress is text in one place, a bar in another and absent on batches.',
+                  'Status, job and target, provider, progress, started, duration and result. Waiting jobs say why and until when. A batch is one row that expands. Provider state sits above the table.',
+                  to('screens-ops.html#jobs', 'Jobs'),
+                ],
+                [
+                  '<b>Providers</b>',
+                  'One provider at a time, chosen from a list in the rail with one grey status line each. Four tabs, queue controls shown twice, the cooldown notice on one tab only.',
+                  'An overview table of every provider with connection, queue, jobs, last success, requests and budget. A provider page with queue controls in the header and three tabs.',
+                  to('screens-ops.html#providers', 'Providers'),
+                ],
+                [
+                  '<b>Account connections</b>',
+                  'Spotify, Sonos, YouTube and Last.fm connect in five different places. Some disconnect immediately, one asks first.',
+                  'Connection state and Sign in on the provider row and page. Disconnect always asks.',
+                  to('screens-ops.html#connections', 'Account connections'),
+                ],
+                [
+                  '<b>Status and wording</b>',
+                  'A finished job is succeeded, Complete, Imported, Listed or a bare date. Missing credentials has three wordings. Retry appears in six styles.',
+                  'Eight states and Needs attention, one mark each. One name per thing. One Retry button.',
+                  to('foundations.html#wording', 'Wording'),
+                ],
+                [
+                  '<b>Colour and contrast</b>',
+                  'Two token sets and about 100 literals. Dark slate footers and badges, dark glass pills on artwork, yellow and green rating badges, a black tooltip.',
+                  'One token set. Grey and white surfaces, four inks, a slate accent, amber and red for state. One dark surface.',
+                  to('foundations.html#colour', 'Colour'),
+                ],
+                [
+                  '<b>Spacing and size</b>',
+                  'About 60 padding values, nine control heights, 15 radii, 13 font sizes.',
+                  'A nine-step space scale, three control heights, four radii, six font sizes.',
+                  to('foundations.html#space', 'Space and size'),
+                ],
+                [
+                  '<b>Cut-off content</b>',
+                  'Tag badges and rating strips scroll inside cells with hidden scrollbars. Wide tables lose their identity column when scrolled. Drawer tables are capped boxes with their own scroll.',
+                  'Pills collapse to +N, scroll areas reserve their gutter, identity columns pin, and a view has one scroll area.',
+                  to('foundations.html#layout', 'Layout and overflow'),
+                ],
+              ],
+            ),
+          },
+          {
+            id: 'keep',
+            title: 'What already works and stays',
+            body: g.rules([
+              '<b>The shell:</b> rail, one white panel, a detail drawer over it and the player dock beneath.',
+              '<b>Browse:</b> Grid, List and Table on every primary page, the search box with field filters and AI search, filter modes, ranges, and all of it held in the URL.',
+              '<b>The drawer:</b> a plain click opens it, a modified click opens the page, Back steps through what you opened.',
+              '<b>Play followed by Queue,</b> everywhere music can be played.',
+              '<b>Review before a large run:</b> metadata and bulk job actions show what will happen before it starts.',
+              '<b>The look in outline:</b> IBM Plex, cool grey page, white panels, dark text, slate accent.',
+              '<b>Virtualised lists</b> and skeleton placeholders.',
+            ]),
+          },
+          {
+            id: 'order',
+            title: 'Suggested build order',
+            body:
+              g.doc(
+                ['Step', 'Work', 'Scope'],
+                [
+                  [
+                    '1',
+                    '<b>Tokens.</b> Add the <code>--ds-*</code> set and point the existing variables and the most-used literals at it.',
+                    ui,
+                  ],
+                  [
+                    '2',
+                    '<b>Small parts.</b> Status, pill, button sizes, icon button, and one formatter each for dates, durations and counts.',
+                    ui,
+                  ],
+                  [
+                    '3',
+                    '<b>Table.</b> One component for the four browse tables and the secondary tables: header, rows, sort, pinned identity column, selection bar.',
+                    ui,
+                  ],
+                  [
+                    '4',
+                    '<b>Play control, card and list row.</b> Then the album grid, followed by the other libraries.',
+                    ui,
+                  ],
+                  [
+                    '5',
+                    '<b>Detail header, tab order and the album overview.</b> Then the other resources.',
+                    ui,
+                  ],
+                  [
+                    '6',
+                    '<b>Trend chart</b> for albums and tracks from the monthly series the app already serves.',
+                    ui,
+                  ],
+                  [
+                    '7',
+                    '<b>Sources rows</b> from the provider, identifier, snapshot and job data already served. Scrobble names move in.',
+                    ui,
+                  ],
+                  [
+                    '8',
+                    '<b>Jobs table</b> columns, linked targets and providers, batch rows.',
+                    ui,
+                  ],
+                  [
+                    '9',
+                    '<b>Daily and weekly listening buckets,</b> and series for artists and playlists.',
+                    api,
+                  ],
+                  [
+                    '10',
+                    '<b>Waiting reason and progress counts</b> on jobs; provider state above the jobs table.',
+                    api,
+                  ],
+                  [
+                    '11',
+                    '<b>Providers overview:</b> one request for every provider with connection, queue, counts and budget.',
+                    api,
+                  ],
+                  [
+                    '12',
+                    '<b>Field provenance and coverage:</b> which provider supplied each value, and how many items in a set have data from each provider.',
+                    api,
+                  ],
+                ],
+              ) +
+              g.note(
+                'Each step',
+                'replaces existing styles as it lands, so the stylesheet shrinks as the work proceeds. Steps 1 to 8 need no server changes.',
+              ),
+          },
+          {
+            id: 'open',
+            title: 'Open questions',
+            body: g.rules([
+              '<b>Album tracks in the overview.</b> The proposal removes the Tracks and Playlists tabs from albums and puts both in the overview. Long albums show 20 tracks and Show all.',
+              '<b>Track listening in the overview.</b> A track has little else to show, so its chart moves into the overview and the Listening and Playlists tabs go.',
+              '<b>The rating on a card.</b> One rating shows by default: RYM for albums, IMDb for films. Sorting by another value swaps it in. Other ratings are in the drawer.',
+              '<b>Rating colours.</b> IMDb yellow and the Metacritic traffic lights are replaced by a neutral source label and a number, which also removes the only green in the app.',
+              '<b>Jobs and Providers leave the library menu.</b> They sit under System in the rail and cover every library, with a library filter on Jobs. Each provider is listed once.',
+              '<b>Double-click</b> no longer opens a table row. The title is the link; the row is for selection.',
+              '<b>Tags</b> open in the shared drawer instead of their own dialog.',
+              '<b>Dark theme.</b> Not designed here. The single token set makes it possible later.',
+            ]),
+          },
+        ],
+      })
+    </script>
+  </body>
+</html>
