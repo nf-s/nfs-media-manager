@@ -151,6 +151,16 @@ test('requests an album context, an album from a track, or a single track', () =
     offset: { uri: trackUri },
   })
   assert.deepEqual(playRequest(track), { uris: [trackUri] })
+  // Playback carried over from another device starts where that one was.
+  assert.deepEqual(playRequest(track, [], 61_500.4), {
+    uris: [trackUri],
+    position_ms: 61_500,
+  })
+  assert.deepEqual(playRequest(from, [], 2_000), {
+    context_uri: albumUri,
+    offset: { uri: trackUri },
+    position_ms: 2_000,
+  })
   assert.equal(
     spotifyWebUrl(albumUri),
     `https://open.spotify.com/album/${albumId}`,

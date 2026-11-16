@@ -36,6 +36,18 @@ const StateSchema = z.object({
   is_playing: z.boolean(),
   item: z.unknown(),
 })
+const AlbumTracksSchema = z.object({
+  items: z.array(
+    z.object({
+      uri: z.string(),
+      is_playable: z.boolean().optional(),
+      linked_from: z.object({ uri: z.string().optional() }).optional(),
+    }),
+  ),
+  next: z.string().nullable().optional(),
+})
+const ALBUM_PAGE = 50
+const ALBUM_PAGES = 10
 const ErrorSchema = z.object({
   error: z.object({
     message: z.string().optional(),
@@ -156,7 +168,11 @@ export function createPlayerApi(
     query: Query = {},
     body?: unknown,
   ): Promise<Response> {
-    const url = new URL(`https://api.spotify.com/v1/me/player${path}`)
+    const url = new URL(
+      path.startsWith('/albums/')
+        ? `https://api.spotify.com/v1${path}`
+        : `https://api.spotify.com/v1/me/player${path}`,
+    )
     for (const [key, value] of Object.entries(query))
       if (value !== undefined) url.searchParams.set(key, String(value))
     const request = async (refresh: boolean) =>
@@ -230,6 +246,30 @@ export function createPlayerApi(
         device_id: deviceId,
         volume_percent: Math.round(Math.min(1, Math.max(0, volume)) * 100),
       })
+    },
+    /**
+     * How many playable tracks come before a track on its album, for a
+     * player that can only start an album from its first track.
+     */
+    async albumTrackIndex(albumUri: string, trackUri: string) {
+      const id = /^spotify:album:([A-Za-z0-9]{22})$/.exec(albumUri)?.[1]
+      if (!id) throw new PlaybackApiError(404, null)
+      let before = 0
+      for (let page = 0; page < ALBUM_PAGES; page += 1) {
+        const response = await send('GET', `/albums/${id}/tracks`, {
+          market: 'from_token',
+          limit: ALBUM_PAGE,
+          offset: page * ALBUM_PAGE,
+        })
+        const { items, next } = AlbumTracksSchema.parse(await response.json())
+        for (const item of items) {
+          if (item.uri === trackUri || item.linked_from?.uri === trackUri)
+            return before
+          if (item.is_playable !== false) before += 1
+        }
+        if (!next) break
+      }
+      throw new PlaybackApiError(404, null)
     },
   }
 }

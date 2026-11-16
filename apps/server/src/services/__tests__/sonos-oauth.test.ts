@@ -62,6 +62,7 @@ import {
   finishSonosAuthorization,
   getSonosAccountStatus,
   getSonosRooms,
+  loadSonosContent,
   sendSonosCommand,
   sonosCallbackDestination,
 } from '../sonos-oauth'
@@ -151,6 +152,50 @@ function storedTokens(values: Record<string, unknown> = {}) {
       ),
     },
   ])
+}
+
+function storedSpotify(accounts: Record<string, unknown>) {
+  return query([
+    {
+      id: 'spotify',
+      encryptedValue: encryptSecretValue(JSON.stringify(accounts)),
+    },
+  ])
+}
+
+const API = 'https://api.ws.sonos.com/control/api/v1'
+/** One household whose only room last played a Spotify track. */
+function respondWithSpotifyRoom(accountId: string) {
+  const responses: Record<string, unknown> = {
+    [`${API}/households`]: { households: [{ id: 'home' }] },
+    [`${API}/households/home/groups`]: {
+      groups: [
+        {
+          id: 'A',
+          name: 'Lounge',
+          coordinatorId: 'A',
+          playerIds: ['A'],
+        },
+      ],
+    },
+    [`${API}/groups/A/playback`]: {},
+    [`${API}/groups/A/playbackMetadata`]: {
+      currentItem: {
+        track: {
+          id: {
+            serviceId: '12',
+            objectId: 'spotify:track:ABCDEFGHIJKLMNOPQRSTUV',
+            accountId,
+          },
+        },
+      },
+    },
+  }
+  mocks.request.mockImplementation(async (url: string) => {
+    const body = responses[url]
+    if (body === undefined) throw new Error(`Unexpected request ${url}`)
+    return Response.json(body)
+  })
 }
 
 describe('Sonos owner/session-bound OAuth (mock database and gate)', () => {
@@ -308,6 +353,7 @@ describe('Sonos owner/session-bound OAuth (mock database and gate)', () => {
   it('lists rooms with a current token and asks for a new sign-in when Sonos rejects it', async () => {
     mocks.database.select
       .mockReturnValueOnce(query([]))
+      .mockReturnValueOnce(query([]))
       .mockReturnValueOnce(storedTokens())
     mocks.request.mockResolvedValueOnce(Response.json({ households: [] }))
     expect(await getSonosRooms('user-1')).toEqual({ households: [] })
@@ -316,6 +362,7 @@ describe('Sonos owner/session-bound OAuth (mock database and gate)', () => {
     )
 
     mocks.database.select
+      .mockReturnValueOnce(query([]))
       .mockReturnValueOnce(query([]))
       .mockReturnValueOnce(storedTokens())
     mocks.request.mockRejectedValueOnce(
@@ -333,6 +380,7 @@ describe('Sonos owner/session-bound OAuth (mock database and gate)', () => {
 
   it('refreshes an expiring token before listing rooms', async () => {
     mocks.database.select
+      .mockReturnValueOnce(query([]))
       .mockReturnValueOnce(query([]))
       .mockReturnValueOnce(storedTokens({ expiresAt: Date.now() + 1000 }))
     mocks.request
@@ -380,6 +428,101 @@ describe('Sonos owner/session-bound OAuth (mock database and gate)', () => {
     expect(mocks.request.mock.calls.at(-1)?.[0]).toBe(
       'https://api.ws.sonos.com/control/api/v1/groups/RINCON_A%3A1/playback/pause',
     )
+  })
+
+  it('remembers a household Spotify account only when it is new or changed', async () => {
+    respondWithSpotifyRoom('sn_1')
+    mocks.database.select
+      .mockReturnValueOnce(query([]))
+      .mockReturnValueOnce(query([]))
+      .mockReturnValueOnce(storedTokens())
+    const rooms = await getSonosRooms('user-1')
+    expect(rooms.households[0]?.rooms[0]?.playable).toBe(true)
+    expect(mocks.values).toHaveBeenCalledTimes(1)
+    const saved = secretSchema.parse(mocks.values.mock.calls[0]?.[0])
+    expect(saved.key).toBe('spotify')
+    expect(JSON.parse(decryptSecretValue(saved.encryptedValue))).toEqual({
+      home: { serviceId: '12', accountId: 'sn_1' },
+    })
+
+    mocks.database.select
+      .mockReturnValueOnce(
+        storedSpotify({ home: { serviceId: '12', accountId: 'sn_1' } }),
+      )
+      .mockReturnValueOnce(query([]))
+      .mockReturnValueOnce(storedTokens())
+    await getSonosRooms('user-1')
+    expect(mocks.values).toHaveBeenCalledTimes(1)
+
+    respondWithSpotifyRoom('sn_2')
+    mocks.database.select
+      .mockReturnValueOnce(
+        storedSpotify({
+          home: { serviceId: '12', accountId: 'sn_1' },
+          other: { serviceId: '12', accountId: 'sn_9' },
+        }),
+      )
+      .mockReturnValueOnce(query([]))
+      .mockReturnValueOnce(storedTokens())
+    await getSonosRooms('user-1')
+    expect(mocks.values).toHaveBeenCalledTimes(2)
+    const changed = secretSchema.parse(mocks.values.mock.calls[1]?.[0])
+    expect(JSON.parse(decryptSecretValue(changed.encryptedValue))).toEqual({
+      home: { serviceId: '12', accountId: 'sn_2' },
+      other: { serviceId: '12', accountId: 'sn_9' },
+    })
+  })
+
+  it('loads Spotify content with the household Spotify account', async () => {
+    mocks.database.select
+      .mockReturnValueOnce(
+        storedSpotify({ home: { serviceId: '12', accountId: 'sn_1' } }),
+      )
+      .mockReturnValueOnce(query([]))
+      .mockReturnValueOnce(storedTokens())
+    mocks.request.mockResolvedValueOnce(Response.json({}))
+    expect(
+      await loadSonosContent('user-1', 'RINCON_A:1', {
+        household: 'home',
+        mode: 'append',
+        uris: ['spotify:track:ABCDEFGHIJKLMNOPQRSTUV'],
+        play: false,
+      }),
+    ).toEqual({ done: true })
+    const [url, init] = mocks.request.mock.calls[0] ?? []
+    expect(url).toBe(`${API}/groups/RINCON_A%3A1/playback/content`)
+    expect(JSON.parse(z.object({ body: z.string() }).parse(init).body)).toEqual(
+      {
+        type: 'TRACK',
+        id: {
+          serviceId: '12',
+          objectId: 'spotify:track:ABCDEFGHIJKLMNOPQRSTUV',
+          accountId: 'sn_1',
+        },
+        queueAction: 'APPEND',
+      },
+    )
+  })
+
+  it('refuses to load content before the household Spotify account is known', async () => {
+    mocks.database.select.mockReturnValueOnce(
+      storedSpotify({ other: { serviceId: '12', accountId: 'sn_1' } }),
+    )
+    await expect(
+      loadSonosContent('user-1', 'RINCON_A:1', {
+        household: 'home',
+        mode: 'replace',
+        uris: ['spotify:album:ABCDEFGHIJKLMNOPQRSTUV'],
+        play: true,
+      }),
+    ).rejects.toMatchObject({
+      response: {
+        statusCode: 409,
+        message:
+          'Play Spotify on this room once from a Spotify app, so its Spotify account is known.',
+      },
+    })
+    expect(mocks.request).not.toHaveBeenCalled()
   })
 
   it('needs a connection before listing rooms', async () => {

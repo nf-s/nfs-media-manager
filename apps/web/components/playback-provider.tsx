@@ -10,6 +10,7 @@ import {
   useSyncExternalStore,
 } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { z } from 'zod'
 import {
   SpotifyAccountStatusSchema,
   SpotifyPlaybackTokenSchema,
@@ -21,6 +22,7 @@ import {
   idlePlaybackState,
   type PlaybackEngine,
   type PlaybackState,
+  type SonosRoomRef,
 } from '@/utils/playback-engine'
 import { createPlayerApi } from '@/utils/spotify-player-api'
 import { createSonosControlApi } from '@/utils/sonos-player-api'
@@ -59,6 +61,12 @@ export type PlaybackControls = Pick<
 const PLAYER_NAME = 'Media Manager'
 const VOLUME_KEY = 'player:volume'
 const SHUFFLE_KEY = 'player:shuffle'
+const ROOM_KEY = 'player:room'
+const RoomSchema = z.object({
+  id: z.string().min(1),
+  name: z.string(),
+  household: z.string().min(1),
+})
 const DEFAULT_VOLUME = 0.8
 const TOKEN_MARGIN_MS = 60_000
 
@@ -133,6 +141,27 @@ function saveShuffle(shuffle: boolean) {
   }
 }
 
+/** The Sonos room chosen as the device, so a reload keeps showing it. */
+function savedRoom(): SonosRoomRef | null {
+  try {
+    const parsed = RoomSchema.safeParse(
+      JSON.parse(window.localStorage.getItem(ROOM_KEY) ?? 'null'),
+    )
+    return parsed.success ? parsed.data : null
+  } catch {
+    return null
+  }
+}
+
+function saveRoom(room: SonosRoomRef | null) {
+  try {
+    if (room) window.localStorage.setItem(ROOM_KEY, JSON.stringify(room))
+    else window.localStorage.removeItem(ROOM_KEY)
+  } catch {
+    /* The room still plays when browser storage is unavailable. */
+  }
+}
+
 function createEngine(apiBaseUrl: string) {
   // The access token is held in memory only and never written to storage.
   let cached: { accessToken: string; expiresAt: number } | null = null
@@ -169,6 +198,8 @@ function createEngine(apiBaseUrl: string) {
     onShuffle: saveShuffle,
     visible: () => document.visibilityState === 'visible',
     sonos: createSonosControlApi(apiBaseUrl),
+    initialRoom: savedRoom(),
+    onRoom: saveRoom,
   })
 }
 

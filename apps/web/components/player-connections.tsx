@@ -15,6 +15,7 @@ import { Button } from '@repo/ui/components/ui/button'
 import { useConfig } from './providers'
 import { usePlayback, type PlaybackView } from './playback-provider'
 import { fetchApiData } from '@/utils/api'
+import type { SonosRoomRef } from '@/utils/playback-engine'
 import {
   playerPromptDismissed,
   setPlayerPromptDismissed,
@@ -64,10 +65,16 @@ function roomName(room: SonosRoom) {
   return room.players.length > 1 ? room.players.join(' + ') : room.name
 }
 
-function roomState(room: SonosRoom, controlled: boolean) {
+function roomState(room: SonosRoom, current: 'chosen' | 'controlled' | null) {
   const playing = [room.track, room.artist].filter(Boolean).join(' – ')
   return [
-    controlled ? 'Controlled here' : room.state ? STATES[room.state] : null,
+    current === 'chosen'
+      ? 'Playing here'
+      : current === 'controlled'
+        ? 'Controlled here'
+        : room.state
+          ? STATES[room.state]
+          : null,
     room.state === 'idle' ? null : room.service,
     room.state === 'idle' ? null : playing || null,
   ]
@@ -76,10 +83,17 @@ function roomState(room: SonosRoom, controlled: boolean) {
 }
 
 /**
- * The account's Sonos rooms and which one the player controls. Mounted while
- * the device list is open, so each opening reads the rooms once.
+ * The account's Sonos rooms. A room Sonos can start Spotify content on is
+ * chosen like a device. Mounted while the device list is open, so each
+ * opening reads the rooms once.
  */
-export function SonosRooms({ view }: { view: PlaybackView }) {
+export function SonosRooms({
+  view,
+  onChoose,
+}: {
+  view: PlaybackView
+  onChoose: (room: SonosRoomRef) => void
+}) {
   const { apiBaseUrl } = useConfig()
   const account = useSonosAccount()
   const rooms = useQuery({
@@ -92,27 +106,53 @@ export function SonosRooms({ view }: { view: PlaybackView }) {
   })
   if (!account.data?.connected) return null
   const { target } = view
-  const groups = rooms.data?.households.flatMap(({ rooms }) => rooms) ?? []
+  const groups =
+    rooms.data?.households.flatMap((household) =>
+      household.rooms.map((room) => ({ room, household: household.id })),
+    ) ?? []
   return (
     <section className="device-section" aria-label="Sonos rooms">
       <h3>Sonos rooms</h3>
       {groups.length > 0 && (
         <ul>
-          {groups.map((room) => {
-            const controlled =
-              target.kind === 'sonos' && target.group.id === room.id
-            return (
-              <li
-                key={room.id}
-                className="device-room"
-                data-current={controlled}
-              >
+          {groups.map(({ room, household }) => {
+            const current =
+              target.kind === 'room' && target.room.id === room.id
+                ? 'chosen'
+                : target.kind === 'sonos' && target.group.id === room.id
+                  ? 'controlled'
+                  : null
+            const row = (
+              <>
                 <SonosMark />
                 <span className="device-room-text">
                   <strong>{roomName(room)}</strong>
-                  <span>{roomState(room, controlled)}</span>
+                  <span>{roomState(room, current)}</span>
                 </span>
-                {controlled && <Check size={14} aria-hidden="true" />}
+                {current && <Check size={14} aria-hidden="true" />}
+              </>
+            )
+            return room.playable ? (
+              <li key={room.id}>
+                <button
+                  type="button"
+                  className="device-room"
+                  aria-pressed={current === 'chosen'}
+                  data-current={current !== null}
+                  onClick={() =>
+                    onChoose({ id: room.id, name: roomName(room), household })
+                  }
+                >
+                  {row}
+                </button>
+              </li>
+            ) : (
+              <li
+                key={room.id}
+                className="device-room"
+                data-current={current !== null}
+              >
+                {row}
               </li>
             )
           })}
@@ -153,10 +193,12 @@ export function SonosRooms({ view }: { view: PlaybackView }) {
           </button>
         </p>
       )}
-      <p className="quiet">
-        A room is controlled here once Spotify plays on it. Spotify does not let
-        this app start playback on a room, so start it from the Spotify app.
-      </p>
+      {groups.some(({ room }) => !room.playable) && (
+        <p className="quiet">
+          A room can be chosen after Spotify has played on it once. Start
+          something on it from the Spotify app.
+        </p>
+      )}
     </section>
   )
 }

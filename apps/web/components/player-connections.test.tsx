@@ -44,6 +44,7 @@ const rooms: SonosRooms = {
           track: 'Fixture track',
           artist: 'Fixture artist',
           actions,
+          playable: false,
         },
         {
           id: 'RINCON_FIXTURE:2',
@@ -54,11 +55,14 @@ const rooms: SonosRooms = {
           track: 'Earlier track',
           artist: null,
           actions,
+          playable: false,
         },
       ],
     },
   ],
 }
+
+const ignore = () => undefined
 
 function render(
   element: React.ReactElement,
@@ -91,11 +95,14 @@ test('Sonos rooms are listed with what they play and which one is controlled', (
           group: {
             id: 'RINCON_FIXTURE:1',
             name: 'Fixture hi-fi',
+            household: 'household-1',
+            playable: false,
             actions,
             volume: 0.3,
           },
         },
       }}
+      onChoose={ignore}
     />,
     connected,
     rooms,
@@ -108,7 +115,44 @@ test('Sonos rooms are listed with what they play and which one is controlled', (
     html,
     /data-current="false">.*?<strong>Fixture study \+ Fixture hall<\/strong><span>Idle<\/span>/,
   )
-  assert.match(html, /start it from the Spotify\s+app\./)
+  assert.match(html, /can be chosen after Spotify has played on it once/)
+  assert.doesNotMatch(html, /<button/)
+})
+
+test('rooms Sonos can start Spotify on are chosen like devices', () => {
+  const playable: SonosRooms = {
+    households: rooms.households.map((household) => ({
+      ...household,
+      rooms: household.rooms.map((room) => ({ ...room, playable: true })),
+    })),
+  }
+  const html = render(
+    <SonosRoomList
+      view={{
+        ...view,
+        target: {
+          kind: 'room',
+          room: {
+            id: 'RINCON_FIXTURE:2',
+            name: 'Fixture study + Fixture hall',
+            household: 'household-1',
+          },
+        },
+      }}
+      onChoose={ignore}
+    />,
+    connected,
+    playable,
+  )
+  assert.match(
+    html,
+    /<button type="button" class="device-room" aria-pressed="false" data-current="false">.*?<strong>Fixture hi-fi<\/strong><span>Playing · Spotify · Fixture track – Fixture artist<\/span>/,
+  )
+  assert.match(
+    html,
+    /<button type="button" class="device-room" aria-pressed="true" data-current="true">.*?<strong>Fixture study \+ Fixture hall<\/strong><span>Playing here<\/span>/,
+  )
+  assert.doesNotMatch(html, /can be chosen after/)
 })
 
 test('the room being looked up and an empty account are reported', () => {
@@ -119,6 +163,7 @@ test('the room being looked up and an empty account are reported', () => {
         findingSonos: true,
         target: { kind: 'restricted', name: 'Fixture hi-fi', type: 'speaker' },
       }}
+      onChoose={ignore}
     />,
     connected,
     { households: [] },
@@ -129,10 +174,13 @@ test('the room being looked up and an empty account are reported', () => {
 
 test('rooms are left out until Sonos is connected', () => {
   assert.equal(
-    render(<SonosRoomList view={view} />, { ...connected, connected: false }),
+    render(<SonosRoomList view={view} onChoose={ignore} />, {
+      ...connected,
+      connected: false,
+    }),
     '',
   )
-  assert.equal(render(<SonosRoomList view={view} />), '')
+  assert.equal(render(<SonosRoomList view={view} onChoose={ignore} />), '')
 })
 
 test('connections show Spotify and the Sonos status with its next step', () => {

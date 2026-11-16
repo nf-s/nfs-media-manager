@@ -86,6 +86,53 @@ test('sends transport commands with bounded values', async () => {
   assert.equal(calls[2]?.body, null)
 })
 
+test('counts the playable tracks before a track on its album', async () => {
+  const albumUri = 'spotify:album:ABCDEFGHIJKL1234567890'
+  const page = (items: unknown[], next: string | null) =>
+    new Response(JSON.stringify({ items, next }), { status: 200 })
+  const { api, calls } = client([
+    page(
+      [
+        { uri: 'spotify:track:one' },
+        { uri: 'spotify:track:two', is_playable: false },
+      ],
+      'https://api.spotify.com/v1/albums/next',
+    ),
+    page(
+      [
+        { uri: 'spotify:track:three', is_playable: true },
+        {
+          uri: 'spotify:track:relinked',
+          linked_from: { uri: 'spotify:track:four' },
+        },
+      ],
+      null,
+    ),
+  ])
+  assert.equal(await api.albumTrackIndex(albumUri, 'spotify:track:four'), 2)
+  assert.deepEqual(
+    calls.map(
+      (call) => `${call.method} ${call.url.pathname}${call.url.search}`,
+    ),
+    [
+      'GET /v1/albums/ABCDEFGHIJKL1234567890/tracks?market=from_token&limit=50&offset=0',
+      'GET /v1/albums/ABCDEFGHIJKL1234567890/tracks?market=from_token&limit=50&offset=50',
+    ],
+  )
+
+  const missing = client([page([{ uri: 'spotify:track:one' }], null)])
+  await assert.rejects(
+    missing.api.albumTrackIndex(albumUri, 'spotify:track:four'),
+    (error) => error instanceof PlaybackApiError && error.status === 404,
+  )
+  const invalid = client([])
+  await assert.rejects(
+    invalid.api.albumTrackIndex('spotify:album:short', 'spotify:track:four'),
+    PlaybackApiError,
+  )
+  assert.deepEqual(invalid.calls, [])
+})
+
 test('asks for a fresh token once after an unauthorized response', async () => {
   const { api, calls, tokens } = client([
     new Response(null, { status: 401 }),

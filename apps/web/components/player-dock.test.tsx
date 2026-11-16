@@ -311,6 +311,8 @@ test('a Sonos group enables the controls Sonos accepts', () => {
       group: {
         id: 'RINCON_FIXTURE:1',
         name: 'Fixture hi-fi',
+        household: 'household-1',
+        playable: false,
         actions: {
           pause: true,
           play: true,
@@ -341,6 +343,68 @@ test('a Sonos group enables the controls Sonos accepts', () => {
     html,
     /Press Next to start the queue|does not let apps control/,
   )
+})
+
+test('a chosen Sonos room is shown as the device with its mark', () => {
+  const html = render({
+    ...on,
+    active: true,
+    current: item,
+    snapshot: { ...snapshot, paused: false },
+    target: {
+      kind: 'room',
+      room: {
+        id: 'RINCON_FIXTURE:1',
+        name: 'Fixture hi-fi',
+        household: 'household-1',
+      },
+    },
+    queue: [{ key: 'queued-1', item }],
+    volume: 0.3,
+  })
+  assert.match(html, /aria-label="Play on: Fixture hi-fi"/)
+  assert.match(
+    html,
+    /<span class="sonos-mark" aria-hidden="true">SONOS<\/span><span>Fixture hi-fi<\/span>/,
+  )
+  for (const control of ['Pause', 'Next', 'Previous'])
+    assert.doesNotMatch(html, new RegExp(`aria-label="${control}" disabled=""`))
+  assert.doesNotMatch(html, /aria-label="Seek"[^>]* disabled=""/)
+  assert.doesNotMatch(html, /plays the tracks|does not let apps control/)
+})
+
+test('a Sonos group that can be started keeps Next for the track due', () => {
+  const group = {
+    id: 'RINCON_FIXTURE:1',
+    name: 'Fixture hi-fi',
+    household: 'household-1',
+    playable: true,
+    actions: {
+      pause: true,
+      play: true,
+      next: false,
+      previous: false,
+      seek: true,
+    },
+    volume: 0.3,
+  }
+  const view: PlaybackView = {
+    ...on,
+    active: true,
+    snapshot: { ...snapshot, paused: false },
+    target: { kind: 'sonos', name: 'Fixture hi-fi', type: 'speaker', group },
+    volume: 0.3,
+  }
+  // The group has no track of its own to skip to and nothing is due here.
+  assert.match(render(view), /aria-label="Next" disabled=""/)
+  const queued = render({ ...view, queue: [{ key: 'queued-1', item }] })
+  assert.doesNotMatch(queued, /aria-label="Next" disabled=""/)
+  assert.match(queued, /Press Next to start the queue\./)
+  assert.match(
+    queued,
+    /Changes to the queue reach it with the next track started from\s+here\./,
+  )
+  assert.doesNotMatch(queued, /device this app can start/)
 })
 
 test('a playback error keeps the controls and links to Spotify', () => {

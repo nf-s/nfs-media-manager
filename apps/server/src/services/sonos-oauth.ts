@@ -10,6 +10,7 @@ import {
   SonosDisconnectResultSchema,
   type SonosAccountStatus,
   type SonosCommand,
+  type SonosContentInput,
   type SonosRooms,
 } from '@repo/schemas/sonos'
 import { db } from '@/lib/db'
@@ -20,11 +21,15 @@ import { resolveProviderSecrets } from '@/lib/provider-secrets'
 import {
   sonosAuthorization,
   sonosCommand,
+  sonosContent,
+  sonosGroupState,
   sonosPlaying,
   sonosRedirectUri,
   sonosRooms,
   sonosToken,
+  type SonosObservedAccount,
   type SonosRequest,
+  type SonosSpotifyAccount,
 } from '@/lib/sonos-api'
 import { sonosPlugin } from '@/plugins/builtin/sonos'
 import { providerSecret } from '@/schemas/db'
@@ -51,8 +56,17 @@ const AccountSchema = z.object({
   scope: z.string(),
   clientId: z.string(),
 })
+/** Each household's Spotify account, by household id. */
+const SpotifyAccountsSchema = z.record(
+  z.string(),
+  z.object({ serviceId: z.string().min(1), accountId: z.string().min(1) }),
+)
 const NOT_CONNECTED = 'Connect Sonos in the player, under Play on, first.'
 const REJECTED = 'Sonos rejected the saved sign-in. Connect the account again.'
+const REFUSED =
+  'Sonos did not accept that. The room may have changed; try again.'
+const UNKNOWN_SPOTIFY =
+  'Play Spotify on this room once from a Spotify app, so its Spotify account is known.'
 const hash = (value: string) => createHash('sha256').update(value).digest('hex')
 const namespace = (userId: string) => `sonos-account-${hash(userId)}`
 type SecretDatabase = Pick<typeof db, 'insert' | 'select' | 'delete' | 'update'>
@@ -145,6 +159,53 @@ async function storedAccount(userId: string) {
   return row
     ? AccountSchema.parse(JSON.parse(decryptSecretValue(row.encryptedValue)))
     : null
+}
+
+/** The Spotify accounts seen for the user's households. */
+async function storedSpotifyAccounts(
+  userId: string,
+): Promise<Map<string, SonosSpotifyAccount>> {
+  const [row] = await db
+    .select()
+    .from(providerSecret)
+    .where(accountSecret(userId, 'spotify'))
+  if (!row) return new Map()
+  return new Map(
+    Object.entries(
+      SpotifyAccountsSchema.parse(
+        JSON.parse(decryptSecretValue(row.encryptedValue)),
+      ),
+    ),
+  )
+}
+
+/**
+ * Saves the Spotify accounts seen in a read when they are new or changed. A
+ * household with several Spotify accounts keeps its saved one while any group
+ * still reports it.
+ */
+async function rememberSpotifyAccounts(
+  userId: string,
+  stored: Map<string, SonosSpotifyAccount>,
+  observed: SonosObservedAccount[],
+) {
+  const accounts = new Map(stored)
+  let changed = false
+  for (const { household, serviceId, accountId } of observed) {
+    const saved = accounts.get(household)
+    const reported = (account: SonosSpotifyAccount) =>
+      observed.some(
+        (seen) =>
+          seen.household === household &&
+          seen.serviceId === account.serviceId &&
+          seen.accountId === account.accountId,
+      )
+    if (saved && reported(saved)) continue
+    accounts.set(household, { serviceId, accountId })
+    changed = true
+  }
+  if (changed)
+    await writeSecret(db, userId, 'spotify', Object.fromEntries(accounts))
 }
 
 export async function getSonosAccountStatus(
@@ -412,7 +473,12 @@ function withSonos<T>(
 }
 
 export async function getSonosRooms(userId: string): Promise<SonosRooms> {
-  return withSonos(userId, sonosRooms)
+  const stored = await storedSpotifyAccounts(userId)
+  const { result, accounts } = await withSonos(userId, (request, token) =>
+    sonosRooms(request, token, new Set(stored.keys())),
+  )
+  await rememberSpotifyAccounts(userId, stored, accounts)
+  return result
 }
 
 /** The Sonos group playing the Spotify track the player shows, if any. */
@@ -420,9 +486,40 @@ export async function findSonosPlayback(
   userId: string,
   playing: { trackUri: string; device: string },
 ) {
-  return withSonos(userId, (request, token) =>
-    sonosPlaying(request, token, playing),
+  const stored = await storedSpotifyAccounts(userId)
+  const { result, accounts } = await withSonos(userId, (request, token) =>
+    sonosPlaying(request, token, playing, new Set(stored.keys())),
   )
+  await rememberSpotifyAccounts(userId, stored, accounts)
+  return result
+}
+
+/** What a group plays now; its volume is read only when asked for. */
+export async function getSonosGroupState(
+  userId: string,
+  groupId: string,
+  query: { volume?: 'true' | 'false' },
+) {
+  return withSonos(userId, (request, token) =>
+    sonosGroupState(request, token, groupId, query.volume === 'true'),
+  )
+}
+
+/** Loads Spotify content on a group with its household's Spotify account. */
+export async function loadSonosContent(
+  userId: string,
+  groupId: string,
+  input: SonosContentInput,
+) {
+  const account = (await storedSpotifyAccounts(userId)).get(input.household)
+  if (!account)
+    throw new ServerError({ statusCode: 409, message: UNKNOWN_SPOTIFY })
+  await withSonos(
+    userId,
+    (request, token) => sonosContent(request, token, groupId, account, input),
+    REFUSED,
+  )
+  return { done: true as const }
 }
 
 export async function sendSonosCommand(
@@ -433,12 +530,12 @@ export async function sendSonosCommand(
   await withSonos(
     userId,
     (request, token) => sonosCommand(request, token, groupId, command),
-    'Sonos did not accept that. The room may have changed; try again.',
+    REFUSED,
   )
   return { done: true as const }
 }
 
-/** Deletes the account's tokens and pending authorization. */
+/** Deletes the account's tokens, pending authorization and Spotify accounts. */
 export async function disconnectSonos(userId: string) {
   await db
     .delete(providerSecret)

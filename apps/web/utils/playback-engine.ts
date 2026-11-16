@@ -28,9 +28,16 @@ import {
   type SpotifySdk,
   type SpotifySdkPlayer,
 } from './spotify-sdk'
-import type { SonosCommand, SonosGroupControl } from '@repo/schemas/sonos'
+import type {
+  SonosCommand,
+  SonosContentInput,
+  SonosGroupControl,
+  SonosGroupState,
+} from '@repo/schemas/sonos'
 import type { SonosControlApi } from './sonos-player-api'
 
+/** A Sonos group, with the household whose Spotify account it plays with. */
+export type SonosRoomRef = { id: string; name: string; household: string }
 export type PlaybackTarget =
   | { kind: 'local' }
   | { kind: 'remote'; device: PlaybackDevice }
@@ -38,15 +45,21 @@ export type PlaybackTarget =
   | { kind: 'restricted'; name: string; type: string }
   /** A restricted Sonos group, controlled through the Sonos connection instead. */
   | { kind: 'sonos'; name: string; type: string; group: SonosGroupControl }
+  /**
+   * A Sonos group played through Sonos itself: Sonos loads the Spotify tracks
+   * into the group's own queue and reports what it plays.
+   */
+  | { kind: 'room'; room: SonosRoomRef }
 /** A target playback can be started on or moved to. */
 export type SelectableTarget = Exclude<
   PlaybackTarget,
   { kind: 'restricted' | 'sonos' }
 >
-type FollowedTarget = Exclude<PlaybackTarget, { kind: 'local' }>
+/** A device followed through Spotify's report of the account's playback. */
+type FollowedTarget = Exclude<PlaybackTarget, { kind: 'local' | 'room' }>
+type RoomTarget = Extract<PlaybackTarget, { kind: 'room' }>
 /** A device Spotify reports but accepts no app commands for. */
 type ObservedTarget = Extract<PlaybackTarget, { kind: 'restricted' | 'sonos' }>
-type SonosTarget = Extract<PlaybackTarget, { kind: 'sonos' }>
 type RemoteState = Awaited<ReturnType<PlayerApi['state']>>
 
 export type PlaybackState = {
@@ -112,8 +125,11 @@ export type PlaybackEngineOptions = {
   random?: () => number
   /** Whether the page is visible; idle remote polling stops while hidden. */
   visible?: () => boolean
-  /** Controls restricted Sonos groups through the Sonos connection. */
+  /** Plays on and controls Sonos groups through the Sonos connection. */
   sonos?: SonosControlApi
+  /** The Sonos group chosen as the device last time. */
+  initialRoom?: SonosRoomRef | null
+  onRoom?: (room: SonosRoomRef | null) => void
 }
 
 const LOCAL_POLL_MS = 1_000
@@ -135,7 +151,14 @@ const FOLLOWING_LIMIT = 50
 const SUCCESSOR_WITHIN_MS = 5_000
 const SONOS_TRIES = 3
 const SONOS_RETRY_MS = 2_000
-const LOCAL: SelectableTarget = { kind: 'local' }
+const ROOM_IDLE_POLL_MS = 10_000
+/** Tracks kept in a Sonos group's queue after the current one. */
+const ROOM_AHEAD = 20
+const ROOM_CHUNK = 10
+const ROOM_VOLUME_EVERY = 5
+/** How long the group's queue is left alone after Sonos refused a change to it. */
+const ROOM_RETRY_MS = 15_000
+const LOCAL: Extract<PlaybackTarget, { kind: 'local' }> = { kind: 'local' }
 const NOT_STARTED: PlaybackFailure = {
   status: 'error',
   message: 'Playback did not start. Try again or choose a device.',
@@ -160,11 +183,15 @@ type SourceSession = {
   initializing: boolean
   revision: number
   filling: Promise<void> | null
+  /** Random picks drawn ahead for a shuffled fill: the entry, then the track in it. */
+  draws: Array<{ entry: number; track: number }>
 }
 
 /** Source tracks resolved ahead: shown as upcoming and sent to Spotify with a track. */
 const SOURCE_AHEAD_SIZE = 30
 const SOURCE_CACHE_SIZE = 20
+/** Source entries of a shuffled list loaded at the same time. */
+const SOURCE_PARALLEL = 6
 
 function sourceTrackKey(index: number, position: number) {
   return `${index}:${position}`
@@ -177,6 +204,7 @@ function isObserved(target: PlaybackTarget): target is ObservedTarget {
 function sameDevice(a: PlaybackTarget, b: PlaybackTarget) {
   if (a.kind === 'remote' && b.kind === 'remote')
     return a.device.id === b.device.id
+  if (a.kind === 'room' && b.kind === 'room') return a.room.id === b.room.id
   if (isObserved(a) && isObserved(b))
     return a.name === b.name && a.type === b.type
   return a.kind === b.kind && a.kind === 'local'
@@ -200,6 +228,50 @@ function sameShown(shown: PlaybackSnapshot | null, after: PlaybackSnapshot) {
   )
 }
 
+/** What a Sonos group reports, in the shape the player follows. */
+function roomSnapshot(
+  reported: SonosGroupState,
+  at: number,
+): PlaybackSnapshot | null {
+  const track = reported.track
+  if (!track) return null
+  return {
+    trackUri: track.uri,
+    linkedFromUri: null,
+    trackName: track.name ?? '',
+    artists: track.artist ?? '',
+    albumName: track.album ?? '',
+    albumUri: reported.containerUri?.startsWith('spotify:album:')
+      ? reported.containerUri
+      : null,
+    artistLinks: [],
+    artworkUrl: track.artworkUrl,
+    durationMs: track.durationMs ?? 0,
+    positionMs: reported.positionMs,
+    paused: reported.state !== 'playing' && reported.state !== 'buffering',
+    contextUri: reported.containerUri,
+    hasNext: reported.hasNext,
+    trackNumber: null,
+    discNumber: null,
+    at,
+  }
+}
+
+/** A track the account plays that this app did not start, as an item to start elsewhere. */
+function shownTrack(shown: PlaybackSnapshot): PlayableItem | null {
+  if (!shown.trackUri) return null
+  return {
+    kind: 'track',
+    uri: shown.trackUri,
+    title: shown.trackName,
+    artist: shown.artists,
+    albumId: null,
+    albumTitle: shown.albumName,
+    artworkUrl: shown.artworkUrl,
+    trackCount: 1,
+  }
+}
+
 /** Resolves when the work settles or the wait is over, whichever is first. */
 function briefly(pending: Promise<unknown>, wait: number) {
   return new Promise<void>((resolve) => {
@@ -216,8 +288,9 @@ function briefly(pending: Promise<unknown>, wait: number) {
  * Plays queue items on this browser or another Spotify device and follows the
  * device's playback. A track goes to Spotify together with the tracks due
  * after it, so they keep playing wherever the playback is moved, including
- * devices this app cannot start playback on. It can also show and control
- * playback the account started elsewhere.
+ * devices this app cannot start playback on. A Sonos group is played through
+ * Sonos: the tracks go into the group's own queue. It can also show and
+ * control playback the account started elsewhere.
  */
 export function createPlaybackEngine(options: PlaybackEngineOptions) {
   const now = options.now ?? Date.now
@@ -230,7 +303,9 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
   let state: PlaybackState = {
     ...idlePlaybackState,
     shuffle: preferredShuffle,
-    volume: options.initialVolume,
+    ...(options.initialRoom && options.sonos
+      ? { target: { kind: 'room', room: options.initialRoom }, volume: null }
+      : { volume: options.initialVolume }),
   }
   let player: SpotifySdkPlayer | null = null
   let loading: Promise<SpotifySdkPlayer> | null = null
@@ -256,7 +331,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
   /** Something was played or queued here, so the player stays once playback stops. */
   let used = false
   /** The target to return to when a device playback was followed to goes quiet. */
-  let fallback: SelectableTarget | null = null
+  let fallback: Exclude<SelectableTarget, RoomTarget> | null = null
   /** Until then Spotify may still report the device playback was moved from. */
   let settlesAt = 0
   /** The restricted device and track last looked up as a Sonos group. */
@@ -266,10 +341,20 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
   let lookingElsewhere = false
   /** A device left by choice that Spotify still reports playing. */
   let left: ObservedTarget | null = null
+  /** Changes to a Sonos group's queue, sent one at a time in order. */
+  let roomWork: Promise<unknown> = Promise.resolve()
+  let roomBusy = 0
+  /** Counts the queues started on a group, so late answers for an earlier one are ignored. */
+  let roomRun = 0
+  let roomPolls = 0
+  let roomRetryAt = 0
 
   function set(patch: Partial<PlaybackState>) {
     if (disposed) return
+    const before = state.target
     state = { ...state, ...patch }
+    if (patch.target && !sameDevice(before, patch.target))
+      options.onRoom?.(patch.target.kind === 'room' ? patch.target.room : null)
     for (const listener of listeners) listener()
   }
 
@@ -428,12 +513,29 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
   }
 
   /**
+   * The Sonos group behind a restricted device, when Sonos can start Spotify
+   * content on it.
+   */
+  function roomBehind(target: PlaybackTarget): RoomTarget | null {
+    if (target.kind !== 'sonos' || !target.group.playable || !options.sonos)
+      return null
+    const { id, name, household } = target.group
+    return { kind: 'room', room: { id, name, household } }
+  }
+
+  /** Whether new playback can be started on the target. */
+  function startable(target: PlaybackTarget) {
+    return !isObserved(target) || roomBehind(target) !== null
+  }
+
+  /**
    * Spotify accepts no start of playback on these devices, and starting it
-   * elsewhere would take the music off them, so the request is refused.
+   * elsewhere would take the music off them, so the request is refused unless
+   * Sonos can start it there.
    */
   function refused(): boolean {
     const target = state.target
-    if (!isObserved(target)) return false
+    if (!isObserved(target) || roomBehind(target)) return false
     set({
       starting: false,
       failure: {
@@ -517,17 +619,33 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
         used.add(sourceTrackKey(entry.index, entry.position))
       let candidates = [...active.remaining]
       while (upcoming.length < SOURCE_AHEAD_SIZE && candidates.length) {
-        const index =
-          candidates[shuffled ? Math.floor(random() * candidates.length) : 0]
+        // Shuffled entries are spread over the source, so the next few are
+        // loaded together instead of one request after another.
+        while (shuffled && active.draws.length < SOURCE_PARALLEL)
+          active.draws.push({ entry: random(), track: random() })
+        const pick = (draw: number) =>
+          candidates[shuffled ? Math.floor(draw * candidates.length) : 0]
+        for (const draw of active.draws) {
+          const ahead = pick(draw.entry)
+          if (ahead !== undefined)
+            loadSourceEntry(active, ahead).catch(() => undefined)
+        }
+        const draw = active.draws.shift()
+        const index = pick(draw?.entry ?? 0)
         if (index === undefined) break
         const tracks = await loadSourceEntry(active, index)
-        if (source !== active || revision !== active.revision || disposed)
+        if (source !== active || revision !== active.revision || disposed) {
+          // The draw is kept for the fill that replaced this one.
+          if (draw && source === active) active.draws.unshift(draw)
           return
+        }
         const available = tracks
           .map((item, position) => ({ index, position, item }))
           .filter((entry) => !used.has(sourceTrackKey(index, entry.position)))
         const entry =
-          available[shuffled ? Math.floor(random() * available.length) : 0]
+          available[
+            shuffled ? Math.floor((draw?.track ?? 0) * available.length) : 0
+          ]
         if (!entry) {
           candidates = candidates.filter((candidate) => candidate !== index)
           if (
@@ -660,6 +778,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       initializing: true,
       revision: 0,
       filling: null,
+      draws: [],
     }
     const captured = active.definition
     source = active
@@ -731,12 +850,113 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     }
   }
 
-  /** Starts an item; `ahead` is a short wait for the tracks that follow it. */
-  async function start(item: PlayableItem, ahead?: Promise<void>) {
+  /**
+   * Sends one change to a Sonos group's queue. The changes reach the group
+   * one at a time, in the order they were made.
+   */
+  function roomSend(
+    room: SonosRoomRef,
+    input: Omit<SonosContentInput, 'household'>,
+  ): Promise<void> {
+    const sonos = options.sonos
+    if (!sonos) return Promise.reject(new Error('Sonos is not connected'))
+    roomBusy += 1
+    const sent = roomWork.then(() =>
+      sonos.load(room.id, { ...input, household: room.household }),
+    )
+    const done = () => {
+      roomBusy -= 1
+    }
+    roomWork = sent.then(done, done)
+    return sent
+  }
+
+  /**
+   * Keeps a Sonos group's queue in step with the tracks due next, so the
+   * group plays on by itself. Tracks are added to the end while the queue
+   * still agrees with the plan; once the plan has changed, the track now due
+   * is placed directly after the current one.
+   */
+  function maintainRoom() {
     const target = state.target
-    if (isObserved(target)) {
-      refused()
+    const active = session
+    if (
+      target.kind !== 'room' ||
+      !active ||
+      active.item.kind !== 'track' ||
+      roomBusy > 0 ||
+      now() < roomRetryAt
+    )
       return
+    const plan = planned().map((next) => next.item)
+    const tail = active.sent.slice(active.index + 1)
+    const head = plan[0]
+    const agrees = tail.every((item, at) => plan[at]?.uri === item.uri)
+    let mode: 'append' | 'next' = 'append'
+    const added: PlayableItem[] = []
+    if (agrees) {
+      const queued = new Set(
+        active.sent.slice(active.index).map((item) => item.uri),
+      )
+      for (const item of plan.slice(tail.length)) {
+        if (
+          queued.has(item.uri) ||
+          tail.length + added.length >= ROOM_AHEAD ||
+          added.length >= ROOM_CHUNK
+        )
+          break
+        queued.add(item.uri)
+        added.push(item)
+      }
+    } else if (head && tail[0]?.uri !== head.uri) {
+      mode = 'next'
+      added.push(head)
+    }
+    if (!added.length) return
+    const generation = roomRun
+    const sent = [...active.sent]
+    if (mode === 'append') sent.push(...added)
+    else sent.splice(active.index + 1, 0, ...added)
+    // The queue is recorded before Sonos confirms, so a group that moves on
+    // meanwhile is still followed.
+    session = { ...active, sent }
+    roomSend(target.room, {
+      mode,
+      uris: added.map((item) => item.uri),
+      play: latest ? !latest.paused : true,
+    }).then(
+      () => {
+        if (generation === roomRun) maintainRoom()
+      },
+      (error: unknown) => {
+        if (generation !== roomRun || disposed) return
+        roomRetryAt = now() + ROOM_RETRY_MS
+        if (session)
+          session = {
+            ...session,
+            sent: session.sent.filter((item) => !added.includes(item)),
+          }
+        fail(error)
+      },
+    )
+  }
+
+  /**
+   * Starts an item; `ahead` is a short wait for the tracks that follow it and
+   * `from` is where in its first track to start.
+   */
+  async function start(item: PlayableItem, ahead?: Promise<void>, from = 0) {
+    let target = state.target
+    if (isObserved(target)) {
+      const room = roomBehind(target)
+      if (!room) {
+        refused()
+        return
+      }
+      // Sonos takes over the group from the Spotify session it was playing.
+      fallback = null
+      set({ target: room, volume: targetVolume(target), findingSonos: false })
+      target = room
     }
     run += 1
     const started = run
@@ -755,6 +975,28 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       failure: null,
     })
     try {
+      if (target.kind === 'room') {
+        roomRun += 1
+        roomRetryAt = 0
+        const skip =
+          item.kind === 'album' && item.startUri
+            ? await api.albumTrackIndex(item.uri, item.startUri)
+            : 0
+        if (started !== run || disposed) return
+        await roomSend(target.room, {
+          mode: 'replace',
+          uris: [item.uri],
+          play: true,
+          ...(skip > 0 ? { skip } : {}),
+          ...(from > 0 ? { positionMs: Math.round(from) } : {}),
+        })
+        if (started !== run) return
+        // The tracks that follow may still be resolving; they are added as
+        // they become known.
+        maintainRoom()
+        schedule(FOLLOW_UP_MS)
+        return
+      }
       const [deviceId] = await Promise.all([
         target.kind === 'local' ? ensureLocal() : target.device.id,
         ahead,
@@ -763,7 +1005,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       const following = followingFor(item)
       if (session) session = { ...session, sent: [item, ...following] }
       await onDevice(target.kind === 'local', () =>
-        api.play(deviceId, playRequest(item, following)),
+        api.play(deviceId, playRequest(item, following, from)),
       )
       if (started !== run) return
       schedule(FOLLOW_UP_MS)
@@ -786,7 +1028,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
 
   /** A device this app cannot start playback on plays only what it was sent. */
   function continueQueue(): boolean {
-    return !isObserved(state.target) && startNext()
+    return startable(state.target) && startNext()
   }
 
   function take(next: Planned) {
@@ -798,8 +1040,8 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
   /**
    * The device moved to another of the tracks sent with the current one, by
    * itself or through a skip made on it. The queue follows the device, except
-   * that a device this app can start gets the track now due when the queue
-   * has changed since.
+   * that a device this app can start gets the track now due when it moved to
+   * a track the queue no longer has next.
    */
   function advanced(
     after: PlaybackSnapshot,
@@ -831,13 +1073,24 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     const plan = planned()
     const at = plan.findIndex((next) => next.item.uri === item.uri)
     const due = plan[at]
-    if (
-      !isObserved(state.target) &&
-      index > active.index &&
-      at !== 0 &&
-      startNext()
+    // The planned tracks before it are ones the device has already passed.
+    const passed = new Set(
+      active.sent.slice(active.index + 1, index).map((sent) => sent.uri),
     )
-      return 'restarted'
+    const inStep =
+      at >= 0 && plan.slice(0, at).every((next) => passed.has(next.item.uri))
+    if (startable(state.target) && index > active.index && !inStep) {
+      if (startNext()) return 'restarted'
+      const target = state.target
+      if (target.kind === 'room' && at < 0) {
+        // Nothing is due, and the group moved on to a track that was taken
+        // off the queue after it had been added to the group.
+        sonosSend(target.room.id, { action: 'pause' })
+        detach()
+        set({ current: null })
+        return 'restarted'
+      }
+    }
     for (const passed of plan.slice(0, at + 1)) take(passed)
     if (due) currentFromSource = due.from === 'source'
     session = { ...active, item, index, anchorUri: after.trackUri }
@@ -940,12 +1193,46 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     )
   }
 
-  function sonosSend(target: SonosTarget, command: SonosCommand) {
-    options.sonos?.command(target.group.id, command).catch((error: unknown) => {
+  function groupId(
+    target: Extract<PlaybackTarget, { kind: 'sonos' | 'room' }>,
+  ) {
+    return target.kind === 'room' ? target.room.id : target.group.id
+  }
+
+  function sonosSend(groupId: string, command: SonosCommand) {
+    options.sonos?.command(groupId, command).catch((error: unknown) => {
       // The group may have changed; look it up again with the next report.
       sonosChecked = null
       fail(error)
     })
+  }
+
+  /** Reads what a Sonos group plays and keeps its queue supplied. */
+  async function pollRoom(target: RoomTarget) {
+    const sonos = options.sonos
+    if (!sonos) return
+    roomPolls += 1
+    const reported = await sonos.state(
+      target.room.id,
+      roomPolls % ROOM_VOLUME_EVERY === 1,
+    )
+    pollErrors = 0
+    if (!sameDevice(state.target, target) || disposed) return
+    if (
+      reported.volume !== undefined &&
+      !volumeTimer &&
+      reported.volume !== state.volume
+    )
+      set({ volume: reported.volume })
+    const snapshot = roomSnapshot(reported, now())
+    if (!snapshot) {
+      missing += 1
+      if (missing === MISSING_STATES && (session || latest)) playbackStopped()
+      return
+    }
+    missing = 0
+    observe(snapshot)
+    maintainRoom()
   }
 
   function observeLocal(payload: unknown) {
@@ -996,14 +1283,17 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
    * comes back once that device goes quiet.
    */
   function follow(target: FollowedTarget, snapshot: PlaybackSnapshot) {
-    if (!isObserved(state.target)) fallback ??= state.target
+    if (state.target.kind === 'local' || state.target.kind === 'remote')
+      fallback ??= state.target
     missing = 0
     set({ target, volume: targetVolume(target) })
     observe(snapshot)
   }
 
   /** The device Spotify reports playback on, if any. */
-  function reported(remote: RemoteState): PlaybackTarget | null {
+  function reported(
+    remote: RemoteState,
+  ): Exclude<PlaybackTarget, RoomTarget> | null {
     if (remote.device)
       return remote.device.id === localId
         ? LOCAL
@@ -1105,7 +1395,8 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     if (shouldPoll())
       return state.target.kind === 'local' ? LOCAL_POLL_MS : REMOTE_POLL_MS
     const idle = watching && visible() && state.failure?.status !== 'expired'
-    return idle ? IDLE_POLL_MS : null
+    if (!idle) return null
+    return state.target.kind === 'room' ? ROOM_IDLE_POLL_MS : IDLE_POLL_MS
   }
 
   async function tick() {
@@ -1113,7 +1404,9 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     ticking = true
     try {
       const target = state.target
-      if (!session && !latest) {
+      if (target.kind === 'room') {
+        if (session || latest || (watching && visible())) await pollRoom(target)
+      } else if (!session && !latest) {
         if (watching && visible()) await findPlayback()
       } else if (target.kind === 'local') {
         const found = player
@@ -1156,8 +1449,11 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
         playbackFailure(error).status === 'expired'
       ) {
         pollErrors = 0
+        // A Sonos group showing nothing is only being watched; its failed
+        // reads are repeated quietly.
+        const shown = session !== null || latest !== null
         playbackStopped()
-        fail(error)
+        if (shown || state.target.kind !== 'room') fail(error)
       }
     } finally {
       ticking = false
@@ -1182,10 +1478,82 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     set({ failure: null })
     expect({ positionMs: position })
     if (target.kind === 'local') guard(player?.seek(position))
-    else if (target.kind === 'sonos')
-      sonosSend(target, { action: 'seek', positionMs: Math.round(position) })
-    else guard(api.seek(target.device.id, position))
+    else if (target.kind === 'remote')
+      guard(api.seek(target.device.id, position))
+    else
+      sonosSend(groupId(target), {
+        action: 'seek',
+        positionMs: Math.round(position),
+      })
     schedule(FOLLOW_UP_MS)
+  }
+
+  /** Pauses the device playback is being taken from. */
+  function quiet(target: PlaybackTarget) {
+    const ignored = () => undefined
+    if (target.kind === 'local') {
+      if (localId) api.pause(localId).catch(ignored)
+    } else if (target.kind === 'remote')
+      api.pause(target.device.id).catch(ignored)
+    else if (target.kind !== 'restricted')
+      options.sonos
+        ?.command(groupId(target), { action: 'pause' })
+        .catch(ignored)
+  }
+
+  /**
+   * Moves playback to or from a Sonos group. Spotify cannot move a session
+   * there, so what is playing is started again on the chosen device at the
+   * same position and paused where it was.
+   */
+  function moveTo(next: SelectableTarget) {
+    const from = state.target
+    if (sameDevice(from, next)) return
+    if (next.kind === 'local') player?.activateElement().catch(() => undefined)
+    const shown = latest
+    const playing = shown !== null && !shown.paused
+    const position = shown ? positionAt(shown, now()) : 0
+    const started = session?.item
+    const item = !playing
+      ? null
+      : started
+        ? started.kind === 'album' && shown.trackUri
+          ? { ...started, startUri: shown.trackUri }
+          : started
+        : shownTrack(shown)
+    // The group itself is taken over by the queue started on it.
+    const sameGroup =
+      from.kind === 'sonos' &&
+      next.kind === 'room' &&
+      from.group.id === next.room.id
+    if (playing && !sameGroup) quiet(from)
+    run += 1
+    detach()
+    latest = null
+    fallback = null
+    // Spotify keeps reporting a device it would not let this app pause.
+    left = from.kind === 'restricted' ? from : null
+    sawLocalState = false
+    missing = 0
+    roomPolls = 0
+    settlesAt = 0
+    if (!started || !item) currentFromSource = false
+    set({
+      target: next,
+      volume:
+        next.kind === 'local'
+          ? localVolume
+          : next.kind === 'remote'
+            ? next.device.volume
+            : null,
+      snapshot: null,
+      current: item,
+      starting: false,
+      failure: null,
+      findingSonos: false,
+    })
+    if (item) void start(item, undefined, position)
+    else schedule(0)
   }
 
   return {
@@ -1311,25 +1679,37 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       else {
         const paused = latest.paused
         expect({ paused: !paused })
-        if (target.kind === 'sonos')
-          sonosSend(target, { action: paused ? 'play' : 'pause' })
-        else
+        if (target.kind === 'remote')
           guard(
             paused ? api.resume(target.device.id) : api.pause(target.device.id),
           )
+        else sonosSend(groupId(target), { action: paused ? 'play' : 'pause' })
       }
       schedule(FOLLOW_UP_MS)
     },
     next() {
       const target = state.target
-      if (isObserved(target)) {
-        // The group skips within the tracks it was sent; the queue follows it.
-        if (target.kind !== 'sonos' || !latest || !target.group.actions.next)
-          return
+      // A Sonos group skips to the next track in its queue when that is the
+      // track due; otherwise the track due is started on it.
+      const queued =
+        session?.phase === 'playing' && session.item.kind === 'track'
+          ? session.sent[session.index + 1]
+          : undefined
+      const due = state.queue[0]?.item ?? source?.upcoming[0]?.item
+      const inStep = queued !== undefined && queued.uri === due?.uri
+      const skip = (group: string) => {
         skippedAt = now()
         set({ failure: null })
-        sonosSend(target, { action: 'next' })
+        sonosSend(group, { action: 'next' })
         schedule(FOLLOW_UP_MS)
+      }
+      if (isObserved(target)) {
+        if (target.kind !== 'sonos') return
+        const skips = latest !== null && target.group.actions.next
+        if (skips && (inStep || !roomBehind(target)))
+          return skip(groupId(target))
+        if (roomBehind(target) && startNext()) return
+        if (skips) skip(groupId(target))
         return
       }
       const itemEnds =
@@ -1338,6 +1718,11 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
         session.item.kind === 'track' ||
         latest?.hasNext === false
       activate()
+      if (target.kind === 'room') {
+        if (!(inStep && latest) && itemEnds && startNext()) return
+        if (latest) skip(groupId(target))
+        return
+      }
       if (itemEnds && startNext()) return
       if (!latest) return
       skippedAt = now()
@@ -1354,7 +1739,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
         // Sonos refuses to go back in some Spotify Connect sessions.
         if (!target.group.actions.previous) return seek(0)
         set({ failure: null })
-        sonosSend(target, { action: 'previous' })
+        sonosSend(groupId(target), { action: 'previous' })
         schedule(FOLLOW_UP_MS)
         return
       }
@@ -1376,6 +1761,11 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       }
       set({ failure: null })
       if (target.kind === 'local') guard(player?.previousTrack())
+      else if (target.kind === 'room')
+        // The group's queue has nothing before the track it started with.
+        options.sonos
+          ?.command(target.room.id, { action: 'previous' })
+          .catch(() => seek(0))
       else
         api.previous(target.device.id).catch((error: unknown) => {
           // Spotify refuses to go back from the first track of a context.
@@ -1390,6 +1780,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       const target = state.target
       if (target.kind === 'restricted') return
       if (target.kind === 'sonos' && target.group.volume === null) return
+      if (target.kind === 'room' && state.volume === null) return
       set({ volume })
       if (target.kind === 'local') {
         localVolume = volume
@@ -1400,9 +1791,9 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       if (volumeTimer) clearTimeout(volumeTimer)
       volumeTimer = setTimeout(() => {
         volumeTimer = null
-        if (target.kind === 'sonos')
-          sonosSend(target, { action: 'volume', volume })
-        else guard(api.volume(target.device.id, volume))
+        if (target.kind === 'remote')
+          guard(api.volume(target.device.id, volume))
+        else sonosSend(groupId(target), { action: 'volume', volume })
       }, VOLUME_DEBOUNCE_MS)
     },
     async refreshDevices() {
@@ -1420,6 +1811,8 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     },
     /** Moves playback to this browser or another device and controls it there. */
     async selectDevice(next: SelectableTarget) {
+      if (next.kind === 'room' || state.target.kind === 'room')
+        return moveTo(next)
       const playing = latest !== null && !latest.paused
       const moving = latest !== null || session !== null
       const leaving = isObserved(state.target) ? state.target : null

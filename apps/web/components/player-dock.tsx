@@ -234,6 +234,7 @@ function itemDetail(item: PlayableItem) {
 
 function targetLabel(target: PlaybackTarget) {
   if (target.kind === 'local') return 'This browser'
+  if (target.kind === 'room') return target.room.name
   return target.kind === 'remote' ? target.device.name : target.name
 }
 
@@ -340,6 +341,9 @@ function Transport({ view }: { view: PlaybackView }) {
   const readOnly = view.target.kind === 'restricted'
   // A Sonos group accepts the controls Sonos reports for its current playback.
   const sonos = view.target.kind === 'sonos' ? view.target.group.actions : null
+  // Sonos can start the track due on the group when its own tracks run out.
+  const startsNext =
+    view.target.kind === 'sonos' && view.target.group.playable && hasNext
   return (
     <div className="player-buttons">
       <button
@@ -394,7 +398,9 @@ function Transport({ view }: { view: PlaybackView }) {
         className="player-skip"
         aria-label="Next"
         disabled={
-          sonos ? !snapshot || !sonos.next : readOnly || (!snapshot && !hasNext)
+          sonos
+            ? !snapshot || (!sonos.next && !startsNext)
+            : readOnly || (!snapshot && !hasNext)
         }
         onClick={controls.next}
       >
@@ -536,11 +542,19 @@ function QueueContents({
   const { target } = view
   return (
     <div className="queue-contents">
-      {(target.kind === 'sonos' || target.kind === 'restricted') && (
+      {(target.kind === 'restricted' ||
+        (target.kind === 'sonos' && !target.group.playable)) && (
         <p className="quiet">
           {target.name} plays the tracks it was sent when playback moved there.
           Changes to the queue reach it after playback is started again on a
           device this app can start.
+        </p>
+      )}
+      {target.kind === 'sonos' && target.group.playable && (
+        <p className="quiet">
+          {target.name} plays the tracks Spotify was given when playback moved
+          there. Changes to the queue reach it with the next track started from
+          here.
         </p>
       )}
       {view.source && (
@@ -570,8 +584,9 @@ function QueueContents({
         {view.queue.length > 0 &&
           !view.current &&
           view.snapshot &&
-          view.target.kind !== 'sonos' &&
-          view.target.kind !== 'restricted' && (
+          (view.target.kind === 'sonos'
+            ? view.target.group.playable
+            : view.target.kind !== 'restricted') && (
             <p className="quiet">Press Next to start the queue.</p>
           )}
         {view.queue.length ? (
@@ -705,7 +720,12 @@ function DeviceList({
         </p>
       )}
       <p className="quiet">Devices appear when Spotify is open on them.</p>
-      {open && <SonosRooms view={view} />}
+      {open && (
+        <SonosRooms
+          view={view}
+          onChoose={(room) => choose({ kind: 'room', room })}
+        />
+      )}
       {open && <PlayerConnections />}
     </div>
   )
@@ -801,7 +821,8 @@ function DockPopover({
 }
 
 function TargetIcon({ view }: { view: PlaybackView }) {
-  if (view.target.kind === 'sonos') return <SonosMark />
+  if (view.target.kind === 'sonos' || view.target.kind === 'room')
+    return <SonosMark />
   if (view.findingSonos)
     return (
       <LoaderCircle

@@ -144,12 +144,14 @@ export function libraryTrackPlayable(
 export function playRequest(
   item: PlayableItem,
   following: readonly PlayableItem[] = [],
+  positionMs = 0,
 ) {
+  const from = positionMs > 0 ? { position_ms: Math.round(positionMs) } : {}
   if (item.kind === 'track')
-    return { uris: [item.uri, ...following.map((next) => next.uri)] }
+    return { uris: [item.uri, ...following.map((next) => next.uri)], ...from }
   return item.startUri
-    ? { context_uri: item.uri, offset: { uri: item.startUri } }
-    : { context_uri: item.uri }
+    ? { context_uri: item.uri, offset: { uri: item.startUri }, ...from }
+    : { context_uri: item.uri, ...from }
 }
 
 /** The open.spotify.com page for an album, artist or track URI. */
