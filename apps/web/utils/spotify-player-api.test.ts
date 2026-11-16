@@ -86,6 +86,54 @@ test('sends transport commands with bounded values', async () => {
   assert.equal(calls[2]?.body, null)
 })
 
+test('reads the details of a track by its URI', async () => {
+  const { api, calls } = client([
+    new Response(
+      JSON.stringify({
+        uri: 'spotify:track:relinked',
+        name: 'Fixture track',
+        duration_ms: 181_000,
+        track_number: 4,
+        disc_number: 1,
+        artists: [
+          { name: 'First artist', uri: 'spotify:artist:first' },
+          { name: 'Second artist' },
+        ],
+        linked_from: { uri: 'spotify:track:ABCDEFGHIJKL1234567890' },
+        album: {
+          uri: 'spotify:album:fixture',
+          name: 'Fixture album',
+          images: [{ url: 'https://images.example/cover.jpg' }],
+        },
+      }),
+      { status: 200 },
+    ),
+  ])
+  assert.deepEqual(await api.track('spotify:track:ABCDEFGHIJKL1234567890'), {
+    trackUri: 'spotify:track:relinked',
+    linkedFromUri: 'spotify:track:ABCDEFGHIJKL1234567890',
+    trackName: 'Fixture track',
+    artists: 'First artist, Second artist',
+    albumName: 'Fixture album',
+    albumUri: 'spotify:album:fixture',
+    artistLinks: [
+      { name: 'First artist', uri: 'spotify:artist:first' },
+      { name: 'Second artist', uri: null },
+    ],
+    artworkUrl: 'https://images.example/cover.jpg',
+    durationMs: 181_000,
+    trackNumber: 4,
+    discNumber: 1,
+  })
+  assert.equal(
+    `${calls[0]?.method} ${calls[0]?.url.pathname}${calls[0]?.url.search}`,
+    'GET /v1/tracks/ABCDEFGHIJKL1234567890?market=from_token',
+  )
+  const invalid = client([])
+  await assert.rejects(invalid.api.track('spotify:album:x'), PlaybackApiError)
+  assert.deepEqual(invalid.calls, [])
+})
+
 test('counts the playable tracks before a track on its album', async () => {
   const albumUri = 'spotify:album:ABCDEFGHIJKL1234567890'
   const page = (items: unknown[], next: string | null) =>

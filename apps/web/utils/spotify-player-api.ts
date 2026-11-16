@@ -78,7 +78,7 @@ export class PlaybackApiError extends Error {
   }
 }
 
-function httpsUrl(value: string | undefined): string | null {
+export function httpsUrl(value: string | null | undefined): string | null {
   if (!value) return null
   try {
     return new URL(value).protocol === 'https:' ? value : null
@@ -104,6 +104,41 @@ function device(value: z.infer<typeof DeviceSchema>): PlaybackDevice | null {
   }
 }
 
+/** What Spotify knows about a track, in the shape a playback snapshot shows it. */
+export type TrackDetails = Pick<
+  PlaybackSnapshot,
+  | 'trackUri'
+  | 'linkedFromUri'
+  | 'trackName'
+  | 'artists'
+  | 'albumName'
+  | 'albumUri'
+  | 'artistLinks'
+  | 'artworkUrl'
+  | 'durationMs'
+  | 'trackNumber'
+  | 'discNumber'
+>
+
+function trackDetails(track: z.infer<typeof TrackSchema>): TrackDetails {
+  return {
+    trackUri: track.uri,
+    linkedFromUri: track.linked_from?.uri ?? null,
+    trackName: track.name,
+    artists: track.artists.map((artist) => artist.name).join(', '),
+    albumName: track.album?.name ?? '',
+    albumUri: track.album?.uri ?? null,
+    artistLinks: track.artists.map(({ name, uri }) => ({
+      name,
+      uri: uri ?? null,
+    })),
+    artworkUrl: httpsUrl(track.album?.images[0]?.url),
+    durationMs: track.duration_ms,
+    trackNumber: track.track_number ?? null,
+    discNumber: track.disc_number ?? null,
+  }
+}
+
 /** Normalises Spotify's playback state response; exported for tests. */
 export function remotePlayback(
   value: unknown,
@@ -126,24 +161,11 @@ export function remotePlayback(
       : { name: state.device.name, type: state.device.type.toLowerCase() },
     snapshot: track.success
       ? {
-          trackUri: track.data.uri,
-          linkedFromUri: track.data.linked_from?.uri ?? null,
-          trackName: track.data.name,
-          artists: track.data.artists.map((artist) => artist.name).join(', '),
-          albumName: track.data.album?.name ?? '',
-          albumUri: track.data.album?.uri ?? null,
-          artistLinks: track.data.artists.map(({ name, uri }) => ({
-            name,
-            uri: uri ?? null,
-          })),
-          artworkUrl: httpsUrl(track.data.album?.images[0]?.url),
-          durationMs: track.data.duration_ms,
+          ...trackDetails(track.data),
           positionMs: state.progress_ms ?? 0,
           paused: !state.is_playing,
           contextUri: state.context?.uri ?? null,
           hasNext: null,
-          trackNumber: track.data.track_number ?? null,
-          discNumber: track.data.disc_number ?? null,
           at,
         }
       : null,
@@ -169,7 +191,7 @@ export function createPlayerApi(
     body?: unknown,
   ): Promise<Response> {
     const url = new URL(
-      path.startsWith('/albums/')
+      path.startsWith('/albums/') || path.startsWith('/tracks/')
         ? `https://api.spotify.com/v1${path}`
         : `https://api.spotify.com/v1/me/player${path}`,
     )
@@ -246,6 +268,18 @@ export function createPlayerApi(
         device_id: deviceId,
         volume_percent: Math.round(Math.min(1, Math.max(0, volume)) * 100),
       })
+    },
+    /**
+     * Spotify's details of a track, for a player that reports only the track's
+     * URI.
+     */
+    async track(trackUri: string): Promise<TrackDetails> {
+      const id = /^spotify:track:([A-Za-z0-9]{22})$/.exec(trackUri)?.[1]
+      if (!id) throw new PlaybackApiError(404, null)
+      const response = await send('GET', `/tracks/${id}`, {
+        market: 'from_token',
+      })
+      return trackDetails(TrackSchema.parse(await response.json()))
     },
     /**
      * How many playable tracks come before a track on its album, for a

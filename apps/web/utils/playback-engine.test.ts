@@ -103,6 +103,9 @@ function harness(
   > = {},
 ) {
   const calls: string[] = []
+  /** Tracks whose details were read from Spotify. */
+  const lookups: string[] = []
+  const failingLookups = new Set<string>()
   const page = { visible: true }
   const listeners = new Map<string, Array<(payload: unknown) => void>>()
   const local: { state: unknown } = { state: null }
@@ -184,6 +187,23 @@ function harness(
       await command(`album index ${albumUri} ${trackUri}`)
       return 3
     },
+    async track(trackUri) {
+      lookups.push(trackUri)
+      if (failingLookups.has(trackUri)) throw new PlaybackApiError(404, null)
+      return {
+        trackUri,
+        linkedFromUri: null,
+        trackName: `Spotify name of ${trackUri}`,
+        artists: 'Spotify artist',
+        albumName: 'Spotify album',
+        albumUri: 'spotify:album:from-spotify',
+        artistLinks: [{ name: 'Spotify artist', uri: null }],
+        artworkUrl: 'https://images.example/cover.jpg',
+        durationMs: 180_000,
+        trackNumber: 2,
+        discNumber: 1,
+      }
+    },
   }
   const engine = createPlaybackEngine({
     api,
@@ -200,6 +220,10 @@ function harness(
   return {
     engine,
     calls,
+    lookups,
+    failLookup(uri: string) {
+      failingLookups.add(uri)
+    },
     page,
     local,
     remote,
@@ -1867,8 +1891,10 @@ test('choosing a Sonos room moves the track there with the tracks that follow it
     /^RINCON_FIXTURE:1 replace spotify:track:source-0 play at \d+$/,
   )
   assert.deepEqual(sonos.loads.slice(1), [
-    `RINCON_FIXTURE:1 append ${uris(1, 10)} play`,
-    `RINCON_FIXTURE:1 append ${uris(11, 20)} play`,
+    `RINCON_FIXTURE:1 append ${uris(1, 3)} play`,
+    `RINCON_FIXTURE:1 append ${uris(4, 6)} play`,
+    `RINCON_FIXTURE:1 append ${uris(7, 9)} play`,
+    `RINCON_FIXTURE:1 append ${uris(10, 10)} play`,
   ])
   const state = setup.engine.getState()
   assert.deepEqual(state.target, { kind: 'room', room: kitchen })
@@ -1903,9 +1929,88 @@ test('Next on a Sonos room skips in its queue and the queue is topped up', async
   ])
   // Nothing is started again; the queue only grows at its end.
   assert.deepEqual(sonos.loads.slice(loaded), [
-    'RINCON_FIXTURE:1 append spotify:track:source-21 play',
-    'RINCON_FIXTURE:1 append spotify:track:source-22 play',
+    'RINCON_FIXTURE:1 append spotify:track:source-11 play',
+    'RINCON_FIXTURE:1 append spotify:track:source-12 play',
   ])
+  setup.engine.dispose()
+})
+
+test('a track Sonos reports by URI alone is described by the queue, then by Spotify', async () => {
+  const sonos = fakeSonos()
+  const setup = await sourceOnRoom(sonos)
+  // Sonos has no name, artist or length for a track it loaded by ID, and its
+  // artwork is served from the speaker on the home network.
+  const bare = (uri: string, positionMs: number) =>
+    roomState(uri, {
+      positionMs,
+      hasNext: true,
+      track: {
+        uri,
+        name: null,
+        artist: null,
+        album: null,
+        artworkUrl: 'http://10.0.0.2:1400/getaa?u=fixture',
+        durationMs: null,
+      },
+    })
+  setup.engine.next()
+  await settle()
+  sonos.room.state = bare(sourceTrack(1).uri, 1_000)
+  await advance(3_000)
+  let shown = setup.engine.getState().snapshot
+  assert.equal(shown?.trackUri, sourceTrack(1).uri)
+  assert.equal(shown?.trackName, `Spotify name of ${sourceTrack(1).uri}`)
+  assert.equal(shown?.artists, 'Spotify artist')
+  assert.equal(shown?.durationMs, 180_000)
+  assert.equal(shown?.artworkUrl, 'https://images.example/cover.jpg')
+  assert.equal(shown?.linkedFromUri, null)
+  // Each track is read from Spotify once, however often the room reports it.
+  await advance(9_000)
+  assert.deepEqual(
+    setup.lookups.filter((uri) => uri === sourceTrack(1).uri),
+    [sourceTrack(1).uri],
+  )
+  // With its length known, the track running out carries the queue on.
+  sonos.room.state = bare(sourceTrack(1).uri, 179_000)
+  await advance(3_000)
+  sonos.room.state = bare(sourceTrack(2).uri, 500)
+  await advance(3_000)
+  shown = setup.engine.getState().snapshot
+  assert.equal(setup.engine.getState().current?.uri, sourceTrack(2).uri)
+  assert.equal(shown?.trackName, `Spotify name of ${sourceTrack(2).uri}`)
+  assert.equal(setup.engine.getState().failure, null)
+  setup.engine.dispose()
+})
+
+test('a room track Spotify cannot describe keeps what the queue knows of it', async () => {
+  const sonos = fakeSonos()
+  const setup = await sourceOnRoom(sonos)
+  const uri = sourceTrack(1).uri
+  setup.failLookup(uri)
+  setup.engine.next()
+  await settle()
+  sonos.room.state = roomState(uri, {
+    positionMs: 1_000,
+    hasNext: true,
+    track: {
+      uri,
+      name: null,
+      artist: null,
+      album: null,
+      artworkUrl: null,
+      durationMs: null,
+    },
+  })
+  await advance(6_000)
+  const shown = setup.engine.getState().snapshot
+  assert.equal(shown?.trackName, sourceTrack(1).title)
+  assert.equal(shown?.artists, sourceTrack(1).artist)
+  assert.equal(shown?.durationMs, 0)
+  assert.equal(setup.engine.getState().failure, null)
+  assert.deepEqual(
+    setup.lookups.filter((seen) => seen === uri),
+    [uri],
+  )
   setup.engine.dispose()
 })
 

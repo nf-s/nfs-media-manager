@@ -17,9 +17,11 @@ import {
   type PlaybackFailure,
 } from './playback-failure'
 import {
+  httpsUrl,
   PlaybackApiError,
   type PlaybackDevice,
   type PlayerApi,
+  type TrackDetails,
 } from './spotify-player-api'
 import {
   sdkDeviceId,
@@ -152,9 +154,13 @@ const SUCCESSOR_WITHIN_MS = 5_000
 const SONOS_TRIES = 3
 const SONOS_RETRY_MS = 2_000
 const ROOM_IDLE_POLL_MS = 10_000
-/** Tracks kept in a Sonos group's queue after the current one. */
-const ROOM_AHEAD = 20
-const ROOM_CHUNK = 10
+/**
+ * Tracks kept in a Sonos group's queue after the current one. Sonos takes
+ * about a second for each track added and a queue change waits for the
+ * request before it, so they are added a few at a time.
+ */
+const ROOM_AHEAD = 10
+const ROOM_CHUNK = 3
 const ROOM_VOLUME_EVERY = 5
 /** How long the group's queue is left alone after Sonos refused a change to it. */
 const ROOM_RETRY_MS = 15_000
@@ -245,7 +251,8 @@ function roomSnapshot(
       ? reported.containerUri
       : null,
     artistLinks: [],
-    artworkUrl: track.artworkUrl,
+    // Sonos serves artwork from the speaker's own address on the home network.
+    artworkUrl: httpsUrl(track.artworkUrl),
     durationMs: track.durationMs ?? 0,
     positionMs: reported.positionMs,
     paused: reported.state !== 'playing' && reported.state !== 'buffering',
@@ -348,6 +355,8 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
   let roomRun = 0
   let roomPolls = 0
   let roomRetryAt = 0
+  /** Spotify's details of tracks a Sonos group plays; null once asked for. */
+  const roomTracks = new Map<string, TrackDetails | null>()
 
   function set(patch: Partial<PlaybackState>) {
     if (disposed) return
@@ -978,6 +987,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       if (target.kind === 'room') {
         roomRun += 1
         roomRetryAt = 0
+        if (item.kind === 'track') describeRoomTrack(item.uri)
         const skip =
           item.kind === 'album' && item.startUri
             ? await api.albumTrackIndex(item.uri, item.startUri)
@@ -1207,6 +1217,60 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     })
   }
 
+  /** Reads Spotify's details of a track a Sonos group plays, once. */
+  function describeRoomTrack(uri: string) {
+    if (roomTracks.has(uri)) return
+    roomTracks.set(uri, null)
+    api.track(uri).then(
+      (details) => {
+        roomTracks.set(uri, details)
+        if (
+          disposed ||
+          state.target.kind !== 'room' ||
+          latest?.trackUri !== uri
+        )
+          return
+        latest = roomTrack(latest)
+        publish(latest)
+      },
+      // The track stays as Sonos and the queue describe it.
+      () => undefined,
+    )
+  }
+
+  /**
+   * Sonos reports only the URI of a track it loaded by ID. Its name, artists,
+   * artwork and length come from Spotify, and until that answers, from the
+   * item this app queued.
+   */
+  function roomTrack(snapshot: PlaybackSnapshot): PlaybackSnapshot {
+    const uri = snapshot.trackUri
+    if (!uri || (snapshot.trackName && snapshot.durationMs > 0)) return snapshot
+    describeRoomTrack(uri)
+    const details = roomTracks.get(uri)
+    if (details)
+      return {
+        ...snapshot,
+        ...details,
+        // The session follows the URI the group reports.
+        trackUri: uri,
+        linkedFromUri: null,
+        albumUri: snapshot.albumUri ?? details.albumUri,
+        artworkUrl: details.artworkUrl ?? snapshot.artworkUrl,
+      }
+    const item =
+      session?.sent.find((sent) => sent.uri === uri) ??
+      (state.current?.uri === uri ? state.current : null)
+    if (!item) return snapshot
+    return {
+      ...snapshot,
+      trackName: snapshot.trackName || item.title,
+      artists: snapshot.artists || item.artist,
+      albumName: snapshot.albumName || item.albumTitle,
+      artworkUrl: snapshot.artworkUrl ?? item.artworkUrl,
+    }
+  }
+
   /** Reads what a Sonos group plays and keeps its queue supplied. */
   async function pollRoom(target: RoomTarget) {
     const sonos = options.sonos
@@ -1231,7 +1295,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       return
     }
     missing = 0
-    observe(snapshot)
+    observe(roomTrack(snapshot))
     maintainRoom()
   }
 
