@@ -12,6 +12,7 @@ Start with [getting started](getting-started.md) for installation or [applicatio
 - [Film collections](film-collections.md): browsing stored collections and their ordered film memberships.
 - [Artists, people and channels](artists-and-people.md): creator details, artist enrichment jobs and music tag fallback.
 - [Spotify playback](spotify-playback.md): optional in-app player, queue, devices and what the browser sends to Spotify.
+- [Sonos](sonos.md): connecting a Sonos account and listing its rooms, for controlling Spotify playback on Sonos speakers.
 - [Last.fm scrobble history](lastfm-scrobbles.md): syncing scrobbles, album linking, listening charts and browse fields.
 - [Subscriptions](subscriptions.md): YouTube channels and Spotify podcasts in one library: setup, sync, search, filters and API.
 - [AI search and voice input](ai-search.md): natural-language filters, voice search and Cloudflare configuration.

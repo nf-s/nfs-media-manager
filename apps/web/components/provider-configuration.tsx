@@ -10,6 +10,7 @@ import {
 import { Button } from '@repo/ui/components/ui/button'
 import { Input } from '@repo/ui/components/ui/input'
 import { useConfig } from './providers'
+import SonosConnection from './sonos-connection'
 import SpotifyPlaybackSetting from './spotify-playback-setting'
 import { fetchApiData } from '@/utils/api'
 
@@ -184,6 +185,7 @@ export default function ProviderConfiguration({
   return (
     <section className="provider-settings">
       {provider.id === 'spotify' && <SpotifyPlaybackSetting />}
+      {provider.id === 'sonos' && <SonosConnection />}
       {provider.rateLimit.configurableRequestBudget && (
         <RequestBudgetForm
           key={`${provider.id}:${provider.rateLimit.requestBudget?.period}:${provider.rateLimit.requestBudget?.limit}`}

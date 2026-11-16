@@ -23,6 +23,7 @@ import { artists, people } from '@/routes/creators'
 import jobs from '@/routes/jobs'
 import imports from '@/routes/imports'
 import albumImports from '@/routes/album-imports'
+import sonos from '@/routes/sonos'
 import spotify from '@/routes/spotify'
 import lastfm from '@/routes/lastfm'
 import youtube from '@/routes/youtube'
@@ -83,6 +84,8 @@ app.use('*', (c, next) => {
       '/api/v1/spotify/callback/',
       '/api/v1/youtube/callback',
       '/api/v1/youtube/callback/',
+      '/api/v1/sonos/callback',
+      '/api/v1/sonos/callback/',
     ].includes(c.req.path)
   )
     return next()
@@ -106,6 +109,7 @@ v1ApiBase.route('/album-imports', albumImports)
 v1ApiBase.route('/spotify', spotify)
 v1ApiBase.route('/lastfm', lastfm)
 v1ApiBase.route('/youtube', youtube)
+v1ApiBase.route('/sonos', sonos)
 v1ApiBase.route('/subscriptions', subscriptions)
 v1ApiBase.route('/tags', tags)
 v1ApiBase.route('/manual-add', manualAdd)
