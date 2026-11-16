@@ -241,7 +241,7 @@ app.openapi(
     responses: {
       302: {
         description:
-          'Return to the Sonos provider settings, without exposing tokens or authorization codes',
+          'Return to the app, where the player reports the result, without exposing tokens or authorization codes',
       },
       401: jsonErrorResponse('Owner browser session required'),
       403: jsonErrorResponse('Forbidden'),
@@ -263,11 +263,9 @@ app.openapi(
     } catch {
       /* Never expose token responses, codes or state in the redirect. */
     }
-    const destination = new URL('/providers', returnOrigin)
+    const destination = new URL('/albums', returnOrigin)
     destination.search = new URLSearchParams({
-      provider: 'sonos',
-      section: 'settings',
-      sonos: connected ? 'connected' : 'error',
+      player: connected ? 'sonos-connected' : 'sonos-error',
     }).toString()
     return c.redirect(destination.toString(), 302)
   },

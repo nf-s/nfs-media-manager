@@ -17,9 +17,13 @@ const TrackSchema = z.object({
   duration_ms: z.number().nonnegative(),
   track_number: z.number().int().optional(),
   disc_number: z.number().int().optional(),
-  artists: z.array(z.object({ name: z.string() })).default([]),
+  artists: z
+    .array(z.object({ name: z.string(), uri: z.string().optional() }))
+    .default([]),
+  linked_from: z.object({ uri: z.string().optional() }).optional(),
   album: z
     .object({
+      uri: z.string().optional(),
       name: z.string(),
       images: z.array(z.object({ url: z.string() })).default([]),
     })
@@ -111,10 +115,15 @@ export function remotePlayback(
     snapshot: track.success
       ? {
           trackUri: track.data.uri,
-          linkedFromUri: null,
+          linkedFromUri: track.data.linked_from?.uri ?? null,
           trackName: track.data.name,
           artists: track.data.artists.map((artist) => artist.name).join(', '),
           albumName: track.data.album?.name ?? '',
+          albumUri: track.data.album?.uri ?? null,
+          artistLinks: track.data.artists.map(({ name, uri }) => ({
+            name,
+            uri: uri ?? null,
+          })),
           artworkUrl: httpsUrl(track.data.album?.images[0]?.url),
           durationMs: track.data.duration_ms,
           positionMs: state.progress_ms ?? 0,

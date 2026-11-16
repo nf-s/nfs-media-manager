@@ -185,7 +185,7 @@ describe('Spotify and album import API security', () => {
     mocks.playbackToken.mockRejectedValueOnce(
       new ServerError({
         statusCode: 422,
-        message: 'Connect Spotify playback in Providers first',
+        message: 'Connect Spotify playback in the player first',
       }),
     )
     const unavailable = await spotify.request(
@@ -193,7 +193,7 @@ describe('Spotify and album import API security', () => {
     )
     expect(unavailable.status).toBe(422)
     expect(await unavailable.text()).toContain(
-      'Connect Spotify playback in Providers first',
+      'Connect Spotify playback in the player first',
     )
     mocks.playbackToken.mockRejectedValueOnce(new Error('fake-sensitive-token'))
     const failed = await spotify.request(post('/playback/token', undefined))
@@ -398,19 +398,19 @@ describe('Spotify and album import API security', () => {
     { connected: true, outcome: 'connected' },
     { connected: false, outcome: 'error' },
   ])(
-    'returns playback-initiated completion ($outcome) to the fixed Providers path',
+    'returns playback-initiated completion ($outcome) to the fixed player path',
     async ({ connected, outcome }) => {
       mocks.callback.mockResolvedValue({
         connected,
         returnOrigin: 'http://localhost:3001',
-        returnTo: 'providers',
+        returnTo: 'player',
       })
       const response = await spotify.request(
         `http://localhost:4001/complete?state=${'a'.repeat(43)}&code=secret-code&returnTo=https://evil.invalid`,
       )
       expect(response.status).toBe(302)
       expect(response.headers.get('location')).toBe(
-        `http://localhost:3001/providers?provider=spotify&mediaType=album&section=settings&spotify=${outcome}`,
+        `http://localhost:3001/albums?player=spotify-${outcome}`,
       )
       expect(response.headers.get('location')).not.toContain('secret-code')
       expect(response.headers.get('location')).not.toContain('state=')

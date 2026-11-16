@@ -9,6 +9,7 @@ import {
   type PlaybackSession,
   type PlaybackSnapshot,
   type QueueEntry,
+  type SessionEvent,
 } from './playback'
 import {
   playbackFailure,
@@ -68,6 +69,8 @@ export type PlaybackState = {
   /** Other Spotify devices; this browser is not listed. */
   devices: PlaybackDevice[]
   devicesStatus: 'idle' | 'loading' | 'error'
+  /** The Sonos group behind a restricted device is being looked up. */
+  findingSonos: boolean
   /** 0 to 1, or null when the target device's volume cannot be set from here. */
   volume: number | null
   starting: boolean
@@ -88,6 +91,7 @@ export const idlePlaybackState: PlaybackState = {
   target: { kind: 'local' },
   devices: [],
   devicesStatus: 'idle',
+  findingSonos: false,
   volume: null,
   starting: false,
   failure: null,
@@ -101,6 +105,9 @@ export type PlaybackEngineOptions = {
   playerName: string
   initialVolume: number
   onLocalVolume?: (volume: number) => void
+  /** The shuffle setting remembered for lists and playlists. */
+  initialShuffle?: boolean
+  onShuffle?: (shuffle: boolean) => void
   now?: () => number
   random?: () => number
   /** Whether the page is visible; idle remote polling stops while hidden. */
@@ -121,6 +128,13 @@ const DEVICE_RETRIES = 2
 const VOLUME_DEBOUNCE_MS = 250
 const RESTART_AFTER_MS = 3_000
 const MISSING_STATES = 3
+/** How long a start waits for the tracks that follow, so they go with it. */
+const FOLLOWING_WAIT_MS = 500
+const FOLLOWING_LIMIT = 50
+/** A track that began this recently after the last one ended is its successor. */
+const SUCCESSOR_WITHIN_MS = 5_000
+const SONOS_TRIES = 3
+const SONOS_RETRY_MS = 2_000
 const LOCAL: SelectableTarget = { kind: 'local' }
 const NOT_STARTED: PlaybackFailure = {
   status: 'error',
@@ -130,6 +144,10 @@ const NOT_STARTED: PlaybackFailure = {
 type Waiter = { resolve: (id: string) => void; reject: (error: Error) => void }
 
 type SourceTrack = { index: number; position: number; item: PlayableItem }
+/** A track due to play after the current one, from the queue or the source. */
+type Planned =
+  | { from: 'queue'; item: PlayableItem; entry: QueueEntry }
+  | { from: 'source'; item: PlayableItem; entry: SourceTrack }
 type SourceSession = {
   definition: PlaybackSource
   tracks: Map<number, Promise<PlayableItem[]>>
@@ -144,7 +162,8 @@ type SourceSession = {
   filling: Promise<void> | null
 }
 
-const SOURCE_PREVIEW_SIZE = 10
+/** Source tracks resolved ahead: shown as upcoming and sent to Spotify with a track. */
+const SOURCE_AHEAD_SIZE = 30
 const SOURCE_CACHE_SIZE = 20
 
 function sourceTrackKey(index: number, position: number) {
@@ -181,10 +200,24 @@ function sameShown(shown: PlaybackSnapshot | null, after: PlaybackSnapshot) {
   )
 }
 
+/** Resolves when the work settles or the wait is over, whichever is first. */
+function briefly(pending: Promise<unknown>, wait: number) {
+  return new Promise<void>((resolve) => {
+    const timeout = setTimeout(resolve, wait)
+    const done = () => {
+      clearTimeout(timeout)
+      resolve()
+    }
+    pending.then(done, done)
+  })
+}
+
 /**
- * Plays queue items one at a time on this browser or another Spotify device,
- * and follows the device's playback to know when to start the next item. It
- * can also show and control playback the account started elsewhere.
+ * Plays queue items on this browser or another Spotify device and follows the
+ * device's playback. A track goes to Spotify together with the tracks due
+ * after it, so they keep playing wherever the playback is moved, including
+ * devices this app cannot start playback on. It can also show and control
+ * playback the account started elsewhere.
  */
 export function createPlaybackEngine(options: PlaybackEngineOptions) {
   const now = options.now ?? Date.now
@@ -193,8 +226,10 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
   const { api } = options
   const listeners = new Set<() => void>()
   const waiters = new Set<Waiter>()
+  let preferredShuffle = options.initialShuffle ?? false
   let state: PlaybackState = {
     ...idlePlaybackState,
+    shuffle: preferredShuffle,
     volume: options.initialVolume,
   }
   let player: SpotifySdkPlayer | null = null
@@ -226,6 +261,11 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
   let settlesAt = 0
   /** The restricted device and track last looked up as a Sonos group. */
   let sonosChecked: string | null = null
+  let sonosTries = 0
+  let sonosRetryAt = 0
+  let lookingElsewhere = false
+  /** A device left by choice that Spotify still reports playing. */
+  let left: ObservedTarget | null = null
 
   function set(patch: Partial<PlaybackState>) {
     if (disposed) return
@@ -297,7 +337,9 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
           localId = null
         })
         created.addListener('player_state_changed', (payload) => {
-          if (state.target.kind === 'local') observeLocal(payload)
+          if (state.target.kind !== 'local' || observeLocal(payload)) return
+          // This browser went quiet: the playback may have been moved.
+          if (sawLocalState) void lookElsewhere()
         })
         created.addListener('autoplay_failed', () =>
           set({
@@ -385,25 +427,60 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     }
   }
 
-  /** Where new playback goes. A restricted device cannot take it, so the earlier target does. */
-  function playTarget(): SelectableTarget {
+  /**
+   * Spotify accepts no start of playback on these devices, and starting it
+   * elsewhere would take the music off them, so the request is refused.
+   */
+  function refused(): boolean {
     const target = state.target
-    if (!isObserved(target)) return target
-    const next = fallback ?? LOCAL
-    fallback = null
-    if (next.kind === 'local') sawLocalState = false
+    if (!isObserved(target)) return false
     set({
-      target: next,
-      volume: next.kind === 'local' ? localVolume : next.device.volume,
+      starting: false,
+      failure: {
+        status: 'error',
+        message: `Spotify does not let this app start playback on ${target.name}. Start it from the Spotify app, or choose another device under Play on.`,
+      },
     })
-    return next
+    return true
+  }
+
+  /** The tracks due after the current one, while no album comes between. */
+  function planned(): Planned[] {
+    const tracks: Planned[] = []
+    for (const entry of state.queue) {
+      if (entry.item.kind !== 'track') return tracks
+      tracks.push({ from: 'queue', item: entry.item, entry })
+    }
+    for (const entry of source?.upcoming ?? []) {
+      if (entry.item.kind !== 'track') break
+      tracks.push({ from: 'source', item: entry.item, entry })
+    }
+    return tracks
+  }
+
+  /** The tracks sent to Spotify after a track; a repeated track gets its own start. */
+  function followingFor(item: PlayableItem): PlayableItem[] {
+    if (item.kind !== 'track') return []
+    const sent = new Set([item.uri])
+    const following: PlayableItem[] = []
+    for (const next of planned().slice(0, FOLLOWING_LIMIT)) {
+      if (sent.has(next.item.uri)) break
+      sent.add(next.item.uri)
+      following.push(next.item)
+    }
+    return following
   }
 
   function clearSource() {
     source = null
     sourceStarting = false
     currentFromSource = false
-    set({ source: null, upcoming: [], sourceLoading: false })
+    set({
+      source: null,
+      upcoming: [],
+      sourceLoading: false,
+      shuffle: preferredShuffle,
+    })
   }
 
   function loadSourceEntry(active: SourceSession, index: number) {
@@ -439,7 +516,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       for (const entry of upcoming)
         used.add(sourceTrackKey(entry.index, entry.position))
       let candidates = [...active.remaining]
-      while (upcoming.length < SOURCE_PREVIEW_SIZE && candidates.length) {
+      while (upcoming.length < SOURCE_AHEAD_SIZE && candidates.length) {
         const index =
           candidates[shuffled ? Math.floor(random() * candidates.length) : 0]
         if (index === undefined) break
@@ -473,6 +550,8 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
         }
         upcoming.push(entry)
         used.add(sourceTrackKey(index, entry.position))
+        // A start made meanwhile sends the tracks resolved so far.
+        active.upcoming = [...upcoming]
       }
       if (source !== active || revision !== active.revision || disposed) return
       active.upcoming = upcoming
@@ -502,7 +581,9 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     })
   }
 
-  function consumeSource(active: SourceSession, entry: SourceTrack) {
+  /** Marks a source track as the one playing and resolves the tracks after it. */
+  function takeSource(active: SourceSession, entry: SourceTrack) {
+    active.upcoming = active.upcoming.filter((next) => next !== entry)
     active.played.add(sourceTrackKey(entry.index, entry.position))
     active.history.push(entry)
     active.revision += 1
@@ -510,8 +591,16 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     sourceStarting = false
     currentFromSource = true
     set({ upcoming: active.upcoming.map((next) => next.item) })
-    void start(entry.item)
     previewSource(active)
+  }
+
+  function consumeSource(active: SourceSession, entry: SourceTrack) {
+    takeSource(active, entry)
+    const ahead =
+      active.upcoming.length === 0 && active.filling
+        ? briefly(active.filling, FOLLOWING_WAIT_MS)
+        : undefined
+    void start(entry.item, ahead)
   }
 
   function startSourceNext(): boolean {
@@ -587,6 +676,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       snapshot: null,
       starting: true,
       failure: null,
+      shuffle: definition.kind === 'album' ? false : preferredShuffle,
       source: { label: definition.label, href: definition.href },
       upcoming: [],
       sourceLoading: true,
@@ -641,7 +731,13 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     }
   }
 
-  async function start(item: PlayableItem) {
+  /** Starts an item; `ahead` is a short wait for the tracks that follow it. */
+  async function start(item: PlayableItem, ahead?: Promise<void>) {
+    const target = state.target
+    if (isObserved(target)) {
+      refused()
+      return
+    }
     run += 1
     const started = run
     session = startSession(item, now())
@@ -650,6 +746,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     skippedAt = null
     sawLocalState = false
     missing = 0
+    left = null
     set({
       active: true,
       current: item,
@@ -658,12 +755,15 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       failure: null,
     })
     try {
-      const target = playTarget()
-      const deviceId =
-        target.kind === 'local' ? await ensureLocal() : target.device.id
+      const [deviceId] = await Promise.all([
+        target.kind === 'local' ? ensureLocal() : target.device.id,
+        ahead,
+      ])
       if (started !== run || disposed) return
+      const following = followingFor(item)
+      if (session) session = { ...session, sent: [item, ...following] }
       await onDevice(target.kind === 'local', () =>
-        api.play(deviceId, playRequest(item)),
+        api.play(deviceId, playRequest(item, following)),
       )
       if (started !== run) return
       schedule(FOLLOW_UP_MS)
@@ -684,12 +784,66 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     return true
   }
 
-  /**
-   * Starting the next item would take playback off a device apps cannot
-   * control, so there the queue waits for Next.
-   */
+  /** A device this app cannot start playback on plays only what it was sent. */
   function continueQueue(): boolean {
     return !isObserved(state.target) && startNext()
+  }
+
+  function take(next: Planned) {
+    if (next.from === 'queue')
+      set({ queue: state.queue.filter((entry) => entry !== next.entry) })
+    else if (source) takeSource(source, next.entry)
+  }
+
+  /**
+   * The device moved to another of the tracks sent with the current one, by
+   * itself or through a skip made on it. The queue follows the device, except
+   * that a device this app can start gets the track now due when the queue
+   * has changed since.
+   */
+  function advanced(
+    after: PlaybackSnapshot,
+    event: SessionEvent,
+  ): 'followed' | 'restarted' | null {
+    const active = session
+    if (!active || active.item.kind !== 'track' || !after.trackUri) return null
+    const playing = (item: PlayableItem) =>
+      item.uri === after.trackUri || item.uri === after.linkedFromUri
+    let index = active.sent.findIndex(
+      (item, at) => at > active.index && playing(item),
+    )
+    // Spotify may play another recording of the track that was due.
+    if (
+      index < 0 &&
+      event === 'finished' &&
+      !after.paused &&
+      after.positionMs <= SUCCESSOR_WITHIN_MS &&
+      active.index + 1 < active.sent.length
+    )
+      index = active.index + 1
+    // A finished list returns to its first track, which is not a step back.
+    if (index < 0 && event === 'left')
+      index = active.sent.findIndex(
+        (item, at) => at < active.index && playing(item),
+      )
+    const item = active.sent[index]
+    if (!item) return null
+    const plan = planned()
+    const at = plan.findIndex((next) => next.item.uri === item.uri)
+    const due = plan[at]
+    if (
+      !isObserved(state.target) &&
+      index > active.index &&
+      at !== 0 &&
+      startNext()
+    )
+      return 'restarted'
+    for (const passed of plan.slice(0, at + 1)) take(passed)
+    if (due) currentFromSource = due.from === 'source'
+    session = { ...active, item, index, anchorUri: after.trackUri }
+    skippedAt = null
+    set({ current: item })
+    return 'followed'
   }
 
   function publish(after: PlaybackSnapshot) {
@@ -707,6 +861,14 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       const starting = session.phase === 'starting'
       const step = stepSession(session, before, after, skippedAt)
       session = step.session
+      const moved =
+        step.event === 'none' || starting ? null : advanced(after, step.event)
+      if (moved === 'restarted') return
+      if (moved === 'followed') {
+        publish(after)
+        findSonos()
+        return
+      }
       if (step.event === 'finished' && continueQueue()) return
       if (step.event !== 'none') {
         // The item ended with nothing queued, or other playback replaced it.
@@ -730,26 +892,51 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     const sonos = options.sonos
     const target = state.target
     const track = latest?.trackUri
-    if (!sonos || !isObserved(target) || !track) return
+    if (!sonos || !isObserved(target)) {
+      sonosTries = 0
+      if (state.findingSonos) set({ findingSonos: false })
+      return
+    }
+    if (!track) return
     const key = `${target.name}\n${target.type}\n${track}`
-    if (key === sonosChecked) return
+    if (key === sonosChecked || now() < sonosRetryAt) return
     sonosChecked = key
+    if (target.kind === 'restricted') set({ findingSonos: true })
+    /** Sonos can take a moment to report playback that has just moved to it. */
+    const again = () => {
+      if (sonosChecked !== key) return
+      sonosTries += 1
+      if (sonosTries >= SONOS_TRIES) return
+      sonosChecked = null
+      sonosRetryAt = now() + SONOS_RETRY_MS
+    }
     sonos.find(track, target.name).then(
       (group) => {
         const current = state.target
         if (disposed || !isObserved(current) || !sameDevice(current, target))
           return
         const { name, type } = current
-        if (group)
+        if (group) {
+          sonosTries = 0
           set({
             target: { kind: 'sonos', name, type, group },
             volume: volumeTimer ? state.volume : group.volume,
+            findingSonos: false,
           })
-        else if (current.kind === 'sonos')
-          set({ target: { kind: 'restricted', name, type }, volume: null })
+          return
+        }
+        again()
+        set({
+          findingSonos: sonosChecked === null,
+          ...(current.kind === 'sonos'
+            ? { target: { kind: 'restricted', name, type }, volume: null }
+            : {}),
+        })
       },
       // A failed lookup leaves the device shown only; the next track tries again.
-      () => undefined,
+      () => {
+        if (!disposed) set({ findingSonos: false })
+      },
     )
   }
 
@@ -821,9 +1008,9 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       return remote.device.id === localId
         ? LOCAL
         : { kind: 'remote', device: remote.device }
-    return remote.restricted
-      ? { kind: 'restricted', ...remote.restricted }
-      : null
+    if (!remote.restricted) return null
+    const found: ObservedTarget = { kind: 'restricted', ...remote.restricted }
+    return left && sameDevice(left, found) ? null : found
   }
 
   /**
@@ -854,6 +1041,24 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     }
     if (target.kind === 'remote') fallback ??= target
     set({ target: found, volume: targetVolume(found) })
+  }
+
+  /** Follows playback at once when another device already reports it. */
+  async function lookElsewhere() {
+    if (lookingElsewhere) return
+    lookingElsewhere = true
+    try {
+      const remote = await api.state()
+      if (state.target.kind !== 'local' || disposed) return
+      const found = reported(remote)
+      if (found && found.kind !== 'local' && remote.snapshot)
+        follow(found, remote.snapshot)
+    } catch {
+      // The regular checks decide what a failing report means.
+    } finally {
+      lookingElsewhere = false
+    }
+    if (!timer && !ticking && pollDelay() !== null) schedule(FOLLOW_UP_MS)
   }
 
   /** This browser stopped reporting playback; it may have moved to another device. */
@@ -920,6 +1125,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
           // it to another device.
           const handedOver = watching && !session && latest?.paused === true
           if (missing === MISSING_STATES || handedOver) await followElsewhere()
+          else await lookElsewhere()
         }
       } else {
         const remote = await api.state()
@@ -1007,18 +1213,33 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       if (state.failure) set({ failure: null })
     },
     play(item: PlayableItem, definition?: PlaybackSource) {
-      playTarget()
+      if (refused()) return
       activate()
       if (definition) void startSource(item, definition)
       else {
         clearSource()
+        if (item.kind === 'album') set({ shuffle: false })
         void start(item)
       }
     },
+    /**
+     * Shuffle is remembered for lists and playlists. On an album it applies
+     * to that album only, which starts in order next time.
+     */
     toggleShuffle() {
       const active = source
-      if (!active) return
       const shuffle = !state.shuffle
+      const album = active
+        ? active.definition.kind === 'album'
+        : state.current?.kind === 'album'
+      if (!album) {
+        preferredShuffle = shuffle
+        options.onShuffle?.(shuffle)
+      }
+      if (!active) {
+        set({ shuffle })
+        return
+      }
       if (shuffle) active.skipped.clear()
       active.revision += 1
       active.filling = null
@@ -1043,8 +1264,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     },
     playFromQueue(key: string) {
       const entry = state.queue.find((candidate) => candidate.key === key)
-      if (!entry) return
-      playTarget()
+      if (!entry || refused()) return
       activate()
       sourceStarting = false
       currentFromSource = false
@@ -1079,6 +1299,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       }
       if (!latest) {
         // Nothing is loaded on the device: retry the item, or start the queue.
+        if (refused()) return
         if (state.current) void start(state.current)
         else startNext()
         return
@@ -1100,13 +1321,14 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       schedule(FOLLOW_UP_MS)
     },
     next() {
-      const current = state.target
-      if (current.kind === 'sonos') {
-        // Starting the queue would take playback off the Sonos group.
-        if (!latest) return
+      const target = state.target
+      if (isObserved(target)) {
+        // The group skips within the tracks it was sent; the queue follows it.
+        if (target.kind !== 'sonos' || !latest || !target.group.actions.next)
+          return
         skippedAt = now()
         set({ failure: null })
-        sonosSend(current, { action: 'next' })
+        sonosSend(target, { action: 'next' })
         schedule(FOLLOW_UP_MS)
         return
       }
@@ -1115,11 +1337,9 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
         session.phase === 'starting' ||
         session.item.kind === 'track' ||
         latest?.hasNext === false
-      if (itemEnds && (state.queue.length > 0 || source)) playTarget()
       activate()
       if (itemEnds && startNext()) return
-      const target = state.target
-      if (!latest || isObserved(target)) return
+      if (!latest) return
       skippedAt = now()
       set({ failure: null })
       if (target.kind === 'local') guard(player?.nextTrack())
@@ -1144,7 +1364,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
         if (previous && current) {
           source.upcoming = [current, ...source.upcoming].slice(
             0,
-            SOURCE_PREVIEW_SIZE,
+            SOURCE_AHEAD_SIZE,
           )
           source.revision += 1
           source.filling = null
@@ -1202,6 +1422,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     async selectDevice(next: SelectableTarget) {
       const playing = latest !== null && !latest.paused
       const moving = latest !== null || session !== null
+      const leaving = isObserved(state.target) ? state.target : null
       if (next.kind === 'local')
         player?.activateElement().catch(() => undefined)
       set({ failure: null })
@@ -1217,10 +1438,30 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
         fallback = null
         sawLocalState = false
         missing = 0
+        left = null
         settlesAt = moving ? now() + TRANSFER_SETTLE_MS : 0
         if (moving) schedule(FOLLOW_UP_MS)
       } catch (error) {
-        fail(error)
+        const kept =
+          leaving !== null &&
+          error instanceof PlaybackApiError &&
+          error.status === 403
+        if (!kept) return fail(error)
+        // Spotify would not move the playback, so it stays on that device and
+        // the chosen one takes whatever is started next.
+        left = leaving
+        fallback = null
+        detach()
+        latest = null
+        sawLocalState = false
+        missing = 0
+        set({
+          target: next,
+          volume: next.kind === 'local' ? localVolume : next.device.volume,
+          snapshot: null,
+          current: null,
+          starting: false,
+        })
       }
     },
     dispose() {

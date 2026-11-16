@@ -12,9 +12,9 @@ export const sonosPlugin: MediaProviderPlugin = {
     description: 'Sonos rooms and what they play',
     mediaTypes: [],
     rateLimit: {
-      maxConcurrent: 2,
+      maxConcurrent: 4,
       concurrentRequests: true,
-      minTimeMs: 100,
+      minTimeMs: 25,
       rateLimitCooldownMs: 60 * 1000,
       // A refused command must not pause the controls that still work.
       errorBackoffMs: 0,

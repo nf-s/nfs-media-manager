@@ -26,9 +26,16 @@ import { createPlayerApi } from '@/utils/spotify-player-api'
 import { createSonosControlApi } from '@/utils/sonos-player-api'
 import { loadSpotifySdk } from '@/utils/spotify-sdk'
 
+/** Whether Spotify lets this app play: its credentials are saved and playback access granted. */
+export type PlaybackConnection =
+  | 'loading'
+  | 'unconfigured'
+  | 'disconnected'
+  | 'connected'
 export type PlaybackView = PlaybackState & {
-  /** Playback is connected in Providers. Without it the app only links to Spotify. */
+  /** The player is ready. Without it the app only links to Spotify. */
   enabled: boolean
+  connection: PlaybackConnection
 }
 export type PlaybackControls = Pick<
   PlaybackEngine,
@@ -51,10 +58,15 @@ export type PlaybackControls = Pick<
 
 const PLAYER_NAME = 'Media Manager'
 const VOLUME_KEY = 'player:volume'
+const SHUFFLE_KEY = 'player:shuffle'
 const DEFAULT_VOLUME = 0.8
 const TOKEN_MARGIN_MS = 60_000
 
-const disabledView: PlaybackView = { ...idlePlaybackState, enabled: false }
+const disabledView: PlaybackView = {
+  ...idlePlaybackState,
+  enabled: false,
+  connection: 'loading',
+}
 const disabledControls: PlaybackControls = {
   play: () => undefined,
   enqueue: () => undefined,
@@ -105,6 +117,22 @@ function saveVolume(volume: number) {
   }
 }
 
+function savedShuffle() {
+  try {
+    return window.localStorage.getItem(SHUFFLE_KEY) === 'on'
+  } catch {
+    return false
+  }
+}
+
+function saveShuffle(shuffle: boolean) {
+  try {
+    window.localStorage.setItem(SHUFFLE_KEY, shuffle ? 'on' : 'off')
+  } catch {
+    /* Shuffle still applies when browser storage is unavailable. */
+  }
+}
+
 function createEngine(apiBaseUrl: string) {
   // The access token is held in memory only and never written to storage.
   let cached: { accessToken: string; expiresAt: number } | null = null
@@ -137,6 +165,8 @@ function createEngine(apiBaseUrl: string) {
     playerName: PLAYER_NAME,
     initialVolume: savedVolume(),
     onLocalVolume: saveVolume,
+    initialShuffle: savedShuffle(),
+    onShuffle: saveShuffle,
     visible: () => document.visibilityState === 'visible',
     sonos: createSonosControlApi(apiBaseUrl),
   })
@@ -188,9 +218,17 @@ export default function PlaybackProvider({
     engine ? engine.getState : idleState,
     idleState,
   )
+  const status = account.data
+  const connection: PlaybackConnection = !status
+    ? 'loading'
+    : status.playback
+      ? 'connected'
+      : status.configured
+        ? 'disconnected'
+        : 'unconfigured'
   const view = useMemo(
-    () => ({ ...state, enabled: engine !== null }),
-    [state, engine],
+    () => ({ ...state, enabled: engine !== null, connection }),
+    [state, engine, connection],
   )
   return (
     <PlaybackControlsContext.Provider value={engine ?? disabledControls}>

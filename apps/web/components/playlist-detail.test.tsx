@@ -291,7 +291,7 @@ test('the drawer lists entries in playlist order in the shared table', async () 
   assert.doesNotMatch(html, /Load more tracks/)
   assert.match(
     table,
-    /aria-label="Play Opening track: Connect Spotify playback in Providers\."[^>]*disabled=/,
+    /aria-label="Play Opening track: Connect Spotify playback in the player\."[^>]*disabled=/,
   )
   assert.match(html, /aria-selected="true"[^>]*>Tracks</)
 })
@@ -301,6 +301,7 @@ test('track rows have play and queue buttons while playback is on', async () => 
     await render('playlist=playlist-1', detail(), {
       ...idlePlaybackState,
       enabled: true,
+      connection: 'connected',
     }),
   )
   assert.match(html, /aria-label="Play Opening track"/)
@@ -441,7 +442,7 @@ test('playlist grid and details keep artwork, playback, navigation, and the visi
     const html = await render(
       'playlist=playlist-1',
       detail(),
-      { ...idlePlaybackState, enabled: true },
+      { ...idlePlaybackState, enabled: true, connection: 'connected' },
       <TrackEntriesTable
         scope="playlist"
         view={view}

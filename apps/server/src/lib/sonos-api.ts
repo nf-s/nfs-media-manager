@@ -188,96 +188,115 @@ function trackUri(metadata: z.infer<typeof MetadataSchema>) {
   }
 }
 
+/** Each household's groups, read in parallel and kept in Sonos's order. */
+async function householdGroups(request: SonosRequest, token: string) {
+  const { households } = HouseholdsSchema.parse(
+    await controlJson(request, token, '/households'),
+  )
+  return Promise.all(
+    households.map(async (household) => ({
+      household,
+      ...GroupsSchema.parse(
+        await controlJson(
+          request,
+          token,
+          `/households/${encodeURIComponent(household.id)}/groups`,
+        ),
+      ),
+    })),
+  )
+}
+
+/** The single item in a list, or null when there are none or several. */
+function only<T>(items: T[]): T | null {
+  return items.length === 1 ? (items[0] ?? null) : null
+}
+
 /** Each room or group, what it plays and which controls Sonos accepts for it. */
 export async function sonosRooms(
   request: SonosRequest,
   token: string,
 ): Promise<SonosRooms> {
-  const { households } = HouseholdsSchema.parse(
-    await controlJson(request, token, '/households'),
+  const result = await Promise.all(
+    (await householdGroups(request, token)).map(
+      async ({ household, groups, players }) => {
+        const names = new Map(players.map((player) => [player.id, player.name]))
+        const rooms = await Promise.all(
+          groups.map(async (group): Promise<SonosRoom> => {
+            const path = `/groups/${encodeURIComponent(group.id)}`
+            const [playback, metadata] = await Promise.all([
+              controlJson(request, token, `${path}/playback`).then((value) =>
+                PlaybackSchema.parse(value),
+              ),
+              controlJson(request, token, `${path}/playbackMetadata`).then(
+                (value) => MetadataSchema.parse(value),
+              ),
+            ])
+            const state = playback.playbackState ?? group.playbackState
+            const track = metadata.currentItem?.track
+            const coordinatorFirst = [
+              group.coordinatorId,
+              ...group.playerIds.filter((id) => id !== group.coordinatorId),
+            ]
+            return {
+              id: group.id,
+              name: group.name,
+              players: coordinatorFirst.flatMap((id) => {
+                const name = names.get(id)
+                return name === undefined ? [] : [name]
+              }),
+              state: state ? STATES[state] : null,
+              service:
+                track?.service?.name ??
+                metadata.container?.service?.name ??
+                null,
+              track: track?.name ?? null,
+              artist: track?.artist?.name ?? null,
+              actions: controls(playback),
+            }
+          }),
+        )
+        return { id: household.id, name: household.name ?? null, rooms }
+      },
+    ),
   )
-  const result = []
-  for (const household of households) {
-    const { groups, players } = GroupsSchema.parse(
-      await controlJson(
-        request,
-        token,
-        `/households/${encodeURIComponent(household.id)}/groups`,
-      ),
-    )
-    const names = new Map(players.map((player) => [player.id, player.name]))
-    const rooms: SonosRoom[] = []
-    for (const group of groups) {
-      const path = `/groups/${encodeURIComponent(group.id)}`
-      const [playback, metadata] = await Promise.all([
-        controlJson(request, token, `${path}/playback`).then((value) =>
-          PlaybackSchema.parse(value),
-        ),
-        controlJson(request, token, `${path}/playbackMetadata`).then((value) =>
-          MetadataSchema.parse(value),
-        ),
-      ])
-      const state = playback.playbackState ?? group.playbackState
-      const track = metadata.currentItem?.track
-      const coordinatorFirst = [
-        group.coordinatorId,
-        ...group.playerIds.filter((id) => id !== group.coordinatorId),
-      ]
-      rooms.push({
-        id: group.id,
-        name: group.name,
-        players: coordinatorFirst.flatMap((id) => {
-          const name = names.get(id)
-          return name === undefined ? [] : [name]
-        }),
-        state: state ? STATES[state] : null,
-        service:
-          track?.service?.name ?? metadata.container?.service?.name ?? null,
-        track: track?.name ?? null,
-        artist: track?.artist?.name ?? null,
-        actions: controls(playback),
-      })
-    }
-    result.push({ id: household.id, name: household.name ?? null, rooms })
-  }
   return SonosRoomsSchema.parse({ households: result })
 }
 
 /**
  * The group playing the given Spotify track. Several households can share a
- * Sonos account, so the track must match and the group name Spotify reports
- * decides between groups playing the same track.
+ * Sonos account, so the group name Spotify reports decides between groups
+ * playing the same track. Sonos metadata can lag behind Spotify, so when no
+ * group plays the track, the only non-idle group with that name is used if it
+ * is playing from Spotify. Null when no single group qualifies.
  */
 export async function sonosPlaying(
   request: SonosRequest,
   token: string,
   playing: { trackUri: string; device: string },
 ) {
-  const { households } = HouseholdsSchema.parse(
-    await controlJson(request, token, '/households'),
-  )
-  const matches = []
-  for (const household of households) {
-    const { groups } = GroupsSchema.parse(
-      await controlJson(
-        request,
-        token,
-        `/households/${encodeURIComponent(household.id)}/groups`,
-      ),
-    )
-    for (const group of groups) {
-      if (group.playbackState === 'PLAYBACK_STATE_IDLE') continue
+  const active = (await householdGroups(request, token))
+    .flatMap(({ groups }) => groups)
+    .filter((group) => group.playbackState !== 'PLAYBACK_STATE_IDLE')
+  const candidates = await Promise.all(
+    active.map(async (group) => {
       const path = `/groups/${encodeURIComponent(group.id)}`
       const metadata = MetadataSchema.parse(
         await controlJson(request, token, `${path}/playbackMetadata`),
       )
-      if (trackUri(metadata) === playing.trackUri)
-        matches.push({ id: group.id, name: group.name, path })
-    }
-  }
-  const named = matches.filter((match) => match.name === playing.device)
+      return { id: group.id, name: group.name, path, uri: trackUri(metadata) }
+    }),
+  )
+  const tracked = candidates.filter(
+    (candidate) => candidate.uri === playing.trackUri,
+  )
+  const named = only(
+    candidates.filter((candidate) => candidate.name === playing.device),
+  )
   const match =
-    named.length === 1 ? named[0] : matches.length === 1 ? matches[0] : null
+    only(tracked.filter((candidate) => candidate.name === playing.device)) ??
+    only(tracked) ??
+    (named?.uri?.startsWith('spotify:') ? named : null)
   if (!match) return SonosPlaybackMatchSchema.parse({ group: null })
   const [playback, volume] = await Promise.all([
     controlJson(request, token, `${match.path}/playback`).then((value) =>

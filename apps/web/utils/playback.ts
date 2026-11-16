@@ -15,6 +15,10 @@ export type PlayableItem = {
   albumTitle: string
   artworkUrl: string | null
   trackCount: number | null
+  /** The library track, when the item is one. */
+  trackId?: string
+  /** The credited artists with their library IDs, for links. */
+  credits?: Array<{ id: string | null; name: string }>
 }
 
 export type QueueEntry = { key: string; item: PlayableItem }
@@ -25,6 +29,11 @@ export type PlaybackSource = {
   href: string
   length: number
   startIndex: number
+  /**
+   * An album starts in order whatever the remembered shuffle setting is;
+   * a list of tracks or a playlist starts with that setting.
+   */
+  kind: 'album' | 'list'
   /** One track row, or an album expanded to its playable tracks. */
   load: (index: number) => Promise<PlayableItem[]>
 }
@@ -33,7 +42,8 @@ export type PlaybackSource = {
 export type LibraryTrackSource = Pick<
   TrackListItem,
   'spotifyTrackId' | 'title' | 'artists' | 'album' | 'albumName' | 'artworkUrl'
->
+> &
+  Partial<Pick<TrackListItem, 'id' | 'artistCredits'>>
 
 export type AlbumSource = Pick<
   AlbumListItem,
@@ -48,9 +58,14 @@ export type AlbumSource = Pick<
 >
 type TrackSource = { externalId: string | null; title: string }
 
-function albumArtist(album: AlbumSource): string {
+function albumCredits(album: AlbumSource) {
   return album.credits
     .filter((credit) => credit.role === 'artist')
+    .map(({ id, name }) => ({ id, name }))
+}
+
+function albumArtist(album: AlbumSource): string {
+  return albumCredits(album)
     .map((credit) => credit.name)
     .join(', ')
 }
@@ -74,6 +89,7 @@ export function albumPlayable(
     albumTitle: album.title,
     artworkUrl: album.artworkUrl,
     trackCount: album.trackCount,
+    credits: albumCredits(album),
   }
 }
 
@@ -92,6 +108,7 @@ export function trackPlayable(
     albumTitle: album.title,
     artworkUrl: album.artworkUrl,
     trackCount: 1,
+    credits: albumCredits(album),
   }
 }
 
@@ -110,20 +127,36 @@ export function libraryTrackPlayable(
     albumTitle: track.album?.title ?? track.albumName ?? '',
     artworkUrl: track.artworkUrl,
     trackCount: 1,
+    ...(track.id ? { trackId: track.id } : {}),
+    credits: track.artists.map((name) => ({
+      id:
+        track.artistCredits?.find((credit) => credit.name === name)?.id ?? null,
+      name,
+    })),
   }
 }
 
-/** Request body for Spotify's start-playback endpoint. */
-export function playRequest(item: PlayableItem) {
-  if (item.kind === 'track') return { uris: [item.uri] }
+/**
+ * Request body for Spotify's start-playback endpoint. The tracks that follow
+ * a track go with it, so Spotify keeps playing them on whichever device has
+ * the playback.
+ */
+export function playRequest(
+  item: PlayableItem,
+  following: readonly PlayableItem[] = [],
+) {
+  if (item.kind === 'track')
+    return { uris: [item.uri, ...following.map((next) => next.uri)] }
   return item.startUri
     ? { context_uri: item.uri, offset: { uri: item.startUri } }
     : { context_uri: item.uri }
 }
 
-/** The open.spotify.com page for an album or track URI. */
+/** The open.spotify.com page for an album, artist or track URI. */
 export function spotifyWebUrl(uri: string | null): string | null {
-  const match = /^spotify:(album|track):([A-Za-z0-9]{22})$/.exec(uri ?? '')
+  const match = /^spotify:(album|artist|track):([A-Za-z0-9]{22})$/.exec(
+    uri ?? '',
+  )
   return match ? `https://open.spotify.com/${match[1]}/${match[2]}` : null
 }
 
@@ -159,6 +192,9 @@ export type PlaybackSnapshot = {
   trackName: string
   artists: string
   albumName: string
+  /** `spotify:album:…` and `spotify:artist:…` references, where Spotify gives them. */
+  albumUri: string | null
+  artistLinks: Array<{ name: string; uri: string | null }>
   artworkUrl: string | null
   durationMs: number
   positionMs: number
@@ -187,6 +223,9 @@ export type PlaybackSession = {
   startedAt: number
   /** For a track item, the URI Spotify actually played for it. */
   anchorUri: string | null
+  /** The tracks Spotify was given in one request; `item` is `sent[index]`. */
+  sent: PlayableItem[]
+  index: number
 }
 export type SessionEvent = 'none' | 'finished' | 'left'
 
@@ -196,7 +235,14 @@ const END_TOLERANCE_MS = 3_000
 const SKIP_WINDOW_MS = 6_000
 
 export function startSession(item: PlayableItem, now: number): PlaybackSession {
-  return { item, phase: 'starting', startedAt: now, anchorUri: null }
+  return {
+    item,
+    phase: 'starting',
+    startedAt: now,
+    anchorUri: null,
+    sent: [item],
+    index: 0,
+  }
 }
 
 export function sessionContains(

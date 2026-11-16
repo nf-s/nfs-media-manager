@@ -51,7 +51,7 @@ const AccountSchema = z.object({
   scope: z.string(),
   clientId: z.string(),
 })
-const NOT_CONNECTED = 'Connect a Sonos account in Providers first.'
+const NOT_CONNECTED = 'Connect Sonos in the player, under Play on, first.'
 const REJECTED = 'Sonos rejected the saved sign-in. Connect the account again.'
 const hash = (value: string) => createHash('sha256').update(value).digest('hex')
 const namespace = (userId: string) => `sonos-account-${hash(userId)}`
@@ -341,7 +341,7 @@ async function sonosAccessToken(userId: string, request: SonosRequest) {
   const config = await settings()
   if (!config)
     throw unavailable(
-      'Sonos is not configured. Add the integration in Providers and connect the account.',
+      'Sonos is not configured. Add the integration in Providers and connect Sonos in the player.',
     )
   return db.transaction(async (tx) => {
     // Serialize refresh/disconnect so a refreshed token cannot overwrite a newer account state.

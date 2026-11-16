@@ -599,7 +599,7 @@ describe('Spotify owner/session-bound OAuth (mock database and gate)', () => {
       stored: undefined,
       scope: `${requestedScope} ${playbackOnlyScope}`,
       playback: true,
-      returnTo: 'providers',
+      returnTo: 'player',
     },
     {
       name: 'explicitly turning playback off',
@@ -607,7 +607,7 @@ describe('Spotify owner/session-bound OAuth (mock database and gate)', () => {
       stored: playbackScope,
       scope: requestedScope,
       playback: false,
-      returnTo: 'providers',
+      returnTo: 'player',
     },
     {
       name: 'a reconnect of a playback account',
@@ -647,7 +647,7 @@ describe('Spotify owner/session-bound OAuth (mock database and gate)', () => {
       stored: `${playbackScope} ${changeScope}`,
       scope: `${requestedScope} ${changeScope}`,
       playback: false,
-      returnTo: 'providers',
+      returnTo: 'player',
     },
     {
       name: 'explicit playlist changes',
@@ -679,7 +679,7 @@ describe('Spotify owner/session-bound OAuth (mock database and gate)', () => {
       stored: undefined,
       scope: `${requestedScope} ${playbackOnlyScope}`,
       playback: true,
-      returnTo: 'providers',
+      returnTo: 'player',
     },
   ])(
     'requests the right scopes for $name',
@@ -782,7 +782,7 @@ describe('Spotify owner/session-bound OAuth (mock database and gate)', () => {
     ).toEqual({
       connected: true,
       returnOrigin: 'http://localhost:3001',
-      returnTo: 'providers',
+      returnTo: 'player',
     })
     const tokens = secretSchema.parse(mocks.values.mock.calls.at(-1)?.[0])
     expect(tokens.key).toBe('tokens')
@@ -835,7 +835,7 @@ describe('Spotify owner/session-bound OAuth (mock database and gate)', () => {
       .mockReturnValueOnce(query([]))
       .mockReturnValueOnce(rows())
     await expect(spotifyPlaybackToken('user-1')).rejects.toThrow(
-      'Connect Spotify playback in Providers first',
+      'Connect Spotify playback in the player first',
     )
     expect(mocks.request).not.toHaveBeenCalled()
     expect(mocks.values).not.toHaveBeenCalled()

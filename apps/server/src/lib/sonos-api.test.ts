@@ -9,6 +9,44 @@ import {
 
 const API = 'https://api.ws.sonos.com/control/api/v1'
 
+const track = 'spotify:track:ABCDEFGHIJKLMNOPQRSTUV'
+const otherTrack = 'spotify:track:ZYXWVUTSRQPONMLKJIHGFE'
+
+function group(id: string, name: string) {
+  return {
+    id,
+    name,
+    coordinatorId: id,
+    playbackState: 'PLAYBACK_STATE_PLAYING',
+    playerIds: [id],
+  }
+}
+
+function playing(objectId?: string) {
+  return {
+    container: { type: 'spotify.connect' },
+    currentItem: { track: { id: { serviceId: '12', objectId } } },
+  }
+}
+
+function controllable(id: string) {
+  return {
+    [`${API}/groups/${id}/playback`]: {
+      playbackState: 'PLAYBACK_STATE_PLAYING',
+      availablePlaybackActions: { canPause: true },
+    },
+    [`${API}/groups/${id}/groupVolume`]: { volume: 40, fixed: false },
+  }
+}
+
+const pauseOnly = {
+  pause: true,
+  play: false,
+  next: false,
+  previous: false,
+  seek: false,
+}
+
 function fakeSonos(responses: Record<string, unknown>) {
   const request: SonosRequest = vi.fn(async (url: string | URL) => {
     const body = responses[String(url)]
@@ -128,18 +166,6 @@ describe('Sonos Control API helpers', () => {
   })
 
   it('finds the group playing the Spotify track, using the device name between households', async () => {
-    const track = 'spotify:track:ABCDEFGHIJKLMNOPQRSTUV'
-    const group = (id: string, name: string) => ({
-      id,
-      name,
-      coordinatorId: id,
-      playbackState: 'PLAYBACK_STATE_PLAYING',
-      playerIds: [id],
-    })
-    const playing = (objectId: string) => ({
-      container: { type: 'spotify.connect' },
-      currentItem: { track: { id: { serviceId: '12', objectId } } },
-    })
     const request = fakeSonos({
       [`${API}/households`]: { households: [{ id: 'home' }, { id: 'other' }] },
       [`${API}/households/home/groups`]: {
@@ -186,6 +212,19 @@ describe('Sonos Control API helpers', () => {
         volume: 0.25,
       },
     })
+    // Both households' groups are read before any group's metadata.
+    expect(
+      vi
+        .mocked(request)
+        .mock.calls.slice(0, 5)
+        .map(([url]) => String(url)),
+    ).toEqual([
+      `${API}/households`,
+      `${API}/households/home/groups`,
+      `${API}/households/other/groups`,
+      `${API}/groups/A/playbackMetadata`,
+      `${API}/groups/C/playbackMetadata`,
+    ])
     // An idle group's metadata is never read.
     expect(request).not.toHaveBeenCalledWith(
       `${API}/groups/B/playbackMetadata`,
@@ -198,6 +237,60 @@ describe('Sonos Control API helpers', () => {
         device: 'Somewhere else',
       }),
     ).toEqual({ group: null })
+  })
+
+  it('uses the named group playing Spotify when Sonos still reports an earlier track', async () => {
+    const request = fakeSonos({
+      [`${API}/households`]: { households: [{ id: 'home' }, { id: 'other' }] },
+      [`${API}/households/home/groups`]: {
+        groups: [group('A', 'Lounge'), group('B', 'Study')],
+      },
+      [`${API}/households/other/groups`]: { groups: [group('C', 'Kitchen')] },
+      [`${API}/groups/A/playbackMetadata`]: playing(otherTrack),
+      [`${API}/groups/B/playbackMetadata`]: playing('x-sonos-http:fixture.mp3'),
+      [`${API}/groups/C/playbackMetadata`]: playing(),
+      ...controllable('A'),
+    })
+    expect(
+      await sonosPlaying(request, 'fixture-token', {
+        trackUri: track,
+        device: 'Lounge',
+      }),
+    ).toEqual({
+      group: { id: 'A', name: 'Lounge', actions: pauseOnly, volume: 0.4 },
+    })
+  })
+
+  it('does not guess between active groups that share the device name', async () => {
+    const request = fakeSonos({
+      [`${API}/households`]: { households: [{ id: 'home' }, { id: 'other' }] },
+      [`${API}/households/home/groups`]: { groups: [group('A', 'Lounge')] },
+      [`${API}/households/other/groups`]: { groups: [group('B', 'Lounge')] },
+      [`${API}/groups/A/playbackMetadata`]: playing(otherTrack),
+      [`${API}/groups/B/playbackMetadata`]: playing(otherTrack),
+    })
+    expect(
+      await sonosPlaying(request, 'fixture-token', {
+        trackUri: track,
+        device: 'Lounge',
+      }),
+    ).toEqual({ group: null })
+  })
+
+  it('does not use the named group when it is not playing from Spotify', async () => {
+    for (const objectId of ['x-sonos-http:fixture.mp3', undefined]) {
+      const request = fakeSonos({
+        [`${API}/households`]: { households: [{ id: 'home' }] },
+        [`${API}/households/home/groups`]: { groups: [group('A', 'Lounge')] },
+        [`${API}/groups/A/playbackMetadata`]: playing(objectId),
+      })
+      expect(
+        await sonosPlaying(request, 'fixture-token', {
+          trackUri: track,
+          device: 'Lounge',
+        }),
+      ).toEqual({ group: null })
+    }
   })
 
   it('sends each command to its Control API endpoint', async () => {

@@ -6,6 +6,7 @@ import JobActivity from './job-activity'
 import { LibrarySelector, MediaScopeContent } from './media-scope'
 import PlaybackProvider from './playback-provider'
 import PlayerDock from './player-dock'
+import { PlayerPromptRestore } from './player-connections'
 import { railSlotId } from '@/hooks/useRailSlot'
 import { AppDetailInspector } from './detail-inspector'
 import { DetailInspectorProvider } from './detail-inspector-context'
@@ -24,6 +25,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             <div className="rail-foot">
               <JobActivity />
               <RefreshDataButton />
+              <PlayerPromptRestore />
               <div className="rail-user-actions">
                 <UserLink />
                 <SignOutButton />

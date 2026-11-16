@@ -384,7 +384,7 @@ describe('Sonos owner/session-bound OAuth (mock database and gate)', () => {
 
   it('needs a connection before listing rooms', async () => {
     await expect(getSonosRooms('user-1')).rejects.toThrow(
-      'Connect a Sonos account in Providers first.',
+      'Connect Sonos in the player, under Play on, first.',
     )
     expect(mocks.request).not.toHaveBeenCalled()
   })

@@ -1,9 +1,8 @@
 'use client'
 
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
-import { useDetailInspector } from './detail-inspector-context'
 import {
+  Fragment,
   useEffect,
   useId,
   useRef,
@@ -35,8 +34,16 @@ import {
   X,
 } from 'lucide-react'
 import { Button } from '@repo/ui/components/ui/button'
+import { DetailLink } from './detail-link'
 import ServiceIconLinks from './service-icon-links'
 import MediaArtwork from './media-artwork'
+import {
+  ConnectionOutcome,
+  ConnectPrompt,
+  PlayerConnections,
+  SonosMark,
+  SonosRooms,
+} from './player-connections'
 import { useConfig } from './providers'
 import {
   usePlayback,
@@ -52,6 +59,7 @@ import {
   type PlaybackSnapshot,
   type QueueEntry,
 } from '@/utils/playback'
+import type { DetailTarget } from '@/utils/detail-inspector'
 import type { PlaybackTarget, SelectableTarget } from '@/utils/playback-engine'
 import { spotifyAuthorizationUrl } from '@/utils/spotify-authorize'
 
@@ -97,6 +105,118 @@ function describe(view: PlaybackView) {
     artwork: current?.artworkUrl ?? snapshot?.artworkUrl ?? null,
     spotifyUrl: spotifyWebUrl(snapshot?.trackUri ?? current?.uri ?? null),
   }
+}
+
+/** Something the player names: its library page when there is one, else its Spotify page. */
+type Reference = {
+  label: string
+  detail: DetailTarget | null
+  url: string | null
+}
+
+/** Where the playing track, its artists and its album lead. */
+function references(view: PlaybackView) {
+  const { snapshot, current } = view
+  const credits = current?.credits ?? []
+  const album: Reference = {
+    label: snapshot?.albumName || current?.albumTitle || '',
+    detail: current?.albumId ? { kind: 'album', id: current.albumId } : null,
+    url: spotifyWebUrl(
+      snapshot?.albumUri ?? (current?.kind === 'album' ? current.uri : null),
+    ),
+  }
+  const track: Reference = {
+    label: snapshot?.trackName ?? current?.title ?? 'Nothing playing',
+    detail:
+      current?.kind === 'track' && current.trackId
+        ? { kind: 'track', id: current.trackId }
+        : album.detail,
+    url: spotifyWebUrl(
+      snapshot?.trackUri ?? (current?.kind === 'track' ? current.uri : null),
+    ),
+  }
+  const named = snapshot
+    ? snapshot.artistLinks
+    : credits.map(({ name }) => ({ name, uri: null }))
+  const plain = snapshot?.artists ?? current?.artist ?? ''
+  const artists: Reference[] = named.length
+    ? named.map(({ name, uri }) => {
+        const id = credits.find((credit) => credit.name === name)?.id
+        return {
+          label: name,
+          detail: id ? { kind: 'artist', id } : null,
+          url: spotifyWebUrl(uri),
+        }
+      })
+    : plain
+      ? [{ label: plain, detail: null, url: null }]
+      : []
+  return { track, artists, album }
+}
+
+function PlayerLink({
+  to,
+  onNavigate,
+  children,
+}: {
+  to: Reference
+  onNavigate?: () => void
+  /** Artwork shown in place of the label. */
+  children?: ReactNode
+}) {
+  const label = children ? `Open ${to.label}` : undefined
+  if (to.detail)
+    return (
+      <DetailLink
+        {...to.detail}
+        title={`Open ${to.label}`}
+        aria-label={label}
+        onClick={onNavigate}
+      >
+        {children ?? to.label}
+      </DetailLink>
+    )
+  if (to.url)
+    return (
+      <a
+        href={to.url}
+        target="_blank"
+        rel="noopener noreferrer"
+        title={`Open ${to.label} in Spotify (opens in a new tab)`}
+        aria-label={label ? `${label} in Spotify` : undefined}
+      >
+        {children ?? to.label}
+      </a>
+    )
+  return <>{children ?? to.label}</>
+}
+
+/** The playing track, its artists and its album, each linked. */
+function NowPlaying({
+  view,
+  onNavigate,
+}: {
+  view: PlaybackView
+  onNavigate?: () => void
+}) {
+  const { track, artists, album } = references(view)
+  return (
+    <span className="player-text">
+      <strong>
+        <PlayerLink to={track} onNavigate={onNavigate} />
+      </strong>
+      <span>
+        {artists.map((artist, index) => (
+          <Fragment key={`${artist.label}:${index}`}>
+            {index > 0 && ', '}
+            <PlayerLink to={artist} onNavigate={onNavigate} />
+          </Fragment>
+        ))}
+        {artists.length > 0 && album.label && ' · '}
+        {album.label && <PlayerLink to={album} onNavigate={onNavigate} />}
+      </span>
+    </span>
+  )
 }
 
 function itemDetail(item: PlayableItem) {
@@ -216,7 +336,7 @@ function Transport({ view }: { view: PlaybackView }) {
   const playing = snapshot !== null && !snapshot.paused
   const hasNext = view.queue.length > 0 || view.upcoming.length > 0
   const nothingToPlay = !snapshot && !view.current && !hasNext
-  // Spotify does not let apps control a restricted device; the queue can still start here.
+  // Spotify does not let apps control a restricted device.
   const readOnly = view.target.kind === 'restricted'
   // A Sonos group accepts the controls Sonos reports for its current playback.
   const sonos = view.target.kind === 'sonos' ? view.target.group.actions : null
@@ -225,10 +345,9 @@ function Transport({ view }: { view: PlaybackView }) {
       <button
         type="button"
         className="player-skip"
-        aria-label="Shuffle source"
+        aria-label="Shuffle"
         aria-pressed={view.shuffle}
-        title="Shuffle source"
-        disabled={!view.source}
+        title="Shuffle"
         onClick={controls.toggleShuffle}
       >
         <Shuffle size={16} aria-hidden="true" />
@@ -275,7 +394,7 @@ function Transport({ view }: { view: PlaybackView }) {
         className="player-skip"
         aria-label="Next"
         disabled={
-          sonos ? !snapshot || !sonos.next : (!snapshot || readOnly) && !hasNext
+          sonos ? !snapshot || !sonos.next : readOnly || (!snapshot && !hasNext)
         }
         onClick={controls.next}
       >
@@ -414,8 +533,16 @@ function QueueContents({
   view: PlaybackView
   onNavigate: () => void
 }) {
+  const { target } = view
   return (
     <div className="queue-contents">
+      {(target.kind === 'sonos' || target.kind === 'restricted') && (
+        <p className="quiet">
+          {target.name} plays the tracks it was sent when playback moved there.
+          Changes to the queue reach it after playback is started again on a
+          device this app can start.
+        </p>
+      )}
       {view.source && (
         <Link
           href={view.source.href}
@@ -443,7 +570,8 @@ function QueueContents({
         {view.queue.length > 0 &&
           !view.current &&
           view.snapshot &&
-          view.target.kind !== 'sonos' && (
+          view.target.kind !== 'sonos' &&
+          view.target.kind !== 'restricted' && (
             <p className="quiet">Press Next to start the queue.</p>
           )}
         {view.queue.length ? (
@@ -486,9 +614,12 @@ function QueueContents({
 
 function DeviceList({
   view,
+  open,
   onChosen,
 }: {
   view: PlaybackView
+  /** The list is on screen; Sonos rooms are read only then. */
+  open: boolean
   onChosen: () => void
 }) {
   const controls = usePlaybackControls()
@@ -518,7 +649,7 @@ function DeviceList({
             {target.kind === 'local' && <Check size={14} aria-hidden="true" />}
           </button>
         </li>
-        {(target.kind === 'restricted' || target.kind === 'sonos') && (
+        {target.kind === 'restricted' && (
           <li>
             <button type="button" aria-pressed disabled>
               <DeviceIcon type={target.type} />
@@ -561,19 +692,21 @@ function DeviceList({
           </button>
         </p>
       )}
-      {target.kind === 'restricted' && (
+      {target.kind === 'restricted' && !view.findingSonos && (
         <p className="quiet">
-          Spotify does not let apps control {target.name}. Choose a device to
-          play there instead.
+          Spotify does not let apps control {target.name}. Choosing a device
+          moves the playback there.
         </p>
       )}
       {target.kind === 'sonos' && (
         <p className="quiet">
-          {target.name} is controlled through Sonos. Choose a device to play
-          there instead.
+          {target.name} is controlled through Sonos. Choosing a device moves the
+          playback there.
         </p>
       )}
       <p className="quiet">Devices appear when Spotify is open on them.</p>
+      {open && <SonosRooms view={view} />}
+      {open && <PlayerConnections />}
     </div>
   )
 }
@@ -593,7 +726,7 @@ function DockPopover({
   action?: ReactNode
   highlighted?: boolean
   onOpen?: () => void
-  children: (close: () => void) => ReactNode
+  children: (close: () => void, open: boolean) => ReactNode
 }) {
   const id = useId()
   const titleId = useId()
@@ -661,27 +794,37 @@ function DockPopover({
           <h2 id={titleId}>{title}</h2>
           {action}
         </div>
-        {children(close)}
+        {children(close, open)}
       </div>
     </>
   )
 }
 
+function TargetIcon({ view }: { view: PlaybackView }) {
+  if (view.target.kind === 'sonos') return <SonosMark />
+  if (view.findingSonos)
+    return (
+      <LoaderCircle
+        size={16}
+        aria-hidden="true"
+        className="motion-safe:animate-spin"
+      />
+    )
+  return <MonitorSpeaker size={16} aria-hidden="true" />
+}
+
 function NowPlayingSheet({
   view,
   onClose,
-  onOpenAlbum,
 }: {
   view: PlaybackView
   onClose: () => void
-  onOpenAlbum: (albumId: string) => void
 }) {
   const controls = usePlaybackControls()
   const dialog = useRef<HTMLDialogElement>(null)
   const titleId = useId()
   const [devicesOpen, setDevicesOpen] = useState(false)
   const shown = describe(view)
-  const albumId = view.current?.albumId ?? null
   useEffect(() => {
     const element = dialog.current
     const previous = document.activeElement
@@ -717,10 +860,7 @@ function NowPlayingSheet({
         </div>
         <div className="player-sheet-body">
           <Artwork src={shown.artwork} className="player-sheet-art" />
-          <div className="player-text">
-            <strong>{shown.title}</strong>
-            <span>{shown.detail}</span>
-          </div>
+          <NowPlaying view={view} onNavigate={onClose} />
           <Scrubber
             snapshot={view.snapshot}
             readOnly={!seekable(view.target)}
@@ -737,21 +877,9 @@ function NowPlayingSheet({
                 setDevicesOpen(!devicesOpen)
               }}
             >
-              <MonitorSpeaker size={16} aria-hidden="true" />
+              <TargetIcon view={view} />
               <span>{targetLabel(view.target)}</span>
             </button>
-            {albumId && (
-              <button
-                type="button"
-                className="player-tool"
-                onClick={() => {
-                  onClose()
-                  onOpenAlbum(albumId)
-                }}
-              >
-                Open album
-              </button>
-            )}
             {shown.spotifyUrl && (
               <ServiceIconLinks
                 links={[
@@ -765,7 +893,11 @@ function NowPlayingSheet({
             )}
           </div>
           {devicesOpen && (
-            <DeviceList view={view} onChosen={() => setDevicesOpen(false)} />
+            <DeviceList
+              view={view}
+              open
+              onChosen={() => setDevicesOpen(false)}
+            />
           )}
           <VolumeControl volume={view.volume} />
           <QueueContents view={view} onNavigate={onClose} />
@@ -778,8 +910,6 @@ function NowPlayingSheet({
 function Dock({ view }: { view: PlaybackView }) {
   const controls = usePlaybackControls()
   const { apiBaseUrl } = useConfig()
-  const router = useRouter()
-  const inspector = useDetailInspector()
   const phone = usePhoneLayout()
   const [sheet, setSheet] = useState(false)
   const reconnect = useMutation({
@@ -787,13 +917,7 @@ function Dock({ view }: { view: PlaybackView }) {
     onSuccess: (url) => window.location.assign(url),
   })
   const shown = describe(view)
-  const { current, failure } = view
-  const albumId = current?.albumId ?? null
-
-  function openAlbum(albumId: string) {
-    if (inspector) inspector.open({ kind: 'album', id: albumId })
-    else router.push(`/albums?item=${encodeURIComponent(albumId)}`)
-  }
+  const { failure } = view
 
   if (failure?.status === 'expired')
     return (
@@ -819,18 +943,11 @@ function Dock({ view }: { view: PlaybackView }) {
       </section>
     )
 
-  const track = (
-    <>
-      <Artwork src={shown.artwork} className="player-art" />
-      <span className="player-text">
-        <strong>{shown.title}</strong>
-        <span>{shown.detail}</span>
-      </span>
-    </>
-  )
+  const artwork = <Artwork src={shown.artwork} className="player-art" />
   return (
     <section className="player-dock" aria-label="Player">
       <Hairline snapshot={view.snapshot} />
+      {!failure && <ConnectionOutcome />}
       {failure && (
         <div className="player-alert" role="alert">
           <span>{failure.message}</span>
@@ -863,19 +980,17 @@ function Dock({ view }: { view: PlaybackView }) {
               aria-label={`Open player: ${shown.title}`}
               onClick={() => setSheet(true)}
             >
-              {track}
-            </button>
-          ) : current && albumId ? (
-            <button
-              type="button"
-              className="player-track"
-              aria-label={`Open ${current.albumTitle}`}
-              onClick={() => openAlbum(albumId)}
-            >
-              {track}
+              {artwork}
+              <span className="player-text">
+                <strong>{shown.title}</strong>
+                <span>{shown.detail}</span>
+              </span>
             </button>
           ) : (
-            <div className="player-track">{track}</div>
+            <div className="player-track">
+              <PlayerLink to={references(view).album}>{artwork}</PlayerLink>
+              <NowPlaying view={view} />
+            </div>
           )}
         </div>
         <div className="player-transport">
@@ -922,12 +1037,14 @@ function Dock({ view }: { view: PlaybackView }) {
             onOpen={() => void controls.refreshDevices()}
             trigger={
               <>
-                <MonitorSpeaker size={16} aria-hidden="true" />
+                <TargetIcon view={view} />
                 <span>{targetLabel(view.target)}</span>
               </>
             }
           >
-            {(close) => <DeviceList view={view} onChosen={close} />}
+            {(close, open) => (
+              <DeviceList view={view} open={open} onChosen={close} />
+            )}
           </DockPopover>
           <VolumeControl volume={view.volume} />
           {shown.spotifyUrl && (
@@ -951,20 +1068,19 @@ function Dock({ view }: { view: PlaybackView }) {
       <p className="sr-only" role="status">
         {view.announcement}
       </p>
-      {sheet && (
-        <NowPlayingSheet
-          view={view}
-          onClose={() => setSheet(false)}
-          onOpenAlbum={openAlbum}
-        />
-      )}
+      {sheet && <NowPlayingSheet view={view} onClose={() => setSheet(false)} />}
     </section>
   )
 }
 
-/** The player bar; hidden until playback is connected and the account plays or queues something. */
+/**
+ * The player bar, shown at all times: the player once Spotify playback is
+ * connected, and until then a prompt to connect it that can be dismissed.
+ */
 export default function PlayerDock() {
   const view = usePlayback()
-  if (!view.enabled || !view.active) return null
-  return <Dock view={view} />
+  if (view.connection === 'loading') return null
+  if (view.connection !== 'connected')
+    return <ConnectPrompt configured={view.connection === 'disconnected'} />
+  return view.enabled ? <Dock view={view} /> : null
 }

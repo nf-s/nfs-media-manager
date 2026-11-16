@@ -195,7 +195,7 @@ app.openapi(
     responses: {
       302: {
         description:
-          'Return to album, playlist or podcast imports or Providers, without exposing tokens or authorization codes',
+          'Return to album, playlist or podcast imports or the player, without exposing tokens or authorization codes',
       },
       401: jsonErrorResponse('Owner browser session required'),
       403: jsonErrorResponse('Forbidden'),
@@ -221,8 +221,8 @@ app.openapi(
     }
     const outcome = connected ? 'connected' : 'error'
     const destination =
-      returnTo === 'providers'
-        ? new URL('/providers', returnOrigin)
+      returnTo === 'player'
+        ? new URL('/albums', returnOrigin)
         : new URL(
             returnTo === 'playlists' || returnTo === 'track-playlists'
               ? '/imports/spotify-playlists'
@@ -232,13 +232,8 @@ app.openapi(
             returnOrigin,
           )
     destination.search = new URLSearchParams(
-      returnTo === 'providers'
-        ? {
-            provider: 'spotify',
-            mediaType: 'album',
-            section: 'settings',
-            spotify: outcome,
-          }
+      returnTo === 'player'
+        ? { player: `spotify-${outcome}` }
         : {
             mediaType:
               returnTo === 'podcasts'

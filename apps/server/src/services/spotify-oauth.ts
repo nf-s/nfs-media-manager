@@ -33,13 +33,13 @@ import {
   recordProviderSuccess,
 } from './provider-requests'
 
-/** The page a connection returns to: saved albums, playlists, podcasts or Providers. */
+/** Where a connection returns to: saved albums, playlists, podcasts or the player. */
 const SpotifyReturnToSchema = z.enum([
   'imports',
   'playlists',
   'track-playlists',
   'podcasts',
-  'providers',
+  'player',
 ])
 export type SpotifyReturnTo = z.infer<typeof SpotifyReturnToSchema>
 const StateSchema = z.object({
@@ -272,7 +272,7 @@ export async function authorizeSpotify(
     playlistChanges,
     returnTo:
       options.playback !== undefined
-        ? 'providers'
+        ? 'player'
         : options.playlists
           ? options.playlistLibrary === 'track'
             ? 'track-playlists'

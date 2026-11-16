@@ -97,7 +97,11 @@ async function render(search: URLSearchParams, detail = false) {
         >
           <SearchParamsContext.Provider value={search}>
             <PlaybackViewContext.Provider
-              value={{ ...idlePlaybackState, enabled: true }}
+              value={{
+                ...idlePlaybackState,
+                enabled: true,
+                connection: 'connected',
+              }}
             >
               {Detail ? (
                 <Detail mediaType="album" id={album.id} />

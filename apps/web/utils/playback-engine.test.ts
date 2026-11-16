@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict'
 import { afterEach, beforeEach, mock, test } from 'node:test'
-import { createPlaybackEngine } from './playback-engine'
+import {
+  createPlaybackEngine,
+  type PlaybackEngineOptions,
+} from './playback-engine'
 import type { PlayableItem, PlaybackSnapshot, PlaybackSource } from './playback'
 import {
   PlaybackApiError,
@@ -74,6 +77,8 @@ function remoteSnapshot(values: Partial<PlaybackSnapshot>): PlaybackSnapshot {
     trackName: 'Fixture track',
     artists: 'Fixture artist',
     albumName: 'Fixture album',
+    albumUri: null,
+    artistLinks: [],
     artworkUrl: null,
     durationMs: 200_000,
     positionMs: 0,
@@ -89,7 +94,11 @@ function remoteSnapshot(values: Partial<PlaybackSnapshot>): PlaybackSnapshot {
 
 let clock = 0
 
-function harness(random?: () => number, sonos?: SonosControlApi) {
+function harness(
+  random?: () => number,
+  sonos?: SonosControlApi,
+  shuffle: Pick<PlaybackEngineOptions, 'initialShuffle' | 'onShuffle'> = {},
+) {
   const calls: string[] = []
   const page = { visible: true }
   const listeners = new Map<string, Array<(payload: unknown) => void>>()
@@ -179,6 +188,7 @@ function harness(random?: () => number, sonos?: SonosControlApi) {
     visible: () => page.visible,
     random,
     sonos,
+    ...shuffle,
   })
   return {
     engine,
@@ -744,7 +754,7 @@ test('shows playback on a device Spotify does not let apps control', async () =>
   assert.deepEqual(setup.sent('pause'), ['pause speaker'])
 })
 
-test('playing here takes over from a device apps cannot control', async () => {
+test('playing something new is refused on a device apps cannot start, which keeps its playback', async () => {
   const setup = harness()
   setup.remote.restricted = { name: 'Fixture hi-fi', type: 'speaker' }
   setup.remote.snapshot = remoteSnapshot({ contextUri: 'spotify:playlist:x' })
@@ -753,16 +763,52 @@ test('playing here takes over from a device apps cannot control', async () => {
   await advance(100)
   assert.equal(setup.engine.getState().target.kind, 'restricted')
 
+  setup.engine.enqueue(track)
   setup.engine.play(album)
-  assert.deepEqual(setup.engine.getState().target, { kind: 'local' })
-  assert.equal(setup.engine.getState().volume, 0.8)
+  setup.engine.next()
+  setup.engine.playFromQueue(setup.engine.getState().queue[0]?.key ?? '')
   await settle()
-  assert.ok(setup.calls.includes('sdk activate'))
-  setup.emit('ready', { device_id: 'browser' })
+  const state = setup.engine.getState()
+  assert.equal(state.target.kind, 'restricted')
+  assert.match(state.failure?.message ?? '', /start playback on Fixture hi-fi/)
+  assert.equal(state.queue.length, 1)
+  assert.equal(state.snapshot?.trackUri, 'spotify:track:one')
+  assert.deepEqual(setup.sent('play'), [])
+  setup.engine.dispose()
+})
+
+test('choosing a device moves the playback off a device apps cannot start', async () => {
+  const setup = harness()
+  setup.remote.restricted = { name: 'Fixture hi-fi', type: 'speaker' }
+  setup.remote.snapshot = remoteSnapshot({ contextUri: 'spotify:playlist:x' })
+  setup.engine.watch()
+  await advance(100)
+  await setup.engine.selectDevice({ kind: 'remote', device: speaker })
+  assert.deepEqual(setup.sent('transfer'), ['transfer speaker true'])
+  assert.equal(setup.engine.getState().target.kind, 'remote')
+  setup.engine.dispose()
+})
+
+test('a device chosen while Spotify refuses the move takes the next start instead', async () => {
+  const setup = harness()
+  setup.remote.restricted = { name: 'Fixture hi-fi', type: 'speaker' }
+  setup.remote.snapshot = remoteSnapshot({ contextUri: 'spotify:playlist:x' })
+  setup.engine.watch()
+  await advance(100)
+  setup.remote.failures.push(new PlaybackApiError(403, null))
+  await setup.engine.selectDevice({ kind: 'remote', device: speaker })
+  assert.equal(setup.engine.getState().failure, null)
+  assert.equal(setup.engine.getState().target.kind, 'remote')
+  assert.equal(setup.engine.getState().snapshot, null)
+  // The speaker left behind is not followed again while it keeps playing.
+  await advance(6_000)
+  assert.equal(setup.engine.getState().target.kind, 'remote')
+  setup.engine.play(album)
   await settle()
   assert.deepEqual(setup.sent('play'), [
-    'play browser {"context_uri":"spotify:album:first"}',
+    'play speaker {"context_uri":"spotify:album:first"}',
   ])
+  setup.engine.dispose()
 })
 
 test('a chosen device gives way to the device playback was moved to', async () => {
@@ -894,6 +940,7 @@ function fixtureSource(length: number, startIndex = 0): PlaybackSource {
     href: '/tracks?sortBy=title&direction=asc',
     length,
     startIndex,
+    kind: 'list',
     load: async (index) => [sourceTrack(index)],
   }
 }
@@ -909,7 +956,7 @@ async function playSource(
   setup.remote.device = speaker
 }
 
-test('captures a source and loads only the next ten tracks until playback advances', async () => {
+test('captures a source and loads only the tracks kept ahead until playback advances', async () => {
   const setup = harness()
   const loaded: number[] = []
   const definition = fixtureSource(100)
@@ -923,8 +970,8 @@ test('captures a source and loads only the next ten tracks until playback advanc
     label: 'Tracks',
     href: '/tracks?sortBy=title&direction=asc',
   })
-  assert.equal(setup.engine.getState().upcoming.length, 10)
-  assert.equal(Math.max(...loaded), 10)
+  assert.equal(setup.engine.getState().upcoming.length, 30)
+  assert.equal(Math.max(...loaded), 30)
   // The captured view keeps working after the caller navigates or changes its settings.
   definition.label = 'Another view'
   definition.load = async () => []
@@ -935,6 +982,7 @@ test('captures a source and loads only the next ten tracks until playback advanc
   }
   assert.equal(setup.engine.getState().source?.label, 'Tracks')
   assert.equal(setup.engine.getState().upcoming[0]?.uri, sourceTrack(16).uri)
+  assert.equal(Math.max(...loaded), 45)
   setup.engine.dispose()
 })
 
@@ -1239,10 +1287,9 @@ test('a rejected Spotify start retains the source song for retry and leaves the 
   setup.engine.toggle()
   await settle()
   assert.equal(setup.engine.getState().failure, null)
-  assert.deepEqual(setup.sent('play'), [
-    'play speaker {"uris":["spotify:track:source-0"]}',
-    'play speaker {"uris":["spotify:track:source-0"]}',
-  ])
+  const withFollowing =
+    'play speaker {"uris":["spotify:track:source-0","spotify:track:single","spotify:track:source-1","spotify:track:source-2"]}'
+  assert.deepEqual(setup.sent('play'), [withFollowing, withFollowing])
   assert.equal(setup.engine.getState().upcoming[0]?.uri, sourceTrack(1).uri)
   setup.engine.dispose()
 })
@@ -1386,7 +1433,7 @@ test('retrying a failed source lookup ignores old playback reported while it was
   assert.ok(requests > 1)
   assert.deepEqual(setup.sent('pause'), [])
   assert.deepEqual(setup.sent('play'), [
-    'play speaker {"uris":["spotify:track:source-0"]}',
+    'play speaker {"uris":["spotify:track:source-0","spotify:track:source-1"]}',
   ])
   setup.engine.dispose()
 })
@@ -1518,5 +1565,202 @@ test('a refused Sonos command is reported and the group is looked up again', asy
   )
   await advance(3_000)
   assert.equal(sonos.lookups.length, 2)
+  setup.engine.dispose()
+})
+
+/** Plays a source track in this browser, then reports the playback on a Sonos group. */
+async function sourceMovedToSonos(sonos: ReturnType<typeof fakeSonos>) {
+  const setup = harness(undefined, sonos.api)
+  setup.engine.prepare()
+  await settle()
+  setup.engine.play(sourceTrack(0), fixtureSource(30))
+  await settle()
+  setup.emit('ready', { device_id: 'browser' })
+  await advance(700)
+  setup.local.state = sdkState({
+    context: '',
+    track: sourceTrack(0).uri,
+    position: 1_000,
+  })
+  await advance(1_000)
+  setup.local.state = null
+  setup.emit('player_state_changed', null)
+  setup.remote.restricted = { name: 'Fixture hi-fi', type: 'speaker' }
+  setup.remote.snapshot = remoteSnapshot({
+    trackUri: sourceTrack(0).uri,
+    contextUri: null,
+    positionMs: 5_000,
+  })
+  await advance(4_000)
+  return setup
+}
+
+test('the upcoming source tracks go to Spotify with the track, so they follow it to a Sonos group', async () => {
+  const sonos = fakeSonos()
+  const setup = await sourceMovedToSonos(sonos)
+  assert.equal(setup.engine.getState().target.kind, 'sonos')
+  const [started] = setup.sent('play')
+  assert.ok(started?.includes(sourceTrack(1).uri), started)
+  setup.engine.next()
+  await settle()
+  assert.deepEqual(sonos.commands, ['RINCON_FIXTURE:1 next'])
+  setup.remote.snapshot = remoteSnapshot({
+    trackUri: sourceTrack(1).uri,
+    contextUri: null,
+    positionMs: 0,
+  })
+  await advance(3_000)
+  const state = setup.engine.getState()
+  assert.equal(state.current?.uri, sourceTrack(1).uri)
+  assert.equal(state.upcoming[0]?.uri, sourceTrack(2).uri)
+  assert.equal(state.target.kind, 'sonos')
+  assert.equal(setup.sent('play').length, 1)
+  setup.engine.dispose()
+})
+
+test('a group without a next track to skip to ignores Next', async () => {
+  const sonos = fakeSonos({
+    ...sonosGroup,
+    actions: { ...sonosGroup.actions, next: false },
+  })
+  const setup = await sourceMovedToSonos(sonos)
+  setup.engine.next()
+  await settle()
+  assert.deepEqual(sonos.commands, [])
+  assert.equal(setup.sent('play').length, 1)
+  setup.engine.dispose()
+})
+
+test('a skip made on the Sonos group past several sent tracks moves the queue to that track', async () => {
+  const sonos = fakeSonos()
+  const setup = await sourceMovedToSonos(sonos)
+  setup.remote.snapshot = remoteSnapshot({
+    trackUri: sourceTrack(3).uri,
+    contextUri: null,
+    positionMs: 2_000,
+  })
+  await advance(3_000)
+  const state = setup.engine.getState()
+  assert.equal(state.current?.uri, sourceTrack(3).uri)
+  assert.equal(state.upcoming[0]?.uri, sourceTrack(4).uri)
+  assert.equal(state.source?.label, 'Tracks')
+  setup.engine.dispose()
+})
+
+test('the Sonos group is looked up again while Sonos has not caught up with Spotify', async () => {
+  const sonos = fakeSonos()
+  const find = sonos.api.find
+  let lookups = 0
+  sonos.api.find = async (trackUri, device) => {
+    lookups += 1
+    return lookups === 1 ? null : find(trackUri, device)
+  }
+  const setup = await watchRestricted(sonos)
+  assert.equal(setup.engine.getState().target.kind, 'restricted')
+  assert.equal(setup.engine.getState().findingSonos, true)
+  await advance(6_000)
+  assert.equal(setup.engine.getState().target.kind, 'sonos')
+  assert.equal(setup.engine.getState().findingSonos, false)
+  assert.equal(lookups, 2)
+  setup.engine.dispose()
+})
+
+test('a device that moves on to the next sent track is followed without another start', async () => {
+  const setup = harness()
+  await playSource(setup, fixtureSource(5))
+  setup.remote.snapshot = remoteSnapshot({
+    trackUri: sourceTrack(0).uri,
+    contextUri: null,
+    positionMs: 198_000,
+  })
+  await advance(700)
+  setup.remote.snapshot = remoteSnapshot({
+    trackUri: sourceTrack(1).uri,
+    contextUri: null,
+    positionMs: 500,
+  })
+  await advance(3_000)
+  assert.equal(setup.engine.getState().current?.uri, sourceTrack(1).uri)
+  assert.equal(setup.engine.getState().upcoming[0]?.uri, sourceTrack(2).uri)
+  assert.deepEqual(setup.sent('play'), [
+    'play speaker {"uris":["spotify:track:source-0","spotify:track:source-1","spotify:track:source-2","spotify:track:source-3","spotify:track:source-4"]}',
+  ])
+
+  // A track queued since then is due first, so it replaces what the device moved to.
+  setup.engine.enqueue(track)
+  setup.remote.snapshot = remoteSnapshot({
+    trackUri: sourceTrack(2).uri,
+    contextUri: null,
+    positionMs: 500,
+  })
+  await advance(3_000)
+  assert.equal(setup.engine.getState().current?.uri, track.uri)
+  assert.equal(setup.engine.getState().queue.length, 0)
+  assert.equal(
+    setup.sent('play')[1],
+    'play speaker {"uris":["spotify:track:single","spotify:track:source-2","spotify:track:source-3","spotify:track:source-4"]}',
+  )
+  setup.engine.dispose()
+})
+
+test('the sent tracks running out ends playback instead of stepping back to the first', async () => {
+  const setup = harness()
+  await playSource(setup, fixtureSource(2))
+  setup.remote.snapshot = remoteSnapshot({
+    trackUri: sourceTrack(0).uri,
+    contextUri: null,
+    positionMs: 1_000,
+  })
+  await advance(700)
+  setup.remote.snapshot = remoteSnapshot({
+    trackUri: sourceTrack(1).uri,
+    contextUri: null,
+    positionMs: 198_000,
+  })
+  await advance(3_000)
+  assert.equal(setup.engine.getState().current?.uri, sourceTrack(1).uri)
+  setup.remote.snapshot = remoteSnapshot({
+    trackUri: sourceTrack(0).uri,
+    contextUri: null,
+    paused: true,
+    positionMs: 0,
+  })
+  await advance(3_000)
+  assert.equal(setup.engine.getState().current, null)
+  assert.equal(setup.sent('play').length, 1)
+  setup.engine.dispose()
+})
+
+test('shuffle is remembered for lists and an album starts in order', async () => {
+  const saved: boolean[] = []
+  const setup = harness(() => 0.99, undefined, {
+    initialShuffle: true,
+    onShuffle: (shuffle) => saved.push(shuffle),
+  })
+  assert.equal(setup.engine.getState().shuffle, true)
+  await playSource(setup, { ...fixtureSource(5), kind: 'album' })
+  assert.equal(setup.engine.getState().shuffle, false)
+  assert.equal(setup.engine.getState().upcoming[0]?.uri, sourceTrack(1).uri)
+  // Shuffling this album leaves the remembered setting alone.
+  setup.engine.toggleShuffle()
+  assert.equal(setup.engine.getState().shuffle, true)
+  setup.engine.toggleShuffle()
+  assert.deepEqual(saved, [])
+
+  setup.engine.play(sourceTrack(0), fixtureSource(5))
+  await settle()
+  assert.equal(setup.engine.getState().shuffle, true)
+  assert.equal(setup.engine.getState().upcoming[0]?.uri, sourceTrack(4).uri)
+  setup.engine.toggleShuffle()
+  assert.deepEqual(saved, [false])
+  setup.engine.toggleShuffle()
+  assert.deepEqual(saved, [false, true])
+  // An album played on its own is in order too, and leaves the setting alone.
+  setup.engine.play(album)
+  assert.equal(setup.engine.getState().shuffle, false)
+  setup.engine.toggleShuffle()
+  assert.deepEqual(saved, [false, true])
+  setup.engine.play(sourceTrack(0), fixtureSource(5))
+  assert.equal(setup.engine.getState().shuffle, true)
   setup.engine.dispose()
 })

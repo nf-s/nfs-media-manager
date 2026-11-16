@@ -39,6 +39,8 @@ const snapshot: PlaybackSnapshot = {
   trackName: 'Second track',
   artists: 'Example artist',
   albumName: 'Fixture album',
+  albumUri: null,
+  artistLinks: [],
   artworkUrl: null,
   durationMs: 200_000,
   positionMs: 10_000,
@@ -49,7 +51,11 @@ const snapshot: PlaybackSnapshot = {
   discNumber: 1,
   at: 0,
 }
-const on: PlaybackView = { ...idlePlaybackState, enabled: true }
+const on: PlaybackView = {
+  ...idlePlaybackState,
+  enabled: true,
+  connection: 'connected',
+}
 
 function render(children: ReactNode, view?: PlaybackView) {
   return renderToStaticMarkup(
@@ -78,9 +84,12 @@ test('play controls remain visible with a connection explanation while playback 
   const html = render(controls())
   assert.match(
     html,
-    /Play Fixture album: Connect Spotify playback in Providers/,
+    /Play Fixture album: Connect Spotify playback in the player/,
   )
-  assert.match(html, /Play Second track: Connect Spotify playback in Providers/)
+  assert.match(
+    html,
+    /Play Second track: Connect Spotify playback in the player/,
+  )
   assert.equal((html.match(/disabled=""/g) ?? []).length, 3)
 })
 
@@ -156,7 +165,7 @@ function libraryControls(track: LibraryTrackSource = libraryTrack) {
 
 test('library track controls explain disconnected playback and retain the row number', () => {
   const html = render(libraryControls())
-  assert.match(html, /Connect Spotify playback in Providers/)
+  assert.match(html, /Connect Spotify playback in the player/)
   assert.match(html, /class="track-number">7<\/span>/)
   assert.equal((html.match(/disabled=""/g) ?? []).length, 3)
 })

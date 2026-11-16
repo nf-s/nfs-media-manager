@@ -44,6 +44,8 @@ function snapshot(values: Partial<PlaybackSnapshot>): PlaybackSnapshot {
     trackName: 'First',
     artists: 'First artist',
     albumName: 'Fixture album',
+    albumUri: null,
+    artistLinks: [],
     artworkUrl: null,
     durationMs: 200_000,
     positionMs: 0,
@@ -75,6 +77,10 @@ test('builds playable albums and tracks only from valid Spotify identifiers', ()
     albumTitle: 'Fixture album',
     artworkUrl: null,
     trackCount: 3,
+    credits: [
+      { id: null, name: 'First artist' },
+      { id: null, name: 'Second artist' },
+    ],
   })
   assert.equal(albumPlayable({ ...album, spotifyUrl: null }), null)
   assert.equal(
@@ -100,6 +106,8 @@ test('library tracks play alone, with their linked album when there is one', () 
     album: { id: 'library-album', title: 'Fixture album' },
     albumName: 'Spotify album name',
     artworkUrl: null,
+    id: 'library-track',
+    artistCredits: [{ id: 'library-artist', name: 'Second artist' }],
   }
   assert.deepEqual(libraryTrackPlayable(track), {
     kind: 'track',
@@ -110,11 +118,21 @@ test('library tracks play alone, with their linked album when there is one', () 
     albumTitle: 'Fixture album',
     artworkUrl: null,
     trackCount: 1,
+    trackId: 'library-track',
+    credits: [
+      { id: null, name: 'First artist' },
+      { id: 'library-artist', name: 'Second artist' },
+    ],
   })
   const unlinked = libraryTrackPlayable({ ...track, album: null })
   assert.equal(unlinked?.albumId, null)
   assert.equal(unlinked?.albumTitle, 'Spotify album name')
   assert.deepEqual(unlinked && playRequest(unlinked), { uris: [trackUri] })
+  assert.deepEqual(
+    unlinked &&
+      playRequest(unlinked, [{ ...unlinked, uri: 'spotify:track:next' }]),
+    { uris: [trackUri, 'spotify:track:next'] },
+  )
   assert.equal(
     libraryTrackPlayable({ ...track, spotifyTrackId: 'local-file' }),
     null,

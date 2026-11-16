@@ -177,6 +177,7 @@ export function createBrowsePlaybackSource({
     href,
     length: total,
     startIndex,
+    kind: collection === 'albums' ? 'album' : 'list',
     async load(index) {
       if (!validIndex(index, total)) return []
       const item =
@@ -222,6 +223,7 @@ export function createPlaylistPlaybackSource({
     href,
     length: total,
     startIndex,
+    kind: 'list',
     async load(index) {
       if (!validIndex(index, total)) return []
       const entry =
@@ -250,6 +252,7 @@ export function createAlbumPlaybackSource(
     href,
     length: 1,
     startIndex: 0,
+    kind: 'album',
     load: async (index) => (index === 0 ? [...tracks] : []),
   }
 }

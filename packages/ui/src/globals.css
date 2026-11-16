@@ -3505,7 +3505,8 @@
   height: 56px;
   padding: 0 12px 0 8px;
 }
-.player-row[data-state='expired'] {
+.player-row[data-state='expired'],
+.player-row[data-state='prompt'] {
   grid-template-columns: minmax(0, 1fr) auto;
   padding-left: 14px;
 }
@@ -3521,8 +3522,25 @@
   border-radius: 6px;
   text-align: left;
 }
-button.player-track:hover strong {
+button.player-track:hover strong,
+.player-text a:hover {
   text-decoration: underline;
+}
+.player-track > a {
+  flex-shrink: 0;
+  border-radius: 4px;
+}
+/* Marks a device or room reached through the Sonos connection. */
+.sonos-mark {
+  flex: none;
+  padding: 3px 4px;
+  border: 1px solid currentColor;
+  border-radius: 3px;
+  color: var(--ink-2);
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  line-height: 1;
 }
 .player-art,
 .queue-art {
@@ -3761,6 +3779,9 @@ button.player-track:hover strong {
   color: #a32318;
   font-size: 12px;
 }
+.player-alert[data-tone='info'] {
+  color: var(--ink);
+}
 .player-alert > span {
   flex: 1;
   min-width: 0;
@@ -3802,7 +3823,7 @@ button.player-track:hover strong {
   font-size: 13px;
 }
 .player-popover:has(.device-list) {
-  width: 264px;
+  width: 312px;
 }
 .player-popover:focus-visible {
   outline: none;
@@ -3963,6 +3984,83 @@ button.player-track:hover strong {
 }
 .device-list [role='alert'] {
   color: #a32318;
+}
+.device-list li button > .sonos-mark,
+.player-tool > .sonos-mark {
+  flex: none;
+  overflow: visible;
+  font-size: 8px;
+  font-weight: 800;
+}
+.device-section {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+.device-section h3 {
+  margin-bottom: 4px;
+  color: #667080;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}
+.device-room {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 2px 8px;
+  border-radius: 8px;
+}
+.device-room[data-current='true'] {
+  background: var(--chip);
+}
+.device-room-text {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  line-height: 1.3;
+}
+.device-room-text strong,
+.device-room-text span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.device-room-text strong {
+  font-weight: 500;
+}
+.device-room-text span {
+  color: #667080;
+  font-size: 11px;
+}
+.device-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.player-connections {
+  display: grid;
+  gap: 2px;
+}
+.player-connections > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 0 8px;
+}
+.player-connections dt {
+  font-weight: 600;
+}
+.player-connections dd {
+  flex: 1;
+  min-width: 0;
+  color: #667080;
+  font-size: 12px;
+}
+.player-connections a {
+  font-size: 12px;
 }
 .player-sheet-body {
   display: grid;

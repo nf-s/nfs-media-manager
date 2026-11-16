@@ -71,7 +71,7 @@ export const SpotifySavedAlbumsInputSchema = z
   })
 /** The token endpoint's message when playback access has not been granted. */
 export const SPOTIFY_PLAYBACK_UNAVAILABLE =
-  'Connect Spotify playback in Providers first'
+  'Connect Spotify playback in the player first'
 export const SpotifyPlaybackTokenSchema = z.object({
   accessToken: z.string().min(1),
   expiresAt: z.string().datetime(),

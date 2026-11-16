@@ -67,9 +67,12 @@ const TrackSchema = z.object({
   uri: z.string(),
   name: z.string(),
   duration_ms: z.number().nonnegative().optional(),
-  artists: z.array(z.object({ name: z.string() })).default([]),
+  artists: z
+    .array(z.object({ name: z.string(), uri: z.string().optional() }))
+    .default([]),
   album: z
     .object({
+      uri: z.string().optional(),
       name: z.string().optional(),
       images: z.array(z.object({ url: z.string() })).default([]),
     })
@@ -114,6 +117,11 @@ export function sdkPlayback(
     trackName: track.name,
     artists: track.artists.map((artist) => artist.name).join(', '),
     albumName: track.album?.name ?? '',
+    albumUri: track.album?.uri ?? null,
+    artistLinks: track.artists.map(({ name, uri }) => ({
+      name,
+      uri: uri ?? null,
+    })),
     artworkUrl: artwork?.startsWith('https://') ? artwork : null,
     durationMs: parsed.data.duration ?? track.duration_ms ?? 0,
     positionMs: parsed.data.position,

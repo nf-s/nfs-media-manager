@@ -3,7 +3,10 @@ import { test } from 'node:test'
 import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { PathnameContext } from 'next/dist/shared/lib/hooks-client-context.shared-runtime'
+import {
+  PathnameContext,
+  SearchParamsContext,
+} from 'next/dist/shared/lib/hooks-client-context.shared-runtime'
 import { AppRouterContext } from 'next/dist/shared/lib/app-router-context.shared-runtime'
 import PlayerDock from './player-dock'
 import { PlaybackViewContext, type PlaybackView } from './playback-provider'
@@ -28,6 +31,8 @@ const snapshot: PlaybackSnapshot = {
   trackName: 'Second track',
   artists: 'Example artist',
   albumName: 'Fixture album',
+  albumUri: null,
+  artistLinks: [],
   artworkUrl: null,
   durationMs: 200_000,
   positionMs: 65_000,
@@ -38,13 +43,17 @@ const snapshot: PlaybackSnapshot = {
   discNumber: 1,
   at: 0,
 }
-const on: PlaybackView = { ...idlePlaybackState, enabled: true }
+const on: PlaybackView = {
+  ...idlePlaybackState,
+  enabled: true,
+  connection: 'connected',
+}
 
 function unexpectedNavigation() {
   throw new Error('Navigation forbidden during rendering')
 }
 
-function render(view?: PlaybackView) {
+function render(view?: PlaybackView, search = '') {
   const dock = view ? (
     <PlaybackViewContext.Provider value={view}>
       <PlayerDock />
@@ -68,7 +77,9 @@ function render(view?: PlaybackView) {
           }}
         >
           <PathnameContext.Provider value="/albums">
-            {dock}
+            <SearchParamsContext.Provider value={new URLSearchParams(search)}>
+              {dock}
+            </SearchParamsContext.Provider>
           </PathnameContext.Provider>
         </AppRouterContext.Provider>
       </ConfigContext.Provider>
@@ -76,13 +87,39 @@ function render(view?: PlaybackView) {
   )
 }
 
-test('the dock is hidden until playback is on and something is played or queued', () => {
+test('the bar asks to connect Spotify until playback is connected, then always shows the player', () => {
   assert.equal(render(), '')
-  assert.equal(render(on), '')
-  assert.equal(
-    render({ ...idlePlaybackState, active: true, enabled: false }),
-    '',
+  const off: PlaybackView = {
+    ...idlePlaybackState,
+    enabled: false,
+    connection: 'disconnected',
+  }
+  const prompt = render(off)
+  assert.match(prompt, /Spotify playback is not connected/)
+  assert.match(prompt, />Connect Spotify<\/button>/)
+  assert.match(prompt, /aria-label="Dismiss"/)
+  const unconfigured = render({ ...off, connection: 'unconfigured' })
+  assert.match(
+    unconfigured,
+    /href="\/providers\?provider=spotify&amp;mediaType=album&amp;section=credentials"/,
   )
+  assert.doesNotMatch(unconfigured, />Connect Spotify</)
+  const idle = render(on)
+  assert.match(idle, /<strong>Nothing playing<\/strong>/)
+  assert.match(idle, /aria-label="Play on: This browser"/)
+  assert.match(idle, /aria-label="Play" disabled=""/)
+})
+
+test('a sign-in that returned to the app reports its result in the bar', () => {
+  assert.match(
+    render(on, 'player=sonos-connected'),
+    /role="status" data-tone="info"><span>Sonos connected\.<\/span>/,
+  )
+  assert.match(
+    render(on, 'player=sonos-error'),
+    /role="alert" data-tone="error"><span>Sonos did not connect\. Try again\./,
+  )
+  assert.doesNotMatch(render(on, 'player=unknown'), /player-alert/)
 })
 
 test('the dock shows the track, transport, queue count, device and Spotify link', () => {
@@ -95,9 +132,13 @@ test('the dock shows the track, transport, queue count, device and Spotify link'
     volume: 0.8,
   })
   assert.match(html, /<section class="player-dock" aria-label="Player"/)
-  assert.match(html, /aria-label="Open Fixture album"/)
-  assert.match(html, /<strong>Second track<\/strong>/)
-  assert.match(html, /Example artist · Fixture album/)
+  // Artwork, track and album open the library album; the artist has no page to open.
+  assert.match(
+    html,
+    /<a [^>]*aria-label="Open Fixture album"[^>]*href="\/albums[^"]*library-album[^"]*"/,
+  )
+  assert.match(html, /<strong><a [^>]*>Second track<\/a><\/strong>/)
+  assert.match(html, /Example artist · <a [^>]*>Fixture album<\/a>/)
   assert.match(html, /aria-label="Play"/)
   assert.match(html, /1:05/)
   assert.match(html, /3:20/)
@@ -123,12 +164,10 @@ test('a queue with nothing playing keeps the dock and its queue', () => {
   assert.doesNotMatch(html, /open\.spotify\.com/)
 })
 
-test('shuffle is unavailable without a source and exposes its selected state', () => {
+test('shuffle can be set at any time and exposes its selected state', () => {
   const withoutSource = render({ ...on, active: true, current: item })
-  assert.match(
-    withoutSource,
-    /aria-label="Shuffle source" aria-pressed="false"[^>]*disabled=""/,
-  )
+  assert.match(withoutSource, /aria-label="Shuffle" aria-pressed="false"/)
+  assert.doesNotMatch(withoutSource, /aria-label="Shuffle"[^>]*disabled=""/)
   assert.doesNotMatch(withoutSource, /Back to source/)
   const withSource = render({
     ...on,
@@ -137,8 +176,7 @@ test('shuffle is unavailable without a source and exposes its selected state', (
     source: { label: 'Tracks', href: '/tracks?sortBy=title&direction=asc' },
     shuffle: true,
   })
-  assert.match(withSource, /aria-label="Shuffle source" aria-pressed="true"/)
-  assert.doesNotMatch(withSource, /aria-label="Shuffle source"[^>]*disabled=""/)
+  assert.match(withSource, /aria-label="Shuffle" aria-pressed="true"/)
 })
 
 test('the queue links to the saved source and places ten upcoming tracks after queued items', () => {
@@ -187,7 +225,17 @@ test('playback started elsewhere is shown without a library album', () => {
   const html = render({
     ...on,
     active: true,
-    snapshot: { ...snapshot, paused: false },
+    snapshot: {
+      ...snapshot,
+      paused: false,
+      albumUri: 'spotify:album:1234567890ABCDEFGHIJKL',
+      artistLinks: [
+        {
+          name: 'Example artist',
+          uri: 'spotify:artist:0987654321ABCDEFGHIJKL',
+        },
+      ],
+    },
     target: {
       kind: 'remote',
       device: {
@@ -202,11 +250,22 @@ test('playback started elsewhere is shown without a library album', () => {
     queue: [{ key: 'queued-1', item }],
     volume: 0.4,
   })
-  assert.match(html, /<strong>Second track<\/strong>/)
+  // Without library items, the track, artist and album open on Spotify.
+  assert.match(
+    html,
+    new RegExp(
+      `<strong><a href="https://open.spotify.com/track/${trackId}"[^>]*>Second track</a></strong>`,
+    ),
+  )
+  assert.match(
+    html,
+    /<a href="https:\/\/open\.spotify\.com\/artist\/0987654321ABCDEFGHIJKL"[^>]*>Example artist<\/a> · <a href="https:\/\/open\.spotify\.com\/album\/1234567890ABCDEFGHIJKL"[^>]*>Fixture album<\/a>/,
+  )
+  assert.match(html, /aria-label="Open Fixture album in Spotify"/)
   assert.match(html, /aria-label="Pause"/)
   assert.match(html, /aria-label="Play on: Fixture speaker"/)
   assert.match(html, /Press Next to start the queue\./)
-  assert.doesNotMatch(html, /aria-label="Open Fixture album"|<h3>Playing<\/h3>/)
+  assert.doesNotMatch(html, /<h3>Playing<\/h3>/)
 })
 
 test('a device apps cannot control is shown with its transport disabled', () => {
@@ -218,7 +277,7 @@ test('a device apps cannot control is shown with its transport disabled', () => 
     volume: null,
   }
   const html = render(view)
-  assert.match(html, /<strong>Second track<\/strong>/)
+  assert.match(html, /<strong><a [^>]*>Second track<\/a><\/strong>/)
   assert.match(html, /aria-label="Play on: Fixture hi-fi"/)
   assert.match(html, /aria-label="Previous" disabled=""/)
   assert.match(html, /aria-label="Pause" disabled=""/)
@@ -226,9 +285,18 @@ test('a device apps cannot control is shown with its transport disabled', () => 
   assert.match(html, /aria-label="Seek"[^>]* disabled=""/)
   assert.match(html, /Spotify does not let apps control Fixture hi-fi\./)
   assert.doesNotMatch(html, /aria-label="Volume"/)
-  // The queue can still start here, so Next stays available for it.
+  // Starting the queue would take the playback off the device, so Next stays off.
   const queued = render({ ...view, queue: [{ key: 'queued-1', item }] })
-  assert.doesNotMatch(queued, /aria-label="Next" disabled=""/)
+  assert.match(queued, /aria-label="Next" disabled=""/)
+  assert.match(queued, /Fixture hi-fi plays the tracks it was sent/)
+  assert.doesNotMatch(queued, /Press Next to start the queue/)
+  // While its Sonos room is being looked up, the device shows that instead.
+  const finding = render({ ...view, findingSonos: true })
+  assert.match(
+    finding,
+    /lucide-loader-circle[^>]*>.*?<\/svg><span>Fixture hi-fi<\/span>/,
+  )
+  assert.doesNotMatch(finding, /does not let apps control/)
 })
 
 test('a Sonos group enables the controls Sonos accepts', () => {
@@ -265,6 +333,10 @@ test('a Sonos group enables the controls Sonos accepts', () => {
   assert.match(html, /aria-label="Seek"[^>]* disabled=""/)
   assert.match(html, /aria-label="Volume"/)
   assert.match(html, /Fixture hi-fi is controlled through Sonos\./)
+  assert.match(
+    html,
+    /<span class="sonos-mark" aria-hidden="true">SONOS<\/span><span>Fixture hi-fi<\/span>/,
+  )
   assert.doesNotMatch(
     html,
     /Press Next to start the queue|does not let apps control/,

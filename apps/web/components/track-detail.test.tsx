@@ -81,7 +81,11 @@ function render(
         >
           <SearchParamsContext.Provider value={new URLSearchParams(filters)}>
             <PlaybackViewContext.Provider
-              value={{ ...idlePlaybackState, enabled: true }}
+              value={{
+                ...idlePlaybackState,
+                enabled: true,
+                connection: 'connected',
+              }}
             >
               {view === 'sources' ? (
                 <TrackSources item={item} />

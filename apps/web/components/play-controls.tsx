@@ -42,7 +42,7 @@ export function UnavailablePlayButton({
   const reason = !available
     ? 'No Spotify recording is available.'
     : !playback.enabled
-      ? 'Connect Spotify playback in Providers.'
+      ? 'Connect Spotify playback in the player.'
       : 'No playable tracks are available.'
   return (
     <button

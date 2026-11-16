@@ -221,8 +221,9 @@ test('reads the browser player state and ignores malformed payloads', () => {
       current_track: {
         uri: 'spotify:track:substitute',
         name: 'Fixture track',
-        artists: [{ name: 'First' }],
+        artists: [{ name: 'First', uri: 'spotify:artist:first' }],
         album: {
+          uri: 'spotify:album:fixture',
           name: 'Fixture album',
           images: [{ url: 'https://images.example/cover.jpg' }],
         },
@@ -238,6 +239,8 @@ test('reads the browser player state and ignores malformed payloads', () => {
     trackName: 'Fixture track',
     artists: 'First',
     albumName: 'Fixture album',
+    albumUri: 'spotify:album:fixture',
+    artistLinks: [{ name: 'First', uri: 'spotify:artist:first' }],
     artworkUrl: 'https://images.example/cover.jpg',
     durationMs: 180000,
     positionMs: 4200,
