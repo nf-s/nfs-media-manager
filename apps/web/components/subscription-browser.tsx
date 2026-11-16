@@ -6,7 +6,7 @@ import { createPortal } from 'react-dom'
 import { useSearchParams } from 'next/navigation'
 import { useQuery } from '@tanstack/react-query'
 import { z } from 'zod'
-import { ArrowDown, ArrowUp, Columns3, Search, X } from 'lucide-react'
+import { Search, X } from 'lucide-react'
 import { Button } from '@repo/ui/components/ui/button'
 import {
   TableBody,
@@ -73,12 +73,9 @@ import {
 import ServiceIconLinks from './service-icon-links'
 import { sameDetail, withoutDetailEntries } from '@/utils/detail-inspector'
 import AiSearch from './ai-search'
-import {
-  BrowseFilterChips,
-  BrowseViewSwitch,
-  RangeEditor,
-} from './browse-controls'
-import BrowseFilterPanel, { FilterPanelSection } from './browse-filter-panel'
+import { BrowseFilterChips, RangeEditor } from './browse-controls'
+import BrowseToolbar, { BrowseColumnsSection } from './browse-toolbar'
+import { FilterPanelSection } from './browse-filter-panel'
 import { FilterButton } from './filter-affordance'
 import {
   SourceAvatar,
@@ -310,10 +307,9 @@ export default function SubscriptionBrowser() {
     },
   })
   const titlesLoading =
-    Boolean(draft.trim()) &&
-    (facets.isDebouncing ||
-      facets.isPending ||
-      (titleFilters.length > 0 && titleMatches.isPending))
+    facets.isDebouncing ||
+    facets.isPending ||
+    (titleFilters.length > 0 && titleMatches.isPending)
   const titleItems =
     !titlesLoading && draft.trim() && titleFilters.length > 0
       ? subscriptionTitleSuggestions(titleMatches.data?.items ?? [])
@@ -495,71 +491,50 @@ export default function SubscriptionBrowser() {
 
   const empty = query.hasTotal && !query.isError && total === 0
   return (
-    <section
-      className={`media-browser ${styles.browser}`}
-      aria-label="Subscriptions"
-    >
+    <section className="media-browser" aria-label="Subscriptions">
       <div className="browse-main">
-        <div className="browse-toolbar">
-          <AiSearch
-            target={subscriptionAiSearchTarget}
-            queryIdentity={identity}
-            autocomplete={{
-              items: titleItems,
-              titlesLoading,
-              titlesError:
-                facets.isError ||
-                (titleFilters.length > 0 && titleMatches.isError),
-              onOpenItem: openDetail,
-              options,
-              placeholder: 'Search titles, channels, podcasts, tags...',
-              value: draft,
-              onValueChange: setDraft,
-              onAddFilter: addFilter,
-              onApplyText: (value) => {
-                setParams({ q: value.slice(0, 200) || null }, true)
+        <BrowseToolbar
+          search={
+            <AiSearch
+              target={subscriptionAiSearchTarget}
+              queryIdentity={identity}
+              autocomplete={{
+                items: titleItems,
+                titlesLoading,
+                titlesError:
+                  facets.isError ||
+                  (titleFilters.length > 0 && titleMatches.isError),
+                onOpenItem: openDetail,
+                options,
+                placeholder: 'Search titles, channels, podcasts, tags...',
+                value: draft,
+                onFocus: facets.activate,
+                onValueChange: setDraft,
+                onAddFilter: addFilter,
+                onApplyText: (value) => {
+                  setParams({ q: value.slice(0, 200) || null }, true)
+                  setDraft('')
+                },
+              }}
+              onApply={(plan) => {
+                setParams(aiSubscriptionSearchParams(plan))
                 setDraft('')
-              },
-            }}
-            onApply={(plan) => {
-              setParams(aiSubscriptionSearchParams(plan))
-              setDraft('')
-            }}
-          />
-          <div className="browse-controls">
-            <select
-              aria-label="Sort by"
-              value={sortBy}
-              onChange={(event) => sort(event.target.value)}
-            >
-              {subscriptionSortOptions(q).map((option) => (
-                <option key={option} value={option}>
-                  {subscriptionSortLabels[option]}
-                </option>
-              ))}
-            </select>
-            {sortBy !== 'relevance' && (
-              <Button
-                variant="ghost"
-                className="icon-button"
-                aria-label={
-                  direction === 'desc' ? 'Sort ascending' : 'Sort descending'
-                }
-                onClick={() =>
-                  setParams({
-                    sortBy,
-                    direction: direction === 'asc' ? 'desc' : 'asc',
-                  })
-                }
-              >
-                {direction === 'desc' ? (
-                  <ArrowDown size={16} />
-                ) : (
-                  <ArrowUp size={16} />
-                )}
-              </Button>
-            )}
-            <BrowseFilterPanel count={activeFilterCount}>
+              }}
+            />
+          }
+          sort={{
+            key: sortBy,
+            direction: sortBy === 'relevance' ? undefined : direction,
+            options: subscriptionSortOptions(q).map((key) => ({
+              key,
+              label: subscriptionSortLabels[key],
+            })),
+            onChange: sort,
+            onDirectionChange: (direction) => setParams({ sortBy, direction }),
+          }}
+          filterCount={activeFilterCount}
+          filters={
+            <>
               {activeFilters && (
                 <section
                   className="filter-panel-active"
@@ -602,56 +577,49 @@ export default function SubscriptionBrowser() {
                 }
               />
               {view === 'table' && (
-                <FilterPanelSection
-                  title="Columns"
-                  icon={<Columns3 size={16} />}
-                >
-                  <div className="filter-panel-columns">
-                    {columnFields.map((field) => (
-                      <label className="check-label" key={field.key}>
-                        <input
-                          type="checkbox"
-                          checked={columnKeys.includes(field.key)}
-                          disabled={field.key === 'title'}
-                          onChange={() =>
-                            setParams({
-                              columns: (columnKeys.includes(field.key)
-                                ? columnKeys.filter((key) => key !== field.key)
-                                : [...columnKeys, field.key]
-                              ).join(','),
-                            })
-                          }
-                        />
-                        {field.label}
-                      </label>
-                    ))}
-                  </div>
-                </FilterPanelSection>
+                <BrowseColumnsSection>
+                  {columnFields.map((field) => (
+                    <label className="check-label" key={field.key}>
+                      <input
+                        type="checkbox"
+                        checked={columnKeys.includes(field.key)}
+                        disabled={field.key === 'title'}
+                        onChange={() =>
+                          setParams({
+                            columns: (columnKeys.includes(field.key)
+                              ? columnKeys.filter((key) => key !== field.key)
+                              : [...columnKeys, field.key]
+                            ).join(','),
+                          })
+                        }
+                      />
+                      {field.label}
+                    </label>
+                  ))}
+                </BrowseColumnsSection>
               )}
-            </BrowseFilterPanel>
-            <BrowseViewSwitch
-              view={view}
-              onChange={(next) => setParams({ view: next })}
-            />
-            <span className="browse-count" aria-live="polite">
-              {query.countError ? (
-                <button
-                  type="button"
-                  className="underline"
-                  onClick={query.retryCount}
-                >
-                  Retry count
-                </button>
-              ) : !query.isCounting ? (
-                `${total.toLocaleString()} ${total === 1 ? 'item' : 'items'}`
-              ) : query.isPending ? (
-                'Loading...'
-              ) : (
-                'Counting...'
-              )}
-            </span>
-          </div>
-        </div>
+            </>
+          }
+          view={view}
+          onViewChange={(next) => setParams({ view: next })}
+          count={
+            query.countError ? (
+              <button
+                type="button"
+                className="underline"
+                onClick={query.retryCount}
+              >
+                Retry count
+              </button>
+            ) : !query.isCounting ? (
+              `${total.toLocaleString()} ${total === 1 ? 'item' : 'items'}`
+            ) : query.isPending ? (
+              'Loading...'
+            ) : (
+              'Counting...'
+            )
+          }
+        />
         {railSlot && activeFilters
           ? createPortal(
               <>

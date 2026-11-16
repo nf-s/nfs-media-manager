@@ -202,6 +202,10 @@ export const artist = pgTable(
   (table) => [
     uniqueIndex('artist_name_uidx').on(table.name),
     index('artist_name_search_idx').using('gin', table.name.op('gin_trgm_ops')),
+    index('artist_browse_name_idx').on(
+      sql`lower(coalesce(${table.sortName}, ${table.name}))`,
+      table.id,
+    ),
   ],
 )
 
@@ -464,6 +468,34 @@ export const filmImportPreview = pgTable('film_import_preview', {
   createdAt: timestamp('created_at').defaultNow().notNull(),
 })
 
+export const artistSelectionSnapshot = pgTable(
+  'artist_selection_snapshot',
+  {
+    id: text('id').primaryKey(),
+    requestedByUserId: text('requested_by_user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    totalCount: integer('total_count').notNull().default(0),
+    expiresAt: timestamp('expires_at').notNull(),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (table) => [
+    index('artist_selection_snapshot_expiry_idx').on(table.expiresAt),
+  ],
+)
+
+export const artistSelectionMember = pgTable(
+  'artist_selection_member',
+  {
+    selectionId: text('selection_id')
+      .notNull()
+      .references(() => artistSelectionSnapshot.id, { onDelete: 'cascade' }),
+    // Retain the reviewed set if an artist is removed before dispatch.
+    artistId: text('artist_id').notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.selectionId, table.artistId] })],
+)
+
 export const providerRequestState = pgTable('provider_request_state', {
   requestBudgetOverride: jsonb('request_budget_override').$type<JsonValue>(),
   budgetUpdatedByUserId: text('budget_updated_by_user_id').references(
@@ -598,6 +630,25 @@ export const scrapeJob = pgTable(
       table.id.desc(),
     ),
     index('scrape_job_batch_idx').on(sql`(${table.options}->>'batchId')`),
+    index('scrape_job_artist_created_idx')
+      .on(
+        table.provider,
+        sql`(${table.options}->>'artistId')`,
+        table.createdAt.desc(),
+        table.id.desc(),
+      )
+      .where(sql`${table.options}->>'task' = 'artist-enrichment'`),
+    index('scrape_job_artist_attempt_idx')
+      .on(
+        table.provider,
+        sql`(${table.options}->>'artistId')`,
+        table.startedAt.desc(),
+        table.createdAt.desc(),
+        table.id.desc(),
+      )
+      .where(
+        sql`${table.options}->>'task' = 'artist-enrichment' and ${table.startedAt} is not null and ${table.status} <> 'queued'`,
+      ),
     index('scrape_job_status_idx').on(table.status),
     index('scrape_job_provider_idx').on(table.provider),
     index('scrape_job_dispatch_idx').on(

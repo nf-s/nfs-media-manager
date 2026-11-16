@@ -23,11 +23,9 @@ const views = [
 export function BrowseViewSwitch({
   view,
   onChange,
-  listLabel = 'List view',
 }: {
   view: BrowseView
   onChange: (view: BrowseView) => void
-  listLabel?: string
 }) {
   return (
     <div className="view-switch" role="group" aria-label="Browse views">
@@ -36,9 +34,9 @@ export function BrowseViewSwitch({
           type="button"
           key={value}
           variant={view === value ? 'default' : 'ghost'}
-          aria-label={value === 'list' ? listLabel : label}
+          aria-label={label}
           aria-pressed={view === value}
-          title={value === 'list' ? listLabel : label}
+          title={label}
           onClick={() => onChange(value)}
         >
           <Icon size={16} />

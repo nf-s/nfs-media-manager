@@ -20,15 +20,9 @@ import { createPortal } from 'react-dom'
 import { useSearchParams } from 'next/navigation'
 import { useQuery } from '@tanstack/react-query'
 import { z } from 'zod'
-import {
-  ArrowDown,
-  ArrowUp,
-  Columns3,
-  ListMusic,
-  Settings2,
-  X,
-} from 'lucide-react'
+import { ListMusic, Settings2, X } from 'lucide-react'
 import { Button } from '@repo/ui/components/ui/button'
+import { TableScroll } from '@repo/ui/components/ui/table'
 import { SavedViewSchema } from '@repo/schemas/imports'
 import {
   ListeningFilterParamSchema,
@@ -69,11 +63,11 @@ import ManualMediaAdd from './manual-media-add'
 import {
   BrowseFilterChips,
   BrowseTagBadges,
-  BrowseViewSwitch,
   RangeEditor,
 } from './browse-controls'
 import { ListeningControls } from './listening-controls'
-import BrowseFilterPanel, { FilterPanelSection } from './browse-filter-panel'
+import BrowseToolbar, { BrowseColumnsSection } from './browse-toolbar'
+import { FilterPanelSection } from './browse-filter-panel'
 import {
   formatListeningPeriod,
   formatListeningRule,
@@ -466,10 +460,9 @@ export default function MediaBrowser({
     },
   })
   const titlesLoading =
-    Boolean(draft.trim()) &&
-    (facets.isDebouncing ||
-      facets.isPending ||
-      (titleFilters.length > 0 && titleMatches.isPending))
+    facets.isDebouncing ||
+    facets.isPending ||
+    (titleFilters.length > 0 && titleMatches.isPending)
   const titleItems =
     !titlesLoading && draft.trim() && titleFilters.length > 0
       ? titleSuggestions(titleMatches.data?.items ?? [])
@@ -785,75 +778,63 @@ export default function MediaBrowser({
       ref={browser}
     >
       <div className="browse-main">
-        <div className="browse-toolbar">
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => setAdding(true)}
-          >
-            Add {mediaType}
-          </Button>
-          {mediaType === 'film' && (
-            <Link className="browse-refresh" href="/jobs?refresh=films">
-              Refresh
-            </Link>
-          )}
-          <AiSearch
-            key={mediaType}
-            target={mediaAiSearchTarget(mediaType, fields)}
-            queryIdentity={queryKey}
-            autocomplete={{
-              items: titleItems,
-              titlesLoading,
-              titlesError:
-                facets.isError ||
-                (titleFilters.length > 0 && titleMatches.isError),
-              onOpenItem: openDetail,
-              options,
-              placeholder: 'Search titles, people, tags, sources...',
-              value: draft,
-              onValueChange: setDraft,
-              onAddFilter: addFilter,
-              onApplyText: (value) => {
-                setParams({ q: value || null })
-                setDraft('')
-              },
-            }}
-            onApply={(plan) => {
-              setParams(aiSearchParams(plan))
-              setDraft('')
-            }}
-          />
-          <div className="browse-controls">
-            <select
-              aria-label="Sort by"
-              value={sortBy}
-              onChange={(event) => sort(event.target.value)}
-            >
-              {fields.map((field) => (
-                <option key={field.key} value={field.key}>
-                  {field.label}
-                </option>
-              ))}
-            </select>
-            <Button
-              variant="ghost"
-              className="icon-button"
-              aria-label={
-                direction === 'desc' ? 'Sort ascending' : 'Sort descending'
-              }
-              onClick={() =>
-                setParams({ direction: direction === 'asc' ? 'desc' : 'asc' })
-              }
-            >
-              {direction === 'desc' ? (
-                <ArrowDown size={16} />
-              ) : (
-                <ArrowUp size={16} />
+        <BrowseToolbar
+          actions={
+            <>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setAdding(true)}
+              >
+                Add {mediaType}
+              </Button>
+              {mediaType === 'film' && (
+                <Link className="browse-refresh" href="/jobs?refresh=films">
+                  Refresh
+                </Link>
               )}
-            </Button>
-            <BrowseFilterPanel count={activeFilterCount}>
+            </>
+          }
+          search={
+            <AiSearch
+              key={mediaType}
+              target={mediaAiSearchTarget(mediaType, fields)}
+              queryIdentity={queryKey}
+              autocomplete={{
+                items: titleItems,
+                titlesLoading,
+                titlesError:
+                  facets.isError ||
+                  (titleFilters.length > 0 && titleMatches.isError),
+                onOpenItem: openDetail,
+                options,
+                placeholder: 'Search titles, people, tags, sources...',
+                value: draft,
+                onFocus: facets.activate,
+                onValueChange: setDraft,
+                onAddFilter: addFilter,
+                onApplyText: (value) => {
+                  setParams({ q: value || null })
+                  setDraft('')
+                },
+              }}
+              onApply={(plan) => {
+                setParams(aiSearchParams(plan))
+                setDraft('')
+              }}
+            />
+          }
+          sort={{
+            key: sortBy,
+            direction,
+            options: fields,
+            onChange: sort,
+            onDirectionChange: (direction) => setParams({ direction }),
+          }}
+          filterCount={activeFilterCount}
+          filters={
+            <>
               {hasActiveFilters && (
                 <section
                   className="filter-panel-active"
@@ -1012,56 +993,49 @@ export default function MediaBrowser({
                 />
               )}
               {view === 'table' && (
-                <FilterPanelSection
-                  title="Columns"
-                  icon={<Columns3 size={16} />}
-                >
-                  <div className="filter-panel-columns">
-                    {fields.map((field) => (
-                      <label className="check-label" key={field.key}>
-                        <input
-                          type="checkbox"
-                          checked={columnKeys.includes(field.key)}
-                          disabled={field.key === 'title'}
-                          onChange={() =>
-                            setParams({
-                              columns: (columnKeys.includes(field.key)
-                                ? columnKeys.filter((key) => key !== field.key)
-                                : [...columnKeys, field.key]
-                              ).join(','),
-                            })
-                          }
-                        />
-                        {field.label}
-                      </label>
-                    ))}
-                  </div>
-                </FilterPanelSection>
+                <BrowseColumnsSection>
+                  {fields.map((field) => (
+                    <label className="check-label" key={field.key}>
+                      <input
+                        type="checkbox"
+                        checked={columnKeys.includes(field.key)}
+                        disabled={field.key === 'title'}
+                        onChange={() =>
+                          setParams({
+                            columns: (columnKeys.includes(field.key)
+                              ? columnKeys.filter((key) => key !== field.key)
+                              : [...columnKeys, field.key]
+                            ).join(','),
+                          })
+                        }
+                      />
+                      {field.label}
+                    </label>
+                  ))}
+                </BrowseColumnsSection>
               )}
-            </BrowseFilterPanel>
-            <BrowseViewSwitch
-              view={view}
-              onChange={(next) => setParams({ view: next })}
-            />
-            <span className="browse-count" aria-live="polite">
-              {query.countError ? (
-                <button
-                  type="button"
-                  className="underline"
-                  onClick={query.retryCount}
-                >
-                  Retry count
-                </button>
-              ) : !query.isCounting ? (
-                `${total.toLocaleString()} ${collection}`
-              ) : query.isPending ? (
-                'Loading...'
-              ) : (
-                'Counting...'
-              )}
-            </span>
-          </div>
-        </div>
+            </>
+          }
+          view={view}
+          onViewChange={(next) => setParams({ view: next })}
+          count={
+            query.countError ? (
+              <button
+                type="button"
+                className="underline"
+                onClick={query.retryCount}
+              >
+                Retry count
+              </button>
+            ) : !query.isCounting ? (
+              `${total.toLocaleString()} ${collection}`
+            ) : query.isPending ? (
+              'Loading...'
+            ) : (
+              'Counting...'
+            )
+          }
+        />
         {railSlot && activeFilters
           ? createPortal(
               <>
@@ -1071,11 +1045,10 @@ export default function MediaBrowser({
               railSlot,
             )
           : activeFilters}
-        <div
+        <TableScroll
           className="browse-scroll"
           data-view={view}
           ref={scroller}
-          tabIndex={0}
           role="region"
           aria-label={`${collection} ${view}`}
           onScroll={(event) =>
@@ -1530,7 +1503,7 @@ export default function MediaBrowser({
               </tbody>
             </table>
           )}
-        </div>
+        </TableScroll>
       </div>
       {adding && (
         <ManualMediaAdd

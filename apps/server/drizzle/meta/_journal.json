@@ -218,6 +218,20 @@
       "when": 1794725678520,
       "tag": "0030_artist_provider_profiles",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1794797622689,
+      "tag": "0031_artist_filter_indexes_and_selection",
+      "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1794797741212,
+      "tag": "0032_artist_browse_name_index",
+      "breakpoints": true
     }
   ]
 }

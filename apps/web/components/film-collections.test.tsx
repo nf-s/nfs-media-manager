@@ -271,13 +271,13 @@ test('collection card views retain filtering, nested links, and bounded renderin
     assert.ok(cardCount > 0 && cardCount < 40, `Rendered ${cardCount} cards`)
     assert.match(drawer, /305 films/)
     assert.match(drawer, /aria-posinset="1" aria-setsize="305"/)
-    const label = view === 'grid' ? 'Grid' : 'Details'
+    const label = view === 'grid' ? 'Grid' : 'List'
     assert.match(
       drawer,
       new RegExp(`aria-label="${label} view" aria-pressed="true"`),
     )
     assert.match(drawer, /aria-label="Sort by"/)
-    assert.match(drawer, /aria-label="Filter Watched"/)
+    assert.match(drawer, / Filters(?:<span|<\/button)/)
     assert.match(drawer, /Position 2/)
     assert.match(drawer, /90 min · Unwatched/)
     assert.doesNotMatch(drawer, /Fixture film 100|Visible columns/)

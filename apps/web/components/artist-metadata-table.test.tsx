@@ -107,6 +107,7 @@ test('artist metadata renders artist selection, playlist and freshness filters w
     )
     assert.match(html, /<h1>Artist metadata<\/h1>/)
     assert.match(html, /Select all loaded artists/)
+    assert.match(html, /Select all 1 matching artists/)
     assert.match(html, /Select Fixture artist/)
     assert.match(html, /Search artists/)
     assert.match(html, /role="combobox"/)

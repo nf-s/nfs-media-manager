@@ -1,14 +1,3 @@
-.browser :global(.browse-toolbar) {
-  flex-wrap: wrap;
-}
-
-@media (max-width: 700px) {
-  .browser :global(.browse-controls > select) {
-    flex-shrink: 1;
-    min-width: 70px;
-  }
-}
-
 /* Fixed row geometry for the virtual scroller: 35px cells plus a 1px divider. */
 .table {
   table-layout: fixed;

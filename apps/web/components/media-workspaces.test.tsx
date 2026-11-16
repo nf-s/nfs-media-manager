@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mock, test } from 'node:test'
+import { before, mock, test } from 'node:test'
 import React, { type ReactNode } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
@@ -20,21 +20,31 @@ import {
 } from '@repo/schemas/film-selection'
 import { albumBrowseFields } from '@repo/schemas/browse'
 import { ImportRunSchema, type ImportRun } from '@repo/schemas/imports'
-import FilmSelectionTable, {
-  updateProviderFreshness,
-} from './film-selection-table'
 import JobsWorkspace from './jobs-workspace'
 import ImportsWorkspace from './imports-workspace'
 import AlbumImportPageClient from './pages/album-import-page-client'
 import ProvidersPageClient from './pages/providers-page-client'
-import NewScrapePageClient from './pages/new-scrape-page-client'
 import AppNavigation from './app-navigation'
 import { LibrarySelector } from './media-scope'
-import FilmRefresh from './film-refresh'
 import FileImportPageClient from './pages/file-import-page-client'
 import ImportsPageClient from './pages/imports-page-client'
 import JobsPageClient from './pages/jobs-page-client'
 import { ConfigContext } from './providers'
+
+require.extensions['.css'] = (module) => {
+  module.exports = {}
+}
+let FilmSelectionTable: typeof import('./film-selection-table').default
+let updateProviderFreshness: typeof import('./film-selection-table').updateProviderFreshness
+let NewScrapePageClient: typeof import('./pages/new-scrape-page-client').default
+let FilmRefresh: typeof import('./film-refresh').default
+before(async () => {
+  const selection = await import('./film-selection-table')
+  FilmSelectionTable = selection.default
+  updateProviderFreshness = selection.updateProviderFreshness
+  NewScrapePageClient = (await import('./pages/new-scrape-page-client')).default
+  FilmRefresh = (await import('./film-refresh')).default
+})
 
 const network = mock.method(globalThis, 'fetch', async () => {
   throw new Error('Network forbidden in UI tests')
@@ -120,6 +130,7 @@ function render(
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
+  client.setQueryData(['ai-status'], { available: true, reason: null })
   client.setQueryData(
     ['providers'],
     [
@@ -546,8 +557,8 @@ test('main navigation has one Browse destination and preserves current browse fi
     html,
     /aria-current="page" href="\/albums\?q=artist&amp;view=table&amp;filters=%5B%5D">Browse/,
   )
-  assert.equal((html.match(/<a /g) ?? []).length, 7)
-  assert.match(html, /href="\/artists\?mediaType=album">Artists/)
+  assert.equal((html.match(/<a /g) ?? []).length, 6)
+  assert.doesNotMatch(html, /href="\/artists/)
   assert.match(html, /href="\/playlists\?mediaType=album">Playlists/)
   assert.doesNotMatch(
     html,
@@ -951,6 +962,7 @@ test('metadata table keeps search, count and columns above header filters and fo
   assert.ok(
     toolbar < search && search < count && count < columns && columns < filters,
   )
+  assert.match(html, /aria-label="Record search"/)
   const header = html.match(/<thead>(.*?)<\/thead>/s)?.[1]
   assert.ok(header)
   assert.match(header, /aria-label="Filter Legacy import"/)
@@ -958,4 +970,42 @@ test('metadata table keeps search, count and columns above header filters and fo
   assert.match(header, /range/)
   assert.ok(html.indexOf('</table>') < html.indexOf('secondary-table-footer'))
   assert.doesNotMatch(html, /Clear selection/)
+})
+
+test('the shared metadata toolbar places active chips above search and count', async () => {
+  const { default: MetadataSelectionToolbar } =
+    await import('./metadata-selection-toolbar')
+  const html = render(
+    '/jobs/metadata',
+    'mediaType=album',
+    <MetadataSelectionToolbar
+      fields={albumBrowseFields}
+      value={{
+        q: 'Fixture',
+        filters: [{ field: 'genre', value: 'Jazz', mode: 'required' }],
+        ranges: [],
+      }}
+      providerFilters={[
+        {
+          key: 'fixture:never',
+          label: 'Fixture provider · Never attempted',
+          remove: () => {},
+        },
+      ]}
+      onChange={() => {}}
+      onClear={() => {}}
+      search={<input type="search" aria-label="Search metadata" />}
+      count="10 albums"
+      columns={<button type="button">Columns</button>}
+    />,
+  )
+  const chips = html.indexOf('aria-label="Active filters"')
+  const freshness = html.indexOf(
+    'aria-label="Remove Fixture provider · Never attempted filter"',
+  )
+  const toolbar = html.indexOf('class="secondary-table-toolbar"')
+  const search = html.indexOf('aria-label="Search metadata"')
+  const count = html.indexOf('10 albums')
+  assert.ok(chips > -1 && chips < freshness && freshness < toolbar)
+  assert.ok(toolbar < search && search < count)
 })

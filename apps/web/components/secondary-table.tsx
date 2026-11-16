@@ -316,51 +316,66 @@ export function SecondaryHeaderFilter({
   )
 }
 
-export function SecondaryColumnFilter<Value extends string>({
-  label,
-  options,
-  value,
-  onChange,
-  disabled,
-}: {
+export type ColumnFilterProps<Value extends string> = {
   label: string
   options: readonly { value: Value; label: string }[]
   value: readonly Value[]
   onChange: (next: Value[]) => void
   disabled?: boolean
-}) {
+}
+
+export function ColumnFilterOptions<Value extends string>({
+  label,
+  options,
+  value,
+  onChange,
+  disabled,
+  showLegend = true,
+}: ColumnFilterProps<Value> & { showLegend?: boolean }) {
   return (
-    <SecondaryHeaderFilter
-      label={label}
-      active={value.length > 0}
+    <fieldset
+      className="secondary-filter-options"
+      aria-label={showLegend ? undefined : label}
       disabled={disabled}
     >
-      <fieldset className="secondary-filter-options">
-        <legend>{label}</legend>
-        <button
-          type="button"
-          disabled={!value.length}
-          onClick={() => onChange([])}
-        >
-          All values
-        </button>
-        {options.map((option) => (
-          <label key={option.value}>
-            <input
-              type="checkbox"
-              checked={value.includes(option.value)}
-              onChange={(event) =>
-                onChange(
-                  event.target.checked
-                    ? [...value, option.value]
-                    : value.filter((item) => item !== option.value),
-                )
-              }
-            />
-            <span>{option.label}</span>
-          </label>
-        ))}
-      </fieldset>
+      {showLegend && <legend>{label}</legend>}
+      <button
+        type="button"
+        disabled={!value.length}
+        onClick={() => onChange([])}
+      >
+        All values
+      </button>
+      {options.map((option) => (
+        <label key={option.value}>
+          <input
+            type="checkbox"
+            checked={value.includes(option.value)}
+            onChange={(event) =>
+              onChange(
+                event.target.checked
+                  ? [...value, option.value]
+                  : value.filter((item) => item !== option.value),
+              )
+            }
+          />
+          <span>{option.label}</span>
+        </label>
+      ))}
+    </fieldset>
+  )
+}
+
+export function SecondaryColumnFilter<Value extends string>(
+  props: ColumnFilterProps<Value>,
+) {
+  return (
+    <SecondaryHeaderFilter
+      label={props.label}
+      active={props.value.length > 0}
+      disabled={props.disabled}
+    >
+      <ColumnFilterOptions {...props} />
     </SecondaryHeaderFilter>
   )
 }
@@ -756,40 +771,44 @@ export function useTableColumns(
       // Column controls remain usable when browser storage is unavailable.
     }
   }
+  const options = configurable ? (
+    <>
+      {columns.map((column) => (
+        <label key={column.key}>
+          <input
+            type="checkbox"
+            checked={visible(column.key)}
+            disabled={column.required || (count === 1 && visible(column.key))}
+            onChange={() =>
+              save(
+                visible(column.key)
+                  ? [...hidden, column.key]
+                  : hidden.filter((item) => item !== column.key),
+              )
+            }
+          />
+          {column.label}
+        </label>
+      ))}
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        onClick={() => save(defaults)}
+      >
+        Reset columns
+      </Button>
+    </>
+  ) : null
   return {
     visible,
     count,
-    controls: configurable ? (
-      <TableColumns
-        columns={columns}
-        visible={visible}
-        count={count}
-        onToggle={(columnKey) =>
-          save(
-            visible(columnKey)
-              ? [...hidden, columnKey]
-              : hidden.filter((item) => item !== columnKey),
-          )
-        }
-        onReset={() => save(defaults)}
-      />
-    ) : null,
+    options,
+    controls: options ? <TableColumns>{options}</TableColumns> : null,
   }
 }
 
-function TableColumns({
-  columns,
-  visible,
-  count,
-  onToggle,
-  onReset,
-}: {
-  columns: readonly TableColumn[]
-  visible: (key: string) => boolean
-  count: number
-  onToggle: (key: string) => void
-  onReset: () => void
-}) {
+function TableColumns({ children }: { children: ReactNode }) {
   const id = useId()
   const trigger = useRef<HTMLButtonElement>(null)
   const panel = useRef<HTMLDivElement>(null)
@@ -842,20 +861,7 @@ function TableColumns({
           }
         }}
       >
-        {columns.map((column) => (
-          <label key={column.key}>
-            <input
-              type="checkbox"
-              checked={visible(column.key)}
-              disabled={column.required || (count === 1 && visible(column.key))}
-              onChange={() => onToggle(column.key)}
-            />
-            {column.label}
-          </label>
-        ))}
-        <Button type="button" variant="ghost" size="sm" onClick={onReset}>
-          Reset columns
-        </Button>
+        {children}
       </div>
     </div>
   )

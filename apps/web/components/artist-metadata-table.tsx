@@ -5,23 +5,26 @@ import { useEffect, useRef, useState } from 'react'
 import {
   useIsMutating,
   useMutation,
+  useQuery,
   useQueryClient,
 } from '@tanstack/react-query'
 import {
   ArtistEnrichmentResultSchema,
   ArtistProfileProviderSchema,
   QueueArtistSelectionSchema,
+  type QueueArtistSelection,
 } from '@repo/schemas/artist-profiles'
+import {
+  ArtistSelectionSnapshotSchema,
+  ArtistSelectionSnapshotPageSchema,
+  type ArtistSelectionSnapshot,
+} from '@repo/schemas/artist-selection'
 import {
   ArtistMetadataItemSchema,
   type ArtistProviderMetadata,
 } from '@repo/schemas/creators'
 import { artistBrowseFields } from '@repo/schemas/artist-browse'
-import {
-  BrowseCountSchema,
-  BrowsePageSliceSchema,
-  formatBrowseValue,
-} from '@repo/schemas/browse'
+import { BrowseCountSchema, BrowsePageSliceSchema } from '@repo/schemas/browse'
 import { Button } from '@repo/ui/components/ui/button'
 import { TableState } from '@repo/ui/components/ui/table'
 import { useCountedVirtualTable } from '@/hooks/useVirtualTable'
@@ -32,6 +35,7 @@ import { withArtistFilter } from '@/utils/artist-browse'
 import {
   artistMetadataQuery,
   dispatchArtistSelection,
+  dispatchArtistSnapshot,
 } from '@/utils/artist-selection'
 import { updateJobSelection } from '@/utils/job-selection'
 import { artistProviderLabels } from './artist-identifier-sources'
@@ -41,13 +45,16 @@ import {
   CreatorLibraryTitle,
 } from './creator-library-table'
 import { useDetailView } from './detail-inspector-context'
-import { updateProviderFreshness } from './film-selection-table'
+import {
+  updateProviderFreshness,
+  providerFreshnessLabel,
+  providerFreshnessOptions,
+  providerFreshnessValue,
+} from './film-selection-table'
 import { useConfig } from './providers'
 import { useSourceAvailability, useSourceCatalog } from './provider-sources'
 import AiSearch from './ai-search'
-import { BrowseFilterChips, RangeEditor } from './browse-controls'
-import BrowseFilterPanel from './browse-filter-panel'
-import { FilterButton } from './filter-affordance'
+import MetadataSelectionToolbar from './metadata-selection-toolbar'
 import {
   SecondaryCell,
   SecondaryColumnFilter,
@@ -55,7 +62,6 @@ import {
   SecondaryTableFrame,
   SecondaryTableHead,
   SecondaryTableScroll,
-  SecondaryTableToolbar,
   SecondaryVirtualRows,
   useTableColumns,
 } from './secondary-table'
@@ -69,6 +75,16 @@ const artistColumns = [
 ]
 const providers = ArtistProfileProviderSchema.options
 const queueKey = ['metadata-selection-queue', 'artist']
+const snapshotKey = ['artist-selection-snapshot']
+type QueueSelection = {
+  selectionKey: string
+  snapshot: ArtistSelectionSnapshot | null
+  selected: string[]
+  omitted: string[]
+  providers: QueueArtistSelection['providers']
+  freshness: QueueArtistSelection['freshness']
+  confirmBroadRun: boolean
+}
 const ArtistMetadataSliceSchema = BrowsePageSliceSchema(
   ArtistMetadataItemSchema,
 )
@@ -123,7 +139,9 @@ export default function ArtistMetadataTable() {
   const { apiBaseUrl } = useConfig()
   const client = useQueryClient()
   const view = useDetailView()
-  const pending = useIsMutating({ mutationKey: queueKey }) > 0
+  const queuePending = useIsMutating({ mutationKey: queueKey }) > 0
+  const snapshotPending = useIsMutating({ mutationKey: snapshotKey }) > 0
+  const pending = queuePending || snapshotPending
   const playlist = useArtistPlaylistFilter(pending)
   const query = artistMetadataQuery(view.params)
   const q = query.q ?? ''
@@ -143,6 +161,12 @@ export default function ArtistMetadataTable() {
     ...playlist.filters,
   })
   const identity = params.toString()
+  const currentIdentity = useRef(identity)
+  const generation = useRef(0)
+  if (currentIdentity.current !== identity) {
+    currentIdentity.current = identity
+    generation.current += 1
+  }
   const countParams = new URLSearchParams(params)
   for (const key of ['sortBy', 'direction', 'provider']) countParams.delete(key)
   const countIdentity = countParams.toString()
@@ -152,6 +176,9 @@ export default function ArtistMetadataTable() {
   )
   const unavailable = useSourceAvailability(available)
   const [selected, setSelected] = useState<string[]>([])
+  const [snapshot, setSnapshot] = useState<ArtistSelectionSnapshot | null>(null)
+  const [excluded, setExcluded] = useState<string[]>([])
+  const [processed, setProcessed] = useState<string[]>([])
   const [anchor, setAnchor] = useState<string | null>(null)
   const [selectedProviders, setSelectedProviders] = useState<string[]>([])
   const [review, setReview] = useState('')
@@ -200,14 +227,54 @@ export default function ArtistMetadataTable() {
     columns.visible(`provider-${provider}`),
   )
   const ids = [...new Set(artists.loadedSlots.map(({ item }) => item.id))]
-  const allChecked = ids.length > 0 && ids.every((id) => selected.includes(id))
+  const visibleIds = artists.slots.flatMap(({ item }) =>
+    item ? [item.id] : [],
+  )
+  const members = useQuery({
+    queryKey: ['artist-selection-members', snapshot?.id, visibleIds],
+    enabled: snapshot !== null && visibleIds.length > 0,
+    queryFn: async ({ signal }) => {
+      if (!snapshot) return []
+      const matches: string[] = []
+      for (let offset = 0; offset < visibleIds.length; offset += 100) {
+        const search = new URLSearchParams({
+          ids: JSON.stringify(visibleIds.slice(offset, offset + 100)),
+        })
+        const page = await fetchApiData(
+          apiBaseUrl,
+          `/api/v1/artists/metadata/selections/${encodeURIComponent(snapshot.id)}?${search}`,
+          ArtistSelectionSnapshotPageSchema,
+          { signal },
+        )
+        matches.push(...page.ids)
+      }
+      return matches
+    },
+    retry: false,
+  })
+  const snapshotMembers = members.data ?? []
+  const omitted = [...new Set([...excluded, ...processed])]
+  const isSelected = (id: string) =>
+    snapshot
+      ? snapshotMembers.includes(id) && !omitted.includes(id)
+      : selected.includes(id)
+  const selectionCount = snapshot
+    ? Math.max(0, snapshot.totalCount - omitted.length)
+    : selected.length
+  const allChecked = snapshot
+    ? snapshot.totalCount > 0 && excluded.length === 0
+    : ids.length > 0 && ids.every((id) => selected.includes(id))
   const partiallyChecked =
-    !allChecked && ids.some((id) => selected.includes(id))
+    !allChecked &&
+    (snapshot ? selectionCount > 0 : ids.some((id) => selected.includes(id)))
   useEffect(() => {
     if (selectAll.current) selectAll.current.indeterminate = partiallyChecked
   }, [partiallyChecked])
   useEffect(() => {
     setSelected([])
+    setSnapshot(null)
+    setExcluded([])
+    setProcessed([])
     setAnchor(null)
     setReview('')
   }, [identity])
@@ -216,42 +283,104 @@ export default function ArtistMetadataTable() {
       selectedProviders.includes(id) &&
       !unavailable(available.find((provider) => provider.id === id)),
   )
-  const operations = selected.length * launchProviders.length
-  const confirmationKey = JSON.stringify([identity, selected, launchProviders])
+  const createSnapshot = useMutation({
+    mutationKey: snapshotKey,
+    retry: false,
+    mutationFn: (input: {
+      identity: string
+      generation: number
+      query: ReturnType<typeof artistMetadataQuery>
+    }) =>
+      fetchApiData(
+        apiBaseUrl,
+        '/api/v1/artists/metadata/selections',
+        ArtistSelectionSnapshotSchema,
+        {
+          method: 'POST',
+          body: JSON.stringify({ query: input.query }),
+        },
+      ),
+    onSuccess: (result, input) => {
+      if (
+        currentIdentity.current !== input.identity ||
+        generation.current !== input.generation
+      )
+        return
+      setSnapshot(result)
+      setExcluded([])
+      setProcessed([])
+      setSelected([])
+      setAnchor(null)
+      setReview('')
+    },
+  })
+  const operations = selectionCount * launchProviders.length
+  const selectionKey = JSON.stringify([
+    identity,
+    generation.current,
+    selected,
+    snapshot?.id,
+    excluded,
+    processed,
+  ])
+  const confirmationKey = JSON.stringify([selectionKey, launchProviders])
+  const currentSelectionKey = useRef(selectionKey)
+  currentSelectionKey.current = selectionKey
   const reviewed = review === confirmationKey
   const queue = useMutation({
     mutationKey: queueKey,
-    mutationFn: () =>
-      dispatchArtistSelection(
-        selected,
-        (artistIds) =>
-          fetchApiData(
-            apiBaseUrl,
-            '/api/v1/artists/enrichment',
-            ArtistEnrichmentResultSchema,
-            {
-              method: 'POST',
-              body: JSON.stringify(
-                QueueArtistSelectionSchema.parse({
-                  artistIds,
-                  providers: launchProviders,
-                  freshness: query.freshness.filter((filter) =>
-                    launchProviders.some(
-                      (provider) => provider === filter.provider,
-                    ),
-                  ),
-                  confirmBroadRun: operations > 5 && reviewed,
-                }),
-              ),
+    mutationFn: (input: QueueSelection) => {
+      const send = (artistIds: string[]) =>
+        fetchApiData(
+          apiBaseUrl,
+          '/api/v1/artists/enrichment',
+          ArtistEnrichmentResultSchema,
+          {
+            method: 'POST',
+            body: JSON.stringify(
+              QueueArtistSelectionSchema.parse({
+                artistIds,
+                providers: input.providers,
+                freshness: input.freshness,
+                confirmBroadRun: input.confirmBroadRun,
+              }),
+            ),
+          },
+        )
+      const selection = input.snapshot
+      return selection
+        ? dispatchArtistSnapshot(
+            input.omitted,
+            (after) => {
+              const search = new URLSearchParams({
+                size: '100',
+                ...(after ? { after } : {}),
+              })
+              return fetchApiData(
+                apiBaseUrl,
+                `/api/v1/artists/metadata/selections/${encodeURIComponent(selection.id)}?${search}`,
+                ArtistSelectionSnapshotPageSchema,
+              )
             },
-          ),
-        setProgress,
-      ),
+            send,
+            setProgress,
+          )
+        : dispatchArtistSelection(input.selected, send, setProgress)
+    },
     onMutate: () => setProgress(0),
-    onSuccess: (result) => {
+    onSuccess: (result, input) => {
+      if (currentSelectionKey.current !== input.selectionKey) return
       setSelected((current) =>
         current.filter((id) => !result.completed.includes(id)),
       )
+      if (input.snapshot) {
+        const next = [...new Set([...processed, ...result.completed])]
+        if (new Set([...excluded, ...next]).size >= input.snapshot.totalCount) {
+          setSnapshot(null)
+          setExcluded([])
+          setProcessed([])
+        } else setProcessed(next)
+      }
       setReview('')
     },
     onSettled: () =>
@@ -287,163 +416,106 @@ export default function ArtistMetadataTable() {
     query.sortBy === 'lastScrapedAt'
       ? `provider-${query.provider}`
       : query.sortBy
-  const activeFilterCount =
-    Number(Boolean(q)) +
-    query.filters.length +
-    query.ranges.length +
-    Number(query.limitResults !== undefined)
-  const activeFilters = (
-    <div className="active-filters">
-      {q && (
-        <FilterButton
-          className="filter-pill"
-          onClick={() => setParams({ q: null })}
-        >
-          Search: {q} ×
-        </FilterButton>
-      )}
-      <BrowseFilterChips
-        filters={query.filters}
-        fields={artistBrowseFields}
-        onChange={(filters) => setParams({ filters: JSON.stringify(filters) })}
-      />
-      {query.ranges.map((range) => {
-        const field = artistBrowseFields.find(
-          (field) => field.key === range.field,
-        )
-        const bound = (value: number | undefined) =>
-          value === undefined
-            ? '*'
-            : field
-              ? formatBrowseValue(field, value)
-              : value
-        return (
-          <FilterButton
-            key={range.field}
-            className="filter-pill"
-            onClick={() =>
-              setParams({
-                ranges: JSON.stringify(
-                  query.ranges.filter((item) => item.field !== range.field),
-                ),
-              })
-            }
-          >
-            {field?.label ?? range.field}: {bound(range.min)} to{' '}
-            {bound(range.max)}
-            {range.includeMissing ? ' + missing' : ''} ×
-          </FilterButton>
-        )
-      })}
-      {query.limitResults !== undefined && (
-        <FilterButton
-          className="filter-pill"
-          onClick={() => setParams({ limitResults: null })}
-        >
-          Limit: {query.limitResults} ×
-        </FilterButton>
-      )}
-      {(activeFilterCount > 0 ||
-        query.playlistIds.length > 0 ||
-        query.freshness.length > 0 ||
-        query.limitResults !== undefined) && (
-        <button
-          type="button"
-          className="clear-filters"
-          onClick={() =>
-            setParams({
-              q: null,
-              filters: null,
-              ranges: null,
-              playlistIds: null,
-              freshness: null,
-              limitResults: null,
-            })
-          }
-        >
-          Clear all
-        </button>
-      )}
-    </div>
-  )
-
   return (
     <>
-      <fieldset disabled={pending}>
-        <SecondaryTableToolbar
-          search={
-            <AiSearch
-              target={mediaAiSearchTarget('artist', artistBrowseFields)}
-              queryIdentity={identity}
-              autocomplete={{
-                options: facets.data ?? [],
-                items: [],
-                titlesLoading: facets.isDebouncing || facets.isPending,
-                titlesError: facets.isError,
-                placeholder: 'Search artists, playlists, tags, countries...',
-                value: draft,
-                disabled: pending,
-                onValueChange: setDraft,
-                onAddFilter: (filter) => {
-                  setParams({
-                    filters: JSON.stringify(
-                      withArtistFilter(query.filters, filter),
-                    ),
-                  })
-                  setDraft('')
-                },
-                onApplyText: (value) => {
-                  setParams({ q: value || null })
-                  setDraft('')
-                },
-                onOpenItem: () => {},
-              }}
-              onApply={(plan) => {
+      <MetadataSelectionToolbar
+        disabled={pending}
+        fields={artistBrowseFields}
+        value={{
+          q,
+          filters: query.filters,
+          ranges: query.ranges,
+          limitResults: query.limitResults,
+        }}
+        otherFiltersActive={
+          query.playlistIds.length > 0 || query.freshness.length > 0
+        }
+        providerFilters={query.freshness.map((filter) => ({
+          key: `${filter.provider}:${providerFreshnessValue(filter)}`,
+          label: `${artistProviderLabels[ArtistProfileProviderSchema.parse(filter.provider)]} · ${providerFreshnessLabel(filter)}`,
+          remove: () =>
+            setParams({
+              freshness: JSON.stringify(
+                query.freshness.filter((item) => item !== filter),
+              ),
+            }),
+        }))}
+        onChange={(next) =>
+          setParams({
+            q: next.q || null,
+            filters: JSON.stringify(next.filters),
+            ranges: JSON.stringify(next.ranges),
+            limitResults:
+              next.limitResults === undefined
+                ? null
+                : String(next.limitResults),
+          })
+        }
+        onClear={() =>
+          setParams({
+            q: null,
+            filters: null,
+            ranges: null,
+            playlistIds: null,
+            freshness: null,
+            limitResults: null,
+          })
+        }
+        search={
+          <AiSearch
+            target={mediaAiSearchTarget('artist', artistBrowseFields)}
+            queryIdentity={identity}
+            autocomplete={{
+              onFocus: facets.activate,
+              options: facets.data ?? [],
+              items: [],
+              titlesLoading: facets.isDebouncing || facets.isPending,
+              titlesError: facets.isError,
+              placeholder: 'Search artists, playlists, tags, countries...',
+              value: draft,
+              disabled: pending,
+              onValueChange: setDraft,
+              onAddFilter: (filter) => {
                 setParams({
-                  ...aiSearchParams(plan),
-                  playlistIds: null,
-                  provider: null,
+                  filters: JSON.stringify(
+                    withArtistFilter(query.filters, filter),
+                  ),
                 })
                 setDraft('')
-              }}
-            />
-          }
-          count={
-            counted.countError ? (
-              <button
-                type="button"
-                className="underline"
-                onClick={counted.retryCount}
-              >
-                Retry count
-              </button>
-            ) : !counted.isCounting ? (
-              `${artists.total.toLocaleString()} ${artists.total === 1 ? 'artist' : 'artists'}`
-            ) : (
-              'Counting...'
-            )
-          }
-          columns={
-            <>
-              <BrowseFilterPanel count={activeFilterCount}>
-                {activeFilters}
-                <RangeEditor
-                  presentation="panel"
-                  fields={artistBrowseFields.filter(
-                    (field) => field.filterable,
-                  )}
-                  ranges={query.ranges}
-                  onChange={(ranges) =>
-                    setParams({ ranges: JSON.stringify(ranges) })
-                  }
-                />
-              </BrowseFilterPanel>
-              {columns.controls}
-            </>
-          }
-        />
-        {activeFilters}
-      </fieldset>
+              },
+              onApplyText: (value) => {
+                setParams({ q: value || null })
+                setDraft('')
+              },
+              onOpenItem: () => {},
+            }}
+            onApply={(plan) => {
+              setParams({
+                ...aiSearchParams(plan),
+                playlistIds: null,
+                provider: null,
+              })
+              setDraft('')
+            }}
+          />
+        }
+        count={
+          counted.countError ? (
+            <button
+              type="button"
+              className="underline"
+              onClick={counted.retryCount}
+            >
+              Retry count
+            </button>
+          ) : !counted.isCounting ? (
+            `${artists.total.toLocaleString()} ${artists.total === 1 ? 'artist' : 'artists'}`
+          ) : (
+            'Counting...'
+          )
+        }
+        columns={columns.controls}
+      />
       {artists.isError && (
         <p role="alert">
           Could not load artists.{' '}
@@ -483,13 +555,24 @@ export default function ArtistMetadataTable() {
                   <input
                     type="checkbox"
                     ref={selectAll}
-                    aria-label="Select all loaded artists"
+                    aria-label={
+                      snapshot
+                        ? 'Select all matching artists'
+                        : 'Select all loaded artists'
+                    }
                     checked={allChecked}
                     disabled={!ids.length || pending}
                     onChange={() => {
-                      setSelected(
-                        allChecked ? [] : [...new Set([...selected, ...ids])],
-                      )
+                      if (snapshot) {
+                        if (allChecked) {
+                          setSnapshot(null)
+                          setProcessed([])
+                        }
+                        setExcluded([])
+                      } else
+                        setSelected(
+                          allChecked ? [] : [...new Set([...selected, ...ids])],
+                        )
                       setReview('')
                     }}
                   />
@@ -523,22 +606,10 @@ export default function ArtistMetadataTable() {
                       <SecondaryColumnFilter
                         label={`${artistProviderLabels[provider]} freshness`}
                         disabled={pending}
-                        options={[
-                          { value: 'never', label: 'Never attempted' },
-                          { value: 'failed', label: 'Latest attempt failed' },
-                          { value: 'unscraped', label: 'No successful scrape' },
-                          ...[30, 90, 180, 365].map((days) => ({
-                            value: String(days),
-                            label: `No success or older than ${days} days`,
-                          })),
-                        ]}
+                        options={providerFreshnessOptions}
                         value={query.freshness
                           .filter((filter) => filter.provider === provider)
-                          .map((filter) =>
-                            filter.mode === 'older'
-                              ? String(filter.olderThanDays)
-                              : filter.mode,
-                          )}
+                          .map(providerFreshnessValue)}
                         onChange={(next) =>
                           setParams({
                             freshness: JSON.stringify(
@@ -569,26 +640,52 @@ export default function ArtistMetadataTable() {
                   <tr
                     key={artist.id}
                     aria-rowindex={index + 2}
-                    data-selected={selected.includes(artist.id) || undefined}
+                    data-selected={isSelected(artist.id) || undefined}
                   >
                     <td className="table-selection-cell">
                       <input
                         type="checkbox"
                         aria-label={`Select ${artist.name}`}
-                        checked={selected.includes(artist.id)}
-                        disabled={pending}
-                        onChange={(event) => {
-                          setSelected(
-                            updateJobSelection(
-                              selected,
-                              ids,
-                              artist.id,
-                              anchor,
-                              'shiftKey' in event.nativeEvent &&
-                                event.nativeEvent.shiftKey === true,
-                              event.target.checked,
-                            ),
+                        checked={isSelected(artist.id)}
+                        aria-busy={snapshot ? members.isFetching : undefined}
+                        disabled={
+                          pending ||
+                          Boolean(
+                            snapshot &&
+                            (!snapshotMembers.includes(artist.id) ||
+                              processed.includes(artist.id)),
                           )
+                        }
+                        onChange={(event) => {
+                          const shift =
+                            'shiftKey' in event.nativeEvent &&
+                            event.nativeEvent.shiftKey === true
+                          if (snapshot)
+                            setExcluded(
+                              updateJobSelection(
+                                excluded,
+                                ids.filter(
+                                  (id) =>
+                                    snapshotMembers.includes(id) &&
+                                    !processed.includes(id),
+                                ),
+                                artist.id,
+                                anchor,
+                                shift,
+                                !event.target.checked,
+                              ),
+                            )
+                          else
+                            setSelected(
+                              updateJobSelection(
+                                selected,
+                                ids,
+                                artist.id,
+                                anchor,
+                                shift,
+                                event.target.checked,
+                              ),
+                            )
                           setAnchor(artist.id)
                           setReview('')
                         }}
@@ -632,8 +729,59 @@ export default function ArtistMetadataTable() {
             </tbody>
           </table>
         </SecondaryTableScroll>
-        <SecondaryTableFooter selectedCount={selected.length}>
+        <SecondaryTableFooter selectedCount={selectionCount}>
           <div className="film-selection-footer">
+            <div className="job-selection-toolbar">
+              {snapshot ? (
+                <>
+                  <span
+                    title={`Selection expires ${new Date(snapshot.expiresAt).toLocaleString()}`}
+                  >
+                    Matching artists selected
+                    {excluded.length
+                      ? ` · ${excluded.length.toLocaleString()} excluded`
+                      : ''}
+                    {processed.length
+                      ? ` · ${processed.length.toLocaleString()} processed`
+                      : ''}
+                  </span>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    disabled={pending}
+                    onClick={() => {
+                      setSnapshot(null)
+                      setExcluded([])
+                      setProcessed([])
+                      setReview('')
+                    }}
+                  >
+                    Clear selection
+                  </Button>
+                </>
+              ) : (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  disabled={
+                    pending || (artists.hasTotal && artists.total === 0)
+                  }
+                  onClick={() =>
+                    createSnapshot.mutate({
+                      identity,
+                      generation: generation.current,
+                      query,
+                    })
+                  }
+                >
+                  {snapshotPending
+                    ? 'Selecting matching artists...'
+                    : `Select all${artists.hasTotal ? ` ${artists.total.toLocaleString()}` : ''} matching artists`}
+                </Button>
+              )}
+            </div>
             <fieldset className="enrichment-providers" disabled={pending}>
               <legend>Fetch metadata from</legend>
               {providers.map((provider) => {
@@ -679,7 +827,7 @@ export default function ArtistMetadataTable() {
                 >
                   <p>
                     <strong>Queue up to {operations} metadata jobs</strong> ·{' '}
-                    {selected.length} artists × {launchProviders.length}{' '}
+                    {selectionCount} artists × {launchProviders.length}{' '}
                     {launchProviders.length === 1 ? 'provider' : 'providers'}
                   </p>
                   <p>
@@ -691,10 +839,24 @@ export default function ArtistMetadataTable() {
                       type="button"
                       size="sm"
                       disabled={pending || !operations}
-                      onClick={() => queue.mutate()}
+                      onClick={() =>
+                        queue.mutate({
+                          selectionKey,
+                          snapshot,
+                          selected: [...selected],
+                          omitted,
+                          providers: [...launchProviders],
+                          freshness: query.freshness.filter((filter) =>
+                            launchProviders.some(
+                              (provider) => provider === filter.provider,
+                            ),
+                          ),
+                          confirmBroadRun: operations > 5 && reviewed,
+                        })
+                      }
                     >
                       {pending
-                        ? `Queueing ${progress}/${selected.length} artists...`
+                        ? `Queueing ${progress}/${selectionCount} artists...`
                         : `Confirm ${operations} metadata jobs`}
                     </Button>
                     <Button
@@ -713,6 +875,27 @@ export default function ArtistMetadataTable() {
           </div>
         </SecondaryTableFooter>
       </SecondaryTableFrame>
+      {createSnapshot.isError && (
+        <p role="alert">
+          Could not select matching artists. Try Select all matching again.
+        </p>
+      )}
+      {snapshot && members.isFetching && (
+        <p role="status">Checking selection for visible rows...</p>
+      )}
+      {snapshot && members.isError && (
+        <p role="alert">
+          Could not check the selected rows. If the selection expired, clear it
+          and select matching artists again.{' '}
+          <button
+            type="button"
+            className="underline"
+            onClick={() => members.refetch()}
+          >
+            Retry
+          </button>
+        </p>
+      )}
       {queue.isError && (
         <p role="alert">
           Could not queue selection. Check artist jobs before retrying.

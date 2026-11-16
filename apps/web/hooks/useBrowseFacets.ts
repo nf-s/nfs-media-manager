@@ -14,19 +14,26 @@ export function useBrowseFacets(
   enabled = true,
 ) {
   const [search, setSearch] = useState('')
+  const [activated, setActivated] = useState(false)
+  const query = draft.trim()
   useEffect(() => {
-    const timer = window.setTimeout(() => setSearch(draft.trim()), 200)
+    const timer = window.setTimeout(() => setSearch(query), 200)
     return () => window.clearTimeout(timer)
-  }, [draft])
+  }, [query])
+  const isDebouncing = search !== query
+  const active = enabled && (activated || Boolean(query))
+  const current = active && !isDebouncing
   const result = useQuery({
     ...browseFacetOptions(apiBaseUrl, collection, search),
-    enabled,
+    enabled: current,
   })
-  const isDebouncing = search !== draft.trim()
   return {
     ...result,
+    activate: () => setActivated(true),
     search,
     isDebouncing,
-    data: isDebouncing ? undefined : result.data,
+    isPending: active && result.isPending,
+    isError: current && result.isError,
+    data: current ? result.data : undefined,
   }
 }

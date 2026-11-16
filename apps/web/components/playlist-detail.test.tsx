@@ -413,11 +413,16 @@ test('playlist data columns share sortable headers and column controls', async (
 
 test('playlist entries expose sorting for every data column', async () => {
   const html = drawerOf(await render('playlist=playlist-1'))
-  for (const view of ['Grid', 'Details', 'Table'])
+  for (const view of ['Grid', 'List', 'Table'])
     assert.ok(html.includes(`aria-label="${view} view"`))
   for (const label of ['Title', 'Artists', 'Album', 'Duration', 'Added'])
     assert.match(html, new RegExp(`<button[^>]*>[^<]*${label}`))
-  assert.match(html, /> Columns</)
+  assert.match(html, / Filters<\/button>/)
+  assert.match(html, /class="browse-toolbar"/)
+  assert.match(
+    html,
+    /browse-sort-direction" type="button" aria-label="Sort descending"/,
+  )
   assert.ok(
     html.indexOf('aria-label="Search playlist entries"') <
       html.indexOf('<thead>'),
@@ -427,7 +432,7 @@ test('playlist entries expose sorting for every data column', async () => {
   assert.match(html, /aria-label="Resize details panel"/)
 })
 
-test('playlist grid and details keep artwork, playback, navigation, and the visible result window', async () => {
+test('playlist grid and list keep artwork, playback, navigation, and the visible result window', async () => {
   const entries = detail().items.items.map((entry, index) => {
     const artworkUrl = `https://example.test/${entry.kind}-${index}.jpg`
     const item =
@@ -438,7 +443,7 @@ test('playlist grid and details keep artwork, playback, navigation, and the visi
   })
   const views: ('grid' | 'list')[] = ['grid', 'list']
   for (const view of views) {
-    const label = view === 'grid' ? 'Grid' : 'Details'
+    const label = view === 'grid' ? 'Grid' : 'List'
     const html = await render(
       'playlist=playlist-1',
       detail(),
@@ -478,7 +483,7 @@ test('playlist grid and details keep artwork, playback, navigation, and the visi
       /aria-label="Search playlist entries"[^>]*value="Fixture"/,
     )
     assert.match(cards, /aria-label="Sort by"/)
-    assert.match(cards, /aria-label="Filter Type"/)
+    assert.match(cards, / Filters<\/button>/)
     assert.match(cards, /aria-posinset="3" aria-setsize="684"/)
     assert.match(cards, /virtual-browse-placeholder/)
     assert.doesNotMatch(cards, /<table|Visible columns/)
@@ -534,7 +539,7 @@ test('a playlist inspector link restores Details independently of the workspace 
     [entry],
   )
   const html = drawerOf(await render(params.toString()))
-  assert.match(html, /aria-label="Details view" aria-pressed="true"/)
+  assert.match(html, /aria-label="List view" aria-pressed="true"/)
   assert.match(html, /<option value="title" selected="">Title<\/option>/)
   assert.deepEqual(linkTargets(html, 'Opening track'), [
     entry,

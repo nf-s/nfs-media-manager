@@ -4,6 +4,7 @@ import { JobSchema } from '@repo/schemas/job'
 import {
   artistMetadataQuery,
   dispatchArtistSelection,
+  dispatchArtistSnapshot,
 } from './artist-selection'
 
 test('an invalid saved artist sort does not discard valid search or filters', () => {
@@ -115,4 +116,96 @@ test('an uncertain artist batch stops without retrying or clearing unconfirmed s
   assert.equal(result.queued, 1)
   assert.deepEqual(result.completed, ids.slice(0, 100))
   assert.match(result.warnings[0] ?? '', /Check artist jobs before retrying/)
+})
+
+test('all matching selection dispatches only bounded snapshot IDs without loading records', async () => {
+  const ids = Array.from(
+    { length: 1001 },
+    (_, index) => `artist-${String(index).padStart(4, '0')}`,
+  )
+  const reads: Array<string | undefined> = []
+  const sends: string[][] = []
+  const result = await dispatchArtistSnapshot(
+    ['artist-0005'],
+    async (after) => {
+      reads.push(after)
+      const offset = after ? ids.indexOf(after) + 1 : 0
+      const page = ids.slice(offset, offset + 100)
+      return {
+        ids: page,
+        nextCursor: offset + 100 < ids.length ? (page.at(-1) ?? null) : null,
+        totalCount: ids.length,
+        expiresAt: '2027-01-01T00:00:00.000Z',
+      }
+    },
+    async (batch) => {
+      sends.push(batch)
+      return { jobs: [], skipped: [] }
+    },
+    () => {},
+  )
+  assert.equal(reads.length, 11)
+  assert.equal(sends.flat().length, 1000)
+  assert.ok(sends.every((batch) => batch.length <= 100))
+  assert.ok(!result.completed.includes('artist-0005'))
+  assert.deepEqual(
+    result.completed,
+    ids.filter((id) => id !== 'artist-0005'),
+  )
+})
+
+test('snapshot dispatch stops before another read after an uncertain batch', async () => {
+  let reads = 0
+  let sends = 0
+  const result = await dispatchArtistSnapshot(
+    [],
+    async () => {
+      reads += 1
+      return {
+        ids: [`artist-${reads}`],
+        nextCursor: `artist-${reads}`,
+        totalCount: 5,
+        expiresAt: '2027-01-01T00:00:00.000Z',
+      }
+    },
+    async () => {
+      sends += 1
+      if (sends === 2) throw new Error('Fixture disconnect')
+      return { jobs: [], skipped: [] }
+    },
+    () => {},
+  )
+  assert.equal(reads, 2)
+  assert.equal(sends, 2)
+  assert.deepEqual(result.completed, ['artist-1'])
+  assert.match(result.warnings[0] ?? '', /Check artist jobs before retrying/)
+})
+
+test('snapshot expiry preserves confirmed progress and repeated cursors cannot loop', async () => {
+  for (const expires of [true, false]) {
+    let reads = 0
+    let sends = 0
+    const result = await dispatchArtistSnapshot(
+      [],
+      async () => {
+        reads += 1
+        if (expires && reads === 2) throw new Error('Fixture expired')
+        return {
+          ids: ['artist-1'],
+          nextCursor: 'artist-1',
+          totalCount: 5,
+          expiresAt: '2027-01-01T00:00:00.000Z',
+        }
+      },
+      async () => {
+        sends += 1
+        return { jobs: [], skipped: [] }
+      },
+      () => {},
+    )
+    assert.equal(reads, 2)
+    assert.equal(sends, 1)
+    assert.deepEqual(result.completed, ['artist-1'])
+    assert.equal(result.warnings.length, 1)
+  }
 })

@@ -30,12 +30,14 @@ import { normalizedTagSql, normalizeTagName } from './tag-state'
 
 type Query = ArtistQuery | ArtistMetadataQuery
 const id = sql`a.id`
-const visibleMusic = sql`item.metadata->>'legacyHidden' is distinct from 'true'
-  and ((item.media_type = 'album' and exists (select 1 from album release where release.media_item_id = item.id))
-    or (item.media_type = 'track' and exists (select 1 from library_track recording where recording.media_item_id = item.id)))`
-const visibleArtist = sql`exists (select 1 from media_credit credit
+const musicCredits = sql`media_credit credit
   join media_item item on item.id = credit.media_item_id
-  where credit.artist_id = a.id and credit.role = 'artist' and ${visibleMusic})`
+  left join album release on item.media_type = 'album' and release.media_item_id = item.id
+  left join library_track recording on item.media_type = 'track' and recording.media_item_id = item.id`
+const visibleMusic = sql`credit.role = 'artist' and item.metadata->>'legacyHidden' is distinct from 'true'
+  and (release.media_item_id is not null or recording.media_item_id is not null)`
+const visibleArtist = sql`exists (select 1 from ${musicCredits}
+  where credit.artist_id = a.id and ${visibleMusic})`
 const countCache = createDatabaseReadCache<number>({
   maxEntries: 128,
   maxValueBytes: 64,
@@ -109,8 +111,8 @@ function candidates(query: Query, includeOrder: boolean): SQL {
         ? sql`left join (select credit.artist_id,
       count(*) filter (where item.media_type = 'album')::int as album_count,
       count(*) filter (where item.media_type = 'track')::int as track_count
-      from media_credit credit join media_item item on item.id = credit.media_item_id
-      where credit.role = 'artist' and ${visibleMusic} group by credit.artist_id
+      from ${musicCredits}
+      where ${visibleMusic} group by credit.artist_id
     ) music_counts on music_counts.artist_id = a.id`
         : sql``
     }
@@ -192,8 +194,8 @@ async function loadArtists(ids: string[]) {
     db.execute(sql`with counts as (
       select credit.artist_id, count(*) filter (where item.media_type = 'album')::int as albums,
         count(*) filter (where item.media_type = 'track')::int as tracks
-      from media_credit credit join media_item item on item.id = credit.media_item_id
-      where credit.artist_id = ${requested} and credit.role = 'artist' and ${visibleMusic} group by credit.artist_id
+      from ${musicCredits}
+      where credit.artist_id = ${requested} and ${visibleMusic} group by credit.artist_id
     ), playlists as (
       select memberships.artist_id, count(distinct playlist.id)::int as count,
         array_agg(distinct playlist.name order by playlist.name) as names
@@ -258,6 +260,18 @@ async function loadArtists(ids: string[]) {
   })
 }
 
+export function artistBrowseIdsQuery(
+  query: Query,
+  limit = query.limitResults,
+  offset?: number,
+): SQL {
+  const paginate = limit !== undefined || offset !== undefined
+  return sql`select a.id from ${candidates(query, paginate)} where ${membership(query)}
+    ${paginate ? sql`order by ${ordering(query)}` : sql``}
+    ${limit === undefined ? sql`` : sql`limit ${limit}`}
+    ${offset === undefined ? sql`` : sql`offset ${offset}`}`
+}
+
 export async function listArtistBrowsePage(query: Query) {
   const offset = (query.page - 1) * query.size
   const remaining =
@@ -265,9 +279,7 @@ export async function listArtistBrowsePage(query: Query) {
       ? query.size + 1
       : Math.max(0, Math.min(query.size + 1, query.limitResults - offset))
   const result = remaining
-    ? await db.execute(
-        sql`select a.id from ${candidates(query, true)} where ${membership(query)} order by ${ordering(query)} limit ${remaining} offset ${offset}`,
-      )
+    ? await db.execute(artistBrowseIdsQuery(query, remaining, offset))
     : { rows: [] }
   const ids = IdSchema.parse(result.rows).map((row) => row.id)
   return BrowsePageSliceSchema(ArtistSummarySchema).parse({
@@ -336,14 +348,20 @@ export async function listArtistBrowseFacets(query: BrowseFacetQuery) {
         field.key === 'genre'
           ? normalizedTagSql(sql`values_for_field.value`)
           : sql`lower(values_for_field.value)`
-      return sql`(select ${field.key}::text as field, min(values_for_field.value) as value, count(distinct a.id)::int as count
-        from (${textRows(field.key)}) values_for_field join artist a on a.id = values_for_field.id
-        where ${visibleArtist} and values_for_field.value is not null and values_for_field.value <> '' ${matches ? sql`and ${matches}` : sql``}
-        group by ${group} order by case when lower(min(values_for_field.value)) = ${(query.q ?? '').toLowerCase()} then 0 else 1 end, count desc, value asc limit ${query.limitPerField})`
+      return sql`(select ${field.key}::text as field, min(artist_values.value) as value, count(*)::int as count
+        from (
+          select ${group} as value_key, min(values_for_field.value) as value
+          from (${textRows(field.key)}) values_for_field join visible_artists a on a.id = values_for_field.id
+          where values_for_field.value is not null and values_for_field.value <> '' ${matches ? sql`and ${matches}` : sql``}
+          group by value_key, a.id
+        ) artist_values
+        group by artist_values.value_key
+        order by case when lower(min(artist_values.value)) = ${(query.q ?? '').toLowerCase()} then 0 else 1 end, count desc, value asc limit ${query.limitPerField})`
     })
-    return z
-      .array(FacetSchema)
-      .parse((await db.execute(sql.join(queries, sql` union all `))).rows)
+    const result = await db.execute(sql`with visible_artists as materialized (
+      select a.id from artist a where ${visibleArtist}
+    ) ${sql.join(queries, sql` union all `)}`)
+    return z.array(FacetSchema).parse(result.rows)
   })
   return rows
     .map((row) => ({

@@ -9,8 +9,7 @@ import {
   useQueryClient,
 } from '@tanstack/react-query'
 import {
-  type BrowseFilter,
-  type BrowseRange,
+  type BrowseField,
   type BrowseValues,
   filmBrowseFields,
   albumBrowseFields,
@@ -23,6 +22,7 @@ import {
   QueueFilmSelectionSchema,
   type ProviderFreshnessFilter,
 } from '@repo/schemas/film-selection'
+import type { ListeningPeriod } from '@repo/schemas/listening'
 import { EnrichmentResultSchema } from '@repo/schemas/job'
 import type { ProviderSummary } from '@repo/schemas/provider'
 import { Button } from '@repo/ui/components/ui/button'
@@ -33,24 +33,59 @@ import {
   SecondaryHeaderFilter,
   SecondaryTableFrame,
   SecondaryTableFooter,
-  SecondaryTableToolbar,
   SecondaryTableScroll,
   SecondaryTableHead,
   SecondaryVirtualRows,
   useTableColumns,
 } from './secondary-table'
 import { FilmProviderSelection } from './film-provider-selection'
-import { BrowseFilterChips, RangeEditor } from './browse-controls'
-import BrowseFilterAutocomplete from './browse-filter-autocomplete'
+import AiSearch from './ai-search'
+import { RangeEditor } from './browse-controls'
+import { useDetailInspector } from './detail-inspector-context'
+import { ListeningControls } from './listening-controls'
+import MetadataSelectionToolbar, {
+  type MetadataSelectionFilters,
+} from './metadata-selection-toolbar'
 import { useFilmSelection } from '@/hooks/useFilmSelection'
+import { mediaAiSearchTarget } from '@/utils/ai-search'
 import { updateJobSelection } from '@/utils/job-selection'
 import { dispatchFilmSelection } from '@/utils/film-selection'
 import { fetchApiData } from '@/utils/api'
+import { formatListeningPeriod } from '@/utils/listening-filters'
 import { scopedHref, type MediaScope } from '@/utils/media-scope'
 
 type Props = {
   providers: ProviderSummary[]
   mediaType?: MediaScope
+}
+
+const emptyFilters: MetadataSelectionFilters = {
+  q: '',
+  filters: [],
+  ranges: [],
+}
+const olderFreshnessLabel = (days: number) =>
+  `No success or older than ${days} days`
+export const providerFreshnessOptions = [
+  { value: 'never', label: 'Never attempted' },
+  { value: 'failed', label: 'Latest attempt failed' },
+  { value: 'unscraped', label: 'No successful scrape' },
+  ...[30, 90, 180, 365].map((days) => ({
+    value: String(days),
+    label: olderFreshnessLabel(days),
+  })),
+]
+
+export function providerFreshnessValue(filter: ProviderFreshnessFilter) {
+  return filter.mode === 'older' ? String(filter.olderThanDays) : filter.mode
+}
+
+export function providerFreshnessLabel(filter: ProviderFreshnessFilter) {
+  if (filter.mode === 'older') return olderFreshnessLabel(filter.olderThanDays)
+  return (
+    providerFreshnessOptions.find(({ value }) => value === filter.mode)
+      ?.label ?? 'All values'
+  )
 }
 
 export function updateProviderFreshness(
@@ -86,16 +121,17 @@ function SelectionTable({ providers, mediaType = 'film' }: Props) {
   const plural = mediaType === 'album' ? 'albums' : 'films'
   const { apiBaseUrl } = useConfig()
   const client = useQueryClient()
+  const inspector = useDetailInspector()
   const [provider, setProvider] = useState('')
   const [freshness, setFreshness] = useState<ProviderFreshnessFilter[]>([])
   const [legacyImports, setLegacyImports] = useState<string[]>([])
   const legacyImport =
     legacyImports.length === 1 ? (legacyImports[0] ?? 'all') : 'all'
   const [selectedProviders, setSelectedProviders] = useState<string[]>([])
-  const [q, setQ] = useState('')
   const [draft, setDraft] = useState('')
-  const [filters, setFilters] = useState<BrowseFilter[]>([])
-  const [ranges, setRanges] = useState<BrowseRange[]>([])
+  const [browseFilters, setBrowseFilters] = useState(emptyFilters)
+  const { q, filters, ranges, listening, limitResults } = browseFilters
+  const [listeningSort, setListeningSort] = useState<ListeningPeriod>()
   const [sortBy, setSortBy] = useState('dateAdded')
   const [direction, setDirection] = useState<'asc' | 'desc'>('desc')
   const [selected, setSelected] = useState<string[]>([])
@@ -113,17 +149,29 @@ function SelectionTable({ providers, mediaType = 'film' }: Props) {
     legacyImport,
   })
   if (sortBy === 'lastScrapedAt') params.set('provider', provider)
+  if (limitResults !== undefined)
+    params.set('limitResults', String(limitResults))
+  if (listening) params.set('listening', JSON.stringify(listening))
+  if (listeningSort) params.set('listeningSort', JSON.stringify(listeningSort))
+  const queryIdentity = params.toString()
   const queueKey = ['metadata-selection-queue', mediaType]
   const queuePending = useIsMutating({ mutationKey: queueKey }) > 0
-  const { fields, facets, films } = useFilmSelection(
-    params.toString(),
-    mediaType,
-    draft,
-    queuePending,
-  )
-  const available =
+  const { fields, facets, films, titleItems, titlesLoading, titlesError } =
+    useFilmSelection(queryIdentity, mediaType, draft, queuePending)
+  const baseFields =
     fields.data ??
     (mediaType === 'album' ? albumBrowseFields : filmBrowseFields)
+  const available: BrowseField[] = listeningSort
+    ? [
+        ...baseFields,
+        {
+          key: 'listeningScrobbles',
+          label: `Scrobbles, ${formatListeningPeriod(listeningSort)}`,
+          type: 'number',
+          filterable: false,
+        },
+      ]
+    : baseFields
   const columns = useTableColumns(`${mediaType}-metadata-selection`, [
     ...available.map((field) => ({
       key: field.key,
@@ -227,6 +275,11 @@ function SelectionTable({ providers, mediaType = 'film' }: Props) {
     setSelected(next)
     setConfirmed(false)
   }
+  function changeFilters(next: MetadataSelectionFilters) {
+    if (queue.isPending) return
+    setBrowseFilters(next)
+    clear()
+  }
   function sort(key: string, nextProvider = '') {
     setSortBy(key)
     setProvider(nextProvider)
@@ -260,73 +313,114 @@ function SelectionTable({ providers, mediaType = 'film' }: Props) {
           </button>
         </p>
       )}
-      <fieldset disabled={queue.isPending} className="film-selection-controls">
-        <div className="flex flex-wrap items-center gap-2">
-          {q && (
-            <Button
-              type="button"
-              variant="ghost"
-              onClick={() => {
-                setQ('')
+      <MetadataSelectionToolbar
+        disabled={queue.isPending}
+        fields={available}
+        value={browseFilters}
+        providerFilters={freshness.map((item) => {
+          const value = providerFreshnessValue(item)
+          const source = providers.find(({ id }) => id === item.provider)
+          const label = providerFreshnessLabel(item)
+          return {
+            key: `${item.provider}:${value}`,
+            label: `${source?.displayName ?? item.provider} · ${label}`,
+            remove: () => {
+              setFreshness(freshness.filter((filter) => filter !== item))
+              clear()
+            },
+          }
+        })}
+        otherFiltersActive={legacyImport !== 'all'}
+        onChange={changeFilters}
+        onClear={() => {
+          setDraft('')
+          setFreshness([])
+          setLegacyImports([])
+          changeFilters(emptyFilters)
+        }}
+        search={
+          <AiSearch
+            target={mediaAiSearchTarget(mediaType, available)}
+            queryIdentity={queryIdentity}
+            autocomplete={{
+              options: (facets.data ?? []).filter(
+                (option) =>
+                  !filters.some(
+                    (filter) =>
+                      filter.field === option.field &&
+                      filter.value === option.value,
+                  ),
+              ),
+              items: titleItems,
+              titlesLoading,
+              titlesError,
+              placeholder: `Search ${plural} or add a filter`,
+              value: draft,
+              disabled: queue.isPending,
+              onFocus: facets.activate,
+              onValueChange: setDraft,
+              onAddFilter: (filter) => {
+                changeFilters({
+                  ...browseFilters,
+                  filters: [
+                    ...filters.filter(
+                      (f) =>
+                        f.field !== filter.field || f.value !== filter.value,
+                    ),
+                    filter,
+                  ],
+                })
                 setDraft('')
-                clear()
-              }}
-            >
-              Clear search: {q}
-            </Button>
-          )}
-          <BrowseFilterChips
-            filters={filters}
-            fields={available}
-            onChange={(next) => {
-              setFilters(next)
+              },
+              onApplyText: (value) => {
+                changeFilters({ ...browseFilters, q: value })
+                setDraft('')
+              },
+              onOpenItem: (id, trigger) => {
+                if (inspector) inspector.open({ kind: mediaType, id }, trigger)
+                else
+                  window.location.assign(`/${plural}/${encodeURIComponent(id)}`)
+              },
+            }}
+            onApply={(plan) => {
+              if (queue.isPending) return
+              changeFilters({
+                q: plan.q,
+                filters: plan.filters,
+                ranges: plan.ranges,
+                listening: plan.listening ?? undefined,
+                limitResults: plan.limitResults ?? undefined,
+              })
+              setProvider('')
+              setSortBy(plan.sortBy)
+              setDirection(plan.direction)
+              setListeningSort(plan.listeningSort ?? undefined)
+              setDraft('')
+            }}
+          />
+        }
+        count={`${films.firstPage?.totalCount.toLocaleString() ?? '…'} ${plural}`}
+        columns={columns.controls}
+      >
+        {mediaType === 'album' && (
+          <ListeningControls
+            presentation="panel"
+            filter={listening}
+            sortPeriod={listeningSort}
+            sorting={sortBy === 'listeningScrobbles'}
+            onFilterChange={(listening) =>
+              changeFilters({ ...browseFilters, listening })
+            }
+            onSortChange={(period) => {
+              if (queue.isPending) return
+              setListeningSort(period)
+              setSortBy('listeningScrobbles')
+              setProvider('')
               clear()
             }}
           />
-          {ranges.length > 0 && (
-            <Button
-              type="button"
-              variant="ghost"
-              onClick={() => {
-                setRanges([])
-                clear()
-              }}
-            >
-              Clear {ranges.length} ranges
-            </Button>
-          )}
-        </div>
-        <SecondaryTableToolbar
-          search={
-            <BrowseFilterAutocomplete
-              options={facets.data ?? []}
-              items={[]}
-              titlesLoading={facets.isDebouncing || facets.isPending}
-              titlesError={facets.isError}
-              placeholder={`Search ${plural} or add a filter`}
-              value={draft}
-              onValueChange={setDraft}
-              onAddFilter={(filter) => {
-                setFilters([
-                  ...filters.filter(
-                    (f) => f.field !== filter.field || f.value !== filter.value,
-                  ),
-                  filter,
-                ])
-                setDraft('')
-                clear()
-              }}
-              onApplyText={(value) => {
-                setQ(value)
-                clear()
-              }}
-              onOpenItem={() => {}}
-            />
-          }
-          count={`${films.firstPage?.totalCount.toLocaleString() ?? '…'} ${plural}`}
-          columns={columns.controls}
-        />
-      </fieldset>
+        )}
+      </MetadataSelectionToolbar>
       <SecondaryTableFrame>
         <SecondaryTableScroll
           ref={films.scroller}
@@ -386,7 +480,7 @@ function SelectionTable({ providers, mediaType = 'film' }: Props) {
                     onSort={sort}
                     disabled={queue.isPending}
                     filter={
-                      field.type !== 'text' ? (
+                      field.filterable && field.type !== 'text' ? (
                         <SecondaryHeaderFilter
                           label={`${field.label} range`}
                           disabled={queue.isPending}
@@ -401,13 +495,15 @@ function SelectionTable({ providers, mediaType = 'film' }: Props) {
                               (range) => range.field === field.key,
                             )}
                             onChange={(next) => {
-                              setRanges([
-                                ...ranges.filter(
-                                  (range) => range.field !== field.key,
-                                ),
-                                ...next,
-                              ])
-                              clear()
+                              changeFilters({
+                                ...browseFilters,
+                                ranges: [
+                                  ...ranges.filter(
+                                    (range) => range.field !== field.key,
+                                  ),
+                                  ...next,
+                                ],
+                              })
                             }}
                           />
                           {ranges.some(
@@ -417,12 +513,12 @@ function SelectionTable({ providers, mediaType = 'film' }: Props) {
                               type="button"
                               variant="ghost"
                               onClick={() => {
-                                setRanges(
-                                  ranges.filter(
+                                changeFilters({
+                                  ...browseFilters,
+                                  ranges: ranges.filter(
                                     (range) => range.field !== field.key,
                                   ),
-                                )
-                                clear()
+                                })
                               }}
                             >
                               Clear range
@@ -467,22 +563,10 @@ function SelectionTable({ providers, mediaType = 'film' }: Props) {
                       <SecondaryColumnFilter
                         label={`${item.displayName} freshness`}
                         disabled={queue.isPending}
-                        options={[
-                          { value: 'never', label: 'Never attempted' },
-                          { value: 'failed', label: 'Latest attempt failed' },
-                          { value: 'unscraped', label: 'No successful scrape' },
-                          ...[30, 90, 180, 365].map((days) => ({
-                            value: String(days),
-                            label: `No success or older than ${days} days`,
-                          })),
-                        ]}
+                        options={providerFreshnessOptions}
                         value={freshness
                           .filter((filter) => filter.provider === item.id)
-                          .map((filter) =>
-                            filter.mode === 'older'
-                              ? String(filter.olderThanDays)
-                              : filter.mode,
-                          )}
+                          .map(providerFreshnessValue)}
                         onChange={(next) => {
                           setFreshness(
                             updateProviderFreshness(freshness, item.id, next),

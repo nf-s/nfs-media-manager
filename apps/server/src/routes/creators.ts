@@ -8,6 +8,13 @@ import {
 } from '@repo/schemas/artist-profiles'
 import { PaginationQuerySchema } from '@repo/schemas/common'
 import {
+  ArtistSelectionSnapshotPageQuerySchema,
+  ArtistSelectionSnapshotPageSchema,
+  ArtistSelectionSnapshotParamsSchema,
+  ArtistSelectionSnapshotSchema,
+  CreateArtistSelectionSnapshotSchema,
+} from '@repo/schemas/artist-selection'
+import {
   SourceSnapshotPageSchema,
   SourceSnapshotSchema,
 } from '@repo/schemas/media'
@@ -61,6 +68,10 @@ import { generateJsonResponse } from '@/lib/response'
 import { authMiddleware, requireOwnerUser } from '@/middlewares/auth'
 import { enqueueArtistEnrichment } from '@/services/artist-enrichment'
 import { queueArtistSelection } from '@/services/artist-selection'
+import {
+  createArtistSelectionSnapshot,
+  listArtistSelectionSnapshotPage,
+} from '@/services/artist-bulk-selection'
 import { listArtistIdentifierSources } from '@/services/artist-provider-evidence'
 import {
   getArtistSourceSnapshot,
@@ -227,6 +238,60 @@ export const artists: OpenAPIHono<AppEnv> = createOpenAPIApp()
       generateJsonResponse(
         c,
         await listArtistMetadata(c.req.valid('query')),
+        200,
+      ),
+  )
+  .openapi(
+    createRoute({
+      method: 'post',
+      path: '/metadata/selections',
+      middleware: [authMiddleware()],
+      request: {
+        body: {
+          required: true,
+          content: {
+            'application/json': { schema: CreateArtistSelectionSnapshotSchema },
+          },
+        },
+      },
+      responses: {
+        ...protectedResponses,
+        200: json('Saved artist selection', ArtistSelectionSnapshotSchema),
+      },
+    }),
+    async (c) =>
+      generateJsonResponse(
+        c,
+        await createArtistSelectionSnapshot(
+          c.req.valid('json').query,
+          requireOwnerUser(c).id,
+        ),
+        200,
+      ),
+  )
+  .openapi(
+    createRoute({
+      method: 'get',
+      path: '/metadata/selections/:selectionId',
+      middleware: [authMiddleware()],
+      request: {
+        params: ArtistSelectionSnapshotParamsSchema,
+        query: ArtistSelectionSnapshotPageQuerySchema,
+      },
+      responses: {
+        ...protectedResponses,
+        404: jsonErrorResponse('Artist selection expired or unavailable'),
+        200: json('Selected artist IDs', ArtistSelectionSnapshotPageSchema),
+      },
+    }),
+    async (c) =>
+      generateJsonResponse(
+        c,
+        await listArtistSelectionSnapshotPage(
+          c.req.valid('param').selectionId,
+          c.req.valid('query'),
+          requireOwnerUser(c).id,
+        ),
         200,
       ),
   )

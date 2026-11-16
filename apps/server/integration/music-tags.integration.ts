@@ -141,6 +141,19 @@ describe('artist tag projections', () => {
     }
   })
 
+  it('orders albums by the first alphabetized tag and keeps stable ties', async () => {
+    const { queryBrowseIds } = await import('@/services/browse')
+    const result = await queryBrowseIds(
+      'album',
+      AlbumQuerySchema.parse({ sortBy: 'genre', direction: 'desc' }),
+    )
+    expect(result.ids).toEqual([
+      'fixture-album-2',
+      'fixture-album-0',
+      'fixture-album-1',
+    ])
+  })
+
   it('exposes fallback tags in search and facets without changing album membership', async () => {
     const { queryBrowseIds, listBrowseFacets } =
       await import('@/services/browse')
@@ -341,7 +354,7 @@ describe('artist tag projections', () => {
             'Function Scan on jsonb_array_elements_text provider_tag',
           ),
         )
-      expect(providerScans).toHaveLength(2)
+      expect(providerScans).toHaveLength(1)
       for (const scan of providerScans)
         expect(Number(/loops=(\d+)/.exec(scan)?.[1]), scan).toBeLessThanOrEqual(
           2,

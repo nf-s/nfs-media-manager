@@ -8,6 +8,12 @@ import { ArtistProviderMetadataSchema } from '@repo/schemas/creators'
 import type { ProviderFreshnessFilter } from '@repo/schemas/film-selection'
 import { db } from '@/lib/db'
 
+// The literal matches the predicate on the artist job indexes.
+const artistJob = sql`job.options->>'task' = ${sql.raw(`'${ARTIST_ENRICHMENT_TASK}'`)}`
+const attempted = sql`job.started_at is not null and job.status <> 'queued'`
+const jobArtist = sql`job.options->>'artistId'`
+const latestAttemptOrder = sql`order by job.started_at desc nulls last, job.created_at desc nulls last, job.id desc nulls last`
+
 export function artistLastScrapedAt(id: SQLWrapper, provider: string) {
   return sql`(
     select snapshot.created_at
@@ -26,34 +32,34 @@ export function artistFreshnessConditions(
   return providers.flatMap((provider) => {
     const modes = filters.filter((filter) => filter.provider === provider)
     if (modes.some((filter) => filter.mode === 'all')) return []
-    const lastScrapedAt = artistLastScrapedAt(id, provider)
+    const successful = sql`select state.artist_id from artist_provider_current_state state
+      where state.provider = ${provider}`
+    const attemptedByProvider = sql`from scrape_job job
+      where ${artistJob} and ${attempted} and job.provider = ${provider}`
     const condition = or(
       ...modes.flatMap((filter) => {
         if (filter.mode === 'all') return []
         if (filter.mode === 'failed')
           return [
-            sql`${id} in (
-            select latest.artist_id from (
-              select distinct on (job.options->>'artistId') job.options->>'artistId' as artist_id, job.status
-              from scrape_job job
-              where job.options->>'task' = ${ARTIST_ENRICHMENT_TASK} and job.provider = ${provider}
-                and job.started_at is not null and job.status <> 'queued'
-              order by job.options->>'artistId', job.started_at desc, job.created_at desc, job.id desc
-            ) latest where latest.status = 'failed'
-          )`,
+            sql`(select job.status ${attemptedByProvider} and ${jobArtist} = ${id}
+              ${latestAttemptOrder} limit 1) = 'failed'`,
           ]
         if (filter.mode === 'never')
           return [
-            sql`${lastScrapedAt} is null and not exists (
-            select 1 from scrape_job job
-            where job.options->>'task' = ${ARTIST_ENRICHMENT_TASK}
-              and job.options->>'artistId' = ${id} and job.provider = ${provider}
-              and job.started_at is not null and job.status <> 'queued'
-          )`,
+            // An index probe avoids joining or rescanning a provider's full history.
+            sql`(${id} not in (${successful}) and (
+              select 1 ${attemptedByProvider} and ${jobArtist} = ${id} limit 1
+            ) is null)`,
           ]
-        if (filter.mode === 'unscraped') return [sql`${lastScrapedAt} is null`]
+        if (filter.mode === 'unscraped')
+          return [sql`${id} not in (${successful})`]
         return [
-          sql`(${lastScrapedAt} is null or ${lastScrapedAt} < ${new Date(now - filter.olderThanDays * 86400000).toISOString()}::timestamp)`,
+          sql`${id} not in (
+            select state.artist_id from artist_provider_current_state state
+            join artist_provider_snapshot snapshot on snapshot.id = state.latest_snapshot_id
+            where state.provider = ${provider}
+              and snapshot.created_at >= ${new Date(now - filter.olderThanDays * 86400000).toISOString()}::timestamp
+          )`,
         ]
       }),
     )
@@ -73,26 +79,26 @@ export async function loadArtistMetadata(ids: string[]) {
   const id = sql`requested.artist_id`
   const provider = sql`requested_provider.provider`
   const result = await db.execute(sql`
-    with latest_jobs as (
-      select distinct on (job.options->>'artistId', job.provider)
-        job.options->>'artistId' as artist_id, job.provider, job.status,
-        max(job.started_at) filter (where job.status <> 'queued')
-          over (partition by job.options->>'artistId', job.provider) as last_attempt_at
-      from scrape_job job
-      where job.options->>'task' = ${ARTIST_ENRICHMENT_TASK}
-        and job.options->>'artistId' = any(${sql.param(ids)}::text[])
-        and job.provider = any(${sql.param(ArtistProfileProviderSchema.options)}::text[])
-      order by job.options->>'artistId', job.provider, job.created_at desc, job.id desc
-    )
     select requested.artist_id as "artistId", requested_provider.provider,
       snapshot.created_at at time zone 'UTC' as "lastScrapedAt",
-      latest.last_attempt_at at time zone 'UTC' as "lastAttemptAt",
+      attempt.started_at at time zone 'UTC' as "lastAttemptAt",
       latest.status as "lastJobStatus"
     from unnest(${sql.param(ids)}::text[]) requested(artist_id)
     cross join unnest(${sql.param(ArtistProfileProviderSchema.options)}::text[]) requested_provider(provider)
     left join artist_provider_current_state state on state.artist_id = ${id} and state.provider = ${provider}
     left join artist_provider_snapshot snapshot on snapshot.id = state.latest_snapshot_id
-    left join latest_jobs latest on latest.artist_id = ${id} and latest.provider = ${provider}
+    left join lateral (
+      select job.status from scrape_job job
+      where ${artistJob} and job.provider = ${provider} and ${jobArtist} = ${id}
+      order by job.created_at desc nulls last, job.id desc nulls last
+      limit 1
+    ) latest on true
+    left join lateral (
+      select job.started_at from scrape_job job
+      where ${artistJob} and job.provider = ${provider} and ${jobArtist} = ${id} and ${attempted}
+      ${latestAttemptOrder}
+      limit 1
+    ) attempt on true
   `)
   return z
     .array(MetadataRowSchema)

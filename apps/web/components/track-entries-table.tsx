@@ -19,6 +19,10 @@ import { formatTrackDuration } from '@/utils/track-browse'
 import { trackServiceLinks } from '@/utils/track-links'
 import type { BrowseView } from '@/utils/media-grid'
 import type { PlaybackSource } from '@/utils/playback'
+import BrowseToolbar, {
+  BrowseColumnFilterSection,
+  BrowseColumnsSection,
+} from './browse-toolbar'
 import { TrackArtistLinks } from './creator-links'
 import { DetailLink } from './detail-link'
 import {
@@ -31,7 +35,6 @@ import {
   SecondaryColumnFilter,
   SecondaryTableHead,
   SecondaryTableScroll,
-  SecondaryTableToolbar,
   SecondaryVirtualRows,
   useTableColumns,
   type TableColumn,
@@ -39,7 +42,6 @@ import {
 import {
   NestedMediaCard,
   NestedMediaCards,
-  NestedMediaViewControls,
   type NestedMediaWindow,
 } from './nested-media-view'
 
@@ -368,19 +370,18 @@ export function TrackEntriesTable({
   const scrollClassName = playlist
     ? 'min-h-0 flex-1'
     : 'max-h-[min(420px,50dvh)]'
-  const typeFilter = kindFilter && (
-    <SecondaryColumnFilter
-      label="Type"
-      options={[
-        { value: 'track', label: 'Tracks' },
-        { value: 'album', label: 'Albums' },
-      ]}
-      {...kindFilter}
-    />
-  )
+  const typeFilter = kindFilter && {
+    label: 'Type',
+    options: [
+      { value: 'track', label: 'Tracks' },
+      { value: 'album', label: 'Albums' },
+    ] satisfies { value: EntryKind; label: string }[],
+    ...kindFilter,
+  }
+  const columnOptions = view === 'table' ? columns.options : null
   return (
     <>
-      <SecondaryTableToolbar
+      <BrowseToolbar
         search={
           <Input
             type="search"
@@ -391,20 +392,25 @@ export function TrackEntriesTable({
             onChange={(event) => onSearch(event.target.value)}
           />
         }
-        count={count}
-        columns={view === 'table' ? columns.controls : undefined}
+        sort={{
+          key: sortBy,
+          direction,
+          options: available,
+          onChange: (key) => onSort(key, 'asc'),
+          onDirectionChange: (next) => onSort(sortBy, next),
+        }}
+        view={view}
+        onViewChange={onViewChange}
+        filterCount={kindFilter?.value.length}
         filters={
-          <NestedMediaViewControls
-            view={view}
-            onViewChange={onViewChange}
-            sortBy={sortBy}
-            direction={direction}
-            sortOptions={available}
-            onSortChange={(key) => onSort(key, 'asc')}
-            onDirectionChange={(next) => onSort(sortBy, next)}
-            filters={typeFilter}
-          />
+          (typeFilter || columnOptions) && (
+            <>
+              {typeFilter && <BrowseColumnFilterSection {...typeFilter} />}
+              <BrowseColumnsSection>{columnOptions}</BrowseColumnsSection>
+            </>
+          )
         }
+        count={count}
       />
       {error && (
         <div role="alert" className="quiet">
@@ -460,7 +466,10 @@ export function TrackEntriesTable({
                       )
                     }
                     className={numeric.includes(key) ? 'numeric' : undefined}
-                    filter={key === 'kind' ? typeFilter : undefined}
+                    filter={
+                      key === 'kind' &&
+                      typeFilter && <SecondaryColumnFilter {...typeFilter} />
+                    }
                   />
                 ))}
               </TableRow>

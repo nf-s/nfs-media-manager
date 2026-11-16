@@ -27,12 +27,15 @@ import { clientQueryDefaults } from '@/utils/query-cache'
 import { fetchApiData } from '@/utils/api'
 import { useConfig } from './providers'
 import MediaArtwork from './media-artwork'
+import BrowseToolbar, {
+  BrowseColumnFilterSection,
+  BrowseColumnsSection,
+} from './browse-toolbar'
 import { useDetailView } from './detail-inspector-context'
 import { DetailSourceTabs } from './detail-source-tabs'
 import {
   NestedMediaCard,
   NestedMediaCards,
-  NestedMediaViewControls,
   useNestedMediaView,
 } from './nested-media-view'
 import {
@@ -40,7 +43,6 @@ import {
   SecondaryColumnFilter,
   SecondaryTableHead,
   SecondaryTableScroll,
-  SecondaryTableToolbar,
   SecondaryVirtualRows,
   useTableColumns,
 } from './secondary-table'
@@ -142,17 +144,19 @@ export function FilmCollectionEntries({ id }: { id: string }) {
       direction: sortBy === key && direction === 'asc' ? 'desc' : 'asc',
     })
   }
-  const watchedFilter = (
-    <SecondaryColumnFilter
-      label="Watched"
-      options={[
-        { value: 'unwatched', label: 'Unwatched' },
-        { value: 'watched', label: 'Watched' },
-      ]}
-      value={watchedStates}
-      onChange={(watchedStates) => changeView({ watchedStates })}
-    />
-  )
+  const watchedFilter = {
+    label: 'Watched',
+    options: [
+      { value: 'unwatched', label: 'Unwatched' },
+      { value: 'watched', label: 'Watched' },
+    ] satisfies {
+      value: (typeof watchedStates)[number]
+      label: string
+    }[],
+    value: watchedStates,
+    onChange: (watchedStates: FilmCollectionQuery['watchedStates']) =>
+      changeView({ watchedStates }),
+  }
   const empty =
     query.hasTotal && query.total === 0
       ? q || watchedStates.length
@@ -165,7 +169,7 @@ export function FilmCollectionEntries({ id }: { id: string }) {
         Stored positions are preserved, including gaps. Older imports may not
         contain the source's film order.
       </p>
-      <SecondaryTableToolbar
+      <BrowseToolbar
         search={
           <Input
             type="search"
@@ -176,22 +180,28 @@ export function FilmCollectionEntries({ id }: { id: string }) {
             onChange={(event) => changeView({ q: event.target.value })}
           />
         }
+        sort={{
+          key: sortBy,
+          direction,
+          options: dataColumns,
+          onChange: (sortBy) => changeView({ sortBy, direction: 'asc' }),
+          onDirectionChange: (direction) => changeView({ direction }),
+        }}
+        view={presentation}
+        onViewChange={(next) => {
+          setPresentation(next)
+          const params = new URLSearchParams(detail.params)
+          params.set('view', next)
+          detail.replace(params)
+        }}
+        filterCount={watchedStates.length}
         filters={
-          <NestedMediaViewControls
-            view={presentation}
-            onViewChange={(next) => {
-              setPresentation(next)
-              const params = new URLSearchParams(detail.params)
-              params.set('view', next)
-              detail.replace(params)
-            }}
-            sortBy={sortBy}
-            direction={direction}
-            sortOptions={dataColumns}
-            onSortChange={(sortBy) => changeView({ sortBy, direction: 'asc' })}
-            onDirectionChange={(direction) => changeView({ direction })}
-            filters={watchedFilter}
-          />
+          <>
+            <BrowseColumnFilterSection {...watchedFilter} />
+            {presentation === 'table' && (
+              <BrowseColumnsSection>{table.options}</BrowseColumnsSection>
+            )}
+          </>
         }
         count={
           query.firstPage
@@ -200,7 +210,6 @@ export function FilmCollectionEntries({ id }: { id: string }) {
               : `${query.total.toLocaleString()} films`
             : undefined
         }
-        columns={presentation === 'table' ? table.controls : undefined}
       />
       {query.isError && (
         <p role="alert" className="quiet">
@@ -243,7 +252,9 @@ export function FilmCollectionEntries({ id }: { id: string }) {
                       direction={direction}
                       onSort={onSort}
                       filter={
-                        column.key === 'watched' ? watchedFilter : undefined
+                        column.key === 'watched' ? (
+                          <SecondaryColumnFilter {...watchedFilter} />
+                        ) : undefined
                       }
                       className={column.className}
                     />

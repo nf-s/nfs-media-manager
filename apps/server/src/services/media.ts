@@ -365,10 +365,13 @@ async function loadAlbums(
     },
   })
 
-  const preferredTags = await rymTagIds(ids)
-  const artistTags = await loadArtistTags(ids)
-  const addedDates = await albumAddedDates(ids)
-  const trackPlaylists = await albumTrackPlaylistNames(ids)
+  const [preferredTags, artistTags, addedDates, trackPlaylists] =
+    await Promise.all([
+      rymTagIds(ids),
+      loadArtistTags(ids),
+      albumAddedDates(ids),
+      albumTrackPlaylistNames(ids),
+    ])
   const items = reorderRecords(records, ids).flatMap((record) => {
     if (!record.album) {
       return []

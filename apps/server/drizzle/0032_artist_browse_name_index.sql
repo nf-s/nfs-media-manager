@@ -1,0 +1,1 @@
+CREATE INDEX IF NOT EXISTS "artist_browse_name_idx" ON "artist" USING btree (lower(coalesce("sort_name", "name")),"id");

@@ -16,6 +16,8 @@ const mocks = vi.hoisted(() => ({
   facets: vi.fn(),
   metadataBrowse: vi.fn(),
   selection: vi.fn(),
+  createSnapshot: vi.fn(),
+  listSnapshotPage: vi.fn(),
   tracks: vi.fn(),
   people: vi.fn(),
   films: vi.fn(),
@@ -28,6 +30,10 @@ vi.mock('@/services/artist-enrichment', () => ({
 }))
 vi.mock('@/services/artist-selection', () => ({
   queueArtistSelection: mocks.selection,
+}))
+vi.mock('@/services/artist-bulk-selection', () => ({
+  createArtistSelectionSnapshot: mocks.createSnapshot,
+  listArtistSelectionSnapshotPage: mocks.listSnapshotPage,
 }))
 vi.mock('@/services/artist-browse', () => ({
   listArtistBrowsePage: mocks.browse,
@@ -65,6 +71,14 @@ function enqueue(body: unknown) {
   })
 }
 
+function createSelection(body: unknown) {
+  return app.request('/artists/metadata/selections', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+}
+
 describe('creator API', () => {
   beforeEach(() => {
     vi.resetAllMocks()
@@ -85,6 +99,7 @@ describe('creator API', () => {
       '/artists/browse-count',
       '/artists/metadata/browse-page',
       '/artists/metadata/browse-count',
+      '/artists/metadata/selections/fixture-selection',
       '/artists/fixture',
       '/artists/fixture/albums',
       '/artists/fixture/tracks',
@@ -96,6 +111,7 @@ describe('creator API', () => {
     ])
       expect((await app.request(path)).status).toBe(401)
     expect((await enqueue({ provider: 'spotify' })).status).toBe(401)
+    expect((await createSelection({ query: {} })).status).toBe(401)
     expect(
       (
         await app.request('/artists/enrichment', {
@@ -241,6 +257,68 @@ describe('creator API', () => {
       },
       'user-1',
     )
+  })
+
+  it('validates artist selection snapshot requests and binds them to the owner', async () => {
+    for (const body of [
+      {},
+      { query: { sortBy: 'lastScrapedAt' } },
+      { query: { ranges: [{ field: 'rating', min: 1 }] } },
+      { query: {}, providers: ['spotify'] },
+    ])
+      expect((await createSelection(body)).status).toBe(422)
+    expect(mocks.createSnapshot).not.toHaveBeenCalled()
+    const snapshot = {
+      id: 'fixture-selection',
+      totalCount: 200,
+      expiresAt: '2027-01-01T00:00:00.000Z',
+    }
+    mocks.createSnapshot.mockResolvedValue(snapshot)
+    const created = await createSelection({
+      query: { playlistIds: ['fixture'] },
+    })
+    expect(created.status).toBe(200)
+    expect(await created.json()).toMatchObject({ data: snapshot })
+    expect(mocks.createSnapshot).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ playlistIds: ['fixture'] }),
+      'user-1',
+    )
+
+    const path = '/artists/metadata/selections/fixture-selection'
+    expect((await app.request(`${path}?size=101`)).status).toBe(422)
+    expect((await app.request(`${path}?ids=invalid`)).status).toBe(422)
+    const ids = ['artist-2', 'artist-3']
+    const query = new URLSearchParams({ ids: JSON.stringify(ids) })
+    expect((await app.request(`${path}?after=artist-1&${query}`)).status).toBe(
+      422,
+    )
+    expect(mocks.listSnapshotPage).not.toHaveBeenCalled()
+    const page = {
+      ids: ['artist-2'],
+      nextCursor: 'artist-2',
+      totalCount: snapshot.totalCount,
+      expiresAt: snapshot.expiresAt,
+    }
+    mocks.listSnapshotPage.mockResolvedValue(page)
+    const read = await app.request(`${path}?after=artist-1&size=1`)
+    expect(read.status).toBe(200)
+    expect(await read.json()).toMatchObject({ data: page })
+    expect(mocks.listSnapshotPage).toHaveBeenCalledExactlyOnceWith(
+      'fixture-selection',
+      { after: 'artist-1', size: 1 },
+      'user-1',
+    )
+    const intersection = { ...page, nextCursor: null }
+    mocks.listSnapshotPage.mockResolvedValue(intersection)
+    const selected = await app.request(`${path}?${query}`)
+    expect(selected.status).toBe(200)
+    expect(await selected.json()).toMatchObject({ data: intersection })
+    expect(mocks.listSnapshotPage).toHaveBeenLastCalledWith(
+      'fixture-selection',
+      { ids, size: 100 },
+      'user-1',
+    )
+    expect(mocks.selection).not.toHaveBeenCalled()
   })
 
   it('validates the film role and uses scoped directory query defaults', async () => {

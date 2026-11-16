@@ -1180,6 +1180,17 @@ export async function createTaskJob(
       if (original.status === 'running')
         await cancelActiveJobInTransaction(tx, original.id, userId, 'running')
     }
+    // The indexed artist ID is also stored on jobs without a group key.
+    const activeTarget =
+      artistId === null
+        ? and(
+            sql`${scrapeJob.options}->>'task' = ${task}`,
+            typeof prepared.groupKey === 'string'
+              ? sql`${scrapeJob.options}->>'groupKey' = ${prepared.groupKey}`
+              : undefined,
+          )
+        : sql`${scrapeJob.options}->>'task' = ${sql.raw(`'${ARTIST_ENRICHMENT_TASK}'`)}
+            and ${scrapeJob.options}->>'artistId' = ${artistId}`
     const [active] = await tx
       .select({ id: scrapeJob.id, options: scrapeJob.options })
       .from(scrapeJob)
@@ -1187,10 +1198,7 @@ export async function createTaskJob(
         and(
           eq(scrapeJob.provider, provider),
           inArray(scrapeJob.status, ['queued', 'running']),
-          sql`${scrapeJob.options}->>'task' = ${task}`,
-          typeof prepared.groupKey === 'string'
-            ? sql`${scrapeJob.options}->>'groupKey' = ${prepared.groupKey}`
-            : undefined,
+          activeTarget,
         ),
       )
       .limit(1)

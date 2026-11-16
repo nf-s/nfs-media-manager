@@ -132,9 +132,9 @@ function page<T>(...items: T[]) {
 
 function assertNestedViewControls(
   html: string,
-  active: 'Grid' | 'Details' | 'Table' = 'Table',
+  active: 'Grid' | 'List' | 'Table' = 'Table',
 ) {
-  for (const label of ['Grid', 'Details', 'Table'])
+  for (const label of ['Grid', 'List', 'Table'])
     assert.match(
       html,
       new RegExp(
@@ -444,7 +444,7 @@ test('person details open films and pass the selected credit role to Browse', ()
   }
 })
 
-test('copied person film Details keeps the stored paging and role filter', () => {
+test('copied person film List keeps the stored paging and role filter', () => {
   const html = render({
     pathname: `/people/${person.id}`,
     search: 'view=list&role=director&sortBy=runtimeMinutes&direction=desc',
@@ -463,10 +463,10 @@ test('copied person film Details keeps the stored paging and role filter', () =>
       ],
     ],
   })
-  assertNestedViewControls(html, 'Details')
+  assertNestedViewControls(html, 'List')
   assert.match(html, /data-view="list" data-media-type="film"/)
   assert.match(html, /aria-label="Sort by"/)
-  assert.match(html, /aria-label="Filter Role"/)
+  assert.match(html, / Filters<span class="filter-panel-count">1<\/span>/)
   assert.equal(destination(html, film.title).pathname, `/films/${film.id}`)
 })
 

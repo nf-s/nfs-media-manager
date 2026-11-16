@@ -156,6 +156,7 @@ function PersonFilms({ person, path }: { person: Person; path: string }) {
       label="films"
       defaultSort={{ key: 'title', direction: 'asc' }}
       filters={roles.filters}
+      filterPanel={roles.filterPanel}
     />
   )
 }

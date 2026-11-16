@@ -1,5 +1,6 @@
 import type { ArtistEnrichmentResult } from '@repo/schemas/artist-profiles'
 import { ArtistMetadataQuerySchema } from '@repo/schemas/creators'
+import type { ArtistSelectionSnapshotPage } from '@repo/schemas/artist-selection'
 
 export function artistMetadataQuery(params: URLSearchParams) {
   const fields = ArtistMetadataQuerySchema.shape
@@ -38,25 +39,67 @@ export async function dispatchArtistSelection(
   onProgress: (count: number) => void,
 ) {
   const ids = [...new Set(selected)]
+  function* batches() {
+    for (let offset = 0; offset < ids.length; offset += 100)
+      yield ids.slice(offset, offset + 100)
+  }
+  return dispatchArtistBatches(batches(), send, onProgress)
+}
+
+/** Resolve only lightweight snapshot IDs as each confirmed queue batch advances. */
+export async function dispatchArtistSnapshot(
+  excluded: string[],
+  load: (after: string | undefined) => Promise<ArtistSelectionSnapshotPage>,
+  send: (ids: string[]) => Promise<ArtistEnrichmentResult>,
+  onProgress: (count: number) => void,
+) {
+  const omitted = new Set(excluded)
+  async function* batches() {
+    let after: string | undefined
+    const cursors = new Set<string>()
+    const seen = new Set<string>()
+    while (true) {
+      const page = await load(after)
+      if (page.nextCursor !== null) {
+        if (!page.ids.length || cursors.has(page.nextCursor))
+          throw new Error('The selection cursor did not advance')
+        cursors.add(page.nextCursor)
+      }
+      const ids = page.ids.filter((id) => {
+        if (seen.has(id)) return false
+        seen.add(id)
+        return !omitted.has(id)
+      })
+      if (ids.length) yield ids
+      if (page.nextCursor === null) return
+      after = page.nextCursor
+    }
+  }
+  return dispatchArtistBatches(batches(), send, onProgress)
+}
+
+async function dispatchArtistBatches(
+  batches: Iterable<string[]> | AsyncIterable<string[]>,
+  send: (ids: string[]) => Promise<ArtistEnrichmentResult>,
+  onProgress: (count: number) => void,
+) {
   const completed: string[] = []
   let queued = 0
   let skipped = 0
   const warnings = new Set<string>()
-  for (let offset = 0; offset < ids.length; offset += 100) {
-    const chunk = ids.slice(offset, offset + 100)
-    try {
+  try {
+    for await (const chunk of batches) {
       const result = await send(chunk)
       completed.push(...chunk)
       queued += result.jobs.length
       skipped += result.skipped.length
       result.skipped.forEach((entry) => warnings.add(entry.reason))
       onProgress(completed.length)
-    } catch {
-      warnings.add(
-        'Stopped: this batch could not be confirmed. Check artist jobs before retrying the remaining selection.',
-      )
-      return { queued, skipped, completed, warnings: [...warnings] }
     }
+  } catch {
+    warnings.add(
+      'Stopped: this batch could not be confirmed or the selection expired. Check artist jobs before retrying the remaining selection.',
+    )
   }
   return { queued, skipped, completed, warnings: [...warnings] }
 }

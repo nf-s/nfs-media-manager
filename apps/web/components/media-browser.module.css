@@ -1,14 +1,3 @@
-.browser :global(.browse-toolbar) {
-  flex-wrap: wrap;
-}
-
-@media (max-width: 700px) {
-  .browser :global(.browse-controls > select) {
-    flex-shrink: 1;
-    min-width: 70px;
-  }
-}
-
 .grid .fallback {
   padding: 8px;
   overflow: hidden;

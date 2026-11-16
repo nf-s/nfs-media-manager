@@ -32,26 +32,20 @@ export async function queueArtistSelection(
       message: 'Queue freshness filters must match selected providers',
     })
   const visible = await matchingArtistSelection(ids)
-  if (visible.length !== ids.length)
-    throw new ServerError({
-      statusCode: 422,
-      message:
-        'Selection includes missing or archived artists. Reload and select again.',
-    })
+  const visibleIds = new Set(visible)
   const result: ArtistEnrichmentResult = { jobs: [], skipped: [] }
   for (const provider of providers) {
-    const matching = new Set(
-      await matchingArtistSelection(
-        ids,
-        freshness.filter((filter) => filter.provider === provider),
-      ),
-    )
+    const filters = freshness.filter((filter) => filter.provider === provider)
+    const matching = new Set(await matchingArtistSelection(visible, filters))
     for (const artistId of ids) {
       if (!matching.has(artistId)) {
         result.skipped.push({
           artistId,
           provider,
-          reason: 'No longer matches the freshness filter.',
+          reason:
+            visibleIds.has(artistId) && filters.length > 0
+              ? 'No longer matches the freshness filter.'
+              : 'Artist is missing or archived.',
         })
         continue
       }

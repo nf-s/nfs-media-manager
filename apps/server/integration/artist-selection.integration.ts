@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { eq } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { migrate } from 'drizzle-orm/node-postgres/migrator'
 import pg from 'pg'
@@ -15,6 +16,7 @@ import {
   ARTIST_ENRICHMENT_TASK,
   QueueArtistSelectionSchema,
 } from '@repo/schemas/artist-profiles'
+import { ArtistSelectionSnapshotPageQuerySchema } from '@repo/schemas/artist-selection'
 import {
   ArtistMetadataQuerySchema,
   ArtistQuerySchema,
@@ -57,6 +59,8 @@ const oldDate = new Date(now - 100 * 86400000)
 const recentDate = new Date(now - 86400000)
 const started = new Date(now - 3600000)
 const ids = ['never', 'recent', 'old', 'failed', 'queued', 'hidden']
+const ownerId = 'snapshot-owner'
+const otherOwnerId = 'other-owner'
 let created = false
 
 async function job(
@@ -85,11 +89,16 @@ beforeAll(async () => {
   await admin.query('create database ' + database)
   created = true
   await migrate(databaseClient, { migrationsFolder: './drizzle' })
+  await databaseClient.insert(schema.user).values([
+    { id: ownerId, name: 'Fixture owner', email: 'owner@example.test' },
+    { id: otherOwnerId, name: 'Other owner', email: 'other@example.test' },
+  ])
 })
 beforeEach(async () => {
   request.mockReset().mockImplementation(async () => {
     throw new Error('Network forbidden in artist selection tests')
   })
+  await databaseClient.delete(schema.artistSelectionSnapshot)
   await databaseClient.delete(schema.artistProviderCurrentState)
   await databaseClient.delete(schema.artistProviderSnapshot)
   await databaseClient.delete(schema.scrapeJob)
@@ -361,6 +370,168 @@ describe('artist selection', () => {
     expect([first.items[0]?.id, second.items[0]?.id]).toEqual(['old', 'recent'])
   })
 
+  it('captures artist Browse filters and freshness before applying the sorted result limit', async () => {
+    const { createArtistSelectionSnapshot, listArtistSelectionSnapshotPage } =
+      await import('@/services/artist-bulk-selection')
+    const query = ArtistMetadataQuerySchema.parse({
+      q: 'fixture',
+      playlistIds: ['tracks', 'albums'],
+      filters: [{ field: 'name', mode: 'exclude', value: 'queued fixture' }],
+      ranges: [{ field: 'albumCount', min: 1 }],
+      freshness: [{ provider: 'lastfm', mode: 'never' }],
+      provider: 'spotify',
+      sortBy: 'lastScrapedAt',
+      direction: 'desc',
+      limitResults: 1,
+      page: 2,
+      size: 1,
+    })
+    const page = (id: string) =>
+      listArtistSelectionSnapshotPage(id, { size: 100 }, ownerId)
+    const recent = await createArtistSelectionSnapshot(query, ownerId)
+    expect(recent.totalCount).toBe(1)
+    expect(await page(recent.id)).toEqual({
+      ids: ['recent'],
+      nextCursor: null,
+      totalCount: 1,
+      expiresAt: recent.expiresAt,
+    })
+    const stale = await createArtistSelectionSnapshot(
+      {
+        ...query,
+        freshness: [
+          ...query.freshness,
+          { provider: 'spotify', mode: 'older', olderThanDays: 30 },
+        ],
+      },
+      ownerId,
+    )
+    expect((await page(stale.id)).ids).toEqual(['old'])
+    expect(request).not.toHaveBeenCalled()
+  })
+
+  it('pages an immutable selection of more than 1,000 matches without creating jobs', async () => {
+    const { createArtistSelectionSnapshot, listArtistSelectionSnapshotPage } =
+      await import('@/services/artist-bulk-selection')
+    const matches = Array.from({ length: 1001 }, (_, index) => ({
+      id: `bulk-${String(index).padStart(4, '0')}`,
+      name: `Bulk fixture artist ${index}`,
+    }))
+    await databaseClient.insert(schema.artist).values(matches)
+    await databaseClient.insert(schema.mediaCredit).values(
+      matches.map(({ id }) => ({
+        artistId: id,
+        mediaItemId: 'album-never',
+        role: 'artist',
+      })),
+    )
+    const originalJobs = await databaseClient.$count(schema.scrapeJob)
+    const snapshot = await createArtistSelectionSnapshot(
+      ArtistMetadataQuerySchema.parse({ q: 'bulk', page: 7, size: 1 }),
+      ownerId,
+    )
+    expect(snapshot.totalCount).toBe(matches.length)
+
+    await databaseClient
+      .delete(schema.artist)
+      .where(eq(schema.artist.id, 'bulk-0000'))
+    await databaseClient
+      .insert(schema.artist)
+      .values({ id: 'bulk-new', name: 'Bulk fixture artist' })
+    await databaseClient.insert(schema.mediaCredit).values({
+      artistId: 'bulk-new',
+      mediaItemId: 'album-never',
+      role: 'artist',
+    })
+    const reviewed = await listArtistSelectionSnapshotPage(
+      snapshot.id,
+      ArtistSelectionSnapshotPageQuerySchema.parse({
+        ids: JSON.stringify(['bulk-0000', 'bulk-1000', 'bulk-new']),
+      }),
+      ownerId,
+    )
+    expect(reviewed).toEqual({
+      ids: ['bulk-0000', 'bulk-1000'],
+      nextCursor: null,
+      totalCount: matches.length,
+      expiresAt: snapshot.expiresAt,
+    })
+    let after: string | undefined
+    const selected: string[] = []
+    for (let offset = 0; offset < matches.length; offset += 100) {
+      const page = await listArtistSelectionSnapshotPage(
+        snapshot.id,
+        { after, size: 100 },
+        ownerId,
+      )
+      expect(page.ids).toHaveLength(Math.min(100, matches.length - offset))
+      expect(page.nextCursor).toBe(
+        offset + 100 < matches.length ? page.ids.at(-1) : null,
+      )
+      selected.push(...page.ids)
+      after = page.nextCursor ?? undefined
+    }
+    expect(selected).toEqual(matches.map(({ id }) => id))
+    expect(await databaseClient.$count(schema.scrapeJob)).toBe(originalJobs)
+    expect(request).not.toHaveBeenCalled()
+  })
+
+  it('restricts snapshot pages to the owner and retains only their unexpired selections', async () => {
+    const { createArtistSelectionSnapshot, listArtistSelectionSnapshotPage } =
+      await import('@/services/artist-bulk-selection')
+    const query = ArtistMetadataQuerySchema.parse({ q: 'no artist matches' })
+    const empty = await createArtistSelectionSnapshot(query, ownerId)
+    expect(
+      await listArtistSelectionSnapshotPage(empty.id, { size: 1 }, ownerId),
+    ).toEqual({
+      ids: [],
+      nextCursor: null,
+      totalCount: 0,
+      expiresAt: empty.expiresAt,
+    })
+    const queryWithMembers = ArtistMetadataQuerySchema.parse({ q: 'Shared' })
+    const expired = await createArtistSelectionSnapshot(
+      queryWithMembers,
+      ownerId,
+    )
+    const other = await createArtistSelectionSnapshot(
+      queryWithMembers,
+      otherOwnerId,
+    )
+    await expect(
+      listArtistSelectionSnapshotPage(empty.id, { size: 1 }, otherOwnerId),
+    ).rejects.toMatchObject({ response: { statusCode: 404 } })
+    await databaseClient
+      .update(schema.artistSelectionSnapshot)
+      .set({
+        expiresAt: new Date(0),
+      })
+      .where(eq(schema.artistSelectionSnapshot.id, expired.id))
+    await databaseClient
+      .update(schema.artistSelectionSnapshot)
+      .set({
+        expiresAt: new Date(0),
+      })
+      .where(eq(schema.artistSelectionSnapshot.id, other.id))
+    await expect(
+      listArtistSelectionSnapshotPage(expired.id, { size: 1 }, ownerId),
+    ).rejects.toMatchObject({ response: { statusCode: 404 } })
+    const fresh = await createArtistSelectionSnapshot(query, ownerId)
+    const remaining = await databaseClient
+      .select({ id: schema.artistSelectionSnapshot.id })
+      .from(schema.artistSelectionSnapshot)
+    expect(remaining.map(({ id }) => id).sort()).toEqual(
+      [empty.id, fresh.id, other.id].sort(),
+    )
+    expect(
+      await databaseClient.$count(
+        schema.artistSelectionMember,
+        eq(schema.artistSelectionMember.selectionId, expired.id),
+      ),
+    ).toBe(0)
+    expect(request).not.toHaveBeenCalled()
+  })
+
   it('requires confirmation, excludes hidden artists and queues only explicit eligible pairs', async () => {
     const { queueArtistSelection } = await import('@/services/artist-selection')
     await expect(
@@ -372,24 +543,21 @@ describe('artist selection', () => {
         null,
       ),
     ).rejects.toMatchObject({ response: { statusCode: 422 } })
-    await expect(
-      queueArtistSelection(
-        QueueArtistSelectionSchema.parse({
-          artistIds: ['hidden'],
-          providers: ['musicbrainz'],
-        }),
-        null,
-      ),
-    ).rejects.toMatchObject({ response: { statusCode: 422 } })
     const result = await queueArtistSelection(
       QueueArtistSelectionSchema.parse({
-        artistIds: ['never', 'old'],
+        artistIds: ['never', 'hidden', 'missing', 'old'],
         providers: ['musicbrainz'],
       }),
       null,
     )
     expect(result.jobs).toHaveLength(2)
-    expect(result.skipped).toEqual([])
+    expect(result.skipped).toEqual(
+      ['hidden', 'missing'].map((artistId) => ({
+        artistId,
+        provider: 'musicbrainz',
+        reason: 'Artist is missing or archived.',
+      })),
+    )
     expect(result.jobs.map((job) => job.options.artistId).sort()).toEqual([
       'never',
       'old',
@@ -451,6 +619,35 @@ describe('artist selection', () => {
       null,
     )
     expect(confirmed.skipped).toHaveLength(6)
+    expect(request).not.toHaveBeenCalled()
+  })
+
+  it('skips a legacy active artist job without a group key and queues other selected artists', async () => {
+    const { queueArtistSelection } = await import('@/services/artist-selection')
+    await databaseClient.insert(schema.scrapeJob).values({
+      id: 'legacy-active',
+      provider: 'musicbrainz',
+      status: 'queued',
+      scope: { mediaType: 'album' },
+      options: { task: ARTIST_ENRICHMENT_TASK, artistId: 'old' },
+    })
+    const result = await queueArtistSelection(
+      QueueArtistSelectionSchema.parse({
+        artistIds: ['old', 'never'],
+        providers: ['musicbrainz'],
+      }),
+      null,
+    )
+    expect(result.jobs.map(({ options }) => options.artistId)).toEqual([
+      'never',
+    ])
+    expect(result.skipped).toEqual([
+      {
+        artistId: 'old',
+        provider: 'musicbrainz',
+        reason: 'An artist job is already queued or running.',
+      },
+    ])
     expect(request).not.toHaveBeenCalled()
   })
 })

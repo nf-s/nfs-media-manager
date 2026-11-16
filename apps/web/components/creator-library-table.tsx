@@ -1,7 +1,6 @@
 'use client'
 
 import {
-  Fragment,
   useDeferredValue,
   useEffect,
   useState,
@@ -24,10 +23,10 @@ import type { DetailTarget } from '@/utils/detail-inspector'
 import { parseBrowseView, type BrowseView } from '@/utils/media-grid'
 import { useDetailInspector, useDetailView } from './detail-inspector-context'
 import { DetailLink } from './detail-link'
+import BrowseToolbar, { BrowseColumnsSection } from './browse-toolbar'
 import {
   NestedMediaCard,
   NestedMediaCards,
-  NestedMediaViewControls,
   useNestedMediaView,
 } from './nested-media-view'
 import { useConfig } from './providers'
@@ -70,6 +69,7 @@ export function CreatorLibraryTable<Row extends { id: string }>({
   defaultSort,
   workspace = false,
   filters,
+  filterPanel,
   card,
 }: {
   kind: DetailTarget['kind']
@@ -81,6 +81,7 @@ export function CreatorLibraryTable<Row extends { id: string }>({
   defaultSort: { key: string; direction: 'asc' | 'desc' }
   workspace?: boolean
   filters?: Record<string, string>
+  filterPanel?: { controls: ReactNode; count: number }
   card?: (row: Row) => CreatorLibraryCard
 }) {
   const { apiBaseUrl } = useConfig()
@@ -150,50 +151,60 @@ export function CreatorLibraryTable<Row extends { id: string }>({
     view.replace(params)
   }
 
+  const searchControl = (
+    <Input
+      type="search"
+      aria-label={`Search ${label}`}
+      placeholder={`Search ${label}`}
+      value={draft}
+      maxLength={200}
+      onChange={(event) => {
+        const next = event.target.value
+        setDraft(next)
+        if (next) view.params.set('q', next)
+        else view.params.delete('q')
+        view.replace(view.params)
+      }}
+    />
+  )
+  const count =
+    total === undefined
+      ? undefined
+      : `${total.toLocaleString()} ${total === 1 ? 'result' : 'results'}`
+  const columnOptions = presentation === 'table' ? table.options : null
+
   return (
     <>
-      <SecondaryTableToolbar
-        search={
-          <Input
-            type="search"
-            aria-label={`Search ${label}`}
-            placeholder={`Search ${label}`}
-            value={draft}
-            maxLength={200}
-            onChange={(event) => {
-              const next = event.target.value
-              setDraft(next)
-              if (next) view.params.set('q', next)
-              else view.params.delete('q')
-              view.replace(view.params)
-            }}
-          />
-        }
-        filters={
-          card && (
-            <NestedMediaViewControls
-              view={presentation}
-              onViewChange={setPresentation}
-              sortBy={sortBy}
-              direction={direction}
-              sortOptions={sortable}
-              onSortChange={(key) => setSort(key, direction)}
-              onDirectionChange={(value) => setSort(sortBy, value)}
-              filters={columns.map((column) =>
-                column.filter ? (
-                  <Fragment key={column.key}>{column.filter}</Fragment>
-                ) : null,
-              )}
-            />
-          )
-        }
-        count={
-          total === undefined
-            ? undefined
-            : `${total.toLocaleString()} ${total === 1 ? 'result' : 'results'}`
-        }
-        columns={!card || presentation === 'table' ? table.controls : undefined}
-      />
+      {card ? (
+        <BrowseToolbar
+          search={searchControl}
+          sort={{
+            key: sortBy,
+            direction,
+            options: sortable,
+            onChange: (key) => setSort(key, direction),
+            onDirectionChange: (value) => setSort(sortBy, value),
+          }}
+          view={presentation}
+          onViewChange={setPresentation}
+          filterCount={filterPanel?.count}
+          filters={
+            (columnOptions || filterPanel) && (
+              <>
+                {filterPanel?.controls}
+                <BrowseColumnsSection>{columnOptions}</BrowseColumnsSection>
+              </>
+            )
+          }
+          count={count}
+        />
+      ) : (
+        <SecondaryTableToolbar
+          search={searchControl}
+          count={count}
+          columns={table.controls}
+        />
+      )}
       {query.isError && (
         <p className="quiet" role="alert">
           Could not load {label}.{' '}

@@ -20,6 +20,8 @@ Search finds matching media IDs through field-specific queries. Titles, summarie
 | Subscription text search                  | Existing full-text GIN index on `subscription_item.search`                                                 |
 | Subscription title and source suggestions | Trigram indexes on item and source titles                                                                  |
 | Subscription duration ranges              | Index on `nullif(duration_sec, 0)`, matching the query's treatment of unknown durations                    |
+| Artist freshness and latest attempt       | Partial provider/artist-ID/descending-time indexes for artist enrichment jobs                              |
+| Artist name ordering                      | B-tree on `lower(coalesce(sort_name, name)), id`                                                           |
 | Job history and batch lookup              | Descending creation date and ID, plus the batch ID expression                                              |
 
 Indexes are targeted at stored columns and query expressions. Generic JSON metadata expansion and broad aggregate reports still need to process matching rows. Very short substring searches and common words can match much of a library; a trigram index is most useful when the search contains selective runs of at least three characters. PostgreSQL can choose a sequential scan when that is cheaper.
@@ -36,6 +38,18 @@ The film collection directory follows the same split through `/api/v1/collection
 
 On a disposable fixture of 20,000 synthetic tracks, the exact count for a required Album track list filter took about 123 ms, while the first page and its metadata took about 10 ms. On 50,000 synthetic subscription items, the original first page with a window count took about 22 ms. Executing the page and exact count independently took about 0.3 ms and 3.8 ms respectively. These are medians from five warm database measurements, excluding HTTP and browser rendering.
 
+## Artist and album filtering
+
+Artist freshness queries probe the latest relevant job through partial expression indexes on `scrape_job`. The artist task predicate and timestamp null ordering must match those indexes. Current profile state is read through its artist/provider key. Metadata hydration looks up only the displayed artists and requested providers; never join every historical job to every visible artist.
+
+Album tag filtering and ordering calculate canonical artist tags and sparse release-tag fallback as sets. Exact playlist chips join indexed membership IDs. Tag hydration remains bounded to the returned media IDs. These paths share the same fallback and alias rules as displayed tags.
+
+Autocomplete starts when search receives focus or text, rather than running a broad facet aggregation for every page mount. It retains debounce and request cancellation. Broad suggestions still count values across the matching library.
+
+On disposable synthetic fixtures, the artist never-attempted page query fell from approximately 5.8 seconds to 33 milliseconds. Album tag ordering fell from approximately 2.2 seconds to 118 milliseconds, and a two-word album search fell from approximately 953 to 173 milliseconds. These are local database/service measurements, not production HTTP latency guarantees. The performance integration suites assert query results and indexed/bounded plans rather than fixed machine-specific timings.
+
+Filtered artist bulk selection inserts matching IDs directly into an owner-bound, one-hour snapshot. It uses the Browse membership predicate and result cap without fetching profiles or all table pages. Dispatch reads that snapshot in bounded batches, rechecks freshness and active jobs, and preserves provider concurrency and cooldowns.
+
 ## Verification
 
 The browse-search and query-indexes integration tests create disposable databases and synthetic libraries. They cover query results, substring escaping, cross-field word matching and PostgreSQL query plans. They do not read or scrape a real library. Run them from the workspace root:
@@ -51,3 +65,5 @@ Uncached broad autocomplete on that fixture took approximately 0.5–0.6 seconds
 ## Upgrading
 
 Migration `0028_library_search_indexes` enables `pg_trgm` and builds the search and lookup indexes. The database role needs permission to install this extension. It uses the existing transactional migration runner; index construction can block writes while it runs. Follow the normal [upgrade procedure](getting-started.md#upgrading-and-backing-up): back up, stop application writers, apply migrations, then start the updated application. No provider refresh or library reimport is needed.
+
+Migrations `0031_artist_filter_indexes_and_selection` and `0032_artist_browse_name_index` add the artist job lookup indexes, name ordering index and temporary selection tables. Existing tables can have those three indexes built with `CREATE INDEX CONCURRENTLY` before applying the migrations; use the exact definitions, verify `pg_index.indisvalid`, and run each concurrent statement outside a transaction. The migration statements use `IF NOT EXISTS` to accept these prebuilt indexes. Do not treat an existing invalid or differently defined index as ready. Otherwise follow the normal stopped-writer migration procedure. No re-scrape is required.

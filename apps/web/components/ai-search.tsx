@@ -248,9 +248,12 @@ export default function AiSearch<Plan>({
       value={
         recording || transcription.isPending ? activity : autocomplete.value
       }
-      disabled={recording || transcription.isPending}
+      disabled={autocomplete.disabled || recording || transcription.isPending}
       hideSuggestions={open || recording || working}
-      onFocus={() => setOpen(false)}
+      onFocus={() => {
+        autocomplete.onFocus?.()
+        setOpen(false)
+      }}
       onValueChange={(value) => {
         cancelRequest()
         setError('')

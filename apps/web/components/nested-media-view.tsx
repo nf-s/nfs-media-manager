@@ -1,12 +1,9 @@
 'use client'
 
 import { useEffect, useState, type ReactNode, type UIEvent } from 'react'
-import { ArrowDown, ArrowUp } from 'lucide-react'
-import { Button } from '@repo/ui/components/ui/button'
 import { TableScroll } from '@repo/ui/components/ui/table'
 import { parseBrowseView, type BrowseView } from '@/utils/media-grid'
 import type { DetailTarget } from '@/utils/detail-inspector'
-import { BrowseViewSwitch } from './browse-controls'
 import { DetailLink } from './detail-link'
 import MediaArtwork from './media-artwork'
 
@@ -41,77 +38,6 @@ export function useNestedMediaView(
     }
   }
   return [view, changeView] satisfies [BrowseView, (view: BrowseView) => void]
-}
-
-export function NestedMediaViewControls<Key extends string>({
-  view,
-  onViewChange,
-  sortBy,
-  direction,
-  sortOptions,
-  onSortChange,
-  onDirectionChange,
-  filters,
-}: {
-  view: BrowseView
-  onViewChange: (view: BrowseView) => void
-  sortBy: Key
-  direction: 'asc' | 'desc'
-  sortOptions: readonly { key: Key; label: string }[]
-  onSortChange: (key: Key) => void
-  onDirectionChange: (direction: 'asc' | 'desc') => void
-  filters?: ReactNode
-}) {
-  const nextDirection = direction === 'asc' ? 'desc' : 'asc'
-  const directionLabel =
-    nextDirection === 'asc' ? 'Sort ascending' : 'Sort descending'
-  return (
-    <div className="nested-media-controls">
-      <BrowseViewSwitch
-        view={view}
-        onChange={onViewChange}
-        listLabel="Details view"
-      />
-      {view !== 'table' && (
-        <>
-          <div className="nested-media-sort">
-            <select
-              aria-label="Sort by"
-              value={sortBy}
-              onChange={(event) => {
-                const option = sortOptions.find(
-                  ({ key }) => key === event.target.value,
-                )
-                if (option) onSortChange(option.key)
-              }}
-            >
-              {sortOptions.map(({ key, label }) => (
-                <option key={key} value={key}>
-                  {label}
-                </option>
-              ))}
-            </select>
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              className="w-7 p-0"
-              aria-label={directionLabel}
-              title={directionLabel}
-              onClick={() => onDirectionChange(nextDirection)}
-            >
-              {direction === 'asc' ? (
-                <ArrowUp size={14} />
-              ) : (
-                <ArrowDown size={14} />
-              )}
-            </Button>
-          </div>
-          {filters}
-        </>
-      )}
-    </div>
-  )
 }
 
 export type NestedMediaWindow<Item> = {
