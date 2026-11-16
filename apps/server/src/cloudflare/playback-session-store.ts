@@ -26,6 +26,17 @@ const LeaseSchema = z
   })
   .strict()
 
+const PartsSchema = z.number().int().nonnegative().max(MAX_PARTS)
+
+function savedState(json: string) {
+  try {
+    const state = SavedPlaybackSchema.safeParse(JSON.parse(json))
+    return state.success ? state.data : null
+  } catch {
+    return null
+  }
+}
+
 function sameLease(a: PlaybackSessionRecord, b: PlaybackSessionRecord) {
   return (
     a.revision === b.revision &&
@@ -72,25 +83,25 @@ export class PlaybackSessionStore extends DurableObject<CloudflareBindings> {
     })
   }
 
+  /**
+   * Reads the stored record. Anything saved under an earlier contract, or
+   * left incomplete, is dropped rather than failing every later exchange.
+   */
   private async load(): Promise<PlaybackSessionRecord> {
     const storage = this.ctx.storage
-    const lease = await storage.get(LEASE_KEY)
-    if (lease === undefined) return EMPTY_PLAYBACK_SESSION
-    const { revision, driver } = LeaseSchema.parse(lease)
-    const parts = z
-      .number()
-      .int()
-      .nonnegative()
-      .max(MAX_PARTS)
-      .parse((await storage.get(PARTS_KEY)) ?? 0)
-    if (parts === 0) return { revision, state: null, driver }
+    const lease = LeaseSchema.safeParse(await storage.get(LEASE_KEY))
+    if (!lease.success) return EMPTY_PLAYBACK_SESSION
+    const { revision, driver } = lease.data
+    const parts = PartsSchema.safeParse((await storage.get(PARTS_KEY)) ?? 0)
+    if (!parts.success || parts.data === 0)
+      return { revision, state: null, driver }
     let json = ''
-    for (let index = 0; index < parts; index++)
-      json += z.string().parse(await storage.get(`state-${index}`))
-    // A state saved under an earlier contract is dropped rather than failing
-    // every later exchange.
-    const state = SavedPlaybackSchema.safeParse(JSON.parse(json))
-    return { revision, state: state.success ? state.data : null, driver }
+    for (let index = 0; index < parts.data; index++) {
+      const part = await storage.get(`state-${index}`)
+      if (typeof part !== 'string') return { revision, state: null, driver }
+      json += part
+    }
+    return { revision, state: savedState(json), driver }
   }
 
   private save(previous: PlaybackSessionRecord, next: PlaybackSessionRecord) {
@@ -100,12 +111,8 @@ export class PlaybackSessionStore extends DurableObject<CloudflareBindings> {
         const parts = Math.ceil(json.length / PART_LENGTH)
         if (parts > MAX_PARTS)
           throw new Error('Playback state exceeds the stored size limit')
-        const stale = z
-          .number()
-          .int()
-          .nonnegative()
-          .max(MAX_PARTS)
-          .parse((await tx.get(PARTS_KEY)) ?? 0)
+        const stored = PartsSchema.safeParse((await tx.get(PARTS_KEY)) ?? 0)
+        const stale = stored.success ? stored.data : MAX_PARTS
         for (let index = 0; index < parts; index++)
           await tx.put(
             `state-${index}`,
