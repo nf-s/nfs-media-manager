@@ -26,9 +26,11 @@ Indexes are targeted at stored columns and query expressions. Generic JSON metad
 
 ## Browse pagination
 
-Albums, Films, Tracks and Subscriptions expose `/api/v1/{library}/browse-page` for rows and `/api/v1/{library}/browse-count` for the exact filtered total. The first returns `items`, `page`, `size` and `hasMore`. It reads one extra result to detect continuation and respects the result cap where the library supports one. The second returns `totalCount` from the same membership predicate and reuses the short-lived, database-versioned cache. The original paginated routes still return rows and totals together.
+Albums, Films, Tracks, Artists and Subscriptions expose `/api/v1/{library}/browse-page` for rows and `/api/v1/{library}/browse-count` for the exact filtered total. The first returns `items`, `page`, `size` and `hasMore`. It reads one extra result to detect continuation and respects the result cap where the library supports one. The second returns `totalCount` from the same membership predicate and reuses the short-lived, database-versioned cache. The original paginated routes still return rows and totals together.
 
 Browse can display the first page and expand the scroll area when the total arrives. A first page with `hasMore: false` already gives the total. Later pages skip counting, including when a requested page is empty. A failed count can be retried while the loaded page remains available.
+
+Artist metadata selection also uses separate `/api/v1/artists/metadata/browse-page` and `/browse-count` endpoints. Artists selects matching IDs before loading the page's membership counts, playlist names, artwork and provider profiles. Search, filter modes, ranges, freshness and result caps share one membership predicate across both surfaces. Profile and playlist hydration must stay bounded to the returned IDs. `artist-browse.integration.ts` checks this with a disposable synthetic library; it does not require a live enrichment run.
 
 The film collection directory follows the same split through `/api/v1/collections/browse-page` and `/browse-count`. Name search, film-only membership, ordering and the page limit are evaluated in SQL. The directory's hidden-by-default source column requests `includeSources=true` only when shown; provenance expansion is restricted to returned collections, never the entire directory or its count query. Arbitrary plugin source readers are not an indexed directory sort/filter field. Collection membership IDs travel with film rows so opening a collection requires no directory lookup.
 

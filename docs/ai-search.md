@@ -1,6 +1,6 @@
 # AI search and voice input
 
-Type a request into the album, film, track or Subscriptions search box, then choose **AI search** below **Filter by text** in the suggestions. Or use the microphone inside the search box and choose **Stop recording and search** when finished. Dictation transcribes the request and runs the search automatically. Successful searches immediately apply the resulting filters. Use the eye icon inside the search box to review the original request, interpretation, applied conditions and assumptions. The resulting filters use the normal browse controls and survive reloads and detail navigation.
+Type a request into the album, film, track, artist or Subscriptions search box, then choose **AI search** below **Filter by text** in the suggestions. Artist metadata selection uses the same search box. Or use the microphone inside the search box and choose **Stop recording and search** when finished. Dictation transcribes the request and runs the search automatically. Successful searches immediately apply the resulting filters. Use the eye icon inside the search box to review the original request, interpretation, applied conditions and assumptions. The resulting filters use the normal browse controls and survive reloads and detail navigation.
 
 Examples:
 
@@ -8,6 +8,7 @@ Examples:
 - “Show albums I used to listen to a lot, but haven't listened to much in the last five years.”
 - “Show unwatched films rated at least 8 on IMDb, newest first.”
 - “Tracks from my Road trip playlist I've never played.”
+- “Artists in my Road trip playlist with at least three albums, sorted by name.”
 - “Long woodworking videos from @examplechannel published this year, most viewed first.”
 
 Each request replaces the current search. It does not edit library records, start scrapes or discover media outside the library. A request that cannot be expressed with the available filters asks for clarification instead of applying a partial search. Review the generated conditions: a model can misinterpret a request even when its output passes validation.
@@ -21,6 +22,8 @@ Vague terms have visible defaults: “only a little” means 1–10 scrobbles, �
 Tracks have no listening rules. A track request uses the track's **Scrobbles** and **Last listened** values, which count all-time linked scrobbles, so counts within a period ask for clarification. The track table has no result limit, so “top 10” sorts without capping.
 
 Scores come from stored metadata. Searches do not fetch fresh ratings, and missing scores are excluded unless requested otherwise. AI search supports the public built-in fields; installation-specific plugin fields remain available through manual filters.
+
+Artists supports stored names, playlists, tags, countries, types, providers, added dates and library album, track and playlist counts. Those counts describe library memberships. Artist listening history, ratings and scrape freshness are not AI search fields; requests that need them ask for clarification. In metadata selection, AI replaces the normal search conditions while retaining the separately selected provider freshness filters.
 
 ## Subscriptions
 
@@ -47,4 +50,4 @@ The owner session and existing origin protection apply to every AI endpoint. Req
 
 ## Verification
 
-The AI service and API tests mock inference and use synthetic plans. They cover listening windows, ratings, track plans, Subscriptions plans, channel and podcast matching, unsupported fields, incomplete history, malformed output, transcription errors, authentication and request limits. Recording tests cover stop/cancel, permission failures, size and duration limits, and releasing microphone tracks. No live library scraping is needed.
+The AI service and API tests mock inference and use synthetic plans. They cover listening windows, ratings, track and artist plans, Subscriptions plans, channel and podcast matching, unsupported fields, incomplete history, malformed output, transcription errors, authentication and request limits. Recording tests cover stop/cancel, permission failures, size and duration limits, and releasing microphone tracks. No live library scraping is needed.

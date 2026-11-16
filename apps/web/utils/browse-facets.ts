@@ -10,6 +10,7 @@ export type BrowseFacetCollection =
   | 'albums'
   | 'films'
   | 'tracks'
+  | 'artists'
   | 'subscriptions'
 
 export function browseFacetOptions(

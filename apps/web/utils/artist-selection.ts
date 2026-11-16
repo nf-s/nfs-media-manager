@@ -11,6 +11,11 @@ export function artistMetadataQuery(params: URLSearchParams) {
   const playlists = fields.playlistIds.safeParse(
     params.get('playlistIds') ?? undefined,
   )
+  const filters = fields.filters.safeParse(params.get('filters') ?? undefined)
+  const ranges = fields.ranges.safeParse(params.get('ranges') ?? undefined)
+  const limit = fields.limitResults.safeParse(
+    params.get('limitResults') ?? undefined,
+  )
   const provider = source.success ? source.data : undefined
   const sortBy = sort.success ? sort.data : 'name'
   return ArtistMetadataQuerySchema.parse({
@@ -20,6 +25,9 @@ export function artistMetadataQuery(params: URLSearchParams) {
     provider,
     freshness: freshness.success ? freshness.data : [],
     playlistIds: playlists.success ? playlists.data : [],
+    filters: filters.success ? filters.data : [],
+    ranges: ranges.success ? ranges.data : [],
+    limitResults: limit.success ? limit.data : undefined,
   })
 }
 

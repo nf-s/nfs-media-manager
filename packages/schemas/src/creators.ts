@@ -16,6 +16,12 @@ import {
 } from './common'
 import { AlbumListItemSchema, FilmListItemSchema } from './media'
 import { TrackListItemSchema } from './tracks'
+import { BrowseValuesSchema } from './browse'
+import {
+  ArtistBrowseSortSchema,
+  ArtistBrowseFiltersParamSchema,
+  ArtistBrowseRangesParamSchema,
+} from './artist-browse'
 
 const CountSchema = z.number().int().nonnegative()
 const CreatorIdentitySchema = z.object({
@@ -37,6 +43,7 @@ export const ArtistSummarySchema = CreatorIdentitySchema.extend({
   albumCount: CountSchema,
   trackCount: CountSchema,
   playlistCount: CountSchema,
+  browse: BrowseValuesSchema.default({}),
 })
 export type ArtistSummary = z.infer<typeof ArtistSummarySchema>
 export const ArtistPageSchema = PaginatedDataSchema(ArtistSummarySchema)
@@ -76,15 +83,12 @@ const CreatorQuerySchema = PaginationQuerySchema.extend({
   direction: DirectionSchema.default('asc'),
 })
 
-const ArtistSortKeySchema = z.enum([
-  'name',
-  'createdAt',
-  'albumCount',
-  'trackCount',
-  'playlistCount',
-])
+const ArtistSortKeySchema = ArtistBrowseSortSchema
 export const ArtistQuerySchema = CreatorQuerySchema.extend({
   sortBy: ArtistSortKeySchema.default('name'),
+  filters: ArtistBrowseFiltersParamSchema,
+  ranges: ArtistBrowseRangesParamSchema,
+  limitResults: z.coerce.number().int().min(1).max(10000).optional(),
   playlistIds: z.preprocess(
     (value) => {
       if (value === undefined) return []

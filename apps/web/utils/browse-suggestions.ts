@@ -10,13 +10,14 @@ export type BrowseSuggestion =
 export function matchingTitleFilters(
   options: FilterSuggestion[],
   query: string,
+  field = 'title',
 ) {
   const words = query.trim().toLowerCase().split(/\s+/).filter(Boolean)
   if (!words.length) return []
   return options
     .filter(
       (option) =>
-        option.field === 'title' &&
+        option.field === field &&
         words.every((word) => option.value.toLowerCase().includes(word)),
     )
     .sort(
@@ -26,7 +27,7 @@ export function matchingTitleFilters(
         a.value.localeCompare(b.value),
     )
     .slice(0, 100)
-    .map(({ value }) => ({ field: 'title', value }))
+    .map(({ value }) => ({ field, value }))
 }
 
 export function titleSuggestions(

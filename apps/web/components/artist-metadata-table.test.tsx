@@ -6,32 +6,39 @@ import {
   PathnameContext,
   SearchParamsContext,
 } from 'next/dist/shared/lib/hooks-client-context.shared-runtime'
-import { ArtistMetadataPageSchema } from '@repo/schemas/creators'
+import { ArtistMetadataItemSchema } from '@repo/schemas/creators'
+import { BrowsePageSliceSchema } from '@repo/schemas/browse'
 import { ProviderSummarySchema } from '@repo/schemas/provider'
-import NewScrapePageClient from './pages/new-scrape-page-client'
-import { ArtistScrapeState } from './artist-metadata-table'
 import { ConfigContext } from './providers'
+
+require.extensions['.css'] = (module) => {
+  module.exports = {}
+}
 
 const network = mock.method(globalThis, 'fetch', async () => {
   throw new Error('Network forbidden in artist metadata tests')
 })
 const timestamp = '2026-01-01T00:00:00.000Z'
 
-test('artist metadata renders artist selection, playlist and freshness filters with explicit provider selection', () => {
+test('artist metadata renders artist selection, playlist and freshness filters with explicit provider selection', async () => {
+  const { default: NewScrapePageClient } =
+    await import('./pages/new-scrape-page-client')
   const client = new QueryClient()
+  client.setQueryData(['ai-status'], { available: true, reason: null })
   const params = new URLSearchParams({
     q: '',
     sortBy: 'name',
     direction: 'asc',
     freshness: '[]',
+    filters: '[]',
+    ranges: '[]',
   })
   client.setQueryData(
     ['artist-selection', params.toString(), 1],
-    ArtistMetadataPageSchema.parse({
+    BrowsePageSliceSchema(ArtistMetadataItemSchema).parse({
       page: 1,
       size: 50,
-      pageCount: 1,
-      totalCount: 1,
+      hasMore: false,
       items: [
         {
           id: 'fixture-artist',
@@ -53,6 +60,14 @@ test('artist metadata renders artist selection, playlist and freshness filters w
         },
       ],
     }),
+  )
+  client.setQueryData(
+    [
+      'artist-selection',
+      'count',
+      'q=&freshness=%5B%5D&filters=%5B%5D&ranges=%5B%5D',
+    ],
+    { totalCount: 1 },
   )
   client.setQueryData(
     ['providers'],
@@ -94,6 +109,9 @@ test('artist metadata renders artist selection, playlist and freshness filters w
     assert.match(html, /Select all loaded artists/)
     assert.match(html, /Select Fixture artist/)
     assert.match(html, /Search artists/)
+    assert.match(html, /role="combobox"/)
+    assert.match(html, /Record search/)
+    assert.match(html, /> Filters/)
     assert.match(html, /Filter Playlists/)
     assert.match(html, /Filter MusicBrainz freshness/)
     assert.match(html, /dateTime="2026-01-01T00:00:00.000Z"/)
@@ -110,7 +128,8 @@ test('artist metadata renders artist selection, playlist and freshness filters w
   }
 })
 
-test('artist freshness keeps a successful scrape date visible after a failed attempt', () => {
+test('artist freshness keeps a successful scrape date visible after a failed attempt', async () => {
+  const { ArtistScrapeState } = await import('./artist-metadata-table')
   const html = renderToStaticMarkup(
     <ArtistScrapeState
       label="MusicBrainz"
@@ -127,7 +146,8 @@ test('artist freshness keeps a successful scrape date visible after a failed att
   assert.doesNotMatch(html, />Never</)
 })
 
-test('artist freshness distinguishes unattempted, failed and queued without claiming success', () => {
+test('artist freshness distinguishes unattempted, failed and queued without claiming success', async () => {
+  const { ArtistScrapeState } = await import('./artist-metadata-table')
   const render = (
     lastJobStatus: 'queued' | 'failed' | null,
     lastAttemptAt: string | null,

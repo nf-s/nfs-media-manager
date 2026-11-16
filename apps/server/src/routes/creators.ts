@@ -19,6 +19,8 @@ import {
   ArtistHistoryPageSchema,
   ArtistHistoryQuerySchema,
   ArtistMetadataPageSchema,
+  ArtistMetadataItemSchema,
+  ArtistSummarySchema,
   ArtistMetadataQuerySchema,
   ArtistPageSchema,
   ArtistPlaylistPageSchema,
@@ -33,6 +35,20 @@ import {
   PersonPageSchema,
   PersonQuerySchema,
 } from '@repo/schemas/creators'
+import { artistBrowseFields } from '@repo/schemas/artist-browse'
+import {
+  BrowseCountSchema,
+  BrowseFacetQuerySchema,
+  BrowseFieldSchema,
+  BrowsePageSliceSchema,
+} from '@repo/schemas/browse'
+import { FilmFilterOptionSchema } from '@repo/schemas/media'
+import {
+  countArtistBrowse,
+  listArtistBrowsePage,
+  listArtistBrowseFacets,
+  listArtistMetadataBrowsePage,
+} from '@/services/artist-browse'
 import { JobSchema } from '@repo/schemas/job'
 import {
   createOpenAPIApp,
@@ -85,6 +101,114 @@ const ArtistSourceParams = CreatorParamsSchema.extend({
 })
 
 export const artists: OpenAPIHono<AppEnv> = createOpenAPIApp()
+  .openapi(
+    createRoute({
+      method: 'get',
+      path: '/fields',
+      middleware: [authMiddleware()],
+      responses: {
+        ...protectedResponses,
+        200: json('Artist browse fields', z.array(BrowseFieldSchema)),
+      },
+    }),
+    async (c) => generateJsonResponse(c, artistBrowseFields, 200),
+  )
+  .openapi(
+    createRoute({
+      method: 'get',
+      path: '/facets',
+      middleware: [authMiddleware()],
+      request: { query: BrowseFacetQuerySchema },
+      responses: {
+        ...protectedResponses,
+        200: json('Artist filter suggestions', z.array(FilmFilterOptionSchema)),
+      },
+    }),
+    async (c) =>
+      generateJsonResponse(
+        c,
+        await listArtistBrowseFacets(c.req.valid('query')),
+        200,
+      ),
+  )
+  .openapi(
+    createRoute({
+      method: 'get',
+      path: '/browse-page',
+      middleware: [authMiddleware()],
+      request: { query: ArtistQuerySchema },
+      responses: {
+        ...protectedResponses,
+        200: json(
+          'Artist browse page',
+          BrowsePageSliceSchema(ArtistSummarySchema),
+        ),
+      },
+    }),
+    async (c) =>
+      generateJsonResponse(
+        c,
+        await listArtistBrowsePage(c.req.valid('query')),
+        200,
+      ),
+  )
+  .openapi(
+    createRoute({
+      method: 'get',
+      path: '/browse-count',
+      middleware: [authMiddleware()],
+      request: { query: ArtistQuerySchema },
+      responses: {
+        ...protectedResponses,
+        200: json('Filtered artist count', BrowseCountSchema),
+      },
+    }),
+    async (c) =>
+      generateJsonResponse(
+        c,
+        await countArtistBrowse(c.req.valid('query')),
+        200,
+      ),
+  )
+  .openapi(
+    createRoute({
+      method: 'get',
+      path: '/metadata/browse-page',
+      middleware: [authMiddleware()],
+      request: { query: ArtistMetadataQuerySchema },
+      responses: {
+        ...protectedResponses,
+        200: json(
+          'Artist metadata browse page',
+          BrowsePageSliceSchema(ArtistMetadataItemSchema),
+        ),
+      },
+    }),
+    async (c) =>
+      generateJsonResponse(
+        c,
+        await listArtistMetadataBrowsePage(c.req.valid('query')),
+        200,
+      ),
+  )
+  .openapi(
+    createRoute({
+      method: 'get',
+      path: '/metadata/browse-count',
+      middleware: [authMiddleware()],
+      request: { query: ArtistMetadataQuerySchema },
+      responses: {
+        ...protectedResponses,
+        200: json('Filtered artist metadata count', BrowseCountSchema),
+      },
+    }),
+    async (c) =>
+      generateJsonResponse(
+        c,
+        await countArtistBrowse(c.req.valid('query')),
+        200,
+      ),
+  )
   .openapi(
     createRoute({
       method: 'get',

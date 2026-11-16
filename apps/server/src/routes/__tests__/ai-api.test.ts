@@ -152,7 +152,7 @@ describe('AI API', () => {
     })
   })
 
-  it('forwards track and Subscriptions requests and returns their plans', async () => {
+  it('forwards track, artist and Subscriptions requests and returns their plans', async () => {
     mockAppSession(true)
     const trackResult = {
       plan: {
@@ -192,13 +192,23 @@ describe('AI API', () => {
       assumptions: [],
       warnings: [],
     }
+    const artistResult = {
+      ...trackResult,
+      plan: { ...trackResult.plan, sortBy: 'name', direction: 'asc' },
+      explanation: 'Artists in the Road trip playlist.',
+    }
     search
       .mockResolvedValueOnce(trackResult)
+      .mockResolvedValueOnce(artistResult)
       .mockResolvedValueOnce(subscriptionResult)
     const { default: app } = await import('@/app')
     const tracks = await app.request(
       '/api/v1/ai/search',
       jsonRequest({ mediaType: 'track', text: 'Road trip tracks' }),
+    )
+    const artists = await app.request(
+      '/api/v1/ai/search',
+      jsonRequest({ mediaType: 'artist', text: 'Road trip artists' }),
     )
     const videos = await app.request(
       '/api/v1/ai/search',
@@ -209,10 +219,13 @@ describe('AI API', () => {
     )
     expect(tracks.status).toBe(200)
     expect(await tracks.json()).toMatchObject({ data: trackResult })
+    expect(artists.status).toBe(200)
+    expect(await artists.json()).toMatchObject({ data: artistResult })
     expect(videos.status).toBe(200)
     expect(await videos.json()).toMatchObject({ data: subscriptionResult })
     expect(search.mock.calls).toEqual([
       [{ mediaType: 'track', text: 'Road trip tracks' }],
+      [{ mediaType: 'artist', text: 'Road trip artists' }],
       [
         {
           mediaType: 'subscription',

@@ -487,6 +487,78 @@ describe('AI track search', () => {
   )
 })
 
+describe('AI artist search', () => {
+  it('describes the artist fields and distinguishes library counts from listening', () => {
+    const prompt = aiSearchPrompt('artist', now)
+    expect(prompt).toContain('read-only artist library search')
+    expect(prompt).toContain('Use name asc by default')
+    expect(prompt).toContain('"key":"playlist"')
+    expect(prompt).toContain('"key":"albumCount"')
+    expect(prompt).toContain("never plays or an artist's complete discography")
+    expect(prompt).toContain('scrape freshness are not artist search fields')
+    expect(prompt).not.toContain('ratingRymValue')
+  })
+
+  it('applies playlist, tag and library count constraints without loading library data', async () => {
+    const expected = plan({
+      filters: [
+        { field: 'playlist', value: 'Example favorites', mode: 'required' },
+        { field: 'genre', value: 'Rock', mode: 'required' },
+        { field: 'type', value: 'Person', mode: 'exclude' },
+      ],
+      ranges: [{ field: 'albumCount', min: 2, includeMissing: false }],
+      sortBy: 'trackCount',
+      limitResults: 25,
+    })
+    mocks.text.mockResolvedValue(completion(interpretation(expected)))
+    const result = await interpretAiSearch(
+      {
+        mediaType: 'artist',
+        text: 'The 25 rock groups in Example favorites with at least two albums, most tracks first',
+      },
+      now,
+    )
+    expect(result).toMatchObject({ plan: expected, warnings: [] })
+    expect(mocks.text).toHaveBeenCalledExactlyOnceWith([
+      {
+        role: 'system',
+        content: expect.stringContaining('read-only artist library search'),
+      },
+      {
+        role: 'user',
+        content:
+          'The 25 rock groups in Example favorites with at least two albums, most tracks first',
+      },
+    ])
+    expect(mocks.sync).not.toHaveBeenCalled()
+    expect(mocks.database).not.toHaveBeenCalled()
+    expect(mocks.plugins).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    {
+      listening: { match: 'all', rules: [{ period: { kind: 'all' }, max: 0 }] },
+    },
+    { listeningSort: { kind: 'all' } },
+    { sortBy: 'scrobbles' },
+    { sortBy: 'ratingRymValue' },
+    { filters: [{ field: 'album', value: 'Example album' }] },
+    { ranges: [{ field: 'lastScrapedAt', max: 1000, includeMissing: false }] },
+    { ranges: [{ field: 'trackCount', min: -1, includeMissing: false }] },
+  ])(
+    'rejects unsupported artist conditions without applying a partial plan',
+    (overrides) => {
+      const search = AiSearchPlanSchema.parse({
+        ...plan({ sortBy: 'name', direction: 'asc' }),
+        ...overrides,
+      })
+      expect(() => validateAiPlan(search, 'artist')).toThrow(
+        'unsupported search',
+      )
+    },
+  )
+})
+
 const channelId = (letter: string) => `UC${letter.repeat(22)}`
 const channelRows = [
   {

@@ -11,6 +11,7 @@ Keep installation-specific Markdown in ignored `docs/.local/`. Do not publish li
 - Validate external input at the boundary with the project's schemas. Keep route handlers thin: authorize, validate, call a service, return.
 - No type assertions, non-null assertions, TypeScript ignores or expected-error directives, lint suppressions, or weakening types to make code compile. Fix the types or the logic.
 - Use concise, functional interface copy. Preserve user-supplied wording. No slogans, decorative headings, taglines, filler or cute empty states. Add explanatory text only when it helps someone act or understand a real limitation. Follow the [UI guidelines](docs/dev-guidelines-ui.md).
+- Keep library interfaces consistent. Every primary Browse page, including Artists, must use the shared Tracks Browse pattern: Grid/List/Table views, sorting, full autocomplete search with field filters and AI search, filter modes, ranges and URL state. Metadata selection must use that same search control and filter semantics alongside provider freshness filters. Do not substitute a plain text search or secondary table for a primary Browse page. Reuse shared controls and verify parity before finishing.
 - Stay within scope. Do not silently refactor unrelated code, leave debug logging or keep commented-out implementations.
 
 ## Workflow

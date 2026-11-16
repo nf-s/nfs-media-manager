@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { useDeferredValue, useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   useIsMutating,
   useMutation,
@@ -13,14 +13,22 @@ import {
   QueueArtistSelectionSchema,
 } from '@repo/schemas/artist-profiles'
 import {
-  ArtistMetadataPageSchema,
+  ArtistMetadataItemSchema,
   type ArtistProviderMetadata,
 } from '@repo/schemas/creators'
+import { artistBrowseFields } from '@repo/schemas/artist-browse'
+import {
+  BrowseCountSchema,
+  BrowsePageSliceSchema,
+  formatBrowseValue,
+} from '@repo/schemas/browse'
 import { Button } from '@repo/ui/components/ui/button'
-import { Input } from '@repo/ui/components/ui/input'
 import { TableState } from '@repo/ui/components/ui/table'
-import { useVirtualTable } from '@/hooks/useVirtualTable'
+import { useCountedVirtualTable } from '@/hooks/useVirtualTable'
+import { useBrowseFacets } from '@/hooks/useBrowseFacets'
 import { fetchApiData } from '@/utils/api'
+import { aiSearchParams, mediaAiSearchTarget } from '@/utils/ai-search'
+import { withArtistFilter } from '@/utils/artist-browse'
 import {
   artistMetadataQuery,
   dispatchArtistSelection,
@@ -36,6 +44,10 @@ import { useDetailView } from './detail-inspector-context'
 import { updateProviderFreshness } from './film-selection-table'
 import { useConfig } from './providers'
 import { useSourceAvailability, useSourceCatalog } from './provider-sources'
+import AiSearch from './ai-search'
+import { BrowseFilterChips, RangeEditor } from './browse-controls'
+import BrowseFilterPanel from './browse-filter-panel'
+import { FilterButton } from './filter-affordance'
 import {
   SecondaryCell,
   SecondaryColumnFilter,
@@ -57,6 +69,9 @@ const artistColumns = [
 ]
 const providers = ArtistProfileProviderSchema.options
 const queueKey = ['metadata-selection-queue', 'artist']
+const ArtistMetadataSliceSchema = BrowsePageSliceSchema(
+  ArtistMetadataItemSchema,
+)
 
 export function ArtistScrapeState({
   state,
@@ -112,18 +127,25 @@ export default function ArtistMetadataTable() {
   const playlist = useArtistPlaylistFilter(pending)
   const query = artistMetadataQuery(view.params)
   const q = query.q ?? ''
-  const [draft, setDraft] = useState(q)
-  useEffect(() => setDraft(q), [q])
-  const search = useDeferredValue(q)
+  const [draft, setDraft] = useState('')
+  const facets = useBrowseFacets(apiBaseUrl, 'artists', draft, !pending)
   const params = new URLSearchParams({
-    q: search,
+    q,
     sortBy: query.sortBy,
     direction: query.direction,
     freshness: JSON.stringify(query.freshness),
+    filters: JSON.stringify(query.filters),
+    ranges: JSON.stringify(query.ranges),
+    ...(query.limitResults === undefined
+      ? {}
+      : { limitResults: String(query.limitResults) }),
     ...(query.provider ? { provider: query.provider } : {}),
     ...playlist.filters,
   })
   const identity = params.toString()
+  const countParams = new URLSearchParams(params)
+  for (const key of ['sortBy', 'direction', 'provider']) countParams.delete(key)
+  const countIdentity = countParams.toString()
   const catalog = useSourceCatalog()
   const available = (catalog.data ?? []).filter(
     (provider) => ArtistProfileProviderSchema.safeParse(provider.id).success,
@@ -135,14 +157,22 @@ export default function ArtistMetadataTable() {
   const [review, setReview] = useState('')
   const [progress, setProgress] = useState(0)
   const selectAll = useRef<HTMLInputElement>(null)
-  const artists = useVirtualTable({
+  const counted = useCountedVirtualTable({
     queryKey: ['artist-selection', identity],
+    countKey: ['artist-selection', 'count', countIdentity],
+    loadCount: (signal) =>
+      fetchApiData(
+        apiBaseUrl,
+        `/api/v1/artists/metadata/browse-count?${countIdentity}`,
+        BrowseCountSchema,
+        { signal },
+      ),
     pageSize: 50,
     loadPage: (page, size, signal) =>
       fetchApiData(
         apiBaseUrl,
-        `/api/v1/artists/metadata?${identity}&page=${page}&size=${size}`,
-        ArtistMetadataPageSchema,
+        `/api/v1/artists/metadata/browse-page?${identity}&page=${page}&size=${size}`,
+        ArtistMetadataSliceSchema,
         { signal },
       ),
     refetchInterval: (page) =>
@@ -157,6 +187,7 @@ export default function ArtistMetadataTable() {
         ? 3000
         : false,
   })
+  const artists = counted.window
   const columns = useTableColumns('artist-metadata-selection', [
     ...artistColumns,
     ...providers.map((provider) => ({
@@ -231,7 +262,8 @@ export default function ArtistMetadataTable() {
       ]),
   })
 
-  function setParams(updates: Record<string, string>) {
+  function setParams(updates: Record<string, string | null>) {
+    if (pending) return
     const next = new URLSearchParams(view.params)
     for (const [key, value] of Object.entries(updates)) {
       if (value) next.set(key, value)
@@ -255,31 +287,163 @@ export default function ArtistMetadataTable() {
     query.sortBy === 'lastScrapedAt'
       ? `provider-${query.provider}`
       : query.sortBy
+  const activeFilterCount =
+    Number(Boolean(q)) +
+    query.filters.length +
+    query.ranges.length +
+    Number(query.limitResults !== undefined)
+  const activeFilters = (
+    <div className="active-filters">
+      {q && (
+        <FilterButton
+          className="filter-pill"
+          onClick={() => setParams({ q: null })}
+        >
+          Search: {q} ×
+        </FilterButton>
+      )}
+      <BrowseFilterChips
+        filters={query.filters}
+        fields={artistBrowseFields}
+        onChange={(filters) => setParams({ filters: JSON.stringify(filters) })}
+      />
+      {query.ranges.map((range) => {
+        const field = artistBrowseFields.find(
+          (field) => field.key === range.field,
+        )
+        const bound = (value: number | undefined) =>
+          value === undefined
+            ? '*'
+            : field
+              ? formatBrowseValue(field, value)
+              : value
+        return (
+          <FilterButton
+            key={range.field}
+            className="filter-pill"
+            onClick={() =>
+              setParams({
+                ranges: JSON.stringify(
+                  query.ranges.filter((item) => item.field !== range.field),
+                ),
+              })
+            }
+          >
+            {field?.label ?? range.field}: {bound(range.min)} to{' '}
+            {bound(range.max)}
+            {range.includeMissing ? ' + missing' : ''} ×
+          </FilterButton>
+        )
+      })}
+      {query.limitResults !== undefined && (
+        <FilterButton
+          className="filter-pill"
+          onClick={() => setParams({ limitResults: null })}
+        >
+          Limit: {query.limitResults} ×
+        </FilterButton>
+      )}
+      {(activeFilterCount > 0 ||
+        query.playlistIds.length > 0 ||
+        query.freshness.length > 0 ||
+        query.limitResults !== undefined) && (
+        <button
+          type="button"
+          className="clear-filters"
+          onClick={() =>
+            setParams({
+              q: null,
+              filters: null,
+              ranges: null,
+              playlistIds: null,
+              freshness: null,
+              limitResults: null,
+            })
+          }
+        >
+          Clear all
+        </button>
+      )}
+    </div>
+  )
 
   return (
     <>
-      <SecondaryTableToolbar
-        search={
-          <Input
-            type="search"
-            aria-label="Search artists"
-            placeholder="Search artists"
-            maxLength={200}
-            value={draft}
-            disabled={pending}
-            onChange={(event) => {
-              setDraft(event.target.value)
-              setParams({ q: event.target.value })
-            }}
-          />
-        }
-        count={
-          artists.hasTotal
-            ? `${artists.total.toLocaleString()} ${artists.total === 1 ? 'artist' : 'artists'}`
-            : undefined
-        }
-        columns={columns.controls}
-      />
+      <fieldset disabled={pending}>
+        <SecondaryTableToolbar
+          search={
+            <AiSearch
+              target={mediaAiSearchTarget('artist', artistBrowseFields)}
+              queryIdentity={identity}
+              autocomplete={{
+                options: facets.data ?? [],
+                items: [],
+                titlesLoading: facets.isDebouncing || facets.isPending,
+                titlesError: facets.isError,
+                placeholder: 'Search artists, playlists, tags, countries...',
+                value: draft,
+                disabled: pending,
+                onValueChange: setDraft,
+                onAddFilter: (filter) => {
+                  setParams({
+                    filters: JSON.stringify(
+                      withArtistFilter(query.filters, filter),
+                    ),
+                  })
+                  setDraft('')
+                },
+                onApplyText: (value) => {
+                  setParams({ q: value || null })
+                  setDraft('')
+                },
+                onOpenItem: () => {},
+              }}
+              onApply={(plan) => {
+                setParams({
+                  ...aiSearchParams(plan),
+                  playlistIds: null,
+                  provider: null,
+                })
+                setDraft('')
+              }}
+            />
+          }
+          count={
+            counted.countError ? (
+              <button
+                type="button"
+                className="underline"
+                onClick={counted.retryCount}
+              >
+                Retry count
+              </button>
+            ) : !counted.isCounting ? (
+              `${artists.total.toLocaleString()} ${artists.total === 1 ? 'artist' : 'artists'}`
+            ) : (
+              'Counting...'
+            )
+          }
+          columns={
+            <>
+              <BrowseFilterPanel count={activeFilterCount}>
+                {activeFilters}
+                <RangeEditor
+                  presentation="panel"
+                  fields={artistBrowseFields.filter(
+                    (field) => field.filterable,
+                  )}
+                  ranges={query.ranges}
+                  onChange={(ranges) =>
+                    setParams({ ranges: JSON.stringify(ranges) })
+                  }
+                />
+              </BrowseFilterPanel>
+              {columns.controls}
+            </>
+          }
+        />
+        {activeFilters}
+      </fieldset>
       {artists.isError && (
         <p role="alert">
           Could not load artists.{' '}

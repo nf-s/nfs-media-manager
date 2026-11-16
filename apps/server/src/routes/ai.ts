@@ -66,7 +66,7 @@ app.openapi(
     responses: {
       200: {
         description:
-          'Validated search interpretation: a browse plan for album, film and track and a Subscriptions plan for subscription',
+          'Validated search interpretation: a browse plan for album, film, track and artist and a Subscriptions plan for subscription',
         content: {
           'application/json': {
             schema: createResponseSchema(

@@ -11,6 +11,10 @@ const mocks = vi.hoisted(() => ({
   playlists: vi.fn(),
   artists: vi.fn(),
   metadata: vi.fn(),
+  browse: vi.fn(),
+  count: vi.fn(),
+  facets: vi.fn(),
+  metadataBrowse: vi.fn(),
   selection: vi.fn(),
   tracks: vi.fn(),
   people: vi.fn(),
@@ -24,6 +28,12 @@ vi.mock('@/services/artist-enrichment', () => ({
 }))
 vi.mock('@/services/artist-selection', () => ({
   queueArtistSelection: mocks.selection,
+}))
+vi.mock('@/services/artist-browse', () => ({
+  listArtistBrowsePage: mocks.browse,
+  countArtistBrowse: mocks.count,
+  listArtistBrowseFacets: mocks.facets,
+  listArtistMetadataBrowsePage: mocks.metadataBrowse,
 }))
 vi.mock('@/services/creators', () => ({
   getArtist: mocks.artist,
@@ -69,6 +79,12 @@ describe('creator API', () => {
     for (const path of [
       '/artists',
       '/artists/metadata',
+      '/artists/fields',
+      '/artists/facets',
+      '/artists/browse-page',
+      '/artists/browse-count',
+      '/artists/metadata/browse-page',
+      '/artists/metadata/browse-count',
       '/artists/fixture',
       '/artists/fixture/albums',
       '/artists/fixture/tracks',
@@ -117,6 +133,8 @@ describe('creator API', () => {
     expect((await app.request(`/artists/metadata?${params}`)).status).toBe(200)
     expect(mocks.artist).not.toHaveBeenCalled()
     expect(mocks.metadata).toHaveBeenCalledExactlyOnceWith({
+      filters: [],
+      ranges: [],
       playlistIds: ['playlist-a', 'playlist-b'],
       freshness: [{ provider: 'spotify', mode: 'never' }],
       provider: 'spotify',
@@ -125,6 +143,71 @@ describe('creator API', () => {
       page: 1,
       direction: 'asc',
     })
+  })
+
+  it('validates shared artist search and routes split pages before artist IDs', async () => {
+    mocks.browse.mockResolvedValue({
+      items: [],
+      page: 1,
+      size: 50,
+      hasMore: false,
+    })
+    mocks.metadataBrowse.mockResolvedValue({
+      items: [],
+      page: 1,
+      size: 50,
+      hasMore: false,
+    })
+    mocks.count.mockResolvedValue({ totalCount: 0 })
+    mocks.facets.mockResolvedValue([])
+    for (const path of [
+      '/fields',
+      '/facets',
+      '/browse-page',
+      '/browse-count',
+      '/metadata/browse-page',
+      '/metadata/browse-count',
+    ])
+      expect((await app.request('/artists' + path)).status).toBe(200)
+    expect(mocks.artist).not.toHaveBeenCalled()
+    for (const path of [
+      '/browse-page',
+      '/browse-count',
+      '/metadata/browse-page',
+      '/metadata/browse-count',
+    ]) {
+      for (const input of [
+        { filters: [{ field: 'watched', value: 'yes' }] },
+        { ranges: [{ field: 'rating', min: 1 }] },
+        { limitResults: 0 },
+        { sortBy: 'watched' },
+      ]) {
+        const params = new URLSearchParams(
+          Object.entries(input).map(([key, value]) => [
+            key,
+            typeof value === 'object' ? JSON.stringify(value) : String(value),
+          ]),
+        )
+        expect(
+          (await app.request('/artists' + path + '?' + params)).status,
+        ).toBe(422)
+      }
+    }
+    const filters = [
+      { field: 'playlist', value: 'Fixture favorites', mode: 'required' },
+    ]
+    const ranges = [{ field: 'albumCount', min: 2, includeMissing: false }]
+    const params = new URLSearchParams({
+      filters: JSON.stringify(filters),
+      ranges: JSON.stringify(ranges),
+      limitResults: '10',
+    })
+    expect((await app.request('/artists/browse-page?' + params)).status).toBe(
+      200,
+    )
+    expect(mocks.browse).toHaveBeenLastCalledWith(
+      expect.objectContaining({ filters, ranges, limitResults: 10 }),
+    )
   })
 
   it('requires bounded explicit artist and provider selections', async () => {

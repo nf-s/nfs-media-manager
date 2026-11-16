@@ -6,6 +6,7 @@ import {
   type AiSubscriptionPlan,
 } from '@repo/schemas/ai-search'
 import { albumBrowseFields, trackBrowseFields } from '@repo/schemas/browse'
+import { artistBrowseFields } from '@repo/schemas/artist-browse'
 import {
   aiSearchParams,
   aiSubscriptionSearchParams,
@@ -103,6 +104,40 @@ test('track plans use the album URL parameters and clear album-only listening st
     'Required · Playlists: Road trip',
     'Scrobbles: at least 1, at most 10',
     'Sort: Scrobbles, descending',
+  ])
+})
+
+test('artist plans use the shared search parameters and describe every applied condition', () => {
+  const artistPlan = AiSearchPlanSchema.parse({
+    q: '',
+    filters: [
+      { field: 'playlist', value: 'Example favorites', mode: 'required' },
+    ],
+    ranges: [{ field: 'albumCount', min: 2, includeMissing: false }],
+    sortBy: 'trackCount',
+    direction: 'desc',
+    limitResults: 25,
+    listening: null,
+    listeningSort: null,
+  })
+  const target = mediaAiSearchTarget('artist', artistBrowseFields)
+  assert.equal(target.mediaType, 'artist')
+  assert.deepEqual(aiSearchParams(artistPlan), {
+    q: null,
+    filters: JSON.stringify(artistPlan.filters),
+    ranges: JSON.stringify(artistPlan.ranges),
+    listening: null,
+    listeningSort: null,
+    sortBy: 'trackCount',
+    direction: 'desc',
+    limitResults: '25',
+    item: null,
+  })
+  assert.deepEqual(target.describe(artistPlan), [
+    'Required · Playlists: Example favorites',
+    'Albums: at least 2',
+    'Sort: Tracks, descending',
+    'Limit: 25 results',
   ])
 })
 

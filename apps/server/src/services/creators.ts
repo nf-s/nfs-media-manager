@@ -1,13 +1,4 @@
-import {
-  and,
-  asc,
-  count,
-  eq,
-  inArray,
-  sql,
-  type SQL,
-  type SQLWrapper,
-} from 'drizzle-orm'
+import { and, asc, count, eq, inArray, sql, type SQL } from 'drizzle-orm'
 import type {
   ArtistProfile,
   ArtistProviderSnapshot,
@@ -44,7 +35,6 @@ import {
   libraryTrack,
   mediaCredit,
   mediaItem,
-  playlist,
 } from '@/schemas/db'
 import {
   countArtistProfileHistory,
@@ -52,12 +42,17 @@ import {
   listCurrentArtistProfiles,
 } from './artist-profiles'
 import { queryBrowseIds } from './browse'
+import {
+  artistPlaylistMembership,
+  artistArtwork,
+  artistPlaylistCount,
+} from './artist-library'
+import { listArtistBrowsePage, countArtistBrowse } from './artist-browse'
 import { listAlbums, listFilms } from './media'
 import { loadTracks } from './tracks'
 import { listArtistIdentifiers } from './artist-provider-evidence'
 import {
   artistFreshnessConditions,
-  artistLastScrapedAt,
   loadArtistMetadata,
 } from './artist-metadata'
 
@@ -114,77 +109,7 @@ function order(column: SQL, direction: 'asc' | 'desc') {
   return direction === 'asc' ? sql`${column} asc` : sql`${column} desc`
 }
 
-// Match the playlists accessible from the existing playlist workspace.
-const visiblePlaylist = sql`${playlist.kind} = 'playlist' and (
-  ${playlist.source} is not null or exists (
-    select 1 from playlist_item member
-    left join album a on a.media_item_id = member.media_item_id
-    left join library_track t on t.media_item_id = member.media_item_id
-    where member.playlist_id = ${playlist.id}
-      and (a.media_item_id is not null or t.album_media_item_id is not null
-        or exists (select 1 from track entry where entry.track_media_item_id = member.media_item_id))
-  )
-)`
-
-function artistPlaylistCredits(artistId?: string | SQLWrapper) {
-  const selectedArtist =
-    artistId === undefined ? sql`` : sql`and credit.artist_id = ${artistId}`
-  return sql`
-    select credit.artist_id, member.playlist_id, recording.media_item_id, 'track' as kind
-    from media_credit credit
-    join library_track recording on recording.media_item_id = credit.media_item_id
-    join media_item item on item.id = recording.media_item_id
-    join playlist_item member on member.media_item_id = recording.media_item_id
-    where credit.role = 'artist' ${selectedArtist}
-      and item.media_type = 'track' and item.metadata->>'legacyHidden' is distinct from 'true'
-    union all
-    select credit.artist_id, member.playlist_id, release.media_item_id, 'album' as kind
-    from media_credit credit
-    join album release on release.media_item_id = credit.media_item_id
-    join media_item item on item.id = release.media_item_id
-    cross join lateral (
-      select release.media_item_id
-      union all
-      select recording.media_item_id from library_track recording
-      where recording.album_media_item_id = release.media_item_id
-      union all
-      select entry.track_media_item_id from track entry
-      where entry.album_media_item_id = release.media_item_id
-    ) related
-    join playlist_item member on member.media_item_id = related.media_item_id
-    join media_item linked_item on linked_item.id = member.media_item_id
-    where credit.role = 'artist' ${selectedArtist}
-      and item.media_type = 'album' and item.metadata->>'legacyHidden' is distinct from 'true'
-      and linked_item.metadata->>'legacyHidden' is distinct from 'true'`
-}
-
-function artistPlaylistMembership(artistId: string | SQLWrapper) {
-  return db
-    .select({
-      id: playlist.id,
-      name: playlist.name,
-      artworkUrl: playlist.artworkUrl,
-      spotifyUrl: playlist.spotifyUrl,
-      createdAt: playlist.createdAt,
-      albumCount:
-        sql<number>`count(distinct memberships.media_item_id) filter (where memberships.kind = 'album')::int`.as(
-          'album_count',
-        ),
-      trackCount:
-        sql<number>`count(distinct memberships.media_item_id) filter (where memberships.kind = 'track')::int`.as(
-          'track_count',
-        ),
-    })
-    .from(playlist)
-    .innerJoin(
-      sql`(${artistPlaylistCredits(artistId)}) as memberships`,
-      sql`memberships.playlist_id = ${playlist.id}`,
-    )
-    .where(visiblePlaylist)
-    .groupBy(playlist.id)
-}
-
-function artistDirectory(q?: string, id?: string, playlistIds: string[] = []) {
+function artistDirectory(id?: string) {
   return db
     .select({
       ...identityColumns,
@@ -202,164 +127,25 @@ function artistDirectory(q?: string, id?: string, playlistIds: string[] = []) {
     .leftJoin(libraryTrack, eq(libraryTrack.mediaItemId, mediaItem.id))
     .where(
       and(
-        creatorFilter(q, id),
+        creatorFilter(undefined, id),
         eq(mediaCredit.role, 'artist'),
         visible,
         sql`(${isAlbum} or ${isTrack})`,
-        playlistIds.length
-          ? inArray(
-              artist.id,
-              db
-                .select({ artistId: sql<string>`memberships.artist_id` })
-                .from(sql`(${artistPlaylistCredits()}) memberships`)
-                .innerJoin(
-                  playlist,
-                  sql`${playlist.id} = memberships.playlist_id`,
-                )
-                .where(and(visiblePlaylist, inArray(playlist.id, playlistIds))),
-            )
-          : undefined,
       ),
     )
     .groupBy(artist.id)
 }
 
-function artistArtwork(id: SQLWrapper) {
-  return sql<string | null>`(
-    select s.normalized_data->>'artworkUrl'
-    from artist_provider_current_state state
-    join artist_provider_snapshot s on s.id = state.latest_snapshot_id
-    where state.artist_id = ${id} and s.normalized_data->>'artworkUrl' is not null
-    order by s.created_at desc, s.id desc limit 1
-  )`
-}
-
-function artistPlaylistCount(id: SQLWrapper) {
-  return sql<number>`(select count(*)::int from (${artistPlaylistMembership(id)}) memberships)`
-}
-
-/** Sorting by playlist count needs every count, so build them in one pass. */
-function artistPlaylistCounts() {
-  const artistId = sql<string>`memberships.artist_id`
-  return db
-    .select({
-      artistId: artistId.as('artist_id'),
-      count: sql<number>`count(distinct ${playlist.id})::int`.as(
-        'playlist_count',
-      ),
-    })
-    .from(sql`(${artistPlaylistCredits()}) memberships`)
-    .innerJoin(playlist, sql`${playlist.id} = memberships.playlist_id`)
-    .where(visiblePlaylist)
-    .groupBy(artistId)
-}
-
-type ArtistDirectoryColumns = Record<
-  keyof typeof identityColumns | 'albumCount' | 'trackCount',
-  SQLWrapper
->
-
-function artistOrder(
-  source: ArtistDirectoryColumns,
-  query: ArtistQuery | ArtistMetadataQuery,
-  playlistCount: SQLWrapper,
-) {
-  const sortColumns = {
-    name: sql`lower(coalesce(${source.sortName}, ${source.name}))`,
-    createdAt: source.createdAt,
-    albumCount: source.albumCount,
-    trackCount: source.trackCount,
-    playlistCount,
-    lastScrapedAt:
-      'provider' in query && query.provider
-        ? artistLastScrapedAt(source.id, query.provider)
-        : sql`null`,
-  }
-  return [
-    query.sortBy === 'lastScrapedAt'
-      ? query.direction === 'asc'
-        ? sql`${sortColumns.lastScrapedAt} asc nulls first`
-        : sql`${sortColumns.lastScrapedAt} desc nulls last`
-      : order(sql`${sortColumns[query.sortBy]}`, query.direction),
-    sql`lower(${source.name})`,
-    asc(source.id),
-  ]
-}
-
-async function listArtistDirectory(query: ArtistQuery | ArtistMetadataQuery) {
-  const directory = artistDirectory(query.q, undefined, query.playlistIds).as(
-    'directory',
-  )
-  const where =
-    'freshness' in query
-      ? and(...artistFreshnessConditions(directory.id, query.freshness))
-      : undefined
-  const countBeforePaging = query.sortBy === 'playlistCount'
-  const playlistCounts = artistPlaylistCounts().as('playlist_counts')
-  const playlistCount = countBeforePaging
-    ? sql<number>`coalesce(${playlistCounts.count}, 0)`
-    : sql<number>`0::int`
-  const candidates = db
-    .select({
-      id: directory.id,
-      name: directory.name,
-      sortName: directory.sortName,
-      createdAt: directory.createdAt,
-      albumCount: directory.albumCount,
-      trackCount: directory.trackCount,
-      playlistCount: playlistCount.as('playlist_count'),
-    })
-    .from(directory)
-  // Compute the directory page before loading details that do not affect its order.
-  const selected = (
-    countBeforePaging
-      ? candidates.leftJoin(
-          playlistCounts,
-          eq(playlistCounts.artistId, directory.id),
-        )
-      : candidates
-  )
-    .where(where)
-    .orderBy(...artistOrder(directory, query, playlistCount))
-    .limit(query.size)
-    .offset((query.page - 1) * query.size)
-    .as('artist_page')
-  // Drizzle unqualifies column chunks for single-table projections. Keep the
-  // outer alias in the correlated subqueries, whose tables also have an id.
-  const selectedArtistId = sql`"artist_page"."id"`
-  const [[total], rows] = await Promise.all([
-    db.select({ value: count() }).from(directory).where(where),
-    db
-      .select({
-        id: selected.id,
-        name: selected.name,
-        sortName: selected.sortName,
-        createdAt: selected.createdAt,
-        albumCount: selected.albumCount,
-        trackCount: selected.trackCount,
-        playlistCount: countBeforePaging
-          ? selected.playlistCount
-          : artistPlaylistCount(selectedArtistId),
-        artworkUrl: artistArtwork(selectedArtistId),
-      })
-      .from(selected)
-      .orderBy(...artistOrder(selected, query, selected.playlistCount)),
+export async function listArtists(query: ArtistQuery | ArtistMetadataQuery) {
+  const [result, total] = await Promise.all([
+    listArtistBrowsePage(query),
+    countArtistBrowse(query),
   ])
-  return ArtistPageSchema.parse(
-    page(
-      query,
-      total?.value ?? 0,
-      rows.map((row) => ({ ...row, createdAt: row.createdAt.toISOString() })),
-    ),
-  )
-}
-
-export function listArtists(query: ArtistQuery) {
-  return listArtistDirectory(query)
+  return ArtistPageSchema.parse(page(query, total.totalCount, result.items))
 }
 
 export async function listArtistMetadata(query: ArtistMetadataQuery) {
-  const result = await listArtistDirectory(query)
+  const result = await listArtists(query)
   const metadata = await loadArtistMetadata(result.items.map((item) => item.id))
   return ArtistMetadataPageSchema.parse({
     ...result,
@@ -404,7 +190,7 @@ function combineProfiles(providers: ArtistProviderSnapshot[]): ArtistProfile {
 }
 
 export async function getArtist(id: string, query: ArtistDetailQuery = {}) {
-  const directory = artistDirectory(undefined, id).as('directory')
+  const directory = artistDirectory(id).as('directory')
   const artistId = sql`${id}`
   const [summary] = await db
     .select({
@@ -452,7 +238,7 @@ function personDirectory(q?: string, role?: PersonRole, id?: string) {
     .innerJoin(film, eq(film.mediaItemId, mediaItem.id))
     .where(
       and(
-        creatorFilter(q, id),
+        creatorFilter(undefined, id),
         eq(mediaItem.mediaType, 'film'),
         inArray(mediaCredit.role, personRoles),
         visible,
@@ -512,7 +298,7 @@ export async function getPerson(id: string) {
 async function requireCreator(id: string, kind: 'artist' | 'person') {
   const directory =
     kind === 'artist'
-      ? artistDirectory(undefined, id).as('directory')
+      ? artistDirectory(id).as('directory')
       : personDirectory(undefined, undefined, id).as('directory')
   const [row] = await db.select({ id: directory.id }).from(directory)
   if (!row)

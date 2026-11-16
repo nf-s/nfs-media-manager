@@ -8,9 +8,12 @@ import {
   SearchParamsContext,
 } from 'next/dist/shared/lib/hooks-client-context.shared-runtime'
 import { PlaylistSummarySchema } from '@repo/schemas/tracks'
-import { ArtistsWorkspace } from './creators-workspace'
 import { useArtistPlaylistFilter } from './artist-playlist-filter'
 import { ConfigContext } from './providers'
+
+require.extensions['.css'] = (module) => {
+  module.exports = {}
+}
 
 const network = mock.method(globalThis, 'fetch', async () => {
   throw new Error('Network forbidden in artist playlist filter tests')
@@ -162,25 +165,28 @@ test('disabled playlist filters cannot alter a pending selection', () => {
   )
 })
 
-test('artist Browse passes playlist selection through to server pagination', () => {
+test('artist Browse preserves legacy playlist selection in shared browse state', async () => {
+  const { ArtistsWorkspace } = await import('./creators-workspace')
   const playlistIds = JSON.stringify([playlist.id])
-  const params = new URLSearchParams({
-    size: '50',
+  const identity = JSON.stringify({
+    q: '',
+    filters: [],
+    ranges: [],
     sortBy: 'name',
     direction: 'asc',
-    playlistIds,
+    playlistIds: [playlist.id],
   })
   const html = render(
     <ArtistsWorkspace />,
     new URLSearchParams({ playlistIds }).toString(),
     [
       [
-        ['artists', params.toString(), 1],
-        { items: [], totalCount: 0, page: 1, size: 50, pageCount: 0 },
+        ['artists', 'browse', identity, 1],
+        { items: [], totalCount: 0, page: 1, size: 100, hasMore: false },
       ],
     ],
   )
-  assert.match(html, /Filter Playlists/)
-  assert.match(html, /0 results/)
-  assert.match(html, /No matching artists/)
+  assert.match(html, /Playlists: 1 selected/)
+  assert.match(html, /0 artists/)
+  assert.match(html, /No matches/)
 })

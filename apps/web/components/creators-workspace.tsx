@@ -1,94 +1,17 @@
 'use client'
 
-import {
-  ArtistPageSchema,
-  PersonPageSchema,
-  type ArtistSummary,
-  type PersonSummary,
-} from '@repo/schemas/creators'
+import { PersonPageSchema, type PersonSummary } from '@repo/schemas/creators'
 import {
   CreatorLibraryDate,
   CreatorLibraryTable,
   CreatorLibraryTitle,
   type CreatorLibraryColumn,
 } from './creator-library-table'
-import MediaArtwork from './media-artwork'
 import { usePersonRoleFilter } from './person-role-filter'
-import { useArtistPlaylistFilter } from './artist-playlist-filter'
-
-const artistColumns: CreatorLibraryColumn<ArtistSummary>[] = [
-  {
-    key: 'artwork',
-    label: 'Artwork',
-    sortable: false,
-    className: 'w-10',
-    render: (artist) => (
-      <MediaArtwork
-        src={artist.artworkUrl}
-        alt=""
-        fallbackLabel=""
-        containerClassName="size-6 rounded"
-        imageClassName="size-6 object-cover"
-        fallbackClassName="size-6"
-      />
-    ),
-  },
-  {
-    key: 'name',
-    label: 'Artist',
-    required: true,
-    render: (artist) => (
-      <CreatorLibraryTitle kind="artist" id={artist.id} title={artist.name} />
-    ),
-  },
-  {
-    key: 'albumCount',
-    label: 'Albums',
-    className: 'numeric',
-    render: (artist) => artist.albumCount.toLocaleString(),
-  },
-  {
-    key: 'trackCount',
-    label: 'Tracks',
-    className: 'numeric',
-    render: (artist) => artist.trackCount.toLocaleString(),
-  },
-  {
-    key: 'playlistCount',
-    label: 'Playlists',
-    className: 'numeric',
-    render: (artist) => artist.playlistCount.toLocaleString(),
-  },
-  {
-    key: 'createdAt',
-    label: 'Added',
-    defaultVisible: false,
-    render: (artist) => <CreatorLibraryDate value={artist.createdAt} />,
-  },
-]
+import ArtistBrowser from './artist-browser'
 
 export function ArtistsWorkspace() {
-  const playlists = useArtistPlaylistFilter()
-  return (
-    <section className="admin-page table-workspace">
-      <h1>Artists</h1>
-      <CreatorLibraryTable
-        workspace
-        kind="artist"
-        queryKey={['artists']}
-        path="/api/v1/artists"
-        schema={ArtistPageSchema}
-        columns={artistColumns.map((column) =>
-          column.key === 'playlistCount'
-            ? { ...column, filter: playlists.control }
-            : column,
-        )}
-        label="artists"
-        defaultSort={{ key: 'name', direction: 'asc' }}
-        filters={playlists.filters}
-      />
-    </section>
-  )
+  return <ArtistBrowser />
 }
 
 export function PeopleWorkspace() {

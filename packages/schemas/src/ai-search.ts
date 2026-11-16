@@ -24,8 +24,8 @@ export const AI_AUDIO_MAX_SECONDS = 60
 /** A subscription plan names at most this many channels and podcasts. */
 export const AI_SUBSCRIPTION_MAX_SOURCES = 50
 
-/** Libraries whose search is a media-item browse plan. */
-export const AiMediaLibrarySchema = z.enum(['album', 'film', 'track'])
+/** Libraries whose search uses the shared browse plan. */
+export const AiMediaLibrarySchema = z.enum(['album', 'film', 'track', 'artist'])
 export type AiMediaLibrary = z.infer<typeof AiMediaLibrarySchema>
 /**
  * `subscription` searches stored videos and podcast episodes and returns an

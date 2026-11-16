@@ -13,15 +13,43 @@ test('an invalid saved artist sort does not discard valid search or filters', ()
     sortBy: 'lastScrapedAt',
     freshness: JSON.stringify(freshness),
     playlistIds: '["fixture-playlist"]',
+    filters:
+      '[{"field":"playlist","value":"Fixture favourites","mode":"required"}]',
+    ranges: '[{"field":"trackCount","min":2,"includeMissing":false}]',
+    limitResults: '25',
   })
   const query = artistMetadataQuery(params)
   assert.equal(query.sortBy, 'name')
   assert.equal(query.q, 'Fixture artist')
   assert.deepEqual(query.freshness, freshness)
   assert.deepEqual(query.playlistIds, ['fixture-playlist'])
+  assert.deepEqual(query.filters, [
+    { field: 'playlist', value: 'Fixture favourites', mode: 'required' },
+  ])
+  assert.deepEqual(query.ranges, [
+    { field: 'trackCount', min: 2, includeMissing: false },
+  ])
+  assert.equal(query.limitResults, 25)
   params.set('q', 'Changed artist')
   params.set('provider', 'invalid')
   assert.equal(artistMetadataQuery(params).q, 'Changed artist')
+})
+
+test('invalid artist browse fields do not erase valid freshness and playlist selection', () => {
+  const query = artistMetadataQuery(
+    new URLSearchParams({
+      filters: '{invalid',
+      ranges: 'invalid',
+      limitResults: '-1',
+      freshness: '[{"provider":"spotify","mode":"never"}]',
+      playlistIds: '["fixture-playlist"]',
+    }),
+  )
+  assert.deepEqual(query.filters, [])
+  assert.deepEqual(query.ranges, [])
+  assert.equal(query.limitResults, undefined)
+  assert.deepEqual(query.freshness, [{ provider: 'spotify', mode: 'never' }])
+  assert.deepEqual(query.playlistIds, ['fixture-playlist'])
 })
 
 const job = JobSchema.parse({
