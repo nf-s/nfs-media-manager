@@ -724,7 +724,9 @@ export default function TrackBrowser() {
             <div className="virtual-browse-error">
               <div role="alert" className="virtual-browse-error-message">
                 Could not load this section.{' '}
-                <Button onClick={query.retry}>Retry</Button>
+                <Button size="md" variant="primary" onClick={query.retry}>
+                  Retry
+                </Button>
               </div>
             </div>
           )}

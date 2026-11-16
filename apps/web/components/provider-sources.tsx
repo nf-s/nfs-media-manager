@@ -236,7 +236,7 @@ function SourceHistory({
           aria-busy={history.isFetching}
         >
           <table
-            className="compact-table"
+            className="ds-table"
             aria-label="Snapshots"
             aria-rowcount={history.hasTotal ? history.total + 1 : undefined}
           >
@@ -469,7 +469,7 @@ export function ProviderSources({
       />
       <SecondaryTableFrame>
         <SecondaryTableScroll role="region" aria-label="Sources">
-          <table className="compact-table" aria-label="Sources">
+          <table className="ds-table" aria-label="Sources">
             <thead>
               <tr>
                 {refreshable && (
@@ -583,7 +583,6 @@ export function ProviderSources({
                         {row.editor && (
                           <Button
                             type="button"
-                            size="sm"
                             variant="ghost"
                             className="size-7 p-0"
                             title={`Edit ${row.label} identifier`}
@@ -607,7 +606,6 @@ export function ProviderSources({
                         {(scope || row.details) && (
                           <Button
                             type="button"
-                            size="sm"
                             variant="ghost"
                             className="size-7 p-0"
                             title={`${row.label} ${scope ? 'history' : 'details'}`}
@@ -640,8 +638,6 @@ export function ProviderSources({
           <SecondaryTableFooter selectedCount={checked.length || undefined}>
             <Button
               type="button"
-              size="sm"
-              variant="outline"
               disabled={!targets.length || refresh.isPending}
               onClick={() => refresh.mutate(targets)}
             >

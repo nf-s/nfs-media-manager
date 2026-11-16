@@ -125,7 +125,7 @@ test('job history uses the shared table loading row inside a bounded scroll regi
   const html = renderHistory()
   assert.match(
     html,
-    /class="table-scroll table-scroll-bounded secondary-table-scroll"/,
+    /class="ds-table-wrap table-scroll table-scroll-bounded secondary-table-scroll"/,
   )
   assert.match(
     html,

@@ -435,7 +435,7 @@ export function PlaylistSyncPanel({ playlist }: { playlist: PlaylistSummary }) {
           </select>
         </label>
         <Button
-          size="sm"
+          variant="primary"
           disabled={!request || active || queue.isPending}
           onClick={() => request && queue.mutate(request)}
         >
@@ -544,7 +544,9 @@ export default function PlaylistDetailView({
     return (
       <p role="alert">
         {errorMessage(summary.error, 'Could not load this playlist.')}{' '}
-        <Button onClick={() => summary.refetch()}>Retry</Button>
+        <Button size="md" variant="primary" onClick={() => summary.refetch()}>
+          Retry
+        </Button>
       </p>
     )
   const playlist = summary.data
@@ -595,22 +597,18 @@ export default function PlaylistDetailView({
               presentation={presentation}
             />
             {filterTracks ? (
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => filterTracks(playlist)}
-              >
+              <Button onClick={() => filterTracks(playlist)}>
                 Filter tracks
               </Button>
             ) : (
-              <Button asChild size="sm" variant="outline">
+              <Button asChild>
                 <Link href={playlistTracksHref(playlist.name)}>
                   Filter tracks
                 </Link>
               </Button>
             )}
             {playlist.albumCount > 0 && (
-              <Button asChild size="sm" variant="outline">
+              <Button asChild>
                 <Link href={playlistAlbumsHref(playlist.name)}>
                   Filter albums
                 </Link>

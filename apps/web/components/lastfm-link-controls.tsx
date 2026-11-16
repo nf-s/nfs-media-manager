@@ -95,12 +95,7 @@ export function AlbumPicker({
         <ul className="grid gap-1">
           {albums.data.items.map((album) => (
             <li key={album.id} className="flex items-center gap-2">
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={disabled}
-                onClick={() => onPick(album.id)}
-              >
+              <Button disabled={disabled} onClick={() => onPick(album.id)}>
                 Link
               </Button>
               <span>
@@ -169,8 +164,6 @@ export function ScrobbledNamePicker({
                 className="flex items-center gap-2"
               >
                 <Button
-                  size="sm"
-                  variant="outline"
                   disabled={disabled || albumName === null}
                   onClick={() => {
                     if (albumName !== null)

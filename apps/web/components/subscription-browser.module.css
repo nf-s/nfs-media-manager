@@ -50,7 +50,7 @@
   aspect-ratio: 16 / 9;
   overflow: hidden;
   border-radius: 6px;
-  background: #e2e6ec;
+  background: var(--ds-chip);
 }
 
 .fill {
@@ -78,7 +78,7 @@
   padding: 0 4px;
   border-radius: 4px;
   background: var(--glass-dark);
-  color: #fff;
+  color: var(--ds-on-inverse);
   font-size: 11px;
   font-weight: 600;
   line-height: 17px;
@@ -108,7 +108,7 @@
 }
 
 .card[data-selected='true'] .thumb {
-  box-shadow: 0 0 0 2px #334155;
+  box-shadow: 0 0 0 2px var(--ds-accent);
 }
 
 .listRow:global(.list-row) {
@@ -200,7 +200,7 @@
 
 .meta {
   overflow: hidden;
-  color: #667080;
+  color: var(--ds-ink-3);
   font-size: 11px;
   line-height: 14px;
   text-overflow: ellipsis;

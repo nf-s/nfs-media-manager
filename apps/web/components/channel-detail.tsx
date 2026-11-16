@@ -115,7 +115,7 @@ export function ChannelDetail({ id }: { id: string }) {
           </p>
         )}
         <div className="form-actions mt-2">
-          <Button asChild variant="outline" size="sm">
+          <Button asChild>
             <Link href={subscriptionSourceHref(source.id)}>
               Filter subscriptions
             </Link>

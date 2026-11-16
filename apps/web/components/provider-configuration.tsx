@@ -100,7 +100,12 @@ function RequestBudgetForm({ provider }: { provider: ProviderSummary }) {
             }}
           />
         </label>
-        <Button type="submit" disabled={update.isPending || !parsed.success}>
+        <Button
+          size="md"
+          variant="primary"
+          type="submit"
+          disabled={update.isPending || !parsed.success}
+        >
           {update.isPending ? 'Saving...' : 'Update budget'}
         </Button>
       </div>

@@ -81,6 +81,7 @@ export default function BrowseToolbar<Key extends string>({
           </select>
           {sort.direction && (
             <Button
+              size="md"
               type="button"
               variant="ghost"
               className="browse-sort-direction"

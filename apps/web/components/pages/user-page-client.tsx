@@ -85,10 +85,10 @@ function CreatedKeyDetails({
         />
       </label>
       <div className="flex flex-wrap items-center gap-2">
-        <Button size="sm" type="button" onClick={() => void copy()}>
+        <Button variant="primary" type="button" onClick={() => void copy()}>
           {created.instructions ? 'Copy agent instructions' : 'Copy API key'}
         </Button>
-        <Button size="sm" variant="outline" type="button" onClick={onDone}>
+        <Button type="button" onClick={onDone}>
           Done
         </Button>
         {copyStatus && <span role="status">{copyStatus}</span>}
@@ -191,7 +191,7 @@ export default function UserPageClient() {
     <section className="admin-page grid min-w-0 gap-4" aria-label="User">
       <header className="flex flex-wrap items-center justify-between gap-2">
         <h1>User</h1>
-        <Button asChild size="sm" variant="outline">
+        <Button asChild>
           <ExternalLink href={`${apiBaseUrl}/api/v1/scalar`}>
             API documentation
           </ExternalLink>
@@ -204,7 +204,7 @@ export default function UserPageClient() {
         </p>
         <div className="flex flex-wrap items-center gap-3">
           <Button
-            size="sm"
+            variant="primary"
             type="button"
             disabled={creating}
             onClick={() => create.mutate('agent')}
@@ -271,7 +271,12 @@ export default function UserPageClient() {
               <option value="never">Never</option>
             </select>
           </label>
-          <Button type="submit" disabled={creating || !name.trim()}>
+          <Button
+            size="md"
+            variant="primary"
+            type="submit"
+            disabled={creating || !name.trim()}
+          >
             {create.isPending && create.variables === 'manual'
               ? 'Creating...'
               : 'Create key'}
@@ -372,8 +377,6 @@ export default function UserPageClient() {
               render: (key) => (
                 <Button
                   type="button"
-                  size="sm"
-                  variant="outline"
                   disabled={!key.enabled || revoke.isPending}
                   aria-label={`Revoke ${key.name}`}
                   onClick={() => revoke.mutate(key.id)}

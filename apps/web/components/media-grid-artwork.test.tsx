@@ -8,7 +8,7 @@ import { BrowseTagBadges } from './browse-controls'
 
 test('all artwork tags render as keyboard-accessible badges in a bounded strip', () => {
   const css = readFileSync(
-    new URL('../../../packages/ui/src/globals.css', import.meta.url),
+    new URL('../../../packages/ui/src/styles/legacy.css', import.meta.url),
     'utf8',
   )
   const tags = ['Tag one', 'Tag two', 'Tag three', 'Tag four', 'Tag five']
@@ -90,10 +90,25 @@ test('grid fallback text has small-text contrast on an opaque surface without gr
     new URL('./media-browser.module.css', import.meta.url),
     'utf8',
   )
+  const tokens = readFileSync(
+    new URL(
+      '../../../packages/ui/src/design-system/tokens.css',
+      import.meta.url,
+    ),
+    'utf8',
+  )
+  const token = (name: string | undefined) =>
+    name
+      ? new RegExp(`${name}:\\s*#([a-f0-9]{6});`, 'i').exec(tokens)?.[1]
+      : undefined
   const fallback = /\.grid \.fallback\s*\{([^}]+)\}/.exec(css)?.[1]
   assert.ok(fallback)
-  const foreground = /(?:^|;)\s*color:\s*#([a-f0-9]{6});/i.exec(fallback)?.[1]
-  const background = /background:\s*#([a-f0-9]{6});/i.exec(fallback)?.[1]
+  const foreground = token(
+    /(?:^|;)\s*color:\s*var\((--ds-[a-z0-9-]+)\);/i.exec(fallback)?.[1],
+  )
+  const background = token(
+    /background:\s*var\((--ds-[a-z0-9-]+)\);/i.exec(fallback)?.[1],
+  )
   assert.ok(foreground)
   assert.ok(background)
   const ratio = (luminance(background) + 0.05) / (luminance(foreground) + 0.05)

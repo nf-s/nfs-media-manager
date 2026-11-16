@@ -2,6 +2,10 @@ import * as React from 'react'
 import * as TabsPrimitive from '@radix-ui/react-tabs'
 import { cn } from '../../lib/utils'
 
+/**
+ * Underlined tabs switch panels. To switch how one panel is shown (view,
+ * range), use `Segmented` from `../ds/segmented` instead.
+ */
 export const Tabs = TabsPrimitive.Root
 
 export const TabsList = React.forwardRef<
@@ -10,10 +14,7 @@ export const TabsList = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <TabsPrimitive.List
     ref={ref}
-    className={cn(
-      'inline-flex h-9 items-center justify-center rounded-md border-transparent bg-[hsl(var(--secondary))] p-0.5',
-      className,
-    )}
+    className={cn('ds-tabs', className)}
     {...props}
   />
 ))
@@ -25,10 +26,7 @@ export const TabsTrigger = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <TabsPrimitive.Trigger
     ref={ref}
-    className={cn(
-      'inline-flex items-center justify-center whitespace-nowrap rounded-md px-3 py-1.5 text-sm font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))] data-[state=active]:bg-white data-[state=active]:text-[hsl(var(--foreground))] data-[state=active]:shadow-none',
-      className,
-    )}
+    className={cn('ds-tab', className)}
     {...props}
   />
 ))
@@ -40,7 +38,7 @@ export const TabsContent = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <TabsPrimitive.Content
     ref={ref}
-    className={cn('mt-6 focus-visible:outline-none', className)}
+    className={cn('ds-tabpanel', className)}
     {...props}
   />
 ))

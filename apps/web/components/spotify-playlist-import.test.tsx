@@ -172,7 +172,7 @@ test('playlist import asks to reconnect when the connection lacks playlist acces
   const html = render([[['spotify-account'], { ...account, playlists: false }]])
   assert.match(html, /does not include playlist access/)
   assert.match(html, /Reconnect Spotify/)
-  assert.doesNotMatch(html, /List playlists|Liked Songs|compact-table/)
+  assert.doesNotMatch(html, /List playlists|Liked Songs|ds-table/)
 })
 
 test('the stored list renders in the shared table without a listing request', () => {
@@ -183,12 +183,9 @@ test('the stored list renders in the shared table without a listing request', ()
   ])
   assert.match(
     html,
-    /class="table-scroll tags-scroll secondary-table-scroll" role="region" aria-label="Spotify playlists"/,
+    /class="ds-table-wrap table-scroll tags-scroll secondary-table-scroll" role="region" aria-label="Spotify playlists"/,
   )
-  assert.match(
-    html,
-    /<table class="compact-table" aria-label="Spotify playlists"/,
-  )
+  assert.match(html, /<table class="ds-table" aria-label="Spotify playlists"/)
   assert.equal((html.match(/<table/g) ?? []).length, 1)
   assert.match(html, /film-import-workflow table-workspace/)
   assert.match(html, />List again</)
@@ -501,7 +498,7 @@ test('playlist import places filters in headers and selected actions in the atta
     'aria-label="Select all importable playlists"',
     'aria-label="Filter Import status"',
     '</table>',
-    'class="secondary-table-footer"',
+    'class="ds-selectbar secondary-table-footer"',
     '>Import selected<',
   ].map((text) => html.indexOf(text))
   assert.ok(positions.every((position) => position >= 0))

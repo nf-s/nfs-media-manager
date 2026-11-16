@@ -241,7 +241,6 @@ export function PlayerConnections() {
           <Button
             type="button"
             variant="ghost"
-            size="sm"
             disabled={playbackOff.isPending}
             onClick={() => playbackOff.mutate()}
           >
@@ -265,7 +264,6 @@ export function PlayerConnections() {
             <Button
               type="button"
               variant="ghost"
-              size="sm"
               disabled={disconnect.isPending}
               onClick={() => disconnect.mutate()}
             >
@@ -274,8 +272,8 @@ export function PlayerConnections() {
           )}
           {status?.configured && !status.connected && (
             <Button
+              variant="primary"
               type="button"
-              size="sm"
               disabled={connect.isPending}
               onClick={() => connect.mutate()}
             >
@@ -332,8 +330,8 @@ export function ConnectPrompt({ configured }: { configured: boolean }) {
         <div className="player-tools">
           {configured ? (
             <Button
+              variant="primary"
               type="button"
-              size="sm"
               disabled={connect.isPending}
               onClick={() => connect.mutate()}
             >
@@ -374,8 +372,8 @@ export function PlayerPromptRestore() {
     return null
   return (
     <Button
+      size="md"
       type="button"
-      variant="outline"
       className="gap-1.5"
       aria-label="Show player"
       title="Show player"

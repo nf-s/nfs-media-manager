@@ -282,12 +282,12 @@ export function ArtistDetail({ id }: { id: string }) {
             />
           </h1>
           <div className="form-actions mt-2">
-            <Button asChild size="sm" variant="outline">
+            <Button asChild>
               <Link href={artistBrowseHref('albums', artist.id)}>
                 Filter albums
               </Link>
             </Button>
-            <Button asChild size="sm" variant="outline">
+            <Button asChild>
               <Link href={artistBrowseHref('tracks', artist.id)}>
                 Filter tracks
               </Link>

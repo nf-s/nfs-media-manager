@@ -153,7 +153,6 @@ export default function JobActivity() {
       <Button
         type="button"
         variant="ghost"
-        size="sm"
         ref={trigger}
         popoverTarget={id}
         aria-label={`Job activity: ${summary}`}
@@ -215,7 +214,6 @@ export default function JobActivity() {
           <Button
             type="button"
             variant="ghost"
-            size="sm"
             onClick={close}
             aria-label="Close job activity"
           >

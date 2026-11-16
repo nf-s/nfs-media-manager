@@ -83,7 +83,7 @@ export function IdentifierRow({
         onChange={(event) => setValue(event.target.value)}
       />
       <Button
-        variant="outline"
+        size="md"
         type="submit"
         disabled={
           !value.trim() || value.trim() === current || mutation.isPending

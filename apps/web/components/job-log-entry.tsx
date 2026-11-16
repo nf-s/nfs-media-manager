@@ -174,7 +174,7 @@ export function JobLogEntry({
               </p>
             )}
             <Button
-              variant="outline"
+              size="md"
               disabled={review.isPending}
               onClick={() =>
                 confirming ? review.mutate() : setConfirming(true)
@@ -188,6 +188,7 @@ export function JobLogEntry({
             </Button>
             {confirming && (
               <Button
+                size="md"
                 variant="ghost"
                 disabled={review.isPending}
                 onClick={() => setConfirming(false)}

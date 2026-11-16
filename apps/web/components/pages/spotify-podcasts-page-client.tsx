@@ -66,7 +66,8 @@ export function SpotifyPodcastAccount() {
         <div className="form-actions">
           {status.connected && <span>Connected.</span>}
           <Button
-            variant={status.connected ? 'outline' : 'default'}
+            size="md"
+            variant={status.connected ? 'default' : 'primary'}
             disabled={!status.configured || authorize.isPending}
             onClick={() => authorize.mutate()}
           >

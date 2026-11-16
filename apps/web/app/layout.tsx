@@ -52,10 +52,8 @@ export default async function RootLayout({
   children: React.ReactNode
 }) {
   return (
-    <html lang="en">
-      <body
-        className={`${plexSans.variable} ${plexMono.variable} min-h-screen font-[family-name:var(--font-plex-sans)]`}
-      >
+    <html lang="en" className={`${plexSans.variable} ${plexMono.variable}`}>
+      <body className="ds min-h-screen">
         <Providers appUrl={env.APP_URL ?? ''} apiBaseUrl={getApiBaseUrl()}>
           {children}
         </Providers>

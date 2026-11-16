@@ -273,6 +273,7 @@ export default function AiSearch<Plan>({
             />
           ) : (
             <Button
+              size="md"
               type="button"
               variant="ghost"
               className="icon-button"
@@ -296,6 +297,7 @@ export default function AiSearch<Plan>({
           )}
           {recording || working ? (
             <Button
+              size="md"
               type="button"
               variant="ghost"
               className="icon-button"
@@ -328,6 +330,7 @@ export default function AiSearch<Plan>({
                   <div role="alert">
                     <p>Could not check AI availability.</p>
                     <Button
+                      size="md"
                       type="button"
                       variant="ghost"
                       onClick={() => void status.refetch()}

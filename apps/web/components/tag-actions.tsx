@@ -94,16 +94,12 @@ export default function TagActions({
     <div className="space-y-2" aria-label="Tag management">
       <div className="flex flex-wrap items-center gap-2">
         <Button
-          size="sm"
-          variant="outline"
           disabled={pending || !mediaType || !tags.some((tag) => !tag.hidden)}
           onClick={() => visibility.mutate(true)}
         >
           Hide
         </Button>
         <Button
-          size="sm"
-          variant="outline"
           disabled={pending || !mediaType || !tags.some((tag) => tag.hidden)}
           onClick={() => visibility.mutate(false)}
         >
@@ -130,7 +126,7 @@ export default function TagActions({
               ))}
             </select>
             <Button
-              size="sm"
+              variant="primary"
               disabled={!target || !mediaType || tags.length > 101 || pending}
               onClick={() => setConfirming(true)}
             >
@@ -160,15 +156,14 @@ export default function TagActions({
               'The merged tag will stay hidden until explicitly unhidden.'}
           </p>
           <div className="flex gap-2">
-            <Button size="sm" disabled={pending} onClick={() => merge.mutate()}>
+            <Button
+              variant="primary"
+              disabled={pending}
+              onClick={() => merge.mutate()}
+            >
               {merge.isPending ? 'Merging...' : 'Confirm merge'}
             </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={pending}
-              onClick={() => setConfirming(false)}
-            >
+            <Button disabled={pending} onClick={() => setConfirming(false)}>
               Cancel
             </Button>
           </div>

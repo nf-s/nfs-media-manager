@@ -159,7 +159,8 @@ export default function FilmImportWorkflow({
       {showSourcePicker && (
         <div className="import-kind" role="group" aria-label="Import source">
           <Button
-            variant={kind === 'csv' ? 'default' : 'outline'}
+            size="md"
+            variant={kind === 'csv' ? 'primary' : 'default'}
             disabled={busy}
             onClick={() => {
               setKind('csv')
@@ -169,7 +170,8 @@ export default function FilmImportWorkflow({
             Import CSV
           </Button>
           <Button
-            variant={kind === 'nfo' ? 'default' : 'outline'}
+            size="md"
+            variant={kind === 'nfo' ? 'primary' : 'default'}
             disabled={busy}
             onClick={() => {
               setKind('nfo')
@@ -240,6 +242,8 @@ export default function FilmImportWorkflow({
             <code>{source.data?.path ?? 'Not configured'}</code>
           </div>
           <Button
+            size="md"
+            variant="primary"
             disabled={busy || !source.data?.available}
             onClick={() => {
               reset()
@@ -324,6 +328,8 @@ export default function FilmImportWorkflow({
                       </label>
                     )}
                     <Button
+                      size="md"
+                      variant="primary"
                       disabled={
                         busy ||
                         start.isSuccess ||

@@ -126,7 +126,7 @@ export default function TagsPageClient({
           role="region"
           aria-label="Tags table"
         >
-          <table className="compact-table w-full secondary-virtual-table">
+          <table className="ds-table w-full secondary-virtual-table">
             <thead>
               <tr>
                 <th scope="col" className="table-selection-cell">
@@ -279,7 +279,6 @@ export default function TagsPageClient({
                     {columns.visible('actions') && (
                       <td className="text-right">
                         <Button
-                          size="sm"
                           variant="ghost"
                           className="size-6 p-0"
                           onClick={() => updateParams('tag', tag.id)}

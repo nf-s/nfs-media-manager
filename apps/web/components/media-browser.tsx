@@ -781,12 +781,7 @@ export default function MediaBrowser({
         <BrowseToolbar
           actions={
             <>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => setAdding(true)}
-              >
+              <Button type="button" onClick={() => setAdding(true)}>
                 Add {mediaType}
               </Button>
               {mediaType === 'film' && (
@@ -1062,7 +1057,9 @@ export default function MediaBrowser({
             <div className="virtual-browse-error">
               <div role="alert" className="virtual-browse-error-message">
                 Could not load this section.{' '}
-                <Button onClick={query.retry}>Retry</Button>
+                <Button size="md" variant="primary" onClick={query.retry}>
+                  Retry
+                </Button>
               </div>
             </div>
           )}

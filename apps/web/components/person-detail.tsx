@@ -55,7 +55,7 @@ export function PersonDetail({ id }: { id: string }) {
         )}
         <div className="form-actions mt-2">
           {person.roles.map((role) => (
-            <Button key={role} asChild size="sm" variant="outline">
+            <Button key={role} asChild>
               <Link href={personFilmsHref(person.id, role)}>
                 Filter films as {role}
               </Link>

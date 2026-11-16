@@ -125,11 +125,11 @@ test('the table view uses the compact shared table and virtual placeholder rows'
     await import('./subscription-browser')
   const search = 'view=table&columns=title,source,type,publishedAt,durationSec'
   const html = render(<SubscriptionBrowser />, browseData(search, 250), search)
-  assert.match(html, /class="table-scroll browse-scroll"[^>]*data-view="table"/)
   assert.match(
     html,
-    /<table class="compact-table[^"]*" aria-label="Subscriptions"/,
+    /class="ds-table-wrap table-scroll browse-scroll"[^>]*data-view="table"/,
   )
+  assert.match(html, /<table class="ds-table[^"]*" aria-label="Subscriptions"/)
   assert.equal((html.match(/<table/g) ?? []).length, 1)
   assert.match(
     html,
@@ -299,12 +299,12 @@ test('the channels list links names to details and counts to filtered Browse', a
   )
   assert.match(
     html,
-    /class="table-scroll tags-scroll min-h-0 flex-1 secondary-table-scroll"/,
+    /class="ds-table-wrap table-scroll tags-scroll min-h-0 flex-1 secondary-table-scroll"/,
   )
-  assert.match(html, /<table class="compact-table"/)
+  assert.match(html, /<table class="ds-table"/)
   assert.match(
     html,
-    /aria-sort="ascending"><div class="secondary-table-heading"><button[^>]*title="Sort by Name">Name<span aria-hidden="true"> ↑/,
+    /aria-sort="ascending"><div class="secondary-table-heading"><button[^>]*title="Sort by Name">Name<svg/,
   )
   assert.match(html, /<td>YouTube<\/td>/)
   assert.match(html, /<td>Podcast<\/td>/)

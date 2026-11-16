@@ -431,7 +431,7 @@ function SelectionTable({ providers, mediaType = 'film' }: Props) {
           aria-busy={films.isFetching}
         >
           <table
-            className="compact-table film-selection-table"
+            className="ds-table film-selection-table"
             style={{
               tableLayout: 'fixed',
               width: '100%',
@@ -510,6 +510,7 @@ function SelectionTable({ providers, mediaType = 'film' }: Props) {
                             (range) => range.field === field.key,
                           ) && (
                             <Button
+                              size="md"
                               type="button"
                               variant="ghost"
                               onClick={() => {
@@ -741,8 +742,8 @@ function SelectionTable({ providers, mediaType = 'film' }: Props) {
             <div className="job-selection-toolbar">
               {!broadConfirmed && (
                 <Button
+                  variant="primary"
                   type="button"
-                  size="sm"
                   disabled={
                     queue.isPending ||
                     !selected.length ||
@@ -775,8 +776,8 @@ function SelectionTable({ providers, mediaType = 'film' }: Props) {
                   </p>
                   <div className="flex items-center gap-2">
                     <Button
+                      variant="primary"
                       type="button"
-                      size="sm"
                       disabled={queue.isPending}
                       onClick={() => queue.mutate()}
                     >
@@ -786,7 +787,6 @@ function SelectionTable({ providers, mediaType = 'film' }: Props) {
                     </Button>
                     <Button
                       type="button"
-                      size="sm"
                       variant="ghost"
                       disabled={queue.isPending}
                       onClick={() => setConfirmed(false)}

@@ -28,10 +28,7 @@ export function CreatorDetailState({
     )
   return (
     <p className="browse-empty" role="alert">
-      Could not load this {subject}.{' '}
-      <Button size="sm" variant="outline" onClick={retry}>
-        Retry
-      </Button>
+      Could not load this {subject}. <Button onClick={retry}>Retry</Button>
     </p>
   )
 }

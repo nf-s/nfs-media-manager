@@ -211,7 +211,7 @@ export function LastfmTrackMatchList() {
         aria-label="Last.fm tracks to match"
         aria-busy={tracks.isFetching}
       >
-        <table className="compact-table" aria-label="Last.fm tracks to match">
+        <table className="ds-table" aria-label="Last.fm tracks to match">
           <TableHeader>
             <TableRow>
               {matchColumns
@@ -309,8 +309,6 @@ export function LastfmTrackMatchList() {
                     <TableCell>
                       {canMergeLastfmTrack(track) ? (
                         <Button
-                          size="sm"
-                          variant="outline"
                           className="secondary-cell-action"
                           aria-label={`Match ${track.title}`}
                           title={`Match ${track.title}`}
@@ -382,7 +380,7 @@ export default function LastfmTrackMatches() {
       ) : !counts.data ? (
         <p role="alert">
           Could not load track matches.{' '}
-          <Button variant="ghost" size="sm" onClick={() => counts.refetch()}>
+          <Button variant="ghost" onClick={() => counts.refetch()}>
             Retry
           </Button>
         </p>
@@ -414,8 +412,6 @@ export default function LastfmTrackMatches() {
       </p>
       <div className="form-actions">
         <Button
-          variant="outline"
-          size="sm"
           disabled={
             !status.data?.configured ||
             !status.data.storedScrobbles ||

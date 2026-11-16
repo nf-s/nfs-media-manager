@@ -446,7 +446,7 @@ export function TrackEntriesTable({
           data-inspector-scroll=""
         >
           <table
-            className="compact-table"
+            className="ds-table"
             aria-label={labels.table}
             aria-rowcount={pending ? undefined : window.total + 1}
           >

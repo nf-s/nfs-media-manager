@@ -659,6 +659,8 @@ export default function SpotifyPlaylistImport() {
           )}
           <div className="form-actions">
             <Button
+              size="md"
+              variant="primary"
               disabled={!status.configured || authorize.isPending}
               onClick={() => authorize.mutate()}
             >
@@ -718,7 +720,7 @@ export default function SpotifyPlaylistImport() {
                 </span>
               )}
               <Button
-                size="sm"
+                variant="primary"
                 disabled={queue.isPending || playlistJobActive(liked.job)}
                 onClick={() =>
                   queue.mutate({
@@ -760,8 +762,7 @@ export default function SpotifyPlaylistImport() {
             )}
           <div className="secondary-table-actions">
             <Button
-              size="sm"
-              variant={listedAt ? 'outline' : 'default'}
+              variant={listedAt ? 'default' : 'primary'}
               disabled={listingActive || list.isPending || listing.isPending}
               onClick={() => list.mutate()}
             >
@@ -810,7 +811,7 @@ export default function SpotifyPlaylistImport() {
               aria-label="Spotify playlists"
               aria-busy={listing.isFetching}
             >
-              <table className="compact-table" aria-label="Spotify playlists">
+              <table className="ds-table" aria-label="Spotify playlists">
                 <TableHeader>
                   <TableRow>
                     {importColumns
@@ -1108,7 +1109,7 @@ export default function SpotifyPlaylistImport() {
                 </label>
               )}
               <Button
-                size="sm"
+                variant="primary"
                 disabled={
                   queue.isPending ||
                   !targets.length ||

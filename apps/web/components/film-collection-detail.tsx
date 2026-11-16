@@ -230,7 +230,7 @@ export function FilmCollectionEntries({ id }: { id: string }) {
           aria-busy={query.isFetching}
         >
           <table
-            className="compact-table"
+            className="ds-table"
             aria-label="Collection films"
             aria-rowcount={query.hasTotal ? query.total + 1 : undefined}
           >
@@ -379,7 +379,7 @@ export function FilmCollectionEntries({ id }: { id: string }) {
       </header>
       {summary && (
         <div className="form-actions">
-          <Button asChild size="sm" variant="outline">
+          <Button asChild>
             <Link href={collectionFilmsHref(summary.name)}>Filter films</Link>
           </Button>
         </div>

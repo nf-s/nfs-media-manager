@@ -967,8 +967,8 @@ function Dock({ view }: { view: PlaybackView }) {
           </div>
           <div className="player-tools">
             <Button
+              variant="primary"
               type="button"
-              size="sm"
               disabled={reconnect.isPending}
               onClick={() => reconnect.mutate()}
             >
@@ -1056,7 +1056,6 @@ function Dock({ view }: { view: PlaybackView }) {
               <Button
                 type="button"
                 variant="ghost"
-                size="sm"
                 disabled={!view.queue.length}
                 onClick={controls.clearQueue}
               >

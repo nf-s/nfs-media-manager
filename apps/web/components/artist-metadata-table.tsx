@@ -545,7 +545,7 @@ export default function ArtistMetadataTable() {
           aria-busy={artists.isFetching}
         >
           <table
-            className="compact-table"
+            className="ds-table"
             aria-label="Artist metadata"
             aria-rowcount={artists.hasTotal ? artists.total + 1 : undefined}
           >
@@ -747,7 +747,6 @@ export default function ArtistMetadataTable() {
                   </span>
                   <Button
                     type="button"
-                    size="sm"
                     variant="ghost"
                     disabled={pending}
                     onClick={() => {
@@ -763,7 +762,6 @@ export default function ArtistMetadataTable() {
               ) : (
                 <Button
                   type="button"
-                  size="sm"
                   variant="ghost"
                   disabled={
                     pending || (artists.hasTotal && artists.total === 0)
@@ -812,8 +810,8 @@ export default function ArtistMetadataTable() {
             <div className="job-selection-toolbar">
               {!reviewed ? (
                 <Button
+                  variant="primary"
                   type="button"
-                  size="sm"
                   disabled={pending || !operations}
                   onClick={() => setReview(confirmationKey)}
                 >
@@ -836,8 +834,8 @@ export default function ArtistMetadataTable() {
                   </p>
                   <div className="flex items-center gap-2">
                     <Button
+                      variant="primary"
                       type="button"
-                      size="sm"
                       disabled={pending || !operations}
                       onClick={() =>
                         queue.mutate({
@@ -861,7 +859,6 @@ export default function ArtistMetadataTable() {
                     </Button>
                     <Button
                       type="button"
-                      size="sm"
                       variant="ghost"
                       disabled={pending}
                       onClick={() => setReview('')}

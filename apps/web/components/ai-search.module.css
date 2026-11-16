@@ -26,12 +26,12 @@
 }
 
 .note {
-  color: #64748b;
+  color: var(--ds-ink-3);
   font-size: 11px;
 }
 
 .error {
-  color: #9f303b;
+  color: var(--ds-danger);
 }
 
 .spinner {

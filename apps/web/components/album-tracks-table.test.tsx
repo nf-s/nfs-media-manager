@@ -144,10 +144,7 @@ test('album track tables restore a playback source search and sort', async () =>
   for (const view of ['Grid', 'List', 'Table'])
     assert.ok(html.includes(`aria-label="${view} view"`))
   assert.match(html, /class="browse-toolbar"/)
-  assert.match(
-    html,
-    /browse-sort-direction" type="button" aria-label="Sort ascending"/,
-  )
+  assert.match(html, /browse-sort-direction"[^>]*aria-label="Sort ascending"/)
   assert.match(html, /value="Song "/)
   assert.match(html, /aria-sort="descending"/)
   assert.match(html, /2 of 3 tracks/)

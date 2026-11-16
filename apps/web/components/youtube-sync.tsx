@@ -58,6 +58,8 @@ export function YoutubeAccount({ status }: { status: SubscriptionSyncStatus }) {
       {account.configured && !account.connected && (
         <div className="form-actions">
           <Button
+            size="md"
+            variant="primary"
             disabled={authorize.isPending}
             onClick={() => authorize.mutate()}
           >
@@ -74,14 +76,14 @@ export function YoutubeAccount({ status }: { status: SubscriptionSyncStatus }) {
           {!confirmingDisconnect && (
             <>
               <Button
-                variant="outline"
+                size="md"
                 disabled={authorize.isPending || disconnect.isPending}
                 onClick={() => authorize.mutate()}
               >
                 {authorize.isPending ? 'Opening Google...' : 'Reconnect'}
               </Button>
               <Button
-                variant="outline"
+                size="md"
                 disabled={authorize.isPending || disconnect.isPending}
                 onClick={() => setConfirmingDisconnect(true)}
               >
@@ -95,7 +97,7 @@ export function YoutubeAccount({ status }: { status: SubscriptionSyncStatus }) {
                 Disconnect YouTube? Stored channels and videos are kept.
               </span>
               <Button
-                variant="outline"
+                size="md"
                 disabled={disconnect.isPending}
                 onClick={() => disconnect.mutate()}
               >
@@ -104,6 +106,7 @@ export function YoutubeAccount({ status }: { status: SubscriptionSyncStatus }) {
                   : 'Confirm disconnect'}
               </Button>
               <Button
+                size="md"
                 variant="ghost"
                 disabled={disconnect.isPending}
                 onClick={() => setConfirmingDisconnect(false)}

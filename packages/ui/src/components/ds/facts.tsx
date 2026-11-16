@@ -1,0 +1,94 @@
+import type { ReactNode } from 'react'
+import { cn } from '../../lib/utils'
+
+type Item = { label: string; value: ReactNode }
+
+/** A grid of labelled facts: label above, value below. At most six per group. */
+export function Facts({ items }: { items: readonly Item[] }) {
+  return (
+    <dl className="ds-facts">
+      {items.map((item) => (
+        <div key={item.label}>
+          <dt>{item.label}</dt>
+          <dd>{item.value}</dd>
+        </div>
+      ))}
+    </dl>
+  )
+}
+
+/** A two-column list of every field: label left, value right. */
+export function KeyValues({ items }: { items: readonly Item[] }) {
+  return (
+    <dl className="ds-kv">
+      {items.map((item) => (
+        <div key={item.label} className="contents">
+          <dt>{item.label}</dt>
+          <dd>{item.value}</dd>
+        </div>
+      ))}
+    </dl>
+  )
+}
+
+export type StatItem = {
+  label: string
+  value: ReactNode
+  tone?: 'attention' | 'danger'
+  /** Shown beside the value, for example a sparkline. */
+  extra?: ReactNode
+}
+
+/** Headline figures. Four at most. */
+export function Stats({ items }: { items: readonly StatItem[] }) {
+  return (
+    <div className="ds-stats">
+      {items.map((item) => (
+        <div key={item.label} className="ds-stat" data-tone={item.tone}>
+          <span className="ds-stat-value">
+            {item.value}
+            {item.extra}
+          </span>
+          <span className="ds-stat-label">{item.label}</span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+/** A titled block in an overview. `aside` sits at the end of the heading. */
+export function Section({
+  title,
+  note,
+  aside,
+  flush = false,
+  className,
+  children,
+}: {
+  title?: string
+  note?: ReactNode
+  aside?: ReactNode
+  flush?: boolean
+  className?: string
+  children: ReactNode
+}) {
+  return (
+    <section
+      className={cn('ds-section', className)}
+      data-flush={flush ? '' : undefined}
+    >
+      {title && (
+        <div className="ds-section-head">
+          <h3>{title}</h3>
+          {note != null && note !== false && (
+            <span className="ds-muted">{note}</span>
+          )}
+          {aside != null && aside !== false && (
+            <span className="ds-section-aside">{aside}</span>
+          )}
+        </div>
+      )}
+      {children}
+    </section>
+  )
+}

@@ -355,7 +355,7 @@ test('scrobble links show reason totals and link library albums', () => {
   assert.match(html, /aria-label="Select all loaded unlinked albums"/)
   assert.match(
     html,
-    /aria-sort="descending"><div[^>]*><button[^>]*>Scrobbles<span aria-hidden="true"> ↓/,
+    /aria-sort="descending"><div[^>]*><button[^>]*>Scrobbles<svg/,
   )
   assert.match(html, /aria-sort="none"><div[^>]*><button[^>]*>Scrobbled artist/)
   assert.match(

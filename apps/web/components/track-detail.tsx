@@ -282,7 +282,9 @@ export default function TrackDetailView({
     return (
       <p role="alert">
         Could not load this track.{' '}
-        <Button onClick={() => detail.refetch()}>Retry</Button>
+        <Button size="md" variant="primary" onClick={() => detail.refetch()}>
+          Retry
+        </Button>
       </p>
     )
   const item = detail.data

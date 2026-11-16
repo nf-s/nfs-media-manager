@@ -121,8 +121,6 @@ function ArtistIdentifierEditor({
       </label>
       <Button
         type="submit"
-        size="sm"
-        variant="outline"
         disabled={!value || !canRefresh || refresh.isPending}
       >
         {refresh.isPending ? 'Queuing...' : 'Refresh with ID'}

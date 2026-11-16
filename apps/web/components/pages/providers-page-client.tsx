@@ -374,6 +374,8 @@ export default function ProvidersPageClient() {
                     <div className="form-actions">
                       {!!secrets.data?.fields.length && (
                         <Button
+                          size="md"
+                          variant="primary"
                           type="submit"
                           disabled={
                             save.isPending ||
@@ -385,8 +387,8 @@ export default function ProvidersPageClient() {
                       )}
                       {provider.supportsTestConnection && (
                         <Button
+                          size="md"
                           type="button"
-                          variant="outline"
                           disabled={
                             test.isPending ||
                             provider.safety?.halted ||

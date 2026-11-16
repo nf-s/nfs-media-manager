@@ -139,7 +139,7 @@ export default function FilmCollectionsWorkspace() {
         aria-busy={query.isFetching}
       >
         <table
-          className="compact-table"
+          className="ds-table"
           aria-label="Film collections"
           aria-rowcount={query.hasTotal ? query.total + 1 : undefined}
         >

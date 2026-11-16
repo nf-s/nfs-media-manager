@@ -52,7 +52,7 @@ test('shared preview preserves selected rows, bounded scrolling and escapes impo
   )
   assert.match(
     html,
-    /class="table-scroll import-preview-scroll secondary-table-scroll"/,
+    /class="ds-table-wrap table-scroll import-preview-scroll secondary-table-scroll"/,
   )
   assert.match(html, /aria-label="Import New album" disabled="" checked=""/)
   assert.match(html, /&lt;script&gt;title&lt;\/script&gt;/)
@@ -182,10 +182,11 @@ test('preview status choices live in the column header and row actions follow th
   assert.match(html, /aria-label="Filter Import status"/)
   assert.match(html, /Already imported<\/span>/)
   assert.ok(
-    html.indexOf('</table>') < html.indexOf('class="secondary-table-footer"'),
+    html.indexOf('</table>') <
+      html.indexOf('class="ds-selectbar secondary-table-footer"'),
   )
   assert.ok(
-    html.indexOf('class="secondary-table-footer"') <
+    html.indexOf('class="ds-selectbar secondary-table-footer"') <
       html.indexOf('Import selected</button>'),
   )
   assert.match(html, /0 selected/)

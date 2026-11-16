@@ -131,10 +131,10 @@ export function TrackMergeReview({
         belong to the Spotify track. Later syncs keep this choice.
       </p>
       <div className="form-actions">
-        <Button size="sm" disabled={pending} onClick={onConfirm}>
+        <Button variant="primary" disabled={pending} onClick={onConfirm}>
           {pending ? 'Merging...' : 'Confirm merge'}
         </Button>
-        <Button size="sm" variant="outline" disabled={pending} onClick={onBack}>
+        <Button disabled={pending} onClick={onBack}>
           Choose another track
         </Button>
       </div>
@@ -260,11 +260,7 @@ export function TrackMergePanel({
                   {candidates.isError && (
                     <p role="alert">
                       Could not search tracks.{' '}
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={candidates.retry}
-                      >
+                      <Button variant="ghost" onClick={candidates.retry}>
                         Retry
                       </Button>
                     </p>
@@ -278,7 +274,7 @@ export function TrackMergePanel({
                     aria-busy={candidates.isFetching}
                   >
                     <table
-                      className="compact-table"
+                      className="ds-table"
                       aria-label="Spotify library tracks"
                     >
                       <thead>
@@ -341,9 +337,7 @@ export function TrackMergePanel({
                                   </td>
                                   <td>
                                     <Button
-                                      size="sm"
                                       className="h-6"
-                                      variant="outline"
                                       aria-label={`Merge with ${item.title} by ${item.artists.join(', ')}`}
                                       onClick={() => setTarget(item)}
                                     >
@@ -384,9 +378,7 @@ export default function TrackMerge({
   if (!canMergeLastfmTrack(track)) return null
   return (
     <>
-      <Button size="sm" variant="outline" onClick={() => setOpen(true)}>
-        Merge with Spotify track
-      </Button>
+      <Button onClick={() => setOpen(true)}>Merge with Spotify track</Button>
       {open && (
         <TrackMergePanel
           key={track.id}

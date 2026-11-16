@@ -152,7 +152,12 @@ export function ManualMediaSearch({
               add.reset()
             }}
           />
-          <Button type="submit" disabled={busy || !query.trim()}>
+          <Button
+            size="md"
+            variant="primary"
+            type="submit"
+            disabled={busy || !query.trim()}
+          >
             {search.isPending ? 'Searching…' : 'Search'}
           </Button>
         </div>
@@ -221,8 +226,6 @@ export function ManualMediaSearch({
                   </div>
                   <Button
                     type="button"
-                    variant="outline"
-                    size="sm"
                     disabled={busy}
                     aria-label={`${inLibrary ? existingActionLabel : 'Add'} ${item.title}`}
                     onClick={() =>
@@ -245,8 +248,6 @@ export function ManualMediaSearch({
               <div className="manual-add-pagination">
                 <Button
                   type="button"
-                  variant="outline"
-                  size="sm"
                   disabled={busy || result.page <= 1}
                   onClick={() => find(result.page - 1)}
                 >
@@ -255,8 +256,6 @@ export function ManualMediaSearch({
                 <span>Page {result.page}</span>
                 <Button
                   type="button"
-                  variant="outline"
-                  size="sm"
                   disabled={busy || !result.hasMore || result.page >= 50}
                   onClick={() => find(result.page + 1)}
                 >

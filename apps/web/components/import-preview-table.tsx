@@ -142,7 +142,7 @@ export default function ImportPreviewTable<
           role="region"
           aria-label="Import preview"
         >
-          <table className="compact-table" aria-label="Import preview">
+          <table className="ds-table" aria-label="Import preview">
             <thead>
               <tr>
                 <th scope="col" className="table-selection-cell">

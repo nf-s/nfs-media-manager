@@ -243,7 +243,7 @@ export function CreatorLibraryTable<Row extends { id: string }>({
           aria-busy={query.isFetching}
         >
           <table
-            className="compact-table"
+            className="ds-table"
             aria-label={label}
             aria-rowcount={total === undefined ? undefined : total + 1}
           >

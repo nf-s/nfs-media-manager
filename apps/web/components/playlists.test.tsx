@@ -106,7 +106,7 @@ test('playlists table links tracks and albums filtered by playlist', () => {
   assert.doesNotMatch(html, />Remove<\/button>/)
   assert.match(
     html,
-    /aria-sort="ascending"><div[^>]*><button[^>]*title="Sort by Playlist"[^>]*>Playlist<span aria-hidden="true"> ↑<\/span>/,
+    /aria-sort="ascending"><div[^>]*><button[^>]*title="Sort by Playlist"[^>]*>Playlist<svg/,
   )
   assert.match(html, /href="\/imports\/spotify-playlists\?mediaType=track"/)
 })
@@ -125,10 +125,13 @@ test('playlist rows open the drawer and show the sync schedule and last check', 
   const html = render(<PlaylistsWorkspace />, [
     playlistPage([synced, { ...playlist, id: 'legacy', name: 'Old list' }]),
   ])
-  assert.match(html, /<button[^>]*title="Sort by Schedule"[^>]*>Schedule<span/)
   assert.match(
     html,
-    /<button[^>]*title="Sort by Last checked"[^>]*>Last checked<span/,
+    /<button[^>]*title="Sort by Schedule"[^>]*>Schedule<\/button>/,
+  )
+  assert.match(
+    html,
+    /<button[^>]*title="Sort by Last checked"[^>]*>Last checked<\/button>/,
   )
   assert.match(html, />Every 6 hours</)
   assert.match(html, /<time dateTime="2026-01-03T00:00:00.000Z">/)

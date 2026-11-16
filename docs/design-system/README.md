@@ -1,6 +1,6 @@
 # Design library
 
-A proposal for one consistent Media Manager interface: a single set of design tokens, sixteen shared components, and redesigned screens assembled from them. It is a review document. **No application code uses it yet**, and nothing under `apps/` or `packages/` was changed to produce it.
+The Media Manager design system: one set of design tokens, the shared components and the screens assembled from them. The app and these pages load the same two stylesheets from `packages/ui/src/design-system/`, so what is drawn here is what the app renders.
 
 ## Viewing it
 
@@ -23,8 +23,6 @@ open docs/design-system/index.html
 | `screens-ops.html`                   | Jobs, job details, activity, Metadata, providers overview, provider page, connections  |
 | [`audit.md`](audit.md)               | The inventory of the current interface that the proposal answers                       |
 | [`user-stories.md`](user-stories.md) | The tasks the proposal is designed around                                              |
-| `assets/tokens.css`                  | The design tokens, as `--ds-*` custom properties                                       |
-| `assets/components.css`              | Every component, as `ds-*` classes that read only the tokens                           |
 | `assets/ds.js`                       | Template functions that produce each component's markup, mock data and the chart       |
 | `assets/gallery.css`                 | Layout of these documentation pages only (`g-*` classes)                               |
 

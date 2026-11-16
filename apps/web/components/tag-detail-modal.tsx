@@ -80,7 +80,7 @@ function TagManagement({ tag }: { tag: Tag }) {
             aria-busy={matches.isFetching}
           >
             <table
-              className="compact-table"
+              className="ds-table"
               aria-label="Tags to merge"
               aria-rowcount={matches.hasTotal ? matches.total : undefined}
             >

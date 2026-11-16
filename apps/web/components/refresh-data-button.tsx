@@ -21,8 +21,8 @@ export default function RefreshDataButton() {
 
   return (
     <Button
+      size="md"
       type="button"
-      variant="outline"
       className="gap-1.5"
       aria-label="Refresh cached data"
       title="Refresh cached data"

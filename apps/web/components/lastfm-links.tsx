@@ -191,8 +191,6 @@ function LinkRow({
           {group.albumName !== null && (
             <div className="flex items-center gap-1 whitespace-nowrap">
               <Button
-                size="sm"
-                variant="outline"
                 className="secondary-cell-action"
                 aria-label={linked ? 'Change album link' : 'Link album'}
                 title={linked ? 'Change album link' : 'Link album'}
@@ -203,8 +201,6 @@ function LinkRow({
               </Button>
               {!linked && (
                 <Button
-                  size="sm"
-                  variant="outline"
                   className="secondary-cell-action"
                   aria-label="Add new album"
                   title="Add new album"
@@ -402,8 +398,6 @@ export default function LastfmLinks() {
       )}
       <div className="form-actions my-3">
         <Button
-          variant="outline"
-          size="sm"
           disabled={relink.isPending || running || queuePending}
           onClick={() => relink.mutate()}
         >
@@ -465,7 +459,7 @@ export default function LastfmLinks() {
           aria-label="Scrobble links"
           aria-busy={links.isFetching}
         >
-          <table className="compact-table" aria-label="Scrobble links">
+          <table className="ds-table" aria-label="Scrobble links">
             <TableHeader>
               <TableRow>
                 <TableHead className="table-selection-cell">

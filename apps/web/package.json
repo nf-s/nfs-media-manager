@@ -42,6 +42,7 @@
     "autoprefixer": "catalog:",
     "eslint": "catalog:",
     "postcss": "catalog:",
+    "postcss-import": "^15.1.0",
     "tailwindcss": "catalog:",
     "typescript": "catalog:",
     "wrangler": "4.156.0"

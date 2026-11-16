@@ -1,10 +1,10 @@
 /*
- * Media Manager design tokens (proposal).
+ * Media Manager design tokens.
  *
- * One token set replaces the two in packages/ui/src/globals.css today
- * (shadcn HSL triplets and the hex ink/line/chip set) and the untokenised
- * literals used most often (#334155, #667080, #a32318).
- * Every component in components.css reads only these variables.
+ * The one token set for the app and for the design library in
+ * docs/design-system, which loads this file directly. Every component in
+ * components.css reads only these variables. A new value needs a new token and
+ * a reason on the Foundations page of the design library.
  */
 
 :root {
@@ -63,8 +63,12 @@
   ); /* nav item hover on the page background */
 
   /* Type: IBM Plex Sans and Mono, six sizes */
-  --ds-font: 'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
-  --ds-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+  --ds-font:
+    var(--font-plex-sans, 'IBM Plex Sans'), system-ui, -apple-system,
+    'Segoe UI', sans-serif;
+  --ds-mono:
+    var(--font-plex-mono, 'IBM Plex Mono'), ui-monospace, 'SF Mono', Menlo,
+    monospace;
   --ds-text-xs: 11px; /* column headers, labels, metadata */
   --ds-text-sm: 12px; /* secondary lines, pills, table cells in dense tables */
   --ds-text-md: 13px; /* body, titles in rows and cards, controls */

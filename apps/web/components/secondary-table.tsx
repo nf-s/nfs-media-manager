@@ -17,6 +17,8 @@ import { Input } from '@repo/ui/components/ui/input'
 import {
   TableHead,
   TableScroll,
+  TableSelectionBar,
+  TableSortButton,
   TableState,
 } from '@repo/ui/components/ui/table'
 import {
@@ -223,14 +225,14 @@ export function SecondaryTableFooter({
   selectedCount?: number
 }) {
   return (
-    <div className="secondary-table-footer">
+    <TableSelectionBar className="secondary-table-footer">
       {selectedCount !== undefined && (
         <span className="secondary-table-selected" role="status">
           {selectedCount.toLocaleString()} selected
         </span>
       )}
       {children}
-    </div>
+    </TableSelectionBar>
   )
 }
 
@@ -543,7 +545,7 @@ export function SecondaryDataTable<T>({
         aria-label={label}
         aria-busy={busy}
       >
-        <table className="compact-table" aria-label={label}>
+        <table className="ds-table" aria-label={label}>
           <thead>
             <tr>
               {shown.map((column) =>
@@ -701,18 +703,14 @@ export function SecondaryTableHead<Key extends string>({
       }
     >
       <div className="secondary-table-heading">
-        <button
-          type="button"
-          className="max-w-full truncate"
+        <TableSortButton
+          direction={active ? direction : undefined}
           disabled={disabled}
           onClick={() => onSort(sortKey)}
           title={`Sort by ${label}`}
         >
           {label}
-          <span aria-hidden="true">
-            {active ? (direction === 'asc' ? ' ↑' : ' ↓') : ' ↕'}
-          </span>
-        </button>
+        </TableSortButton>
         {filter}
       </div>
       {children}
@@ -790,12 +788,7 @@ export function useTableColumns(
           {column.label}
         </label>
       ))}
-      <Button
-        type="button"
-        variant="ghost"
-        size="sm"
-        onClick={() => save(defaults)}
-      >
+      <Button type="button" variant="ghost" onClick={() => save(defaults)}>
         Reset columns
       </Button>
     </>
@@ -834,8 +827,6 @@ function TableColumns({ children }: { children: ReactNode }) {
     <div className="table-column-controls">
       <Button
         type="button"
-        variant="outline"
-        size="sm"
         className="table-columns-trigger"
         ref={trigger}
         popoverTarget={id}

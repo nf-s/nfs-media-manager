@@ -479,8 +479,6 @@ function PlaylistPicker({
       <Button
         ref={trigger}
         type="button"
-        size="sm"
-        variant="outline"
         className="w-max"
         popoverTarget={id}
         aria-expanded={open}

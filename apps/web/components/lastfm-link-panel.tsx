@@ -288,9 +288,7 @@ export default function LastfmLinkPanel({
                 <div role="alert">
                   <p>{backgroundError}</p>
                   {onRetry && (
-                    <Button size="sm" variant="outline" onClick={onRetry}>
-                      Retry add and link
-                    </Button>
+                    <Button onClick={onRetry}>Retry add and link</Button>
                   )}
                 </div>
               )}
@@ -300,8 +298,6 @@ export default function LastfmLinkPanel({
               <div className="flex flex-wrap gap-2">
                 {linked && (
                   <Button
-                    size="sm"
-                    variant="outline"
                     disabled={busy}
                     onClick={() =>
                       update.mutate(
@@ -319,8 +315,6 @@ export default function LastfmLinkPanel({
                 )}
                 {(group.reason === 'manual' || group.reason === 'excluded') && (
                   <Button
-                    size="sm"
-                    variant="outline"
                     disabled={busy}
                     onClick={() =>
                       update.mutate(
@@ -375,8 +369,6 @@ export default function LastfmLinkPanel({
                             className="flex items-center gap-2"
                           >
                             <Button
-                              size="sm"
-                              variant="outline"
                               disabled={busy}
                               onClick={() => chooseLibraryAlbum(album.id)}
                             >
@@ -545,8 +537,6 @@ export function LastfmLinkWorkflow({
               {operation.error}
             </span>
             <Button
-              size="sm"
-              variant="outline"
               onClick={() =>
                 onSelectionChange({ group: operation.group, mode: 'new' })
               }
@@ -554,7 +544,6 @@ export function LastfmLinkWorkflow({
               Review
             </Button>
             <Button
-              size="sm"
               variant="ghost"
               onClick={() =>
                 setOperations((current) =>

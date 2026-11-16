@@ -257,6 +257,8 @@ export default function LastfmSync({
       )}
       <div className="form-actions">
         <Button
+          size="md"
+          variant="primary"
           disabled={!data.configured || running || sync.isPending}
           onClick={() => sync.mutate()}
         >
@@ -268,7 +270,7 @@ export default function LastfmSync({
         </Button>
         {stopJob && !confirmingStop && (
           <Button
-            variant="outline"
+            size="md"
             disabled={stop.isPending}
             onClick={() => setConfirmingStop(true)}
           >
@@ -279,13 +281,14 @@ export default function LastfmSync({
           <>
             <span>Stop the sync job? Stored scrobbles are kept.</span>
             <Button
-              variant="outline"
+              size="md"
               disabled={stop.isPending}
               onClick={() => stop.mutate(stopJob)}
             >
               {stop.isPending ? 'Stopping...' : 'Confirm stop'}
             </Button>
             <Button
+              size="md"
               variant="ghost"
               disabled={stop.isPending}
               onClick={() => setConfirmingStop(false)}

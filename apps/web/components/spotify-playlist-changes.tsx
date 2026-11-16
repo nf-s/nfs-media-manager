@@ -24,12 +24,7 @@ export default function AllowPlaylistChanges({
   })
   return (
     <>
-      <Button
-        size="sm"
-        variant="outline"
-        disabled={authorize.isPending}
-        onClick={() => authorize.mutate()}
-      >
+      <Button disabled={authorize.isPending} onClick={() => authorize.mutate()}>
         {authorize.isPending ? 'Connecting...' : 'Allow playlist changes'}
       </Button>
       {authorize.isError && (

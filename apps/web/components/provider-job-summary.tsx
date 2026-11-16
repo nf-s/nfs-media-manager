@@ -22,7 +22,7 @@ export default function ProviderJobSummary({
       <div className="provider-activity-heading">
         <h2>Jobs · {summary.total.toLocaleString()}</h2>
         {summary.total > 0 && (
-          <Button variant="ghost" size="sm" onClick={onOpenJobs}>
+          <Button variant="ghost" onClick={onOpenJobs}>
             View jobs
           </Button>
         )}

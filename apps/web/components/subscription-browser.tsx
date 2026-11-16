@@ -646,7 +646,9 @@ export default function SubscriptionBrowser() {
             <div className="virtual-browse-error">
               <div role="alert" className="virtual-browse-error-message">
                 Could not load this section.{' '}
-                <Button onClick={query.retry}>Retry</Button>
+                <Button size="md" variant="primary" onClick={query.retry}>
+                  Retry
+                </Button>
               </div>
             </div>
           )}
@@ -749,7 +751,7 @@ export default function SubscriptionBrowser() {
             </div>
           ) : (
             <table
-              className={`compact-table ${styles.table}`}
+              className={`ds-table ${styles.table}`}
               aria-label="Subscriptions"
               aria-rowcount={query.hasTotal ? total + 1 : undefined}
               style={{

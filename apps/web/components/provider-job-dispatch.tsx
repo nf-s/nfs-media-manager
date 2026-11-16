@@ -117,7 +117,7 @@ export default function ProviderJobDispatch({
       {status.isError && (
         <p role="alert">
           Could not load queue status.{' '}
-          <Button size="sm" variant="ghost" onClick={() => status.refetch()}>
+          <Button variant="ghost" onClick={() => status.refetch()}>
             Retry
           </Button>
         </p>
@@ -183,7 +183,7 @@ export default function ProviderJobDispatch({
               </p>
               <div className="form-actions">
                 <Button
-                  size="sm"
+                  variant="primary"
                   disabled={
                     busy ||
                     (reviewing !== 'pause' && waitingToResume) ||
@@ -194,7 +194,6 @@ export default function ProviderJobDispatch({
                   Confirm {actionLabel.toLowerCase()}
                 </Button>
                 <Button
-                  size="sm"
                   variant="ghost"
                   disabled={busy}
                   onClick={() => setReview(null)}
@@ -206,8 +205,6 @@ export default function ProviderJobDispatch({
           ) : (
             <div className="form-actions">
               <Button
-                size="sm"
-                variant="outline"
                 disabled={busy || waitingToResume}
                 onClick={() => startReview('resume')}
               >
@@ -215,8 +212,6 @@ export default function ProviderJobDispatch({
               </Button>
               {restricted && (
                 <Button
-                  size="sm"
-                  variant="outline"
                   disabled={busy || active > 0}
                   onClick={() => startReview('resume-all')}
                 >
@@ -225,7 +220,6 @@ export default function ProviderJobDispatch({
               )}
               {!data.paused && (
                 <Button
-                  size="sm"
                   variant="ghost"
                   disabled={busy}
                   onClick={() => startReview('pause')}
@@ -240,8 +234,6 @@ export default function ProviderJobDispatch({
       {worker?.supportsModeSwitch && (
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
           <Button
-            size="sm"
-            variant="outline"
             disabled={
               busy || !!reviewing || !!switchRestriction || status.isError
             }

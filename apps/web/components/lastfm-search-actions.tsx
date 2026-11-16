@@ -111,7 +111,7 @@ export default function LastfmSearchActions({
             </label>
           )}
           <Button
-            size="sm"
+            variant="primary"
             disabled={
               disabled ||
               queue.isPending ||

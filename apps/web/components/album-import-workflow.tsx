@@ -257,6 +257,8 @@ export default function AlbumImportWorkflow({
               )}
               <div className="form-actions">
                 <Button
+                  size="md"
+                  variant="primary"
                   disabled={busy || !account.data.configured}
                   onClick={() => connect.mutate()}
                 >
@@ -268,7 +270,7 @@ export default function AlbumImportWorkflow({
                 </Button>
                 {account.data.connected && (
                   <Button
-                    variant="outline"
+                    size="md"
                     disabled={busy}
                     onClick={() => disconnect.mutate()}
                   >
@@ -321,7 +323,12 @@ export default function AlbumImportWorkflow({
                       : 'Reads only the requested batch, sorted by date added. It may not contain your newest additions. More than 50 requires the full-scan confirmation.'}{' '}
                     No albums are imported and no jobs are queued.
                   </p>
-                  <Button type="submit" disabled={busy}>
+                  <Button
+                    size="md"
+                    variant="primary"
+                    type="submit"
+                    disabled={busy}
+                  >
                     {preview.isPending
                       ? 'Loading saved albums...'
                       : 'Preview saved albums'}
@@ -471,6 +478,8 @@ export default function AlbumImportWorkflow({
                   </label>
                 )}
                 <Button
+                  size="md"
+                  variant="primary"
                   disabled={
                     busy ||
                     commit.isSuccess ||

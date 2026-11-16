@@ -26,6 +26,7 @@ export function StoredJobData({ job }: { job: DataJob }) {
         <p role="alert">
           Could not load stored JSON.{' '}
           <Button
+            size="md"
             type="button"
             variant="ghost"
             disabled={result.isFetching}

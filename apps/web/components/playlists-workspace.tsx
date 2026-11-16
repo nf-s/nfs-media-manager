@@ -175,7 +175,7 @@ export default function PlaylistsWorkspace() {
     <section className="admin-page table-workspace">
       <h1>Playlists</h1>
       <div className="tags-bulk">
-        <Button asChild size="sm" variant="outline">
+        <Button asChild>
           <Link href={importHref}>Import playlists</Link>
         </Button>
       </div>
@@ -226,7 +226,7 @@ export default function PlaylistsWorkspace() {
           aria-busy={query.isFetching}
         >
           <table
-            className="compact-table"
+            className="ds-table"
             aria-label="Playlists"
             aria-rowcount={query.hasTotal ? query.total + 1 : undefined}
           >
@@ -463,7 +463,6 @@ export default function PlaylistsWorkspace() {
                       <TableCell className="text-right">
                         {playlist.source && (
                           <Button
-                            size="sm"
                             variant="ghost"
                             className="size-6 p-0"
                             disabled={remove.isPending}
@@ -494,16 +493,13 @@ export default function PlaylistsWorkspace() {
               in no other playlist? Albums stay in the library.
             </span>
             <Button
-              size="sm"
-              variant="destructive"
+              variant="danger"
               disabled={remove.isPending}
               onClick={() => remove.mutate(confirming)}
             >
               {remove.isPending ? 'Removing...' : 'Confirm removal'}
             </Button>
             <Button
-              size="sm"
-              variant="outline"
               disabled={remove.isPending}
               onClick={() => setConfirming(null)}
             >

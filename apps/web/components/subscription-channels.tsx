@@ -249,7 +249,7 @@ export default function SubscriptionChannels() {
         aria-label="Channels and podcasts"
         aria-busy={sources.isFetching}
       >
-        <table className="compact-table" aria-label="Channels and podcasts">
+        <table className="ds-table" aria-label="Channels and podcasts">
           <TableHeader>
             <TableRow>
               {subscriptionSourceColumns

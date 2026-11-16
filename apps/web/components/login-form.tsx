@@ -64,9 +64,13 @@ export default function LoginForm() {
       </div>
 
       <Button
+        size="md"
+        variant="primary"
         type="submit"
         className="w-full"
-        disabled={loginMutation.isPending || email.length === 0 || password.length === 0}
+        disabled={
+          loginMutation.isPending || email.length === 0 || password.length === 0
+        }
       >
         {loginMutation.isPending ? 'Signing in...' : 'Sign In'}
       </Button>

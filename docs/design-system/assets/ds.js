@@ -348,7 +348,7 @@
 
   function coverage(label, have, total, o = {}) {
     const missing = total - have
-    return `<div class="ds-coverage"><span>${esc(label)}</span>${meter(Math.round((have / total) * 100), o.tone)}<span class="ds-muted ds-num">${have} of ${total}</span>${missing ? btn(o.action || `Queue ${missing}`, { size: 'xs' }) : `<span class="ds-muted" style="font-size:11px">Complete</span>`}</div>`
+    return `<div class="ds-coverage"><span>${esc(label)}</span>${meter(Math.round((have / total) * 100), o.tone)}<span class="ds-muted ds-num">${have} of ${total}</span>${missing ? btn(o.action || `Queue ${missing}`, { size: 'xs' }) : `<span class="ds-muted ds-coverage-done">Complete</span>`}</div>`
   }
 
   function source(o) {
@@ -1141,7 +1141,7 @@
   function chartBox(set, o = {}) {
     const ranges = o.ranges || ['30d', '1y', '5y', 'All']
     const selected = Math.max(0, ranges.indexOf(o.range || 'All'))
-    return `<div data-chartbox><div class="ds-charthead"><span class="ds-muted" data-chart-caption style="font-size:12px"></span>${o.extra || ''}${ranges.length > 1 ? seg(ranges, selected, { label: 'Range' }) : ''}</div><div class="ds-chart"${attrs({ 'data-chart': set, 'data-range': (ranges[selected] || 'All').toLowerCase(), 'data-unit': o.unit, 'data-height': o.height })}></div></div>`
+    return `<div data-chartbox><div class="ds-charthead"><span class="ds-muted ds-chart-caption" data-chart-caption></span>${o.extra || ''}${ranges.length > 1 ? seg(ranges, selected, { label: 'Range' }) : ''}</div><div class="ds-chart"${attrs({ 'data-chart': set, 'data-range': (ranges[selected] || 'All').toLowerCase(), 'data-unit': o.unit, 'data-height': o.height })}></div></div>`
   }
 
   function spark(values, o = {}) {

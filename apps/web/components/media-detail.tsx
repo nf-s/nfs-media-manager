@@ -257,7 +257,12 @@ function EditMedia({
         <Input name="note" />
       </label>
       <div className="form-actions">
-        <Button disabled={mutation.isPending} type="submit">
+        <Button
+          size="md"
+          variant="primary"
+          disabled={mutation.isPending}
+          type="submit"
+        >
           {mutation.isPending ? 'Saving...' : 'Save changes'}
         </Button>
         <span role="status">{mutation.isSuccess ? 'Saved' : error}</span>
@@ -378,7 +383,9 @@ export default function MediaDetail({
     return (
       <p role="alert">
         Could not load this item.{' '}
-        <Button onClick={() => detail.refetch()}>Retry</Button>
+        <Button size="md" variant="primary" onClick={() => detail.refetch()}>
+          Retry
+        </Button>
       </p>
     )
   const item = detail.data

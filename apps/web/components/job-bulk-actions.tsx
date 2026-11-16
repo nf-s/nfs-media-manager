@@ -200,8 +200,6 @@ export default function JobBulkActions({
           </select>
           {!reviewing && (
             <Button
-              size="sm"
-              variant="outline"
               disabled={disabled || action.isPending || !targetJobs.length}
               onClick={() => setReviewedSelection(selectionKey)}
             >
@@ -268,7 +266,7 @@ export default function JobBulkActions({
               )}
               <div className="flex items-center gap-2">
                 <Button
-                  size="sm"
+                  variant="primary"
                   disabled={disabled || action.isPending || !selectedAction}
                   onClick={() => {
                     if (selectedAction) action.mutate(selectedAction)
@@ -277,7 +275,6 @@ export default function JobBulkActions({
                   Confirm {actionLabel.toLowerCase()}
                 </Button>
                 <Button
-                  size="sm"
                   variant="ghost"
                   disabled={disabled || action.isPending}
                   onClick={() => setReviewedSelection('')}

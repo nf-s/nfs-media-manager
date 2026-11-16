@@ -90,6 +90,8 @@ export default function LegacyImportPageClient() {
       />
       <div className="import-actions">
         <Button
+          size="md"
+          variant="primary"
           disabled={
             running ||
             start.isPending ||

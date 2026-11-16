@@ -245,6 +245,8 @@ export function SubscriptionSync({
       )}
       <div className="form-actions">
         <Button
+          size="md"
+          variant="primary"
           disabled={!data.account.connected || running || sync.isPending}
           onClick={() => sync.mutate()}
         >
@@ -256,7 +258,7 @@ export function SubscriptionSync({
         </Button>
         {stopJob && !confirmingStop && (
           <Button
-            variant="outline"
+            size="md"
             disabled={stop.isPending}
             onClick={() => setConfirmingStop(true)}
           >
@@ -270,13 +272,14 @@ export function SubscriptionSync({
               are kept.
             </span>
             <Button
-              variant="outline"
+              size="md"
               disabled={stop.isPending}
               onClick={() => stop.mutate(stopJob)}
             >
               {stop.isPending ? 'Stopping...' : 'Confirm stop'}
             </Button>
             <Button
+              size="md"
               variant="ghost"
               disabled={stop.isPending}
               onClick={() => setConfirmingStop(false)}

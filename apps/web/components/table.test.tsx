@@ -28,10 +28,13 @@ test('shared table uses compact styles and one keyboard-scrollable container', (
       </TableBody>
     </Table>,
   )
-  assert.equal((html.match(/class="table-scroll /g) ?? []).length, 1)
+  assert.equal(
+    (html.match(/class="ds-table-wrap table-scroll /g) ?? []).length,
+    1,
+  )
   assert.match(html, /tabindex="0"/)
   assert.match(html, /table-scroll-bounded/)
-  assert.match(html, /<table class="compact-table" aria-label="Films"/)
+  assert.match(html, /<table class="ds-table" aria-label="Films"/)
   assert.match(html, /<th scope="col" aria-sort="ascending"/)
   assert.match(html, /<tr data-selected="true"><td>Example film/)
   assert.doesNotMatch(html, /p-3|uppercase/)
@@ -45,14 +48,14 @@ test('scroll wrapper supports native tables and accessible region props', () => 
       aria-busy
       className="history-scroll"
     >
-      <table className="compact-table">
+      <table className="ds-table">
         <tbody>
           <TableState colSpan={4}>Loading history...</TableState>
         </tbody>
       </table>
     </TableScroll>,
   )
-  assert.match(html, /class="table-scroll history-scroll"/)
+  assert.match(html, /class="ds-table-wrap table-scroll history-scroll"/)
   assert.match(html, /role="region" aria-label="History" aria-busy="true"/)
   assert.match(
     html,

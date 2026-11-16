@@ -118,7 +118,7 @@ export function ArtistIdentifierSources({
         aria-busy={query.isFetching}
       >
         <table
-          className="compact-table w-full table-fixed"
+          className="ds-table w-full table-fixed"
           aria-label={label}
           aria-rowcount={query.hasTotal ? query.total + 1 : undefined}
         >

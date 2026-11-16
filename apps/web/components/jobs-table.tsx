@@ -433,8 +433,6 @@ export function JobsTable({ provider, mediaItemId, artistId }: JobsTableProps) {
           <Link href={scopedHref('/jobs', mediaType)}>All jobs</Link>
           {!retryConfirmed && (
             <Button
-              size="sm"
-              variant="outline"
               disabled={retryBatch.isPending || bulkPending}
               onClick={() => setRetryConfirmed(true)}
             >
@@ -453,14 +451,13 @@ export function JobsTable({ provider, mediaItemId, artistId }: JobsTableProps) {
               </p>
               <div className="flex items-center gap-2">
                 <Button
-                  size="sm"
+                  variant="primary"
                   disabled={retryBatch.isPending || bulkPending}
                   onClick={() => retryBatch.mutate()}
                 >
                   Confirm retry entire batch
                 </Button>
                 <Button
-                  size="sm"
                   variant="ghost"
                   disabled={retryBatch.isPending}
                   onClick={() => setRetryConfirmed(false)}
@@ -521,7 +518,7 @@ export function JobsTable({ provider, mediaItemId, artistId }: JobsTableProps) {
           aria-busy={jobs.isFetching}
         >
           <table
-            className="compact-table"
+            className="ds-table"
             aria-label={history ? 'Job history' : 'Jobs'}
           >
             <thead>

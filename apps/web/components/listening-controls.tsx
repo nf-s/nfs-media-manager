@@ -220,7 +220,6 @@ function ListeningFilterEditor({
           <Button
             type="button"
             variant="ghost"
-            size="sm"
             className="justify-self-start gap-1"
             aria-label={`Remove listening rule ${index + 1}`}
             onClick={() =>
@@ -235,8 +234,6 @@ function ListeningFilterEditor({
       ))}
       <Button
         type="button"
-        variant="outline"
-        size="sm"
         className="justify-self-start gap-1"
         disabled={rules.length >= 10}
         onClick={() =>
@@ -253,14 +250,13 @@ function ListeningFilterEditor({
       </Button>
       {filterError && <p role="alert">{filterError}</p>}
       <div className="flex flex-wrap gap-2">
-        <Button type="submit" size="sm">
+        <Button variant="primary" type="submit">
           Apply rules
         </Button>
         {filter && (
           <Button
             type="button"
             variant="ghost"
-            size="sm"
             onClick={() => onFilterChange(undefined)}
           >
             Clear rules
@@ -300,7 +296,7 @@ function ListeningSortEditor({
         <PeriodInputs label="Sort" value={sortDraft} onChange={setSortDraft} />
       </fieldset>
       {sortError && <p role="alert">{sortError}</p>}
-      <Button type="submit" size="sm">
+      <Button variant="primary" type="submit">
         {sorting ? 'Update sort period' : 'Sort by scrobbles'}
       </Button>
     </form>

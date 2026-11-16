@@ -85,7 +85,6 @@ function FilterDialog({
           <Button
             type="button"
             variant="ghost"
-            size="sm"
             aria-label="Close filters"
             onClick={onClose}
           >
@@ -113,8 +112,6 @@ export default function BrowseFilterPanel({
     <>
       <Button
         type="button"
-        variant="outline"
-        size="sm"
         className="filter-panel-trigger gap-1"
         aria-haspopup="dialog"
         aria-expanded={open}

@@ -21,7 +21,7 @@ export default function UserLink() {
     </>
   )
   return (
-    <Button asChild variant="outline" size="sm" className="gap-1.5">
+    <Button asChild className="gap-1.5">
       {path === '/user' || !inspector ? (
         <Link
           href={scopedHref('/user', scope)}

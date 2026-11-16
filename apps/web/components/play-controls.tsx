@@ -292,7 +292,7 @@ export function AlbumPlayButtons({
   const { item, playing, controls, play } = playback
   return (
     <div className="detail-play">
-      <Button type="button" size="sm" onClick={() => play(source)}>
+      <Button variant="primary" type="button" onClick={() => play(source)}>
         {playing ? (
           <Pause size={14} aria-hidden="true" />
         ) : (
@@ -300,12 +300,7 @@ export function AlbumPlayButtons({
         )}
         {playing ? 'Pause' : 'Play'}
       </Button>
-      <Button
-        type="button"
-        size="sm"
-        variant="outline"
-        onClick={() => controls.enqueue(item)}
-      >
+      <Button type="button" onClick={() => controls.enqueue(item)}>
         <ListPlus size={14} aria-hidden="true" />
         Add to queue
       </Button>
@@ -517,8 +512,8 @@ export function LibraryTrackPlayButtons({
   return (
     <div className="detail-play">
       <Button
+        variant="primary"
         type="button"
-        size="sm"
         onClick={() => (current ? controls.toggle() : controls.play(item))}
       >
         {playing ? (
@@ -528,12 +523,7 @@ export function LibraryTrackPlayButtons({
         )}
         {playing ? 'Pause' : 'Play'}
       </Button>
-      <Button
-        type="button"
-        size="sm"
-        variant="outline"
-        onClick={() => controls.enqueue(item)}
-      >
+      <Button type="button" onClick={() => controls.enqueue(item)}>
         <ListPlus size={14} aria-hidden="true" />
         Add to queue
       </Button>

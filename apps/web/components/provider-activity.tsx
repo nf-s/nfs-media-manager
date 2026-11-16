@@ -120,12 +120,15 @@ export default function ProviderActivity({
               </p>
               <div className="form-actions">
                 <Button
+                  size="md"
+                  variant="primary"
                   disabled={clear.isPending}
                   onClick={() => clear.mutate()}
                 >
                   {clear.isPending ? 'Clearing...' : 'Confirm clear cooldown'}
                 </Button>
                 <Button
+                  size="md"
                   variant="ghost"
                   disabled={clear.isPending}
                   onClick={() => setConfirming(null)}
@@ -136,7 +139,7 @@ export default function ProviderActivity({
             </>
           ) : (
             <Button
-              variant="outline"
+              size="md"
               onClick={() => {
                 clear.reset()
                 setConfirming(provider.safety?.cooldownUntil ?? null)
@@ -163,8 +166,7 @@ export default function ProviderActivity({
             {ranges.map((item) => (
               <Button
                 key={item.value}
-                size="sm"
-                variant={range === item.value ? 'default' : 'ghost'}
+                variant={range === item.value ? 'primary' : 'ghost'}
                 aria-pressed={range === item.value}
                 onClick={() => setRange(item.value)}
               >
@@ -234,7 +236,7 @@ export default function ProviderActivity({
                 role="region"
                 aria-label="Request counts"
               >
-                <table className="compact-table" aria-label="Request counts">
+                <table className="ds-table" aria-label="Request counts">
                   <thead>
                     <tr>
                       {columns.visible('start') && (

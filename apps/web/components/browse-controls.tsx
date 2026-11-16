@@ -31,9 +31,10 @@ export function BrowseViewSwitch({
     <div className="view-switch" role="group" aria-label="Browse views">
       {views.map(({ value, label, Icon }) => (
         <Button
+          size="md"
           type="button"
           key={value}
-          variant={view === value ? 'default' : 'ghost'}
+          variant={view === value ? 'primary' : 'ghost'}
           aria-label={label}
           aria-pressed={view === value}
           title={label}
@@ -256,7 +257,9 @@ export function RangeEditor({
         Include missing values
       </label>
       {error && <p role="alert">{error}</p>}
-      <Button type="submit">Apply range</Button>
+      <Button size="md" variant="primary" type="submit">
+        Apply range
+      </Button>
     </form>
   )
   return presentation === 'panel' ? (

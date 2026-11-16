@@ -96,7 +96,7 @@ function firstJobHref(html: string) {
 test('job monitor has shared sortable columns, selection and links to details', () => {
   const html = render()
   assert.match(html, /table-scroll jobs-scroll secondary-table-scroll/)
-  assert.match(html, /<table class="compact-table" aria-label="Jobs"/)
+  assert.match(html, /<table class="ds-table" aria-label="Jobs"/)
   for (const label of ['Provider', 'Job', 'Status', 'Created'])
     assert.match(html, new RegExp(`title="Sort by ${label}"`))
   assert.match(html, /aria-label="Select example-provider job/)

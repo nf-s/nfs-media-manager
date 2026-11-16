@@ -72,8 +72,6 @@ function SourceList({
             className="flex items-center gap-2"
           >
             <Button
-              size="sm"
-              variant="outline"
               disabled={disabled}
               aria-label={`${action} ${source.artistName} — ${source.albumName}`}
               onClick={() => onAction(source)}
@@ -138,12 +136,7 @@ export function ListeningSources({
       )}
       <div className="grid gap-1 text-sm">
         <div className="flex flex-wrap items-center gap-3">
-          <Button
-            size="sm"
-            variant="outline"
-            aria-expanded={adding}
-            onClick={() => setAdding(!adding)}
-          >
+          <Button aria-expanded={adding} onClick={() => setAdding(!adding)}>
             Add scrobbled name
           </Button>
           <Link
@@ -176,7 +169,9 @@ export default function AlbumListening({ albumId }: { albumId: string }) {
     return (
       <p role="alert">
         Listening history unavailable.{' '}
-        <Button onClick={() => listening.refetch()}>Retry</Button>
+        <Button size="md" variant="primary" onClick={() => listening.refetch()}>
+          Retry
+        </Button>
       </p>
     )
   const data = listening.data
@@ -224,8 +219,7 @@ export default function AlbumListening({ albumId }: { albumId: string }) {
           {(['year', 'month'] satisfies ListeningPeriod[]).map((value) => (
             <Button
               key={value}
-              size="sm"
-              variant={period === value ? 'default' : 'outline'}
+              variant={period === value ? 'primary' : 'default'}
               aria-pressed={period === value}
               onClick={() => setPeriod(value)}
             >
@@ -237,8 +231,7 @@ export default function AlbumListening({ albumId }: { albumId: string }) {
           {(['bar', 'line'] satisfies ListeningChartStyle[]).map((value) => (
             <Button
               key={value}
-              size="sm"
-              variant={chartStyle === value ? 'default' : 'outline'}
+              variant={chartStyle === value ? 'primary' : 'default'}
               aria-pressed={chartStyle === value}
               onClick={() => setChartStyle(value)}
             >
