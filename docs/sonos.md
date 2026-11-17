@@ -40,6 +40,8 @@ The room plays its own queue, so the app can be closed while it plays: the room 
 - **leaves the room alone** when it holds anything else: a playlist, a track the app did not load, an earlier track of the queue, or the saved track again from its start. The player shows **This browser** as the device and nothing playing; the queue and source are kept, and the room can be chosen again under **Play on**.
 - **does not rejoin** a room that is stopped (Sonos reports it idle or with nothing loaded), which is how a queue that ran out ends. The saved track is shown paused at the saved position, with the room still the device; **Play** starts it there again.
 
+Where the room is not rejoined, the queue is moved on past the tracks of it that the Spotify account's play history lists as played meanwhile, as for a [Spotify device](spotify-playback.md#picking-the-queue-up-again). A room that stops reporting a track while the app is open is treated the same way: the track is kept, shown paused, and the room is followed again when it plays on through the tracks the app loaded.
+
 While the room is read, a line above the dock says **Rejoining the queue on …**; afterwards it says whether the room was rejoined or why not. Nothing is sent to the room before that read, including the tracks normally added ahead.
 
 ## Playback a Spotify app put on a room

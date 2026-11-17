@@ -13,7 +13,11 @@ import {
 } from '@repo/schemas/sonos'
 import { Button } from '@repo/ui/components/ui/button'
 import { useConfig } from './providers'
-import { usePlayback, type PlaybackView } from './playback-provider'
+import {
+  usePlayback,
+  useSpotifyAccount,
+  type PlaybackView,
+} from './playback-provider'
 import { fetchApiData } from '@/utils/api'
 import type { SonosRoomRef } from '@/utils/playback-engine'
 import {
@@ -208,8 +212,14 @@ export function PlayerConnections() {
   const { apiBaseUrl } = useConfig()
   const client = useQueryClient()
   const sonos = useSonosAccount()
+  const spotify = useSpotifyAccount()
   const playbackOff = useMutation({
     mutationFn: () => spotifyAuthorizationUrl(apiBaseUrl, { playback: false }),
+    onSuccess: (url) => window.location.assign(url),
+  })
+  // Asking for playback again adds the play history to the consent.
+  const allowHistory = useMutation({
+    mutationFn: () => spotifyAuthorizationUrl(apiBaseUrl, { playback: true }),
     onSuccess: (url) => window.location.assign(url),
   })
   const connect = useMutation({
@@ -230,7 +240,10 @@ export function PlayerConnections() {
     },
   })
   const status = sonos.data
-  const failure = playbackOff.error ?? connect.error ?? disconnect.error
+  const withoutHistory =
+    spotify.data?.playback === true && !spotify.data.playbackHistory
+  const failure =
+    playbackOff.error ?? allowHistory.error ?? connect.error ?? disconnect.error
   return (
     <section className="device-section" aria-label="Connections">
       <h3>Connections</h3>
@@ -247,6 +260,20 @@ export function PlayerConnections() {
             Turn off playback
           </Button>
         </div>
+        {withoutHistory && (
+          <div>
+            <dt>Play history</dt>
+            <dd>Not allowed</dd>
+            <Button
+              variant="primary"
+              type="button"
+              disabled={allowHistory.isPending}
+              onClick={() => allowHistory.mutate()}
+            >
+              Allow
+            </Button>
+          </div>
+        )}
         <div>
           <dt>Sonos</dt>
           <dd>
@@ -281,15 +308,18 @@ export function PlayerConnections() {
             </Button>
           )}
           {status && !status.configured && (
-            <Link
-              className="underline"
-              href="/providers/sonos?tab=settings"
-            >
+            <Link className="underline" href="/providers/sonos?tab=settings">
               Add credentials
             </Link>
           )}
         </div>
       </dl>
+      {withoutHistory && (
+        <p className="quiet">
+          With play history, the queue moves on past what Spotify played while
+          this app was closed.
+        </p>
+      )}
       {failure && <p role="alert">{failure.message}</p>}
     </section>
   )
@@ -338,10 +368,7 @@ export function ConnectPrompt({ configured }: { configured: boolean }) {
               Connect Spotify
             </Button>
           ) : (
-            <Link
-              className="underline"
-              href="/providers/spotify?tab=settings"
-            >
+            <Link className="underline" href="/providers/spotify?tab=settings">
               Spotify credentials
             </Link>
           )}

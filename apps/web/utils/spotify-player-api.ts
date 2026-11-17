@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import type { PlaybackSnapshot } from './playback'
+import type { PlaybackSnapshot, PlayedTrack } from './playback'
 
 const DeviceSchema = z.object({
   id: z.string().nullable(),
@@ -47,6 +47,16 @@ const AlbumTracksSchema = z.object({
   ),
   next: z.string().nullable().optional(),
 })
+const HistorySchema = z.object({
+  items: z.array(
+    z.object({
+      track: z.object({ uri: z.string(), name: z.string() }),
+      played_at: z.string(),
+    }),
+  ),
+})
+/** The most play history entries Spotify returns for one request. */
+const HISTORY_LIMIT = 50
 const ALBUM_PAGE = 50
 const ALBUM_PAGES = 10
 const ErrorSchema = z.object({
@@ -223,6 +233,8 @@ export function createPlayerApi(
       parsed.success ? (parsed.data.error.reason ?? null) : null,
     )
   }
+  /** Set once Spotify has refused the play history to this connection. */
+  let historyRefused = false
   /** A track as Spotify serves it in the account's market. */
   async function readTrack(trackUri: string) {
     const id = /^spotify:track:([A-Za-z0-9]{22})$/.exec(trackUri)?.[1]
@@ -295,6 +307,33 @@ export function createPlayerApi(
     ): Promise<{ uri: string; name: string } | null> {
       const { uri, name, is_playable: playable } = await readTrack(trackUri)
       return playable === false ? null : { uri, name }
+    },
+    /**
+     * The tracks the account played after a time, on any device; null when
+     * the connection was not given permission to read the play history,
+     * which Spotify grants separately from playback.
+     */
+    async played(since: number): Promise<PlayedTrack[] | null> {
+      if (historyRefused) return null
+      let response: Response
+      try {
+        response = await send('GET', '/recently-played', {
+          limit: HISTORY_LIMIT,
+          after: Math.max(0, Math.floor(since)),
+        })
+      } catch (error) {
+        if (!(error instanceof PlaybackApiError) || error.status !== 403)
+          throw error
+        historyRefused = true
+        return null
+      }
+      const { items } = HistorySchema.parse(await response.json())
+      return items.flatMap(({ track, played_at: at }) => {
+        const playedAt = Date.parse(at)
+        return Number.isNaN(playedAt)
+          ? []
+          : [{ uri: track.uri, name: track.name, playedAt }]
+      })
     },
     /**
      * How many playable tracks come before a track on its album, for a

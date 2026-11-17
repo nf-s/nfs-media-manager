@@ -94,6 +94,8 @@ const secretSchema = z.object({
 const playbackOnlyScope =
   'streaming user-read-email user-read-private user-read-playback-state user-modify-playback-state'
 const playbackScope = `user-library-read ${playbackOnlyScope}`
+// Asked for with playback, and not needed for it.
+const historyScope = 'user-read-recently-played'
 // Every authorization asks for saved albums and playlists.
 const requestedScope =
   'user-library-read playlist-read-private playlist-read-collaborative'
@@ -521,17 +523,35 @@ describe('Spotify owner/session-bound OAuth (mock database and gate)', () => {
   })
 
   it.each([
-    { scope: 'user-library-read', playback: false },
-    { scope: 'user-library-read streaming', playback: false },
-    { scope: playbackScope, playback: true },
+    { scope: 'user-library-read', playback: false, playbackHistory: false },
+    {
+      scope: 'user-library-read streaming',
+      playback: false,
+      playbackHistory: false,
+    },
+    {
+      scope: `user-library-read ${historyScope}`,
+      playback: false,
+      playbackHistory: false,
+    },
+    { scope: playbackScope, playback: true, playbackHistory: false },
+    {
+      scope: `${playbackScope} ${historyScope}`,
+      playback: true,
+      playbackHistory: true,
+    },
   ])(
-    'reports playback $playback for stored scope "$scope"',
-    async ({ scope, playback }) => {
+    'reports playback $playback and its history $playbackHistory for stored scope "$scope"',
+    async ({ scope, playback, playbackHistory }) => {
       mocks.database.select
         .mockReturnValueOnce(query([]))
         .mockReturnValueOnce(storedTokens({ scope }))
       const status = await getSpotifyAccountStatus('user-1')
-      expect(status).toMatchObject({ connected: true, playback })
+      expect(status).toMatchObject({
+        connected: true,
+        playback,
+        playbackHistory,
+      })
       expect(JSON.stringify(status)).not.toContain('fake-access-token')
       expect(JSON.stringify(status)).not.toContain('fake-refresh-token')
       expect(mocks.request).not.toHaveBeenCalled()
@@ -597,7 +617,7 @@ describe('Spotify owner/session-bound OAuth (mock database and gate)', () => {
       name: 'explicit playback',
       options: { playback: true },
       stored: undefined,
-      scope: `${requestedScope} ${playbackOnlyScope}`,
+      scope: `${requestedScope} ${playbackOnlyScope} ${historyScope}`,
       playback: true,
       returnTo: 'player',
     },
@@ -613,7 +633,7 @@ describe('Spotify owner/session-bound OAuth (mock database and gate)', () => {
       name: 'a reconnect of a playback account',
       options: {},
       stored: playbackScope,
-      scope: `${requestedScope} ${playbackOnlyScope}`,
+      scope: `${requestedScope} ${playbackOnlyScope} ${historyScope}`,
       playback: true,
       returnTo: 'imports',
     },
@@ -653,7 +673,7 @@ describe('Spotify owner/session-bound OAuth (mock database and gate)', () => {
       name: 'explicit playlist changes',
       options: { playlistChanges: true, playlists: true },
       stored: playbackScope,
-      scope: `${requestedScope} ${playbackOnlyScope} ${changeScope}`,
+      scope: `${requestedScope} ${playbackOnlyScope} ${historyScope} ${changeScope}`,
       playback: true,
       returnTo: 'playlists',
     },
@@ -669,7 +689,7 @@ describe('Spotify owner/session-bound OAuth (mock database and gate)', () => {
       name: 'a reconnect from podcasts keeping playback and playlist changes',
       options: { podcasts: true },
       stored: `${playbackScope} ${changeScope}`,
-      scope: `${requestedScope} ${playbackOnlyScope} ${changeScope}`,
+      scope: `${requestedScope} ${playbackOnlyScope} ${historyScope} ${changeScope}`,
       playback: true,
       returnTo: 'podcasts',
     },
@@ -677,7 +697,7 @@ describe('Spotify owner/session-bound OAuth (mock database and gate)', () => {
       name: 'explicit playback and playlist changes',
       options: { playback: true, playlistChanges: false },
       stored: undefined,
-      scope: `${requestedScope} ${playbackOnlyScope}`,
+      scope: `${requestedScope} ${playbackOnlyScope} ${historyScope}`,
       playback: true,
       returnTo: 'player',
     },
@@ -767,7 +787,7 @@ describe('Spotify owner/session-bound OAuth (mock database and gate)', () => {
     expect(mocks.success).not.toHaveBeenCalled()
   })
 
-  it('stores a playback completion with every scope and returns to Providers', async () => {
+  it('stores a playback completion without the play history and returns to Providers', async () => {
     const started = await begin('http://localhost:3001', { playback: true })
     mockCompletion(started.saved)
     mocks.request.mockResolvedValue(

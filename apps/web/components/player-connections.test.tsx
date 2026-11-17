@@ -4,6 +4,8 @@ import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { SonosAccountStatus, SonosRooms } from '@repo/schemas/sonos'
+import type { SpotifyAccountStatusSchema } from '@repo/schemas/spotify'
+import type { z } from 'zod'
 import {
   PlayerConnections,
   SonosRooms as SonosRoomList,
@@ -68,9 +70,11 @@ function render(
   element: React.ReactElement,
   account?: SonosAccountStatus,
   list?: SonosRooms,
+  spotify?: z.infer<typeof SpotifyAccountStatusSchema>,
 ) {
   const client = new QueryClient()
   if (account) client.setQueryData(['sonos-account'], account)
+  if (spotify) client.setQueryData(['spotify-account'], spotify)
   if (list) client.setQueryData(['sonos-rooms'], list)
   return renderToStaticMarkup(
     <QueryClientProvider client={client}>
@@ -203,4 +207,31 @@ test('connections show Spotify and the Sonos status with its next step', () => {
     /<dd>Not set up<\/dd><a class="underline" href="\/providers\/sonos\?tab=settings">Add credentials<\/a>/,
   )
   assert.match(render(<PlayerConnections />), /<dd>Checking…<\/dd>/)
+})
+
+test('connections offer the play history only to a playback connection made without it', () => {
+  const spotify = {
+    configured: true,
+    connected: true,
+    expiresAt: null,
+    scope: 'user-library-read',
+    redirectUri: null,
+    playback: true,
+    playbackHistory: false,
+    playlists: true,
+    playlistChanges: false,
+  }
+  const without = render(<PlayerConnections />, connected, undefined, spotify)
+  assert.match(
+    without,
+    /<dt>Play history<\/dt><dd>Not allowed<\/dd>.*?>Allow<\/button>/,
+  )
+  assert.match(without, /the queue moves on past what Spotify played/)
+  const allowed = render(<PlayerConnections />, connected, undefined, {
+    ...spotify,
+    playbackHistory: true,
+  })
+  assert.doesNotMatch(allowed, /Play history/)
+  // Until the status is known, nothing is offered.
+  assert.doesNotMatch(render(<PlayerConnections />, connected), /Play history/)
 })

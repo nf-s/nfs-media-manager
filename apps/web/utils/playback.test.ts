@@ -3,10 +3,13 @@ import { test } from 'node:test'
 import {
   albumPlayable,
   formatClock,
+  givenIndex,
   libraryTrackPlayable,
   moveEntry,
+  playedThrough,
   playRequest,
   positionAt,
+  queueContinues,
   queueSummary,
   rejoinVerdict,
   sessionContains,
@@ -16,6 +19,7 @@ import {
   startUnverified,
   stepSession,
   trackPlayable,
+  WATCHED_MS,
   type PlayableItem,
   type PlaybackSession,
   type PlaybackSnapshot,
@@ -535,17 +539,34 @@ test('a saved queue is rejoined only on the same tracks, further along', () => {
       index: 1,
     },
   )
-  // Nothing loaded, or stopped.
+  // Another recording of a later track, which Spotify names the same.
+  assert.deepEqual(
+    rejoinVerdict(
+      saved,
+      before,
+      at(8, { trackUri: 'spotify:track:reissue', trackName: ' track 2 ' }),
+      false,
+    ),
+    { verdict: 'rejoined', index: 2 },
+  )
+  // Nothing loaded, or stopped: how far it played is not known.
   assert.deepEqual(rejoinVerdict(saved, before, null, false), {
     verdict: 'ended',
+    finished: false,
   })
   assert.deepEqual(rejoinVerdict(saved, before, at(2), true), {
     verdict: 'ended',
+    finished: false,
   })
   // Back at the start of the list, stopped: it ran out.
   assert.deepEqual(
     rejoinVerdict(saved, before, at(0, { paused: true, positionMs: 0 }), false),
-    { verdict: 'ended' },
+    { verdict: 'ended', finished: true },
+  )
+  // The saved track again, stopped at its start: put back by hand.
+  assert.deepEqual(
+    rejoinVerdict(saved, before, at(1, { paused: true, positionMs: 0 }), false),
+    { verdict: 'ended', finished: false },
   )
   // Another track, a playlist, an earlier track playing, or the saved track
   // again from its start.
@@ -600,6 +621,161 @@ test('a saved album is rejoined while its context plays', () => {
       }),
       false,
     ),
-    { verdict: 'ended' },
+    { verdict: 'ended', finished: true },
+  )
+})
+
+function listTracks(count: number): PlayableItem[] {
+  return Array.from({ length: count }, (_, index) => ({
+    kind: 'track',
+    uri: `spotify:track:list-${index}`,
+    title: `Track ${index}`,
+    artist: 'Fixture artist',
+    albumId: null,
+    albumTitle: '',
+    artworkUrl: null,
+    trackCount: 1,
+  }))
+}
+
+test('a device track is found among the tracks it was given by URI, then by name', () => {
+  const sent = listTracks(4)
+  const shown = (trackUri: string | null, trackName = 'Something') => ({
+    trackUri,
+    linkedFromUri: null,
+    trackName,
+  })
+  assert.equal(givenIndex(sent, 0, shown('spotify:track:list-2')), 2)
+  assert.equal(givenIndex(sent, 3, shown('spotify:track:list-2')), -1)
+  assert.equal(
+    givenIndex(sent, 0, {
+      trackUri: 'spotify:track:relinked',
+      linkedFromUri: 'spotify:track:list-1',
+      trackName: 'Something',
+    }),
+    1,
+  )
+  // Another recording carries the same name; the URI wins when both match.
+  assert.equal(
+    givenIndex(sent, 0, shown('spotify:track:reissue', 'TRACK 3')),
+    3,
+  )
+  assert.equal(givenIndex(sent, 0, shown('spotify:track:list-0', 'Track 3')), 0)
+  assert.equal(givenIndex(sent, 0, shown('spotify:track:other', '')), -1)
+  assert.equal(givenIndex(sent, 0, shown(null, 'Track 1')), -1)
+})
+
+test('the play history tells how far a device got through its tracks', () => {
+  const sent = listTracks(6)
+  const played = (
+    index: number,
+    playedAt: number,
+    name = `Track ${index}`,
+  ) => ({
+    uri: `spotify:track:list-${index}`,
+    name,
+    playedAt,
+  })
+  // Nothing played since: the saved track is still the one due.
+  assert.equal(playedThrough(sent, 1, [], 1_000), 1)
+  assert.equal(playedThrough(sent, 1, [played(1, 900)], 1_000), 1)
+  // The saved track and the two after it, listed newest first.
+  assert.equal(
+    playedThrough(
+      sent,
+      1,
+      [played(3, 4_000), played(2, 3_000), played(1, 2_000)],
+      1_000,
+    ),
+    4,
+  )
+  // A track skipped on the way is passed over, other music is ignored and
+  // a track before the saved one does not move the queue back.
+  assert.equal(
+    playedThrough(
+      sent,
+      1,
+      [
+        played(0, 1_500),
+        played(2, 2_000),
+        { uri: 'spotify:track:other', name: 'Other', playedAt: 2_500 },
+        played(4, 3_000),
+      ],
+      1_000,
+    ),
+    5,
+  )
+  // Everything given was played.
+  assert.equal(playedThrough(sent, 4, [played(5, 2_000)], 1_000), 6)
+  // Another recording, by name.
+  assert.equal(
+    playedThrough(
+      sent,
+      1,
+      [{ uri: 'spotify:track:reissue', name: 'Track 2', playedAt: 2_000 }],
+      1_000,
+    ),
+    3,
+  )
+})
+
+test('the queue goes on by itself only after its item ended under this page', () => {
+  const sent = listTracks(3)
+  const [first, , last] = sent
+  assert.ok(first && last)
+  const midList = { item: first, sent, index: 0 }
+  const atEnd = { item: last, sent, index: 2 }
+  const before = snapshot({
+    trackUri: last.uri,
+    contextUri: null,
+    positionMs: 198_000,
+    at: 10_000,
+  })
+  const stopped = snapshot({
+    trackUri: first.uri,
+    contextUri: null,
+    positionMs: 0,
+    paused: true,
+    at: 13_000,
+  })
+  const other = snapshot({
+    trackUri: 'spotify:track:other',
+    contextUri: 'spotify:playlist:other',
+    positionMs: 1_000,
+    at: 13_000,
+  })
+  // The device stopped at the end of what it was given.
+  assert.equal(queueContinues(atEnd, before, stopped), true)
+  // Spotify carried on with other music as the last track ran out.
+  assert.equal(queueContinues(atEnd, before, other), true)
+  // Other music while the device still had tracks to play was chosen there.
+  assert.equal(queueContinues(midList, before, other), false)
+  // Other music found a minute later may have been chosen too.
+  assert.equal(queueContinues(atEnd, before, { ...other, at: 70_000 }), false)
+  assert.equal(queueContinues(atEnd, before, { ...stopped, at: 70_000 }), true)
+  // Music paused part-way was stopped by someone.
+  assert.equal(
+    queueContinues(atEnd, before, {
+      ...other,
+      paused: true,
+      positionMs: 40_000,
+    }),
+    false,
+  )
+  // A page that was not reading the device does not know what was played.
+  assert.equal(
+    queueContinues(atEnd, before, {
+      ...stopped,
+      at: before.at + WATCHED_MS + 1,
+    }),
+    false,
+  )
+  assert.equal(queueContinues(atEnd, null, stopped), false)
+  // An album is the whole of what the device was given.
+  const item = albumPlayable(album)
+  assert.ok(item)
+  assert.equal(
+    queueContinues({ item, sent: [item], index: 0 }, before, other),
+    true,
   )
 })

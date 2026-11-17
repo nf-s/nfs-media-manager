@@ -167,6 +167,65 @@ test('reads the recording Spotify plays for a track, or that it plays none', asy
   assert.deepEqual(invalid.calls, [])
 })
 
+test('reads the tracks played since a time, or that the history may not be read', async () => {
+  const history = {
+    items: [
+      {
+        track: { uri: 'spotify:track:two', name: 'Second' },
+        played_at: '2026-01-01T00:05:00.000Z',
+      },
+      {
+        track: { uri: 'spotify:track:one', name: 'First' },
+        played_at: '2026-01-01T00:01:30.250Z',
+      },
+      {
+        track: { uri: 'spotify:track:undated', name: 'Undated' },
+        played_at: '',
+      },
+    ],
+  }
+  const { api, calls } = client([
+    new Response(JSON.stringify(history), { status: 200 }),
+  ])
+  assert.deepEqual(await api.played(1_767_225_600_500.7), [
+    {
+      uri: 'spotify:track:two',
+      name: 'Second',
+      playedAt: Date.parse('2026-01-01T00:05:00.000Z'),
+    },
+    {
+      uri: 'spotify:track:one',
+      name: 'First',
+      playedAt: Date.parse('2026-01-01T00:01:30.250Z'),
+    },
+  ])
+  assert.equal(
+    `${calls[0]?.method} ${calls[0]?.url.pathname}${calls[0]?.url.search}`,
+    'GET /v1/me/player/recently-played?limit=50&after=1767225600500',
+  )
+
+  // A connection made without the permission is refused once and not asked again.
+  const refused = client([
+    new Response(
+      JSON.stringify({ error: { message: 'Insufficient client scope' } }),
+      {
+        status: 403,
+      },
+    ),
+  ])
+  assert.equal(await refused.api.played(0), null)
+  assert.equal(await refused.api.played(0), null)
+  assert.equal(refused.calls.length, 1)
+
+  // Any other failure is the caller's to handle and is tried again next time.
+  const failing = client([
+    new Response('{}', { status: 502 }),
+    new Response(JSON.stringify({ items: [] }), { status: 200 }),
+  ])
+  await assert.rejects(failing.api.played(0), PlaybackApiError)
+  assert.deepEqual(await failing.api.played(0), [])
+})
+
 test('counts the playable tracks before a track on its album', async () => {
   const albumUri = 'spotify:album:ABCDEFGHIJKL1234567890'
   const page = (items: unknown[], next: string | null) =>

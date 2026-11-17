@@ -7,6 +7,11 @@ export const SpotifyAccountStatusSchema = z.object({
   scope: z.string().nullable(),
   redirectUri: z.string().nullable(),
   playback: z.boolean(),
+  /**
+   * Whether the playback connection may also read what the account played
+   * lately, which moves the queue on past what played while the app was closed.
+   */
+  playbackHistory: z.boolean().default(false),
   /** Whether the connection includes playlist read access. */
   playlists: z.boolean(),
   /** Whether the connection may add items to the account's playlists. */

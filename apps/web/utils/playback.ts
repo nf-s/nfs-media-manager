@@ -212,8 +212,6 @@ export type PlaybackSession = {
    * was asked; null when it plays none or could not say.
    */
   playsAs?: string | null
-  /** The start was sent a second time because the device ignored the first. */
-  resent?: boolean
 }
 export type SessionEvent = 'none' | 'finished' | 'left'
 
@@ -223,6 +221,98 @@ const END_TOLERANCE_MS = 3_000
 const SKIP_WINDOW_MS = 6_000
 /** How far before the saved position a device may report the same track. */
 const REJOIN_BACK_MS = 5_000
+/**
+ * How long ago a device may last have been read for the page to know what it
+ * has played since. Past this, as after the computer slept, the device is
+ * picked up like a saved session's.
+ */
+export const WATCHED_MS = 90_000
+/** Other music that began this soon after the last read began as the item ran out. */
+const WATCHED_CLOSELY_MS = 10_000
+
+/** Two recordings of one track carry the same name. */
+export function sameName(one: string, other: string) {
+  const name = one.trim().toLowerCase()
+  return name !== '' && name === other.trim().toLowerCase()
+}
+
+/**
+ * Where a device's track is among the tracks it was given, from `from` on;
+ * -1 when it is none of them. Spotify can play another recording of a track
+ * than the one asked for, so a track of the same name is taken for it when
+ * no URI matches.
+ */
+export function givenIndex(
+  sent: readonly PlayableItem[],
+  from: number,
+  shown: Pick<PlaybackSnapshot, 'trackUri' | 'linkedFromUri' | 'trackName'>,
+): number {
+  if (!shown.trackUri) return -1
+  const exact = sent.findIndex(
+    (item, at) =>
+      at >= from &&
+      (item.uri === shown.trackUri || item.uri === shown.linkedFromUri),
+  )
+  if (exact >= 0) return exact
+  return sent.findIndex(
+    (item, at) =>
+      at >= from &&
+      item.kind === 'track' &&
+      sameName(item.title, shown.trackName),
+  )
+}
+
+/** A track the account played, from Spotify's play history. */
+export type PlayedTrack = { uri: string; name: string; playedAt: number }
+
+/**
+ * How far the tracks a device was given were played while no page followed
+ * it: the index of the one due after the last of them in the account's play
+ * history since `since`, or `from` when none was played. Tracks skipped on
+ * the way are passed over with it.
+ */
+export function playedThrough(
+  sent: readonly PlayableItem[],
+  from: number,
+  history: readonly PlayedTrack[],
+  since: number,
+): number {
+  let due = from
+  const played = history
+    .filter((entry) => entry.playedAt > since)
+    .sort((one, other) => one.playedAt - other.playedAt)
+  for (const entry of played) {
+    const index = givenIndex(sent, due, {
+      trackUri: entry.uri,
+      linkedFromUri: null,
+      trackName: entry.name,
+    })
+    if (index >= 0) due = index + 1
+  }
+  return due
+}
+
+/**
+ * Whether the queue goes on by itself once an item has finished. It does
+ * when the device has stopped at the end of what it was given, and when
+ * other music began as the last of it ran out while this page was reading
+ * the device, which is Spotify carrying on with music of its own choice.
+ * Other music found playing was chosen by someone and is left alone: nothing
+ * is started over it.
+ */
+export function queueContinues(
+  session: Pick<PlaybackSession, 'item' | 'sent' | 'index'>,
+  before: PlaybackSnapshot | null,
+  after: PlaybackSnapshot,
+): boolean {
+  if (!before) return false
+  const unread = after.at - before.at
+  if (unread > WATCHED_MS) return false
+  if (after.paused) return after.positionMs <= END_TOLERANCE_MS
+  const last =
+    session.item.kind === 'album' || session.index >= session.sent.length - 1
+  return last && unread <= WATCHED_CLOSELY_MS
+}
 
 export function startSession(
   item: PlayableItem,
@@ -339,7 +429,9 @@ function ranOutOrSkipped(
  */
 export type RejoinVerdict =
   | { verdict: 'rejoined'; index: number }
-  | { verdict: 'ended' | 'changed' }
+  /** `finished` when the device is known to have played all it was given. */
+  | { verdict: 'ended'; finished: boolean }
+  | { verdict: 'changed' }
 
 export function rejoinVerdict(
   session: Pick<PlaybackSession, 'item' | 'sent' | 'index' | 'anchorUri'>,
@@ -348,7 +440,7 @@ export function rejoinVerdict(
   /** The device reports that it is stopped, with nothing to resume. */
   idle: boolean,
 ): RejoinVerdict {
-  if (!after || idle) return { verdict: 'ended' }
+  if (!after || idle) return { verdict: 'ended', finished: false }
   // The app plays tracks and albums only, never a playlist.
   if (after.contextUri?.startsWith('spotify:playlist:'))
     return { verdict: 'changed' }
@@ -359,6 +451,9 @@ export function rejoinVerdict(
     saved.trackUri === after.trackUri
   const wentBack =
     sameTrack && after.positionMs + REJOIN_BACK_MS < saved.positionMs
+  /** Earlier in the queue: stopped at a start it has ended, otherwise it changed. */
+  const back = (finished: boolean): RejoinVerdict =>
+    reset ? { verdict: 'ended', finished } : { verdict: 'changed' }
   const { item } = session
   if (item.kind === 'album') {
     if (after.contextUri !== item.uri) return { verdict: 'changed' }
@@ -368,24 +463,20 @@ export function rejoinVerdict(
       reset &&
       after.trackNumber === 1 &&
       (after.discNumber ?? 1) === 1
-    if (wentBack || restarted) return { verdict: reset ? 'ended' : 'changed' }
+    if (restarted) return { verdict: 'ended', finished: true }
+    if (wentBack) return back(false)
     return { verdict: 'rejoined', index: session.index }
   }
-  const playing = (sent: PlayableItem) =>
-    sent.uri === after.trackUri || sent.uri === after.linkedFromUri
-  let index = session.sent.findIndex(
-    (sent, at) => at >= session.index && playing(sent),
-  )
+  let index = givenIndex(session.sent, session.index, after)
   // Spotify may have played another recording of the current track.
   if (index < 0 && after.trackUri && after.trackUri === session.anchorUri)
     index = session.index
   if (index < 0) {
     // A finished list returns to one of its earlier tracks and stops there.
-    const earlier = session.sent.some(playing)
-    return { verdict: earlier && reset ? 'ended' : 'changed' }
+    const earlier = givenIndex(session.sent, 0, after) >= 0
+    return earlier ? back(true) : { verdict: 'changed' }
   }
-  if (index === session.index && wentBack)
-    return { verdict: reset ? 'ended' : 'changed' }
+  if (index === session.index && wentBack) return back(false)
   return { verdict: 'rejoined', index }
 }
 

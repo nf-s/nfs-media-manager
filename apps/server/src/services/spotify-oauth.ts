@@ -16,6 +16,7 @@ import { decryptSecretValue, encryptSecretValue } from '@/lib/crypto'
 import { ServerError } from '@/lib/error'
 import { resolveProviderSecrets } from '@/lib/provider-secrets'
 import {
+  SPOTIFY_PLAYBACK_HISTORY_SCOPES,
   SPOTIFY_PLAYBACK_SCOPES,
   SPOTIFY_PLAYLIST_CHANGE_SCOPES,
   SPOTIFY_PLAYLIST_SCOPES,
@@ -219,6 +220,12 @@ export async function getSpotifyAccountStatus(userId: string) {
     scope: connected ? SPOTIFY_SCOPE : null,
     redirectUri: configured?.redirectUri ?? null,
     playback: connected && hasScopes(account?.scope, SPOTIFY_PLAYBACK_SCOPES),
+    playbackHistory:
+      connected &&
+      hasScopes(account?.scope, [
+        ...SPOTIFY_PLAYBACK_SCOPES,
+        ...SPOTIFY_PLAYBACK_HISTORY_SCOPES,
+      ]),
     playlists: connected && hasScopes(account?.scope, SPOTIFY_PLAYLIST_SCOPES),
     playlistChanges:
       connected && hasScopes(account?.scope, PLAYLIST_CHANGE_ACCESS.scopes),
@@ -256,7 +263,9 @@ export async function authorizeSpotify(
     config.redirectUri,
     [
       ...PLAYLIST_ACCESS.scopes,
-      ...(playback ? SPOTIFY_PLAYBACK_SCOPES : []),
+      ...(playback
+        ? [...SPOTIFY_PLAYBACK_SCOPES, ...SPOTIFY_PLAYBACK_HISTORY_SCOPES]
+        : []),
       ...(playlistChanges ? SPOTIFY_PLAYLIST_CHANGE_SCOPES : []),
     ],
   )

@@ -231,6 +231,20 @@ function createPlayer(apiBaseUrl: string) {
   return { engine, sync }
 }
 
+/** The Spotify connection and what it may do; shared by everything that asks. */
+export function useSpotifyAccount() {
+  const { apiBaseUrl } = useConfig()
+  return useQuery({
+    queryKey: ['spotify-account'],
+    queryFn: () =>
+      fetchApiData(
+        apiBaseUrl,
+        '/api/v1/spotify/status',
+        SpotifyAccountStatusSchema,
+      ),
+  })
+}
+
 const noSubscription = () => () => undefined
 const idleState = () => idlePlaybackState
 
@@ -240,15 +254,7 @@ export default function PlaybackProvider({
   children: React.ReactNode
 }) {
   const { apiBaseUrl } = useConfig()
-  const account = useQuery({
-    queryKey: ['spotify-account'],
-    queryFn: () =>
-      fetchApiData(
-        apiBaseUrl,
-        '/api/v1/spotify/status',
-        SpotifyAccountStatusSchema,
-      ),
-  })
+  const account = useSpotifyAccount()
   const enabled = account.data?.playback === true
   const [player, setPlayer] = useState<PlaybackSync | null>(null)
   useEffect(() => {

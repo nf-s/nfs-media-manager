@@ -14,6 +14,11 @@ export const SPOTIFY_PLAYBACK_SCOPES: readonly string[] = [
   'user-read-playback-state',
   'user-modify-playback-state',
 ]
+// What the account played lately, on any device. Requested with playback and
+// not required for it: a connection made before it was asked for still plays.
+export const SPOTIFY_PLAYBACK_HISTORY_SCOPES: readonly string[] = [
+  'user-read-recently-played',
+]
 // Reading the account's playlists; requested with every new connection.
 export const SPOTIFY_PLAYLIST_SCOPES: readonly string[] = [
   'playlist-read-private',
