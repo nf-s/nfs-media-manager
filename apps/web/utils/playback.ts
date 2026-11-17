@@ -207,6 +207,11 @@ export type PlaybackSession = {
   index: number
   /** The track the device was on when another item's start was requested. */
   replacedUri?: string | null
+  /**
+   * For a track item, the recording Spotify plays for it here, once Spotify
+   * was asked; null when it plays none or could not say.
+   */
+  playsAs?: string | null
   /** The start was sent a second time because the device ignored the first. */
   resent?: boolean
 }
@@ -245,18 +250,56 @@ function beganAfterStart(session: PlaybackSession, after: PlaybackSnapshot) {
   )
 }
 
+/** The device plays the track item being started, or its recording here. */
+function requestedTrack(session: PlaybackSession, after: PlaybackSnapshot) {
+  const { uri } = session.item
+  return (
+    after.trackUri === uri ||
+    after.linkedFromUri === uri ||
+    (!!session.playsAs && after.trackUri === session.playsAs)
+  )
+}
+
 /**
- * Whether the device answered a start by playing what it already had from its
- * beginning: the request was accepted and then not acted on.
+ * Whether the device answered a start by beginning something else, such as
+ * the track it already had from its beginning: the request was accepted and
+ * then not acted on. That track is known when the device was heard on it
+ * before. Otherwise an album is told by its context, and a track once Spotify
+ * has said which recording it plays for the item.
  */
 export function startIgnored(
   session: PlaybackSession,
   after: PlaybackSnapshot,
 ): boolean {
+  if (
+    session.phase !== 'starting' ||
+    !after.trackUri ||
+    !beganAfterStart(session, after)
+  )
+    return false
+  const earlier = after.trackUri === session.replacedUri
+  if (session.item.kind === 'album')
+    return earlier || after.contextUri !== session.item.uri
+  if (requestedTrack(session, after)) return false
+  return earlier || typeof session.playsAs === 'string'
+}
+
+/**
+ * Whether a track that began after a track item's start needs Spotify's word
+ * on what it is: another recording of the item, a track sent after one that
+ * cannot be played, or the start being ignored.
+ */
+export function startUnverified(
+  session: PlaybackSession,
+  after: PlaybackSnapshot,
+): boolean {
   return (
     session.phase === 'starting' &&
-    !!session.replacedUri &&
-    after.trackUri === session.replacedUri &&
+    session.item.kind === 'track' &&
+    session.playsAs === undefined &&
+    !!after.trackUri &&
+    after.trackUri !== session.replacedUri &&
+    !requestedTrack(session, after) &&
     beganAfterStart(session, after)
   )
 }
@@ -362,16 +405,17 @@ export function stepSession(
     if (item.kind === 'album' && after.contextUri === item.uri)
       return { session: { ...session, phase: 'playing' }, event: 'none' }
     if (item.kind === 'track' && after.trackUri) {
-      const requested =
-        after.trackUri === item.uri || after.linkedFromUri === item.uri
-      // Spotify may play another recording of the requested track. Accept a
-      // track that began after the request once the direct match has had time,
-      // unless it is the track the device was already on: that is the earlier
-      // playback starting again, not the requested track.
+      // Spotify may play another recording of the requested track, or go on
+      // to the next track sent when it cannot be played. Accept a track that
+      // began after the request once the direct match has had time, unless it
+      // is the track the device was already on, or Spotify has named the
+      // recording it plays for the item: that is the earlier playback
+      // starting again, not the requested track.
       const substituted =
         beganAfterStart(session, after) &&
-        after.trackUri !== session.replacedUri
-      if (requested || substituted)
+        after.trackUri !== session.replacedUri &&
+        typeof session.playsAs !== 'string'
+      if (requestedTrack(session, after) || substituted)
         return {
           session: { ...session, phase: 'playing', anchorUri: after.trackUri },
           event: 'none',

@@ -5,6 +5,7 @@ import {
   rejoinVerdict,
   startIgnored,
   startSession,
+  startUnverified,
   stepSession,
   type PlayableItem,
   type PlaybackSource,
@@ -355,6 +356,12 @@ function shownTrack(shown: PlaybackSnapshot): PlayableItem | null {
   }
 }
 
+/** Two recordings of one track carry the same name. */
+function sameName(one: string, other: string) {
+  const name = one.trim().toLowerCase()
+  return name !== '' && name === other.trim().toLowerCase()
+}
+
 /** Resolves when the work settles or the wait is over, whichever is first. */
 function briefly(pending: Promise<unknown>, wait: number) {
   return new Promise<void>((resolve) => {
@@ -404,6 +411,8 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
   /** The last track a device reported outside a start, and the item it was. */
   let heard: string | null = null
   let heardFor: string | null = null
+  /** The start for which Spotify was asked which recording it plays. */
+  let verifying = 0
   /** Where in its first track the item being started begins. */
   let startedFrom = 0
   let sawLocalState = false
@@ -1300,6 +1309,16 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     set({ active: true, snapshot: after, starting: false })
   }
 
+  /** The Spotify device a start is sent to; a Sonos room is not one. */
+  function startDevice() {
+    const target = state.target
+    return target.kind === 'local'
+      ? localId
+      : target.kind === 'remote'
+        ? target.device.id
+        : null
+  }
+
   /**
    * Spotify can accept a start and then play what the device already had,
    * from its beginning. The request is sent once more; if that is ignored
@@ -1307,12 +1326,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
    */
   function resend(active: PlaybackSession) {
     const target = state.target
-    const deviceId =
-      target.kind === 'local'
-        ? localId
-        : target.kind === 'remote'
-          ? target.device.id
-          : null
+    const deviceId = startDevice()
     const [item, ...following] = active.sent
     if (!deviceId || !item) return
     const started = run
@@ -1331,9 +1345,40 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     )
   }
 
+  /**
+   * Asks Spotify which recording it plays for the track being started, to
+   * tell that recording from other music beginning on a device this page has
+   * not heard play. A track of the same name is taken for the recording.
+   */
+  function verifyStart(active: PlaybackSession, began: PlaybackSnapshot) {
+    if (verifying === run) return
+    verifying = run
+    const started = run
+    api
+      .recording(active.item.uri)
+      .then(
+        (recording) =>
+          recording && sameName(recording.name, began.trackName)
+            ? began.trackUri
+            : (recording?.uri ?? null),
+        // Spotify could not say, so the track that began is taken for it.
+        () => null,
+      )
+      .then((playsAs) => {
+        if (started !== run || disposed || session?.phase !== 'starting') return
+        session = { ...session, playsAs }
+        if (latest) observe(latest)
+      })
+  }
+
   function observe(after: PlaybackSnapshot) {
     const before = latest
     latest = after
+    if (session && startDevice() && startUnverified(session, after)) {
+      // The item is not shown as playing until Spotify has answered.
+      verifyStart(session, after)
+      return
+    }
     if (session && !session.resent && startIgnored(session, after))
       resend(session)
     if (after.trackUri && session?.phase !== 'starting') {

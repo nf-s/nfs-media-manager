@@ -129,6 +129,10 @@ function harness(
   /** Tracks whose details were read from Spotify. */
   const lookups: string[] = []
   const failingLookups = new Set<string>()
+  /** Tracks Spotify was asked which recording it plays for. */
+  const asked: string[] = []
+  /** The recording Spotify plays for a track: another one, or none. */
+  const recordings = new Map<string, string | null>()
   const page = { visible: true }
   const listeners = new Map<string, Array<(payload: unknown) => void>>()
   const local: { state: unknown } = { state: null }
@@ -204,6 +208,17 @@ function harness(
       await command(`album index ${albumUri} ${trackUri}`)
       return 3
     },
+    async recording(trackUri) {
+      asked.push(trackUri)
+      if (failingLookups.has(trackUri)) throw new PlaybackApiError(404, null)
+      const recording = recordings.get(trackUri)
+      return recording === null
+        ? null
+        : {
+            uri: recording ?? trackUri,
+            name: `Spotify name of ${trackUri}`,
+          }
+    },
     async track(trackUri) {
       lookups.push(trackUri)
       if (failingLookups.has(trackUri)) throw new PlaybackApiError(404, null)
@@ -240,6 +255,10 @@ function harness(
     lookups,
     failLookup(uri: string) {
       failingLookups.add(uri)
+    },
+    asked,
+    playsAs(uri: string, recording: string | null) {
+      recordings.set(uri, recording)
     },
     page,
     local,
@@ -3947,6 +3966,173 @@ test('a device that keeps restarting what it was playing is reported, not shown 
   await restartEarlier(one, 5)
   await restartEarlier(one, 14)
   assert.deepEqual(one.sent('play'), [anotherPlay, anotherPlay])
+  const state = one.sync.getState()
+  assert.equal(state.current, null)
+  assert.equal(state.starting, false)
+  assert.match(state.failure?.message ?? '', /did not start/)
+  assert.equal(state.snapshot?.trackUri, 'spotify:track:from-the-app')
+  one.close()
+})
+
+/** A page opened while its device is idle: it has not heard the device play. */
+async function idleDevice() {
+  const one = page('Chrome on Mac', fakeSessions())
+  one.engine.watch()
+  one.sync.start()
+  await advance(1_000)
+  await one.sync.selectDevice({ kind: 'remote', device: speaker })
+  one.remote.device = { ...speaker, active: true }
+  return one
+}
+
+/** The device begins a track from its start, a second at a time. */
+async function begins(
+  one: ReturnType<typeof page>,
+  values: Partial<PlaybackSnapshot>,
+  seconds: number,
+) {
+  for (let second = 0; second < seconds; second += 1) {
+    one.remote.snapshot = remoteSnapshot({
+      contextUri: null,
+      ...values,
+      positionMs: second * 1_000,
+    })
+    await advance(1_000)
+  }
+}
+
+test('a page that never heard its device play sends an ignored track start once more', async () => {
+  const one = await idleDevice()
+  one.sync.play(anotherAlbum[0] ?? track, anotherAlbumSource())
+  await restartEarlier(one, 5)
+  assert.deepEqual(one.sent('play'), [anotherPlay, anotherPlay])
+  assert.deepEqual(one.asked, ['spotify:track:another-0'])
+  assert.equal(one.sync.getState().starting, true)
+  assert.equal(one.sync.getState().snapshot, null)
+  await begins(one, { trackUri: 'spotify:track:another-0' }, 4)
+  const state = one.sync.getState()
+  assert.deepEqual(one.sent('play'), [anotherPlay, anotherPlay])
+  assert.equal(state.current?.uri, 'spotify:track:another-0')
+  assert.equal(state.snapshot?.trackUri, 'spotify:track:another-0')
+  assert.equal(state.failure, null)
+  one.close()
+})
+
+test('a page that never heard its device play reports a track start ignored twice', async () => {
+  const one = await idleDevice()
+  one.sync.play(anotherAlbum[0] ?? track, anotherAlbumSource())
+  await restartEarlier(one, 5)
+  await restartEarlier(one, 14)
+  assert.deepEqual(one.sent('play'), [anotherPlay, anotherPlay])
+  assert.deepEqual(one.asked, ['spotify:track:another-0'])
+  const state = one.sync.getState()
+  assert.equal(state.current, null)
+  assert.equal(state.starting, false)
+  assert.match(state.failure?.message ?? '', /did not start/)
+  assert.equal(state.snapshot?.trackUri, 'spotify:track:from-the-app')
+  one.close()
+})
+
+test('another recording Spotify plays for a track is the track started', async () => {
+  const one = await idleDevice()
+  one.playsAs('spotify:track:another-0', 'spotify:track:another-0-here')
+  one.sync.play(anotherAlbum[0] ?? track, anotherAlbumSource())
+  await begins(one, { trackUri: 'spotify:track:another-0-here' }, 6)
+  assert.deepEqual(one.sent('play'), [anotherPlay])
+  assert.deepEqual(one.asked, ['spotify:track:another-0'])
+  const state = one.sync.getState()
+  assert.equal(state.current?.uri, 'spotify:track:another-0')
+  assert.equal(state.snapshot?.trackUri, 'spotify:track:another-0-here')
+  assert.equal(state.starting, false)
+  assert.equal(state.failure, null)
+  one.close()
+})
+
+test('a recording of the same name that Spotify did not name is the track started', async () => {
+  const one = await idleDevice()
+  one.sync.play(anotherAlbum[0] ?? track, anotherAlbumSource())
+  await begins(
+    one,
+    {
+      trackUri: 'spotify:track:another-0-reissue',
+      trackName: ' spotify name of spotify:track:ANOTHER-0',
+    },
+    6,
+  )
+  assert.deepEqual(one.sent('play'), [anotherPlay])
+  const state = one.sync.getState()
+  assert.equal(state.current?.uri, 'spotify:track:another-0')
+  assert.equal(state.snapshot?.trackUri, 'spotify:track:another-0-reissue')
+  assert.equal(state.failure, null)
+  one.close()
+})
+
+test('a track sent with the one started, begun again by the device, is not taken for a skip', async () => {
+  const one = await idleDevice()
+  one.sync.play(anotherAlbum[0] ?? track, anotherAlbumSource())
+  // The device held the third track of this album and plays it again.
+  await begins(one, { trackUri: 'spotify:track:another-2' }, 5)
+  assert.deepEqual(one.sent('play'), [anotherPlay, anotherPlay])
+  assert.deepEqual(one.asked, ['spotify:track:another-0'])
+  assert.equal(one.sync.getState().starting, true)
+  await begins(one, { trackUri: 'spotify:track:another-0' }, 4)
+  const state = one.sync.getState()
+  assert.deepEqual(one.sent('play'), [anotherPlay, anotherPlay])
+  assert.equal(state.current?.uri, 'spotify:track:another-0')
+  assert.equal(state.snapshot?.trackUri, 'spotify:track:another-0')
+  assert.equal(state.failure, null)
+  one.close()
+})
+
+test('a track Spotify cannot play here gives way to the next one sent', async () => {
+  const one = await idleDevice()
+  one.playsAs('spotify:track:another-0', null)
+  one.sync.play(anotherAlbum[0] ?? track, anotherAlbumSource())
+  await begins(one, { trackUri: 'spotify:track:another-1' }, 6)
+  assert.deepEqual(one.sent('play'), [anotherPlay])
+  assert.deepEqual(one.asked, ['spotify:track:another-0'])
+  const state = one.sync.getState()
+  assert.equal(state.snapshot?.trackUri, 'spotify:track:another-1')
+  assert.equal(state.starting, false)
+  assert.equal(state.failure, null)
+  one.close()
+})
+
+test('a track that began is taken for the one started when Spotify cannot say', async () => {
+  const one = await idleDevice()
+  one.failLookup('spotify:track:another-0')
+  one.sync.play(anotherAlbum[0] ?? track, anotherAlbumSource())
+  await restartEarlier(one, 6)
+  assert.deepEqual(one.sent('play'), [anotherPlay])
+  assert.deepEqual(one.asked, ['spotify:track:another-0'])
+  const state = one.sync.getState()
+  assert.equal(state.current?.uri, 'spotify:track:another-0')
+  assert.equal(state.failure, null)
+  one.close()
+})
+
+test('a page that never heard its device play sends an ignored album start once more', async () => {
+  const one = await idleDevice()
+  const albumPlay = 'play speaker {"context_uri":"spotify:album:first"}'
+  one.sync.play(album)
+  await restartEarlier(one, 5)
+  assert.deepEqual(one.sent('play'), [albumPlay, albumPlay])
+  assert.deepEqual(one.asked, [])
+  assert.equal(one.sync.getState().starting, true)
+  await begins(one, { contextUri: album.uri }, 2)
+  assert.equal(one.sync.getState().current, album)
+  assert.equal(one.sync.getState().failure, null)
+  await restartEarlier(one, 1)
+  assert.deepEqual(one.sent('play'), [albumPlay, albumPlay])
+  one.close()
+})
+
+test('a page that never heard its device play reports an album start ignored twice', async () => {
+  const one = await idleDevice()
+  one.sync.play(album)
+  await restartEarlier(one, 5)
+  await restartEarlier(one, 14)
+  assert.equal(one.sent('play').length, 2)
   const state = one.sync.getState()
   assert.equal(state.current, null)
   assert.equal(state.starting, false)

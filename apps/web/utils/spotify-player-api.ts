@@ -21,6 +21,7 @@ const TrackSchema = z.object({
     .array(z.object({ name: z.string(), uri: z.string().optional() }))
     .default([]),
   linked_from: z.object({ uri: z.string().optional() }).optional(),
+  is_playable: z.boolean().optional(),
   album: z
     .object({
       uri: z.string().optional(),
@@ -222,6 +223,15 @@ export function createPlayerApi(
       parsed.success ? (parsed.data.error.reason ?? null) : null,
     )
   }
+  /** A track as Spotify serves it in the account's market. */
+  async function readTrack(trackUri: string) {
+    const id = /^spotify:track:([A-Za-z0-9]{22})$/.exec(trackUri)?.[1]
+    if (!id) throw new PlaybackApiError(404, null)
+    const response = await send('GET', `/tracks/${id}`, {
+      market: 'from_token',
+    })
+    return TrackSchema.parse(await response.json())
+  }
   return {
     async devices(): Promise<PlaybackDevice[]> {
       const response = await send('GET', '/devices')
@@ -274,12 +284,17 @@ export function createPlayerApi(
      * URI.
      */
     async track(trackUri: string): Promise<TrackDetails> {
-      const id = /^spotify:track:([A-Za-z0-9]{22})$/.exec(trackUri)?.[1]
-      if (!id) throw new PlaybackApiError(404, null)
-      const response = await send('GET', `/tracks/${id}`, {
-        market: 'from_token',
-      })
-      return trackDetails(TrackSchema.parse(await response.json()))
+      return trackDetails(await readTrack(trackUri))
+    },
+    /**
+     * The recording Spotify plays for a track in the account's market, which
+     * can be another one than was asked for; null when it plays none there.
+     */
+    async recording(
+      trackUri: string,
+    ): Promise<{ uri: string; name: string } | null> {
+      const { uri, name, is_playable: playable } = await readTrack(trackUri)
+      return playable === false ? null : { uri, name }
     },
     /**
      * How many playable tracks come before a track on its album, for a

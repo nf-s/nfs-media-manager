@@ -134,6 +134,39 @@ test('reads the details of a track by its URI', async () => {
   assert.deepEqual(invalid.calls, [])
 })
 
+test('reads the recording Spotify plays for a track, or that it plays none', async () => {
+  const track = {
+    uri: 'spotify:track:relinked',
+    name: 'Fixture track',
+    duration_ms: 181_000,
+    linked_from: { uri: 'spotify:track:ABCDEFGHIJKL1234567890' },
+  }
+  const { api, calls } = client([
+    new Response(JSON.stringify({ ...track, is_playable: true }), {
+      status: 200,
+    }),
+    new Response(JSON.stringify(track), { status: 200 }),
+    new Response(JSON.stringify({ ...track, is_playable: false }), {
+      status: 200,
+    }),
+  ])
+  const recording = { uri: 'spotify:track:relinked', name: 'Fixture track' }
+  const uri = 'spotify:track:ABCDEFGHIJKL1234567890'
+  assert.deepEqual(await api.recording(uri), recording)
+  assert.deepEqual(await api.recording(uri), recording)
+  assert.equal(await api.recording(uri), null)
+  assert.equal(
+    `${calls[0]?.method} ${calls[0]?.url.pathname}${calls[0]?.url.search}`,
+    'GET /v1/tracks/ABCDEFGHIJKL1234567890?market=from_token',
+  )
+  const invalid = client([])
+  await assert.rejects(
+    invalid.api.recording('spotify:album:x'),
+    PlaybackApiError,
+  )
+  assert.deepEqual(invalid.calls, [])
+})
+
 test('counts the playable tracks before a track on its album', async () => {
   const albumUri = 'spotify:album:ABCDEFGHIJKL1234567890'
   const page = (items: unknown[], next: string | null) =>

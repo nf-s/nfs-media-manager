@@ -13,6 +13,7 @@ import {
   spotifyWebUrl,
   startIgnored,
   startSession,
+  startUnverified,
   stepSession,
   trackPlayable,
   type PlayableItem,
@@ -402,6 +403,95 @@ test('a track session follows the requested or substituted recording', () => {
     stepSession(active, { ...end, positionMs: 5_000 }, next).event,
     'left',
   )
+})
+
+test('a start is judged by what the device begins, heard before or not', () => {
+  const began = snapshot({
+    trackUri: 'spotify:track:other',
+    contextUri: 'spotify:playlist:other',
+    positionMs: 3_200,
+    at: 3_500,
+  })
+  // An album is known by its context.
+  const item = albumPlayable(album)
+  assert.ok(item)
+  const albumStart = startSession(item, 0)
+  assert.equal(startIgnored(albumStart, began), true)
+  assert.equal(startUnverified(albumStart, began), false)
+  assert.equal(
+    startIgnored(albumStart, { ...began, contextUri: albumUri }),
+    false,
+  )
+  // Older playback still reported, a paused device, and a report too early.
+  assert.equal(
+    startIgnored(albumStart, { ...began, positionMs: 90_000 }),
+    false,
+  )
+  assert.equal(startIgnored(albumStart, { ...began, paused: true }), false)
+  assert.equal(
+    startIgnored(albumStart, { ...began, positionMs: 800, at: 1_000 }),
+    false,
+  )
+  assert.equal(startIgnored(playing(item), began), false)
+  // The track the device was heard on, begun again inside the album.
+  const heardAlbum = { ...albumStart, replacedUri: began.trackUri }
+  assert.equal(
+    startIgnored(heardAlbum, { ...began, contextUri: albumUri }),
+    true,
+  )
+
+  // A track that began could be another recording, until Spotify has said.
+  const track = trackPlayable(album, { externalId: trackId, title: 'Second' })
+  assert.ok(track)
+  const following: PlayableItem = { ...track, uri: 'spotify:track:following' }
+  const start = { ...startSession(track, 0), sent: [track, following] }
+  assert.equal(startUnverified(start, began), true)
+  assert.equal(startIgnored(start, began), false)
+  assert.equal(startUnverified(start, { ...began, positionMs: 90_000 }), false)
+  assert.equal(startUnverified(start, { ...began, trackUri }), false)
+  assert.equal(
+    startUnverified(start, { ...began, linkedFromUri: trackUri }),
+    false,
+  )
+  // So could a track sent after it: the next one when the item cannot be
+  // played, or the earlier one begun again.
+  const sentAfter = { ...began, trackUri: following.uri }
+  assert.equal(startUnverified(start, sentAfter), true)
+  assert.equal(startIgnored(start, sentAfter), false)
+  // The track the device was heard on needs no question.
+  const heard = { ...start, replacedUri: began.trackUri }
+  assert.equal(startUnverified(heard, began), false)
+  assert.equal(startIgnored(heard, began), true)
+
+  // Spotify names the recording it plays for the item.
+  const named = { ...start, playsAs: 'spotify:track:recording' }
+  assert.equal(startUnverified(named, began), false)
+  assert.equal(startIgnored(named, began), true)
+  assert.equal(stepSession(named, null, began).session.phase, 'starting')
+  assert.equal(
+    stepSession(named, null, { ...began, at: 12_000, positionMs: 11_500 })
+      .event,
+    'left',
+  )
+  const recording = snapshot({
+    trackUri: 'spotify:track:recording',
+    contextUri: null,
+    positionMs: 400,
+    at: 500,
+  })
+  assert.equal(startIgnored(named, recording), false)
+  const accepted = stepSession(named, null, recording).session
+  assert.equal(accepted.phase, 'playing')
+  assert.equal(accepted.anchorUri, 'spotify:track:recording')
+  assert.equal(startIgnored(named, sentAfter), true)
+  assert.equal(stepSession(named, null, sentAfter).session.phase, 'starting')
+  // Spotify plays no recording of the item, or could not say: the track
+  // that began is taken for it.
+  const unknown = { ...start, playsAs: null }
+  assert.equal(startUnverified(unknown, began), false)
+  assert.equal(startIgnored(unknown, began), false)
+  assert.equal(stepSession(unknown, null, began).session.phase, 'playing')
+  assert.equal(stepSession(unknown, null, sentAfter).session.phase, 'playing')
 })
 
 test('a saved queue is rejoined only on the same tracks, further along', () => {
