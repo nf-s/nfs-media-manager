@@ -197,6 +197,9 @@ export const artist = pgTable(
     id: text('id').primaryKey(),
     name: text('name').notNull(),
     sortName: text('sort_name'),
+    // Scrobbles linked to the artist's library albums and tracks, counted
+    // once. Recomputed whenever scrobble links are.
+    scrobbleCount: integer('scrobble_count').default(0).notNull(),
     ...timestampColumns,
   },
   (table) => [
@@ -204,6 +207,10 @@ export const artist = pgTable(
     index('artist_name_search_idx').using('gin', table.name.op('gin_trgm_ops')),
     index('artist_browse_name_idx').on(
       sql`lower(coalesce(${table.sortName}, ${table.name}))`,
+      table.id,
+    ),
+    index('artist_browse_scrobbles_idx').on(
+      table.scrobbleCount.desc().nullsLast(),
       table.id,
     ),
   ],

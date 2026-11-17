@@ -239,6 +239,13 @@
       "when": 1794821739468,
       "tag": "0033_subscription_item_watched",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1794879968571,
+      "tag": "0034_artist_scrobble_count",
+      "breakpoints": true
     }
   ]
 }

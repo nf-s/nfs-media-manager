@@ -108,6 +108,11 @@ beforeAll(async () => {
   await scrobble('s3', lastMonth, 'Fixture artist A', 'Other song', 'album-1')
   await scrobble('s4', thisMonth, 'Fixture artist B', 'Fixture track two', null)
   await scrobble('s5', twoYearsAgo, 'Fixture artist B', 'Old song', 'album-2')
+  // A scrobble of a hidden album does not count towards its artist.
+  await scrobble('s6', thisMonth, 'Fixture artist B', 'Hidden song', 'album-3')
+  const { refreshArtistListeningTotals } =
+    await import('@/services/artist-listening')
+  await refreshArtistListeningTotals(database)
   await database.insert(schema.subscriptionSource).values([
     { id: FIXTURE, type: 'youtube', title: 'Fixture channel' },
     { id: SECOND, type: 'youtube', title: 'Second channel' },
@@ -199,7 +204,7 @@ it('returns the unfiltered artist total without search, filters or ranges', asyn
   ).toEqual({ totalCount: 1, unfilteredCount: 2 })
 })
 
-it('lists artist scrobbles and monthly scrobbles from one grouped read', async () => {
+it('sorts artists by the stored scrobble count and reads monthly scrobbles once', async () => {
   const { listArtistBrowsePage } = await import('@/services/artist-browse')
   const { getArtistListeningSeries } =
     await import('@/services/listening-series')
@@ -208,9 +213,10 @@ it('lists artist scrobbles and monthly scrobbles from one grouped read', async (
     ArtistQuerySchema.parse({ sortBy: 'scrobbles', direction: 'desc' }),
   )
   expect(page.items.map((item) => item.id)).toEqual(['artist-a', 'artist-b'])
+  // Only the monthly read touches scrobbles; the order uses the stored count.
   expect(
     logQuery.mock.calls.filter(([query]) => query.includes('lastfm_scrobble')),
-  ).toHaveLength(2)
+  ).toHaveLength(1)
   const [first, second] = page.items
   expect(first?.scrobbleCount).toBe(3)
   expect(first?.listeningMonths).toHaveLength(12)
@@ -228,6 +234,61 @@ it('lists artist scrobbles and monthly scrobbles from one grouped read', async (
     'artist-b',
     'artist-a',
   ])
+})
+
+it('recounts stored artist scrobbles when links or credits change', async () => {
+  const { refreshArtistListeningTotals } =
+    await import('@/services/artist-listening')
+  const stored = async () =>
+    Object.fromEntries(
+      (
+        await pool.query<{ id: string; scrobble_count: number }>(
+          'select id, scrobble_count from artist order by id',
+        )
+      ).rows.map((row) => [row.id, row.scrobble_count]),
+    )
+  expect(await stored()).toEqual({
+    'artist-a': 3,
+    'artist-b': 2,
+    'artist-c': 0,
+  })
+  await pool.query(`begin;
+    -- One scrobbled name counted towards two tracks of the same artist, and
+    -- an album credited to two artists.
+    insert into media_item (id, slug, media_type, title, metadata) values
+      ('track-3', 'track-3', 'track', 'Fixture track one again', '{}');
+    insert into library_track (media_item_id) values ('track-3');
+    insert into media_credit (media_item_id, artist_id, role) values
+      ('track-3', 'artist-a', 'artist'), ('album-1', 'artist-c', 'artist');
+    insert into lastfm_track_link (username, artist_key, track_key, track_media_item_id, strategy) values
+      ('listener', 'fixture artist a', 'fixture track one', 'track-3', 'exact');
+    delete from lastfm_track_link where track_media_item_id = 'track-2';
+    commit;`)
+  try {
+    await refreshArtistListeningTotals(database)
+    expect(await stored()).toEqual({
+      'artist-a': 3,
+      'artist-b': 1,
+      'artist-c': 3,
+    })
+    const { getArtistListeningSeries } =
+      await import('@/services/listening-series')
+    for (const [id, count] of Object.entries(await stored()))
+      expect((await getArtistListeningSeries(id, now)).total).toBe(count)
+  } finally {
+    await pool.query(`begin;
+      delete from media_item where id = 'track-3';
+      delete from media_credit where media_item_id = 'album-1' and artist_id = 'artist-c';
+      insert into lastfm_track_link (username, artist_key, track_key, track_media_item_id, strategy) values
+        ('listener', 'fixture artist b', 'fixture track two', 'track-2', 'exact');
+      commit;`)
+    await refreshArtistListeningTotals(database)
+  }
+  expect(await stored()).toEqual({
+    'artist-a': 3,
+    'artist-b': 2,
+    'artist-c': 0,
+  })
 })
 
 it('returns the unfiltered subscription total of subscribed sources', async () => {

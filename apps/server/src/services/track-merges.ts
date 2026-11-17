@@ -12,6 +12,7 @@ import {
   lockLibraryTrackWrites,
   removeOrphanTracks,
 } from './album-library-tracks'
+import { refreshArtistListeningTotals } from './artist-listening'
 import { refreshTrackListeningTotals } from './track-links'
 
 const MergeTracksSchema = z.array(
@@ -114,6 +115,7 @@ export async function mergeLastfmTrack(
     await removeOrphanTracks(tx, [sourceId])
     await refreshTrackAddedDates(tx)
     await refreshTrackListeningTotals(tx)
+    await refreshArtistListeningTotals(tx)
     return { targetId }
   })
 }

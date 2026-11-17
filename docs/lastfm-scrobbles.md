@@ -105,6 +105,7 @@ Searches use the existing Spotify dispatcher, request spacing, cooldowns and acc
 - **Browse** gains three album fields, recomputed at the end of every sync:
   - `Last listened`: date of the most recent linked scrobble.
   - `Scrobbles, last year` and `Scrobbles, last 5 years`: linked scrobbles in a rolling window ending at the last sync.
+- Artists Browse's `Scrobbles` is stored on the artist: every scrobble linked to a library album or track credited to the artist, counted once, as in the artist's listening series. It is recounted at the end of every sync, relink, manual link change, playlist import and track merge. Between those, a change to an item's credited artists or a removed album is not reflected in the stored count; the listening series always reads current links.
 - `Scrobbles` is set to the linked scrobble count for albums that have linked scrobbles. Other albums keep the count reported by the Last.fm album provider. A later Last.fm album metadata job writes Last.fm's own album count again until the next sync.
 
 ### Custom listening filters and sorting

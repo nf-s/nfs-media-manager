@@ -5,6 +5,7 @@ import {
   TrackScrobbleLinkStrategySchema,
 } from '@repo/schemas/tracks'
 import { db } from '@/lib/db'
+import { refreshArtistListeningTotals } from './artist-listening'
 import { importLastfmLibraryTracks } from './lastfm-library-tracks'
 import { lockLibraryTrackWrites } from './album-library-tracks'
 import { spotifyAlbumId } from '@/lib/spotify-api'
@@ -325,8 +326,10 @@ export async function refreshTrackListeningTotals(tx: Transaction) {
 }
 
 /**
- * Relinks tracks to albums, then scrobbles to tracks. `account` is the
- * configured Last.fm account, or null to leave listening untouched.
+ * Relinks tracks to albums, then scrobbles to tracks, then recounts each
+ * artist's scrobbles from the links and credits as they now stand. `account`
+ * is the configured Last.fm account, or null to leave track listening
+ * untouched.
  */
 export async function refreshTrackLinks(account: string | null) {
   await linkTracksToAlbums()
@@ -334,4 +337,5 @@ export async function refreshTrackLinks(account: string | null) {
     await importLastfmLibraryTracks(account)
     await linkScrobblesToTracks(account)
   }
+  await refreshArtistListeningTotals(db)
 }

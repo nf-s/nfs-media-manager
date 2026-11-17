@@ -22,6 +22,7 @@ Search finds matching media IDs through field-specific queries. Titles, summarie
 | Subscription duration ranges              | Index on `nullif(duration_sec, 0)`, matching the query's treatment of unknown durations                    |
 | Artist freshness and latest attempt       | Partial provider/artist-ID/descending-time indexes for artist enrichment jobs                              |
 | Artist name ordering                      | B-tree on `lower(coalesce(sort_name, name)), id`                                                           |
+| Artist scrobble ordering and ranges       | Stored `artist.scrobble_count` with a B-tree on `scrobble_count DESC NULLS LAST, id`                       |
 | Job history and batch lookup              | Descending creation date and ID, plus the batch ID expression                                              |
 
 Indexes are targeted at stored columns and query expressions. Generic JSON metadata expansion and broad aggregate reports still need to process matching rows. Very short substring searches and common words can match much of a library; a trigram index is most useful when the search contains selective runs of at least three characters. PostgreSQL can choose a sequential scan when that is cheaper.
@@ -43,6 +44,8 @@ On a disposable fixture of 20,000 synthetic tracks, the exact count for a requir
 ## Artist and album filtering
 
 Artist freshness queries probe the latest relevant job through partial expression indexes on `scrape_job`. The artist task predicate and timestamp null ordering must match those indexes. Current profile state is read through its artist/provider key. Metadata hydration looks up only the displayed artists and requested providers; never join every historical job to every visible artist.
+
+Artist scrobble ordering and ranges read the stored `artist.scrobble_count`. Counting linked scrobbles per request joined every scrobble to its credits and removed duplicates across the album and track links, which took seconds on a long listening history. `refreshArtistListeningTotals` recounts after links change: it groups scrobbles by scrobbled name and album link first, because every scrobble in a group has the same links, and writes only changed artists. The page's 12-month sparkline reads only the scrobbles inside those months, for the displayed artists.
 
 Album tag filtering and ordering calculate canonical artist tags and sparse release-tag fallback as sets. Exact playlist chips join indexed membership IDs. Tag hydration remains bounded to the returned media IDs. These paths share the same fallback and alias rules as displayed tags.
 
@@ -69,3 +72,5 @@ Uncached broad autocomplete on that fixture took approximately 0.5–0.6 seconds
 Migration `0028_library_search_indexes` enables `pg_trgm` and builds the search and lookup indexes. The database role needs permission to install this extension. It uses the existing transactional migration runner; index construction can block writes while it runs. Follow the normal [upgrade procedure](getting-started.md#upgrading-and-backing-up): back up, stop application writers, apply migrations, then start the updated application. No provider refresh or library reimport is needed.
 
 Migrations `0031_artist_filter_indexes_and_selection` and `0032_artist_browse_name_index` add the artist job lookup indexes, name ordering index and temporary selection tables. Existing tables can have those three indexes built with `CREATE INDEX CONCURRENTLY` before applying the migrations; use the exact definitions, verify `pg_index.indisvalid`, and run each concurrent statement outside a transaction. The migration statements use `IF NOT EXISTS` to accept these prebuilt indexes. Do not treat an existing invalid or differently defined index as ready. Otherwise follow the normal stopped-writer migration procedure. No re-scrape is required.
+
+Migration `0034_artist_scrobble_count` adds `artist.scrobble_count`, fills it from the stored scrobble links and builds its ordering index. It needs no re-scrape or relink.
