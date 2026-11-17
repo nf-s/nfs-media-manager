@@ -106,8 +106,30 @@ async function render(
   }
 }
 
-test('Tracks list rows: thumbnail, title, artists and album, play pair, tags and values', async () => {
+test('Tracks start in the Table view; Grid shows the density control', async () => {
   const html = await render()
+  assert.match(html, /data-view="table"/)
+  assert.match(html, /aria-pressed="true" aria-label="Table view"/)
+  assert.doesNotMatch(html, /aria-label="Grid density"/)
+  const grid = await render('view=grid')
+  assert.match(
+    grid,
+    /aria-label="Browse views">.*?<\/div><div class="ds-seg" role="group" aria-label="Grid density"><button type="button" aria-pressed="false">Compact<\/button><button type="button" aria-pressed="true">Standard<\/button><button type="button" aria-pressed="false">Roomy<\/button><\/div><span class="ds-toolbar-count"/,
+  )
+  // The 1000px first measure: five standard columns, eight compact, four roomy.
+  assert.match(grid, /grid-template-columns:repeat\(5, minmax\(0, 1fr\)\)/)
+  const compact = await render('view=grid&density=compact')
+  assert.match(
+    compact,
+    /<button type="button" aria-pressed="true">Compact<\/button>/,
+  )
+  assert.match(compact, /grid-template-columns:repeat\(8, minmax\(0, 1fr\)\)/)
+  const roomy = await render('view=grid&density=roomy')
+  assert.match(roomy, /grid-template-columns:repeat\(4, minmax\(0, 1fr\)\)/)
+})
+
+test('Tracks list rows: thumbnail, title, artists and album, play pair, tags and values', async () => {
+  const html = await render('view=list')
   assert.match(html, /data-view="list"/)
   assert.match(html, /1 track|250 tracks/)
   assert.match(html, /class="ds-listhead"/)

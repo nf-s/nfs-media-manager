@@ -2,14 +2,35 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
   cardGrid,
+  defaultBrowseView,
+  defaultGridDensity,
   formatCardDetails,
+  gridCardMin,
+  gridDensities,
   mediaGridGeometry,
+  nestedViewKey,
   parseCardDetails,
   parseBrowseView,
   parseGridDensity,
   preserveGridScroll,
+  readNestedView,
+  restoreSavedBrowse,
+  type GridDensity,
+  type GridKind,
 } from './media-grid'
+import { itemGridGeometry } from './browse-items'
 import { browseWindow } from './virtual-browse'
+
+/** An in-memory stand-in for `window.localStorage`. */
+function memoryStorage(initial: Record<string, string> = {}) {
+  const values = new Map(Object.entries(initial))
+  return {
+    values,
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => void values.set(key, value),
+    removeItem: (key: string) => void values.delete(key),
+  }
+}
 
 test('cards reserve the meta line and the tags line under the creator', () => {
   const card = (extraRow: boolean, tagsBelowArtwork: boolean) =>
@@ -106,19 +127,30 @@ test('card details default to all shown and round-trip saved preferences', () =>
 
 test('a phone shows two standard columns, three compact and at least two roomy, filling the width', () => {
   for (const mediaType of ['album', 'film'] satisfies Array<'album' | 'film'>) {
+    // A 375px phone leaves the grid 355px inside the page margins.
     const compact = mediaGridGeometry({
-      width: 375,
+      width: 355,
       mediaType,
       density: 'compact',
     })
     const standard = mediaGridGeometry({
-      width: 375,
+      width: 355,
       mediaType,
       density: 'standard',
     })
     assert.equal(compact.columns, 3)
     assert.equal(standard.columns, 2)
     assert.ok(compact.rowHeight < standard.rowHeight)
+    // A detail tab on a phone is narrower than the page; compact keeps three.
+    for (const [density, columns] of [
+      ['compact', 3],
+      ['standard', 2],
+      ['roomy', 2],
+    ] satisfies [GridDensity, number][])
+      assert.equal(
+        mediaGridGeometry({ width: 319, mediaType, density }).columns,
+        columns,
+      )
     for (const width of [280, 350, 390, 600, 700]) {
       for (const density of ['compact', 'standard', 'roomy']) {
         const grid = mediaGridGeometry({
@@ -246,4 +278,126 @@ test('unchanged geometry preserves the exact scroll position for modal return', 
   })
   for (const top of [0, 1234.56789, 987654.321])
     assert.equal(preserveGridScroll(top, grid, grid), top)
+})
+
+test('tracks start in Table, albums and films in Grid, other lists keep their own default', () => {
+  assert.equal(defaultBrowseView('track'), 'table')
+  assert.equal(defaultBrowseView('album'), 'grid')
+  assert.equal(defaultBrowseView('film'), 'grid')
+  assert.equal(defaultBrowseView('subscription'), 'table')
+  assert.equal(defaultBrowseView('artist', 'list'), 'list')
+  assert.equal(defaultBrowseView('person'), 'table')
+  // A view named in the URL still wins over the default.
+  assert.equal(parseBrowseView('list', defaultBrowseView('track')), 'list')
+})
+
+test('a view saved under the old defaults is dropped once; later choices and other state stay', () => {
+  for (const library of ['tracks', 'albums', 'films']) {
+    const storage = memoryStorage({
+      [`browse:${library}`]: 'view=list&sortBy=title&density=roomy',
+    })
+    assert.equal(
+      restoreSavedBrowse(storage, library),
+      'sortBy=title&density=roomy',
+    )
+    assert.equal(
+      storage.values.get(`browse:${library}`),
+      'sortBy=title&density=roomy',
+    )
+    // A view chosen after the change is kept on every later visit.
+    storage.setItem(`browse:${library}`, 'view=list&sortBy=title')
+    assert.equal(restoreSavedBrowse(storage, library), 'view=list&sortBy=title')
+    assert.equal(restoreSavedBrowse(storage, library), 'view=list&sortBy=title')
+  }
+  // Only a stored view is dropped; nothing stored stays nothing.
+  const empty = memoryStorage()
+  assert.equal(restoreSavedBrowse(empty, 'tracks'), null)
+  const onlyView = memoryStorage({ 'browse:tracks': 'view=grid' })
+  assert.equal(restoreSavedBrowse(onlyView, 'tracks'), '')
+  // Artists and Subscriptions keep their defaults, so their saved view stays.
+  for (const library of ['artists', 'subscriptions']) {
+    const storage = memoryStorage({ [`browse:${library}`]: 'view=grid' })
+    assert.equal(restoreSavedBrowse(storage, library), 'view=grid')
+  }
+})
+
+test('a nested view stored under the old key is discarded for the new default', () => {
+  const storage = memoryStorage({
+    'nested-media-view:playlist-entries': 'list',
+    'nested-media-view:creator-library-album': 'table',
+  })
+  assert.equal(readNestedView(storage, 'playlist-entries', 'table'), 'table')
+  assert.equal(
+    readNestedView(
+      storage,
+      'creator-library-album',
+      defaultBrowseView('album'),
+    ),
+    'grid',
+  )
+  assert.equal(storage.values.has('nested-media-view:playlist-entries'), false)
+  storage.setItem(nestedViewKey('playlist-entries'), 'list')
+  assert.equal(readNestedView(storage, 'playlist-entries', 'table'), 'list')
+  storage.setItem(nestedViewKey('collection-films'), 'bogus')
+  assert.equal(readNestedView(storage, 'collection-films', 'grid'), 'grid')
+})
+
+test('phones start compact and wider screens standard unless a density is named', () => {
+  assert.equal(defaultGridDensity(true), 'compact')
+  assert.equal(defaultGridDensity(false), 'standard')
+  assert.equal(parseGridDensity(null, defaultGridDensity(true)), 'compact')
+  assert.equal(parseGridDensity('bogus', defaultGridDensity(true)), 'compact')
+  assert.equal(parseGridDensity('roomy', defaultGridDensity(true)), 'roomy')
+  assert.equal(
+    parseGridDensity('standard', defaultGridDensity(true)),
+    'standard',
+  )
+  assert.deepEqual(gridDensities, ['compact', 'standard', 'roomy'])
+})
+
+test('every Browse grid has three densities: three phone columns compact, the design width standard', () => {
+  const kinds = [
+    ['album', 164],
+    ['track', 164],
+    ['film', 118],
+    ['artist', 120],
+    ['subscription', 200],
+  ] satisfies [GridKind, number][]
+  for (const [kind, standard] of kinds) {
+    assert.equal(gridCardMin(kind, 'standard'), standard)
+    assert.ok(gridCardMin(kind, 'compact') < standard)
+    assert.ok(gridCardMin(kind, 'roomy') > standard)
+    const phone = (density: (typeof gridDensities)[number]) =>
+      itemGridGeometry({ width: 355, min: gridCardMin(kind, density) })
+    assert.equal(phone('compact').columns, 3)
+    assert.equal(phone('standard').columns, 2)
+    assert.equal(phone('roomy').columns, 2)
+    // Columns never exceed the width, so the page never scrolls sideways.
+    for (const width of [320, 355, 375, 701, 1000, 1440])
+      for (const density of gridDensities) {
+        const { columns } = itemGridGeometry({
+          width,
+          min: gridCardMin(kind, density),
+        })
+        const card = (width - 24 - (columns - 1) * 16) / columns
+        assert.ok(card > 0)
+        assert.ok(columns === 2 || card >= gridCardMin(kind, density))
+      }
+    // Denser grids have more columns and shorter rows at the same width.
+    const [compact, standardGrid, roomy] = gridDensities.map((density) =>
+      itemGridGeometry({ width: 1200, min: gridCardMin(kind, density) }),
+    )
+    assert.ok(compact && standardGrid && roomy)
+    assert.ok(compact.columns > standardGrid.columns)
+    assert.ok(standardGrid.columns > roomy.columns)
+    assert.ok(compact.rowHeight < standardGrid.rowHeight)
+    assert.ok(standardGrid.rowHeight < roomy.rowHeight)
+  }
+  for (const mediaType of ['album', 'film'] satisfies ('album' | 'film')[])
+    for (const density of gridDensities)
+      assert.equal(
+        mediaGridGeometry({ width: 1000, mediaType, density }).columns,
+        itemGridGeometry({ width: 1000, min: gridCardMin(mediaType, density) })
+          .columns,
+      )
 })

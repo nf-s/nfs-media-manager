@@ -26,7 +26,12 @@ import {
   formatDateTime,
 } from '@repo/ui/lib/format'
 import type { TitleSuggestion } from './browse-suggestions'
-import { parseBrowseView, type BrowseView } from './media-grid'
+import {
+  fewestGridColumns,
+  parseBrowseView,
+  type BrowseView,
+  type GridDensity,
+} from './media-grid'
 import { formatVideoDuration } from './youtube'
 
 /** API collection, page path and browser storage key suffix. */
@@ -298,10 +303,27 @@ export function subscriptionTitleSuggestions(
 export const subscriptionCardBodyHeight = 72
 
 /** Grid geometry: 16:9 thumbnails over a fixed-height body. */
-export function subscriptionGridGeometry(width: number) {
+/** Width per column of a nested video grid, by density. Compact fits three on a phone. */
+const subscriptionColumnWidth: Record<
+  'mobile' | 'desktop',
+  Record<GridDensity, number>
+> = {
+  mobile: { compact: 110, standard: 170, roomy: 240 },
+  desktop: { compact: 180, standard: 250, roomy: 340 },
+}
+
+export function subscriptionGridGeometry(
+  width: number,
+  density: GridDensity = 'standard',
+) {
   const mobile = width <= 700
   const gap = mobile ? 8 : 12
-  const columns = Math.max(2, Math.floor(width / (mobile ? 170 : 250)))
+  const columns = Math.max(
+    fewestGridColumns(density),
+    Math.floor(
+      width / subscriptionColumnWidth[mobile ? 'mobile' : 'desktop'][density],
+    ),
+  )
   const thumbWidth = Math.max(0, (width - (columns - 1) * gap) / columns)
   const cardHeight = thumbWidth * (9 / 16) + subscriptionCardBodyHeight
   return { mobile, gap, columns, cardHeight, rowHeight: cardHeight + gap }

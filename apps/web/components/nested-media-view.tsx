@@ -4,7 +4,12 @@ import { useEffect, useState, type ReactNode, type UIEvent } from 'react'
 import { Card, CardGrid, CardTitle } from '@repo/ui/components/ds/card'
 import { List, ListRow, RowTitle } from '@repo/ui/components/ds/list-row'
 import { Skeleton, State } from '@repo/ui/components/ds/feedback'
-import { cardGrid, parseBrowseView, type BrowseView } from '@/utils/media-grid'
+import {
+  cardGrid,
+  nestedViewKey,
+  readNestedView,
+  type BrowseView,
+} from '@/utils/media-grid'
 import type { DetailTarget } from '@/utils/detail-inspector'
 import { DetailLink } from './detail-link'
 import {
@@ -17,11 +22,16 @@ import {
 type CardView = Exclude<BrowseView, 'table'>
 type ArtworkType = 'album' | 'film' | 'subscription'
 
+/**
+ * The view chosen for a nested list, kept in browser storage per `scope`.
+ * `fallback` is the list's default (see `defaultBrowseView`); a view stored
+ * under the earlier defaults is discarded once (`readNestedView`).
+ */
 export function useNestedMediaView(
   scope: string,
   fallback: BrowseView = 'table',
 ) {
-  const key = `nested-media-view:${scope}`
+  const key = nestedViewKey(scope)
   const [saved, setSaved] = useState<{ key: string; view: BrowseView } | null>(
     null,
   )
@@ -29,12 +39,12 @@ export function useNestedMediaView(
     try {
       setSaved({
         key,
-        view: parseBrowseView(window.localStorage.getItem(key), fallback),
+        view: readNestedView(window.localStorage, scope, fallback),
       })
     } catch {
       // The view can still change when browser storage is unavailable.
     }
-  }, [key, fallback])
+  }, [key, scope, fallback])
   const view = saved?.key === key ? saved.view : fallback
   function changeView(view: BrowseView) {
     setSaved({ key, view })

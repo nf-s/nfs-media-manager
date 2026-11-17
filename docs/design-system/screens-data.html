@@ -285,27 +285,34 @@
         [],
         ['MusicBrainz ID'],
       ]
+      const coverageOf = (selected) =>
+        D.seg(['Albums', 'Artists'], selected, { label: 'Coverage of' })
+      const playlistCoverage = section(
+        'Coverage',
+        D.coverage('Spotify', 18, 18) +
+          D.coverage('Discogs', 14, 18, { action: 'Queue' }) +
+          D.coverage('Rate Your Music', 11, 18, { action: 'Queue' }) +
+          D.coverage('MusicBrainz', 6, 18, { tone: 'attention' }),
+        { note: '18 albums · stale after 180 days', aside: coverageOf(0) },
+      )
+      const playlistArtistCoverage = section(
+        'Coverage',
+        D.coverage('Spotify', 23, 23) +
+          D.coverage('Last.fm', 19, 23, { action: 'Queue' }) +
+          D.coverage('MusicBrainz', 12, 23, { action: 'Queue' }) +
+          D.coverage('Discogs', 9, 23, { tone: 'attention' }),
+        { note: '23 artists · stale after 180 days', aside: coverageOf(1) },
+      )
       const playlistBody =
         section(
           '',
           stats([
-            ['42', 'tracks'],
-            ['2h 51m', 'length'],
             ['1,284', 'scrobbles', { extra: D.sparkOf('playlist') }],
+            ['2026-11-12', 'last played'],
+            ['31', 'library albums'],
+            ['40', 'linked tracks'],
           ]),
           { flush: true },
-        ) +
-        section(
-          'Coverage',
-          D.coverage('Spotify', 42, 42) +
-            D.coverage('Last.fm match', 40, 42, { action: 'Review 2' }) +
-            D.coverage('Genres', 36, 42) +
-            D.coverage('RYM rating', 31, 42) +
-            D.coverage('MusicBrainz ID', 20, 42, { tone: 'attention' }),
-          {
-            note: '42 tracks and their albums',
-            aside: btn('Queue all missing', { size: 'xs' }),
-          },
         ) +
         section(
           'Tracks',
@@ -448,20 +455,38 @@
               `<p>A playlist, an artist or a whole library can show how complete its data is and queue what is missing, without leaving the item. ${g.tag('api')}</p>` +
               `<div class="g-pair" data-split="narrow"><div>${g.spec(
                 g.rules([
-                  '<b>Coverage</b> counts, for the tracks in this playlist and their albums, how many have each source or field.',
-                  '<b>Queue</b> creates the metadata jobs for the missing ones, after the same review step the Metadata page uses.',
-                  '<b>Missing data</b> filters the track list to rows with gaps and names the gap in each row.',
+                  '<b>Coverage is a tab,</b> after Listening and before Sources, on playlists and artists. It is never in Overview.',
+                  '<b>Albums and Artists</b> switch what a playlist counts: the albums behind its entries, or the artists credited on them. An artist counts its albums.',
+                  '<b>Queue</b> creates the metadata jobs for the missing ones, after the same review step the Metadata page uses. Artists mode queues artists only.',
+                  '<b>An album count</b> opens Overview with the track list filtered to Missing data, which names the gap in each row. <b>An artist count</b> opens Artists Metadata filtered to the playlist and that gap.',
                   '<b>Selecting rows</b> offers the provider that would fill the selected gap.',
-                  '<b>Needs API:</b> a coverage summary per set. The Metadata page already computes freshness per provider for films and artists.',
                 ]),
-              )}<div class="g-flowline" style="margin-top:12px">${step('Playlist', 'Late shift')}${arrow}${step('Coverage', '11 without a rating')}${arrow}${step('Queue', 'review, confirm')}${arrow}${step('Jobs', 'batch of 11')}${arrow}${step('Playlist', 'coverage updates')}</div></div><div>${inspectorFrame(
+              )}<div class="g-flowline" style="margin-top:12px">${step('Playlist', 'Late shift')}${arrow}${step('Coverage', '7 albums without a rating')}${arrow}${step('Queue', 'review, confirm')}${arrow}${step('Jobs', 'batch of 7')}${arrow}${step('Playlist', 'coverage updates')}</div></div><div>${inspectorFrame(
                 D.inspector({
                   crumbs: ['Playlists', 'Late shift'],
                   head: playlistHead,
-                  tabs: ['Overview', 'Listening', 'Sources'],
+                  tabs: ['Overview', 'Listening', 'Coverage', 'Sources'],
+                  tab: 2,
+                  body: playlistCoverage,
+                }),
+                520,
+              )}${inspectorFrame(
+                D.inspector({
+                  crumbs: ['Playlists', 'Late shift'],
+                  head: playlistHead,
+                  tabs: ['Overview', 'Listening', 'Coverage', 'Sources'],
+                  tab: 2,
+                  body: playlistArtistCoverage,
+                }),
+                520,
+              )}${inspectorFrame(
+                D.inspector({
+                  crumbs: ['Playlists', 'Late shift'],
+                  head: playlistHead,
+                  tabs: ['Overview', 'Listening', 'Coverage', 'Sources'],
                   body: playlistBody,
                 }),
-                900,
+                760,
               )}</div></div>`,
           },
           {

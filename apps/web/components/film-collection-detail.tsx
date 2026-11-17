@@ -35,8 +35,9 @@ import {
   TableState,
 } from '@repo/ui/components/ui/table'
 import { useVirtualTable } from '@/hooks/useVirtualTable'
+import { useNestedGridDensity } from '@/hooks/useGridDensity'
 import { collectionFilmsHref } from '@/utils/playlist-links'
-import { parseBrowseView } from '@/utils/media-grid'
+import { defaultBrowseView, parseBrowseView } from '@/utils/media-grid'
 import { clientQueryDefaults } from '@/utils/query-cache'
 import { fetchApiData } from '@/utils/api'
 import { useConfig } from './providers'
@@ -110,11 +111,17 @@ export function FilmCollectionEntries({ id }: { id: string }) {
     aliases: { films: 'overview' },
   })
   const showSources = tab === 'sources'
-  const [savedPresentation, setPresentation] =
-    useNestedMediaView('collection-films')
+  const [savedPresentation, setPresentation] = useNestedMediaView(
+    'collection-films',
+    defaultBrowseView('film'),
+  )
   const presentation = parseBrowseView(
     detail.params.get('view'),
     savedPresentation,
+  )
+  const [density, setDensity] = useNestedGridDensity(
+    'film',
+    detail.params.get('density'),
   )
   function changeView(patch: Partial<FilmCollectionQuery>) {
     const next = { ...view, ...patch }
@@ -146,7 +153,7 @@ export function FilmCollectionEntries({ id }: { id: string }) {
   const query = useVirtualTable({
     queryKey: ['film-collection', id, sortBy, direction, q, watchedStates],
     rowHeight: 36,
-    presentation: { view: presentation, mediaType: 'film' },
+    presentation: { view: presentation, mediaType: 'film', density },
     enabled: !showSources,
     loadPage: async (page, size, signal) => {
       const result = await fetchApiData(
@@ -214,6 +221,15 @@ export function FilmCollectionEntries({ id }: { id: string }) {
           const params = new URLSearchParams(detail.params)
           params.set('view', next)
           detail.replace(params)
+        }}
+        density={{
+          value: density,
+          onChange: (next) => {
+            setDensity(next)
+            const params = new URLSearchParams(detail.params)
+            params.set('density', next)
+            detail.replace(params)
+          },
         }}
         filterCount={watchedStates.length}
         filters={

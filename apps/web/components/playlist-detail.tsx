@@ -21,7 +21,7 @@ import {
   DetailActionsSpacer,
   DetailHeader,
 } from '@repo/ui/components/ds/detail-header'
-import { Facts, Section, Stats } from '@repo/ui/components/ds/facts'
+import { Facts, Section } from '@repo/ui/components/ds/facts'
 import { Notice } from '@repo/ui/components/ds/feedback'
 import { Progress } from '@repo/ui/components/ds/meter'
 import { PlayHeaderButtons, PlayPair } from '@repo/ui/components/ds/play'
@@ -38,11 +38,15 @@ import {
 import { useVirtualTable } from '@/hooks/useVirtualTable'
 import { fetchApiData } from '@/utils/api'
 import {
+  COVERAGE_SUBJECT_PARAM,
   GAP_FILTER_PARAM,
   coverageEntriesKey,
   coverageEntriesPath,
+  coverageSubject,
+  coverageSubjectParams,
   gapFilter,
   gapFilterParam,
+  gapFilterParams,
   gapFilterValue,
   gapLabels,
   type GapFilter,
@@ -79,8 +83,9 @@ import { DetailLink } from './detail-link'
 import { CreatorDetailState } from './creator-detail-state'
 import { DetailArt, DetailTabs, OpenAtProvider } from './detail-frame'
 import { DetailMore } from './detail-more'
+import { ScrobbleStats } from './listening-stats'
 import { ListeningTrend } from './listening-trend'
-import { MetadataCoverage } from './metadata-coverage'
+import { PlaylistCoverage } from './metadata-coverage'
 import { GapFilterControls, GapSelection } from './playlist-gaps'
 import {
   TrackEntriesTable,
@@ -724,14 +729,16 @@ export default function PlaylistDetailView({
         tabs={[
           { value: 'overview', label: 'Overview' },
           { value: 'listening', label: 'Listening' },
+          { value: 'coverage', label: 'Coverage' },
           { value: 'sources', label: 'Sources' },
         ]}
       >
         <TabsContent value="overview">
           <Section flush>
-            <Stats
+            <ScrobbleStats
+              kind="playlist"
+              id={playlist.id}
               items={[
-                { label: 'tracks', value: formatCount(playlist.trackCount) },
                 {
                   label: 'library albums',
                   value: formatCount(playlist.albumCount),
@@ -739,10 +746,6 @@ export default function PlaylistDetailView({
                 {
                   label: 'linked tracks',
                   value: formatCount(playlist.linkedTrackCount),
-                },
-                {
-                  label: 'last checked',
-                  value: formatDate(playlist.sync.lastCheckedAt),
                 },
               ]}
             />
@@ -752,19 +755,6 @@ export default function PlaylistDetailView({
               <p className="dtl-text">{playlist.description}</p>
             </Section>
           )}
-          <MetadataCoverage
-            kind="playlist"
-            id={playlist.id}
-            onShowGap={(provider, gap) => {
-              const params = new URLSearchParams(detail.params)
-              params.set(
-                GAP_FILTER_PARAM,
-                gapFilterParam(id, { gap, provider: provider.provider }),
-              )
-              params.delete('tab')
-              detail.replace(params)
-            }}
-          />
           <PlaylistEntries
             id={id}
             presentation={presentation}
@@ -773,6 +763,23 @@ export default function PlaylistDetailView({
         </TabsContent>
         <TabsContent value="listening">
           <ListeningTrend kind="playlist" id={playlist.id} />
+        </TabsContent>
+        <TabsContent value="coverage">
+          <PlaylistCoverage
+            id={playlist.id}
+            subject={coverageSubject(detail.params.get(COVERAGE_SUBJECT_PARAM))}
+            onSubjectChange={(subject) =>
+              detail.replace(coverageSubjectParams(detail.params, subject))
+            }
+            onShowGap={(provider, gap) =>
+              detail.replace(
+                gapFilterParams(detail.params, id, {
+                  gap,
+                  provider: provider.provider,
+                }),
+              )
+            }
+          />
         </TabsContent>
         <TabsContent value="sources">
           <ProviderSources

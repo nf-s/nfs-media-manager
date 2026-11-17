@@ -123,22 +123,22 @@
         ['4.4', 'Discogs'],
         ['2026-11-09', 'last played'],
       ])
-      const albumTags = kv([
-        ['Genres', pills(['dream pop', 'shoegaze', 'ethereal wave'], md)],
-        [
-          'Descriptors',
+      const albumTags =
+        section(
+          'Album tags',
           pills(
             [
+              'dream pop',
+              'shoegaze',
+              'ethereal wave',
               'nocturnal',
               'lush',
               'atmospheric',
-              'melancholic',
-              'female vocalist',
             ],
             md,
           ),
-        ],
-      ])
+          { aside: linkBtn('Manage tags') },
+        ) + section('Artist tags', pills(['bedroom pop', 'new zealand'], md))
       const albumDetails = [
         ['Released', '2019-03-08'],
         ['Added', '2026-10-02'],
@@ -152,9 +152,9 @@
         section('Tracks', trackTable(D.COLS.albumTracks, AT), {
           note: '11 · 42:18',
         }) +
-        section('Tags', albumTags) +
+        albumTags +
         section('Playlists', pills(['Late shift', 'Kitchen'], md), {
-          aside: btn('Add to playlist', { icon: 'plus', size: 'xs' }),
+          aside: linkBtn('Add to playlist'),
         }) +
         section('Details', facts(albumDetails), {
           aside: linkBtn('All fields'),
@@ -317,7 +317,7 @@
           ['4.4', 'Discogs'],
         ]),
         { flush: true },
-      )}${section('Tags', `<div class="g-stack">${pills(['dream pop', 'shoegaze', 'ethereal wave'], md)}${pills(['nocturnal', 'lush', 'atmospheric', 'melancholic'], md)}</div>`)}${section('Playlists', pills(['Late shift', 'Kitchen'], md), { aside: btn('Add', { icon: 'plus', size: 'xs' }) })}${section('Details', kv(albumDetails))}${section('Sources', sourceSummary, { aside: linkBtn('Manage') })}</div></div></div>`
+      )}${albumTags}${section('Playlists', pills(['Late shift', 'Kitchen'], md), { aside: linkBtn('Add to playlist') })}${section('Details', kv(albumDetails))}${section('Sources', sourceSummary, { aside: linkBtn('Manage') })}</div></div></div>`
 
       /* Track, artist, film */
       const trackOverview =
@@ -337,9 +337,9 @@
         section(
           'Appears on',
           `<div class="ds-list" data-compact style="margin:0 -12px">${D.row(A[0], { by: 'Album · Mira Kestrel · 2019' })}</div>${pills(['Late shift', 'Kitchen'], md)}`,
-          { aside: btn('Add to playlist', { icon: 'plus', size: 'xs' }) },
+          { aside: linkBtn('Add to playlist') },
         ) +
-        section('Tags', pills(['dream pop', 'shoegaze'], md)) +
+        section('Album tags', pills(['dream pop', 'shoegaze'], md)) +
         section(
           'Details',
           facts([
@@ -357,7 +357,8 @@
           stats([
             ['902', 'scrobbles', { extra: D.sparkOf('artist') }],
             ['2026-11-12', 'last played'],
-            ['Harbour Lights', 'most played album'],
+            ['4', 'playlists'],
+            ['2026-10-02', 'added'],
           ]),
           { flush: true },
         ) +
@@ -530,12 +531,12 @@
                     [
                       'Artist',
                       'Overview · Albums · Tracks · Playlists · Sources',
-                      'Overview · Albums · Tracks · Listening · Sources',
+                      'Overview · Albums · Tracks · Listening · Coverage · Sources',
                     ],
                     [
                       'Playlist',
                       'Tracks · Sources',
-                      'Overview · Listening · Sources',
+                      'Overview · Listening · Coverage · Sources',
                     ],
                     [
                       'Film',
@@ -575,6 +576,7 @@
                 "<b>Overview is always first</b> and always holds the item's contents: tracks for an album or playlist, films for a person or collection, videos for a channel.",
                 "<b>A tab exists only when it holds more than one block.</b> Playlists is a section of Overview; it is a tab with a single button today. A track's listening chart sits in its Overview.",
                 '<b>Listening is added for artists and playlists,</b> which have none today.',
+                '<b>Coverage is a tab for artists and playlists,</b> never a section of Overview.',
                 '<b>Sources is last,</b> before Edit. Every tab can be linked to directly.',
                 '<b>Tabs are underlined,</b> the same control the provider pages use.',
               ]),
@@ -595,8 +597,9 @@
               g.rules([
                 '<b>Summary:</b> scrobbles with a 12-month sparkline, the headline ratings and last played. Provider statistics (votes, have, want, listeners) move to each source.',
                 '<b>Tracks are a compact table</b> in the overview: number, title, duration, scrobbles. No toolbar, no Artist or Album column. An Artist column appears only on a compilation. Past 20 tracks the list shows the first 20 and a Show all button.',
-                '<b>Tags are grouped</b> under two or three labels, merged across providers. Which provider supplied a tag is answered in Sources.',
+                '<b>Each tag group is its own section</b> (Album tags, Artist tags; Genres, Keywords on a film), merged across providers and set flush left like Playlists and Details. Which provider supplied a tag is answered in Sources.',
                 '<b>Details</b> holds six facts. All fields opens the full list with the source of each.',
+                '<b>A section has one action,</b> a link button at the end of its heading: Manage tags, Add to playlist, All fields. No section uses a bordered button or an icon for it.',
               ]) +
               g.sub('The drawer over the grid') +
               `<div class="g-scroll"><div class="g-screen" style="--g-h:720px">${gridScreen}${albumInspector(0, albumOverview)}</div></div>`,
@@ -651,6 +654,7 @@
                     ['Albums', 3],
                     ['Tracks', 31],
                     'Listening',
+                    'Coverage',
                     'Sources',
                   ],
                   body: artistOverview,

@@ -167,11 +167,6 @@
 }
 
 /* Playlist additions */
-.dtl-add {
-  display: grid;
-  justify-items: start;
-  gap: var(--ds-3);
-}
 .dtl-additions {
   display: grid;
   gap: var(--ds-2);

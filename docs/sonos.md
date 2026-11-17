@@ -32,6 +32,16 @@ A room can be chosen once the Spotify account its household plays with is known.
 - A control shows its expected result at once, before Sonos answers: Next shows the track the room's queue has next, a started track shows as playing once Sonos has accepted it, and pause, seek and volume show as set. The room is read again as soon as Sonos has answered the command. A report read before that answer is discarded, and for six seconds after a start or a skip so is a report that still names the track before. If the command is refused, or the room has not followed by then, the dock returns to what the room reports.
 - A refused queue change is reported once and not repeated for 15 seconds.
 
+## Closing every page
+
+The room plays its own queue, so the app can be closed while it plays: the room carries on through the tracks loaded ahead, up to 10. The session is kept on the server with no time limit. The first page opened afterwards, on any computer or phone, reads the room once before it does anything else, and:
+
+- **rejoins it** when the room still holds the queue the app loaded, further along: it plays or is paused on the saved track at or after the saved position, or on a later track the app loaded. Nothing is started or loaded again. The dock shows the room as the device and the track it has reached; the queue and source carry on from there, and pause, Next, Previous and queue changes work on the room. The room's queue is then topped up as usual.
+- **leaves the room alone** when it holds anything else: a playlist, a track the app did not load, an earlier track of the queue, or the saved track again from its start. The player shows **This browser** as the device and nothing playing; the queue and source are kept, and the room can be chosen again under **Play on**.
+- **does not rejoin** a room that is stopped (Sonos reports it idle or with nothing loaded), which is how a queue that ran out ends. The saved track is shown paused at the saved position, with the room still the device; **Play** starts it there again.
+
+While the room is read, a line above the dock says **Rejoining the queue on …**; afterwards it says whether the room was rejoined or why not. Nothing is sent to the room before that read, including the tracks normally added ahead.
+
 ## Playback a Spotify app put on a room
 
 When Spotify reports playback on a restricted device, the player asks the server for the Sonos group behind it: the group playing the same Spotify track, and where several groups do (an account can have several households), the one named like the Spotify device. Sonos can lag behind Spotify just after playback moves, so when no group plays the track, the only non-idle group with that name is used if it plays from Spotify, and an unanswered lookup is repeated twice, two seconds apart. While it runs, the device button shows a spinner and **Play on** shows **Finding … on Sonos**; a controlled group shows the **SONOS** mark on the device button.
@@ -56,6 +66,7 @@ When Spotify reports playback on a restricted device, the player asks the server
 
 ## Limits
 
+- Sonos reports the track a room plays, its container (an album or playlist), its position and whether it is playing, paused or idle; it does not report an identifier for the queue itself. Rejoining therefore recognises the app's queue by those tracks: a queue replaced in the Sonos app by the same tracks, further along, is taken for the app's queue. How Sonos reports a queue that has run out (idle on its first track is assumed) and whether it reports a container for tracks loaded one by one have not been checked against a real household.
 - Sonos's `playback/content` command is not listed in the Control API reference; its behaviour here was established against a real household. Sonos answers 200 for a wrong or missing Spotify account and then loads nothing, so a room that stays silent after a start usually means the stored account no longer matches (for example after the household's Spotify account was replaced). Play Spotify on a room once from the Spotify app and open **Play on**: the stored account is replaced when the rooms report a different one.
 - Spotify does not know about playback Sonos started: the Spotify app does not show it, and it cannot be moved to another device from the Spotify app. Spotify cannot transfer a session to or from a room either, so moving restarts the track at the same position, with a short gap.
 - A room started here plays from its own Sonos queue. The Sonos app shows that queue without titles or artists, and "No information available" for the playing track, because Sonos has no details for tracks loaded by ID. Edits made to the queue in the Sonos app are not read back.

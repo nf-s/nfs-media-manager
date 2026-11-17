@@ -1,13 +1,111 @@
 import { z } from 'zod'
+import { QueueArtistSelectionSchema } from '@repo/schemas/artist-profiles'
 import {
   COVERAGE_ITEM_ID_LIMIT,
   CoverageGapSchema,
+  CoverageSubjectSchema,
   type CoverageGap,
+  type CoverageSubject,
   type EntryGap,
   type ProviderCoverage,
 } from '@repo/schemas/coverage'
 import type { PlaylistDetailQuery } from '@repo/schemas/tracks'
-import { coverageKey } from './metadata-coverage'
+import { scopedHref } from './media-scope'
+import { BROAD_RUN_JOBS, coverageKey } from './metadata-coverage'
+
+/** The URL parameter of a playlist's Coverage mode; Albums is left out. */
+export const COVERAGE_SUBJECT_PARAM = 'coverage'
+
+/** The playlist's Coverage mode from the URL, Albums by default. */
+export function coverageSubject(value: string | null): CoverageSubject {
+  const parsed = CoverageSubjectSchema.safeParse(value)
+  return parsed.success ? parsed.data : 'albums'
+}
+
+/** The detail's URL parameters with a Coverage mode. */
+export function coverageSubjectParams(
+  params: URLSearchParams,
+  subject: CoverageSubject,
+) {
+  const next = new URLSearchParams(params)
+  if (subject === 'albums') next.delete(COVERAGE_SUBJECT_PARAM)
+  else next.set(COVERAGE_SUBJECT_PARAM, subject)
+  return next
+}
+
+export function artistCoveragePath(playlistId: string) {
+  return `/api/v1/playlists/${encodeURIComponent(playlistId)}/coverage/artists`
+}
+
+/** Under the playlist's coverage key, so queueing anything reloads it. */
+export function artistCoverageKey(playlistId: string) {
+  return [...coverageKey('playlist', playlistId), 'artists']
+}
+
+/** Freshness filters of the artist queue and Metadata for one provider's gap. */
+function artistGapFreshness(
+  provider: string,
+  gap: CoverageGap,
+  olderThanDays: number,
+) {
+  return [
+    gap === 'missing'
+      ? { provider, mode: 'unscraped' as const }
+      : { provider, mode: 'older' as const, olderThanDays },
+  ]
+}
+
+/**
+ * The artist queue request for one provider's gap. The queue rechecks
+ * freshness, so artists fetched since are skipped, and skips active jobs.
+ */
+export function artistCoverageQueueRequest({
+  provider,
+  gap,
+  ids,
+  olderThanDays,
+  confirmed,
+}: {
+  provider: string
+  gap: CoverageGap
+  ids: readonly string[]
+  olderThanDays: number
+  confirmed: boolean
+}) {
+  const artistIds = ids.slice(0, COVERAGE_ITEM_ID_LIMIT)
+  return QueueArtistSelectionSchema.parse({
+    artistIds,
+    providers: [provider],
+    freshness: artistGapFreshness(provider, gap, olderThanDays),
+    confirmBroadRun: confirmed && artistIds.length > BROAD_RUN_JOBS,
+  })
+}
+
+/**
+ * Artists Metadata filtered to the playlist and the provider's gap. Its
+ * older filter also lists artists never fetched, so stale ones are sorted
+ * first by their last fetch.
+ */
+export function artistGapHref(
+  playlistId: string,
+  provider: string,
+  gap: CoverageGap,
+  olderThanDays: number,
+) {
+  const params = new URLSearchParams({
+    playlistIds: JSON.stringify([playlistId]),
+    freshness: JSON.stringify(artistGapFreshness(provider, gap, olderThanDays)),
+  })
+  if (gap === 'stale') {
+    params.set('sortBy', 'lastScrapedAt')
+    params.set('provider', provider)
+    params.set('direction', 'desc')
+  }
+  return scopedHref(`/jobs/metadata?${params}`, 'artist')
+}
+
+/** Artist jobs, where queued artist enrichment shows its progress. */
+export const ARTIST_JOBS_HREF = scopedHref('/jobs', 'artist')
 
 /** The URL parameter of a playlist track list's Missing data filter. */
 export const GAP_FILTER_PARAM = 'playlistGaps'
@@ -35,6 +133,21 @@ export function gapFilter(value: string | null, id: string): GapFilter | null {
 
 export function gapFilterParam(id: string, filter: GapFilter) {
   return JSON.stringify({ id, gap: filter.gap, provider: filter.provider })
+}
+
+/**
+ * The detail's URL parameters that open the Overview, where the tracks are,
+ * filtered to a gap. Coverage's counts use it.
+ */
+export function gapFilterParams(
+  params: URLSearchParams,
+  id: string,
+  filter: GapFilter,
+) {
+  const next = new URLSearchParams(params)
+  next.set(GAP_FILTER_PARAM, gapFilterParam(id, filter))
+  next.delete('tab')
+  return next
 }
 
 type EntryQuery = Pick<

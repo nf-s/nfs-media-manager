@@ -148,6 +148,11 @@ test('Artists list uses 48px rows: round thumbnail, title, country, tag pills an
 test('Artists grid uses clean round artwork cards with a meta line and tags', async () => {
   const grid = await render('view=grid')
   assert.match(grid, /data-view="grid"/)
+  assert.match(
+    grid,
+    /aria-label="Grid density"><button type="button" aria-pressed="false">Compact<\/button><button type="button" aria-pressed="true">Standard/,
+  )
+  assert.doesNotMatch(await render(), /aria-label="Grid density"/)
   assert.match(grid, /<article class="ds-card" data-item-index="0">/)
   assert.match(grid, /<span class="ds-art" data-ratio="round">/)
   assert.match(grid, /aria-label="Open details for Example Artist"/)

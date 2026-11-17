@@ -20,7 +20,7 @@ import {
   DetailActionsSpacer,
   DetailHeader,
 } from '@repo/ui/components/ds/detail-header'
-import { Section, Stats } from '@repo/ui/components/ds/facts'
+import { Section } from '@repo/ui/components/ds/facts'
 import { Notice, Skeleton } from '@repo/ui/components/ds/feedback'
 import { Button } from '@repo/ui/components/ui/button'
 import {
@@ -61,16 +61,24 @@ import {
   useDetailTab,
 } from './detail-frame'
 import { AlbumPlay, TrackRowPlay } from './detail-play'
+import { ScrobbleStats } from './listening-stats'
 import { ListeningTrend } from './listening-trend'
 import { MetadataCoverage } from './metadata-coverage'
 import { useConfig } from './providers'
 
-type ArtistTab = 'overview' | 'albums' | 'tracks' | 'listening' | 'sources'
+type ArtistTab =
+  | 'overview'
+  | 'albums'
+  | 'tracks'
+  | 'listening'
+  | 'coverage'
+  | 'sources'
 const artistTabs: readonly [ArtistTab, ...ArtistTab[]] = [
   'overview',
   'albums',
   'tracks',
   'listening',
+  'coverage',
   'sources',
 ]
 /** Playlists were a tab before they joined the Overview. */
@@ -250,16 +258,15 @@ function ArtistOverview({
   return (
     <>
       <Section flush>
-        <Stats
+        <ScrobbleStats
+          kind="artist"
+          id={artist.id}
           items={[
-            { label: 'albums', value: formatCount(artist.albumCount) },
-            { label: 'tracks', value: formatCount(artist.trackCount) },
             { label: 'playlists', value: formatCount(artist.playlistCount) },
             { label: 'added', value: formatDate(artist.createdAt) },
           ]}
         />
       </Section>
-      <MetadataCoverage kind="artist" id={artist.id} />
       {profile.summary && (
         <Section title="About">
           <p className="dtl-text">{profile.summary}</p>
@@ -519,6 +526,7 @@ export function ArtistDetail({ id }: { id: string }) {
           { value: 'albums', label: 'Albums', count: artist.albumCount },
           { value: 'tracks', label: 'Tracks', count: artist.trackCount },
           { value: 'listening', label: 'Listening' },
+          { value: 'coverage', label: 'Coverage' },
           { value: 'sources', label: 'Sources' },
         ]}
       >
@@ -570,6 +578,9 @@ export function ArtistDetail({ id }: { id: string }) {
         </TabsContent>
         <TabsContent value="listening">
           <ListeningTrend kind="artist" id={artist.id} />
+        </TabsContent>
+        <TabsContent value="coverage">
+          <MetadataCoverage kind="artist" id={artist.id} />
         </TabsContent>
         <TabsContent value="sources">
           <ArtistProfileSources

@@ -159,6 +159,7 @@ for (const view of ['table', 'list', 'grid']) {
       ],
       children: <MediaBrowser mediaType="film" />,
     })
+    assert.equal(html.includes('aria-label="Grid density"'), view === 'grid')
     const target = collectionDestination(html)
     assert.equal(target.pathname, '/films')
     assert.equal(target.searchParams.get('view'), view)

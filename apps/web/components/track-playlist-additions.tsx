@@ -1,33 +1,41 @@
 'use client'
 
+import type { ReactNode } from 'react'
 import type { TrackListItem } from '@repo/schemas/tracks'
+import { Section } from '@repo/ui/components/ds/facts'
 import { Notice } from '@repo/ui/components/ds/feedback'
 import { Button } from '@repo/ui/components/ui/button'
 import {
-  AddToPlaylist,
   AdditionList,
   AdditionState,
+  useAddToPlaylist,
   usePlaylistAdditions,
 } from './playlist-addition-controls'
 
-function MatchedTrackAdditions({
+const TITLE = 'Appears on'
+
+function MatchedTrack({
   trackId,
   onResolved,
+  children,
 }: {
   trackId: string
   onResolved: (id: string) => void
+  children: ReactNode
 }) {
   const { additions, additionList, playlists } = usePlaylistAdditions(
     'track',
     trackId,
     onResolved,
   )
+  const adding = useAddToPlaylist('track', trackId, additionList)
   const names = new Map(
     (playlists.data ?? []).map((playlist) => [playlist.id, playlist.name]),
   )
   return (
-    <>
-      <AddToPlaylist mediaType="track" id={trackId} additions={additionList} />
+    <Section title={TITLE} aside={adding.action}>
+      {children}
+      {adding.notice}
       {additions.isError && (
         <Notice
           tone="danger"
@@ -51,28 +59,35 @@ function MatchedTrackAdditions({
           ))}
         </AdditionList>
       )}
-    </>
+    </Section>
   )
 }
 
-export default function TrackPlaylistAdditions({
+/**
+ * A track's Appears on section: its album and playlists, given as children,
+ * with the action that adds the track to another playlist in the head.
+ */
+export default function TrackAppearsOn({
   track,
   onResolved,
+  children,
 }: {
   track: Pick<TrackListItem, 'id' | 'spotifyTrackId'>
   onResolved: (id: string) => void
+  children: ReactNode
 }) {
   if (!track.spotifyTrackId)
     return (
-      <p className="ds-help">
-        Match this track to Spotify to add it to a playlist.
-      </p>
+      <Section title={TITLE}>
+        {children}
+        <p className="ds-help">
+          Match this track to Spotify to add it to a playlist.
+        </p>
+      </Section>
     )
   return (
-    <MatchedTrackAdditions
-      key={track.id}
-      trackId={track.id}
-      onResolved={onResolved}
-    />
+    <MatchedTrack key={track.id} trackId={track.id} onResolved={onResolved}>
+      {children}
+    </MatchedTrack>
   )
 }

@@ -192,10 +192,17 @@ test('artist overview displays profile evidence and independent music filters wi
     cache: [[['artist', artist.id], artist]],
   })
   assert.match(html, /Synthetic biography\./)
+  assert.deepEqual(
+    [...html.matchAll(/<span class="ds-stat-label">([^<]+)</g)].map(
+      (match) => match[1],
+    ),
+    ['scrobbles', 'last played', 'playlists', 'added'],
+  )
   assert.match(
     html,
-    /<span class="ds-stat-value">2<\/span><span class="ds-stat-label">tracks</,
+    /<span class="ds-stat-value">1<\/span><span class="ds-stat-label">playlists</,
   )
+  assert.match(html, /1 album<\/span>.*2 tracks<\/span>/)
   const tabs = [...html.matchAll(/role="tab"[^>]*>([^<]+)</g)].map(
     (match) => match[1],
   )
@@ -204,6 +211,7 @@ test('artist overview displays profile evidence and independent music filters wi
     'Albums',
     'Tracks',
     'Listening',
+    'Coverage',
     'Sources',
   ])
   assert.ok(html.includes(spotifyProfile.profile.url))
@@ -270,11 +278,11 @@ test('copied artist album Grid preserves the parent detail and playback controls
   ])
 })
 
-test('artist tracks and playlists offer layout controls on their own result pages', () => {
-  for (const { tab, sortBy } of [
-    { tab: 'albums', sortBy: 'title' },
-    { tab: 'tracks', sortBy: 'title' },
-  ]) {
+test('artist albums start in Grid and tracks in Table, each with layout controls', () => {
+  for (const { tab, sortBy, active } of [
+    { tab: 'albums', sortBy: 'title', active: 'Grid' },
+    { tab: 'tracks', sortBy: 'title', active: 'Table' },
+  ] satisfies { tab: string; sortBy: string; active: 'Grid' | 'Table' }[]) {
     const html = render({
       pathname: `/artists/${artist.id}`,
       search: `tab=${tab}`,
@@ -293,7 +301,9 @@ test('artist tracks and playlists offer layout controls on their own result page
         ],
       ],
     })
-    assertNestedViewControls(html)
+    assertNestedViewControls(html, active)
+    // Card size sits with the view switch while the Grid view is shown.
+    assert.equal(html.includes('aria-label="Grid density"'), active === 'Grid')
     assert.ok(html.includes(`No ${tab} stored.`))
   }
 })
@@ -480,7 +490,11 @@ test('person details open films and pass the selected credit role to Browse', ()
   })
   assert.equal(destination(html, film.title).pathname, `/films/${film.id}`)
   assert.match(html, /Director, Actor/)
-  assertNestedViewControls(html)
+  assertNestedViewControls(html, 'Grid')
+  assert.match(
+    html,
+    /class="browse-nested-item"[^>]*><article class="ds-card"><span class="ds-art" data-ratio="poster">/,
+  )
   for (const role of person.roles) {
     const target = destination(html, `Filter films as ${role}`)
     assert.equal(target.pathname, '/films')

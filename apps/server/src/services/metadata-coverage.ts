@@ -11,6 +11,7 @@ import {
   type CoverageUnavailableReason,
   type EntryGap,
 } from '@repo/schemas/coverage'
+import { ArtistProfileProviderSchema } from '@repo/schemas/artist-profiles'
 import { canIdentifyMedia } from '@repo/schemas/provider-identification'
 import type { ProviderSummary } from '@repo/schemas/provider'
 import { db } from '@/lib/db'
@@ -20,12 +21,28 @@ import {
   providerCurrentState,
   providerReference,
 } from '@/schemas/db'
+import { artistPlaylistCredits, visiblePlaylist } from './artist-library'
+import {
+  artistFreshnessConditions,
+  artistLastScrapedAt,
+} from './artist-metadata'
 import { requireCreator } from './creators'
 import { getPlaylistSummary, playlistAlbumMembers } from './playlist-directory'
 import { listProviders } from './providers'
 import { getPlaylistDetail } from './tracks'
 
 const AlbumRowsSchema = z.array(z.object({ id: z.string(), title: z.string() }))
+const ArtistGapsSchema = z.object({
+  total: z.coerce.number().int().nonnegative(),
+  providers: z.array(
+    z.object({
+      missing: z.coerce.number().int().nonnegative(),
+      notFresh: z.coerce.number().int().nonnegative(),
+      missingIds: z.array(z.string()).nullable(),
+      staleIds: z.array(z.string()).nullable(),
+    }),
+  ),
+})
 const EntryAlbumRowsSchema = z.array(
   z.object({ id: z.string(), album_id: z.string() }),
 )
@@ -197,6 +214,79 @@ function playlistAlbums(id: string) {
 export async function getPlaylistCoverage(id: string, query: CoverageQuery) {
   await getPlaylistSummary(id)
   return albumCoverage(playlistAlbums(id), query)
+}
+
+/**
+ * Per artist provider, how many of the playlist's artists have a current
+ * profile, a stale one or none. The artists are those the Metadata page's
+ * playlist filter matches: credited on its tracks, on its album entries and
+ * on the albums of its tracks, leaving hidden items out. Missing and stale
+ * use the artist queue's freshness filters (`unscraped`, and `older` without
+ * the never scraped), so queueing the IDs rechecks the same rule. One
+ * aggregate over the playlist's artists; reads stored state only.
+ */
+export async function getPlaylistArtistCoverage(
+  id: string,
+  query: CoverageQuery,
+): Promise<Coverage> {
+  await getPlaylistSummary(id)
+  const providers = (await listProviders()).filter(
+    (provider) => ArtistProfileProviderSchema.safeParse(provider.id).success,
+  )
+  const artistId = sql`m.id`
+  const columns = providers.map(({ id: provider }) => {
+    const [missing] = artistFreshnessConditions(artistId, [
+      { provider, mode: 'unscraped' },
+    ])
+    const [notFresh] = artistFreshnessConditions(artistId, [
+      { provider, mode: 'older', olderThanDays: query.olderThanDays },
+    ])
+    const isMissing = missing ?? sql`false`
+    const isNotFresh = notFresh ?? sql`false`
+    return sql`json_build_object(
+      'missing', count(*) filter (where ${isMissing}),
+      'notFresh', count(*) filter (where ${isNotFresh}),
+      'missingIds', (array_agg(m.id order by m.sort_key, m.id)
+        filter (where ${isMissing}))[1:${COVERAGE_ITEM_ID_LIMIT}::int],
+      'staleIds', (array_agg(m.id order by ${artistLastScrapedAt(artistId, provider)}, m.id)
+        filter (where ${isNotFresh} and not ${isMissing}))[1:${COVERAGE_ITEM_ID_LIMIT}::int]
+    )`
+  })
+  const [row] = (
+    await db.execute(sql`
+      select count(*)::int as total,
+        json_build_array(${sql.join(columns, sql`, `)}) as providers
+      from (
+        select a.id, lower(coalesce(a.sort_name, a.name)) as sort_key
+        from artist a
+        where a.id in (
+          select memberships.artist_id from (${artistPlaylistCredits()}) memberships
+          join playlist on playlist.id = memberships.playlist_id
+          where playlist.id = ${id} and ${visiblePlaylist}
+        )
+      ) m`)
+  ).rows
+  const gaps = ArtistGapsSchema.parse(row)
+  return CoverageSchema.parse({
+    total: gaps.total,
+    olderThanDays: query.olderThanDays,
+    providers: providers.map((provider, index) => {
+      const counts = gaps.providers[index]
+      const missing = counts?.missing ?? 0
+      const stale = (counts?.notFresh ?? 0) - missing
+      return {
+        provider: provider.id,
+        displayName: provider.displayName,
+        eligible: gaps.total,
+        covered: gaps.total - missing - stale,
+        stale,
+        missing,
+        unavailableReason: unavailableReason(provider),
+        missingItemIds: counts?.missingIds ?? [],
+        staleItemIds: counts?.staleIds ?? [],
+      }
+    }),
+  })
 }
 
 /**

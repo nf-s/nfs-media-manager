@@ -107,7 +107,7 @@ Each story gives the path before the design system, the path now and the mockup 
 > I am looking at a playlist and want its tracks and albums to have ratings and tags. I want to see what is missing and fetch it.
 
 - **Before.** Leave the playlist, open Jobs, then Metadata, rebuild the selection with filters, pick a provider, review and queue. Nothing on the playlist says what is missing.
-- **Now.** The playlist and artist overviews have Coverage: one line per provider with a count, Queue for what is missing and Refresh for what is stale. Either shows the review step, then a batch appears in Jobs and the coverage reloads. Each count links to the track list filtered to those rows: Missing data lists the entries with a gap and names it, and the selected rows are queued for one provider through the same review step.
+- **Now.** Playlists and artists have a Coverage tab: one line per provider with a count, Queue for what is missing and Refresh for what is stale. Either shows the review step, then the jobs appear in Jobs and the coverage reloads. On a playlist, Albums and Artists switch what it counts, so its artists can be fetched without queueing any album. An album count opens Overview with the track list filtered to those rows: Missing data lists the entries with a gap and names it, and the selected rows are queued for one provider through the same review step. An artist count opens Artists Metadata filtered to the playlist and that gap.
 - **See.** [Filling in missing data](screens-data.html#coverage).
 
 ### 13. Refresh stale data across a library

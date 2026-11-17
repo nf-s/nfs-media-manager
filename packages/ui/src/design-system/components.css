@@ -1301,6 +1301,9 @@ button.ds-pill:hover {
   font-variant-numeric: tabular-nums;
   line-height: 24px;
 }
+.ds-stat-value .ds-spark {
+  flex: none;
+}
 .ds-stat-label {
   color: var(--ds-ink-3);
   font-size: var(--ds-text-xs);

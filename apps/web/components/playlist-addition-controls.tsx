@@ -11,7 +11,6 @@ import {
   type ReactNode,
 } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Plus } from 'lucide-react'
 import { BrowseCountSchema } from '@repo/schemas/browse'
 import { SpotifyAccountStatusSchema } from '@repo/schemas/spotify'
 import {
@@ -289,15 +288,16 @@ export function AdditionList({ children }: { children: ReactNode }) {
   )
 }
 
-export function AddToPlaylist({
-  mediaType,
-  id,
-  additions,
-}: {
-  mediaType: PlaylistMediaType
-  id: string
-  additions: Addition[]
-}) {
+/**
+ * Adding an album or track to a playlist, in two parts: the action for the
+ * section head, present when the Spotify connection allows the change, and
+ * the notice for the section when it does not or when an addition fails.
+ */
+export function useAddToPlaylist(
+  mediaType: PlaylistMediaType,
+  id: string,
+  additions: Addition[],
+): { action: ReactNode; notice: ReactNode } {
   const { apiBaseUrl } = useConfig()
   const client = useQueryClient()
   const account = useQuery({
@@ -353,59 +353,68 @@ export function AddToPlaylist({
   const importHref = scopedHref('/imports/spotify-playlists', mediaType)
   const status = account.data
   if (account.isError)
-    return (
-      <Notice
-        tone="danger"
-        action={
-          <Button size="xs" onClick={() => account.refetch()}>
-            Retry
-          </Button>
-        }
-      >
-        Could not load the Spotify connection.
-      </Notice>
-    )
-  if (!status) return null
+    return {
+      action: null,
+      notice: (
+        <Notice
+          tone="danger"
+          action={
+            <Button size="xs" onClick={() => account.refetch()}>
+              Retry
+            </Button>
+          }
+        >
+          Could not load the Spotify connection.
+        </Notice>
+      ),
+    }
+  if (!status) return { action: null, notice: null }
   if (!status.connected || !status.playlists)
-    return (
-      <Notice
-        action={
-          <Button asChild size="xs">
-            <Link href={importHref}>Connect Spotify</Link>
-          </Button>
-        }
-      >
-        Adding to a playlist needs a connected Spotify account.
-      </Notice>
-    )
+    return {
+      action: null,
+      notice: (
+        <Notice
+          action={
+            <Button asChild size="xs">
+              <Link href={importHref}>Connect Spotify</Link>
+            </Button>
+          }
+        >
+          Adding to a playlist needs a connected Spotify account.
+        </Notice>
+      ),
+    }
   if (!status.playlistChanges)
-    return (
-      <Notice action={<AllowPlaylistChanges playlistLibrary={mediaType} />}>
-        The Spotify connection does not allow playlist changes.
-      </Notice>
-    )
+    return {
+      action: null,
+      notice: (
+        <Notice action={<AllowPlaylistChanges playlistLibrary={mediaType} />}>
+          The Spotify connection does not allow playlist changes.
+        </Notice>
+      ),
+    }
   const active = new Set(
     additions
       .filter((addition) => playlistJobActive(addition.job))
       .map((addition) => addition.playlistId),
   )
-  return (
-    <div className="dtl-add">
+  return {
+    action: (
       <PlaylistPicker
         mediaType={mediaType}
         busy={(playlistId) => add.isPending || active.has(playlistId)}
         onChoose={(playlistId) => add.mutate(playlistId)}
       />
-      {add.isError && (
-        <Notice tone="danger">
-          {errorMessage(
-            add.error,
-            `Could not add the ${mediaType} to the playlist.`,
-          )}
-        </Notice>
-      )}
-    </div>
-  )
+    ),
+    notice: add.isError ? (
+      <Notice tone="danger">
+        {errorMessage(
+          add.error,
+          `Could not add the ${mediaType} to the playlist.`,
+        )}
+      </Notice>
+    ) : null,
+  }
 }
 
 function PlaylistPicker({
@@ -504,12 +513,12 @@ function PlaylistPicker({
       <Button
         ref={trigger}
         type="button"
+        variant="link"
         size="xs"
         popoverTarget={id}
         aria-expanded={open}
         aria-controls={id}
       >
-        <Plus className="ds-i" data-size="sm" aria-hidden="true" />
         Add to playlist
       </Button>
       <div

@@ -100,8 +100,10 @@
   min-width: 0;
   min-height: 0;
   overflow: auto;
-  /* none, not contain: contain still lets the table rubber-band past its edges. */
-  overscroll-behavior: none;
+  /* Sideways: none, not contain, which still lets the table rubber-band past
+     its edges. Up and down the scroll passes on, so a table inside a panel or
+     page does not hold the wheel when it has nowhere to scroll itself. */
+  overscroll-behavior: none auto;
   scrollbar-gutter: stable;
 }
 .table-scroll:focus-visible {

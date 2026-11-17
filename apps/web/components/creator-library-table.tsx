@@ -21,9 +21,15 @@ import {
   TableState,
 } from '@repo/ui/components/ui/table'
 import { useVirtualTable } from '@/hooks/useVirtualTable'
+import { useNestedGridDensity } from '@/hooks/useGridDensity'
 import { fetchApiData } from '@/utils/api'
 import type { DetailTarget } from '@/utils/detail-inspector'
-import { parseBrowseView, type BrowseView } from '@/utils/media-grid'
+import {
+  defaultBrowseView,
+  parseBrowseView,
+  type BrowseView,
+  type GridDensity,
+} from '@/utils/media-grid'
 import { useDetailInspector, useDetailView } from './detail-inspector-context'
 import { DetailLink } from './detail-link'
 import BrowseToolbar, { BrowseColumnsSection } from './browse-toolbar'
@@ -94,18 +100,31 @@ export function CreatorLibraryTable<Row extends { id: string }>({
   const view = useDetailView()
   const scope = `creator-library-${kind}`
   const table = useTableColumns(scope, columns, { reorder: true })
-  const [savedPresentation, setSavedPresentation] = useNestedMediaView(scope)
+  // Lists without cards have only the table.
+  const defaultPresentation = card ? defaultBrowseView(kind) : 'table'
+  const [savedPresentation, setSavedPresentation] = useNestedMediaView(
+    scope,
+    defaultPresentation,
+  )
   const urlPresentation = view.params.get('view')
   const presentation = parseBrowseView(urlPresentation, savedPresentation)
-  // Keep restored card layouts in the copied detail URL as well as explicit changes.
+  // Keep restored layouts in the copied detail URL as well as explicit changes.
   useEffect(() => {
-    if (!card || presentation === 'table' || urlPresentation === presentation)
+    if (
+      !card ||
+      presentation === defaultPresentation ||
+      urlPresentation === presentation
+    )
       return
     const params = new URLSearchParams(view.params)
     params.set('view', presentation)
     view.replace(params)
-  }, [card, presentation, urlPresentation, view])
+  }, [card, defaultPresentation, presentation, urlPresentation, view])
   const mediaType = kind === 'film' || kind === 'subscription' ? kind : 'album'
+  const [density, setSavedDensity] = useNestedGridDensity(
+    mediaType,
+    view.params.get('density'),
+  )
   const q = view.params.get('q')?.slice(0, 200) ?? ''
   const [draft, setDraft] = useState(q)
   useEffect(() => setDraft(q), [q])
@@ -129,7 +148,7 @@ export function CreatorLibraryTable<Row extends { id: string }>({
   const query = useVirtualTable({
     queryKey: [...queryKey, params.toString()],
     pageSize: 50,
-    presentation: card ? { view: presentation, mediaType } : undefined,
+    presentation: card ? { view: presentation, mediaType, density } : undefined,
     loadPage: (index, _size, signal) => {
       const page = new URLSearchParams(params)
       page.set('page', String(index))
@@ -156,6 +175,13 @@ export function CreatorLibraryTable<Row extends { id: string }>({
     setSavedPresentation(next)
     const params = new URLSearchParams(view.params)
     params.set('view', next)
+    view.replace(params)
+  }
+
+  function setDensity(next: GridDensity) {
+    setSavedDensity(next)
+    const params = new URLSearchParams(view.params)
+    params.set('density', next)
     view.replace(params)
   }
 
@@ -192,6 +218,7 @@ export function CreatorLibraryTable<Row extends { id: string }>({
           }}
           view={presentation}
           onViewChange={setPresentation}
+          density={{ value: density, onChange: setDensity }}
           filterCount={filterPanel?.count}
           filters={
             (columnOptions || filterPanel) && (

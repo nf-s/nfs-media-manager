@@ -4,8 +4,8 @@ import type { ReactNode } from 'react'
 import { ArrowDown, ArrowUp, Columns3, Filter } from 'lucide-react'
 import { Button } from '@repo/ui/components/ui/button'
 import { Select, Toolbar, ToolbarCount } from '@repo/ui/components/ds/toolbar'
-import type { BrowseView } from '@/utils/media-grid'
-import { BrowseViewSwitch } from './browse-controls'
+import type { BrowseView, GridDensity } from '@/utils/media-grid'
+import { BrowseDensitySwitch, BrowseViewSwitch } from './browse-controls'
 import BrowseFilterPanel, { FilterPanelSection } from './browse-filter-panel'
 import { ColumnFilterOptions, type ColumnFilterProps } from './secondary-table'
 
@@ -44,7 +44,7 @@ export function BrowseColumnFilterSection<Value extends string>(
 
 /**
  * The browse toolbar. Order: actions, search, sort, direction, filters,
- * view, count.
+ * view, density (Grid only), count.
  */
 export default function BrowseToolbar<Key extends string>({
   actions,
@@ -54,6 +54,7 @@ export default function BrowseToolbar<Key extends string>({
   filterCount = 0,
   view,
   onViewChange,
+  density,
   count,
 }: {
   actions?: ReactNode
@@ -64,6 +65,11 @@ export default function BrowseToolbar<Key extends string>({
   view: BrowseView
   /** Absent on a list fixed to one view, which shows no view switch. */
   onViewChange?: (view: BrowseView) => void
+  /** Card size, shown while the Grid view is active. */
+  density?: {
+    value: GridDensity
+    onChange: (density: GridDensity) => void
+  }
   count?: ReactNode
 }) {
   const nextDirection = sort.direction === 'asc' ? 'desc' : 'asc'
@@ -110,6 +116,12 @@ export default function BrowseToolbar<Key extends string>({
         <BrowseFilterPanel count={filterCount}>{filters}</BrowseFilterPanel>
       )}
       {onViewChange && <BrowseViewSwitch view={view} onChange={onViewChange} />}
+      {density && view === 'grid' && (
+        <BrowseDensitySwitch
+          density={density.value}
+          onChange={density.onChange}
+        />
+      )}
       {count != null && <ToolbarCount>{count}</ToolbarCount>}
     </Toolbar>
   )

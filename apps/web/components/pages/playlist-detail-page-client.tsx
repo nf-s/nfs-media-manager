@@ -11,7 +11,14 @@ export default function PlaylistDetailPageClient({
   playlistId: string
 }) {
   const params = new URLSearchParams(useSearchParams())
-  for (const key of ['inspect', 'tab', 'view', 'playlistView'])
+  for (const key of [
+    'inspect',
+    'tab',
+    'view',
+    'playlistView',
+    'coverage',
+    'playlistGaps',
+  ])
     params.delete(key)
   return (
     <DetailPage

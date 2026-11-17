@@ -261,4 +261,22 @@ describe('createMemoryPlaybackSessions', () => {
       state,
     })
   })
+
+  it('keeps a session nobody holds for hours, for the next client to carry on', async () => {
+    let now = 1000
+    const sessions = createMemoryPlaybackSessions(() => now)
+    const state = savedPlayback('Left playing')
+    await sessions.sync('user-1', input(first, { state }))
+    expect(
+      await sessions.release('user-1', { clientId: first, revision: 1 }),
+    ).toEqual({ released: true, revision: 1 })
+    now += 6 * 60 * 60 * 1000
+    expect(await sessions.sync('user-1', input(second))).toEqual({
+      revision: 1,
+      role: 'driver',
+      driver: { clientId: second, name: 'Phone' },
+      changed: true,
+      state,
+    })
+  })
 })

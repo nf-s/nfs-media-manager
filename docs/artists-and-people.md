@@ -6,7 +6,7 @@ Artists Browse follows Tracks: Grid, List and Table, sortable fields, selectable
 
 Creator and channel names open details by default. Related albums, tracks, playlists, films and subscription items open in the same detail inspector, with Back preserving the previous entry and its tab. Open page provides a standalone URL. Each creator or channel detail has explicit actions to filter the relevant library.
 
-Music details list playlist memberships in an Overview section. Artist details show the albums, tracks and playlists already in the library; these are library memberships, not a provider's complete discography. Film people initially expose director and actor credits.
+Music details list playlist memberships in an Overview section. Artist details show the albums, tracks and playlists already in the library; these are library memberships, not a provider's complete discography. An artist's Overview leads with scrobbles and their 12-month sparkline, last played, the playlist count and the date added; the album and track counts are in the header and on their tabs. Film people initially expose director and actor credits.
 
 Related media tables offer Grid, List and Table through the same toolbar used by Browse. Album and track artwork stays square, film posters stay portrait, and channel thumbnails use 16:9. Each nested list type remembers its view separately. Search, sorting, role filters and playback actions remain available in every mode. Keep each nested viewport bounded to the panel; the full result height belongs inside that scroller, not in the surrounding document. Only the visible pages and overscan load, including after changing view or resizing the panel.
 
@@ -21,6 +21,8 @@ Metadata uses the same full autocomplete and AI search as Browse, with field chi
 Artist enrichment is an explicit job for one artist and one provider: Spotify, Last.fm, Discogs or MusicBrainz. It uses the existing provider dispatcher, request gate, budgets and cooldowns. Viewing details does not start a job. Provider identifiers are independent of the internal artist ID. An ambiguous name search needs an explicit provider artist identifier instead of silently selecting a namesake.
 
 Successful jobs retain immutable artist provider snapshots and advance that provider's current snapshot pointer. Profiles can contain a biography, image, country, artist type, provider identifier, source link and tags when supplied by the provider. Missing fields remain absent; they are not inferred from releases. Provider availability and returned fields can vary.
+
+An artist's **Coverage** tab shows how many of its albums each album provider has current, stale or no data for, and queues the gap through the reviewed album queue. A playlist's **Coverage** tab can count its artists instead; see [playlist Coverage](tracks-and-playlists.md#playlist-drawer).
 
 Open **Sources** to see one row per provider with its current identifier. Each row has Refresh, and **Refresh all** refreshes every eligible provider. Edit a provider's identifier in its row and choose **Save and refresh** to submit a specific identifier. A successful refresh stores that identifier with the provider profile. A row's history lists its jobs and stored snapshots, newest first; a snapshot opens the recorded response and normalized profile. Details load current profiles; historical profiles and stored responses load only when opened.
 

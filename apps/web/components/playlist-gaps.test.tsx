@@ -11,6 +11,7 @@ import { CoverageEntriesSchema, CoverageSchema } from '@repo/schemas/coverage'
 import { PlaylistDetailSchema } from '@repo/schemas/tracks'
 import { ConfigContext } from './providers'
 import { DetailInspectorProvider } from './detail-inspector-context'
+import { PlaylistCoverage } from './metadata-coverage'
 import {
   GapFilterControls,
   GapSelection,
@@ -18,12 +19,18 @@ import {
 } from './playlist-gaps'
 import { trackEntryKey, type IndexedTrackEntry } from './track-entries-table'
 import {
+  COVERAGE_SUBJECT_PARAM,
   GAP_FILTER_PARAM,
+  artistCoverageKey,
+  artistCoveragePath,
   coverageEntriesKey,
+  coverageSubject,
+  coverageSubjectParams,
   coverageEntriesPath,
   gapFilter,
   gapFilterOptions,
   gapFilterParam,
+  gapFilterParams,
   parseGapFilterValue,
   selectionGaps,
   selectionQueueIds,
@@ -411,7 +418,38 @@ test('the playlist drawer filters its tracks to the rows with gaps and names eac
     table,
     /<span class="ds-pill" data-tone="attention"><span class="ds-pill-label">Discogs<\/span><\/span><span class="ds-pill" data-tone="attention"><span class="ds-pill-label">Rate Your Music/,
   )
-  // Coverage's counts link to the same filter on the playlist.
+  // Coverage is its own tab; Overview keeps only the track list's filter.
+  assert.doesNotMatch(html, /<h3>Coverage<\/h3>/)
+  assert.doesNotMatch(html, /aria-label="Show the entries missing Discogs"/)
+})
+
+test('the playlist drawer lists Coverage as a tab between Listening and Sources', async () => {
+  const { AppDetailInspector } = await import('./detail-inspector')
+  const queries = client()
+  queries.setQueryData(['playlist', ID], playlist)
+  const search = detailEntryParams('/playlists', new URLSearchParams(), [
+    { kind: 'playlist', id: ID, view: '' },
+  ])
+  const html = wrap(<AppDetailInspector />, queries, search.toString())
+  const tabs = [...html.matchAll(/role="tab"[^>]*>([^<]+)</g)].map(
+    (match) => match[1],
+  )
+  assert.deepEqual(tabs, ['Overview', 'Listening', 'Coverage', 'Sources'])
+  assert.match(html, /aria-selected="true"[^>]*>Overview</)
+  assert.doesNotMatch(html, /<h3>Coverage<\/h3>/)
+  assert.doesNotMatch(html, /Coverage by provider/)
+})
+
+test('Coverage counts open the Overview tracks filtered to the gap', () => {
+  const html = wrap(
+    <PlaylistCoverage
+      id={ID}
+      subject="albums"
+      onSubjectChange={() => {}}
+      onShowGap={() => {}}
+    />,
+    client(),
+  )
   assert.match(
     html,
     /data-variant="link"[^>]*aria-label="Show the entries missing Discogs"[^>]*>1 missing</,
@@ -421,6 +459,38 @@ test('the playlist drawer filters its tracks to the rows with gaps and names eac
     html,
     /aria-label="Show the entries with stale Discogs"[^>]*>1 stale</,
   )
+  const params = gapFilterParams(
+    new URLSearchParams({ playlist: ID, tab: 'coverage', coverage: 'albums' }),
+    ID,
+    { gap: 'stale', provider: 'discogs' },
+  )
+  assert.equal(params.has('tab'), false)
+  assert.equal(params.get('playlist'), ID)
+  assert.deepEqual(gapFilter(params.get(GAP_FILTER_PARAM), ID), {
+    gap: 'stale',
+    provider: 'discogs',
+  })
+})
+
+test('the Coverage mode travels in the URL, Albums by default', () => {
+  assert.equal(COVERAGE_SUBJECT_PARAM, 'coverage')
+  assert.equal(coverageSubject(null), 'albums')
+  assert.equal(coverageSubject('artists'), 'artists')
+  assert.equal(coverageSubject('tracks'), 'albums')
+  const params = new URLSearchParams({ playlist: ID, tab: 'coverage' })
+  const artists = coverageSubjectParams(params, 'artists')
+  assert.equal(artists.get('coverage'), 'artists')
+  assert.equal(artists.get('tab'), 'coverage')
+  assert.equal(params.has('coverage'), false)
+  assert.equal(coverageSubjectParams(artists, 'albums').has('coverage'), false)
+  assert.equal(
+    artistCoveragePath('playlist 1'),
+    '/api/v1/playlists/playlist%201/coverage/artists',
+  )
+  assert.deepEqual(artistCoverageKey(ID), [
+    ...coverageKey('playlist', ID),
+    'artists',
+  ])
 })
 
 test('a gap review is tied to the rows it was opened with', () => {

@@ -5,7 +5,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { SpotifyAccountStatusSchema } from '@repo/schemas/spotify'
 import { PlaylistSummarySchema } from '@repo/schemas/tracks'
-import TrackPlaylistAdditions from './track-playlist-additions'
+import TrackAppearsOn from './track-playlist-additions'
 import { TrackPlaylistAdditionsSchema } from '@repo/schemas/track-playlist-additions'
 import { resolvedTrackReplacement } from './playlist-addition-controls'
 import { ConfigContext } from './providers'
@@ -86,12 +86,14 @@ function render(
             apiBaseUrl: 'http://localhost:4001',
           }}
         >
-          <TrackPlaylistAdditions
+          <TrackAppearsOn
             track={{ id: 'track-1', spotifyTrackId }}
             onResolved={() => {
               throw new Error('No navigation on render')
             }}
-          />
+          >
+            <span>Fixture album</span>
+          </TrackAppearsOn>
         </ConfigContext.Provider>
       </QueryClientProvider>,
     )

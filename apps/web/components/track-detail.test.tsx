@@ -171,7 +171,8 @@ test('tracks with a Spotify match keep album metadata, playback and every source
   assert.deepEqual(pillHref(html, 'Electronic'), [
     { field: 'albumTag', value: 'Electronic' },
   ])
-  assert.match(html, /<dt>Artist tags<\/dt>/)
+  assert.match(html, /<h3>Album tags<\/h3>/)
+  assert.match(html, /<h3>Artist tags<\/h3>/)
   assert.deepEqual(pillHref(html, 'Synth-pop'), [
     { field: 'artistTag', value: 'Synth-pop' },
   ])

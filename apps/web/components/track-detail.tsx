@@ -17,7 +17,7 @@ import {
   DetailActionsSpacer,
   DetailHeader,
 } from '@repo/ui/components/ds/detail-header'
-import { Facts, KeyValues, Section, Stats } from '@repo/ui/components/ds/facts'
+import { Facts, Section } from '@repo/ui/components/ds/facts'
 import { List, ListRow, RowTitle } from '@repo/ui/components/ds/list-row'
 import { Button } from '@repo/ui/components/ui/button'
 import {
@@ -56,11 +56,12 @@ import {
   useDetailTab,
 } from './detail-frame'
 import { TrackHeaderPlay } from './detail-play'
+import { ListeningStats } from './listening-stats'
 import { ListeningTrend } from './listening-trend'
 import ServiceIconLinks, { serviceLinks } from './service-icon-links'
 import { canMergeLastfmTrack, TrackMergePanel } from './track-merge'
 import { DetailMore } from './detail-more'
-import TrackPlaylistAdditions from './track-playlist-additions'
+import TrackAppearsOn from './track-playlist-additions'
 
 type OnFilter = (filter: BrowseFilter, keepOpen?: boolean) => void
 type TrackTab = 'overview' | 'sources'
@@ -256,7 +257,10 @@ function TrackOverview({
     <div className="dtl-overview">
       <div className="dtl-main">
         <Section flush>
-          <Stats
+          <ListeningStats
+            kind="track"
+            id={item.id}
+            trendOn="scrobbles"
             items={[
               { label: 'scrobbles', value: formatCount(item.scrobbles) },
               { label: 'last played', value: formatDate(item.lastListenedAt) },
@@ -265,7 +269,7 @@ function TrackOverview({
           />
         </Section>
         <ListeningTrend kind="track" id={item.id} />
-        <Section title="Appears on">
+        <TrackAppearsOn track={item} onResolved={onResolved}>
           {(item.album || item.albumName) && (
             <List compact>
               <ListRow
@@ -294,26 +298,18 @@ function TrackOverview({
             </List>
           )}
           <PlaylistPills playlists={item.playlists} />
-          <TrackPlaylistAdditions track={item} onResolved={onResolved} />
-        </Section>
+        </TrackAppearsOn>
       </div>
       <div className="dtl-side">
-        {tags.length > 0 && (
-          <Section title="Tags">
-            <KeyValues
-              items={tags.map((group) => ({
-                label: group.label,
-                value: (
-                  <FilterValues
-                    field={group.field}
-                    values={group.values}
-                    onFilter={onFilter}
-                  />
-                ),
-              }))}
+        {tags.map((group) => (
+          <Section key={group.field} title={group.label}>
+            <FilterValues
+              field={group.field}
+              values={group.values}
+              onFilter={onFilter}
             />
           </Section>
-        )}
+        ))}
         <Section
           title="Details"
           aside={

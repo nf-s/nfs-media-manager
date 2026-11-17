@@ -12,10 +12,12 @@ import {
   mediaGridGeometry,
   preserveGridScroll,
   type BrowseView,
+  type GridDensity,
 } from '@/utils/media-grid'
 import { subscriptionGridGeometry } from '@/utils/subscriptions'
 import { browsePageSize, browseWindow } from '@/utils/virtual-browse'
 import { clientQueryDefaults } from '@/utils/query-cache'
+import { useNestedGridDensity } from './useGridDensity'
 import {
   useVirtualPages,
   type VirtualPageData,
@@ -35,6 +37,8 @@ type TableGeometry = {
   presentation?: {
     view: BrowseView
     mediaType: 'album' | 'film' | 'subscription'
+    /** Grid card size; the stored nested-grid density when absent. */
+    density?: GridDensity
   }
 }
 
@@ -54,14 +58,18 @@ function useTableViewport(
   const [viewport, setViewport] = useState({ height: 420, width: 480 })
   const [position, setPosition] = useState({ identity, top: 0 })
   const view = presentation?.view ?? 'table'
+  const [storedDensity] = useNestedGridDensity(
+    presentation?.mediaType ?? 'album',
+  )
+  const density = presentation?.density ?? storedDensity
   const grid =
     presentation?.view === 'grid'
       ? presentation.mediaType === 'subscription'
-        ? subscriptionGridGeometry(viewport.width)
+        ? subscriptionGridGeometry(viewport.width, density)
         : mediaGridGeometry({
             width: viewport.width,
             mediaType: presentation.mediaType,
-            density: 'standard',
+            density,
             tagsBelowArtwork: true,
           })
       : undefined

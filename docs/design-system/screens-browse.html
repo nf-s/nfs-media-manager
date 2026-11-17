@@ -89,6 +89,13 @@
 
       const oldRow = `<div class="g-old g-old-row">${D.thumb(A[0])}<div><div style="display:flex;align-items:center;gap:8px">${icon('play', { size: 'sm' })}${icon('queue', { size: 'sm' })}<b>Harbour Lights</b><span class="g-old-pill" style="background:#edf0f4">Added 02/10/2026</span></div><div class="g-old-by">Mira Kestrel · 2019</div><div style="display:flex;align-items:center;gap:6px;margin-top:4px"><u style="background:#d51007"></u>3.71<u style="background:#2a6fdb"></u>4.4<span class="g-old-pill" style="background:#edf0f4">dream pop</span><span class="g-old-pill" style="background:#edf0f4">shoegaze</span><span class="g-old-pill" style="background:#edf0f4">ethereal</span></div></div></div>`
 
+      /* Grid density sits after the view switch while Grid is shown. */
+      const withDensity = (toolbar, selected = 1) =>
+        toolbar.replace(
+          '<span class="ds-toolbar-count">',
+          `${D.seg(['Compact', 'Standard', 'Roomy'], selected, { label: 'Grid density' })}<span class="ds-toolbar-count">`,
+        )
+
       const gridScreen = D.shell({
         library: 'Albums',
         nav: D.libraryNav('Browse'),
@@ -98,13 +105,15 @@
           ['2012–2025', 'required'],
         ],
         main:
-          D.toolbar({
-            placeholder: 'Search albums',
-            sort: albumSort,
-            filterCount: 2,
-            view: 0,
-            count: '12 of 128 albums',
-          }) +
+          withDensity(
+            D.toolbar({
+              placeholder: 'Search albums',
+              sort: albumSort,
+              filterCount: 2,
+              view: 0,
+              count: '12 of 128 albums',
+            }),
+          ) +
           `<div class="ds-main-scroll"><div class="ds-grid">${A.map((a, i) => albumCard(a, { state: i === 1 ? 'hover' : i === 0 ? 'playing' : undefined, selected: i === 4 })).join('')}</div></div>`,
       })
 
@@ -209,6 +218,8 @@
                 '<b>The last row is never covered.</b> Playback messages live in the dock, and the scroll area ends above it.',
                 '<b>Active filters</b> stay in the rail as removable pills, coloured by mode: any, required, excluded.',
                 '<b>Count</b> reads <code>12 of 128 albums</code> when filtered.',
+                '<b>Density</b> (Compact, Standard, Roomy) follows the view switch while Grid is shown, on every Browse page and in every grid inside a detail. It is saved per library and kept in the URL. Phones start compact; wider screens start standard.',
+                '<b>Default views:</b> Albums, Films and Subscriptions start in Grid, Tracks in Table and Artists in List. Inside details, album and film lists start in Grid and track lists in Table.',
               ]),
           },
           {
@@ -453,19 +464,19 @@
             id: 'phone',
             title: 'Phone',
             body:
-              `<p>At 375px the album grid used to show five columns of thumbnails with the play circles covering most of each one. It now uses two columns, a persistent mini player and bottom navigation.</p>` +
+              `<p>At 375px the album grid used to show five columns of thumbnails with the play circles covering most of each one. It now starts compact with three columns, a persistent mini player and bottom navigation.</p>` +
               g.flow(
                 [
                   g.item(
                     phone(
-                      `${phoneBar}<div class="g-phone-scroll" data-touch><div class="ds-grid">${A.slice(
+                      `${phoneBar}<div class="g-phone-scroll" data-touch><div class="ds-grid" style="--ds-card-min:96px">${A.slice(
                         0,
-                        6,
+                        9,
                       )
                         .map((a) => albumCard(a))
                         .join('')}</div></div>`,
                     ),
-                    'Grid: two columns, play pair always visible',
+                    'Grid: compact by default, three columns, play pair always visible',
                   ),
                   g.item(
                     phone(

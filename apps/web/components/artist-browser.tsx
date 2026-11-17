@@ -80,7 +80,12 @@ import {
   RangeEditor,
 } from './browse-controls'
 import BrowseToolbar, { BrowseColumnsSection } from './browse-toolbar'
-import { parseBrowseView, preserveGridScroll } from '@/utils/media-grid'
+import {
+  gridCardMin,
+  parseBrowseView,
+  preserveGridScroll,
+} from '@/utils/media-grid'
+import { useGridDensity } from '@/hooks/useGridDensity'
 import { DetailLink } from './detail-link'
 import {
   ActiveFiltersSection,
@@ -104,7 +109,6 @@ const PageSchema = BrowsePageSliceSchema(ArtistSummarySchema)
 const headerHeight = 28
 const listRowHeight = 48
 const tableRowHeight = 32
-const cardMinWidth = 120
 const noun = { one: 'artist', other: 'artists' }
 
 export default function ArtistBrowser() {
@@ -123,6 +127,7 @@ export default function ArtistBrowser() {
   const inspector = useDetailInspector()
   const railSlot = useRailSlot()
   const view = parseBrowseView(searchParams.get('view'), 'list')
+  const density = useGridDensity(searchParams.get('density'))
   const filters = parseArtistFilters(searchParams.get('filters'))
   const playlistsResult = ArtistQuerySchema.shape.playlistIds.safeParse(
     searchParams.get('playlistIds') ?? undefined,
@@ -184,7 +189,13 @@ export default function ArtistBrowser() {
   })
   const scrollIdentity = `${collection}:${queryKey}:${view}`
   const mobile = viewport.width <= 700
-  const grid = itemGridGeometry({ width: viewport.width, min: cardMinWidth })
+  // A compact card is too narrow for tags or a value beside the album count.
+  const compactCards = density === 'compact'
+  const grid = itemGridGeometry({
+    width: viewport.width,
+    min: gridCardMin('artist', density),
+    tags: !compactCards,
+  })
   const rowHeight =
     view === 'grid'
       ? grid.rowHeight
@@ -473,18 +484,20 @@ export default function ArtistBrowser() {
         <span>
           {formatItemCount(item.albumCount, { one: 'album', other: 'albums' })}
         </span>
-        <span>
-          {sortBy !== 'albumCount' && sortBy !== 'scrobbles' && sorted ? (
-            sorted
-          ) : item.scrobbleCount === undefined ? (
-            <EmptyValue />
-          ) : (
-            formatItemCount(item.scrobbleCount, {
-              one: 'scrobble',
-              other: 'scrobbles',
-            })
-          )}
-        </span>
+        {!compactCards && (
+          <span>
+            {sortBy !== 'albumCount' && sortBy !== 'scrobbles' && sorted ? (
+              sorted
+            ) : item.scrobbleCount === undefined ? (
+              <EmptyValue />
+            ) : (
+              formatItemCount(item.scrobbleCount, {
+                one: 'scrobble',
+                other: 'scrobbles',
+              })
+            )}
+          </span>
+        )}
       </>
     )
   }
@@ -638,6 +651,10 @@ export default function ArtistBrowser() {
           }
           view={view}
           onViewChange={(next) => setParams({ view: next })}
+          density={{
+            value: density,
+            onChange: (next) => setParams({ density: next }),
+          }}
           count={
             <BrowseItemsCount
               query={query}
@@ -696,7 +713,7 @@ export default function ArtistBrowser() {
                     title={<CardTitle>{artistLink(item)}</CardTitle>}
                     by={country(item) || undefined}
                     meta={cardMeta(item)}
-                    tags={artistTags(item, 1)}
+                    tags={compactCards ? undefined : artistTags(item, 1)}
                   />
                 ) : (
                   <CardSkeleton key={`slot-${index}`} ratio="round" />

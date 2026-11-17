@@ -118,14 +118,16 @@ import {
 import {
   cardDetails,
   cardGrid,
+  defaultBrowseView,
   formatCardDetails,
   mediaGridGeometry,
   parseBrowseView,
   parseCardDetails,
-  parseGridDensity,
   preserveGridScroll,
+  restoreSavedBrowse,
 } from '@/utils/media-grid'
 import { useRailSlot } from '@/hooks/useRailSlot'
+import { useGridDensity } from '@/hooks/useGridDensity'
 import {
   getProviderRating,
   ratingScore,
@@ -377,9 +379,12 @@ export default function MediaBrowser({
       (mediaType === 'album' ? 'dateAdded' : 'releaseDate'),
   )
   const direction = searchParams.get('direction') === 'asc' ? 'asc' : 'desc'
-  const view = parseBrowseView(searchParams.get('view'))
+  const view = parseBrowseView(
+    searchParams.get('view'),
+    defaultBrowseView(mediaType),
+  )
   const details = parseCardDetails(searchParams.get('overlays'))
-  const density = parseGridDensity(searchParams.get('density'))
+  const density = useGridDensity(searchParams.get('density'))
   const selectedId =
     inspector?.root?.kind === mediaType ? inspector.root.id : null
   const fieldsQuery = useQuery({
@@ -443,7 +448,9 @@ export default function MediaBrowser({
     listeningSort: requestedListeningPeriod,
     ...creator,
   })
-  const showTags = details.includes('tags')
+  // A compact card is too narrow for tags or a value beside the year.
+  const compactCards = density === 'compact'
+  const showTags = details.includes('tags') && !compactCards
   const grid = mediaGridGeometry({
     width: viewport.width,
     mediaType,
@@ -524,7 +531,7 @@ export default function MediaBrowser({
 
   useEffect(() => {
     try {
-      const saved = window.localStorage.getItem(`browse:${collection}`)
+      const saved = restoreSavedBrowse(window.localStorage, collection)
       if (!window.location.search && saved)
         window.history.replaceState(null, '', `/${collection}?${saved}`)
       const parsed = WidthsSchema.safeParse(
@@ -871,11 +878,12 @@ export default function MediaBrowser({
   function cardMeta(item: MediaItem) {
     const year = item.releaseDate?.slice(0, 4)
     const value =
-      (details.includes('sort') && sortedValue(item)) ||
-      (details.includes('ratings') ||
-      (details.includes('sort') && sortField?.rating)
-        ? shownRating(item)
-        : null)
+      !compactCards &&
+      ((details.includes('sort') && sortedValue(item)) ||
+        (details.includes('ratings') ||
+        (details.includes('sort') && sortField?.rating)
+          ? shownRating(item)
+          : null))
     return (
       <>
         <span>{year ?? <EmptyValue />}</span>
@@ -1188,24 +1196,6 @@ export default function MediaBrowser({
               >
                 <div className="browse-form">
                   {view === 'grid' && (
-                    <label className="ds-field">
-                      <span className="ds-label">Grid density</span>
-                      <Select
-                        aria-label="Grid density"
-                        value={density}
-                        onChange={(event) =>
-                          setParams({
-                            density: parseGridDensity(event.target.value),
-                          })
-                        }
-                      >
-                        <option value="compact">Compact</option>
-                        <option value="standard">Standard</option>
-                        <option value="roomy">Roomy</option>
-                      </Select>
-                    </label>
-                  )}
-                  {view === 'grid' && (
                     <fieldset className="browse-fieldset">
                       <legend className="ds-label">On cards</legend>
                       {cardDetails.map((detail) => (
@@ -1367,6 +1357,10 @@ export default function MediaBrowser({
           }
           view={view}
           onViewChange={(next) => setParams({ view: next })}
+          density={{
+            value: density,
+            onChange: (next) => setParams({ density: next }),
+          }}
           count={
             query.countError ? (
               <Button

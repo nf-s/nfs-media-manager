@@ -87,7 +87,14 @@ import {
 import BrowseToolbar, { BrowseColumnsSection } from './browse-toolbar'
 import { LibraryTrackPlayButton } from './play-controls'
 import { createBrowsePlaybackSource } from '@/utils/playback-source'
-import { parseBrowseView, preserveGridScroll } from '@/utils/media-grid'
+import {
+  defaultBrowseView,
+  gridCardMin,
+  parseBrowseView,
+  preserveGridScroll,
+  restoreSavedBrowse,
+} from '@/utils/media-grid'
+import { useGridDensity } from '@/hooks/useGridDensity'
 import { DetailLink } from './detail-link'
 import {
   ActiveFiltersSection,
@@ -111,7 +118,6 @@ const PageSchema = PaginatedDataSchema(TrackListItemSchema)
 const headerHeight = 28
 const listRowHeight = 48
 const tableRowHeight = 32
-const cardMinWidth = 164
 const noun = { one: 'track', other: 'tracks' }
 
 export default function TrackBrowser() {
@@ -129,7 +135,11 @@ export default function TrackBrowser() {
   const scroller = useRef<HTMLDivElement>(null)
   const inspector = useDetailInspector()
   const railSlot = useRailSlot()
-  const view = parseBrowseView(searchParams.get('view'), 'list')
+  const view = parseBrowseView(
+    searchParams.get('view'),
+    defaultBrowseView('track'),
+  )
+  const density = useGridDensity(searchParams.get('density'))
   const filters = parseTrackFilters(searchParams.get('filters'))
   const creator = parseCreatorBrowseScope(searchParams, 'track')
   const rangesResult = BrowseRangesParamSchema.safeParse(
@@ -181,7 +191,13 @@ export default function TrackBrowser() {
   })
   const scrollIdentity = `${collection}:${queryKey}:${view}`
   const mobile = viewport.width <= 700
-  const grid = itemGridGeometry({ width: viewport.width, min: cardMinWidth })
+  // A compact card is too narrow for tags or a value beside the year.
+  const compactCards = density === 'compact'
+  const grid = itemGridGeometry({
+    width: viewport.width,
+    min: gridCardMin('track', density),
+    tags: !compactCards,
+  })
   const rowHeight =
     view === 'grid'
       ? grid.rowHeight
@@ -238,7 +254,7 @@ export default function TrackBrowser() {
 
   useEffect(() => {
     try {
-      const saved = window.localStorage.getItem(`browse:${collection}`)
+      const saved = restoreSavedBrowse(window.localStorage, collection)
       if (!window.location.search && saved)
         window.history.replaceState(null, '', `/${collection}?${saved}`)
     } catch {
@@ -541,7 +557,9 @@ export default function TrackBrowser() {
     return (
       <>
         <span>{item.releaseDate?.slice(0, 4) ?? EMPTY_VALUE}</span>
-        <span>{sorted ?? formatTrackDuration(item.durationSec)}</span>
+        {!compactCards && (
+          <span>{sorted ?? formatTrackDuration(item.durationSec)}</span>
+        )}
       </>
     )
   }
@@ -683,6 +701,10 @@ export default function TrackBrowser() {
           }
           view={view}
           onViewChange={(next) => setParams({ view: next })}
+          density={{
+            value: density,
+            onChange: (next) => setParams({ density: next }),
+          }}
           count={
             <BrowseItemsCount
               query={query}
@@ -742,7 +764,7 @@ export default function TrackBrowser() {
                     title={<CardTitle>{trackLink(item)}</CardTitle>}
                     by={<TrackArtistLinks track={item} />}
                     meta={cardMeta(item)}
-                    tags={tags(item)}
+                    tags={compactCards ? undefined : tags(item)}
                   />
                 ) : (
                   <CardSkeleton key={`slot-${index}`} />

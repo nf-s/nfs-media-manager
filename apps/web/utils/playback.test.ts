@@ -8,8 +8,10 @@ import {
   playRequest,
   positionAt,
   queueSummary,
+  rejoinVerdict,
   sessionContains,
   spotifyWebUrl,
+  startIgnored,
   startSession,
   stepSession,
   trackPlayable,
@@ -365,6 +367,19 @@ test('a track session follows the requested or substituted recording', () => {
     stepSession(session, null, { ...stale, at: 12_000 }).event,
     'left',
   )
+  // The track the device was already on, begun again, is not the request.
+  const replacing = startSession(track, 0, 'spotify:track:substitute')
+  assert.equal(stepSession(replacing, null, later).session.phase, 'starting')
+  assert.equal(startIgnored(replacing, later), true)
+  assert.equal(startIgnored(replacing, unlinked), false)
+  assert.equal(startIgnored(replacing, stale), false)
+  assert.equal(startIgnored(session, later), false)
+  assert.equal(
+    stepSession(replacing, null, { ...later, positionMs: 11_500, at: 12_000 })
+      .event,
+    'left',
+  )
+  assert.equal(stepSession(replacing, null, direct).session.phase, 'playing')
 
   const active = playing(track, trackUri)
   assert.equal(sessionContains(active, direct), true)
@@ -386,5 +401,115 @@ test('a track session follows the requested or substituted recording', () => {
   assert.equal(
     stepSession(active, { ...end, positionMs: 5_000 }, next).event,
     'left',
+  )
+})
+
+test('a saved queue is rejoined only on the same tracks, further along', () => {
+  const tracks = [0, 1, 2, 3].map(
+    (index): PlayableItem => ({
+      kind: 'track',
+      uri: `spotify:track:list-${index}`,
+      title: `Track ${index}`,
+      artist: 'Fixture artist',
+      albumId: null,
+      albumTitle: '',
+      artworkUrl: null,
+      trackCount: 1,
+    }),
+  )
+  const [, second] = tracks
+  assert.ok(second)
+  const saved = {
+    item: second,
+    sent: tracks,
+    index: 1,
+    anchorUri: second.uri,
+  }
+  const at = (index: number, values: Partial<PlaybackSnapshot> = {}) =>
+    snapshot({
+      trackUri: `spotify:track:list-${index}`,
+      contextUri: null,
+      positionMs: 60_000,
+      ...values,
+    })
+  const before = at(1, { positionMs: 40_000 })
+  // Further along, playing or paused.
+  assert.deepEqual(rejoinVerdict(saved, before, at(3), false), {
+    verdict: 'rejoined',
+    index: 3,
+  })
+  assert.deepEqual(
+    rejoinVerdict(saved, before, at(1, { paused: true }), false),
+    {
+      verdict: 'rejoined',
+      index: 1,
+    },
+  )
+  // Nothing loaded, or stopped.
+  assert.deepEqual(rejoinVerdict(saved, before, null, false), {
+    verdict: 'ended',
+  })
+  assert.deepEqual(rejoinVerdict(saved, before, at(2), true), {
+    verdict: 'ended',
+  })
+  // Back at the start of the list, stopped: it ran out.
+  assert.deepEqual(
+    rejoinVerdict(saved, before, at(0, { paused: true, positionMs: 0 }), false),
+    { verdict: 'ended' },
+  )
+  // Another track, a playlist, an earlier track playing, or the saved track
+  // again from its start.
+  for (const other of [
+    at(9),
+    at(2, { contextUri: 'spotify:playlist:other' }),
+    at(0),
+    at(1, { positionMs: 1_000 }),
+  ])
+    assert.deepEqual(rejoinVerdict(saved, before, other, false), {
+      verdict: 'changed',
+    })
+})
+
+test('a saved album is rejoined while its context plays', () => {
+  const item = albumPlayable(album)
+  assert.ok(item)
+  const saved = { item, sent: [item], index: 0, anchorUri: null }
+  const before = snapshot({
+    trackUri: 'spotify:track:second',
+    trackNumber: 2,
+    positionMs: 30_000,
+  })
+  assert.deepEqual(
+    rejoinVerdict(
+      saved,
+      before,
+      snapshot({ trackUri: 'spotify:track:third', trackNumber: 3 }),
+      false,
+    ),
+    { verdict: 'rejoined', index: 0 },
+  )
+  assert.deepEqual(
+    rejoinVerdict(
+      saved,
+      before,
+      snapshot({ contextUri: 'spotify:album:another' }),
+      false,
+    ),
+    { verdict: 'changed' },
+  )
+  // A finished album stops at the start of its first track.
+  assert.deepEqual(
+    rejoinVerdict(
+      saved,
+      before,
+      snapshot({
+        trackUri: 'spotify:track:first',
+        trackNumber: 1,
+        positionMs: 0,
+        paused: true,
+      }),
+      false,
+    ),
+    { verdict: 'ended' },
   )
 })

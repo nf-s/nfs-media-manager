@@ -10,9 +10,9 @@ import { useConfig } from './providers'
 import { fetchApiData } from '@/utils/api'
 import { PlaylistPills } from './detail-frame'
 import {
-  AddToPlaylist,
   AdditionList,
   AdditionState,
+  useAddToPlaylist,
   usePlaylistAdditions,
 } from './playlist-addition-controls'
 
@@ -38,10 +38,12 @@ export default function AlbumPlaylists({ albumId }: { albumId: string }) {
     (playlists.data ?? []).map((playlist) => [playlist.id, playlist.name]),
   )
   const memberships = query.data?.playlists ?? []
+  const adding = useAddToPlaylist('album', albumId, additionList)
   return (
     <Section
       title="Playlists"
       note={memberships.length ? formatCount(memberships.length) : undefined}
+      aside={adding.action}
     >
       {query.isError && (
         <Notice
@@ -66,7 +68,7 @@ export default function AlbumPlaylists({ albumId }: { albumId: string }) {
           }))}
         />
       )}
-      <AddToPlaylist mediaType="album" id={albumId} additions={additionList} />
+      {adding.notice}
       {additionList.length > 0 && (
         <AdditionList>
           {additionList.map((addition) => (

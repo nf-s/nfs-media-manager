@@ -297,7 +297,9 @@ test('the drawer lists entries in playlist order in the shared table', async () 
   const tabs = [...html.matchAll(/role="tab"[^>]*>([^<]+)</g)].map(
     (match) => match[1],
   )
-  assert.deepEqual(tabs, ['Overview', 'Listening', 'Sources'])
+  assert.deepEqual(tabs, ['Overview', 'Listening', 'Coverage', 'Sources'])
+  // Coverage has its own tab; Overview holds the tracks.
+  assert.doesNotMatch(html, /<h3>Coverage<\/h3>/)
   assert.match(html, /aria-label="Play Synthetic mix"[^>]*>.*Play<\/button>/)
 })
 

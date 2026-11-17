@@ -2,6 +2,8 @@ import {
   moveEntry,
   playRequest,
   positionAt,
+  rejoinVerdict,
+  startIgnored,
   startSession,
   stepSession,
   type PlayableItem,
@@ -81,6 +83,19 @@ export type PlaybackSharing = {
   driverName: string | null
 }
 
+/** What became of a saved session's playback when this page took it over. */
+export type PlaybackRejoin = {
+  /**
+   * `checking` while the device is read; `rejoined` when it still plays the
+   * queue it was given; `changed` when it plays or holds something else;
+   * `ended` when nothing is loaded on it any more; `unreadable` when it could
+   * not be read.
+   */
+  status: 'checking' | 'rejoined' | 'changed' | 'ended' | 'unreadable'
+  /** The room or device the session played on; null until it is known. */
+  device: string | null
+}
+
 export type PlaybackState = {
   /**
    * The account is playing something, or something was played or queued here,
@@ -111,6 +126,8 @@ export type PlaybackState = {
   announcement: string
   /** Set by the session sync; the engine alone always runs its own queue. */
   sharing: PlaybackSharing
+  /** Taking over a saved session's device, and its outcome, until dismissed. */
+  rejoin: PlaybackRejoin | null
 }
 
 export const idlePlaybackState: PlaybackState = {
@@ -131,6 +148,7 @@ export const idlePlaybackState: PlaybackState = {
   failure: null,
   announcement: '',
   sharing: { role: 'driver', driverName: null },
+  rejoin: null,
 }
 
 export type PlaybackEngineOptions = {
@@ -383,6 +401,11 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
   let currentFromSource = false
   let latest: PlaybackSnapshot | null = null
   let skippedAt: number | null = null
+  /** The last track a device reported outside a start, and the item it was. */
+  let heard: string | null = null
+  let heardFor: string | null = null
+  /** Where in its first track the item being started begins. */
+  let startedFrom = 0
   let sawLocalState = false
   let missing = 0
   let pollErrors = 0
@@ -426,6 +449,19 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
    * and where in it to start again.
    */
   let resume: { item: PlayableItem; positionMs: number } | null = null
+  /**
+   * The run of a restore still reading the device. A Sonos group's queue is
+   * left alone until it is known to be the one the session gave it.
+   */
+  let rejoining: number | null = null
+  /** Counts restores, so a device report read across one is dropped. */
+  let restores = 0
+
+  /** A control used here answers the note about rejoining a saved session. */
+  function acted() {
+    if (state.rejoin && state.rejoin.status !== 'checking')
+      set({ rejoin: null })
+  }
 
   function set(patch: Partial<PlaybackState>) {
     if (disposed) return
@@ -1033,7 +1069,8 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       !active ||
       active.item.kind !== 'track' ||
       roomBusy > 0 ||
-      now() < roomRetryAt
+      now() < roomRetryAt ||
+      rejoining === run
     )
       return
     const plan = planned().map((next) => next.item)
@@ -1102,7 +1139,10 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     run += 1
     const started = run
     resume = null
-    session = startSession(item, now())
+    // Starting the item the device is already on plays that same track.
+    const replaced = heard !== item.uri && heardFor !== item.uri ? heard : null
+    session = startSession(item, now(), replaced)
+    startedFrom = from
     used = true
     latest = null
     skippedAt = null
@@ -1115,6 +1155,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       snapshot: null,
       starting: true,
       failure: null,
+      rejoin: null,
     })
     try {
       if (target.kind === 'room') {
@@ -1253,9 +1294,46 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     set({ active: true, snapshot: after, starting: false })
   }
 
+  /**
+   * Spotify can accept a start and then play what the device already had,
+   * from its beginning. The request is sent once more; if that is ignored
+   * too, the start times out and is reported.
+   */
+  function resend(active: PlaybackSession) {
+    const target = state.target
+    const deviceId =
+      target.kind === 'local'
+        ? localId
+        : target.kind === 'remote'
+          ? target.device.id
+          : null
+    const [item, ...following] = active.sent
+    if (!deviceId || !item) return
+    const started = run
+    session = { ...active, startedAt: now(), resent: true }
+    onDevice(target.kind === 'local', () =>
+      api.play(deviceId, playRequest(item, following, startedFrom)),
+    ).then(
+      () => {
+        if (started === run) schedule(FOLLOW_UP_MS)
+      },
+      (error: unknown) => {
+        if (started !== run) return
+        detach()
+        fail(error)
+      },
+    )
+  }
+
   function observe(after: PlaybackSnapshot) {
     const before = latest
     latest = after
+    if (session && !session.resent && startIgnored(session, after))
+      resend(session)
+    if (after.trackUri && session?.phase !== 'starting') {
+      heard = after.trackUri
+      heardFor = session?.sent[session.index]?.uri ?? null
+    }
     if (resume && !session && !after.paused) {
       // Something else plays now, so the restored item is no longer current.
       resume = null
@@ -1482,6 +1560,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     if (!sonos || sonosPending > 0) return
     let reported: SonosGroupState
     let epoch: number
+    const restored = restores
     do {
       epoch = sonosEpoch
       roomPolls += 1
@@ -1490,7 +1569,12 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
         roomPolls % ROOM_VOLUME_EVERY === 1,
       )
       pollErrors = 0
-      if (!sameDevice(state.target, target) || disposed) return
+      if (
+        !sameDevice(state.target, target) ||
+        restored !== restores ||
+        disposed
+      )
+        return
       // A report read across a command may predate it, so it is read again.
     } while (epoch !== sonosEpoch && sonosPending === 0)
     if (epoch !== sonosEpoch) return
@@ -1824,6 +1908,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
         volume: selectedVolume(next),
         failure: null,
         findingSonos: false,
+        rejoin: null,
       })
       schedule(0)
       return
@@ -1865,6 +1950,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       starting: false,
       failure: null,
       findingSonos: false,
+      rejoin: null,
     })
     if (item) void start(item, undefined, position)
     else schedule(0)
@@ -1987,15 +2073,52 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     return index
   }
 
+  function targetName(target: PlaybackTarget): string | null {
+    if (target.kind === 'local') return null
+    if (target.kind === 'room') return target.room.name
+    return target.kind === 'remote' ? target.device.name : target.name
+  }
+
   /**
    * Picks a restored session up from what the device reports. A device still
    * on the tracks it was given is followed from the track it has reached. When
    * nothing plays them any more, the item is kept to start again where it
    * stopped.
+   *
+   * With `check`, the session is taken over from a device that nothing has
+   * been running, perhaps for hours. It is rejoined only when the device holds
+   * the same queue further along; a Sonos group that holds anything else is
+   * left alone, and nothing is sent to it.
    */
-  function reattach(restored: SavedPlayback, after: PlaybackSnapshot | null) {
+  function reattach(
+    restored: SavedPlayback,
+    after: PlaybackSnapshot | null,
+    check: {
+      idle: boolean
+      unreadable: boolean
+      announce: boolean
+      /** The saved device's name, for a device that has gone since. */
+      device: string | null
+    } | null,
+  ) {
+    rejoining = null
     const active = session
-    const index = after && active ? sentIndex(active, after) : -1
+    const device = targetName(state.target) ?? check?.device ?? null
+    const report = (status: PlaybackRejoin['status']) => {
+      if (check?.announce) set({ rejoin: { status, device } })
+    }
+    const verdict =
+      active && check
+        ? rejoinVerdict(active, restored.snapshot, after, check.idle)
+        : null
+    const index =
+      !after || !active
+        ? -1
+        : !verdict
+          ? sentIndex(active, after)
+          : verdict.verdict === 'rejoined'
+            ? verdict.index
+            : -1
     if (after && active && index >= 0) {
       const item = active.sent[index]
       if (item && index > active.index) {
@@ -2017,17 +2140,40 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       }
       latest = after
       set({ active: true, snapshot: after, starting: false })
+      report('rejoined')
       findSonos()
       maintainRoom()
       return
     }
     detach()
+    const changed = verdict?.verdict === 'changed'
+    if (changed && state.target.kind === 'room') {
+      // The room plays or holds something else now. It is left alone, and
+      // the queue and source are kept for whatever is played next.
+      currentFromSource = false
+      set({
+        current: null,
+        snapshot: null,
+        starting: false,
+        target: LOCAL,
+        volume: localVolume,
+      })
+      report('changed')
+      return
+    }
     if (after && !after.paused) {
       // Other playback has taken the device. The queue and source are kept.
       currentFromSource = false
       latest = after
       set({ current: null, snapshot: after, starting: false })
+      report('changed')
       findSonos()
+      return
+    }
+    if (changed) {
+      currentFromSource = false
+      set({ current: null, snapshot: null, starting: false })
+      report('changed')
       return
     }
     const shown = restored.snapshot
@@ -2045,6 +2191,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       snapshot: shown && item ? { ...shown, paused: true, at: now() } : null,
       starting: false,
     })
+    report(check?.unreadable ? 'unreadable' : 'ended')
     const ownBrowser =
       restored.target.kind === 'spotify' &&
       restored.target.browser !== null &&
@@ -2064,13 +2211,22 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
   /**
    * Takes a saved session over: its queue, source and device, then what the
    * device is playing now. Nothing is sent to the device unless this page was
-   * the one playing and has just been reloaded.
+   * the one playing and has just been reloaded. `claimed` is set when the
+   * session is taken from a page that was running it a moment ago, so its
+   * device is followed as it is; otherwise the device is checked for the
+   * queue it was given, as when the app is opened again after every page
+   * was closed.
    */
-  async function restore(restored: SavedPlayback) {
+  async function restore(
+    restored: SavedPlayback,
+    { claimed = false }: { claimed?: boolean } = {},
+  ) {
     if (disposed) return
     run += 1
     roomRun += 1
+    restores += 1
     const restoring = run
+    rejoining = restoring
     const current = () => restoring === run && !disposed
     stop()
     const kept = restored.source
@@ -2114,6 +2270,16 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       ? { ...restored.session, phase: 'playing', startedAt: now() }
       : null
     const target = restoredTarget(restored.target)
+    const savedName =
+      restored.target.kind === 'room'
+        ? restored.target.room.name
+        : (restored.target.device?.name ?? null)
+    // Playback in a browser stops when its page closes, so there is nothing
+    // to rejoin there.
+    const announce =
+      !claimed &&
+      restored.session !== null &&
+      (restored.target.kind === 'room' || restored.target.browser === null)
     set({
       active: true,
       current: restored.current,
@@ -2130,9 +2296,12 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       starting: restored.current !== null,
       failure: null,
       findingSonos: false,
+      rejoin: announce ? { status: 'checking', device: savedName } : null,
     })
     if (active) previewSource(active)
     let found: PlaybackSnapshot | null = null
+    let idle = false
+    let unreadable = false
     try {
       if (target.kind === 'room') {
         const reported = await options.sonos?.state(target.room.id, true)
@@ -2140,6 +2309,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
         if (reported?.volume !== undefined) set({ volume: reported.volume })
         const snapshot = reported ? roomSnapshot(reported, now()) : null
         found = snapshot ? roomTrack(snapshot) : null
+        idle = reported?.state === 'idle'
       } else {
         const remote = await api.state()
         if (!current()) return
@@ -2163,9 +2333,14 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       }
     } catch (error) {
       if (!current()) return
+      unreadable = true
       if (playbackFailure(error).status === 'expired') fail(error)
     }
-    reattach(restored, found)
+    reattach(
+      restored,
+      found,
+      claimed ? null : { idle, unreadable, announce, device: savedName },
+    )
     if (!timer && pollDelay() !== null) schedule(FOLLOW_UP_MS)
   }
 
@@ -2198,7 +2373,9 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       sourceStarting = false
       currentFromSource = false
       resume = null
+      rejoining = null
       set({
+        rejoin: null,
         queue: [],
         current: null,
         source: null,
@@ -2244,8 +2421,9 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     refresh() {
       if (pollDelay() !== null) schedule(0)
     },
+    /** Dismisses the error or the note about rejoining a saved session. */
     clearFailure() {
-      if (state.failure) set({ failure: null })
+      if (state.failure || state.rejoin) set({ failure: null, rejoin: null })
     },
     play(item: PlayableItem, definition?: PlaybackSource) {
       if (refused()) return
@@ -2328,6 +2506,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     toggle() {
       if (session?.phase === 'starting' || sourceStarting) return
       activate()
+      acted()
       if (currentFromSource && source?.initializing && state.current) {
         void startSource(state.current, source.definition)
         return
@@ -2357,6 +2536,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       schedule(FOLLOW_UP_MS)
     },
     next() {
+      acted()
       const target = state.target
       // A Sonos group skips to the next track in its queue when that is the
       // track due; otherwise the track due is started on it.
@@ -2408,6 +2588,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     previous() {
       const target = state.target
       if (!latest || target.kind === 'restricted') return
+      acted()
       if (positionAt(latest, now()) > RESTART_AFTER_MS) return seek(0)
       if (target.kind === 'sonos') {
         // Sonos refuses to go back in some Spotify Connect sessions.
@@ -2492,7 +2673,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       const leaving = isObserved(state.target) ? state.target : null
       if (next.kind === 'local')
         player?.activateElement().catch(() => undefined)
-      set({ failure: null })
+      set({ failure: null, rejoin: null })
       try {
         if (next.kind === 'local') {
           const id = await ensureLocal()

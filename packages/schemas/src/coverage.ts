@@ -2,8 +2,14 @@ import { z } from 'zod'
 import { PaginatedDataSchema } from './common'
 import { PlaylistDetailQuerySchema, PlaylistEntrySchema } from './tracks'
 
-/** IDs returned per list; the album queue accepts at most 100 per request. */
+/** IDs returned per list; the album and artist queues accept at most 100 per request. */
 export const COVERAGE_ITEM_ID_LIMIT = 100
+
+/**
+ * What a playlist's coverage counts: the albums behind its entries, or the
+ * artists credited on them. An artist's coverage counts its albums.
+ */
+export const CoverageSubjectSchema = z.enum(['albums', 'artists'])
 
 export const CoverageQuerySchema = z.object({
   /** Same freshness rule and default as album and film refreshes. */
@@ -23,25 +29,26 @@ export const ProviderCoverageSchema = z.object({
   provider: z.string(),
   displayName: z.string(),
   /**
-   * Albums the provider has scraped or can look up from a stored identifier
-   * or by name. The others need an identifier before they can be queued.
+   * Items the provider has scraped or can look up. An album needs a stored
+   * identifier or a provider that looks albums up by name; the others need
+   * an identifier before they can be queued. Every artist can be looked up.
    */
   eligible: z.number().int().nonnegative(),
-  /** Eligible albums scraped within `olderThanDays`. */
+  /** Eligible items scraped within `olderThanDays`. */
   covered: z.number().int().nonnegative(),
-  /** Eligible albums last scraped before `olderThanDays`. */
+  /** Eligible items last scraped before `olderThanDays`. */
   stale: z.number().int().nonnegative(),
-  /** Eligible albums without a successful scrape. */
+  /** Eligible items without a successful scrape. */
   missing: z.number().int().nonnegative(),
   unavailableReason: CoverageUnavailableReasonSchema.nullable(),
-  /** The first 100 missing albums, by title. */
+  /** The first 100 missing items, by title or name. */
   missingItemIds: z.array(z.string()).max(COVERAGE_ITEM_ID_LIMIT),
-  /** The first 100 stale albums, oldest scrape first. */
+  /** The first 100 stale items, oldest scrape first. */
   staleItemIds: z.array(z.string()).max(COVERAGE_ITEM_ID_LIMIT),
 })
 
 export const CoverageSchema = z.object({
-  /** Albums in the set. */
+  /** Albums, or artists, in the set. */
   total: z.number().int().nonnegative(),
   olderThanDays: z.number().int().positive(),
   providers: z.array(ProviderCoverageSchema),
@@ -86,6 +93,7 @@ export const CoverageEntriesSchema = PaginatedDataSchema(
   albumCount: z.number().int().nonnegative(),
 })
 
+export type CoverageSubject = z.infer<typeof CoverageSubjectSchema>
 export type CoverageQuery = z.infer<typeof CoverageQuerySchema>
 export type CoverageUnavailableReason = z.infer<
   typeof CoverageUnavailableReasonSchema

@@ -50,6 +50,7 @@ import {
 } from '@/services/spotify-playlist-additions'
 import { getPlaylistListeningSeries } from '@/services/listening-series'
 import {
+  getPlaylistArtistCoverage,
   getPlaylistCoverage,
   getPlaylistCoverageEntries,
 } from '@/services/metadata-coverage'
@@ -261,6 +262,37 @@ const app: OpenAPIHono<AppEnv> = createOpenAPIApp()
       generateJsonResponse(
         c,
         await getPlaylistCoverage(
+          c.req.valid('param').id,
+          c.req.valid('query'),
+        ),
+        200,
+      ),
+  )
+  .openapi(
+    createRoute({
+      method: 'get',
+      path: '/:id/coverage/artists',
+      middleware: [authMiddleware()],
+      request: { params: PlaylistParamsSchema, query: CoverageQuerySchema },
+      responses: {
+        200: {
+          description:
+            'Per artist provider, how many of the artists credited in the playlist have a current, stale or no profile',
+          content: {
+            'application/json': {
+              schema: createResponseSchema(CoverageSchema),
+            },
+          },
+        },
+        401: jsonErrorResponse('Unauthorized'),
+        404: jsonErrorResponse('Playlist not found'),
+        422: validationErrorResponse,
+      },
+    }),
+    async (c) =>
+      generateJsonResponse(
+        c,
+        await getPlaylistArtistCoverage(
           c.req.valid('param').id,
           c.req.valid('query'),
         ),

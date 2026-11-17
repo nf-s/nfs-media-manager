@@ -22,6 +22,7 @@ import {
 import { EMPTY_VALUE, formatCount, formatDate } from '@repo/ui/lib/format'
 import { formatTrackDuration } from '@/utils/track-browse'
 import type { BrowseView } from '@/utils/media-grid'
+import { useNestedGridDensity } from '@/hooks/useGridDensity'
 import type { PlaybackSource } from '@/utils/playback'
 import BrowseToolbar, {
   BrowseColumnFilterSection,
@@ -390,6 +391,8 @@ export function TrackEntriesTable({
     ...kindFilter,
   }
   const columnOptions = view === 'table' ? columns.options : null
+  // The window's geometry reads the same stored density (`useVirtualTable`).
+  const [density, setDensity] = useNestedGridDensity('album')
   const colSpan = columns.count + (gaps ? 2 : 0)
   return (
     <>
@@ -413,6 +416,7 @@ export function TrackEntriesTable({
         }}
         view={view}
         onViewChange={onViewChange}
+        density={{ value: density, onChange: setDensity }}
         filterCount={kindFilter?.value.length}
         filters={
           (typeFilter || columnOptions) && (

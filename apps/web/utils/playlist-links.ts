@@ -62,7 +62,12 @@ export function trackHref(id: string) {
 }
 
 /** Tabs of the playlist drawer; `overview` is the default and is left out of URLs. */
-export const PlaylistTabSchema = z.enum(['overview', 'listening', 'sources'])
+export const PlaylistTabSchema = z.enum([
+  'overview',
+  'listening',
+  'coverage',
+  'sources',
+])
 export type PlaylistTab = z.infer<typeof PlaylistTabSchema>
 
 /**

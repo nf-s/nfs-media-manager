@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import { cn } from '../../lib/utils'
+import { Sparkline } from './trend-chart'
 
 type Item = { label: string; value: ReactNode }
 
@@ -31,15 +32,18 @@ export function KeyValues({ items }: { items: readonly Item[] }) {
   )
 }
 
+/** Counts per period, oldest first, and what they show in words. */
+export type StatTrend = { values: readonly number[]; label: string }
+
 export type StatItem = {
   label: string
   value: ReactNode
   tone?: 'attention' | 'danger'
-  /** Shown beside the value, for example a sparkline. */
-  extra?: ReactNode
+  /** A sparkline beside the value. */
+  trend?: StatTrend
 }
 
-/** Headline figures. Four at most. */
+/** Headline figures. Four at most; one may carry a sparkline. */
 export function Stats({ items }: { items: readonly StatItem[] }) {
   return (
     <div className="ds-stats">
@@ -47,7 +51,9 @@ export function Stats({ items }: { items: readonly StatItem[] }) {
         <div key={item.label} className="ds-stat" data-tone={item.tone}>
           <span className="ds-stat-value">
             {item.value}
-            {item.extra}
+            {item.trend && (
+              <Sparkline values={item.trend.values} label={item.trend.label} />
+            )}
           </span>
           <span className="ds-stat-label">{item.label}</span>
         </div>

@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
+  COVERAGE_ITEM_ID_LIMIT,
   CoverageEntriesQuerySchema,
   CoverageEntriesSchema,
+  CoverageSchema,
+  CoverageSubjectSchema,
 } from '../src/coverage'
 
 const page = {
@@ -87,6 +90,43 @@ describe('coverage entry contracts', () => {
           {
             ...item,
             gaps: [{ provider: 'fixture-a', displayName: 'A', albumIds: [] }],
+          },
+        ],
+      }).success,
+    ).toBe(false)
+  })
+})
+
+describe('coverage contracts', () => {
+  it('counts a playlist by its albums or its artists', () => {
+    expect(CoverageSubjectSchema.options).toEqual(['albums', 'artists'])
+    expect(CoverageSubjectSchema.safeParse('tracks').success).toBe(false)
+  })
+
+  it('bounds the IDs returned for each gap', () => {
+    const provider = {
+      provider: 'musicbrainz',
+      displayName: 'MusicBrainz',
+      eligible: 101,
+      covered: 0,
+      stale: 0,
+      missing: 101,
+      unavailableReason: null,
+      missingItemIds: Array.from(
+        { length: COVERAGE_ITEM_ID_LIMIT },
+        (_, index) => `artist-${index}`,
+      ),
+      staleItemIds: [],
+    }
+    const coverage = { total: 101, olderThanDays: 180, providers: [provider] }
+    expect(CoverageSchema.safeParse(coverage).success).toBe(true)
+    expect(
+      CoverageSchema.safeParse({
+        ...coverage,
+        providers: [
+          {
+            ...provider,
+            missingItemIds: [...provider.missingItemIds, 'artist-100'],
           },
         ],
       }).success,

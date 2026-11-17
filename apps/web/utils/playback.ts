@@ -205,6 +205,10 @@ export type PlaybackSession = {
   /** The tracks Spotify was given in one request; `item` is `sent[index]`. */
   sent: PlayableItem[]
   index: number
+  /** The track the device was on when another item's start was requested. */
+  replacedUri?: string | null
+  /** The start was sent a second time because the device ignored the first. */
+  resent?: boolean
 }
 export type SessionEvent = 'none' | 'finished' | 'left'
 
@@ -212,8 +216,14 @@ const START_GRACE_MS = 10_000
 const RELINK_GRACE_MS = 3_000
 const END_TOLERANCE_MS = 3_000
 const SKIP_WINDOW_MS = 6_000
+/** How far before the saved position a device may report the same track. */
+const REJOIN_BACK_MS = 5_000
 
-export function startSession(item: PlayableItem, now: number): PlaybackSession {
+export function startSession(
+  item: PlayableItem,
+  now: number,
+  replacedUri: string | null = null,
+): PlaybackSession {
   return {
     item,
     phase: 'starting',
@@ -221,7 +231,34 @@ export function startSession(item: PlayableItem, now: number): PlaybackSession {
     anchorUri: null,
     sent: [item],
     index: 0,
+    replacedUri,
   }
+}
+
+/** A track that began after the start was requested, once it has had time. */
+function beganAfterStart(session: PlaybackSession, after: PlaybackSnapshot) {
+  const sinceStart = after.at - session.startedAt
+  return (
+    !after.paused &&
+    sinceStart >= RELINK_GRACE_MS &&
+    after.positionMs <= sinceStart + 2_000
+  )
+}
+
+/**
+ * Whether the device answered a start by playing what it already had from its
+ * beginning: the request was accepted and then not acted on.
+ */
+export function startIgnored(
+  session: PlaybackSession,
+  after: PlaybackSnapshot,
+): boolean {
+  return (
+    session.phase === 'starting' &&
+    !!session.replacedUri &&
+    after.trackUri === session.replacedUri &&
+    beganAfterStart(session, after)
+  )
 }
 
 export function sessionContains(
@@ -251,6 +288,65 @@ function ranOutOrSkipped(
 }
 
 /**
+ * What a saved session finds on its device when the app is opened again:
+ * `rejoined` when the device still plays the tracks it was given, on the
+ * saved one at or past the saved position or on a later one; `ended` when
+ * nothing is loaded any more or the tracks ran out and went back to the
+ * start; `changed` when the device plays or holds something else.
+ */
+export type RejoinVerdict =
+  | { verdict: 'rejoined'; index: number }
+  | { verdict: 'ended' | 'changed' }
+
+export function rejoinVerdict(
+  session: Pick<PlaybackSession, 'item' | 'sent' | 'index' | 'anchorUri'>,
+  saved: PlaybackSnapshot | null,
+  after: PlaybackSnapshot | null,
+  /** The device reports that it is stopped, with nothing to resume. */
+  idle: boolean,
+): RejoinVerdict {
+  if (!after || idle) return { verdict: 'ended' }
+  // The app plays tracks and albums only, never a playlist.
+  if (after.contextUri?.startsWith('spotify:playlist:'))
+    return { verdict: 'changed' }
+  const reset = after.paused && after.positionMs <= END_TOLERANCE_MS
+  const sameTrack =
+    saved !== null &&
+    saved.trackUri !== null &&
+    saved.trackUri === after.trackUri
+  const wentBack =
+    sameTrack && after.positionMs + REJOIN_BACK_MS < saved.positionMs
+  const { item } = session
+  if (item.kind === 'album') {
+    if (after.contextUri !== item.uri) return { verdict: 'changed' }
+    // A finished album stops at the start of its first track.
+    const restarted =
+      !sameTrack &&
+      reset &&
+      after.trackNumber === 1 &&
+      (after.discNumber ?? 1) === 1
+    if (wentBack || restarted) return { verdict: reset ? 'ended' : 'changed' }
+    return { verdict: 'rejoined', index: session.index }
+  }
+  const playing = (sent: PlayableItem) =>
+    sent.uri === after.trackUri || sent.uri === after.linkedFromUri
+  let index = session.sent.findIndex(
+    (sent, at) => at >= session.index && playing(sent),
+  )
+  // Spotify may have played another recording of the current track.
+  if (index < 0 && after.trackUri && after.trackUri === session.anchorUri)
+    index = session.index
+  if (index < 0) {
+    // A finished list returns to one of its earlier tracks and stops there.
+    const earlier = session.sent.some(playing)
+    return { verdict: earlier && reset ? 'ended' : 'changed' }
+  }
+  if (index === session.index && wentBack)
+    return { verdict: reset ? 'ended' : 'changed' }
+  return { verdict: 'rejoined', index }
+}
+
+/**
  * Advances a session with a new observation. `finished` means the item played
  * to its end (the queue may continue); `left` means other playback replaced it.
  */
@@ -269,11 +365,12 @@ export function stepSession(
       const requested =
         after.trackUri === item.uri || after.linkedFromUri === item.uri
       // Spotify may play another recording of the requested track. Accept a
-      // track that began after the request once the direct match has had time.
+      // track that began after the request once the direct match has had time,
+      // unless it is the track the device was already on: that is the earlier
+      // playback starting again, not the requested track.
       const substituted =
-        !after.paused &&
-        sinceStart >= RELINK_GRACE_MS &&
-        after.positionMs <= sinceStart + 2_000
+        beganAfterStart(session, after) &&
+        after.trackUri !== session.replacedUri
       if (requested || substituted)
         return {
           session: { ...session, phase: 'playing', anchorUri: after.trackUri },

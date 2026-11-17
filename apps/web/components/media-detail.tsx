@@ -37,7 +37,6 @@ import {
   Facts,
   KeyValues,
   Section,
-  Stats,
   type StatItem,
 } from '@repo/ui/components/ds/facts'
 import { Status } from '@repo/ui/components/ds/status'
@@ -48,6 +47,7 @@ import {
   EMPTY_VALUE,
   formatCount,
   formatDate,
+  formatItemCount,
   formatRuntime,
   formatTrackLength,
 } from '@repo/ui/lib/format'
@@ -66,6 +66,7 @@ import { CreatorLinks } from './creator-links'
 import { CreatorDetailState } from './creator-detail-state'
 import { FilmCollectionLinks } from './film-collection-links'
 import AlbumListening from './album-listening'
+import { ListeningStats } from './listening-stats'
 import AlbumPlaylists from './album-playlists'
 import AlbumTracksTable from './album-tracks-table'
 import { FieldProvenance } from './field-provenance'
@@ -631,31 +632,29 @@ export default function MediaDetail({
     }[],
   ) => {
     const shown = sections.filter((section) => section.values.length > 0)
-    return (
-      shown.length > 0 && (
-        <Section
-          title="Tags"
-          aside={
-            <Link href={scopedHref('/tags', item.mediaType)}>Manage tags</Link>
-          }
-        >
-          <KeyValues
-            items={shown.map((section) => ({
-              label: section.label,
-              value: (
-                <FilterPills
-                  field={section.field}
-                  values={section.values}
-                  max={section.max}
-                  onFilter={filter}
-                  selected={selectedFilters}
-                />
-              ),
-            }))}
-          />
-        </Section>
-      )
-    )
+    return shown.map((section, index) => (
+      <Section
+        key={section.label}
+        title={section.label}
+        aside={
+          index === 0 && (
+            <Button variant="link" size="xs" asChild>
+              <Link href={scopedHref('/tags', item.mediaType)}>
+                Manage tags
+              </Link>
+            </Button>
+          )
+        }
+      >
+        <FilterPills
+          field={section.field}
+          values={section.values}
+          max={section.max}
+          onFilter={filter}
+          selected={selectedFilters}
+        />
+      </Section>
+    ))
   }
 
   let overview: ReactNode
@@ -761,7 +760,12 @@ export default function MediaDetail({
       <div className="dtl-overview">
         <div className="dtl-main">
           <Section flush>
-            <Stats items={stats.slice(0, 4)} />
+            <ListeningStats
+              kind="album"
+              id={item.id}
+              trendOn="scrobbles"
+              items={stats.slice(0, 4)}
+            />
           </Section>
           {item.summary && (
             <Section title="About">
@@ -917,10 +921,16 @@ export default function MediaDetail({
       {header}
       {selectedFilters.length > 0 && (
         <div className="dtl-filters">
-          <Link href={`/${collection}?${browseParams}`}>
-            <FilterIndicator />
-            Browse with {selectedFilters.length} filters
-          </Link>
+          <Button asChild size="xs">
+            <Link href={`/${collection}?${browseParams}`}>
+              <FilterIndicator />
+              Browse with{' '}
+              {formatItemCount(selectedFilters.length, {
+                one: 'filter',
+                other: 'filters',
+              })}
+            </Link>
+          </Button>
           <BrowseFilterChips
             filters={selectedFilters}
             fields={fields.data ?? []}

@@ -3421,3 +3421,536 @@ test('a session on a Sonos room is shown and taken over on another page', async 
   one.close()
   two.close()
 })
+
+/**
+ * Plays a saved source on the Sonos room from one page, lets the room take
+ * the tracks that follow, then closes the page: no page is left open.
+ */
+async function roomSessionLeftPlaying(
+  sessions: ReturnType<typeof fakeSessions>,
+  sonos: ReturnType<typeof fakeSonos>,
+) {
+  const one = page('Chrome on Mac', sessions, undefined, sonos.api)
+  one.sync.start()
+  await settle()
+  await one.sync.selectDevice({ kind: 'room', room: kitchen })
+  one.sync.play(sourceTrack(0), savedFixtureSource(40))
+  await settle()
+  sonos.room.state = roomState(sourceTrack(0).uri, {
+    positionMs: 60_000,
+    hasNext: true,
+  })
+  await advance(15_000)
+  one.sync.close()
+  one.close()
+  return { loaded: sonos.loads.length }
+}
+
+/** The app opened again later on any computer or phone. */
+async function reopen(
+  sessions: ReturnType<typeof fakeSessions>,
+  sonos?: ReturnType<typeof fakeSonos>,
+  world?: SpotifyWorld,
+) {
+  const again = page('Safari on iPhone', sessions, world, sonos?.api)
+  again.engine.watch()
+  again.sync.start()
+  await advance(1_000)
+  return again
+}
+
+test('a Sonos room that played on with every page closed is rejoined where it is', async () => {
+  const sessions = fakeSessions()
+  const sonos = fakeSonos()
+  const { loaded } = await roomSessionLeftPlaying(sessions, sonos)
+  assert.equal(sessions.record.driver, null)
+  assert.equal(sessions.record.state?.session?.sent.length, 11)
+
+  // Half an hour later the room is three tracks further along its queue.
+  clock += 30 * 60_000
+  sonos.room.state = roomState(sourceTrack(3).uri, {
+    positionMs: 50_000,
+    hasNext: true,
+  })
+  const again = await reopen(sessions, sonos)
+  let shown = again.sync.getState()
+  assert.equal(shown.sharing.role, 'driver')
+  assert.deepEqual(shown.target, { kind: 'room', room: kitchen })
+  assert.equal(shown.current?.uri, sourceTrack(3).uri)
+  assert.equal(shown.snapshot?.trackUri, sourceTrack(3).uri)
+  assert.equal(shown.snapshot?.paused, false)
+  assert.equal(shown.upcoming[0]?.uri, sourceTrack(4).uri)
+  assert.deepEqual(shown.rejoin, {
+    status: 'rejoined',
+    device: 'Fixture kitchen',
+  })
+  // Nothing on the room was started or loaded again.
+  assert.deepEqual(sonos.commands, [])
+  assert.equal(
+    sonos.loads.slice(loaded).filter((load) => !load.includes(' append '))
+      .length,
+    0,
+  )
+
+  // The controls work on the room's own queue.
+  again.sync.next()
+  await settle()
+  assert.deepEqual(sonos.commands, ['RINCON_FIXTURE:1 next'])
+  shown = again.sync.getState()
+  assert.equal(shown.current?.uri, sourceTrack(4).uri)
+  assert.equal(shown.rejoin, null)
+  sonos.room.state = roomState(sourceTrack(4).uri, { hasNext: true })
+  await advance(3_000)
+  again.sync.toggle()
+  await settle()
+  assert.deepEqual(sonos.commands.at(-1), 'RINCON_FIXTURE:1 pause')
+  again.close()
+})
+
+test('a Sonos room that was given other music is not rejoined and is left alone', async () => {
+  const sessions = fakeSessions()
+  const sonos = fakeSonos()
+  const { loaded } = await roomSessionLeftPlaying(sessions, sonos)
+  clock += 30 * 60_000
+  // A playlist was started on the room from the Sonos app.
+  sonos.room.state = roomState('spotify:track:from-the-sonos-app', {
+    positionMs: 70_000,
+    hasNext: true,
+    containerUri: 'spotify:playlist:sonos-app',
+  })
+  const again = await reopen(sessions, sonos)
+  const shown = again.sync.getState()
+  assert.deepEqual(shown.target, { kind: 'local' })
+  assert.equal(shown.current, null)
+  assert.equal(shown.snapshot, null)
+  assert.equal(shown.source?.label, 'Tracks')
+  assert.deepEqual(shown.rejoin, {
+    status: 'changed',
+    device: 'Fixture kitchen',
+  })
+  await advance(30_000)
+  assert.deepEqual(sonos.commands, [])
+  assert.equal(sonos.loads.length, loaded)
+  again.close()
+})
+
+test('a Sonos room whose queue was replaced or went back is not rejoined', async () => {
+  for (const changed of [
+    // Another track, loaded without a playlist.
+    roomState('spotify:track:something-else', { positionMs: 1_000 }),
+    // An earlier track of the queue, playing.
+    roomState(sourceTrack(0).uri, { positionMs: 1_000, hasNext: true }),
+    // The saved track again, from near its start: the queue was replaced.
+    roomState(sourceTrack(0).uri, { positionMs: 0, state: 'playing' }),
+  ]) {
+    const sessions = fakeSessions()
+    const sonos = fakeSonos()
+    const { loaded } = await roomSessionLeftPlaying(sessions, sonos)
+    clock += 10 * 60_000
+    if (changed.track?.uri === sourceTrack(0).uri && changed.positionMs > 0)
+      sessions.record.state = sessions.record.state && {
+        ...sessions.record.state,
+        session: sessions.record.state.session && {
+          ...sessions.record.state.session,
+          index: 2,
+          item: sourceTrack(2),
+          anchorUri: sourceTrack(2).uri,
+        },
+      }
+    sonos.room.state = changed
+    const again = await reopen(sessions, sonos)
+    const shown = again.sync.getState()
+    assert.equal(shown.rejoin?.status, 'changed', JSON.stringify(changed))
+    assert.deepEqual(shown.target, { kind: 'local' })
+    assert.deepEqual(sonos.commands, [])
+    assert.equal(sonos.loads.length, loaded)
+    again.close()
+  }
+})
+
+test('a Sonos room whose queue has ended is shown idle with the session to start again', async () => {
+  const sessions = fakeSessions()
+  const sonos = fakeSonos()
+  const { loaded } = await roomSessionLeftPlaying(sessions, sonos)
+  clock += 3 * 60 * 60_000
+  sonos.room.state = roomState(sourceTrack(0).uri, { state: 'idle' })
+  const again = await reopen(sessions, sonos)
+  const shown = again.sync.getState()
+  assert.deepEqual(shown.rejoin, { status: 'ended', device: 'Fixture kitchen' })
+  assert.equal(shown.snapshot?.paused, true)
+  await advance(30_000)
+  assert.deepEqual(sonos.commands, [])
+  assert.equal(sonos.loads.length, loaded)
+  again.close()
+})
+
+test("a restored room's queue is not added to before the room has been read", async () => {
+  const sessions = fakeSessions()
+  const sonos = fakeSonos()
+  const { loaded } = await roomSessionLeftPlaying(sessions, sonos)
+  // The room holds fewer tracks ahead than it is normally given.
+  const record = sessions.record.state
+  assert.ok(record?.session)
+  sessions.record.state = {
+    ...record,
+    session: { ...record.session, sent: record.session.sent.slice(0, 2) },
+  }
+  sonos.room.state = roomState('spotify:track:something-else', {
+    positionMs: 1_000,
+  })
+  const gate: { open: () => void } = { open: () => undefined }
+  const held: SonosControlApi = {
+    ...sonos.api,
+    async state(groupId, volume) {
+      await new Promise<void>((resolve) => {
+        gate.open = () => resolve()
+      })
+      return sonos.api.state(groupId, volume)
+    },
+  }
+  const again = page('Safari on iPhone', sessions, undefined, held)
+  again.sync.start()
+  await advance(1_000)
+  assert.deepEqual(again.sync.getState().rejoin, {
+    status: 'checking',
+    device: 'Fixture kitchen',
+  })
+  assert.equal(sonos.loads.length, loaded)
+  gate.open()
+  await advance(1_000)
+  assert.equal(again.sync.getState().rejoin?.status, 'changed')
+  assert.equal(sonos.loads.length, loaded)
+  again.close()
+})
+
+test('a Spotify device that played on with every page closed is rejoined where it is', async () => {
+  const sessions = fakeSessions()
+  const one = page('Chrome on Mac', sessions)
+  await driveSource(one)
+  await advance(5_000)
+  one.sync.close()
+  one.close()
+  const played = one.sent('play').length
+
+  clock += 20 * 60_000
+  one.remote.snapshot = playing(5, 30_000)
+  const again = await reopen(sessions, undefined, one.remote)
+  const shown = again.sync.getState()
+  assert.equal(shown.current?.uri, sourceTrack(5).uri)
+  assert.equal(shown.upcoming[0]?.uri, sourceTrack(6).uri)
+  assert.deepEqual(shown.target, { kind: 'remote', device: speaker })
+  assert.deepEqual(shown.rejoin, {
+    status: 'rejoined',
+    device: 'Fixture speaker',
+  })
+  assert.deepEqual(again.sent('play'), [])
+  assert.equal(one.sent('play').length, played)
+  again.close()
+})
+
+test('a Spotify device playing something else is shown but not rejoined', async () => {
+  const sessions = fakeSessions()
+  const one = page('Chrome on Mac', sessions)
+  await driveSource(one)
+  await advance(5_000)
+  one.sync.close()
+  one.close()
+  clock += 20 * 60_000
+  one.remote.snapshot = remoteSnapshot({
+    trackUri: 'spotify:track:from-the-app',
+    contextUri: 'spotify:playlist:from-the-app',
+  })
+  const again = await reopen(sessions, undefined, one.remote)
+  const shown = again.sync.getState()
+  assert.equal(shown.current, null)
+  assert.equal(shown.snapshot?.trackUri, 'spotify:track:from-the-app')
+  assert.equal(shown.rejoin?.status, 'changed')
+  assert.equal(shown.source?.label, 'Tracks')
+  assert.deepEqual(again.sent('play'), [])
+  again.close()
+})
+
+test('a Spotify list that ran out and went back to its start is not rejoined', async () => {
+  const sessions = fakeSessions()
+  const one = page('Chrome on Mac', sessions)
+  await driveSource(one)
+  one.remote.snapshot = playing(0, 90_000)
+  await advance(12_000)
+  one.sync.close()
+  one.close()
+  clock += 4 * 60 * 60_000
+  one.remote.snapshot = remoteSnapshot({
+    trackUri: sourceTrack(0).uri,
+    contextUri: null,
+    positionMs: 0,
+    paused: true,
+  })
+  const again = await reopen(sessions, undefined, one.remote)
+  const shown = again.sync.getState()
+  assert.equal(shown.rejoin?.status, 'ended')
+  assert.equal(shown.snapshot?.paused, true)
+  assert.deepEqual(again.sent('play'), [])
+  again.close()
+})
+
+test('a session taken over for a command here gives no note about rejoining', async () => {
+  const sessions = fakeSessions()
+  const one = page('Chrome on Mac', sessions)
+  await driveSource(one)
+  const two = page('Safari on iPhone', sessions, one.remote)
+  two.engine.watch()
+  two.sync.start()
+  await advance(1_000)
+  two.sync.enqueue(track)
+  await advance(1_000)
+  assert.equal(two.sync.getState().sharing.role, 'driver')
+  assert.equal(two.sync.getState().rejoin, null)
+  one.close()
+  two.close()
+})
+
+/** The tracks of another album, played from its track list. */
+const anotherAlbum: PlayableItem[] = [0, 1, 2].map((index) => ({
+  ...track,
+  uri: `spotify:track:another-${index}`,
+  title: `Another ${index}`,
+  albumId: 'album-another',
+}))
+function anotherAlbumSource(): PlaybackSource {
+  return {
+    label: 'Another album',
+    href: '/albums/album-another',
+    length: 1,
+    startIndex: 0,
+    kind: 'album',
+    descriptor: { type: 'album', tracks: anotherAlbum },
+    load: async (index) => (index === 0 ? [...anotherAlbum] : []),
+  }
+}
+const anotherPlay =
+  'play speaker {"uris":["spotify:track:another-0","spotify:track:another-1","spotify:track:another-2"]}'
+
+test('Play on an album replaces what this browser is playing', async () => {
+  const sessions = fakeSessions()
+  const one = page('Chrome on Mac', sessions)
+  one.sync.start()
+  one.engine.prepare()
+  await settle()
+  one.sync.play(sourceTrack(0), savedFixtureSource(40))
+  await settle()
+  one.emit('ready', { device_id: 'browser' })
+  await settle()
+  one.local.state = sdkState({
+    context: '',
+    track: sourceTrack(0).uri,
+    position: 1_000,
+  })
+  await advance(5_000)
+  one.sync.play(anotherAlbum[0] ?? track, anotherAlbumSource())
+  await advance(2_000)
+  one.local.state = sdkState({
+    context: '',
+    track: 'spotify:track:another-0',
+    position: 500,
+  })
+  await advance(10_000)
+  const plays = one.sent('play')
+  assert.equal(plays.length, 2)
+  assert.match(
+    plays[1] ?? '',
+    /^play browser \{"uris":\["spotify:track:another-0"/,
+  )
+  assert.equal(one.sync.getState().current?.uri, 'spotify:track:another-0')
+  one.close()
+})
+
+test('Play on a track replaces playback started on another device', async () => {
+  const sessions = fakeSessions()
+  const one = page('Chrome on Mac', sessions)
+  one.remote.device = { ...speaker, active: true }
+  one.remote.snapshot = remoteSnapshot({
+    trackUri: 'spotify:track:from-the-app',
+    contextUri: 'spotify:playlist:from-the-app',
+    positionMs: 60_000,
+  })
+  one.engine.watch()
+  one.sync.start()
+  await advance(1_000)
+  one.sync.play(anotherAlbum[0] ?? track, anotherAlbumSource())
+  // Spotify reports the earlier track for a few seconds.
+  for (let second = 0; second < 4; second += 1) {
+    one.remote.snapshot = remoteSnapshot({
+      trackUri: 'spotify:track:from-the-app',
+      contextUri: 'spotify:playlist:from-the-app',
+      positionMs: 62_000 + second * 1_000,
+    })
+    await advance(1_000)
+  }
+  one.remote.snapshot = remoteSnapshot({
+    trackUri: 'spotify:track:another-0',
+    contextUri: null,
+    positionMs: 500,
+  })
+  await advance(10_000)
+  assert.deepEqual(one.sent('play'), [anotherPlay])
+  assert.equal(one.sync.getState().current?.uri, 'spotify:track:another-0')
+  one.close()
+})
+
+test('Play on a follower replaces what the other page started', async () => {
+  const sessions = fakeSessions()
+  const one = page('Safari on iPhone', sessions)
+  await driveSource(one)
+  const two = page('Chrome on Mac', sessions, one.remote)
+  two.engine.watch()
+  two.sync.start()
+  await advance(5_000)
+  assert.equal(two.sync.getState().sharing.role, 'follower')
+  two.sync.play(anotherAlbum[0] ?? track, anotherAlbumSource())
+  await advance(2_000)
+  two.remote.snapshot = remoteSnapshot({
+    trackUri: 'spotify:track:another-0',
+    contextUri: null,
+    positionMs: 500,
+  })
+  await advance(10_000)
+  const plays = two.sent('play')
+  assert.equal(plays.length, 1)
+  assert.match(
+    plays[0] ?? '',
+    /^play speaker \{"uris":\["spotify:track:another-0"/,
+  )
+  assert.equal(one.sent('play').length, 1)
+  assert.equal(two.sync.getState().current?.uri, 'spotify:track:another-0')
+  one.close()
+  two.close()
+})
+
+test('Play after a reload that carried the session on replaces the resumed track', async () => {
+  const sessions = fakeSessions()
+  const one = page('Chrome on Mac', sessions)
+  one.sync.start()
+  one.engine.prepare()
+  await settle()
+  one.sync.play(sourceTrack(0), savedFixtureSource(40))
+  await settle()
+  one.emit('ready', { device_id: 'browser' })
+  await settle()
+  one.local.state = sdkState({
+    context: '',
+    track: sourceTrack(0).uri,
+    position: 1_000,
+  })
+  await advance(5_000)
+  one.sync.close()
+  one.close()
+
+  const again = harness(
+    undefined,
+    undefined,
+    { browserId: 'client-Chrome on Mac', restoreSource },
+    one.remote,
+  )
+  const sync = createPlaybackSync({
+    engine: again.engine,
+    api: sessions.api,
+    clientId: 'client-reloaded',
+    clientName: 'Chrome on Mac',
+    now: () => clock,
+    resuming: true,
+  })
+  again.engine.prepare()
+  sync.start()
+  await settle()
+  again.emit('ready', { device_id: 'browser-reloaded' })
+  await advance(500)
+  assert.equal(again.sent('play').length, 1)
+  again.local.state = sdkState({
+    context: '',
+    track: sourceTrack(0).uri,
+    position: 6_000,
+  })
+  await advance(5_000)
+  sync.play(anotherAlbum[0] ?? track, anotherAlbumSource())
+  await advance(2_000)
+  again.local.state = sdkState({
+    context: '',
+    track: 'spotify:track:another-0',
+    position: 500,
+  })
+  await advance(10_000)
+  const plays = again.sent('play')
+  assert.equal(plays.length, 2)
+  assert.match(
+    plays[1] ?? '',
+    /^play browser-reloaded \{"uris":\["spotify:track:another-0"/,
+  )
+  assert.equal(sync.getState().current?.uri, 'spotify:track:another-0')
+  sync.dispose()
+  again.engine.dispose()
+})
+
+/** The device plays the earlier track from its beginning, as if nothing was asked. */
+async function restartEarlier(
+  one: ReturnType<typeof page>,
+  seconds: number,
+  from = 0,
+) {
+  for (let second = 0; second < seconds; second += 1) {
+    one.remote.snapshot = remoteSnapshot({
+      trackUri: 'spotify:track:from-the-app',
+      contextUri: 'spotify:playlist:from-the-app',
+      positionMs: (from + second) * 1_000,
+    })
+    await advance(1_000)
+  }
+}
+
+function playingElsewhere() {
+  const one = page('Chrome on Mac', fakeSessions())
+  one.remote.device = { ...speaker, active: true }
+  one.remote.snapshot = remoteSnapshot({
+    trackUri: 'spotify:track:from-the-app',
+    contextUri: 'spotify:playlist:from-the-app',
+    positionMs: 60_000,
+  })
+  one.engine.watch()
+  one.sync.start()
+  return one
+}
+
+test('a device that restarts what it was playing is sent the requested track once more', async () => {
+  const one = playingElsewhere()
+  await advance(1_000)
+  one.sync.play(anotherAlbum[0] ?? track, anotherAlbumSource())
+  await restartEarlier(one, 5)
+  assert.deepEqual(one.sent('play'), [anotherPlay, anotherPlay])
+  assert.equal(one.sync.getState().starting, true)
+  one.remote.snapshot = remoteSnapshot({
+    trackUri: 'spotify:track:another-0',
+    contextUri: null,
+    positionMs: 500,
+  })
+  await advance(10_000)
+  assert.deepEqual(one.sent('play'), [anotherPlay, anotherPlay])
+  const state = one.sync.getState()
+  assert.equal(state.current?.uri, 'spotify:track:another-0')
+  assert.equal(state.snapshot?.trackUri, 'spotify:track:another-0')
+  assert.equal(state.failure, null)
+  one.close()
+})
+
+test('a device that keeps restarting what it was playing is reported, not shown as the requested track', async () => {
+  const one = playingElsewhere()
+  await advance(1_000)
+  one.sync.play(anotherAlbum[0] ?? track, anotherAlbumSource())
+  await restartEarlier(one, 5)
+  await restartEarlier(one, 14)
+  assert.deepEqual(one.sent('play'), [anotherPlay, anotherPlay])
+  const state = one.sync.getState()
+  assert.equal(state.current, null)
+  assert.equal(state.starting, false)
+  assert.match(state.failure?.message ?? '', /did not start/)
+  assert.equal(state.snapshot?.trackUri, 'spotify:track:from-the-app')
+  one.close()
+})

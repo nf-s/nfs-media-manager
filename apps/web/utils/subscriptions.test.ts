@@ -7,6 +7,7 @@ import {
   subscriptionBrowseFields,
 } from '@repo/schemas/subscriptions'
 import { browseSuggestions } from './browse-suggestions'
+import { gridDensities } from './media-grid'
 import {
   filterSubscriptionSources,
   formatSubscriptionDuration,
@@ -304,6 +305,23 @@ test('grid geometry keeps at least two columns and 16:9 thumbnails', () => {
   const phone = subscriptionGridGeometry(300)
   assert.equal(phone.columns, 2)
   assert.equal(phone.gap, 8)
+})
+
+test('nested video grids follow the density: three phone columns compact', () => {
+  assert.equal(subscriptionGridGeometry(351, 'compact').columns, 3)
+  assert.equal(subscriptionGridGeometry(351, 'standard').columns, 2)
+  assert.equal(subscriptionGridGeometry(351, 'roomy').columns, 2)
+  // A detail tab on a phone is narrower than the page; compact keeps three.
+  assert.equal(subscriptionGridGeometry(319, 'compact').columns, 3)
+  assert.equal(subscriptionGridGeometry(319, 'standard').columns, 2)
+  const [compact, standard, roomy] = gridDensities.map((density) =>
+    subscriptionGridGeometry(1000, density),
+  )
+  assert.ok(compact && standard && roomy)
+  assert.equal(standard.columns, subscriptionGridGeometry(1000).columns)
+  assert.ok(compact.columns > standard.columns)
+  assert.ok(standard.columns > roomy.columns)
+  assert.ok(compact.rowHeight < standard.rowHeight)
 })
 
 const youtubeSourceInput = {

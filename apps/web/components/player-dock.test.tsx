@@ -8,11 +8,11 @@ import {
   SearchParamsContext,
 } from 'next/dist/shared/lib/hooks-client-context.shared-runtime'
 import { AppRouterContext } from 'next/dist/shared/lib/app-router-context.shared-runtime'
-import PlayerDock from './player-dock'
+import PlayerDock, { rejoinMessage } from './player-dock'
 import { PlaybackViewContext, type PlaybackView } from './playback-provider'
 import { ConfigContext } from './providers'
 import type { PlayableItem, PlaybackSnapshot } from '@/utils/playback'
-import { idlePlaybackState } from '@/utils/playback-engine'
+import { idlePlaybackState, type PlaybackTarget } from '@/utils/playback-engine'
 
 const trackId = 'ABCDEFGHIJKL1234567890'
 const item: PlayableItem = {
@@ -99,10 +99,7 @@ test('the bar asks to connect Spotify until playback is connected, then always s
   assert.match(prompt, />Connect Spotify<\/button>/)
   assert.match(prompt, /aria-label="Dismiss"/)
   const unconfigured = render({ ...off, connection: 'unconfigured' })
-  assert.match(
-    unconfigured,
-    /href="\/providers\/spotify\?tab=settings"/,
-  )
+  assert.match(unconfigured, /href="\/providers\/spotify\?tab=settings"/)
   assert.doesNotMatch(unconfigured, />Connect Spotify</)
   const idle = render(on)
   assert.match(idle, /<strong>Nothing playing<\/strong>/)
@@ -437,4 +434,62 @@ test('an expired connection replaces the controls with Reconnect', () => {
   assert.match(html, /Sign in again to keep playing\./)
   assert.match(html, />Reconnect<\/button>/)
   assert.doesNotMatch(html, /player-transport/)
+})
+
+test('rejoining a saved session shows what happened on its room or device', () => {
+  const room: PlaybackTarget = {
+    kind: 'room',
+    room: { id: 'RINCON_FIXTURE:1', name: 'Fixture hi-fi', household: 'h1' },
+  }
+  let html = render({
+    ...on,
+    active: true,
+    current: item,
+    target: room,
+    starting: true,
+    rejoin: { status: 'checking', device: 'Fixture hi-fi' },
+  })
+  assert.match(
+    html,
+    /<div class="player-alert" role="status" data-tone="info"><span>Rejoining the queue on Fixture hi-fi…<\/span><\/div>/,
+  )
+  html = render({
+    ...on,
+    active: true,
+    current: item,
+    snapshot: { ...snapshot, paused: false },
+    target: room,
+    rejoin: { status: 'rejoined', device: 'Fixture hi-fi' },
+  })
+  assert.match(
+    html,
+    /Rejoined the queue on Fixture hi-fi\.<\/span><button type="button" aria-label="Dismiss"/,
+  )
+  assert.match(html, /aria-label="Play on: Fixture hi-fi"/)
+  html = render({
+    ...on,
+    active: true,
+    rejoin: { status: 'changed', device: 'Fixture hi-fi' },
+  })
+  assert.match(
+    html,
+    /Fixture hi-fi no longer has this queue, so the player did not rejoin it\./,
+  )
+  assert.match(html, /aria-label="Play on: This browser"/)
+  // An error takes the place of the note.
+  html = render({
+    ...on,
+    active: true,
+    failure: { status: 'error', message: 'Fixture failure' },
+    rejoin: { status: 'ended', device: 'Fixture hi-fi' },
+  })
+  assert.doesNotMatch(html, /no longer playing/)
+  assert.equal(
+    rejoinMessage({ status: 'ended', device: 'Fixture hi-fi' }),
+    'The queue is no longer playing on Fixture hi-fi.',
+  )
+  assert.equal(
+    rejoinMessage({ status: 'unreadable', device: null }),
+    'The device could not be read, so the player did not rejoin it.',
+  )
 })

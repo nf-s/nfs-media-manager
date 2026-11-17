@@ -26,6 +26,11 @@
   flex: 1 1 0%;
   min-height: 0;
 }
+/* A table that fills its page is the page's own scroller and keeps the scroll */
+:is(.sec-page, .sec-fill) > .secondary-table-frame > .table-scroll,
+:is(.sec-page, .sec-fill) > .table-scroll {
+  overscroll-behavior: none;
+}
 /* A page of forms and sections that scrolls as one */
 .sec-scroll {
   flex: 1 1 0%;

@@ -38,6 +38,14 @@
 .browse-order {
   max-width: calc(var(--ds-rail) - var(--ds-6));
 }
+/* Controls that do not fit, as in the detail drawer or with the Grid
+   density shown, wrap onto a second row instead of squeezing the search */
+.ds-toolbar:has(> .browse-find) {
+  flex-wrap: wrap;
+}
+.ds-toolbar > .browse-find {
+  min-width: min(100%, calc(var(--ds-rail) - var(--ds-6)));
+}
 
 /* Search with autocomplete */
 .browse-combobox {
@@ -390,8 +398,10 @@
   .ds-toolbar > .browse-combobox {
     flex-basis: 100%;
   }
+  /* The sort keeps a readable width; what does not fit beside it wraps */
   .browse-order {
     flex: 1;
+    min-width: calc(var(--ds-rail) / 2);
     max-width: none;
   }
 }

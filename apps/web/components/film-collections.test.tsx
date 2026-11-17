@@ -187,8 +187,28 @@ test('Films navigation exposes Collections and its shared sortable table control
   assert.match(html, /title="Filter films by Synthetic collection"/)
 })
 
-test('collection deep links open members in source order without renumbering gaps', async () => {
+test('a collection deep link opens its films in the Grid view with the density control', async () => {
   const html = await render('collection=collection')
+  const drawer = html.slice(
+    html.indexOf('aria-label="Film collection details"'),
+  )
+  assert.match(drawer, /aria-pressed="true" aria-label="Grid view"/)
+  assert.match(
+    drawer,
+    /role="group" aria-label="Grid density"><button type="button" aria-pressed="false">Compact<\/button><button type="button" aria-pressed="true">Standard<\/button>/,
+  )
+  assert.match(
+    drawer,
+    /<article class="ds-card"><span class="ds-art" data-ratio="poster">/,
+  )
+  assert.doesNotMatch(drawer, /<thead>/)
+})
+
+test('collection deep links open members in source order without renumbering gaps', async () => {
+  const entry = { kind: 'collection', id: 'collection', view: 'view=table' }
+  const html = await render(
+    new URLSearchParams({ inspect: JSON.stringify([entry]) }).toString(),
+  )
   const drawer = html.slice(
     html.indexOf('aria-label="Film collection details"'),
   )

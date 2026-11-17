@@ -24,7 +24,11 @@ import {
   type BrowseFilter,
 } from '@repo/schemas/browse'
 import { FilterPanelSection } from './browse-filter-panel'
-import type { BrowseView } from '@/utils/media-grid'
+import {
+  gridDensities,
+  type BrowseView,
+  type GridDensity,
+} from '@/utils/media-grid'
 import { musicDisplayTags } from '@repo/schemas/music-tags'
 
 const views = [
@@ -57,6 +61,34 @@ export function BrowseViewSwitch({
       label="Browse views"
       value={view}
       options={views}
+      onChange={onChange}
+    />
+  )
+}
+
+const densityLabels: Record<GridDensity, string> = {
+  compact: 'Compact',
+  standard: 'Standard',
+  roomy: 'Roomy',
+}
+const densities = gridDensities.map((value) => ({
+  value,
+  label: densityLabels[value],
+}))
+
+/** Card size in the Grid view. */
+export function BrowseDensitySwitch({
+  density,
+  onChange,
+}: {
+  density: GridDensity
+  onChange: (density: GridDensity) => void
+}) {
+  return (
+    <Segmented
+      label="Grid density"
+      value={density}
+      options={densities}
       onChange={onChange}
     />
   )

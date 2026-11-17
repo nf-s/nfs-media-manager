@@ -176,9 +176,16 @@ export function createPlaybackSync(options: PlaybackSyncOptions) {
     return key !== savedAs || due ? { state, key } : null
   }
 
+  /**
+   * `command` is set when the session was claimed to run a command here: its
+   * device is then followed as the previous driver left it. Otherwise the
+   * device is checked for the queue it was given, which nothing may have run
+   * for hours.
+   */
   async function apply(
     result: PlaybackSyncResult,
     sent: { state: SavedPlayback | null; key: string; revision: number } | null,
+    command: boolean,
   ) {
     const before = role
     // What was started here while the server could not be reached replaces
@@ -209,7 +216,7 @@ export function createPlaybackSync(options: PlaybackSyncOptions) {
       savedAs = undefined
       if (keep) saveSoon()
       else if (role === 'driver') {
-        if (stored) await engine.restore(stored)
+        if (stored) await engine.restore(stored, { claimed: command })
         else engine.release()
       } else {
         if (before === 'driver') engine.release()
@@ -218,7 +225,7 @@ export function createPlaybackSync(options: PlaybackSyncOptions) {
     } else if (role === 'driver' && before === 'follower') {
       // The driver went away: its session carries on here.
       savedAs = undefined
-      if (stored) await engine.restore(stored)
+      if (stored) await engine.restore(stored, { claimed: command })
     } else if (role === 'follower' && before !== 'follower') {
       if (before === 'driver') engine.release()
       if (stored) engine.watchSaved(stored.target)
@@ -227,23 +234,27 @@ export function createPlaybackSync(options: PlaybackSyncOptions) {
   }
 
   /** Works alone when the server cannot be reached, so playback is never held up. */
-  async function standAlone(claim: boolean) {
+  async function standAlone(claim: boolean, command: boolean) {
     if (role !== null && !claim) return
     const before = role
     alone = true
     role = 'driver'
     driver = null
     savedAs = undefined
-    if (before === 'follower' && stored) await engine.restore(stored)
+    if (before === 'follower' && stored)
+      await engine.restore(stored, { claimed: command })
     publish()
   }
 
-  /** One exchange with the server; `claim` takes the session over. */
-  function exchange(claim = false): Promise<void> {
+  /**
+   * One exchange with the server; `claim` takes the session over, and
+   * `command` says that a command here is waiting for it.
+   */
+  function exchange(claim = false, command = false): Promise<void> {
     if (disposed) return Promise.resolve()
     if (busy)
       return busy.then(() =>
-        claim && role !== 'driver' ? exchange(true) : undefined,
+        claim && role !== 'driver' ? exchange(true, command) : undefined,
       )
     const sending = claim ? null : unsaved()
     const sent = sending ? { ...sending, revision } : null
@@ -256,8 +267,8 @@ export function createPlaybackSync(options: PlaybackSyncOptions) {
         ...(sending ? { state: sending.state } : {}),
       })
       .then(
-        (result) => apply(result, sent),
-        () => standAlone(claim),
+        (result) => apply(result, sent, command),
+        () => standAlone(claim, command),
       )
       .finally(() => {
         busy = null
@@ -318,7 +329,7 @@ export function createPlaybackSync(options: PlaybackSyncOptions) {
         return
       }
       engine.activate()
-      void exchange(true).then(() => {
+      void exchange(true, true).then(() => {
         if (!disposed) command(...args)
       })
     }
@@ -382,7 +393,7 @@ export function createPlaybackSync(options: PlaybackSyncOptions) {
     async selectDevice(next: SelectableTarget) {
       if (role !== 'driver') {
         engine.activate()
-        await exchange(true)
+        await exchange(true, true)
       }
       await engine.selectDevice(next)
     },

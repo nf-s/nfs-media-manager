@@ -43,9 +43,10 @@ import { fetchApiData } from '@/utils/api'
 import { useVirtualBrowse } from '@/hooks/useVirtualBrowse'
 import { useBrowseFacets } from '@/hooks/useBrowseFacets'
 import { useRailSlot } from '@/hooks/useRailSlot'
+import { useGridDensity } from '@/hooks/useGridDensity'
 import { useSubscriptionSource } from '@/hooks/useSubscriptionSource'
 import { matchingTitleFilters } from '@/utils/browse-suggestions'
-import { preserveGridScroll } from '@/utils/media-grid'
+import { gridCardMin, preserveGridScroll } from '@/utils/media-grid'
 import {
   aiSubscriptionSearchParams,
   subscriptionAiSearchTarget,
@@ -121,7 +122,6 @@ const collection = subscriptionCollection
 const headerHeight = 28
 const listRowHeight = 48
 const tableRowHeight = 32
-const cardMinWidth = 200
 const noun = { one: 'item', other: 'items' }
 /** Sorts whose value the card does not already show. */
 const cardSortKeys = new Set(['watchedAt', 'likeCount', 'commentCount'])
@@ -192,10 +192,14 @@ export default function SubscriptionBrowser() {
             : 110,
   )
   const mobile = viewport.width <= 700
+  const density = useGridDensity(searchParams.get('density'))
+  // A compact card is too narrow for tags or a value beside the date.
+  const compactCards = density === 'compact'
   const grid = itemGridGeometry({
     width: viewport.width,
-    min: cardMinWidth,
+    min: gridCardMin('subscription', density),
     ratio: 9 / 16,
+    tags: !compactCards,
   })
   const scrollIdentity = `${collection}:${identity}:${view}`
   const previousScrollTop = scroll.identity === scrollIdentity ? scroll.top : 0
@@ -497,14 +501,16 @@ export default function SubscriptionBrowser() {
     return (
       <>
         <span>{published(item)}</span>
-        <span>
-          {sorted ??
-            (item.type === 'youtube'
-              ? item.viewCount === null
-                ? 'Views hidden'
-                : `${formatCompactSubscriptionCount(item.viewCount)} views`
-              : subscriptionTypeLabels[item.type])}
-        </span>
+        {!compactCards && (
+          <span>
+            {sorted ??
+              (item.type === 'youtube'
+                ? item.viewCount === null
+                  ? 'Views hidden'
+                  : `${formatCompactSubscriptionCount(item.viewCount)} views`
+                : subscriptionTypeLabels[item.type])}
+          </span>
+        )}
       </>
     )
   }
@@ -680,6 +686,10 @@ export default function SubscriptionBrowser() {
           }
           view={view}
           onViewChange={(next) => setParams({ view: next })}
+          density={{
+            value: density,
+            onChange: (next) => setParams({ density: next }),
+          }}
           count={
             <BrowseItemsCount
               query={query}
@@ -755,7 +765,7 @@ export default function SubscriptionBrowser() {
                     title={<CardTitle>{itemLink(item)}</CardTitle>}
                     by={channelLink(item)}
                     meta={cardMeta(item)}
-                    tags={itemTags(item)}
+                    tags={compactCards ? undefined : itemTags(item)}
                   />
                 )
               })}

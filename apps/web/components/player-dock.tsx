@@ -61,7 +61,11 @@ import {
   type QueueEntry,
 } from '@/utils/playback'
 import type { DetailTarget } from '@/utils/detail-inspector'
-import type { PlaybackTarget, SelectableTarget } from '@/utils/playback-engine'
+import type {
+  PlaybackRejoin,
+  PlaybackTarget,
+  SelectableTarget,
+} from '@/utils/playback-engine'
 import { spotifyAuthorizationUrl } from '@/utils/spotify-authorize'
 
 const phoneQuery = '(max-width: 700px)'
@@ -949,6 +953,38 @@ function NowPlayingSheet({
   )
 }
 
+/** What the player says about taking over a saved session's device. */
+export function rejoinMessage({ status, device }: PlaybackRejoin) {
+  const on = device ? ` on ${device}` : ''
+  const name = device ?? 'The device'
+  switch (status) {
+    case 'checking':
+      return `Rejoining the queue${on}…`
+    case 'rejoined':
+      return `Rejoined the queue${on}.`
+    case 'changed':
+      return `${name} no longer has this queue, so the player did not rejoin it.`
+    case 'ended':
+      return `The queue is no longer playing${on}.`
+    case 'unreadable':
+      return `${name} could not be read, so the player did not rejoin it.`
+  }
+}
+
+function RejoinNotice({ rejoin }: { rejoin: PlaybackRejoin }) {
+  const { clearFailure } = usePlaybackControls()
+  return (
+    <div className="player-alert" role="status" data-tone="info">
+      <span>{rejoinMessage(rejoin)}</span>
+      {rejoin.status !== 'checking' && (
+        <button type="button" aria-label="Dismiss" onClick={clearFailure}>
+          <X size={14} aria-hidden="true" />
+        </button>
+      )}
+    </div>
+  )
+}
+
 function Dock({ view }: { view: PlaybackView }) {
   const controls = usePlaybackControls()
   const { apiBaseUrl } = useConfig()
@@ -990,6 +1026,7 @@ function Dock({ view }: { view: PlaybackView }) {
     <section className="player-dock" aria-label="Player">
       <Hairline snapshot={view.snapshot} />
       {!failure && <ConnectionOutcome />}
+      {!failure && view.rejoin && <RejoinNotice rejoin={view.rejoin} />}
       {failure && (
         <div className="player-alert" role="alert">
           <span>{failure.message}</span>

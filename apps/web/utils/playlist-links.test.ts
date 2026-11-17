@@ -71,6 +71,7 @@ test('playlist drawer links open the Playlists page on a tab', () => {
 test('an unknown or missing drawer tab reads as Overview, and old tabs still open', () => {
   assert.equal(parsePlaylistTab('sources'), 'sources')
   assert.equal(parsePlaylistTab('listening'), 'listening')
+  assert.equal(parsePlaylistTab('coverage'), 'coverage')
   assert.equal(parsePlaylistTab('sync'), 'sources')
   assert.equal(parsePlaylistTab('tracks'), 'overview')
   assert.equal(parsePlaylistTab(null), 'overview')

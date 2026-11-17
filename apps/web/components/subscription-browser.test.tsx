@@ -341,6 +341,7 @@ test('the grid view shows clean video cards with a duration badge, meta line and
   const html = render(<SubscriptionBrowser />, browseData('', 120))
   assert.match(html, /data-view="grid"/)
   assert.doesNotMatch(html, /<table/)
+  assert.match(html, /aria-label="Grid density"/)
   assert.match(html, /<span class="ds-art" data-ratio="video">/)
   assert.match(html, /<span class="ds-art-badge">12:34<\/span>/)
   assert.equal((html.match(/ds-art-badge/g) ?? []).length, 1)
