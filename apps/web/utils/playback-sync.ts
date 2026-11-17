@@ -392,7 +392,9 @@ export function createPlaybackSync(options: PlaybackSyncOptions) {
     clearFailure: engine.clearFailure,
     async selectDevice(next: SelectableTarget) {
       if (role !== 'driver') {
-        engine.activate()
+        // Audio is unlocked inside the click, for the device about to play:
+        // by the time the session has been taken over, the click is over.
+        engine.activate(next)
         await exchange(true, true)
       }
       await engine.selectDevice(next)

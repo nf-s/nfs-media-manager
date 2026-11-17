@@ -187,7 +187,7 @@ const TRANSFER_SETTLE_MS = 5_000
 const READY_TIMEOUT_MS = 15_000
 const START_TIMEOUT_MS = 15_000
 const DEVICE_RETRY_MS = 700
-const DEVICE_RETRIES = 2
+const DEVICE_RETRIES = 6
 const VOLUME_DEBOUNCE_MS = 250
 const RESTART_AFTER_MS = 3_000
 const MISSING_STATES = 3
@@ -602,13 +602,19 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     return ready
   }
 
-  /** Browsers only allow audio that a user gesture unlocked. */
-  function activate() {
-    if (state.target.kind === 'local')
+  /**
+   * Browsers only allow audio that a user gesture unlocked. `target` is the
+   * device about to play, when it is not the current one yet.
+   */
+  function activate(target: PlaybackTarget = state.target) {
+    if (target.kind === 'local')
       player?.activateElement().catch(() => undefined)
   }
 
-  /** Spotify can take a moment to list a device that has just registered. */
+  /**
+   * Spotify can take a few seconds to list a device that has just registered,
+   * as a browser does the first time it is chosen under Play on.
+   */
   async function onDevice(local: boolean, command: () => Promise<void>) {
     for (let attempt = 0; ; attempt += 1) {
       try {
@@ -2139,6 +2145,8 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
         set({ current: item })
       }
       latest = after
+      heard = after.trackUri
+      heardFor = session?.sent[session.index]?.uri ?? null
       set({ active: true, snapshot: after, starting: false })
       report('rejoined')
       findSonos()
@@ -2165,6 +2173,8 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       // Other playback has taken the device. The queue and source are kept.
       currentFromSource = false
       latest = after
+      heard = after.trackUri
+      heardFor = null
       set({ current: null, snapshot: after, starting: false })
       report('changed')
       findSonos()

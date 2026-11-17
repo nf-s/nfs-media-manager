@@ -3954,3 +3954,106 @@ test('a device that keeps restarting what it was playing is reported, not shown 
   assert.equal(state.snapshot?.trackUri, 'spotify:track:from-the-app')
   one.close()
 })
+
+test('This browser chosen on another open page unlocks its audio in the click and takes the playback', async () => {
+  const sessions = fakeSessions()
+  const one = page('Chrome on Mac', sessions)
+  await driveSource(one)
+  const two = page('Safari on iPhone', sessions, one.remote)
+  two.engine.prepare()
+  two.engine.watch()
+  two.sync.start()
+  await advance(5_000)
+  assert.equal(two.sync.getState().sharing.role, 'follower')
+  assert.deepEqual(two.sent('sdk activate'), [])
+
+  const moved = two.sync.selectDevice({ kind: 'local' })
+  // Nothing has been awaited yet, so this is still inside the click: the
+  // session has not been asked for, and the audio is already unlocked.
+  assert.equal(two.sync.getState().sharing.role, 'follower')
+  assert.equal(two.sent('sdk activate').length, 1)
+  await settle()
+  two.emit('ready', { device_id: 'phone-browser' })
+  await moved
+  assert.equal(two.sync.getState().sharing.role, 'driver')
+  assert.deepEqual(two.sent('transfer'), ['transfer phone-browser true'])
+  assert.deepEqual(two.engine.getState().target, { kind: 'local' })
+  assert.equal(two.engine.getState().failure, null)
+  // Nothing was started again: the playback moved as it was.
+  assert.deepEqual(two.sent('play'), [])
+  one.close()
+  two.close()
+})
+
+test('a browser Spotify has not listed yet still takes the playback a few seconds later', async () => {
+  const setup = harness()
+  const { engine, remote } = setup
+  await engine.selectDevice({ kind: 'remote', device: speaker })
+  engine.play(album)
+  await settle()
+  remote.device = { ...speaker, active: true }
+  remote.snapshot = remoteSnapshot({ positionMs: 1_000 })
+  await advance(700)
+  // Spotify answers "no such device" for the first few seconds after a
+  // browser registers. A check of the device made meanwhile may take one of
+  // these answers, so at least three reach the transfer.
+  for (let refusal = 0; refusal < 5; refusal += 1)
+    remote.failures.push(new PlaybackApiError(404, null))
+  const moved = engine.selectDevice({ kind: 'local' })
+  await settle()
+  setup.emit('ready', { device_id: 'browser' })
+  await advance(4_000)
+  await moved
+  assert.ok(setup.sent('transfer').length > 3)
+  assert.equal(setup.sent('transfer').at(-1), 'transfer browser true')
+  assert.deepEqual(remote.failures, [])
+  assert.deepEqual(engine.getState().target, { kind: 'local' })
+  assert.equal(engine.getState().failure, null)
+  engine.dispose()
+})
+
+test('a browser Spotify never lists is reported and the playback stays where it was', async () => {
+  const setup = harness()
+  const { engine, remote } = setup
+  await engine.selectDevice({ kind: 'remote', device: speaker })
+  engine.play(album)
+  await settle()
+  remote.device = { ...speaker, active: true }
+  remote.snapshot = remoteSnapshot({ positionMs: 1_000 })
+  await advance(700)
+  for (let refusal = 0; refusal < 12; refusal += 1)
+    remote.failures.push(new PlaybackApiError(404, null))
+  const moved = engine.selectDevice({ kind: 'local' })
+  await settle()
+  setup.emit('ready', { device_id: 'browser' })
+  await advance(6_000)
+  await moved
+  remote.failures.length = 0
+  // The first attempt and six more, 700 ms apart.
+  assert.equal(setup.sent('transfer').length, 7)
+  assert.equal(engine.getState().target.kind, 'remote')
+  assert.match(engine.getState().failure?.message ?? '', /not available/)
+  engine.dispose()
+})
+
+test('a page that has just taken the session over notices a start its device ignores', async () => {
+  const sessions = fakeSessions()
+  const one = page('Safari on iPhone', sessions)
+  await driveSource(one)
+  const two = page('Chrome on Mac', sessions, one.remote)
+  two.sync.start()
+  await settle()
+  // This page has not read the device itself yet when Play is pressed.
+  assert.equal(two.sync.getState().sharing.role, 'follower')
+  two.sync.play(anotherAlbum[0] ?? track, anotherAlbumSource())
+  await advance(1_000)
+  // The device starts the track it was on again instead.
+  for (let second = 0; second < 5; second += 1) {
+    two.remote.snapshot = playing(0, second * 1_000)
+    await advance(1_000)
+  }
+  assert.deepEqual(two.sent('play'), [anotherPlay, anotherPlay])
+  assert.equal(two.sync.getState().starting, true)
+  one.close()
+  two.close()
+})
