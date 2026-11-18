@@ -90,7 +90,9 @@ export function getArtistBrowseValues(artist: ArtistSummary): BrowseValues {
     ...(artist.scrobbleCount === undefined
       ? {}
       : { scrobbles: artist.scrobbleCount }),
-    listeningScrobbles: artist.listeningScrobbles ?? null,
+    ...(artist.listeningScrobbles === undefined
+      ? {}
+      : { listeningScrobbles: artist.listeningScrobbles }),
     playlistCount: artist.playlistCount,
   }
 }
