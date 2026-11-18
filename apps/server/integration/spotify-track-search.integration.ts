@@ -36,6 +36,7 @@ const candidateId = 'catalogtrack0000000000'
 const otherCandidateId = 'catalogtrack0000000001'
 const title = 'Night Signal: Live'
 const artistName = 'Example Artist'
+const catalogArtistId = 'catalogartist000000000'
 let market: string | undefined
 let clientSecret: string | undefined
 const catalogTrack = {
@@ -43,7 +44,7 @@ const catalogTrack = {
   id: candidateId,
   name: title,
   duration_ms: 174000,
-  artists: [{ id: 'catalogartist000000000', name: artistName }],
+  artists: [{ id: catalogArtistId, name: artistName }],
   album: {
     id: 'catalogalbum0000000000',
     name: 'Example Album',
@@ -977,15 +978,16 @@ it.each([undefined, candidateId])(
     )
     await processQueuedJobs()
 
-    expect(
-      await getSpotifyTrackSearch(source.trackMediaItemId, userId),
-    ).toMatchObject({
-      job: {
-        status: 'succeeded',
-        acceptedTrackId: trackId,
-        matchMethod: 'automatic',
-      },
+    const { job } = await getSpotifyTrackSearch(source.trackMediaItemId, userId)
+    expect(job).toMatchObject({
+      status: 'succeeded',
+      acceptedTrackId: trackId,
+      matchMethod: 'automatic',
     })
+    if (!job) throw new Error('Expected a completed Spotify search')
+    expect(
+      (await getJob(job.jobId))?.options.matchedExistingSpotifyTrackId,
+    ).toBe(spotifyTrackId)
     expect(await fixture.select().from(schema.libraryTrack)).toMatchObject([
       {
         mediaItemId: trackId,
@@ -1004,6 +1006,218 @@ it.each([undefined, candidateId])(
     expect(await fixture.select().from(schema.lastfmScrobble)).toMatchObject([
       scrobble,
     ])
+    expect(request).toHaveBeenCalledTimes(2)
+  },
+)
+
+it('reuses a preidentified Spotify track with only destination diacritics and one second of rounding', async () => {
+  const { source, scrobble } = await addScrobbledRecording([
+    catalogTrack.album.name,
+  ])
+  const sourceId = source.trackMediaItemId
+  const { albumId, trackId } = await addListedRecording(candidateId)
+  const destinationTitle = 'Night Sïgnal: Live'
+  await fixture
+    .update(schema.mediaItem)
+    .set({
+      title: destinationTitle,
+      metadata: { spotifyArtistCredits: catalogTrack.artists },
+    })
+    .where(eq(schema.mediaItem.id, trackId))
+  await fixture
+    .update(schema.track)
+    .set({ title: destinationTitle, durationSec: 175 })
+    .where(eq(schema.track.trackMediaItemId, trackId))
+  await fixture
+    .update(schema.libraryTrack)
+    .set({
+      durationSec: 175,
+      spotifyUrl: `https://open.spotify.com/track/${candidateId}`,
+      spotifyAlbumId: catalogTrack.album.id,
+    })
+    .where(eq(schema.libraryTrack.mediaItemId, trackId))
+  await fixture
+    .update(schema.lastfmScrobble)
+    .set({ albumMediaItemId: albumId })
+    .where(eq(schema.lastfmScrobble.username, source.username))
+  const prior = {
+    username: 'fixture-another-listener',
+    artistKey: source.artistKey,
+    trackKey: source.trackKey,
+  }
+  await fixture.insert(schema.lastfmScrobble).values({
+    ...scrobble,
+    ...prior,
+    id: 'fixture-target-listen',
+    trackName: 'NIGHT  SIGNAL: LIVE',
+    listenedAt: new Date('2025-01-01T00:00:00Z'),
+    albumName: catalogTrack.album.name,
+    albumKey: catalogTrack.album.name.toLowerCase(),
+    albumMediaItemId: albumId,
+  })
+  await fixture
+    .insert(schema.lastfmTrackSource)
+    .values({ ...prior, trackMediaItemId: trackId })
+  await fixture
+    .insert(schema.lastfmTrackLink)
+    .values({ ...prior, trackMediaItemId: trackId, strategy: 'exact' })
+  const rawBefore = await fixture
+    .select()
+    .from(schema.lastfmScrobble)
+    .orderBy(schema.lastfmScrobble.id)
+
+  expect(
+    await queueSpotifyTrackSearches({ trackIds: [sourceId] }, userId),
+  ).toMatchObject({ queued: 1 })
+  await processQueuedJobs()
+  const { job } = await getSpotifyTrackSearch(sourceId, userId)
+  expect(job).toMatchObject({
+    status: 'succeeded',
+    acceptedTrackId: trackId,
+    matchMethod: 'automatic',
+  })
+  if (!job) throw new Error('Expected a completed Spotify search')
+  expect((await getJob(job.jobId))?.options.matchedExistingSpotifyTrackId).toBe(
+    candidateId,
+  )
+  expect(await getTrackDetail(sourceId)).toBeNull()
+  expect(await getTrackDetail(trackId)).toMatchObject({
+    title: destinationTitle,
+    durationSec: 175,
+    scrobbles: 2,
+  })
+  expect(
+    await fixture
+      .select()
+      .from(schema.lastfmTrackSource)
+      .orderBy(schema.lastfmTrackSource.username),
+  ).toMatchObject([
+    { ...prior, trackMediaItemId: trackId, manuallyMatched: false },
+    {
+      username: source.username,
+      trackMediaItemId: trackId,
+      manuallyMatched: false,
+    },
+  ])
+  expect(
+    await fixture
+      .select()
+      .from(schema.lastfmScrobble)
+      .orderBy(schema.lastfmScrobble.id),
+  ).toEqual(rawBefore)
+  expect(await fixture.select().from(schema.track)).toMatchObject([
+    { title: destinationTitle, position: 2, trackMediaItemId: trackId },
+  ])
+  expect(request).toHaveBeenCalledTimes(2)
+})
+
+it.each([
+  { reason: 'the destination lacks a direct Spotify ID', idless: true },
+  {
+    reason: 'only the source title has a diacritic difference',
+    sourceTitle: 'Night Sïgnal: Live',
+    destinationTitle: title,
+    durationSec: 174,
+  },
+  {
+    reason: 'the album position has a different version',
+    positionTitle: 'Night Sïgnal: Remix',
+  },
+  {
+    reason: 'the album position has different punctuation',
+    positionTitle: 'Night Sïgnal - Live',
+  },
+  {
+    reason: 'the album position has a different Spotify ID',
+    positionSpotifyId: otherCandidateId,
+  },
+  {
+    reason: 'the destination has a conflicting native artist credit',
+    artistId: 'anotherartist000000000',
+  },
+  {
+    reason: 'the destination has a different release',
+    spotifyAlbumId: otherEdition.album.id,
+  },
+  { reason: 'the destination differs by two seconds', durationSec: 176 },
+  { reason: 'the destination has a conflicting ISRC', isrc: 'AA-FI1-20-00002' },
+  { reason: 'more than one Spotify ID matches the source', duplicate: true },
+  { reason: 'the destination title is manually overridden', overridden: true },
+])(
+  'keeps the saved search unmatched when $reason',
+  async ({
+    idless,
+    sourceTitle = title,
+    destinationTitle = 'Night Sïgnal: Live',
+    positionTitle = destinationTitle,
+    positionSpotifyId,
+    durationSec = 175,
+    artistId = catalogArtistId,
+    spotifyAlbumId = catalogTrack.album.id,
+    isrc,
+    duplicate,
+    overridden,
+  }) => {
+    const { source } = await addScrobbledRecording(
+      [catalogTrack.album.name],
+      sourceTitle,
+    )
+    const sourceId = source.trackMediaItemId
+    const { albumId, trackId } = await addListedRecording(
+      idless ? undefined : candidateId,
+    )
+    await fixture
+      .update(schema.mediaItem)
+      .set({
+        title: idless ? title : destinationTitle,
+        metadata: {
+          spotifyArtistCredits: [{ id: artistId, name: artistName }],
+        },
+      })
+      .where(eq(schema.mediaItem.id, trackId))
+    await fixture
+      .update(schema.track)
+      .set({ title: positionTitle, durationSec, externalId: positionSpotifyId })
+      .where(eq(schema.track.trackMediaItemId, trackId))
+    await fixture
+      .update(schema.libraryTrack)
+      .set({ durationSec, isrc })
+      .where(eq(schema.libraryTrack.mediaItemId, trackId))
+    await fixture
+      .update(schema.album)
+      .set({ spotifyUrl: `https://open.spotify.com/album/${spotifyAlbumId}` })
+      .where(eq(schema.album.mediaItemId, albumId))
+    if (duplicate)
+      mockCandidates(catalogTrack, { ...catalogTrack, id: otherCandidateId })
+    if (overridden)
+      await fixture.insert(schema.mediaOverride).values({
+        id: 'fixture-title-override',
+        mediaItemId: trackId,
+        field: 'title',
+        value: destinationTitle,
+      })
+
+    expect(
+      await queueSpotifyTrackSearches({ trackIds: [sourceId] }, userId),
+    ).toMatchObject({ queued: 1 })
+    await processQueuedJobs()
+    const { job } = await getSpotifyTrackSearch(sourceId, userId)
+    expect(job).toMatchObject({
+      status: 'succeeded',
+      resultCount: duplicate ? 2 : 1,
+    })
+    if (!job) throw new Error('Expected a completed Spotify search')
+    expect(job.acceptedTrackId).toBeUndefined()
+    expect(
+      (await getJob(job.jobId))?.options.matchedExistingSpotifyTrackId,
+    ).toBeUndefined()
+    expect(await getTrackDetail(sourceId)).toMatchObject({
+      spotifyTrackId: null,
+      scrobbles: 1,
+    })
+    expect(await fixture.select().from(schema.lastfmTrackSource)).toMatchObject(
+      [{ trackMediaItemId: sourceId, manuallyMatched: false }],
+    )
     expect(request).toHaveBeenCalledTimes(2)
   },
 )

@@ -27,6 +27,8 @@ export function spotifySearchArtistNames(id: SQL) {
 
 const RecordingEvidenceSchema = z.object({
   title: z.string(),
+  spotify_track_id: z.string().nullable(),
+  has_manual_overrides: z.boolean(),
   artists: z.array(z.string()),
   artist_credits: z.array(z.object({ id: z.string(), name: z.string() })),
   track_ids: z.array(z.string()),
@@ -83,7 +85,9 @@ export async function spotifySearchRecordingEvidence(
       from (${spotifyAlbumReleaseIds()}) r join releases on releases.album_media_item_id = r.album_id
       where r.spotify_id is not null
     )
-    select title, ${spotifySearchArtistNames(sql`recording.id`)} as artists, spotify_url, isrc,
+    select title, ${spotifySearchArtistNames(sql`recording.id`)} as artists, spotify_url, isrc, spotify_track_id,
+      exists (select 1 from media_override where media_item_id = recording.id
+        union all select 1 from provider_reference_override where media_item_id = recording.id) as has_manual_overrides,
       (
         source_label is not distinct from 'lastfm' and spotify_album_id is null and spotify_track_id is null
         and not coalesce(metadata ? 'spotifyTrackSearch', false)
@@ -135,17 +139,24 @@ function sameName(value: string | null, name: string) {
 export function spotifySearchExactRelease(
   recording: RecordingEvidence,
   candidate: SpotifyTrackSearchCandidate,
-  { standaloneSource = false }: { standaloneSource?: boolean } = {},
+  {
+    standaloneSource = false,
+    allowTargetTitleDiacritics = false,
+  }: { standaloneSource?: boolean; allowTargetTitleDiacritics?: boolean } = {},
 ) {
   const albums = [
     ...recording.album_names,
     ...recording.scrobbled_albums,
   ].filter((name) => albumNameKey(name))
+  const titleKey = allowTargetTitleDiacritics
+    ? diacriticInsensitiveTitleKey
+    : albumNameKey
+  const candidateTitle = titleKey(candidate.title)
   return (
-    sameName(candidate.title, recording.title) &&
+    candidateTitle === titleKey(recording.title) &&
     sameSpotifySearchArtists(recording.artists, candidate.artists) &&
-    recording.position_titles.every((title) =>
-      sameName(candidate.title, title),
+    recording.position_titles.every(
+      (title) => candidateTitle === titleKey(title),
     ) &&
     recording.track_ids.every((id) => id === candidate.spotifyTrackId) &&
     recording.album_ids.every((id) => id === candidate.spotifyAlbumId) &&
@@ -154,6 +165,11 @@ export function spotifySearchExactRelease(
         ? albums.some((name) => sameName(candidate.albumName, name))
         : albums.every((name) => sameName(candidate.albumName, name))))
   )
+}
+
+function diacriticInsensitiveTitleKey(title: string) {
+  const key = albumNameKey(title)
+  return key.normalize('NFD').replace(/\p{M}/gu, '') || key
 }
 
 function haveDifferentVersions(first: string, second: string) {
@@ -267,7 +283,12 @@ export function spotifySearchTargetConflicts(
 export function spotifySearchConsistentRecording(
   recording: RecordingEvidence,
   candidate: SpotifyTrackSearchCandidate,
+  {
+    allowTargetDurationRounding = false,
+  }: { allowTargetDurationRounding?: boolean } = {},
 ) {
+  const durationTolerance =
+    allowTargetDurationRounding && candidate.durationSec > 0 ? 1 : 0
   return (
     (!recording.spotify_url ||
       recording.spotify_url === candidate.spotifyUrl) &&
@@ -280,7 +301,8 @@ export function spotifySearchConsistentRecording(
       ),
     ) &&
     recording.durations.every(
-      (duration) => duration === candidate.durationSec,
+      (duration) =>
+        Math.abs(duration - candidate.durationSec) <= durationTolerance,
     ) &&
     recording.scrobbles.every(
       ({ title, artist, manual }) =>
@@ -288,5 +310,23 @@ export function spotifySearchConsistentRecording(
         sameName(candidate.title, title) &&
         sameName(candidate.artists.join(', '), artist),
     )
+  )
+}
+
+/** A distinct, preidentified destination may differ only in title diacritics and one second of duration. */
+export function spotifySearchMatchesDestination(
+  recording: RecordingEvidence,
+  candidate: SpotifyTrackSearchCandidate,
+) {
+  const allowTolerance =
+    recording.spotify_track_id === candidate.spotifyTrackId &&
+    !recording.has_manual_overrides
+  return (
+    spotifySearchExactRelease(recording, candidate, {
+      allowTargetTitleDiacritics: allowTolerance,
+    }) &&
+    spotifySearchConsistentRecording(recording, candidate, {
+      allowTargetDurationRounding: allowTolerance,
+    })
   )
 }

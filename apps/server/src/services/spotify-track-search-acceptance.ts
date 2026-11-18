@@ -7,6 +7,7 @@ import {
 import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
 import { slugifyParts } from '@/lib/media-utils'
+import { SpotifyIdSchema } from '@/lib/spotify-api'
 import { libraryTrack, mediaItem, scrapeJob } from '@/schemas/db'
 import {
   independentTrackData,
@@ -22,6 +23,7 @@ import {
   spotifySearchConsistentRecording,
   spotifySearchExactRelease,
   spotifySearchHasAlternateVersion,
+  spotifySearchMatchesDestination,
   spotifySearchRecordingEvidence,
   spotifySearchTargetConflicts,
 } from './spotify-track-search-evidence'
@@ -228,6 +230,7 @@ async function linkSpotifyRecording(
   targetId: string,
   candidate: SpotifyTrackSearchCandidate,
   matchMethod: MatchMethod,
+  reusedSpotifyTrackId = false,
 ) {
   await storeConfirmedRecording(tx, targetId, candidate, jobId, matchMethod)
   if (targetId !== trackId)
@@ -248,6 +251,13 @@ async function linkSpotifyRecording(
         acceptedTrackId: targetId,
         acceptedSpotifyTrackId: candidate.spotifyTrackId,
         matchMethod,
+        ...(matchMethod === 'automatic' && reusedSpotifyTrackId
+          ? {
+              matchedExistingSpotifyTrackId: SpotifyIdSchema.parse(
+                candidate.spotifyTrackId,
+              ),
+            }
+          : {}),
       })}::jsonb`,
     })
     .where(eq(scrapeJob.id, jobId))
@@ -293,6 +303,7 @@ export async function reconcileSpotifyTrackSearchInTransaction(
     return { status: 'unmatched' }
 
   const targetId = await resolveRecordingTarget(tx, source, candidate)
+  let reusedSpotifyTrackId = false
   if (targetId !== source.id) {
     const target = await libraryRecording(tx, targetId)
     const targetEvidence =
@@ -300,10 +311,10 @@ export async function reconcileSpotifyTrackSearchInTransaction(
     if (
       target &&
       (!targetEvidence ||
-        !spotifySearchExactRelease(targetEvidence, candidate) ||
-        !spotifySearchConsistentRecording(targetEvidence, candidate))
+        !spotifySearchMatchesDestination(targetEvidence, candidate))
     )
       return { status: 'unmatched' }
+    reusedSpotifyTrackId = target?.spotifyId === candidate.spotifyTrackId
   }
   try {
     await checkRecordingTransfer(tx, source, targetId, candidate)
@@ -313,7 +324,14 @@ export async function reconcileSpotifyTrackSearchInTransaction(
     throw error
   }
   if (!dryRun)
-    await linkSpotifyRecording(tx, input, targetId, candidate, 'automatic')
+    await linkSpotifyRecording(
+      tx,
+      input,
+      targetId,
+      candidate,
+      'automatic',
+      reusedSpotifyTrackId,
+    )
   return { status: 'matched', targetId }
 }
 
