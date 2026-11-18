@@ -4,6 +4,7 @@ import {
   PlaylistDetailQuerySchema,
   type PlaylistDetailQuery,
 } from '@repo/schemas/tracks'
+import type { MediaScope } from './media-scope'
 
 const PlaylistEntryViewSchema = PlaylistDetailQuerySchema.extend({
   id: z.string(),
@@ -52,9 +53,9 @@ export function playlistAlbumsHref(name: string) {
   return `/albums?${playlistFilterParams(name)}`
 }
 
-/** The Films view filtered to members of one stored collection. */
-export function collectionFilmsHref(name: string) {
-  return `/films?${new URLSearchParams({ filters: JSON.stringify([{ field: 'collection', value: name, mode: 'required' } satisfies BrowseFilter]) })}`
+/** The library Browse view filtered to members of one stored collection. */
+export function collectionItemsHref(mediaType: MediaScope, name: string) {
+  return `/${mediaType}s?${new URLSearchParams({ filters: JSON.stringify([{ field: 'collection', value: name, mode: 'required' } satisfies BrowseFilter]) })}`
 }
 
 export function trackHref(id: string) {

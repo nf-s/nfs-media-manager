@@ -19,7 +19,11 @@ import {
   type ProviderDispatchAction,
 } from '@/utils/provider-job-dispatch'
 import { useConfig } from './providers'
-import type { useProviderLocalWorkerMode } from './provider-local-worker'
+import type {
+  useProviderLocalWorkerMode,
+  useProviderLocalWorkerPair,
+} from './provider-local-worker'
+import { ConfirmAction } from './confirm-action'
 
 type DispatchProvider = Pick<
   ProviderSummary,
@@ -323,24 +327,23 @@ export function ProviderWorkerModeSwitch({
   worker,
   dispatch,
   changeMode,
+  busy = false,
 }: {
   worker?: ProviderLocalWorkerStatus
   dispatch: ProviderDispatch
   changeMode: ReturnType<typeof useProviderLocalWorkerMode>
+  busy?: boolean
 }) {
   if (!worker?.supportsModeSwitch) return null
-  const { data, active, reviewing, update, status } = dispatch
+  const { reviewing, update, status } = dispatch
   const nextMode = worker.mode === 'local' ? 'cloud' : 'local'
-  const restriction = worker.blocked
-    ? 'Review the local request before switching.'
-    : !data?.paused || active > 0 || worker.active
-      ? 'Pause the queue and wait for active work to finish.'
-      : null
+  const restriction = workerControlRestriction(worker, dispatch, 'switching')
   return (
     <>
       <span className="ds-actions">
         <Button
           disabled={
+            busy ||
             update.isPending ||
             changeMode.isPending ||
             !!reviewing ||
@@ -362,6 +365,84 @@ export function ProviderWorkerModeSwitch({
           {changeMode.error.message || 'Could not switch transport.'}
         </p>
       )}
+    </>
+  )
+}
+
+function workerControlRestriction(
+  worker: ProviderLocalWorkerStatus,
+  dispatch: ProviderDispatch,
+  action: 'switching' | 'pairing',
+) {
+  if (worker.blocked) return `Review the local request before ${action}.`
+  if (!dispatch.data?.paused || dispatch.active > 0 || worker.active)
+    return 'Pause the queue and wait for active work to finish.'
+  return null
+}
+
+export function ProviderWorkerPairing({
+  worker,
+  dispatch,
+  pairing,
+  busy,
+}: {
+  worker?: ProviderLocalWorkerStatus
+  dispatch: ProviderDispatch
+  pairing: ReturnType<typeof useProviderLocalWorkerPair>
+  busy: boolean
+}) {
+  if (!worker) return null
+  const { request, canDownload, download } = pairing
+  const restriction = workerControlRestriction(worker, dispatch, 'pairing')
+  const disabled =
+    busy ||
+    request.isPending ||
+    dispatch.update.isPending ||
+    !!dispatch.reviewing ||
+    dispatch.status.isError ||
+    !!restriction
+  return (
+    <>
+      {canDownload ? (
+        <span className="ds-actions">
+          <Button type="button" onClick={download}>
+            Download worker token
+          </Button>
+          <span className="ds-help">
+            Use the token in the worker’s private configuration.
+          </span>
+        </span>
+      ) : (
+        <span className="ds-actions">
+          <ConfirmAction
+            question={
+              worker.paired
+                ? 'Replace the worker pairing?'
+                : 'Pair the local worker?'
+            }
+            details={
+              worker.paired
+                ? 'The previous token stops working immediately. Download the new token to reconnect the worker.'
+                : 'Download the token after pairing to connect the worker.'
+            }
+            confirmLabel={worker.paired ? 'Replace pairing' : 'Pair worker'}
+            disabled={disabled}
+            onConfirm={() => {
+              if (!disabled) request.mutate()
+            }}
+          >
+            {request.isPending
+              ? 'Pairing...'
+              : worker.paired
+                ? 'Replace pairing'
+                : 'Pair worker'}
+          </ConfirmAction>
+          {restriction && !worker.supportsModeSwitch && (
+            <span className="ds-help">{restriction}</span>
+          )}
+        </span>
+      )}
+      {request.isError && <p role="alert">{request.error.message}</p>}
     </>
   )
 }

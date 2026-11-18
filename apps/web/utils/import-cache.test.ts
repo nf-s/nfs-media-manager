@@ -79,6 +79,8 @@ test('completed imports invalidate derived library data without deleting cached 
     ['album-playlists', 'fixture'],
     ['film-collections'],
     ['film-collection', 'fixture'],
+    ['album-collections'],
+    ['album-collection', 'fixture'],
     ['album-picker', ''],
     ['album-selection'],
     ['film-selection'],

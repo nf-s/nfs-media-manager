@@ -23,7 +23,7 @@ import {
 import MediaDetail from './media-detail'
 import TrackDetail from './track-detail'
 import PlaylistDetail from './playlist-detail'
-import { FilmCollectionEntries } from './film-collection-detail'
+import { CollectionEntries } from './collection-detail'
 import { SubscriptionItemDetails } from './subscription-item-details'
 import { ArtistDetail } from './artist-detail'
 import { PersonDetail } from './person-detail'
@@ -165,7 +165,12 @@ export function DetailInspector(options: InspectorOptions) {
       libraryViewForPath(pathname, params.get('mediaType')),
     )
   const pageHref = detailPageHref(target, pageParams)
-  const trail = detailCrumbTrail(pathname, nav.entries, crumbs)
+  const trail = detailCrumbTrail(
+    pathname,
+    nav.entries,
+    crumbs,
+    params.get('mediaType'),
+  )
 
   return (
     <>
@@ -173,7 +178,11 @@ export function DetailInspector(options: InspectorOptions) {
       <MediaInspector
         ref={inspector}
         tabIndex={-1}
-        aria-label={labels[activeKind]}
+        aria-label={
+          activeKind === 'collection' && target.mediaType === 'album'
+            ? 'Album collection details'
+            : labels[activeKind]
+        }
         onDismiss={nav.close}
         headerClassName="ds-inspector-bar dtl-bar"
         header={
@@ -314,7 +323,10 @@ function InspectorContent({
       ) : target.kind === 'playlist' ? (
         <PlaylistInspectorContent id={target.id} {...options.playlist} />
       ) : target.kind === 'collection' ? (
-        <FilmCollectionEntries id={target.id} />
+        <CollectionEntries
+          id={target.id}
+          mediaType={target.mediaType ?? 'film'}
+        />
       ) : target.kind === 'artist' ? (
         <ArtistDetail id={target.id} />
       ) : target.kind === 'person' ? (

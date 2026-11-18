@@ -128,11 +128,11 @@ describe('offline collection provenance', () => {
     const readIds: string[] = []
     mocks.states.mockImplementation(async (predicate: SQL) => {
       const params = new PgDialect().sqlToQuery(predicate).params
-      expect(params.length).toBeLessThanOrEqual(102)
       const ids = params.filter(
         (value): value is string =>
           typeof value === 'string' && value.startsWith('film-'),
       )
+      expect(ids.length).toBeLessThanOrEqual(100)
       readIds.push(...ids)
       return ids.map((id) => ({
         mediaItemId: id,

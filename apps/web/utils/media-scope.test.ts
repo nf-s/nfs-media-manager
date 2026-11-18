@@ -353,13 +353,15 @@ test('unsupported track links return to Tracks without rendering another library
     assert.equal(trackScopeRedirect(path, 'track'), null)
 })
 
-test('collections stay in Films and switching libraries leaves collection detail state', () => {
-  assert.equal(mediaScopeForPath('/collections', 'album'), 'film')
-  assert.equal(libraryViewForPath('/collections', 'album'), 'film')
+test('collections follow the Films or Albums scope and switching clears collection detail state', () => {
+  assert.equal(mediaScopeForPath('/collections', 'album'), 'album')
+  assert.equal(libraryViewForPath('/collections', 'album'), 'album')
+  assert.equal(libraryViewForPath('/collections/example', 'album'), 'album')
+  assert.equal(libraryViewForPath('/collections/example', null), 'film')
   assert.equal(workspaceScopeForPath('/collections', 'subscription'), 'film')
   assert.equal(
     switchLibraryHref('/collections', 'collection=example', 'album'),
-    '/albums',
+    '/collections?mediaType=album',
   )
   assert.equal(
     switchLibraryHref('/collections', 'collection=example', 'track'),

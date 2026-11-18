@@ -23,6 +23,8 @@ export function invalidateMediaItem(
   return Promise.all([
     client.invalidateQueries({ queryKey: ['history', id] }),
     client.invalidateQueries({ queryKey: [`${mediaType}-selection`] }),
+    client.invalidateQueries({ queryKey: [`${mediaType}-collections`] }),
+    client.invalidateQueries({ queryKey: [`${mediaType}-collection`] }),
     ...(mediaType === 'album'
       ? [
           invalidatePlaylists(client),
@@ -32,8 +34,6 @@ export function invalidateMediaItem(
       : [
           client.invalidateQueries({ queryKey: [mediaType, id] }),
           client.invalidateQueries({ queryKey: ['films'] }),
-          client.invalidateQueries({ queryKey: ['film-collections'] }),
-          client.invalidateQueries({ queryKey: ['film-collection'] }),
         ]),
   ])
 }

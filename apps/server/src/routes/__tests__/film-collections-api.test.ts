@@ -6,20 +6,27 @@ const mocks = vi.hoisted(() => ({
   page: vi.fn(),
   count: vi.fn(),
   detail: vi.fn(),
+  albumPage: vi.fn(),
+  albumCount: vi.fn(),
+  albumDetail: vi.fn(),
 }))
 vi.mock('@/env', () => ({ env: { NODE_ENV: 'test' } }))
 vi.mock('@/lib/db', () => ({ db: {} }))
 vi.mock('@/lib/auth', () => ({ auth: { api: { getSession: mocks.session } } }))
-vi.mock('@/services/film-collections', () => ({
+vi.mock('@/services/collections', () => ({
   listFilmCollectionBrowsePage: mocks.page,
   countFilmCollections: mocks.count,
   getFilmCollection: mocks.detail,
+  listAlbumCollectionBrowsePage: mocks.albumPage,
+  countAlbumCollections: mocks.albumCount,
+  getAlbumCollection: mocks.albumDetail,
 }))
 import { ServerError } from '@/lib/error'
-import collections from '../film-collections'
+import { albumCollections, filmCollections } from '../collections'
 
 const app = new Hono()
-app.route('/', collections)
+app.route('/', filmCollections)
+app.route('/album-collections', albumCollections)
 app.onError((error, c) =>
   error instanceof ServerError
     ? c.json(error.response, error.response.statusCode)
@@ -173,5 +180,59 @@ describe('film collections API', () => {
       direction: 'asc',
       includeSources: 'false',
     })
+  })
+})
+
+describe('album collections API', () => {
+  beforeEach(() => {
+    vi.resetAllMocks()
+    mocks.session.mockResolvedValue({
+      user: { id: 'user-1', email: 'owner@example.test', role: 'admin' },
+      session: { id: 'session-1', userId: 'user-1' },
+    })
+  })
+
+  it('requires authentication for each album collection route', async () => {
+    mocks.session.mockResolvedValue(null)
+    for (const path of ['browse-page', 'browse-count', 'example'])
+      expect((await app.request(`/album-collections/${path}`)).status).toBe(401)
+    for (const service of [
+      mocks.albumPage,
+      mocks.albumCount,
+      mocks.albumDetail,
+    ])
+      expect(service).not.toHaveBeenCalled()
+  })
+
+  it('validates album-specific ordering and passes the requested page to the album service', async () => {
+    const id = 'example'
+    for (const path of [
+      'browse-page?sortBy=filmCount',
+      'browse-count?size=101',
+      `${id}?sortBy=watched`,
+    ])
+      expect((await app.request(`/album-collections/${path}`)).status).toBe(422)
+    for (const service of [
+      mocks.albumPage,
+      mocks.albumCount,
+      mocks.albumDetail,
+    ])
+      expect(service).not.toHaveBeenCalled()
+
+    const detail = { id, albumCount: 0 }
+    mocks.albumDetail.mockResolvedValue(detail)
+    const response = await app.request(
+      `/album-collections/${id}?sortBy=artists&direction=desc&size=10&page=2&includeSources=false`,
+    )
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ data: detail })
+    expect(mocks.albumDetail).toHaveBeenCalledExactlyOnceWith(id, {
+      sortBy: 'artists',
+      direction: 'desc',
+      size: 10,
+      page: 2,
+      includeSources: 'false',
+    })
+    expect(mocks.detail).not.toHaveBeenCalled()
   })
 })

@@ -2,6 +2,7 @@ import type {
   MediaProviderPlugin,
   MediaPluginManifest,
 } from '@repo/media-plugin-sdk'
+import { ArtistProfileProviderSchema } from '@repo/schemas/artist-profiles'
 import { mdblistPlugin } from '@/plugins/builtin/mdblist'
 import { spotifyPlugin } from '@/plugins/builtin/spotify'
 import { musicbrainzPlugin } from '@/plugins/builtin/musicbrainz'
@@ -16,6 +17,7 @@ export interface ProviderCatalogEntry extends MediaPluginManifest {
   /** Fills the Subscriptions library; listed in its Providers. */
   subscriptions: boolean
   supportsScrape: boolean
+  supportsArtistEnrichment?: boolean
   supportsLegacyImport: boolean
   pluginPath: string | null
 }
@@ -42,6 +44,7 @@ const builtinProviders = [
     surface: 'provider',
     subscriptions: true,
     supportsScrape: true,
+    supportsArtistEnrichment: true,
     supportsLegacyImport: true,
     pluginPath: null,
   },
@@ -50,6 +53,7 @@ const builtinProviders = [
     surface: 'provider',
     subscriptions: false,
     supportsScrape: true,
+    supportsArtistEnrichment: true,
     supportsLegacyImport: true,
     pluginPath: null,
   },
@@ -58,6 +62,7 @@ const builtinProviders = [
     surface: 'provider',
     subscriptions: false,
     supportsScrape: true,
+    supportsArtistEnrichment: true,
     supportsLegacyImport: true,
     pluginPath: null,
   },
@@ -66,6 +71,7 @@ const builtinProviders = [
     surface: 'provider',
     subscriptions: false,
     supportsScrape: true,
+    supportsArtistEnrichment: true,
     supportsLegacyImport: true,
     pluginPath: null,
   },
@@ -170,6 +176,10 @@ export function createCatalogEntryFromPlugin(
     surface: 'provider',
     subscriptions: false,
     supportsScrape: typeof plugin.scrapeMediaItem === 'function',
+    supportsArtistEnrichment:
+      typeof plugin.scrapeArtist === 'function' ||
+      (pluginPath === null &&
+        ArtistProfileProviderSchema.safeParse(plugin.manifest.id).success),
     supportsLegacyImport: typeof plugin.importLegacyRecord === 'function',
     pluginPath,
   }

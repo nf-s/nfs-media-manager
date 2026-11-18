@@ -11,6 +11,7 @@ import {
 import { z } from 'zod'
 import {
   detailEntries,
+  detailCrumbKey,
   detailEntryParams,
   detailLocation,
   sameDetail,
@@ -134,10 +135,7 @@ export function DetailInspectorProvider({ children }: { children: ReactNode }) {
     active,
     entries,
     canGoBack: entries.length > 1,
-    entryKey: JSON.stringify([
-      pathname,
-      ...entries.map(({ kind, id }) => [kind, id]),
-    ]),
+    entryKey: JSON.stringify([pathname, ...entries.map(detailCrumbKey)]),
     href: (target) =>
       detailLocation(
         pathname,

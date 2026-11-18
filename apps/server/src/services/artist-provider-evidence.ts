@@ -3,12 +3,14 @@ import {
   ArtistProfileProviderSchema,
   type ArtistIdentifier,
   type ArtistProfileProvider,
+  type ArtistProviderId,
   type ArtistProviderSnapshot,
 } from '@repo/schemas/artist-profiles'
 import { sql, type SQL } from 'drizzle-orm'
 import { z } from 'zod'
 import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
+import { listCurrentArtistProfiles } from './artist-profiles'
 import {
   artistNameKey,
   artistSearchNameMatches,
@@ -290,7 +292,7 @@ export async function listArtistIdentifiers(
   name: string,
   profiles: ArtistProviderSnapshot[],
 ): Promise<ArtistIdentifier[]> {
-  return Promise.all(
+  const builtin = await Promise.all(
     ArtistProfileProviderSchema.options.map(
       async (provider): Promise<ArtistIdentifier> => {
         const profile = profiles.find(
@@ -325,11 +327,27 @@ export async function listArtistIdentifiers(
       },
     ),
   )
+  return [
+    ...builtin,
+    ...profiles.flatMap(({ provider, profile }): ArtistIdentifier[] =>
+      ArtistProfileProviderSchema.safeParse(provider).success ||
+      !profile.externalId
+        ? []
+        : [
+            {
+              provider,
+              externalId: profile.externalId,
+              status: 'confirmed',
+              url: profile.url ?? null,
+            },
+          ],
+    ),
+  ]
 }
 
 export async function listArtistIdentifierSources(
   artistId: string,
-  provider: ArtistProfileProvider,
+  provider: ArtistProviderId,
   { page, size }: { page: number; size: number },
 ) {
   const target = await db.query.artist.findFirst({
@@ -337,7 +355,37 @@ export async function listArtistIdentifierSources(
   })
   if (!target)
     throw new ServerError({ statusCode: 404, message: 'Artist not found.' })
-  const accepted = await acceptedEvidence(artistId, target.name, provider)
+  const builtin = ArtistProfileProviderSchema.safeParse(provider)
+  if (!builtin.success) {
+    const row = (await listCurrentArtistProfiles(artistId)).find(
+      (snapshot) => snapshot.provider === provider,
+    )
+    const externalId = row?.profile.externalId
+    const items =
+      row && externalId && page === 1
+        ? [
+            {
+              externalId,
+              provider,
+              kind: 'artist',
+              id: artistId,
+              title: target.name,
+              snapshotId: row.id,
+              jobId: row.scrapeJobId,
+              createdAt: row.createdAt,
+            },
+          ]
+        : []
+    const totalCount = externalId ? 1 : 0
+    return ArtistIdentifierSourcePageSchema.parse({
+      page,
+      size,
+      totalCount,
+      pageCount: totalCount,
+      items,
+    })
+  }
+  const accepted = await acceptedEvidence(artistId, target.name, builtin.data)
   if (!accepted.length)
     return { page, size, totalCount: 0, pageCount: 0, items: [] }
   const values = sql.join(
@@ -348,7 +396,7 @@ export async function listArtistIdentifierSources(
     sql`, `,
   )
   const sourceQuery = sql`
-    ${evidenceQuery(artistId, target.name, provider)},
+    ${evidenceQuery(artistId, target.name, builtin.data)},
     accepted(raw_id, name, credited_name, normalized_id) as (values ${values}),
     sources as (
       select distinct a.normalized_id as "externalId", e.provider, e.kind, e.id, e.title,

@@ -110,6 +110,8 @@ test('editing media expires related details, browse, selection and memberships',
       ['history', 'fixture'],
       [`${mediaType}s`, 'facets', ''],
       [`${mediaType}-selection`, 'filters'],
+      [`${mediaType}-collections`],
+      [`${mediaType}-collection`, 'fixture'],
       ...(mediaType === 'album'
         ? [
             ['playlist', 'fixture'],
@@ -120,7 +122,7 @@ test('editing media expires related details, browse, selection and memberships',
             ['album-picker'],
             ['lastfm-links'],
           ]
-        : [['film-collections'], ['film-collection', 'fixture']]),
+        : []),
     ]
     for (const key of keys) client.setQueryData(key, 'Cached')
     client.setQueryData(['subscriptions'], 'Unchanged')

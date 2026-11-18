@@ -1,6 +1,5 @@
 import { and, gte, inArray, lt, sql } from 'drizzle-orm'
 import { z } from 'zod'
-import { ArtistProfileProviderSchema } from '@repo/schemas/artist-profiles'
 import {
   ProviderOverviewQuerySchema,
   type ProviderOverview,
@@ -32,8 +31,7 @@ type SecretRow = typeof providerSecret.$inferSelect
 function inLibrary(provider: ProviderCatalogEntry, library: Library) {
   if (library === undefined) return true
   if (library === 'subscription') return provider.subscriptions
-  if (library === 'artist')
-    return ArtistProfileProviderSchema.safeParse(provider.id).success
+  if (library === 'artist') return Boolean(provider.supportsArtistEnrichment)
   return (
     provider.mediaTypes.includes(library) ||
     (provider.mediaTypes.length === 0 && !provider.subscriptions)
@@ -42,8 +40,7 @@ function inLibrary(provider: ProviderCatalogEntry, library: Library) {
 
 function roles(provider: ProviderCatalogEntry) {
   const result: ProviderOverviewItem['roles'] = [...provider.mediaTypes]
-  if (ArtistProfileProviderSchema.safeParse(provider.id).success)
-    result.push('artist')
+  if (provider.supportsArtistEnrichment) result.push('artist')
   if (provider.subscriptions) result.push('subscription')
   if (provider.mediaTypes.length === 0) result.push('account')
   return result

@@ -388,6 +388,139 @@ test('artist Sources offers selectable eligible providers and explicit refresh',
   assert.match(html, /aria-label="Sources"/)
 })
 
+test('configured artist source exposes stored evidence and only opens resolved related artists', () => {
+  const provider = ProviderSummarySchema.parse({
+    id: 'fixture-provider',
+    displayName: 'Fixture provider',
+    description: '',
+    surface: 'provider',
+    mediaTypes: ['album'],
+    rateLimit: { maxConcurrent: 1, minTimeMs: 0 },
+    supportsScrape: true,
+    supportsArtistEnrichment: true,
+    supportsLegacyImport: false,
+    secrets: [],
+    pluginPath: null,
+  })
+  const legacy = {
+    similarArtists: [
+      { name: 'Resolved artist', artistId: 'similar-artist' },
+      { name: 'Unresolved artist', externalId: 'different-fixture-id' },
+    ],
+  }
+  const related = {
+    relationships: [
+      {
+        kind: 'similar',
+        targetType: 'artist',
+        name: 'Resolved artist',
+        targetId: 'similar-artist',
+      },
+      {
+        kind: 'similar',
+        targetType: 'artist',
+        name: 'Unresolved artist',
+        externalId: 'different-fixture-id',
+      },
+      {
+        kind: 'related',
+        targetType: 'album',
+        name: 'Referenced album',
+        targetId: 'referenced-album',
+      },
+    ],
+  }
+  function profile(relationships: typeof legacy | typeof related) {
+    return ArtistDetailSchema.parse({
+      ...artist,
+      providers: [
+        ...artist.providers,
+        {
+          id: 'fixture-profile',
+          provider: provider.id,
+          profile: {
+            externalId: 'fixture-id',
+            summary: 'Fixture profile biography.',
+            url: 'https://example.test/artists/fixture',
+            tags: ['Fixture tag'],
+            ...relationships,
+          },
+          scrapeJobId: null,
+          createdAt: timestamp,
+        },
+      ],
+      identifiers: [
+        {
+          provider: provider.id,
+          externalId: 'fixture-id',
+          status: 'confirmed',
+          url: 'https://example.test/artists/fixture',
+        },
+      ],
+    })
+  }
+  const entry: DetailEntry = {
+    kind: 'artist',
+    id: artist.id,
+    view: `tab=sources&provider=${provider.id}`,
+  }
+  for (const relationships of [legacy, related]) {
+    const html = render({
+      pathname: '/artists',
+      search: new URLSearchParams({
+        inspect: JSON.stringify([entry]),
+      }).toString(),
+      children: (
+        <DetailInspectorProvider>
+          <InspectorEntryContext.Provider
+            value={{ active: entry, replaceView() {} }}
+          >
+            <ArtistDetail id={artist.id} />
+          </InspectorEntryContext.Provider>
+        </DetailInspectorProvider>
+      ),
+      cache: [
+        [['artist', artist.id], profile(relationships)],
+        [['providers'], [provider]],
+      ],
+    })
+    assert.match(html, /aria-label="Refresh Fixture provider"/)
+    assert.match(html, /aria-label="Edit Fixture provider identifier"/)
+    assert.match(html, /Fixture profile biography/)
+    assert.match(html, /Fixture tag/)
+    assert.match(html, /href="https:\/\/example.test\/artists\/fixture"/)
+    assert.match(html, /aria-label="Similar artists"/)
+    assert.match(html, /Unresolved artist/)
+    assert.doesNotMatch(html, />Unresolved artist<\/a>|>Find match</)
+    const href =
+      /href="([^"]+)"[^>]*><span class="ds-pill-label">Resolved artist<\//.exec(
+        html,
+      )?.[1]
+    assert.ok(href)
+    const url = new URL(href.replaceAll('&amp;', '&'), 'http://localhost')
+    assert.deepEqual(detailEntries(url.pathname, url.searchParams), [
+      entry,
+      { kind: 'artist', id: 'similar-artist' },
+    ])
+    if ('relationships' in relationships) {
+      assert.match(html, /aria-label="Related albums"/)
+      const albumHref =
+        /href="([^"]+)"[^>]*><span class="ds-pill-label">Referenced album<\//.exec(
+          html,
+        )?.[1]
+      assert.ok(albumHref)
+      const albumUrl = new URL(
+        albumHref.replaceAll('&amp;', '&'),
+        'http://localhost',
+      )
+      assert.deepEqual(
+        detailEntries(albumUrl.pathname, albumUrl.searchParams),
+        [entry, { kind: 'album', id: 'referenced-album' }],
+      )
+    } else assert.doesNotMatch(html, /aria-label="Related albums"/)
+  }
+})
+
 test('artist Sources shows stored IDs and provenance controls before any artist enrichment', () => {
   const known = {
     ...artist,

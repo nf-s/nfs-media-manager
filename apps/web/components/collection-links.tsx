@@ -2,24 +2,28 @@
 
 import { Fragment } from 'react'
 import { sameBrowseFilter, type BrowseFilter } from '@repo/schemas/browse'
-import type { FilmDetail } from '@repo/schemas/media'
-import { Pill, PillLabel, Pills } from '@repo/ui/components/ds/pill'
+import type { AlbumDetail, FilmDetail } from '@repo/schemas/media'
+import type { MediaScope } from '@/utils/media-scope'
+import { EmptyValue, Pill, PillLabel, Pills } from '@repo/ui/components/ds/pill'
 import { DetailLink } from './detail-link'
 
 /**
- * The stored collections a film belongs to. Each opens the collection; as
+ * The stored collections an item belongs to. Each opens the collection; as
  * pills, a collection the browse filters use shows in its filter mode.
  */
-export function FilmCollectionLinks({
+export function CollectionLinks({
   item,
+  mediaType,
   activeFilters,
   pills = false,
 }: {
-  item: Pick<FilmDetail, 'id' | 'playlists' | 'collectionSources'>
+  item: Pick<AlbumDetail | FilmDetail, 'playlists'>
+  mediaType: MediaScope
   activeFilters?: BrowseFilter[]
   pills?: boolean
 }) {
   const collections = item.playlists.filter(({ kind }) => kind === 'collection')
+  if (!collections.length) return pills ? null : <EmptyValue />
   if (pills)
     return (
       <Pills wrap label="Collections">
@@ -30,7 +34,12 @@ export function FilmCollectionLinks({
           const mode = active ? (active.mode ?? 'any') : undefined
           return id ? (
             <Pill asChild size="md" mode={mode} key={id}>
-              <DetailLink kind="collection" id={id} title={`Open ${name}`}>
+              <DetailLink
+                kind="collection"
+                mediaType={mediaType}
+                id={id}
+                title={`Open ${name}`}
+              >
                 <PillLabel>{name}</PillLabel>
               </DetailLink>
             </Pill>
@@ -51,6 +60,7 @@ export function FilmCollectionLinks({
             <DetailLink
               className="pointer-events-auto hover:underline"
               kind="collection"
+              mediaType={mediaType}
               id={id}
               title={`Open ${name}`}
             >

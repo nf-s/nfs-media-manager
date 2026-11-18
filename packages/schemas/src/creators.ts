@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import {
-  ArtistProfileProviderSchema,
+  ArtistProviderIdSchema,
   ArtistIdentifierSchema,
   ArtistProfileSchema,
   ArtistProviderSnapshotSchema,
@@ -72,7 +72,7 @@ export const ArtistDetailSchema = ArtistSummarySchema.extend({
 export type ArtistDetail = z.infer<typeof ArtistDetailSchema>
 
 export const ArtistHistoryQuerySchema = PaginationQuerySchema.extend({
-  provider: ArtistProfileProviderSchema.optional(),
+  provider: ArtistProviderIdSchema.optional(),
 })
 export type ArtistHistoryQuery = z.infer<typeof ArtistHistoryQuerySchema>
 export const ArtistHistoryPageSchema = PaginatedDataSchema(
@@ -132,7 +132,7 @@ export const ArtistMetadataQuerySchema = ArtistQuerySchema.extend({
   sortBy: z
     .enum([...ArtistSortKeySchema.options, 'lastScrapedAt'])
     .default('name'),
-  provider: ArtistProfileProviderSchema.optional(),
+  provider: ArtistProviderIdSchema.optional(),
   freshness: z.preprocess((value) => {
     if (value === undefined) return []
     if (typeof value !== 'string') return value
@@ -149,7 +149,7 @@ export const ArtistMetadataQuerySchema = ArtistQuerySchema.extend({
 export type ArtistMetadataQuery = z.infer<typeof ArtistMetadataQuerySchema>
 
 export const ArtistProviderMetadataSchema = z.object({
-  provider: ArtistProfileProviderSchema,
+  provider: ArtistProviderIdSchema,
   lastScrapedAt: z.string().datetime().nullable(),
   lastAttemptAt: z.string().datetime().nullable(),
   lastJobStatus: JobStatusSchema.nullable(),

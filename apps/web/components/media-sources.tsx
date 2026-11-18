@@ -33,6 +33,7 @@ import {
   useSourceCatalog,
   type ProviderSourceRow,
 } from './provider-sources'
+import { relationshipSourceBlocks } from './relationship-source-blocks'
 
 function useMediaSourceSummary(id: string, enabled = true) {
   const { apiBaseUrl } = useConfig()
@@ -146,6 +147,7 @@ export default function MediaSources({
   }
   const details = item.mediaType === 'album' ? (item.providerDetails ?? []) : []
   const collectionSources = isAlbum ? (item.collectionSources ?? []) : []
+  const relationshipSources = isAlbum ? (item.relationshipSources ?? []) : []
   const serviceLinks = item.links.filter(
     (link) => link.provider !== 'youtube-trailer',
   )
@@ -164,6 +166,7 @@ export default function MediaSources({
     ...(summary.data?.providers.map((provider) => provider.id) ?? []),
     ...details.map((detail) => detail.provider),
     ...collectionSources.map((source) => source.provider),
+    ...relationshipSources.map((source) => source.provider),
     ...(nfoPath ? ['nfo'] : []),
     // Scrobble names are matched under Last.fm.
     ...(isAlbum ? ['lastfm'] : []),
@@ -180,6 +183,9 @@ export default function MediaSources({
     const provider = supported.find((provider) => provider.id === id)
     const providerDetails = details.filter((detail) => detail.provider === id)
     const collections = collectionSources.filter(
+      (source) => source.provider === id,
+    )
+    const relationshipSource = relationshipSources.find(
       (source) => source.provider === id,
     )
     const label =
@@ -215,7 +221,7 @@ export default function MediaSources({
     ]
     const scrobbles =
       isAlbum && id === 'lastfm' && listening.data ? listening.data : undefined
-    const blocks: NonNullable<ProviderSourceRow['blocks']> = []
+    const blocks = relationshipSourceBlocks(relationshipSource?.relationships)
     if (scrobbles)
       blocks.push({
         title: 'Scrobble names',
@@ -276,8 +282,9 @@ export default function MediaSources({
             ? { state: 'done', label: 'Matched by name' }
             : { state: 'attention', label: 'No names linked' }
           : undefined,
-      updatedAt: summary.data?.providers.find((row) => row.id === id)
-        ?.latestSnapshot?.createdAt,
+      updatedAt:
+        summary.data?.providers.find((row) => row.id === id)?.latestSnapshot
+          ?.createdAt ?? relationshipSource?.createdAt,
       links,
       provides,
       unavailable: provider?.supportsScrape

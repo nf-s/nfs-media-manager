@@ -1,7 +1,7 @@
 import { createRoute, z, type OpenAPIHono } from '@hono/zod-openapi'
 import {
   ArtistEnrichmentInputSchema,
-  ArtistProfileProviderSchema,
+  ArtistProviderIdSchema,
   ArtistIdentifierSourcePageSchema,
   ArtistEnrichmentResultSchema,
   QueueArtistSelectionSchema,
@@ -121,7 +121,7 @@ const personResponses = {
   404: jsonErrorResponse('Person not found'),
 }
 const ArtistSourceParams = CreatorParamsSchema.extend({
-  provider: ArtistProfileProviderSchema,
+  provider: ArtistProviderIdSchema,
 })
 
 export const artists: OpenAPIHono<AppEnv> = createOpenAPIApp()

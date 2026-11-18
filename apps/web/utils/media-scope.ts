@@ -66,12 +66,7 @@ function pathMediaScope(path: string): MediaScope | null {
     path === '/imports/lastfm'
   )
     return 'album'
-  if (
-    isUnder(path, '/films') ||
-    isUnder(path, '/collections') ||
-    isUnder(path, '/people')
-  )
-    return 'film'
+  if (isUnder(path, '/films') || isUnder(path, '/people')) return 'film'
   return null
 }
 
@@ -86,6 +81,7 @@ export function workspaceScopeForPath(
   path: string,
   value: string | null,
 ): WorkspaceScope {
+  if (isUnder(path, '/collections')) return mediaScope(value)
   if (isUnder(path, '/artists')) return 'artist'
   if (subscriptionPaths.some((root) => isUnder(path, root)))
     return 'subscription'
@@ -154,6 +150,12 @@ export function switchMediaScopeHref(
   const current = new URLSearchParams(search)
   if (workspaceScopeForPath(path, current.get('mediaType')) === mediaType)
     return `${path}${current.size ? `?${current}` : ''}`
+
+  if (
+    isUnder(path, '/collections') &&
+    (mediaType === 'album' || mediaType === 'film')
+  )
+    return scopedHref('/collections', mediaType)
 
   if (
     [

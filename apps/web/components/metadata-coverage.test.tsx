@@ -449,7 +449,7 @@ test('an artist review names artists and the artist queue rules', () => {
 
 test('artist queue requests go through the artist queue with its freshness filter', () => {
   const missing = artistCoverageQueueRequest({
-    provider: 'musicbrainz',
+    provider: 'fixture-provider',
     gap: 'missing',
     ids: ['artist-2', 'artist-4'],
     olderThanDays: 180,
@@ -457,8 +457,8 @@ test('artist queue requests go through the artist queue with its freshness filte
   })
   assert.deepEqual(missing, {
     artistIds: ['artist-2', 'artist-4'],
-    providers: ['musicbrainz'],
-    freshness: [{ provider: 'musicbrainz', mode: 'unscraped' }],
+    providers: ['fixture-provider'],
+    freshness: [{ provider: 'fixture-provider', mode: 'unscraped' }],
     confirmBroadRun: false,
   })
   const artists = many.map((id) => id.replace('album', 'artist'))
@@ -474,10 +474,10 @@ test('artist queue requests go through the artist queue with its freshness filte
   assert.deepEqual(stale.freshness, [
     { provider: 'lastfm', mode: 'older', olderThanDays: 90 },
   ])
-  // Only artist enrichment providers are accepted.
+  // Provider IDs are validated before catalog eligibility is checked at the API.
   assert.throws(() =>
     artistCoverageQueueRequest({
-      provider: 'rym',
+      provider: 'invalid provider',
       gap: 'missing',
       ids: ['artist-1'],
       olderThanDays: 180,

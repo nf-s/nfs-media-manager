@@ -29,7 +29,7 @@ import type { JsonValue } from '@repo/schemas/common'
 import { canIdentifyMedia } from '@repo/schemas/provider-identification'
 import {
   ARTIST_ENRICHMENT_TASK,
-  ArtistProfileProviderSchema,
+  ArtistProviderIdSchema,
 } from '@repo/schemas/artist-profiles'
 import {
   LASTFM_SCROBBLE_SYNC_TASK,
@@ -134,9 +134,11 @@ import {
   runSpotifyTrackPlaylistAddition,
 } from '@/services/spotify-track-playlist-additions'
 import {
+  collectAlbumArtistProfiles,
   prepareArtistEnrichment,
   runArtistEnrichment,
 } from '@/services/artist-enrichment'
+import { saveArtistProviderResult } from '@/services/artist-profiles'
 
 let workerRunning = false
 
@@ -665,6 +667,62 @@ async function processJob(
         mediaItemId,
         existingReferences: [...references, ...overrides],
       })
+      const request = createProviderRequest(plugin, assertActive, {
+        onRetry: async ({ error, attempt, retryAt }) => {
+          const credentials = jobLogSecrets(secrets)
+          const details = jobErrorDetails(error, credentials)
+          const evidence = providerResponseEvidence(error, credentials)
+          const message =
+            `Retrying request (attempt ${attempt}) after ${details.name}: ${details.message}`.slice(
+              0,
+              1000,
+            )
+          await withRunningJob(nextJob.id, (tx) =>
+            logJob(
+              nextJob.id,
+              'warn',
+              message,
+              {
+                mediaItemId,
+                error: details,
+                attempt,
+                retryAt: new Date(retryAt).toISOString(),
+                ...(evidence.length ? { diagnostics: evidence } : {}),
+              },
+              tx,
+            ),
+          )
+        },
+      })
+      const artists = mediaRecord.credits
+        .filter((credit) => credit.role === 'artist')
+        .sort((a, b) => a.billingOrder - b.billingOrder)
+        .map(({ artist: { id, name } }) => ({ id, name }))
+      const artistProfiles =
+        mediaRecord.mediaType === 'album' &&
+        plugin.manifest.bootstrapAlbumArtists
+          ? await collectAlbumArtistProfiles(
+              plugin,
+              artists,
+              {
+                secrets,
+                request,
+                recordDiagnostic: diagnostics.recordDiagnostic,
+              },
+              assertActive,
+              async (artistId, result) => {
+                await withRunningJob(nextJob.id, (tx) =>
+                  saveArtistProviderResult(
+                    artistId,
+                    plugin.manifest.id,
+                    { ...result, scrapeJobId: nextJob.id },
+                    tx,
+                    { onlyIfMissing: true },
+                  ),
+                )
+              },
+            )
+          : undefined
       await assertActive()
       const scraped = PluginResultSchema.parse(
         await scrapeMediaItem({
@@ -673,10 +731,7 @@ async function processJob(
           options: nextJob.options,
           media: {
             title: mediaRecord.title,
-            artists: mediaRecord.credits
-              .filter((credit) => credit.role === 'artist')
-              .sort((a, b) => a.billingOrder - b.billingOrder)
-              .map((credit) => credit.artist.name),
+            artists: artists.map(({ name }) => name),
             releaseDate: mediaRecord.releaseDate?.toISOString(),
           },
           existingReferences: [
@@ -713,33 +768,8 @@ async function processJob(
             ...referenceHints,
           ],
           secrets,
-          request: createProviderRequest(plugin, assertActive, {
-            onRetry: async ({ error, attempt, retryAt }) => {
-              const credentials = jobLogSecrets(secrets)
-              const details = jobErrorDetails(error, credentials)
-              const evidence = providerResponseEvidence(error, credentials)
-              const message =
-                `Retrying request (attempt ${attempt}) after ${details.name}: ${details.message}`.slice(
-                  0,
-                  1000,
-                )
-              await withRunningJob(nextJob.id, (tx) =>
-                logJob(
-                  nextJob.id,
-                  'warn',
-                  message,
-                  {
-                    mediaItemId,
-                    error: details,
-                    attempt,
-                    retryAt: new Date(retryAt).toISOString(),
-                    ...(evidence.length ? { diagnostics: evidence } : {}),
-                  },
-                  tx,
-                ),
-              )
-            },
-          }),
+          request,
+          ...(artistProfiles === undefined ? {} : { artistProfiles }),
           recordDiagnostic: diagnostics.recordDiagnostic,
           log: async (level: 'info' | 'warn' | 'error', message: string) => {
             await withRunningJob(nextJob.id, (tx) =>
@@ -964,7 +994,7 @@ const taskJobs = new Map<string, TaskJobDefinition>([
     ARTIST_ENRICHMENT_TASK,
     {
       provider: (options) => {
-        const provider = ArtistProfileProviderSchema.safeParse(options.provider)
+        const provider = ArtistProviderIdSchema.safeParse(options.provider)
         return provider.success ? provider.data : null
       },
       prepare: prepareArtistEnrichment,
@@ -1234,10 +1264,7 @@ export async function createTaskJob(
         .where(
           and(
             eq(artistProviderCurrentState.artistId, artistId),
-            eq(
-              artistProviderCurrentState.provider,
-              ArtistProfileProviderSchema.parse(provider),
-            ),
+            eq(artistProviderCurrentState.provider, provider),
             sql`${artistProviderSnapshot.createdAt} > (
             select ${scrapeJob.createdAt} from ${scrapeJob} where ${scrapeJob.id} = ${original.id}
           )`,

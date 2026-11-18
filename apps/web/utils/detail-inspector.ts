@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { mediaScope, scopedHref } from './media-scope'
 
 const inspectorParam = 'inspect'
 export const userDetailId = 'account'
@@ -25,6 +26,7 @@ const DetailTargetSchema = z.object({
     'tag',
   ]),
   id: z.string().min(1).max(500),
+  mediaType: z.enum(['album', 'film']).optional(),
 })
 export type DetailTarget = z.infer<typeof DetailTargetSchema>
 
@@ -33,6 +35,7 @@ const DetailEntrySchema = DetailTargetSchema.extend({
 })
   .refine(({ kind, id }) => kind !== 'user' || id === userDetailId)
   .refine(({ kind, id }) => kind !== 'tag' || parseTagDetailId(id) !== null)
+  .refine(({ kind, mediaType }) => kind === 'collection' || !mediaType)
 export type DetailEntry = z.infer<typeof DetailEntrySchema>
 
 /** A tag's drawer entry carries its library, because tag IDs are per library. */
@@ -68,7 +71,12 @@ export function sameDetail(
   a: DetailTarget | undefined,
   b: DetailTarget | undefined,
 ) {
-  return a?.kind === b?.kind && a?.id === b?.id
+  return (
+    a?.kind === b?.kind &&
+    a?.id === b?.id &&
+    (a?.kind !== 'collection' ||
+      (a.mediaType ?? 'film') === (b?.mediaType ?? 'film'))
+  )
 }
 
 export function detailBrowseKind(pathname: string) {
@@ -99,7 +107,13 @@ function legacyDetail(pathname: string, params: URLSearchParams) {
       : playlist
         ? { kind: 'playlist', id: playlist }
         : collection
-          ? { kind: 'collection', id: collection }
+          ? {
+              kind: 'collection',
+              id: collection,
+              ...(params.get('mediaType') === 'album'
+                ? { mediaType: 'album' }
+                : {}),
+            }
           : { kind: detailBrowseKind(pathname), id: params.get('item') },
   )
   if (!parsed.success) return null
@@ -240,7 +254,9 @@ export type DetailCrumbStep =
   | { label: string; to: 'current' }
 
 export function detailCrumbKey(target: DetailTarget) {
-  return `${target.kind}:${target.id}`
+  return target.kind === 'collection' && target.mediaType === 'album'
+    ? `album-collection:${target.id}`
+    : `${target.kind}:${target.id}`
 }
 
 /**
@@ -255,6 +271,7 @@ export function detailCrumbTrail(
   pathname: string,
   entries: readonly DetailTarget[],
   crumbs: ReadonlyMap<string, DetailCrumb>,
+  workspaceMediaType: string | null = null,
 ): DetailCrumbStep[] {
   const root = entries[0]
   if (!root) return []
@@ -262,10 +279,17 @@ export function detailCrumbTrail(
     pathLibraries.find(
       ({ path }) => pathname === path || pathname.startsWith(`${path}/`),
     ) ?? kindLibraries[root.kind]
+  const libraryHref =
+    library === libraries.collections &&
+    (pathname.startsWith('/collections/')
+      ? mediaScope(workspaceMediaType)
+      : root.mediaType) === 'album'
+      ? scopedHref(library.path, 'album')
+      : library.path
   const trail: DetailCrumbStep[] = [
     pathname === library.path
       ? { label: library.label, to: 'library' }
-      : { label: library.label, to: 'href', href: library.path },
+      : { label: library.label, to: 'href', href: libraryHref },
   ]
   entries.forEach((entry, index) => {
     const crumb = crumbs.get(detailCrumbKey(entry))
@@ -294,6 +318,12 @@ export function detailPageHref(target: DetailTarget, view?: URLSearchParams) {
     return detailLocation('/tags', params)
   }
   const id = encodeURIComponent(target.id)
+  if (target.kind === 'collection') {
+    const params = new URLSearchParams(view)
+    if (target.mediaType === 'album') params.set('mediaType', 'album')
+    else if (params.get('mediaType') !== 'film') params.delete('mediaType')
+    return detailLocation(`/collections/${id}`, params)
+  }
   const collection = target.kind === 'person' ? 'people' : `${target.kind}s`
   return detailLocation(`/${collection}/${id}`, new URLSearchParams(view))
 }

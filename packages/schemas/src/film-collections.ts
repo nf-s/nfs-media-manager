@@ -1,18 +1,14 @@
 import { z } from 'zod'
 import { BrowsePageSliceSchema } from './browse'
-import { SourceNavigationLinkSchema } from './tags'
+import { PaginatedDataSchema } from './common'
 import {
-  DirectionSchema,
-  PaginatedDataSchema,
-  PaginationQuerySchema,
-} from './common'
+  CollectionItemSchema,
+  CollectionQuerySchema,
+  CollectionSummarySchema,
+} from './collections'
 
-export const FilmCollectionSummarySchema = z.object({
-  id: z.string(),
-  name: z.string(),
-  sourceLinks: z.array(SourceNavigationLinkSchema).default([]),
+export const FilmCollectionSummarySchema = CollectionSummarySchema.extend({
   filmCount: z.number().int().nonnegative(),
-  createdAt: z.string().datetime(),
 })
 export type FilmCollectionSummary = z.infer<typeof FilmCollectionSummarySchema>
 
@@ -25,12 +21,8 @@ export type FilmCollectionBrowseSort = z.infer<
   typeof FilmCollectionBrowseSortSchema
 >
 
-export const FilmCollectionBrowseQuerySchema = PaginationQuerySchema.extend({
-  q: z.string().trim().max(200).optional(),
-  size: PaginationQuerySchema.shape.size.default(100),
+export const FilmCollectionBrowseQuerySchema = CollectionQuerySchema.extend({
   sortBy: FilmCollectionBrowseSortSchema.default('name'),
-  direction: DirectionSchema.default('asc'),
-  includeSources: z.enum(['true', 'false']).optional(),
 })
 export type FilmCollectionBrowseQuery = z.infer<
   typeof FilmCollectionBrowseQuerySchema
@@ -70,26 +62,16 @@ const WatchedStatesParamSchema = z.preprocess(
     .optional(),
 )
 
-export const FilmCollectionQuerySchema = PaginationQuerySchema.extend({
-  q: z.string().trim().max(200).optional(),
+export const FilmCollectionQuerySchema = CollectionQuerySchema.extend({
   watched: z.enum(['watched', 'unwatched']).optional(),
   watchedStates: WatchedStatesParamSchema,
-  size: PaginationQuerySchema.shape.size.default(100),
   sortBy: FilmCollectionSortSchema.default('position'),
-  direction: DirectionSchema.default('asc'),
-  includeSources: z.enum(['true', 'false']).optional(),
 })
 export type FilmCollectionQuery = z.infer<typeof FilmCollectionQuerySchema>
 
-export const FilmCollectionItemSchema = z.object({
-  id: z.string(),
-  position: z.number().int().nonnegative(),
-  title: z.string(),
-  artworkUrl: z.string().nullable(),
-  releaseDate: z.string().datetime().nullable(),
+export const FilmCollectionItemSchema = CollectionItemSchema.extend({
   runtimeMinutes: z.number().int().nonnegative().nullable(),
   watched: z.boolean(),
-  source: z.string().nullable(),
   dateAdded: z.string().datetime(),
 })
 export type FilmCollectionItem = z.infer<typeof FilmCollectionItemSchema>

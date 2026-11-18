@@ -8,7 +8,7 @@ import {
   SearchParamsContext,
 } from 'next/dist/shared/lib/hooks-client-context.shared-runtime'
 import { filmBrowseFields } from '@repo/schemas/browse'
-import { FilmDetailSchema } from '@repo/schemas/media'
+import { AlbumDetailSchema, FilmDetailSchema } from '@repo/schemas/media'
 import { detailEntries, type DetailEntry } from '@/utils/detail-inspector'
 import { DetailInspectorProvider } from './detail-inspector-context'
 import { ConfigContext } from './providers'
@@ -61,15 +61,29 @@ const film = FilmDetailSchema.parse({
   budget: null,
   boxOffice: null,
 })
+const album = AlbumDetailSchema.parse({
+  ...film,
+  id: 'album-fixture',
+  mediaType: 'album',
+  slug: 'synthetic-album',
+  title: 'Synthetic album',
+  dateAdded: null,
+  durationSec: null,
+  spotifyUrl: null,
+  trackCount: 0,
+  tracks: [],
+})
 
 function render({
   search,
   cache,
   children,
+  path = '/films',
 }: {
   search: URLSearchParams
   cache: [unknown[], unknown][]
   children: ReactNode
+  path?: string
 }) {
   const client = new QueryClient()
   for (const [key, data] of cache) client.setQueryData(key, data)
@@ -82,7 +96,7 @@ function render({
             apiBaseUrl: 'http://localhost:4001',
           }}
         >
-          <PathnameContext.Provider value="/films">
+          <PathnameContext.Provider value={path}>
             <SearchParamsContext.Provider value={search}>
               <DetailInspectorProvider>{children}</DetailInspectorProvider>
             </SearchParamsContext.Provider>
@@ -136,36 +150,46 @@ test('film details open the stored collection on top of the current inspector en
   assert.match(html, /<h3>Collections<\/h3>/)
 })
 
-for (const view of ['table', 'list', 'grid']) {
-  test(`film Browse ${view} links to the stored collection`, async () => {
-    const { default: MediaBrowser } = await import('./media-browser')
-    const identity = JSON.stringify({
-      q: '',
-      filters: [],
-      ranges: [],
-      sortBy: 'collection',
-      direction: 'desc',
-      includeArchived: false,
-      limitResults: null,
-    })
-    const html = render({
-      search: new URLSearchParams({
-        view,
+for (const item of [film, album]) {
+  const { mediaType } = item
+  const path = `/${mediaType}s`
+  for (const view of ['table', 'list', 'grid']) {
+    test(`${mediaType} Browse ${view} links to the stored collection`, async () => {
+      const { default: MediaBrowser } = await import('./media-browser')
+      const identity = JSON.stringify({
+        q: '',
+        filters: [],
+        ranges: [],
         sortBy: 'collection',
-        columns: 'title,collection',
-      }),
-      cache: [
-        [['films', 'browse', identity, 1], { items: [film], totalCount: 1 }],
-      ],
-      children: <MediaBrowser mediaType="film" />,
+        direction: 'desc',
+        includeArchived: false,
+        limitResults: null,
+      })
+      const html = render({
+        path,
+        search: new URLSearchParams({
+          view,
+          sortBy: 'collection',
+          columns: 'title,collection',
+        }),
+        cache: [
+          [
+            [`${mediaType}s`, 'browse', identity, 1],
+            { items: [item], totalCount: 1 },
+          ],
+        ],
+        children: <MediaBrowser mediaType={mediaType} />,
+      })
+      assert.equal(html.includes('aria-label="Grid density"'), view === 'grid')
+      const target = collectionDestination(html)
+      assert.equal(target.pathname, path)
+      assert.equal(target.searchParams.get('view'), view)
+      assert.equal(target.searchParams.has('filters'), false)
+      assert.deepEqual(detailEntries(target.pathname, target.searchParams), [
+        mediaType === 'album'
+          ? { kind: 'collection', id: collection.id, mediaType }
+          : { kind: 'collection', id: collection.id },
+      ])
     })
-    assert.equal(html.includes('aria-label="Grid density"'), view === 'grid')
-    const target = collectionDestination(html)
-    assert.equal(target.pathname, '/films')
-    assert.equal(target.searchParams.get('view'), view)
-    assert.equal(target.searchParams.has('filters'), false)
-    assert.deepEqual(detailEntries(target.pathname, target.searchParams), [
-      { kind: 'collection', id: collection.id },
-    ])
-  })
+  }
 }

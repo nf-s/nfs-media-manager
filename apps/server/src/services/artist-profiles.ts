@@ -1,12 +1,18 @@
-import { and, count, desc, eq, sql } from 'drizzle-orm'
+import { and, count, desc, eq, inArray, sql } from 'drizzle-orm'
 import { nanoid } from 'nanoid'
 import {
   ArtistProfileSchema,
   ArtistProviderSnapshotSchema,
   type ArtistProfile,
-  type ArtistProfileProvider,
+  type ArtistProviderId,
 } from '@repo/schemas/artist-profiles'
+import type { PluginArtistResult } from '@repo/media-plugin-sdk'
 import { JsonValueSchema, type JsonValue } from '@repo/schemas/common'
+import {
+  EntityRelationshipCandidateSchema,
+  EntityRelationshipSchema,
+  type EntityRelationship,
+} from '@repo/schemas/entity-relationships'
 import type { SourceSnapshot } from '@repo/schemas/media'
 import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
@@ -15,6 +21,10 @@ import {
   artistProviderCurrentState,
   artistProviderSnapshot,
 } from '@/schemas/db'
+import {
+  resolveEntityRelationships,
+  visibleArtist,
+} from './entity-relationships'
 
 type ArtistProfileTransaction = Parameters<
   Parameters<typeof db.transaction>[0]
@@ -23,7 +33,7 @@ type ArtistProfileTransaction = Parameters<
 /** Look up the library identity and use only a confirmed artist profile ID. */
 export async function loadArtistProviderTarget(
   artistId: string,
-  provider: ArtistProfileProvider,
+  provider: ArtistProviderId,
 ) {
   const [target] = await db
     .select({
@@ -45,21 +55,7 @@ export async function loadArtistProviderTarget(
         artistProviderCurrentState.latestSnapshotId,
       ),
     )
-    .where(
-      and(
-        eq(artist.id, artistId),
-        sql`exists (
-          select 1 from media_credit c
-          join media_item m on m.id = c.media_item_id
-          left join album a on a.media_item_id = m.id
-          left join library_track t on t.media_item_id = m.id
-          where c.artist_id = ${artist.id} and c.role = 'artist'
-            and ((m.media_type = 'album' and a.media_item_id is not null)
-              or (m.media_type = 'track' and t.media_item_id is not null))
-            and m.metadata->>'legacyHidden' is distinct from 'true'
-        )`,
-      ),
-    )
+    .where(and(eq(artist.id, artistId), visibleArtist))
   return target
     ? {
         name: target.name,
@@ -68,16 +64,101 @@ export async function loadArtistProviderTarget(
     : null
 }
 
+function legacyRelationships(
+  entries: NonNullable<ArtistProfile['similarArtists']>,
+): EntityRelationship[] {
+  return entries.map(({ artistId, ...entry }) => ({
+    ...entry,
+    kind: 'similar',
+    targetType: 'artist',
+    ...(artistId ? { targetId: artistId } : {}),
+  }))
+}
+
+export async function resolveLegacyArtistRelationships(
+  artistId: string,
+  provider: ArtistProviderId,
+  result: PluginArtistResult,
+) {
+  if (!result.profile.similarArtists?.length) return result
+  const resolved = await resolveEntityRelationships(
+    { type: 'artist', id: artistId },
+    provider,
+    legacyRelationships(result.profile.similarArtists),
+  )
+  return {
+    ...result,
+    profile: {
+      ...result.profile,
+      similarArtists: resolved.map(({ name, externalId, targetId }) => ({
+        name,
+        ...(externalId ? { externalId } : {}),
+        ...(targetId ? { artistId: targetId } : {}),
+      })),
+    },
+  }
+}
+
+export async function loadCurrentArtistPayloads(
+  provider: ArtistProviderId,
+  artistIds: string[],
+) {
+  if (!artistIds.length) return []
+  return db
+    .select({
+      artistId: artist.id,
+      name: artist.name,
+      payload: artistProviderSnapshot.payload,
+    })
+    .from(artistProviderCurrentState)
+    .innerJoin(artist, eq(artist.id, artistProviderCurrentState.artistId))
+    .innerJoin(
+      artistProviderSnapshot,
+      and(
+        eq(
+          artistProviderSnapshot.id,
+          artistProviderCurrentState.latestSnapshotId,
+        ),
+        eq(artistProviderSnapshot.artistId, artist.id),
+        eq(artistProviderSnapshot.provider, provider),
+      ),
+    )
+    .where(
+      and(
+        inArray(artist.id, artistIds),
+        eq(artistProviderCurrentState.provider, provider),
+      ),
+    )
+}
+
 export async function saveArtistProviderResult(
   artistId: string,
-  provider: ArtistProfileProvider,
+  provider: ArtistProviderId,
   result: { profile: ArtistProfile; payload: JsonValue; scrapeJobId: string },
   transaction?: ArtistProfileTransaction,
+  options?: { onlyIfMissing: true },
 ) {
   const id = nanoid()
   const normalizedData = ArtistProfileSchema.parse(result.profile)
   const payload = JsonValueSchema.parse(result.payload)
   const save = async (database: ArtistProfileTransaction) => {
+    // Serialize the first album's write with explicit artist refreshes.
+    await database
+      .select({ id: artist.id })
+      .from(artist)
+      .where(eq(artist.id, artistId))
+      .for('update')
+    if (options?.onlyIfMissing) {
+      const existing =
+        await database.query.artistProviderCurrentState.findFirst({
+          where: (table, operators) =>
+            operators.and(
+              operators.eq(table.artistId, artistId),
+              operators.eq(table.provider, provider),
+            ),
+        })
+      if (existing) return
+    }
     await database.insert(artistProviderSnapshot).values({
       id,
       artistId,
@@ -126,11 +207,21 @@ const formatSnapshot = (
     typeof artistProviderSnapshot.$inferSelect,
     'id' | 'provider' | 'scrapeJobId' | 'createdAt'
   > & { profile: ArtistProfile },
-) =>
-  ArtistProviderSnapshotSchema.parse({
+) => {
+  const profile = row.profile
+  const relationships =
+    profile.relationships ??
+    (profile.similarArtists &&
+      legacyRelationships(profile.similarArtists).filter(
+        (relationship) =>
+          EntityRelationshipSchema.safeParse(relationship).success,
+      ))
+  return ArtistProviderSnapshotSchema.parse({
     ...row,
+    profile: relationships ? { ...profile, relationships } : profile,
     createdAt: row.createdAt.toISOString(),
   })
+}
 
 export async function listCurrentArtistProfiles(artistId: string) {
   const rows = await db
@@ -148,12 +239,31 @@ export async function listCurrentArtistProfiles(artistId: string) {
       desc(artistProviderSnapshot.createdAt),
       desc(artistProviderSnapshot.id),
     )
-  return rows.map(formatSnapshot)
+  return Promise.all(
+    rows.map(async (row) => {
+      const snapshot = formatSnapshot(row)
+      if (!snapshot.profile.relationships?.length) return snapshot
+      const candidates = snapshot.profile.relationships.map((relationship) =>
+        EntityRelationshipCandidateSchema.parse(relationship),
+      )
+      return {
+        ...snapshot,
+        profile: {
+          ...snapshot.profile,
+          relationships: await resolveEntityRelationships(
+            { type: 'artist', id: artistId },
+            snapshot.provider,
+            candidates,
+          ),
+        },
+      }
+    }),
+  )
 }
 
 function profileHistoryFilter(
   artistId: string,
-  provider: ArtistProfileProvider | undefined,
+  provider: ArtistProviderId | undefined,
 ) {
   return and(
     eq(artistProviderSnapshot.artistId, artistId),
@@ -165,7 +275,7 @@ function profileHistoryFilter(
 
 export async function countArtistProfileHistory(
   artistId: string,
-  provider?: ArtistProfileProvider,
+  provider?: ArtistProviderId,
 ) {
   const [row] = await db
     .select({ value: count() })
@@ -178,7 +288,7 @@ export async function listArtistProfileHistory(
   artistId: string,
   size: number,
   offset = 0,
-  provider?: ArtistProfileProvider,
+  provider?: ArtistProviderId,
 ) {
   const rows = await db
     .select(snapshotColumns)
@@ -195,7 +305,7 @@ export async function listArtistProfileHistory(
 
 export async function listArtistSourceSnapshots(
   id: string,
-  provider: ArtistProfileProvider,
+  provider: ArtistProviderId,
   { page, size }: { page: number; size: number },
 ) {
   const [totalCount, rows] = await Promise.all([
@@ -222,7 +332,7 @@ export async function listArtistSourceSnapshots(
 
 export async function getArtistSourceSnapshot(
   id: string,
-  provider: ArtistProfileProvider,
+  provider: ArtistProviderId,
   snapshotId: string,
 ): Promise<SourceSnapshot> {
   const [row] = await db

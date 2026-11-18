@@ -8,6 +8,7 @@ import type { BrowseFacetQuery } from '@repo/schemas/browse'
 import { getCollectionSourceLinks } from './source-navigation'
 import { withStoredTrailerLinks } from './stored-trailers'
 import { getAlbumProviderDetails } from './album-provider-details'
+import { listAlbumRelationshipSources } from './entity-relationships'
 import { albumAddedDates } from './album-added-dates'
 import { albumTrackPlaylistNames } from './album-playlists'
 import { loadTracks } from './tracks'
@@ -225,15 +226,10 @@ function mapReferences(
     )
 }
 
-function mapPlaylists(
-  items: CommonPlaylistItem[],
-  mediaType: 'album' | 'film',
-): AlbumListItem['playlists'] {
+function mapPlaylists(items: CommonPlaylistItem[]): AlbumListItem['playlists'] {
   return items
     .map((item) => ({
-      ...(mediaType === 'film' && item.playlist.kind === 'collection'
-        ? { id: item.playlist.id }
-        : {}),
+      ...(item.playlist.kind === 'collection' ? { id: item.playlist.id } : {}),
       name: item.playlist.name,
       kind: item.playlist.kind,
       position: item.position,
@@ -285,7 +281,7 @@ function buildCommonPayload<TMediaType extends 'album' | 'film'>(
     credits: mapCredits(record.credits),
     links: withRymRatingSourceLink(mapLinks(record.links), record.metadata),
     providerReferences: mapReferences(record.providerReferences),
-    playlists: mapPlaylists(record.playlistItems, record.mediaType),
+    playlists: mapPlaylists(record.playlistItems),
     createdAt: record.createdAt.toISOString(),
     updatedAt: record.updatedAt.toISOString(),
   }
@@ -548,10 +544,12 @@ export async function getAlbumDetail(id: string): Promise<AlbumDetail | null> {
   const albumDetail: AlbumDetail = {
     artistTags: (await loadArtistTags([id])).get(id) ?? [],
     providerDetails: await getAlbumProviderDetails(id),
-    collectionSources: await getCollectionSourceLinks(id, {
-      ...record.album.metadata,
-      ...record.metadata,
-    }),
+    relationshipSources: await listAlbumRelationshipSources(id),
+    collectionSources: await getCollectionSourceLinks(
+      id,
+      { ...record.album.metadata, ...record.metadata },
+      'album',
+    ),
     ...common,
     playlists: withTrackPlaylists(
       common.playlists,
@@ -609,10 +607,11 @@ export async function getFilmDetail(id: string): Promise<FilmDetail | null> {
   }
 
   const filmDetail: FilmDetail = {
-    collectionSources: await getCollectionSourceLinks(id, {
-      ...record.film.metadata,
-      ...record.metadata,
-    }),
+    collectionSources: await getCollectionSourceLinks(
+      id,
+      { ...record.film.metadata, ...record.metadata },
+      'film',
+    ),
     ...buildCommonPayload(
       {
         ...record,

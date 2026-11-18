@@ -64,7 +64,7 @@ import { BrowseFilterChips } from './browse-controls'
 import { FilterIndicator } from './filter-affordance'
 import { CreatorLinks } from './creator-links'
 import { CreatorDetailState } from './creator-detail-state'
-import { FilmCollectionLinks } from './film-collection-links'
+import { CollectionLinks } from './collection-links'
 import AlbumListening from './album-listening'
 import { ListeningStats } from './listening-stats'
 import AlbumPlaylists from './album-playlists'
@@ -697,7 +697,6 @@ export default function MediaDetail({
       .map((tag) => tag.name)
     const dateAdded = values.dateAdded
     const source = textValues('source')[0]
-    const collections = textValues('collection')
     const facts = withSortedFact(
       [
         {
@@ -797,13 +796,13 @@ export default function MediaDetail({
             { label: 'Artist tags', field: 'artistTag', values: artistTags },
           ])}
           <AlbumPlaylists key={item.id} albumId={item.id} />
-          {collections.length > 0 && (
+          {item.playlists.some(({ kind }) => kind === 'collection') && (
             <Section title="Collections">
-              <FilterPills
-                field="collection"
-                values={collections}
-                onFilter={filter}
-                selected={selectedFilters}
+              <CollectionLinks
+                mediaType="album"
+                item={item}
+                activeFilters={selectedFilters}
+                pills
               />
             </Section>
           )}
@@ -908,7 +907,8 @@ export default function MediaDetail({
           <DetailsSection mediaItemId={item.id} facts={facts} />
           {collections.length > 0 && (
             <Section title="Collections">
-              <FilmCollectionLinks
+              <CollectionLinks
+                mediaType="film"
                 item={item}
                 activeFilters={selectedFilters}
                 pills

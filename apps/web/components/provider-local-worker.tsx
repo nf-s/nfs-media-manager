@@ -6,6 +6,7 @@ import {
   useQuery,
   useQueryClient,
 } from '@tanstack/react-query'
+import { useEffect, useRef } from 'react'
 import {
   ProviderLocalWorkerControlResultSchema,
   ProviderLocalWorkerControlSchema,
@@ -74,6 +75,77 @@ export function useProviderLocalWorkerMode(provider: string) {
       await client.invalidateQueries({ queryKey })
     },
   })
+}
+
+export function useProviderLocalWorkerPair(provider: string) {
+  const { apiBaseUrl } = useConfig()
+  const client = useQueryClient()
+  const queryKey = workerKey(provider)
+  const pendingToken = useRef<{ provider: string; token: string } | null>(null)
+  const mountedProvider = useRef<string | null>(null)
+  useEffect(() => {
+    mountedProvider.current = provider
+    return () => {
+      mountedProvider.current = null
+      pendingToken.current = null
+    }
+  }, [provider])
+  const request = useMutation({
+    retry: false,
+    mutationFn: async () => {
+      try {
+        const { token, status } = await fetchApiData(
+          apiBaseUrl,
+          workerPath(provider),
+          ProviderLocalWorkerControlResultSchema,
+          {
+            method: 'POST',
+            cache: 'no-store',
+            body: JSON.stringify(
+              ProviderLocalWorkerControlSchema.parse({ mode: 'pair' }),
+            ),
+          },
+        )
+        if (!token) throw new Error()
+        // Only status is returned to the mutation cache.
+        if (mountedProvider.current === provider)
+          pendingToken.current = { provider, token }
+        return status
+      } catch {
+        throw new Error(
+          'Could not pair the worker. Check the queue and worker status before trying again.',
+        )
+      }
+    },
+    onSuccess: async (status) => {
+      await client.cancelQueries({ queryKey })
+      client.setQueryData(queryKey, status)
+    },
+    onError: async () => {
+      await client.invalidateQueries({ queryKey })
+    },
+  })
+  return {
+    request,
+    canDownload:
+      request.isSuccess && pendingToken.current?.provider === provider,
+    download() {
+      const result = pendingToken.current
+      if (result?.provider !== provider || !request.isSuccess) return
+      const url = URL.createObjectURL(
+        new Blob([result.token], { type: 'text/plain' }),
+      )
+      const link = document.createElement('a')
+      link.href = url
+      link.download = 'local-worker-token.txt'
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      pendingToken.current = null
+      request.reset()
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+    },
+  }
 }
 
 export function ProviderLocalWorkerBadge({

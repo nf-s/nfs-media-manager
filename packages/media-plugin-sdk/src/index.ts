@@ -1,5 +1,10 @@
 import { z } from 'zod'
 import {
+  ArtistProfileSchema,
+  ArtistSimilarCandidateSchema,
+} from '@repo/schemas/artist-profiles'
+import { EntityRelationshipCandidateSchema } from '@repo/schemas/entity-relationships'
+import {
   ProviderLocalWorkerModeSchema,
   ProviderRequestDiagnosticsSchema,
   ProviderSiteUrlSchema,
@@ -166,6 +171,10 @@ export const PluginNormalizedResultSchema = z
     credits: z.array(PluginCreditSchema).default([]),
     tracks: z.array(PluginTrackSchema).default([]),
     playlists: z.array(PluginPlaylistSchema).default([]),
+    relationships: z
+      .array(EntityRelationshipCandidateSchema)
+      .max(100)
+      .optional(),
   })
   .default(() => ({
     references: [],
@@ -180,6 +189,18 @@ export const PluginResultSchema = z.object({
   payload: JsonValueSchema,
   normalized: PluginNormalizedResultSchema,
 })
+
+export const PluginArtistResultSchema = z.object({
+  payload: JsonValueSchema,
+  profile: ArtistProfileSchema.extend({
+    similarArtists: z.array(ArtistSimilarCandidateSchema).max(100).optional(),
+    relationships: z
+      .array(EntityRelationshipCandidateSchema)
+      .max(100)
+      .optional(),
+  }),
+})
+export type PluginArtistResult = z.infer<typeof PluginArtistResultSchema>
 
 /** One provider record an item could be matched to, as a search lists it. */
 export const PluginMatchCandidateSchema = z.object({
@@ -231,11 +252,23 @@ export interface MediaPluginScrapeContext {
   mediaType: PluginMediaType
   options?: Readonly<Record<string, JsonValue>>
   media?: { title: string; artists: string[]; releaseDate?: string }
+  /** Current snapshots for this provider and the album's credited artists. */
+  artistProfiles?: readonly {
+    artistId: string
+    name: string
+    payload: JsonValue
+  }[]
   existingReferences: PluginReference[]
   secrets: Record<string, string>
   request: MediaPluginTestContext['request']
   log: (level: 'info' | 'warn' | 'error', message: string) => Promise<void>
   // Optional, best-effort evidence only; the host validates, redacts and bounds it.
+  recordDiagnostic?: (diagnostic: PluginDiagnostic) => void
+}
+
+export interface MediaPluginArtistContext extends MediaPluginTestContext {
+  artist: { id: string; name: string }
+  providerArtistId: string | null
   recordDiagnostic?: (diagnostic: PluginDiagnostic) => void
 }
 
@@ -282,6 +315,8 @@ export interface MediaPluginManifest {
   requireExplicitSelection?: boolean
   identifierTypes?: string[]
   supportsNameLookup?: boolean
+  /** Fetch and save missing artist profiles before a queued album lookup. */
+  bootstrapAlbumArtists?: boolean
   sourceNavigation?: { collectionUrlTemplate?: string; tagUrlTemplate?: string }
   reviewableErrors?: Array<{ name: string; message: string }>
   fileImports?: Array<{ id: string; label: string; requiredColumns: string[] }>
@@ -332,6 +367,10 @@ export interface MediaProviderPlugin {
   ) => Array<{ id: string; name: string }>
   testConnection?: (context: MediaPluginTestContext) => Promise<void>
   scrapeMediaItem?: (context: MediaPluginScrapeContext) => Promise<PluginResult>
+  /** Enrich one explicitly queued artist through the same request gate as media. */
+  scrapeArtist?: (
+    context: MediaPluginArtistContext,
+  ) => Promise<PluginArtistResult>
   /**
    * Optional: one bounded search of the provider, through `context.request`,
    * listing records the item could be matched to. Offered as Find match.
@@ -370,6 +409,34 @@ export function isProviderItemNotFoundError(
     error.name === 'ProviderItemNotFoundError' &&
     providerItemNotFoundBrand in error &&
     error[providerItemNotFoundBrand] === true &&
+    !('cause' in error) &&
+    !('errors' in error)
+  )
+}
+
+const providerArtistSearchAmbiguousBrand = Symbol.for(
+  '@repo/media-plugin-sdk/ProviderArtistSearchAmbiguousError',
+)
+
+export class ProviderArtistSearchAmbiguousError extends Error {
+  readonly [providerArtistSearchAmbiguousBrand] = true
+
+  constructor(
+    message = 'Artist search is ambiguous. Specify a provider artist ID.',
+  ) {
+    super(message)
+    this.name = 'ProviderArtistSearchAmbiguousError'
+  }
+}
+
+export function isProviderArtistSearchAmbiguousError(
+  error: unknown,
+): error is ProviderArtistSearchAmbiguousError {
+  return (
+    error instanceof Error &&
+    error.name === 'ProviderArtistSearchAmbiguousError' &&
+    providerArtistSearchAmbiguousBrand in error &&
+    error[providerArtistSearchAmbiguousBrand] === true &&
     !('cause' in error) &&
     !('errors' in error)
   )
@@ -414,6 +481,7 @@ export const MediaPluginManifestSchema = z
     requireExplicitSelection: z.boolean().optional(),
     identifierTypes: z.array(z.string().min(1)).optional(),
     supportsNameLookup: z.boolean().optional(),
+    bootstrapAlbumArtists: z.boolean().optional(),
     sourceNavigation: z
       .object({
         collectionUrlTemplate: z.string().url().optional(),
@@ -545,10 +613,12 @@ export function isMediaProviderPlugin(
 ): value is MediaProviderPlugin {
   if (typeof value !== 'object' || value === null || !('manifest' in value))
     return false
-  if (!MediaPluginManifestSchema.safeParse(value.manifest).success) return false
+  const manifest = MediaPluginManifestSchema.safeParse(value.manifest)
+  if (!manifest.success) return false
   for (const key of [
     'testConnection',
     'scrapeMediaItem',
+    'scrapeArtist',
     'searchMatchCandidates',
     'importLegacyRecord',
     'importFileRecord',
@@ -558,5 +628,12 @@ export function isMediaProviderPlugin(
     if (key in value && typeof Reflect.get(value, key) !== 'function')
       return false
   }
+  if (
+    manifest.data.bootstrapAlbumArtists &&
+    (!manifest.data.mediaTypes.includes('album') ||
+      !('scrapeArtist' in value) ||
+      !('scrapeMediaItem' in value))
+  )
+    return false
   return true
 }

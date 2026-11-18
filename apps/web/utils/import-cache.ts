@@ -51,6 +51,8 @@ export function invalidateImportedLibrary(client: QueryClient) {
         'album-playlists',
         'film-collections',
         'film-collection',
+        'album-collections',
+        'album-collection',
         'album-selection',
         'film-selection',
         'album-picker',

@@ -14,6 +14,10 @@ import {
   type JobEntry,
 } from '@repo/schemas/job'
 import { ARTIST_ENRICHMENT_TASK } from '@repo/schemas/artist-profiles'
+import {
+  ProviderSummarySchema,
+  type ProviderSummary,
+} from '@repo/schemas/provider'
 import JobsPageClient, { JobsTable } from './pages/jobs-page-client'
 import { DetailInspectorProvider } from './detail-inspector-context'
 import { detailEntries } from '@/utils/detail-inspector'
@@ -87,11 +91,13 @@ function render(
   search = 'mediaType=film',
   provider?: string,
   entries: JobEntry[] = [{ kind: 'job', job }],
+  catalog?: ProviderSummary[],
 ) {
   const client = new QueryClient({
     defaultOptions: { queries: { enabled: false, retry: false } },
   })
   const params = new URLSearchParams(search)
+  if (catalog) client.setQueryData(['providers'], catalog)
   const items = entries.filter(
     (entry) =>
       !provider ||
@@ -202,6 +208,29 @@ test('the health strip counts queued, running, waiting and attention and links t
   assert.match(html, /class="ds-stats"/)
   for (const label of ['queued', 'running', 'waiting', 'need attention'])
     assert.match(html, new RegExp(`class="ds-stat-label">${label}<`))
+})
+
+test('artist Jobs filter lists the providers with the artist enrichment capability', () => {
+  const catalog = ['fixture-artist-provider', 'fixture-release-provider'].map(
+    (id, index) =>
+      ProviderSummarySchema.parse({
+        id,
+        displayName:
+          index === 0 ? 'Artist source fixture' : 'Release source fixture',
+        description: '',
+        surface: 'provider',
+        mediaTypes: ['album'],
+        rateLimit: { maxConcurrent: 1, minTimeMs: 0 },
+        supportsScrape: true,
+        supportsArtistEnrichment: index === 0,
+        supportsLegacyImport: false,
+        secrets: [],
+        pluginPath: null,
+      }),
+  )
+  const html = render('mediaType=artist', undefined, [], catalog)
+  assert.match(html, /Artist source fixture/)
+  assert.doesNotMatch(html, /Release source fixture/)
 })
 
 test('batches are one row with progress and the provider wait, and expand to their jobs', () => {

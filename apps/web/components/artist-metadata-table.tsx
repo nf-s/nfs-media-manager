@@ -46,6 +46,10 @@ import { fetchApiData } from '@/utils/api'
 import { aiSearchParams, mediaAiSearchTarget } from '@/utils/ai-search'
 import { withArtistFilter } from '@/utils/artist-browse'
 import {
+  artistProviderLabel,
+  supportsArtistEnrichment,
+} from '@/utils/artist-providers'
+import {
   artistMetadataQuery,
   dispatchArtistSelection,
   dispatchArtistSnapshot,
@@ -55,7 +59,6 @@ import {
   listeningScrobblesField,
   listeningScrobblesKey,
 } from '@/utils/listening-filters'
-import { artistProviderLabels } from './artist-identifier-sources'
 import { useArtistPlaylistFilter } from './artist-playlist-filter'
 import {
   CreatorLibraryDate,
@@ -99,7 +102,6 @@ const artistColumns: ArtistColumn[] = [
 ]
 /** Width of the selection column, which the name is pinned after. */
 const selectionWidth = 28
-const providers = ArtistProfileProviderSchema.options
 const queueKey = ['metadata-selection-queue', 'artist']
 const snapshotKey = ['artist-selection-snapshot']
 type QueueSelection = {
@@ -147,6 +149,14 @@ export default function ArtistMetadataTable({
   const playlist = useArtistPlaylistFilter(pending)
   const query = artistMetadataQuery(view.params)
   const q = query.q ?? ''
+  const catalog = useSourceCatalog()
+  const available = catalog.data?.filter(supportsArtistEnrichment) ?? []
+  const providers = catalog.data
+    ? available.map(({ id }) => id)
+    : ArtistProfileProviderSchema.options
+  const providerLabel = (provider: string) =>
+    artistProviderLabel(provider, catalog.data)
+  const unavailable = useSourceAvailability(available)
   const [draft, setDraft] = useState('')
   const facets = useBrowseFacets(apiBaseUrl, 'artists', draft, !pending)
   const libraryColumns: ArtistColumn[] = [
@@ -162,7 +172,7 @@ export default function ArtistMetadataTable({
     ...libraryColumns,
     ...providers.map((provider) => ({
       key: `provider-${provider}`,
-      label: `${artistProviderLabels[provider]} · Last scraped`,
+      label: `${providerLabel(provider)} · Last scraped`,
     })),
   ])
   // The period is read only for its column or sort.
@@ -204,11 +214,6 @@ export default function ArtistMetadataTable({
   for (const key of ['sortBy', 'direction', 'provider', 'listeningSort'])
     countParams.delete(key)
   const countIdentity = countParams.toString()
-  const catalog = useSourceCatalog()
-  const available = (catalog.data ?? []).filter(
-    (provider) => ArtistProfileProviderSchema.safeParse(provider.id).success,
-  )
-  const unavailable = useSourceAvailability(available)
   const [selected, setSelected] = useState<string[]>([])
   const [snapshot, setSnapshot] = useState<ArtistSelectionSnapshot | null>(null)
   const [excluded, setExcluded] = useState<string[]>([])
@@ -460,7 +465,7 @@ export default function ArtistMetadataTable({
         }
         providerFilters={query.freshness.map((filter) => ({
           key: `${filter.provider}:${providerFreshnessValue(filter)}`,
-          label: `${artistProviderLabels[ArtistProfileProviderSchema.parse(filter.provider)]} · ${providerFreshnessLabel(filter)}`,
+          label: `${providerLabel(filter.provider)} · ${providerFreshnessLabel(filter)}`,
           remove: () =>
             setParams({
               freshness: JSON.stringify(
@@ -735,14 +740,14 @@ export default function ArtistMetadataTable({
                 <SecondaryTableHead
                   key={provider}
                   sortKey={`provider-${provider}`}
-                  label={`${artistProviderLabels[provider]} · Last scraped`}
+                  label={`${providerLabel(provider)} · Last scraped`}
                   sortBy={sortKey}
                   direction={query.direction}
                   onSort={() => sort('lastScrapedAt', provider)}
                   disabled={pending}
                   filter={
                     <SecondaryColumnFilter
-                      label={`${artistProviderLabels[provider]} freshness`}
+                      label={`${providerLabel(provider)} freshness`}
                       disabled={pending}
                       options={providerFreshnessOptions}
                       value={query.freshness
@@ -866,7 +871,7 @@ export default function ArtistMetadataTable({
                         state={artist.providers.find(
                           (state) => state.provider === provider,
                         )}
-                        label={artistProviderLabels[provider]}
+                        label={providerLabel(provider)}
                       />
                     </TableCell>
                   ))}
@@ -883,6 +888,9 @@ export default function ArtistMetadataTable({
           </span>
           <fieldset className="ops-providers" disabled={pending}>
             <legend className="ds-label">Fetch metadata from</legend>
+            {!providers.length && (
+              <span>No artist enrichment providers available.</span>
+            )}
             {providers.map((provider) => {
               const reason = catalog.isPending
                 ? 'Loading providers...'
@@ -903,7 +911,7 @@ export default function ArtistMetadataTable({
                       setReview('')
                     }}
                   />
-                  {artistProviderLabels[provider]}
+                  {providerLabel(provider)}
                   {reason ? ` (${reason})` : ''}
                 </label>
               )

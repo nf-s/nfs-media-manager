@@ -7,6 +7,7 @@ import {
   Download,
   LayoutGrid,
   Layers,
+  Library,
   ListChecks,
   ListMusic,
   Tag,
@@ -121,19 +122,22 @@ export function libraryNavigation(view: LibraryView): NavItem[] {
           },
         ]
       : []),
-    film
-      ? {
-          href: scopedHref('/collections', 'film'),
-          label: 'Collections',
-          Icon: ListMusic,
-          section: '/collections',
-        }
-      : {
-          href: scopedHref('/playlists', 'album'),
-          label: 'Playlists',
-          Icon: ListMusic,
-          section: '/playlists',
-        },
+    ...(film
+      ? []
+      : [
+          {
+            href: scopedHref('/playlists', 'album'),
+            label: 'Playlists',
+            Icon: ListMusic,
+            section: '/playlists',
+          },
+        ]),
+    {
+      href: scopedHref('/collections', view),
+      label: 'Collections',
+      Icon: Library,
+      section: '/collections',
+    },
     {
       href: scopedHref('/tags', view),
       label: 'Tags',

@@ -12,11 +12,17 @@ import {
   type FilmCollectionBrowsePage,
   type FilmCollectionDetail,
 } from '@repo/schemas/film-collections'
+import {
+  AlbumCollectionDetailSchema,
+  type AlbumCollectionBrowsePage,
+  type AlbumCollectionDetail,
+} from '@repo/schemas/album-collections'
 import { ConfigContext } from './providers'
-import FilmCollectionsWorkspace from './film-collections-workspace'
+import CollectionsWorkspace from './collections-workspace'
 import AppNavigation from './app-navigation'
 import { DetailInspectorProvider } from './detail-inspector-context'
 import { detailEntries } from '@/utils/detail-inspector'
+import CollectionPageClient from './pages/collection-page-client'
 
 const network = mock.method(globalThis, 'fetch', async () => {
   throw new Error('Network forbidden in collection UI tests')
@@ -65,15 +71,45 @@ const collection = FilmCollectionDetailSchema.parse({
     ],
   },
 })
+const albumCollection = AlbumCollectionDetailSchema.parse({
+  id: collection.id,
+  name: 'Synthetic album collection',
+  createdAt: collection.createdAt,
+  albumCount: 2,
+  sourceLinks: [
+    {
+      provider: 'fixture',
+      providerLabel: 'Fixture',
+      name: 'First destination',
+      url: 'https://example.test/album-collections/17',
+    },
+    {
+      provider: 'fixture',
+      providerLabel: 'Fixture',
+      name: 'Second destination',
+      url: 'https://example.test/album-collections/18',
+    },
+  ],
+  items: {
+    ...collection.items,
+    items: collection.items.items.map((item) => ({
+      ...item,
+      id: `${item.id}-album`,
+      title: item.title.replace('film', 'album'),
+      artists: ['Fixture artist'],
+      durationSec: 1500,
+    })),
+  },
+})
 
 async function render(
   search: string,
   path = '/collections',
   directory: {
-    page?: FilmCollectionBrowsePage | null
+    page?: FilmCollectionBrowsePage | AlbumCollectionBrowsePage | null
     totalCount?: number
   } = {},
-  members: FilmCollectionDetail = collection,
+  members?: FilmCollectionDetail | AlbumCollectionDetail,
 ) {
   require.extensions['.css'] = (module) => {
     module.exports = {}
@@ -82,27 +118,34 @@ async function render(
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
+  const params = new URLSearchParams(search)
+  const mediaType = params.get('mediaType') === 'album' ? 'album' : 'film'
+  const fixture = mediaType === 'album' ? albumCollection : collection
+  const details = members ?? fixture
   const page =
     directory.page === undefined
-      ? { items: [collection], page: 1, size: 100, hasMore: false }
+      ? { items: [fixture], page: 1, size: 100, hasMore: false }
       : directory.page
   if (page)
     client.setQueryData(
-      ['film-collections', 'browse', '', 'name', 'asc', false, 1],
+      [`${mediaType}-collections`, 'browse', '', 'name', 'asc', false, 1],
       {
         ...page,
         totalCount: page.hasMore ? undefined : page.items.length,
       },
     )
   if (directory.totalCount !== undefined)
-    client.setQueryData(['film-collections', 'browse-count', ''], {
+    client.setQueryData([`${mediaType}-collections`, 'browse-count', ''], {
       totalCount: directory.totalCount,
     })
   client.setQueryData(
-    ['film-collection', collection.id, 'position', 'asc', '', [], 1],
-    { ...members.items, summary: { ...members, sourceLinks: [] } },
+    [`${mediaType}-collection`, fixture.id, 'position', 'asc', '', [], 1],
+    { ...details.items, summary: { ...details, sourceLinks: [] } },
   )
-  client.setQueryData(['film-collection', collection.id, 'sources'], collection)
+  client.setQueryData(
+    [`${mediaType}-collection`, fixture.id, 'sources'],
+    details,
+  )
   try {
     return renderToStaticMarkup(
       <QueryClientProvider client={client}>
@@ -113,10 +156,14 @@ async function render(
           }}
         >
           <PathnameContext.Provider value={path}>
-            <SearchParamsContext.Provider value={new URLSearchParams(search)}>
+            <SearchParamsContext.Provider value={params}>
               <DetailInspectorProvider>
                 <AppNavigation />
-                <FilmCollectionsWorkspace />
+                {path === `/collections/${fixture.id}` ? (
+                  <CollectionPageClient collectionId={fixture.id} />
+                ) : (
+                  <CollectionsWorkspace />
+                )}
                 <AppDetailInspector />
               </DetailInspectorProvider>
             </SearchParamsContext.Provider>
@@ -222,7 +269,10 @@ test('collection deep links open members in source order without renumbering gap
     drawer.indexOf('aria-label="Filter Watched"') > drawer.indexOf('<thead>'),
   )
   assert.match(drawer, /aria-label="Resize details panel"/)
-  assert.doesNotMatch(drawer, /href="https:\/\/example.test\/collections\/17"/)
+  assert.match(
+    drawer,
+    /href="https:\/\/example.test\/collections\/17" target="_blank" rel="noopener noreferrer"[^>]*>Open on Fixture/,
+  )
   assert.match(drawer, /aria-pressed="true" aria-label="Table view"/)
   assert.match(
     drawer,
@@ -325,7 +375,7 @@ test('collection Sources displays only saved collection destinations', async () 
   assert.doesNotMatch(drawer, /aria-label="Collection films"|Refresh selected/)
 })
 
-test('album and track navigation retain Playlists', async () => {
+test('album and track navigation retain Playlists and only Albums gains Collections', async () => {
   for (const path of ['/albums', '/tracks']) {
     const html = await render('', path)
     assert.match(
@@ -334,9 +384,83 @@ test('album and track navigation retain Playlists', async () => {
         ? /href="\/playlists\?mediaType=track"><svg.*?<\/svg><span>Playlists</
         : /href="\/playlists\?mediaType=album"><svg.*?<\/svg><span>Playlists</,
     )
-    assert.doesNotMatch(
-      html.slice(0, html.indexOf('</nav>')),
-      /href="\/collections/,
+    const nav = html.slice(0, html.indexOf('</nav>'))
+    if (path === '/albums')
+      assert.match(
+        nav,
+        /href="\/collections\?mediaType=album"><svg.*?<\/svg><span>Collections/,
+      )
+    else assert.doesNotMatch(nav, /href="\/collections/)
+  }
+})
+
+test('the album collection directory opens a scoped collection with album actions', async () => {
+  const html = await render('mediaType=album')
+  assert.match(html, /aria-label="Album collections"/)
+  assert.match(html, /title="Sort by Albums"/)
+  assert.match(html, /title="Filter albums by Synthetic album collection"/)
+  const href = /href="([^"]+)"[^>]*>Synthetic album collection<\/a>/.exec(
+    html,
+  )?.[1]
+  assert.ok(href)
+  const url = new URL(href.replaceAll('&amp;', '&'), 'http://localhost')
+  assert.equal(url.searchParams.get('mediaType'), 'album')
+  assert.deepEqual(detailEntries(url.pathname, url.searchParams), [
+    { kind: 'collection', id: albumCollection.id, mediaType: 'album' },
+  ])
+})
+
+test('album collection details open albums and expose each saved destination', async () => {
+  const entry = {
+    kind: 'collection',
+    id: albumCollection.id,
+    mediaType: 'album',
+    view: 'view=table',
+  }
+  const search = new URLSearchParams({
+    mediaType: 'album',
+    inspect: JSON.stringify([entry]),
+  })
+  const html = await render(search.toString())
+  const inspector = html.slice(
+    html.indexOf('aria-label="Album collection details"'),
+  )
+  assert.match(inspector, /aria-label="Search collection albums"/)
+  assert.match(inspector, /title="Sort by Artists"/)
+  assert.match(inspector, /25:00/)
+  assert.match(inspector, /Fixture artist/)
+  assert.doesNotMatch(inspector, /Filter Watched|Sort by Runtime/)
+  assert.match(inspector, /href="\/albums\?filters=[^"]*">Filter albums/)
+  for (const [index, link] of albumCollection.sourceLinks.entries())
+    assert.ok(
+      inspector.includes(
+        `href="${link.url}" target="_blank" rel="noopener noreferrer" aria-label="Open on Fixture (${index + 1}) (opens in a new tab)"`,
+      ),
     )
+  const href = /href="([^"]+)">Z first album<\/a>/.exec(inspector)?.[1]
+  assert.ok(href)
+  const url = new URL(href.replaceAll('&amp;', '&'), 'http://localhost')
+  assert.deepEqual(detailEntries(url.pathname, url.searchParams), [
+    entry,
+    { kind: 'album', id: 'later-title-album' },
+  ])
+  assert.match(
+    inspector,
+    /href="\/collections\/collection\?mediaType=album&amp;view=table"[^>]*>Open page/,
+  )
+})
+
+test('standalone collections expose the saved destination and the scoped return link', async () => {
+  for (const mediaType of ['film', 'album']) {
+    const sources =
+      mediaType === 'album'
+        ? albumCollection.sourceLinks
+        : collection.sourceLinks
+    const html = await render(
+      `mediaType=${mediaType}`,
+      '/collections/collection',
+    )
+    assert.ok(html.includes(`href="/collections?mediaType=${mediaType}"`))
+    assert.ok(sources.every(({ url }) => html.includes(`href="${url}"`)))
   }
 })

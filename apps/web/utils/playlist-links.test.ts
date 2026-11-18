@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
   parsePlaylistTab,
-  collectionFilmsHref,
+  collectionItemsHref,
   playlistAlbumsHref,
   playlistDrawerParams,
   playlistFilter,
@@ -86,10 +86,15 @@ test('the playlist filter is required, as the playlist links apply it', () => {
   })
 })
 
-test('collection film links apply the required collection filter', () => {
-  const url = new URL(collectionFilmsHref(name), 'https://example.test')
-  assert.equal(url.pathname, '/films')
-  assert.deepEqual(JSON.parse(url.searchParams.get('filters') ?? ''), [
-    { field: 'collection', value: name, mode: 'required' },
-  ])
+test('collection links apply the required collection filter in their library', () => {
+  for (const mediaType of ['album', 'film'] satisfies ('album' | 'film')[]) {
+    const url = new URL(
+      collectionItemsHref(mediaType, name),
+      'https://example.test',
+    )
+    assert.equal(url.pathname, `/${mediaType}s`)
+    assert.deepEqual(JSON.parse(url.searchParams.get('filters') ?? ''), [
+      { field: 'collection', value: name, mode: 'required' },
+    ])
+  }
 })

@@ -568,14 +568,12 @@ test('main navigation has one Browse destination and preserves current browse fi
     html,
     /aria-current="page" href="\/albums\?q=artist&amp;view=table&amp;filters=%5B%5D">Browse/,
   )
-  assert.equal(navLinks(html).length, 7)
+  assert.equal(navLinks(html).length, 8)
   assert.match(html, /href="\/albums\/matches">Matches/)
   assert.doesNotMatch(html, /href="\/artists/)
   assert.match(html, /href="\/playlists\?mediaType=album">Playlists/)
-  assert.doesNotMatch(
-    html,
-    />Albums<|>Films<|>Collections<|href="\/(films|collections)/,
-  )
+  assert.match(html, /href="\/collections\?mediaType=album">Collections/)
+  assert.doesNotMatch(html, />Albums<|>Films<|href="\/films/)
   const detail = renderNavigation('/films/one', '')
   assert.match(detail, /aria-current="page" href="\/films">Browse/)
   assert.equal(navLinks(detail).length, 8)

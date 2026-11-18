@@ -63,6 +63,8 @@ export function invalidateChangedJobActivity(
       'tag-provenance',
       'film-collections',
       'film-collection',
+      'album-collections',
+      'album-collection',
       'playlists',
       'playlist',
       'album-playlists',

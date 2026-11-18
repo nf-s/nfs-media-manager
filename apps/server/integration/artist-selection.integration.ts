@@ -43,6 +43,12 @@ vi.mock('@/lib/db', () => ({
   },
 }))
 vi.mock('@/plugins/registry', () => ({
+  listArtistEnrichmentProviderIds: async () => [
+    'musicbrainz',
+    'spotify',
+    'lastfm',
+    'discogs',
+  ],
   getScrapePlugin: async (id: string) =>
     id === 'musicbrainz' ? musicbrainzPlugin : null,
 }))

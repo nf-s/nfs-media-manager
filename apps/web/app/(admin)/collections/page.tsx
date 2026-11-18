@@ -1,5 +1,5 @@
-import FilmCollectionsWorkspace from '@/components/film-collections-workspace'
+import CollectionsWorkspace from '@/components/collections-workspace'
 
 export default function CollectionsPage() {
-  return <FilmCollectionsWorkspace />
+  return <CollectionsWorkspace />
 }

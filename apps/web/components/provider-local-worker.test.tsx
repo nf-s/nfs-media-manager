@@ -14,6 +14,7 @@ import {
 import {
   providerLocalWorkerQuery,
   useProviderLocalWorkerMode,
+  useProviderLocalWorkerPair,
 } from './provider-local-worker'
 
 const idle = ProviderLocalWorkerStatusSchema.parse({
@@ -169,6 +170,61 @@ test('failed worker mode changes refresh the status before returning the error',
     assert.deepEqual(observer.getCurrentResult().data, idle)
   } finally {
     close()
+    client.clear()
+  }
+})
+
+test('pairing sends one no-store request and keeps only status in query and mutation data', async (t) => {
+  const client = new QueryClient()
+  const options = providerLocalWorkerQuery('', 'fixture')
+  const token = 'a'.repeat(43)
+  const paired = { ...idle, online: false }
+  const requests: Array<{
+    method: string | undefined
+    cache: RequestCache | undefined
+    body: BodyInit | null | undefined
+  }> = []
+  t.mock.method(
+    globalThis,
+    'fetch',
+    async (_input: RequestInfo | URL, init?: RequestInit) => {
+      requests.push({
+        method: init?.method,
+        cache: init?.cache,
+        body: init?.body,
+      })
+      return Response.json({
+        statusCode: 200,
+        message: 'OK',
+        data: { token, status: paired },
+      })
+    },
+  )
+  let pair: (() => Promise<unknown>) | undefined
+  function PairControl() {
+    pair = useProviderLocalWorkerPair('fixture').request.mutateAsync
+    return null
+  }
+  try {
+    renderToStaticMarkup(
+      <QueryClientProvider client={client}>
+        <PairControl />
+      </QueryClientProvider>,
+    )
+    assert.ok(pair)
+    assert.deepEqual(await pair(), paired)
+    assert.deepEqual(requests, [
+      { method: 'POST', cache: 'no-store', body: '{"mode":"pair"}' },
+    ])
+    assert.deepEqual(client.getQueryData(options.queryKey), paired)
+    assert.deepEqual(
+      client
+        .getMutationCache()
+        .getAll()
+        .map(({ state }) => state.data),
+      [paired],
+    )
+  } finally {
     client.clear()
   }
 })

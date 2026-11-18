@@ -14,6 +14,14 @@ import {
 } from 'vitest'
 import type { ArtistProfileProvider } from '@repo/schemas/artist-profiles'
 import type { JsonValue } from '@repo/schemas/common'
+import type { EntityRelationshipCandidate } from '@repo/schemas/entity-relationships'
+import {
+  PluginResultSchema,
+  ProviderArtistSearchAmbiguousError,
+  ProviderItemNotFoundError,
+  ProviderRequestError,
+  type MediaProviderPlugin,
+} from '@repo/media-plugin-sdk'
 import { env } from '@/env'
 import { musicbrainzPlugin } from '@/plugins/builtin/musicbrainz'
 import * as schema from '@/schemas/db'
@@ -29,6 +37,23 @@ const admin = new pg.Client({ ...connection, database: env.DATABASE_NAME })
 const pool = new pg.Pool({ ...connection, database })
 const databaseClient = drizzle(pool, { schema })
 const request = vi.fn<typeof fetch>()
+const fixtureArtist = vi.fn<NonNullable<MediaProviderPlugin['scrapeArtist']>>()
+const fixtureAlbum =
+  vi.fn<NonNullable<MediaProviderPlugin['scrapeMediaItem']>>()
+const fixturePlugin: MediaProviderPlugin = {
+  manifest: {
+    id: 'fixture-plugin',
+    displayName: 'Fixture plugin',
+    description: '',
+    mediaTypes: ['album'],
+    supportsNameLookup: true,
+    bootstrapAlbumArtists: true,
+    secrets: [],
+    rateLimit: { maxConcurrent: 1, minTimeMs: 0 },
+  },
+  scrapeArtist: fixtureArtist,
+  scrapeMediaItem: fixtureAlbum,
+}
 vi.mock('@/lib/db', () => ({
   get db() {
     return databaseClient
@@ -48,7 +73,9 @@ vi.mock('@/plugins/registry', async (importOriginal) => ({
             },
           },
         }
-      : null,
+      : id === fixturePlugin.manifest.id
+        ? fixturePlugin
+        : null,
 }))
 vi.mock('@/lib/provider-secrets', () => ({
   resolveProviderSecrets: () => ({
@@ -113,6 +140,11 @@ beforeAll(async () => {
 })
 beforeEach(async () => {
   request.mockReset()
+  fixtureArtist.mockReset()
+  fixtureAlbum.mockReset().mockImplementation(async ({ request }) => {
+    await request('https://example.test/album')
+    return PluginResultSchema.parse({ payload: { album: 'fixture' } })
+  })
   request.mockImplementation(async () => {
     throw new Error('Unexpected request')
   })
@@ -135,6 +167,464 @@ afterAll(async () => {
 })
 
 describe('artist enrichment through queued jobs and stored evidence', () => {
+  async function queueFixtureAlbum(mediaItemId: string) {
+    const { createJob } = await import('@/services/jobs')
+    return createJob(
+      {
+        provider: fixturePlugin.manifest.id,
+        scope: { mediaItemIds: [mediaItemId], mediaType: 'album', limit: 1 },
+        options: {},
+        confirmBroadRun: false,
+      },
+      null,
+    )
+  }
+
+  async function fixtureAlbumJob(mediaItemId: string) {
+    const { getJob, processQueuedJobs } = await import('@/services/jobs')
+    const job = await queueFixtureAlbum(mediaItemId)
+    await processQueuedJobs()
+    return getJob(job.id)
+  }
+
+  it('saves the first album artist before the album lookup and reuses its current same-provider payload', async () => {
+    await seedArtistAlbum('next-album')
+    const related = { id: 'related-artist', name: 'Related Artist' }
+    const fromId = { id: 'identified-artist', name: 'Identified Artist' }
+    const duplicates = [
+      { id: 'dupe-first', name: 'Duplicate Artist' },
+      { id: 'dupe-second', name: 'DUPLICATE ARTIST' },
+    ]
+    await databaseClient
+      .insert(schema.artist)
+      .values([related, fromId, ...duplicates])
+    await seedArtistAlbum('related-album', related.id)
+    await seedArtistAlbum('identified-album', fromId.id)
+    for (const { id } of duplicates) await seedArtistAlbum(id + '-album', id)
+    const payload = { releases: ['fixture-release'] }
+    fixtureArtist.mockImplementation(async ({ artist, request }) => {
+      expect(artist).toEqual({ id: artistId, name: artistName })
+      await request('https://example.test/artist')
+      return {
+        payload,
+        profile: {
+          tags: ['Ambient'],
+          externalId: 'saved-artist-id',
+          similarArtists: [
+            { name: related.name },
+            { name: 'No local credit' },
+            { name: 'Alternate source name', externalId: 'identified-id' },
+            { name: fromId.name, externalId: 'conflicting-id' },
+            { name: 'duplicate artist' },
+          ],
+        },
+      }
+    })
+    fixtureAlbum.mockImplementation(async ({ request, artistProfiles }) => {
+      expect(artistProfiles).toEqual([{ artistId, name: artistName, payload }])
+      const state =
+        await databaseClient.query.artistProviderCurrentState.findFirst({
+          where: (table, operators) =>
+            operators.and(
+              operators.eq(table.provider, fixturePlugin.manifest.id),
+              operators.eq(table.artistId, artistId),
+            ),
+        })
+      expect(state?.artistId).toBe(artistId)
+      await request('https://example.test/album')
+      return PluginResultSchema.parse({ payload: { album: 'fixture' } })
+    })
+    const prior = [
+      {
+        id: 'different-provider',
+        artistId,
+        provider: 'musicbrainz',
+        normalizedData: { tags: [] },
+        payload: { releases: ['different-release'] },
+      },
+      {
+        id: 'known-provider-identity',
+        artistId: fromId.id,
+        provider: fixturePlugin.manifest.id,
+        normalizedData: { tags: [], externalId: 'identified-id' },
+        payload: {},
+      },
+    ]
+    await databaseClient.insert(schema.artistProviderSnapshot).values(prior)
+    await databaseClient.insert(schema.artistProviderCurrentState).values(
+      prior.map((snapshot) => ({
+        artistId: snapshot.artistId,
+        provider: snapshot.provider,
+        latestSnapshotId: snapshot.id,
+      })),
+    )
+    request.mockImplementation(async () => Response.json({}))
+    const { getJob, processQueuedJobs } = await import('@/services/jobs')
+    const firstQueued = await queueFixtureAlbum('album-fixture')
+    const secondQueued = await queueFixtureAlbum('next-album')
+    await processQueuedJobs()
+    const first = await getJob(firstQueued.id)
+    const second = await getJob(secondQueued.id)
+    expect(first?.status).toBe('succeeded')
+    expect(second?.status).toBe('succeeded')
+    expect(fixtureArtist).toHaveBeenCalledOnce()
+    expect(
+      request.mock.calls.map(([url]) => new URL(String(url)).pathname),
+    ).toEqual(['/artist', '/album', '/album'])
+    const { listArtistSourceSnapshots } =
+      await import('@/services/artist-profiles')
+    expect(
+      await listArtistSourceSnapshots(artistId, fixturePlugin.manifest.id, {
+        page: 1,
+        size: 10,
+      }),
+    ).toMatchObject({ items: [{ jobId: firstQueued.id }] })
+    const snapshots = (
+      await databaseClient
+        .select()
+        .from(schema.artistProviderSnapshot)
+        .where(
+          eq(schema.artistProviderSnapshot.provider, fixturePlugin.manifest.id),
+        )
+    ).filter((snapshot) => snapshot.artistId === artistId)
+    expect(snapshots).toMatchObject([
+      {
+        scrapeJobId: first?.id,
+        normalizedData: {
+          tags: ['Ambient'],
+          similarArtists: [
+            { name: related.name, artistId: related.id },
+            { name: 'No local credit' },
+            {
+              name: 'Alternate source name',
+              externalId: 'identified-id',
+              artistId: fromId.id,
+            },
+            { name: fromId.name, externalId: 'conflicting-id' },
+            { name: 'duplicate artist' },
+          ],
+        },
+      },
+    ])
+    const { getArtist } = await import('@/services/creators')
+    expect(
+      (await getArtist(artistId)).providers.find(
+        (snapshot) => snapshot.provider === fixturePlugin.manifest.id,
+      )?.profile.relationships,
+    ).toEqual([
+      {
+        kind: 'similar',
+        targetType: 'artist',
+        name: related.name,
+        targetId: related.id,
+      },
+      { kind: 'similar', targetType: 'artist', name: 'No local credit' },
+      {
+        kind: 'similar',
+        targetType: 'artist',
+        name: 'Alternate source name',
+        externalId: 'identified-id',
+        targetId: fromId.id,
+      },
+      {
+        kind: 'similar',
+        targetType: 'artist',
+        name: fromId.name,
+        externalId: 'conflicting-id',
+      },
+      { kind: 'similar', targetType: 'artist', name: 'duplicate artist' },
+    ])
+  })
+
+  it.each([
+    new ProviderItemNotFoundError('No confirmed artist match'),
+    new ProviderArtistSearchAmbiguousError(),
+  ])(
+    'continues with album fallback after a definitive artist lookup miss',
+    async (error) => {
+      fixtureArtist.mockRejectedValue(error)
+      request.mockImplementation(async () => Response.json({}))
+      expect((await fixtureAlbumJob('album-fixture'))?.status).toBe('succeeded')
+      expect(fixtureAlbum).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({
+          artistProfiles: [],
+        }),
+      )
+      expect(
+        await databaseClient.select().from(schema.artistProviderSnapshot),
+      ).toEqual([])
+    },
+  )
+
+  it('stops before album lookup when the shared artist request receives a rate limit', async () => {
+    fixtureArtist.mockImplementation(async ({ request }) => {
+      await request('https://example.test/artist')
+      return { payload: {}, profile: { tags: [] } }
+    })
+    request.mockImplementation(
+      async () =>
+        new Response(null, {
+          status: 429,
+          headers: { 'Retry-After': '60' },
+        }),
+    )
+    expect((await fixtureAlbumJob('album-fixture'))?.status).toBe('failed')
+    expect(request).toHaveBeenCalledOnce()
+    expect(fixtureAlbum).not.toHaveBeenCalled()
+    expect(
+      await databaseClient.select().from(schema.artistProviderSnapshot),
+    ).toEqual([])
+  })
+
+  it.each(['available', 'absent', 'expired'])(
+    'uses the paired transport exclusively when it is %s',
+    async (state) => {
+      const { processQueuedJobById, getJob } = await import('@/services/jobs')
+      const { withProviderTransport } =
+        await import('@/services/provider-transport')
+      const job = await queueFixtureAlbum('album-fixture')
+      fixtureArtist.mockImplementation(async ({ request }) => {
+        await request('https://example.test/artist')
+        return { payload: {}, profile: { tags: [] } }
+      })
+      const execute = vi.fn(async () => {
+        if (state === 'expired')
+          throw new ProviderRequestError(
+            'Fixture worker request expired',
+            'request-failed',
+            null,
+            true,
+          )
+        return Response.json({})
+      })
+      const local = fixturePlugin.manifest.localWorkerRequired
+      fixturePlugin.manifest.localWorkerRequired = true
+      try {
+        await withProviderTransport(
+          async () => (state === 'absent' ? null : { execute }),
+          () =>
+            processQueuedJobById(job.id, fixturePlugin.manifest.id, {
+              canContinue: async () => true,
+              recordOutcome: async () => {},
+            }),
+        )
+      } finally {
+        fixturePlugin.manifest.localWorkerRequired = local
+      }
+      expect(request).not.toHaveBeenCalled()
+      expect((await getJob(job.id))?.status).toBe(
+        state === 'available' ? 'succeeded' : 'failed',
+      )
+      expect(execute).toHaveBeenCalledTimes(
+        state === 'available' ? 2 : state === 'expired' ? 1 : 0,
+      )
+      expect(fixtureAlbum).toHaveBeenCalledTimes(state === 'available' ? 1 : 0)
+    },
+  )
+
+  it('projects artist and album relationships from the current source snapshots and retains history', async () => {
+    const { enqueueArtistEnrichment } =
+      await import('@/services/artist-enrichment')
+    const { processQueuedJobs } = await import('@/services/jobs')
+    const { getArtist } = await import('@/services/creators')
+    const { getAlbumDetail } = await import('@/services/media')
+    const { getArtistSourceSnapshot } =
+      await import('@/services/artist-profiles')
+    const { getMediaSourceSnapshot } = await import('@/services/history')
+    const { applyProviderResult } = await import('@/services/provider-state')
+    const provider = fixturePlugin.manifest.id
+    const candidates = [
+      {
+        kind: 'similar',
+        targetType: 'album',
+        name: 'Preferred edition',
+        externalId: 'shared-id',
+        referenceType: 'edition',
+      },
+      {
+        kind: 'similar',
+        targetType: 'album',
+        name: 'Ambiguous edition',
+        externalId: 'shared-id',
+      },
+      {
+        kind: 'similar',
+        targetType: 'album',
+        name: 'Unrelated provider',
+        externalId: 'other-provider',
+      },
+      {
+        kind: 'similar',
+        targetType: 'album',
+        name: 'Archived album',
+        externalId: 'archived-id',
+      },
+      { kind: 'similar', targetType: 'album', name: 'Name-only album' },
+      { kind: 'similar', targetType: 'artist', name: 'Another Artist' },
+    ] satisfies EntityRelationshipCandidate[]
+    const second = { id: 'another-artist', name: 'Another Artist' }
+    await databaseClient.insert(schema.artist).values(second)
+    await seedArtistAlbum('target-album', second.id)
+    await seedArtistAlbum('other-album')
+    await seedArtistAlbum('archived-album')
+    await databaseClient
+      .update(schema.mediaItem)
+      .set({ metadata: { legacyHidden: true } })
+      .where(eq(schema.mediaItem.id, 'archived-album'))
+    await databaseClient.insert(schema.providerReference).values([
+      {
+        id: 'target-reference',
+        mediaItemId: 'target-album',
+        provider,
+        referenceType: 'edition',
+        externalId: 'shared-id',
+      },
+      {
+        id: 'other-reference',
+        mediaItemId: 'other-album',
+        provider,
+        referenceType: 'release',
+        externalId: 'shared-id',
+      },
+      {
+        id: 'unrelated-reference',
+        mediaItemId: 'target-album',
+        provider: 'unrelated',
+        referenceType: 'edition',
+        externalId: 'other-provider',
+      },
+      {
+        id: 'archived-reference',
+        mediaItemId: 'archived-album',
+        provider,
+        referenceType: 'edition',
+        externalId: 'archived-id',
+      },
+    ])
+    const related = candidates.map((candidate) =>
+      candidate.referenceType === 'edition'
+        ? { ...candidate, targetId: 'target-album' }
+        : candidate.targetType === 'artist'
+          ? { ...candidate, targetId: second.id }
+          : candidate,
+    )
+    const artistJob = await enqueueArtistEnrichment(
+      { artistId, provider },
+      null,
+    )
+    fixtureArtist.mockResolvedValue({
+      payload: {},
+      profile: { tags: [], relationships: candidates },
+    })
+    await processQueuedJobs()
+    const [artistSource] = (await getArtist(artistId)).providers
+    expect(artistSource).toMatchObject({
+      provider,
+      scrapeJobId: artistJob.id,
+      profile: { relationships: related },
+    })
+    expect(artistSource?.profile.relationships).toEqual(related)
+    expect(artistSource?.id).toBeDefined()
+    if (!artistSource) throw new Error('Missing artist source')
+    const artistHistory = await getArtistSourceSnapshot(
+      artistId,
+      provider,
+      artistSource.id,
+    )
+    expect(artistHistory.normalizedData).toMatchObject({
+      relationships: candidates,
+    })
+    expect(JSON.stringify(artistHistory.normalizedData)).not.toContain(
+      'targetId',
+    )
+
+    async function saveAlbumRelationships(relationships: typeof candidates) {
+      const result = PluginResultSchema.parse({
+        payload: {},
+        normalized: { relationships },
+      })
+      await applyProviderResult({
+        ...result,
+        provider,
+        mediaType: 'album',
+        mediaItemId: 'album-fixture',
+        source: 'scrape-job',
+      })
+    }
+    await saveAlbumRelationships(candidates)
+    const album = await getAlbumDetail('album-fixture')
+    const [source] = album?.relationshipSources ?? []
+    expect(source).toMatchObject({ provider, relationships: related })
+    expect(source?.relationships).toEqual(related)
+    if (!source) throw new Error('Missing album source')
+    await databaseClient
+      .update(schema.mediaItem)
+      .set({ metadata: { legacyHidden: true } })
+      .where(eq(schema.mediaItem.id, 'target-album'))
+    expect(
+      (await getAlbumDetail('album-fixture'))?.relationshipSources?.[0]
+        ?.relationships[0],
+    ).toEqual(candidates[0])
+    expect(
+      (await getArtist(artistId)).providers[0]?.profile.relationships?.[0],
+    ).toEqual(candidates[0])
+    await saveAlbumRelationships([])
+    expect(
+      (await getAlbumDetail('album-fixture'))?.relationshipSources,
+    ).toEqual([])
+    const history = await getMediaSourceSnapshot(
+      'album-fixture',
+      provider,
+      source.snapshotId,
+    )
+    expect(history.normalizedData).toMatchObject({ relationships: candidates })
+    expect(JSON.stringify(history.normalizedData)).not.toContain('targetId')
+  })
+
+  it('queues an explicit artist job for a plugin and exposes saved source provenance', async () => {
+    const { enqueueArtistEnrichment } =
+      await import('@/services/artist-enrichment')
+    const { getJob, processQueuedJobs } = await import('@/services/jobs')
+    const { getArtist } = await import('@/services/creators')
+    const { listArtistIdentifierSources } =
+      await import('@/services/artist-provider-evidence')
+    const provider = fixturePlugin.manifest.id
+    const providerArtistId = 'confirmed-fixture-id'
+    const url = 'https://example.test/artist/confirmed-fixture-id'
+    fixtureArtist.mockResolvedValue({
+      payload: { result: 'fixture' },
+      profile: { externalId: providerArtistId, url, tags: ['Ambient'] },
+    })
+    const job = await enqueueArtistEnrichment(
+      { provider, artistId, providerArtistId },
+      null,
+    )
+    await processQueuedJobs()
+    expect((await getJob(job.id))?.status).toBe('succeeded')
+    expect(fixtureArtist).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ providerArtistId }),
+    )
+    expect((await getArtist(artistId)).identifiers).toContainEqual({
+      provider,
+      externalId: providerArtistId,
+      status: 'confirmed',
+      url,
+    })
+    expect(
+      await listArtistIdentifierSources(artistId, provider, {
+        page: 1,
+        size: 10,
+      }),
+    ).toMatchObject({
+      totalCount: 1,
+      items: [{ jobId: job.id, externalId: providerArtistId }],
+    })
+    await expect(
+      enqueueArtistEnrichment({ provider: 'youtube', artistId }, null),
+    ).rejects.toMatchObject({ response: { statusCode: 422 } })
+    expect(fixtureAlbum).not.toHaveBeenCalled()
+  })
+
   it('compares stored artist names, retains conflicting IDs, and pages provider sorts', async () => {
     const secondArtist = 'second-artist'
     await databaseClient.insert(schema.artist).values({

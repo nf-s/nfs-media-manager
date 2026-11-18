@@ -91,7 +91,12 @@ const albumWithCollections = AlbumDetailSchema.parse({
   trackCount: 0,
   tracks: [],
   playlists: [
-    { name: 'Fixture collection', kind: 'collection', position: 0 },
+    {
+      id: 'fixture-collection',
+      name: 'Fixture collection',
+      kind: 'collection',
+      position: 0,
+    },
     { name: 'Collection without a link', kind: 'collection', position: 1 },
     { name: 'Fixture playlist', kind: 'playlist', position: 0 },
   ],
@@ -258,7 +263,7 @@ test('Cloudflare mode uses server credentials even when a local worker is suppor
   )
 })
 
-test('album Overview uses collection memberships as browse filters', () => {
+test('album Overview links collection memberships to album collection details', () => {
   const client = new QueryClient()
   client.setQueryData(['album', albumWithCollections.id], albumWithCollections)
   try {
@@ -277,11 +282,14 @@ test('album Overview uses collection memberships as browse filters', () => {
       </QueryClientProvider>,
     )
     assert.match(html, />Collections<\/h3>/)
-    assert.match(html, /title="Filter collection: Fixture collection\./)
-    assert.match(html, /title="Filter collection: Collection without a link\./)
+    assert.match(
+      html,
+      /href="\/collections\/fixture-collection\?mediaType=album"/,
+    )
+    assert.match(html, />Collection without a link<\/span>/)
     assert.doesNotMatch(
       html,
-      /Filter collection: Fixture playlist|collections\/fixture/,
+      /Fixture playlist|https:\/\/example\.test\/collections\/fixture/,
     )
   } finally {
     client.clear()
@@ -303,6 +311,69 @@ test('album Sources show stored collection links under their provider', () => {
     /href="https:\/\/example\.test\/collections\/fixture" target="_blank" rel="noopener noreferrer"[^>]*>Fixture collection<\/a>/,
   )
   assert.doesNotMatch(html, /Collection without a link|Fixture playlist/)
+})
+
+test('album Sources show provider relationships and open only verified library items', () => {
+  const album = AlbumDetailSchema.parse({
+    ...albumWithCollections,
+    relationshipSources: [
+      {
+        provider: 'relationship-fixture',
+        snapshotId: 'fixture-snapshot',
+        jobId: null,
+        createdAt,
+        relationships: [
+          {
+            kind: 'related',
+            targetType: 'album',
+            name: 'Resolved fixture album',
+            targetId: 'related-fixture-album',
+          },
+          {
+            kind: 'related',
+            targetType: 'album',
+            name: 'Unresolved fixture album',
+            externalId: 'external-album-1',
+            url: 'https://example.test/albums/fixture',
+          },
+          {
+            kind: 'influence',
+            targetType: 'artist',
+            name: 'Resolved fixture artist',
+            targetId: 'related-fixture-artist',
+          },
+        ],
+      },
+    ],
+  })
+  const html = renderSources(
+    { ...provider, mediaTypes: ['album'] },
+    undefined,
+    album,
+    'sourceProvider=relationship-fixture',
+  )
+  assert.match(html, /aria-label="Related albums"/)
+  assert.match(html, /aria-label="Related artists"/)
+  assert.match(
+    html,
+    /href="\/albums\/related-fixture-album"[^>]*><span class="ds-pill-label">Resolved fixture album/,
+  )
+  assert.match(
+    html,
+    /href="\/artists\/related-fixture-artist"[^>]*><span class="ds-pill-label">Resolved fixture artist/,
+  )
+  assert.match(
+    html,
+    /<span class="ds-pill" data-size="md"><span class="ds-pill-label">Unresolved fixture album/,
+  )
+  assert.doesNotMatch(html, /href="https:\/\/example.test\/albums\/fixture"/)
+  const closed = renderSources(
+    { ...provider, mediaTypes: ['album'] },
+    undefined,
+    album,
+  )
+  assert.match(closed, /relationship-fixture/)
+  assert.doesNotMatch(closed, /Resolved fixture album|Unresolved fixture album/)
 })
 
 test('Sources can refresh an album by a barcode supplied by another provider', () => {

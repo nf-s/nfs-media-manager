@@ -223,7 +223,7 @@ export function NestedMediaCard({
   subtitle,
   metadata,
   actions,
-}: DetailTarget & {
+}: Pick<DetailTarget, 'kind' | 'id'> & {
   view: CardView
   title: string
   artworkUrl?: string | null

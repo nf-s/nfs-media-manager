@@ -14,10 +14,14 @@ import {
   ProviderDispatchNotes,
   ProviderDispatchReview,
   ProviderWorkerModeSwitch,
+  ProviderWorkerPairing,
   dispatchStateLabel,
   useProviderDispatch,
 } from './provider-job-dispatch'
-import { useProviderLocalWorkerMode } from './provider-local-worker'
+import {
+  useProviderLocalWorkerMode,
+  useProviderLocalWorkerPair,
+} from './provider-local-worker'
 
 const provider = ProviderSummarySchema.parse({
   id: 'fixture',
@@ -50,6 +54,7 @@ function Dispatch({
 }) {
   const dispatch = useProviderDispatch(configuration)
   const changeMode = useProviderLocalWorkerMode(configuration.id)
+  const pairing = useProviderLocalWorkerPair(configuration.id)
   return (
     <>
       <p>{dispatchStateLabel(dispatch)}</p>
@@ -57,11 +62,19 @@ function Dispatch({
       <ProviderDispatchNotes dispatch={dispatch} />
       <ProviderDispatchReview dispatch={dispatch} />
       {configuration.supportsJobDispatchControl && (
-        <ProviderWorkerModeSwitch
-          worker={worker}
-          dispatch={dispatch}
-          changeMode={changeMode}
-        />
+        <>
+          <ProviderWorkerModeSwitch
+            worker={worker}
+            dispatch={dispatch}
+            changeMode={changeMode}
+          />
+          <ProviderWorkerPairing
+            worker={worker}
+            dispatch={dispatch}
+            pairing={pairing}
+            busy={changeMode.isPending}
+          />
+        </>
       )}
     </>
   )
@@ -240,4 +253,37 @@ test('transport switching waits for paused, drained dispatch and a clear local w
   const blocked = render(paused, workerProvider, { ...worker, blocked: true })
   assert.match(button(blocked, 'Switch to Cloudflare'), /disabled=""/)
   assert.match(blocked, /Review the local request before switching/)
+})
+
+test('worker pairing requires review and is available without a transport switch', () => {
+  const local = { ...worker, supportsModeSwitch: false }
+  for (const paired of [false, true]) {
+    const html = render(paused, workerProvider, { ...local, paired })
+    const control = button(html, paired ? 'Replace pairing' : 'Pair worker')
+    assert.match(control, /aria-haspopup="dialog"/)
+    assert.doesNotMatch(control, /disabled=""/)
+    assert.doesNotMatch(html, /Download worker token/)
+  }
+})
+
+test('worker pairing waits for paused, drained dispatch and a clear worker', () => {
+  const local = { ...worker, supportsModeSwitch: false }
+  const dispatchBusy = {
+    ...paused,
+    slots: [
+      { jobId: 'fixture-job', phase: 'running', expiresAt: 1700000000000 },
+    ],
+  }
+  for (const html of [
+    render(stopped, workerProvider, local),
+    render(dispatchBusy, workerProvider, local),
+    render(paused, workerProvider, { ...local, active: true }),
+    render(paused, workerProvider, { ...local, blocked: true }),
+  ]) {
+    assert.match(button(html, 'Replace pairing'), /disabled=""/)
+    assert.match(
+      html,
+      /Pause the queue and wait for active work to finish|Review the local request before pairing/,
+    )
+  }
 })

@@ -84,6 +84,19 @@ test('artist metadata renders artist selection, playlist and freshness filters w
         secrets: [],
         rateLimit: { minTimeMs: 0, maxConcurrent: 1 },
       }),
+      ProviderSummarySchema.parse({
+        id: 'fixture-provider',
+        displayName: 'Fixture provider',
+        description: '',
+        surface: 'provider',
+        mediaTypes: ['album'],
+        supportsScrape: true,
+        supportsArtistEnrichment: true,
+        supportsLegacyImport: false,
+        pluginPath: null,
+        secrets: [],
+        rateLimit: { minTimeMs: 0, maxConcurrent: 1 },
+      }),
     ],
   )
   try {
@@ -116,6 +129,7 @@ test('artist metadata renders artist selection, playlist and freshness filters w
     assert.match(html, /<\/svg>Filters<\/button>/)
     assert.match(html, /Filter Playlists/)
     assert.match(html, /Filter MusicBrainz freshness/)
+    assert.match(html, /Filter Fixture provider freshness/)
     assert.match(html, /dateTime="2026-01-01T00:00:00.000Z"/)
     assert.doesNotMatch(html, /Album metadata|Film metadata|Legacy import/)
     const providerControls = html.match(

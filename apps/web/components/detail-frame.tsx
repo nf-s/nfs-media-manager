@@ -170,7 +170,15 @@ export function FilterPill({
 }
 
 /** The provider's page for this item, as the last action of a detail header. */
-export function OpenAtProvider({ label, url }: { label: string; url: string }) {
+export function OpenAtProvider({
+  label,
+  url,
+  actionLabel,
+}: {
+  label: string
+  url: string
+  actionLabel?: string
+}) {
   const href = safeRatingHref(url)
   if (!href) return null
   return (
@@ -179,9 +187,9 @@ export function OpenAtProvider({ label, url }: { label: string; url: string }) {
         href={href}
         target="_blank"
         rel="noopener noreferrer"
-        aria-label={`Open at ${label} (opens in a new tab)`}
+        aria-label={`${actionLabel ?? `Open at ${label}`} (opens in a new tab)`}
       >
-        {label}
+        {actionLabel ?? label}
         <ExternalLink className="ds-i" data-size="sm" aria-hidden="true" />
       </a>
     </Button>

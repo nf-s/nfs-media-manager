@@ -4,6 +4,7 @@ import { ProviderFreshnessFiltersSchema } from './film-selection'
 import { JobSchema } from './job'
 import { uniqueMusicTags } from './music-tags'
 import { SourceNavigationLinkSchema } from './tags'
+import { EntityRelationshipSchema } from './entity-relationships'
 
 export const ARTIST_ENRICHMENT_TASK = 'artist-enrichment'
 
@@ -15,8 +16,11 @@ export const ArtistProfileProviderSchema = z.enum([
 ])
 export type ArtistProfileProvider = z.infer<typeof ArtistProfileProviderSchema>
 
+export const ArtistProviderIdSchema = z.string().regex(/^[a-z][a-z0-9-]*$/)
+export type ArtistProviderId = z.infer<typeof ArtistProviderIdSchema>
+
 export const ArtistIdentifierSchema = z.object({
-  provider: ArtistProfileProviderSchema,
+  provider: ArtistProviderIdSchema,
   externalId: z.string().nullable(),
   status: z.enum(['confirmed', 'inferred', 'conflict', 'missing']),
   url: SourceNavigationLinkSchema.shape.url.nullable(),
@@ -25,7 +29,7 @@ export type ArtistIdentifier = z.infer<typeof ArtistIdentifierSchema>
 
 export const ArtistIdentifierSourceSchema = z.object({
   externalId: z.string(),
-  provider: ArtistProfileProviderSchema,
+  provider: ArtistProviderIdSchema,
   kind: z.enum(['album', 'track', 'artist']),
   id: z.string(),
   title: z.string(),
@@ -45,6 +49,10 @@ export type ArtistIdentifierSourcePage = z.infer<
 
 const ProfileTextSchema = z.string().trim().min(1)
 const ProfileUrlSchema = SourceNavigationLinkSchema.shape.url
+export const ArtistSimilarCandidateSchema = z.object({
+  name: ProfileTextSchema,
+  externalId: ProfileTextSchema.max(1000).optional(),
+})
 
 export const ArtistProfileSchema = z.object({
   name: ProfileTextSchema.optional(),
@@ -55,12 +63,21 @@ export const ArtistProfileSchema = z.object({
   externalId: ProfileTextSchema.optional(),
   url: ProfileUrlSchema.optional(),
   tags: z.array(z.string()).transform(uniqueMusicTags).default([]),
+  relationships: z.array(EntityRelationshipSchema).max(100).optional(),
+  similarArtists: z
+    .array(
+      ArtistSimilarCandidateSchema.extend({
+        artistId: CreatorIdSchema.optional(),
+      }),
+    )
+    .max(100)
+    .optional(),
 })
 export type ArtistProfile = z.infer<typeof ArtistProfileSchema>
 
 export const ArtistProviderSnapshotSchema = z.object({
   id: z.string(),
-  provider: ArtistProfileProviderSchema,
+  provider: ArtistProviderIdSchema,
   profile: ArtistProfileSchema,
   scrapeJobId: z.string().nullable(),
   createdAt: z.string().datetime(),
@@ -71,7 +88,7 @@ export type ArtistProviderSnapshot = z.infer<
 
 export const ArtistEnrichmentInputSchema = z
   .object({
-    provider: ArtistProfileProviderSchema,
+    provider: ArtistProviderIdSchema,
     providerArtistId: z.string().trim().min(1).max(1000).optional(),
   })
   .strict()
@@ -81,8 +98,7 @@ export const ArtistFreshnessFiltersSchema =
   ProviderFreshnessFiltersSchema.refine(
     (filters) =>
       filters.every(
-        (filter) =>
-          ArtistProfileProviderSchema.safeParse(filter.provider).success,
+        (filter) => ArtistProviderIdSchema.safeParse(filter.provider).success,
       ),
     'Choose artist enrichment providers',
   )
@@ -90,7 +106,7 @@ export const ArtistFreshnessFiltersSchema =
 export const QueueArtistSelectionSchema = z
   .object({
     artistIds: z.array(CreatorIdSchema).min(1).max(100),
-    providers: z.array(ArtistProfileProviderSchema).min(1).max(4),
+    providers: z.array(ArtistProviderIdSchema).min(1).max(20),
     freshness: ArtistFreshnessFiltersSchema.optional(),
     confirmBroadRun: z.boolean().default(false),
   })
@@ -102,7 +118,7 @@ export const ArtistEnrichmentResultSchema = z.object({
   skipped: z.array(
     z.object({
       artistId: CreatorIdSchema,
-      provider: ArtistProfileProviderSchema,
+      provider: ArtistProviderIdSchema,
       reason: z.string(),
     }),
   ),

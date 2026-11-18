@@ -78,11 +78,13 @@ with an uncertain outcome requires worker review before switching modes.
 Cloudflare execution uses the server-side Discogs credential. Local execution
 uses the credentials configured on that worker.
 
-To set up a Discogs worker, pause Discogs and use the owner-authenticated
-`POST /api/v1/cloud/providers/discogs/local-worker` with
-`{"mode":"pair"}`. Keep the returned token in the worker's private
-environment as `LOCAL_WORKER_TOKEN`. Set the other worker variables in the
-Discogs worker's private `.env` file.
+To set up a Discogs worker, pause the queue and wait for active work to finish.
+Open the provider’s **Settings → Local worker**, choose **Pair worker** or
+**Replace pairing**, then confirm. Replacement immediately invalidates the
+previous token. Choose **Download worker token** before leaving the page.
+Set `LOCAL_WORKER_TOKEN` in the worker's private `.env` file to the contents
+of `local-worker-token.txt` and remove the downloaded copy. Set the other worker
+variables in the same private file.
 
 | Variable                        | Value                                                                         |
 | ------------------------------- | ----------------------------------------------------------------------------- |

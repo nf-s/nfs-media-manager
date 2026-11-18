@@ -6,6 +6,12 @@
     "paths": {
       // Native ESM plugins need the built module's named exports under TSX.
       "@repo/schemas/provider": ["../../packages/schemas/dist/provider"],
+      "@repo/schemas/artist-profiles": [
+        "../../packages/schemas/dist/artist-profiles"
+      ],
+      "@repo/schemas/entity-relationships": [
+        "../../packages/schemas/dist/entity-relationships"
+      ],
       "@repo/schemas/*": ["../../packages/schemas/src/*"],
       "@repo/media-plugin-sdk": [
         "../../packages/media-plugin-sdk/src/index.ts"

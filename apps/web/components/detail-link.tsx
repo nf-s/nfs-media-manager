@@ -16,6 +16,7 @@ type DetailLinkProps = DetailTarget &
 export function DetailLink({
   kind,
   id,
+  mediaType,
   tab,
   view: state,
   onClick,
@@ -26,7 +27,12 @@ export function DetailLink({
     tab || state
       ? new URLSearchParams({ ...(tab ? { tab } : {}), ...state })
       : undefined
-  const target = { kind, id, view: view?.toString() }
+  const target = {
+    kind,
+    id,
+    ...(kind === 'collection' && mediaType === 'album' ? { mediaType } : {}),
+    view: view?.toString(),
+  }
   return (
     <Link
       {...props}

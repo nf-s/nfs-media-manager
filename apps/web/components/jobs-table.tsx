@@ -19,7 +19,7 @@ import {
   useQueryClient,
 } from '@tanstack/react-query'
 import { ChevronDown, ChevronRight } from 'lucide-react'
-import { ArtistProfileProviderSchema } from '@repo/schemas/artist-profiles'
+import { supportsArtistEnrichment } from '@/utils/artist-providers'
 import {
   JobSortKeySchema,
   JobListQuerySchema,
@@ -259,7 +259,7 @@ export function JobsTable({ provider }: { provider?: string }) {
     library === 'subscription'
       ? item.subscriptions
       : library === 'artist'
-        ? ArtistProfileProviderSchema.safeParse(item.id).success
+        ? supportsArtistEnrichment(item)
         : library
           ? item.mediaTypes.some((kind) => kind === library)
           : item.surface === 'provider',

@@ -5,8 +5,15 @@ import { useDeferredValue } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Library } from 'lucide-react'
 import {
+  AlbumCollectionDetailSchema,
+  AlbumCollectionQuerySchema,
+  type AlbumCollectionDetail,
+  type AlbumCollectionSort,
+} from '@repo/schemas/album-collections'
+import {
   FilmCollectionDetailSchema,
   FilmCollectionQuerySchema,
+  type FilmCollectionDetail,
   type FilmCollectionSort,
   type FilmCollectionQuery,
 } from '@repo/schemas/film-collections'
@@ -24,7 +31,9 @@ import {
   EMPTY_VALUE,
   formatCount,
   formatDate,
+  formatItemCount,
   formatRuntime,
+  formatTrackLength,
 } from '@repo/ui/lib/format'
 import {
   TableBody,
@@ -36,14 +45,20 @@ import {
 } from '@repo/ui/components/ui/table'
 import { useVirtualTable } from '@/hooks/useVirtualTable'
 import { useNestedGridDensity } from '@/hooks/useGridDensity'
-import { collectionFilmsHref } from '@/utils/playlist-links'
+import { collectionItemsHref } from '@/utils/playlist-links'
+import type { MediaScope } from '@/utils/media-scope'
 import { defaultBrowseView, parseBrowseView } from '@/utils/media-grid'
 import { clientQueryDefaults } from '@/utils/query-cache'
 import { fetchApiData } from '@/utils/api'
 import { useConfig } from './providers'
 import { CreatorDetailState } from './creator-detail-state'
 import { DetailMore } from './detail-more'
-import { DetailArt, DetailTabs, useDetailTab } from './detail-frame'
+import {
+  DetailArt,
+  DetailTabs,
+  OpenAtProvider,
+  useDetailTab,
+} from './detail-frame'
 import { ProviderSources } from './provider-sources'
 import BrowseToolbar, {
   BrowseColumnFilterSection,
@@ -64,24 +79,42 @@ import {
   useTableColumns,
 } from './secondary-table'
 
-const dataColumns: Array<{
-  key: FilmCollectionSort
+type CollectionDetail = AlbumCollectionDetail | FilmCollectionDetail
+type CollectionSort = AlbumCollectionSort | FilmCollectionSort
+type CollectionView = {
+  q?: string
+  sortBy: CollectionSort
+  direction: 'asc' | 'desc'
+  watchedStates?: FilmCollectionQuery['watchedStates']
+}
+
+type CollectionColumn = {
+  key: CollectionSort
   label: string
   defaultVisible?: boolean
   required?: boolean
   align?: 'end'
-}> = [
+}
+
+const sharedColumns: CollectionColumn[] = [
+  { key: 'source', label: 'Source', defaultVisible: false },
+  { key: 'dateAdded', label: 'Added', defaultVisible: false },
+]
+const filmColumns: CollectionColumn[] = [
   { key: 'position', label: 'Stored position', align: 'end' },
   { key: 'title', label: 'Film', required: true },
   { key: 'releaseDate', label: 'Released' },
   { key: 'runtimeMinutes', label: 'Runtime', align: 'end' },
   { key: 'watched', label: 'Watched' },
-  { key: 'source', label: 'Source', defaultVisible: false },
-  { key: 'dateAdded', label: 'Added', defaultVisible: false },
+  ...sharedColumns,
 ]
-const columns = [
-  { key: 'artwork', label: 'Artwork', defaultVisible: false },
-  ...dataColumns,
+const albumColumns: CollectionColumn[] = [
+  { key: 'position', label: 'Stored position', align: 'end' },
+  { key: 'title', label: 'Album', required: true },
+  { key: 'artists', label: 'Artists' },
+  { key: 'releaseDate', label: 'Released' },
+  { key: 'durationSec', label: 'Duration', align: 'end' },
+  ...sharedColumns,
 ]
 
 type CollectionTab = 'overview' | 'sources'
@@ -94,79 +127,123 @@ function DateValue({ value }: { value: string | null }) {
   return value ? <time dateTime={value}>{formatDate(value)}</time> : EMPTY_VALUE
 }
 
-export function FilmCollectionEntries({ id }: { id: string }) {
+function collectionCount(collection: CollectionDetail) {
+  return 'albumCount' in collection
+    ? collection.albumCount
+    : collection.filmCount
+}
+
+function albumDuration(durationSec: number | null) {
+  return formatTrackLength(durationSec === null ? null : durationSec * 1000)
+}
+
+export function CollectionEntries({
+  id,
+  mediaType,
+}: {
+  id: string
+  mediaType: MediaScope
+}) {
   const { apiBaseUrl } = useConfig()
   const detail = useDetailView()
-  const parsed = FilmCollectionQuerySchema.safeParse(
-    Object.fromEntries(detail.params),
-  )
-  const view = parsed.success
+  const album = mediaType === 'album'
+  const members = `${mediaType}s`
+  const label = album ? 'Albums' : 'Films'
+  const countNoun = { one: mediaType, other: members }
+  const ratio = album ? undefined : 'poster'
+  const dataColumns = album ? albumColumns : filmColumns
+  const columns = [
+    { key: 'artwork', label: 'Artwork', defaultVisible: false },
+    ...dataColumns,
+  ]
+  const querySchema = album
+    ? AlbumCollectionQuerySchema
+    : FilmCollectionQuerySchema
+  const parsed = querySchema.safeParse(Object.fromEntries(detail.params))
+  const view: CollectionView = parsed.success
     ? parsed.data
-    : FilmCollectionQuerySchema.parse({})
+    : querySchema.parse({})
   const { sortBy, direction } = view
   const search = view.q ?? ''
   const q = useDeferredValue(search.trim())
   const watchedStates = view.watchedStates ?? []
   const { tab, setTab } = useDetailTab(collectionTabs, {
-    aliases: { films: 'overview' },
+    aliases: { albums: 'overview', films: 'overview' },
   })
   const showSources = tab === 'sources'
   const [savedPresentation, setPresentation] = useNestedMediaView(
-    'collection-films',
-    defaultBrowseView('film'),
+    `collection-${members}`,
+    defaultBrowseView(mediaType),
   )
   const presentation = parseBrowseView(
     detail.params.get('view'),
     savedPresentation,
   )
   const [density, setDensity] = useNestedGridDensity(
-    'film',
+    mediaType,
     detail.params.get('density'),
   )
-  function changeView(patch: Partial<FilmCollectionQuery>) {
+  function changeView(patch: Partial<CollectionView>) {
     const next = { ...view, ...patch }
     const params = new URLSearchParams(detail.params)
     for (const [key, value] of Object.entries({
       q: next.q ?? '',
       sortBy: next.sortBy,
       direction: next.direction,
-      watchedStates: JSON.stringify(next.watchedStates ?? []),
+      ...(!album
+        ? { watchedStates: JSON.stringify(next.watchedStates ?? []) }
+        : {}),
     }))
       params.set(key, value)
     detail.replace(params)
   }
-  const table = useTableColumns('film-collection-items', columns)
-  const path = `/api/v1/collections/${encodeURIComponent(id)}`
+  const table = useTableColumns(`${mediaType}-collection-items`, columns)
+  const path = `/api/v1/${album ? 'album-collections' : 'collections'}/${encodeURIComponent(id)}`
+  const schema = album
+    ? AlbumCollectionDetailSchema
+    : FilmCollectionDetailSchema
+  const queryKey = [`${mediaType}-collection`, id]
   const sources = useQuery({
-    queryKey: ['film-collection', id, 'sources'],
+    queryKey: [...queryKey, 'sources'],
     queryFn: ({ signal }) =>
-      fetchApiData(
-        apiBaseUrl,
-        `${path}?size=1&includeSources=true`,
-        FilmCollectionDetailSchema,
-        { signal },
-      ),
-    enabled: showSources,
+      fetchApiData(apiBaseUrl, `${path}?size=1&includeSources=true`, schema, {
+        signal,
+      }),
     ...clientQueryDefaults,
     retry: false,
   })
   const query = useVirtualTable({
-    queryKey: ['film-collection', id, sortBy, direction, q, watchedStates],
+    queryKey: [...queryKey, sortBy, direction, q, watchedStates],
     rowHeight: 36,
-    presentation: { view: presentation, mediaType: 'film', density },
+    presentation: { view: presentation, mediaType, density },
     enabled: !showSources,
     loadPage: async (page, size, signal) => {
       const result = await fetchApiData(
         apiBaseUrl,
         `${path}?${new URLSearchParams({ page: String(page), size: String(size), sortBy, direction, includeSources: 'false', ...(q ? { q } : {}), ...(watchedStates.length ? { watchedStates: JSON.stringify(watchedStates) } : {}) })}`,
-        FilmCollectionDetailSchema,
+        schema,
         { signal },
       )
       return { ...result.items, summary: result }
     },
   })
   const summary = query.firstPage?.summary ?? sources.data
-  function onSort(key: FilmCollectionSort) {
+  const sourceLinks = sources.data?.sourceLinks ?? []
+  const sourceLabels = new Map<string, number>()
+  for (const { providerLabel } of sourceLinks)
+    sourceLabels.set(providerLabel, (sourceLabels.get(providerLabel) ?? 0) + 1)
+  const seenLabels = new Map<string, number>()
+  const destinations = sourceLinks.map((link) => {
+    const { providerLabel } = link
+    const position = (seenLabels.get(providerLabel) ?? 0) + 1
+    seenLabels.set(providerLabel, position)
+    const label =
+      (sourceLabels.get(providerLabel) ?? 0) > 1
+        ? `${providerLabel} (${position})`
+        : providerLabel
+    return { ...link, label }
+  })
+  function onSort(key: CollectionSort) {
     changeView({
       sortBy: key,
       direction: sortBy === key && direction === 'asc' ? 'desc' : 'asc',
@@ -188,21 +265,23 @@ export function FilmCollectionEntries({ id }: { id: string }) {
   const empty =
     query.hasTotal && query.total === 0
       ? q || watchedStates.length
-        ? 'No matching films.'
-        : 'No films in this collection.'
+        ? `No matching ${members}.`
+        : `No ${members} in this collection.`
       : undefined
-  const films = (
+  const collectionItems = (
     <>
-      <p className="ds-help">
-        Stored positions are preserved, including gaps. Older imports may not
-        contain the source's film order.
-      </p>
+      {!album && (
+        <p className="ds-help">
+          Stored positions are preserved, including gaps. Older imports may not
+          contain the source's film order.
+        </p>
+      )}
       <BrowseToolbar
         search={
           <Input
             type="search"
-            aria-label="Search collection films"
-            placeholder="Search films"
+            aria-label={`Search collection ${members}`}
+            placeholder={`Search ${members}`}
             value={search}
             maxLength={200}
             onChange={(event) => changeView({ q: event.target.value })}
@@ -233,18 +312,24 @@ export function FilmCollectionEntries({ id }: { id: string }) {
         }}
         filterCount={watchedStates.length}
         filters={
-          <>
-            <BrowseColumnFilterSection {...watchedFilter} />
-            {presentation === 'table' && (
-              <BrowseColumnsSection>{table.options}</BrowseColumnsSection>
-            )}
-          </>
+          !album || presentation === 'table' ? (
+            <>
+              {!album && <BrowseColumnFilterSection {...watchedFilter} />}
+              {presentation === 'table' && (
+                <BrowseColumnsSection>{table.options}</BrowseColumnsSection>
+              )}
+            </>
+          ) : undefined
         }
         count={
           query.firstPage
-            ? q || watchedStates.length
-              ? `${formatCount(query.total)} of ${formatCount(query.firstPage.summary.filmCount)} films`
-              : `${formatCount(query.total)} films`
+            ? formatItemCount(
+                query.total,
+                countNoun,
+                q || watchedStates.length
+                  ? collectionCount(query.firstPage.summary)
+                  : undefined,
+              )
             : undefined
         }
       />
@@ -257,7 +342,7 @@ export function FilmCollectionEntries({ id }: { id: string }) {
             </Button>
           }
         >
-          Could not load collection films.
+          Could not load collection {members}.
         </Notice>
       )}
       {presentation === 'table' ? (
@@ -266,13 +351,13 @@ export function FilmCollectionEntries({ id }: { id: string }) {
           onScroll={query.onScroll}
           className="dtl-entries"
           role="region"
-          aria-label="Collection films"
+          aria-label={`Collection ${members}`}
           data-inspector-scroll=""
           aria-busy={query.isFetching}
         >
           <table
             className="ds-table"
-            aria-label="Collection films"
+            aria-label={`Collection ${members}`}
             aria-rowcount={query.hasTotal ? query.total + 1 : undefined}
           >
             <TableHeader>
@@ -315,7 +400,7 @@ export function FilmCollectionEntries({ id }: { id: string }) {
                   >
                     {table.visible('artwork') && (
                       <TableCell>
-                        <Thumb ratio="poster">
+                        <Thumb ratio={ratio}>
                           {row.artworkUrl && (
                             <img
                               className="ds-artimg"
@@ -337,11 +422,18 @@ export function FilmCollectionEntries({ id }: { id: string }) {
                         <SecondaryCell text={row.title}>
                           <DetailLink
                             className="ds-cell-title"
-                            kind="film"
+                            kind={mediaType}
                             id={row.id}
                           >
                             {row.title}
                           </DetailLink>
+                        </SecondaryCell>
+                      </TableCell>
+                    )}
+                    {'artists' in row && table.visible('artists') && (
+                      <TableCell>
+                        <SecondaryCell text={row.artists.join(', ')}>
+                          {row.artists.join(', ') || EMPTY_VALUE}
                         </SecondaryCell>
                       </TableCell>
                     )}
@@ -350,12 +442,18 @@ export function FilmCollectionEntries({ id }: { id: string }) {
                         <DateValue value={row.releaseDate} />
                       </TableCell>
                     )}
-                    {table.visible('runtimeMinutes') && (
+                    {'durationSec' in row && table.visible('durationSec') && (
                       <TableCell align="end">
-                        {formatRuntime(row.runtimeMinutes)}
+                        {albumDuration(row.durationSec)}
                       </TableCell>
                     )}
-                    {table.visible('watched') && (
+                    {'runtimeMinutes' in row &&
+                      table.visible('runtimeMinutes') && (
+                        <TableCell align="end">
+                          {formatRuntime(row.runtimeMinutes)}
+                        </TableCell>
+                      )}
+                    {'watched' in row && table.visible('watched') && (
                       <TableCell>{row.watched ? 'Yes' : 'No'}</TableCell>
                     )}
                     {table.visible('source') && (
@@ -380,43 +478,50 @@ export function FilmCollectionEntries({ id }: { id: string }) {
         <NestedMediaCards
           window={query}
           view={presentation}
-          mediaType="film"
-          label="Collection films"
+          mediaType={mediaType}
+          label={`Collection ${members}`}
           empty={empty}
           busy={query.isFetching}
           renderItem={(row) => (
             <NestedMediaCard
               view={presentation}
-              kind="film"
+              kind={mediaType}
               id={row.id}
               title={row.title}
               artworkUrl={row.artworkUrl}
               subtitle={[
+                'artists' in row ? row.artists.join(', ') : undefined,
                 `Position ${formatCount(row.position)}`,
                 row.releaseDate?.slice(0, 4),
               ]
                 .filter(Boolean)
                 .join(' · ')}
-              metadata={[
-                row.runtimeMinutes === null
-                  ? undefined
-                  : formatRuntime(row.runtimeMinutes),
-                row.watched ? 'Watched' : 'Unwatched',
-              ]
-                .filter(Boolean)
-                .join(' · ')}
+              metadata={
+                'artists' in row
+                  ? row.durationSec === null
+                    ? undefined
+                    : albumDuration(row.durationSec)
+                  : [
+                      row.runtimeMinutes === null
+                        ? undefined
+                        : formatRuntime(row.runtimeMinutes),
+                      row.watched ? 'Watched' : 'Unwatched',
+                    ]
+                      .filter(Boolean)
+                      .join(' · ')
+              }
             />
           )}
         />
       )}
     </>
   )
-  if (!summary && (query.isError || sources.isError) && !query.firstPage)
+  if (!summary && (showSources ? sources.isError : query.isError))
     return (
       <CreatorDetailState
         retry={() => {
-          query.retry()
-          void sources.refetch()
+          if (showSources) void sources.refetch()
+          else query.retry()
         }}
         subject="collection"
       />
@@ -427,27 +532,33 @@ export function FilmCollectionEntries({ id }: { id: string }) {
         art={
           <DetailArt
             src={null}
-            ratio="poster"
+            ratio={ratio}
             fallback={<Library className="ds-i" aria-hidden="true" />}
           />
         }
         kind="Collection"
         title={summary?.name ?? 'Collection'}
         facts={[
-          summary
-            ? `${formatCount(summary.filmCount)} ${summary.filmCount === 1 ? 'film' : 'films'}`
-            : null,
+          summary ? formatItemCount(collectionCount(summary), countNoun) : null,
         ]}
         actions={
           summary && (
             <>
               <DetailActionsSpacer />
+              {destinations.map(({ provider, url, label }) => (
+                <OpenAtProvider
+                  key={`${provider}:${url}`}
+                  label={label}
+                  actionLabel={`Open on ${label}`}
+                  url={url}
+                />
+              ))}
               <DetailMore
                 crumb={{ title: summary.name }}
                 items={[
                   {
-                    label: 'Filter films',
-                    href: collectionFilmsHref(summary.name),
+                    label: `Filter ${members}`,
+                    href: collectionItemsHref(mediaType, summary.name),
                   },
                 ]}
               />
@@ -465,21 +576,31 @@ export function FilmCollectionEntries({ id }: { id: string }) {
         ]}
       >
         <TabsContent value="overview">
-          <Section title="Films" flush>
-            {films}
+          {sources.isError && !sources.data && (
+            <Notice
+              tone="danger"
+              action={
+                <Button size="xs" onClick={() => sources.refetch()}>
+                  Retry
+                </Button>
+              }
+            >
+              Could not load collection sources.
+            </Notice>
+          )}
+          <Section title={label} flush>
+            {collectionItems}
           </Section>
         </TabsContent>
         <TabsContent value="sources">
           <ProviderSources
-            rows={
-              sources.data?.sourceLinks.map((link) => ({
-                id: `${link.provider}:${link.url}`,
-                label: link.providerLabel,
-                links: [
-                  { provider: link.provider, label: link.name, url: link.url },
-                ],
-              })) ?? []
-            }
+            rows={destinations.map((link) => ({
+              id: `${link.provider}:${link.url}`,
+              label: link.label,
+              links: [
+                { provider: link.provider, label: link.name, url: link.url },
+              ],
+            }))}
             pending={sources.isPending}
             unavailable={
               sources.isError && !sources.data

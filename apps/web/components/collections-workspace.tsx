@@ -1,8 +1,13 @@
 'use client'
 
 import Link from 'next/link'
+import { useSearchParams } from 'next/navigation'
 import { useDeferredValue, useState } from 'react'
 import { BrowseCountSchema } from '@repo/schemas/browse'
+import {
+  AlbumCollectionBrowsePageSchema,
+  type AlbumCollectionBrowseSort,
+} from '@repo/schemas/album-collections'
 import {
   FilmCollectionBrowsePageSchema,
   type FilmCollectionBrowseSort,
@@ -35,32 +40,47 @@ import {
   useTableColumns,
 } from './secondary-table'
 import ServiceIconLinks from './service-icon-links'
-import { collectionFilmsHref } from '@/utils/playlist-links'
+import { collectionItemsHref } from '@/utils/playlist-links'
+import { mediaScope, type MediaScope } from '@/utils/media-scope'
 
-const columns: Array<{
-  key: FilmCollectionBrowseSort | 'source'
-  label: string
-  required?: boolean
-  defaultVisible?: boolean
-}> = [
-  { key: 'name', label: 'Collection', required: true },
-  { key: 'filmCount', label: 'Films' },
-  { key: 'source', label: 'Source', defaultVisible: false },
-  { key: 'createdAt', label: 'Added', defaultVisible: false },
-]
+type CollectionBrowseSort = FilmCollectionBrowseSort | AlbumCollectionBrowseSort
 
-export default function FilmCollectionsWorkspace() {
+export default function CollectionsWorkspace() {
+  const mediaType = mediaScope(useSearchParams().get('mediaType'))
+  return <CollectionDirectory key={mediaType} mediaType={mediaType} />
+}
+
+function CollectionDirectory({ mediaType }: { mediaType: MediaScope }) {
   const { apiBaseUrl } = useConfig()
+  const album = mediaType === 'album'
+  const endpoint = album ? '/api/v1/album-collections' : '/api/v1/collections'
+  const collectionLabel = album ? 'Album collections' : 'Film collections'
+  const countKey = album ? 'albumCount' : 'filmCount'
+  const columns: Array<{
+    key: CollectionBrowseSort | 'source'
+    label: string
+    required?: boolean
+    defaultVisible?: boolean
+  }> = [
+    { key: 'name', label: 'Collection', required: true },
+    { key: countKey, label: album ? 'Albums' : 'Films' },
+    { key: 'source', label: 'Source', defaultVisible: false },
+    { key: 'createdAt', label: 'Added', defaultVisible: false },
+  ]
   const [search, setSearch] = useState('')
   const q = useDeferredValue(search.trim())
-  const [sortBy, setSortBy] = useState<FilmCollectionBrowseSort>('name')
+  const [sortBy, setSortBy] = useState<CollectionBrowseSort>('name')
   const [direction, setDirection] = useState<'asc' | 'desc'>('asc')
-  const table = useTableColumns('film-collections', columns)
+  const directoryKey = `${mediaType}-collections`
+  const table = useTableColumns(directoryKey, columns)
   const includeSources = table.visible('source')
   const inspector = useDetailInspector()
   const selectedId =
-    inspector?.root?.kind === 'collection' ? inspector.root.id : null
-  const viewportKey = ['film-collections', 'browse', q, sortBy, direction]
+    inspector?.root?.kind === 'collection' &&
+    (inspector.root.mediaType ?? 'film') === mediaType
+      ? inspector.root.id
+      : null
+  const viewportKey = [directoryKey, 'browse', q, sortBy, direction]
   const {
     window: query,
     isCounting,
@@ -69,11 +89,11 @@ export default function FilmCollectionsWorkspace() {
   } = useCountedVirtualTable({
     viewportKey,
     queryKey: [...viewportKey, includeSources],
-    countKey: ['film-collections', 'browse-count', q],
+    countKey: [directoryKey, 'browse-count', q],
     loadCount: (signal) =>
       fetchApiData(
         apiBaseUrl,
-        `/api/v1/collections/browse-count?${new URLSearchParams({ q })}`,
+        `${endpoint}/browse-count?${new URLSearchParams({ q })}`,
         BrowseCountSchema,
         { signal },
       ),
@@ -88,14 +108,16 @@ export default function FilmCollectionsWorkspace() {
       })
       return fetchApiData(
         apiBaseUrl,
-        `/api/v1/collections/browse-page?${params}`,
-        FilmCollectionBrowsePageSchema,
+        `${endpoint}/browse-page?${params}`,
+        album
+          ? AlbumCollectionBrowsePageSchema
+          : FilmCollectionBrowsePageSchema,
         { signal },
       )
     },
   })
   /** A new sort starts ascending for names and descending for counts and dates. */
-  function onSort(key: FilmCollectionBrowseSort) {
+  function onSort(key: CollectionBrowseSort) {
     setDirection(
       sortBy === key
         ? direction === 'asc'
@@ -153,12 +175,12 @@ export default function FilmCollectionsWorkspace() {
         ref={query.scroller}
         onScroll={query.onScroll}
         role="region"
-        aria-label="Film collections"
+        aria-label={collectionLabel}
         aria-busy={query.isFetching}
       >
         <table
           className="ds-table"
-          aria-label="Film collections"
+          aria-label={collectionLabel}
           aria-rowcount={query.hasTotal ? query.total + 1 : undefined}
         >
           <TableHeader>
@@ -176,7 +198,7 @@ export default function FilmCollectionsWorkspace() {
                       sortBy={sortBy}
                       direction={direction}
                       onSort={onSort}
-                      align={column.key === 'filmCount' ? 'end' : undefined}
+                      align={column.key === countKey ? 'end' : undefined}
                       sticky={column.key === 'name' ? 0 : undefined}
                       stickyEdge={column.key === 'name'}
                     />
@@ -187,7 +209,9 @@ export default function FilmCollectionsWorkspace() {
           <TableBody>
             {query.hasTotal && !query.total && (
               <TableState colSpan={table.count}>
-                {q ? 'No matching collections.' : 'No stored film collections.'}
+                {q
+                  ? 'No matching collections.'
+                  : `No stored ${mediaType} collections.`}
               </TableState>
             )}
             <SecondaryVirtualRows
@@ -205,6 +229,7 @@ export default function FilmCollectionsWorkspace() {
                       <SecondaryCell text={row.name}>
                         <DetailLink
                           kind="collection"
+                          mediaType={mediaType}
                           id={row.id}
                           className="ds-cell-title"
                         >
@@ -213,13 +238,15 @@ export default function FilmCollectionsWorkspace() {
                       </SecondaryCell>
                     </TableCell>
                   )}
-                  {table.visible('filmCount') && (
+                  {table.visible(countKey) && (
                     <TableCell align="end">
                       <Link
-                        href={collectionFilmsHref(row.name)}
-                        title={`Filter films by ${row.name}`}
+                        href={collectionItemsHref(mediaType, row.name)}
+                        title={`Filter ${mediaType}s by ${row.name}`}
                       >
-                        {formatCount(row.filmCount)}
+                        {formatCount(
+                          'albumCount' in row ? row.albumCount : row.filmCount,
+                        )}
                       </Link>
                     </TableCell>
                   )}

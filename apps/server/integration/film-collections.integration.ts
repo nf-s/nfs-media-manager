@@ -10,12 +10,18 @@ import { inArray } from 'drizzle-orm'
 import { migrate } from 'drizzle-orm/node-postgres/migrator'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import {
+  AlbumCollectionBrowseQuerySchema,
+  AlbumCollectionQuerySchema,
+  AlbumCollectionSortSchema,
+} from '@repo/schemas/album-collections'
+import {
   FilmCollectionBrowseQuerySchema,
   FilmCollectionQuerySchema,
   FilmCollectionSortSchema,
 } from '@repo/schemas/film-collections'
 import { env } from '@/env'
 import * as schema from '@/schemas/db'
+import { AlbumQuerySchema } from '@repo/schemas/media'
 
 const database = `film_collections_${randomUUID().replaceAll('-', '')}`
 const connection = {
@@ -67,13 +73,28 @@ vi.mock('@/plugins/registry', () => ({
         },
       },
     },
+    {
+      manifest: {
+        ...manifest,
+        id: 'fixture-album',
+        displayName: 'Album fixture',
+        mediaTypes: ['album'],
+        sourceNavigation: {
+          collectionUrlTemplate: 'https://example.test/albums/{id}',
+        },
+      },
+      readStoredCollections,
+    },
   ],
 }))
 import {
+  countAlbumCollections,
   countFilmCollections,
+  getAlbumCollection,
   getFilmCollection,
+  listAlbumCollectionBrowsePage,
   listFilmCollectionBrowsePage,
-} from '@/services/film-collections'
+} from '@/services/collections'
 
 const browseQuery = FilmCollectionBrowseQuerySchema.parse
 
@@ -143,6 +164,29 @@ beforeAll(async () => {
     },
     { id: 'album', slug: 'album', title: 'Album', mediaType: 'album' },
     {
+      id: 'album-beta',
+      slug: 'album-beta',
+      title: 'Beta',
+      mediaType: 'album',
+      releaseDate: new Date('2020-01-01'),
+      sourceLabel: 'A source',
+    },
+    {
+      id: 'album-gamma',
+      slug: 'album-gamma',
+      title: 'Gamma',
+      mediaType: 'album',
+      releaseDate: new Date('2019-01-01'),
+      sourceLabel: 'B source',
+    },
+    {
+      id: 'album-hidden',
+      slug: 'album-hidden',
+      title: 'Hidden album',
+      mediaType: 'album',
+      metadata: { legacyHidden: true },
+    },
+    {
       id: 'hidden',
       slug: 'hidden',
       title: 'Hidden film',
@@ -184,13 +228,53 @@ beforeAll(async () => {
       ],
     },
   })
-  await databaseClient.insert(schema.album).values({ mediaItemId: 'album' })
+  await databaseClient.insert(schema.album).values([
+    {
+      mediaItemId: 'album',
+      metadata: {
+        'plugin.fixture-album.details': {
+          collections: [{ id: 'mixed', name: 'Fixture collection' }],
+        },
+        'plugin.fixture.details': {
+          collections: [{ id: 'wrong', name: 'Fixture collection' }],
+        },
+      },
+    },
+    {
+      mediaItemId: 'album-beta',
+      durationSec: 2400,
+      dateAdded: new Date('2024-01-01'),
+    },
+    {
+      mediaItemId: 'album-gamma',
+      durationSec: 1800,
+      dateAdded: new Date('2023-01-01'),
+    },
+    { mediaItemId: 'album-hidden' },
+  ])
+  await databaseClient.insert(schema.artist).values([
+    { id: 'first-artist', name: 'First artist' },
+    { id: 'second-artist', name: 'Second artist' },
+  ])
+  await databaseClient.insert(schema.mediaCredit).values([
+    { mediaItemId: 'album-beta', artistId: 'first-artist', role: 'artist' },
+    {
+      mediaItemId: 'album-beta',
+      artistId: 'second-artist',
+      role: 'artist',
+      billingOrder: 1,
+    },
+    { mediaItemId: 'album-gamma', artistId: 'second-artist', role: 'artist' },
+  ])
   await databaseClient.insert(schema.playlistItem).values([
     { playlistId: 'collection', mediaItemId: 'alpha', position: 8 },
     { playlistId: 'collection', mediaItemId: 'beta', position: 2 },
     { playlistId: 'collection', mediaItemId: 'gamma', position: 8 },
     { playlistId: 'collection', mediaItemId: 'album', position: 0 },
     { playlistId: 'music-only', mediaItemId: 'album', position: 0 },
+    { playlistId: 'music-only', mediaItemId: 'album-beta', position: 8 },
+    { playlistId: 'music-only', mediaItemId: 'album-gamma', position: 8 },
+    { playlistId: 'music-only', mediaItemId: 'album-hidden', position: 1 },
     { playlistId: 'playlist', mediaItemId: 'alpha', position: 1 },
     { playlistId: 'collection', mediaItemId: 'hidden', position: 1 },
     { playlistId: 'hidden-only', mediaItemId: 'hidden', position: 1 },
@@ -592,6 +676,150 @@ describe('film collections', () => {
           items.map((item) => item.id),
         ),
       )
+    }
+  })
+})
+
+describe('album collection memberships', () => {
+  const query = AlbumCollectionQuerySchema.parse
+  const browseQuery = AlbumCollectionBrowseQuerySchema.parse
+
+  it('includes canonical membership IDs in album Browse and detail', async () => {
+    const { getAlbumDetail, listAlbumBrowsePage } =
+      await import('@/services/media')
+    const detail = await getAlbumDetail('album')
+    const browse = await listAlbumBrowsePage(AlbumQuerySchema.parse({}))
+    const memberships = [
+      { id: 'collection', name: 'Fixture collection', kind: 'collection' },
+      { id: 'music-only', name: 'Music collection', kind: 'collection' },
+    ]
+    for (const media of [
+      detail,
+      browse.items.find((row) => row.id === 'album'),
+    ])
+      expect(media?.playlists).toMatchObject(memberships)
+  })
+
+  it('uses only visible albums for directory pages, counts and mixed collections', async () => {
+    expect(
+      await listAlbumCollectionBrowsePage(
+        browseQuery({ size: 1, sortBy: 'albumCount', direction: 'desc' }),
+      ),
+    ).toMatchObject({
+      items: [{ id: 'music-only', albumCount: 3, sourceLinks: [] }],
+      hasMore: true,
+    })
+    expect(
+      await listAlbumCollectionBrowsePage(
+        browseQuery({
+          size: 1,
+          page: 2,
+          sortBy: 'albumCount',
+          direction: 'desc',
+        }),
+      ),
+    ).toMatchObject({
+      items: [{ id: 'collection', albumCount: 1, sourceLinks: [] }],
+      hasMore: false,
+    })
+    expect(await countAlbumCollections(browseQuery({}))).toEqual({
+      totalCount: 2,
+    })
+    expect(await countAlbumCollections(browseQuery({ q: 'MUSIC' }))).toEqual({
+      totalCount: 1,
+    })
+    expect(await countAlbumCollections(browseQuery({ q: '_' }))).toEqual({
+      totalCount: 0,
+    })
+    const mixed = await getAlbumCollection('collection', query({}))
+    expect(mixed).toMatchObject({
+      albumCount: 1,
+      items: { totalCount: 1, items: [{ id: 'album' }] },
+    })
+    expect(mixed.sourceLinks.map((link) => link.url)).toEqual([
+      'https://example.test/albums/mixed',
+    ])
+    for (const id of ['playlist', 'hidden-only', 'empty', 'missing'])
+      await expect(getAlbumCollection(id, query({}))).rejects.toMatchObject({
+        response: { statusCode: 404 },
+      })
+  })
+
+  it('retains stored positions, ranks album-only fields globally and searches credited artists', async () => {
+    const stored = await getAlbumCollection(
+      'music-only',
+      query({ includeSources: 'false' }),
+    )
+    expect(stored.items.items.map((row) => [row.id, row.position])).toEqual([
+      ['album', 0],
+      ['album-beta', 8],
+      ['album-gamma', 8],
+    ])
+    const search = await getAlbumCollection(
+      'music-only',
+      query({ q: 'second artist', page: 2, size: 1, includeSources: 'false' }),
+    )
+    expect(search.items).toMatchObject({
+      totalCount: 2,
+      pageCount: 2,
+      items: [{ id: 'album-gamma', artists: ['Second artist'] }],
+    })
+    for (const sortBy of AlbumCollectionSortSchema.options) {
+      const detail = await getAlbumCollection(
+        'music-only',
+        query({ sortBy, direction: 'desc', size: 1, includeSources: 'false' }),
+      )
+      expect(detail.items.items).toHaveLength(1)
+      expect(detail.items.items[0]?.id, sortBy).toBe(
+        ['position', 'releaseDate', 'durationSec', 'dateAdded'].includes(sortBy)
+          ? 'album-beta'
+          : 'album-gamma',
+      )
+    }
+  })
+
+  it('resolves historical album source IDs and ignores unrelated normalized payloads', async () => {
+    const snapshots = ['album-source-history', 'album-source-unrelated']
+    await databaseClient.insert(schema.providerSnapshot).values([
+      {
+        id: 'album-source-history',
+        checksum: 'history',
+        mediaItemId: 'album-beta',
+        provider: 'legacy-browser',
+        source: 'legacy-clean-import',
+        payload: { collections: [{ id: 'history', name: 'MUSIC COLLECTION' }] },
+        normalizedData: {
+          playlists: [{ kind: 'collection', name: 'Music collection' }],
+        },
+      },
+      {
+        id: 'album-source-unrelated',
+        checksum: 'unrelated',
+        mediaItemId: 'album-beta',
+        provider: 'fixture-album',
+        source: 'fixture',
+        payload: {
+          collections: [{ id: 'other', name: 'Different collection' }],
+        },
+        normalizedData: {
+          playlists: [{ kind: 'collection', name: 'Different collection' }],
+        },
+      },
+    ])
+    try {
+      readStoredCollections.mockClear()
+      const result = await getAlbumCollection(
+        'music-only',
+        query({ size: 1, includeSources: 'true' }),
+      )
+      expect(result.sourceLinks.map((link) => link.url)).toEqual([
+        'https://example.test/albums/history',
+      ])
+      expect(readStoredCollections).toHaveBeenCalledOnce()
+    } finally {
+      await databaseClient
+        .delete(schema.providerSnapshot)
+        .where(inArray(schema.providerSnapshot.id, snapshots))
     }
   })
 })

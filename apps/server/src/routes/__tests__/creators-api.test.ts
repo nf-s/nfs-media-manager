@@ -166,9 +166,9 @@ describe('creator API', () => {
   it('validates metadata filters and routes the directory before artist IDs', async () => {
     for (const query of [
       'sortBy=lastScrapedAt',
-      'provider=youtube',
+      'provider=invalid/provider',
       'playlistIds=invalid',
-      `freshness=${encodeURIComponent(JSON.stringify([{ provider: 'youtube', mode: 'never' }]))}`,
+      `freshness=${encodeURIComponent(JSON.stringify([{ provider: 'invalid/provider', mode: 'never' }]))}`,
     ])
       expect((await app.request(`/artists/metadata?${query}`)).status).toBe(422)
     mocks.metadata.mockResolvedValue({ items: [] })
@@ -335,7 +335,7 @@ describe('creator API', () => {
       })
     for (const body of [
       { artistIds: [], providers: ['spotify'] },
-      { artistIds: ['fixture'], providers: ['youtube'] },
+      { artistIds: ['fixture'], providers: ['invalid/provider'] },
       {
         artistIds: Array.from({ length: 101 }, (_, i) => `artist-${i}`),
         providers: ['spotify'],
@@ -441,7 +441,7 @@ describe('creator API', () => {
 
   it('queues only a single provider for the selected artist and owner', async () => {
     for (const body of [
-      { provider: 'youtube' },
+      { provider: 'invalid/provider' },
       { provider: 'spotify', force: true },
     ])
       expect((await enqueue(body)).status).toBe(422)

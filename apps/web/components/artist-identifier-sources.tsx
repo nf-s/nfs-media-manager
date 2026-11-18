@@ -5,11 +5,13 @@ import {
   type ArtistIdentifier,
   type ArtistIdentifierSource,
 } from '@repo/schemas/artist-profiles'
+import type { ProviderSummary } from '@repo/schemas/provider'
 import { Notice } from '@repo/ui/components/ds/feedback'
 import { Button } from '@repo/ui/components/ui/button'
 import { TableState } from '@repo/ui/components/ui/table'
 import { useVirtualTable } from '@/hooks/useVirtualTable'
 import { fetchApiData } from '@/utils/api'
+import { artistProviderLabel } from '@/utils/artist-providers'
 import { DetailLink } from './detail-link'
 import { useConfig } from './providers'
 import {
@@ -18,20 +20,16 @@ import {
   SecondaryVirtualRows,
 } from './secondary-table'
 
-export const artistProviderLabels = {
-  spotify: 'Spotify',
-  musicbrainz: 'MusicBrainz',
-  discogs: 'Discogs',
-  lastfm: 'Last.fm',
-}
-
 export function ArtistIdentifierSourceRow({
   source,
   index,
+  catalog,
 }: {
   source: ArtistIdentifierSource
   index: number
+  catalog?: readonly ProviderSummary[]
 }) {
+  const label = artistProviderLabel(source.provider, catalog)
   const kind =
     source.kind === 'artist'
       ? 'Artist profile'
@@ -58,10 +56,10 @@ export function ArtistIdentifierSourceRow({
             {kind} ·{' '}
             {source.jobId ? (
               <DetailLink kind="job" id={source.jobId}>
-                {artistProviderLabels[source.provider]}
+                {label}
               </DetailLink>
             ) : (
-              artistProviderLabels[source.provider]
+              label
             )}
           </span>
         </div>
@@ -77,9 +75,11 @@ export function ArtistIdentifierSourceRow({
 export function ArtistIdentifierSources({
   id,
   identifier,
+  catalog,
 }: {
   id: string
   identifier: ArtistIdentifier
+  catalog?: readonly ProviderSummary[]
 }) {
   const { apiBaseUrl } = useConfig()
   const query = useVirtualTable({
@@ -89,12 +89,12 @@ export function ArtistIdentifierSources({
     loadPage: (page, size, signal) =>
       fetchApiData(
         apiBaseUrl,
-        `/api/v1/artists/${encodeURIComponent(id)}/sources/${identifier.provider}/identifiers?${new URLSearchParams({ page: String(page), size: String(size) })}`,
+        `/api/v1/artists/${encodeURIComponent(id)}/sources/${encodeURIComponent(identifier.provider)}/identifiers?${new URLSearchParams({ page: String(page), size: String(size) })}`,
         ArtistIdentifierSourcePageSchema,
         { signal },
       ),
   })
-  const label = `Sources for ${artistProviderLabels[identifier.provider]} identifier`
+  const label = `Sources for ${artistProviderLabel(identifier.provider, catalog)} identifier`
   return (
     <div className="data-stack">
       <p className="ds-muted">
@@ -149,6 +149,7 @@ export function ArtistIdentifierSources({
                   key={index}
                   source={source}
                   index={index}
+                  catalog={catalog}
                 />
               )}
             />

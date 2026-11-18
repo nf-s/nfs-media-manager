@@ -17,7 +17,7 @@ import {
 import type { JsonValue } from '@repo/media-plugin-sdk'
 import type {
   ArtistProfile,
-  ArtistProfileProvider,
+  ArtistProviderId,
 } from '@repo/schemas/artist-profiles'
 export * from './auth'
 import { user } from './auth'
@@ -800,7 +800,7 @@ export const artistProviderSnapshot = pgTable(
     artistId: text('artist_id')
       .notNull()
       .references(() => artist.id, { onDelete: 'cascade' }),
-    provider: text('provider').$type<ArtistProfileProvider>().notNull(),
+    provider: text('provider').$type<ArtistProviderId>().notNull(),
     payload: jsonb('payload').$type<JsonValue>().notNull(),
     normalizedData: jsonb('normalized_data').$type<ArtistProfile>().notNull(),
     scrapeJobId: text('scrape_job_id').references(() => scrapeJob.id, {
@@ -823,7 +823,7 @@ export const artistProviderCurrentState = pgTable(
     artistId: text('artist_id')
       .notNull()
       .references(() => artist.id, { onDelete: 'cascade' }),
-    provider: text('provider').$type<ArtistProfileProvider>().notNull(),
+    provider: text('provider').$type<ArtistProviderId>().notNull(),
     latestSnapshotId: text('latest_snapshot_id')
       .notNull()
       .references(() => artistProviderSnapshot.id, { onDelete: 'cascade' }),

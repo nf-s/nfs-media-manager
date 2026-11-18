@@ -6,6 +6,7 @@ import {
   type QueueArtistSelection,
 } from '@repo/schemas/artist-profiles'
 import { ServerError } from '@/lib/error'
+import { listArtistEnrichmentProviderIds } from '@/plugins/registry'
 import { matchingArtistSelection } from './creators'
 import { requireEnrichmentConfirmation } from './film-enrichment'
 import { createTaskJob } from './jobs'
@@ -17,6 +18,12 @@ export async function queueArtistSelection(
   const options = QueueArtistSelectionSchema.parse(input)
   const ids = [...new Set(options.artistIds)]
   const providers = [...new Set(options.providers)]
+  const available = new Set(await listArtistEnrichmentProviderIds())
+  if (providers.some((provider) => !available.has(provider)))
+    throw new ServerError({
+      statusCode: 422,
+      message: 'Choose artist enrichment providers.',
+    })
   requireEnrichmentConfirmation(
     ids.length * providers.length,
     options.confirmBroadRun,

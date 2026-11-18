@@ -2,7 +2,7 @@
 
 import { DetailInspector } from './detail-inspector'
 import { CreatorLinks } from './creator-links'
-import { FilmCollectionLinks } from './film-collection-links'
+import { CollectionLinks } from './collection-links'
 import { CreatorScopeChip } from './creator-scope-chip'
 import {
   clearCreatorScope,
@@ -769,8 +769,8 @@ export default function MediaBrowser({
   }
 
   function renderValue(item: MediaItem, field: BrowseField) {
-    if (item.mediaType === 'film' && field.key === 'collection')
-      return <FilmCollectionLinks item={item} />
+    if (field.key === 'collection')
+      return <CollectionLinks item={item} mediaType={item.mediaType} />
     const values = getBrowseValues(item)
     const value = values[field.key]
     if (['artist', 'director', 'actor', 'writer'].includes(field.key))
@@ -849,8 +849,8 @@ export default function MediaBrowser({
         title={sortBy === 'dateAdded' ? item.dateAddedSource : sortField.label}
       >
         {sortBy === 'dateAdded' ? 'Added ' : ''}
-        {item.mediaType === 'film' && sortBy === 'collection' ? (
-          <FilmCollectionLinks item={item} />
+        {sortBy === 'collection' ? (
+          <CollectionLinks item={item} mediaType={item.mediaType} />
         ) : value === undefined || isMissing(value) ? (
           <EmptyValue />
         ) : (

@@ -11,7 +11,6 @@ import {
   type CoverageUnavailableReason,
   type EntryGap,
 } from '@repo/schemas/coverage'
-import { ArtistProfileProviderSchema } from '@repo/schemas/artist-profiles'
 import { canIdentifyMedia } from '@repo/schemas/provider-identification'
 import type { ProviderSummary } from '@repo/schemas/provider'
 import { db } from '@/lib/db'
@@ -231,7 +230,7 @@ export async function getPlaylistArtistCoverage(
 ): Promise<Coverage> {
   await getPlaylistSummary(id)
   const providers = (await listProviders()).filter(
-    (provider) => ArtistProfileProviderSchema.safeParse(provider.id).success,
+    (provider) => provider.supportsArtistEnrichment,
   )
   const artistId = sql`m.id`
   const columns = providers.map(({ id: provider }) => {

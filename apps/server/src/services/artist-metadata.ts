@@ -1,12 +1,10 @@
 import { or, sql, type SQLWrapper } from 'drizzle-orm'
 import { z } from 'zod'
-import {
-  ARTIST_ENRICHMENT_TASK,
-  ArtistProfileProviderSchema,
-} from '@repo/schemas/artist-profiles'
+import { ARTIST_ENRICHMENT_TASK } from '@repo/schemas/artist-profiles'
 import { ArtistProviderMetadataSchema } from '@repo/schemas/creators'
 import type { ProviderFreshnessFilter } from '@repo/schemas/film-selection'
 import { db } from '@/lib/db'
+import { listArtistEnrichmentProviderIds } from '@/plugins/registry'
 
 // The literal matches the predicate on the artist job indexes.
 const artistJob = sql`job.options->>'task' = ${sql.raw(`'${ARTIST_ENRICHMENT_TASK}'`)}`
@@ -84,7 +82,7 @@ export async function loadArtistMetadata(ids: string[]) {
       attempt.started_at at time zone 'UTC' as "lastAttemptAt",
       latest.status as "lastJobStatus"
     from unnest(${sql.param(ids)}::text[]) requested(artist_id)
-    cross join unnest(${sql.param(ArtistProfileProviderSchema.options)}::text[]) requested_provider(provider)
+    cross join unnest(${sql.param(await listArtistEnrichmentProviderIds())}::text[]) requested_provider(provider)
     left join artist_provider_current_state state on state.artist_id = ${id} and state.provider = ${provider}
     left join artist_provider_snapshot snapshot on snapshot.id = state.latest_snapshot_id
     left join lateral (

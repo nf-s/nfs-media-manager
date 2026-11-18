@@ -229,6 +229,7 @@ export const ProviderSummarySchema = z.object({
     failureCooldownMs: z.number().int().nonnegative().optional(),
   }),
   supportsScrape: z.boolean(),
+  supportsArtistEnrichment: z.boolean().optional(),
   supportsJobDispatchControl: z.boolean().default(false),
   supportsLocalWorker: z.boolean().optional(),
   maxItemsPerJob: z.number().int().positive().optional(),

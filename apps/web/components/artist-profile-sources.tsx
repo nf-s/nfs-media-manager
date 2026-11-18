@@ -6,16 +6,24 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   ArtistEnrichmentInputSchema,
   ArtistProfileProviderSchema,
+  ArtistProviderIdSchema,
   type ArtistIdentifier,
-  type ArtistProfileProvider,
+  type ArtistProviderId,
   type ArtistProviderSnapshot,
 } from '@repo/schemas/artist-profiles'
+import type { EntityRelationship } from '@repo/schemas/entity-relationships'
 import { JobSchema } from '@repo/schemas/job'
+import type { ProviderSummary } from '@repo/schemas/provider'
 import { Notice } from '@repo/ui/components/ds/feedback'
+import { Pill, Pills } from '@repo/ui/components/ds/pill'
 import { Button } from '@repo/ui/components/ui/button'
 import { Input } from '@repo/ui/components/ui/input'
 import { Label } from '@repo/ui/components/ui/label'
 import { fetchApiData } from '@/utils/api'
+import {
+  artistProviderLabel,
+  supportsArtistEnrichment,
+} from '@/utils/artist-providers'
 import { useDetailView } from './detail-inspector-context'
 import { FindMatch } from './find-match'
 import { errorMessage } from './lastfm-sync'
@@ -28,15 +36,22 @@ import {
   type ProviderSourceRow,
 } from './provider-sources'
 import ServiceIconLinks from './service-icon-links'
-import {
-  ArtistIdentifierSources,
-  artistProviderLabels as providerLabels,
-} from './artist-identifier-sources'
+import { ArtistIdentifierSources } from './artist-identifier-sources'
+import { relationshipSourceBlocks } from './relationship-source-blocks'
 
-function profileLinks(snapshots: ArtistProviderSnapshot[]) {
+function profileLinks(
+  snapshots: ArtistProviderSnapshot[],
+  catalog: readonly ProviderSummary[] | undefined,
+) {
   return snapshots.flatMap(({ provider, profile }) =>
     profile.url
-      ? [{ provider, label: providerLabels[provider], url: profile.url }]
+      ? [
+          {
+            provider,
+            label: artistProviderLabel(provider, catalog),
+            url: profile.url,
+          },
+        ]
       : [],
   )
 }
@@ -48,7 +63,8 @@ export function ArtistProfileLinks({
   snapshots: ArtistProviderSnapshot[]
   identifiers: ArtistIdentifier[]
 }) {
-  const links = profileLinks(snapshots)
+  const catalog = useSourceCatalog()
+  const links = profileLinks(snapshots, catalog.data)
   for (const identifier of identifiers) {
     if (
       identifier.url &&
@@ -56,7 +72,7 @@ export function ArtistProfileLinks({
     )
       links.push({
         provider: identifier.provider,
-        label: providerLabels[identifier.provider],
+        label: artistProviderLabel(identifier.provider, catalog.data),
         url: identifier.url,
       })
   }
@@ -66,7 +82,7 @@ export function ArtistProfileLinks({
 function queueArtistRefresh(
   apiBaseUrl: string,
   id: string,
-  provider: ArtistProfileProvider,
+  provider: ArtistProviderId,
   providerArtistId?: string,
 ) {
   return fetchApiData(
@@ -85,12 +101,14 @@ function queueArtistRefresh(
 function ArtistIdentifierEditor({
   id,
   provider,
+  label,
   initial,
   canRefresh,
   onCancel,
 }: {
   id: string
-  provider: ArtistProfileProvider
+  provider: ArtistProviderId
+  label: string
   initial?: string
   canRefresh: boolean
   onCancel?: () => void
@@ -109,7 +127,6 @@ function ArtistIdentifierEditor({
     },
   })
   const value = identifier.trim()
-  const label = providerLabels[provider]
   const inputId = `artist-identifier-${provider}`
   return (
     <form
@@ -168,66 +185,109 @@ export function ArtistProfileSources({
   const { apiBaseUrl } = useConfig()
   const client = useQueryClient()
   const catalog = useSourceCatalog()
-  const sourceUnavailable = useSourceAvailability(
-    (catalog.data ?? []).filter(
-      (provider) => ArtistProfileProviderSchema.safeParse(provider.id).success,
-    ),
-  )
+  const providers = catalog.data?.filter(supportsArtistEnrichment) ?? []
+  const sourceUnavailable = useSourceAvailability(providers)
   const view = useDetailView()
-  const initialProvider = ArtistProfileProviderSchema.safeParse(
+  const initialProvider = ArtistProviderIdSchema.safeParse(
     view.params.get('provider'),
   )
-  const rows = ArtistProfileProviderSchema.options.map(
-    (provider): ProviderSourceRow => {
-      const configured = catalog.data?.find((entry) => entry.id === provider)
-      const current = snapshots.find(
-        (snapshot) => snapshot.provider === provider,
+  const ids = new Set([
+    ...(catalog.data ? [] : ArtistProfileProviderSchema.options),
+    ...providers.map(({ id }) => id),
+    ...snapshots.map(({ provider }) => provider),
+    ...identifiers.map(({ provider }) => provider),
+  ])
+  const rows = [...ids].map((provider): ProviderSourceRow => {
+    const configured = providers.find((entry) => entry.id === provider)
+    const label = artistProviderLabel(provider, catalog.data)
+    const current = snapshots.find((snapshot) => snapshot.provider === provider)
+    const identifier = identifiers.find((entry) => entry.provider === provider)
+    const externalId = identifier
+      ? (identifier.externalId ?? undefined)
+      : current?.profile.externalId
+    const relationships =
+      current?.profile.relationships ??
+      current?.profile.similarArtists?.map<EntityRelationship>(
+        ({ artistId, name, externalId }) => ({
+          kind: 'similar',
+          targetType: 'artist',
+          targetId: artistId,
+          name,
+          externalId,
+        }),
       )
-      const identifier = identifiers.find(
-        (entry) => entry.provider === provider,
-      )
-      const externalId = identifier
-        ? (identifier.externalId ?? undefined)
-        : current?.profile.externalId
-      return {
-        id: provider,
-        label: providerLabels[provider],
-        identifier:
-          identifier?.status === 'conflict' ? 'Conflicting IDs' : externalId,
-        identifierDetails:
-          identifier && identifier.status !== 'missing'
-            ? () => <ArtistIdentifierSources id={id} identifier={identifier} />
-            : undefined,
-        updatedAt: current?.createdAt,
-        links: identifier?.url
-          ? [{ provider, label: providerLabels[provider], url: identifier.url }]
-          : current
-            ? profileLinks([current])
-            : undefined,
-        unavailable: catalog.isPending
-          ? undefined
-          : sourceUnavailable(configured),
-        refresh: configured
-          ? () => queueArtistRefresh(apiBaseUrl, id, provider)
-          : undefined,
-        editor: configured
-          ? (canRefresh: boolean, close: () => void) => (
-              <ArtistIdentifierEditor
-                key={`${provider}:${externalId}`}
+    return {
+      id: provider,
+      label,
+      identifier:
+        identifier?.status === 'conflict' ? 'Conflicting IDs' : externalId,
+      identifierDetails:
+        identifier && identifier.status !== 'missing'
+          ? () => (
+              <ArtistIdentifierSources
                 id={id}
-                provider={provider}
-                initial={externalId}
-                canRefresh={canRefresh}
-                onCancel={close}
+                identifier={identifier}
+                catalog={catalog.data}
               />
             )
           : undefined,
-        findMatch: configured
+      updatedAt: current?.createdAt,
+      links: identifier?.url
+        ? [{ provider, label, url: identifier.url }]
+        : current
+          ? profileLinks([current], catalog.data)
+          : undefined,
+      blocks: [
+        ...(current?.profile.summary
+          ? [
+              {
+                title: 'About',
+                content: <p className="dtl-text">{current.profile.summary}</p>,
+              },
+            ]
+          : []),
+        ...(current?.profile.tags.length
+          ? [
+              {
+                title: 'Tags',
+                content: (
+                  <Pills wrap label={`Tags supplied by ${label}`}>
+                    {current.profile.tags.map((tag) => (
+                      <Pill key={tag}>{tag}</Pill>
+                    ))}
+                  </Pills>
+                ),
+              },
+            ]
+          : []),
+        ...relationshipSourceBlocks(relationships),
+      ],
+      unavailable: catalog.isPending
+        ? undefined
+        : sourceUnavailable(configured),
+      refresh: configured
+        ? () => queueArtistRefresh(apiBaseUrl, id, provider)
+        : undefined,
+      editor: configured
+        ? (canRefresh: boolean, close: () => void) => (
+            <ArtistIdentifierEditor
+              key={`${provider}:${externalId}`}
+              id={id}
+              provider={provider}
+              label={label}
+              initial={externalId}
+              canRefresh={canRefresh}
+              onCancel={close}
+            />
+          )
+        : undefined,
+      findMatch:
+        configured && ArtistProfileProviderSchema.safeParse(provider).success
           ? (context) => (
               <FindMatch
                 scope={{ kind: 'artist', id }}
                 provider={provider}
-                label={providerLabels[provider]}
+                label={label}
                 context={context}
                 chooseUnavailable={
                   context.canRefresh ? undefined : 'Cannot refresh now'
@@ -247,14 +307,15 @@ export function ArtistProfileSources({
               />
             )
           : undefined,
-        href: configured ? providerHref(provider) : undefined,
-        match:
-          identifier?.status === 'conflict'
-            ? { state: 'attention', label: 'Conflicting IDs' }
-            : undefined,
-      }
-    },
-  )
+      href: catalog.data?.some(({ id }) => id === provider)
+        ? providerHref(provider)
+        : undefined,
+      match:
+        identifier?.status === 'conflict'
+          ? { state: 'attention', label: 'Conflicting IDs' }
+          : undefined,
+    }
+  })
   return (
     <ProviderSources
       rows={rows}

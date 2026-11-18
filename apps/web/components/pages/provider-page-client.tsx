@@ -65,6 +65,7 @@ import {
   ProviderDispatchNotes,
   ProviderDispatchReview,
   ProviderWorkerModeSwitch,
+  ProviderWorkerPairing,
   dispatchStateLabel,
   useProviderDispatch,
   type ProviderDispatch,
@@ -75,6 +76,7 @@ import {
   ProviderLocalWorkerBadge,
   useProviderLocalWorker,
   useProviderLocalWorkerMode,
+  useProviderLocalWorkerPair,
 } from '../provider-local-worker'
 
 function useProviderSummaries() {
@@ -179,6 +181,8 @@ function ProviderDetail({
   const dispatch = useProviderDispatch(provider)
   const cooldown = useProviderCooldown(id)
   const changeMode = useProviderLocalWorkerMode(id)
+  const pairing = useProviderLocalWorkerPair(id)
+  const workerBusy = changeMode.isPending || pairing.request.isPending
   const jobs = useQuery({
     queryKey: ['jobs', 'provider-summary', id],
     queryFn: () =>
@@ -238,10 +242,7 @@ function ProviderDetail({
         ]}
         actions={
           <>
-            <ProviderDispatchActions
-              dispatch={dispatch}
-              busy={changeMode.isPending}
-            />
+            <ProviderDispatchActions dispatch={dispatch} busy={workerBusy} />
             {safetyCooldown && !queueCooldown && !cooldown.confirming && (
               <Button size="md" onClick={() => cooldown.start(safetyCooldown)}>
                 Clear cooldown
@@ -309,10 +310,7 @@ function ProviderDetail({
             </Notice>
           )}
           <ProviderCooldownConfirm cooldown={cooldown} />
-          <ProviderDispatchReview
-            dispatch={dispatch}
-            busy={changeMode.isPending}
-          />
+          <ProviderDispatchReview dispatch={dispatch} busy={workerBusy} />
         </div>
         <TabsContent value="overview">
           <div className="ds-page-cols providers-cols">
@@ -410,11 +408,20 @@ function ProviderDetail({
                   )}
                   {worker && <ProviderLocalWorkerBadge status={worker} />}
                   {provider.supportsJobDispatchControl && (
-                    <ProviderWorkerModeSwitch
-                      worker={worker}
-                      dispatch={dispatch}
-                      changeMode={changeMode}
-                    />
+                    <>
+                      <ProviderWorkerModeSwitch
+                        worker={worker}
+                        dispatch={dispatch}
+                        changeMode={changeMode}
+                        busy={pairing.request.isPending}
+                      />
+                      <ProviderWorkerPairing
+                        worker={worker}
+                        dispatch={dispatch}
+                        pairing={pairing}
+                        busy={changeMode.isPending}
+                      />
+                    </>
                   )}
                 </Section>
               )}

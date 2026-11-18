@@ -1,10 +1,10 @@
-import FilmCollectionPageClient from '@/components/pages/film-collection-page-client'
+import CollectionPageClient from '@/components/pages/collection-page-client'
 
-export default async function FilmCollectionDetailPage({
+export default async function CollectionDetailPage({
   params,
 }: {
   params: Promise<{ collectionId: string }>
 }) {
   const { collectionId } = await params
-  return <FilmCollectionPageClient collectionId={collectionId} />
+  return <CollectionPageClient collectionId={collectionId} />
 }

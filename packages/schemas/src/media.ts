@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { SourceNavigationLinkSchema } from './tags'
 import { AlbumProviderDetailsSchema } from './album-provider-details'
+import { EntityRelationshipSourceSchema } from './entity-relationships'
 import { TrackListItemSchema } from './tracks'
 import {
   ListeningFilterParamSchema,
@@ -157,6 +158,7 @@ export const AlbumDetailSchema = AlbumListItemSchema.extend({
   tracks: z.array(AlbumTrackEntrySchema),
   collectionSources: z.array(SourceNavigationLinkSchema).optional(),
   providerDetails: z.array(AlbumProviderDetailsSchema).optional(),
+  relationshipSources: z.array(EntityRelationshipSourceSchema).optional(),
 })
 
 export const FilmListItemSchema = MediaBaseSchema.extend({

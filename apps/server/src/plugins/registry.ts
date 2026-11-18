@@ -148,3 +148,9 @@ export async function listLoadedScrapePlugins(): Promise<
     ...Array.from(plugins.values()).map((entry) => entry.plugin),
   ]
 }
+
+export async function listArtistEnrichmentProviderIds(): Promise<string[]> {
+  return (await listProviderCatalog())
+    .filter((provider) => provider.supportsArtistEnrichment)
+    .map((provider) => provider.id)
+}
