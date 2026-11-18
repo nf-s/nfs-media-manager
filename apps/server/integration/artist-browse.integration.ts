@@ -3,6 +3,7 @@ import { drizzle } from 'drizzle-orm/node-postgres'
 import { migrate } from 'drizzle-orm/node-postgres/migrator'
 import pg from 'pg'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
+import { ArtistProfileProviderSchema } from '@repo/schemas/artist-profiles'
 import {
   ArtistMetadataQuerySchema,
   ArtistQuerySchema,
@@ -27,6 +28,8 @@ vi.mock('@/lib/db', () => ({
   },
 }))
 vi.mock('@/plugins/registry', () => ({
+  listArtistEnrichmentProviderIds: async () =>
+    ArtistProfileProviderSchema.options,
   listLoadedScrapePlugins: async () => [],
 }))
 let created = false
