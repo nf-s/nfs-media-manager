@@ -247,12 +247,21 @@ export interface MediaPluginTestContext {
   ) => Promise<Response>
 }
 
+export interface AlbumReleaseTrackEvidence {
+  libraryTracks: number
+  matchedTracks: number
+  exactSequence: boolean
+  creditedArtists?: readonly { name: string; tracks: number }[]
+}
+
 export interface AlbumReleaseHint {
   source: 'spotify' | 'musicbrainz' | 'discogs'
   title: string
   year?: number
+  releaseDate?: string
   releaseType?: string
   artists?: readonly string[]
+  trackEvidence?: AlbumReleaseTrackEvidence
 }
 
 export interface MediaPluginMediaIdentity {

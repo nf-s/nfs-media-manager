@@ -1,6 +1,7 @@
 import { beforeEach, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
+  tracks: vi.fn<() => Promise<{ title: string }[]>>(),
   snapshots: vi.fn<() => Promise<{ provider: string; payload: unknown }[]>>(),
   references: vi.fn<
     () => Promise<
@@ -26,6 +27,7 @@ vi.mock('@/lib/db', () => ({
       providerReference: { findMany: mocks.references },
       providerReferenceOverride: { findMany: mocks.overrides },
       providerSnapshot: { findMany: mocks.snapshots },
+      track: { findMany: mocks.tracks },
     },
   },
 }))
@@ -70,6 +72,7 @@ const musicBrainzRelease = {
 
 beforeEach(() => {
   vi.resetAllMocks()
+  mocks.tracks.mockResolvedValue([])
   mocks.overrides.mockResolvedValue([])
   mocks.references.mockResolvedValue([
     {
@@ -116,6 +119,7 @@ it('projects exactly linked release evidence from modern and legacy snapshots', 
       source: 'spotify',
       title: 'Fixture edition',
       year: 2003,
+      releaseDate: '2003-03',
       releaseType: 'compilation',
       artists: ['Fixture artist'],
     },
@@ -123,6 +127,7 @@ it('projects exactly linked release evidence from modern and legacy snapshots', 
       source: 'musicbrainz',
       title: 'Fixture release group',
       year: 1999,
+      releaseDate: '1999',
       releaseType: 'album',
       artists: ['Fixture credited artist'],
     },
@@ -252,5 +257,241 @@ it.each([
 
     expect(await getAlbumReleaseHints('fixture-album')).toEqual([])
     expect(mocks.snapshots).not.toHaveBeenCalled()
+  },
+)
+
+const trackNames = [
+  'Fixture Opening',
+  'Fixture Interlude',
+  'Fixture Finale',
+  'Fixture Encore',
+  'Fixture Reprise',
+]
+const spotifyTracks = {
+  offset: 0,
+  next: null,
+  total: trackNames.length,
+  items: trackNames.map((name, index) => ({
+    name,
+    disc_number: 1,
+    track_number: index + 1,
+    artists:
+      index < 2
+        ? [{ name: 'Fixture Guest' }, { name: 'Fixture Guest' }]
+        : [{ name: 'Fixture Artist' }],
+  })),
+}
+
+it('compares a complete Spotify sequence and reports each artist once per track', async () => {
+  mocks.tracks.mockResolvedValue(trackNames.map((title) => ({ title })))
+  mocks.snapshots.mockResolvedValueOnce([
+    {
+      provider: 'spotify',
+      payload: {
+        data: {
+          ...spotifyRelease,
+          release_date: '2003-03-10',
+          release_date_precision: 'day',
+          total_tracks: 5,
+          tracks: {
+            ...spotifyTracks,
+            items: [...spotifyTracks.items].reverse(),
+          },
+        },
+      },
+    },
+  ])
+  expect(await getAlbumReleaseHints('fixture-album')).toMatchObject([
+    {
+      source: 'spotify',
+      releaseDate: '2003-03-10',
+      trackEvidence: {
+        libraryTracks: 5,
+        matchedTracks: 5,
+        exactSequence: true,
+        creditedArtists: [
+          { name: 'Fixture Artist', tracks: 3 },
+          { name: 'Fixture Guest', tracks: 2 },
+        ],
+      },
+    },
+  ])
+})
+
+it.each([
+  { ...spotifyTracks, next: 'https://example.test/tracks?page=2' },
+  { ...spotifyTracks, offset: 5 },
+  { ...spotifyTracks, total: 6 },
+  { ...spotifyTracks, items: [{ name: ' ' }, ...spotifyTracks.items.slice(1)] },
+  {
+    ...spotifyTracks,
+    items: [spotifyTracks.items[1], ...spotifyTracks.items.slice(1)],
+  },
+])(
+  'omits evidence for an incomplete or invalid Spotify tracklist',
+  async (tracks) => {
+    mocks.tracks.mockResolvedValue(trackNames.map((title) => ({ title })))
+    mocks.snapshots.mockResolvedValueOnce([
+      { provider: 'spotify', payload: { ...spotifyRelease, tracks } },
+    ])
+    expect(
+      (await getAlbumReleaseHints('fixture-album'))[0]?.trackEvidence,
+    ).toBeUndefined()
+  },
+)
+
+it.each([
+  {
+    titles: trackNames,
+    items: [
+      { ...spotifyTracks.items[0], artists: [{ name: ' ' }] },
+      ...spotifyTracks.items.slice(1),
+    ],
+    exactSequence: true,
+    matchedTracks: 5,
+  },
+  {
+    titles: Array.from({ length: 5 }, () => 'Fixture Interlude'),
+    items: spotifyTracks.items.map((track) => ({
+      ...track,
+      name: 'Fixture Interlude',
+    })),
+    exactSequence: true,
+    matchedTracks: 1,
+  },
+  {
+    titles: [...trackNames].reverse(),
+    items: spotifyTracks.items,
+    exactSequence: false,
+    matchedTracks: 5,
+  },
+])(
+  'omits Spotify artist counts without distinctive, valid exact credits',
+  async ({ titles, items, exactSequence, matchedTracks }) => {
+    mocks.tracks.mockResolvedValue(titles.map((title) => ({ title })))
+    mocks.snapshots.mockResolvedValueOnce([
+      {
+        provider: 'legacy-record',
+        payload: {
+          spotify: { ...spotifyRelease, tracks: { ...spotifyTracks, items } },
+        },
+      },
+    ])
+    expect(
+      (await getAlbumReleaseHints('fixture-album'))[0]?.trackEvidence,
+    ).toEqual({ libraryTracks: 5, exactSequence, matchedTracks })
+  },
+)
+
+it.each([
+  { format: 'LP, Album', expected: 'album' },
+  { format: '7", Single', expected: undefined },
+  { format: 'Cassette, Promo', expected: 'album' },
+])(
+  'requires agreement among Discogs release formats with the master title',
+  async ({ format, expected }) => {
+    mocks.references.mockResolvedValue([masterReference])
+    mocks.tracks.mockResolvedValue(trackNames.map((title) => ({ title })))
+    mocks.snapshots.mockResolvedValueOnce([
+      {
+        provider: 'legacy-record',
+        payload: {
+          discogs: {
+            master: {
+              ...master,
+              main_release: 100,
+              tracklist: [
+                { title: 'Side A', type_: 'heading' },
+                ...trackNames
+                  .slice(0, 4)
+                  .map((title) => ({ title, type_: 'track' })),
+              ],
+            },
+            releases: [
+              {
+                id: 100,
+                title: master.title,
+                major_formats: ['Vinyl'],
+                format: 'LP, Album, Limited Edition',
+              },
+              {
+                id: 200,
+                title: master.title,
+                major_formats: ['Vinyl'],
+                format,
+              },
+              {
+                id: 300,
+                title: 'Unrelated title',
+                major_formats: ['Vinyl'],
+                format: '7", EP',
+              },
+            ],
+          },
+        },
+      },
+    ])
+    const hint = (await getAlbumReleaseHints('fixture-album'))[0]
+    expect(hint?.releaseType).toBe(expected)
+    expect(hint?.trackEvidence).toEqual({
+      libraryTracks: 5,
+      matchedTracks: 4,
+      exactSequence: false,
+    })
+  },
+)
+
+it('omits Spotify track evidence past the track limit and omits a date with conflicting precision', async () => {
+  mocks.tracks.mockResolvedValue(
+    Array.from({ length: 501 }, (_, index) => ({
+      title: `Fixture track ${index}`,
+    })),
+  )
+  mocks.snapshots.mockResolvedValueOnce([
+    {
+      provider: 'spotify',
+      payload: {
+        ...spotifyRelease,
+        release_date: '2003-03-10',
+        release_date_precision: 'month',
+        tracks: spotifyTracks,
+      },
+    },
+  ])
+  const hint = (await getAlbumReleaseHints('fixture-album'))[0]
+  expect(hint).toMatchObject({ year: 2003 })
+  expect(hint?.releaseDate).toBeUndefined()
+  expect(hint?.trackEvidence).toBeUndefined()
+})
+
+it.each([
+  { id: 100, master_id: masterId, expected: 'ep' },
+  { id: 123, master_id: masterId, expected: undefined },
+  { id: 100, master_id: 123, expected: undefined },
+])(
+  'reads formats only from the verified Discogs main release',
+  async ({ id, master_id, expected }) => {
+    mocks.references.mockResolvedValue([masterReference])
+    mocks.snapshots.mockResolvedValueOnce([
+      {
+        provider: 'discogs',
+        payload: {
+          master: { ...master, main_release: 100 },
+          mainRelease: {
+            id,
+            master_id,
+            title: master.title,
+            formats: [{ descriptions: ['EP'] }],
+          },
+          versions: {
+            pagination: { page: 1, pages: 2, items: 2 },
+            versions: [{ id: 200, title: master.title, format: 'LP, Album' }],
+          },
+        },
+      },
+    ])
+    expect((await getAlbumReleaseHints('fixture-album'))[0]?.releaseType).toBe(
+      expected,
+    )
   },
 )

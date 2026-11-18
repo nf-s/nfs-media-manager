@@ -2,7 +2,18 @@ import type { AlbumReleaseHint } from '@repo/media-plugin-sdk'
 import { sql, type SQL } from 'drizzle-orm'
 import { z } from 'zod'
 import { DiscogsRecordSchema } from '@/lib/album-provider-details'
+import {
+  AlbumEvidenceTrackLimit,
+  albumEvidenceTrackNames,
+  discogsAlbumTrackEvidence,
+  spotifyAlbumTrackEvidence,
+} from '@/lib/album-release-track-evidence'
 import { db } from '@/lib/db'
+import {
+  DiscogsReleaseEnvelopeSchema,
+  StoredDiscogsIdSchema,
+  discogsMasterReleaseType,
+} from '@/lib/discogs-release-formats'
 import {
   AlbumReleaseDateSchema,
   SpotifyAlbumTypeSchema,
@@ -28,8 +39,11 @@ const SpotifyReleaseSchema = z.object({
   id: SpotifyIdSchema,
   name: ReleaseNameSchema,
   release_date: z.unknown().optional(),
+  release_date_precision: z.unknown().optional(),
   album_type: z.unknown().optional(),
   artists: z.unknown().optional(),
+  total_tracks: z.unknown().optional(),
+  tracks: z.unknown().optional(),
 })
 const MusicBrainzReleaseSchema = z.object({
   id: AlbumMbidSchema,
@@ -48,27 +62,22 @@ const MusicBrainzCreditSchema = z.union([
   z.object({ artist: CreditedArtistSchema }).transform(({ artist }) => artist),
 ])
 const DiscogsMasterSchema = z.object({
-  id: z.union([
-    DiscogsRecordSchema.shape.id.transform(String),
-    DiscogsReferenceIdSchema,
-  ]),
+  id: StoredDiscogsIdSchema,
   title: ReleaseNameSchema,
   year: z.unknown().optional(),
   artists: z.unknown().optional(),
+  main_release: z.unknown().optional(),
+  tracklist: z.unknown().optional(),
 })
 const DiscogsYearSchema = DiscogsRecordSchema.shape.year
   .unwrap()
   .min(1)
   .max(9999)
-const EnvelopesSchema = z.object({
+const EnvelopesSchema = DiscogsReleaseEnvelopeSchema.extend({
   data: z.unknown().optional(),
   spotify: z.unknown().optional(),
   releaseGroup: z.unknown().optional(),
-  master: z.unknown().optional(),
-  discogs: z
-    .object({ master: z.unknown().optional() })
-    .optional()
-    .catch(undefined),
+  discogs: DiscogsReleaseEnvelopeSchema.optional().catch(undefined),
   mb: z
     .object({ releaseGroup: z.unknown().optional() })
     .optional()
@@ -92,14 +101,21 @@ function releaseHint(
   date: unknown,
   type: unknown,
   credits: unknown,
+  precision?: unknown,
 ): AlbumReleaseHint {
-  const releaseDate = AlbumReleaseDateSchema.safeParse(date)
+  const releaseDate = AlbumReleaseDateSchema.safeParse(date).data
   const year =
     source === 'discogs'
       ? DiscogsYearSchema.safeParse(date).data
-      : releaseDate.success
-        ? Number(releaseDate.data.slice(0, 4))
+      : releaseDate
+        ? Number(releaseDate.slice(0, 4))
         : undefined
+  const datePrecision =
+    releaseDate?.length === 10
+      ? 'day'
+      : releaseDate?.length === 7
+        ? 'month'
+        : 'year'
   const releaseType =
     source === 'spotify'
       ? SpotifyAlbumTypeSchema.safeParse(type).data
@@ -117,6 +133,11 @@ function releaseHint(
     source,
     title,
     ...(year ? { year } : {}),
+    ...(year &&
+    releaseDate &&
+    (precision === undefined || precision === datePrecision)
+      ? { releaseDate }
+      : {}),
     ...(releaseType ? { releaseType } : {}),
     ...(artists.success
       ? { artists: artists.data.map(({ name }) => name) }
@@ -129,25 +150,36 @@ function readSnapshot(
   externalId: string,
   provider: string,
   payload: unknown,
+  libraryTracks: readonly string[] | undefined,
 ): AlbumReleaseHint | undefined {
   const envelope = EnvelopesSchema.safeParse(payload).data
   if (!envelope) return
   if (source === 'discogs') {
     // Master and release identifiers occupy different namespaces.
-    const records =
+    const sources =
       provider === 'legacy-record'
-        ? [envelope.discogs?.master]
-        : [envelope.master, envelope.discogs?.master]
-    for (const record of records) {
-      const master = DiscogsMasterSchema.safeParse(record).data
+        ? [envelope.discogs]
+        : [envelope, envelope.discogs]
+    for (const container of sources) {
+      if (!container) continue
+      const master = DiscogsMasterSchema.safeParse(container.master).data
       if (master?.id !== externalId) continue
-      return releaseHint(
-        source,
-        master.title,
-        master.year,
-        undefined,
-        master.artists,
+      const releaseType = discogsMasterReleaseType(container, master)
+      const trackEvidence = discogsAlbumTrackEvidence(
+        libraryTracks,
+        master.tracklist,
       )
+      return {
+        ...releaseHint(
+          source,
+          master.title,
+          master.year,
+          undefined,
+          master.artists,
+        ),
+        ...(releaseType ? { releaseType } : {}),
+        ...(trackEvidence ? { trackEvidence } : {}),
+      }
     }
     return
   }
@@ -159,13 +191,22 @@ function readSnapshot(
     for (const record of records) {
       const release = SpotifyReleaseSchema.safeParse(record).data
       if (release?.id !== externalId) continue
-      return releaseHint(
-        source,
-        release.name,
-        release.release_date,
-        release.album_type,
-        release.artists,
+      const trackEvidence = spotifyAlbumTrackEvidence(
+        libraryTracks,
+        release.tracks,
+        release.total_tracks,
       )
+      return {
+        ...releaseHint(
+          source,
+          release.name,
+          release.release_date,
+          release.album_type,
+          release.artists,
+          release.release_date_precision,
+        ),
+        ...(trackEvidence ? { trackEvidence } : {}),
+      }
     }
     return
   }
@@ -197,7 +238,7 @@ function snapshotMatches(source: ReleaseSource, payload: SQL, id: string) {
 export async function getAlbumReleaseHints(
   mediaItemId: string,
 ): Promise<AlbumReleaseHint[]> {
-  const [references, overrides] = await Promise.all([
+  const [references, overrides, libraryTrackRows] = await Promise.all([
     db.query.providerReference.findMany({
       columns: {
         provider: true,
@@ -223,7 +264,17 @@ export async function getAlbumReleaseHints(
         operators.desc(table.id),
       ],
     }),
+    db.query.track.findMany({
+      columns: { title: true },
+      where: (table, operators) =>
+        operators.eq(table.albumMediaItemId, mediaItemId),
+      orderBy: (table, operators) => [operators.asc(table.position)],
+      limit: AlbumEvidenceTrackLimit + 1,
+    }),
   ])
+  const libraryTracks = albumEvidenceTrackNames(
+    libraryTrackRows.map(({ title }) => title),
+  )
   const hints: AlbumReleaseHint[] = []
   for (const source of sources) {
     const matching = references.filter((reference) =>
@@ -261,7 +312,13 @@ export async function getAlbumReleaseHints(
       limit: 8,
     })
     for (const snapshot of snapshots) {
-      const hint = readSnapshot(source, id, snapshot.provider, snapshot.payload)
+      const hint = readSnapshot(
+        source,
+        id,
+        snapshot.provider,
+        snapshot.payload,
+        libraryTracks,
+      )
       if (!hint) continue
       hints.push(hint)
       break
