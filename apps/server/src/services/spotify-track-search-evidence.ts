@@ -14,7 +14,12 @@ import {
   plainKey,
 } from '@/lib/lastfm-album-matching'
 import { trackBaseKey, trackVersionKey } from '@/lib/track-matching'
-import { spotifyAlbumReleaseIds } from './album-library-tracks'
+import {
+  AlbumFallbackArtistCreditCorrectionSchema,
+  independentTrackData,
+  isCompilationFallbackArtist,
+  spotifyAlbumReleaseIds,
+} from './album-library-tracks'
 
 type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0]
 
@@ -329,4 +334,77 @@ export function spotifySearchMatchesDestination(
       allowTargetDurationRounding: allowTolerance,
     })
   )
+}
+
+/** Prove that an existing track's generic billing came from its one exact Spotify release. */
+export async function readSpotifyAlbumFallbackArtistCreditCorrection(
+  tx: Transaction,
+  targetId: string,
+  candidate: SpotifyTrackSearchCandidate,
+  recording: RecordingEvidence,
+  {
+    recordingIncludesScrobbles = true,
+  }: { recordingIncludesScrobbles?: boolean } = {},
+) {
+  const [previousArtist] = recording.artists
+  if (
+    !previousArtist ||
+    recording.artists.length !== 1 ||
+    !isCompilationFallbackArtist(previousArtist) ||
+    recording.spotify_track_id !== candidate.spotifyTrackId ||
+    recording.has_manual_overrides ||
+    candidate.spotifyAlbumId === null ||
+    candidate.durationSec <= 0 ||
+    candidate.artists.some(isCompilationFallbackArtist) ||
+    !sameSpotifySearchArtists(
+      candidate.artistCredits.map(({ name }) => name),
+      candidate.artists,
+    ) ||
+    new Set(candidate.artistCredits.map(({ id }) => id)).size !==
+      candidate.artistCredits.length ||
+    !spotifySearchExactRelease(
+      { ...recording, artists: candidate.artists },
+      candidate,
+    ) ||
+    !spotifySearchConsistentRecording(recording, candidate)
+  )
+    return undefined
+
+  const { rows } = await tx.execute(sql`
+    select listed.album_media_item_id as "albumId", listed.position,
+      ${previousArtist}::text as "previousArtist", stored.spotify_track_id as "spotifyTrackId"
+    from media_item item join library_track stored on stored.media_item_id = item.id
+    join track listed on listed.track_media_item_id = item.id
+      and listed.album_media_item_id = stored.album_media_item_id
+    join media_item release on release.id = listed.album_media_item_id
+    where item.id = ${targetId} and item.source_label = 'album' and item.slug = item.id
+      and item.release_date is null and item.artwork_url is null
+      and item.summary is null and item.original_title is null
+      and coalesce(item.metadata, '{}'::jsonb) = '{}'::jsonb
+      and release.media_type = 'album' and release.metadata->>'legacyHidden' is distinct from 'true'
+      and stored.spotify_track_id = ${candidate.spotifyTrackId} and listed.external_id = stored.spotify_track_id
+      and listed.position > 0 and listed.duration_sec = ${candidate.durationSec}
+      and (stored.duration_sec is null or stored.duration_sec = listed.duration_sec)
+      and (select count(*) from track where track_media_item_id = item.id) = 1
+      and exists (select 1 from (${spotifyAlbumReleaseIds()}) r
+        where r.album_id = release.id and r.spotify_id = ${candidate.spotifyAlbumId})
+      and array(select c.artist_id from media_credit c where c.media_item_id = release.id and c.role = 'artist')
+        = array(select c.artist_id from media_credit c where c.media_item_id = item.id and c.role = 'artist')
+      and not ${independentTrackData(sql`item.id`)}`)
+  if (!rows.length) return undefined
+
+  // Manual review normally omits target listening evidence. This repair must also respect it.
+  if (!recordingIncludesScrobbles) {
+    const full = await spotifySearchRecordingEvidence(tx, targetId)
+    if (
+      !full ||
+      !spotifySearchExactRelease(
+        { ...full, artists: candidate.artists },
+        candidate,
+      ) ||
+      !spotifySearchConsistentRecording(full, candidate)
+    )
+      return undefined
+  }
+  return AlbumFallbackArtistCreditCorrectionSchema.parse(rows[0])
 }

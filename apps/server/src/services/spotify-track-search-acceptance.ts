@@ -14,12 +14,14 @@ import {
   lockLibraryTrackWrites,
   removeOrphanTracks,
   spotifyAlbumReleaseIds,
+  type AlbumFallbackArtistCreditCorrection,
 } from './album-library-tracks'
 import {
   readSpotifyTrackSearchCandidate,
   readSpotifyTrackSearchForAutomaticMatch,
 } from './spotify-track-search'
 import {
+  readSpotifyAlbumFallbackArtistCreditCorrection,
   spotifySearchConsistentRecording,
   spotifySearchExactRelease,
   spotifySearchHasAlternateVersion,
@@ -42,7 +44,11 @@ type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0]
 type MatchMethod = 'automatic' | 'manual'
 type SearchScope = { trackId: string; jobId: string; userId: string | null }
 type ReconciliationResult =
-  | { status: 'matched'; targetId: string }
+  | {
+      status: 'matched'
+      targetId: string
+      albumFallbackArtistCreditCorrection?: AlbumFallbackArtistCreditCorrection
+    }
   | { status: 'unmatched' | 'stale' }
 
 /** Confirming a recording must preserve independently recorded release positions and annotations. */
@@ -118,6 +124,7 @@ async function storeConfirmedRecording(
   candidate: SpotifyTrackSearchCandidate,
   jobId: string,
   matchMethod: MatchMethod,
+  albumFallbackArtistCreditCorrection?: AlbumFallbackArtistCreditCorrection,
 ) {
   const existing = await libraryRecording(tx, targetId)
   if (existing?.hidden)
@@ -137,6 +144,9 @@ async function storeConfirmedRecording(
           spotifyArtistCredits: candidate.artistCredits,
           spotifyArtistCreditsSource: { source: 'spotify-search', jobId },
         }
+      : {}),
+    ...(albumFallbackArtistCreditCorrection
+      ? { albumFallbackArtistCreditCorrection }
       : {}),
   }
   await tx
@@ -184,13 +194,13 @@ async function storeConfirmedRecording(
         isrc: sql`coalesce(${libraryTrack.isrc}, excluded.isrc)`,
         spotifyAlbumId: sql`coalesce(excluded.spotify_album_id, ${libraryTrack.spotifyAlbumId})`,
         albumName:
-          matchMethod === 'automatic'
+          matchMethod === 'automatic' || albumFallbackArtistCreditCorrection
             ? sql`coalesce(${libraryTrack.albumName}, excluded.album_name)`
             : sql`coalesce(excluded.album_name, ${libraryTrack.albumName})`,
         updatedAt: new Date(),
       },
     })
-  if (!existing?.hasArtists)
+  if (!existing?.hasArtists || albumFallbackArtistCreditCorrection)
     await replaceSpotifyTrackCredits(tx, [
       { id: targetId, artists: candidate.artists },
     ])
@@ -230,9 +240,22 @@ async function linkSpotifyRecording(
   targetId: string,
   candidate: SpotifyTrackSearchCandidate,
   matchMethod: MatchMethod,
-  reusedSpotifyTrackId = false,
+  {
+    reusedSpotifyTrackId = false,
+    albumFallbackArtistCreditCorrection,
+  }: {
+    reusedSpotifyTrackId?: boolean
+    albumFallbackArtistCreditCorrection?: AlbumFallbackArtistCreditCorrection
+  } = {},
 ) {
-  await storeConfirmedRecording(tx, targetId, candidate, jobId, matchMethod)
+  await storeConfirmedRecording(
+    tx,
+    targetId,
+    candidate,
+    jobId,
+    matchMethod,
+    albumFallbackArtistCreditCorrection,
+  )
   if (targetId !== trackId)
     await transferTrackMemberships(tx, trackId, targetId, true)
   await moveTrackScrobbleNames(
@@ -251,6 +274,9 @@ async function linkSpotifyRecording(
         acceptedTrackId: targetId,
         acceptedSpotifyTrackId: candidate.spotifyTrackId,
         matchMethod,
+        ...(albumFallbackArtistCreditCorrection
+          ? { albumFallbackArtistCreditCorrection }
+          : {}),
         ...(matchMethod === 'automatic' && reusedSpotifyTrackId
           ? {
               matchedExistingSpotifyTrackId: SpotifyIdSchema.parse(
@@ -304,16 +330,27 @@ export async function reconcileSpotifyTrackSearchInTransaction(
 
   const targetId = await resolveRecordingTarget(tx, source, candidate)
   let reusedSpotifyTrackId = false
+  let albumFallbackArtistCreditCorrection:
+    | AlbumFallbackArtistCreditCorrection
+    | undefined
   if (targetId !== source.id) {
     const target = await libraryRecording(tx, targetId)
     const targetEvidence =
       target && (await spotifySearchRecordingEvidence(tx, targetId))
+    if (target && !targetEvidence) return { status: 'unmatched' }
     if (
-      target &&
-      (!targetEvidence ||
-        !spotifySearchMatchesDestination(targetEvidence, candidate))
-    )
-      return { status: 'unmatched' }
+      targetEvidence &&
+      !spotifySearchMatchesDestination(targetEvidence, candidate)
+    ) {
+      albumFallbackArtistCreditCorrection =
+        await readSpotifyAlbumFallbackArtistCreditCorrection(
+          tx,
+          targetId,
+          candidate,
+          targetEvidence,
+        )
+      if (!albumFallbackArtistCreditCorrection) return { status: 'unmatched' }
+    }
     reusedSpotifyTrackId = target?.spotifyId === candidate.spotifyTrackId
   }
   try {
@@ -324,15 +361,17 @@ export async function reconcileSpotifyTrackSearchInTransaction(
     throw error
   }
   if (!dryRun)
-    await linkSpotifyRecording(
-      tx,
-      input,
-      targetId,
-      candidate,
-      'automatic',
+    await linkSpotifyRecording(tx, input, targetId, candidate, 'automatic', {
       reusedSpotifyTrackId,
-    )
-  return { status: 'matched', targetId }
+      albumFallbackArtistCreditCorrection,
+    })
+  return {
+    status: 'matched',
+    targetId,
+    ...(albumFallbackArtistCreditCorrection
+      ? { albumFallbackArtistCreditCorrection }
+      : {}),
+  }
 }
 
 /** Apply or preview a past search using its retained results without another Spotify request. */
@@ -392,24 +431,39 @@ export async function acceptSpotifyTrackSearch(input: {
       })
     const targetId = await resolveRecordingTarget(tx, source, candidate)
     await checkRecordingTransfer(tx, source, targetId, candidate)
+    let albumFallbackArtistCreditCorrection:
+      | AlbumFallbackArtistCreditCorrection
+      | undefined
     if (targetId !== trackId) {
       const target = await spotifySearchRecordingEvidence(tx, targetId, {
         includeScrobbles: false,
       })
-      if (target && spotifySearchTargetConflicts(target, candidate))
-        throw new ServerError({
-          statusCode: 409,
-          message:
-            'This Spotify result conflicts with the library recording that would receive these scrobbles.',
-          data: SpotifyTrackSearchTargetConflictSchema.parse({
-            code: 'spotify-track-target-conflict',
-            trackId: targetId,
-            title:
-              target.title.trim().slice(0, 500).trimEnd() || 'Library track',
-          }),
-        })
+      if (target && spotifySearchTargetConflicts(target, candidate)) {
+        albumFallbackArtistCreditCorrection =
+          await readSpotifyAlbumFallbackArtistCreditCorrection(
+            tx,
+            targetId,
+            candidate,
+            target,
+            { recordingIncludesScrobbles: false },
+          )
+        if (!albumFallbackArtistCreditCorrection)
+          throw new ServerError({
+            statusCode: 409,
+            message:
+              'This Spotify result conflicts with the library recording that would receive these scrobbles.',
+            data: SpotifyTrackSearchTargetConflictSchema.parse({
+              code: 'spotify-track-target-conflict',
+              trackId: targetId,
+              title:
+                target.title.trim().slice(0, 500).trimEnd() || 'Library track',
+            }),
+          })
+      }
     }
-    await linkSpotifyRecording(tx, input, targetId, candidate, 'manual')
+    await linkSpotifyRecording(tx, input, targetId, candidate, 'manual', {
+      albumFallbackArtistCreditCorrection,
+    })
     return { targetId }
   })
 }

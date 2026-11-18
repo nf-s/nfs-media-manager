@@ -106,6 +106,7 @@ import {
   retryJob,
 } from '@/services/jobs'
 import { listJobEntries } from '@/services/job-entries'
+import { replaceAlbumTracks } from '@/services/album-library-tracks'
 import { refreshTrackLinks } from '@/services/track-links'
 import { removeScrobbleTrackMatch } from '@/services/track-merges'
 import { listTrackMatchDiagnostics } from '@/services/track-match-diagnostics'
@@ -496,9 +497,9 @@ async function addScrobbledRecording(
   return { source, scrobble, scrobbles, username }
 }
 
-async function confirmStoredSpotifyCandidate(trackId: string) {
+async function confirmStoredSpotifyCandidate(trackId: string, resultCount = 1) {
   const search = await getSpotifyTrackSearch(trackId, userId)
-  expect(search.job).toMatchObject({ status: 'succeeded', resultCount: 1 })
+  expect(search.job).toMatchObject({ status: 'succeeded', resultCount })
   expect(search.job?.acceptedTrackId).toBeUndefined()
   const jobId = search.job?.jobId
   if (!jobId) throw new Error('Expected a saved Spotify search')
@@ -514,6 +515,422 @@ async function confirmStoredSpotifyCandidate(trackId: string) {
     body: JSON.stringify({ jobId, spotifyTrackId: candidateId }),
   })
 }
+
+async function addCompilationRecording() {
+  const recording = await addListedRecording(candidateId)
+  const genericArtistId = 'fixture-various-artists'
+  await fixture
+    .update(schema.libraryTrack)
+    .set({ durationSec: null })
+    .where(eq(schema.libraryTrack.mediaItemId, recording.trackId))
+  await fixture
+    .insert(schema.artist)
+    .values({ id: genericArtistId, name: 'Various Artists' })
+  await fixture
+    .update(schema.mediaCredit)
+    .set({ artistId: genericArtistId })
+    .where(eq(schema.mediaCredit.mediaItemId, recording.trackId))
+  await fixture.insert(schema.mediaCredit).values({
+    mediaItemId: recording.albumId,
+    artistId: genericArtistId,
+    role: 'artist',
+  })
+  return { ...recording, genericArtistId }
+}
+
+it.each(['automatic', 'manual', 'saved search'])(
+  'repairs a corroborated compilation fallback through %s confirmation',
+  async (confirmationPath) => {
+    const { source, scrobble } = await addScrobbledRecording([
+      catalogTrack.album.name,
+    ])
+    const sourceId = source.trackMediaItemId
+    const { albumId, trackId, genericArtistId } =
+      await addCompilationRecording()
+    await fixture
+      .update(schema.lastfmScrobble)
+      .set({ albumMediaItemId: albumId })
+      .where(eq(schema.lastfmScrobble.username, source.username))
+    const prior = {
+      username: 'fixture-another-listener',
+      artistKey: source.artistKey,
+      trackKey: source.trackKey,
+    }
+    await fixture.insert(schema.lastfmScrobble).values({
+      ...scrobble,
+      ...prior,
+      id: 'compilation-target-listen',
+      albumMediaItemId: albumId,
+      albumName: catalogTrack.album.name,
+      albumKey: catalogTrack.album.name.toLowerCase(),
+    })
+    await fixture
+      .insert(schema.lastfmTrackSource)
+      .values({ ...prior, trackMediaItemId: trackId })
+    await fixture
+      .insert(schema.lastfmTrackLink)
+      .values({ ...prior, trackMediaItemId: trackId, strategy: 'exact' })
+    const rawScrobbles = await fixture
+      .select()
+      .from(schema.lastfmScrobble)
+      .orderBy(schema.lastfmScrobble.id)
+    expect(await getTrackDetail(trackId)).toMatchObject({
+      artists: ['Various Artists'],
+      spotifyTrackId: candidateId,
+    })
+    const marker = {
+      albumId,
+      position: 2,
+      previousArtist: 'Various Artists',
+      spotifyTrackId: candidateId,
+    }
+
+    if (confirmationPath === 'manual')
+      mockCandidates(catalogTrack, { ...catalogTrack, id: otherCandidateId })
+    if (confirmationPath === 'saved search')
+      await fixture
+        .update(schema.libraryTrack)
+        .set({ durationSec: 175 })
+        .where(eq(schema.libraryTrack.mediaItemId, trackId))
+    expect(
+      await queueSpotifyTrackSearches({ trackIds: [sourceId] }, userId),
+    ).toMatchObject({ queued: 1 })
+    await processQueuedJobs()
+    expect(request).toHaveBeenCalledTimes(2)
+    if (confirmationPath === 'manual') {
+      const confirmation = await confirmStoredSpotifyCandidate(sourceId, 2)
+      expect(confirmation.status).toBe(200)
+      expect(await confirmation.json()).toMatchObject({
+        data: { targetId: trackId },
+      })
+      expect(request).not.toHaveBeenCalled()
+    }
+    if (confirmationPath === 'saved search') {
+      const saved = (await getSpotifyTrackSearch(sourceId, userId)).job
+      if (!saved) throw new Error('Expected a stored Spotify search')
+      expect(saved.acceptedTrackId).toBeUndefined()
+      expect((await getJob(saved.jobId))?.options).not.toHaveProperty(
+        'albumFallbackArtistCreditCorrection',
+      )
+      await fixture
+        .update(schema.libraryTrack)
+        .set({ durationSec: null })
+        .where(eq(schema.libraryTrack.mediaItemId, trackId))
+      request.mockClear()
+      const selection = { trackId: sourceId, jobId: saved.jobId, userId }
+      const matched = {
+        status: 'matched',
+        targetId: trackId,
+        albumFallbackArtistCreditCorrection: marker,
+      }
+      expect(
+        await reconcileSavedSpotifyTrackSearch(selection, { dryRun: true }),
+      ).toEqual(matched)
+      expect(await getTrackDetail(trackId)).toMatchObject({
+        artists: ['Various Artists'],
+      })
+      expect(await reconcileSavedSpotifyTrackSearch(selection)).toEqual(matched)
+      expect(request).not.toHaveBeenCalled()
+    }
+    const { job } = await getSpotifyTrackSearch(sourceId, userId)
+    const matchMethod = confirmationPath === 'manual' ? 'manual' : 'automatic'
+    expect(job).toMatchObject({
+      status: 'succeeded',
+      acceptedTrackId: trackId,
+      matchMethod,
+    })
+    if (!job) throw new Error('Expected a completed Spotify search')
+    expect(
+      (await getJob(job.jobId))?.options.albumFallbackArtistCreditCorrection,
+    ).toEqual(marker)
+    const [retained] = await fixture
+      .select()
+      .from(schema.mediaItem)
+      .where(eq(schema.mediaItem.id, trackId))
+    expect(retained).toMatchObject({
+      title,
+      sourceLabel: 'album',
+      metadata: {
+        albumFallbackArtistCreditCorrection: marker,
+        spotifyArtistCredits: catalogTrack.artists,
+        spotifyArtistCreditsSource: {
+          source: 'spotify-search',
+          jobId: job.jobId,
+        },
+      },
+    })
+    expect(
+      await fixture
+        .select()
+        .from(schema.libraryTrack)
+        .where(eq(schema.libraryTrack.mediaItemId, trackId)),
+    ).toMatchObject([
+      {
+        albumMediaItemId: albumId,
+        albumLinkStrategy: 'album-track-list',
+        durationSec: 174,
+        spotifyTrackId: candidateId,
+      },
+    ])
+
+    await fixture.transaction((tx) =>
+      replaceAlbumTracks(tx, albumId, [
+        {
+          title,
+          durationSec: 174,
+          position: 4,
+          externalId: candidateId,
+          artists: ['Various Artists'],
+        },
+      ]),
+    )
+    expect(await getTrackDetail(sourceId)).toBeNull()
+    expect(await getTrackDetail(trackId)).toMatchObject({
+      title,
+      artists: [artistName],
+      scrobbles: 2,
+    })
+    expect(
+      await fixture
+        .select()
+        .from(schema.mediaCredit)
+        .where(eq(schema.mediaCredit.mediaItemId, albumId)),
+    ).toMatchObject([{ artistId: genericArtistId, role: 'artist' }])
+    expect(await fixture.select().from(schema.track)).toMatchObject([
+      {
+        albumMediaItemId: albumId,
+        trackMediaItemId: trackId,
+        title,
+        externalId: candidateId,
+        position: 4,
+      },
+    ])
+    const secondAlbumId = 'fixture-second-compilation'
+    await fixture.insert(schema.mediaItem).values({
+      id: secondAlbumId,
+      slug: secondAlbumId,
+      title: 'Another Compilation',
+      mediaType: 'album',
+    })
+    await fixture.insert(schema.album).values({ mediaItemId: secondAlbumId })
+    await fixture.insert(schema.mediaCredit).values({
+      mediaItemId: secondAlbumId,
+      artistId: genericArtistId,
+      role: 'artist',
+    })
+    await fixture.transaction((tx) =>
+      replaceAlbumTracks(tx, secondAlbumId, [
+        {
+          title,
+          position: 1,
+          externalId: candidateId,
+          durationSec: 174,
+          artists: ['Various Artists'],
+        },
+        {
+          title: 'Second Recording',
+          position: 2,
+          artists: ['Another Performer'],
+        },
+      ]),
+    )
+    expect(await getTrackDetail(trackId)).toMatchObject({
+      artists: [artistName],
+      scrobbles: 2,
+    })
+    expect(
+      await fixture
+        .select()
+        .from(schema.track)
+        .where(eq(schema.track.albumMediaItemId, secondAlbumId))
+        .orderBy(schema.track.position),
+    ).toMatchObject([
+      {
+        trackMediaItemId: trackId,
+        title,
+        externalId: candidateId,
+        position: 1,
+      },
+      { title: 'Second Recording', position: 2 },
+    ])
+    expect(
+      await fixture
+        .select()
+        .from(schema.lastfmScrobble)
+        .orderBy(schema.lastfmScrobble.id),
+    ).toEqual(rawScrobbles)
+    expect(
+      await fixture
+        .select()
+        .from(schema.lastfmTrackSource)
+        .orderBy(schema.lastfmTrackSource.username),
+    ).toMatchObject([
+      { ...prior, trackMediaItemId: trackId, manuallyMatched: false },
+      {
+        username: source.username,
+        trackMediaItemId: trackId,
+        manuallyMatched: matchMethod === 'manual',
+      },
+    ])
+  },
+)
+
+type CompilationRecording = Awaited<ReturnType<typeof addCompilationRecording>>
+
+it.each<{
+  reason: string
+  change: (recording: CompilationRecording) => Promise<void>
+  expectedArtist?: string
+}>([
+  {
+    reason: 'no native position ID',
+    change: async ({ trackId }) => {
+      await fixture
+        .update(schema.track)
+        .set({ externalId: null })
+        .where(eq(schema.track.trackMediaItemId, trackId))
+    },
+  },
+  {
+    reason: 'no physical duration',
+    change: async ({ trackId }) => {
+      await fixture
+        .update(schema.track)
+        .set({ durationSec: null })
+        .where(eq(schema.track.trackMediaItemId, trackId))
+    },
+  },
+  {
+    reason: 'multiple physical positions',
+    change: async ({ albumId, trackId }) => {
+      await fixture.insert(schema.track).values({
+        id: 'fixture-second-position',
+        albumMediaItemId: albumId,
+        trackMediaItemId: trackId,
+        title,
+        externalId: candidateId,
+        durationSec: 174,
+        position: 3,
+      })
+    },
+  },
+  {
+    reason: 'a different release',
+    change: async ({ albumId }) => {
+      await fixture
+        .update(schema.album)
+        .set({
+          spotifyUrl: `https://open.spotify.com/album/${otherEdition.album.id}`,
+        })
+        .where(eq(schema.album.mediaItemId, albumId))
+    },
+  },
+  {
+    reason: 'the release has independently named credits',
+    change: async ({ albumId }) => {
+      await fixture
+        .insert(schema.artist)
+        .values({ id: 'fixture-guest-artist', name: 'Guest Performer' })
+      await fixture.insert(schema.mediaCredit).values({
+        mediaItemId: albumId,
+        artistId: 'fixture-guest-artist',
+        role: 'artist',
+        billingOrder: 2,
+      })
+    },
+  },
+  {
+    reason: 'the existing recording has a named credit',
+    expectedArtist: 'Another Performer',
+    change: async ({ trackId }) => {
+      await fixture
+        .insert(schema.artist)
+        .values({ id: 'fixture-named-artist', name: 'Another Performer' })
+      await fixture
+        .update(schema.mediaCredit)
+        .set({ artistId: 'fixture-named-artist' })
+        .where(eq(schema.mediaCredit.mediaItemId, trackId))
+    },
+  },
+  {
+    reason: 'the existing recording carries an override',
+    change: async ({ trackId }) => {
+      await fixture.insert(schema.mediaOverride).values({
+        id: 'fixture-compilation-override',
+        mediaItemId: trackId,
+        field: 'title',
+        value: title,
+      })
+    },
+  },
+  {
+    reason: 'the candidate lacks a native artist ID',
+    change: async () => {
+      mockCandidates({
+        ...catalogTrack,
+        artists: [{ id: 'invalid-artist-id', name: artistName }],
+      })
+    },
+  },
+  {
+    reason: 'the existing scrobbled version conflicts',
+    change: async ({ trackId }) => {
+      const prior = {
+        username: 'fixture-compilation-other-listener',
+        trackKey: 'night signal: instrumental',
+        artistKey: artistName.toLowerCase(),
+      }
+      await fixture.insert(schema.lastfmScrobble).values({
+        ...prior,
+        id: 'fixture-conflicting-target-listen',
+        listenedAt: new Date('2025-01-02T00:00:00Z'),
+        artistName,
+        trackName: 'Night Signal: Instrumental',
+      })
+      await fixture
+        .insert(schema.lastfmTrackSource)
+        .values({ ...prior, trackMediaItemId: trackId })
+    },
+  },
+])(
+  'keeps a compilation match in review when $reason',
+  async ({ change, expectedArtist }) => {
+    const { source } = await addScrobbledRecording([catalogTrack.album.name])
+    const target = await addCompilationRecording()
+    await change(target)
+    const rawScrobbles = await fixture
+      .select()
+      .from(schema.lastfmScrobble)
+      .orderBy(schema.lastfmScrobble.id)
+
+    await queueSpotifyTrackSearches(
+      { trackIds: [source.trackMediaItemId] },
+      userId,
+    )
+    await processQueuedJobs()
+    const response = await confirmStoredSpotifyCandidate(
+      source.trackMediaItemId,
+    )
+    expect(response.status).toBe(409)
+    const payload = z
+      .object({ data: SpotifyTrackSearchTargetConflictSchema })
+      .parse(await response.json())
+    expect(payload.data).toMatchObject({
+      trackId: target.trackId,
+    })
+    expect(request).not.toHaveBeenCalled()
+    expect(await getTrackDetail(target.trackId)).toMatchObject({
+      artists: [expectedArtist ?? 'Various Artists'],
+    })
+    expect(await getTrackDetail(source.trackMediaItemId)).not.toBeNull()
+    expect(
+      await fixture
+        .select()
+        .from(schema.lastfmScrobble)
+        .orderBy(schema.lastfmScrobble.id),
+    ).toEqual(rawScrobbles)
+  },
+)
 
 it.each([
   {

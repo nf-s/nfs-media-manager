@@ -1,9 +1,18 @@
 import { and, eq, inArray, sql, type SQL } from 'drizzle-orm'
 import type { PluginNormalizedResult } from '@repo/media-plugin-sdk'
 import { z } from 'zod'
+import { albumNameKey } from '@/lib/album-import-candidates'
 import type { db } from '@/lib/db'
 import { createStableId } from '@/lib/media-utils'
-import { album, artist, mediaCredit, mediaItem, track } from '@/schemas/db'
+import { SpotifyIdSchema } from '@/lib/spotify-api'
+import {
+  album,
+  artist,
+  libraryTrack,
+  mediaCredit,
+  mediaItem,
+  track,
+} from '@/schemas/db'
 import { reconcileLastfmAlbumTrackAliases } from './lastfm-library-tracks'
 import { refreshTrackAddedDates } from './spotify-playlists'
 import { refreshTrackListeningTotals } from './track-links'
@@ -23,6 +32,20 @@ const DuplicateTracksSchema = z.array(
   }),
 )
 const SpotifyReleaseIdsSchema = z.array(z.object({ spotify_id: z.string() }))
+
+export function isCompilationFallbackArtist(name: string) {
+  return albumNameKey(name) === 'various artists'
+}
+
+export const AlbumFallbackArtistCreditCorrectionSchema = z.object({
+  albumId: z.string().min(1),
+  position: z.number().int().positive(),
+  previousArtist: z.string().refine(isCompilationFallbackArtist),
+  spotifyTrackId: SpotifyIdSchema,
+})
+export type AlbumFallbackArtistCreditCorrection = z.infer<
+  typeof AlbumFallbackArtistCreditCorrectionSchema
+>
 
 /** Share the library-track writer lock with imports, retention and merges. */
 export async function lockLibraryTrackWrites(database: Transaction) {
@@ -85,14 +108,21 @@ export async function replaceAlbumTracks(
 
   const creditedRecordings = entries.flatMap((entry) => {
     const id = recordings.get(entry.id)
-    return id && entry.artists.length ? [{ id, artists: entry.artists }] : []
+    return id && entry.artists.length
+      ? [{ id, externalId: entry.external_id, artists: entry.artists }]
+      : []
   })
   if (creditedRecordings.length) {
     // Playlist and Last.fm imports own their credits. Only replace album
     // fallback credits when this list supplies native track-level artists.
     const owned = await database
-      .select({ id: mediaItem.id })
+      .select({
+        id: mediaItem.id,
+        spotifyTrackId: libraryTrack.spotifyTrackId,
+        creditCorrection: sql<unknown>`${mediaItem.metadata}->'albumFallbackArtistCreditCorrection'`,
+      })
       .from(mediaItem)
+      .innerJoin(libraryTrack, eq(libraryTrack.mediaItemId, mediaItem.id))
       .where(
         and(
           inArray(
@@ -102,9 +132,23 @@ export async function replaceAlbumTracks(
           eq(mediaItem.sourceLabel, 'album'),
         ),
       )
-    const ownedIds = new Set(owned.map((item) => item.id))
+    const ownedTracks = new Map(owned.map((item) => [item.id, item]))
     const credits = creditedRecordings
-      .filter((recording) => ownedIds.has(recording.id))
+      .filter((recording) => {
+        const saved = ownedTracks.get(recording.id)
+        if (!saved) return false
+        if (!recording.artists.every(isCompilationFallbackArtist)) return true
+        const correction = AlbumFallbackArtistCreditCorrectionSchema.safeParse(
+          saved.creditCorrection,
+        )
+        // Album billing cannot replace verified artists on the same Spotify track.
+        return (
+          !correction.success ||
+          correction.data.spotifyTrackId !== saved.spotifyTrackId ||
+          (SpotifyIdSchema.safeParse(recording.externalId).success &&
+            correction.data.spotifyTrackId !== recording.externalId)
+        )
+      })
       .flatMap((recording) =>
         [...new Set(recording.artists)].map((name, billingOrder) => ({
           track_id: recording.id,
@@ -127,7 +171,9 @@ export async function replaceAlbumTracks(
         .delete(mediaCredit)
         .where(
           and(
-            inArray(mediaCredit.mediaItemId, [...ownedIds]),
+            inArray(mediaCredit.mediaItemId, [
+              ...new Set(credits.map(({ track_id }) => track_id)),
+            ]),
             eq(mediaCredit.role, 'artist'),
           ),
         )
