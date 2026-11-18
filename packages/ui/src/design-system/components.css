@@ -777,6 +777,14 @@ button.ds-pill:hover {
   z-index: 3;
   background: var(--ds-surface);
 }
+.ds-table [data-sticky='end'] {
+  left: auto;
+  right: 0;
+  z-index: 2;
+}
+.ds-table th[data-sticky='end'] {
+  z-index: 4;
+}
 .ds-table[data-scrolled] [data-sticky='edge'] {
   box-shadow: var(--ds-shadow-edge);
 }
@@ -1030,9 +1038,18 @@ button.ds-pill:hover {
   min-width: 0;
   overflow: hidden;
 }
-/* Narrow containers: artwork, title and the play pair only */
+/* Narrow containers keep the artwork, title, play pair and any trailing action */
 .ds-list[data-compact] .ds-row {
   grid-template-columns: auto minmax(0, 1fr) auto;
+}
+.ds-row[data-action],
+.ds-listhead[data-action] {
+  grid-template-columns: auto minmax(0, 1.2fr) auto minmax(0, 1fr) auto var(
+      --ds-h-xs
+    );
+}
+.ds-list[data-compact] .ds-row[data-action] {
+  grid-template-columns: auto minmax(0, 1fr) auto var(--ds-h-xs);
 }
 .ds-list[data-compact] .ds-row-tags,
 .ds-list[data-compact] .ds-row-meta {

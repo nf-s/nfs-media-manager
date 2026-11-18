@@ -146,17 +146,17 @@ test('Tracks start in the Table view; Grid shows the density control', async () 
 })
 
 test('Group recordings follows the sort unless the URL sets an override', async () => {
-  const shown = [
-    /aria-pressed="true">Group recordings<\/button>/,
-    /aria-expanded="false" aria-label="Show 2 release versions for Example Song"/,
-  ]
   for (const search of [
     'sortBy=scrobbles',
     'view=list&sortBy=lastListenedAt',
     'view=grid&sortBy=artist&groupRecordings=true',
   ]) {
     const html = await render(search, 1, undefined, true)
-    for (const pattern of shown) assert.match(html, pattern)
+    assert.doesNotMatch(html, />Group recordings<\/button>/)
+    assert.match(
+      html,
+      /aria-expanded="false" aria-label="Show 2 release versions for Example Song"/,
+    )
   }
   for (const search of [
     'sortBy=artist',
@@ -165,9 +165,34 @@ test('Group recordings follows the sort unless the URL sets an override', async 
     'sortBy=scrobbles&groupRecordings=false',
   ]) {
     const html = await render(search)
-    assert.match(html, /aria-pressed="false">Group recordings<\/button>/)
-    assert.doesNotMatch(html, /aria-label="Show 2 release versions/)
+    assert.doesNotMatch(
+      html,
+      /aria-label="Show 2 release versions|data-sticky="end"/,
+    )
   }
+})
+
+test('Tracks put release version controls at the end of each grouped item', async () => {
+  const table = await render('sortBy=scrobbles', 1, undefined, true)
+  assert.match(
+    table,
+    /<th scope="col" data-sticky="end" aria-label="Release versions"><\/th><\/tr>/,
+  )
+  assert.match(
+    table,
+    /<td data-align="end" data-sticky="end"><button[^>]*aria-label="Show 2 release versions for Example Song"[^>]*>.*?<\/button><\/td><\/tr>/,
+  )
+  const list = await render('view=list&sortBy=scrobbles', 1, undefined, true)
+  assert.match(list, /<div class="ds-listhead" data-action="">/)
+  assert.match(
+    list,
+    /<span class="ds-w-date">2026-03-0[45]<\/span><\/div><button[^>]*aria-label="Show 2 release versions for Example Song"/,
+  )
+  const grid = await render('view=grid&sortBy=scrobbles', 1, undefined, true)
+  assert.match(
+    grid,
+    /<a class="ds-card-title"[^>]*>Example Song<\/a><button[^>]*aria-label="Show 2 release versions for Example Song"/,
+  )
 })
 
 test('Tracks list rows: thumbnail, title, artists and album, play pair, tags and values', async () => {
