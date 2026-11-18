@@ -170,6 +170,29 @@ describe('direct provider requests', () => {
     expect(state.halted).toBe(false)
   })
 
+  it('returns answered failure statuses to the caller unrecorded', async () => {
+    state.failureCount = 1
+    state.lastError = 'Provider request failed (HTTP 400)'
+    mocks.fetch.mockResolvedValueOnce(
+      Response.json({ error: 9 }, { status: 403 }),
+    )
+    const request = createDirectProviderRequest(plugin(), [400, 403])
+    const response = await request('https://provider.example.test/a', {
+      method: 'POST',
+    })
+    expect(response.status).toBe(403)
+    expect(await response.json()).toEqual({ error: 9 })
+    expect(state.halted).toBe(false)
+    expect(state.failureCount).toBe(1)
+    expect(mocks.write).not.toHaveBeenCalled()
+
+    // Other failures are still recorded.
+    mocks.fetch.mockResolvedValueOnce(new Response(null, { status: 401 }))
+    const error = await failure(request('https://provider.example.test/a'))
+    expect(error.code).toBe('access-denied')
+    expect(state.halted).toBe(true)
+  })
+
   it('records a request that never answers as a failure', async () => {
     mocks.fetch.mockRejectedValueOnce(new TypeError('fetch failed'))
     const request = createDirectProviderRequest(plugin())

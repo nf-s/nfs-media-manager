@@ -94,6 +94,8 @@ function savedKey(state: SavedPlayback | null) {
   return JSON.stringify({
     ...state,
     savedAt: 0,
+    // What was heard grows all the time, like the position.
+    listen: state.listen && { ...state.listen, heardMs: 0, durationMs: 0 },
     snapshot: shown && {
       trackUri: shown.trackUri,
       paused: shown.paused,

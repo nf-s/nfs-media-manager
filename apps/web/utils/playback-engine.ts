@@ -13,6 +13,7 @@ import {
   stepSession,
   WATCHED_MS,
   type PlayableItem,
+  type PlayedTrack,
   type PlaybackSource,
   type PlaybackSession,
   type PlaybackSnapshot,
@@ -45,7 +46,17 @@ import type {
   SonosGroupState,
 } from '@repo/schemas/sonos'
 import type { SonosControlApi } from './sonos-player-api'
+import {
+  earlierPlays,
+  finishedPlays,
+  hearRoom,
+  listenDue,
+  type RoomPlay,
+  type Sighting,
+} from './room-listen'
+import type { LastfmPlay } from '@repo/schemas/lastfm'
 import type {
+  PlaybackListen,
   SavedPlayback,
   SavedSource,
   SavedTarget,
@@ -183,6 +194,14 @@ export type PlaybackEngineOptions = {
   browserId?: string
   /** Reads a saved source's entries again; null when it cannot be read. */
   restoreSource?: (saved: SavedSource) => PlaybackSource | null
+  /**
+   * Takes the tracks played on a Sonos room that this app loaded there, for
+   * scrobbling. Nothing is counted while `enabled` answers false.
+   */
+  scrobbles?: {
+    enabled: () => boolean
+    report: (plays: LastfmPlay[]) => void
+  }
 }
 
 const LOCAL_POLL_MS = 1_000
@@ -476,6 +495,10 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
   let rejoining: number | null = null
   /** Counts restores, so a device report read across one is dropped. */
   let restores = 0
+  /** How much of the track a Sonos group is on has been heard, for scrobbling. */
+  let listen: PlaybackListen | null = null
+  /** Where the group was in its tracks when it was last read. */
+  let sighted: Sighting | null = null
 
   /** A control used here answers the note about rejoining a saved session. */
   function acted() {
@@ -1171,6 +1194,8 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     run += 1
     const started = run
     resume = null
+    listen = null
+    sighted = null
     // Starting the item the device is already on plays that same track.
     const replaced = heard !== item.uri && heardFor !== item.uri ? heard : null
     session = startSession(item, now(), replaced)
@@ -1627,6 +1652,209 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     }
   }
 
+  function scrobbling() {
+    return options.scrobbles?.enabled() === true
+  }
+
+  /** Spotify's details of a track, as read for the dock where they were. */
+  function trackDetails(uri: string): Promise<TrackDetails | null> {
+    const known = roomTracks.get(uri)
+    if (known) return Promise.resolve(known)
+    return api.track(uri).then(
+      (details) => {
+        roomTracks.set(uri, details)
+        return details
+      },
+      () => null,
+    )
+  }
+
+  function trackLengths(items: readonly PlayableItem[]) {
+    return Promise.all(
+      items
+        .filter((item) => item.kind === 'track')
+        .map(async ({ uri }) => ({
+          uri,
+          durationMs: (await trackDetails(uri))?.durationMs ?? 0,
+        })),
+    )
+  }
+
+  /**
+   * Hands plays on for scrobbling under the names Spotify has for them, and
+   * the queued item's where Spotify cannot be asked. Only the first artist is
+   * named, as in Spotify's own scrobbles.
+   */
+  function reportPlays(plays: readonly RoomPlay[], given: PlaybackSession) {
+    const scrobbles = options.scrobbles
+    if (!scrobbles || plays.length === 0) return
+    void Promise.all(
+      plays.map(async ({ uri, startedAt }): Promise<LastfmPlay[]> => {
+        const details = await trackDetails(uri)
+        const item = given.sent.find(
+          (sent) => sent.kind === 'track' && sent.uri === uri,
+        )
+        const track = details?.trackName || item?.title || ''
+        const artist =
+          details?.artistLinks[0]?.name ||
+          item?.credits?.[0]?.name ||
+          item?.artist ||
+          ''
+        if (!track || !artist) return []
+        return [
+          {
+            trackUri: uri,
+            track,
+            artist,
+            album: details?.albumName || item?.albumTitle || '',
+            durationMs: details ? Math.round(details.durationMs) : null,
+            startedAt: Math.round(startedAt),
+          },
+        ]
+      }),
+    ).then((found) => {
+      const known = found.flat()
+      if (known.length > 0 && !disposed) scrobbles.report(known)
+    })
+  }
+
+  /**
+   * Counts what a Sonos group has played of the tracks this app gave it
+   * since it was last read, and reports each track once enough of it was
+   * heard. Other music on the group is not counted.
+   */
+  function heardRoom(after: PlaybackSnapshot) {
+    const active = session
+    if (
+      !scrobbling() ||
+      state.target.kind !== 'room' ||
+      active?.phase !== 'playing' ||
+      !after.trackUri ||
+      sentIndex(active, after) !== active.index
+    )
+      return
+    const before = sighted
+    const reached: Sighting = {
+      uri: after.trackUri,
+      index: active.index,
+      positionMs: after.positionMs,
+      at: after.at,
+    }
+    const step = hearRoom(
+      listen,
+      before,
+      { ...reached, durationMs: after.durationMs },
+      active.startedAt,
+    )
+    sighted = reached
+    listen = step.listen
+    if (before && step.earlier) {
+      const { listen: left, budgetMs } = step.earlier
+      const passed =
+        active.item.kind === 'track'
+          ? active.sent.slice(before.index + 1, reached.index)
+          : []
+      // A track already reported with none passed since leaves nothing to add.
+      if (passed.length > 0 || !left?.reported)
+        void Promise.all([
+          left && left.durationMs > 0
+            ? left.durationMs
+            : trackDetails(before.uri).then(
+                (details) => details?.durationMs ?? 0,
+              ),
+          trackLengths(passed),
+        ]).then(([beforeDurationMs, lengths]) =>
+          reportPlays(
+            earlierPlays({
+              listen: left,
+              before,
+              beforeDurationMs,
+              passed: lengths,
+              budgetMs,
+              until: reached.at - reached.positionMs,
+            }),
+            active,
+          ),
+        )
+    }
+    if (listenDue(listen)) {
+      listen = { ...listen, reported: true }
+      reportPlays([{ uri: listen.uri, startedAt: listen.startedAt }], active)
+    }
+  }
+
+  /**
+   * A Sonos group played everything it was given and stopped while it was
+   * not read: the tracks from the one it was last on are counted as played,
+   * as far as the time since allows.
+   */
+  function heardToEnd(active: PlaybackSession) {
+    const before = sighted
+    const left = listen?.uri === before?.uri ? listen : null
+    listen = null
+    sighted = null
+    if (!scrobbling() || !before) return
+    const budgetMs = now() - before.at
+    const rest =
+      active.item.kind === 'track' ? active.sent.slice(before.index + 1) : []
+    void Promise.all([
+      left && left.durationMs > 0
+        ? left.durationMs
+        : trackDetails(before.uri).then((details) => details?.durationMs ?? 0),
+      trackLengths(rest),
+    ]).then(([beforeDurationMs, lengths]) =>
+      reportPlays(
+        finishedPlays({
+          listen: left,
+          before,
+          beforeDurationMs,
+          rest: lengths,
+          budgetMs,
+        }),
+        active,
+      ),
+    )
+  }
+
+  /**
+   * The tracks of a Sonos group's queue that the account's play history
+   * lists since the group was last read, up to the one now `due`. Spotify
+   * dates a play by its end.
+   */
+  function heardInHistory(
+    active: PlaybackSession,
+    history: readonly PlayedTrack[],
+    since: number,
+    due: number,
+  ) {
+    const left = listen
+    const next = active.sent[due]
+    const latest = Math.max(since, ...history.map((entry) => entry.playedAt))
+    // The group is counted from the track now due, should it play on.
+    listen = null
+    sighted = next
+      ? { uri: next.uri, index: due, positionMs: 0, at: latest }
+      : null
+    if (!scrobbling()) return
+    const played = active.sent.slice(active.index, due).flatMap((item) => {
+      const entry = history.find(
+        (heard) =>
+          heard.playedAt > since &&
+          (heard.uri === item.uri || sameName(heard.name, item.title)),
+      )
+      const reported = left?.uri === item.uri && left.reported
+      return entry && !reported && item.kind === 'track'
+        ? [{ uri: item.uri, endedAt: entry.playedAt }]
+        : []
+    })
+    void Promise.all(
+      played.map(async ({ uri, endedAt }) => ({
+        uri,
+        startedAt: endedAt - ((await trackDetails(uri))?.durationMs ?? 0),
+      })),
+    ).then((plays) => reportPlays(plays, active))
+  }
+
   /** Reads what a Sonos group plays and keeps its queue supplied. */
   async function pollRoom(target: RoomTarget) {
     const sonos = options.sonos
@@ -1676,7 +1904,9 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       return
     }
     missing = 0
-    observe(roomTrack(snapshot))
+    const shown = roomTrack(snapshot)
+    observe(shown)
+    heardRoom(shown)
     maintainRoom()
     // The track due next is described ahead, so a skip to it shows at once.
     const following = session?.sent[session.index + 1]
@@ -2181,6 +2411,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       shuffle: state.shuffle,
       target: savedTarget(),
       source: kept,
+      listen,
     }
   }
 
@@ -2228,6 +2459,8 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     active: PlaybackSession,
     since: number,
     held: PlayableItem | null,
+    /** The session played on a Sonos group, whose plays are scrobbled here. */
+    room: boolean,
   ) {
     if (active.item.kind !== 'track') return
     const checked = run
@@ -2237,6 +2470,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
         if ((resume?.item ?? null) !== held) return
         const due = playedThrough(active.sent, active.index, history, since)
         if (due <= active.index) return
+        if (room) heardInHistory(active, history, since, due)
         if (!held) {
           // The tracks before the one due were played; it stays due.
           pass(active, due - 1)
@@ -2290,6 +2524,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     rejoining = null
     resume = null
     const active = session
+    const room = state.target.kind === 'room'
     const device = targetName(state.target) ?? check?.device ?? null
     const report = (status: PlaybackRejoin['status']) => {
       if (check?.announce) set({ rejoin: { status, device } })
@@ -2340,7 +2575,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
         volume: localVolume,
       })
       report('changed')
-      if (unfollowed) catchUp(unfollowed, saved.savedAt, null)
+      if (unfollowed) catchUp(unfollowed, saved.savedAt, null, room)
       return
     }
     if (after && (changed || !after.paused)) {
@@ -2353,12 +2588,13 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       set({ current: null, snapshot: after, starting: false })
       report('changed')
       findSonos()
-      if (unfollowed) catchUp(unfollowed, saved.savedAt, null)
+      if (unfollowed) catchUp(unfollowed, saved.savedAt, null, room)
       return
     }
     latest = null
     if (active && verdict?.verdict === 'ended' && verdict.finished) {
       // The device played all it was given, so the queue goes on after it.
+      if (room) heardToEnd(active)
       pass(active, active.sent.length)
       currentFromSource = false
       set({ current: null, snapshot: null, starting: false })
@@ -2383,7 +2619,8 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       starting: false,
     })
     report(check?.unreadable ? 'unreadable' : 'ended')
-    if (unfollowed && resume) catchUp(unfollowed, saved.savedAt, resume.item)
+    if (unfollowed && resume)
+      catchUp(unfollowed, saved.savedAt, resume.item, room)
   }
 
   /**
@@ -2447,6 +2684,18 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     session = restored.session
       ? { ...restored.session, phase: 'playing', startedAt: now() }
       : null
+    const shown = restored.snapshot
+    listen = restored.listen ?? null
+    // The group is counted from where the session was saved.
+    sighted =
+      restored.session && shown?.trackUri
+        ? {
+            uri: shown.trackUri,
+            index: restored.session.index,
+            positionMs: shown.positionMs,
+            at: shown.at,
+          }
+        : null
     const target = restoredTarget(restored.target)
     const savedName =
       restored.target.kind === 'room'
@@ -2552,6 +2801,8 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       currentFromSource = false
       resume = null
       rejoining = null
+      listen = null
+      sighted = null
       set({
         rejoin: null,
         queue: [],

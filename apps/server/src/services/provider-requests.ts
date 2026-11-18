@@ -756,9 +756,14 @@ export async function protectProviderFromLocalResponse(
  * requests at once. It still refuses while the provider is halted or cooling
  * down, and records every failure as the gate does, so a rate limit or a
  * rejected sign-in stops the provider's requests on every path.
+ *
+ * `answeredStatuses` lists failed statuses whose response is returned instead,
+ * unrecorded, for a provider whose error body says whether one account or the
+ * whole app was refused. The caller must record any failure it reads there.
  */
 export function createDirectProviderRequest(
   plugin: MediaProviderPlugin,
+  answeredStatuses: readonly number[] = [],
 ): MediaPluginTestContext['request'] {
   const provider = plugin.manifest.id
   const limits = plugin.manifest.rateLimit
@@ -777,6 +782,7 @@ export function createDirectProviderRequest(
     const state = await openProviderState(provider)
     let response: Response
     let body: string
+    let answered = false
     try {
       const timeout = AbortSignal.timeout(timeoutMs)
       response = await fetch(url, {
@@ -787,7 +793,8 @@ export function createDirectProviderRequest(
           : timeout,
       })
       const receivedAt = Date.now()
-      if (!response.ok) {
+      answered = !response.ok && answeredStatuses.includes(response.status)
+      if (!response.ok && !answered) {
         void response.body?.cancel().catch(() => undefined)
         const limited = response.status === 429
         const retryAfter = response.headers.get('retry-after')
@@ -839,7 +846,11 @@ export function createDirectProviderRequest(
       )
     }
     // Earlier failures count towards a cooldown until a request succeeds.
-    if (state && (state.failureCount > 0 || state.lastError !== null))
+    if (
+      !answered &&
+      state &&
+      (state.failureCount > 0 || state.lastError !== null)
+    )
       await recordProviderSuccess(provider)
     return new Response(
       response.status === 204 || response.status === 205 ? null : body,

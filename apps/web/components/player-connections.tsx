@@ -5,6 +5,7 @@ import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { useSyncExternalStore } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Check, LoaderCircle, Play, X } from 'lucide-react'
+import { LastfmDisconnectResultSchema } from '@repo/schemas/lastfm'
 import {
   SonosAccountStatusSchema,
   SonosDisconnectResultSchema,
@@ -14,6 +15,7 @@ import {
 import { Button } from '@repo/ui/components/ui/button'
 import { useConfig } from './providers'
 import {
+  useLastfmScrobbling,
   usePlayback,
   useSpotifyAccount,
   type PlaybackView,
@@ -25,6 +27,7 @@ import {
   setPlayerPromptDismissed,
   subscribePlayerPrompt,
 } from '@/utils/player-prompt'
+import { lastfmAuthorizationUrl } from '@/utils/scrobble-reporter'
 import { sonosAuthorizationUrl } from '@/utils/sonos-authorize'
 import { spotifyAuthorizationUrl } from '@/utils/spotify-authorize'
 
@@ -41,6 +44,11 @@ const OUTCOMES: Record<string, { message: string; failed: boolean }> = {
   },
   'sonos-connected': { message: 'Sonos connected.', failed: false },
   'sonos-error': { message: 'Sonos did not connect. Try again.', failed: true },
+  'lastfm-connected': { message: 'Last.fm connected.', failed: false },
+  'lastfm-error': {
+    message: 'Last.fm did not connect. Try again.',
+    failed: true,
+  },
 }
 
 /** Marks a device or room that is reached through the Sonos connection. */
@@ -207,7 +215,7 @@ export function SonosRooms({
   )
 }
 
-/** Spotify playback and Sonos account connections, with their status. */
+/** Spotify playback, Sonos and Last.fm scrobbling connections, with their status. */
 export function PlayerConnections() {
   const { apiBaseUrl } = useConfig()
   const client = useQueryClient()
@@ -239,11 +247,33 @@ export function PlayerConnections() {
       await client.invalidateQueries({ queryKey: ['sonos-account'] })
     },
   })
+  const lastfm = useLastfmScrobbling()
+  const connectLastfm = useMutation({
+    mutationFn: () => lastfmAuthorizationUrl(apiBaseUrl),
+    onSuccess: (url) => window.location.assign(url),
+  })
+  const disconnectLastfm = useMutation({
+    mutationFn: () =>
+      fetchApiData(
+        apiBaseUrl,
+        '/api/v1/lastfm/scrobbling/account',
+        LastfmDisconnectResultSchema,
+        { method: 'DELETE' },
+      ),
+    onSuccess: () =>
+      client.invalidateQueries({ queryKey: ['lastfm-scrobbling'] }),
+  })
   const status = sonos.data
+  const scrobbling = lastfm.data
   const withoutHistory =
     spotify.data?.playback === true && !spotify.data.playbackHistory
   const failure =
-    playbackOff.error ?? allowHistory.error ?? connect.error ?? disconnect.error
+    playbackOff.error ??
+    allowHistory.error ??
+    connect.error ??
+    disconnect.error ??
+    connectLastfm.error ??
+    disconnectLastfm.error
   return (
     <section className="device-section" aria-label="Connections">
       <h3>Connections</h3>
@@ -313,7 +343,55 @@ export function PlayerConnections() {
             </Link>
           )}
         </div>
+        <div>
+          <dt>Last.fm</dt>
+          <dd>
+            {lastfm.isPending
+              ? 'Checking…'
+              : !scrobbling
+                ? 'Status unavailable'
+                : scrobbling.connected
+                  ? 'Connected'
+                  : scrobbling.configured
+                    ? 'Not connected'
+                    : 'Not set up'}
+          </dd>
+          {scrobbling?.connected && (
+            <Button
+              type="button"
+              variant="ghost"
+              disabled={disconnectLastfm.isPending}
+              onClick={() => disconnectLastfm.mutate()}
+            >
+              Disconnect
+            </Button>
+          )}
+          {scrobbling?.configured && !scrobbling.connected && (
+            <Button
+              variant="primary"
+              type="button"
+              disabled={connectLastfm.isPending}
+              onClick={() => connectLastfm.mutate()}
+            >
+              Connect Last.fm
+            </Button>
+          )}
+          {scrobbling && !scrobbling.configured && (
+            <Link className="underline" href="/providers/lastfm?tab=settings">
+              Add credentials
+            </Link>
+          )}
+        </div>
       </dl>
+      {scrobbling && (
+        <p className="quiet">
+          {scrobbling.connected
+            ? `Tracks played on Sonos rooms from here are scrobbled${
+                scrobbling.account ? ` to ${scrobbling.account}` : ''
+              }.`
+            : 'With Last.fm connected, tracks played on Sonos rooms from here are scrobbled.'}
+        </p>
+      )}
       {withoutHistory && (
         <p className="quiet">
           With play history, the queue moves on past what Spotify played while
@@ -412,7 +490,7 @@ export function PlayerPromptRestore() {
   )
 }
 
-/** The result of a Spotify or Sonos sign-in that returned to the app. */
+/** The result of a Spotify, Sonos or Last.fm sign-in that returned to the app. */
 export function ConnectionOutcome() {
   const router = useRouter()
   const pathname = usePathname()

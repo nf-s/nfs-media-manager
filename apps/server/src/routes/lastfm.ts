@@ -1,6 +1,11 @@
 import { createRoute, type OpenAPIHono } from '@hono/zod-openapi'
 import { createMiddleware } from 'hono/factory'
 import {
+  LastfmAuthorizeInputSchema,
+  LastfmAuthorizeResultSchema,
+  LastfmCallbackQuerySchema,
+  LastfmCallbackStateSchema,
+  LastfmDisconnectResultSchema,
   LastfmLinkQuerySchema,
   LastfmLinkReportSchema,
   LastfmLinkUpdateSchema,
@@ -10,7 +15,11 @@ import {
   LastfmSpotifySearchInputSchema,
   LastfmSpotifySearchGroupSchema,
   LastfmSpotifySearchSchema,
+  LastfmScrobbleInputSchema,
+  LastfmScrobbleResultSchema,
+  LastfmScrobblingStatusSchema,
 } from '@repo/schemas/lastfm'
+import { z } from 'zod'
 import { EnrichmentResultSchema } from '@repo/schemas/job'
 import { env } from '@/env'
 import { ServerError } from '@/lib/error'
@@ -18,11 +27,16 @@ import {
   createOpenAPIApp,
   createResponseSchema,
   jsonErrorResponse,
+  ownerSessionSecurity,
   validationErrorResponse,
   type AppEnv,
 } from '@/lib/openapi'
 import { generateJsonResponse } from '@/lib/response'
-import { authMiddleware } from '@/middlewares/auth'
+import {
+  authMiddleware,
+  requireBrowserSession,
+  requireOwnerUser,
+} from '@/middlewares/auth'
 import {
   getLastfmLinkReport,
   getLastfmSyncStatus,
@@ -30,6 +44,13 @@ import {
   setLastfmAlbumLink,
   setLastfmSyncSchedule,
 } from '@/services/lastfm-scrobbles'
+import {
+  authorizeLastfmScrobbling,
+  disconnectLastfmScrobbling,
+  finishLastfmScrobbling,
+  getLastfmScrobblingStatus,
+  scrobbleLastfmPlays,
+} from '@/services/lastfm-scrobbling'
 import { queueLastfmSync } from '@/services/lastfm-sync-jobs'
 import {
   getLastfmSpotifySearch,
@@ -47,6 +68,15 @@ const sameOrigin = createMiddleware<AppEnv>(async (c, next) => {
       message: 'Request origin is not allowed',
     })
   }
+  await next()
+})
+
+const browserSession = authMiddleware({ sessionOnly: true })
+
+// Scrobbling's sign-in and reports carry account credentials.
+const noStore = createMiddleware<AppEnv>(async (c, next) => {
+  c.header('Cache-Control', 'no-store')
+  c.header('Referrer-Policy', 'no-referrer')
   await next()
 })
 
@@ -255,6 +285,181 @@ const app: OpenAPIHono<AppEnv> = createOpenAPIApp()
       },
     }),
     async (c) => generateJsonResponse(c, await relinkLastfmScrobbles(), 200),
+  )
+  .openapi(
+    createRoute({
+      method: 'get',
+      path: '/scrobbling',
+      middleware: [noStore, authMiddleware()],
+      responses: {
+        200: {
+          description:
+            'Local Last.fm scrobbling sign-in status; no Last.fm requests',
+          content: {
+            'application/json': {
+              schema: createResponseSchema(LastfmScrobblingStatusSchema),
+            },
+          },
+        },
+        401: jsonErrorResponse('Unauthorized'),
+      },
+    }),
+    async (c) =>
+      generateJsonResponse(
+        c,
+        await getLastfmScrobblingStatus(requireOwnerUser(c).id),
+        200,
+      ),
+  )
+  .openapi(
+    createRoute({
+      method: 'post',
+      path: '/scrobbling/authorize',
+      security: ownerSessionSecurity,
+      middleware: [noStore, browserSession, sameOrigin],
+      request: {
+        body: {
+          required: true,
+          content: {
+            'application/json': { schema: LastfmAuthorizeInputSchema },
+          },
+        },
+      },
+      responses: {
+        200: {
+          description: 'Last.fm sign-in URL for scrobbling',
+          content: {
+            'application/json': {
+              schema: createResponseSchema(LastfmAuthorizeResultSchema),
+            },
+          },
+        },
+        401: jsonErrorResponse('Owner browser session required'),
+        403: jsonErrorResponse('Forbidden'),
+        422: validationErrorResponse,
+      },
+    }),
+    async (c) => {
+      const { user, session } = requireBrowserSession(c)
+      return generateJsonResponse(
+        c,
+        await authorizeLastfmScrobbling(
+          user.id,
+          session.id,
+          c.req.header('origin'),
+        ),
+        200,
+      )
+    },
+  )
+  .openapi(
+    createRoute({
+      method: 'get',
+      path: '/scrobbling/callback/{state}',
+      security: ownerSessionSecurity,
+      middleware: [noStore, browserSession],
+      request: {
+        params: z.object({ state: LastfmCallbackStateSchema }),
+        query: LastfmCallbackQuerySchema,
+      },
+      responses: {
+        302: {
+          description:
+            'Return to the app, where the player reports the result, without exposing tokens or session keys',
+        },
+        401: jsonErrorResponse('Owner browser session required'),
+        403: jsonErrorResponse('Forbidden'),
+        422: validationErrorResponse,
+      },
+    }),
+    async (c) => {
+      const { user, session } = requireBrowserSession(c)
+      let connected = false
+      let returnOrigin = env.APP_URL
+      try {
+        const result = await finishLastfmScrobbling(
+          c.req.valid('param').state,
+          c.req.valid('query'),
+          user.id,
+          session.id,
+        )
+        connected = result.connected
+        returnOrigin = result.returnOrigin
+      } catch {
+        /* Never expose tokens, session keys or Last.fm errors in the redirect. */
+      }
+      const destination = new URL('/albums', returnOrigin)
+      destination.search = new URLSearchParams({
+        player: connected ? 'lastfm-connected' : 'lastfm-error',
+      }).toString()
+      return c.redirect(destination.toString(), 302)
+    },
+  )
+  .openapi(
+    createRoute({
+      method: 'delete',
+      path: '/scrobbling/account',
+      security: ownerSessionSecurity,
+      middleware: [noStore, browserSession, sameOrigin],
+      responses: {
+        200: {
+          description:
+            'Delete this user account Last.fm session, pending sign-in and plays waiting to be scrobbled',
+          content: {
+            'application/json': {
+              schema: createResponseSchema(LastfmDisconnectResultSchema),
+            },
+          },
+        },
+        401: jsonErrorResponse('Owner browser session required'),
+        403: jsonErrorResponse('Forbidden'),
+      },
+    }),
+    async (c) =>
+      generateJsonResponse(
+        c,
+        await disconnectLastfmScrobbling(requireBrowserSession(c).user.id),
+        200,
+      ),
+  )
+  .openapi(
+    createRoute({
+      method: 'post',
+      path: '/scrobbles',
+      security: ownerSessionSecurity,
+      middleware: [noStore, browserSession, sameOrigin],
+      request: {
+        body: {
+          required: true,
+          content: {
+            'application/json': { schema: LastfmScrobbleInputSchema },
+          },
+        },
+      },
+      responses: {
+        200: {
+          description:
+            'Keep tracks played on Sonos rooms and scrobble every waiting play to the signed-in Last.fm account',
+          content: {
+            'application/json': {
+              schema: createResponseSchema(LastfmScrobbleResultSchema),
+            },
+          },
+        },
+        401: jsonErrorResponse('Owner browser session required'),
+        403: jsonErrorResponse('Forbidden'),
+        422: validationErrorResponse,
+      },
+    }),
+    async (c) =>
+      generateJsonResponse(
+        c,
+        await scrobbleLastfmPlays(
+          requireBrowserSession(c).user.id,
+          c.req.valid('json'),
+        ),
+        200,
+      ),
   )
 
 app.onError((error, c) =>

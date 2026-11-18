@@ -1037,6 +1037,48 @@ export const lastfmSync = pgTable('lastfm_sync', {
   ...timestampColumns,
 })
 
+// Tracks the player played on Sonos rooms, kept to scrobble them to the
+// user's Last.fm account. Rows only de-duplicate reports and hold plays until
+// Last.fm takes them; they are deleted once Last.fm would refuse them as too
+// old. The history sync reads the scrobbles back into lastfm_scrobble.
+export const lastfmPlay = pgTable(
+  'lastfm_play',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    trackUri: text('track_uri').notNull(),
+    artist: text('artist').notNull(),
+    track: text('track').notNull(),
+    // Empty when the album is not known.
+    album: text('album').notNull().default(''),
+    durationMs: integer('duration_ms'),
+    // UTC, when the track began.
+    startedAt: timestamp('started_at').notNull(),
+    // waiting, sent, or ignored.
+    status: text('status').notNull().default('waiting'),
+    // Last.fm's ignoredMessage code; null for a play dropped here as too old.
+    ignoredCode: integer('ignored_code'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    sentAt: timestamp('sent_at'),
+  },
+  (table) => [
+    index('lastfm_play_user_track_time_idx').on(
+      table.userId,
+      table.trackUri,
+      table.startedAt,
+    ),
+    index('lastfm_play_waiting_idx')
+      .on(table.userId, table.startedAt)
+      .where(sql`${table.status} = 'waiting'`),
+    check(
+      'lastfm_play_status_check',
+      sql`${table.status} in ('waiting', 'sent', 'ignored')`,
+    ),
+  ],
+)
+
 const tsvector = customType<{ data: string }>({
   dataType: () => 'tsvector',
 })

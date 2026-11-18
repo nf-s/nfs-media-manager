@@ -6,11 +6,13 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   useSyncExternalStore,
 } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { z } from 'zod'
+import { LastfmScrobblingStatusSchema } from '@repo/schemas/lastfm'
 import {
   SpotifyAccountStatusSchema,
   SpotifyPlaybackTokenSchema,
@@ -36,6 +38,11 @@ import {
   playerClientName,
   takeDriving,
 } from '@/utils/player-client'
+import {
+  createScrobbleReporter,
+  sendScrobbles,
+  type ScrobbleReporter,
+} from '@/utils/scrobble-reporter'
 import { createPlayerApi } from '@/utils/spotify-player-api'
 import { createSonosControlApi } from '@/utils/sonos-player-api'
 import { loadSpotifySdk } from '@/utils/spotify-sdk'
@@ -174,7 +181,10 @@ function saveRoom(room: SonosRoomRef | null) {
   }
 }
 
-function createEngine(apiBaseUrl: string) {
+/** Whether plays are scrobbled now, and where they are handed in. */
+type Scrobbling = { enabled: () => boolean; reporter: ScrobbleReporter }
+
+function createEngine(apiBaseUrl: string, scrobbling: Scrobbling) {
   // The access token is held in memory only and never written to storage.
   let cached: { accessToken: string; expiresAt: number } | null = null
   let pending: Promise<string> | null = null
@@ -214,12 +224,16 @@ function createEngine(apiBaseUrl: string) {
     onRoom: saveRoom,
     browserId: playerBrowserId(),
     restoreSource: (saved) => restorePlaybackSource(apiBaseUrl, saved),
+    scrobbles: {
+      enabled: scrobbling.enabled,
+      report: scrobbling.reporter.report,
+    },
   })
 }
 
 /** The engine with the account's shared session around it. */
-function createPlayer(apiBaseUrl: string) {
-  const engine = createEngine(apiBaseUrl)
+function createPlayer(apiBaseUrl: string, scrobbling: Scrobbling) {
+  const engine = createEngine(apiBaseUrl, scrobbling)
   const sync = createPlaybackSync({
     engine,
     api: createSessionApi(apiBaseUrl),
@@ -245,6 +259,20 @@ export function useSpotifyAccount() {
   })
 }
 
+/** The Last.fm sign-in that scrobbles what this app plays on Sonos rooms. */
+export function useLastfmScrobbling() {
+  const { apiBaseUrl } = useConfig()
+  return useQuery({
+    queryKey: ['lastfm-scrobbling'],
+    queryFn: () =>
+      fetchApiData(
+        apiBaseUrl,
+        '/api/v1/lastfm/scrobbling',
+        LastfmScrobblingStatusSchema,
+      ),
+  })
+}
+
 const noSubscription = () => () => undefined
 const idleState = () => idlePlaybackState
 
@@ -256,10 +284,24 @@ export default function PlaybackProvider({
   const { apiBaseUrl } = useConfig()
   const account = useSpotifyAccount()
   const enabled = account.data?.playback === true
+  const client = useQueryClient()
+  const lastfm = useLastfmScrobbling()
+  const scrobbling = useRef(false)
+  useEffect(() => {
+    scrobbling.current = lastfm.data?.connected === true
+  }, [lastfm.data?.connected])
   const [player, setPlayer] = useState<PlaybackSync | null>(null)
   useEffect(() => {
     if (!enabled) return
-    const { engine, sync } = createPlayer(apiBaseUrl)
+    const reporter = createScrobbleReporter({
+      send: sendScrobbles(apiBaseUrl),
+      onDisconnected: () =>
+        void client.invalidateQueries({ queryKey: ['lastfm-scrobbling'] }),
+    })
+    const { engine, sync } = createPlayer(apiBaseUrl, {
+      enabled: () => scrobbling.current,
+      reporter,
+    })
     engine.prepare()
     engine.watch()
     sync.start()
@@ -280,9 +322,10 @@ export default function PlaybackProvider({
       sync.close()
       sync.dispose()
       engine.dispose()
+      reporter.dispose()
       setPlayer(null)
     }
-  }, [enabled, apiBaseUrl])
+  }, [enabled, apiBaseUrl, client])
   const subscribe = useCallback(
     (listener: () => void) =>
       player ? player.subscribe(listener) : noSubscription(),

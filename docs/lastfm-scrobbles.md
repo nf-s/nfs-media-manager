@@ -6,6 +6,8 @@ The app can store every scrobble from one Last.fm account and use it for album l
 
 Add the Last.fm API key and username in the Last.fm provider's Settings (`/providers/lastfm?tab=settings`), or set `LASTFM_API_KEY` and `LASTFM_USERNAME`. The account's recent listening must be public; the sync uses the API key only and has no Last.fm sign-in.
 
+Scrobbling is separate from this sync and needs a Last.fm sign-in of its own: the player can [scrobble the tracks it plays on Sonos rooms](sonos.md#scrobbling-to-lastfm). Those scrobbles are read back by the next sync like any others.
+
 ## Syncing
 
 The sync is a Last.fm job. It has no media item and appears in Jobs as **Scrobble sync**, with its status, progress log, cancel and retry. No page needs to stay open.

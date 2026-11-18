@@ -23,6 +23,9 @@ import {
   requireAlbum,
 } from './album-provider-helpers'
 
+/** Identifies this app to Last.fm on every request it sends. */
+export const LASTFM_USER_AGENT = 'media-manager-lastfm-sync/1.0'
+
 export function lastFmErrorCode(
   body: unknown,
 ): ProviderRequestError['code'] | null {
@@ -136,6 +139,14 @@ export const lastfmPlugin: MediaProviderPlugin = {
         required: false,
         envVars: ['LASTFM_USERNAME'],
         helpText: 'Optional. Includes your album scrobble count when provided.',
+      },
+      {
+        key: 'apiSecret',
+        label: 'Shared secret',
+        required: false,
+        envVars: ['LASTFM_API_SECRET'],
+        helpText:
+          'Optional. Needed to sign in to Last.fm in the player and scrobble what plays on Sonos.',
       },
     ],
     browseFields: [

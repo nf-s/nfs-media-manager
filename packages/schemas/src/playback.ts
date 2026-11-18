@@ -144,6 +144,23 @@ export const SavedTargetSchema = z.discriminatedUnion('kind', [
 ])
 export type SavedTarget = z.infer<typeof SavedTargetSchema>
 
+/**
+ * How much of a track on a Sonos room has been heard, kept with the session
+ * so a reloaded page neither scrobbles the track twice nor starts counting
+ * again.
+ */
+export const PlaybackListenSchema = z.object({
+  uri: UriSchema,
+  /** Clock time the track began, in milliseconds. */
+  startedAt: z.number().nonnegative(),
+  heardMs: z.number().nonnegative(),
+  /** The track's length; 0 until it is known. */
+  durationMs: z.number().nonnegative(),
+  /** The play has been reported for scrobbling. */
+  reported: z.boolean(),
+})
+export type PlaybackListen = z.infer<typeof PlaybackListenSchema>
+
 export const SavedPlaybackSchema = z.object({
   version: z.literal(1),
   /** Clock time of the save, in milliseconds. */
@@ -167,6 +184,8 @@ export const SavedPlaybackSchema = z.object({
   shuffle: z.boolean(),
   target: SavedTargetSchema,
   source: SavedSourceSchema.nullable(),
+  /** The listen of the track a Sonos room plays, for scrobbling. */
+  listen: PlaybackListenSchema.nullable().optional(),
 })
 export type SavedPlayback = z.infer<typeof SavedPlaybackSchema>
 

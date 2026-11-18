@@ -20,6 +20,7 @@ const providerSecretEnvFallbacks: Record<string, Record<string, string[]>> = {
   lastfm: {
     apiKey: ['LASTFM_API_KEY'],
     username: ['LASTFM_USERNAME'],
+    apiSecret: ['LASTFM_API_SECRET'],
   },
   tmdb: {
     apiKey: ['TMDB_API_KEY'],

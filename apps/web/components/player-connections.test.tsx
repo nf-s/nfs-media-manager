@@ -3,6 +3,7 @@ import { test } from 'node:test'
 import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import type { LastfmScrobblingStatus } from '@repo/schemas/lastfm'
 import type { SonosAccountStatus, SonosRooms } from '@repo/schemas/sonos'
 import type { SpotifyAccountStatusSchema } from '@repo/schemas/spotify'
 import type { z } from 'zod'
@@ -71,9 +72,11 @@ function render(
   account?: SonosAccountStatus,
   list?: SonosRooms,
   spotify?: z.infer<typeof SpotifyAccountStatusSchema>,
+  lastfm?: LastfmScrobblingStatus,
 ) {
   const client = new QueryClient()
   if (account) client.setQueryData(['sonos-account'], account)
+  if (lastfm) client.setQueryData(['lastfm-scrobbling'], lastfm)
   if (spotify) client.setQueryData(['spotify-account'], spotify)
   if (list) client.setQueryData(['sonos-rooms'], list)
   return renderToStaticMarkup(
@@ -234,4 +237,45 @@ test('connections offer the play history only to a playback connection made with
   assert.doesNotMatch(allowed, /Play history/)
   // Until the status is known, nothing is offered.
   assert.doesNotMatch(render(<PlayerConnections />, connected), /Play history/)
+})
+
+test('connections show the Last.fm scrobbling status with its next step', () => {
+  const scrobbling = (lastfm: LastfmScrobblingStatus) =>
+    render(<PlayerConnections />, connected, undefined, undefined, lastfm)
+  const on = scrobbling({
+    configured: true,
+    connected: true,
+    account: 'fixture-listener',
+  })
+  assert.match(
+    on,
+    /<dt>Last\.fm<\/dt><dd>Connected<\/dd>.*?>Disconnect<\/button>/,
+  )
+  assert.match(
+    on,
+    /Tracks played on Sonos rooms from here are scrobbled to fixture-listener\./,
+  )
+  assert.doesNotMatch(on, /With Last\.fm connected/)
+  const off = scrobbling({ configured: true, connected: false, account: null })
+  assert.match(
+    off,
+    /<dt>Last\.fm<\/dt><dd>Not connected<\/dd>.*?>Connect Last\.fm<\/button>/,
+  )
+  assert.match(
+    off,
+    /With Last\.fm connected, tracks played on Sonos rooms from here are scrobbled\./,
+  )
+  const unset = scrobbling({
+    configured: false,
+    connected: false,
+    account: null,
+  })
+  assert.match(
+    unset,
+    /<dt>Last\.fm<\/dt><dd>Not set up<\/dd><a class="underline" href="\/providers\/lastfm\?tab=settings">Add credentials<\/a>/,
+  )
+  assert.match(
+    render(<PlayerConnections />, connected),
+    /<dt>Last\.fm<\/dt><dd>Checking…<\/dd>/,
+  )
 })

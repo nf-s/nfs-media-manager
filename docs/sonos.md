@@ -44,6 +44,24 @@ Where the room is not rejoined, the queue is moved on past the tracks of it that
 
 While the room is read, a line above the dock says **Rejoining the queue on …**; afterwards it says whether the room was rejoined or why not. Nothing is sent to the room before that read, including the tracks normally added ahead.
 
+## Scrobbling to Last.fm
+
+Tracks played on a room from here can be scrobbled to a Last.fm account. Sonos plays them from its own queue, outside any Spotify app, so this app reports them itself. It is off until Last.fm is connected for it:
+
+1. In **Providers → Last.fm → Settings** (`/providers/lastfm?tab=settings`), save the API account's **Shared secret** beside its API key, or set `LASTFM_API_SECRET`. Both are shown on the [Last.fm API account](https://www.last.fm/api/accounts) page.
+2. In the player, open **Play on** and choose **Connect Last.fm** under **Connections**, then allow the app on Last.fm. Last.fm returns to the app and the player reports the result. **Connections** then shows **Last.fm: Connected** and names the account the tracks go to; **Disconnect** deletes the stored sign-in and any plays not sent yet.
+
+Only a room chosen under **Play on**, playing tracks this app loaded on it, is scrobbled. Nothing else is: not music started on the room from the Sonos or Spotify app, not [playback a Spotify app put on a room](#playback-a-spotify-app-put-on-a-room) that is only controlled from here, and not playback in this browser or on a Spotify device, which Spotify scrobbles itself when the Spotify account is connected to Last.fm.
+
+- A track is scrobbled once half of it, or four minutes, has been heard on the room. Tracks of 30 seconds or less are not scrobbled. The scrobble carries Spotify's name for the track, its first artist and its album, and the time the track began.
+- What was heard is counted from the room's position at each read. Between two reads no more is counted than the time that passed, so a track that was skipped or sought through does not count, and a track that ran out between two reads does.
+- The page that runs the queue reports the plays. The count for the playing track is saved with the [shared session](spotify-playback.md#the-shared-session), so a reload or another browser taking over carries on with it and does not scrobble the track again.
+- A room keeps playing with every page closed. When a page is opened again and the room is [rejoined](#closing-every-page), the tracks it played meanwhile are scrobbled as far as the time since allows, each dated back from the track the room is on by the lengths of the tracks between. A room found stopped at the start of its queue is scrobbled to the end of that queue. A room that is idle, or plays something else, is scrobbled from the Spotify account's play history where the history lists the queue's tracks and [may be read](spotify-playback.md#picking-the-queue-up-again).
+- The server keeps each reported play until Last.fm has taken it. A play Last.fm could not be reached for is sent with the next one reported. A play already kept for the same track at about the same time is not kept twice.
+- When Last.fm rejects the stored sign-in, **Connections** shows **Not connected** and the plays wait for the account to be connected again.
+- Sign-in is Last.fm's web authentication. Last.fm returns to `/api/v1/lastfm/scrobbling/callback/{state}`, which checks the state against the signed-in session before exchanging the token for a session key. The shared secret and session key stay on the server, encrypted like other provider secrets. Saving a different API key ends the connection.
+- Scrobbles are signed requests of up to 50 plays and count against the Last.fm provider like its other requests: a rate limit or a refused API key stops them as it stops the [scrobble sync](lastfm-scrobbles.md), and the plays wait. Plays are kept in `lastfm_play` for about two weeks, to recognise a play reported twice.
+
 ## Playback a Spotify app put on a room
 
 When Spotify reports playback on a restricted device, the player asks the server for the Sonos group behind it: the group playing the same Spotify track, and where several groups do (an account can have several households), the one named like the Spotify device. Sonos can lag behind Spotify just after playback moves, so when no group plays the track, the only non-idle group with that name is used if it plays from Spotify, and an unanswered lookup is repeated twice, two seconds apart. While it runs, the device button shows a spinner and **Play on** shows **Finding … on Sonos**; a controlled group shows the **SONOS** mark on the device button.
@@ -75,11 +93,16 @@ When Spotify reports playback on a restricted device, the player asks the server
 - Every Sonos cloud request takes about a second from start to answer. The dock does not wait for it, but the sound follows a control by a second or two, and the room list takes a few seconds to load the first time **Play on** is opened; after that the rooms read before are shown while they are read again.
 - Each state read costs two Sonos requests (three with the volume), so an open, visible player on a playing room makes about 45 a minute.
 - Group IDs can change when rooms are regrouped; a command then fails once and the group is looked up again.
-- Tests use fake Sonos responses only.
+- Scrobbling counts what a page can tell from the room. A room paused for a long time and then skipped through from the Sonos app while no page was open looks like one that played on, and those tracks are scrobbled. Tracks a room played unread are not scrobbled when the room is never rejoined and the play history does not list them, or once they are more than two weeks old, which Last.fm refuses. For an album played as an album, tracks between two reads more than one track apart are not scrobbled.
+- Waiting plays are sent only when another play is reported; nothing retries in the background. Plays waiting when a sign-in is rejected go to whichever account is connected next.
+- Last.fm's documentation does not state how old a scrobble may be or show its JSON answers. The two-week limit and the answer format follow common client practice and have not been checked against the live service.
+- Whether Spotify scrobbles what Sonos plays from its own queue has not been established. If it does for an account, those tracks reach Last.fm twice with this connection; disconnect Last.fm scrobbling here in that case. A track moved part-way between this browser and a room can be scrobbled by both.
+- Tests use fake Sonos and Last.fm responses only.
 
 ## Verification
 
 ```bash
-pnpm --filter @repo/server exec vitest run src/lib/sonos-api.test.ts src/services/__tests__/sonos-oauth.test.ts
-apps/server/node_modules/.bin/tsx --tsconfig apps/web/tsconfig.test.json --test apps/web/components/player-connections.test.tsx apps/web/components/player-dock.test.tsx apps/web/utils/playback-engine.test.ts
+pnpm --filter @repo/server exec vitest run src/lib/sonos-api.test.ts src/services/__tests__/sonos-oauth.test.ts src/lib/lastfm-scrobble-api.test.ts src/services/__tests__/lastfm-scrobbling.test.ts src/routes/__tests__/lastfm-scrobbling-api.test.ts
+pnpm --filter @repo/server exec vitest run --config vitest.integration.config.ts integration/lastfm-scrobbling.integration.ts
+apps/server/node_modules/.bin/tsx --tsconfig apps/web/tsconfig.test.json --test apps/web/components/player-connections.test.tsx apps/web/components/player-dock.test.tsx apps/web/utils/playback-engine.test.ts apps/web/utils/room-listen.test.ts apps/web/utils/scrobble-reporter.test.ts
 ```

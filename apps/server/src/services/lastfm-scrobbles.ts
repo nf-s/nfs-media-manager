@@ -26,7 +26,11 @@ import {
   albumNameMatches,
   requestAlbumJson,
 } from '@/plugins/builtin/album-provider-helpers'
-import { lastFmErrorCode, lastfmPlugin } from '@/plugins/builtin/lastfm'
+import {
+  LASTFM_USER_AGENT,
+  lastFmErrorCode,
+  lastfmPlugin,
+} from '@/plugins/builtin/lastfm'
 import {
   album,
   lastfmAlbumLink,
@@ -65,7 +69,6 @@ const MAX_ALBUM_SOURCES = 50
 const OVERLAP_SECONDS = 7 * 24 * 60 * 60
 // Earlier timestamps come from devices with an unset clock.
 const EARLIEST_UTS = Date.UTC(2002, 0, 1) / 1000
-const USER_AGENT = 'media-manager-lastfm-sync/1.0'
 
 const NamedSchema = z.object({
   '#text': z.string(),
@@ -412,7 +415,7 @@ async function fetchPage(
     { request, secrets: configured.secrets },
     'Last.fm',
     url,
-    { headers: { 'User-Agent': USER_AGENT } },
+    { headers: { 'User-Agent': LASTFM_USER_AGENT } },
     lastFmErrorCode,
   )
   if ('error' in payload) {

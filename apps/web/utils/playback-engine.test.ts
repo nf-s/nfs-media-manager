@@ -19,6 +19,7 @@ import {
 import type { SpotifySdk, SpotifySdkPlayer } from './spotify-sdk'
 import type { SonosControlApi } from './sonos-player-api'
 import type { SonosGroupControl, SonosGroupState } from '@repo/schemas/sonos'
+import type { LastfmPlay } from '@repo/schemas/lastfm'
 import {
   PLAYBACK_LEASE_MS,
   SavedPlaybackSchema,
@@ -129,6 +130,7 @@ function harness(
     | 'onRoom'
     | 'browserId'
     | 'restoreSource'
+    | 'scrobbles'
   > = {},
   world?: SpotifyWorld,
 ) {
@@ -3037,11 +3039,12 @@ function page(
   sessions: ReturnType<typeof fakeSessions>,
   world?: SpotifyWorld,
   sonos?: SonosControlApi,
+  scrobbles?: PlaybackEngineOptions['scrobbles'],
 ) {
   const setup = harness(
     undefined,
     sonos,
-    { browserId: `client-${name}`, restoreSource },
+    { browserId: `client-${name}`, restoreSource, scrobbles },
     world,
   )
   const sync = createPlaybackSync({
@@ -4653,4 +4656,369 @@ test('a Sonos room that reported no track for a while is followed again when it 
     0,
   )
   one.close()
+})
+
+/** Collects the plays an engine hands on for scrobbling. */
+function scrobbleLog(enabled = true) {
+  const plays: LastfmPlay[] = []
+  return {
+    plays,
+    scrobbles: {
+      enabled: () => enabled,
+      report: (reported: LastfmPlay[]) => {
+        plays.push(...reported)
+      },
+    },
+  }
+}
+
+/** Lets a room play a track from one position to another, read as it goes. */
+async function roomPlays(
+  sonos: ReturnType<typeof fakeSonos>,
+  uri: string,
+  from: number,
+  to: number,
+  values: Partial<SonosGroupState> = {},
+) {
+  for (let positionMs = from; positionMs <= to; positionMs += 3_000) {
+    sonos.room.state = roomState(uri, { positionMs, ...values })
+    await advance(3_000)
+  }
+}
+
+async function trackOnRoom(log: ReturnType<typeof scrobbleLog>) {
+  const sonos = fakeSonos()
+  const setup = harness(undefined, sonos.api, { scrobbles: log.scrobbles })
+  await setup.engine.selectDevice({ kind: 'room', room: kitchen })
+  setup.engine.play(track)
+  await settle()
+  return { sonos, setup }
+}
+
+test('a track played on a Sonos room is reported once half of it was heard', async () => {
+  const log = scrobbleLog()
+  const { sonos, setup } = await trackOnRoom(log)
+  const startedAt = clock
+  await roomPlays(sonos, track.uri, 0, 93_000)
+  assert.equal(log.plays.length, 0)
+  await roomPlays(sonos, track.uri, 96_000, 198_000)
+  assert.equal(log.plays.length, 1)
+  const [play] = log.plays
+  assert.deepEqual(
+    { ...play, startedAt: 0 },
+    {
+      trackUri: track.uri,
+      track: `Spotify name of ${track.uri}`,
+      artist: 'Spotify artist',
+      album: 'Spotify album',
+      durationMs: 180_000,
+      startedAt: 0,
+    },
+  )
+  // The play is dated from when the track began on the room.
+  assert.ok(Math.abs((play?.startedAt ?? 0) - startedAt) <= 3_000)
+  assert.equal(setup.engine.saved()?.listen?.reported, true)
+  setup.engine.dispose()
+})
+
+test('a track skipped on a Sonos room is not reported, and nothing is counted with scrobbling off', async () => {
+  const log = scrobbleLog()
+  const sonos = fakeSonos()
+  const setup = harness(undefined, sonos.api, { scrobbles: log.scrobbles })
+  await setup.engine.selectDevice({ kind: 'room', room: kitchen })
+  setup.engine.play(sourceTrack(0), fixtureSource(40))
+  await settle()
+  await roomPlays(sonos, sourceTrack(0).uri, 0, 30_000, { hasNext: true })
+  setup.engine.next()
+  await settle()
+  await roomPlays(sonos, sourceTrack(1).uri, 0, 60_000, { hasNext: true })
+  assert.equal(log.plays.length, 0)
+  await roomPlays(sonos, sourceTrack(1).uri, 63_000, 120_000, {
+    hasNext: true,
+  })
+  assert.deepEqual(
+    log.plays.map((play) => play.trackUri),
+    [sourceTrack(1).uri],
+  )
+  setup.engine.dispose()
+
+  const off = scrobbleLog(false)
+  const quiet = await trackOnRoom(off)
+  await roomPlays(quiet.sonos, track.uri, 0, 150_000)
+  assert.equal(off.plays.length, 0)
+  assert.equal(quiet.setup.engine.saved()?.listen, null)
+  quiet.setup.engine.dispose()
+})
+
+test('music this app did not load on a Sonos room is not reported', async () => {
+  const log = scrobbleLog()
+  const sonos = fakeSonos()
+  const setup = harness(undefined, sonos.api, {
+    initialRoom: kitchen,
+    scrobbles: log.scrobbles,
+  })
+  setup.engine.watch()
+  await roomPlays(sonos, 'spotify:track:elsewhere', 0, 150_000)
+  assert.equal(
+    setup.engine.getState().snapshot?.trackUri,
+    'spotify:track:elsewhere',
+  )
+  assert.equal(setup.engine.getState().current, null)
+  assert.equal(log.plays.length, 0)
+  setup.engine.dispose()
+})
+
+test('a track that runs out between two reads of the room is reported with the one before the skip left out', async () => {
+  const log = scrobbleLog()
+  const sonos = fakeSonos()
+  const setup = harness(undefined, sonos.api, { scrobbles: log.scrobbles })
+  await setup.engine.selectDevice({ kind: 'room', room: kitchen })
+  setup.engine.play(sourceTrack(0), fixtureSource(40))
+  await settle()
+  await roomPlays(sonos, sourceTrack(0).uri, 0, 90_000, { hasNext: true })
+  assert.equal(log.plays.length, 0)
+  // The page is not read for a minute and a half, as when it is hidden.
+  clock += 80_000
+  sonos.room.state = roomState(sourceTrack(0).uri, {
+    positionMs: 173_000,
+    hasNext: true,
+  })
+  await advance(3_000)
+  assert.deepEqual(
+    log.plays.map((play) => play.trackUri),
+    [sourceTrack(0).uri],
+  )
+  // The room went two tracks on within seconds: the one between was skipped.
+  sonos.room.state = roomState(sourceTrack(2).uri, {
+    positionMs: 1_000,
+    hasNext: true,
+  })
+  await advance(3_000)
+  assert.equal(setup.engine.getState().current?.uri, sourceTrack(2).uri)
+  assert.equal(log.plays.length, 1)
+  setup.engine.dispose()
+})
+
+test('tracks a Sonos room played with every page closed are reported when it is rejoined', async () => {
+  const log = scrobbleLog()
+  const sessions = fakeSessions()
+  const sonos = fakeSonos()
+  const one = page(
+    'Chrome on Mac',
+    sessions,
+    undefined,
+    sonos.api,
+    log.scrobbles,
+  )
+  one.sync.start()
+  await settle()
+  await one.sync.selectDevice({ kind: 'room', room: kitchen })
+  one.sync.play(sourceTrack(0), savedFixtureSource(40))
+  await settle()
+  const startedAt = clock
+  await roomPlays(sonos, sourceTrack(0).uri, 0, 60_000, { hasNext: true })
+  await advance(1_000)
+  one.sync.close()
+  one.close()
+  assert.equal(log.plays.length, 0)
+  assert.equal(sessions.record.state?.listen?.reported, false)
+
+  // Half an hour later the room is three tracks further along its queue.
+  clock += 30 * 60_000
+  sonos.room.state = roomState(sourceTrack(3).uri, {
+    positionMs: 50_000,
+    hasNext: true,
+  })
+  const again = page(
+    'Safari on iPhone',
+    sessions,
+    undefined,
+    sonos.api,
+    log.scrobbles,
+  )
+  again.engine.watch()
+  again.sync.start()
+  await advance(4_000)
+  assert.equal(again.sync.getState().current?.uri, sourceTrack(3).uri)
+  assert.deepEqual(
+    log.plays.map((play) => play.trackUri),
+    [sourceTrack(0).uri, sourceTrack(1).uri, sourceTrack(2).uri],
+  )
+  const [first, second, third] = log.plays
+  assert.ok(Math.abs((first?.startedAt ?? 0) - startedAt) <= 3_000)
+  // Each track is dated back from the one after it, by its own length.
+  assert.equal((third?.startedAt ?? 0) - (second?.startedAt ?? 0), 180_000)
+  assert.ok((third?.startedAt ?? 0) + 180_000 <= clock - 50_000)
+
+  // The track the room is on is reported in its turn, once.
+  await roomPlays(sonos, sourceTrack(3).uri, 53_000, 110_000, {
+    hasNext: true,
+  })
+  assert.equal(log.plays.length, 4)
+  assert.equal(log.plays[3]?.trackUri, sourceTrack(3).uri)
+  again.close()
+})
+
+test('a track reported before a reload is not reported again after it', async () => {
+  const log = scrobbleLog()
+  const sessions = fakeSessions()
+  const sonos = fakeSonos()
+  const one = page(
+    'Chrome on Mac',
+    sessions,
+    undefined,
+    sonos.api,
+    log.scrobbles,
+  )
+  one.sync.start()
+  await settle()
+  await one.sync.selectDevice({ kind: 'room', room: kitchen })
+  one.sync.play(sourceTrack(0), savedFixtureSource(40))
+  await settle()
+  await roomPlays(sonos, sourceTrack(0).uri, 0, 120_000, { hasNext: true })
+  await advance(1_000)
+  assert.equal(log.plays.length, 1)
+  one.sync.close()
+  one.close()
+  assert.equal(sessions.record.state?.listen?.reported, true)
+
+  // The room is paused for twenty minutes, then the app is opened again.
+  clock += 20 * 60_000
+  sonos.room.state = roomState(sourceTrack(0).uri, {
+    state: 'paused',
+    positionMs: 125_000,
+    hasNext: true,
+  })
+  const again = page(
+    'Safari on iPhone',
+    sessions,
+    undefined,
+    sonos.api,
+    log.scrobbles,
+  )
+  again.engine.watch()
+  again.sync.start()
+  await advance(4_000)
+  assert.equal(again.sync.getState().current?.uri, sourceTrack(0).uri)
+  await roomPlays(sonos, sourceTrack(0).uri, 128_000, 197_000, {
+    hasNext: true,
+  })
+  sonos.room.state = roomState(sourceTrack(1).uri, {
+    positionMs: 1_000,
+    hasNext: true,
+  })
+  await advance(3_000)
+  assert.equal(log.plays.length, 1)
+  again.close()
+})
+
+test('a Sonos room found stopped after its whole queue is reported to the end of it', async () => {
+  const log = scrobbleLog()
+  const sessions = fakeSessions()
+  const sonos = fakeSonos()
+  const one = page(
+    'Chrome on Mac',
+    sessions,
+    undefined,
+    sonos.api,
+    log.scrobbles,
+  )
+  one.sync.start()
+  await settle()
+  await one.sync.selectDevice({ kind: 'room', room: kitchen })
+  one.sync.play(sourceTrack(0), savedFixtureSource(40))
+  await settle()
+  await roomPlays(sonos, sourceTrack(0).uri, 0, 198_000, { hasNext: true })
+  await roomPlays(sonos, sourceTrack(1).uri, 1_000, 31_000, { hasNext: true })
+  await advance(1_000)
+  one.sync.close()
+  one.close()
+  assert.deepEqual(
+    log.plays.map((play) => play.trackUri),
+    [sourceTrack(0).uri],
+  )
+  const given = sessions.record.state?.session?.sent.length ?? 0
+  assert.ok(given > 2)
+
+  // Hours later the room has stopped back at the first of its tracks.
+  clock += 3 * 60 * 60_000
+  sonos.room.state = roomState(sourceTrack(0).uri, {
+    state: 'paused',
+    positionMs: 0,
+  })
+  const again = page(
+    'Safari on iPhone',
+    sessions,
+    undefined,
+    sonos.api,
+    log.scrobbles,
+  )
+  again.engine.watch()
+  again.sync.start()
+  await advance(4_000)
+  assert.deepEqual(again.sync.getState().rejoin, {
+    status: 'ended',
+    device: 'Fixture kitchen',
+  })
+  assert.deepEqual(
+    log.plays.map((play) => play.trackUri),
+    Array.from({ length: given }, (_, index) => sourceTrack(index).uri),
+  )
+  again.close()
+})
+
+test("a stopped Sonos room's tracks are reported from Spotify's play history", async () => {
+  const log = scrobbleLog()
+  const sessions = fakeSessions()
+  const sonos = fakeSonos()
+  const one = page(
+    'Chrome on Mac',
+    sessions,
+    undefined,
+    sonos.api,
+    log.scrobbles,
+  )
+  one.sync.start()
+  await settle()
+  await one.sync.selectDevice({ kind: 'room', room: kitchen })
+  one.sync.play(sourceTrack(0), savedFixtureSource(40))
+  await settle()
+  await roomPlays(sonos, sourceTrack(0).uri, 0, 120_000, { hasNext: true })
+  await advance(1_000)
+  one.sync.close()
+  one.close()
+  const closedAt = clock
+  assert.equal(log.plays.length, 1)
+
+  clock += 3 * 60 * 60_000
+  sonos.room.state = roomState(sourceTrack(0).uri, { state: 'idle' })
+  const again = page(
+    'Safari on iPhone',
+    sessions,
+    {
+      device: null,
+      restricted: null,
+      snapshot: null,
+      devices: [],
+      failures: [],
+      history: playedSince(closedAt, [0, 1, 2]),
+    },
+    sonos.api,
+    log.scrobbles,
+  )
+  again.engine.watch()
+  again.sync.start()
+  await advance(4_000)
+  assert.equal(again.sync.getState().current?.uri, sourceTrack(3).uri)
+  // The first track was reported while it played; Spotify dates a play by its end.
+  assert.deepEqual(
+    log.plays
+      .slice(1)
+      .map(({ trackUri, startedAt }) => ({ trackUri, startedAt })),
+    [
+      { trackUri: sourceTrack(1).uri, startedAt: closedAt + 400_000 - 180_000 },
+      { trackUri: sourceTrack(2).uri, startedAt: closedAt + 600_000 - 180_000 },
+    ],
+  )
+  again.close()
 })

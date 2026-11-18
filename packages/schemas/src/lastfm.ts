@@ -275,6 +275,72 @@ export const LastfmLinkReportSchema = PaginatedDataSchema(
   summary: z.array(LastfmLinkSummarySchema),
 })
 
+/**
+ * Scrobbling what the player plays on Sonos rooms. It needs a Last.fm sign-in
+ * of its own: the history sync reads public listening with the API key only.
+ */
+export const LastfmScrobblingStatusSchema = z.object({
+  /** The API key and shared secret are saved in Providers. */
+  configured: z.boolean(),
+  connected: z.boolean(),
+  /** The Last.fm account scrobbles go to; null when not connected. */
+  account: z.string().nullable(),
+})
+export const LastfmAuthorizeInputSchema = z.object({}).strict()
+export const LastfmAuthorizeResultSchema = z.object({
+  url: z.string().url(),
+  expiresAt: z.string().datetime(),
+})
+/** The state names the pending sign-in; it is part of the callback's path. */
+export const LastfmCallbackStateSchema = z.string().regex(/^[A-Za-z0-9_-]{43}$/)
+/** Last.fm adds the token when the account allowed the app. */
+export const LastfmCallbackQuerySchema = z.object({
+  token: z
+    .string()
+    .regex(/^[A-Za-z0-9_-]{8,128}$/)
+    .optional(),
+})
+export const LastfmDisconnectResultSchema = z.object({
+  disconnected: z.literal(true),
+})
+
+const SCROBBLE_TEXT_MAX = 500
+/** One track played on a Sonos room that this app loaded there. */
+export const LastfmPlaySchema = z
+  .object({
+    trackUri: z.string().regex(/^spotify:track:[A-Za-z0-9]{22}$/),
+    track: z.string().trim().min(1).max(SCROBBLE_TEXT_MAX),
+    /** The first credited artist, as Spotify scrobbles a track. */
+    artist: z.string().trim().min(1).max(SCROBBLE_TEXT_MAX),
+    /** Empty when the album is not known. */
+    album: z.string().trim().max(SCROBBLE_TEXT_MAX),
+    durationMs: z
+      .number()
+      .int()
+      .min(0)
+      .max(24 * 60 * 60 * 1000)
+      .nullable(),
+    /** Clock time the track began, in milliseconds. */
+    startedAt: z.number().int().nonnegative(),
+  })
+  .strict()
+export const LASTFM_SCROBBLE_BATCH = 50
+export const LastfmScrobbleInputSchema = z
+  .object({
+    plays: z.array(LastfmPlaySchema).min(1).max(LASTFM_SCROBBLE_BATCH),
+  })
+  .strict()
+export const LastfmScrobbleResultSchema = z.object({
+  /** False when no Last.fm account is signed in; nothing was kept then. */
+  connected: z.boolean(),
+  /** Plays kept to send. A play already reported, in the future or too old is not kept. */
+  accepted: z.number().int().nonnegative(),
+  /** Scrobbles Last.fm took in this request, including ones that had waited. */
+  scrobbled: z.number().int().nonnegative(),
+  /** Plays kept that Last.fm has not taken yet; they are sent with the next report. */
+  waiting: z.number().int().nonnegative(),
+})
+
 export type LastfmSyncStatus = z.infer<typeof LastfmSyncStatusSchema>
 export type AlbumListening = z.infer<typeof AlbumListeningSchema>
 export type ListeningMonth = z.infer<typeof ListeningMonthSchema>
@@ -293,3 +359,9 @@ export type LastfmSpotifySearchInput = z.input<
   typeof LastfmSpotifySearchInputSchema
 >
 export type LastfmSpotifySearch = z.infer<typeof LastfmSpotifySearchSchema>
+export type LastfmScrobblingStatus = z.infer<
+  typeof LastfmScrobblingStatusSchema
+>
+export type LastfmPlay = z.infer<typeof LastfmPlaySchema>
+export type LastfmScrobbleInput = z.infer<typeof LastfmScrobbleInputSchema>
+export type LastfmScrobbleResult = z.infer<typeof LastfmScrobbleResultSchema>
