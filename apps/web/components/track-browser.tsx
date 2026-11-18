@@ -476,14 +476,15 @@ export default function TrackBrowser() {
     )
   }
 
-  function trackLink(
-    item: TrackListItem,
-    className?: string,
-    label = item.title,
-  ) {
+  function trackLink(item: TrackListItem, className?: string) {
     return (
-      <DetailLink kind="track" id={item.id} className={className} title={label}>
-        {label}
+      <DetailLink
+        kind="track"
+        id={item.id}
+        className={className}
+        title={item.title}
+      >
+        {item.title}
       </DetailLink>
     )
   }
@@ -522,13 +523,11 @@ export default function TrackBrowser() {
             title={item.title}
             target={{ kind: 'track', id: item.id }}
           />
-          {child
-            ? trackLink(
-                item,
-                'ds-cell-title',
-                item.albumName ?? item.album?.title ?? 'Release unknown',
-              )
-            : titleWithVersions(item, index, trackLink(item, 'ds-cell-title'))}
+          {titleWithVersions(
+            item,
+            child ? undefined : index,
+            trackLink(item, 'ds-cell-title'),
+          )}
           {child ? (
             <LibraryTrackPlayButton track={item} />
           ) : (
