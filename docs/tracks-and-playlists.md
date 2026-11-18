@@ -114,7 +114,7 @@ Tracks Browse hides a standalone Last.fm entry with no album, playlist or Spotif
 
 Find **Group recordings** under **Filters → Views**. It is on when sorting by **Scrobbles** or **Last listened**. Other sorts, including **Artist** and **Album**, start with each release version visible. Toggle grouping for the current sort. Its setting survives a reload and changing the sort field applies the new sort’s default.
 
-Use the arrow at the right edge of a grouped recording in Grid, List or Table to see the matching library tracks and open or play a specific release version. Groups use the full track title, billed artists and recording evidence from a shared ISRC or an exact Last.fm match. Version qualifiers such as “Radio Edit” and “Remix” distinguish recordings. Conflicting ISRCs or substantially different known durations keep ambiguous versions apart.
+Use the arrow immediately after a grouped track’s title in Grid, List or Table to see the matching library tracks and open or play a specific release version. Groups use the full track title, billed artists and recording evidence from a shared ISRC or an exact Last.fm match. Version qualifiers such as “Radio Edit” and “Remix” distinguish recordings. Conflicting ISRCs or substantially different known durations keep ambiguous versions apart.
 
 The grouped row counts each linked listen once, shows the latest listen and uses the earliest known Added date among the included versions. Album, playlist and other release filters narrow those versions before grouping. Listening and Added ranges apply to the grouped values. Album track lists and the Matches table continue to show individual entries.
 

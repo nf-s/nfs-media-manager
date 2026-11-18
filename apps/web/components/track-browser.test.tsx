@@ -172,27 +172,24 @@ test('Group recordings follows the sort unless the URL sets an override', async 
   }
 })
 
-test('Tracks put release version controls at the end of each grouped item', async () => {
-  const table = await render('sortBy=scrobbles', 1, undefined, true)
-  assert.match(
-    table,
-    /<th scope="col" data-sticky="end" aria-label="Release versions"><\/th><\/tr>/,
-  )
-  assert.match(
-    table,
-    /<td data-align="end" data-sticky="end"><button[^>]*aria-label="Show 2 release versions for Example Song"[^>]*>.*?<\/button><\/td><\/tr>/,
-  )
-  const list = await render('view=list&sortBy=scrobbles', 1, undefined, true)
-  assert.match(list, /<div class="ds-listhead" data-action="">/)
-  assert.match(
-    list,
-    /<span class="ds-w-date">2026-03-0[45]<\/span><\/div><button[^>]*aria-label="Show 2 release versions for Example Song"/,
-  )
-  const grid = await render('view=grid&sortBy=scrobbles', 1, undefined, true)
-  assert.match(
-    grid,
-    /<a class="ds-card-title"[^>]*>Example Song<\/a><button[^>]*aria-label="Show 2 release versions for Example Song"/,
-  )
+test('Grouped Tracks place the release versions button immediately after the title link in every view', async () => {
+  for (const view of ['table', 'list', 'grid']) {
+    const html = await render(
+      `view=${view}&sortBy=scrobbles`,
+      1,
+      undefined,
+      true,
+    )
+    assert.match(
+      html,
+      /<a [^>]*>Example Song<\/a><button[^>]*aria-label="Show 2 release versions for Example Song"/,
+      view,
+    )
+    assert.doesNotMatch(
+      html,
+      /justify-between[^>]*><a [^>]*>Example Song|<th [^>]*aria-label="Release versions"/,
+    )
+  }
 })
 
 test('Tracks list rows: thumbnail, title, artists and album, play pair, tags and values', async () => {

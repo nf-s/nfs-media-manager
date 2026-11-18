@@ -34,6 +34,7 @@ const maxWidth = 650
 export function useColumnWidths(
   collection: string,
   defaultWidth: (field: BrowseField) => number,
+  minimumWidths: Partial<Record<string, number>> = {},
 ) {
   const [widths, setWidths] = useState<Record<string, number>>({})
   const resize = useRef<{ key: string; x: number; width: number } | null>(null)
@@ -47,9 +48,10 @@ export function useColumnWidths(
       /* Ignore unavailable storage or malformed saved widths. */
     }
   }, [collection])
+  const clamp = (key: string, width: number) =>
+    Math.max(minimumWidths[key] ?? minWidth, Math.min(maxWidth, width))
   const widthFor = (field: BrowseField) =>
-    widths[field.key] ?? defaultWidth(field)
-  const clamp = (width: number) => Math.max(minWidth, Math.min(maxWidth, width))
+    clamp(field.key, widths[field.key] ?? defaultWidth(field))
   function save(next: Record<string, number>) {
     setWidths(next)
     try {
@@ -70,6 +72,7 @@ export function useColumnWidths(
         save({
           ...widths,
           [field.key]: clamp(
+            field.key,
             widthFor(field) + (event.key === 'ArrowRight' ? 10 : -10),
           ),
         })
@@ -87,6 +90,7 @@ export function useColumnWidths(
           setWidths({
             ...widths,
             [field.key]: clamp(
+              field.key,
               resize.current.width + event.clientX - resize.current.x,
             ),
           })

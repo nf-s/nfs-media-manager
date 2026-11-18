@@ -26,7 +26,6 @@ import { Settings2 } from 'lucide-react'
 import {
   TableBody,
   TableCell,
-  TableHead,
   TableHeader,
   TableRow,
   TableScroll,
@@ -125,7 +124,6 @@ const collection = 'tracks'
 const headerHeight = 28
 const listRowHeight = 48
 const tableRowHeight = 32
-const versionsColumnWidth = 'calc(var(--ds-h-xs) + 2 * var(--ds-gutter))'
 const noun = { one: 'track', other: 'tracks' }
 
 export default function TrackBrowser() {
@@ -177,17 +175,20 @@ export default function TrackBrowser() {
   const columns = orderedFields.filter((field) =>
     columnKeys.includes(field.key),
   )
-  const widths = useColumnWidths(collection, (field) =>
-    field.key === 'title' ? 280 : field.type === 'text' ? 180 : 110,
+  const widths = useColumnWidths(
+    collection,
+    (field) =>
+      field.key === 'title' ? 280 : field.type === 'text' ? 180 : 110,
+    // Leave room for the title, disclosure and playback controls on grouped rows.
+    groupRecordings ? { title: 180 } : undefined,
   )
   const tableWidths = columns.map((field) => {
     const width = `${widths.widthFor(field)}px`
-    // Leave room for both pinned columns, even in a narrow view.
+    // Keep part of the horizontally scrolling columns visible beside the pinned title.
     return groupRecordings && field.key === 'title'
-      ? `clamp(0px, ${viewport.width}px - ${versionsColumnWidth}, ${width})`
+      ? `min(${width}, max(0px, ${viewport.width}px - 2 * var(--ds-8)))`
       : width
   })
-  if (groupRecordings) tableWidths.push(versionsColumnWidth)
   const queryKey = JSON.stringify({
     q,
     filters,
@@ -454,18 +455,19 @@ export default function TrackBrowser() {
     )
   }
 
-  function versionToggle(item: TrackListItem, index: number) {
-    return (
-      <RecordingVersionsToggle track={item} index={index} versions={versions} />
-    )
-  }
-
-  function cardTitle(item: TrackListItem, index: number) {
-    const title = <CardTitle>{trackLink(item)}</CardTitle>
-    return item.recordingGroup ? (
-      <span className="ds-cell-id justify-between">
+  function titleWithVersions(
+    item: TrackListItem,
+    index: number | undefined,
+    title: ReactNode,
+  ) {
+    return item.recordingGroup && index !== undefined ? (
+      <span className="ds-cell-id gap-[var(--ds-1)]">
         {title}
-        {versionToggle(item, index)}
+        <RecordingVersionsToggle
+          track={item}
+          index={index}
+          versions={versions}
+        />
       </span>
     ) : (
       title
@@ -487,13 +489,13 @@ export default function TrackBrowser() {
             title={item.title}
             target={{ kind: 'track', id: item.id }}
           />
-          {trackLink(
-            item,
-            'ds-cell-title',
-            child
-              ? (item.albumName ?? item.album?.title ?? 'Release unknown')
-              : item.title,
-          )}
+          {child
+            ? trackLink(
+                item,
+                'ds-cell-title',
+                item.albumName ?? item.album?.title ?? 'Release unknown',
+              )
+            : titleWithVersions(item, index, trackLink(item, 'ds-cell-title'))}
           {child ? (
             <LibraryTrackPlayButton track={item} />
           ) : (
@@ -534,11 +536,6 @@ export default function TrackBrowser() {
             {renderValue(item, field, index, child)}
           </TableCell>
         ))}
-        {groupRecordings && (
-          <TableCell align="end" stickyEnd>
-            {!child && versionToggle(item, index)}
-          </TableCell>
-        )}
       </TableRow>
     )
   }
@@ -560,7 +557,11 @@ export default function TrackBrowser() {
             target={{ kind: 'track', id: item.id }}
           />
         }
-        title={<RowTitle>{trackLink(item)}</RowTitle>}
+        title={titleWithVersions(
+          item,
+          index,
+          <RowTitle>{trackLink(item)}</RowTitle>,
+        )}
         by={
           child ? (
             item.album || item.albumName ? (
@@ -596,13 +597,6 @@ export default function TrackBrowser() {
             <RowValue kind="num">{formatCount(item.scrobbles)}</RowValue>
             <RowValue kind="date">{formatDate(item.dateAdded)}</RowValue>
           </>
-        }
-        action={
-          groupRecordings
-            ? child
-              ? null
-              : versionToggle(item, index)
-            : undefined
         }
       />
     )
@@ -807,7 +801,11 @@ export default function TrackBrowser() {
                           overlay={playPair(item, index, 'tile')}
                         />
                       }
-                      title={cardTitle(item, index)}
+                      title={titleWithVersions(
+                        item,
+                        index,
+                        <CardTitle>{trackLink(item)}</CardTitle>,
+                      )}
                       by={<TrackArtistLinks track={item} />}
                       meta={cardMeta(item)}
                       tags={
@@ -834,7 +832,6 @@ export default function TrackBrowser() {
                 <ListHead
                   title="Track"
                   tags="Tags"
-                  action={groupRecordings}
                   meta={
                     <>
                       <RowValue kind="num">Duration</RowValue>
@@ -872,9 +869,6 @@ export default function TrackBrowser() {
                 {columns.map((field, index) => (
                   <col key={field.key} style={{ width: tableWidths[index] }} />
                 ))}
-                {groupRecordings && (
-                  <col style={{ width: versionsColumnWidth }} />
-                )}
               </colgroup>
               <TableHeader>
                 <TableRow>
@@ -889,9 +883,6 @@ export default function TrackBrowser() {
                       resizer={widths.resizer(field)}
                     />
                   ))}
-                  {groupRecordings && (
-                    <TableHead stickyEnd aria-label="Release versions" />
-                  )}
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -916,7 +907,6 @@ export default function TrackBrowser() {
                             <Skeleton height={10} width="70%" />
                           </TableCell>
                         ))}
-                        {groupRecordings && <TableCell stickyEnd />}
                       </TableRow>
                     )
                   const rowIndex =
