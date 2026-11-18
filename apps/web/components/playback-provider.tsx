@@ -66,6 +66,10 @@ export type PlaybackControls = Pick<
   | 'removeFromQueue'
   | 'moveInQueue'
   | 'clearQueue'
+  | 'playUpcoming'
+  | 'removeUpcoming'
+  | 'moveUpcoming'
+  | 'queueUpcoming'
   | 'toggleShuffle'
   | 'toggle'
   | 'next'
@@ -101,6 +105,10 @@ const disabledControls: PlaybackControls = {
   removeFromQueue: () => undefined,
   moveInQueue: () => undefined,
   clearQueue: () => undefined,
+  playUpcoming: () => undefined,
+  removeUpcoming: () => undefined,
+  moveUpcoming: () => undefined,
+  queueUpcoming: () => undefined,
   toggleShuffle: () => undefined,
   toggle: () => undefined,
   next: () => undefined,

@@ -11,7 +11,11 @@ import { AppRouterContext } from 'next/dist/shared/lib/app-router-context.shared
 import PlayerDock, { rejoinMessage } from './player-dock'
 import { PlaybackViewContext, type PlaybackView } from './playback-provider'
 import { ConfigContext } from './providers'
-import type { PlayableItem, PlaybackSnapshot } from '@/utils/playback'
+import type {
+  PlayableItem,
+  PlaybackSnapshot,
+  QueueEntry,
+} from '@/utils/playback'
 import { idlePlaybackState, type PlaybackTarget } from '@/utils/playback-engine'
 
 const trackId = 'ABCDEFGHIJKL1234567890'
@@ -177,12 +181,15 @@ test('shuffle can be set at any time and exposes its selected state', () => {
 })
 
 test('the queue links to the saved source and places ten upcoming tracks after queued items', () => {
-  const upcoming: PlayableItem[] = Array.from({ length: 12 }, (_, index) => ({
-    ...item,
-    kind: 'track',
-    uri: `spotify:track:fixture-${index}`,
-    title: `Source track ${index + 1}`,
-    trackCount: 1,
+  const upcoming: QueueEntry[] = Array.from({ length: 12 }, (_, index) => ({
+    key: `${index + 1}:0`,
+    item: {
+      ...item,
+      kind: 'track',
+      uri: `spotify:track:fixture-${index}`,
+      title: `Source track ${index + 1}`,
+      trackCount: 1,
+    },
   }))
   const html = render({
     ...on,
@@ -199,8 +206,26 @@ test('the queue links to the saved source and places ten upcoming tracks after q
   assert.ok(html.indexOf('Queued album') < html.indexOf('Next from Tracks'))
   assert.match(html, /<strong>Source track 10<\/strong>/)
   assert.doesNotMatch(html, /Source track 11|Source track 12/)
+  // A queued entry can be played now, moved and removed.
+  assert.match(html, /aria-label="Play Queued album now"/)
+  assert.match(html, /aria-label="Move Queued album up"[^>]* disabled=""/)
   assert.match(html, /aria-label="Remove Queued album from queue"/)
-  assert.doesNotMatch(html, /aria-label="Remove Source track/)
+  assert.doesNotMatch(html, /aria-label="Move Queued album to queue"/)
+  // A source track can be skipped to, moved to the queue, reordered and removed.
+  assert.match(html, /aria-label="Skip to Source track 3"/)
+  assert.match(html, /aria-label="Move Source track 3 to queue"/)
+  assert.match(html, /aria-label="Move Source track 1 up"[^>]* disabled=""/)
+  assert.doesNotMatch(
+    html,
+    /aria-label="Move Source track 2 up"[^>]* disabled=""/,
+  )
+  // The last track listed cannot be moved out of sight.
+  assert.match(html, /aria-label="Move Source track 10 down"[^>]* disabled=""/)
+  assert.match(html, /aria-label="Remove Source track 3 from upcoming tracks"/)
+  assert.equal(
+    html.match(/<li class="queue-row"[^>]* draggable="true"/g)?.length,
+    11,
+  )
 })
 
 test('the queue shows loading state and permits next when only the source has tracks', () => {
@@ -208,7 +233,9 @@ test('the queue shows loading state and permits next when only the source has tr
     ...on,
     active: true,
     source: { label: 'Albums', href: '/albums' },
-    upcoming: [{ ...item, kind: 'track', title: 'Upcoming track' }],
+    upcoming: [
+      { key: '1:0', item: { ...item, kind: 'track', title: 'Upcoming track' } },
+    ],
     sourceLoading: true,
   })
   assert.match(html, /role="status">Loading tracks…/)

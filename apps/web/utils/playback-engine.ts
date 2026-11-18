@@ -125,8 +125,11 @@ export type PlaybackState = {
   snapshot: PlaybackSnapshot | null
   queue: QueueEntry[]
   source: Pick<PlaybackSource, 'label' | 'href'> | null
-  /** The next source tracks, after the manual queue. */
-  upcoming: PlayableItem[]
+  /**
+   * The next source tracks, after the manual queue. A key names its track in
+   * the source for as long as the source plays.
+   */
+  upcoming: QueueEntry[]
   shuffle: boolean
   sourceLoading: boolean
   target: PlaybackTarget
@@ -263,7 +266,9 @@ type SourceSession = {
   definition: PlaybackSource
   tracks: Map<number, Promise<PlayableItem[]>>
   remaining: number[]
+  /** Tracks played, and those moved to the queue or removed by hand. */
   played: Set<string>
+  /** Tracks passed over; a shuffle may still draw them. */
   skipped: Set<string>
   exhausted: Set<number>
   upcoming: SourceTrack[]
@@ -287,6 +292,14 @@ const SOURCE_PARALLEL = 6
 
 function sourceTrackKey(index: number, position: number) {
   return `${index}:${position}`
+}
+
+/** Source tracks as they are shown: each under the key of its place in the source. */
+export function upcomingEntries(tracks: readonly SourceTrack[]): QueueEntry[] {
+  return tracks.map(({ index, position, item }) => ({
+    key: sourceTrackKey(index, position),
+    item,
+  }))
 }
 
 /** Ascending indexes as `[from, to)` ranges, and back. */
@@ -823,7 +836,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     const show = () => {
       if (source !== active || revision !== active.revision || disposed) return
       active.upcoming = [...upcoming]
-      set({ upcoming: upcoming.map((entry) => entry.item) })
+      set({ upcoming: upcomingEntries(upcoming) })
       shown = upcoming.length
       maintainRoom()
     }
@@ -947,8 +960,39 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     active.filling = null
     sourceStarting = false
     currentFromSource = true
-    set({ upcoming: active.upcoming.map((next) => next.item) })
+    set({ upcoming: upcomingEntries(active.upcoming) })
     previewSource(active)
+  }
+
+  /** The source track shown under a key, with the source it is in. */
+  function upcomingTrack(key: string) {
+    const active = source
+    const entry = active?.upcoming.find(
+      (next) => sourceTrackKey(next.index, next.position) === key,
+    )
+    return active && entry ? { active, entry } : null
+  }
+
+  /**
+   * The upcoming tracks were changed by hand. A fill under way worked from
+   * the earlier list, so it is replaced by one that continues from this one.
+   */
+  function rearrangeSource(
+    active: SourceSession,
+    upcoming: SourceTrack[],
+    patch: Partial<PlaybackState>,
+  ) {
+    active.upcoming = upcoming
+    active.revision += 1
+    active.filling = null
+    set({ ...patch, upcoming: upcomingEntries(upcoming) })
+    previewSource(active)
+  }
+
+  /** Takes a track out of the source for good: it is not drawn or read again. */
+  function withdrawSource(active: SourceSession, entry: SourceTrack) {
+    active.played.add(sourceTrackKey(entry.index, entry.position))
+    return active.upcoming.filter((next) => next !== entry)
   }
 
   function consumeSource(active: SourceSession, entry: SourceTrack) {
@@ -2715,7 +2759,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       source: active
         ? { label: active.definition.label, href: active.definition.href }
         : null,
-      upcoming: active ? active.upcoming.map((entry) => entry.item) : [],
+      upcoming: active ? upcomingEntries(active.upcoming) : [],
       shuffle: restored.shuffle,
       sourceLoading: false,
       target,
@@ -2932,6 +2976,56 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     clearQueue() {
       if (state.queue.length) set({ queue: [], announcement: 'Queue cleared' })
     },
+    /**
+     * Skips ahead in the source to one of its upcoming tracks. The tracks
+     * before it are passed over; the manual queue is kept and plays next.
+     */
+    playUpcoming(key: string) {
+      const found = upcomingTrack(key)
+      if (!found || refused()) return
+      activate()
+      const { active, entry } = found
+      const at = active.upcoming.indexOf(entry)
+      for (const passed of active.upcoming.slice(0, at))
+        active.skipped.add(sourceTrackKey(passed.index, passed.position))
+      active.upcoming = active.upcoming.slice(at)
+      consumeSource(active, entry)
+    },
+    /** Takes an upcoming track out of the source; the source goes on without it. */
+    removeUpcoming(key: string) {
+      const found = upcomingTrack(key)
+      if (!found) return
+      const { active, entry } = found
+      rearrangeSource(active, withdrawSource(active, entry), {
+        announcement: `Removed from upcoming tracks: ${entry.item.title}`,
+      })
+    },
+    moveUpcoming(from: number, to: number) {
+      const active = source
+      const entry = active?.upcoming[from]
+      if (!active || !entry || from === to) return
+      if (to < 0 || to >= active.upcoming.length) return
+      rearrangeSource(active, moveEntry(active.upcoming, from, to), {
+        announcement: `${entry.item.title}: position ${to + 1} of upcoming tracks`,
+      })
+    },
+    /**
+     * Moves an upcoming source track into the manual queue, at `to` or at its
+     * end. The source goes on without it.
+     */
+    queueUpcoming(key: string, to?: number) {
+      const found = upcomingTrack(key)
+      if (!found) return
+      const { active, entry } = found
+      sequence += 1
+      const queue = [...state.queue]
+      const at = Math.min(Math.max(0, to ?? queue.length), queue.length)
+      queue.splice(at, 0, { key: `queue-${sequence}`, item: entry.item })
+      rearrangeSource(active, withdrawSource(active, entry), {
+        queue,
+        announcement: `Moved to queue: ${entry.item.title}`,
+      })
+    },
     toggle() {
       if (session?.phase === 'starting' || sourceStarting) return
       activate()
@@ -3037,7 +3131,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
           )
           source.revision += 1
           source.filling = null
-          set({ upcoming: source.upcoming.map((entry) => entry.item) })
+          set({ upcoming: upcomingEntries(source.upcoming) })
           void start(previous.item)
           previewSource(source)
           return

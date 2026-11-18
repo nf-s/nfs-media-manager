@@ -11,11 +11,12 @@ import {
 } from '@repo/schemas/playback'
 import { fetchApiData } from './api'
 import type { PlayableItem, PlaybackSource } from './playback'
-import type {
-  PlaybackEngine,
-  PlaybackSharing,
-  PlaybackState,
-  SelectableTarget,
+import {
+  upcomingEntries,
+  type PlaybackEngine,
+  type PlaybackSharing,
+  type PlaybackState,
+  type SelectableTarget,
 } from './playback-engine'
 
 /** The server's record of the account's session. */
@@ -150,7 +151,7 @@ export function createPlaybackSync(options: PlaybackSyncOptions) {
       active: true,
       current: stored.current,
       queue: stored.queue,
-      upcoming: source ? source.upcoming.map((entry) => entry.item) : [],
+      upcoming: source ? upcomingEntries(source.upcoming) : [],
       source: source ? { label: source.label, href: source.href } : null,
       shuffle: stored.shuffle,
       // Until this page sees the device itself, the driver's last report.
@@ -377,6 +378,10 @@ export function createPlaybackSync(options: PlaybackSyncOptions) {
     removeFromQueue: drive(engine.removeFromQueue),
     moveInQueue: drive(engine.moveInQueue),
     clearQueue: drive(engine.clearQueue),
+    playUpcoming: drive(engine.playUpcoming),
+    removeUpcoming: drive(engine.removeUpcoming),
+    moveUpcoming: drive(engine.moveUpcoming),
+    queueUpcoming: drive(engine.queueUpcoming),
     toggleShuffle: drive(engine.toggleShuffle),
     next: drive(engine.next),
     previous: drive(engine.previous),
