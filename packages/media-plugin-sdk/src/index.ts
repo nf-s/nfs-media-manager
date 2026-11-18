@@ -268,6 +268,8 @@ export interface MediaPluginLegacyImportContext {
 export interface MediaPluginManifest {
   localWorker?: LocalWorkerPolicy
   localWorkerDefaultMode?: ProviderLocalWorkerMode
+  /** Require a paired local worker for every provider HTTP request. */
+  localWorkerRequired?: boolean
   id: string
   displayName: string
   description: string
@@ -400,6 +402,7 @@ export const MediaPluginManifestSchema = z
   .object({
     localWorker: LocalWorkerPolicySchema.optional(),
     localWorkerDefaultMode: ProviderLocalWorkerModeSchema.optional(),
+    localWorkerRequired: z.boolean().optional(),
     id: z.string().regex(/^[a-z][a-z0-9-]*$/),
     displayName: z.string().min(1),
     description: z.string(),
@@ -484,6 +487,29 @@ export const MediaPluginManifestSchema = z
       .optional(),
   })
   .superRefine((manifest, context) => {
+    if (manifest.localWorkerRequired) {
+      if (!manifest.localWorker || manifest.localWorkerDefaultMode) {
+        context.addIssue({
+          code: 'custom',
+          path: ['localWorkerRequired'],
+          message:
+            'Local-only execution requires a worker policy and no switchable mode',
+        })
+      }
+      const limits = manifest.rateLimit
+      if (
+        limits.concurrentRequests ||
+        limits.fixedWindow ||
+        limits.requestBudget?.period === 'day'
+      ) {
+        context.addIssue({
+          code: 'custom',
+          path: ['rateLimit'],
+          message:
+            'Local-only execution requires a serial worker-compatible rate limit',
+        })
+      }
+    }
     if (manifest.localWorkerDefaultMode && !manifest.localWorker) {
       context.addIssue({
         code: 'custom',

@@ -765,6 +765,8 @@ export function createDirectProviderRequest(
   plugin: MediaProviderPlugin,
   answeredStatuses: readonly number[] = [],
 ): MediaPluginTestContext['request'] {
+  if (plugin.manifest.localWorkerRequired)
+    throw new Error('Direct requests are unavailable for local-only providers')
   const provider = plugin.manifest.id
   const limits = plugin.manifest.rateLimit
   if (

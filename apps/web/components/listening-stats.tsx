@@ -7,29 +7,23 @@ import {
   type StatTrend,
 } from '@repo/ui/components/ds/facts'
 import { EmptyValue } from '@repo/ui/components/ds/pill'
-import { formatCount, formatItemCount } from '@repo/ui/lib/format'
+import { formatCount } from '@repo/ui/lib/format'
 import type { ListeningSeries } from '@repo/schemas/lastfm'
 import type { ListeningSeriesKind } from '@/utils/listening-series'
-import {
-  RECENT_LISTENING_MONTHS,
-  recentListeningMonths,
-} from '@/utils/listening-months'
+import { listeningMonthsSince } from '@/utils/listening-months'
 import { ListeningDate, useListeningSeries } from './listening-trend'
 
-const SCROBBLE = { one: 'scrobble', other: 'scrobbles' }
-
 function scrobbleTrend(series: ListeningSeries | undefined) {
-  if (!series || series.total === 0) return undefined
-  const values = recentListeningMonths(series.months, new Date())
-  const total = values.reduce((sum, value) => sum + value, 0)
+  if (!series || series.total === 0 || !series.historyFrom) return undefined
   return {
-    values,
-    label: `${formatItemCount(total, SCROBBLE)} in the last ${RECENT_LISTENING_MONTHS} months`,
+    values: listeningMonthsSince(series.months, series.historyFrom, new Date()),
+    label: `Scrobbles since ${series.historyFrom}`,
   }
 }
 
 /**
- * Scrobbles per month for the last 12 UTC calendar months, from the same
+ * Scrobbles per UTC calendar month since the earliest stored scrobble of
+ * anything, so every item's sparkline covers the same period. From the same
  * request and cache entry as the Listening chart. Undefined while loading,
  * after a failure, or when nothing is scrobbled.
  */

@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -5,6 +6,22 @@ describe('plugin registry', () => {
   afterEach(() => {
     vi.resetModules()
     vi.clearAllMocks()
+  })
+
+  it('loads the built plugin SDK through the Node server TSX configuration', () => {
+    const serverDirectory = fileURLToPath(new URL('../../../', import.meta.url))
+    expect(() =>
+      execFileSync(
+        process.execPath,
+        [
+          '--import',
+          'tsx',
+          '-e',
+          "import('../../packages/media-plugin-sdk/dist/index.js')",
+        ],
+        { cwd: serverDirectory, env: {}, stdio: 'pipe' },
+      ),
+    ).not.toThrow()
   })
 
   it('loads configured external plugins into the provider catalog', async () => {

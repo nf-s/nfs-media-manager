@@ -42,7 +42,6 @@ import {
   type ArtistSummary,
 } from '@repo/schemas/creators'
 import {
-  ARTIST_LISTENING_MONTHS,
   artistBrowseFields,
   getArtistBrowseValues,
 } from '@repo/schemas/artist-browse'
@@ -790,9 +789,7 @@ export default function ArtistBrowser() {
                     <>
                       <RowValue kind="num">Albums</RowValue>
                       <RowValue kind="num">Scrobbles</RowValue>
-                      <RowValue kind="spark">
-                        {`${ARTIST_LISTENING_MONTHS} months`}
-                      </RowValue>
+                      <RowValue kind="spark">All time</RowValue>
                     </>
                   }
                 />
@@ -831,7 +828,7 @@ export default function ArtistBrowser() {
                           {item.listeningMonths && (
                             <Sparkline
                               values={item.listeningMonths}
-                              label={`Scrobbles per month for ${item.name}, last ${ARTIST_LISTENING_MONTHS} months`}
+                              label={`Scrobbles for ${item.name}, all time`}
                             />
                           )}
                         </RowValue>

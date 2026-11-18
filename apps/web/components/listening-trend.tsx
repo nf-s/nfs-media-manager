@@ -98,7 +98,11 @@ export function ListeningTrend({
               },
             ]}
           />
-          <TrendChart days={data.days} months={data.months} />
+          <TrendChart
+            days={data.days}
+            months={data.months}
+            from={data.historyFrom ?? undefined}
+          />
         </>
       )}
     </Section>

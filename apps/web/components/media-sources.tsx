@@ -145,6 +145,7 @@ export default function MediaSources({
     providerReferences: item.providerReferences,
   }
   const details = item.mediaType === 'album' ? (item.providerDetails ?? []) : []
+  const collectionSources = isAlbum ? (item.collectionSources ?? []) : []
   const serviceLinks = item.links.filter(
     (link) => link.provider !== 'youtube-trailer',
   )
@@ -162,6 +163,7 @@ export default function MediaSources({
     ...serviceLinks.map((link) => link.provider),
     ...(summary.data?.providers.map((provider) => provider.id) ?? []),
     ...details.map((detail) => detail.provider),
+    ...collectionSources.map((source) => source.provider),
     ...(nfoPath ? ['nfo'] : []),
     // Scrobble names are matched under Last.fm.
     ...(isAlbum ? ['lastfm'] : []),
@@ -177,8 +179,12 @@ export default function MediaSources({
   const rows = [...ids].map<ProviderSourceRow>((id) => {
     const provider = supported.find((provider) => provider.id === id)
     const providerDetails = details.filter((detail) => detail.provider === id)
+    const collections = collectionSources.filter(
+      (source) => source.provider === id,
+    )
     const label =
       provider?.displayName ??
+      collections[0]?.providerLabel ??
       (id === 'google-custom-search'
         ? 'Google Custom Search (legacy)'
         : id === 'nfo'
@@ -209,6 +215,32 @@ export default function MediaSources({
     ]
     const scrobbles =
       isAlbum && id === 'lastfm' && listening.data ? listening.data : undefined
+    const blocks: NonNullable<ProviderSourceRow['blocks']> = []
+    if (scrobbles)
+      blocks.push({
+        title: 'Scrobble names',
+        content: <ListeningSources albumId={item.id} data={scrobbles} />,
+      })
+    if (collections.length > 0)
+      blocks.push({
+        title: 'Collections',
+        content: (
+          <ul className="data-picker">
+            {collections.map(({ name, url }) => (
+              <li key={JSON.stringify([name, url])}>
+                <a
+                  href={url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label={`${name} (opens in a new tab)`}
+                >
+                  {name}
+                </a>
+              </li>
+            ))}
+          </ul>
+        ),
+      })
     const stored = identifiers
       .map(({ current }) => current)
       .filter(Boolean)
@@ -284,14 +316,7 @@ export default function MediaSources({
             />
           )
         : undefined,
-      blocks: scrobbles
-        ? [
-            {
-              title: 'Scrobble names',
-              content: <ListeningSources albumId={item.id} data={scrobbles} />,
-            },
-          ]
-        : undefined,
+      blocks,
       details:
         (id === 'nfo' && nfoPath) ||
         providerDetails.length ||

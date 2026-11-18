@@ -363,7 +363,7 @@
                 }) +
                   `<div class="ds-grid" style="--ds-card-min:120px">${AR.map(artistCard).join('')}</div>`,
               )}${panel(
-                `<div class="ds-list">${D.listHead(['Artist', 'Tags', '<span class="ds-w-num">Albums</span>', '<span class="ds-w-num">Scrobbles</span>', '<span class="ds-w-spark">12 months</span>'])}${AR.slice(
+                `<div class="ds-list">${D.listHead(['Artist', 'Tags', '<span class="ds-w-num">Albums</span>', '<span class="ds-w-num">Scrobbles</span>', '<span class="ds-w-spark">All time</span>'])}${AR.slice(
                   0,
                   6,
                 )
@@ -382,7 +382,7 @@
               )}</div>` +
               g.rules([
                 '<b>Round artwork</b> marks a person or group at a glance. Artists without an image get the neutral placeholder, not a grey tile with the name repeated.',
-                '<b>List rows are 48px,</b> down from 68px, and carry a 12-month listening sparkline.',
+                '<b>List rows are 48px,</b> down from 68px, and carry a listening sparkline of the whole history, the same period on every row.',
                 '<b>Artists is a primary Browse page</b> like the others: Grid, List, Table, the full search with field filters, and the same toolbar.',
               ]),
           },

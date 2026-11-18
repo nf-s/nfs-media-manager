@@ -11,6 +11,7 @@ const series = {
   total: 0,
   firstDate: null,
   lastDate: null,
+  historyFrom: null,
   daysFrom: '2021-11-16',
   daysTo: '2026-11-16',
   days: [],

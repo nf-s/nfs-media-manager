@@ -697,6 +697,7 @@ export default function MediaDetail({
       .map((tag) => tag.name)
     const dateAdded = values.dateAdded
     const source = textValues('source')[0]
+    const collections = textValues('collection')
     const facts = withSortedFact(
       [
         {
@@ -796,6 +797,16 @@ export default function MediaDetail({
             { label: 'Artist tags', field: 'artistTag', values: artistTags },
           ])}
           <AlbumPlaylists key={item.id} albumId={item.id} />
+          {collections.length > 0 && (
+            <Section title="Collections">
+              <FilterPills
+                field="collection"
+                values={collections}
+                onFilter={filter}
+                selected={selectedFilters}
+              />
+            </Section>
+          )}
           <DetailsSection mediaItemId={item.id} facts={facts} />
         </div>
       </div>

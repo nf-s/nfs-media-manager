@@ -15,7 +15,7 @@ import {
   recoverCloudJobById,
 } from '@/services/cloud-job-store'
 import { getScrapePlugin } from '@/plugins/registry'
-import { localWorkerBlocksDispatch } from './local-worker'
+import { getLocalWorkerStatus, localWorkerBlocksDispatch } from './local-worker'
 
 async function workerBlocksDispatch(
   bindings: CloudflareBindings,
@@ -23,10 +23,7 @@ async function workerBlocksDispatch(
 ) {
   const plugin = await getScrapePlugin(provider)
   if (!plugin) return true
-  const status = await bindings.LOCAL_WORKERS.getByName(provider).status(
-    plugin.manifest.localWorkerDefaultMode,
-  )
-  return localWorkerBlocksDispatch(status)
+  return localWorkerBlocksDispatch(await getLocalWorkerStatus(bindings, plugin))
 }
 
 export class ProviderCoordinator extends DurableObject<CloudflareBindings> {

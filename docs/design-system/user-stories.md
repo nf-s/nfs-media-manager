@@ -69,7 +69,7 @@ Each story gives the path before the design system, the path now and the mockup 
 > I want a line chart of my listening for any album, track, artist or playlist, and it should look right whether there are twenty scrobbles or twenty thousand.
 
 - **Before.** Albums and tracks only. The album chart has dots and Bar and Line toggles; the track chart is fixed bars. Months or years only, no range, no tooltip. Sparse items draw as a row of spikes.
-- **Now.** One trend chart: a smooth line with a soft fill and no point markers, a crosshair and tooltip, and ranges of 30 days, 1 year, 5 years and all time. The chart picks days, weeks, months, quarters or years so the line has enough in each point to read as a line. Gaps are filled with zero. The current period is dotted.
+- **Now.** One trend chart: a smooth line with a soft fill and no point markers, a crosshair and tooltip, and ranges of 30 days, 1 year, 5 years and all time. All time on a listening chart starts at the earliest scrobble of the whole history, so every item's chart covers the same period. The chart picks days, weeks, months, quarters or years so the line has enough in each point to read as a line. Gaps are filled with zero. The current period is dotted.
 - **See.** [Trend chart](components.html#chart), [Listening chart, everywhere](screens-data.html#listening).
 - **Scope.** Albums, tracks, artists and playlists, from one listening series endpoint per kind.
 

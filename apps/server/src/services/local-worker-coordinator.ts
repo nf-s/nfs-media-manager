@@ -170,12 +170,14 @@ export class LocalWorkerCoordinator {
   configure(
     policy: LocalWorkerPolicy,
     tokenHash: string | null,
+    mode?: 'local',
   ): Promise<boolean> {
     return this.exclusive(async () => {
       const parsedPolicy = LocalWorkerPolicySchema.parse(policy)
       const parsedHash = TokenHashSchema.nullable().parse(tokenHash)
       const state = await this.state()
       if (state.active) return false
+      if (mode) state.mode = mode
       state.policy = parsedPolicy
       state.tokenHash = parsedHash
       state.lastSeenAt = null

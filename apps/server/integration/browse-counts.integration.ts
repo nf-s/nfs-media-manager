@@ -221,11 +221,16 @@ it('sorts artists by the stored scrobble count and reads monthly scrobbles once'
     logQuery.mock.calls.filter(([query]) => query.includes('lastfm_scrobble')),
   ).toHaveLength(1)
   const [first, second] = page.items
+  // Both cover the months since the earliest stored scrobble, two years ago.
   expect(first?.scrobbleCount).toBe(3)
-  expect(first?.listeningMonths).toHaveLength(12)
+  expect(first?.listeningMonths).toHaveLength(25)
   expect(first?.listeningMonths?.slice(-2)).toEqual([1, 2])
+  expect(first?.listeningMonths?.reduce((sum, count) => sum + count)).toBe(3)
   expect(second?.scrobbleCount).toBe(2)
-  expect(second?.listeningMonths?.reduce((sum, count) => sum + count)).toBe(1)
+  expect(second?.listeningMonths).toHaveLength(25)
+  expect(second?.listeningMonths?.[0]).toBe(1)
+  expect(second?.listeningMonths?.at(-1)).toBe(1)
+  expect(second?.listeningMonths?.reduce((sum, count) => sum + count)).toBe(2)
   for (const item of page.items)
     expect(item.scrobbleCount).toBe(
       (await getArtistListeningSeries(item.id, now)).total,

@@ -35,13 +35,17 @@ export async function getLocalWorkerStatus(
   bindings: CloudflareBindings,
   plugin: MediaProviderPlugin,
 ) {
-  const { id, localWorkerDefaultMode } = plugin.manifest
+  const { id, localWorkerDefaultMode, localWorkerRequired } = plugin.manifest
   const status = await bindings.LOCAL_WORKERS.getByName(id).status(
-    localWorkerDefaultMode,
+    localWorkerRequired ? 'local' : localWorkerDefaultMode,
   )
   return ProviderLocalWorkerStatusSchema.parse({
     ...status,
-    supportsModeSwitch: localWorkerDefaultMode !== undefined,
+    ...(localWorkerRequired && status.mode === 'cloud'
+      ? { mode: 'local', paired: false, online: false }
+      : {}),
+    supportsModeSwitch:
+      !localWorkerRequired && localWorkerDefaultMode !== undefined,
   })
 }
 
@@ -62,6 +66,11 @@ export async function configureLocalWorker(
   const plugin = await getScrapePlugin(provider)
   if (!plugin)
     throw new ServerError({ statusCode: 404, message: 'Unknown provider' })
+  if (plugin.manifest.localWorkerRequired && mode === 'cloud')
+    throw new ServerError({
+      statusCode: 422,
+      message: 'Provider requires a local worker',
+    })
   const coordinator = bindings.PROVIDER_COORDINATORS.getByName(provider)
   if (
     mode === 'local' ||
@@ -130,7 +139,13 @@ export async function configureLocalWorker(
       message: 'Provider does not support local request execution',
     })
   const token = randomBytes(32).toString('base64url')
-  if (!(await worker.configure(plugin.manifest.localWorker, hash(token))))
+  if (
+    !(await worker.configure(
+      plugin.manifest.localWorker,
+      hash(token),
+      plugin.manifest.localWorkerRequired ? 'local' : undefined,
+    ))
+  )
     throw new ServerError({
       statusCode: 409,
       message: 'Local worker has an active request',
@@ -142,8 +157,7 @@ export async function localProviderTransport(
   bindings: CloudflareBindings,
   plugin: MediaProviderPlugin,
 ): Promise<ProviderTransport | null> {
-  const worker = bindings.LOCAL_WORKERS.getByName(plugin.manifest.id)
-  const status = await worker.status(plugin.manifest.localWorkerDefaultMode)
+  const status = await getLocalWorkerStatus(bindings, plugin)
   if (localWorkerBlocksDispatch(status))
     throw new ProviderRequestError(
       'Local worker is unpaired, offline or requires review; no provider request was sent',
@@ -152,6 +166,7 @@ export async function localProviderTransport(
       true,
     )
   if (status.mode === 'cloud') return null
+  const worker = bindings.LOCAL_WORKERS.getByName(plugin.manifest.id)
   const policy = await worker.getPolicy()
   if (!policy) throw new Error('Local worker policy is missing')
   return {

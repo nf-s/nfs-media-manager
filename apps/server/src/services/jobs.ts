@@ -72,6 +72,7 @@ import { scrapeMediaType } from '@/lib/scrape-media-type'
 import { sanitizeAlbumProviderResult } from '@/lib/spotify-audio-features'
 import { importMediaTypeExpression } from '@/lib/import-media-type'
 import { createDatabaseReadCache } from '@/lib/database-read-cache'
+import { env } from '@/env'
 import { getScrapePlugin, listLoadedScrapePlugins } from '@/plugins/registry'
 import {
   artistProviderCurrentState,
@@ -372,6 +373,10 @@ export async function processQueuedJobs(
         const nextJob = await nextQueuedJob([...excluded], [...active.keys()])
         if (!nextJob) break
         const plugin = await getScrapePlugin(nextJob.provider)
+        if (plugin?.manifest.localWorkerRequired) {
+          excluded.add(nextJob.provider)
+          continue
+        }
         const concurrent =
           plugin?.manifest.rateLimit.concurrentRequests === true
         if (!concurrent) {
@@ -1538,6 +1543,11 @@ export async function createJob(
         'This provider is not backed by a loaded scraping plugin in the current environment.',
     })
   }
+  if (plugin.manifest.localWorkerRequired && env.RUNTIME_KIND !== 'cloudflare')
+    throw new ServerError({
+      statusCode: 422,
+      message: 'Provider requires a paired local worker on the hosted runtime',
+    })
 
   let mediaItemIds = parsedInput.scope.mediaItemIds
 

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { mock, test } from 'node:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { SearchParamsContext } from 'next/dist/shared/lib/hooks-client-context.shared-runtime'
 import {
   AlbumDetailSchema,
   FilmDetailSchema,
@@ -17,6 +18,7 @@ import {
 import { AlbumListeningSchema } from '@repo/schemas/lastfm'
 import { MediaProvenanceSchema } from '@repo/schemas/provenance'
 import { InspectorEntryContext } from './detail-inspector-context'
+import MediaDetail from './media-detail'
 import MediaSources from './media-sources'
 import { ConfigContext } from './providers'
 
@@ -75,6 +77,32 @@ const provider = ProviderSummarySchema.parse({
   supportsLegacyImport: false,
   secrets: [],
   pluginPath: null,
+})
+
+const albumWithCollections = AlbumDetailSchema.parse({
+  ...item,
+  id: 'album-with-collections',
+  mediaType: 'album',
+  title: 'Fixture album',
+  dateAdded: null,
+  durationSec: null,
+  spotifyUrl: null,
+  providerReferences: [],
+  trackCount: 0,
+  tracks: [],
+  playlists: [
+    { name: 'Fixture collection', kind: 'collection', position: 0 },
+    { name: 'Collection without a link', kind: 'collection', position: 1 },
+    { name: 'Fixture playlist', kind: 'playlist', position: 0 },
+  ],
+  collectionSources: [
+    {
+      provider: 'collections-fixture',
+      providerLabel: 'Collection source fixture',
+      name: 'Fixture collection',
+      url: 'https://example.test/collections/fixture',
+    },
+  ],
 })
 
 function renderSources(
@@ -228,6 +256,53 @@ test('Cloudflare mode uses server credentials even when a local worker is suppor
     renderSources(configured, { ...cloudWorker, blocked: true }),
     selectedProviderDisabled,
   )
+})
+
+test('album Overview uses collection memberships as browse filters', () => {
+  const client = new QueryClient()
+  client.setQueryData(['album', albumWithCollections.id], albumWithCollections)
+  try {
+    const html = renderToStaticMarkup(
+      <QueryClientProvider client={client}>
+        <ConfigContext.Provider
+          value={{
+            appUrl: 'https://app.example.test',
+            apiBaseUrl: 'https://api.example.test',
+          }}
+        >
+          <SearchParamsContext.Provider value={new URLSearchParams()}>
+            <MediaDetail mediaType="album" id={albumWithCollections.id} />
+          </SearchParamsContext.Provider>
+        </ConfigContext.Provider>
+      </QueryClientProvider>,
+    )
+    assert.match(html, />Collections<\/h3>/)
+    assert.match(html, /title="Filter collection: Fixture collection\./)
+    assert.match(html, /title="Filter collection: Collection without a link\./)
+    assert.doesNotMatch(
+      html,
+      /Filter collection: Fixture playlist|collections\/fixture/,
+    )
+  } finally {
+    client.clear()
+    assert.equal(network.mock.callCount(), 0)
+  }
+})
+
+test('album Sources show stored collection links under their provider', () => {
+  const html = renderSources(
+    { ...provider, mediaTypes: ['album'] },
+    undefined,
+    albumWithCollections,
+    'sourceProvider=collections-fixture',
+  )
+  assert.match(html, /Collection source fixture/)
+  assert.match(html, /<h4>Collections<\/h4>/)
+  assert.match(
+    html,
+    /href="https:\/\/example\.test\/collections\/fixture" target="_blank" rel="noopener noreferrer"[^>]*>Fixture collection<\/a>/,
+  )
+  assert.doesNotMatch(html, /Collection without a link|Fixture playlist/)
 })
 
 test('Sources can refresh an album by a barcode supplied by another provider', () => {

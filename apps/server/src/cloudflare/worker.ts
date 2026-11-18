@@ -101,9 +101,7 @@ function run<T>(
                         provider,
                       ).getStatus(provider),
                     worker: plugin?.manifest.localWorker
-                      ? await bindings.LOCAL_WORKERS.getByName(provider).status(
-                          plugin.manifest.localWorkerDefaultMode,
-                        )
+                      ? await getLocalWorkerStatus(bindings, plugin)
                       : null,
                   }
                 }, execute),

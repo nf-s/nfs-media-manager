@@ -39,11 +39,13 @@ const FIVE_YEARS_MS = 1826 * 86_400_000
  *
  * `days` holds sparse daily counts for the last five years; `months` holds
  * sparse monthly counts for all time and is used when the history is older
- * than `days` can show.
+ * than `days` can show. `from` is the date all time starts at: the start of
+ * the whole history, so every item's chart covers the same period.
  */
 export function TrendChart({
   days,
   months,
+  from,
   unit = 'scrobbles',
   defaultRange = 'all',
   ranges = DEFAULT_RANGES,
@@ -55,6 +57,8 @@ export function TrendChart({
 }: {
   days: readonly TrendDay[]
   months?: readonly TrendMonth[]
+  /** ISO date all time starts at, when earlier than the first count. */
+  from?: string
   unit?: string
   defaultRange?: TrendRange
   ranges?: readonly TrendRange[]
@@ -97,19 +101,22 @@ export function TrendChart({
       t: utcDay(month.month),
       v: month.count,
     }))
+    const start = from === undefined ? undefined : utcDay(from)
     const older =
       monthsOnly ||
       (range === 'all' &&
         monthly.length > 0 &&
-        (monthly[0]?.t ?? today) < today - FIVE_YEARS_MS)
+        Math.min(monthly[0]?.t ?? today, start ?? today) <
+          today - FIVE_YEARS_MS)
     /* No more than one point every 8px, so a narrow chart takes a coarser grain */
     const maxPoints = Math.min(120, Math.max(12, Math.floor(innerWidth / 8)))
     return bucketTrend(older ? monthly : daily, range, {
       today,
       maxPoints,
       finest: older ? 'month' : 'day',
+      from: start,
     })
-  }, [days, months, monthsOnly, range, today, innerWidth])
+  }, [days, months, from, monthsOnly, range, today, innerWidth])
 
   const { grain, points } = series
   const ticks = trendTicks(Math.max(1, ...points.map((point) => point.v)))
@@ -282,7 +289,10 @@ export function TrendChart({
   )
 }
 
-/** A 72×20 trend with no axes: at most 16 points, merged from `values`. */
+/**
+ * A 72×20 trend with no axes: at most 16 points, merged from `values` in
+ * equal runs that end with the latest value.
+ */
 export function Sparkline({
   values,
   width = 72,

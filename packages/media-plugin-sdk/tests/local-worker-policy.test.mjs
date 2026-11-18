@@ -61,6 +61,37 @@ test('origin remains restricted to an exact HTTPS origin', () => {
   )
 })
 
+test('local-only execution requires a worker policy and cannot declare a switchable mode', () => {
+  const manifest = {
+    id: 'fixture',
+    displayName: 'Fixture',
+    description: '',
+    mediaTypes: ['album'],
+    secrets: [],
+    rateLimit: { maxConcurrent: 1, minTimeMs: 0 },
+    localWorkerRequired: true,
+  }
+  const localWorker = {
+    origin: 'https://metadata.fixture.invalid',
+    paths: ['/api'],
+    credentialHeaders: [],
+  }
+  assert.equal(MediaPluginManifestSchema.safeParse(manifest).success, false)
+  assert.equal(
+    MediaPluginManifestSchema.parse({ ...manifest, localWorker })
+      .localWorkerRequired,
+    true,
+  )
+  assert.equal(
+    MediaPluginManifestSchema.safeParse({
+      ...manifest,
+      localWorker,
+      localWorkerDefaultMode: 'cloud',
+    }).success,
+    false,
+  )
+})
+
 test('numeric metadata paths permit only positive identifiers and carry no query', () => {
   const policy = LocalWorkerPolicySchema.parse({
     origin: 'https://metadata.fixture.invalid',
