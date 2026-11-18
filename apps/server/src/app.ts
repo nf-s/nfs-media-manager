@@ -2,6 +2,7 @@ import { Scalar } from '@scalar/hono-api-reference'
 import { compress } from 'hono/compress'
 import { cors } from 'hono/cors'
 import { secureHeaders } from 'hono/secure-headers'
+import { SONOS_PLAYBACK_CLIENT_HEADER } from '@repo/schemas/playback'
 import { SONOS_PAGE_HEADER, SONOS_REASON_HEADER } from '@repo/schemas/sonos'
 import { env } from '@/env'
 import { auth } from '@/lib/auth'
@@ -63,6 +64,7 @@ app.use(
       'Authorization',
       SONOS_PAGE_HEADER,
       SONOS_REASON_HEADER,
+      SONOS_PLAYBACK_CLIENT_HEADER,
     ],
     allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
     credentials: true,

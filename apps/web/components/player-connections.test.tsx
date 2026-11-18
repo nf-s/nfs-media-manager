@@ -2,7 +2,11 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import {
+  QueryClient,
+  QueryClientProvider,
+  QueryObserver,
+} from '@tanstack/react-query'
 import type { LastfmScrobblingStatus } from '@repo/schemas/lastfm'
 import type { SonosAccountStatus, SonosRooms } from '@repo/schemas/sonos'
 import type { SpotifyAccountStatusSchema } from '@repo/schemas/spotify'
@@ -10,6 +14,7 @@ import type { z } from 'zod'
 import {
   PlayerConnections,
   SonosRooms as SonosRoomList,
+  sonosRoomsQuery,
 } from './player-connections'
 import type { PlaybackView } from './playback-provider'
 import { ConfigContext } from './providers'
@@ -188,6 +193,33 @@ test('rooms are left out until Sonos is connected', () => {
     '',
   )
   assert.equal(render(<SonosRoomList view={view} onChoose={ignore} />), '')
+})
+
+test('opening and retrying the Sonos room list use the playback room loader', async (t) => {
+  const client = new QueryClient()
+  const fetch = t.mock.method(globalThis, 'fetch', async () => {
+    throw new Error('The room list must use the playback room loader')
+  })
+  const loadRooms = t.mock.fn(async () => rooms)
+  const options = sonosRoomsQuery(true, loadRooms)
+  const first = new QueryObserver(client, options)
+  const second = new QueryObserver(client, options)
+  const closeFirst = first.subscribe(ignore)
+  const closeSecond = second.subscribe(ignore)
+  try {
+    assert.equal(loadRooms.mock.callCount(), 1)
+    assert.deepEqual((await first.refetch()).data, rooms)
+    assert.deepEqual(second.getCurrentResult().data, rooms)
+    assert.equal(loadRooms.mock.callCount(), 1)
+
+    assert.deepEqual((await second.refetch()).data, rooms)
+    assert.equal(loadRooms.mock.callCount(), 2)
+    assert.equal(fetch.mock.callCount(), 0)
+  } finally {
+    closeFirst()
+    closeSecond()
+    client.clear()
+  }
 })
 
 test('connections show Spotify and the Sonos status with its next step', () => {

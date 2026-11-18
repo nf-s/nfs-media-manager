@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { SONOS_PLAYBACK_CLIENT_HEADER } from '@repo/schemas/playback'
 
 const first = 'client-aaaaaaaa'
 const second = 'client-bbbbbbbb'
@@ -60,6 +61,8 @@ function sync(body: Record<string, unknown>) {
 
 describe('Playback session API', () => {
   afterEach(() => {
+    vi.doUnmock('@/services/sonos-oauth')
+    vi.doUnmock('@/services/api-keys')
     vi.resetModules()
     vi.resetAllMocks()
   })
@@ -223,5 +226,63 @@ describe('Playback session API', () => {
     ).toMatchObject({
       data: { revision: 2, role: 'driver', changed: true, state: null },
     })
+  })
+
+  it('enforces the managed lease on Sonos routes and keeps owner key reads', async () => {
+    mockAppSession(true)
+    const rooms = vi.fn().mockResolvedValue({ households: [] })
+    const command = vi.fn().mockResolvedValue({ done: true })
+    vi.doMock('@/services/sonos-oauth', async (original) => ({
+      ...(await original<typeof import('@/services/sonos-oauth')>()),
+      getSonosRooms: rooms,
+      sendSonosCommand: command,
+    }))
+    vi.doMock('@/services/api-keys', async (original) => ({
+      ...(await original<typeof import('@/services/api-keys')>()),
+      authenticateApiKey: vi.fn().mockResolvedValue({
+        status: 'authenticated',
+        id: 'fixture-key',
+        user: { id: 'user-1' },
+      }),
+    }))
+    const { default: app } = await import('@/app')
+    const readRooms = (headers?: HeadersInit) =>
+      app.request('/api/v1/sonos/rooms', { headers })
+    const sendCommand = (clientId: string) => {
+      const request = jsonRequest({ action: 'play' })
+      const headers = new Headers(request.headers)
+      headers.set(SONOS_PLAYBACK_CLIENT_HEADER, clientId)
+      return app.request('/api/v1/sonos/groups/fixture-group/command', {
+        ...request,
+        headers,
+      })
+    }
+
+    expect((await readRooms()).status).toBe(403)
+    expect(
+      (
+        await app.request(
+          '/api/v1/playback/session',
+          sync({ clientId: first, revision: 0, sonosManaged: true }),
+        )
+      ).status,
+    ).toBe(200)
+    expect((await readRooms()).status).toBe(403)
+    expect(
+      (await readRooms({ [SONOS_PLAYBACK_CLIENT_HEADER]: second })).status,
+    ).toBe(403)
+    expect((await sendCommand(second)).status).toBe(403)
+    expect(rooms).not.toHaveBeenCalled()
+    expect(command).not.toHaveBeenCalled()
+
+    expect(
+      (await readRooms({ [SONOS_PLAYBACK_CLIENT_HEADER]: first })).status,
+    ).toBe(200)
+    expect((await sendCommand(first)).status).toBe(200)
+    expect(
+      (await readRooms({ Authorization: 'Bearer fixture-key' })).status,
+    ).toBe(200)
+    expect(rooms).toHaveBeenCalledTimes(2)
+    expect(command).toHaveBeenCalledOnce()
   })
 })

@@ -2,18 +2,24 @@ import { DurableObject } from 'cloudflare:workers'
 import { z } from 'zod'
 import {
   SavedPlaybackSchema,
+  SharedSonosRoomsReportSchema,
+  SharedSonosRoomsStateSchema,
   type PlaybackReleaseInput,
   type PlaybackSyncInput,
 } from '@repo/schemas/playback'
 import {
+  canDispatchSonos,
   EMPTY_PLAYBACK_SESSION,
   PlaybackDriverSchema,
+  PlaybackSessionSonosSchema,
   releasePlaybackSession,
   syncPlaybackSession,
   type PlaybackSessionRecord,
 } from '@/services/playback-session'
 
 const LEASE_KEY = 'lease'
+const SONOS_KEY = 'sonos'
+const SONOS_ROOMS_KEY = 'sonos-rooms'
 const PARTS_KEY = 'state-parts'
 /** Characters per stored value; well under the per-value storage limit. */
 const PART_LENGTH = 500_000
@@ -27,10 +33,16 @@ const LeaseSchema = z
   .strict()
 
 const PartsSchema = z.number().int().nonnegative().max(MAX_PARTS)
+const SonosMetadataSchema = PlaybackSessionSonosSchema.omit({
+  rooms: true,
+}).extend({
+  requested: SharedSonosRoomsStateSchema.shape.requested,
+})
 
-function savedState(json: string) {
+function storedJson<T>(json: unknown, schema: z.ZodType<T>): T | null {
+  if (typeof json !== 'string') return null
   try {
-    const state = SavedPlaybackSchema.safeParse(JSON.parse(json))
+    const state = schema.safeParse(JSON.parse(json))
     return state.success ? state.data : null
   } catch {
     return null
@@ -59,6 +71,14 @@ export class PlaybackSessionStore extends DurableObject<CloudflareBindings> {
     )
   }
 
+  canDispatchSonos(clientId: string | null) {
+    return this.ctx.blockConcurrencyWhile(async () => {
+      const stored = this.record ?? (await this.load())
+      this.record = stored
+      return canDispatchSonos(stored, clientId, Date.now())
+    })
+  }
+
   release(input: PlaybackReleaseInput) {
     return this.update((stored) =>
       releasePlaybackSession(stored, input, Date.now()),
@@ -74,7 +94,10 @@ export class PlaybackSessionStore extends DurableObject<CloudflareBindings> {
     return this.ctx.blockConcurrencyWhile(async () => {
       const previous = this.record ?? (await this.load())
       const next = change(previous)
-      if (!sameLease(previous, next.stored)) {
+      if (
+        !sameLease(previous, next.stored) ||
+        previous.sonos !== next.stored.sonos
+      ) {
         this.record = undefined
         await this.save(previous, next.stored)
       }
@@ -89,19 +112,43 @@ export class PlaybackSessionStore extends DurableObject<CloudflareBindings> {
    */
   private async load(): Promise<PlaybackSessionRecord> {
     const storage = this.ctx.storage
-    const lease = LeaseSchema.safeParse(await storage.get(LEASE_KEY))
-    if (!lease.success) return EMPTY_PLAYBACK_SESSION
+    const [leaseValue, sonosValue, roomsValue] = await Promise.all([
+      storage.get(LEASE_KEY),
+      storage.get(SONOS_KEY),
+      storage.get(SONOS_ROOMS_KEY),
+    ])
+    const lease = LeaseSchema.safeParse(leaseValue)
+    const metadata = storedJson(sonosValue, SonosMetadataSchema)
+    const completed = storedJson(roomsValue, SharedSonosRoomsReportSchema)
+    const shared =
+      metadata || completed
+        ? {
+            sonos: {
+              managed: metadata?.managed ?? false,
+              clientId: metadata?.clientId ?? null,
+              observed: metadata?.observed ?? null,
+              rooms: {
+                requested: Math.max(
+                  metadata?.requested ?? 0,
+                  completed?.id ?? 0,
+                ),
+                completed,
+              },
+            },
+          }
+        : {}
+    if (!lease.success) return { ...EMPTY_PLAYBACK_SESSION, ...shared }
     const { revision, driver } = lease.data
+    const record = { revision, state: null, driver, ...shared }
     const parts = PartsSchema.safeParse((await storage.get(PARTS_KEY)) ?? 0)
-    if (!parts.success || parts.data === 0)
-      return { revision, state: null, driver }
+    if (!parts.success || parts.data === 0) return record
     let json = ''
     for (let index = 0; index < parts.data; index++) {
       const part = await storage.get(`state-${index}`)
-      if (typeof part !== 'string') return { revision, state: null, driver }
+      if (typeof part !== 'string') return record
       json += part
     }
-    return { revision, state: savedState(json), driver }
+    return { ...record, state: storedJson(json, SavedPlaybackSchema) }
   }
 
   private save(previous: PlaybackSessionRecord, next: PlaybackSessionRecord) {
@@ -122,10 +169,28 @@ export class PlaybackSessionStore extends DurableObject<CloudflareBindings> {
           await tx.delete(`state-${index}`)
         await tx.put(PARTS_KEY, parts)
       }
-      await tx.put(LEASE_KEY, {
-        revision: next.revision,
-        driver: next.driver,
-      })
+      if (!sameLease(previous, next))
+        await tx.put(LEASE_KEY, {
+          revision: next.revision,
+          driver: next.driver,
+        })
+      // Keep the completed list off the lease and observation write paths.
+      if (next.sonos && previous.sonos !== next.sonos) {
+        const { rooms, ...metadata } = next.sonos
+        const before = previous.sonos
+        if (
+          metadata.managed !== before?.managed ||
+          metadata.clientId !== before?.clientId ||
+          metadata.observed !== before?.observed ||
+          rooms.requested !== (before?.rooms.requested ?? 0)
+        )
+          await tx.put(
+            SONOS_KEY,
+            JSON.stringify({ ...metadata, requested: rooms.requested }),
+          )
+        if (rooms.completed && rooms.completed !== before?.rooms.completed)
+          await tx.put(SONOS_ROOMS_KEY, JSON.stringify(rooms.completed))
+      }
     })
   }
 }

@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { SonosGroupControlSchema, SonosRoomsSchema } from './sonos'
 
 export const spotifyIdPattern = /^[A-Za-z0-9]{22}$/
 
@@ -119,16 +120,18 @@ export const SavedSourceSchema = z.object({
 })
 export type SavedSource = z.infer<typeof SavedSourceSchema>
 
+const RoomTargetSchema = z.object({
+  kind: z.literal('room'),
+  room: z.object({
+    id: z.string().min(1).max(200),
+    name: TextSchema,
+    household: z.string().min(1).max(200),
+  }),
+})
+
 /** Where the playback is, in terms any signed-in browser can resolve. */
 export const SavedTargetSchema = z.discriminatedUnion('kind', [
-  z.object({
-    kind: z.literal('room'),
-    room: z.object({
-      id: z.string().min(1).max(200),
-      name: TextSchema,
-      household: z.string().min(1).max(200),
-    }),
-  }),
+  RoomTargetSchema,
   z.object({
     kind: z.literal('spotify'),
     /** The Spotify device; null for one Spotify gives no usable ID for. */
@@ -191,14 +194,62 @@ export const SavedPlaybackSchema = z.object({
 })
 export type SavedPlayback = z.infer<typeof SavedPlaybackSchema>
 
-const ClientIdSchema = z.string().regex(/^[A-Za-z0-9_-]{8,64}$/)
+export const PlaybackClientIdSchema = z.string().regex(/^[A-Za-z0-9_-]{8,64}$/)
+export const SONOS_PLAYBACK_CLIENT_HEADER = 'X-Playback-Client'
 
 export const PlaybackClientSchema = z.object({
-  clientId: ClientIdSchema,
+  clientId: PlaybackClientIdSchema,
   /** How the client is named to the account's other clients. */
   name: z.string().max(80),
 })
 export type PlaybackClient = z.infer<typeof PlaybackClientSchema>
+
+const sonosEncoder = new TextEncoder()
+const encodedSonosSize = (value: unknown) =>
+  sonosEncoder.encode(JSON.stringify(value)).byteLength
+
+/** Driver's live Sonos display, independent of the saved queue. */
+export const SharedSonosObservationSchema = z
+  .object({
+    target: z.discriminatedUnion('kind', [
+      RoomTargetSchema,
+      z.object({
+        kind: z.literal('sonos'),
+        name: TextSchema,
+        type: TextSchema,
+        group: SonosGroupControlSchema,
+      }),
+    ]),
+    snapshot: PlaybackSnapshotSchema.nullable(),
+    volume: z.number().min(0).max(1).nullable(),
+  })
+  .refine((observation) => encodedSonosSize(observation) <= 100_000)
+export type SharedSonosObservation = z.infer<
+  typeof SharedSonosObservationSchema
+>
+
+const SonosRoomsRequestIdSchema = z.number().int().nonnegative()
+export const SharedSonosRoomsReportSchema = z.object({
+  id: SonosRoomsRequestIdSchema.min(1),
+  result: z.discriminatedUnion('ok', [
+    z.object({
+      ok: z.literal(true),
+      rooms: SonosRoomsSchema.refine(
+        (rooms) => encodedSonosSize(rooms) <= 200_000,
+      ),
+    }),
+    z.object({ ok: z.literal(false) }),
+  ]),
+})
+export type SharedSonosRoomsReport = z.infer<
+  typeof SharedSonosRoomsReportSchema
+>
+
+export const SharedSonosRoomsStateSchema = z.object({
+  requested: SonosRoomsRequestIdSchema,
+  completed: SharedSonosRoomsReportSchema.nullable(),
+})
+export type SharedSonosRoomsState = z.infer<typeof SharedSonosRoomsStateSchema>
 
 /**
  * One exchange with the shared session. Exactly one client at a time runs the
@@ -206,7 +257,7 @@ export type PlaybackClient = z.infer<typeof PlaybackClientSchema>
  */
 export const PlaybackSyncInputSchema = z
   .object({
-    clientId: ClientIdSchema,
+    clientId: PlaybackClientIdSchema,
     clientName: z.string().max(80),
     /** The session revision the client has; 0 when it has none. */
     revision: z.number().int().nonnegative(),
@@ -217,6 +268,14 @@ export const PlaybackSyncInputSchema = z
      * and `revision` is the stored one. Null clears the session.
      */
     state: SavedPlaybackSchema.nullable().optional(),
+    /** The client can share Sonos data and identify its lease on Sonos requests. */
+    sonosManaged: z.literal(true).optional(),
+    sonosObservation: SharedSonosObservationSchema.nullable().optional(),
+    /** The last room-list completion this client has seen. */
+    sonosRoomsRequest: SonosRoomsRequestIdSchema.optional(),
+    /** Acknowledges the cached list so unchanged results need not be returned. */
+    sonosRoomsSeen: SonosRoomsRequestIdSchema.optional(),
+    sonosRoomsReport: SharedSonosRoomsReportSchema.optional(),
   })
   .strict()
 export type PlaybackSyncInput = z.infer<typeof PlaybackSyncInputSchema>
@@ -230,13 +289,17 @@ export const PlaybackSyncResultSchema = z.object({
   changed: z.boolean(),
   /** The stored state when `changed`; otherwise null. */
   state: SavedPlaybackSchema.nullable(),
+  /** Omitted by older servers. True once a driver has activated this mode. */
+  sonosManaged: z.boolean().optional(),
+  sonosObservation: SharedSonosObservationSchema.nullable().optional(),
+  sonosRooms: SharedSonosRoomsStateSchema.optional(),
 })
 export type PlaybackSyncResult = z.infer<typeof PlaybackSyncResultSchema>
 
 /** Gives the lease up when a client closes, with its last state. */
 export const PlaybackReleaseInputSchema = z
   .object({
-    clientId: ClientIdSchema,
+    clientId: PlaybackClientIdSchema,
     revision: z.number().int().nonnegative(),
     state: SavedPlaybackSchema.nullable().optional(),
   })

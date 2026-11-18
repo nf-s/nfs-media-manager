@@ -1,6 +1,10 @@
 import { createRoute, type OpenAPIHono } from '@hono/zod-openapi'
 import { createMiddleware } from 'hono/factory'
 import {
+  PlaybackClientIdSchema,
+  SONOS_PLAYBACK_CLIENT_HEADER,
+} from '@repo/schemas/playback'
+import {
   SonosAccountStatusSchema,
   SonosAuthorizeInputSchema,
   SonosAuthorizeResultSchema,
@@ -46,6 +50,7 @@ import {
   sendSonosCommand,
   sonosCallbackDestination,
 } from '@/services/sonos-oauth'
+import { canUserDispatchSonos } from '@/services/playback-session-store'
 
 const browserSession = authMiddleware({ sessionOnly: true })
 
@@ -61,6 +66,24 @@ const sameOrigin = createMiddleware<AppEnv>(async (c, next) => {
     })
   }
   await next()
+})
+
+const playbackDriver = createMiddleware<AppEnv>(async (c, next) => {
+  if (c.get('apiKeyId')) return next()
+  const client = PlaybackClientIdSchema.nullable().safeParse(
+    c.req.header(SONOS_PLAYBACK_CLIENT_HEADER) ?? null,
+  )
+  if (!client.success)
+    throw new ServerError({
+      statusCode: 422,
+      message: 'Invalid playback client',
+    })
+  if (!(await canUserDispatchSonos(requireOwnerUser(c).id, client.data)))
+    throw new ServerError({
+      statusCode: 403,
+      message: 'Switch playback control to this page and try again.',
+    })
+  return next()
 })
 
 const app: OpenAPIHono<AppEnv> = createOpenAPIApp()
@@ -99,7 +122,7 @@ app.openapi(
   createRoute({
     method: 'get',
     path: '/rooms',
-    middleware: [authMiddleware()],
+    middleware: [authMiddleware(), playbackDriver],
     responses: {
       200: {
         description:
@@ -111,6 +134,7 @@ app.openapi(
         },
       },
       401: jsonErrorResponse('Unauthorized'),
+      403: jsonErrorResponse('Playback control is required'),
       422: validationErrorResponse,
     },
   }),
@@ -122,7 +146,7 @@ app.openapi(
   createRoute({
     method: 'get',
     path: '/playback',
-    middleware: [authMiddleware()],
+    middleware: [authMiddleware(), playbackDriver],
     request: { query: SonosPlaybackQuerySchema },
     responses: {
       200: {
@@ -135,6 +159,7 @@ app.openapi(
         },
       },
       401: jsonErrorResponse('Unauthorized'),
+      403: jsonErrorResponse('Playback control is required'),
       422: validationErrorResponse,
     },
   }),
@@ -151,7 +176,7 @@ app.openapi(
     method: 'post',
     path: '/groups/{groupId}/command',
     security: ownerSessionSecurity,
-    middleware: [browserSession, sameOrigin],
+    middleware: [browserSession, sameOrigin, playbackDriver],
     request: {
       params: z.object({ groupId: SonosGroupIdSchema }),
       body: {
@@ -189,7 +214,7 @@ app.openapi(
   createRoute({
     method: 'get',
     path: '/groups/{groupId}/state',
-    middleware: [authMiddleware()],
+    middleware: [authMiddleware(), playbackDriver],
     request: {
       params: z.object({ groupId: SonosGroupIdSchema }),
       query: SonosGroupStateQuerySchema,
@@ -205,6 +230,7 @@ app.openapi(
         },
       },
       401: jsonErrorResponse('Unauthorized'),
+      403: jsonErrorResponse('Playback control is required'),
       422: validationErrorResponse,
     },
   }),
@@ -225,7 +251,7 @@ app.openapi(
     method: 'post',
     path: '/groups/{groupId}/content',
     security: ownerSessionSecurity,
-    middleware: [browserSession, sameOrigin],
+    middleware: [browserSession, sameOrigin, playbackDriver],
     request: {
       params: z.object({ groupId: SonosGroupIdSchema }),
       body: {

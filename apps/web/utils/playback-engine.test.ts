@@ -3,6 +3,7 @@ import { afterEach, beforeEach, mock, test } from 'node:test'
 import {
   createPlaybackEngine,
   type PlaybackEngineOptions,
+  type PlaybackTarget,
 } from './playback-engine'
 import type {
   PlayableItem,
@@ -22,16 +23,21 @@ import type { SonosControlApi } from './sonos-player-api'
 import type {
   SonosGroupControl,
   SonosGroupState,
+  SonosRooms,
   SonosStateReason,
 } from '@repo/schemas/sonos'
 import type { LastfmPlay } from '@repo/schemas/lastfm'
 import {
   PLAYBACK_LEASE_MS,
   SavedPlaybackSchema,
-  type PlaybackSyncResult,
   type SavedPlayback,
   type SavedSource,
 } from '@repo/schemas/playback'
+import {
+  EMPTY_PLAYBACK_SESSION,
+  releasePlaybackSession,
+  syncPlaybackSession,
+} from '../../server/src/services/playback-session'
 import { createPlaybackSync, type SessionApi } from './playback-sync'
 
 const album: PlayableItem = {
@@ -268,6 +274,7 @@ function harness(
     ...shuffle,
   })
   return {
+    api,
     engine,
     calls,
     lookups,
@@ -2533,7 +2540,7 @@ test('a Sonos report read before a command was answered does not undo it', async
     return reported
   }
   // A read is under way when Pause is pressed.
-  await advance(3_000)
+  await advance(15_000)
   const reads = sonos.reads.length
   setup.engine.toggle()
   assert.equal(setup.engine.getState().snapshot?.paused, true)
@@ -2594,13 +2601,13 @@ test('a Sonos room that moves on by itself is followed without another start', a
     positionMs: 198_000,
     hasNext: true,
   })
-  await advance(3_000)
+  await advance(15_000)
   // The page was asleep while the room played two more tracks.
   sonos.room.state = roomState(sourceTrack(3).uri, {
     positionMs: 4_000,
     hasNext: true,
   })
-  await advance(3_000)
+  await advance(15_000)
   const state = setup.engine.getState()
   assert.equal(state.current?.uri, sourceTrack(3).uri)
   assert.equal(state.upcoming[0]?.item.uri, sourceTrack(4).uri)
@@ -2649,9 +2656,9 @@ test('a track queued while on a Sonos room is placed next in its queue', async (
     positionMs: 198_000,
     hasNext: true,
   })
-  await advance(3_000)
+  await advance(15_000)
   sonos.room.state = roomState(track.uri, { positionMs: 500, hasNext: true })
-  await advance(3_000)
+  await advance(15_000)
   let state = setup.engine.getState()
   assert.equal(state.current, track)
   assert.deepEqual(state.queue, [])
@@ -2660,9 +2667,9 @@ test('a track queued while on a Sonos room is placed next in its queue', async (
     positionMs: 198_000,
     hasNext: true,
   })
-  await advance(3_000)
+  await advance(15_000)
   sonos.room.state = roomState(sourceTrack(1).uri, { hasNext: true })
-  await advance(3_000)
+  await advance(15_000)
   state = setup.engine.getState()
   assert.equal(state.current?.uri, sourceTrack(1).uri)
   assert.equal(
@@ -2706,7 +2713,7 @@ test('the queue carries on when a Sonos room has played everything it was given'
   await advance(3_000)
   // A finished Sonos queue goes idle at the start of its first track.
   sonos.room.state = roomState(track.uri, { state: 'idle' })
-  await advance(3_000)
+  await advance(15_000)
   assert.equal(
     sonos.loads.at(-1),
     'RINCON_FIXTURE:1 replace spotify:album:first play',
@@ -2716,7 +2723,7 @@ test('the queue carries on when a Sonos room has played everything it was given'
     containerUri: album.uri,
     hasNext: true,
   })
-  await advance(1_000)
+  await advance(3_000)
   assert.equal(setup.engine.getState().starting, false)
   assert.equal(setup.engine.getState().snapshot?.contextUri, album.uri)
   setup.engine.dispose()
@@ -2757,7 +2764,7 @@ test('a track taken off the queue stops a Sonos room that reaches it with nothin
   sonos.room.state = roomState(track.uri, { positionMs: 198_000 })
   await advance(3_000)
   sonos.room.state = roomState(sourceTrack(7).uri, { positionMs: 500 })
-  await advance(3_000)
+  await advance(15_000)
   assert.deepEqual(sonos.commands, ['RINCON_FIXTURE:1 pause'])
   assert.equal(setup.engine.getState().current, null)
   setup.engine.dispose()
@@ -2816,7 +2823,7 @@ test('leaving a Sonos room for this browser starts the track here at the same pl
     positionMs: 60_000,
     hasNext: true,
   })
-  await advance(3_000)
+  await advance(15_000)
   await setup.engine.selectDevice({ kind: 'local' })
   await settle()
   assert.deepEqual(sonos.commands, ['RINCON_FIXTURE:1 pause'])
@@ -2868,7 +2875,7 @@ test('a Sonos queue is polled less while paused and stops polling while paused a
   await advance(100)
   assert.equal(setup.engine.getState().snapshot?.paused, true)
   let reads = sonos.reads.length
-  await advance(30_000)
+  await advance(90_000)
   assert.equal(sonos.reads.length - reads, 3)
   assert.deepEqual(sonos.readReasons.slice(reads), [
     'room-paused',
@@ -2897,9 +2904,144 @@ test('a hidden page keeps polling the Sonos room while it runs a playing queue',
   const setup = await sourceOnRoom(sonos)
   setup.page.visible = false
   const reads = sonos.reads.length
-  await advance(12_000)
+  await advance(60_000)
   assert.equal(sonos.reads.length - reads, 4)
   assert.equal(sonos.readReasons[reads], 'room-playing')
+  setup.engine.dispose()
+})
+
+test('a passive page mirrors a Sonos room without reading it at startup or during playback', async () => {
+  const sonos = fakeSonos()
+  const driver = harness(undefined, sonos.api, { initialRoom: kitchen })
+  const follower = harness(undefined, sonos.api, { initialRoom: kitchen })
+  const shown = remoteSnapshot({ trackUri: track.uri, trackName: track.title })
+  sonos.room.state = roomState(track.uri)
+  follower.engine.setSonosPolling(false)
+  follower.engine.watch()
+  await advance(100)
+  assert.deepEqual(sonos.reads, [])
+  follower.remote.restricted = { name: 'Fixture speaker', type: 'speaker' }
+  follower.remote.snapshot = remoteSnapshot({})
+  follower.engine.followSonos(null)
+  await advance(100)
+  assert.equal(follower.engine.getState().target.kind, 'restricted')
+  assert.deepEqual(sonos.lookups, [])
+
+  driver.engine.watch()
+  follower.engine.followSonos({
+    target: { kind: 'room', room: kitchen },
+    snapshot: shown,
+    volume: 0.3,
+  })
+  await advance(100)
+  const initial = sonos.reads.length
+  assert.equal(initial, 1)
+  follower.engine.refresh()
+  await advance(30_000)
+  assert.equal(sonos.reads.length - initial, 2)
+  assert.equal(follower.engine.getState().snapshot?.trackName, track.title)
+  assert.equal(follower.engine.getState().volume, 0.3)
+  assert.deepEqual(follower.lookups, [])
+  assert.deepEqual(sonos.loads, [])
+  driver.engine.dispose()
+  follower.engine.dispose()
+})
+
+test('a passive page uses shared Sonos Connect controls without a lookup', async () => {
+  const sonos = fakeSonos()
+  const setup = harness(undefined, sonos.api)
+  const snapshot = remoteSnapshot({ contextUri: 'spotify:playlist:x' })
+  setup.remote.restricted = { name: 'Fixture hi-fi', type: 'speaker' }
+  setup.remote.snapshot = snapshot
+  setup.engine.setSonosPolling(false)
+  setup.engine.watch()
+  await advance(6_000)
+  assert.equal(setup.engine.getState().target.kind, 'restricted')
+  assert.deepEqual(sonos.lookups, [])
+
+  const target: PlaybackTarget = {
+    kind: 'sonos',
+    name: 'Fixture hi-fi',
+    type: 'speaker',
+    group: sonosGroup,
+  }
+  setup.engine.followSonos({ target, snapshot, volume: 0.3 })
+  setup.engine.toggle()
+  setup.engine.seek(30_000)
+  setup.engine.setVolume(0.5)
+  await advance(1_000)
+  assert.deepEqual(setup.engine.getState().target, target)
+  assert.equal(setup.engine.getState().volume, 0.3)
+  assert.deepEqual(sonos.commands, [])
+
+  setup.engine.setSonosPolling(true)
+  setup.engine.toggle()
+  await settle()
+  assert.deepEqual(sonos.commands, ['RINCON_FIXTURE:1 pause'])
+
+  setup.engine.setSonosPolling(false)
+  setup.engine.followSonos(null)
+  await advance(100)
+  assert.equal(setup.engine.getState().target.kind, 'restricted')
+  assert.deepEqual(sonos.lookups, [])
+  setup.engine.dispose()
+})
+
+test('a room report begun before demotion cannot replace the shared report after promotion', async () => {
+  const sonos = fakeSonos()
+  const setup = harness(undefined, sonos.api, { initialRoom: kitchen })
+  const room = sonos.api.state
+  let answer: (state: SonosGroupState) => void = () => undefined
+  sonos.api.state = () =>
+    new Promise((resolve) => {
+      answer = resolve
+    })
+  setup.engine.watch()
+  await advance(100)
+
+  setup.engine.setSonosPolling(false)
+  const shown = remoteSnapshot({ trackUri: track.uri })
+  setup.engine.followSonos({
+    target: { kind: 'room', room: kitchen },
+    snapshot: shown,
+    volume: 0.7,
+  })
+  sonos.api.state = room
+  setup.engine.setSonosPolling(true)
+  answer(roomState('spotify:track:old', { volume: 0.4 }))
+  await settle()
+  assert.equal(setup.engine.getState().snapshot?.trackUri, track.uri)
+  assert.equal(setup.engine.getState().volume, 0.7)
+  setup.engine.dispose()
+})
+
+test('a restricted device match begun before demotion cannot replace shared controls', async () => {
+  const sonos = fakeSonos()
+  let answer: (group: SonosGroupControl) => void = () => undefined
+  sonos.api.find = () =>
+    new Promise((resolve) => {
+      answer = resolve
+    })
+  const setup = await watchRestricted(sonos)
+  assert.equal(setup.engine.getState().findingSonos, true)
+  setup.engine.setSonosPolling(false)
+  const target: PlaybackTarget = {
+    kind: 'sonos',
+    name: 'Fixture hi-fi',
+    type: 'speaker',
+    group: { ...sonosGroup, id: 'RINCON_SHARED_FIXTURE:1', volume: 0.7 },
+  }
+  setup.engine.followSonos({
+    target,
+    snapshot: remoteSnapshot({}),
+    volume: 0.7,
+  })
+  setup.engine.setSonosPolling(true)
+  answer(sonosGroup)
+  await settle()
+  assert.deepEqual(setup.engine.getState().target, target)
+  assert.equal(setup.engine.getState().volume, 0.7)
+  assert.equal(setup.engine.getState().findingSonos, false)
   setup.engine.dispose()
 })
 
@@ -3212,72 +3354,32 @@ test('a released session leaves the device playing and drops the queue here', as
   setup.engine.dispose()
 })
 
-/** The server's session record, with the lease rules of the real one. */
+/** Runs the server's lease rules against a disposable session and a fake clock. */
 function fakeSessions() {
-  const record: {
-    revision: number
-    state: SavedPlayback | null
-    driver: { clientId: string; name: string; expiresAt: number } | null
-  } = { revision: 0, state: null, driver: null }
+  let record = structuredClone(EMPTY_PLAYBACK_SESSION)
   const down = { is: false }
   const api: SessionApi = {
     async sync(input) {
       if (down.is) throw new Error('unreachable')
-      const live =
-        record.driver && record.driver.expiresAt > clock ? record.driver : null
-      const holds = input.claim || !live || live.clientId === input.clientId
-      record.driver = holds
-        ? {
-            clientId: input.clientId,
-            name: input.clientName,
-            expiresAt: clock + PLAYBACK_LEASE_MS,
-          }
-        : live
-      const role: PlaybackSyncResult['role'] = holds ? 'driver' : 'follower'
-      const base = {
-        role,
-        driver: record.driver && {
-          clientId: record.driver.clientId,
-          name: record.driver.name,
-        },
-      }
-      if (
-        holds &&
-        input.state !== undefined &&
-        input.revision === record.revision
-      ) {
-        record.state = transferredOrNull(input.state)
-        record.revision += 1
-        const saved: PlaybackSyncResult = {
-          ...base,
-          revision: record.revision,
-          changed: false,
-          state: null,
-        }
-        return saved
-      }
-      const changed = input.revision !== record.revision
-      return {
-        ...base,
-        revision: record.revision,
-        changed,
-        state: changed ? record.state : null,
-      }
+      const next = syncPlaybackSession(record, structuredClone(input), clock)
+      record = next.stored
+      return structuredClone(next.result)
     },
     release(input) {
-      if (record.driver?.clientId !== input.clientId) return
-      if (input.state !== undefined && input.revision === record.revision) {
-        record.state = transferredOrNull(input.state)
-        record.revision += 1
-      }
-      record.driver = null
+      record = releasePlaybackSession(
+        record,
+        structuredClone(input),
+        clock,
+      ).stored
     },
   }
-  return { api, record, down }
-}
-
-function transferredOrNull(saved: SavedPlayback | null) {
-  return saved ? transferred(saved) : null
+  return {
+    api,
+    get record() {
+      return record
+    },
+    down,
+  }
 }
 
 /** One open page of the account: its engine with the shared session around it. */
@@ -3287,6 +3389,7 @@ function page(
   world?: SpotifyWorld,
   sonos?: SonosControlApi,
   scrobbles?: PlaybackEngineOptions['scrobbles'],
+  readSonosRooms?: () => Promise<SonosRooms>,
 ) {
   const setup = harness(
     undefined,
@@ -3297,6 +3400,7 @@ function page(
   const sync = createPlaybackSync({
     engine: setup.engine,
     api: sessions.api,
+    readSonosRooms,
     clientId: `client-${name}`,
     clientName: name,
     now: () => clock,
@@ -3311,6 +3415,148 @@ function page(
     },
   }
 }
+
+test('two pages share external Sonos playback and only the master reads the room', async () => {
+  const sessions = fakeSessions()
+  const firstRoom = fakeSonos()
+  firstRoom.room.state = roomState(track.uri)
+  const secondRoom = fakeSonos()
+  secondRoom.room.state = roomState(track.uri)
+  const one = page('first', sessions, undefined, firstRoom.api)
+  const two = page('second', sessions, undefined, secondRoom.api)
+  one.engine.watch()
+  one.sync.start()
+  await settle()
+  await one.sync.selectDevice({ kind: 'room', room: kitchen })
+  await advance(1_000)
+  two.engine.watch()
+  two.sync.start()
+  await advance(36_000)
+  assert.equal(sessions.record.state, null)
+  assert.equal(two.sync.getState().sharing.role, 'follower')
+  assert.deepEqual(two.sync.getState().target, { kind: 'room', room: kitchen })
+  assert.equal(two.sync.getState().snapshot?.trackUri, track.uri)
+  assert.equal(two.sync.getState().volume, one.sync.getState().volume)
+  assert.ok(firstRoom.reads.length >= 3)
+  assert.equal(secondRoom.reads.length, 0)
+  // A hidden master driving no queue yields the external room to the visible page.
+  one.page.visible = false
+  await advance(22_000)
+  assert.equal(two.sync.getState().sharing.role, 'driver')
+  assert.equal(two.sync.getState().target.kind, 'room')
+  assert.ok(secondRoom.reads.length > 0)
+  one.sync.close()
+  one.close()
+  sessions.down.is = true
+  two.sync.refresh()
+  await settle()
+  const afterFailure = secondRoom.reads.length
+  await advance(35_000)
+  assert.equal(secondRoom.reads.length, afterFailure)
+  two.close()
+})
+
+test('a stalled heartbeat stops room reads when the confirmed lease expires', async () => {
+  const sessions = fakeSessions()
+  const sonos = fakeSonos()
+  sonos.room.state = roomState(track.uri)
+  const one = page('first', sessions, undefined, sonos.api)
+  one.engine.watch()
+  one.sync.start()
+  await settle()
+  await one.sync.selectDevice({ kind: 'room', room: kitchen })
+  await advance(1_000)
+  const reads = sonos.reads.length
+  assert.ok(reads > 0)
+  const send = sessions.api.sync
+  let finish = () => {}
+  sessions.api.sync = async (input) => {
+    const result = await send(input)
+    await new Promise<void>((resolve) => {
+      finish = resolve
+    })
+    return result
+  }
+  one.sync.refresh()
+  await advance(30_000)
+  assert.equal(sonos.reads.length, reads)
+  one.sync.close()
+  finish()
+  await advance(30_000)
+  assert.equal(sonos.reads.length, reads)
+  one.close()
+})
+
+test('room menus on two pages share a master read and can retry a failed refresh', async () => {
+  const sessions = fakeSessions()
+  let masterReads = 0
+  let followerReads = 0
+  let failRead = false
+  const result: SonosRooms = {
+    households: [{ id: 'household', name: 'Fixture', rooms: [] }],
+  }
+  const first = page(
+    'first',
+    sessions,
+    undefined,
+    undefined,
+    undefined,
+    async () => {
+      masterReads += 1
+      if (failRead) throw new Error('unavailable')
+      return result
+    },
+  )
+  const second = page(
+    'second',
+    sessions,
+    undefined,
+    undefined,
+    undefined,
+    async () => {
+      followerReads += 1
+      return result
+    },
+  )
+  first.sync.start()
+  await settle()
+  second.sync.start()
+  await settle()
+  const both = Promise.all([
+    first.sync.loadSonosRooms(),
+    second.sync.loadSonosRooms(),
+  ])
+  await advance(2_000)
+  assert.deepEqual(await both, [result, result])
+  assert.equal(masterReads, 1)
+  failRead = true
+  const failure = assert.rejects(
+    second.sync.loadSonosRooms(),
+    /could not be read/,
+  )
+  await advance(10_000)
+  await failure
+  failRead = false
+  const retry = second.sync.loadSonosRooms()
+  await advance(10_000)
+  assert.deepEqual(await retry, result)
+  assert.equal(masterReads, 3)
+  assert.equal(followerReads, 0)
+  second.page.visible = false
+  await advance(12_000)
+  const fromMaster = first.sync.loadSonosRooms()
+  await advance(1_000)
+  await fromMaster
+  await advance(20_000)
+  second.page.visible = true
+  const afterSleep = second.sync.loadSonosRooms()
+  await advance(10_000)
+  assert.deepEqual(await afterSleep, result)
+  assert.equal(masterReads, 5)
+  assert.equal(followerReads, 0)
+  first.close()
+  second.close()
+})
 
 /** Plays a saved source on the speaker from a page and lets it save. */
 async function driveSource(one: ReturnType<typeof page>, length = 40) {
@@ -5052,6 +5298,42 @@ test('a track played on a Sonos room is reported once half of it was heard', asy
   setup.engine.dispose()
 })
 
+test('a play still waiting for track details is not marked reported after Sonos lease loss', async () => {
+  const log = scrobbleLog()
+  const sonos = fakeSonos()
+  const setup = harness(undefined, sonos.api, {
+    initialRoom: kitchen,
+    scrobbles: log.scrobbles,
+  })
+  const trackDetails = setup.api.track
+  const answers: Array<() => void> = []
+  setup.api.track = async (uri) => {
+    const details = await trackDetails(uri)
+    await new Promise<void>((resolve) => answers.push(resolve))
+    return details
+  }
+  setup.engine.play(track)
+  await settle()
+  await roomPlays(sonos, track.uri, 0, 120_000)
+  assert.ok(answers.length > 0)
+  assert.equal(log.plays.length, 0)
+  assert.equal(setup.engine.saved()?.listen?.reported, false)
+
+  setup.engine.setSonosPolling(false)
+  setup.engine.setSonosPolling(true)
+  setup.api.track = trackDetails
+  for (const answer of answers) answer()
+  await settle()
+  assert.equal(log.plays.length, 0)
+  assert.equal(setup.engine.saved()?.listen?.reported, false)
+
+  sonos.room.state = roomState(track.uri, { positionMs: 125_000 })
+  await advance(100)
+  assert.equal(log.plays.length, 1)
+  assert.equal(setup.engine.saved()?.listen?.reported, true)
+  setup.engine.dispose()
+})
+
 test('a track skipped on a Sonos room is not reported, and nothing is counted with scrobbling off', async () => {
   const log = scrobbleLog()
   const sonos = fakeSonos()
@@ -5108,13 +5390,13 @@ test('a track that runs out between two reads of the room is reported with the o
   await settle()
   await roomPlays(sonos, sourceTrack(0).uri, 0, 90_000, { hasNext: true })
   assert.equal(log.plays.length, 0)
-  // The page is not read for a minute and a half, as when it is hidden.
-  clock += 80_000
+  // The page goes without a read for about 80 seconds.
+  clock += 68_000
   sonos.room.state = roomState(sourceTrack(0).uri, {
     positionMs: 173_000,
     hasNext: true,
   })
-  await advance(3_000)
+  await advance(15_000)
   assert.deepEqual(
     log.plays.map((play) => play.trackUri),
     [sourceTrack(0).uri],
@@ -5124,7 +5406,7 @@ test('a track that runs out between two reads of the room is reported with the o
     positionMs: 1_000,
     hasNext: true,
   })
-  await advance(3_000)
+  await advance(15_000)
   assert.equal(setup.engine.getState().current?.uri, sourceTrack(2).uri)
   assert.equal(log.plays.length, 1)
   setup.engine.dispose()

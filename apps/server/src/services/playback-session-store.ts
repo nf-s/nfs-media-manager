@@ -7,6 +7,7 @@ import type {
 import { env } from '@/env'
 import { ServerError } from '@/lib/error'
 import {
+  canDispatchSonos,
   EMPTY_PLAYBACK_SESSION,
   releasePlaybackSession,
   syncPlaybackSession,
@@ -17,6 +18,7 @@ import {
 /** Keeps one shared playback session per signed-in user. */
 export interface PlaybackSessions {
   sync(userId: string, input: PlaybackSyncInput): Promise<PlaybackSyncResult>
+  canDispatchSonos(userId: string, clientId: string | null): Promise<boolean>
   release(
     userId: string,
     input: PlaybackReleaseInput,
@@ -29,6 +31,13 @@ export function createMemoryPlaybackSessions(
 ): PlaybackSessions {
   const records = new Map<string, PlaybackSessionRecord>()
   return {
+    async canDispatchSonos(userId, clientId) {
+      return canDispatchSonos(
+        records.get(userId) ?? EMPTY_PLAYBACK_SESSION,
+        clientId,
+        now(),
+      )
+    },
     async sync(userId, input) {
       const next = syncPlaybackSession(
         records.get(userId) ?? EMPTY_PLAYBACK_SESSION,
@@ -73,6 +82,10 @@ function playbackSessions(): PlaybackSessions {
 
 export function syncUserPlayback(userId: string, input: PlaybackSyncInput) {
   return playbackSessions().sync(userId, input)
+}
+
+export function canUserDispatchSonos(userId: string, clientId: string | null) {
+  return playbackSessions().canDispatchSonos(userId, clientId)
 }
 
 export function releaseUserPlayback(

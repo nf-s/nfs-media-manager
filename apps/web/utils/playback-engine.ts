@@ -60,6 +60,7 @@ import type {
   SavedPlayback,
   SavedSource,
   SavedTarget,
+  SharedSonosObservation,
 } from '@repo/schemas/playback'
 
 /** A Sonos group, with the household whose Spotify account it plays with. */
@@ -84,6 +85,7 @@ export type SelectableTarget = Exclude<
 /** A device followed through Spotify's report of the account's playback. */
 type FollowedTarget = Exclude<PlaybackTarget, { kind: 'local' | 'room' }>
 type RoomTarget = Extract<PlaybackTarget, { kind: 'room' }>
+type SonosTarget = Extract<PlaybackTarget, { kind: 'room' | 'sonos' }>
 /** A device Spotify reports but accepts no app commands for. */
 type ObservedTarget = Extract<PlaybackTarget, { kind: 'restricted' | 'sonos' }>
 type RemoteState = Awaited<ReturnType<PlayerApi['state']>>
@@ -227,7 +229,8 @@ const FOLLOWING_LIMIT = 50
 const SUCCESSOR_WITHIN_MS = 5_000
 const SONOS_TRIES = 3
 const SONOS_RETRY_MS = 2_000
-const ROOM_IDLE_POLL_MS = 10_000
+const ROOM_PLAYING_POLL_MS = 15_000
+const ROOM_IDLE_POLL_MS = 30_000
 /**
  * Tracks kept in a Sonos group's queue after the current one. Sonos takes
  * about a second for each track added, so they are added one at a time and a
@@ -325,6 +328,10 @@ function rangeIndexes(ranges: ReadonlyArray<readonly [number, number]>) {
 
 function isObserved(target: PlaybackTarget): target is ObservedTarget {
   return target.kind === 'restricted' || target.kind === 'sonos'
+}
+
+function isSonosTarget(target: PlaybackTarget): target is SonosTarget {
+  return target.kind === 'room' || target.kind === 'sonos'
 }
 
 function sameDevice(a: PlaybackTarget, b: PlaybackTarget) {
@@ -469,6 +476,10 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
   let fallback: Exclude<SelectableTarget, RoomTarget> | null = null
   /** Until then Spotify may still report the device playback was moved from. */
   let settlesAt = 0
+  let sonosPolling = true
+  let followingSonos = false
+  /** Invalidates work that started under an earlier Sonos lease. */
+  let sonosLease = 0
   /** The restricted device and track last looked up as a Sonos group. */
   let sonosChecked: string | null = null
   let sonosTries = 0
@@ -491,6 +502,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
   let roomExpected: { uri: string; until: number } | null = null
   /** Spotify's details of tracks a Sonos group plays; null once asked for. */
   const roomTracks = new Map<string, TrackDetails | null>()
+  const describingRoomTracks = new Set<string>()
   /**
    * The item a session was on when nothing is playing it any more, and where
    * in it to start again. `given` is that session: its device may still hold
@@ -512,6 +524,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
   let restores = 0
   /** How much of the track a Sonos group is on has been heard, for scrobbling. */
   let listen: PlaybackListen | null = null
+  let reportingListen: PlaybackListen | null = null
   /** Where the group was in its tracks when it was last read. */
   let sighted: Sighting | null = null
 
@@ -521,7 +534,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       set({ rejoin: null })
   }
 
-  function set(patch: Partial<PlaybackState>) {
+  function set(patch: Partial<PlaybackState>, rememberRoom = true) {
     if (disposed) return
     const before = state.target
     state = { ...state, ...patch }
@@ -532,7 +545,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
           ? setTimeout(() => set({ rejoin: null }), REJOIN_NOTICE_MS)
           : null
     }
-    if (patch.target && !sameDevice(before, patch.target))
+    if (rememberRoom && patch.target && !sameDevice(before, patch.target))
       options.onRoom?.(patch.target.kind === 'room' ? patch.target.room : null)
     for (const listener of listeners) listener()
   }
@@ -549,6 +562,14 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
   function stop() {
     if (timer) clearTimeout(timer)
     timer = null
+  }
+
+  function holdsSonosLease(lease = sonosLease) {
+    return sonosPolling && lease === sonosLease && !disposed
+  }
+
+  function canControl(target: PlaybackTarget) {
+    return !isSonosTarget(target) || holdsSonosLease()
   }
 
   function detach() {
@@ -726,6 +747,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
    */
   function refused(): boolean {
     const target = state.target
+    if (!canControl(target)) return true
     if (!isObserved(target) || roomBehind(target)) return false
     set({
       starting: false,
@@ -996,7 +1018,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     active.filling = null
     set({ ...patch, upcoming: upcomingEntries(upcoming) })
     previewSource(active)
-    refreshPausedRoom()
+    refreshRoomQueue()
   }
 
   /** Takes a track out of the source for good: it is not drawn or read again. */
@@ -1153,10 +1175,12 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
   ): Promise<void> {
     const sonos = options.sonos
     if (!sonos) return Promise.reject(new Error('Sonos is not connected'))
+    const lease = sonosLease
     roomBusy += 1
-    const sent = roomWork.then(() =>
-      sonos.load(room.id, { ...input, household: room.household }),
-    )
+    const sent = roomWork.then(() => {
+      if (holdsSonosLease(lease))
+        return sonos.load(room.id, { ...input, household: room.household })
+    })
     const done = () => {
       roomBusy -= 1
     }
@@ -1174,6 +1198,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     const target = state.target
     const active = session
     if (
+      !holdsSonosLease() ||
       target.kind !== 'room' ||
       !active ||
       active.item.kind !== 'track' ||
@@ -1228,9 +1253,9 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     )
   }
 
-  /** A queue edit should reach a paused room before its next routine read. */
-  function refreshPausedRoom() {
-    if (state.target.kind === 'room' && session && latest?.paused)
+  /** A queue edit should reach the room before its next routine read. */
+  function refreshRoomQueue() {
+    if (holdsSonosLease() && state.target.kind === 'room' && session && latest)
       schedule(FOLLOW_UP_MS)
   }
 
@@ -1240,6 +1265,8 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
    */
   async function start(item: PlayableItem, ahead?: Promise<void>, from = 0) {
     let target = state.target
+    if (!canControl(target)) return
+    const lease = sonosLease
     if (isObserved(target)) {
       const room = roomBehind(target)
       if (!room) {
@@ -1283,7 +1310,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
           item.kind === 'album' && item.startUri
             ? await api.albumTrackIndex(item.uri, item.startUri)
             : 0
-        if (started !== run || disposed) return
+        if (started !== run || !holdsSonosLease(lease)) return
         await roomSend(target.room, {
           mode: 'replace',
           uris: [item.uri],
@@ -1291,7 +1318,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
           ...(skip > 0 ? { skip } : {}),
           ...(from > 0 ? { positionMs: Math.round(from) } : {}),
         })
-        if (started !== run) return
+        if (started !== run || !holdsSonosLease(lease)) return
         // Sonos has accepted the track; its own report follows a second later.
         if (item.kind === 'track') expectRoomTrack(item, from, false)
         // The tracks that follow may still be resolving; they are added as
@@ -1313,7 +1340,11 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       if (started !== run) return
       schedule(FOLLOW_UP_MS)
     } catch (error) {
-      if (started !== run) return
+      if (
+        started !== run ||
+        (target.kind === 'room' && !holdsSonosLease(lease))
+      )
+        return
       detach()
       fail(error)
     }
@@ -1533,7 +1564,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     const sonos = options.sonos
     const target = state.target
     const track = latest?.trackUri
-    if (!sonos || !isObserved(target)) {
+    if (!sonos || !holdsSonosLease() || !isObserved(target)) {
       sonosTries = 0
       if (state.findingSonos) set({ findingSonos: false })
       return
@@ -1541,6 +1572,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     if (!track) return
     const key = `${target.name}\n${target.type}\n${track}`
     if (key === sonosChecked || now() < sonosRetryAt) return
+    const lease = sonosLease
     sonosChecked = key
     if (target.kind === 'restricted') set({ findingSonos: true })
     /** Sonos can take a moment to report playback that has just moved to it. */
@@ -1554,7 +1586,12 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     sonos.find(track, target.name).then(
       (group) => {
         const current = state.target
-        if (disposed || !isObserved(current) || !sameDevice(current, target))
+        if (
+          !holdsSonosLease(lease) ||
+          sonosChecked !== key ||
+          !sameDevice(current, target) ||
+          !isObserved(current)
+        )
           return
         const { name, type } = current
         if (group) {
@@ -1576,14 +1613,13 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       },
       // A failed lookup leaves the device shown only; the next track tries again.
       () => {
-        if (!disposed) set({ findingSonos: false })
+        if (holdsSonosLease(lease) && sonosChecked === key)
+          set({ findingSonos: false })
       },
     )
   }
 
-  function groupId(
-    target: Extract<PlaybackTarget, { kind: 'sonos' | 'room' }>,
-  ) {
+  function groupId(target: SonosTarget) {
     return target.kind === 'room' ? target.room.id : target.group.id
   }
 
@@ -1598,12 +1634,17 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     after?: Promise<unknown>,
   ): Promise<void> {
     const sonos = options.sonos
-    if (!sonos) return Promise.resolve()
+    if (!sonos || !holdsSonosLease()) return Promise.resolve()
+    const lease = sonosLease
     sonosPending += 1
     sonosEpoch += 1
-    const send = () => sonos.command(groupId, command)
+    const send = () => {
+      if (holdsSonosLease(lease)) return sonos.command(groupId, command)
+      return Promise.resolve()
+    }
     const sent = after ? after.then(send) : send()
     const answered = () => {
+      if (!holdsSonosLease(lease)) return
       sonosPending -= 1
       sonosEpoch += 1
       if (sonosPending === 0 && state.target.kind === 'room') schedule(0)
@@ -1617,7 +1658,9 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     command: SonosCommand,
     after?: Promise<unknown>,
   ) {
+    const lease = sonosLease
     sonosCommand(groupId, command, after).catch((error: unknown) => {
+      if (!holdsSonosLease(lease)) return
       // The group may have changed; look it up again with the next report.
       sonosChecked = null
       roomExpected = null
@@ -1660,22 +1703,29 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
 
   /** Reads Spotify's details of a track a Sonos group plays, once. */
   function describeRoomTrack(uri: string) {
-    if (roomTracks.has(uri)) return
-    roomTracks.set(uri, null)
+    if (
+      !holdsSonosLease() ||
+      roomTracks.has(uri) ||
+      describingRoomTracks.has(uri)
+    )
+      return
+    const lease = sonosLease
+    describingRoomTracks.add(uri)
     api.track(uri).then(
       (details) => {
+        if (!holdsSonosLease(lease)) return
+        describingRoomTracks.delete(uri)
         roomTracks.set(uri, details)
-        if (
-          disposed ||
-          state.target.kind !== 'room' ||
-          latest?.trackUri !== uri
-        )
-          return
+        if (state.target.kind !== 'room' || latest?.trackUri !== uri) return
         latest = roomTrack(latest)
         publish(latest)
       },
       // The track stays as Sonos and the queue describe it.
-      () => undefined,
+      () => {
+        if (!holdsSonosLease(lease)) return
+        describingRoomTracks.delete(uri)
+        roomTracks.set(uri, null)
+      },
     )
   }
 
@@ -1713,15 +1763,18 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
   }
 
   function scrobbling() {
-    return options.scrobbles?.enabled() === true
+    return holdsSonosLease() && options.scrobbles?.enabled() === true
   }
 
   /** Spotify's details of a track, as read for the dock where they were. */
   function trackDetails(uri: string): Promise<TrackDetails | null> {
+    if (!holdsSonosLease()) return Promise.resolve(null)
+    const lease = sonosLease
     const known = roomTracks.get(uri)
     if (known) return Promise.resolve(known)
     return api.track(uri).then(
       (details) => {
+        if (!holdsSonosLease(lease)) return null
         roomTracks.set(uri, details)
         return details
       },
@@ -1747,8 +1800,10 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
    */
   function reportPlays(plays: readonly RoomPlay[], given: PlaybackSession) {
     const scrobbles = options.scrobbles
-    if (!scrobbles || plays.length === 0) return
-    void Promise.all(
+    if (!scrobbles || plays.length === 0 || !holdsSonosLease())
+      return Promise.resolve(false)
+    const lease = sonosLease
+    return Promise.all(
       plays.map(async ({ uri, startedAt }): Promise<LastfmPlay[]> => {
         const details = await trackDetails(uri)
         const item = given.sent.find(
@@ -1774,7 +1829,9 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       }),
     ).then((found) => {
       const known = found.flat()
-      if (known.length > 0 && !disposed) scrobbles.report(known)
+      if (!known.length || !holdsSonosLease(lease)) return false
+      scrobbles.report(known)
+      return true
     })
   }
 
@@ -1809,6 +1866,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     sighted = reached
     listen = step.listen
     if (before && step.earlier) {
+      const lease = sonosLease
       const { listen: left, budgetMs } = step.earlier
       const passed =
         active.item.kind === 'track'
@@ -1823,7 +1881,8 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
                 (details) => details?.durationMs ?? 0,
               ),
           trackLengths(passed),
-        ]).then(([beforeDurationMs, lengths]) =>
+        ]).then(([beforeDurationMs, lengths]) => {
+          if (!holdsSonosLease(lease)) return
           reportPlays(
             earlierPlays({
               listen: left,
@@ -1834,13 +1893,31 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
               until: reached.at - reached.positionMs,
             }),
             active,
-          ),
+          )
+        })
+    }
+    if (!listenDue(listen)) return
+    const due = listen
+    if (
+      reportingListen?.uri === due.uri &&
+      reportingListen.startedAt === due.startedAt
+    )
+      return
+    reportingListen = due
+    const lease = sonosLease
+    void reportPlays([{ uri: due.uri, startedAt: due.startedAt }], active).then(
+      (reported) => {
+        if (!holdsSonosLease(lease)) return
+        if (reportingListen === due) reportingListen = null
+        // Do not save a play as reported if lease loss prevented the report.
+        if (
+          reported &&
+          listen?.uri === due.uri &&
+          listen.startedAt === due.startedAt
         )
-    }
-    if (listenDue(listen)) {
-      listen = { ...listen, reported: true }
-      reportPlays([{ uri: listen.uri, startedAt: listen.startedAt }], active)
-    }
+          listen = { ...listen, reported: true }
+      },
+    )
   }
 
   /**
@@ -1854,6 +1931,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     listen = null
     sighted = null
     if (!scrobbling() || !before) return
+    const lease = sonosLease
     const budgetMs = now() - before.at
     const rest =
       active.item.kind === 'track' ? active.sent.slice(before.index + 1) : []
@@ -1862,7 +1940,8 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
         ? left.durationMs
         : trackDetails(before.uri).then((details) => details?.durationMs ?? 0),
       trackLengths(rest),
-    ]).then(([beforeDurationMs, lengths]) =>
+    ]).then(([beforeDurationMs, lengths]) => {
+      if (!holdsSonosLease(lease)) return
       reportPlays(
         finishedPlays({
           listen: left,
@@ -1872,8 +1951,8 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
           budgetMs,
         }),
         active,
-      ),
-    )
+      )
+    })
   }
 
   /**
@@ -1896,6 +1975,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       ? { uri: next.uri, index: due, positionMs: 0, at: latest }
       : null
     if (!scrobbling()) return
+    const lease = sonosLease
     const played = active.sent.slice(active.index, due).flatMap((item) => {
       const entry = history.find(
         (heard) =>
@@ -1912,14 +1992,17 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
         uri,
         startedAt: endedAt - ((await trackDetails(uri))?.durationMs ?? 0),
       })),
-    ).then((plays) => reportPlays(plays, active))
+    ).then((plays) => {
+      if (holdsSonosLease(lease)) reportPlays(plays, active)
+    })
   }
 
   /** Reads what a Sonos group plays and keeps its queue supplied. */
   async function pollRoom(target: RoomTarget) {
     const sonos = options.sonos
     // The answer to a command on its way starts the next read.
-    if (!sonos || sonosPending > 0) return
+    if (!sonos || !holdsSonosLease() || sonosPending > 0) return
+    const lease = sonosLease
     let reported: SonosGroupState
     let epoch: number
     const restored = restores
@@ -1931,18 +2014,23 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
         : roomPlaying()
           ? 'room-playing'
           : 'room-paused'
-      reported = await sonos.state(
-        target.room.id,
-        roomPolls % ROOM_VOLUME_EVERY === 1,
-        reason,
-      )
-      pollErrors = 0
+      try {
+        reported = await sonos.state(
+          target.room.id,
+          roomPolls % ROOM_VOLUME_EVERY === 1,
+          reason,
+        )
+      } catch (error) {
+        if (!holdsSonosLease(lease)) return
+        throw error
+      }
       if (
+        !holdsSonosLease(lease) ||
         !sameDevice(state.target, target) ||
-        restored !== restores ||
-        disposed
+        restored !== restores
       )
         return
+      pollErrors = 0
       // A report read across a command may predate it, so it is read again.
     } while (epoch !== sonosEpoch && sonosPending === 0)
     if (epoch !== sonosEpoch) return
@@ -2178,10 +2266,11 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
   async function findPlayback() {
     const remote = await api.state().catch((error: unknown) => {
       // A failed background check is simply repeated at the next one.
-      if (playbackFailure(error).status === 'expired') fail(error)
+      if (!followingSonos && playbackFailure(error).status === 'expired')
+        fail(error)
       return null
     })
-    if (!remote || session || latest || disposed) return
+    if (!remote || session || latest || disposed || followingSonos) return
     const found = reported(remote)
     const snapshot = remote.snapshot
     if (!found || found.kind === 'local' || !snapshot) return
@@ -2210,9 +2299,13 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
 
   /** Time to the next check: frequent while following playback, occasional while watching for it. */
   function pollDelay(): number | null {
-    if (shouldPoll())
-      return state.target.kind === 'local' ? LOCAL_POLL_MS : REMOTE_POLL_MS
+    if (followingSonos || (!sonosPolling && state.target.kind === 'room'))
+      return null
     const room = state.target.kind === 'room'
+    if (shouldPoll()) {
+      if (room && session?.phase !== 'starting') return ROOM_PLAYING_POLL_MS
+      return state.target.kind === 'local' ? LOCAL_POLL_MS : REMOTE_POLL_MS
+    }
     const idle =
       (watching || (room && session !== null)) &&
       visible() &&
@@ -2222,7 +2315,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
   }
 
   async function tick() {
-    if (ticking || disposed) return
+    if (ticking || disposed || followingSonos) return
     ticking = true
     try {
       const target = state.target
@@ -2231,9 +2324,8 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       } else if (!session && !latest) {
         if (watching && visible()) await findPlayback()
       } else if (target.kind === 'local') {
-        const found = player
-          ? observeLocal(await player.getCurrentState())
-          : false
+        const sdk = player ? await player.getCurrentState() : null
+        const found = state.target.kind === 'local' && observeLocal(sdk)
         if (!found && sawLocalState) {
           missed()
           // A paused browser player that lost its playback has usually handed
@@ -2265,6 +2357,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       }
     } catch (error) {
       // One failed check is not the end of playback; repeated failures are.
+      if (followingSonos) return
       pollErrors += 1
       if (
         pollErrors >= MISSING_STATES ||
@@ -2294,6 +2387,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
 
   function seek(positionMs: number) {
     const target = state.target
+    if (!canControl(target)) return
     if (!latest && resume && state.snapshot) {
       // Nothing plays yet: this moves where the restored item will start.
       const position = Math.max(
@@ -2327,7 +2421,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       if (localId) api.pause(localId).catch(ignored)
     } else if (target.kind === 'remote')
       api.pause(target.device.id).catch(ignored)
-    else if (target.kind !== 'restricted')
+    else if (isSonosTarget(target) && holdsSonosLease())
       options.sonos
         ?.command(groupId(target), { action: 'pause' })
         .catch(ignored)
@@ -2345,6 +2439,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
    */
   function moveTo(next: SelectableTarget) {
     const from = state.target
+    if (!canControl(from) || !canControl(next)) return
     if (sameDevice(from, next)) return
     if (next.kind === 'local') player?.activateElement().catch(() => undefined)
     if (resume && !latest) {
@@ -2538,11 +2633,19 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     /** The session played on a Sonos group, whose plays are scrobbled here. */
     room: boolean,
   ) {
-    if (active.item.kind !== 'track') return
+    if (active.item.kind !== 'track' || (room && !holdsSonosLease())) return
     const checked = run
+    const lease = sonosLease
     api.played(since).then(
       (history) => {
-        if (!history || checked !== run || disposed || session) return
+        if (
+          !history ||
+          checked !== run ||
+          disposed ||
+          session ||
+          (room && !holdsSonosLease(lease))
+        )
+          return
         if ((resume?.item ?? null) !== held) return
         const due = playedThrough(active.sent, active.index, history, since)
         if (due <= active.index) return
@@ -2712,13 +2815,18 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     restored: SavedPlayback,
     { claimed = false }: { claimed?: boolean } = {},
   ) {
-    if (disposed) return
+    const restoringRoom = restored.target.kind === 'room'
+    if (disposed || (restoringRoom && !holdsSonosLease())) return
+    const lease = sonosLease
     run += 1
     roomRun += 1
     restores += 1
     const restoring = run
     rejoining = restoring
-    const current = () => restoring === run && !disposed
+    const current = () =>
+      restoring === run &&
+      !disposed &&
+      (!restoringRoom || holdsSonosLease(lease))
     stop()
     const kept = restored.source
     const definition = kept ? (options.restoreSource?.(kept) ?? null) : null
@@ -2859,14 +2967,76 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     roomExpected = null
     fallback = null
     sawLocalState = false
-    set({ target: next, volume: selectedVolume(next), snapshot: null })
+    set(
+      { target: next, volume: selectedVolume(next), snapshot: null },
+      sonosPolling,
+    )
     schedule(0)
+  }
+
+  /** A shared session grants Sonos observation only to the current driver. */
+  function setSonosPolling(enabled: boolean) {
+    if (disposed || enabled === sonosPolling) return
+    sonosPolling = enabled
+    sonosLease += 1
+    if (enabled) {
+      followingSonos = false
+      if (!timer && pollDelay() !== null) schedule(0)
+      return
+    }
+    sonosChecked = null
+    sonosTries = 0
+    sonosRetryAt = 0
+    sonosPending = 0
+    roomRun += 1
+    roomExpected = null
+    reportingListen = null
+    describingRoomTracks.clear()
+    if (isSonosTarget(state.target)) {
+      // Keep the last display while the driver's shared report is arriving.
+      followingSonos = latest !== null || state.target.kind === 'sonos'
+      stop()
+      if (volumeTimer) clearTimeout(volumeTimer)
+      volumeTimer = null
+    }
+    if (state.findingSonos) set({ findingSonos: false })
+  }
+
+  /** Mirrors a driver's report without observing, loading or scrobbling it. */
+  function followSonos(playback: SharedSonosObservation | null) {
+    if (
+      disposed ||
+      sonosPolling ||
+      !options.sonos ||
+      (!playback && !followingSonos && !isSonosTarget(state.target))
+    )
+      return
+    followingSonos = playback !== null
+    stop()
+    latest = playback?.snapshot ? { ...playback.snapshot, at: now() } : null
+    missing = 0
+    pollErrors = 0
+    sawLocalState = false
+    fallback = null
+    set(
+      {
+        target: playback?.target ?? LOCAL,
+        snapshot: latest,
+        volume: playback ? playback.volume : localVolume,
+        active: latest !== null || used || state.queue.length > 0,
+        findingSonos: false,
+      },
+      false,
+    )
+    if (!timer && pollDelay() !== null) schedule(0)
   }
 
   return {
     getState: () => state,
     saved,
     restore,
+    setSonosPolling,
+    followSonos,
     /**
      * Another client has taken the session over. The queue, source and item
      * are dropped here without a command to the device, whose playback is
@@ -2902,6 +3072,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
      * report; a Sonos group has to be named.
      */
     watchSaved(target: SavedTarget) {
+      if (followingSonos) return
       const shown = state.target
       if (target.kind === 'room') {
         if (!options.sonos) return
@@ -2974,6 +3145,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
         : [...active.remaining].sort((a, b) => a - b)
       set({ shuffle, upcoming: [] })
       if (!active.initializing) previewSource(active)
+      refreshRoomQueue()
     },
     enqueue(item: PlayableItem) {
       sequence += 1
@@ -2983,7 +3155,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
         queue: [...state.queue, { key: `queue-${sequence}`, item }],
         announcement: `Added to queue: ${item.title}`,
       })
-      refreshPausedRoom()
+      refreshRoomQueue()
     },
     playFromQueue(key: string) {
       const entry = state.queue.find((candidate) => candidate.key === key)
@@ -3001,7 +3173,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
         queue: state.queue.filter((candidate) => candidate !== entry),
         announcement: `Removed from queue: ${entry.item.title}`,
       })
-      refreshPausedRoom()
+      refreshRoomQueue()
     },
     moveInQueue(from: number, to: number) {
       const entry = state.queue[from]
@@ -3010,12 +3182,12 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
         queue: moveEntry(state.queue, from, to),
         announcement: `${entry.item.title}: position ${to + 1} of ${state.queue.length}`,
       })
-      refreshPausedRoom()
+      refreshRoomQueue()
     },
     clearQueue() {
       if (!state.queue.length) return
       set({ queue: [], announcement: 'Queue cleared' })
-      refreshPausedRoom()
+      refreshRoomQueue()
     },
     /**
      * Skips ahead in the source to one of its upcoming tracks. The tracks
@@ -3068,6 +3240,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       })
     },
     toggle() {
+      if (!canControl(state.target)) return
       if (session?.phase === 'starting' || sourceStarting) return
       activate()
       acted()
@@ -3100,8 +3273,9 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       schedule(FOLLOW_UP_MS)
     },
     next() {
-      acted()
       const target = state.target
+      if (!canControl(target)) return
+      acted()
       // A Sonos group skips to the next track in its queue when that is the
       // track due; otherwise the track due is started on it.
       const queued =
@@ -3151,7 +3325,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     },
     previous() {
       const target = state.target
-      if (!latest || target.kind === 'restricted') return
+      if (!latest || target.kind === 'restricted' || !canControl(target)) return
       acted()
       if (positionAt(latest, now()) > RESTART_AFTER_MS) return seek(0)
       if (target.kind === 'sonos') {
@@ -3180,12 +3354,13 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       }
       set({ failure: null })
       if (target.kind === 'local') guard(player?.previousTrack())
-      else if (target.kind === 'room')
+      else if (target.kind === 'room') {
+        const lease = sonosLease
         // The group's queue has nothing before the track it started with.
-        sonosCommand(target.room.id, { action: 'previous' }).catch(() =>
-          seek(0),
-        )
-      else
+        sonosCommand(target.room.id, { action: 'previous' }).catch(() => {
+          if (holdsSonosLease(lease)) seek(0)
+        })
+      } else
         api.previous(target.device.id).catch((error: unknown) => {
           // Spotify refuses to go back from the first track of a context.
           if (error instanceof PlaybackApiError && error.status === 403) seek(0)
@@ -3197,7 +3372,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     setVolume(value: number) {
       const volume = Math.min(1, Math.max(0, value))
       const target = state.target
-      if (target.kind === 'restricted') return
+      if (target.kind === 'restricted' || !canControl(target)) return
       if (target.kind === 'sonos' && target.group.volume === null) return
       if (target.kind === 'room' && state.volume === null) return
       set({ volume })
@@ -3208,11 +3383,13 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
         return
       }
       if (volumeTimer) clearTimeout(volumeTimer)
+      const lease = sonosLease
       volumeTimer = setTimeout(() => {
         volumeTimer = null
         if (target.kind === 'remote')
           guard(api.volume(target.device.id, volume))
-        else sonosSend(groupId(target), { action: 'volume', volume })
+        else if (holdsSonosLease(lease))
+          sonosSend(groupId(target), { action: 'volume', volume })
       }, VOLUME_DEBOUNCE_MS)
     },
     async refreshDevices() {

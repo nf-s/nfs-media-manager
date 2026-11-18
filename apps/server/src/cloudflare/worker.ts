@@ -235,6 +235,14 @@ export default {
             () =>
               withPlaybackSessions(
                 {
+                  canDispatchSonos: async (userId, clientId) =>
+                    z
+                      .boolean()
+                      .parse(
+                        await bindings.PLAYBACK_SESSIONS.getByName(
+                          userId,
+                        ).canDispatchSonos(clientId),
+                      ),
                   sync: async (userId, input) =>
                     PlaybackSyncResultSchema.parse(
                       await bindings.PLAYBACK_SESSIONS.getByName(userId).sync(

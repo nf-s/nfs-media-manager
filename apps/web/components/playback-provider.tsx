@@ -76,6 +76,7 @@ export type PlaybackControls = Pick<
   | 'previous'
   | 'seek'
   | 'setVolume'
+  | 'loadSonosRooms'
   | 'refreshDevices'
   | 'selectDevice'
   | 'clearFailure'
@@ -115,6 +116,7 @@ const disabledControls: PlaybackControls = {
   previous: () => undefined,
   seek: () => undefined,
   setVolume: () => undefined,
+  loadSonosRooms: () => Promise.reject(new Error('Playback is unavailable.')),
   refreshDevices: async () => undefined,
   selectDevice: async () => undefined,
   clearFailure: () => undefined,
@@ -192,7 +194,11 @@ function saveRoom(room: SonosRoomRef | null) {
 /** Whether plays are scrobbled now, and where they are handed in. */
 type Scrobbling = { enabled: () => boolean; reporter: ScrobbleReporter }
 
-function createEngine(apiBaseUrl: string, scrobbling: Scrobbling) {
+function createEngine(
+  apiBaseUrl: string,
+  scrobbling: Scrobbling,
+  sonos: ReturnType<typeof createSonosControlApi>,
+) {
   // The access token is held in memory only and never written to storage.
   let cached: { accessToken: string; expiresAt: number } | null = null
   let pending: Promise<string> | null = null
@@ -227,7 +233,7 @@ function createEngine(apiBaseUrl: string, scrobbling: Scrobbling) {
     initialShuffle: savedShuffle(),
     onShuffle: saveShuffle,
     visible: () => document.visibilityState === 'visible',
-    sonos: createSonosControlApi(apiBaseUrl),
+    sonos,
     initialRoom: savedRoom(),
     onRoom: saveRoom,
     browserId: playerBrowserId(),
@@ -241,11 +247,14 @@ function createEngine(apiBaseUrl: string, scrobbling: Scrobbling) {
 
 /** The engine with the account's shared session around it. */
 function createPlayer(apiBaseUrl: string, scrobbling: Scrobbling) {
-  const engine = createEngine(apiBaseUrl, scrobbling)
+  const clientId = playerClientId()
+  const sonos = createSonosControlApi(apiBaseUrl, clientId)
+  const engine = createEngine(apiBaseUrl, scrobbling, sonos)
   const sync = createPlaybackSync({
     engine,
     api: createSessionApi(apiBaseUrl),
-    clientId: playerClientId(),
+    clientId,
+    readSonosRooms: sonos.rooms,
     clientName: playerClientName(window.navigator.userAgent),
     resuming: takeDriving(Date.now()),
     visible: () => document.visibilityState === 'visible',

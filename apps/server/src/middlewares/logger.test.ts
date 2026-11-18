@@ -2,7 +2,7 @@ import { Hono } from 'hono'
 import { afterEach, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import { SONOS_PAGE_HEADER, SONOS_REASON_HEADER } from '@repo/schemas/sonos'
-import { logApiRequest } from '@/lib/request-log'
+import { logApiRequest, setPlaybackLogRole } from '@/lib/request-log'
 import { createSonosRequestFetch } from '@/lib/sonos-request-log'
 import { logger } from './logger'
 
@@ -17,6 +17,11 @@ app.get('/api/v1/sonos/groups/:id/state', async (c) => {
     {},
   )
   return c.body(null, 422)
+})
+
+app.get('/api/v1/playback/session', (c) => {
+  setPlaybackLogRole('follower')
+  return c.body(null, 200)
 })
 
 function serve(path: string, page: string, reason = 'room-watching') {
@@ -41,6 +46,7 @@ const RecordSchema = z.object({
     .regex(/^[0-9a-f]{16}$/)
     .optional(),
   visibility: z.enum(['visible', 'hidden']).optional(),
+  playbackRole: z.enum(['driver', 'follower']).optional(),
   stateReason: z.literal('room-watching').optional(),
 })
 
@@ -86,6 +92,28 @@ it('correlates concurrent Sonos sends with the initiating page and access result
   expect(JSON.stringify(info.mock.calls)).not.toMatch(
     /fixture-(?:room|track|auth)|00000000-0000-4000/,
   )
+})
+
+it('identifies the same anonymous page on a player heartbeat and a room request', async () => {
+  runtime.RUNTIME_KIND = 'cloudflare'
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () => new Response(null)),
+  )
+  const info = vi.spyOn(console, 'info').mockImplementation(() => {})
+  const id = '00000000-0000-4000-8000-000000000001'
+  await serve('/api/v1/playback/session', id + '/visible')
+  await serve('/api/v1/sonos/groups/fixture-room/state', id + '/hidden')
+  const records = info.mock.calls.map(([value]) => RecordSchema.parse(value))
+  expect(records[0]).toMatchObject({
+    event: 'api.request',
+    route: '/api/v1/playback/session',
+    playbackRole: 'follower',
+    visibility: 'visible',
+  })
+  expect(records[0]?.page).toBeDefined()
+  expect(records[0]?.page).toBe(records.at(-1)?.page)
+  expect(JSON.stringify(info.mock.calls)).not.toContain(id)
 })
 
 it('omits unrecognized paths and untrusted correlation headers', async () => {

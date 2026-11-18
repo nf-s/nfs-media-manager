@@ -4,6 +4,7 @@ import {
   SavedPlaybackSchema,
   type PlaybackSyncInput,
   type SavedPlayback,
+  type SharedSonosObservation,
 } from '@repo/schemas/playback'
 import {
   EMPTY_PLAYBACK_SESSION,
@@ -16,6 +17,15 @@ import { createMemoryPlaybackSessions } from '@/services/playback-session-store'
 
 const first = 'client-aaaaaaaa'
 const second = 'client-bbbbbbbb'
+
+const observation: SharedSonosObservation = {
+  target: {
+    kind: 'room',
+    room: { id: 'fixture-group', household: 'fixture-household', name: 'Room' },
+  },
+  snapshot: null,
+  volume: 0.4,
+}
 
 function savedPlayback(title: string): SavedPlayback {
   return SavedPlaybackSchema.parse({
@@ -81,6 +91,7 @@ describe('syncPlaybackSession', () => {
       driver: { clientId: first, name: 'Laptop' },
       changed: false,
       state: null,
+      sonosManaged: false,
     })
     expect(stored.driver).toEqual({
       clientId: first,
@@ -117,6 +128,7 @@ describe('syncPlaybackSession', () => {
       driver: { clientId: first, name: 'Laptop' },
       changed: false,
       state: null,
+      sonosManaged: false,
     })
     expect(stored).toEqual(before)
   })
@@ -277,6 +289,126 @@ describe('createMemoryPlaybackSessions', () => {
       driver: { clientId: second, name: 'Phone' },
       changed: true,
       state,
+      sonosManaged: false,
     })
+  })
+})
+
+describe('shared Sonos playback', () => {
+  it('shares the driver observation without changing the saved queue', async () => {
+    let now = 1000
+    const sessions = createMemoryPlaybackSessions(() => now)
+    await sessions.sync('user-1', input(first, { sonosManaged: true }))
+    await sessions.sync(
+      'user-1',
+      input(first, { sonosManaged: true, sonosObservation: observation }),
+    )
+    const follower = await sessions.sync(
+      'user-1',
+      input(second, {
+        sonosManaged: true,
+        sonosObservation: { ...observation, volume: 0.99 },
+      }),
+    )
+    expect(follower).toMatchObject({
+      role: 'follower',
+      sonosObservation: observation,
+      revision: 0,
+      state: null,
+    })
+    now += 10000
+    await sessions.sync('user-1', input(first, { sonosManaged: true }))
+    now += 2500
+    expect(
+      await sessions.sync('user-1', input(second, { sonosManaged: true })),
+    ).toMatchObject({ role: 'follower', sonosObservation: observation })
+    await sessions.release('user-1', { clientId: first, revision: 0 })
+    const promoted = await sessions.sync(
+      'user-1',
+      input(second, { sonosManaged: true, sonosObservation: null }),
+    )
+    expect(promoted).toMatchObject({
+      role: 'driver',
+      sonosObservation: observation,
+    })
+    now += PLAYBACK_LEASE_MS
+    expect(
+      await sessions.sync('user-1', input(first, { sonosManaged: true })),
+    ).toMatchObject({ role: 'driver', sonosObservation: null })
+  })
+
+  it('coalesces room opens and accepts only the current driver reply for the pending request', async () => {
+    const sessions = createMemoryPlaybackSessions(() => 1000)
+    const sync = (client: string, options: Partial<PlaybackSyncInput> = {}) =>
+      sessions.sync('user-1', input(client, { sonosManaged: true, ...options }))
+    const roomsA = { households: [] }
+    const report = {
+      id: 1,
+      result: { ok: true, rooms: roomsA },
+    } satisfies PlaybackSyncInput['sonosRoomsReport']
+    await sync(first)
+    const [a, b] = await Promise.all([
+      sync(second, { sonosRoomsRequest: 0 }),
+      sync('client-cccccccc', { sonosRoomsRequest: 0 }),
+    ])
+    expect(a.sonosRooms).toEqual({ requested: 1, completed: null })
+    expect(b.sonosRooms).toEqual(a.sonosRooms)
+    expect(
+      (await sync(second, { sonosRoomsReport: report })).sonosRooms,
+    ).toEqual({ requested: 1, completed: null })
+    expect(
+      (await sync(first, { sonosRoomsReport: report })).sonosRooms,
+    ).toEqual({ requested: 1, completed: report })
+    expect((await sync(second, { sonosRoomsRequest: 0 })).sonosRooms).toEqual({
+      requested: 1,
+      completed: report,
+    })
+    expect((await sync(second, { sonosRoomsRequest: 1 })).sonosRooms).toEqual({
+      requested: 2,
+      completed: report,
+    })
+    expect(
+      (await sync(first, { sonosRoomsReport: report })).sonosRooms,
+    ).toEqual({ requested: 2, completed: report })
+    const failed = {
+      id: 2,
+      result: { ok: false },
+    } satisfies PlaybackSyncInput['sonosRoomsReport']
+    expect(
+      (await sync(first, { sonosRoomsReport: failed })).sonosRooms,
+    ).toEqual({ requested: 2, completed: failed })
+    expect(
+      (await sync(second, { sonosRoomsSeen: 2 })).sonosRooms,
+    ).toBeUndefined()
+    expect((await sync(second, { sonosRoomsSeen: 1 })).sonosRooms).toEqual({
+      requested: 2,
+      completed: failed,
+    })
+  })
+
+  it('checks a live managed lease without renewing it and preserves legacy queue control', async () => {
+    let now = 1000
+    const sessions = createMemoryPlaybackSessions(() => now)
+    expect(await sessions.canDispatchSonos('user-1', null)).toBe(false)
+    await sessions.sync('user-1', input(first, { sonosManaged: true }))
+    expect(await sessions.canDispatchSonos('user-1', first)).toBe(true)
+    expect(await sessions.canDispatchSonos('user-1', second)).toBe(false)
+    expect(await sessions.canDispatchSonos('user-1', null)).toBe(false)
+    expect(await sessions.canDispatchSonos('user-2', null)).toBe(false)
+    now += PLAYBACK_LEASE_MS
+    expect(await sessions.canDispatchSonos('user-1', first)).toBe(false)
+    expect(await sessions.canDispatchSonos('user-1', null)).toBe(false)
+    expect(
+      await sessions.sync(
+        'user-1',
+        input(second, { state: savedPlayback('Legacy') }),
+      ),
+    ).toMatchObject({ role: 'driver', revision: 1, sonosManaged: true })
+    expect(await sessions.canDispatchSonos('user-1', second)).toBe(false)
+    expect(
+      await sessions.sync('user-1', input(first, { sonosManaged: true })),
+    ).toMatchObject({ role: 'driver', revision: 1, sonosManaged: true })
+    expect(await sessions.canDispatchSonos('user-1', first)).toBe(true)
+    expect(await sessions.canDispatchSonos('user-1', second)).toBe(false)
   })
 })

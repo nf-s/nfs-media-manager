@@ -8,12 +8,14 @@ import {
   type SonosStateReason,
 } from '@repo/schemas/sonos'
 import { env } from '@/env'
+import type { SonosRateLimit } from '@/lib/sonos-rate-limit'
 
 interface RequestLogContext {
   requestId: string
   route: string
   page?: string
   visibility?: 'visible' | 'hidden'
+  playbackRole?: 'driver' | 'follower'
   stateReason?: SonosStateReason
 }
 
@@ -37,6 +39,11 @@ type RequestEvent =
         | 'timeout'
         | 'aborted'
       retryAfterMs?: number
+    })
+  | (SonosDispatch & {
+      event: 'sonos.rate-limit'
+      reason: SonosRateLimit['reason']
+      retryAt: number | null
     })
   | {
       event: 'sonos.blocked'
@@ -72,7 +79,11 @@ export function setRequestLogRoute(route: string, headers: Headers) {
   const current = context.getStore()
   if (!current) return
   current.route = route
-  if (!route.startsWith('/api/v1/sonos/')) return
+  if (
+    !route.startsWith('/api/v1/sonos/') &&
+    route !== '/api/v1/playback/session'
+  )
+    return
   const parsed = SonosPageHeaderSchema.safeParse(headers.get(SONOS_PAGE_HEADER))
   if (parsed.success) {
     const [id, visibility] = parsed.data
@@ -85,6 +96,11 @@ export function setRequestLogRoute(route: string, headers: Headers) {
     )
     if (reason.success) current.stateReason = reason.data
   }
+}
+
+export function setPlaybackLogRole(role: 'driver' | 'follower') {
+  const current = context.getStore()
+  if (current) current.playbackRole = role
 }
 
 /** Owns one access record at the HTTP entry point, including early responses. */

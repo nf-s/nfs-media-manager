@@ -2,16 +2,18 @@ import { randomUUID } from 'node:crypto'
 import { ProviderRequestError } from '@repo/media-plugin-sdk'
 import { writeRequestLog } from '@/lib/request-log'
 import { retryAfterTime } from '@/lib/request-policy'
-import {
-  SONOS_CONTROL_API,
-  SONOS_TOKEN_API,
-  type SonosRequest,
-} from '@/lib/sonos-api'
+import { sonosControlPath, type SonosRateLimit } from '@/lib/sonos-rate-limit'
+import { SONOS_TOKEN_API, type SonosRequest } from '@/lib/sonos-api'
 
-const controlApi = new URL(SONOS_CONTROL_API)
 const tokenApi = new URL(SONOS_TOKEN_API)
 type TokenOperation = 'oauth.exchange' | 'oauth.refresh'
 type SonosMethod = 'GET' | 'POST' | 'UNKNOWN'
+type SonosAttempt = {
+  attemptId: string
+  operation: string
+  method: SonosMethod
+}
+const limitedAttempts = new WeakMap<Response, SonosAttempt>()
 
 /** Report known operations without copying a URL segment to the log. */
 function operationFor(
@@ -27,12 +29,8 @@ function operationFor(
   }
   if (url.origin === tokenApi.origin && url.pathname === tokenApi.pathname)
     return method === 'POST' ? tokenOperation : 'unknown'
-  if (
-    url.origin !== controlApi.origin ||
-    !url.pathname.startsWith(`${controlApi.pathname}/`)
-  )
-    return 'unknown'
-  const path = url.pathname.slice(controlApi.pathname.length)
+  const path = sonosControlPath(url)
+  if (!path) return 'unknown'
   if (method === 'GET') {
     if (path === '/households') return 'households.list'
     if (/^\/households\/[^/]+\/groups$/.test(path)) return 'groups.list'
@@ -81,7 +79,7 @@ export function createSonosRequestFetch(tokenOperation: TokenOperation) {
         : init.method === undefined || init.method === 'GET'
           ? 'GET'
           : 'UNKNOWN'
-    const attempt = {
+    const attempt: SonosAttempt = {
       attemptId: randomUUID(),
       operation: operationFor(url, method, tokenOperation),
       method,
@@ -114,8 +112,21 @@ export function createSonosRequestFetch(tokenOperation: TokenOperation) {
       outcome: response.ok ? 'success' : 'http_error',
       ...(retryAfterMs > 0 ? { retryAfterMs } : {}),
     })
+    if (response.status === 429) limitedAttempts.set(response, attempt)
     return response
   }
+}
+
+/** Correlates the applied cooldown with the fetch that received the 429. */
+export function logSonosRateLimit(
+  response: Response,
+  { reason }: SonosRateLimit,
+  retryAt: number | null,
+) {
+  const attempt = limitedAttempts.get(response)
+  if (!attempt) return
+  limitedAttempts.delete(response)
+  writeRequestLog({ event: 'sonos.rate-limit', ...attempt, reason, retryAt })
 }
 
 /** Records an attempted operation that the local provider gate refused to send. */

@@ -38,6 +38,12 @@ import {
   fixedRequestWindow,
   unsignedHeaderInteger,
 } from '@/lib/request-policy'
+import {
+  sonosControlPath,
+  sonosRateLimit,
+  type SonosRateLimit,
+} from '@/lib/sonos-rate-limit'
+import { logSonosRateLimit } from '@/lib/sonos-request-log'
 
 export function effectiveRequestBudget(
   rateLimit: MediaProviderPlugin['manifest']['rateLimit'],
@@ -555,12 +561,13 @@ export async function recordProviderFailure(
   plugin: MediaProviderPlugin,
   error: unknown,
   transient?: TransientDisposition,
+  sonosLimit?: SonosRateLimit,
 ) {
   if (isProviderItemNotFoundError(error)) return
   if (error instanceof ProviderRequestError && error.recorded && !transient)
     return
   const provider = plugin.manifest.id
-  await db.transaction(async (tx) => {
+  return db.transaction(async (tx) => {
     await tx
       .insert(providerRequestState)
       .values({ provider })
@@ -574,8 +581,10 @@ export async function recordProviderFailure(
     const count = state.failureCount + (transient === 'retry' ? 0 : 1)
     const failureCooldown =
       plugin.manifest.rateLimit.failureCooldownMs ?? FAILURE_COOLDOWN_MS
+    const now = Date.now()
     const retryAt =
-      error instanceof ProviderRequestError ? (error.retryAt ?? 0) : 0
+      sonosLimit?.retryAt(now, count) ??
+      (error instanceof ProviderRequestError ? (error.retryAt ?? 0) : 0)
     const delaysNextRequest = transient
       ? transient !== 'cooldown'
       : failureCooldown === 0 &&
@@ -584,9 +593,10 @@ export async function recordProviderFailure(
     const requestBackoff = delaysNextRequest ? retryAt : 0
     const requested = requestBackoff ? 0 : retryAt
     const scheduledRateLimit =
-      plugin.manifest.rateLimit.retryAfterIsAuthoritative &&
-      error instanceof ProviderRequestError &&
-      error.code === 'rate-limit'
+      sonosLimit !== undefined ||
+      (plugin.manifest.rateLimit.retryAfterIsAuthoritative &&
+        error instanceof ProviderRequestError &&
+        error.code === 'rate-limit')
     const until = Math.max(
       state.cooldownUntil?.getTime() ?? 0,
       requested,
@@ -594,9 +604,10 @@ export async function recordProviderFailure(
         count >= MAX_CONSECUTIVE_PROVIDER_FAILURES &&
         failureCooldown > 0 &&
         !scheduledRateLimit
-        ? Date.now() + failureCooldown
+        ? now + failureCooldown
         : 0,
     )
+    const cooldownUntil = until > now ? new Date(until) : null
     await tx
       .update(providerRequestState)
       .set({
@@ -605,7 +616,7 @@ export async function recordProviderFailure(
           state.halted ||
           (error instanceof ProviderRequestError &&
             error.code === 'access-denied'),
-        cooldownUntil: until > Date.now() ? new Date(until) : null,
+        cooldownUntil,
         ...(requestBackoff
           ? {
               nextAllowedAt: new Date(
@@ -620,6 +631,7 @@ export async function recordProviderFailure(
         updatedAt: new Date(),
       })
       .where(eq(providerRequestState.provider, provider))
+    return cooldownUntil?.getTime() ?? null
   })
 }
 
@@ -789,20 +801,42 @@ export function createDirectProviderRequest(
     let response: Response
     let body: string
     let answered = false
+    let sonosLimit: { response: Response; policy: SonosRateLimit } | undefined
     try {
       const timeout = AbortSignal.timeout(timeoutMs)
+      const signal = init?.signal
+        ? AbortSignal.any([init.signal, timeout])
+        : timeout
       response = await dispatchFetch(url, {
         ...init,
         redirect: 'manual',
-        signal: init?.signal
-          ? AbortSignal.any([init.signal, timeout])
-          : timeout,
+        signal,
       })
       const receivedAt = Date.now()
       answered = !response.ok && answeredStatuses.includes(response.status)
       if (!response.ok && !answered) {
-        void response.body?.cancel().catch(() => undefined)
         const limited = response.status === 429
+        if (limited && provider === 'sonos' && sonosControlPath(url)) {
+          const captured = await readErrorBody(
+            response,
+            AbortSignal.any([
+              signal,
+              AbortSignal.timeout(ERROR_BODY_CAPTURE_TIMEOUT_MS),
+            ]),
+            false,
+            responseContentType(response),
+          )
+          sonosLimit = {
+            response,
+            policy: sonosRateLimit(
+              response.headers,
+              receivedAt,
+              captured.state === 'captured' ? captured.text : undefined,
+            ),
+          }
+        } else {
+          void response.body?.cancel().catch(() => undefined)
+        }
         const retryAfter = response.headers.get('retry-after')
         const errorBackoff = limits.errorBackoffMs ?? 60000
         throw new ProviderRequestError(
@@ -815,13 +849,15 @@ export function createDirectProviderRequest(
               ? 'access-denied'
               : 'request-failed',
           limited
-            ? rateLimitRetryAt(
-                response.headers,
-                receivedAt,
-                limits.rateLimitCooldownMs ?? 60000,
-                null,
-                limits.retryAfterIsAuthoritative,
-              )
+            ? sonosLimit
+              ? null
+              : rateLimitRetryAt(
+                  response.headers,
+                  receivedAt,
+                  limits.rateLimitCooldownMs ?? 60000,
+                  null,
+                  limits.retryAfterIsAuthoritative,
+                )
             : (response.status === 400 || response.status >= 500) &&
                 (errorBackoff > 0 || retryAfter !== null)
               ? retryAfterTime(retryAfter, receivedAt, errorBackoff)
@@ -842,11 +878,22 @@ export function createDirectProviderRequest(
               false,
               { cause: error },
             )
-      await recordProviderFailure(plugin, safe)
+      const cooldownUntil = await recordProviderFailure(
+        plugin,
+        safe,
+        undefined,
+        sonosLimit?.policy,
+      )
+      if (sonosLimit)
+        logSonosRateLimit(
+          sonosLimit.response,
+          sonosLimit.policy,
+          cooldownUntil ?? null,
+        )
       throw new ProviderRequestError(
         safe.message,
         safe.code,
-        safe.retryAt,
+        sonosLimit ? (cooldownUntil ?? null) : safe.retryAt,
         true,
         { cause: safe, diagnostics: safe.diagnostics },
       )

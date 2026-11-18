@@ -6,7 +6,8 @@ let sonosPage: string | undefined
 
 function sonosPageHeaders(path: string): Record<string, string> {
   if (
-    !path.startsWith('/api/v1/sonos/') ||
+    (!path.startsWith('/api/v1/sonos/') &&
+      path !== '/api/v1/playback/session') ||
     typeof document === 'undefined' ||
     typeof globalThis.crypto?.randomUUID !== 'function'
   )

@@ -1,3 +1,4 @@
+import { SONOS_PLAYBACK_CLIENT_HEADER } from '@repo/schemas/playback'
 import {
   SONOS_REASON_HEADER,
   SonosCommandResultSchema,
@@ -7,6 +8,7 @@ import {
   SonosGroupStateSchema,
   SonosPlaybackMatchSchema,
   SonosPlaybackQuerySchema,
+  SonosRoomsSchema,
   type SonosCommand,
   type SonosContentInput,
   type SonosGroupControl,
@@ -34,8 +36,9 @@ export type SonosControlApi = {
   load(groupId: string, input: SonosContentInput): Promise<void>
 }
 
-export function createSonosControlApi(apiBaseUrl: string): SonosControlApi {
-  return {
+export function createSonosControlApi(apiBaseUrl: string, clientId: string) {
+  const headers = { [SONOS_PLAYBACK_CLIENT_HEADER]: clientId }
+  const api: SonosControlApi = {
     async find(trackUri, device) {
       const query = SonosPlaybackQuerySchema.safeParse({ trackUri, device })
       if (!query.success) return null
@@ -44,6 +47,7 @@ export function createSonosControlApi(apiBaseUrl: string): SonosControlApi {
         apiBaseUrl,
         `/api/v1/sonos/playback?${search}`,
         SonosPlaybackMatchSchema,
+        { headers },
       )
       return result.group
     },
@@ -54,6 +58,7 @@ export function createSonosControlApi(apiBaseUrl: string): SonosControlApi {
         SonosCommandResultSchema,
         {
           method: 'POST',
+          headers,
           body: JSON.stringify(SonosCommandSchema.parse(command)),
         },
       )
@@ -63,7 +68,11 @@ export function createSonosControlApi(apiBaseUrl: string): SonosControlApi {
         apiBaseUrl,
         `/api/v1/sonos/groups/${encodeURIComponent(groupId)}/state${volume ? '?volume=true' : ''}`,
         SonosGroupStateSchema,
-        { headers: reason ? { [SONOS_REASON_HEADER]: reason } : {} },
+        {
+          headers: reason
+            ? { ...headers, [SONOS_REASON_HEADER]: reason }
+            : headers,
+        },
       )
     },
     async load(groupId, input) {
@@ -73,9 +82,17 @@ export function createSonosControlApi(apiBaseUrl: string): SonosControlApi {
         SonosContentResultSchema,
         {
           method: 'POST',
+          headers,
           body: JSON.stringify(SonosContentInputSchema.parse(input)),
         },
       )
     },
+  }
+  return {
+    ...api,
+    rooms: () =>
+      fetchApiData(apiBaseUrl, '/api/v1/sonos/rooms', SonosRoomsSchema, {
+        headers,
+      }),
   }
 }

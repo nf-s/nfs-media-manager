@@ -17,6 +17,7 @@ import {
   validationErrorResponse,
   type AppEnv,
 } from '@/lib/openapi'
+import { setPlaybackLogRole } from '@/lib/request-log'
 import { generateJsonResponse } from '@/lib/response'
 import { authMiddleware, requireBrowserSession } from '@/middlewares/auth'
 import {
@@ -83,15 +84,14 @@ app.openapi(
       503: jsonErrorResponse('Playback sessions unavailable'),
     },
   }),
-  async (c) =>
-    generateJsonResponse(
-      c,
-      await syncUserPlayback(
-        requireBrowserSession(c).user.id,
-        c.req.valid('json'),
-      ),
-      200,
-    ),
+  async (c) => {
+    const result = await syncUserPlayback(
+      requireBrowserSession(c).user.id,
+      c.req.valid('json'),
+    )
+    setPlaybackLogRole(result.role)
+    return generateJsonResponse(c, result, 200)
+  },
 )
 
 app.openapi(

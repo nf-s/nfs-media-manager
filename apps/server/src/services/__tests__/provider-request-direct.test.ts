@@ -106,6 +106,10 @@ type SonosResult = Omit<
   Extract<RequestEvent, { event: 'sonos.request' }>,
   'attemptId'
 >
+type SonosLimitResult = Omit<
+  Extract<RequestEvent, { event: 'sonos.rate-limit' }>,
+  'attemptId'
+>
 
 function loggedResult(
   operation: string,
@@ -127,12 +131,22 @@ function requestResults() {
   const completed = new Set<string>()
   const results = mocks.log.mock.calls.flatMap<
     | SonosResult
+    | SonosLimitResult
     | Extract<RequestEvent, { event: 'api.request' | 'sonos.blocked' }>
   >(([event]) => {
     if (event.event === 'sonos.dispatch') {
       expect(dispatches.has(event.attemptId)).toBe(false)
       dispatches.set(event.attemptId, event)
       return []
+    }
+    if (event.event === 'sonos.rate-limit') {
+      const { attemptId, ...result } = event
+      expect(completed.has(attemptId)).toBe(true)
+      expect(dispatches.get(attemptId)).toMatchObject({
+        operation: result.operation,
+        method: result.method,
+      })
+      return [result]
     }
     if (event.event !== 'sonos.request') return [event]
     const { attemptId, ...result } = event
@@ -185,6 +199,56 @@ afterEach(() => {
 })
 
 describe('Sonos request logs', () => {
+  it('stops daily-quota requests until the next midnight UTC', async () => {
+    vi.setSystemTime(new Date('2026-03-05T22:15:00Z'))
+    mocks.fetch.mockResolvedValueOnce(
+      Response.json(
+        {
+          error: 'Quota violation.',
+          'allowed quota': '20000 per day per user',
+          extra: 'fixture-private-body',
+        },
+        { status: 429 },
+      ),
+    )
+    const request = sonosDirectRequest()
+    const send = () =>
+      sonosCommand(request, 'fixture-access-token', 'fixture-room', {
+        action: 'next',
+      })
+    const reset = Date.parse('2026-03-06T00:00:00Z')
+    expect(await failure(send())).toMatchObject({
+      code: 'rate-limit',
+      recorded: true,
+      retryAt: reset,
+    })
+    expect(state.cooldownUntil?.getTime()).toBe(reset)
+    vi.advanceTimersByTime(61000)
+    expect(await failure(send())).toMatchObject({
+      code: 'cooldown',
+      retryAt: reset,
+    })
+    expect(mocks.fetch).toHaveBeenCalledOnce()
+    expect(requestResults()).toEqual([
+      loggedResult('group.next', {
+        status: 429,
+        outcome: 'http_error',
+      }),
+      {
+        event: 'sonos.rate-limit',
+        operation: 'group.next',
+        method: 'POST',
+        reason: 'daily-quota',
+        retryAt: reset,
+      },
+    ])
+
+    vi.setSystemTime(reset)
+    mocks.fetch.mockResolvedValueOnce(new Response(null, { status: 204 }))
+    await send()
+    expect(mocks.fetch).toHaveBeenCalledTimes(2)
+  })
+
   it('distinguishes dispatched Sonos commands, throttle responses and local refusals', async () => {
     const group = 'fixture-room/id?fixture-query=fixture-value'
     const request = logSonosBlocked(sonosDirectRequest())
@@ -228,8 +292,8 @@ describe('Sonos request logs', () => {
       code: 'cooldown',
       recorded: true,
     })
-    const retryAt = Date.now() + 60000
-    vi.advanceTimersByTime(60000)
+    const retryAt = Date.now() + 12000
+    vi.advanceTimersByTime(12000)
     expect(await refusedCommand('pause')).toMatchObject({
       code: 'access-denied',
       recorded: true,
@@ -247,10 +311,184 @@ describe('Sonos request logs', () => {
         outcome: 'http_error',
         retryAfterMs: 12000,
       }),
+      {
+        event: 'sonos.rate-limit',
+        operation: 'group.next',
+        method: 'POST',
+        reason: 'unknown',
+        retryAt,
+      },
       { event: 'sonos.blocked', reason: 'cooldown', retryAt },
       loggedResult('group.pause', { status: 401, outcome: 'http_error' }),
       { event: 'sonos.blocked', reason: 'access-denied' },
     ])
+  })
+
+  it.each([
+    {
+      reason: 'user-minute-quota',
+      body: {
+        error: 'Quota violation.',
+        'allowed quota': '600 per minute per user',
+      },
+      headers: new Headers({ 'Retry-After': '5' }),
+      seconds: 5,
+    },
+    {
+      reason: 'app-minute-quota',
+      body: {
+        error: 'Quota violation.',
+        'allowed quota': '1000 per minute per client',
+      },
+      headers: new Headers({ 'RateLimit-Reset': '32' }),
+      seconds: 32,
+    },
+    {
+      reason: 'app-minute-quota',
+      body: {},
+      headers: new Headers({
+        'RateLimit-Limit': '1000',
+        'RateLimit-Remaining': '0',
+        'RateLimit-Reset': '17',
+      }),
+      seconds: 17,
+    },
+  ])(
+    'honors the delay for $reason',
+    async ({ reason, body, headers, seconds }) => {
+      state.failureCount = 4
+      mocks.fetch.mockResolvedValueOnce(
+        Response.json(body, { status: 429, headers }),
+      )
+      const retryAt = Date.now() + seconds * 1000
+      const error = await failure(
+        sonosCommand(
+          sonosDirectRequest(),
+          'fixture-access-token',
+          'fixture-room',
+          {
+            action: 'next',
+          },
+        ),
+      )
+      expect(error.retryAt).toBe(retryAt)
+      expect(state.cooldownUntil?.getTime()).toBe(retryAt)
+      expect(mocks.fetch).toHaveBeenCalledOnce()
+      expect(requestResults()).toContainEqual({
+        event: 'sonos.rate-limit',
+        operation: 'group.next',
+        method: 'POST',
+        reason,
+        retryAt,
+      })
+    },
+  )
+
+  it('backs off without retrying a spike-arrested command', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.5)
+    const request = sonosDirectRequest()
+    const send = () =>
+      sonosCommand(request, 'fixture-access-token', 'fixture-room', {
+        action: 'next',
+      })
+    const baseDelays = [1000, 2000, 4000, 8000, 16000, 32000, 32000]
+    for (const [index, base] of baseDelays.entries()) {
+      mocks.fetch.mockResolvedValueOnce(
+        Response.json(
+          {
+            fault: {
+              detail: { errorcode: 'policies.ratelimit.SpikeArrestViolation' },
+            },
+          },
+          { status: 429, headers: { 'Retry-After': '0' } },
+        ),
+      )
+      const delay = base + base / 4
+      const retryAt = Date.now() + delay
+      expect((await failure(send())).retryAt).toBe(retryAt)
+      expect((await failure(send())).code).toBe('cooldown')
+      expect(mocks.fetch).toHaveBeenCalledTimes(index + 1)
+      expect(requestResults()).toContainEqual({
+        event: 'sonos.rate-limit',
+        operation: 'group.next',
+        method: 'POST',
+        reason: 'spike-arrest',
+        retryAt,
+      })
+      vi.advanceTimersByTime(delay)
+    }
+  })
+
+  it.each([
+    { suggested: '1', applied: 1250 },
+    { suggested: '2', applied: 2000 },
+  ])(
+    'treats a spike Retry-After of $suggested seconds as a floor',
+    async ({ suggested, applied }) => {
+      vi.spyOn(Math, 'random').mockReturnValue(0.5)
+      mocks.fetch.mockResolvedValueOnce(
+        Response.json(
+          {
+            fault: {
+              detail: {
+                errorcode: 'policies.ratelimit.SpikeArrestViolation',
+              },
+            },
+          },
+          { status: 429, headers: { 'Retry-After': suggested } },
+        ),
+      )
+      const error = await failure(
+        sonosCommand(
+          sonosDirectRequest(),
+          'fixture-access-token',
+          'fixture-room',
+          { action: 'next' },
+        ),
+      )
+      expect(error.retryAt).toBe(Date.now() + applied)
+      expect(mocks.fetch).toHaveBeenCalledOnce()
+    },
+  )
+
+  it('bounds reads of unknown throttle bodies and uses a short backoff', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0)
+    const cancel = vi.fn()
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.enqueue(new Uint8Array(17 * 1024))
+      },
+      cancel,
+    })
+    mocks.fetch.mockResolvedValueOnce(
+      new Response(stream, {
+        status: 429,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    )
+    const retryAt = Date.now() + 1000
+    expect(
+      (
+        await failure(
+          sonosCommand(
+            sonosDirectRequest(),
+            'fixture-access-token',
+            'fixture-room',
+            {
+              action: 'next',
+            },
+          ),
+        )
+      ).retryAt,
+    ).toBe(retryAt)
+    expect(cancel).toHaveBeenCalledOnce()
+    expect(requestResults()).toContainEqual({
+      event: 'sonos.rate-limit',
+      operation: 'group.next',
+      method: 'POST',
+      reason: 'unknown',
+      retryAt,
+    })
   })
 
   it('logs network failures without copying the error', async () => {
@@ -353,6 +591,32 @@ describe('Sonos request logs', () => {
     expect(requestResults()).toEqual([
       loggedResult('oauth.exchange'),
       loggedResult('oauth.refresh'),
+    ])
+  })
+
+  it('keeps the existing cooldown for throttled OAuth refreshes', async () => {
+    mocks.fetch.mockResolvedValueOnce(
+      Response.json(
+        {
+          error: 'Quota violation.',
+          'allowed quota': '20000 per day per user',
+        },
+        { status: 429 },
+      ),
+    )
+    const result = await failure(
+      sonosToken(
+        sonosDirectRequest(),
+        { clientId: 'fixture-key', clientSecret: 'fixture-secret' },
+        new URLSearchParams({
+          grant_type: 'refresh_token',
+          refresh_token: 'fixture-refresh-token',
+        }),
+      ),
+    )
+    expect(result.retryAt).toBe(Date.now() + 60000)
+    expect(requestResults()).toEqual([
+      loggedResult('oauth.refresh', { status: 429, outcome: 'http_error' }),
     ])
   })
 })

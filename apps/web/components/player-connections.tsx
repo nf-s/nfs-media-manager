@@ -3,13 +3,17 @@
 import Link from 'next/link'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { useSyncExternalStore } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import {
+  queryOptions,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query'
 import { Check, LoaderCircle, Play, X } from 'lucide-react'
 import { LastfmDisconnectResultSchema } from '@repo/schemas/lastfm'
 import {
   SonosAccountStatusSchema,
   SonosDisconnectResultSchema,
-  SonosRoomsSchema,
   type SonosRoom,
 } from '@repo/schemas/sonos'
 import { Button } from '@repo/ui/components/ui/button'
@@ -17,7 +21,9 @@ import { useConfig } from './providers'
 import {
   useLastfmScrobbling,
   usePlayback,
+  usePlaybackControls,
   useSpotifyAccount,
+  type PlaybackControls,
   type PlaybackView,
 } from './playback-provider'
 import { fetchApiData } from '@/utils/api'
@@ -37,6 +43,7 @@ const STATES = {
   paused: 'Paused',
   playing: 'Playing',
 } as const
+const SONOS_ROOMS_KEY = ['sonos-rooms']
 const OUTCOMES: Record<string, { message: string; failed: boolean }> = {
   'spotify-error': {
     message: 'Spotify did not connect. Try again.',
@@ -94,10 +101,25 @@ function roomState(room: SonosRoom, current: 'chosen' | 'controlled' | null) {
     .join(' · ')
 }
 
+export function sonosRoomsQuery(
+  connected: boolean,
+  loadSonosRooms: PlaybackControls['loadSonosRooms'],
+) {
+  return queryOptions({
+    queryKey: SONOS_ROOMS_KEY,
+    enabled: connected,
+    staleTime: 0,
+    retry: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    queryFn: loadSonosRooms,
+  })
+}
+
 /**
  * The account's Sonos rooms. A room Sonos can start Spotify content on is
- * chosen like a device. Mounted while the device list is open, so each
- * opening reads the rooms once; the rooms read before stay in view meanwhile.
+ * chosen like a device. An open list requests a refresh through the page
+ * driving playback, with the previous rooms kept in view while it refreshes.
  */
 export function SonosRooms({
   view,
@@ -106,16 +128,11 @@ export function SonosRooms({
   view: PlaybackView
   onChoose: (room: SonosRoomRef) => void
 }) {
-  const { apiBaseUrl } = useConfig()
+  const { loadSonosRooms } = usePlaybackControls()
   const account = useSonosAccount()
-  const rooms = useQuery({
-    queryKey: ['sonos-rooms'],
-    enabled: account.data?.connected === true,
-    staleTime: 0,
-    retry: false,
-    queryFn: () =>
-      fetchApiData(apiBaseUrl, '/api/v1/sonos/rooms', SonosRoomsSchema),
-  })
+  const rooms = useQuery(
+    sonosRoomsQuery(account.data?.connected === true, loadSonosRooms),
+  )
   if (!account.data?.connected) return null
   const { target } = view
   const groups =
@@ -243,7 +260,7 @@ export function PlayerConnections() {
         { method: 'DELETE' },
       ),
     onSuccess: async () => {
-      client.removeQueries({ queryKey: ['sonos-rooms'] })
+      client.removeQueries({ queryKey: SONOS_ROOMS_KEY })
       await client.invalidateQueries({ queryKey: ['sonos-account'] })
     },
   })

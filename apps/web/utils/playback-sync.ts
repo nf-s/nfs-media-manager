@@ -1,16 +1,22 @@
+import { z } from 'zod'
 import {
+  PLAYBACK_LEASE_MS,
   PlaybackReleaseInputSchema,
   PlaybackReleaseResultSchema,
   PlaybackSyncInputSchema,
   PlaybackSyncResultSchema,
+  SharedSonosObservationSchema,
   type PlaybackClient,
   type PlaybackReleaseInput,
   type PlaybackSyncInput,
   type PlaybackSyncResult,
   type SavedPlayback,
+  type SharedSonosObservation,
 } from '@repo/schemas/playback'
+import type { SonosRooms } from '@repo/schemas/sonos'
+import { createPlaybackSonosRooms } from './playback-sonos-rooms'
 import { fetchApiData } from './api'
-import type { PlayableItem, PlaybackSource } from './playback'
+import { positionAt, type PlayableItem, type PlaybackSource } from './playback'
 import {
   upcomingEntries,
   type PlaybackEngine,
@@ -37,6 +43,8 @@ export type PlaybackSyncOptions = {
   now?: () => number
   /** Whether the page is visible; a hidden page asks far less. */
   visible?: () => boolean
+  /** Only a confirmed driver calls Sonos to fulfil room list requests. */
+  readSonosRooms?: () => Promise<SonosRooms>
 }
 
 /**
@@ -53,18 +61,59 @@ const POSITION_EVERY_MS = 10_000
 /** A request sent as the page closes may not be larger than this. */
 const CLOSING_BYTES = 60_000
 
-export function createSessionApi(apiBaseUrl: string): SessionApi {
-  return {
-    sync(input) {
-      return fetchApiData(
-        apiBaseUrl,
-        '/api/v1/playback/session',
-        PlaybackSyncResultSchema,
-        {
-          method: 'POST',
-          body: JSON.stringify(PlaybackSyncInputSchema.parse(input)),
-        },
+const LegacySessionErrorSchema = z.object({
+  statusCode: z.literal(422),
+  data: z.object({
+    issues: z
+      .array(
+        z.object({
+          code: z.literal('unrecognized_keys'),
+          path: z.literal('(root)'),
+        }),
       )
+      .min(1),
+  }),
+})
+
+export function createSessionApi(apiBaseUrl: string): SessionApi {
+  let legacyServer = false
+  const send = (input: PlaybackSyncInput) =>
+    fetchApiData(
+      apiBaseUrl,
+      '/api/v1/playback/session',
+      PlaybackSyncResultSchema,
+      {
+        method: 'POST',
+        signal: AbortSignal.timeout(PLAYBACK_LEASE_MS),
+        body: JSON.stringify(input),
+        errorData: { status: 422, schema: LegacySessionErrorSchema.shape.data },
+      },
+    )
+  return {
+    async sync(input) {
+      const validated = PlaybackSyncInputSchema.parse(input)
+      if (!legacyServer) {
+        try {
+          return await send(validated)
+        } catch (error) {
+          // Older APIs reject the new fields before changing any state.
+          if (
+            !validated.sonosManaged ||
+            !LegacySessionErrorSchema.safeParse(error).success
+          )
+            throw error
+        }
+      }
+      const { clientId, clientName, revision, claim, state } = validated
+      const result = await send({
+        clientId,
+        clientName,
+        revision,
+        claim,
+        state,
+      })
+      legacyServer = result.sonosManaged === undefined
+      return legacyServer ? result : { ...result, sonosManaged: false }
     },
     release(input) {
       const { state, ...lease } = PlaybackReleaseInputSchema.parse(input)
@@ -135,7 +184,59 @@ export function createPlaybackSync(options: PlaybackSyncOptions) {
   let paced = false
   let saveTimer: ReturnType<typeof setTimeout> | null = null
   let disposed = false
+  let hasSonosLease = false
+  let leaseTimer: ReturnType<typeof setTimeout> | null = null
+  let observationSent: string | undefined
+  let mirrored: string | undefined
+  let closed = false
+  let generation = 0
+  engine.setSonosPolling(false)
+  const rooms = createPlaybackSonosRooms(
+    options.readSonosRooms ??
+      (() => Promise.reject(new Error('Sonos rooms unavailable'))),
+    () => {
+      // A menu can open, or a room read finish, during another exchange.
+      void Promise.resolve(busy).then(() => {
+        if (!disposed && !closed) void exchange()
+      })
+    },
+    now,
+  )
   let shown = compose()
+
+  function stopSonos() {
+    if (leaseTimer) clearTimeout(leaseTimer)
+    leaseTimer = null
+    hasSonosLease = false
+    engine.setSonosPolling(false)
+    observationSent = undefined
+    rooms.cancelRead()
+  }
+
+  function updateSonosLease(granted: boolean, requestedAt: number) {
+    const remaining = requestedAt + PLAYBACK_LEASE_MS - now()
+    if (!granted || remaining <= 0) {
+      stopSonos()
+      return
+    }
+    if (leaseTimer) clearTimeout(leaseTimer)
+    leaseTimer = setTimeout(stopSonos, remaining)
+    if (!hasSonosLease) {
+      hasSonosLease = true
+      engine.setSonosPolling(true)
+    }
+  }
+
+  function sonosObservation(): SharedSonosObservation | null {
+    const { target, snapshot, volume } = engine.getState()
+    if (target.kind !== 'room' && target.kind !== 'sonos') return null
+    const parsed = SharedSonosObservationSchema.safeParse({
+      target,
+      snapshot,
+      volume,
+    })
+    return parsed.success ? parsed.data : null
+  }
 
   function compose(): PlaybackState {
     const state = engine.getState()
@@ -189,7 +290,11 @@ export function createPlaybackSync(options: PlaybackSyncOptions) {
     result: PlaybackSyncResult,
     sent: { state: SavedPlayback | null; key: string; revision: number } | null,
     command: boolean,
+    requestedAt: number,
+    observationKey: string | undefined,
   ) {
+    const version = generation
+    if (disposed || closed) return
     const before = role
     // What was started here while the server could not be reached replaces
     // the session the server still has.
@@ -201,6 +306,15 @@ export function createPlaybackSync(options: PlaybackSyncOptions) {
     alone = false
     role = result.role
     driver = result.driver
+    const regaining = !hasSonosLease
+    const granted = role === 'driver' && result.sonosManaged === true
+    if (granted && !hasSonosLease && result.sonosObservation)
+      engine.followSonos(result.sonosObservation)
+    updateSonosLease(granted, requestedAt)
+    if (hasSonosLease) {
+      mirrored = undefined
+      if (observationKey !== undefined) observationSent = observationKey
+    }
     if (
       sent &&
       result.role === 'driver' &&
@@ -221,23 +335,38 @@ export function createPlaybackSync(options: PlaybackSyncOptions) {
       else if (role === 'driver') {
         if (stored) await engine.restore(stored, { claimed: command })
         else engine.release()
-      } else {
-        if (before === 'driver') engine.release()
-        if (stored) engine.watchSaved(stored.target)
-      }
-    } else if (role === 'driver' && before === 'follower') {
+      } else if (before === 'driver') engine.release()
+    } else if (
+      role === 'driver' &&
+      (before === 'follower' ||
+        (granted &&
+          regaining &&
+          engine.getState().rejoin?.status === 'checking'))
+    ) {
       // The driver went away: its session carries on here.
       savedAs = undefined
       if (stored) await engine.restore(stored, { claimed: command })
-    } else if (role === 'follower' && before !== 'follower') {
-      if (before === 'driver') engine.release()
-      if (stored) engine.watchSaved(stored.target)
+    } else if (role === 'follower' && before === 'driver') engine.release()
+    if (disposed || closed || generation !== version) return
+    if (role === 'follower') {
+      const observation = result.sonosObservation ?? null
+      const key = JSON.stringify(observation)
+      if (mirrored !== key) {
+        mirrored = key
+        engine.followSonos(observation)
+      }
+      if (!observation && stored) engine.watchSaved(stored.target)
     }
+    if (!result.sonosManaged) rooms.unavailable()
+    else rooms.apply(result.sonosRooms, hasSonosLease)
     publish()
   }
 
-  /** Works alone when the server cannot be reached, so playback is never held up. */
+  /** Spotify can run locally during a sync outage. Sonos requires a live lease. */
   async function standAlone(claim: boolean, command: boolean) {
+    if (disposed || closed) return
+    stopSonos()
+    rooms.unavailable()
     if (role !== null && !claim) return
     const before = role
     alone = true
@@ -254,28 +383,55 @@ export function createPlaybackSync(options: PlaybackSyncOptions) {
    * `command` says that a command here is waiting for it.
    */
   function exchange(claim = false, command = false): Promise<void> {
-    if (disposed) return Promise.resolve()
+    if (disposed || closed) return Promise.resolve()
     if (busy)
       return busy.then(() =>
-        claim && role !== 'driver' ? exchange(true, command) : undefined,
+        claim && (role !== 'driver' || !hasSonosLease)
+          ? exchange(true, command)
+          : undefined,
       )
+    const version = generation
     const sending = claim ? null : unsaved()
     const sent = sending ? { ...sending, revision } : null
+    const requestedAt = now()
+    const observation = hasSonosLease && !claim ? sonosObservation() : undefined
+    const observationKey = JSON.stringify(observation)
+    // Rebase the playing position on this heartbeat before it crosses clocks.
+    const snapshot = observation?.snapshot
+    const report =
+      observation && snapshot && !snapshot.paused
+        ? {
+            ...observation,
+            snapshot: {
+              ...snapshot,
+              at: requestedAt,
+              positionMs: positionAt(snapshot, requestedAt),
+            },
+          }
+        : observation
     const exchanged = api
       .sync({
         clientId,
         clientName,
         revision,
         claim,
+        sonosManaged: true,
+        sonosObservation: report,
+        ...rooms.input(),
         ...(sending ? { state: sending.state } : {}),
       })
       .then(
-        (result) => apply(result, sent, command),
-        () => standAlone(claim, command),
+        (result) =>
+          version === generation
+            ? apply(result, sent, command, requestedAt, observationKey)
+            : undefined,
+        () => (version === generation ? standAlone(claim, command) : undefined),
       )
       .finally(() => {
-        busy = null
-        plan()
+        if (version === generation) {
+          busy = null
+          plan()
+        }
       })
     busy = exchanged
     return exchanged
@@ -293,23 +449,33 @@ export function createPlaybackSync(options: PlaybackSyncOptions) {
   function plan() {
     if (timer) clearTimeout(timer)
     timer = null
-    if (disposed) return
+    if (disposed || closed) return
     paced = playing()
-    if (!visible() && !(role === 'driver' && paced)) return
+    // A hidden driver observing someone else's room yields to a visible page.
+    const keepHidden =
+      role === 'driver' &&
+      paced &&
+      (!onSonos() || Boolean(engine.saved()?.session))
+    if (!rooms.waiting() && !visible() && !keepHidden) return
     timer = setTimeout(
       () => {
         timer = null
         void exchange()
       },
-      paced ? PLAYING_MS : QUIET_MS,
+      rooms.waiting() ? 1000 : paced ? PLAYING_MS : QUIET_MS,
     )
   }
 
   function saveSoon() {
-    if (saveTimer || role !== 'driver' || disposed) return
+    if (saveTimer || role !== 'driver' || disposed || closed) return
     saveTimer = setTimeout(() => {
       saveTimer = null
-      if (unsaved()) void exchange()
+      if (
+        unsaved() ||
+        (hasSonosLease &&
+          JSON.stringify(sonosObservation()) !== observationSent)
+      )
+        void exchange()
     }, SAVE_DELAY_MS)
   }
 
@@ -327,15 +493,27 @@ export function createPlaybackSync(options: PlaybackSyncOptions) {
    */
   function drive<A extends unknown[]>(command: (...args: A) => void) {
     return (...args: A) => {
-      if (role === 'driver') {
+      if (disposed || closed) return
+      if (role === 'driver' && (!onSonos() || hasSonosLease)) {
         command(...args)
         return
       }
       engine.activate()
       void exchange(true, true).then(() => {
-        if (!disposed) command(...args)
+        if (
+          !disposed &&
+          !closed &&
+          role === 'driver' &&
+          (!onSonos() || hasSonosLease)
+        )
+          command(...args)
       })
     }
+  }
+
+  function onSonos() {
+    const { target } = engine.getState()
+    return target.kind === 'room' || target.kind === 'sonos'
   }
 
   return {
@@ -348,10 +526,12 @@ export function createPlaybackSync(options: PlaybackSyncOptions) {
     },
     /** Joins the session: as its driver when no other page is running it. */
     start() {
+      closed = false
       void exchange(options.resuming === true)
     },
     /** Asks again at once, for example when the page becomes visible. */
     refresh() {
+      closed = false
       void exchange()
     },
     /**
@@ -359,12 +539,20 @@ export function createPlaybackSync(options: PlaybackSyncOptions) {
      * Returns whether this page was running the queue.
      */
     close() {
+      if (closed) return false
+      closed = true
+      generation += 1
+      busy = null
+      stopSonos()
+      rooms.unavailable()
       if (role !== 'driver') return false
       api.release({ clientId, revision, state: engine.saved() })
       return true
     },
     dispose() {
       disposed = true
+      stopSonos()
+      rooms.unavailable()
       if (timer) clearTimeout(timer)
       if (saveTimer) clearTimeout(saveTimer)
       unsubscribe()
@@ -386,24 +574,46 @@ export function createPlaybackSync(options: PlaybackSyncOptions) {
     next: drive(engine.next),
     previous: drive(engine.previous),
     /**
-     * Pause and resume go straight to a device this page can see playing;
-     * starting something needs the queue, so the session is taken over.
+     * Spotify devices can be controlled from a follower. Sonos operations
+     * and starting a queue require the playback driver.
      */
     toggle() {
-      if (role === 'driver' || engine.getState().snapshot) engine.toggle()
+      if (onSonos()) drive(engine.toggle)()
+      else if (role === 'driver' || engine.getState().snapshot) engine.toggle()
       else drive(engine.toggle)()
     },
-    seek: engine.seek,
-    setVolume: engine.setVolume,
+    seek(position: number) {
+      if (onSonos()) drive(engine.seek)(position)
+      else engine.seek(position)
+    },
+    setVolume(volume: number) {
+      if (onSonos()) drive(engine.setVolume)(volume)
+      else engine.setVolume(volume)
+    },
+    loadSonosRooms() {
+      return closed || disposed
+        ? Promise.reject(new Error('Playback is unavailable.'))
+        : rooms.load()
+    },
     refreshDevices: engine.refreshDevices,
     clearFailure: engine.clearFailure,
     async selectDevice(next: SelectableTarget) {
-      if (role !== 'driver') {
+      if (
+        role !== 'driver' ||
+        ((next.kind === 'room' || onSonos()) && !hasSonosLease)
+      ) {
         // Audio is unlocked inside the click, for the device about to play:
         // by the time the session has been taken over, the click is over.
         engine.activate(next)
         await exchange(true, true)
       }
+      if (
+        disposed ||
+        closed ||
+        role !== 'driver' ||
+        ((next.kind === 'room' || onSonos()) && !hasSonosLease)
+      )
+        return
       await engine.selectDevice(next)
     },
   }
