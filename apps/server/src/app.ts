@@ -2,6 +2,7 @@ import { Scalar } from '@scalar/hono-api-reference'
 import { compress } from 'hono/compress'
 import { cors } from 'hono/cors'
 import { secureHeaders } from 'hono/secure-headers'
+import { SONOS_PAGE_HEADER, SONOS_REASON_HEADER } from '@repo/schemas/sonos'
 import { env } from '@/env'
 import { auth } from '@/lib/auth'
 import { ServerError } from '@/lib/error'
@@ -57,7 +58,12 @@ app.use('*', async (c, next) => {
 app.use(
   cors({
     origin: env.TRUSTED_ORIGINS,
-    allowHeaders: ['Content-Type', 'Authorization'],
+    allowHeaders: [
+      'Content-Type',
+      'Authorization',
+      SONOS_PAGE_HEADER,
+      SONOS_REASON_HEADER,
+    ],
     allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
     credentials: true,
     exposeHeaders: ['Content-Type', 'Authorization', 'Retry-After'],

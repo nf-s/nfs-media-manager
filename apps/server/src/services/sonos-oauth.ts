@@ -31,6 +31,10 @@ import {
   type SonosRequest,
   type SonosSpotifyAccount,
 } from '@/lib/sonos-api'
+import {
+  createSonosRequestFetch,
+  logSonosBlocked,
+} from '@/lib/sonos-request-log'
 import { sonosPlugin } from '@/plugins/builtin/sonos'
 import { providerSecret } from '@/schemas/db'
 import {
@@ -145,9 +149,14 @@ async function sonosOperation<T>(
   direct = false,
 ): Promise<T> {
   try {
-    if (direct) return await execute(createDirectProviderRequest(sonosPlugin))
-    const result = await execute(createProviderRequest(sonosPlugin))
-    await recordProviderSuccess('sonos')
+    const dispatchFetch = createSonosRequestFetch(
+      direct ? 'oauth.refresh' : 'oauth.exchange',
+    )
+    const request = direct
+      ? createDirectProviderRequest(sonosPlugin, [], dispatchFetch)
+      : createProviderRequest(sonosPlugin, undefined, { dispatchFetch })
+    const result = await execute(logSonosBlocked(request))
+    if (!direct) await recordProviderSuccess('sonos')
     return result
   } catch (error) {
     if (error instanceof ServerError) throw error

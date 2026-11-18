@@ -1,4 +1,19 @@
 import { z } from 'zod'
+import { SONOS_PAGE_HEADER } from '@repo/schemas/sonos'
+import { playerClientId } from './player-client'
+
+let sonosPage: string | undefined
+
+function sonosPageHeaders(path: string): Record<string, string> {
+  if (
+    !path.startsWith('/api/v1/sonos/') ||
+    typeof document === 'undefined' ||
+    typeof globalThis.crypto?.randomUUID !== 'function'
+  )
+    return {}
+  sonosPage ??= playerClientId()
+  return { [SONOS_PAGE_HEADER]: `${sonosPage}/${document.visibilityState}` }
+}
 
 type ApiRequestInit = RequestInit & {
   errorData?: { status: number; schema: z.ZodType }
@@ -25,6 +40,7 @@ export async function fetchApiData<TSchema extends z.ZodTypeAny>(
     credentials: 'include',
     headers: {
       'Content-Type': 'application/json',
+      ...sonosPageHeaders(path),
       ...(init?.headers ?? {}),
     },
   })

@@ -2,6 +2,7 @@ import { serve } from '@hono/node-server'
 import app from '@/app'
 import { env } from '@/env'
 import { db } from '@/lib/db'
+import { logApiRequest } from '@/lib/request-log'
 import { startJobWorker } from '@/services/job-worker'
 
 function fatal(error: unknown): never {
@@ -35,7 +36,8 @@ async function main(): Promise<void> {
   if (shutdownPromise !== undefined) return
   server = serve(
     {
-      fetch: app.fetch,
+      fetch: (request, bindings) =>
+        logApiRequest(request, () => app.fetch(request, bindings)),
       port: env.PORT,
     },
     () => {

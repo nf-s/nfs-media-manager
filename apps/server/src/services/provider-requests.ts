@@ -143,6 +143,9 @@ interface PendingProviderRetry {
   retryBefore: number
 }
 
+type ProviderFetch = (url: string | URL, init: RequestInit) => Promise<Response>
+const fetchProvider: ProviderFetch = (url, init) => fetch(url, init)
+
 function responseDiagnostics(
   response: Response,
   receivedAt: number,
@@ -764,6 +767,7 @@ export async function protectProviderFromLocalResponse(
 export function createDirectProviderRequest(
   plugin: MediaProviderPlugin,
   answeredStatuses: readonly number[] = [],
+  dispatchFetch: ProviderFetch = fetchProvider,
 ): MediaPluginTestContext['request'] {
   if (plugin.manifest.localWorkerRequired)
     throw new Error('Direct requests are unavailable for local-only providers')
@@ -787,7 +791,7 @@ export function createDirectProviderRequest(
     let answered = false
     try {
       const timeout = AbortSignal.timeout(timeoutMs)
-      response = await fetch(url, {
+      response = await dispatchFetch(url, {
         ...init,
         redirect: 'manual',
         signal: init?.signal
@@ -884,8 +888,10 @@ export function createProviderRequest(
   configuration: {
     timeoutMs?: number
     onRetry?: (retry: ProviderRequestRetry) => Promise<void>
+    dispatchFetch?: ProviderFetch
   } = {},
 ): MediaPluginTestContext['request'] {
+  const dispatchFetch = configuration.dispatchFetch ?? fetchProvider
   const timeoutMs = RequestTimeoutSchema.parse(
     configuration.timeoutMs === undefined
       ? plugin.manifest.rateLimit.requestTimeoutMs
@@ -994,7 +1000,7 @@ export function createProviderRequest(
               dispatchBefore,
               expiresAt: dispatchBefore + timeoutMs,
             })
-          : fetch(url, { ...init, redirect: 'manual', signal })
+          : dispatchFetch(url, { ...init, redirect: 'manual', signal })
       ).then((response) => ({ response, receivedAt: Date.now() }))
       const activeReservation = reservation
       const recordRemoteReceipt = async () => {

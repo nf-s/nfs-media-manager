@@ -15,7 +15,8 @@ import {
 
 export type SonosRequest = MediaPluginTestContext['request']
 
-const CONTROL_API = 'https://api.ws.sonos.com/control/api/v1'
+export const SONOS_CONTROL_API = 'https://api.ws.sonos.com/control/api/v1'
+export const SONOS_TOKEN_API = 'https://api.sonos.com/login/v3/oauth/access'
 
 const TokenSchema = z.object({
   access_token: z.string().min(1),
@@ -151,17 +152,14 @@ export async function sonosToken(
   const credentials = Buffer.from(
     `${client.clientId}:${client.clientSecret}`,
   ).toString('base64')
-  const response = await request(
-    'https://api.sonos.com/login/v3/oauth/access',
-    {
-      method: 'POST',
-      headers: {
-        Authorization: `Basic ${credentials}`,
-        'Content-Type': 'application/x-www-form-urlencoded;charset=utf-8',
-      },
-      body: body.toString(),
+  const response = await request(SONOS_TOKEN_API, {
+    method: 'POST',
+    headers: {
+      Authorization: `Basic ${credentials}`,
+      'Content-Type': 'application/x-www-form-urlencoded;charset=utf-8',
     },
-  )
+    body: body.toString(),
+  })
   let payload: unknown
   try {
     payload = await response.json()
@@ -179,7 +177,7 @@ async function controlJson(
   token: string,
   path: string,
 ): Promise<unknown> {
-  const response = await request(`${CONTROL_API}${path}`, {
+  const response = await request(`${SONOS_CONTROL_API}${path}`, {
     headers: { Authorization: `Bearer ${token}` },
   })
   return response.json()
@@ -469,7 +467,7 @@ async function controlPost(
   body: object,
 ) {
   await request(
-    `${CONTROL_API}/groups/${encodeURIComponent(groupId)}/${endpoint}`,
+    `${SONOS_CONTROL_API}/groups/${encodeURIComponent(groupId)}/${endpoint}`,
     {
       method: 'POST',
       headers: {

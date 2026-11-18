@@ -19,7 +19,11 @@ import {
 } from './spotify-player-api'
 import type { SpotifySdk, SpotifySdkPlayer } from './spotify-sdk'
 import type { SonosControlApi } from './sonos-player-api'
-import type { SonosGroupControl, SonosGroupState } from '@repo/schemas/sonos'
+import type {
+  SonosGroupControl,
+  SonosGroupState,
+  SonosStateReason,
+} from '@repo/schemas/sonos'
 import type { LastfmPlay } from '@repo/schemas/lastfm'
 import {
   PLAYBACK_LEASE_MS,
@@ -1864,6 +1868,7 @@ function fakeSonos(group: SonosGroupControl | null = sonosGroup) {
   const commands: string[] = []
   const failures: Error[] = []
   const reads: string[] = []
+  const readReasons: Array<SonosStateReason | undefined> = []
   const loads: string[] = []
   const loadFailures: Error[] = []
   /** What the group reports; tests change it as the group plays. */
@@ -1880,8 +1885,9 @@ function fakeSonos(group: SonosGroupControl | null = sonosGroup) {
       const failure = failures.shift()
       if (failure) throw failure
     },
-    async state(groupId, volume) {
+    async state(groupId, volume, reason) {
       reads.push(`${groupId}${volume ? ' volume' : ''}`)
+      readReasons.push(reason)
       return volume ? { ...room.state, volume: 0.2 } : room.state
     },
     async load(groupId, input) {
@@ -1892,7 +1898,17 @@ function fakeSonos(group: SonosGroupControl | null = sonosGroup) {
       if (failure) throw failure
     },
   }
-  return { api, lookups, commands, failures, reads, loads, loadFailures, room }
+  return {
+    api,
+    lookups,
+    commands,
+    failures,
+    reads,
+    readReasons,
+    loads,
+    loadFailures,
+    room,
+  }
 }
 
 function roomState(
@@ -2831,11 +2847,59 @@ test('the chosen Sonos room is remembered and shown when the player opens', asyn
   const state = setup.engine.getState()
   assert.equal(state.snapshot?.trackUri, 'spotify:track:elsewhere')
   assert.equal(state.snapshot?.paused, true)
+  assert.deepEqual(sonos.readReasons, ['room-watching'])
   assert.deepEqual(setup.sent('state'), [])
   await setup.engine.selectDevice({ kind: 'local' })
   assert.deepEqual(saved, [null])
   await setup.engine.selectDevice({ kind: 'room', room: kitchen })
   assert.deepEqual(saved, [null, kitchen.id])
+  setup.engine.dispose()
+})
+
+test('a Sonos queue is polled less while paused and stops polling while paused and hidden', async () => {
+  const sonos = fakeSonos()
+  const setup = await sourceOnRoom(sonos)
+  setup.engine.watch()
+  sonos.room.state = roomState(sourceTrack(0).uri, {
+    state: 'paused',
+    positionMs: 2_000,
+    hasNext: true,
+  })
+  await advance(100)
+  assert.equal(setup.engine.getState().snapshot?.paused, true)
+  let reads = sonos.reads.length
+  await advance(30_000)
+  assert.equal(sonos.reads.length - reads, 3)
+  assert.deepEqual(sonos.readReasons.slice(reads), [
+    'room-paused',
+    'room-paused',
+    'room-paused',
+  ])
+
+  setup.page.visible = false
+  reads = sonos.reads.length
+  // A read already scheduled while visible may finish, without scheduling more.
+  await advance(30_000)
+  assert.equal(sonos.reads.length - reads, 1)
+  reads = sonos.reads.length
+  await advance(30_000)
+  assert.equal(sonos.reads.length, reads)
+
+  setup.page.visible = true
+  setup.engine.refresh()
+  await advance(100)
+  assert.equal(sonos.reads.length - reads, 1)
+  setup.engine.dispose()
+})
+
+test('a hidden page keeps polling the Sonos room while it runs a playing queue', async () => {
+  const sonos = fakeSonos()
+  const setup = await sourceOnRoom(sonos)
+  setup.page.visible = false
+  const reads = sonos.reads.length
+  await advance(12_000)
+  assert.equal(sonos.reads.length - reads, 4)
+  assert.equal(sonos.readReasons[reads], 'room-playing')
   setup.engine.dispose()
 })
 
@@ -3760,7 +3824,9 @@ test('a Sonos room that played on with every page closed is rejoined where it is
     positionMs: 50_000,
     hasNext: true,
   })
+  const reads = sonos.reads.length
   const again = await reopen(sessions, sonos)
+  assert.equal(sonos.readReasons[reads], 'room-rejoin')
   let shown = again.sync.getState()
   assert.equal(shown.sharing.role, 'driver')
   assert.deepEqual(shown.target, { kind: 'room', room: kitchen })

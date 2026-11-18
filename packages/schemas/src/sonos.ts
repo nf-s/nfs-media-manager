@@ -3,6 +3,22 @@ import { z } from 'zod'
 /** The Control API's only scope: playback, volume, grouping and favourites. */
 export const SONOS_SCOPE = 'playback-control-all'
 
+/** Browser-generated for one page load. Used only to correlate Sonos diagnostics. */
+export const SONOS_PAGE_HEADER = 'X-Sonos-Page'
+export const SONOS_REASON_HEADER = 'X-Sonos-Reason'
+export const SonosStateReasonSchema = z.enum([
+  'room-playing',
+  'room-paused',
+  'room-watching',
+  'room-rejoin',
+])
+export type SonosStateReason = z.infer<typeof SonosStateReasonSchema>
+export const SonosPageHeaderSchema = z
+  .string()
+  .max(44)
+  .transform((header) => header.split('/'))
+  .pipe(z.tuple([z.uuidv4(), z.enum(['visible', 'hidden'])]))
+
 export const SonosAccountStatusSchema = z.object({
   /** The integration key, secret and redirect URI are saved in Providers. */
   configured: z.boolean(),

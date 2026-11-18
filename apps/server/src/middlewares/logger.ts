@@ -1,13 +1,10 @@
 import { createMiddleware } from 'hono/factory'
+import { routePath } from 'hono/route'
+import { setRequestLogRoute } from '@/lib/request-log'
 
 export function logger() {
   return createMiddleware(async (c, next) => {
-    const startedAt = Date.now()
+    setRequestLogRoute(routePath(c, -1), c.req.raw.headers)
     await next()
-    const durationMs = Date.now() - startedAt
-
-    console.info(
-      `${c.req.method} ${new URL(c.req.url).pathname} ${c.res.status} ${durationMs}ms`,
-    )
   })
 }

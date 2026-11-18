@@ -82,5 +82,15 @@
     { "tag": "v3", "new_sqlite_classes": ["PlaybackSessionStore"] },
   ],
   "triggers": { "crons": ["*/5 * * * *"] },
-  "observability": { "enabled": true, "head_sampling_rate": 0.1 },
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 0.1,
+    "redact_query_string": true,
+    "logs": {
+      "enabled": true,
+      "head_sampling_rate": 1,
+      "persist": true,
+      "invocation_logs": false,
+    },
+  },
 }

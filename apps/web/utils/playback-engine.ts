@@ -996,6 +996,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     active.filling = null
     set({ ...patch, upcoming: upcomingEntries(upcoming) })
     previewSource(active)
+    refreshPausedRoom()
   }
 
   /** Takes a track out of the source for good: it is not drawn or read again. */
@@ -1225,6 +1226,12 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
         fail(error)
       },
     )
+  }
+
+  /** A queue edit should reach a paused room before its next routine read. */
+  function refreshPausedRoom() {
+    if (state.target.kind === 'room' && session && latest?.paused)
+      schedule(FOLLOW_UP_MS)
   }
 
   /**
@@ -1919,9 +1926,15 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     do {
       epoch = sonosEpoch
       roomPolls += 1
+      const reason = !session
+        ? 'room-watching'
+        : roomPlaying()
+          ? 'room-playing'
+          : 'room-paused'
       reported = await sonos.state(
         target.room.id,
         roomPolls % ROOM_VOLUME_EVERY === 1,
+        reason,
       )
       pollErrors = 0
       if (
@@ -2183,8 +2196,14 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     rejoinKept(snapshot)
   }
 
+  function roomPlaying() {
+    return session?.phase === 'starting' || latest?.paused === false
+  }
+
   function shouldPoll() {
     if (state.failure?.status === 'expired') return false
+    if (state.target.kind === 'room')
+      return roomPlaying() && (session !== null || visible())
     if (session) return true
     return latest !== null && !latest.paused && visible()
   }
@@ -2193,9 +2212,13 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
   function pollDelay(): number | null {
     if (shouldPoll())
       return state.target.kind === 'local' ? LOCAL_POLL_MS : REMOTE_POLL_MS
-    const idle = watching && visible() && state.failure?.status !== 'expired'
+    const room = state.target.kind === 'room'
+    const idle =
+      (watching || (room && session !== null)) &&
+      visible() &&
+      state.failure?.status !== 'expired'
     if (!idle) return null
-    return state.target.kind === 'room' ? ROOM_IDLE_POLL_MS : IDLE_POLL_MS
+    return room ? ROOM_IDLE_POLL_MS : IDLE_POLL_MS
   }
 
   async function tick() {
@@ -2784,7 +2807,11 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     let unreadable = false
     try {
       if (target.kind === 'room') {
-        const reported = await options.sonos?.state(target.room.id, true)
+        const reported = await options.sonos?.state(
+          target.room.id,
+          true,
+          'room-rejoin',
+        )
         if (!current()) return
         if (reported?.volume !== undefined) set({ volume: reported.volume })
         const snapshot = reported ? roomSnapshot(reported, now()) : null
@@ -2956,6 +2983,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
         queue: [...state.queue, { key: `queue-${sequence}`, item }],
         announcement: `Added to queue: ${item.title}`,
       })
+      refreshPausedRoom()
     },
     playFromQueue(key: string) {
       const entry = state.queue.find((candidate) => candidate.key === key)
@@ -2973,6 +3001,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
         queue: state.queue.filter((candidate) => candidate !== entry),
         announcement: `Removed from queue: ${entry.item.title}`,
       })
+      refreshPausedRoom()
     },
     moveInQueue(from: number, to: number) {
       const entry = state.queue[from]
@@ -2981,9 +3010,12 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
         queue: moveEntry(state.queue, from, to),
         announcement: `${entry.item.title}: position ${to + 1} of ${state.queue.length}`,
       })
+      refreshPausedRoom()
     },
     clearQueue() {
-      if (state.queue.length) set({ queue: [], announcement: 'Queue cleared' })
+      if (!state.queue.length) return
+      set({ queue: [], announcement: 'Queue cleared' })
+      refreshPausedRoom()
     },
     /**
      * Skips ahead in the source to one of its upcoming tracks. The tracks

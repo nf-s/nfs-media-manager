@@ -17,6 +17,7 @@ import {
 import { env } from '@/env'
 import { authMiddleware } from '@/middlewares/auth'
 import { generateJsonResponse } from '@/lib/response'
+import { logApiRequest, setRequestLogRoute } from '@/lib/request-log'
 import { getScrapePlugin, listLoadedScrapePlugins } from '@/plugins/registry'
 import { consumeCloudJobMessage } from '@/services/cloud-job-queue'
 import { withJobDispatchWakeup } from '@/services/job-dispatch-context'
@@ -211,45 +212,53 @@ app.post(
 const workerBindings = new AsyncLocalStorage<CloudflareBindings>()
 
 export default {
-  async fetch(request, bindings) {
-    try {
-      assertConfiguration()
-      const local = await handleLocalWorkerRequest(request, bindings)
-      if (local) return local
-      return await workerBindings.run(bindings, () =>
-        withWorkersAi(
-          {
-            text: (input, signal) =>
-              bindings.AI.run(AI_TEXT_MODEL, input, { signal }),
-            transcribe: (input, signal) =>
-              bindings.AI.run(AI_TRANSCRIPTION_MODEL, input, { signal }),
-          },
-          () =>
-            withPlaybackSessions(
-              {
-                sync: async (userId, input) =>
-                  PlaybackSyncResultSchema.parse(
-                    await bindings.PLAYBACK_SESSIONS.getByName(userId).sync(
-                      input,
+  fetch(request, bindings) {
+    return logApiRequest(request, async () => {
+      try {
+        assertConfiguration()
+        const local = await handleLocalWorkerRequest(request, bindings)
+        if (local) {
+          setRequestLogRoute(
+            '/api/v1/local-worker/:provider/:action',
+            request.headers,
+          )
+          return local
+        }
+        return await workerBindings.run(bindings, () =>
+          withWorkersAi(
+            {
+              text: (input, signal) =>
+                bindings.AI.run(AI_TEXT_MODEL, input, { signal }),
+              transcribe: (input, signal) =>
+                bindings.AI.run(AI_TRANSCRIPTION_MODEL, input, { signal }),
+            },
+            () =>
+              withPlaybackSessions(
+                {
+                  sync: async (userId, input) =>
+                    PlaybackSyncResultSchema.parse(
+                      await bindings.PLAYBACK_SESSIONS.getByName(userId).sync(
+                        input,
+                      ),
                     ),
-                  ),
-                release: async (userId, input) =>
-                  PlaybackReleaseResultSchema.parse(
-                    await bindings.PLAYBACK_SESSIONS.getByName(userId).release(
-                      input,
+                  release: async (userId, input) =>
+                    PlaybackReleaseResultSchema.parse(
+                      await bindings.PLAYBACK_SESSIONS.getByName(
+                        userId,
+                      ).release(input),
                     ),
-                  ),
-              },
-              () => run(bindings, async () => app.fetch(request)),
-            ),
-        ),
-      )
-    } catch {
-      return Response.json(
-        { message: 'Service unavailable' },
-        { status: 503, headers: { 'Cache-Control': 'private, no-store' } },
-      )
-    }
+                },
+                () => run(bindings, async () => app.fetch(request)),
+              ),
+          ),
+        )
+      } catch {
+        return Response.json(
+          { message: 'Service unavailable' },
+          { status: 503, headers: { 'Cache-Control': 'private, no-store' } },
+        )
+      }
+    })
   },
   async queue(batch, bindings) {
     for (const message of batch.messages) {

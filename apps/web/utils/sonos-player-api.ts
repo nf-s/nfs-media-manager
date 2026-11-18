@@ -1,4 +1,5 @@
 import {
+  SONOS_REASON_HEADER,
   SonosCommandResultSchema,
   SonosCommandSchema,
   SonosContentInputSchema,
@@ -10,6 +11,7 @@ import {
   type SonosContentInput,
   type SonosGroupControl,
   type SonosGroupState,
+  type SonosStateReason,
 } from '@repo/schemas/sonos'
 import { fetchApiData } from './api'
 
@@ -23,7 +25,11 @@ export type SonosControlApi = {
   find(trackUri: string, device: string): Promise<SonosGroupControl | null>
   command(groupId: string, command: SonosCommand): Promise<void>
   /** What the group plays now; the volume is read only when asked for. */
-  state(groupId: string, volume: boolean): Promise<SonosGroupState>
+  state(
+    groupId: string,
+    volume: boolean,
+    reason?: SonosStateReason,
+  ): Promise<SonosGroupState>
   /** Loads Spotify tracks or albums into the group's own queue. */
   load(groupId: string, input: SonosContentInput): Promise<void>
 }
@@ -52,11 +58,12 @@ export function createSonosControlApi(apiBaseUrl: string): SonosControlApi {
         },
       )
     },
-    state(groupId, volume) {
+    state(groupId, volume, reason) {
       return fetchApiData(
         apiBaseUrl,
         `/api/v1/sonos/groups/${encodeURIComponent(groupId)}/state${volume ? '?volume=true' : ''}`,
         SonosGroupStateSchema,
+        { headers: reason ? { [SONOS_REASON_HEADER]: reason } : {} },
       )
     },
     async load(groupId, input) {
