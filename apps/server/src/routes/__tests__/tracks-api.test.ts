@@ -282,6 +282,7 @@ describe('tracks API', () => {
     ).toBe(200)
     expect(mocks.diagnostics).toHaveBeenCalledWith(
       expect.objectContaining({ q: 'fixture', sortBy: 'lastfm' }),
+      'user-1',
     )
   })
 
@@ -327,6 +328,7 @@ describe('tracks API', () => {
     expect((await app.request(`/match-diagnostics?${params}`)).status).toBe(200)
     expect(mocks.diagnostics).toHaveBeenCalledWith(
       expect.objectContaining({ filters, ranges }),
+      'user-1',
     )
   })
 

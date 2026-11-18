@@ -10,6 +10,7 @@ import {
   TrackMergeResultSchema,
   TrackScrobbleMatchInputSchema,
   trackSourceLabels,
+  isImportedSpotifyMatch,
   trackSpotifyMatchLabels,
   type TrackListItem,
 } from '@repo/schemas/tracks'
@@ -50,7 +51,8 @@ export type TrackScrobbleCorrection = {
 
 export function canMergeLastfmTrack(track: TrackListItem) {
   return (
-    track.sources.includes('lastfm') && track.spotifyMatch !== 'spotify-import'
+    track.sources.includes('lastfm') &&
+    !isImportedSpotifyMatch(track.spotifyMatch)
   )
 }
 
@@ -76,12 +78,13 @@ export async function loadTrackMergeCandidates(
             mode: 'any',
           }))
         : [
-            {
-              field: 'spotifyMatch',
-              value: trackSpotifyMatchLabels['spotify-import'],
-              mode: 'required',
-            },
-          ],
+            trackSpotifyMatchLabels['spotify-import'],
+            trackSpotifyMatchLabels['spotify-search'],
+          ].map((value) => ({
+            field: 'spotifyMatch',
+            value,
+            mode: 'any',
+          })),
     ),
   })
   return fetchApiData(apiBaseUrl, `/api/v1/tracks?${params}`, TrackPageSchema, {
@@ -125,7 +128,7 @@ export async function mergeLibraryTrack(
     throw new Error('This track is not a separate Last.fm record.')
   if (!source.sources.includes('lastfm'))
     throw new Error('This track has no Last.fm names to merge.')
-  if (!namesOnly && target.spotifyMatch !== 'spotify-import')
+  if (!namesOnly && !isImportedSpotifyMatch(target.spotifyMatch))
     throw new Error('Choose an imported Spotify track to keep.')
   return fetchApiData(
     apiBaseUrl,
@@ -462,7 +465,7 @@ export function TrackMergePanel({
                             renderRow={(item) =>
                               item.id === track.id ||
                               (!includeLibraryTracks &&
-                                item.spotifyMatch !== 'spotify-import') ? (
+                                !isImportedSpotifyMatch(item.spotifyMatch)) ? (
                                 <tr aria-hidden="true">
                                   <td
                                     colSpan={4}

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { JobSchema } from '@repo/schemas/job'
 import { ARTIST_ENRICHMENT_TASK } from '@repo/schemas/artist-profiles'
+import { SPOTIFY_TRACK_SEARCH_TASK } from '@repo/schemas/spotify-track-search'
 import { SPOTIFY_PODCAST_SYNC_TASK } from '@repo/schemas/subscriptions'
 import { YOUTUBE_SYNC_TASK } from '@repo/schemas/youtube'
 import {
@@ -327,13 +328,7 @@ test('switching between Albums and Tracks keeps the shared import source', () =>
 })
 
 test('unsupported track links return to Tracks without rendering another library', () => {
-  for (const path of [
-    '/tags',
-    '/tags/hidden',
-    '/jobs',
-    '/jobs/metadata',
-    '/providers',
-  ]) {
+  for (const path of ['/tags', '/tags/hidden', '/providers']) {
     assert.equal(libraryViewForPath(path, 'track'), 'track')
     assert.equal(trackScopeRedirect(path, 'track'), '/tracks')
     assert.equal(trackScopeRedirect(path, 'album'), null)
@@ -345,6 +340,8 @@ test('unsupported track links return to Tracks without rendering another library
     )
   for (const path of [
     '/tracks',
+    '/jobs',
+    '/jobs/metadata',
     '/playlists',
     '/imports/lastfm',
     '/imports/spotify-playlists',
@@ -513,7 +510,7 @@ test('job media filtering uses actual items, not provider capability or stale sc
   assert.equal(jobMatchesScope(job(null), 'album'), false)
 })
 
-function taskJob(task: string, mediaType: 'album' | null) {
+function taskJob(task: string, mediaType: 'album' | 'track' | null) {
   return JobSchema.parse({
     ...job(null),
     scope: { mediaType },
@@ -521,6 +518,13 @@ function taskJob(task: string, mediaType: 'album' | null) {
     items: [],
   })
 }
+
+test('Spotify track search jobs belong to Tracks', () => {
+  const search = taskJob(SPOTIFY_TRACK_SEARCH_TASK, 'track')
+  assert.equal(jobMediaScope(search), 'track')
+  assert.equal(jobMatchesScope(search, 'track'), true)
+  assert.equal(jobMatchesScope(search, 'album'), false)
+})
 
 test('subscription syncs belong to Subscriptions, including ones stored as album jobs', () => {
   for (const sync of [
@@ -574,6 +578,6 @@ test('Jobs and Providers are System pages with a library filter', () => {
 test('Metadata selects from the linked library, then the rail, then Albums', () => {
   assert.equal(metadataLibrary('film', 'artist'), 'film')
   assert.equal(metadataLibrary('subscription', 'artist'), 'artist')
-  assert.equal(metadataLibrary(null, 'track'), 'album')
+  assert.equal(metadataLibrary(null, 'track'), 'track')
   assert.equal(metadataLibrary(null), 'album')
 })

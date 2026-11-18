@@ -1,7 +1,12 @@
 import type { Job, JobBatchEntry, JobEntry } from '@repo/schemas/job'
 import type { StatusState } from '@repo/ui/components/ds/status'
-import { formatCount, formatDate, formatTime } from '@repo/ui/lib/format'
-import { jobTaskTitle } from './job-selection'
+import {
+  formatCount,
+  formatDate,
+  formatItemCount,
+  formatTime,
+} from '@repo/ui/lib/format'
+import { isSpotifyTrackSearchJob, jobTaskTitle } from './job-selection'
 import { isBlockingWait, waitingLabel } from './provider-health'
 
 /** A job's name: its task, else the items it targets. */
@@ -19,12 +24,13 @@ export function jobTitle(job: Pick<Job, 'options' | 'items'>) {
 export function jobBatchHref(job: Pick<Job, 'options'>) {
   const batchId = job.options.batchId
   return typeof batchId === 'string'
-    ? `/jobs?batchId=${encodeURIComponent(batchId)}`
+    ? `/jobs?batchId=${encodeURIComponent(batchId)}${isSpotifyTrackSearchJob(job) ? '&mediaType=track' : ''}`
     : null
 }
 
 const batchNouns: Record<string, { one: string; other: string }> = {
   album: { one: 'album', other: 'albums' },
+  track: { one: 'track', other: 'tracks' },
   film: { one: 'film', other: 'films' },
   artist: { one: 'artist', other: 'artists' },
   subscription: { one: 'subscription sync', other: 'subscription syncs' },
@@ -85,12 +91,14 @@ export function batchResult(batch: JobBatchEntry, now: Date = new Date()) {
 
 /** Result cell of a job: the wait, the error or what the provider returned. */
 export function jobResult(
-  job: Pick<Job, 'status' | 'waiting' | 'errorMessage' | 'items'>,
+  job: Pick<Job, 'status' | 'waiting' | 'errorMessage' | 'items' | 'options'>,
   mediaItemId?: string,
   now: Date = new Date(),
 ) {
   if (job.status === 'queued' && job.waiting)
     return waitingLabel(job.waiting, now)
+  const searchResult = spotifyTrackSearchResult(job)
+  if (searchResult) return searchResult
   const item = mediaItemId
     ? job.items.find((candidate) => candidate.mediaItemId === mediaItemId)
     : undefined
@@ -104,6 +112,14 @@ export function jobResult(
   return item && item.status !== job.status
     ? `This item: ${item.status}${message ? ` · ${message}` : ''}`
     : message
+}
+
+export function spotifyTrackSearchResult(job: Pick<Job, 'options' | 'status'>) {
+  if (!isSpotifyTrackSearchJob(job) || job.status !== 'succeeded') return null
+  const count = job.options.resultCount
+  return typeof count === 'number' && Number.isInteger(count) && count >= 0
+    ? formatItemCount(count, { one: 'Spotify match', other: 'Spotify matches' })
+    : 'Search skipped'
 }
 
 /** A past time: the clock time today, the ISO date before that. */

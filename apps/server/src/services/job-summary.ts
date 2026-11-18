@@ -9,6 +9,7 @@ import {
   type JobSummaryAction,
 } from '@repo/schemas/job'
 import type { ProviderWaiting } from '@repo/schemas/provider'
+import { SPOTIFY_TRACK_SEARCH_TASK } from '@repo/schemas/spotify-track-search'
 import {
   jobWaiting,
   loadProviderWaitStates,
@@ -45,6 +46,7 @@ function latestLogMessage(job: Job, levels: Job['logs'][number]['level'][]) {
 
 function credentialAction(job: Job): JobSummaryAction {
   // Account tasks use the signed-in account; item scrapes use stored keys.
+  if (getJobTask(job.options) === SPOTIFY_TRACK_SEARCH_TASK) return 'add-key'
   return hasAccountSignIn(job.provider) && getJobTask(job.options) !== null
     ? 'sign-in'
     : 'add-key'

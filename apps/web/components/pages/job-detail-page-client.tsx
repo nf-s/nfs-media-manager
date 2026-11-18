@@ -7,17 +7,14 @@ import { JobDetail } from '../job-detail'
 import { jobMediaScope } from '@/utils/job-media-scope'
 import { scopedHref } from '@/utils/media-scope'
 import { jobDetailOptions } from '@/utils/job-data'
-import { jobTitle } from '@/utils/job-entries'
+import { jobBatchHref, jobTitle } from '@/utils/job-entries'
 import { useConfig } from '../providers'
 
 export default function JobDetailPageClient({ jobId }: { jobId: string }) {
   const { apiBaseUrl } = useConfig()
   const job = useQuery(jobDetailOptions(apiBaseUrl, jobId))
   const library = job.data ? jobMediaScope(job.data) : null
-  const batchId =
-    typeof job.data?.options.batchId === 'string'
-      ? job.data.options.batchId
-      : null
+  const batchHref = job.data ? jobBatchHref(job.data) : null
   return (
     <div className="ds-page">
       <nav className="ds-crumbs ops-crumbs" aria-label="Breadcrumb">
@@ -25,11 +22,9 @@ export default function JobDetailPageClient({ jobId }: { jobId: string }) {
           Jobs
         </Link>
         <ChevronRight className="ds-i" data-size="sm" aria-hidden="true" />
-        {batchId && (
+        {batchHref && (
           <>
-            <Link href={`/jobs?batchId=${encodeURIComponent(batchId)}`}>
-              Batch
-            </Link>
+            <Link href={batchHref}>Batch</Link>
             <ChevronRight className="ds-i" data-size="sm" aria-hidden="true" />
           </>
         )}

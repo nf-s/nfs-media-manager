@@ -219,7 +219,7 @@ export default function AppNavigation() {
       <div className="shell-nav-row">
         <NavLink
           item={{
-            href: '/jobs',
+            href: view === 'track' ? scopedHref('/jobs', 'track') : '/jobs',
             label: 'Jobs',
             Icon: Activity,
             section: '/jobs',

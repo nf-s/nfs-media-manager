@@ -812,6 +812,7 @@ describe('album selection and safe scheduling', () => {
       { mediaType: 'album', queued: 1, running: 0, failed: 0, imports: 0 },
       { mediaType: 'film', queued: 1, running: 0, failed: 0, imports: 0 },
       { mediaType: 'artist', queued: 0, running: 0, failed: 0, imports: 0 },
+      { mediaType: 'track', queued: 0, running: 0, failed: 0, imports: 0 },
       {
         mediaType: 'subscription',
         queued: 0,

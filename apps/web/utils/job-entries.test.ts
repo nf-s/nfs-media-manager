@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import type { JobBatchEntry } from '@repo/schemas/job'
 import { ProviderOverviewItemSchema } from '@repo/schemas/provider'
+import { SPOTIFY_TRACK_SEARCH_TASK } from '@repo/schemas/spotify-track-search'
 import {
   batchResult,
   batchStatus,
@@ -9,6 +10,7 @@ import {
   formatWhen,
   jobBatchHref,
   jobStatus,
+  spotifyTrackSearchResult,
 } from './job-entries'
 import {
   blockedQueuedJobs,
@@ -151,4 +153,27 @@ test('a job links to its batch only when it has one', () => {
   )
   assert.equal(jobBatchHref({ options: {} }), null)
   assert.equal(jobBatchHref({ options: { batchId: 7 } }), null)
+  assert.equal(
+    jobBatchHref({
+      options: { task: SPOTIFY_TRACK_SEARCH_TASK, batchId: 'batch 1' },
+    }),
+    '/jobs?batchId=batch%201&mediaType=track',
+  )
+})
+
+test('Spotify track search jobs show the saved candidate count', () => {
+  assert.equal(
+    spotifyTrackSearchResult({
+      options: { task: SPOTIFY_TRACK_SEARCH_TASK, resultCount: 2 },
+      status: 'succeeded',
+    }),
+    '2 Spotify matches',
+  )
+  assert.equal(
+    spotifyTrackSearchResult({
+      options: { task: SPOTIFY_TRACK_SEARCH_TASK },
+      status: 'succeeded',
+    }),
+    'Search skipped',
+  )
 })

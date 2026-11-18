@@ -637,6 +637,20 @@ export const scrapeJob = pgTable(
       table.id.desc(),
     ),
     index('scrape_job_batch_idx').on(sql`(${table.options}->>'batchId')`),
+    index('scrape_job_spotify_track_search_idx')
+      .on(
+        sql`(${table.options}->>'trackId')`,
+        table.createdAt.desc(),
+        table.id.desc(),
+      )
+      .where(sql`${table.options}->>'task' = 'spotify-track-search'`),
+    index('scrape_job_spotify_track_search_retained_idx')
+      .on(
+        sql`(coalesce(${table.options}->>'acceptedTrackId', ${table.options}->>'trackId'))`,
+        table.createdAt.desc(),
+        table.id.desc(),
+      )
+      .where(sql`${table.options}->>'task' = 'spotify-track-search'`),
     index('scrape_job_artist_created_idx')
       .on(
         table.provider,

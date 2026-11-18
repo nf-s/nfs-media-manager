@@ -14,12 +14,17 @@ import {
   type ManualMediaAddResult,
   type ManualMediaSearchInput,
 } from '@repo/schemas/manual-add'
+import {
+  SPOTIFY_TRACK_SEARCH_LIMIT,
+  SpotifyTrackSearchCandidateSchema,
+} from '@repo/schemas/spotify-track-search'
 import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
 import { resolveProviderSecrets } from '@/lib/provider-secrets'
 import {
   SpotifyAlbumSchema,
   normalizeSpotifyAlbum,
+  normalizeSpotifyTrackEntry,
   spotifyJson,
 } from '@/lib/spotify-api'
 import { AlbumImportCandidateSchema } from '@/lib/album-import-candidates'
@@ -39,12 +44,17 @@ import {
   recordProviderSuccess,
 } from './provider-requests'
 import { getProviderTransport } from './provider-transport'
+import { getSpotifyAccountStatus, spotifyAccountToken } from './spotify-oauth'
 
 /**
  * A provider and its stored credentials for a request made outside a job.
  * A provider whose local worker is connected may hold its credentials there.
  */
-async function manualProvider(providerId: string, action: string) {
+async function manualProvider(
+  providerId: string,
+  action: string,
+  { requireCredentials = true } = {},
+) {
   const plugin = await getScrapePlugin(providerId)
   if (!plugin)
     throw new ServerError({
@@ -71,6 +81,7 @@ async function manualProvider(providerId: string, action: string) {
       })
     : null
   if (
+    requireCredentials &&
     !worker &&
     plugin.manifest.secrets.some(
       (field) => field.required && !secrets[field.key]?.trim(),
@@ -104,7 +115,18 @@ export async function providerOperation<T>(
   assertActive?: () => Promise<void>,
   action = 'searching or adding items',
 ): Promise<T> {
-  const { plugin, secrets } = await manualProvider(providerId, action)
+  const provider = await manualProvider(providerId, action)
+  return runProviderOperation(provider, execute, assertActive)
+}
+
+async function runProviderOperation<T>(
+  { plugin, secrets }: Awaited<ReturnType<typeof manualProvider>>,
+  execute: (
+    context: MediaPluginTestContext,
+    plugin: MediaProviderPlugin,
+  ) => Promise<T>,
+  assertActive?: () => Promise<void>,
+): Promise<T> {
   try {
     await assertActive?.()
     const result = await execute(
@@ -112,7 +134,7 @@ export async function providerOperation<T>(
       plugin,
     )
     await assertActive?.()
-    await recordProviderSuccess(providerId)
+    await recordProviderSuccess(plugin.manifest.id)
     return result
   } catch (error) {
     await assertActive?.()
@@ -139,6 +161,72 @@ function spotifyMarket(
     })
   }
   return market ? { market } : {}
+}
+
+async function spotifyTrackSearchAccess(userId: string | null) {
+  const provider = await manualProvider('spotify', 'searching tracks', {
+    requireCredentials: false,
+  })
+  const { secrets } = provider
+  const params = spotifyMarket(secrets)
+  if (params.market && secrets.clientId?.trim() && secrets.clientSecret?.trim())
+    return { provider, params, account: null }
+  if (userId && (await getSpotifyAccountStatus(userId)).connected)
+    return { provider, params, account: userId }
+  throw new ServerError({
+    statusCode: 422,
+    message: params.market
+      ? 'Configure Spotify Client ID and Client secret in Providers or connect a Spotify account to search tracks.'
+      : 'Set Spotify Market in Providers or connect a Spotify account before searching tracks.',
+  })
+}
+
+export async function prepareSpotifyCatalogTrackSearch(userId: string | null) {
+  await spotifyTrackSearchAccess(userId)
+}
+
+export async function searchSpotifyTrackCandidates(
+  query: string,
+  userId: string | null,
+  assertActive: () => Promise<void>,
+) {
+  const { provider, params, account } = await spotifyTrackSearchAccess(userId)
+  return runProviderOperation(
+    provider,
+    async ({ secrets, request }) => {
+      const token = account
+        ? await spotifyAccountToken(account, request)
+        : await spotifyClientToken(secrets, request)
+      const { tracks } = z
+        .object({
+          tracks: z.object({
+            items: z.array(z.unknown()).max(SPOTIFY_TRACK_SEARCH_LIMIT),
+            offset: z.literal(0),
+          }),
+        })
+        .parse(
+          await spotifyJson(request, token, 'search', {
+            ...params,
+            q: query,
+            type: 'track',
+            limit: String(SPOTIFY_TRACK_SEARCH_LIMIT),
+          }),
+        )
+      const seen = new Set<string>()
+      return tracks.items.flatMap((item) => {
+        const { track } = normalizeSpotifyTrackEntry({ item })
+        if (!track || seen.has(track.spotifyTrackId)) return []
+        const candidate = SpotifyTrackSearchCandidateSchema.safeParse({
+          ...track,
+          spotifyUrl: `https://open.spotify.com/track/${track.spotifyTrackId}`,
+        })
+        if (!candidate.success) return []
+        seen.add(track.spotifyTrackId)
+        return [candidate.data]
+      })
+    },
+    assertActive,
+  )
 }
 
 function filmCandidate(

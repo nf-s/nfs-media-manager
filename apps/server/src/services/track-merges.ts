@@ -201,6 +201,34 @@ async function trackMatchResult(
   return current ? { targetId } : { targetId, sourceRemoved: true }
 }
 
+/** Move the original names and rebuild their listening totals in the caller's transaction. */
+export async function moveTrackScrobbleNames(
+  tx: Transaction,
+  sourceId: string,
+  targetId: string,
+  removeStandalone: boolean,
+  transferListening = false,
+) {
+  const names = RecordedNamesSchema.parse(
+    (
+      await tx.execute(sql`
+    select username, artist_key, track_key from lastfm_track_source
+    where track_media_item_id = ${sourceId}`)
+    ).rows,
+  )
+  if (transferListening && sourceId !== targetId) {
+    await tx.execute(sql`
+      insert into lastfm_track_link (username, artist_key, track_key, track_media_item_id, strategy)
+      select username, artist_key, track_key, ${targetId}, strategy
+      from lastfm_track_link where track_media_item_id = ${sourceId} on conflict do nothing`)
+    await tx.execute(
+      sql`delete from lastfm_track_link where track_media_item_id = ${sourceId}`,
+    )
+  }
+  if (names.length || transferListening)
+    await assignScrobbleNames(tx, names, sourceId, targetId, removeStandalone)
+}
+
 /** Match one recorded Last.fm artist/title group and leave other memberships in place. */
 export async function matchScrobbleTrack(
   displayedId: string,
@@ -274,6 +302,40 @@ export async function removeScrobbleTrackMatch(
   })
 }
 
+/** Keep release positions and playlist entries when a confirmed recording already exists. */
+export async function transferTrackMemberships(
+  tx: Transaction,
+  sourceId: string,
+  targetId: string,
+  moveAlbumPositions: boolean,
+) {
+  // Shared playlists keep the earliest position and Added date, as imports do.
+  await tx.execute(sql`
+    insert into playlist_item (playlist_id, media_item_id, position, added_at)
+    select playlist_id, ${targetId}, position, added_at
+    from playlist_item where media_item_id = ${sourceId}
+    on conflict (playlist_id, media_item_id) do update
+      set position = least(playlist_item.position, excluded.position),
+        added_at = least(playlist_item.added_at, excluded.added_at)`)
+  if (moveAlbumPositions) {
+    await tx.execute(sql`
+      update track set track_media_item_id = ${targetId}
+      where track_media_item_id = ${sourceId}`)
+    await tx.execute(sql`
+      update library_track target
+      set album_media_item_id = source.album_media_item_id,
+        album_link_strategy = 'album-track-list'
+      from library_track source
+      where target.media_item_id = ${targetId} and source.media_item_id = ${sourceId}
+        and (target.album_media_item_id is null or target.album_media_item_id = source.album_media_item_id) and exists (
+          select 1 from track t where t.track_media_item_id = target.media_item_id
+            and t.album_media_item_id = source.album_media_item_id)`)
+  }
+  await tx.execute(
+    sql`delete from playlist_item where media_item_id = ${sourceId}`,
+  )
+}
+
 /** Keeps an explicitly chosen imported Spotify identity and its recorded evidence. */
 export async function mergeLastfmTrack(
   sourceId: string,
@@ -291,7 +353,7 @@ export async function mergeLastfmTrack(
       (
         await tx.execute(sql`
           select lt.media_item_id as id, lt.spotify_track_id,
-            (mi.source_label is not distinct from 'spotify') as imported_spotify,
+            (coalesce(mi.source_label, '') in ('spotify', 'spotify-search')) as imported_spotify,
             exists (select 1 from lastfm_track_source s
               where s.track_media_item_id = lt.media_item_id) as lastfm_source
           from library_track lt join media_item mi on mi.id = lt.media_item_id
@@ -313,16 +375,8 @@ export async function mergeLastfmTrack(
           : 'Only a Last.fm track without an imported Spotify identity can be merged.',
       })
     if (namesOnly) {
-      const names = RecordedNamesSchema.parse(
-        (
-          await tx.execute(sql`
-            select username, artist_key, track_key
-            from lastfm_track_source where track_media_item_id = ${sourceId}`)
-        ).rows,
-      )
-      await assignScrobbleNames(
+      await moveTrackScrobbleNames(
         tx,
-        names,
         sourceId,
         targetId,
         source.spotify_track_id === null,
@@ -335,14 +389,6 @@ export async function mergeLastfmTrack(
         message: 'Choose a track imported from Spotify.',
       })
 
-    // Shared playlists keep the earliest position and Added date, as imports do.
-    await tx.execute(sql`
-      insert into playlist_item (playlist_id, media_item_id, position, added_at)
-      select playlist_id, ${targetId}, position, added_at
-      from playlist_item where media_item_id = ${sourceId}
-      on conflict (playlist_id, media_item_id) do update
-        set position = least(playlist_item.position, excluded.position),
-          added_at = least(playlist_item.added_at, excluded.added_at)`)
     await tx.execute(sql`
       update lastfm_track_source
       set track_media_item_id = ${targetId}, manually_matched = true
@@ -363,22 +409,11 @@ export async function mergeLastfmTrack(
       where track_media_item_id = ${targetId} and manually_matched
       on conflict (username, artist_key, track_key, track_media_item_id)
         do update set strategy = excluded.strategy`)
-    if (source.spotify_track_id === null) {
-      await tx.execute(sql`
-        update track set track_media_item_id = ${targetId}
-        where track_media_item_id = ${sourceId}`)
-      await tx.execute(sql`
-        update library_track target
-        set album_media_item_id = source.album_media_item_id,
-          album_link_strategy = 'album-track-list'
-        from library_track source
-        where target.media_item_id = ${targetId} and source.media_item_id = ${sourceId}
-          and target.album_media_item_id is null and exists (
-            select 1 from track t where t.track_media_item_id = target.media_item_id
-              and t.album_media_item_id = source.album_media_item_id)`)
-    }
-    await tx.execute(
-      sql`delete from playlist_item where media_item_id = ${sourceId}`,
+    await transferTrackMemberships(
+      tx,
+      sourceId,
+      targetId,
+      source.spotify_track_id === null,
     )
     await removeOrphanTracks(tx, [sourceId])
     await refreshTrackAddedDates(tx)

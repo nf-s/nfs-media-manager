@@ -49,13 +49,14 @@ export type CloudDispatchStatus = z.infer<typeof CloudDispatchStatusSchema>
 
 export const JobScopeSchema = z.object({
   mediaItemIds: z.array(z.string()).default([]),
-  mediaType: z.enum(['album', 'film']).nullable().default(null),
+  mediaType: z.enum(['album', 'film', 'track']).nullable().default(null),
   limit: z.number().int().positive().max(100).default(5),
 })
 
 export const CreateJobSchema = z.object({
   provider: z.string().min(1),
   scope: JobScopeSchema.extend({
+    mediaType: z.enum(['album', 'film']).nullable().default(null),
     mediaItemIds: z
       .array(z.string().min(1))
       .length(1, 'Select exactly one media item per job'),
@@ -102,11 +103,18 @@ function parseFilterValues(value: unknown) {
   }
 }
 
+export const JobLibrarySchema = z.enum([
+  'album',
+  'film',
+  'track',
+  'artist',
+  'subscription',
+])
+
 export const JobListQuerySchema = z.object({
   sortBy: JobSortKeySchema.default('createdAt'),
   direction: z.enum(['asc', 'desc']).default('desc'),
-  /** Artist enrichment and subscription syncs each belong to their own library. */
-  mediaType: z.enum(['album', 'film', 'artist', 'subscription']).optional(),
+  mediaType: JobLibrarySchema.optional(),
   status: JobStatusFilterSchema.optional(),
   statuses: z
     .preprocess(parseFilterValues, z.array(JobStatusFilterSchema).max(7))
@@ -287,7 +295,7 @@ export const JobBatchEntrySchema = z.object({
   /** The only provider in the batch, or null when it has several. */
   provider: z.string().nullable(),
   providers: z.array(z.string()),
-  mediaType: z.enum(['album', 'film', 'artist', 'subscription']).nullable(),
+  mediaType: JobLibrarySchema.nullable(),
   /** Where the batch came from when known, such as a library import. */
   label: z.string().nullable(),
   importId: z.string().nullable(),
@@ -356,7 +364,7 @@ export const JobActivitySchema = z.object({
   libraries: z
     .array(
       z.object({
-        mediaType: z.enum(['album', 'film', 'artist', 'subscription']),
+        mediaType: JobLibrarySchema,
         queued: z.number(),
         running: z.number(),
         failed: z.number(),

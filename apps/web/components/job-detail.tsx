@@ -43,9 +43,15 @@ import { fetchApiData } from '@/utils/api'
 import {
   activeJobProgressLabel,
   isArtistEnrichmentJob,
+  isSpotifyTrackSearchJob,
 } from '@/utils/job-selection'
 import { jobDetailOptions } from '@/utils/job-data'
-import { jobBatchHref, jobStatus, jobTitle } from '@/utils/job-entries'
+import {
+  jobBatchHref,
+  jobStatus,
+  jobTitle,
+  spotifyTrackSearchResult,
+} from '@/utils/job-entries'
 import {
   isBlockingWait,
   providerDisplayName,
@@ -157,6 +163,11 @@ export function JobDetail({
     job.items[0].mediaType
       ? job.items[0]
       : null
+  const recording = job.options.acceptedTrackId ?? job.options.trackId
+  const trackId =
+    isSpotifyTrackSearchJob(job) && typeof recording === 'string'
+      ? recording
+      : null
 
   function actionButton(action: JobSummaryAction, primary: boolean) {
     const variant = primary ? 'primary' : 'default'
@@ -207,6 +218,7 @@ export function JobDetail({
       {provider}
     </Link>,
     progress,
+    spotifyTrackSearchResult(job),
     job.startedAt ? `Started ${formatDateTime(job.startedAt)}` : null,
     job.startedAt
       ? formatElapsed(
@@ -247,6 +259,13 @@ export function JobDetail({
                   id={singleItem.mediaItemId}
                 >
                   Open {singleItem.mediaType}
+                </DetailLink>
+              </Button>
+            )}
+            {trackId && (
+              <Button variant="ghost" size="md" asChild>
+                <DetailLink kind="track" id={trackId} tab="sources">
+                  Open track
                 </DetailLink>
               </Button>
             )}

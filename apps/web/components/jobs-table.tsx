@@ -62,7 +62,7 @@ import {
 } from '@repo/ui/lib/format'
 import { fetchApiData } from '@/utils/api'
 import { useVirtualTable } from '@/hooks/useVirtualTable'
-import { systemLibraryFilter, type WorkspaceScope } from '@/utils/media-scope'
+import { parseLibraryView, type LibraryView } from '@/utils/media-scope'
 import {
   activeJobProgressLabel,
   canCancelJob,
@@ -112,9 +112,10 @@ const headerHeight = 28
 const selectionWidth = 36
 const batchPageSize = 25
 
-const libraryOptions: { value: WorkspaceScope | ''; label: string }[] = [
+const libraryOptions: { value: LibraryView | ''; label: string }[] = [
   { value: '', label: 'All libraries' },
   { value: 'album', label: 'Albums' },
+  { value: 'track', label: 'Tracks' },
   { value: 'film', label: 'Films' },
   { value: 'artist', label: 'Artists' },
   { value: 'subscription', label: 'Subscriptions' },
@@ -192,7 +193,7 @@ export function JobsTable({ provider }: { provider?: string }) {
   const search = useSearchParams()
   const inspector = useDetailInspector()
   const param = (key: string) => search.get(key)
-  const library = provider ? null : systemLibraryFilter(param('mediaType'))
+  const library = provider ? null : parseLibraryView(param('mediaType'))
   const query = param('q')?.slice(0, 200) ?? ''
   const [draft, setDraft] = useState(query)
   useEffect(() => setDraft(query), [query])
@@ -260,9 +261,11 @@ export function JobsTable({ provider }: { provider?: string }) {
       ? item.subscriptions
       : library === 'artist'
         ? supportsArtistEnrichment(item)
-        : library
-          ? item.mediaTypes.some((kind) => kind === library)
-          : item.surface === 'provider',
+        : library === 'track'
+          ? item.id === 'spotify'
+          : library
+            ? item.mediaTypes.some((kind) => kind === library)
+            : item.surface === 'provider',
   )
   const filters = {
     ...(library ? { mediaType: library } : {}),
@@ -879,7 +882,7 @@ export function JobsTable({ provider }: { provider?: string }) {
             disabled={bulkPending}
             onChange={(event) =>
               setParams({
-                mediaType: systemLibraryFilter(event.target.value) ?? '',
+                mediaType: parseLibraryView(event.target.value) ?? '',
                 page: '',
               })
             }

@@ -42,6 +42,13 @@ export function splitScrobbleCredit(artist: string) {
     : undefined
 }
 
+export function parseTrackNumberPrefix(title: string) {
+  const match = /^(\d{1,3})\s+[-–—]\s+(.+)$/.exec(title)
+  return match?.[1] && match[2]
+    ? { position: Number(match[1]), title: match[2] }
+    : undefined
+}
+
 const key = (...values: string[]) => JSON.stringify(values)
 
 function linkedAlbum(name: ScrobbledName) {
@@ -92,12 +99,12 @@ export function createAlbumTrackAliasMatcher<T extends AlbumRecording>(
   return (name: ScrobbledName) => {
     const album = linkedAlbum(name)
     if (!album) return undefined
-    const numbered = /^(\d{1,3})\s+[-–—]\s+(.+)$/.exec(name.track_key)
-    const parts = titleCredit(numbered?.[2] ?? name.track_key)
+    const numbered = parseTrackNumberPrefix(name.track_key)
+    const parts = titleCredit(numbered?.title ?? name.track_key)
     const compound = splitScrobbleCredit(name.artist_key)
     const candidates = slots.get(key(album, parts.title)) ?? []
     const [slot, other] = numbered
-      ? candidates.filter((entry) => entry.position === Number(numbered[1]))
+      ? candidates.filter((entry) => entry.position === numbered.position)
       : candidates
     if (!slot || other) return undefined
     const recording = slot.recording

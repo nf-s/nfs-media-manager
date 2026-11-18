@@ -285,7 +285,12 @@ test('candidate search restricts stored tracks to native Spotify imports before 
       assert.equal(url.searchParams.get('page'), '2')
       assert.equal(url.searchParams.get('size'), '20')
       assert.deepEqual(JSON.parse(url.searchParams.get('filters') ?? '[]'), [
-        { field: 'spotifyMatch', value: 'Spotify import', mode: 'required' },
+        {
+          field: 'spotifyMatch',
+          value: 'Spotify playlist / Liked Songs',
+          mode: 'any',
+        },
+        { field: 'spotifyMatch', value: 'Spotify track search', mode: 'any' },
       ])
       assert.notEqual(init?.method, 'POST')
       return Response.json({
@@ -320,6 +325,7 @@ test('correction candidates include Last.fm-only tracks and every other stored s
       { field: 'source', value: 'Last.fm', mode: 'any' },
       { field: 'source', value: 'Spotify playlists', mode: 'any' },
       { field: 'source', value: 'Liked Songs', mode: 'any' },
+      { field: 'source', value: 'Spotify track search', mode: 'any' },
     ])
     return Response.json({
       statusCode: 200,

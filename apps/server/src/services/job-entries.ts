@@ -1,6 +1,7 @@
 import { and, inArray, sql, type SQL } from 'drizzle-orm'
 import { z } from 'zod'
 import {
+  JobLibrarySchema,
   JobListQuerySchema,
   type JobBatchEntry,
   type JobEntry,
@@ -99,9 +100,7 @@ async function loadBatches(ids: string[], now: number) {
     time === null ? null : new Date(time).toISOString()
   return new Map(
     rows.map((row): [string, JobBatchEntry] => {
-      const mediaType = z
-        .enum(['album', 'film', 'artist', 'subscription'])
-        .safeParse(row.mediaType)
+      const mediaType = JobLibrarySchema.safeParse(row.mediaType)
       const importId = importIds.get(row.batchId) ?? null
       return [
         row.batchId,

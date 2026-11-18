@@ -461,7 +461,7 @@ async function resolvePlaylist(tx: Transaction, target: PlaylistTarget) {
   return id
 }
 
-const trackItemId = (spotifyTrackId: string) =>
+export const spotifyTrackItemId = (spotifyTrackId: string) =>
   createStableId('library-track', `spotify:${spotifyTrackId}`)
 
 const SpotifyTrackCandidateRowsSchema = z.array(
@@ -476,9 +476,12 @@ const SpotifyTrackCandidateRowsSchema = z.array(
 )
 
 /** Exact Spotify IDs win, then a uniquely corroborated album recording can gain an ID. */
-async function resolveSpotifyTrackIds(
+export async function resolveSpotifyTrackIds(
   tx: Transaction,
-  tracks: SpotifyLibraryTrack[],
+  tracks: Pick<
+    SpotifyLibraryTrack,
+    'spotifyTrackId' | 'spotifyAlbumId' | 'title' | 'artists' | 'albumName'
+  >[],
 ) {
   if (!tracks.length) return new Map<string, string>()
   const incoming = tracks.map(
@@ -589,6 +592,48 @@ export async function refreshTrackAddedDates(
       and lt.date_added is distinct from m.added`)
 }
 
+/** Resolve the provider's ordered artist credits against existing library artists. */
+export async function replaceSpotifyTrackCredits(
+  tx: Transaction,
+  batch: { id: string; artists: string[] }[],
+) {
+  const artists = new Map<string, string>()
+  for (const track of batch)
+    for (const name of track.artists)
+      artists.set(createStableId('artist', name.toLowerCase()), name)
+  await tx
+    .insert(artist)
+    .values([...artists].map(([id, name]) => ({ id, name, sortName: name })))
+    .onConflictDoNothing()
+  await tx.delete(mediaCredit).where(
+    and(
+      inArray(
+        mediaCredit.mediaItemId,
+        batch.map((track) => track.id),
+      ),
+      eq(mediaCredit.role, 'artist'),
+    ),
+  )
+  const credits = batch.flatMap((track) =>
+    track.artists.map((name, billingOrder) => ({
+      track_id: track.id,
+      artist_id: createStableId('artist', name.toLowerCase()),
+      artist_name: name,
+      billing_order: billingOrder,
+    })),
+  )
+  // Legacy albums can already credit this artist under another ID.
+  await tx.execute(sql`
+    insert into media_credit (media_item_id, artist_id, role, billing_order)
+    select r.track_id, a.id, 'artist', r.billing_order
+    from jsonb_to_recordset(${JSON.stringify(credits)}::jsonb)
+      as r(track_id text, artist_id text, artist_name text, billing_order int)
+    join lateral (select id from artist where id = r.artist_id or name = r.artist_name
+      order by case when name = r.artist_name then 0 else 1 end limit 1) a on true
+    order by r.track_id, r.billing_order
+    on conflict do nothing`)
+}
+
 async function storeImport(
   target: PlaylistTarget,
   tracks: SpotifyLibraryTrack[],
@@ -605,10 +650,25 @@ async function storeImport(
       recordedAt: new Date().toISOString(),
     }
     const knownIds = await resolveSpotifyTrackIds(tx, tracks)
-    const idForTrack = (id: string) => knownIds.get(id) ?? trackItemId(id)
+    const idForTrack = (id: string) =>
+      knownIds.get(id) ?? spotifyTrackItemId(id)
     for (let start = 0; start < tracks.length; start += WRITE_BATCH) {
       const batch = tracks.slice(start, start + WRITE_BATCH)
-      const ids = batch.map((track) => idForTrack(track.spotifyTrackId))
+      const confirmed = await tx
+        .select({ id: mediaItem.id })
+        .from(libraryTrack)
+        .innerJoin(mediaItem, eq(mediaItem.id, libraryTrack.mediaItemId))
+        .where(
+          and(
+            inArray(
+              libraryTrack.spotifyTrackId,
+              batch.map(({ spotifyTrackId }) => spotifyTrackId),
+            ),
+            sql`${mediaItem.metadata} #>> '{spotifyTrackSearch,spotifyTrackId}' = ${libraryTrack.spotifyTrackId}`,
+          ),
+        )
+      const confirmedIds = new Set(confirmed.map(({ id }) => id))
+      const preserveReviewed = inArray(mediaItem.id, [...confirmedIds])
       const items = batch.map((track): typeof mediaItem.$inferInsert => {
         const id = idForTrack(track.spotifyTrackId)
         return {
@@ -633,18 +693,24 @@ async function storeImport(
         .onConflictDoUpdate({
           target: mediaItem.id,
           set: {
-            title: sql`excluded.title`,
-            artworkUrl: sql`excluded.artwork_url`,
-            sourceLabel: 'spotify',
+            title: sql`case when ${preserveReviewed} then ${mediaItem.title} else excluded.title end`,
+            artworkUrl: sql`case when ${preserveReviewed} then ${mediaItem.artworkUrl} else excluded.artwork_url end`,
+            sourceLabel: sql`case when ${preserveReviewed} then ${mediaItem.sourceLabel} else excluded.source_label end`,
             metadata: sql`coalesce(${mediaItem.metadata}, '{}'::jsonb) || excluded.metadata`,
-            releaseDate: sql`excluded.release_date`,
+            releaseDate: sql`case when ${preserveReviewed} then ${mediaItem.releaseDate} else excluded.release_date end`,
             updatedAt: new Date(),
           },
         })
+      // The playlist records provider evidence and membership for all tracks.
+      // A confirmed ID already has its own library metadata and display credits.
+      const imports = batch.filter(
+        (track) => !confirmedIds.has(idForTrack(track.spotifyTrackId)),
+      )
+      if (!imports.length) continue
       await tx
         .insert(libraryTrack)
         .values(
-          batch.map((track) => ({
+          imports.map((track) => ({
             mediaItemId: idForTrack(track.spotifyTrackId),
             spotifyTrackId: track.spotifyTrackId,
             isrc: track.isrc,
@@ -666,42 +732,13 @@ async function storeImport(
             updatedAt: new Date(),
           },
         })
-      const artists = new Map<string, string>()
-      for (const track of batch)
-        for (const name of track.artists)
-          artists.set(createStableId('artist', name.toLowerCase()), name)
-      await tx
-        .insert(artist)
-        .values(
-          [...artists].map(([id, name]) => ({ id, name, sortName: name })),
-        )
-        .onConflictDoNothing()
-      await tx
-        .delete(mediaCredit)
-        .where(
-          and(
-            inArray(mediaCredit.mediaItemId, ids),
-            eq(mediaCredit.role, 'artist'),
-          ),
-        )
-      const credits = batch.flatMap((track) =>
-        track.artists.map((name, billingOrder) => ({
-          track_id: idForTrack(track.spotifyTrackId),
-          artist_id: createStableId('artist', name.toLowerCase()),
-          artist_name: name,
-          billing_order: billingOrder,
+      await replaceSpotifyTrackCredits(
+        tx,
+        imports.map((track) => ({
+          id: idForTrack(track.spotifyTrackId),
+          artists: track.artists,
         })),
       )
-      // Legacy albums can already credit this artist under another ID.
-      await tx.execute(sql`
-        insert into media_credit (media_item_id, artist_id, role, billing_order)
-        select r.track_id, a.id, 'artist', r.billing_order
-        from jsonb_to_recordset(${JSON.stringify(credits)}::jsonb)
-          as r(track_id text, artist_id text, artist_name text, billing_order int)
-        join lateral (select id from artist where id = r.artist_id or name = r.artist_name
-          order by case when name = r.artist_name then 0 else 1 end limit 1) a on true
-        order by r.track_id, r.billing_order
-        on conflict do nothing`)
     }
     await tx.execute(sql`
       delete from playlist_item pi using library_track lt

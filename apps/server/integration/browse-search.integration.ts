@@ -403,7 +403,7 @@ it('preserves membership, match labels, album precedence and literal text search
   expect(await ids('marker voice')).toEqual(['search-import'])
   expect(await ids('marker 50%_\\verbatim')).toEqual(['search-import'])
   expect(await ids('marker 50%X')).toEqual([])
-  expect(await ids('marker Spotify import')).toEqual(['search-import'])
+  expect(await ids('marker Spotify playlist')).toEqual(['search-import'])
   expect(await ids('marker Album track list')).toEqual(['search-derived'])
   expect(await ids('marker Unmatched')).toEqual(['search-unmatched'])
   expect(await ids('marker Last.fm')).toEqual([

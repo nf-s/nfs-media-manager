@@ -586,6 +586,148 @@ describe('Spotify playlist imports', () => {
     expect(withoutIds?.metadata).toEqual(updated?.metadata)
   })
 
+  it('reuses confirmed Spotify search recordings without replacing their metadata', async () => {
+    const linkedId = spotifyId('confirmedlisted')
+    const detachedId = spotifyId('confirmeddetached')
+    const localAlbumId = spotifyId('confirmedrelease')
+    await addAlbum('confirmed-release', 'Local Release', {
+      spotifyAlbumId: localAlbumId,
+      tracks: ['Local Recording'],
+      trackIds: [linkedId],
+    })
+    const [position] = await databaseClient.select().from(schema.track)
+    if (!position) throw new Error('Expected a local album position')
+    await databaseClient.insert(schema.mediaItem).values({
+      id: 'detached-recording',
+      slug: 'detached-recording',
+      mediaType: 'track',
+      title: 'Detached Recording',
+    })
+    await databaseClient.insert(schema.libraryTrack).values({
+      mediaItemId: 'detached-recording',
+      spotifyTrackId: detachedId,
+    })
+    const localArtwork = 'https://example.com/local-artwork.jpg'
+    const candidateMetadata = (spotifyTrackId: string) => ({
+      title: 'Reviewed Spotify recording',
+      artists: ['Reviewed Artist'],
+      spotifyTrackId,
+    })
+    for (const { id, spotifyTrackId, spotifyAlbumId } of [
+      {
+        id: position.trackMediaItemId,
+        spotifyTrackId: linkedId,
+        spotifyAlbumId: localAlbumId,
+      },
+      {
+        id: 'detached-recording',
+        spotifyTrackId: detachedId,
+        spotifyAlbumId: null,
+      },
+    ]) {
+      await databaseClient
+        .update(schema.mediaItem)
+        .set({
+          artworkUrl: localArtwork,
+          releaseDate: new Date('2021-03-04T00:00:00Z'),
+          sourceLabel: 'spotify-search',
+          metadata: {
+            spotifyTrackSearch: candidateMetadata(spotifyTrackId),
+            localNote: 'Keep this',
+          },
+        })
+        .where(eq(schema.mediaItem.id, id))
+      await databaseClient
+        .update(schema.libraryTrack)
+        .set({
+          albumName: 'Recorded release name',
+          spotifyAlbumId,
+          durationSec: 190,
+          isrc: 'AA-BB1-21-00002',
+        })
+        .where(eq(schema.libraryTrack.mediaItemId, id))
+    }
+    const artistCredits = [
+      { id: spotifyId('providerartist'), name: 'Provider Artist' },
+    ]
+    const incomingTracks = [linkedId, detachedId].map((id) => ({
+      added_at: '2024-06-01T10:00:00Z',
+      item: {
+        type: 'track',
+        id,
+        name: 'Playlist recording',
+        duration_ms: 201000,
+        artists: artistCredits,
+        album: {
+          id: spotifyId('providerrelease'),
+          name: 'Playlist release',
+          images: [{ url: 'https://i.scdn.co/image/playlist-artwork' }],
+          release_date: '2022-05-01',
+        },
+        external_ids: { isrc: 'AA-BB1-22-00003' },
+      },
+    }))
+    entries[OWNED] = incomingTracks
+    liked = incomingTracks
+    await importAll({
+      playlists: [chosen(OWNED, 'Morning')],
+      likedSongs: false,
+    })
+    await importAll({ playlists: [], likedSongs: true })
+
+    const linked = await getTrackDetail(position.trackMediaItemId)
+    expect(linked).toMatchObject({
+      title: 'Local Recording',
+      artists: ['The Examples'],
+      artworkUrl: localArtwork,
+      releaseDate: '2021-03-04T00:00:00.000Z',
+      durationSec: 190,
+      albumName: 'Recorded release name',
+      album: { id: 'confirmed-release', title: 'Local Release' },
+      albumLinkStrategy: 'album-track-list',
+      spotifyTrackId: linkedId,
+      spotifyMatch: 'spotify-search',
+      isrc: 'AA-BB1-21-00002',
+      playlists: [{ name: 'Liked Songs' }, { name: 'Morning' }],
+      sources: expect.arrayContaining([
+        'album',
+        'spotify',
+        'spotify-liked',
+        'spotify-search',
+      ]),
+    })
+    expect(
+      await titles({ filters: required('Morning', 'Liked Songs') }),
+    ).toEqual(['Detached Recording', 'Local Recording'])
+    const [stored] = await databaseClient
+      .select()
+      .from(schema.mediaItem)
+      .where(eq(schema.mediaItem.id, position.trackMediaItemId))
+    expect(stored?.metadata).toMatchObject({
+      localNote: 'Keep this',
+      spotifyTrackSearch: candidateMetadata(linkedId),
+      spotifyArtistCredits: artistCredits,
+      spotifyArtistCreditsSource: {
+        source: 'spotify-liked',
+        jobId: expect.any(String),
+      },
+    })
+
+    expect(await removeImportedPlaylist(await playlistId('Morning'))).toEqual({
+      removedTracks: 0,
+    })
+    expect(
+      await removeImportedPlaylist(await playlistId('Liked Songs')),
+    ).toEqual({ removedTracks: 0 })
+    expect(await getTrackDetail('detached-recording')).toMatchObject({
+      sources: ['spotify-search'],
+      spotifyTrackId: detachedId,
+      spotifyMatch: 'spotify-search',
+      playlists: [],
+    })
+    expect(await databaseClient.select().from(schema.track)).toEqual([position])
+  })
+
   it('bounds playlist pages and applies directory filters and sorts before paging', async () => {
     await databaseClient.insert(schema.playlist).values(
       Array.from(

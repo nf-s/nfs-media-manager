@@ -198,7 +198,7 @@ test('tracks with a Spotify match keep album metadata, playback and every source
   assert.match(render(matched, '', 'sources'), /unique artist and title match/)
 })
 
-test('album-derived Spotify IDs explain the exact fallback without claiming verification', () => {
+test('album-derived Spotify IDs identify the stored track list that supplied them', () => {
   const html = render(
     TrackDetailSchema.parse({
       ...scrobbled,
@@ -210,8 +210,7 @@ test('album-derived Spotify IDs explain the exact fallback without claiming veri
     '',
     'sources',
   )
-  assert.match(html, /exactly one track with the same title/)
-  assert.match(html, /has not been checked against Spotify/)
+  assert.match(html, /stored track list supplied the Spotify track ID/)
   assert.doesNotMatch(html, /Spotify ID came from a playlist/)
 })
 

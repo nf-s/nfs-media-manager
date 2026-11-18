@@ -1,4 +1,4 @@
-import { and, eq, inArray, sql } from 'drizzle-orm'
+import { and, eq, inArray, sql, type SQL } from 'drizzle-orm'
 import type { PluginNormalizedResult } from '@repo/media-plugin-sdk'
 import { z } from 'zod'
 import type { db } from '@/lib/db'
@@ -180,7 +180,7 @@ export async function replaceAlbumTracks(
     .where(eq(album.mediaItemId, albumId))
 }
 
-function spotifyAlbumReleaseIds(albumId?: string) {
+export function spotifyAlbumReleaseIds(albumId?: string) {
   const albumScope =
     albumId === undefined ? sql`` : sql`and release.media_item_id = ${albumId}`
   return sql`
@@ -192,6 +192,22 @@ function spotifyAlbumReleaseIds(albumId?: string) {
     union
     select release.media_item_id, (regexp_match(release.spotify_url, '/album/([A-Za-z0-9]{22})([/?#]|$)'))[1]
     from album release where release.spotify_url is not null ${albumScope}`
+}
+
+/** Data owned by the recording that cannot be moved with its release and listening memberships. */
+export function independentTrackData(id: SQL) {
+  return sql`exists (
+              select 1 from media_credit where media_item_id = ${id} and role <> 'artist'
+              union all select 1 from media_item_tag where media_item_id = ${id}
+              union all select 1 from tag_occurrence where media_item_id = ${id}
+              union all select 1 from external_link where media_item_id = ${id}
+              union all select 1 from provider_reference where media_item_id = ${id}
+              union all select 1 from provider_snapshot where media_item_id = ${id}
+              union all select 1 from provider_current_state where media_item_id = ${id}
+              union all select 1 from scrape_job_item where media_item_id = ${id}
+              union all select 1 from media_override where media_item_id = ${id}
+              union all select 1 from provider_reference_override where media_item_id = ${id}
+            )`
 }
 
 /** Repairs split album positions when one imported track matches the exact release. */
@@ -218,7 +234,7 @@ export async function reconcileSpotifyAlbumRecordings(
           join media_item imported on imported.id = target.media_item_id
           join track t on t.album_media_item_id = r.album_id
             and lower(regexp_replace(trim(t.title), '[[:space:]]+', ' ', 'g'))
-              = lower(regexp_replace(trim(imported.title), '[[:space:]]+', ' ', 'g'))
+              = lower(regexp_replace(trim(coalesce(imported.metadata#>>'{spotifyTrackSearch,title}', imported.title)), '[[:space:]]+', ' ', 'g'))
           join library_track source on source.media_item_id = t.track_media_item_id
           join media_item legacy on legacy.id = source.media_item_id
           -- A generated album recording has no independent media metadata.
@@ -231,7 +247,7 @@ export async function reconcileSpotifyAlbumRecordings(
             and source.spotify_track_id is null and source.isrc is null and source.spotify_url is null
             and source.spotify_album_id is null and source.album_name is null
             and (source.duration_sec is null or source.duration_sec = target.duration_sec)
-            and imported.source_label = 'spotify' and target.spotify_track_id is not null
+            and imported.source_label in ('spotify', 'spotify-search') and target.spotify_track_id is not null
             and imported.metadata->>'legacyHidden' is distinct from 'true'
             and release.metadata->>'legacyHidden' is distinct from 'true'
             and (target.album_media_item_id is null or target.album_media_item_id = r.album_id)
@@ -254,18 +270,7 @@ export async function reconcileSpotifyAlbumRecordings(
               = array(select c.artist_id from media_credit c
                 where c.media_item_id = target.media_item_id and c.role = 'artist'
                 order by c.billing_order, c.artist_id)
-            and not exists (
-              select 1 from media_credit where media_item_id = legacy.id and role <> 'artist'
-              union all select 1 from media_item_tag where media_item_id = legacy.id
-              union all select 1 from tag_occurrence where media_item_id = legacy.id
-              union all select 1 from external_link where media_item_id = legacy.id
-              union all select 1 from provider_reference where media_item_id = legacy.id
-              union all select 1 from provider_snapshot where media_item_id = legacy.id
-              union all select 1 from provider_current_state where media_item_id = legacy.id
-              union all select 1 from scrape_job_item where media_item_id = legacy.id
-              union all select 1 from media_override where media_item_id = legacy.id
-              union all select 1 from provider_reference_override where media_item_id = legacy.id
-            )
+            and not ${independentTrackData(sql`legacy.id`)}
         )
         select source_id, target_id, album_id, spotify_id from candidates
         where source_matches = 1 and target_matches = 1`)
@@ -336,7 +341,7 @@ async function mergeSpotifyAlbumRecordings(
   await refreshTrackListeningTotals(database, targetIds)
 }
 
-/** Deletes recordings that have no album, playlist or Last.fm membership. */
+/** A recording explicitly kept from catalog search survives removal of its final membership. */
 export async function removeOrphanTracks(
   database: Transaction,
   ids?: string[],
@@ -350,6 +355,7 @@ export async function removeOrphanTracks(
     : sql``
   const removed = await database.execute(sql`
     delete from media_item mi where mi.media_type = 'track' ${candidates}
+      and not coalesce(mi.metadata ? 'spotifyTrackSearch', false)
       and not exists (select 1 from track t where t.track_media_item_id = mi.id)
       and not exists (select 1 from playlist_item pi where pi.media_item_id = mi.id)
       and not exists (select 1 from lastfm_track_source s where s.track_media_item_id = mi.id)`)

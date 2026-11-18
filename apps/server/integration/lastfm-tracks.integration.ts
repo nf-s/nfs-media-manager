@@ -47,6 +47,8 @@ vi.mock('@/plugins/registry', () => ({
 import { refreshTrackLinks } from '@/services/track-links'
 import { replaceAlbumTracks } from '@/services/album-library-tracks'
 import { reconcileLastfmAlbumTrackAliases } from '@/services/lastfm-library-tracks'
+import { acceptSpotifyTrackSearch } from '@/services/spotify-track-search-acceptance'
+import { SPOTIFY_TRACK_SEARCH_TASK } from '@repo/schemas/spotify-track-search'
 import { mergeLastfmTrack } from '@/services/track-merges'
 import {
   listTrackMatchDiagnostics,
@@ -215,6 +217,62 @@ async function album(
 }
 
 let created = false
+async function savedSpotifyCandidate(
+  trackId: string,
+  title: string,
+  recording: string,
+  release = 'catalog-release',
+) {
+  const userId = 'catalog-fixture-owner'
+  await databaseClient
+    .insert(schema.user)
+    .values({ id: userId, name: 'Test Owner', email: 'catalog@example.test' })
+    .onConflictDoNothing()
+  const jobId = randomUUID()
+  const spotifyTrackId = spotifyId(recording)
+  await databaseClient.insert(schema.scrapeJob).values({
+    id: jobId,
+    provider: 'spotify',
+    status: 'succeeded',
+    requestedByUserId: userId,
+    scope: { mediaType: 'track', mediaItemIds: [trackId] },
+    options: {
+      task: SPOTIFY_TRACK_SEARCH_TASK,
+      trackId,
+      query: title,
+      resultCount: 1,
+    },
+  })
+  await databaseClient.insert(schema.scrapeJobLog).values({
+    id: randomUUID(),
+    jobId,
+    level: 'info',
+    message: 'Stored catalog fixture',
+    metadata: {
+      diagnostics: [
+        {
+          kind: SPOTIFY_TRACK_SEARCH_TASK,
+          query: title,
+          candidates: [
+            {
+              title,
+              spotifyTrackId,
+              artists: [ARTIST],
+              spotifyAlbumId: spotifyId(release),
+              albumName: 'Catalog Release',
+              spotifyUrl: `https://open.spotify.com/track/${spotifyTrackId}`,
+              isrc: null,
+              durationSec: 186,
+              artworkUrl: null,
+            },
+          ],
+        },
+      ],
+    },
+  })
+  return { trackId, jobId, userId, spotifyTrackId }
+}
+
 beforeAll(async () => {
   vi.stubGlobal('fetch', request)
   await admin.connect()
@@ -241,6 +299,233 @@ afterAll(async () => {
 })
 
 describe('Last.fm tracks library', () => {
+  it('keeps an albumless scrobble as a playable catalog recording, then reuses it on a later release', async () => {
+    await scrobble('02 - Test Recording')
+    await scrobble('02 - Test Recording', { at: LAST_LISTEN })
+    await refreshTrackLinks(LISTENER)
+    const [source] = await allTracks()
+    if (!source) throw new Error('Missing scrobble fixture')
+    const selection = await listTrackMatchDiagnostics(
+      {
+        page: 1,
+        size: 1,
+        view: 'spotify-search-metadata',
+        playability: 'unavailable',
+        sortBy: 'listeningScrobbles',
+        direction: 'desc',
+        listeningSort: { kind: 'dates', from: '2024-01-01' },
+        listening: {
+          match: 'all',
+          rules: [{ period: { kind: 'all' }, min: 2 }],
+        },
+      },
+      'catalog-fixture-owner',
+    )
+    expect(selection).toMatchObject({
+      totalCount: 1,
+      items: [{ id: source.id, track: { listeningScrobbles: 1 } }],
+    })
+    const choice = await savedSpotifyCandidate(
+      source.id,
+      'Test Recording',
+      'catalog-recording',
+    )
+    await expect(
+      acceptSpotifyTrackSearch({
+        ...choice,
+        spotifyTrackId: spotifyId('not-in-results'),
+      }),
+    ).rejects.toMatchObject({ response: { statusCode: 404 } })
+    const result = await acceptSpotifyTrackSearch(choice)
+    expect(result.targetId).not.toBe(source.id)
+    expect(await acceptSpotifyTrackSearch(choice)).toEqual(result)
+    await refreshTrackLinks(LISTENER)
+    const kept = await getTrackDetail(result.targetId)
+    expect(kept).toMatchObject({
+      title: 'Test Recording',
+      spotifyMatch: 'spotify-search',
+      sources: ['lastfm', 'spotify-search'],
+      scrobbles: 2,
+      lastfmSources: [
+        expect.objectContaining({
+          trackName: '02 - Test Recording',
+          manuallyMatched: true,
+        }),
+      ],
+    })
+    expect(await getTrackDetail(source.id)).toBeNull()
+    const diagnostics = await listTrackMatchDiagnostics({
+      page: 1,
+      size: 10,
+      sortBy: 'name',
+      direction: 'asc',
+    })
+    expect(diagnostics.items[0]?.matches).toContainEqual(
+      expect.objectContaining({
+        provider: 'spotify',
+        name: 'Test Recording',
+        creator: ARTIST,
+        identifier: choice.spotifyTrackId,
+      }),
+    )
+    await album('catalog-release', 'Catalog Release', [
+      { title: 'Intro' },
+      { title: 'Test Recording', spotifyId: choice.spotifyTrackId },
+    ])
+    await refreshTrackLinks(LISTENER)
+    expect(await getTrackDetail(result.targetId)).toMatchObject({
+      album: { id: 'catalog-release' },
+      scrobbles: 2,
+      spotifyMatch: 'spotify-search',
+    })
+    expect(
+      (
+        await databaseClient
+          .select()
+          .from(schema.track)
+          .where(eq(schema.track.trackMediaItemId, result.targetId))
+      ).map((row) => row.position),
+    ).toEqual([2])
+    expect(request).not.toHaveBeenCalled()
+  })
+
+  it('links a reviewed stray name to an existing Spotify album track and keeps playlist and release order', async () => {
+    const id = spotifyId('known-recording')
+    await album('catalog-release', 'Catalog Release', [
+      { title: 'Intro' },
+      { title: 'Test Recording', spotifyId: id },
+    ])
+    const [known] = (await allTracks()).filter(
+      (item) => item.spotifyTrackId === id,
+    )
+    if (!known) throw new Error('Expected playable album track')
+    await playlist('fixture-playlist', [known.id])
+    await scrobble('Unrelated imported name')
+    await refreshTrackLinks(LISTENER)
+    const [stray] = (await allTracks()).filter(
+      (item) => item.title === 'Unrelated imported name',
+    )
+    if (!stray) throw new Error('Expected a separate Last.fm track')
+    const choice = await savedSpotifyCandidate(
+      stray.id,
+      'Test Recording',
+      'known-recording',
+    )
+    expect(await acceptSpotifyTrackSearch(choice)).toEqual({
+      targetId: known.id,
+    })
+    await refreshTrackLinks(LISTENER)
+    expect(await getTrackDetail(known.id)).toMatchObject({
+      spotifyMatch: 'album-track-list',
+      scrobbles: 1,
+      sources: expect.arrayContaining([
+        'lastfm',
+        'album',
+        'spotify',
+        'spotify-search',
+      ]),
+    })
+    expect(
+      await databaseClient.select().from(schema.playlistItem),
+    ).toMatchObject([{ mediaItemId: known.id, position: 0 }])
+    expect(
+      await databaseClient
+        .select()
+        .from(schema.track)
+        .where(eq(schema.track.trackMediaItemId, known.id)),
+    ).toMatchObject([{ position: 2 }])
+  })
+
+  it('reuses an ID-less album position and preserves listening links from other scrobbled names', async () => {
+    await album('catalog-release', 'Catalog Release', [
+      { title: 'Intro' },
+      { title: 'Test Recording' },
+    ])
+    await scrobble('Different source name')
+    await refreshTrackLinks(LISTENER)
+    const tracks = await allTracks()
+    const source = tracks.find((item) => item.title === 'Different source name')
+    const stored = tracks.find((item) => item.title === 'Test Recording')
+    if (!source || !stored)
+      throw new Error('Expected a separate source and album position')
+    await scrobble('Listening attribution', { at: LAST_LISTEN })
+    await databaseClient.insert(schema.lastfmTrackLink).values({
+      username: LISTENER,
+      artistKey: albumNameKey(ARTIST),
+      trackKey: albumNameKey('Listening attribution'),
+      trackMediaItemId: source.id,
+      strategy: 'normalized',
+    })
+    const choice = await savedSpotifyCandidate(
+      source.id,
+      'Test Recording',
+      'catalog-recording',
+    )
+    expect(await acceptSpotifyTrackSearch(choice)).toEqual({
+      targetId: stored.id,
+    })
+    expect(await getTrackDetail(stored.id)).toMatchObject({
+      scrobbles: 2,
+      albumLinkStrategy: 'album-track-list',
+      spotifyMatch: 'spotify-search',
+    })
+    expect(
+      await databaseClient
+        .select()
+        .from(schema.lastfmTrackLink)
+        .where(eq(schema.lastfmTrackLink.trackMediaItemId, stored.id)),
+    ).toHaveLength(2)
+  })
+
+  it('keeps a release position and separate annotations intact when the catalog choice would discard them', async () => {
+    await album('original-release', 'Original Release', [
+      { title: 'Test Recording' },
+    ])
+    const [original] = await allTracks()
+    if (!original) throw new Error('Expected an album track')
+    const choice = await savedSpotifyCandidate(
+      original.id,
+      'Test Recording',
+      'different-recording',
+      'different-release',
+    )
+    await expect(acceptSpotifyTrackSearch(choice)).rejects.toMatchObject({
+      response: { statusCode: 409 },
+    })
+    expect(await getTrackDetail(original.id)).toMatchObject({
+      album: { id: 'original-release' },
+      spotifyMatch: 'unmatched',
+    })
+    await scrobble('Annotated name')
+    await refreshTrackLinks(LISTENER)
+    const [stray] = (await allTracks()).filter(
+      (item) => item.title === 'Annotated name',
+    )
+    if (!stray) throw new Error('Expected a separate name')
+    await databaseClient
+      .update(schema.mediaItem)
+      .set({ summary: 'Retain this annotation' })
+      .where(eq(schema.mediaItem.id, stray.id))
+    const annotated = await savedSpotifyCandidate(
+      stray.id,
+      'Test Recording',
+      'catalog-recording',
+    )
+    await expect(acceptSpotifyTrackSearch(annotated)).rejects.toMatchObject({
+      response: { statusCode: 409 },
+    })
+    expect(await getTrackDetail(stray.id)).toMatchObject({
+      spotifyMatch: 'unmatched',
+      scrobbles: 1,
+    })
+    expect(
+      await databaseClient
+        .select()
+        .from(schema.mediaItem)
+        .where(eq(schema.mediaItem.id, stray.id)),
+    ).toMatchObject([{ summary: 'Retain this annotation' }])
+  })
+
   it('filters and counts track matches across Browse fields, provider evidence and retained Last.fm rows', async () => {
     await spotifyTrack('imported-recording', 'Shared Song', {
       album: 'Playlist Edition',
@@ -1750,7 +2035,17 @@ describe('Last.fm tracks library', () => {
     ).toEqual([
       ['Album track list', 4],
       ['Unmatched', 4],
-      ['Spotify import', 1],
+      ['Spotify playlist / Liked Songs', 1],
+    ])
+    const legacy = await listTracks(
+      query({
+        filters: [
+          { field: 'spotifyMatch', value: 'Spotify import', mode: 'required' },
+        ],
+      }),
+    )
+    expect(legacy.items.map((item) => item.spotifyMatch)).toEqual([
+      'spotify-import',
     ])
   })
 

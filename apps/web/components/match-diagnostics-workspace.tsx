@@ -12,7 +12,11 @@ import type {
   MatchDiagnosticsPage,
   MatchDiagnosticsRow,
 } from '@repo/schemas/match-diagnostics'
-import { getTrackBrowseValues, TrackDetailSchema } from '@repo/schemas/tracks'
+import {
+  getTrackBrowseValues,
+  isImportedSpotifyMatch,
+  TrackDetailSchema,
+} from '@repo/schemas/tracks'
 import { Notice } from '@repo/ui/components/ds/feedback'
 import { EmptyValue } from '@repo/ui/components/ds/pill'
 import { PageHead } from '@repo/ui/components/ds/toolbar'
@@ -369,7 +373,7 @@ function MatchTrackMerge({
     source.isError ||
     target.isError ||
     (!correction && source.data && !canMergeLastfmTrack(source.data)) ||
-    (target.data && target.data.spotifyMatch !== 'spotify-import')
+    (target.data && !isImportedSpotifyMatch(target.data.spotifyMatch))
   if (
     unavailable ||
     source.isFetching ||

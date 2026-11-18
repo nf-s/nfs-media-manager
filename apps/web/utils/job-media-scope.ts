@@ -1,9 +1,9 @@
 import type { Job } from '@repo/schemas/job'
 import { isArtistEnrichmentJob, isSubscriptionSyncJob } from './job-selection'
-import type { MediaScope, WorkspaceScope } from './media-scope'
+import type { LibraryView, MediaScope } from './media-scope'
 
 /** Task identity preserves the library of artist and subscription jobs with legacy album scopes. */
-export function jobMediaScope(job: Job): WorkspaceScope | null {
+export function jobMediaScope(job: Job): LibraryView | null {
   if (isSubscriptionSyncJob(job)) return 'subscription'
   if (isArtistEnrichmentJob(job)) return 'artist'
   return (
@@ -11,7 +11,7 @@ export function jobMediaScope(job: Job): WorkspaceScope | null {
   )
 }
 
-export function jobMatchesScope(job: Job, scope: WorkspaceScope) {
+export function jobMatchesScope(job: Job, scope: LibraryView) {
   if (isSubscriptionSyncJob(job)) return scope === 'subscription'
   if (isArtistEnrichmentJob(job)) return scope === 'artist'
   if (scope === 'subscription' || scope === 'artist') return false
@@ -22,15 +22,20 @@ export function jobMatchesScope(job: Job, scope: WorkspaceScope) {
 }
 
 /**
- * The library Metadata selects from: Albums, Films or Artists. A link's
+ * The library Metadata selects from: Albums, Films, Artists or Tracks. A link's
  * `mediaType` wins, then the library open in the rail, then Albums.
  */
 export function metadataLibrary(
   value: string | null,
   fallback: string | null = null,
-): MediaScope | 'artist' {
+): MediaScope | 'artist' | 'track' {
   for (const candidate of [value, fallback])
-    if (candidate === 'album' || candidate === 'film' || candidate === 'artist')
+    if (
+      candidate === 'album' ||
+      candidate === 'film' ||
+      candidate === 'artist' ||
+      candidate === 'track'
+    )
       return candidate
   return 'album'
 }

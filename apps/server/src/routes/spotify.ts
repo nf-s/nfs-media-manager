@@ -12,6 +12,13 @@ import {
 import { AlbumImportPreviewSchema } from '@repo/schemas/album-imports'
 import { EnrichmentResultSchema } from '@repo/schemas/job'
 import {
+  SpotifyTrackSearchInputSchema,
+  SpotifyTrackSearchParamsSchema,
+  SpotifyTrackSearchSchema,
+  SpotifyTrackSearchStatusInputSchema,
+  SpotifyTrackSearchStatusSchema,
+} from '@repo/schemas/spotify-track-search'
+import {
   SpotifyPlaylistImportInputSchema,
   SpotifyPlaylistImportsSchema,
   SpotifyPlaylistListSchema,
@@ -50,6 +57,12 @@ import {
   getSpotifyPlaylists,
   queueSpotifyPlaylistListing,
 } from '@/services/spotify-playlist-listing'
+import {
+  getSpotifyTrackSearch,
+  listSpotifyTrackSearchStatuses,
+  queueSpotifyTrackSearches,
+} from '@/services/spotify-track-search'
+import spotifyTrackSearchAcceptanceRoute from './spotify-track-search-acceptance'
 
 const browserSession = authMiddleware({ sessionOnly: true })
 
@@ -424,6 +437,115 @@ app.openapi(
       200,
     ),
 )
+
+app.openapi(
+  createRoute({
+    method: 'post',
+    path: '/tracks/search',
+    middleware: [authMiddleware(), sameOrigin],
+    request: {
+      body: {
+        required: true,
+        content: {
+          'application/json': { schema: SpotifyTrackSearchInputSchema },
+        },
+      },
+    },
+    responses: {
+      200: {
+        description:
+          'Queue one Spotify catalog search per eligible selected track',
+        content: {
+          'application/json': {
+            schema: createResponseSchema(EnrichmentResultSchema),
+          },
+        },
+      },
+      401: jsonErrorResponse('Unauthorized'),
+      422: validationErrorResponse,
+      429: jsonErrorResponse('Spotify is cooling down or halted'),
+    },
+  }),
+  async (c) =>
+    generateJsonResponse(
+      c,
+      await queueSpotifyTrackSearches(
+        c.req.valid('json'),
+        requireOwnerUser(c).id,
+      ),
+      200,
+    ),
+)
+
+app.openapi(
+  createRoute({
+    method: 'post',
+    path: '/tracks/search/status',
+    middleware: [authMiddleware(), sameOrigin],
+    request: {
+      body: {
+        required: true,
+        content: {
+          'application/json': { schema: SpotifyTrackSearchStatusInputSchema },
+        },
+      },
+    },
+    responses: {
+      200: {
+        description:
+          'Latest stored Spotify track search jobs for the requested tracks',
+        content: {
+          'application/json': {
+            schema: createResponseSchema(SpotifyTrackSearchStatusSchema),
+          },
+        },
+      },
+      401: jsonErrorResponse('Unauthorized'),
+      422: validationErrorResponse,
+    },
+  }),
+  async (c) =>
+    generateJsonResponse(
+      c,
+      await listSpotifyTrackSearchStatuses(
+        c.req.valid('json'),
+        requireOwnerUser(c).id,
+      ),
+      200,
+    ),
+)
+
+app.openapi(
+  createRoute({
+    method: 'get',
+    path: '/tracks/search/{trackId}',
+    middleware: [authMiddleware()],
+    request: { params: SpotifyTrackSearchParamsSchema },
+    responses: {
+      200: {
+        description: 'Latest stored Spotify track search and candidates',
+        content: {
+          'application/json': {
+            schema: createResponseSchema(SpotifyTrackSearchSchema),
+          },
+        },
+      },
+      401: jsonErrorResponse('Unauthorized'),
+      404: jsonErrorResponse('Library track not found'),
+    },
+  }),
+  async (c) =>
+    generateJsonResponse(
+      c,
+      await getSpotifyTrackSearch(
+        c.req.valid('param').trackId,
+        requireOwnerUser(c).id,
+      ),
+      200,
+    ),
+)
+
+app.route('/tracks/search', spotifyTrackSearchAcceptanceRoute)
 
 app.onError((error, c) =>
   error instanceof ServerError

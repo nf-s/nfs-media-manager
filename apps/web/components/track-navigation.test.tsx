@@ -74,7 +74,7 @@ test('Tracks navigation offers only supported destinations without changing libr
   assert.doesNotMatch(html, />Tags<|mediaType=album/)
   assert.doesNotMatch(html, /href="\/artists/)
   // Jobs and Providers sit once under System for every library.
-  assert.match(html, /href="\/jobs">Jobs</)
+  assert.match(html, /href="\/jobs\?mediaType=track">Jobs</)
   assert.match(html, /href="\/providers">Providers</)
 })
 
@@ -141,6 +141,22 @@ test('Jobs opened with the Artists filter links its Metadata tab to artists', ()
   assert.match(html, /Artist metadata content/)
 })
 
+test('Track Jobs keeps the Tracks filter across its tabs', () => {
+  const html = render(
+    '/jobs/metadata',
+    'mediaType=track',
+    <MediaScopeContent>
+      <JobsWorkspace>Track metadata content</JobsWorkspace>
+    </MediaScopeContent>,
+  )
+  assert.match(
+    html,
+    /aria-current="page" href="\/jobs\/metadata\?mediaType=track">Metadata/,
+  )
+  assert.match(html, /href="\/jobs\?mediaType=track">Activity/)
+  assert.match(html, /Track metadata content/)
+})
+
 test('shared track import pages retain Tracks in the selector and navigation', () => {
   for (const path of ['/imports/lastfm', '/imports/spotify-playlists']) {
     const html = render(
@@ -184,7 +200,7 @@ test('Tracks imports expose Spotify and Last.fm without film or album import con
 })
 
 test('invalid track-scoped metadata destinations never mount another library’s content', () => {
-  for (const path of ['/tags', '/jobs', '/providers', '/imports/csv']) {
+  for (const path of ['/tags', '/providers', '/imports/csv']) {
     const html = render(
       path,
       'mediaType=track',

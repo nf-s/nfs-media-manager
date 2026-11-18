@@ -1,0 +1,2 @@
+CREATE INDEX "scrape_job_spotify_track_search_idx" ON "scrape_job" USING btree (("options"->>'trackId'),"created_at" DESC NULLS LAST,"id" DESC NULLS LAST) WHERE "scrape_job"."options"->>'task' = 'spotify-track-search';--> statement-breakpoint
+CREATE INDEX "scrape_job_spotify_track_search_retained_idx" ON "scrape_job" USING btree ((coalesce("options"->>'acceptedTrackId', "options"->>'trackId')),"created_at" DESC NULLS LAST,"id" DESC NULLS LAST) WHERE "scrape_job"."options"->>'task' = 'spotify-track-search';

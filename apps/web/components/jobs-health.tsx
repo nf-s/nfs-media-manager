@@ -10,7 +10,7 @@ import { Toolbar } from '@repo/ui/components/ds/toolbar'
 import { EMPTY_VALUE, formatCount } from '@repo/ui/lib/format'
 import { fetchApiData } from '@/utils/api'
 import { jobActivityPollInterval } from '@/utils/job-cache'
-import { systemLibraryFilter } from '@/utils/media-scope'
+import { parseLibraryView } from '@/utils/media-scope'
 import {
   blockedQueuedJobs,
   providerOverviewOptions,
@@ -32,7 +32,7 @@ function statusHref(status: string, library: string | null) {
 export default function JobsHealth() {
   const { apiBaseUrl } = useConfig()
   const params = useSearchParams()
-  const library = systemLibraryFilter(params.get('mediaType'))
+  const library = parseLibraryView(params.get('mediaType'))
   const activity = useQuery({
     queryKey: ['job-activity'],
     queryFn: () =>
@@ -44,11 +44,15 @@ export default function JobsHealth() {
     refetchInterval: (query) => jobActivityPollInterval(query.state.data),
     staleTime: 0,
   })
-  const overview = useQuery(providerOverviewOptions(apiBaseUrl, library))
+  const overview = useQuery(
+    providerOverviewOptions(apiBaseUrl, library === 'track' ? null : library),
+  )
   const counts = library
     ? activity.data?.libraries.find((entry) => entry.mediaType === library)
     : activity.data
-  const providers = overview.data?.providers ?? []
+  const providers = (overview.data?.providers ?? []).filter(
+    (provider) => library !== 'track' || provider.id === 'spotify',
+  )
   const shown = providers.filter((provider) => {
     const status = providerQueueStatus(provider)
     return status.state !== 'done'
@@ -64,7 +68,8 @@ export default function JobsHealth() {
         {formatCount(value)}
       </Link>
     )
-  const waiting = overview.data ? blockedQueuedJobs(providers) : undefined
+  const blocked = overview.data ? blockedQueuedJobs(providers) : undefined
+  const waiting = library === 'track' && blocked ? counts?.queued : blocked
   return (
     <>
       <Toolbar className="ops-health" role="group" aria-label="Job summary">

@@ -118,6 +118,7 @@ export const TrackSourceSchema = z.enum([
   'lastfm',
   'spotify',
   'spotify-liked',
+  'spotify-search',
 ])
 export type TrackSource = z.infer<typeof TrackSourceSchema>
 export const trackSourceLabels: Record<TrackSource, string> = {
@@ -125,19 +126,26 @@ export const trackSourceLabels: Record<TrackSource, string> = {
   lastfm: 'Last.fm',
   spotify: 'Spotify playlists',
   'spotify-liked': 'Liked Songs',
+  'spotify-search': 'Spotify track search',
 }
 
 /** Where the current Spotify identity comes from, independent of membership. */
 export const TrackSpotifyMatchSchema = z.enum([
   'spotify-import',
+  'spotify-search',
   'album-track-list',
   'unmatched',
 ])
 export type TrackSpotifyMatch = z.infer<typeof TrackSpotifyMatchSchema>
 export const trackSpotifyMatchLabels: Record<TrackSpotifyMatch, string> = {
-  'spotify-import': 'Spotify import',
+  'spotify-import': 'Spotify playlist / Liked Songs',
+  'spotify-search': 'Spotify track search',
   'album-track-list': 'Album track list',
   unmatched: 'Unmatched',
+}
+
+export function isImportedSpotifyMatch(match: TrackSpotifyMatch) {
+  return match === 'spotify-import' || match === 'spotify-search'
 }
 
 export const TrackListItemSchema = z.object({
@@ -289,15 +297,28 @@ export const TrackDetailSchema = TrackListItemSchema.extend({
 })
 export type TrackDetail = z.infer<typeof TrackDetailSchema>
 
-const TrackFiltersParamSchema = z.preprocess((value) => {
-  if (Array.isArray(value)) return value
-  if (typeof value !== 'string' || value.length === 0) return []
-  try {
-    return JSON.parse(value)
-  } catch {
-    return value
-  }
-}, z.array(BrowseFilterSchema).max(100))
+const TrackFiltersParamSchema = z.preprocess(
+  (value) => {
+    if (Array.isArray(value)) return value
+    if (typeof value !== 'string' || value.length === 0) return []
+    try {
+      return JSON.parse(value)
+    } catch {
+      return value
+    }
+  },
+  z
+    .array(BrowseFilterSchema)
+    .max(100)
+    .transform((filters) =>
+      filters.map((filter) =>
+        filter.field === 'spotifyMatch' &&
+        filter.value.toLowerCase() === 'spotify import'
+          ? { ...filter, value: trackSpotifyMatchLabels['spotify-import'] }
+          : filter,
+      ),
+    ),
+)
 
 export const TrackQuerySchema = PaginationQuerySchema.extend({
   creatorId: CreatorIdSchema.optional(),

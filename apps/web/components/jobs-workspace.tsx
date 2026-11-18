@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { usePathname, useSearchParams } from 'next/navigation'
 import { PageHead } from '@repo/ui/components/ds/toolbar'
 import { metadataLibrary } from '@/utils/job-media-scope'
-import { scopedHref, systemLibraryFilter } from '@/utils/media-scope'
+import { parseLibraryView, scopedHref } from '@/utils/media-scope'
 import { useRailLibraryView } from './media-scope'
 
 /** Jobs and Metadata share the Jobs heading and its tabs; job pages do not. */
@@ -17,7 +17,7 @@ export default function JobsWorkspace({
   const params = useSearchParams()
   const rail = useRailLibraryView()
   if (path !== '/jobs' && path !== '/jobs/metadata') return children
-  const filter = systemLibraryFilter(params.get('mediaType'))
+  const filter = parseLibraryView(params.get('mediaType'))
   const tabs = [
     {
       href: filter ? scopedHref('/jobs', filter) : '/jobs',

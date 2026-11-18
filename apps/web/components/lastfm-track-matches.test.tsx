@@ -5,6 +5,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { LastfmSyncStatusSchema } from '@repo/schemas/lastfm'
 import type { MatchDiagnosticsRow } from '@repo/schemas/match-diagnostics'
+import type { SpotifyTrackSearchJob } from '@repo/schemas/spotify-track-search'
 import { TrackListItemSchema, type TrackListItem } from '@repo/schemas/tracks'
 import LastfmTrackMatches, {
   LastfmTrackMatchList,
@@ -135,7 +136,10 @@ function diagnosticRow(
   }
 }
 
-function renderList(items: ReturnType<typeof diagnosticRow>[]) {
+function renderList(
+  items: ReturnType<typeof diagnosticRow>[],
+  searchJob?: SpotifyTrackSearchJob,
+) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
@@ -143,6 +147,11 @@ function renderList(items: ReturnType<typeof diagnosticRow>[]) {
     ['tracks', 'lastfm-matching', '', 'unavailable', 'scrobbles', 'desc', 1],
     { page: 1, size: 100, totalCount: items.length, pageCount: 1, items },
   )
+  if (searchJob)
+    client.setQueryData(
+      ['tracks', 'spotify-track-search', 'status', [lastfmTrack.id]],
+      { items: [{ trackId: lastfmTrack.id, job: searchJob }] },
+    )
   try {
     return renderToStaticMarkup(
       <QueryClientProvider client={client}>
@@ -239,6 +248,18 @@ test('matching rows preserve album provenance, service icons and name actions', 
   const html = renderList([diagnosticRow(lastfmTrack), diagnosticRow(fallback)])
   assert.match(html, /aria-label="Search Last.fm tracks"/)
   assert.match(html, /aria-label="Last.fm tracks to match"/)
+  assert.match(
+    html,
+    /aria-label="Select all loaded tracks needing a Spotify match"\/>/,
+  )
+  assert.match(
+    html,
+    /aria-label="Select Stored recording for Spotify search"\/>/,
+  )
+  assert.match(
+    html,
+    /aria-label="Select Album-derived recording for Spotify search" disabled=""/,
+  )
   assert.match(html, /aria-label="Merge Last.fm names for Stored recording"/)
   assert.match(
     html,
@@ -260,6 +281,24 @@ test('matching rows preserve album provenance, service icons and name actions', 
   assert.doesNotMatch(html, /<dialog|Confirm merge|Unlink|Search Spotify/)
 })
 
+test('a track with a running Spotify search cannot be selected again', () => {
+  const html = renderList([diagnosticRow(lastfmTrack)], {
+    status: 'running',
+    jobId: 'example-search',
+    resultCount: null,
+    errorMessage: null,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    startedAt: '2026-01-01T00:00:00.000Z',
+    finishedAt: null,
+  })
+  assert.match(
+    html,
+    /aria-label="Select Stored recording for Spotify search" disabled=""/,
+  )
+  assert.match(html, /data-status="running">Running/)
+  assert.match(html, /href="\/jobs\/example-search"/)
+})
+
 test('matched Spotify rows open Sources and can merge their Last.fm names', () => {
   const html = renderList([
     diagnosticRow(
@@ -276,10 +315,47 @@ test('matched Spotify rows open Sources and can merge their Last.fm names', () =
     html,
     /href="\/tracks\/lastfm-track\?tab=sources">Scrobbled names<\/a>/,
   )
-  assert.match(html, /Spotify import/)
+  assert.match(html, /Spotify playlist \/ Liked Songs/)
   assert.match(html, /1 track/)
   assert.match(html, /aria-label="Merge Last.fm names for Stored recording"/)
   assert.doesNotMatch(html, /<dialog|Confirm merge/)
+})
+
+test('a confirmed Spotify catalog match has separate provenance and cannot be selected again', () => {
+  const html = renderList(
+    [
+      diagnosticRow(
+        TrackListItemSchema.parse({
+          ...lastfmTrack,
+          spotifyMatch: 'spotify-search',
+          spotifyTrackId: '1234567890ABCDEFGHIJKL',
+          spotifyUrl: 'https://open.spotify.com/track/1234567890ABCDEFGHIJKL',
+          sources: ['lastfm', 'spotify-search'],
+        }),
+      ),
+    ],
+    {
+      jobId: 'example-search',
+      status: 'succeeded',
+      resultCount: 1,
+      acceptedTrackId: lastfmTrack.id,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      startedAt: null,
+      finishedAt: '2026-01-01T00:02:00.000Z',
+      errorMessage: null,
+    },
+  )
+  assert.match(
+    html,
+    /href="\/tracks\/lastfm-track\?tab=sources">Matched track<\/a>/,
+  )
+  assert.doesNotMatch(html, /Review matches/)
+  assert.match(html, /Spotify track search/)
+  assert.match(
+    html,
+    /aria-label="Select Stored recording for Spotify search" disabled=""/,
+  )
+  assert.doesNotMatch(html, /Spotify playlist \/ Liked Songs|Unmatched/)
 })
 
 test('a verified alternate has its own match label, Spotify link and recording details', () => {

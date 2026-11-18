@@ -59,6 +59,7 @@ export function TrackBrowseSearch({
   onAddFilter,
   setParams,
   ready = true,
+  disabled = false,
   matches = false,
 }: {
   fields: BrowseField[]
@@ -69,11 +70,18 @@ export function TrackBrowseSearch({
   onAddFilter: (filter: BrowseFilter, keepOpen?: boolean) => void
   setParams: (updates: Record<string, string | null>) => void
   ready?: boolean
+  disabled?: boolean
   matches?: boolean
 }) {
   const { apiBaseUrl } = useConfig()
   const [draft, setDraft] = useState('')
-  const facets = useBrowseFacets(apiBaseUrl, 'tracks', draft, ready, matches)
+  const facets = useBrowseFacets(
+    apiBaseUrl,
+    'tracks',
+    draft,
+    ready && !disabled,
+    matches,
+  )
   const titleFilters = matchingTitleFilters(facets.data ?? [], facets.search)
   const titleMatches = useQuery({
     queryKey: [
@@ -82,7 +90,7 @@ export function TrackBrowseSearch({
       titleFilters,
       ...(creator ? [creator] : []),
     ],
-    enabled: ready && titleFilters.length > 0,
+    enabled: ready && !disabled && titleFilters.length > 0,
     queryFn: async ({ signal }) => {
       const direction: 'asc' = 'asc'
       const query = {
@@ -152,6 +160,7 @@ export function TrackBrowseSearch({
         options,
         placeholder: 'Search titles, artists, albums, playlists...',
         value: draft,
+        disabled,
         onFocus: facets.activate,
         onValueChange: setDraft,
         onAddFilter,

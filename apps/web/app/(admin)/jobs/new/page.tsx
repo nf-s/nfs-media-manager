@@ -7,5 +7,9 @@ export default async function NewScrapePage({
   searchParams: Promise<{ mediaType?: string }>
 }) {
   const params = await searchParams
-  redirect(scopedHref('/jobs/metadata', mediaScope(params.mediaType ?? null)))
+  const library =
+    params.mediaType === 'track'
+      ? 'track'
+      : mediaScope(params.mediaType ?? null)
+  redirect(scopedHref('/jobs/metadata', library))
 }

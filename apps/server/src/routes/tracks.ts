@@ -44,7 +44,11 @@ import {
   validationErrorResponse,
 } from '@/lib/openapi'
 import { generateJsonResponse } from '@/lib/response'
-import { authMiddleware, mutationOriginMiddleware } from '@/middlewares/auth'
+import {
+  authMiddleware,
+  mutationOriginMiddleware,
+  requireOwnerUser,
+} from '@/middlewares/auth'
 import {
   listBrowseFields,
   queryBrowseCounts,
@@ -98,7 +102,10 @@ app.openapi(
   async (c) =>
     generateJsonResponse(
       c,
-      await listTrackMatchDiagnostics(c.req.valid('query')),
+      await listTrackMatchDiagnostics(
+        c.req.valid('query'),
+        requireOwnerUser(c).id,
+      ),
       200,
     ),
 )

@@ -105,7 +105,7 @@ export async function loadTracks(ids: string[]): Promise<TrackListItem[]> {
               order by p.name)
             from playlist_item pi join playlist p on p.id = pi.playlist_id
             where pi.media_item_id = mi.id), '[]'::jsonb) as playlists,
-          ${trackSourcesExpression(sql`mi.id`)} as sources,
+          ${trackSourcesExpression(sql`mi.id`, sql`mi.metadata`)} as sources,
           coalesce(lt.duration_sec, ${albumTrackDurationExpression(sql`lt.media_item_id`, sql`lt.album_media_item_id`)}) as duration_sec,
           lt.spotify_track_id,
           ${trackSpotifyMatchExpression(sql`lt.spotify_track_id`, sql`mi.source_label`)} as spotify_match,
@@ -424,7 +424,7 @@ function playlistEntrySortExpression(key: PlaylistEntrySort): SQL {
     case 'lastListened':
       return sql`lt.last_listened_at`
     case 'source':
-      return sql`case when lt.media_item_id is not null then ${trackSourcesExpression(sql`mi.id`, true)} end`
+      return sql`case when lt.media_item_id is not null then ${trackSourcesExpression(sql`mi.id`, sql`mi.metadata`, true)} end`
     case 'spotifyMatch':
       return sql`case when lt.media_item_id is not null then ${trackSpotifyMatchExpression(sql`lt.spotify_track_id`, sql`mi.source_label`, true)} end`
     case 'kind':

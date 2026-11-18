@@ -6,12 +6,14 @@ import { Select } from '@repo/ui/components/ds/toolbar'
 import { useMediaProviders } from '@/components/film-provider-selection'
 import FilmSelectionTable from '@/components/film-selection-table'
 import ArtistMetadataTable from '@/components/artist-metadata-table'
+import TrackMetadataTable from '@/components/track-metadata-table'
 import { useRailLibraryView } from '@/components/media-scope'
 import { metadataLibrary } from '@/utils/job-media-scope'
 import { scopedHref, type MediaScope } from '@/utils/media-scope'
 
 const libraries = [
   { value: 'album', label: 'Albums' },
+  { value: 'track', label: 'Tracks' },
   { value: 'film', label: 'Films' },
   { value: 'artist', label: 'Artists' },
 ]
@@ -46,6 +48,12 @@ export default function NewScrapePageClient() {
   const rail = useRailLibraryView()
   const library = metadataLibrary(params.get('mediaType'), rail)
   const filter = <LibraryFilter value={library} />
+  if (library === 'track')
+    return (
+      <section className="ops-fill" aria-label="Track metadata">
+        <TrackMetadataTable filters={filter} />
+      </section>
+    )
   if (library === 'artist')
     return (
       <section className="ops-fill" aria-label="Artist metadata">

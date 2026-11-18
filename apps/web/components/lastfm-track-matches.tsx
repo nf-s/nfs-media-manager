@@ -3,7 +3,7 @@
 import Link from 'next/link'
 import { DetailLink } from './detail-link'
 import { LibraryTrackInlinePlayButtons } from './play-controls'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { BrowseFilter } from '@repo/schemas/browse'
 import type { TrackPlayability } from '@repo/schemas/match-diagnostics'
@@ -27,6 +27,7 @@ import {
 } from '@repo/ui/components/ui/table'
 import { useVirtualTable } from '@/hooks/useVirtualTable'
 import { spotifyTrackUri } from '@/utils/album-links'
+import { updateJobSelection } from '@/utils/job-selection'
 import {
   loadTrackMatchDiagnosticsPage,
   playableMatchTrack,
@@ -46,6 +47,7 @@ import { TrackMergePanel } from './track-merge'
 import {
   SecondaryCell,
   SecondaryColumnFilter,
+  SecondaryTableFrame,
   SecondaryTableHead,
   SecondaryTableScroll,
   SecondaryTableToolbar,
@@ -53,6 +55,13 @@ import {
   useTableColumns,
   type TableColumn,
 } from './secondary-table'
+import {
+  isActiveSpotifyTrackSearch,
+  SpotifyTrackSearchJobCell,
+  SpotifyTrackSearchReview,
+  SpotifyTrackSearchSelectionBar,
+  useSpotifyTrackSearchStatus,
+} from './spotify-track-search'
 
 const source: BrowseFilter = {
   field: 'source',
@@ -65,6 +74,7 @@ type MatchDirection = 'asc' | 'desc'
 const defaultSortBy = 'scrobbles'
 const defaultDirection = 'desc'
 const matchPageSize = 100
+const CHECK_WIDTH = 36
 const missingSpotifyHref = `${libraryMatchesHref('track')}?${new URLSearchParams(
   {
     filters: JSON.stringify([source]),
@@ -139,7 +149,15 @@ export function LastfmTrackMatchList() {
   const [sortBy, setSortBy] = useState<MatchSort>(defaultSortBy)
   const [direction, setDirection] = useState<MatchDirection>(defaultDirection)
   const [selected, setSelected] = useState<TrackListItem | null>(null)
-  const [matchedId, setMatchedId] = useState<string | null>(null)
+  const [review, setReview] = useState<TrackListItem | null>(null)
+  const [matched, setMatched] = useState<{
+    id: string
+    kind: 'names' | 'spotify'
+  } | null>(null)
+  const [selectedIds, setSelectedIds] = useState<string[]>([])
+  const [anchor, setAnchor] = useState<string | null>(null)
+  const [queuePending, setQueuePending] = useState(false)
+  const selectAll = useRef<HTMLInputElement>(null)
   const columns = useTableColumns('lastfm-track-matches', [
     ...matchColumns,
     { key: 'actions', label: 'Actions', required: true },
@@ -158,6 +176,7 @@ export function LastfmTrackMatchList() {
       sortBy,
       direction,
     ],
+    enabled: !queuePending,
     pageSize: matchPageSize,
     loadPage: (page, _size, signal) =>
       loadLastfmTracksToMatch(
@@ -168,7 +187,36 @@ export function LastfmTrackMatchList() {
   })
   const total = tracks.total
   const changing = tracks.isPending || draft.trim() !== query
+  const unmatchedIds = tracks.loadedSlots
+    .filter(
+      ({ item }) =>
+        !item.spotifyAlternate &&
+        !spotifyTrackUri(item.track.spotifyTrackId) &&
+        item.track.sources.includes('lastfm'),
+    )
+    .map(({ item }) => item.track.id)
+  const searchStatuses = useSpotifyTrackSearchStatus(
+    tracks.loadedSlots.map(({ item }) => item.track.id),
+  )
+  const eligibleIds = unmatchedIds.filter(
+    (id) => !isActiveSpotifyTrackSearch(searchStatuses.byId.get(id)?.job),
+  )
+  const eligible = new Set(eligibleIds)
+  const selectedForSearch = selectedIds.filter((id) => eligible.has(id))
+  const checked = new Set(selectedForSearch)
+  const allChecked =
+    eligibleIds.length > 0 && eligibleIds.every((id) => checked.has(id))
+  const selectionDisabled = changing || tracks.isError || queuePending
+  const partiallyChecked = selectedForSearch.length > 0 && !allChecked
+  useEffect(() => {
+    if (selectAll.current) selectAll.current.indeterminate = partiallyChecked
+  }, [partiallyChecked])
+  function selectTracks(ids: string[]) {
+    setSelectedIds(ids)
+    setAnchor(null)
+  }
   function sort(key: MatchSort) {
+    selectTracks([])
     setDirection(sortBy === key && direction === 'desc' ? 'asc' : 'desc')
     setSortBy(key)
   }
@@ -182,7 +230,11 @@ export function LastfmTrackMatchList() {
             placeholder="Search tracks, artists or albums"
             maxLength={200}
             value={draft}
-            onChange={(event) => setDraft(event.target.value)}
+            disabled={queuePending}
+            onChange={(event) => {
+              setDraft(event.target.value)
+              selectTracks([])
+            }}
           />
         }
         count={
@@ -193,10 +245,12 @@ export function LastfmTrackMatchList() {
         }
         columns={columns.controls}
       />
-      {matchedId && (
+      {matched && (
         <p role="status" className="ds-muted">
-          Last.fm names merged.{' '}
-          <DetailLink kind="track" id={matchedId} tab="sources">
+          {matched.kind === 'spotify'
+            ? 'Spotify track linked.'
+            : 'Last.fm names merged.'}{' '}
+          <DetailLink kind="track" id={matched.id} tab="sources">
             Open track
           </DetailLink>
         </p>
@@ -213,168 +267,259 @@ export function LastfmTrackMatchList() {
           Could not load Last.fm tracks.
         </Notice>
       )}
+      {searchStatuses.isError && (
+        <Notice
+          tone="danger"
+          action={
+            <Button size="xs" onClick={searchStatuses.retry}>
+              Retry
+            </Button>
+          }
+        >
+          Could not load Spotify search status.
+        </Notice>
+      )}
       {selected && (
         <TrackMergePanel
           track={selected}
           namesOnly
           onClose={() => setSelected(null)}
-          onMerged={setMatchedId}
+          onMerged={(id) => setMatched({ id, kind: 'names' })}
         />
       )}
-      <SecondaryTableScroll
-        ref={tracks.scroller}
-        onScroll={tracks.onScroll}
-        className="table-scroll-bounded"
-        role="region"
-        aria-label="Last.fm tracks to match"
-        aria-busy={tracks.isFetching}
-      >
-        <table className="ds-table" aria-label="Last.fm tracks to match">
-          <TableHeader>
-            <TableRow>
-              {matchColumns
-                .filter((column) => columns.visible(column.key))
-                .map((column) => (
-                  <SecondaryTableHead
-                    key={column.key}
-                    sortKey={column.key}
-                    label={column.label}
-                    align={column.key === 'scrobbles' ? 'end' : undefined}
-                    sortBy={sortBy}
-                    direction={direction}
-                    onSort={sort}
-                    filter={
-                      column.key === 'spotifyMatch' ? (
-                        <SecondaryColumnFilter
-                          label="Match status"
-                          options={matchStatuses}
-                          value={statuses}
-                          onChange={setStatuses}
-                        />
-                      ) : undefined
+      {review && (
+        <SpotifyTrackSearchReview
+          track={review}
+          onClose={() => setReview(null)}
+          onMatched={(id) => setMatched({ id, kind: 'spotify' })}
+        />
+      )}
+      <SecondaryTableFrame>
+        <SecondaryTableScroll
+          ref={tracks.scroller}
+          onScroll={tracks.onScroll}
+          className="table-scroll-bounded"
+          role="region"
+          aria-label="Last.fm tracks to match"
+          aria-busy={tracks.isFetching}
+        >
+          <table className="ds-table" aria-label="Last.fm tracks to match">
+            <TableHeader>
+              <TableRow>
+                <TableHead className="sec-check-cell" sticky={0}>
+                  <input
+                    ref={selectAll}
+                    type="checkbox"
+                    className="ds-check"
+                    aria-label="Select all loaded tracks needing a Spotify match"
+                    checked={allChecked}
+                    disabled={selectionDisabled || !eligibleIds.length}
+                    onChange={(event) =>
+                      selectTracks(event.target.checked ? eligibleIds : [])
                     }
                   />
-                ))}
-              <TableHead>Actions</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {!tracks.total && (
-              <TableState colSpan={columns.count} error={tracks.isError}>
-                {tracks.isPending
-                  ? 'Loading Last.fm tracks...'
-                  : tracks.isError
-                    ? 'Could not load Last.fm tracks.'
-                    : 'No matching Last.fm tracks.'}
-                {tracks.isError && (
-                  <Button size="xs" variant="link" onClick={tracks.retry}>
-                    Retry
-                  </Button>
-                )}
-              </TableState>
-            )}
-            {(!tracks.isError || tracks.hasTotal) && (
-              <SecondaryVirtualRows
-                window={tracks}
-                colSpan={columns.count}
-                renderRow={({ track, spotifyAlternate }) => {
-                  const playable = playableMatchTrack(track, spotifyAlternate)
-                  const spotifyUri = spotifyTrackUri(playable.spotifyTrackId)
-                  const spotifyUrl = spotifyWebUrl(spotifyUri ?? null)
-                  const matchLabel = spotifyAlternate
-                    ? 'Other Spotify version'
-                    : trackSpotifyMatchLabels[
-                        spotifyUri ? track.spotifyMatch : 'unmatched'
-                      ]
-                  return (
-                    <TableRow
-                      key={track.id}
-                      data-selected={selected?.id === track.id || undefined}
-                    >
-                      <TableCell>
-                        <div className="secondary-cell-actions">
-                          <LibraryTrackInlinePlayButtons track={playable} />
-                          <SecondaryCell text={track.title}>
-                            <DetailLink kind="track" id={track.id}>
-                              {track.title}
-                            </DetailLink>
-                          </SecondaryCell>
-                          <ServiceIconLinks
-                            links={trackServiceLinks({ ...track, spotifyUrl })}
+                </TableHead>
+                {matchColumns
+                  .filter((column) => columns.visible(column.key))
+                  .map((column) => (
+                    <SecondaryTableHead
+                      key={column.key}
+                      sortKey={column.key}
+                      label={column.label}
+                      align={column.key === 'scrobbles' ? 'end' : undefined}
+                      sortBy={sortBy}
+                      direction={direction}
+                      onSort={sort}
+                      disabled={queuePending}
+                      sticky={column.key === 'title' ? CHECK_WIDTH : undefined}
+                      stickyEdge={column.key === 'title'}
+                      filter={
+                        column.key === 'spotifyMatch' ? (
+                          <SecondaryColumnFilter
+                            label="Match status"
+                            options={matchStatuses}
+                            value={statuses}
+                            disabled={queuePending}
+                            onChange={(next) => {
+                              selectTracks([])
+                              setStatuses(next)
+                            }}
                           />
-                        </div>
-                      </TableCell>
-                      {columns.visible('artist') && (
-                        <TableCell>
-                          <SecondaryCell text={track.artists.join(', ')}>
-                            {track.artists.join(', ') || '-'}
-                          </SecondaryCell>
+                        ) : undefined
+                      }
+                    />
+                  ))}
+                <TableHead>Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {!tracks.total && (
+                <TableState colSpan={columns.count + 1} error={tracks.isError}>
+                  {tracks.isPending
+                    ? 'Loading Last.fm tracks...'
+                    : tracks.isError
+                      ? 'Could not load Last.fm tracks.'
+                      : 'No matching Last.fm tracks.'}
+                  {tracks.isError && (
+                    <Button size="xs" variant="link" onClick={tracks.retry}>
+                      Retry
+                    </Button>
+                  )}
+                </TableState>
+              )}
+              {(!tracks.isError || tracks.hasTotal) && (
+                <SecondaryVirtualRows
+                  window={tracks}
+                  colSpan={columns.count + 1}
+                  renderRow={({ track, spotifyAlternate }) => {
+                    const playable = playableMatchTrack(track, spotifyAlternate)
+                    const spotifyUri = spotifyTrackUri(playable.spotifyTrackId)
+                    const spotifyUrl = spotifyWebUrl(spotifyUri ?? null)
+                    const matchLabel = spotifyAlternate
+                      ? 'Other Spotify version'
+                      : trackSpotifyMatchLabels[
+                          spotifyUri ? track.spotifyMatch : 'unmatched'
+                        ]
+                    const job = searchStatuses.byId.get(track.id)?.job
+                    return (
+                      <TableRow
+                        key={track.id}
+                        data-selected={
+                          checked.has(track.id) ||
+                          selected?.id === track.id ||
+                          review?.id === track.id ||
+                          undefined
+                        }
+                      >
+                        <TableCell className="sec-check-cell" sticky={0}>
+                          <input
+                            type="checkbox"
+                            className="ds-check"
+                            aria-label={`Select ${track.title} for Spotify search`}
+                            checked={checked.has(track.id)}
+                            disabled={
+                              selectionDisabled || !eligible.has(track.id)
+                            }
+                            onChange={(event) => {
+                              setSelectedIds(
+                                updateJobSelection(
+                                  selectedForSearch,
+                                  eligibleIds,
+                                  track.id,
+                                  anchor,
+                                  'shiftKey' in event.nativeEvent &&
+                                    event.nativeEvent.shiftKey === true,
+                                  event.target.checked,
+                                ),
+                              )
+                              setAnchor(track.id)
+                            }}
+                          />
                         </TableCell>
-                      )}
-                      {columns.visible('album') && (
-                        <TableCell>
-                          <SecondaryCell text={track.albumName ?? '-'}>
-                            {track.albumName ?? '-'}
-                          </SecondaryCell>
+                        <TableCell sticky={CHECK_WIDTH} stickyEdge>
+                          <div className="secondary-cell-actions">
+                            <LibraryTrackInlinePlayButtons track={playable} />
+                            <SecondaryCell text={track.title}>
+                              <DetailLink kind="track" id={track.id}>
+                                {track.title}
+                              </DetailLink>
+                            </SecondaryCell>
+                            <ServiceIconLinks
+                              links={trackServiceLinks({
+                                ...track,
+                                spotifyUrl,
+                              })}
+                            />
+                          </div>
                         </TableCell>
-                      )}
-                      {columns.visible('scrobbles') && (
-                        <TableCell align="end" className="ds-num">
-                          {formatCount(track.scrobbles)}
-                        </TableCell>
-                      )}
-                      {columns.visible('spotifyMatch') && (
+                        {columns.visible('artist') && (
+                          <TableCell>
+                            <SecondaryCell text={track.artists.join(', ')}>
+                              {track.artists.join(', ') || '-'}
+                            </SecondaryCell>
+                          </TableCell>
+                        )}
+                        {columns.visible('album') && (
+                          <TableCell>
+                            <SecondaryCell text={track.albumName ?? '-'}>
+                              {track.albumName ?? '-'}
+                            </SecondaryCell>
+                          </TableCell>
+                        )}
+                        {columns.visible('scrobbles') && (
+                          <TableCell align="end" className="ds-num">
+                            {formatCount(track.scrobbles)}
+                          </TableCell>
+                        )}
+                        {columns.visible('spotifyMatch') && (
+                          <TableCell>
+                            <SecondaryCell text={matchLabel}>
+                              {spotifyAlternate ? (
+                                <DetailLink
+                                  kind="track"
+                                  id={spotifyAlternate.trackId}
+                                  tab="sources"
+                                >
+                                  {matchLabel}
+                                </DetailLink>
+                              ) : (
+                                matchLabel
+                              )}
+                            </SecondaryCell>
+                          </TableCell>
+                        )}
                         <TableCell>
-                          <SecondaryCell text={matchLabel}>
-                            {spotifyAlternate ? (
+                          <div className="secondary-cell-actions">
+                            <Button size="xs" variant="ghost" asChild>
                               <DetailLink
                                 kind="track"
-                                id={spotifyAlternate.trackId}
+                                id={track.id}
                                 tab="sources"
                               >
-                                {matchLabel}
+                                Scrobbled names
                               </DetailLink>
-                            ) : (
-                              matchLabel
-                            )}
-                          </SecondaryCell>
-                        </TableCell>
-                      )}
-                      <TableCell>
-                        <div className="secondary-cell-actions">
-                          <Button size="xs" variant="ghost" asChild>
-                            <DetailLink
-                              kind="track"
-                              id={track.id}
-                              tab="sources"
-                            >
-                              Scrobbled names
-                            </DetailLink>
-                          </Button>
-                          {track.sources.includes('lastfm') && (
-                            <Button
-                              size="xs"
-                              aria-label={`Merge Last.fm names for ${track.title}`}
-                              aria-haspopup="dialog"
-                              disabled={changing || tracks.isError}
-                              onClick={() => {
-                                setMatchedId(null)
-                                setSelected(track)
-                              }}
-                            >
-                              Merge names
                             </Button>
-                          )}
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  )
-                }}
-              />
-            )}
-          </TableBody>
-        </table>
-      </SecondaryTableScroll>
+                            {track.sources.includes('lastfm') && (
+                              <Button
+                                size="xs"
+                                aria-label={`Merge Last.fm names for ${track.title}`}
+                                aria-haspopup="dialog"
+                                disabled={selectionDisabled}
+                                onClick={() => {
+                                  setMatched(null)
+                                  setSelected(track)
+                                }}
+                              >
+                                Merge names
+                              </Button>
+                            )}
+                            {job && (
+                              <SpotifyTrackSearchJobCell
+                                job={job}
+                                disabled={selectionDisabled}
+                                onReview={() => {
+                                  setMatched(null)
+                                  setReview(track)
+                                }}
+                              />
+                            )}
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    )
+                  }}
+                />
+              )}
+            </TableBody>
+          </table>
+        </SecondaryTableScroll>
+        <SpotifyTrackSearchSelectionBar
+          selectedIds={selectedForSearch}
+          onSelect={selectTracks}
+          onPendingChange={setQueuePending}
+          disabled={selectionDisabled}
+        />
+      </SecondaryTableFrame>
     </>
   )
 }

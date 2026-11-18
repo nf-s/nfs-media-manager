@@ -41,6 +41,11 @@ import {
   SPOTIFY_PLAYLIST_LISTING_TASK,
 } from '@repo/schemas/tracks'
 import { SPOTIFY_PLAYLIST_ADD_TRACK_TASK } from '@repo/schemas/track-playlist-additions'
+import {
+  SPOTIFY_TRACK_SEARCH_TASK,
+  SpotifyTrackSearchFreshnessSchema,
+  SpotifyTrackSearchParamsSchema,
+} from '@repo/schemas/spotify-track-search'
 import { YOUTUBE_SYNC_TASK } from '@repo/schemas/youtube'
 import {
   SPOTIFY_PODCAST_SYNC_TASK,
@@ -133,6 +138,11 @@ import {
   prepareSpotifyTrackPlaylistAddition,
   runSpotifyTrackPlaylistAddition,
 } from '@/services/spotify-track-playlist-additions'
+import {
+  prepareSpotifyTrackSearch,
+  runSpotifyTrackSearch,
+  validateQueuedSpotifyTrackSearch,
+} from '@/services/spotify-track-search'
 import {
   collectAlbumArtistProfiles,
   prepareArtistEnrichment,
@@ -973,6 +983,7 @@ export type TaskJobResult = LastfmSyncJobResult & {
 
 export interface TaskJobContext extends LastfmSyncJobContext {
   jobId: string
+  requestedByUserId: string | null
   /** Records how far the job has read, in `options.progress`. */
   progress(progress: JobProgress): Promise<void>
 }
@@ -1018,6 +1029,14 @@ const taskJobs = new Map<string, TaskJobDefinition>([
       provider: 'spotify',
       prepare: prepareLastfmSpotifySearch,
       run: runLastfmSpotifySearch,
+    },
+  ],
+  [
+    SPOTIFY_TRACK_SEARCH_TASK,
+    {
+      provider: 'spotify',
+      prepare: prepareSpotifyTrackSearch,
+      run: runSpotifyTrackSearch,
     },
   ],
   [
@@ -1097,13 +1116,17 @@ async function insertTaskJob(
   const nonMediaTask =
     options.task === ARTIST_ENRICHMENT_TASK ||
     SUBSCRIPTION_SYNC_TASKS.some((task) => task === options.task)
+  const trackSearch =
+    options.task === SPOTIFY_TRACK_SEARCH_TASK
+      ? SpotifyTrackSearchParamsSchema.parse(options)
+      : null
   await tx.insert(scrapeJob).values({
     id: jobId,
     provider,
     status: 'queued',
     scope: {
-      mediaItemIds: [],
-      mediaType: nonMediaTask ? null : 'album',
+      mediaItemIds: trackSearch ? [trackSearch.trackId] : [],
+      mediaType: trackSearch ? 'track' : nonMediaTask ? null : 'album',
       limit: 1,
     },
     options,
@@ -1168,6 +1191,10 @@ export async function createTaskJob(
         : `Provider is cooling down until ${safety.cooldownUntil}`,
     })
   const prepared = await definition.prepare(userId, input)
+  const trackSearch =
+    task === SPOTIFY_TRACK_SEARCH_TASK
+      ? SpotifyTrackSearchParamsSchema.parse(prepared)
+      : null
   const artistId =
     task === ARTIST_ENRICHMENT_TASK && typeof prepared.artistId === 'string'
       ? prepared.artistId
@@ -1248,6 +1275,17 @@ export async function createTaskJob(
         ),
       )
       .limit(1)
+    // A search that finished before the active read has already updated freshness.
+    if (trackSearch)
+      await validateQueuedSpotifyTrackSearch(tx, {
+        trackId: trackSearch.trackId,
+        userId,
+        batchId: typeof batchId === 'string' ? batchId : undefined,
+        retryOf: original?.id,
+        freshness: original
+          ? undefined
+          : SpotifyTrackSearchFreshnessSchema.optional().parse(input.freshness),
+      })
     // If a sibling finished before the active-job read, its profile is visible
     // here. If it is still active, the branch below won't enqueue a second job.
     if (original && artistId !== null) {
@@ -1403,6 +1441,7 @@ async function processTaskJob(
   const result = await definition.run(
     {
       jobId: nextJob.id,
+      requestedByUserId: nextJob.requestedByUserId,
       assertActive,
       isActive: async () => {
         try {
@@ -1892,6 +1931,7 @@ export function jobListWhere(query: JobListQuery) {
       ? sql`(${scrapeJob.provider} ilike ${pattern} or ${scrapeJob.id} ilike ${pattern}
         or ${scrapeJob.options}->>'artistName' ilike ${pattern}
         or ${scrapeJob.options}->>'albumName' ilike ${pattern}
+        or ${scrapeJob.options}->>'trackTitle' ilike ${pattern}
         or exists (
       select 1 from scrape_job_item i join media_item m on m.id = i.media_item_id where i.job_id = ${scrapeJob.id} and m.title ilike ${pattern}
     ))`
@@ -1924,6 +1964,7 @@ export async function jobSortField(query: JobListQuery) {
     when ${LASTFM_SPOTIFY_SEARCH_TASK} then concat('Spotify album search',
       case when nullif(btrim(concat_ws('', ${table.options}->>'artistName', ${table.options}->>'albumName')), '') is not null
         then concat(' · ', concat_ws(' — ', nullif(btrim(${table.options}->>'artistName'), ''), nullif(btrim(${table.options}->>'albumName'), ''))) else '' end)
+    when ${SPOTIFY_TRACK_SEARCH_TASK} then concat_ws(' · ', 'Spotify track search', nullif(btrim(${table.options}->>'trackTitle'), ''))
     else (select m.title from scrape_job_item i join media_item m on m.id = i.media_item_id
       where i.job_id = ${table.id} order by i.created_at, i.id limit 1) end`
   const result = query.mediaItemId
@@ -2173,6 +2214,7 @@ export async function getJobActivity() {
 async function readJobActivity() {
   const albums = jobsInMediaScope('album')
   const films = jobsInMediaScope('film')
+  const tracks = jobsInMediaScope('track')
   const artists = jobsInMediaScope('artist')
   const subscriptions = jobsInMediaScope('subscription')
   const importScope = importMediaTypeExpression(libraryImport.result)
@@ -2188,6 +2230,9 @@ async function readJobActivity() {
       filmQueued: sql<number>`count(*) filter (where status = 'queued' and ${films})::int`,
       filmRunning: sql<number>`count(*) filter (where status = 'running' and ${films})::int`,
       filmFailed: sql<number>`count(*) filter (where ${jobsNeedingAttention()} and ${films})::int`,
+      trackQueued: sql<number>`count(*) filter (where status = 'queued' and ${tracks})::int`,
+      trackRunning: sql<number>`count(*) filter (where status = 'running' and ${tracks})::int`,
+      trackFailed: sql<number>`count(*) filter (where ${jobsNeedingAttention()} and ${tracks})::int`,
       artistQueued: sql<number>`count(*) filter (where status = 'queued' and ${artists})::int`,
       artistRunning: sql<number>`count(*) filter (where status = 'running' and ${artists})::int`,
       artistFailed: sql<number>`count(*) filter (where ${jobsNeedingAttention()} and ${artists})::int`,
@@ -2234,6 +2279,13 @@ async function readJobActivity() {
         imports: 0,
       },
       {
+        mediaType: 'track',
+        queued: counts?.trackQueued ?? 0,
+        running: counts?.trackRunning ?? 0,
+        failed: counts?.trackFailed ?? 0,
+        imports: 0,
+      },
+      {
         mediaType: 'subscription',
         queued: counts?.subscriptionQueued ?? 0,
         running: counts?.subscriptionRunning ?? 0,
@@ -2258,6 +2310,8 @@ function jobsInMediaScope(
   if (mediaType === 'subscription') return subscriptionSync
   const artistEnrichment = sql`coalesce(${scrapeJob.options}->>'task', '') = ${ARTIST_ENRICHMENT_TASK}`
   if (mediaType === 'artist') return artistEnrichment
+  if (mediaType === 'track')
+    return sql`${scrapeJob.options}->>'task' = ${SPOTIFY_TRACK_SEARCH_TASK}`
   return sql`((${scrapeJob.scope}->>'mediaType' = ${mediaType} or exists (
     select 1 from scrape_job_item scoped_item join media_item scoped_media on scoped_media.id = scoped_item.media_item_id
     where scoped_item.job_id = ${scrapeJob.id} and scoped_media.media_type = ${mediaType}
@@ -2523,10 +2577,16 @@ export async function retryJob(
       statusCode: 409,
       message: 'These items have already been scraped successfully',
     })
+  const { mediaType, ...scope } = original.scope
+  if (mediaType === 'track')
+    throw new ServerError({
+      statusCode: 409,
+      message: 'Track searches must be retried as tasks.',
+    })
   return createJob(
     {
       provider: original.provider,
-      scope: { ...original.scope, mediaItemIds },
+      scope: { ...scope, mediaType, mediaItemIds },
       options: {
         ...original.options,
         benignReviewed: false,

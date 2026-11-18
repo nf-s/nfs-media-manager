@@ -112,9 +112,17 @@ export function loadTrackMatchDiagnosticsPage(
   if (query.filters.length) params.set('filters', JSON.stringify(query.filters))
   if (query.ranges.length) params.set('ranges', JSON.stringify(query.ranges))
   if (query.creatorId) params.set('creatorId', query.creatorId)
-  if (query.playability && query.playability !== 'all')
+  if (
+    query.playability &&
+    (query.playability !== 'all' || query.view === 'spotify-search-metadata')
+  )
     params.set('playability', query.playability)
-  if (query.view === 'spotify-coverage') params.set('view', query.view)
+  if (query.view && query.view !== 'providers') params.set('view', query.view)
+  if (query.freshness?.length)
+    params.set('freshness', JSON.stringify(query.freshness))
+  if (query.listening) params.set('listening', JSON.stringify(query.listening))
+  if (query.listeningSort)
+    params.set('listeningSort', JSON.stringify(query.listeningSort))
   if (query.limitResults !== undefined)
     params.set('limitResults', String(query.limitResults))
   return fetchApiData(

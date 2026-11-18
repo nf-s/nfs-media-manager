@@ -2,6 +2,8 @@ import { z } from 'zod'
 import { DirectionSchema, PaginationQuerySchema } from './common'
 import { trackBrowseFields, type BrowseField } from './browse'
 import { TrackListItemSchema, TrackQuerySchema } from './tracks'
+import { selectionQueryFields } from './film-selection'
+import { SpotifyTrackSearchFreshnessSchema } from './spotify-track-search'
 
 export const MatchDiagnosticsQuerySchema = PaginationQuerySchema.extend({
   q: z.string().trim().max(200).optional(),
@@ -28,12 +30,19 @@ export const trackPlayabilityLabels: Record<TrackPlayability, string> = {
 export const TrackMatchDiagnosticsQuerySchema =
   MatchDiagnosticsQuerySchema.extend({
     /** Coverage lists read library recordings without hydrating provider payloads. */
-    view: z.enum(['providers', 'spotify-coverage']).optional(),
+    view: z
+      .enum(['providers', 'spotify-coverage', 'spotify-search-metadata'])
+      .optional(),
     playability: TrackPlayabilitySchema.optional(),
     creatorId: TrackQuerySchema.shape.creatorId,
     filters: TrackQuerySchema.shape.filters,
     ranges: TrackQuerySchema.shape.ranges,
     limitResults: TrackQuerySchema.shape.limitResults,
+    listening: TrackQuerySchema.shape.listening,
+    listeningSort: TrackQuerySchema.shape.listeningSort,
+    freshness: selectionQueryFields.freshness
+      .pipe(SpotifyTrackSearchFreshnessSchema)
+      .optional(),
   })
 export type TrackMatchDiagnosticsQuery = z.infer<
   typeof TrackMatchDiagnosticsQuerySchema

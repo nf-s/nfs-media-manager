@@ -16,7 +16,7 @@ const trackImportPaths = [
   '/imports/spotify-playlists',
   '/imports/lastfm',
 ]
-const trackUnsupportedPaths = ['/tags', '/jobs', '/providers']
+const trackUnsupportedPaths = ['/tags', '/providers']
 /** Jobs and Providers sit once under System and filter by library. */
 const systemPaths = ['/jobs', '/providers']
 const subscriptionPaths = [
@@ -101,6 +101,7 @@ export function libraryViewForPath(
     (value === 'track' &&
       (isUnder(path, '/imports') ||
         isUnder(path, '/user') ||
+        isUnder(path, '/jobs') ||
         trackUnsupportedPaths.some((root) => isUnder(path, root))))
     ? 'track'
     : workspaceScopeForPath(path, value)

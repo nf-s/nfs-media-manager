@@ -106,6 +106,8 @@ function FilterValues({
 
 /** Why the track has its Spotify ID, or why it has none. */
 function spotifyMatchNote(item: TrackDetail) {
+  if (item.spotifyMatch === 'spotify-search')
+    return 'You confirmed this recording from a Spotify track search.'
   if (item.spotifyMatch === 'spotify-import')
     return item.lastfmSources.some((source) => source.manuallyMatched)
       ? 'Imported from Spotify. The Last.fm names marked below were chosen manually for this recording.'
@@ -113,7 +115,7 @@ function spotifyMatchNote(item: TrackDetail) {
         ? 'Imported from Spotify. Last.fm was matched by a unique artist and title match, with compatible album information.'
         : 'The Spotify ID came from a playlist or Liked Songs import.'
   return item.spotifyMatch === 'album-track-list'
-    ? 'The linked album’s stored track list has exactly one track with the same title. This automatic match has not been checked against Spotify.'
+    ? 'The linked album’s stored track list supplied the Spotify track ID.'
     : 'No stored Spotify ID is available for playback.'
 }
 

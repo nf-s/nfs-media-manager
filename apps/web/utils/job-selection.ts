@@ -20,6 +20,7 @@ import {
   SUBSCRIPTION_SYNC_TASKS,
 } from '@repo/schemas/subscriptions'
 import { SPOTIFY_PLAYLIST_ADD_TRACK_TASK } from '@repo/schemas/track-playlist-additions'
+import { SPOTIFY_TRACK_SEARCH_TASK } from '@repo/schemas/spotify-track-search'
 import { YOUTUBE_SYNC_TASK } from '@repo/schemas/youtube'
 import { playlistJobProgress } from './playlist-sync'
 import { ARTIST_ENRICHMENT_TASK } from '@repo/schemas/artist-profiles'
@@ -51,6 +52,10 @@ export function isSubscriptionSyncJob(job: Pick<Job, 'options'>): boolean {
 
 export function isScrobbleSpotifySearchJob(job: Pick<Job, 'options'>): boolean {
   return getJobTask(job.options) === LASTFM_SPOTIFY_SEARCH_TASK
+}
+
+export function isSpotifyTrackSearchJob(job: Pick<Job, 'options'>): boolean {
+  return getJobTask(job.options) === SPOTIFY_TRACK_SEARCH_TASK
 }
 
 export function isPlaylistImportJob(job: Pick<Job, 'options'>): boolean {
@@ -108,6 +113,12 @@ export function jobTaskTitle(job: Pick<Job, 'options'>): string | null {
       ? `Spotify album search · ${target.join(' — ')}`
       : 'Spotify album search'
   }
+  if (isSpotifyTrackSearchJob(job)) {
+    const title = job.options.trackTitle
+    return filledText(title)
+      ? `Spotify track search · ${title}`
+      : 'Spotify track search'
+  }
   return null
 }
 
@@ -137,6 +148,7 @@ export function canRetryJob(job: Job): boolean {
       isYoutubeSyncJob(job) ||
       isSpotifyPodcastSyncJob(job) ||
       isScrobbleSpotifySearchJob(job) ||
+      isSpotifyTrackSearchJob(job) ||
       isArtistEnrichmentJob(job) ||
       isPlaylistImportJob(job) ||
       isPlaylistListingJob(job) ||

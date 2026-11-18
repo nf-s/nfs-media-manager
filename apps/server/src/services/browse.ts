@@ -161,7 +161,11 @@ function albumPlaylistRows(condition = sql`true`): SQL {
 function trackValueExpression(key: string): SQL | null {
   switch (key) {
     case 'source':
-      return trackSourcesExpression(sql`${mediaItem.id}`, true)
+      return trackSourcesExpression(
+        sql`${mediaItem.id}`,
+        sql`${mediaItem.metadata}`,
+        true,
+      )
     case 'spotifyMatch':
       return sql`to_jsonb(${trackSpotifyMatchExpression(sql`${libraryTrack.spotifyTrackId}`, sql`${mediaItem.sourceLabel}`, true)})`
     case 'releaseDate':
@@ -1201,7 +1205,9 @@ function textRows(
       union all
       select media_item.id, ${trackSourceLabels.album}::text as value from media_item join track t on t.track_media_item_id = media_item.id where ${visible}
       union all
-      select media_item.id, ${trackSourceLabels.lastfm}::text as value from media_item join lastfm_track_source s on s.track_media_item_id = media_item.id where ${visible}`
+      select media_item.id, ${trackSourceLabels.lastfm}::text as value from media_item join lastfm_track_source s on s.track_media_item_id = media_item.id where ${visible}
+      union all
+      select media_item.id, ${trackSourceLabels['spotify-search']}::text as value from media_item where ${visible} and media_item.metadata ? 'spotifyTrackSearch'`
   if (mediaType === 'track' && key === 'albumLink')
     return sql`select media_item.id, ${trackAlbumLinkLabels.linked}::text as value from media_item join library_track lt on lt.media_item_id = media_item.id where ${visible} and lt.album_media_item_id is not null
       union all
