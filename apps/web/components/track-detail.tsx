@@ -20,14 +20,6 @@ import {
 import { Facts, Section } from '@repo/ui/components/ds/facts'
 import { List, ListRow, RowTitle } from '@repo/ui/components/ds/list-row'
 import { Button } from '@repo/ui/components/ui/button'
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@repo/ui/components/ui/table'
 import { TabsContent } from '@repo/ui/components/ui/tabs'
 import {
   EMPTY_VALUE,
@@ -37,11 +29,10 @@ import {
 } from '@repo/ui/lib/format'
 import { useConfig } from './providers'
 import { fetchApiData } from '@/utils/api'
-import { lastfmTrackUrl, trackServiceLinks } from '@/utils/track-links'
+import { trackServiceLinks } from '@/utils/track-links'
 import {
   parseTrackFilters,
   trackFilter,
-  trackScrobbleRuleLabels,
   tracksHref,
 } from '@/utils/track-browse'
 import { TrackArtistLinks } from './creator-links'
@@ -61,6 +52,7 @@ import { ListeningTrend } from './listening-trend'
 import ServiceIconLinks, { serviceLinks } from './service-icon-links'
 import { canMergeLastfmTrack, TrackMergePanel } from './track-merge'
 import { DetailMore } from './detail-more'
+import { TrackLastfmSources } from './track-lastfm-sources'
 import TrackAppearsOn from './track-playlist-additions'
 
 type OnFilter = (filter: BrowseFilter, keepOpen?: boolean) => void
@@ -122,115 +114,24 @@ function spotifyMatchNote(item: TrackDetail) {
         : 'The Spotify ID came from a playlist or Liked Songs import.'
   return item.spotifyMatch === 'album-track-list'
     ? 'The linked album’s stored track list has exactly one track with the same title. This automatic match has not been checked against Spotify.'
-    : 'No Spotify match for playback. Choose an imported library track to merge into; Spotify has not been searched for this track.'
+    : 'No stored Spotify ID is available for playback.'
 }
 
 /** The track's Spotify match and the Last.fm names that count towards it. */
-export function TrackSources({ item }: { item: TrackDetail }) {
+export function TrackSources({
+  item,
+  onResolved,
+}: {
+  item: TrackDetail
+  onResolved?: (targetId: string) => void
+}) {
   return (
     <>
       <Section title="Spotify match" flush>
         <p>{trackSpotifyMatchLabels[item.spotifyMatch]}</p>
         <p className="ds-help">{spotifyMatchNote(item)}</p>
       </Section>
-      {item.lastfmSources.length > 0 && (
-        <Section
-          title="Recorded by Last.fm"
-          note={formatCount(item.lastfmSources.length)}
-        >
-          <Table aria-label="Recorded by Last.fm">
-            <TableHeader>
-              <TableRow>
-                <TableHead>Track</TableHead>
-                <TableHead>Artist</TableHead>
-                <TableHead>Albums</TableHead>
-                <TableHead align="end">Scrobbles</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {item.lastfmSources.map((source) => {
-                const url = lastfmTrackUrl(source.artistName, source.trackName)
-                return (
-                  <TableRow
-                    key={JSON.stringify([source.artistName, source.trackName])}
-                  >
-                    <TableCell>
-                      <span className="ds-cell-id">
-                        <span className="ds-cell-title">
-                          {source.trackName}
-                        </span>
-                        {url && (
-                          <ServiceIconLinks
-                            links={[
-                              { provider: 'lastfm', label: 'Last.fm', url },
-                            ]}
-                          />
-                        )}
-                      </span>
-                    </TableCell>
-                    <TableCell>{source.artistName}</TableCell>
-                    <TableCell>
-                      {source.albumNames.length
-                        ? source.albumNames.join(' · ')
-                        : 'Album not supplied'}
-                      {source.manuallyMatched && (
-                        <span className="ds-muted"> · Manually matched</span>
-                      )}
-                    </TableCell>
-                    <TableCell align="end">
-                      {formatCount(source.count)}
-                    </TableCell>
-                  </TableRow>
-                )
-              })}
-            </TableBody>
-          </Table>
-          <p className="ds-help">
-            These recorded names give this track its Last.fm source. Scrobbled
-            names below include any broader name matches.
-          </p>
-        </Section>
-      )}
-      {item.listening.sources.length > 0 && (
-        <Section
-          title="Scrobbled names"
-          note={formatCount(item.listening.sources.length)}
-        >
-          <Table aria-label="Scrobbled names">
-            <TableHeader>
-              <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead>Match</TableHead>
-                <TableHead align="end">Scrobbles</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {item.listening.sources.map((source) => (
-                <TableRow key={`${source.artistName}\u0000${source.trackName}`}>
-                  <TableCell>
-                    <span className="ds-cell-id">
-                      <span className="ds-truncate">
-                        {source.artistName} — {source.trackName}
-                      </span>
-                      <ServiceIconLinks
-                        links={trackServiceLinks({
-                          title: source.trackName,
-                          artists: [source.artistName],
-                          spotifyUrl: null,
-                        })}
-                      />
-                    </span>
-                  </TableCell>
-                  <TableCell>
-                    {trackScrobbleRuleLabels[source.strategy]}
-                  </TableCell>
-                  <TableCell align="end">{formatCount(source.count)}</TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </Section>
-      )}
+      <TrackLastfmSources item={item} onResolved={onResolved} />
     </>
   )
 }
@@ -379,8 +280,8 @@ export default function TrackDetailView({
   id: string
   /** Applies a filter in the surrounding browser; without it values link to /tracks. */
   onFilter?: OnFilter
-  /** Replaces the discarded track with the retained Spotify track after merging. */
-  onMerged?: (targetId: string) => void
+  /** Opens the retained track after a merge or a source correction. */
+  onMerged?: (targetId: string, tab?: 'sources') => void
 }) {
   const { apiBaseUrl } = useConfig()
   const { tab, setTab } = useDetailTab(trackTabs, { aliases: trackTabAliases })
@@ -403,9 +304,12 @@ export default function TrackDetailView({
       />
     )
   const item = detail.data
-  function openResolvedTrack(targetId: string) {
-    if (onMerged) onMerged(targetId)
-    else window.location.assign(`/tracks/${encodeURIComponent(targetId)}`)
+  function openResolvedTrack(targetId: string, tab?: 'sources') {
+    if (onMerged) onMerged(targetId, tab)
+    else
+      window.location.assign(
+        `/tracks/${encodeURIComponent(targetId)}${tab ? `?tab=${tab}` : ''}`,
+      )
   }
   const [primaryLink, ...otherLinks] = serviceLinks(trackServiceLinks(item))
   return (
@@ -482,7 +386,7 @@ export default function TrackDetailView({
           key={item.id}
           track={item}
           onClose={() => setMerging(false)}
-          onMerged={openResolvedTrack}
+          onMerged={(targetId) => openResolvedTrack(targetId)}
         />
       )}
       <DetailTabs
@@ -503,7 +407,11 @@ export default function TrackDetailView({
           />
         </TabsContent>
         <TabsContent value="sources">
-          <TrackSources item={item} />
+          <TrackSources
+            key={item.id}
+            item={item}
+            onResolved={(targetId) => openResolvedTrack(targetId, 'sources')}
+          />
         </TabsContent>
       </DetailTabs>
     </article>

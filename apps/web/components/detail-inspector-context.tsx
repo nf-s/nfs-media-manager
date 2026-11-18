@@ -18,7 +18,6 @@ import {
   withoutDetailEntries,
   type DetailCrumb,
   type DetailEntry,
-  type DetailTarget,
 } from '@/utils/detail-inspector'
 
 const InspectorHistorySchema = z.object({
@@ -105,7 +104,7 @@ type Navigation = {
   /** The workspace URL with the drawer closed. */
   closedHref: string
   open: (target: DetailEntry, trigger?: HTMLElement) => void
-  replace: (target: DetailTarget) => void
+  replace: (target: DetailEntry) => void
   replaceView: (params: URLSearchParams) => void
   back: () => void
   /** Steps back to the entry at `index`, as Back would one step at a time. */

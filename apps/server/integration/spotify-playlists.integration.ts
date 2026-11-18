@@ -1278,11 +1278,14 @@ describe('Spotify playlist imports', () => {
     ])
     expect((await getTrackDetail(target.id))?.lastfmSources).toEqual([
       {
+        artistKey: 'the examples',
+        trackKey: 'opening',
         artistName: 'The Examples',
         trackName: 'Opening',
         albumNames: ['Recorded Release'],
         count: 2,
         manuallyMatched: true,
+        keptSeparate: false,
       },
     ])
 

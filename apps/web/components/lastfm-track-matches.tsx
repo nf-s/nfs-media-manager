@@ -4,7 +4,6 @@ import Link from 'next/link'
 import { DetailLink } from './detail-link'
 import { LibraryTrackInlinePlayButtons } from './play-controls'
 import { useEffect, useState } from 'react'
-import { Link2 } from 'lucide-react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { BrowseFilter } from '@repo/schemas/browse'
 import { PaginatedDataSchema } from '@repo/schemas/common'
@@ -38,7 +37,7 @@ import {
 } from './lastfm-sync'
 import { useConfig } from './providers'
 import ServiceIconLinks from './service-icon-links'
-import { canMergeLastfmTrack, TrackMergePanel } from './track-merge'
+import { TrackMergePanel } from './track-merge'
 import {
   SecondaryCell,
   SecondaryColumnFilter,
@@ -185,8 +184,8 @@ export function LastfmTrackMatchList() {
       />
       {matchedId && (
         <p role="status" className="ds-muted">
-          Track matched.{' '}
-          <DetailLink kind="track" id={matchedId}>
+          Last.fm names merged.{' '}
+          <DetailLink kind="track" id={matchedId} tab="sources">
             Open track
           </DetailLink>
         </p>
@@ -206,6 +205,7 @@ export function LastfmTrackMatchList() {
       {selected && (
         <TrackMergePanel
           track={selected}
+          namesOnly
           onClose={() => setSelected(null)}
           onMerged={setMatchedId}
         />
@@ -311,25 +311,27 @@ export function LastfmTrackMatchList() {
                       </TableCell>
                     )}
                     <TableCell>
-                      {canMergeLastfmTrack(track) ? (
-                        <Button
-                          className="secondary-cell-action"
-                          aria-label={`Match ${track.title}`}
-                          title={`Match ${track.title}`}
-                          aria-haspopup="dialog"
-                          disabled={changing || tracks.isError}
-                          onClick={() => {
-                            setMatchedId(null)
-                            setSelected(track)
-                          }}
-                        >
-                          <Link2 size={14} aria-hidden="true" />
+                      <div className="secondary-cell-actions">
+                        <Button size="xs" variant="ghost" asChild>
+                          <DetailLink kind="track" id={track.id} tab="sources">
+                            Scrobbled names
+                          </DetailLink>
                         </Button>
-                      ) : (
-                        <DetailLink kind="track" id={track.id}>
-                          Open track
-                        </DetailLink>
-                      )}
+                        {track.sources.includes('lastfm') && (
+                          <Button
+                            size="xs"
+                            aria-label={`Merge Last.fm names for ${track.title}`}
+                            aria-haspopup="dialog"
+                            disabled={changing || tracks.isError}
+                            onClick={() => {
+                              setMatchedId(null)
+                              setSelected(track)
+                            }}
+                          >
+                            Merge names
+                          </Button>
+                        )}
+                      </div>
                     </TableCell>
                   </TableRow>
                 )}
@@ -413,9 +415,8 @@ export default function LastfmTrackMatches() {
       )}
       <p className="ds-muted">
         Spotify links come from existing Spotify imports or a unique title in
-        the linked album’s stored track list. Open a track to see which applies
-        and the names recorded by Last.fm. Spotify has not been searched for
-        unmatched tracks.
+        the linked album’s stored track list. Open Scrobbled names to add, move
+        or remove a name. Merge names moves all recorded names to another track.
       </p>
       <span className="ds-actions">
         <Button

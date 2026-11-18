@@ -178,30 +178,6 @@ export const TrackListItemSchema = z.object({
 })
 export type TrackListItem = z.infer<typeof TrackListItemSchema>
 
-export const TrackScrobbleSourceSchema = z.object({
-  artistName: z.string(),
-  trackName: z.string(),
-  count: z.number().int().positive(),
-  strategy: TrackScrobbleLinkStrategySchema,
-})
-
-export const TrackLastfmSourceSchema = z.object({
-  artistName: z.string(),
-  trackName: z.string(),
-  /** Distinct recorded album names; empty when no album name was supplied. */
-  albumNames: z.array(z.string()),
-  count: z.number().int().positive(),
-  /** Includes an explicit owner choice for this library identity. */
-  manuallyMatched: z.boolean(),
-})
-
-export const TrackMergeInputSchema = z
-  .object({ targetId: z.string().min(1) })
-  .strict()
-export type TrackMergeInput = z.infer<typeof TrackMergeInputSchema>
-export const TrackMergeResultSchema = z.object({ targetId: z.string().min(1) })
-export type TrackMergeResult = z.infer<typeof TrackMergeResultSchema>
-
 const RecordedScrobbleKeySchema = z
   .string()
   .min(1)
@@ -211,18 +187,91 @@ const RecordedScrobbleKeySchema = z
     'Invalid recorded name key',
   )
 
-export const TrackScrobbleMatchInputSchema = TrackMergeInputSchema.extend({
-  targetId: z
+export const TrackScrobbleNameKeySchema = z
+  .object({
+    artistKey: RecordedScrobbleKeySchema,
+    trackKey: RecordedScrobbleKeySchema,
+  })
+  .strict()
+export type TrackScrobbleNameKey = z.infer<typeof TrackScrobbleNameKeySchema>
+
+// Stored name keys can predate the mutation input limits.
+const TrackScrobbleNameSchema = z.object({
+  artistKey: z.string(),
+  trackKey: z.string(),
+  artistName: z.string(),
+  trackName: z.string(),
+  count: z.number().int().positive(),
+})
+
+export const TrackScrobbleSourceSchema = TrackScrobbleNameSchema.extend({
+  strategy: TrackScrobbleLinkStrategySchema,
+})
+
+export const TrackLastfmSourceSchema = TrackScrobbleNameSchema.extend({
+  /** Distinct recorded album names; empty when no album name was supplied. */
+  albumNames: z.array(z.string()),
+  /** Includes an explicit owner choice for this library identity. */
+  manuallyMatched: z.boolean(),
+  /** The owner chose to keep this recorded name on its own Last.fm track. */
+  keptSeparate: z.boolean(),
+})
+
+export const TrackScrobbleNamesQuerySchema = PaginationQuerySchema.extend({
+  q: z
     .string()
     .trim()
-    .min(1)
-    .max(500)
-    .refine((id) => !id.includes('\0'), 'Invalid track ID'),
-  artistKey: RecordedScrobbleKeySchema,
-  trackKey: RecordedScrobbleKeySchema,
+    .max(200)
+    .refine((query) => !query.includes('\0'), 'Invalid search')
+    .optional(),
+  size: PaginationQuerySchema.shape.size.default(25),
+})
+export type TrackScrobbleNamesQuery = z.infer<
+  typeof TrackScrobbleNamesQuerySchema
+>
+const TrackScrobbledNameSchema = TrackLastfmSourceSchema.extend({
+  trackId: z.string(),
+})
+export type TrackScrobbledName = z.infer<typeof TrackScrobbledNameSchema>
+export const TrackScrobbleNamesPageSchema = PaginatedDataSchema(
+  TrackScrobbledNameSchema,
+)
+export type TrackScrobbleNamesPage = z.infer<
+  typeof TrackScrobbleNamesPageSchema
+>
+
+export const TrackMatchIdSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(500)
+  .refine((id) => !id.includes('\0'), 'Invalid track ID')
+
+export const TrackMergeInputSchema = z
+  .object({ targetId: TrackMatchIdSchema, namesOnly: z.boolean().optional() })
+  .strict()
+export type TrackMergeInput = z.infer<typeof TrackMergeInputSchema>
+export const TrackMergeResultSchema = z.object({
+  targetId: z.string().min(1),
+  /** The source track was removed after its Last.fm names were moved. */
+  sourceRemoved: z.literal(true).optional(),
+})
+export type TrackMergeResult = z.infer<typeof TrackMergeResultSchema>
+
+export const TrackScrobbleMatchInputSchema = TrackScrobbleNameKeySchema.extend({
+  targetId: TrackMatchIdSchema,
 })
 export type TrackScrobbleMatchInput = z.infer<
   typeof TrackScrobbleMatchInputSchema
+>
+
+export const TrackScrobbleRemoveInputSchema = TrackScrobbleNameKeySchema.extend(
+  {
+    mode: z.enum(['separate', 'automatic']).default('separate'),
+  },
+)
+export type TrackScrobbleRemoveInput = z.infer<
+  typeof TrackScrobbleRemoveInputSchema
 >
 
 export const TrackDetailSchema = TrackListItemSchema.extend({

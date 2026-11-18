@@ -38,11 +38,14 @@ const scrobbled = TrackDetailSchema.parse({
   lastListenedAt: '2026-01-04T00:00:00.000Z',
   lastfmSources: [
     {
+      artistKey: 'example artist',
+      trackKey: 'synthetic track',
       artistName: 'Example artist',
       trackName: 'Synthetic track',
       albumNames: ['Recorded album'],
       count: 3,
       manuallyMatched: false,
+      keptSeparate: false,
     },
   ],
   listening: {
@@ -52,6 +55,8 @@ const scrobbled = TrackDetailSchema.parse({
     months: [{ month: '2026-01', count: 3 }],
     sources: [
       {
+        artistKey: 'example artist',
+        trackKey: 'synthetic track',
         artistName: 'Example artist',
         trackName: 'Synthetic track',
         count: 3,
@@ -227,6 +232,9 @@ test('manual source choices are identified separately from automatic matches', (
   )
   assert.match(html, /chosen manually/)
   assert.match(html, /Manually matched/)
+  assert.match(html, />Add scrobbled name<\/button>/)
+  assert.match(html, />Merge Last.fm names<\/button>/)
+  assert.doesNotMatch(html, />Merge with Spotify track<\/button>/)
   assert.doesNotMatch(html, /unique artist and title match/)
 })
 
@@ -247,6 +255,14 @@ test('Sources lists the recorded and scrobbled Last.fm names in tables', () => {
   assert.match(html, /<h3>Recorded by Last.fm<\/h3>/)
   assert.match(html, /<table class="ds-table" aria-label="Scrobbled names">/)
   assert.match(html, /Example artist — Synthetic track/)
+  assert.match(html, />Add scrobbled name<\/button>/)
+  assert.match(html, />Merge Last.fm names<\/button>/)
+  assert.match(html, />Merge with Spotify track<\/button>/)
+  assert.match(
+    html,
+    /aria-label="Change match for Synthetic track by Example artist"/,
+  )
+  assert.match(html, /aria-label="Remove Synthetic track by Example artist"/)
   assert.match(
     html,
     /https:\/\/www.last.fm\/music\/Example%20artist\/_\/Synthetic%20track/,

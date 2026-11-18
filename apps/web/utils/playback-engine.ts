@@ -146,7 +146,7 @@ export type PlaybackState = {
   announcement: string
   /** Set by the session sync; the engine alone always runs its own queue. */
   sharing: PlaybackSharing
-  /** Taking over a saved session's device, and its outcome, until dismissed. */
+  /** Taking over a saved session's device, and its outcome. */
   rejoin: PlaybackRejoin | null
 }
 
@@ -215,6 +215,7 @@ const TRANSFER_SETTLE_MS = 5_000
 const READY_TIMEOUT_MS = 15_000
 const START_TIMEOUT_MS = 15_000
 const DEVICE_RETRY_MS = 700
+const REJOIN_NOTICE_MS = 10_000
 const DEVICE_RETRIES = 6
 const VOLUME_DEBOUNCE_MS = 250
 const RESTART_AFTER_MS = 3_000
@@ -458,6 +459,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
   let sequence = 0
   let timer: ReturnType<typeof setTimeout> | null = null
   let volumeTimer: ReturnType<typeof setTimeout> | null = null
+  let rejoinTimer: ReturnType<typeof setTimeout> | null = null
   let ticking = false
   let disposed = false
   let watching = false
@@ -523,6 +525,13 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     if (disposed) return
     const before = state.target
     state = { ...state, ...patch }
+    if (patch.rejoin !== undefined) {
+      if (rejoinTimer) clearTimeout(rejoinTimer)
+      rejoinTimer =
+        patch.rejoin?.status === 'rejoined'
+          ? setTimeout(() => set({ rejoin: null }), REJOIN_NOTICE_MS)
+          : null
+    }
     if (patch.target && !sameDevice(before, patch.target))
       options.onRoom?.(patch.target.kind === 'room' ? patch.target.room : null)
     for (const listener of listeners) listener()
@@ -3239,6 +3248,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       disposed = true
       stop()
       if (volumeTimer) clearTimeout(volumeTimer)
+      if (rejoinTimer) clearTimeout(rejoinTimer)
       rejectWaiters(new SdkFailure('disposed'))
       listeners.clear()
       player?.disconnect()

@@ -716,10 +716,13 @@ describe('Last.fm scrobble sync jobs with offline HTTP and a temporary database'
     expect(all.lastListenedAt).toBe(new Date(recent * 1000).toISOString())
     expect(all.months[0]).toEqual({ month: '2015-05', count: 2 })
     expect(all.months).toHaveLength(2)
+    const [listed] = await databaseClient.select().from(schema.track)
+    if (!listed) throw new Error('Missing fixture album track')
     expect(all.tracks).toEqual([
       {
         key: 'first track',
-        title: 'First track',
+        trackId: listed.trackMediaItemId,
+        title: 'First Track',
         position: 1,
         count: 2,
         lastListenedAt: new Date(recent * 1000).toISOString(),
@@ -752,5 +755,86 @@ describe('Last.fm scrobble sync jobs with offline HTTP and a temporary database'
     expect(bonus.months).toEqual([{ month: '2015-05', count: 1 }])
     expect(bonus.tracks).toHaveLength(2)
     expect((await getAlbumListening('missing')).total).toBe(0)
+  })
+
+  it('groups confirmed track names on the album and filters all their plays together', async () => {
+    const { getAlbumListening, setLastfmAlbumLink } =
+      await import('@/services/lastfm-scrobbles')
+    respond(
+      page(1, 1, [
+        scrobble(recent, '01. First Track'),
+        scrobble(old + 120, 'First Track', 'Album fixture (Deluxe Edition)'),
+        scrobble(old, 'First Track'),
+        scrobble(old - 60, 'First Track', 'Unknown album'),
+        scrobble(old - 120, 'First Track', 'Other release', 'Other artist'),
+        scrobble(old - 180, 'First Track (Remastered)'),
+      ]),
+    )
+    await syncToEnd()
+    await setLastfmAlbumLink({
+      action: 'link',
+      artistName: 'Other artist',
+      albumName: 'Other release',
+      albumId: 'album-fixture',
+    })
+
+    const [listed] = await databaseClient.select().from(schema.track)
+    if (!listed) throw new Error('Missing fixture album track')
+    const matched = await databaseClient.select().from(schema.lastfmTrackSource)
+    expect(
+      matched.find(
+        (row) =>
+          row.trackKey === 'first track' && row.artistKey === 'artist fixture',
+      )?.trackMediaItemId,
+    ).not.toBe(listed.trackMediaItemId)
+    await databaseClient
+      .update(schema.lastfmTrackSource)
+      .set({ trackMediaItemId: listed.trackMediaItemId, manuallyMatched: true })
+      .where(eq(schema.lastfmTrackSource.trackKey, '01. first track'))
+    await databaseClient
+      .update(schema.lastfmTrackSource)
+      .set({ manuallyMatched: true })
+      .where(eq(schema.lastfmTrackSource.trackKey, 'first track (remastered)'))
+
+    const all = await getAlbumListening('album-fixture')
+    expect(all.total).toBe(5)
+    expect(all.tracks).toMatchObject([
+      {
+        title: 'First Track',
+        trackId: listed.trackMediaItemId,
+        position: 1,
+        count: 3,
+      },
+      { title: 'First Track (Remastered)', position: null, count: 1 },
+      { title: 'First Track', position: null, count: 1 },
+    ])
+    expect(
+      all.sources.map(({ albumName, count }) => [albumName, count]),
+    ).toEqual([
+      ['Album fixture', 3],
+      ['Album fixture (Deluxe Edition)', 1],
+      ['Other release', 1],
+    ])
+    const [combined, remastered, unrelated] = all.tracks
+    if (!combined || !unrelated)
+      throw new Error('Missing fixture listening rows')
+    expect(combined.key).not.toBe(unrelated.key)
+    expect(unrelated.trackId).toBeUndefined()
+    expect(remastered?.trackId).toBeUndefined()
+    const selected = await getAlbumListening('album-fixture', combined.key)
+    expect(selected.total).toBe(3)
+    expect(selected.months).toEqual([
+      { month: '2015-05', count: 2 },
+      { month: new Date(recent * 1000).toISOString().slice(0, 7), count: 1 },
+    ])
+    expect(
+      (await getAlbumListening('album-fixture', unrelated.key)).total,
+    ).toBe(1)
+    expect(
+      (await getAlbumListening('album-fixture', '01. first track')).total,
+    ).toBe(3)
+    expect(
+      (await getAlbumListening('album-fixture', 'first track')).total,
+    ).toBe(3)
   })
 })

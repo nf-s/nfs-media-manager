@@ -76,10 +76,12 @@ test('a tag has the shared header and Overview and Sources tabs', () => {
     html,
     /href="\/albums\?filters=[^"]+">Browse albums with this tag/,
   )
-  assert.match(
-    render(<TagDetail id="tag-1" mediaType="album" />, 'tab=sources'),
-    /<h3>Detailed provenance<\/h3>/,
+  const sources = render(
+    <TagDetail id="tag-1" mediaType="album" />,
+    'tab=sources',
   )
+  assert.match(sources, /<h3>Detailed provenance<\/h3>/)
+  assert.match(sources, /aria-label="Find tag to merge"/)
 })
 
 test('outside the app drawer a tag opens in a drawer frame of its own', () => {

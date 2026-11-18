@@ -46,6 +46,7 @@ vi.mock('@/plugins/registry', () => ({
 
 import { refreshTrackLinks } from '@/services/track-links'
 import { replaceAlbumTracks } from '@/services/album-library-tracks'
+import { reconcileLastfmAlbumTrackAliases } from '@/services/lastfm-library-tracks'
 import { mergeLastfmTrack } from '@/services/track-merges'
 import {
   listTrackMatchDiagnostics,
@@ -962,11 +963,14 @@ describe('Last.fm tracks library', () => {
     )
     expect((await getTrackDetail(items[0]?.id ?? ''))?.lastfmSources).toEqual([
       {
+        artistKey: albumNameKey(ARTIST),
+        trackKey: 'uncatalogued song',
         artistName: ARTIST,
         trackName: 'Uncatalogued Song',
         albumNames: ['Uncatalogued Album'],
         count: 2,
         manuallyMatched: false,
+        keptSeparate: false,
       },
     ])
     await refreshTrackLinks(LISTENER)
@@ -1056,11 +1060,14 @@ describe('Last.fm tracks library', () => {
     expect((await getTrackDetail(standalone?.id ?? ''))?.lastfmSources).toEqual(
       [
         {
+          artistKey: albumNameKey(ARTIST),
+          trackKey: 'ambiguous song',
           artistName: ARTIST,
           trackName: 'Ambiguous Song',
           albumNames: ['Shared Album'],
           count: 1,
           manuallyMatched: false,
+          keptSeparate: false,
         },
       ],
     )
@@ -1238,6 +1245,228 @@ describe('Last.fm tracks library', () => {
       isrc: null,
     })
     expect(request).not.toHaveBeenCalled()
+  })
+
+  it('reconciles numbered and featured scrobble names through a unique confirmed album position', async () => {
+    const albumId = 'alias-release'
+    const release = 'Fixture Release'
+    const options = { album: release }
+    const names: [string, string][] = [
+      ['02 - Signal', ARTIST],
+      ['Signal (feat. Guest Singer)', ARTIST],
+      ['Signal', ARTIST + ', Guest Singer'],
+    ]
+    for (const [title, artist] of names)
+      await scrobble(title, { ...options, artist })
+    await scrobble('Signal', options)
+    await refreshTrackLinks(LISTENER)
+    // A subsequent metadata import supplies the actual recording.
+    await album(albumId, release, [
+      { title: 'Intro' },
+      { title: 'Signal', spotifyId: spotifyId('signal') },
+    ])
+    await databaseClient
+      .update(schema.lastfmScrobble)
+      .set({ albumMediaItemId: albumId })
+    await refreshTrackLinks(LISTENER)
+    const resolve = async () =>
+      (await allTracks()).filter((track) => track.sources.includes('lastfm'))
+    expect(await resolve()).toMatchObject([
+      { title: 'Signal', spotifyTrackId: spotifyId('signal'), scrobbles: 4 },
+    ])
+    await refreshTrackLinks(LISTENER)
+    expect(await resolve()).toHaveLength(1)
+    expect(
+      await databaseClient.select().from(schema.lastfmScrobble),
+    ).toHaveLength(4)
+    expect(
+      await databaseClient.select().from(schema.lastfmTrackSource),
+    ).toHaveLength(4)
+  })
+
+  it('matches previously imported aliases as soon as an album track list supplies their positions', async () => {
+    const albumId = 'late-album-positions'
+    const release = 'Late Positions'
+    const options = { albumId, album: release }
+    await album(albumId, release, [])
+    await scrobble('02 - Signal', options)
+    await scrobble('Signal (feat. Guest Singer)', options)
+    await scrobble('Signal', { ...options, artist: ARTIST + ', Guest Singer' })
+    await scrobble('03 - Playlist Track', options)
+    await scrobble('04 - Already Known', options)
+    await scrobble('05 - Conflicting History', options)
+    await scrobble('05 - Conflicting History', { album: 'Unknown Release' })
+    await refreshTrackLinks(LISTENER)
+
+    const before = await databaseClient.select().from(schema.lastfmTrackSource)
+    const inPlaylist = before.find(
+      (row) => row.trackKey === '03 - playlist track',
+    )
+    const alreadyKnown = before.find(
+      (row) => row.trackKey === '04 - already known',
+    )
+    const conflicting = before.find(
+      (row) => row.trackKey === '05 - conflicting history',
+    )
+    if (!inPlaylist || !alreadyKnown || !conflicting)
+      throw new Error('Expected standalone Last.fm fixtures')
+    await playlist('alias-playlist', [inPlaylist.trackMediaItemId])
+    await spotifyTrack('exact-release-track', '04 - Already Known', options)
+
+    await databaseClient.transaction((tx) =>
+      replaceAlbumTracks(tx, albumId, [
+        { title: 'Opening', position: 1 },
+        { title: 'Signal', position: 2, externalId: spotifyId('late-signal') },
+        { title: 'Playlist Track', position: 3 },
+        { title: 'Already Known', position: 4 },
+        { title: 'Conflicting History', position: 5 },
+      ]),
+    )
+
+    const listed = (await getAlbumDetail(albumId))?.tracks[1]?.track
+    expect(listed).toMatchObject({
+      title: 'Signal',
+      spotifyTrackId: spotifyId('late-signal'),
+      scrobbles: 3,
+      sources: ['album', 'lastfm'],
+    })
+    const after = await databaseClient.select().from(schema.lastfmTrackSource)
+    expect(
+      after.filter((row) => row.trackMediaItemId === listed?.id),
+    ).toHaveLength(3)
+    expect(after).toEqual(
+      expect.arrayContaining([inPlaylist, alreadyKnown, conflicting]),
+    )
+    expect(
+      await databaseClient.select().from(schema.lastfmScrobble),
+    ).toHaveLength(7)
+    expect(request).not.toHaveBeenCalled()
+  })
+
+  it('previews and reconciles stored aliases without changing explicit choices or duplicating scrobbles', async () => {
+    const albumId = 'pending-alias-release'
+    const release = 'Pending Aliases'
+    await album(albumId, release, [])
+    await scrobble('01 - First Signal', { albumId, album: release })
+    await scrobble('02 - Second Signal', { albumId, album: release })
+    await refreshTrackLinks(LISTENER)
+    await databaseClient
+      .update(schema.lastfmTrackSource)
+      .set({ manuallyMatched: true })
+      .where(eq(schema.lastfmTrackSource.trackKey, '02 - second signal'))
+    const before = await databaseClient.select().from(schema.lastfmTrackSource)
+    const manual = before.find((row) => row.manuallyMatched)
+    if (!manual) throw new Error('Expected a manual source fixture')
+
+    // As if the track list was stored before automatic alias reconciliation.
+    for (const [index, title] of ['First Signal', 'Second Signal'].entries()) {
+      const id = `pending-alias-track-${index}`
+      await spotifyTrack(id, title, { albumId, album: release })
+      await databaseClient.insert(schema.track).values({
+        id,
+        albumMediaItemId: albumId,
+        trackMediaItemId: id,
+        position: index + 1,
+        title,
+      })
+    }
+    const guest = 'Fixture Guest'
+    const guestId = createStableId('artist', guest.toLowerCase())
+    await databaseClient
+      .insert(schema.artist)
+      .values({ id: guestId, name: guest })
+    await databaseClient.insert(schema.mediaCredit).values({
+      mediaItemId: 'pending-alias-track-0',
+      artistId: guestId,
+      role: 'artist',
+      billingOrder: 1,
+    })
+    await databaseClient.insert(schema.lastfmTrackLink).values({
+      username: LISTENER,
+      artistKey: albumNameKey(ARTIST),
+      trackKey: '01 - first signal',
+      trackMediaItemId: 'pending-alias-track-0',
+      strategy: 'version',
+    })
+    const check = (dryRun = false) =>
+      databaseClient.transaction((tx) =>
+        reconcileLastfmAlbumTrackAliases(tx, { dryRun }),
+      )
+    expect(await check(true)).toBe(1)
+    expect(
+      await databaseClient.select().from(schema.lastfmTrackSource),
+    ).toEqual(expect.arrayContaining(before))
+    expect(await check()).toBe(1)
+    expect(await check()).toBe(0)
+    const after = await databaseClient.select().from(schema.lastfmTrackSource)
+    expect(after).toEqual(
+      expect.arrayContaining([
+        manual,
+        expect.objectContaining({
+          trackKey: '01 - first signal',
+          trackMediaItemId: 'pending-alias-track-0',
+        }),
+      ]),
+    )
+    expect(
+      await databaseClient.select().from(schema.lastfmScrobble),
+    ).toHaveLength(2)
+    expect((await getAlbumDetail(albumId))?.tracks[0]?.track).toMatchObject({
+      title: 'First Signal',
+      scrobbles: 1,
+      dateAdded: FIRST_LISTEN,
+    })
+    const [link] = await databaseClient
+      .select()
+      .from(schema.lastfmTrackLink)
+      .where(
+        eq(schema.lastfmTrackLink.trackMediaItemId, 'pending-alias-track-0'),
+      )
+    expect(link?.strategy).toBe('exact')
+    const [artist] = await databaseClient
+      .select()
+      .from(schema.artist)
+      .where(eq(schema.artist.id, guestId))
+    expect(artist?.scrobbleCount).toBe(1)
+    expect(request).not.toHaveBeenCalled()
+  })
+
+  it('requires the release position and corroborated artist credits and preserves version labels', async () => {
+    const albumId = 'ambiguous-alias-release'
+    const options = { albumId, album: 'Alias Release' }
+    await album(albumId, options.album, [
+      { title: 'Opening' },
+      { title: 'Signal', spotifyId: spotifyId('studio') },
+      { title: 'Signal (Radio Edit)', spotifyId: spotifyId('edit') },
+      { title: 'Twice (feat. A)', spotifyId: spotifyId('guest-a') },
+      { title: 'Twice (feat. B)', spotifyId: spotifyId('guest-b') },
+    ])
+    for (const title of [
+      '01 - Signal',
+      '02 - Signal (Remix)',
+      '02 - Signal (Radio Edit)',
+      'Signal feat. Guest - Radio Edit',
+      'Twice (feat. C)',
+      'Signal (feat. A)',
+      'Signal (feat. B)',
+    ])
+      await scrobble(title, options)
+    await scrobble('Signal', { ...options, artist: ARTIST + ', Unknown' })
+    await scrobble('02 - Opening', { ...options, artist: 'Different Artist' })
+    await scrobble('02 - Mixed', options)
+    await scrobble('02 - Mixed', { album: 'Unknown Release', at: LAST_LISTEN })
+    await refreshTrackLinks(LISTENER)
+    const sources = await databaseClient
+      .select({ id: schema.lastfmTrackSource.trackMediaItemId })
+      .from(schema.lastfmTrackSource)
+    const tracks = await allTracks()
+    expect(sources).toHaveLength(10)
+    expect(
+      sources.every(
+        (source) =>
+          tracks.find((item) => item.id === source.id)?.spotifyTrackId === null,
+      ),
+    ).toBe(true)
   })
 
   it('does not infer playback from ambiguous album titles or a different recording version', async () => {
@@ -1483,18 +1712,24 @@ describe('Last.fm tracks library', () => {
     const detail = await getTrackDetail(item?.id ?? '')
     expect(detail?.lastfmSources).toEqual([
       {
+        artistKey: albumNameKey(ARTIST),
+        trackKey: 'recorded song',
         artistName: ARTIST,
         trackName: 'Recorded Song',
         albumNames: ['Another Album', 'Original Album'],
         count: 2,
         manuallyMatched: false,
+        keptSeparate: false,
       },
       {
+        artistKey: albumNameKey(ARTIST),
+        trackKey: 'recorded song',
         artistName: ' example artist ',
         trackName: ' RECORDED SONG ',
         albumNames: [],
         count: 1,
         manuallyMatched: false,
+        keptSeparate: false,
       },
     ])
     expect(JSON.stringify(detail?.lastfmSources)).not.toContain(LISTENER)
@@ -1584,11 +1819,14 @@ describe('Last.fm tracks library', () => {
       listening: { total: 2, sources: [{ strategy: 'manual', count: 2 }] },
       lastfmSources: [
         {
+          artistKey: albumNameKey(ARTIST),
+          trackKey: 'shared recording',
           artistName: ARTIST,
           trackName: 'Shared Recording',
           albumNames: ['Another Release', 'Scrobbled Release'],
           count: 2,
           manuallyMatched: true,
+          keptSeparate: false,
         },
       ],
     })
@@ -1639,18 +1877,24 @@ describe('Last.fm tracks library', () => {
     const detail = await getTrackDetail('chosen')
     expect(detail?.lastfmSources).toEqual([
       {
+        artistKey: albumNameKey(ARTIST),
+        trackKey: 'chosen recording',
         artistName: ARTIST,
         trackName: 'Chosen Recording',
         albumNames: [],
         count: 1,
         manuallyMatched: false,
+        keptSeparate: false,
       },
       {
+        artistKey: albumNameKey(ARTIST),
+        trackKey: 'recorded title',
         artistName: ARTIST,
         trackName: 'Recorded Title',
         albumNames: ['Recorded Album'],
         count: 1,
         manuallyMatched: true,
+        keptSeparate: false,
       },
     ])
     expect(detail?.listening.total).toBe(2)

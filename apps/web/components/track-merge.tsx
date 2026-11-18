@@ -9,6 +9,7 @@ import {
   TrackMergeInputSchema,
   TrackMergeResultSchema,
   TrackScrobbleMatchInputSchema,
+  trackSourceLabels,
   trackSpotifyMatchLabels,
   type TrackListItem,
 } from '@repo/schemas/tracks'
@@ -53,13 +54,13 @@ export function canMergeLastfmTrack(track: TrackListItem) {
   )
 }
 
-/** Searches stored imported Spotify tracks without contacting a provider. */
+/** Searches stored tracks without contacting a provider. */
 export async function loadTrackMergeCandidates(
   apiBaseUrl: string,
   query: string,
   page: number,
   signal?: AbortSignal,
-  includeAlbumTracks = false,
+  includeLibraryTracks = false,
 ) {
   const params = new URLSearchParams({
     q: query,
@@ -67,16 +68,21 @@ export async function loadTrackMergeCandidates(
     size: String(SEARCH_RESULTS),
     sortBy: 'title',
     direction: 'asc',
-    filters: JSON.stringify([
-      {
-        field: 'spotifyMatch',
-        value:
-          trackSpotifyMatchLabels[
-            includeAlbumTracks ? 'unmatched' : 'spotify-import'
+    filters: JSON.stringify(
+      includeLibraryTracks
+        ? Object.values(trackSourceLabels).map((value) => ({
+            field: 'source',
+            value,
+            mode: 'any',
+          }))
+        : [
+            {
+              field: 'spotifyMatch',
+              value: trackSpotifyMatchLabels['spotify-import'],
+              mode: 'required',
+            },
           ],
-        mode: includeAlbumTracks ? 'exclude' : 'required',
-      },
-    ]),
+    ),
   })
   return fetchApiData(apiBaseUrl, `/api/v1/tracks?${params}`, TrackPageSchema, {
     signal,
@@ -86,11 +92,9 @@ export async function loadTrackMergeCandidates(
 export async function changeTrackScrobbleMatch(
   apiBaseUrl: string,
   sourceId: string,
-  target: TrackListItem,
+  targetId: string,
   { artistKey, trackKey }: TrackScrobbleCorrection,
 ) {
-  if (target.id === sourceId || !target.spotifyTrackId)
-    throw new Error('Choose another track with a Spotify ID.')
   return fetchApiData(
     apiBaseUrl,
     `/api/v1/tracks/${encodeURIComponent(sourceId)}/scrobble-match`,
@@ -101,7 +105,7 @@ export async function changeTrackScrobbleMatch(
         TrackScrobbleMatchInputSchema.parse({
           artistKey,
           trackKey,
-          targetId: target.id,
+          targetId,
         }),
       ),
     },
@@ -113,10 +117,15 @@ export async function mergeLibraryTrack(
   apiBaseUrl: string,
   source: TrackListItem,
   target: TrackListItem,
+  namesOnly = false,
 ) {
-  if (!canMergeLastfmTrack(source))
+  if (source.id === target.id)
+    throw new Error('Choose a different track to keep.')
+  if (!namesOnly && !canMergeLastfmTrack(source))
     throw new Error('This track is not a separate Last.fm record.')
-  if (target.id === source.id || target.spotifyMatch !== 'spotify-import')
+  if (!source.sources.includes('lastfm'))
+    throw new Error('This track has no Last.fm names to merge.')
+  if (!namesOnly && target.spotifyMatch !== 'spotify-import')
     throw new Error('Choose an imported Spotify track to keep.')
   return fetchApiData(
     apiBaseUrl,
@@ -125,7 +134,10 @@ export async function mergeLibraryTrack(
     {
       method: 'POST',
       body: JSON.stringify(
-        TrackMergeInputSchema.parse({ targetId: target.id }),
+        TrackMergeInputSchema.parse({
+          targetId: target.id,
+          ...(namesOnly && { namesOnly: true }),
+        }),
       ),
     },
   )
@@ -148,6 +160,7 @@ export function TrackMergeReview({
   source,
   target,
   correction,
+  namesOnly = false,
   pending,
   onConfirm,
   onBack,
@@ -155,6 +168,7 @@ export function TrackMergeReview({
   source: TrackListItem
   target: TrackListItem
   correction?: TrackScrobbleCorrection
+  namesOnly?: boolean
   pending: boolean
   onConfirm: () => void
   onBack: () => void
@@ -168,16 +182,18 @@ export function TrackMergeReview({
             <span>{correction.artistName ?? source.artists.join(', ')}</span>
           </div>
         </Section>
-        <Section title="Current track">
-          <TrackIdentity track={source} />
-        </Section>
-        <Section title="Spotify track to match">
+        {source.id !== target.id && (
+          <Section title="Current track">
+            <TrackIdentity track={source} />
+          </Section>
+        )}
+        <Section title="Track to link">
           <TrackIdentity track={target} />
         </Section>
         <Section>
           <p>
-            Listening history for this recorded name moves to the selected
-            track. Both tracks keep their releases and playlists.
+            This recorded name and its listening history will be linked to the
+            selected track. Later syncs keep this choice.
           </p>
         </Section>
         <div className="ds-actions">
@@ -192,21 +208,38 @@ export function TrackMergeReview({
     )
   return (
     <div role="group" aria-label="Confirm track merge">
-      <Section title="Last.fm record to merge" flush>
+      <Section
+        title={
+          namesOnly ? 'Track with names to merge' : 'Last.fm record to merge'
+        }
+        flush
+      >
         <TrackIdentity track={source} />
         <span className="ds-muted">
           {formatCount(source.scrobbles)} scrobbles
         </span>
       </Section>
-      <Section title="Spotify track to keep">
+      <Section
+        title={
+          namesOnly ? 'Track to link the names to' : 'Spotify track to keep'
+        }
+      >
         <TrackIdentity track={target} />
       </Section>
       <Section>
-        <p>
-          The Spotify track keeps its Spotify ID and playlists. The separate
-          Last.fm record is removed, and its recorded names and listening
-          history belong to the Spotify track. Later syncs keep this choice.
-        </p>
+        {namesOnly ? (
+          <p>
+            All recorded Last.fm names and their listening history move to the
+            selected track. Album and playlist entries stay in place. Later
+            syncs keep this choice.
+          </p>
+        ) : (
+          <p>
+            The Spotify track keeps its Spotify ID and playlists. The separate
+            Last.fm record is removed, and its recorded names and listening
+            history belong to the Spotify track. Later syncs keep this choice.
+          </p>
+        )}
       </Section>
       <div className="ds-actions">
         <Button variant="primary" disabled={pending} onClick={onConfirm}>
@@ -224,14 +257,16 @@ export function TrackMergePanel({
   track,
   initialTarget,
   correction,
+  namesOnly = false,
   onClose,
   onMerged,
 }: {
   track: TrackListItem
   initialTarget?: TrackListItem
   correction?: TrackScrobbleCorrection
+  namesOnly?: boolean
   onClose: () => void
-  onMerged: (targetId: string) => void
+  onMerged: (targetId: string, sourceRemoved?: boolean) => void
 }) {
   const { apiBaseUrl } = useConfig()
   const client = useQueryClient()
@@ -244,10 +279,14 @@ export function TrackMergePanel({
   const [target, setTarget] = useState<TrackListItem | null>(
     initialTarget ?? null,
   )
+  const includeLibraryTracks = namesOnly || correction !== undefined
+  const searchLabel = includeLibraryTracks
+    ? 'Library tracks'
+    : 'Spotify library tracks'
   const candidates = useVirtualTable({
     queryKey: [
       'tracks',
-      correction ? 'scrobble-match-candidates' : 'merge-candidates',
+      includeLibraryTracks ? 'scrobble-match-candidates' : 'merge-candidates',
       query,
     ],
     pageSize: SEARCH_RESULTS,
@@ -258,19 +297,22 @@ export function TrackMergePanel({
         query,
         page,
         signal,
-        correction !== undefined,
+        includeLibraryTracks,
       ),
   })
   const merge = useMutation({
     retry: false,
     mutationFn: (chosen: TrackListItem) =>
       correction
-        ? changeTrackScrobbleMatch(apiBaseUrl, track.id, chosen, correction)
-        : mergeLibraryTrack(apiBaseUrl, track, chosen),
-    onSuccess: async (result) => {
-      onMerged(result.targetId)
+        ? changeTrackScrobbleMatch(apiBaseUrl, track.id, chosen.id, correction)
+        : mergeLibraryTrack(apiBaseUrl, track, chosen, namesOnly),
+    onSuccess: async ({ targetId, sourceRemoved }) => {
+      onMerged(targetId, sourceRemoved)
       onClose()
-      await invalidateScrobbleLinks(client, correction ? undefined : track.id)
+      await invalidateScrobbleLinks(
+        client,
+        sourceRemoved || (!correction && !namesOnly) ? track.id : undefined,
+      )
     },
   })
   useEffect(() => {
@@ -304,7 +346,11 @@ export function TrackMergePanel({
         <div className="ds-inspector-bar">
           <div className="ds-crumbs">
             <b id={titleId}>
-              {correction ? 'Change scrobble match' : 'Track match'}
+              {correction
+                ? 'Change scrobble match'
+                : namesOnly
+                  ? 'Merge Last.fm names'
+                  : 'Track match'}
             </b>
           </div>
           <Button
@@ -325,6 +371,7 @@ export function TrackMergePanel({
               source={track}
               target={target}
               correction={correction}
+              namesOnly={namesOnly}
               pending={merge.isPending}
               onConfirm={() => merge.mutate(target)}
               onBack={() => {
@@ -335,16 +382,27 @@ export function TrackMergePanel({
           ) : (
             <>
               <TrackIdentity track={track} />
+              {correction && (
+                <div className="ds-actions">
+                  <Button size="xs" onClick={() => setTarget(track)}>
+                    Keep on this track
+                  </Button>
+                </div>
+              )}
               {!correction && (
                 <span className="ds-muted">
                   {formatCount(track.scrobbles)} scrobbles
                 </span>
               )}
               <label className="ds-field">
-                <span className="ds-label">Spotify library track</span>
+                <span className="ds-label">
+                  {includeLibraryTracks
+                    ? 'Library track'
+                    : 'Spotify library track'}
+                </span>
                 <Input
                   type="search"
-                  aria-label="Search Spotify library tracks"
+                  aria-label={`Search ${includeLibraryTracks ? 'library tracks' : searchLabel}`}
                   placeholder="Search library tracks"
                   maxLength={200}
                   value={draft}
@@ -375,13 +433,10 @@ export function TrackMergePanel({
                     onScroll={candidates.onScroll}
                     className="dtl-bounded"
                     role="region"
-                    aria-label="Spotify library tracks"
+                    aria-label={searchLabel}
                     aria-busy={candidates.isFetching}
                   >
-                    <table
-                      className="ds-table"
-                      aria-label="Spotify library tracks"
-                    >
+                    <table className="ds-table" aria-label={searchLabel}>
                       <TableHeader>
                         <TableRow>
                           <TableHead>Track</TableHead>
@@ -395,8 +450,8 @@ export function TrackMergePanel({
                       <TableBody>
                         {candidates.hasTotal && !candidates.total && (
                           <TableState colSpan={4}>
-                            {correction
-                              ? 'No tracks with Spotify IDs found.'
+                            {includeLibraryTracks
+                              ? 'No library tracks found.'
                               : 'No imported Spotify tracks found.'}
                           </TableState>
                         )}
@@ -406,9 +461,8 @@ export function TrackMergePanel({
                             colSpan={4}
                             renderRow={(item) =>
                               item.id === track.id ||
-                              (correction
-                                ? !item.spotifyTrackId
-                                : item.spotifyMatch !== 'spotify-import') ? (
+                              (!includeLibraryTracks &&
+                                item.spotifyMatch !== 'spotify-import') ? (
                                 <tr aria-hidden="true">
                                   <td
                                     colSpan={4}

@@ -14,7 +14,9 @@ Combine a match filter with track filters such as artist, album, playlist and so
 
 The Album column distinguishes release appearances of the same title. Spotify shows the imported recording or a saved album track with that Spotify ID. An ID can be available even when the provider title and credits are missing. Last.fm shows the actual artist and track names on the linked listens, including spelling variants. The Discogs column shows the track at the corresponding position in the linked release's stored Discogs track list. Its link opens the album's Discogs source.
 
-Use **Change match** beside a single Last.fm name or in the cell's additional identities to choose the playable track that should receive those listens. Check both identities before confirming. This moves the recorded name and its listening history. The library album and playlist entries keep their positions.
+Use **Change match** beside a single Last.fm name or in the cell's additional identities to choose the library track that should receive those listens. Check both identities before confirming. This moves the recorded name and its listening history. The library album and playlist entries keep their positions.
+
+Track **Sources** also lets you search for and add an imported scrobbled name, keep one separate, or restore automatic matching. **Merge Last.fm names** moves all the recorded names together. The destination can be another Last.fm-only track.
 
 Use **Merge** when a separate Last.fm record and an imported Spotify track should be one library entry. The review identifies the source and the track to keep. A confirmed merge carries over the source's recorded names and playlist memberships. The manual choice is used on subsequent syncs. Standalone Last.fm rows hidden from ordinary Browse remain available in Matches.
 

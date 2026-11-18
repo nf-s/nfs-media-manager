@@ -18,11 +18,14 @@ test('merged track links keep recorded Last.fm identity beside the retained Spot
     spotifyUrl: 'https://open.spotify.com/track/1234567890ABCDEFGHIJKL',
     lastfmSources: [
       {
+        artistKey: 'recorded artist',
+        trackKey: 'recorded title',
         artistName: 'Recorded artist',
         trackName: 'Recorded title',
         albumNames: [],
         count: 2,
         manuallyMatched: true,
+        keptSeparate: false,
       },
     ],
   })

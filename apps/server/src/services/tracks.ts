@@ -39,6 +39,7 @@ import {
 } from './browse'
 import type { RecordingGroup } from './recording-groups'
 import { refreshTrackAddedDates } from './spotify-playlists'
+import { getLastfmTrackNames } from './lastfm-track-names'
 import {
   lockLibraryTrackWrites,
   removeOrphanTracks,
@@ -279,19 +280,12 @@ const MonthRowsSchema = z.array(
 )
 const SourceRowsSchema = z.array(
   z.object({
+    artist_key: z.string(),
+    track_key: z.string(),
     artist_name: z.string(),
     track_name: z.string(),
     count: z.coerce.number(),
     strategy: TrackScrobbleLinkStrategySchema,
-  }),
-)
-const LastfmSourceRowsSchema = z.array(
-  z.object({
-    artist_name: z.string(),
-    track_name: z.string(),
-    album_names: z.array(z.string()),
-    count: z.coerce.number().int().positive(),
-    manually_matched: z.boolean(),
   }),
 )
 const isoSeconds = (value: number | null) =>
@@ -324,7 +318,7 @@ export async function getTrackDetail(id: string): Promise<TrackDetail | null> {
   const sources = SourceRowsSchema.parse(
     (
       await db.execute(sql`
-        select max(s.artist_name) as artist_name,
+        select l.artist_key, l.track_key, max(s.artist_name) as artist_name,
           max(s.track_name) as track_name, count(*) as count,
           max(l.strategy) as strategy
         ${linked}
@@ -332,36 +326,18 @@ export async function getTrackDetail(id: string): Promise<TrackDetail | null> {
         order by count(*) desc, l.artist_key, l.track_key limit 50`)
     ).rows,
   )
-  const lastfmSources = LastfmSourceRowsSchema.parse(
-    (
-      await db.execute(sql`
-        select s.artist_name, s.track_name, count(*) as count,
-          bool_or(l.manually_matched) as manually_matched,
-          coalesce(array_agg(distinct s.album_name order by s.album_name)
-            filter (where nullif(trim(s.album_name), '') is not null), '{}') as album_names
-        from lastfm_track_source l
-        join lastfm_scrobble s on s.username = l.username
-          and s.artist_key = l.artist_key and s.track_key = l.track_key
-        where l.track_media_item_id = ${id}
-        group by s.artist_name, s.track_name
-        order by count(*) desc, s.artist_name, s.track_name limit 50`)
-    ).rows,
-  )
+  const lastfmSources = await getLastfmTrackNames(id)
   return TrackDetailSchema.parse({
     ...item,
-    lastfmSources: lastfmSources.map((row) => ({
-      artistName: row.artist_name,
-      trackName: row.track_name,
-      albumNames: row.album_names,
-      count: row.count,
-      manuallyMatched: row.manually_matched,
-    })),
+    lastfmSources,
     listening: {
       total: summary[0]?.total ?? 0,
       firstListenedAt: isoSeconds(summary[0]?.first ?? null),
       lastListenedAt: isoSeconds(summary[0]?.last ?? null),
       months,
       sources: sources.map((row) => ({
+        artistKey: row.artist_key,
+        trackKey: row.track_key,
         artistName: row.artist_name,
         trackName: row.track_name,
         count: row.count,

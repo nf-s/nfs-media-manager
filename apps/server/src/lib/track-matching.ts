@@ -1,9 +1,11 @@
 import type {
   TrackAlbumLinkStrategy,
   TrackScrobbleLinkStrategy,
+  TrackScrobbleNameKey,
 } from '@repo/schemas/tracks'
 import { albumNameKey } from './album-import-candidates'
 import { artistKeys, baseTitleKey, plainKey } from './lastfm-album-matching'
+import { createStableId } from './media-utils'
 
 const BRACKETED = /[([]([^()[\]]*)[)\]]/g
 const DASH = /\s+[-–—]\s+/
@@ -11,6 +13,16 @@ const INLINE_FEATURE = /\s+(?:feat\.?|ft\.?|featuring)\s+.*$/i
 // A featured credit, a remaster note or the default mix names the same recording.
 const SAME_RECORDING =
   /^(?:(?:feat\.?|ft\.?|featuring|with)\s|.*\bremaster(?:ed)?\b|original(?: mix| version)?$|album version$|bonus track$|explicit$|clean$)/i
+
+export function standaloneLastfmTrackId(
+  account: string,
+  { artistKey, trackKey }: TrackScrobbleNameKey,
+) {
+  return createStableId(
+    'library-track',
+    JSON.stringify(['lastfm', account, artistKey, trackKey]),
+  )
+}
 
 function titleParts(title: string) {
   const qualifiers: string[] = []

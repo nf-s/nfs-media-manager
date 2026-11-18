@@ -221,8 +221,15 @@ test('matching rows expose stored metadata, service icons and actions for both e
   const html = renderList([lastfmTrack, fallback])
   assert.match(html, /aria-label="Search Last.fm tracks"/)
   assert.match(html, /aria-label="Last.fm tracks to match"/)
-  assert.match(html, /aria-label="Match Stored recording"/)
-  assert.match(html, /aria-label="Match Album-derived recording"/)
+  assert.match(html, /aria-label="Merge Last.fm names for Stored recording"/)
+  assert.match(
+    html,
+    /aria-label="Merge Last.fm names for Album-derived recording"/,
+  )
+  assert.match(
+    html,
+    /href="\/tracks\/lastfm-track\?tab=sources">Scrobbled names<\/a>/,
+  )
   assert.match(html, /Recorded album/)
   assert.match(html, /Example artist/)
   assert.match(html, /Album track list/)
@@ -235,7 +242,7 @@ test('matching rows expose stored metadata, service icons and actions for both e
   assert.doesNotMatch(html, /<dialog|Confirm merge|Unlink|Search Spotify/)
 })
 
-test('native imported Spotify rows open details and never offer a merge or unlink action', () => {
+test('matched Spotify rows open Sources and can merge their Last.fm names', () => {
   const html = renderList([
     TrackListItemSchema.parse({
       ...lastfmTrack,
@@ -245,10 +252,14 @@ test('native imported Spotify rows open details and never offer a merge or unlin
       sources: ['lastfm', 'spotify'],
     }),
   ])
-  assert.match(html, /href="\/tracks\/lastfm-track">Open track<\/a>/)
+  assert.match(
+    html,
+    /href="\/tracks\/lastfm-track\?tab=sources">Scrobbled names<\/a>/,
+  )
   assert.match(html, /Spotify import/)
   assert.match(html, /1 track/)
-  assert.doesNotMatch(html, /aria-label="Match Stored recording"|Unlink/)
+  assert.match(html, /aria-label="Merge Last.fm names for Stored recording"/)
+  assert.doesNotMatch(html, /<dialog|Confirm merge/)
 })
 
 test('match counts use source membership and effective Spotify matching filters', async (t) => {

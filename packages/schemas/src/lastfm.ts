@@ -62,6 +62,8 @@ export const ListeningMonthSchema = z.object({
 
 export const ListeningTrackSchema = z.object({
   key: z.string().min(1),
+  /** The recording in the album's track list, when the scrobble resolves to one. */
+  trackId: z.string().min(1).optional(),
   title: z.string(),
   position: z.number().int().positive().nullable(),
   count: z.number().int().positive(),

@@ -3936,6 +3936,32 @@ test('a Spotify device that played on with every page closed is rejoined where i
   again.close()
 })
 
+test('each successful queue rejoin notice lasts ten seconds', async () => {
+  const sessions = fakeSessions()
+  const one = page('Chrome on Mac', sessions)
+  await driveSource(one)
+  await advance(5_000)
+  one.sync.close()
+  one.close()
+  const saved = sessions.record.state
+  assert.ok(saved)
+
+  const again = page('Safari on iPhone', sessions, one.remote)
+  one.remote.snapshot = playing(5, 30_000)
+  await again.engine.restore(saved)
+  assert.equal(again.engine.getState().rejoin?.status, 'rejoined')
+  await advance(5_000)
+
+  one.remote.snapshot = playing(6, 30_000)
+  await again.engine.restore(saved)
+  await advance(9_900)
+  assert.equal(again.engine.getState().rejoin?.status, 'rejoined')
+  await advance(100)
+  assert.equal(again.engine.getState().rejoin, null)
+  assert.equal(again.engine.getState().current?.uri, sourceTrack(6).uri)
+  again.close()
+})
+
 test('a Spotify device playing something else is shown but not rejoined', async () => {
   const sessions = fakeSessions()
   const one = page('Chrome on Mac', sessions)

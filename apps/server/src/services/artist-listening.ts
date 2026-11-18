@@ -1,4 +1,4 @@
-import { sql } from 'drizzle-orm'
+import { inArray, sql } from 'drizzle-orm'
 import type { db } from '@/lib/db'
 
 type Executor = Pick<typeof db, 'execute'>
@@ -11,7 +11,38 @@ type Executor = Pick<typeof db, 'execute'>
  * linked through both its album and a track still counts once. Only changed
  * artists are written.
  */
-export async function refreshArtistListeningTotals(database: Executor) {
+export async function refreshArtistListeningTotals(
+  database: Executor,
+  artistIds?: string[],
+) {
+  if (artistIds) {
+    if (!artistIds.length) return
+    await database.execute(sql`
+      with credited as materialized (
+        select c.media_item_id, c.artist_id, m.media_type
+        from media_credit c join media_item m on m.id = c.media_item_id
+        where c.role = 'artist' and m.media_type in ('album', 'track')
+          and m.metadata->>'legacyHidden' is distinct from 'true'
+          and ${inArray(sql`c.artist_id`, artistIds)}
+      ), totals as (
+        select artist_id, count(*)::int as count from (
+          select c.artist_id, s.id from credited c
+          join lastfm_scrobble s on s.album_media_item_id = c.media_item_id
+          where c.media_type = 'album'
+          union
+          select c.artist_id, s.id from credited c
+          join lastfm_track_link l on l.track_media_item_id = c.media_item_id
+          join lastfm_scrobble s on s.username = l.username
+            and s.artist_key = l.artist_key and s.track_key = l.track_key
+          where c.media_type = 'track'
+        ) plays group by artist_id
+      )
+      update artist a set scrobble_count = coalesce(totals.count, 0)
+      from artist base left join totals on totals.artist_id = base.id
+      where a.id = base.id and ${inArray(sql`base.id`, artistIds)}
+        and a.scrobble_count <> coalesce(totals.count, 0)`)
+    return
+  }
   await database.execute(sql`
     with plays as materialized (
       select row_number() over () as id, named.* from (

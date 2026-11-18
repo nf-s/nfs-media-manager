@@ -4,6 +4,7 @@ import { z } from 'zod'
 import type { db } from '@/lib/db'
 import { createStableId } from '@/lib/media-utils'
 import { album, artist, mediaCredit, mediaItem, track } from '@/schemas/db'
+import { reconcileLastfmAlbumTrackAliases } from './lastfm-library-tracks'
 import { refreshTrackAddedDates } from './spotify-playlists'
 import { refreshTrackListeningTotals } from './track-links'
 
@@ -144,6 +145,7 @@ export async function replaceAlbumTracks(
 
   await database.execute(sql`select merge_album_track_history(${albumId})`)
   await reconcileSpotifyAlbumRecordings(database, albumId)
+  await reconcileLastfmAlbumTrackAliases(database, { albumId })
 
   if (previous.length) {
     const previousIds = sql.join(

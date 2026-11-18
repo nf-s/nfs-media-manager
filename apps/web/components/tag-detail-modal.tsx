@@ -259,6 +259,7 @@ export function TagDetail({
           <TagManagement key={data.tag.id} tag={data.tag} />
         </TabsContent>
         <TabsContent value="sources">
+          <TagManagement key={data.tag.id} tag={data.tag} />
           <Section title="Detailed provenance" flush>
             <VirtualTagSources query={detail} label="Detailed provenance" />
           </Section>

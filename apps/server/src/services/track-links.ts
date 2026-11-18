@@ -3,6 +3,7 @@ import { z } from 'zod'
 import {
   TrackAlbumLinkStrategySchema,
   TrackScrobbleLinkStrategySchema,
+  type TrackScrobbleNameKey,
 } from '@repo/schemas/tracks'
 import { db } from '@/lib/db'
 import { refreshArtistListeningTotals } from './artist-listening'
@@ -196,106 +197,115 @@ const linkKey = (row: {
  * changed links are written.
  */
 export async function linkScrobblesToTracks(account: string) {
-  await db.transaction(async (tx) => {
-    // Read and write under the identity writer lock so an in-flight relink
-    // cannot overwrite a manual merge computed from newer source memberships.
-    await lockLibraryTrackWrites(tx)
-    const tracks = await libraryTracks(tx)
-    const scrobbled = tracks.length
-      ? ScrobbledRowsSchema.parse(
-          (
-            await tx.execute(sql`
+  await db.transaction((tx) => writeScrobbleTrackLinks(tx, account))
+}
+
+export async function writeScrobbleTrackLinks(
+  tx: Transaction,
+  account: string,
+  name?: TrackScrobbleNameKey,
+) {
+  // Read and write under the identity writer lock so an in-flight relink
+  // cannot overwrite a manual merge computed from newer source memberships.
+  await lockLibraryTrackWrites(tx)
+  const nameFilter = name
+    ? sql`and artist_key = ${name.artistKey} and track_key = ${name.trackKey}`
+    : sql``
+  const tracks = await libraryTracks(tx)
+  const scrobbled = tracks.length
+    ? ScrobbledRowsSchema.parse(
+        (
+          await tx.execute(sql`
             select s.artist_key, s.track_key,
               max(s.artist_name) as artist_name,
               max(s.track_name) as track_name,
               coalesce(array_agg(distinct s.album_media_item_id)
                 filter (where s.album_media_item_id is not null), '{}') as album_ids
-            from lastfm_scrobble s where s.username = ${account}
+            from lastfm_scrobble s where s.username = ${account} ${nameFilter}
             group by s.artist_key, s.track_key`)
-          ).rows,
-        )
-      : []
-    const match = createScrobbleTrackMatcher(
-      tracks
-        .filter(
-          (track) =>
-            track.source_label !== 'lastfm' ||
-            track.listed_album_ids.length > 0,
-        )
-        .flatMap((track) =>
-          [...new Set([track.album_id, ...track.listed_album_ids])].map(
-            (albumId) => ({
-              id: track.id,
-              title: track.title,
-              artists: track.artists,
-              albumId,
-            }),
-          ),
+        ).rows,
+      )
+    : []
+  const match = createScrobbleTrackMatcher(
+    tracks
+      .filter(
+        (track) =>
+          track.source_label !== 'lastfm' || track.listed_album_ids.length > 0,
+      )
+      .flatMap((track) =>
+        [...new Set([track.album_id, ...track.listed_album_ids])].map(
+          (albumId) => ({
+            id: track.id,
+            title: track.title,
+            artists: track.artists,
+            albumId,
+          }),
         ),
-    )
-    // Manual choices are exclusive for their stored names, even if the chosen
-    // Spotify recording's artist, title or album differs from the scrobble.
-    const sources = LinkRowsSchema.parse(
-      (
-        await tx.execute(sql`
+      ),
+  )
+  // Manual choices are exclusive for their stored names, even if the chosen
+  // Spotify recording's artist, title or album differs from the scrobble.
+  const sources = LinkRowsSchema.parse(
+    (
+      await tx.execute(sql`
     select artist_key, track_key, track_media_item_id as track_id,
       case when manually_matched then 'manual' else 'exact' end as strategy
-    from lastfm_track_source where username = ${account}`)
-      ).rows,
-    )
-    const manualNames = new Set(
-      sources
-        .filter((source) => source.strategy === 'manual')
-        .map((source) => JSON.stringify([source.artist_key, source.track_key])),
-    )
-    const wanted = new Map(
-      scrobbled.flatMap((row) => {
-        if (manualNames.has(JSON.stringify([row.artist_key, row.track_key])))
-          return []
-        const result = match({
-          artistName: row.artist_name,
-          trackName: row.track_name,
-          albumIds: row.album_ids,
-        })
-        return (result?.trackIds ?? []).map((trackId) => {
-          const link = {
-            artist_key: row.artist_key,
-            track_key: row.track_key,
-            track_id: trackId,
-            strategy: result?.strategy ?? 'exact',
-          }
-          return [linkKey(link), link]
-        })
-      }),
-    )
-    // Imported Last.fm identities always retain their own history, even when
-    // broader listening rules also count that name towards Spotify editions.
-    for (const source of sources) wanted.set(linkKey(source), source)
-    const stored = LinkRowsSchema.parse(
-      (
-        await tx.execute(sql`
-        select artist_key, track_key, track_media_item_id as track_id, strategy
-        from lastfm_track_link where username = ${account}`)
-      ).rows,
-    )
-    const current = new Map(stored.map((row) => [linkKey(row), row]))
-    const removed = stored.filter(
-      (row) => wanted.get(linkKey(row))?.strategy !== row.strategy,
-    )
-    const added = [...wanted.values()].filter(
-      (row) => current.get(linkKey(row))?.strategy !== row.strategy,
-    )
-    for (let start = 0; start < removed.length; start += WRITE_BATCH)
+    from lastfm_track_source where username = ${account} ${nameFilter}`)
+    ).rows,
+  )
+  const manualNames = new Set(
+    sources
+      .filter((source) => source.strategy === 'manual')
+      .map((source) => JSON.stringify([source.artist_key, source.track_key])),
+  )
+  const wanted = new Map(
+    scrobbled.flatMap((row) => {
+      if (manualNames.has(JSON.stringify([row.artist_key, row.track_key])))
+        return []
+      const result = match({
+        artistName: row.artist_name,
+        trackName: row.track_name,
+        albumIds: row.album_ids,
+      })
+      return (result?.trackIds ?? []).map((trackId) => {
+        const link = {
+          artist_key: row.artist_key,
+          track_key: row.track_key,
+          track_id: trackId,
+          strategy: result?.strategy ?? 'exact',
+        }
+        return [linkKey(link), link]
+      })
+    }),
+  )
+  // Imported Last.fm identities always retain their own history, even when
+  // broader listening rules also count that name towards Spotify editions.
+  for (const source of sources) wanted.set(linkKey(source), source)
+  const stored = LinkRowsSchema.parse(
+    (
       await tx.execute(sql`
+        select artist_key, track_key, track_media_item_id as track_id, strategy
+        from lastfm_track_link where username = ${account} ${nameFilter}`)
+    ).rows,
+  )
+  const current = new Map(stored.map((row) => [linkKey(row), row]))
+  const removed = stored.filter(
+    (row) => wanted.get(linkKey(row))?.strategy !== row.strategy,
+  )
+  const added = [...wanted.values()].filter(
+    (row) => current.get(linkKey(row))?.strategy !== row.strategy,
+  )
+  for (let start = 0; start < removed.length; start += WRITE_BATCH)
+    await tx.execute(sql`
         delete from lastfm_track_link l
         using jsonb_to_recordset(${JSON.stringify(
           removed.slice(start, start + WRITE_BATCH),
         )}::jsonb) as r(artist_key text, track_key text, track_id text)
         where l.username = ${account} and l.artist_key = r.artist_key
           and l.track_key = r.track_key and l.track_media_item_id = r.track_id`)
-    for (let start = 0; start < added.length; start += WRITE_BATCH)
-      // A track removed since it was read is skipped, not a failed relink.
-      await tx.execute(sql`
+  for (let start = 0; start < added.length; start += WRITE_BATCH)
+    // A track removed since it was read is skipped, not a failed relink.
+    await tx.execute(sql`
         insert into lastfm_track_link (username, artist_key, track_key,
           track_media_item_id, strategy)
         select ${account}, r.artist_key, r.track_key, r.track_id, r.strategy
@@ -306,8 +316,12 @@ export async function linkScrobblesToTracks(account: string) {
         where exists (
           select 1 from library_track lt where lt.media_item_id = r.track_id)
         on conflict do nothing`)
-    await refreshTrackListeningTotals(tx)
-  })
+  await refreshTrackListeningTotals(
+    tx,
+    name
+      ? [...new Set([...stored, ...wanted.values()].map((row) => row.track_id))]
+      : undefined,
+  )
 }
 
 /** Recount links after an identity change; never add already-counted summaries. */

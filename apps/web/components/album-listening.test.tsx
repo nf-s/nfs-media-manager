@@ -38,6 +38,7 @@ const listening = AlbumListeningSchema.parse({
   tracks: [
     {
       key: 'opening',
+      trackId: 'opening-track',
       title: 'Opening',
       position: 1,
       count: 9,
@@ -168,6 +169,11 @@ test('album Listening points to Sources for scrobble names when it can open them
   )
   assert.match(html, /Scrobble names are matched in Sources, under Last\.fm\./)
   assert.match(html, />Open Sources</)
+  assert.match(html, /href="\/tracks\/opening-track\?tab=sources">Opening<\/a>/)
+  assert.match(
+    html,
+    /<span class="ds-cell-title" title="Closing">Closing<\/span>/,
+  )
   assert.doesNotMatch(html, /aria-label="Scrobble names"/)
 })
 

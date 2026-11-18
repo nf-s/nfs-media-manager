@@ -19,12 +19,16 @@ import {
   TrackFilterOptionSchema,
   TrackListeningHistogramQuerySchema,
   TrackListItemSchema,
+  TrackMatchIdSchema,
   TrackMergeInputSchema,
   TrackMergeResultSchema,
   TrackPositionsQuerySchema,
   TrackPositionsSchema,
   TrackQuerySchema,
   TrackScrobbleMatchInputSchema,
+  TrackScrobbleNamesPageSchema,
+  TrackScrobbleNamesQuerySchema,
+  TrackScrobbleRemoveInputSchema,
 } from '@repo/schemas/tracks'
 import {
   TrackPlaylistAdditionInputSchema,
@@ -54,7 +58,12 @@ import {
   listTracks,
   listTracksAtPositions,
 } from '@/services/tracks'
-import { matchScrobbleTrack, mergeLastfmTrack } from '@/services/track-merges'
+import {
+  matchScrobbleTrack,
+  mergeLastfmTrack,
+  removeScrobbleTrackMatch,
+} from '@/services/track-merges'
+import { listLastfmTrackNames } from '@/services/lastfm-track-names'
 import {
   listTrackMatchDiagnostics,
   listTrackMatchDiagnosticsFacets,
@@ -439,17 +448,45 @@ app
   )
   .openapi(
     createRoute({
+      method: 'get',
+      path: '/:id/scrobble-names',
+      middleware: [authMiddleware()],
+      request: {
+        params: z.object({ id: TrackMatchIdSchema }),
+        query: TrackScrobbleNamesQuerySchema,
+      },
+      responses: {
+        200: {
+          description:
+            'Page of imported Last.fm names and their current tracks',
+          content: {
+            'application/json': {
+              schema: createResponseSchema(TrackScrobbleNamesPageSchema),
+            },
+          },
+        },
+        401: jsonErrorResponse('Unauthorized'),
+        404: jsonErrorResponse('Track not found'),
+        422: validationErrorResponse,
+      },
+    }),
+    async (c) =>
+      generateJsonResponse(
+        c,
+        await listLastfmTrackNames(
+          c.req.valid('param').id,
+          c.req.valid('query'),
+        ),
+        200,
+      ),
+  )
+  .openapi(
+    createRoute({
       method: 'post',
       path: '/:id/scrobble-match',
       middleware: [authMiddleware(), mutationOriginMiddleware()],
       request: {
-        params: z.object({
-          id: z
-            .string()
-            .min(1)
-            .max(500)
-            .refine((id) => !id.includes('\0'), 'Invalid track ID'),
-        }),
+        params: z.object({ id: TrackMatchIdSchema }),
         body: {
           content: {
             'application/json': { schema: TrackScrobbleMatchInputSchema },
@@ -459,8 +496,7 @@ app
       },
       responses: {
         200: {
-          description:
-            'Matched one recorded Last.fm name to the selected Spotify track',
+          description: 'Matched one Last.fm name to the selected library track',
           content: {
             'application/json': {
               schema: createResponseSchema(TrackMergeResultSchema),
@@ -483,11 +519,52 @@ app
   )
   .openapi(
     createRoute({
+      method: 'delete',
+      path: '/:id/scrobble-match',
+      middleware: [authMiddleware(), mutationOriginMiddleware()],
+      request: {
+        params: z.object({ id: TrackMatchIdSchema }),
+        body: {
+          content: {
+            'application/json': { schema: TrackScrobbleRemoveInputSchema },
+          },
+          required: true,
+        },
+      },
+      responses: {
+        200: {
+          description:
+            'Kept a Last.fm name separate or restored automatic matching',
+          content: {
+            'application/json': {
+              schema: createResponseSchema(TrackMergeResultSchema),
+            },
+          },
+        },
+        401: jsonErrorResponse('Unauthorized'),
+        403: jsonErrorResponse('Forbidden'),
+        404: jsonErrorResponse('Track not found'),
+        409: jsonErrorResponse('Last.fm match has changed'),
+        422: validationErrorResponse,
+      },
+    }),
+    async (c) =>
+      generateJsonResponse(
+        c,
+        await removeScrobbleTrackMatch(
+          c.req.valid('param').id,
+          c.req.valid('json'),
+        ),
+        200,
+      ),
+  )
+  .openapi(
+    createRoute({
       method: 'post',
       path: '/:id/merge',
       middleware: [authMiddleware(), mutationOriginMiddleware()],
       request: {
-        params: z.object({ id: z.string().min(1) }),
+        params: z.object({ id: TrackMatchIdSchema }),
         body: {
           content: { 'application/json': { schema: TrackMergeInputSchema } },
           required: true,
@@ -495,7 +572,8 @@ app
       },
       responses: {
         200: {
-          description: 'Last.fm track merged into the selected Spotify track',
+          description:
+            'Merged a Last.fm track or its recorded names into the selected track',
           content: {
             'application/json': {
               schema: createResponseSchema(TrackMergeResultSchema),

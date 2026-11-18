@@ -20,8 +20,10 @@ export default function TrackDetailPageClient({
     >
       <TrackDetailView
         id={trackId}
-        onMerged={(targetId) =>
-          router.replace(`/tracks/${encodeURIComponent(targetId)}`)
+        onMerged={(targetId, tab) =>
+          router.replace(
+            `/tracks/${encodeURIComponent(targetId)}${tab ? `?tab=${tab}` : ''}`,
+          )
         }
       />
     </DetailPage>

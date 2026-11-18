@@ -293,7 +293,15 @@ export function DetailInspector(options: InspectorOptions) {
               key={nav.entryKey}
               target={target}
               options={options}
-              onMerged={(id) => nav.replace({ kind: 'track', id })}
+              onMerged={(id, tab) =>
+                nav.replace({
+                  kind: 'track',
+                  id,
+                  view: tab
+                    ? new URLSearchParams({ tab }).toString()
+                    : undefined,
+                })
+              }
             />
           </InspectorPageContext.Provider>
         </InspectorEntryContext.Provider>
@@ -309,7 +317,7 @@ function InspectorContent({
 }: {
   target: DetailEntry
   options: InspectorOptions
-  onMerged: (id: string) => void
+  onMerged: (id: string, tab?: 'sources') => void
 }) {
   const tag = target.kind === 'tag' ? parseTagDetailId(target.id) : null
   return (

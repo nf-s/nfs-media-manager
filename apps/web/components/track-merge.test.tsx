@@ -261,7 +261,7 @@ test('scrobble correction sends only stable name keys and the reviewed target', 
     await changeTrackScrobbleMatch(
       'http://example.test',
       source.id,
-      albumMatched,
+      albumMatched.id,
       {
         artistKey: 'fixture artist',
         trackKey: 'recorded song',
@@ -310,19 +310,22 @@ test('candidate search restricts stored tracks to native Spotify imports before 
   assert.equal(network.mock.callCount(), 1)
 })
 
-test('correction candidates exclude unmatched tracks with the browse filter contract', async (t) => {
+test('correction candidates include Last.fm-only tracks and every other stored source', async (t) => {
   const network = t.mock.method(globalThis, 'fetch', async (input: string) => {
     const url = new URL(input)
     const query = TrackQuerySchema.parse(Object.fromEntries(url.searchParams))
     assert.equal(query.q, 'Fixture')
     assert.deepEqual(query.filters, [
-      { field: 'spotifyMatch', value: 'Unmatched', mode: 'exclude' },
+      { field: 'source', value: 'Album track list', mode: 'any' },
+      { field: 'source', value: 'Last.fm', mode: 'any' },
+      { field: 'source', value: 'Spotify playlists', mode: 'any' },
+      { field: 'source', value: 'Liked Songs', mode: 'any' },
     ])
     return Response.json({
       statusCode: 200,
       message: 'OK',
       data: {
-        items: [albumMatched],
+        items: [source],
         page: 1,
         size: 20,
         totalCount: 1,
@@ -337,7 +340,7 @@ test('correction candidates exclude unmatched tracks with the browse filter cont
     undefined,
     true,
   )
-  assert.deepEqual(result.items, [albumMatched])
+  assert.deepEqual(result.items, [source])
   assert.equal(network.mock.callCount(), 1)
 })
 
@@ -383,7 +386,7 @@ test('invalid source or target pairs cannot trigger a merge request', async (t) 
       ...target,
       id: source.id,
     }),
-    /imported Spotify track/,
+    /different track/,
   )
   assert.equal(network.mock.callCount(), 0)
 })

@@ -50,11 +50,13 @@ An imported playlist that shares its name with a playlist from the legacy album 
 
 ### Last.fm tracks
 
-Use **Tracks → Imports → Last.fm scrobbles**. **Sync now** reads the configured account's listening history and adds or updates its library tracks when the sync completes. Albums and Tracks show the same shared sync; there is no separate track-import step. The Tracks page shows how many Last.fm tracks are in the library and how many have no Spotify match, with links to those filtered lists. Its matching table starts with **Needs match**, including tracks with an unconfirmed album-track-list match. Search, sort or change the match-status filter to work through stored tracks. **Match** opens the same side-panel pattern as album linking, with library search prefilled from the track title. Choose a result, review both recordings, then confirm the merge; the table stays open for the next track.
+Use **Tracks → Imports → Last.fm scrobbles**. **Sync now** reads the configured account's listening history and adds or updates its library tracks when the sync completes. Albums and Tracks show the same shared sync; there is no separate track-import step. The Tracks page shows how many Last.fm tracks are in the library and how many have no Spotify match, with links to those filtered lists. Its matching table starts with **Needs match**, including tracks with an unconfirmed album-track-list match. Search, sort or change the match-status filter to work through stored tracks. Choose **Scrobbled names** in the table to open the track’s **Sources** and correct individual names. **Merge names** opens a library track search. Choose the recording to receive the names and review both entries before confirming.
 
 **Refresh matches** is a secondary action for recomputing links after library metadata changes, or using history stored before track import was available. It reads stored history without requesting Last.fm or searching Spotify. The Albums page's **Relink** uses the same refresh.
 
 Each distinct scrobbled artist and track name is represented in the library. A unique matching Spotify library track is reused when its artist and title match, ignoring case and repeated spaces. Any supplied album names must also match, either by name or by all resolving to the same library album. Otherwise the name gets a Last.fm track with its listening history and known album name. Unknown metadata stays empty. Ambiguous matches and different live, remix or edit titles are not combined to choose a Spotify recording.
+
+When the supplied albums resolve to one library release, the track list provides additional evidence. A leading number such as “02 -” must agree with the track position. An explicit featured credit can identify the unique track on that album. For a combined artist credit, the guest must also appear in the release credits or in a corroborating scrobbled name. Conflicting versions or credits remain available for manual review.
 
 A track can have more than one source. Reusing a Spotify track adds **Last.fm** alongside **Spotify playlists** or **Liked Songs**. Repeating the import refreshes the existing tracks rather than adding another copy.
 
@@ -145,7 +147,9 @@ A track's detail shows its sources, playlists (each opens the playlist drawer), 
 
 ### Reviewing duplicates
 
-In **Tracks → Matches**, choose **Change match** beside a recorded Last.fm artist and title. Select a library track with a stored Spotify ID, including an ID from an album track list, and confirm. The selected listening history moves to that recording and later syncs retain the choice. To replace an earlier choice, open **Change match** for the recorded name on its current track.
+In **Track → Sources**, **Add scrobbled name** searches stored Last.fm names across the library. **Change match** assigns one recorded name and its plays to a library track. **Remove** keeps the name on its own Last.fm entry. **Use automatic match** lets the import rules decide again. Manual choices survive subsequent imports.
+
+**Merge Last.fm names** moves all recorded names from the displayed track to a library track you choose. Both Last.fm-only and Spotify-backed tracks are valid destinations. The original scrobbles, album track lists and playlist positions are preserved. **Tracks → Matches** also offers **Change match** beside individual recorded names.
 
 On a Last.fm-backed track without an imported Spotify identity, **Merge with Spotify track** searches existing imported library tracks. Select the recording to keep, compare its artist, title, album and Spotify link, then confirm. Nothing is selected or merged automatically. The merge retains the chosen Spotify track, transfers Last.fm source memberships and playlist memberships, and preserves listening history. If the original recording is still listed on an album with its own Spotify ID, that position keeps its recording. A saved manual source association prevents later Last.fm refreshes from recreating the duplicate, including when recorded album names differ. These source associations are labelled **Manually matched** in track details.
 

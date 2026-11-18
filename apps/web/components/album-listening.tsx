@@ -25,6 +25,7 @@ import {
 } from '@repo/ui/components/ui/table'
 import { formatCount, formatDate } from '@repo/ui/lib/format'
 import { useConfig } from './providers'
+import { DetailLink } from './detail-link'
 import {
   ScrobbledNamePicker,
   useLastfmLinkUpdate,
@@ -229,9 +230,21 @@ function TracksByScrobbles({
                 {track.position ?? <EmptyValue />}
               </TableCell>
               <TableCell>
-                <span className="ds-cell-title" title={track.title}>
-                  {track.title}
-                </span>
+                {track.trackId ? (
+                  <DetailLink
+                    className="ds-cell-title"
+                    kind="track"
+                    id={track.trackId}
+                    tab="sources"
+                    title={track.title}
+                  >
+                    {track.title}
+                  </DetailLink>
+                ) : (
+                  <span className="ds-cell-title" title={track.title}>
+                    {track.title}
+                  </span>
+                )}
               </TableCell>
               <TableCell align="end" className="ds-num">
                 {formatCount(track.count)}

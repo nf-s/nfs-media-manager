@@ -42,7 +42,7 @@ The room plays its own queue, so the app can be closed while it plays: the room 
 
 Where the room is not rejoined, the queue is moved on past the tracks of it that the Spotify account's play history lists as played meanwhile, as for a [Spotify device](spotify-playback.md#picking-the-queue-up-again). A room that stops reporting a track while the app is open is treated the same way: the track is kept, shown paused, and the room is followed again when it plays on through the tracks the app loaded.
 
-While the room is read, a line above the dock says **Rejoining the queue on …**; afterwards it says whether the room was rejoined or why not. Nothing is sent to the room before that read, including the tracks normally added ahead.
+While the room is read, a line above the dock says **Rejoining the queue on …**; afterwards it says whether the room was rejoined or why not. A successful rejoin message clears after ten seconds. Nothing is sent to the room before that read, including the tracks normally added ahead.
 
 ## Scrobbling to Last.fm
 

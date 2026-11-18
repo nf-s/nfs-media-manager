@@ -23,7 +23,6 @@ import { createStableId } from '@/lib/media-utils'
 import { resolveProviderSecrets } from '@/lib/provider-secrets'
 import {
   AlbumCountSchema,
-  albumNameMatches,
   requestAlbumJson,
 } from '@/plugins/builtin/album-provider-helpers'
 import {
@@ -38,7 +37,6 @@ import {
   lastfmSync,
   providerSecret,
   scrapeJob,
-  track,
 } from '@/schemas/db'
 import { linkScrobblesToAlbums } from './lastfm-album-links'
 import { refreshTrackLinks } from './track-links'
@@ -886,7 +884,7 @@ export async function getLastfmLinkReport(
               ids.map((id) => sql`${id}`),
               sql`, `,
             )})
-            group by mi.id order by mi.title, mi.id`)
+            group by mi.id order by lower(mi.title), mi.id`)
         ).rows,
       )
     : []
@@ -930,23 +928,16 @@ export async function getLastfmLinkReport(
   })
 }
 
-const SummarySchema = z
-  .array(
-    z.object({
-      total: z.coerce.number(),
-      first: z.coerce.number().nullable(),
-      last: z.coerce.number().nullable(),
-    }),
-  )
-  .length(1)
-const MonthRowsSchema = z.array(
-  z.object({ month: z.string(), count: z.coerce.number() }),
-)
-const TrackRowsSchema = z.array(
+const AlbumTrackMonthRowsSchema = z.array(
   z.object({
-    key: z.string(),
+    artist_key: z.string(),
+    track_key: z.string(),
+    recording_id: z.string().nullable(),
     title: z.string(),
+    position: z.number().nullable(),
+    month: z.string(),
     count: z.coerce.number(),
+    first: z.coerce.number(),
     last: z.coerce.number(),
   }),
 )
@@ -969,43 +960,151 @@ const source = (row: z.infer<typeof SourceRowsSchema>[number]) => ({
 const isoSeconds = (value: number | null) =>
   value === null ? null : new Date(value * 1000).toISOString()
 
+type AlbumTrackMonth = z.infer<typeof AlbumTrackMonthRowsSchema>[number]
+type AlbumTrackGroup = {
+  recordingId: string | null
+  title: string
+  position: number | null
+  count: number
+  last: number
+  aliases: Set<string>
+}
+
+const albumTrackGroupId = (row: AlbumTrackMonth) =>
+  JSON.stringify(
+    row.recording_id === null
+      ? [row.artist_key, row.track_key]
+      : [row.recording_id],
+  )
+
+async function albumTrackListening(albumId: string, trackKey?: string) {
+  // A stored edition may list the same recording twice. Use its first
+  // position, and resolve one recording per credited name before counting.
+  const rows = AlbumTrackMonthRowsSchema.parse(
+    (
+      await db.execute(sql`
+        with album_tracks as (
+          select distinct on (track_media_item_id) track_media_item_id, title, position
+          from track where album_media_item_id = ${albumId}
+          order by track_media_item_id, position
+        ), plays as materialized (
+          select username, artist_key, track_key, track_name, listened_at
+          from lastfm_scrobble where album_media_item_id = ${albumId}
+        ), names as (
+          select distinct username, artist_key, track_key from plays
+        ), resolved as (
+          select n.*, coalesce(listed.track_media_item_id, linked.track_id) as recording_id
+          from names n
+          left join lastfm_track_source s using (username, artist_key, track_key)
+          left join album_tracks listed on listed.track_media_item_id = s.track_media_item_id
+          left join media_item source_recording on source_recording.id = s.track_media_item_id
+          left join lateral (
+            select min(l.track_media_item_id) as track_id
+            from lastfm_track_link l
+            join album_tracks t on t.track_media_item_id = l.track_media_item_id
+            where l.username = n.username and l.artist_key = n.artist_key
+              and l.track_key = n.track_key
+              and l.strategy in ('exact', 'normalized', 'version')
+              and listed.track_media_item_id is null and s.manually_matched is not true
+              and (s.track_media_item_id is null or source_recording.source_label = 'lastfm')
+            having count(*) = 1
+          ) linked on true
+        )
+        select p.artist_key, p.track_key, r.recording_id, t.position,
+          coalesce(t.title, (array_agg(p.track_name order by p.listened_at desc, p.track_name))[1]) as title,
+          to_char(p.listened_at, 'YYYY-MM') as month, count(*) as count,
+          extract(epoch from min(p.listened_at))::float8 as first,
+          extract(epoch from max(p.listened_at))::float8 as last
+        from plays p join resolved r using (username, artist_key, track_key)
+        left join album_tracks t on t.track_media_item_id = r.recording_id
+        group by p.artist_key, p.track_key, r.recording_id, t.position, t.title, month`)
+    ).rows,
+  )
+  const groups = new Map<string, AlbumTrackGroup>()
+  const aliasGroups = new Map<string, Set<string>>()
+  for (const row of rows) {
+    const id = albumTrackGroupId(row)
+    const group = groups.get(id) ?? {
+      recordingId: row.recording_id,
+      title: row.title,
+      position: row.position,
+      count: 0,
+      last: row.last,
+      aliases: new Set<string>(),
+    }
+    group.count += row.count
+    group.aliases.add(row.track_key)
+    if (row.last > group.last) {
+      group.last = row.last
+      group.title = row.title
+    }
+    groups.set(id, group)
+    const ids = aliasGroups.get(row.track_key) ?? new Set<string>()
+    ids.add(id)
+    aliasGroups.set(row.track_key, ids)
+  }
+
+  let selectedId: string | undefined
+  const tracks = [...groups].map(([id, group]) => {
+    const uniqueAliases = [...group.aliases]
+      .sort()
+      .filter((alias) => aliasGroups.get(alias)?.size === 1)
+    const canonical = albumNameKey(group.title)
+    let key = uniqueAliases.includes(canonical) ? canonical : uniqueAliases[0]
+    if (key === undefined) {
+      key = createStableId('listening-track', id)
+      while (aliasGroups.has(key)) key = `_${key}`
+    }
+    if (key === trackKey) selectedId = id
+    return {
+      key,
+      ...(group.recordingId === null ? {} : { trackId: group.recordingId }),
+      title: group.title,
+      position: group.position,
+      count: group.count,
+      lastListenedAt: isoSeconds(group.last),
+    }
+  })
+  // Old URLs with an unambiguous alternate name select the whole recording.
+  // An ambiguous raw key still selects the plays recorded under that name.
+  const legacy = trackKey ? aliasGroups.get(trackKey) : undefined
+  if (selectedId === undefined && legacy?.size === 1)
+    selectedId = [...legacy][0]
+
+  const months = new Map<string, number>()
+  let total = 0
+  let first: number | null = null
+  let last: number | null = null
+  for (const row of rows) {
+    if (
+      trackKey &&
+      (selectedId === undefined
+        ? row.track_key !== trackKey
+        : albumTrackGroupId(row) !== selectedId)
+    )
+      continue
+    total += row.count
+    first = first === null ? row.first : Math.min(first, row.first)
+    last = last === null ? row.last : Math.max(last, row.last)
+    months.set(row.month, (months.get(row.month) ?? 0) + row.count)
+  }
+  return {
+    total,
+    firstListenedAt: isoSeconds(first),
+    lastListenedAt: isoSeconds(last),
+    months: [...months].sort().map(([month, count]) => ({ month, count })),
+    tracks: tracks.sort(
+      (left, right) =>
+        right.count - left.count || left.key.localeCompare(right.key),
+    ),
+  }
+}
+
 export async function getAlbumListening(
   albumId: string,
   trackKey?: string,
 ): Promise<AlbumListening> {
-  const filter = trackKey ? sql`and track_key = ${trackKey}` : sql``
-  const summary = SummarySchema.parse(
-    (
-      await db.execute(sql`
-        select count(*) as total,
-          extract(epoch from min(listened_at))::float8 as first,
-          extract(epoch from max(listened_at))::float8 as last
-        from lastfm_scrobble
-        where album_media_item_id = ${albumId} ${filter}`)
-    ).rows,
-  )
-  const months = MonthRowsSchema.parse(
-    (
-      await db.execute(sql`
-        select to_char(date_trunc('month', listened_at), 'YYYY-MM') as month,
-          count(*) as count
-        from lastfm_scrobble
-        where album_media_item_id = ${albumId} ${filter}
-        group by 1 order by 1`)
-    ).rows,
-  )
-  const scrobbled = TrackRowsSchema.parse(
-    (
-      await db.execute(sql`
-        select track_key as key,
-          (array_agg(track_name order by listened_at desc))[1] as title,
-          count(*) as count,
-          extract(epoch from max(listened_at))::float8 as last
-        from lastfm_scrobble
-        where album_media_item_id = ${albumId}
-        group by track_key order by count(*) desc, track_key`)
-    ).rows,
-  )
+  const listening = await albumTrackListening(albumId, trackKey)
   const sources = SourceRowsSchema.parse(
     (
       await db.execute(sql`
@@ -1047,24 +1146,8 @@ export async function getAlbumListening(
         order by count(*) desc, s.artist_key, s.album_key limit 10`)
     ).rows,
   )
-  const albumTracks = await db
-    .select({ title: track.title, position: track.position })
-    .from(track)
-    .where(eq(track.albumMediaItemId, albumId))
   return AlbumListeningSchema.parse({
-    total: summary[0]?.total ?? 0,
-    firstListenedAt: isoSeconds(summary[0]?.first ?? null),
-    lastListenedAt: isoSeconds(summary[0]?.last ?? null),
-    months,
-    tracks: scrobbled.map((row) => ({
-      key: row.key,
-      title: row.title,
-      position:
-        albumTracks.find((item) => albumNameMatches(item.title, row.title))
-          ?.position ?? null,
-      count: row.count,
-      lastListenedAt: isoSeconds(row.last),
-    })),
+    ...listening,
     sources: sources.map(source),
     similarUnlinked: similar.map(source),
   })
