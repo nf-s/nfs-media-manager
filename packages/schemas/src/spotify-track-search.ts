@@ -5,6 +5,8 @@ import { spotifyIdPattern } from './playback'
 
 export const SPOTIFY_TRACK_SEARCH_TASK = 'spotify-track-search'
 export const SPOTIFY_TRACK_SEARCH_LIMIT = 10
+export const SPOTIFY_TRACK_SEARCH_MARKET_REQUIRED =
+  'Set Spotify Market in Providers or connect a Spotify account before searching tracks.'
 
 const id = z
   .string()

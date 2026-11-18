@@ -14,6 +14,23 @@ type AlbumRecording = {
   positions: { albumId: string; title: string; position: number }[]
 }
 
+export function hasTrackVersionQualifier(name: string) {
+  return /\b(?:mix|remix(?:es|ed)?|edit(?:s|ed)?|live|version|demo|dub|remaster(?:ed)?|instrumental|acoustic|mono|stereo|clean|explicit)\b/i.test(
+    name,
+  )
+}
+
+export function hasUnmatchedVersionAlbum(
+  albums: string[],
+  matchedAlbum: string,
+) {
+  return albums.some(
+    (album) =>
+      albumNameKey(album) !== albumNameKey(matchedAlbum) &&
+      hasTrackVersionQualifier(album),
+  )
+}
+
 // Only discard an explicit trailing guest credit. A version named anywhere
 // in the suffix must not disappear along with the credit.
 function titleCredit(title: string) {
@@ -25,9 +42,8 @@ function titleCredit(title: string) {
   if (
     !match?.[1]?.trim() ||
     !guest?.trim() ||
-    /\b(?:mix|remix|edit|live|version|demo|dub|remaster(?:ed)?|instrumental|acoustic|mono|stereo|clean|explicit)\b|\s[-–—]\s/i.test(
-      guest,
-    )
+    hasTrackVersionQualifier(guest) ||
+    /\s[-–—]\s/.test(guest)
   )
     return { title, guest: undefined }
   return { title: match[1].trim(), guest: guest.trim() }

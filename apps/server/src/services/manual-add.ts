@@ -16,6 +16,7 @@ import {
 } from '@repo/schemas/manual-add'
 import {
   SPOTIFY_TRACK_SEARCH_LIMIT,
+  SPOTIFY_TRACK_SEARCH_MARKET_REQUIRED,
   SpotifyTrackSearchCandidateSchema,
   SpotifyTrackSearchMarketSchema,
 } from '@repo/schemas/spotify-track-search'
@@ -184,10 +185,9 @@ async function spotifyTrackSearchAccess(
     return { provider, params: { market: explicitMarket }, account: null }
   throw new ServerError({
     statusCode: 422,
-    message:
-      params.market || explicitMarket
-        ? 'Configure Spotify Client ID and Client secret in Providers or connect a Spotify account to search tracks.'
-        : 'Set Spotify Market in Providers or connect a Spotify account before searching tracks.',
+    message: hasClientCredentials
+      ? SPOTIFY_TRACK_SEARCH_MARKET_REQUIRED
+      : 'Configure Spotify Client ID and Client secret in Providers or connect a Spotify account to search tracks.',
   })
 }
 

@@ -18,6 +18,7 @@ import {
 import {
   spotifySearchConsistentRecording,
   spotifySearchExactRelease,
+  spotifySearchHasAlternateVersion,
   spotifySearchRecordingEvidence,
 } from './spotify-track-search-evidence'
 import {
@@ -271,13 +272,18 @@ export async function reconcileSpotifyTrackSearchInTransaction(
   // Different Spotify IDs stay reviewable when the release cannot distinguish them.
   const exact = new Map(
     candidates
-      .filter((candidate) => spotifySearchExactRelease(evidence, candidate))
+      .filter((candidate) =>
+        spotifySearchExactRelease(evidence, candidate, {
+          standaloneSource: true,
+        }),
+      )
       .map((candidate) => [candidate.spotifyTrackId, candidate]),
   )
   const [candidate] = exact.values()
   if (
     exact.size !== 1 ||
     !candidate ||
+    spotifySearchHasAlternateVersion(evidence, candidate, candidates) ||
     !spotifySearchConsistentRecording(evidence, candidate)
   )
     return { status: 'unmatched' }

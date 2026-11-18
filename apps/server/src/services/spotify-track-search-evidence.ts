@@ -3,7 +3,13 @@ import { z } from 'zod'
 import { spotifyIdPattern } from '@repo/schemas/playback'
 import type { SpotifyTrackSearchCandidate } from '@repo/schemas/spotify-track-search'
 import { albumNameKey } from '@/lib/album-import-candidates'
+import {
+  hasTrackVersionQualifier,
+  hasUnmatchedVersionAlbum,
+} from '@/lib/album-track-aliases'
 import type { db } from '@/lib/db'
+import { plainKey } from '@/lib/lastfm-album-matching'
+import { trackBaseKey, trackVersionKey } from '@/lib/track-matching'
 import { spotifyAlbumReleaseIds } from './album-library-tracks'
 
 type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0]
@@ -26,6 +32,8 @@ const RecordingEvidenceSchema = z.object({
   position_titles: z.array(z.string()),
   album_ids: z.array(z.string()),
   album_names: z.array(z.string()),
+  scrobbled_albums: z.array(z.string()),
+  standalone_lastfm: z.boolean(),
   scrobbles: z.array(
     z.object({
       title: z.string(),
@@ -45,7 +53,7 @@ export async function spotifySearchRecordingEvidence(
       select title, external_id, duration_sec, album_media_item_id
       from track where track_media_item_id = ${id}
     ), recording as (
-      select mi.id, mi.title, mi.metadata, lt.spotify_track_id, lt.spotify_album_id,
+      select mi.id, mi.title, mi.metadata, mi.source_label, lt.spotify_track_id, lt.spotify_album_id,
         lt.album_media_item_id, lt.album_name, lt.duration_sec, lt.isrc, lt.spotify_url
       from media_item mi join library_track lt on lt.media_item_id = mi.id
       where mi.id = ${id} and mi.media_type = 'track'
@@ -69,6 +77,12 @@ export async function spotifySearchRecordingEvidence(
       where r.spotify_id is not null
     )
     select title, ${spotifySearchArtistNames(sql`recording.id`)} as artists, spotify_url, isrc,
+      (
+        source_label is not distinct from 'lastfm' and spotify_album_id is null and spotify_track_id is null
+        and not coalesce(metadata ? 'spotifyTrackSearch', false)
+        and not exists (select 1 from positions)
+        and not exists (select 1 from releases where album_media_item_id is not null)
+      ) as standalone_lastfm,
       coalesce((select jsonb_agg(credit) from jsonb_path_query(metadata,
         '$.spotifyArtistCredits[*] ? (@.id.type() == "string" && @.name.type() == "string")'
       ) credit), '[]'::jsonb) as artist_credits,
@@ -84,10 +98,11 @@ export async function spotifySearchRecordingEvidence(
       array(select album_name where album_name is not null and spotify_album_id is null and not exists (select 1 from spotify_releases)
         union select m.title from releases join media_item m on m.id = releases.album_media_item_id
           where not exists (select 1 from spotify_releases r where r.album_id = m.id)
-        union select s.album_name from scrobbles s
+      ) as album_names,
+      array(select distinct s.album_name from scrobbles s
           where s.album_name is not null and not exists (
             select 1 from spotify_releases r where r.album_id = s.album_media_item_id
-          )) as album_names,
+          )) as scrobbled_albums,
       coalesce((select jsonb_agg(jsonb_build_object(
         'title', n.track_key, 'artist', n.artist_key, 'manual', n.manually_matched
       )) from recorded_names n), '[]'::jsonb) as scrobbles
@@ -113,7 +128,12 @@ function sameName(value: string | null, name: string) {
 export function spotifySearchExactRelease(
   recording: RecordingEvidence,
   candidate: SpotifyTrackSearchCandidate,
+  { standaloneSource = false }: { standaloneSource?: boolean } = {},
 ) {
+  const albums = [
+    ...recording.album_names,
+    ...recording.scrobbled_albums,
+  ].filter((name) => albumNameKey(name))
   return (
     sameName(candidate.title, recording.title) &&
     sameSpotifySearchArtists(recording.artists, candidate.artists) &&
@@ -122,8 +142,43 @@ export function spotifySearchExactRelease(
     ) &&
     recording.track_ids.every((id) => id === candidate.spotifyTrackId) &&
     recording.album_ids.every((id) => id === candidate.spotifyAlbumId) &&
-    recording.album_names.every(
-      (name) => !albumNameKey(name) || sameName(candidate.albumName, name),
+    (!albums.length ||
+      (standaloneSource && recording.standalone_lastfm
+        ? albums.some((name) => sameName(candidate.albumName, name))
+        : albums.every((name) => sameName(candidate.albumName, name))))
+  )
+}
+
+function haveDifferentVersions(first: string, second: string) {
+  if (trackVersionKey(first) === trackVersionKey(second)) return false
+  if (trackBaseKey(first) === trackBaseKey(second)) return true
+  // Also catch plain suffixes and colons outside the usual bracket/dash forms.
+  const a = plainKey(first)
+  const b = plainKey(second)
+  const [shorter, longer] = a.length < b.length ? [a, b] : [b, a]
+  return (
+    longer.startsWith(`${shorter} `) &&
+    hasTrackVersionQualifier(longer.slice(shorter.length + 1))
+  )
+}
+
+/** Unmatched scrobbled album names can still signal a distinct version. */
+export function spotifySearchHasAlternateVersion(
+  recording: RecordingEvidence,
+  chosen: SpotifyTrackSearchCandidate,
+  candidates: SpotifyTrackSearchCandidate[],
+) {
+  const matchedAlbum = chosen.albumName
+  if (!recording.standalone_lastfm || !matchedAlbum) return false
+  const albums = [...recording.album_names, ...recording.scrobbled_albums]
+  return (
+    hasUnmatchedVersionAlbum(albums, matchedAlbum) ||
+    candidates.some(
+      (candidate) =>
+        !sameName(candidate.albumName, matchedAlbum) &&
+        albums.some((album) => sameName(candidate.albumName, album)) &&
+        sameSpotifySearchArtists(recording.artists, candidate.artists) &&
+        haveDifferentVersions(candidate.title, recording.title),
     )
   )
 }

@@ -13,9 +13,11 @@ import {
 import { X } from 'lucide-react'
 import { EnrichmentResultSchema } from '@repo/schemas/job'
 import {
+  SPOTIFY_TRACK_SEARCH_MARKET_REQUIRED,
   SpotifyTrackSearchAcceptInputSchema,
   SpotifyTrackSearchAcceptResultSchema,
   SpotifyTrackSearchInputSchema,
+  SpotifyTrackSearchMarketSchema,
   SpotifyTrackSearchSchema,
   SpotifyTrackSearchStatusInputSchema,
   SpotifyTrackSearchStatusSchema,
@@ -30,6 +32,7 @@ import { Notice, Skeleton } from '@repo/ui/components/ds/feedback'
 import { List, ListRow, RowTitle } from '@repo/ui/components/ds/list-row'
 import { Status } from '@repo/ui/components/ds/status'
 import { Button } from '@repo/ui/components/ui/button'
+import { Input } from '@repo/ui/components/ui/input'
 import { formatCount, formatItemCount } from '@repo/ui/lib/format'
 import { fetchApiData } from '@/utils/api'
 import { dispatchFilmSelection } from '@/utils/film-selection'
@@ -49,7 +52,7 @@ const MATCHES = { one: 'match', other: 'matches' }
 const spotifySearchPath = '/api/v1/spotify/tracks/search'
 const spotifySearchKey = ['tracks', 'spotify-track-search']
 
-export function queueSpotifyTrackSearch(
+function queueSpotifyTrackSearch(
   apiBaseUrl: string,
   input: SpotifyTrackSearchInput,
 ) {
@@ -57,6 +60,80 @@ export function queueSpotifyTrackSearch(
     method: 'POST',
     body: JSON.stringify(SpotifyTrackSearchInputSchema.parse(input)),
   })
+}
+
+const tabMarketKey = 'spotify-track-search:market'
+
+function rememberedMarket() {
+  try {
+    return window.sessionStorage.getItem(tabMarketKey)
+  } catch {
+    return null
+  }
+}
+
+/** Offer a market in place when the installation only has Spotify app credentials. */
+export function useQueueSpotifyTrackSearch() {
+  const { apiBaseUrl } = useConfig()
+  const [market, setMarket] = useState<string | null>(null)
+  const [failureMessage, setFailureMessage] = useState('')
+  const marketNeeded = market !== null
+  async function queue(input: SpotifyTrackSearchInput) {
+    setFailureMessage('')
+    const selected = SpotifyTrackSearchMarketSchema.safeParse(
+      market ?? rememberedMarket(),
+    )
+    try {
+      const result = await queueSpotifyTrackSearch(apiBaseUrl, {
+        ...input,
+        ...(selected.success ? { market: selected.data } : {}),
+      })
+      if (marketNeeded && selected.success) {
+        try {
+          window.sessionStorage.setItem(tabMarketKey, selected.data)
+        } catch {
+          // Searching also works when the browser disables session storage.
+        }
+        setMarket(null)
+      }
+      return result
+    } catch (failure) {
+      const message = errorMessage(
+        failure,
+        'Could not queue the Spotify search.',
+      )
+      if (message === SPOTIFY_TRACK_SEARCH_MARKET_REQUIRED)
+        setMarket((value) => value ?? '')
+      else setFailureMessage(message)
+      throw failure
+    }
+  }
+  return {
+    queue,
+    failureMessage,
+    marketNeeded,
+    invalidMarket:
+      marketNeeded && !SpotifyTrackSearchMarketSchema.safeParse(market).success,
+    marketField: marketNeeded && (
+      <label className="ds-field">
+        <span className="ds-label">Spotify market</span>
+        <Input
+          aria-label="Spotify market"
+          value={market}
+          placeholder="AU"
+          maxLength={2}
+          autoCapitalize="characters"
+          autoComplete="off"
+          spellCheck={false}
+          onChange={(event) => setMarket(event.target.value.toUpperCase())}
+        />
+        <span className="ds-help">
+          Enter a two-letter country code, then search again. This tab will
+          remember it.
+        </span>
+      </label>
+    ),
+  }
 }
 
 export function invalidateSpotifySearchJobs(client: QueryClient) {
@@ -152,7 +229,7 @@ export function SpotifyTrackSearchSelectionBar({
   disabled?: boolean
   total?: number
 }) {
-  const { apiBaseUrl } = useConfig()
+  const search = useQueueSpotifyTrackSearch()
   const client = useQueryClient()
   const [batchId, setBatchId] = useState('')
   const [progress, setProgress] = useState(0)
@@ -165,7 +242,7 @@ export function SpotifyTrackSearchSelectionBar({
       return dispatchFilmSelection(
         ids,
         (chunk) =>
-          queueSpotifyTrackSearch(apiBaseUrl, {
+          search.queue({
             trackIds: chunk,
             batchId: batch,
             confirmBroadRun: ids.length > 5,
@@ -199,6 +276,10 @@ export function SpotifyTrackSearchSelectionBar({
       hideWhenEmpty
     >
       <div className="sec-selectbar-actions">
+        {search.marketField}
+        {search.failureMessage && (
+          <span role="alert">{search.failureMessage}</span>
+        )}
         {queue.isPending && (
           <span role="status">
             Queueing searches · {formatCount(progress)} confirmed
@@ -212,27 +293,29 @@ export function SpotifyTrackSearchSelectionBar({
             )}
           </span>
         )}
-        {queue.data && (
-          <span role="status">
-            {formatCount(queue.data.queued)} queued ·{' '}
-            {formatCount(queue.data.skipped)} skipped.{' '}
-            {batchId && (queue.data.queued > 0 || queue.data.interrupted) && (
-              <Link
-                href={scopedHref(
-                  `/jobs?batchId=${encodeURIComponent(batchId)}`,
-                  'track',
-                )}
-              >
-                View search jobs
-              </Link>
-            )}
-            {queue.data.warnings.map((warning) => (
-              <span key={warning} className="block">
-                {warning}
-              </span>
-            ))}
-          </span>
-        )}
+        {queue.data &&
+          ((!search.marketNeeded && !search.failureMessage) ||
+            queue.data.completed.length > 0) && (
+            <span role="status">
+              {formatCount(queue.data.queued)} queued ·{' '}
+              {formatCount(queue.data.skipped)} skipped.{' '}
+              {batchId && (queue.data.queued > 0 || queue.data.interrupted) && (
+                <Link
+                  href={scopedHref(
+                    `/jobs?batchId=${encodeURIComponent(batchId)}`,
+                    'track',
+                  )}
+                >
+                  View search jobs
+                </Link>
+              )}
+              {queue.data.warnings.map((warning) => (
+                <span key={warning} className="block">
+                  {warning}
+                </span>
+              ))}
+            </span>
+          )}
         {selectedIds.length > 0 && (
           <span className="ds-actions">
             <Button
@@ -249,7 +332,7 @@ export function SpotifyTrackSearchSelectionBar({
               question={`Search Spotify for ${formatItemCount(selectedIds.length, TRACKS)}?`}
               details="Each track uses one search job. Unique exact matches link automatically."
               confirmLabel="Search Spotify tracks"
-              disabled={disabled || queue.isPending}
+              disabled={disabled || queue.isPending || search.invalidMarket}
               onConfirm={() => queue.mutate(selectedIds)}
             >
               Search Spotify tracks

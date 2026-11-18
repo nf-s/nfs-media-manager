@@ -1,9 +1,11 @@
 import { inArray, sql, type SQL } from 'drizzle-orm'
 import { z } from 'zod'
+import { SPOTIFY_TRACK_SEARCH_TASK } from '@repo/schemas/spotify-track-search'
 import type { TrackScrobbleNameKey } from '@repo/schemas/tracks'
 import { db } from '@/lib/db'
 import {
   createAlbumTrackAliasMatcher,
+  hasUnmatchedVersionAlbum,
   splitScrobbleCredit,
 } from '@/lib/album-track-aliases'
 import { albumNameKey } from '@/lib/album-import-candidates'
@@ -59,6 +61,9 @@ const ManualRowsSchema = z.array(
     track_key: z.string(),
     track_id: z.string(),
   }),
+)
+const CatalogMatchRowsSchema = z.array(
+  ManualRowsSchema.element.extend({ source_id: z.string() }),
 )
 const PendingAlbumSourcesSchema = z.array(
   z.object({
@@ -120,8 +125,9 @@ function findExactMatches(candidates: Recording[]) {
       byName.set(identity, [...(byName.get(identity) ?? []), candidate])
     }
   }
-  return (group: ScrobbledName) =>
-    (byName.get(key(group.artist_name, group.track_name)) ?? []).filter(
+  return (group: ScrobbledName, existingCatalogId?: string) => {
+    const named = byName.get(key(group.artist_name, group.track_name)) ?? []
+    const exact = named.filter(
       (candidate) =>
         (group.album_names.length === 0 && !candidate.album_only) ||
         (!group.has_unlinked_album &&
@@ -136,6 +142,29 @@ function findExactMatches(candidates: Recording[]) {
             albumNameKey(name) === albumNameKey(candidate.album_name),
         ),
     )
+    if (exact.length || !existingCatalogId || group.album_ids.length)
+      return exact
+
+    // A prior catalog match belongs to this stored name. Keep it only while
+    // its full credit and one observed release still identify a unique entry.
+    const supported = named.filter(
+      (candidate) =>
+        albumNameKey(candidate.artists.join(', ')) ===
+          albumNameKey(group.artist_name) &&
+        candidate.album_name !== null &&
+        group.album_names.some(
+          (album) =>
+            albumNameKey(album) === albumNameKey(candidate.album_name ?? ''),
+        ),
+    )
+    const [retained] = supported
+    return supported.length === 1 &&
+      retained?.id === existingCatalogId &&
+      retained.album_name !== null &&
+      !hasUnmatchedVersionAlbum(group.album_names, retained.album_name)
+      ? [retained]
+      : []
+  }
 }
 
 /** Imports stored history only; uncertain recording identities remain separate. */
@@ -371,6 +400,38 @@ export async function importLastfmTrackSources(
       row.track_id,
     ]),
   )
+  const previousCatalogMatches = new Map(
+    (scope
+      ? []
+      : CatalogMatchRowsSchema.parse(
+          (
+            await tx.execute(sql`
+          select s.artist_key, s.track_key, s.track_media_item_id as track_id,
+            j.options->>'trackId' as source_id
+          from lastfm_track_source s join library_track lt on lt.media_item_id = s.track_media_item_id
+          join scrape_job j on coalesce(j.options->>'acceptedTrackId', j.options->>'trackId') = s.track_media_item_id
+            and j.options->>'acceptedSpotifyTrackId' = lt.spotify_track_id
+          where s.username = ${account} and not s.manually_matched
+            and j.provider = 'spotify' and j.status = 'succeeded'
+            and j.options->>'task' = ${sql.raw(`'${SPOTIFY_TRACK_SEARCH_TASK}'`)}
+            and j.options->>'matchMethod' = 'automatic'
+            and j.options->>'trackId' is not null`)
+          ).rows,
+        )
+    )
+      .filter(
+        (row) =>
+          row.source_id ===
+          standaloneLastfmTrackId(account, {
+            artistKey: row.artist_key,
+            trackKey: row.track_key,
+          }),
+      )
+      .map((row) => [
+        JSON.stringify([row.artist_key, row.track_key]),
+        row.track_id,
+      ]),
+  )
   const exactMatches = findExactMatches(candidates)
   const albumAlias = createAlbumTrackAliasMatcher(candidates, groups, manual)
   const selected = scope
@@ -381,15 +442,14 @@ export async function importLastfmTrackSources(
       )
     : groups
   const records = selected.map((group) => {
-    const matches = exactMatches(group)
+    const nameKey = JSON.stringify([group.artist_key, group.track_key])
+    const matches = exactMatches(group, previousCatalogMatches.get(nameKey))
     const matched = matches.length
       ? matches.length === 1
         ? matches[0]
         : undefined
       : albumAlias(group)
-    const manualId = manual.get(
-      JSON.stringify([group.artist_key, group.track_key]),
-    )
+    const manualId = manual.get(nameKey)
     const standaloneId = standaloneLastfmTrackId(account, {
       artistKey: group.artist_key,
       trackKey: group.track_key,

@@ -13,15 +13,14 @@ import { formatAge, formatDateTime } from '@repo/ui/lib/format'
 import { spotifyTrackUri } from '@/utils/album-links'
 import { providerMarkText } from '@/utils/source-rows'
 import { DetailLink } from './detail-link'
-import { errorMessage, invalidateScrobbleLinks } from './lastfm-sync'
-import { useConfig } from './providers'
+import { invalidateScrobbleLinks } from './lastfm-sync'
 import {
   invalidateSpotifySearchJobs,
   isActiveSpotifyTrackSearch,
-  queueSpotifyTrackSearch,
   SpotifyTrackSearchJobStatus,
   SpotifyTrackSearchResult,
   SpotifyTrackSearchReview,
+  useQueueSpotifyTrackSearch,
   useSavedSpotifyTrackSearch,
 } from './spotify-track-search'
 
@@ -56,7 +55,7 @@ export function TrackSpotifySource({
   item: TrackDetail
   onResolved?: (id: string) => void
 }) {
-  const { apiBaseUrl } = useConfig()
+  const catalog = useQueueSpotifyTrackSearch()
   const client = useQueryClient()
   const [review, setReview] = useState(false)
   const search = useSavedSpotifyTrackSearch(item.id)
@@ -69,8 +68,7 @@ export function TrackSpotifySource({
   const needsMatch = !direct && !alternate
   const queue = useMutation({
     retry: false,
-    mutationFn: () =>
-      queueSpotifyTrackSearch(apiBaseUrl, { trackIds: [item.id] }),
+    mutationFn: () => catalog.queue({ trackIds: [item.id] }),
     onSettled: async (result) => {
       await invalidateSpotifySearchJobs(client)
       if (result?.skipped)
@@ -144,6 +142,7 @@ export function TrackSpotifySource({
                 size="xs"
                 disabled={
                   queue.isPending ||
+                  catalog.invalidMarket ||
                   !search.data ||
                   isActiveSpotifyTrackSearch(job)
                 }
@@ -157,6 +156,7 @@ export function TrackSpotifySource({
       >
         <SourceBlock title="Spotify match">{matchNote(item, job)}</SourceBlock>
       </SourceRow>
+      {needsMatch && catalog.marketField}
       {search.isError && (
         <Notice
           tone="danger"
@@ -169,10 +169,8 @@ export function TrackSpotifySource({
           Could not load the saved Spotify search.
         </Notice>
       )}
-      {queue.isError && (
-        <Notice tone="danger">
-          {errorMessage(queue.error, 'Could not queue the Spotify search.')}
-        </Notice>
+      {catalog.failureMessage && (
+        <Notice tone="danger">{catalog.failureMessage}</Notice>
       )}
       {queue.data?.skipped && needsMatch && !isActiveSpotifyTrackSearch(job) ? (
         <p role="status" className="ds-help">

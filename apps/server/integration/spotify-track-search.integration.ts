@@ -49,6 +49,15 @@ const catalogTrack = {
   },
   external_ids: { isrc: 'aa-fi1-20-00001' },
 }
+const otherEdition = {
+  ...catalogTrack,
+  id: otherCandidateId,
+  album: {
+    ...catalogTrack.album,
+    id: 'catalogalbum0000000001',
+    name: 'The Other Edition',
+  },
+}
 const searchBody = {
   tracks: { offset: 0, items: [catalogTrack, { type: 'track', id: null }] },
 }
@@ -95,6 +104,7 @@ import {
 } from '@/services/jobs'
 import { listJobEntries } from '@/services/job-entries'
 import { refreshTrackLinks } from '@/services/track-links'
+import { removeScrobbleTrackMatch } from '@/services/track-merges'
 import { listTrackMatchDiagnostics } from '@/services/track-match-diagnostics'
 import {
   acceptSpotifyTrackSearch,
@@ -449,7 +459,7 @@ async function addListedRecording(spotifyTrackId?: string) {
   return { albumId, trackId }
 }
 
-async function addScrobbledRecording() {
+async function addScrobbledRecording(albums: string[] = []) {
   const username = 'fixture-listener'
   const scrobble = {
     id: 'fixture-listen',
@@ -463,12 +473,254 @@ async function addScrobbledRecording() {
   await fixture
     .delete(schema.mediaItem)
     .where(eq(schema.mediaItem.id, recordingId))
-  await fixture.insert(schema.lastfmScrobble).values(scrobble)
+  const scrobbles = albums.length
+    ? albums.map((album, index) => ({
+        ...scrobble,
+        id: `fixture-listen-${index}`,
+        listenedAt: new Date(scrobble.listenedAt.getTime() + index * 1000),
+        albumName: album,
+        albumKey: album.toLowerCase(),
+      }))
+    : [scrobble]
+  await fixture.insert(schema.lastfmScrobble).values(scrobbles)
   await refreshTrackLinks(username)
   const [source] = await fixture.select().from(schema.lastfmTrackSource)
   if (!source) throw new Error('Expected a Last.fm recording')
-  return { source, scrobble, username }
+  return { source, scrobble, scrobbles, username }
 }
+
+it('links a standalone Last.fm name when one exact Spotify release supports its playback tags', async () => {
+  const { source, scrobbles, username } = await addScrobbledRecording([
+    catalogTrack.album.name,
+    'Synthetic EP',
+  ])
+  await queueSpotifyTrackSearches(
+    { trackIds: [source.trackMediaItemId] },
+    userId,
+  )
+  await processQueuedJobs()
+  const search = await getSpotifyTrackSearch(source.trackMediaItemId, userId)
+  expect(search.job).toMatchObject({
+    status: 'succeeded',
+    resultCount: 1,
+    matchMethod: 'automatic',
+  })
+  const targetId = search.job?.acceptedTrackId
+  if (!targetId) throw new Error('Expected the retained Spotify recording')
+
+  await refreshTrackLinks(username)
+  expect(await fixture.select().from(schema.lastfmTrackSource)).toMatchObject([
+    { trackMediaItemId: targetId, manuallyMatched: false },
+  ])
+  expect(await fixture.select().from(schema.libraryTrack)).toMatchObject([
+    { mediaItemId: targetId, spotifyTrackId: candidateId, scrobbleCount: 2 },
+  ])
+  expect(await fixture.select().from(schema.lastfmScrobble)).toMatchObject(
+    scrobbles,
+  )
+  const editedTitle = `${title} (Radio Edit)`
+  await fixture.insert(schema.lastfmScrobble).values({
+    id: 'fixture-radio-edit',
+    username,
+    artistName,
+    artistKey: artistName.toLowerCase(),
+    trackName: editedTitle,
+    trackKey: editedTitle.toLowerCase(),
+    listenedAt: new Date('2025-01-03T00:00:00Z'),
+    albumName: catalogTrack.album.name,
+    albumKey: catalogTrack.album.name.toLowerCase(),
+  })
+  await refreshTrackLinks(username)
+  expect(await fixture.select().from(schema.lastfmTrackSource)).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        trackKey: source.trackKey,
+        trackMediaItemId: targetId,
+      }),
+      expect.objectContaining({
+        trackKey: editedTitle.toLowerCase(),
+        trackMediaItemId: expect.not.stringMatching(targetId),
+      }),
+    ]),
+  )
+  await removeScrobbleTrackMatch(targetId, {
+    artistKey: source.artistKey,
+    trackKey: source.trackKey,
+    mode: 'separate',
+  })
+  await refreshTrackLinks(username)
+  expect(
+    await fixture
+      .select()
+      .from(schema.lastfmTrackSource)
+      .where(eq(schema.lastfmTrackSource.trackKey, source.trackKey)),
+  ).toMatchObject([
+    { trackMediaItemId: source.trackMediaItemId, manuallyMatched: true },
+  ])
+  expect(await fixture.select().from(schema.lastfmScrobble)).toEqual(
+    expect.arrayContaining(
+      scrobbles.map((scrobble) => expect.objectContaining(scrobble)),
+    ),
+  )
+  expect(request).toHaveBeenCalledTimes(2)
+})
+
+it.each([
+  {
+    reason: 'two observed releases with separate exact IDs',
+    albums: [catalogTrack.album.name, otherEdition.album.name],
+    candidates: [catalogTrack, otherEdition],
+  },
+  {
+    reason: 'no observed release',
+    albums: ['Fixture Single', 'Fixture EP'],
+    candidates: [catalogTrack],
+  },
+  {
+    reason: 'an unmatched live release',
+    albums: [catalogTrack.album.name, 'Fixture Live Sessions'],
+    candidates: [catalogTrack],
+  },
+  {
+    reason: 'a different recording on the other observed release',
+    albums: [catalogTrack.album.name, otherEdition.album.name],
+    candidates: [catalogTrack, { ...otherEdition, name: `${title}: Acoustic` }],
+  },
+])(
+  'keeps standalone album observations reviewable with $reason',
+  async ({ albums, candidates }) => {
+    const { source, scrobbles } = await addScrobbledRecording(albums)
+    mockCandidates(...candidates)
+    await queueSpotifyTrackSearches(
+      { trackIds: [source.trackMediaItemId] },
+      userId,
+    )
+    await processQueuedJobs()
+
+    const search = await getSpotifyTrackSearch(source.trackMediaItemId, userId)
+    expect(search.job).toMatchObject({
+      status: 'succeeded',
+      resultCount: candidates.length,
+    })
+    expect(search.job?.acceptedTrackId).toBeUndefined()
+    expect(await fixture.select().from(schema.libraryTrack)).toMatchObject([
+      { mediaItemId: source.trackMediaItemId, spotifyTrackId: null },
+    ])
+    expect(await fixture.select().from(schema.lastfmScrobble)).toMatchObject(
+      scrobbles,
+    )
+  },
+)
+
+it('protects a concrete album association even when a raw album tag agrees with Spotify', async () => {
+  const { source } = await addScrobbledRecording([
+    catalogTrack.album.name,
+    'Fixture EP',
+  ])
+  const { albumId, trackId } = await addListedRecording()
+  await fixture
+    .update(schema.album)
+    .set({
+      spotifyUrl: `https://open.spotify.com/album/${otherEdition.album.id}`,
+    })
+    .where(eq(schema.album.mediaItemId, albumId))
+  await fixture
+    .update(schema.track)
+    .set({ trackMediaItemId: source.trackMediaItemId })
+    .where(eq(schema.track.trackMediaItemId, trackId))
+  await queueSpotifyTrackSearches(
+    { trackIds: [source.trackMediaItemId] },
+    userId,
+  )
+  await processQueuedJobs()
+  expect(
+    (await getSpotifyTrackSearch(source.trackMediaItemId, userId)).job
+      ?.acceptedTrackId,
+  ).toBeUndefined()
+  expect(await fixture.select().from(schema.track)).toMatchObject([
+    {
+      albumMediaItemId: albumId,
+      trackMediaItemId: source.trackMediaItemId,
+      position: 2,
+    },
+  ])
+})
+
+it('keeps a retained Spotify recording with conflicting release evidence separate', async () => {
+  const { source, scrobble } = await addScrobbledRecording([
+    catalogTrack.album.name,
+    'Fixture EP',
+  ])
+  const { trackId: retainedId, albumId } = await addListedRecording(candidateId)
+  const username = 'other-fixture-listener'
+  await fixture.insert(schema.lastfmTrackSource).values({
+    username,
+    artistKey: source.artistKey,
+    trackKey: source.trackKey,
+    trackMediaItemId: retainedId,
+  })
+  await fixture.insert(schema.lastfmScrobble).values({
+    ...scrobble,
+    username,
+    albumName: 'Fixture EP',
+    albumKey: 'fixture ep',
+  })
+  await queueSpotifyTrackSearches(
+    { trackIds: [source.trackMediaItemId] },
+    userId,
+  )
+  await processQueuedJobs()
+
+  const { job } = await getSpotifyTrackSearch(source.trackMediaItemId, userId)
+  expect(job).toMatchObject({ status: 'succeeded', resultCount: 1 })
+  expect(job?.acceptedTrackId).toBeUndefined()
+  expect(await fixture.select().from(schema.track)).toMatchObject([
+    { albumMediaItemId: albumId, trackMediaItemId: retainedId, position: 2 },
+  ])
+  expect(await fixture.select().from(schema.lastfmTrackSource)).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ trackMediaItemId: source.trackMediaItemId }),
+      expect.objectContaining({ trackMediaItemId: retainedId }),
+    ]),
+  )
+})
+
+it('reconciles a saved standalone match with alternative album tags offline', async () => {
+  const { source, scrobbles } = await addScrobbledRecording([
+    catalogTrack.album.name,
+    'Fixture EP',
+  ])
+  const trackId = source.trackMediaItemId
+  await fixture
+    .update(schema.libraryTrack)
+    .set({ durationSec: 900 })
+    .where(eq(schema.libraryTrack.mediaItemId, trackId))
+  await queueSpotifyTrackSearches({ trackIds: [trackId] }, userId)
+  await processQueuedJobs()
+  const saved = (await getSpotifyTrackSearch(trackId, userId)).job
+  if (!saved) throw new Error('Expected a completed Spotify search')
+  expect(saved.acceptedTrackId).toBeUndefined()
+  await fixture
+    .update(schema.libraryTrack)
+    .set({ durationSec: null })
+    .where(eq(schema.libraryTrack.mediaItemId, trackId))
+  request.mockClear()
+
+  const selection = { trackId, jobId: saved.jobId, userId }
+  expect(
+    await reconcileSavedSpotifyTrackSearch(selection, { dryRun: true }),
+  ).toMatchObject({ status: 'matched' })
+  expect(await reconcileSavedSpotifyTrackSearch(selection)).toMatchObject({
+    status: 'matched',
+  })
+  expect(await reconcileSavedSpotifyTrackSearch(selection)).toEqual({
+    status: 'stale',
+  })
+  expect(await fixture.select().from(schema.lastfmScrobble)).toMatchObject(
+    scrobbles,
+  )
+  expect(request).not.toHaveBeenCalled()
+})
 
 it.each([undefined, candidateId])(
   'reuses the exact album position for a Last.fm recording with existing Spotify ID %s',
@@ -595,16 +847,6 @@ it('previews and applies a saved exact match offline, and respects newer searche
   ])
   expect(request).not.toHaveBeenCalled()
 })
-
-const otherEdition = {
-  ...catalogTrack,
-  id: otherCandidateId,
-  album: {
-    ...catalogTrack.album,
-    id: 'catalogalbum0000000001',
-    name: 'The Other Edition',
-  },
-}
 
 it.each([false, true])(
   'requires known release evidence to select among exact editions (known release = %s)',
@@ -813,23 +1055,26 @@ it('keeps the connected account ahead of the requested fallback market', async (
   )
 })
 
-it('requires configured app credentials when the explicit market is the only available option', async () => {
-  market = undefined
-  clientSecret = undefined
-  await expect(
-    queueSpotifyTrackSearches(
-      { trackIds: [recordingId], market: 'AU' },
-      userId,
-    ),
-  ).rejects.toMatchObject({
-    response: {
-      statusCode: 422,
-      message: expect.stringContaining('Configure Spotify Client ID'),
-    },
-  })
-  expect(await fixture.select().from(schema.scrapeJob)).toHaveLength(0)
-  expect(request).not.toHaveBeenCalled()
-})
+it.each([undefined, 'AU'])(
+  'asks for missing credentials before a search with market %s',
+  async (requestedMarket) => {
+    market = undefined
+    clientSecret = undefined
+    await expect(
+      queueSpotifyTrackSearches(
+        { trackIds: [recordingId], market: requestedMarket },
+        userId,
+      ),
+    ).rejects.toMatchObject({
+      response: {
+        statusCode: 422,
+        message: expect.stringContaining('Configure Spotify Client ID'),
+      },
+    })
+    expect(await fixture.select().from(schema.scrapeJob)).toHaveLength(0)
+    expect(request).not.toHaveBeenCalled()
+  },
+)
 
 it.each([undefined, 'AU'])(
   'uses a connected Spotify account with market %s when client credentials are unavailable',
@@ -841,11 +1086,7 @@ it.each([undefined, 'AU'])(
     ).rejects.toMatchObject({
       response: {
         statusCode: 422,
-        message: expect.stringContaining(
-          configuredMarket
-            ? 'Configure Spotify Client ID'
-            : 'Set Spotify Market in Providers',
-        ),
+        message: expect.stringContaining('Configure Spotify Client ID'),
       },
     })
     expect(await fixture.select().from(schema.scrapeJob)).toHaveLength(0)
