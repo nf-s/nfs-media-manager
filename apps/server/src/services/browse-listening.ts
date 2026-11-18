@@ -31,16 +31,23 @@ export function listeningPeriodBounds(period: ListeningPeriod, now: Date) {
   return { from, to: now, inclusiveTo: true }
 }
 
-function periodPredicate(period: ListeningPeriod, now: Date): SQL {
+/** True for scrobbles inside the period; `listenedAt` names the timestamp column. */
+export function listeningPeriodPredicate(
+  period: ListeningPeriod,
+  now: Date,
+  listenedAt: SQL = sql`listened_at`,
+): SQL {
   const bounds = listeningPeriodBounds(period, now)
   const conditions: SQL[] = []
   if (bounds.from)
-    conditions.push(sql`listened_at >= ${bounds.from.toISOString()}::timestamp`)
+    conditions.push(
+      sql`${listenedAt} >= ${bounds.from.toISOString()}::timestamp`,
+    )
   if (bounds.to)
     conditions.push(
       bounds.inclusiveTo
-        ? sql`listened_at <= ${bounds.to.toISOString()}::timestamp`
-        : sql`listened_at < ${bounds.to.toISOString()}::timestamp`,
+        ? sql`${listenedAt} <= ${bounds.to.toISOString()}::timestamp`
+        : sql`${listenedAt} < ${bounds.to.toISOString()}::timestamp`,
     )
   return conditions.length
     ? sql`(${sql.join(conditions, sql` and `)})`
@@ -59,7 +66,7 @@ export function createBrowseListening(
     let entry = periods.get(key)
     if (!entry) {
       entry = {
-        predicate: periodPredicate(period, now),
+        predicate: listeningPeriodPredicate(period, now),
         alias: `count_${periods.size}`,
       }
       periods.set(key, entry)

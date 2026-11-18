@@ -4,6 +4,7 @@ import { AlbumProviderDetailsSchema } from './album-provider-details'
 import { TrackListItemSchema } from './tracks'
 import {
   ListeningFilterParamSchema,
+  ListeningHistogramPeriodParamSchema,
   ListeningPeriodParamSchema,
 } from './listening'
 import {
@@ -84,6 +85,14 @@ export const AlbumQuerySchema = PaginationQuerySchema.extend({
   sortBy: AlbumSortSchema.default('dateAdded'),
   direction: DirectionSchema.default('desc'),
 })
+
+/** An album browse query and the period its listening histogram counts over. */
+export const AlbumListeningHistogramQuerySchema = AlbumQuerySchema.extend({
+  period: ListeningHistogramPeriodParamSchema,
+})
+export type AlbumListeningHistogramQuery = z.infer<
+  typeof AlbumListeningHistogramQuerySchema
+>
 
 export const FilmQuerySchema = PaginationQuerySchema.extend({
   creatorId: CreatorIdSchema.optional(),

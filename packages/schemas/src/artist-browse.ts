@@ -41,6 +41,8 @@ export const ArtistBrowseSortSchema = z.enum([
   'trackCount',
   'scrobbles',
   'playlistCount',
+  /** Scrobbles in the query's `listeningSort` period. */
+  'listeningScrobbles',
 ])
 const textKeys = new Set(
   artistBrowseFields

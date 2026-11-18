@@ -18,6 +18,11 @@ import { AlbumListItemSchema, FilmListItemSchema } from './media'
 import { TrackListItemSchema } from './tracks'
 import { BrowseValuesSchema } from './browse'
 import {
+  ListeningFilterParamSchema,
+  ListeningHistogramPeriodParamSchema,
+  ListeningPeriodParamSchema,
+} from './listening'
+import {
   ArtistBrowseSortSchema,
   ArtistBrowseFiltersParamSchema,
   ArtistBrowseRangesParamSchema,
@@ -45,6 +50,8 @@ export const ArtistSummarySchema = CreatorIdentitySchema.extend({
   playlistCount: CountSchema,
   /** Scrobbles linked to the artist's library albums and tracks; in browse rows. */
   scrobbleCount: CountSchema.optional(),
+  /** Scrobbles in the requested sort period; only when one was asked for. */
+  listeningScrobbles: CountSchema.optional(),
   /** Scrobbles per UTC month, oldest first, ending with the current month; in browse rows. */
   listeningMonths: z.array(CountSchema).optional(),
   browse: BrowseValuesSchema.default({}),
@@ -105,8 +112,18 @@ export const ArtistQuerySchema = CreatorQuerySchema.extend({
     },
     z.array(z.string().min(1).max(200)).max(100),
   ),
+  listening: ListeningFilterParamSchema,
+  listeningSort: ListeningPeriodParamSchema,
 })
 export type ArtistQuery = z.infer<typeof ArtistQuerySchema>
+
+/** An artist browse query and the period its listening histogram counts over. */
+export const ArtistListeningHistogramQuerySchema = ArtistQuerySchema.extend({
+  period: ListeningHistogramPeriodParamSchema,
+})
+export type ArtistListeningHistogramQuery = z.infer<
+  typeof ArtistListeningHistogramQuerySchema
+>
 
 export const ArtistMetadataQuerySchema = ArtistQuerySchema.extend({
   sortBy: z

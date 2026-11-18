@@ -81,3 +81,36 @@ export const ListeningPeriodParamSchema = z.preprocess(
   parseOptionalJson,
   ListeningPeriodSchema.optional(),
 )
+
+/**
+ * The lowest scrobble count of each bar of a library's listening histogram.
+ * A bar ends one below the next bar's edge; the last bar is open-ended.
+ */
+export const listeningHistogramEdges = {
+  album: [0, 1, 5, 10, 20, 50, 100, 200],
+  track: [0, 1, 2, 5, 10, 20, 50, 100],
+  artist: [0, 1, 10, 50, 100, 200, 500, 1000],
+} as const satisfies Record<string, readonly number[]>
+export type ListeningLibrary = keyof typeof listeningHistogramEdges
+
+/** The period a listening histogram counts over, as a serialized query value. */
+export const ListeningHistogramPeriodParamSchema = z.preprocess(
+  parseOptionalJson,
+  ListeningPeriodSchema,
+)
+
+/**
+ * How many of a browse query's items have each number of scrobbles in a
+ * period. The query's own listening rules are left out, so the bars show what
+ * a rule would choose from.
+ */
+export const ListeningHistogramSchema = z
+  .object({
+    edges: z.array(z.number().int().nonnegative()).min(1),
+    counts: z.array(z.number().int().nonnegative()),
+  })
+  .refine(
+    (histogram) => histogram.edges.length === histogram.counts.length,
+    'Each bar needs a count',
+  )
+export type ListeningHistogram = z.infer<typeof ListeningHistogramSchema>

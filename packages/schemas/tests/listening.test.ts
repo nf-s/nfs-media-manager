@@ -2,11 +2,18 @@ import { describe, expect, it } from 'vitest'
 import {
   ListeningFilterParamSchema,
   ListeningFilterSchema,
+  ListeningHistogramSchema,
+  listeningHistogramEdges,
   ListeningPeriodParamSchema,
   ListeningPeriodSchema,
   ListeningRuleSchema,
 } from '../src/listening'
-import { AlbumQuerySchema } from '../src/media'
+import {
+  AlbumListeningHistogramQuerySchema,
+  AlbumQuerySchema,
+} from '../src/media'
+import { TrackQuerySchema } from '../src/tracks'
+import { ArtistQuerySchema } from '../src/creators'
 
 describe('listening controls', () => {
   it('parses optional URL state and preserves zero count bounds', () => {
@@ -92,6 +99,43 @@ describe('listening controls', () => {
     ).toBe(false)
     expect(
       ListeningFilterSchema.safeParse({ match: 'invalid', rules: [] }).success,
+    ).toBe(false)
+  })
+
+  it('accepts listening rules and a sort period on tracks and artists', () => {
+    const listening = {
+      match: 'any',
+      rules: [
+        { period: { kind: 'rolling', amount: 2, unit: 'years' }, max: 0 },
+      ],
+    }
+    const params = {
+      listening: JSON.stringify(listening),
+      listeningSort: '{"kind":"all"}',
+      sortBy: 'listeningScrobbles',
+    }
+    for (const schema of [TrackQuerySchema, ArtistQuerySchema])
+      expect(schema.parse(params)).toMatchObject({
+        listening,
+        listeningSort: { kind: 'all' },
+        sortBy: 'listeningScrobbles',
+      })
+    expect(TrackQuerySchema.parse({}).listening).toBeUndefined()
+  })
+
+  it('requires a period for a histogram and one count per bar', () => {
+    expect(AlbumListeningHistogramQuerySchema.safeParse({}).success).toBe(false)
+    expect(
+      AlbumListeningHistogramQuerySchema.parse({ period: '{"kind":"all"}' })
+        .period,
+    ).toEqual({ kind: 'all' })
+    const edges = [...listeningHistogramEdges.album]
+    expect(
+      ListeningHistogramSchema.safeParse({ edges, counts: edges.map(() => 0) })
+        .success,
+    ).toBe(true)
+    expect(
+      ListeningHistogramSchema.safeParse({ edges, counts: [1] }).success,
     ).toBe(false)
   })
 })

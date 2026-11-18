@@ -15,6 +15,11 @@ import {
 } from './common'
 import { JobProgressSchema, JobStatusSchema } from './job'
 import { ListeningMonthSchema } from './lastfm'
+import {
+  ListeningFilterParamSchema,
+  ListeningHistogramPeriodParamSchema,
+  ListeningPeriodParamSchema,
+} from './listening'
 import { YoutubeSyncScheduleSchema } from './youtube'
 
 /** `scrape_job.options.task` of the job that imports one Spotify playlist. */
@@ -163,6 +168,8 @@ export const TrackListItemSchema = z.object({
   spotifyUrl: z.string().url().nullable(),
   isrc: z.string().nullable(),
   scrobbles: z.number().int().nonnegative(),
+  /** Scrobbles in the requested sort period; only when one was asked for. */
+  listeningScrobbles: z.number().int().nonnegative().optional(),
   lastListenedAt: z.string().nullable(),
   /** Matching release versions represented by this grouped Browse row. */
   recordingGroup: z
@@ -255,10 +262,20 @@ export const TrackQuerySchema = PaginationQuerySchema.extend({
   q: z.string().optional(),
   filters: TrackFiltersParamSchema,
   ranges: BrowseRangesParamSchema,
+  listening: ListeningFilterParamSchema,
+  listeningSort: ListeningPeriodParamSchema,
   sortBy: BrowseKeySchema.default('dateAdded'),
   direction: DirectionSchema.default('desc'),
 })
 export type TrackQuery = z.infer<typeof TrackQuerySchema>
+
+/** A track browse query and the period its listening histogram counts over. */
+export const TrackListeningHistogramQuerySchema = TrackQuerySchema.extend({
+  period: ListeningHistogramPeriodParamSchema,
+})
+export type TrackListeningHistogramQuery = z.infer<
+  typeof TrackListeningHistogramQuerySchema
+>
 
 export const TRACK_POSITIONS_MAX = 50
 /**
