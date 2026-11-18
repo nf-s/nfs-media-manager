@@ -10,9 +10,13 @@ const RecordingGroupSchema = z.object({
 })
 
 export type RecordingGroup = z.infer<typeof RecordingGroupSchema>
-export const RecordingGroupRowsSchema = z.array(RecordingGroupSchema)
+/** A Browse row also carries the group's count in a requested sort period. */
+const RecordingGroupRowSchema = RecordingGroupSchema.extend({
+  listening_scrobbles: z.number().int().nonnegative().nullable(),
+})
+export const RecordingGroupRowsSchema = z.array(RecordingGroupRowSchema)
 export const RecordingGroupPositionRowsSchema = z.array(
-  RecordingGroupSchema.extend({ rank: z.number().int().positive() }),
+  RecordingGroupRowSchema.extend({ rank: z.number().int().positive() }),
 )
 
 // The SQL equivalent of albumNameKey. Keep the complete title so mix, edit

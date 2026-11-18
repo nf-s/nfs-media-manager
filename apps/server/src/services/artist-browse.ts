@@ -10,10 +10,16 @@ import {
 import {
   ArtistSummarySchema,
   ArtistMetadataItemSchema,
+  type ArtistListeningHistogramQuery,
   type ArtistQuery,
   type ArtistMetadataQuery,
 } from '@repo/schemas/creators'
 import { ARTIST_LISTENING_MONTHS } from '@repo/schemas/artist-browse'
+import {
+  defaultListeningPeriod,
+  listeningHistogramEdges,
+  ListeningHistogramSchema,
+} from '@repo/schemas/listening'
 import { db } from '@/lib/db'
 import { createDatabaseReadCache } from '@/lib/database-read-cache'
 import {
@@ -27,6 +33,11 @@ import {
   artistLastScrapedAt,
   loadArtistMetadata,
 } from './artist-metadata'
+import {
+  createArtistBrowseListening,
+  type ArtistBrowseListening,
+} from './artist-browse-listening'
+import { listeningPeriodBounds } from './browse-listening'
 import { normalizedTagSql, normalizeTagName } from './tag-state'
 
 type Query = ArtistQuery | ArtistMetadataQuery
@@ -132,7 +143,19 @@ function numericValue(field: string): SQL {
   return sql`coalesce(playlist_counts.playlist_count, 0)`
 }
 
-function candidates(query: Query, includeOrder: boolean): SQL {
+/** The period rows are counted and sorted over, when one applies. */
+function listeningSortPeriod(query: Query) {
+  return (
+    query.listeningSort ??
+    (query.sortBy === 'listeningScrobbles' ? defaultListeningPeriod : undefined)
+  )
+}
+
+function candidates(
+  query: Query,
+  includeOrder: boolean,
+  listening?: ArtistBrowseListening,
+): SQL {
   const required = new Set(query.ranges.map((range) => range.field))
   if (includeOrder) required.add(query.sortBy)
   const music = required.has('albumCount') || required.has('trackCount')
@@ -157,10 +180,11 @@ function candidates(query: Query, includeOrder: boolean): SQL {
         : sql``
     }
     ${playlists ? sql`left join (${artistPlaylistCounts()}) playlist_counts on playlist_counts.artist_id = a.id` : sql``}
-    ${textSort ? sql`left join (select id, min(lower(value)) as value from (${textRows(query.sortBy)}) source group by id) sort_values on sort_values.id = a.id` : sql``}`
+    ${textSort ? sql`left join (select id, min(lower(value)) as value from (${textRows(query.sortBy)}) source group by id) sort_values on sort_values.id = a.id` : sql``}
+    ${listening?.join ?? sql``}`
 }
 
-function membership(query: Query): SQL {
+function membership(query: Query, listening?: ArtistBrowseListening): SQL {
   const conditions: SQL[] = [visibleArtist]
   if (query.playlistIds.length)
     conditions.push(sql`${id} in (
@@ -199,13 +223,16 @@ function membership(query: Query): SQL {
   }
   if ('freshness' in query)
     conditions.push(...artistFreshnessConditions(id, query.freshness))
+  if (listening?.condition) conditions.push(listening.condition)
   return and(...conditions) ?? sql`true`
 }
 
-function ordering(query: Query): SQL {
+function ordering(query: Query, listening?: ArtistBrowseListening): SQL {
   let value: SQL
   if (query.sortBy === 'lastScrapedAt' && 'provider' in query && query.provider)
     value = artistLastScrapedAt(id, query.provider)
+  else if (query.sortBy === 'listeningScrobbles' && listening?.sort)
+    value = listening.sort
   else if (query.sortBy === 'name')
     value = sql`lower(coalesce(a.sort_name, a.name))`
   else if (
@@ -226,7 +253,12 @@ function ordering(query: Query): SQL {
   return sql`${value} ${query.direction === 'asc' ? sql`asc` : sql`desc`} ${nulls}, a.id asc`
 }
 
-const IdSchema = z.array(z.object({ id: z.string() }))
+const IdSchema = z.array(
+  z.object({
+    id: z.string(),
+    listeningScrobbles: z.number().int().nonnegative().optional(),
+  }),
+)
 const ArtistRowSchema = ArtistSummarySchema.extend({
   createdAt: z.coerce.date(),
 })
@@ -260,7 +292,11 @@ async function loadArtistListening(requested: SQL, now: Date) {
   )
 }
 
-async function loadArtists(ids: string[], now = new Date()) {
+async function loadArtists(
+  ids: string[],
+  listeningScrobbles?: Map<string, number>,
+  now = new Date(),
+) {
   if (!ids.length) return []
   const requested = sql`any(${sql.param(ids)}::text[])`
   const [result, profiles, listening] = await Promise.all([
@@ -304,6 +340,9 @@ async function loadArtists(ids: string[], now = new Date()) {
         {
           ...row,
           createdAt: row.createdAt.toISOString(),
+          ...(listeningScrobbles
+            ? { listeningScrobbles: listeningScrobbles.get(row.id) ?? 0 }
+            : {}),
           listeningMonths:
             listening.get(row.id) ??
             Array.from({ length: ARTIST_LISTENING_MONTHS }, () => 0),
@@ -338,14 +377,28 @@ async function loadArtists(ids: string[], now = new Date()) {
   })
 }
 
+/**
+ * The matching artist IDs; ordered and with their `listeningScrobbles` in the
+ * sort period when a limit or offset applies.
+ */
 export function artistBrowseIdsQuery(
   query: Query,
   limit = query.limitResults,
   offset?: number,
+  now = new Date(),
 ): SQL {
   const paginate = limit !== undefined || offset !== undefined
-  return sql`select a.id from ${candidates(query, paginate)} where ${membership(query)}
-    ${paginate ? sql`order by ${ordering(query)}` : sql``}
+  const listening = createArtistBrowseListening(
+    query.listening,
+    paginate ? listeningSortPeriod(query) : undefined,
+    now,
+  )
+  const sorted = listening?.sort
+    ? sql`, ${listening.sort} as "listeningScrobbles"`
+    : sql``
+  return sql`select a.id${sorted} from ${candidates(query, paginate, listening)}
+    where ${membership(query, listening)}
+    ${paginate ? sql`order by ${ordering(query, listening)}` : sql``}
     ${limit === undefined ? sql`` : sql`limit ${limit}`}
     ${offset === undefined ? sql`` : sql`offset ${offset}`}`
 }
@@ -359,27 +412,45 @@ export async function listArtistBrowsePage(query: Query) {
   const result = remaining
     ? await db.execute(artistBrowseIdsQuery(query, remaining, offset))
     : { rows: [] }
-  const ids = IdSchema.parse(result.rows).map((row) => row.id)
+  const rows = IdSchema.parse(result.rows)
+  const items = rows.slice(0, query.size)
+  const listeningScrobbles = listeningSortPeriod(query)
+    ? new Map(items.map((row) => [row.id, row.listeningScrobbles ?? 0]))
+    : undefined
   return BrowsePageSliceSchema(ArtistSummarySchema).parse({
-    items: await loadArtists(ids.slice(0, query.size)),
+    items: await loadArtists(
+      items.map((row) => row.id),
+      listeningScrobbles,
+    ),
     page: query.page,
     size: query.size,
-    hasMore: ids.length > query.size,
+    hasMore: rows.length > query.size,
   })
 }
 
-export async function countArtistBrowse(query: Query) {
+export async function countArtistBrowse(query: Query, now = new Date()) {
   const { limitResults } = query
+  // A listening sort period without rules leaves the count alone.
+  const listening = createArtistBrowseListening(query.listening, undefined, now)
   const filters = {
     q: query.q,
     filters: query.filters,
     ranges: query.ranges,
     playlistIds: query.playlistIds,
     freshness: 'freshness' in query ? query.freshness : undefined,
+    listening: query.listening && {
+      match: query.listening.match,
+      rules: query.listening.rules.map((rule) => ({
+        min: rule.min,
+        max: rule.max,
+        bounds: listeningPeriodBounds(rule.period, now),
+      })),
+    },
   }
   const total = await countCache(JSON.stringify(filters), async () => {
     const result = await db.execute(
-      sql`select count(*)::int as count from ${candidates(query, false)} where ${membership(query)}`,
+      sql`select count(*)::int as count from ${candidates(query, false, listening)}
+        where ${membership(query, listening)}`,
     )
     return (
       z
@@ -395,7 +466,8 @@ export async function countArtistBrowse(query: Query) {
 
 /**
  * The filtered count and, for "N of M", the count Clear filters leaves:
- * without search, filters, ranges, playlists or a result limit.
+ * without search, filters, ranges, playlists, listening rules or a result
+ * limit.
  */
 export async function artistBrowseCounts(query: ArtistQuery) {
   const filtered =
@@ -403,7 +475,8 @@ export async function artistBrowseCounts(query: ArtistQuery) {
     query.filters.length > 0 ||
     query.ranges.length > 0 ||
     query.playlistIds.length > 0 ||
-    query.limitResults !== undefined
+    query.limitResults !== undefined ||
+    query.listening !== undefined
   const [{ totalCount }, unfiltered] = await Promise.all([
     countArtistBrowse(query),
     filtered
@@ -414,6 +487,7 @@ export async function artistBrowseCounts(query: ArtistQuery) {
           ranges: [],
           playlistIds: [],
           limitResults: undefined,
+          listening: undefined,
         })
       : undefined,
   ])
@@ -429,6 +503,38 @@ export async function listArtistMetadataBrowsePage(query: ArtistMetadataQuery) {
       ...item,
       providers: metadata.filter((row) => row.artistId === item.id),
     })),
+  })
+}
+
+/**
+ * How many artists matching the query, without its listening rules, have
+ * each number of scrobbles in the period, by bar of the artist histogram. One
+ * grouped read counts every bar.
+ */
+export async function artistListeningHistogram(
+  { period, ...query }: ArtistListeningHistogramQuery,
+  now = new Date(),
+) {
+  const edges = listeningHistogramEdges.artist
+  const listening = createArtistBrowseListening(undefined, period, now)
+  const value = listening?.sort ?? sql`0`
+  const bars = edges.map((edge, index) => {
+    const next = edges[index + 1]
+    return next === undefined
+      ? sql`count(*) filter (where ${value} >= ${edge})::int`
+      : sql`count(*) filter (where ${value} >= ${edge} and ${value} < ${next})::int`
+  })
+  const unruled = { ...query, listening: undefined }
+  const result =
+    await db.execute(sql`select array[${sql.join(bars, sql`, `)}] as counts
+    from ${candidates(unruled, false, listening)} where ${membership(unruled)}`)
+  const [row] = z
+    .array(z.object({ counts: z.array(z.number().int().nonnegative()) }))
+    .length(1)
+    .parse(result.rows)
+  return ListeningHistogramSchema.parse({
+    edges: [...edges],
+    counts: row?.counts ?? edges.map(() => 0),
   })
 }
 

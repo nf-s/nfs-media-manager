@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   metadata: vi.fn(),
   browse: vi.fn(),
   count: vi.fn(),
+  histogram: vi.fn(),
   facets: vi.fn(),
   diagnostics: vi.fn(),
   metadataBrowse: vi.fn(),
@@ -42,6 +43,7 @@ vi.mock('@/services/artist-browse', () => ({
   listArtistBrowsePage: mocks.browse,
   artistBrowseCounts: mocks.count,
   countArtistBrowse: mocks.count,
+  artistListeningHistogram: mocks.histogram,
   listArtistBrowseFacets: mocks.facets,
   listArtistMetadataBrowsePage: mocks.metadataBrowse,
 }))
@@ -254,6 +256,73 @@ describe('creator API', () => {
     )
     expect(mocks.browse).toHaveBeenLastCalledWith(
       expect.objectContaining({ filters, ranges, limitResults: 10 }),
+    )
+  })
+
+  it('validates listening rules and the histogram period before artist IDs', async () => {
+    mocks.browse.mockResolvedValue({
+      items: [],
+      page: 1,
+      size: 50,
+      hasMore: false,
+    })
+    const histogram = { edges: [0, 1], counts: [3, 2] }
+    mocks.histogram.mockResolvedValue(histogram)
+    const listening = {
+      match: 'any',
+      rules: [
+        { period: { kind: 'rolling', amount: 2, unit: 'years' }, max: 9 },
+      ],
+    }
+    const period = { kind: 'dates', from: '2025-01-01' }
+    const response = await app.request(
+      '/artists/listening-histogram?' +
+        new URLSearchParams({
+          period: JSON.stringify(period),
+          listening: JSON.stringify(listening),
+          q: 'fixture',
+        }),
+    )
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ data: histogram })
+    expect(mocks.histogram).toHaveBeenLastCalledWith(
+      expect.objectContaining({ period, listening, q: 'fixture' }),
+    )
+    expect(mocks.artist).not.toHaveBeenCalled()
+    const invalid: Record<string, string>[] = [
+      {},
+      { period: JSON.stringify({ kind: 'rolling', amount: 0, unit: 'days' }) },
+      {
+        period: JSON.stringify({ kind: 'all' }),
+        listening: JSON.stringify({ match: 'all', rules: [{ period }] }),
+      },
+    ]
+    for (const input of invalid)
+      expect(
+        (
+          await app.request(
+            '/artists/listening-histogram?' + new URLSearchParams(input),
+          )
+        ).status,
+      ).toBe(422)
+    expect(
+      (
+        await app.request(
+          '/artists/browse-page?' +
+            new URLSearchParams({
+              listening: JSON.stringify(listening),
+              listeningSort: JSON.stringify(period),
+              sortBy: 'listeningScrobbles',
+            }),
+        )
+      ).status,
+    ).toBe(200)
+    expect(mocks.browse).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        listening,
+        listeningSort: period,
+        sortBy: 'listeningScrobbles',
+      }),
     )
   })
 

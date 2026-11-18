@@ -62,7 +62,7 @@ import { mediaAiSearchTarget } from '@/utils/ai-search'
 import { updateJobSelection } from '@/utils/job-selection'
 import { dispatchFilmSelection } from '@/utils/film-selection'
 import { fetchApiData } from '@/utils/api'
-import { formatListeningPeriod } from '@/utils/listening-filters'
+import { listeningScrobblesField } from '@/utils/listening-filters'
 import type { MediaScope } from '@/utils/media-scope'
 
 type Props = {
@@ -266,6 +266,12 @@ function SelectionTable({
   if (listening) params.set('listening', JSON.stringify(listening))
   if (listeningSort) params.set('listeningSort', JSON.stringify(listeningSort))
   const queryIdentity = params.toString()
+  // The histogram counts the library under the browse filters alone.
+  const listeningParams = new URLSearchParams({
+    q,
+    filters: JSON.stringify(filters),
+    ranges: JSON.stringify(ranges),
+  })
   const queueKey = ['metadata-selection-queue', mediaType]
   const queuePending = useIsMutating({ mutationKey: queueKey }) > 0
   const { fields, facets, films, titleItems, titlesLoading, titlesError } =
@@ -273,17 +279,10 @@ function SelectionTable({
   const baseFields =
     fields.data ??
     (mediaType === 'album' ? albumBrowseFields : filmBrowseFields)
-  const available: BrowseField[] = listeningSort
-    ? [
-        ...baseFields,
-        {
-          key: 'listeningScrobbles',
-          label: `Scrobbles, ${formatListeningPeriod(listeningSort)}`,
-          type: 'number',
-          filterable: false,
-        },
-      ]
-    : baseFields
+  const available: BrowseField[] =
+    mediaType === 'album'
+      ? [...baseFields, listeningScrobblesField(listeningSort)]
+      : baseFields
   const columns = useTableColumns(`${mediaType}-metadata-selection`, [
     ...available.map((field) => ({
       key: field.key,
@@ -498,19 +497,24 @@ function SelectionTable({
       >
         {mediaType === 'album' && (
           <ListeningControls
-            presentation="panel"
+            apiBaseUrl={apiBaseUrl}
+            library="album"
+            params={listeningParams}
             filter={listening}
             sortPeriod={listeningSort}
-            sorting={sortBy === 'listeningScrobbles'}
+            total={films.firstPage?.totalCount}
+            examples={films.loadedSlots.slice(0, 3).map(({ item }) => ({
+              id: item.id,
+              title: item.title,
+              artworkUrl: item.artworkUrl,
+            }))}
             onFilterChange={(listening) =>
               changeFilters({ ...browseFilters, listening })
             }
-            onSortChange={(period) => {
+            onSortPeriodChange={(period) => {
               if (queue.isPending) return
               setListeningSort(period)
-              setSortBy('listeningScrobbles')
-              setProvider('')
-              clear()
+              if (sortBy === 'listeningScrobbles') clear()
             }}
           />
         )}

@@ -569,6 +569,110 @@
               ),
           },
           {
+            id: 'histogram',
+            title: 'Histogram and conditions',
+            body:
+              `<p>A filter on a count over a period, such as track plays in the last year. The histogram shows how the library is spread and sets a range by its bars; the conditions state the same filter exactly. Both are views of one filter.</p>` +
+              `<div class="g-cols">${g.spec(
+                fixed(
+                  D.hist(
+                    [
+                      ['0', 104],
+                      ['1+', 212],
+                      ['5+', 187],
+                      ['10+', 263, 'selected'],
+                      ['20+', 301, 'selected'],
+                      ['50+', 139],
+                      ['100+', 61],
+                      ['200+', 17],
+                    ],
+                    { label: 'Number of track plays' },
+                  ),
+                  328,
+                ) +
+                  '<div class="g-cap">Between 10 and 49: two bars selected.</div>',
+              )}${g.spec(
+                fixed(
+                  D.hist(
+                    [
+                      ['0', 104, 'selected'],
+                      ['1+', 212, 'selected'],
+                      ['5+', 187, 'partial'],
+                      ['10+', 263],
+                      ['20+', 301],
+                      ['50+', 139],
+                      ['100+', 61],
+                      ['200+', 17],
+                    ],
+                    { label: 'Number of track plays' },
+                  ),
+                  328,
+                ) +
+                  '<div class="g-cap">At most 6: the 5+ bar is only partly covered.</div>',
+              )}${g.spec(
+                fixed(
+                  D.hist(
+                    ['0', '1+', '5+', '10+', '20+', '50+', '100+', '200+'].map(
+                      (label) => [label],
+                    ),
+                    { label: 'Number of track plays' },
+                  ),
+                  328,
+                ) + '<div class="g-cap">Counts loading.</div>',
+              )}</div>` +
+              `<div class="g-cols">${g.spec(
+                fixed(
+                  D.cond([
+                    [
+                      { select: 'At most', label: 'Comparison' },
+                      { number: 6, label: 'Number' },
+                      'track plays',
+                    ],
+                    ['during', { select: 'all time', label: 'Period' }],
+                  ]),
+                  328,
+                ),
+              )}${g.spec(
+                fixed(
+                  D.cond([
+                    [
+                      { select: 'Between', label: 'Comparison' },
+                      { number: 10, label: 'Minimum' },
+                      'and',
+                      { number: 49, label: 'Maximum' },
+                      'track plays',
+                    ],
+                    [
+                      'during',
+                      { select: 'a date range…', label: 'Period' },
+                      { date: '2019-01-01', label: 'From' },
+                      'to',
+                      { date: '2019-12-31', label: 'Through' },
+                    ],
+                  ]),
+                  328,
+                ),
+              )}${g.spec(
+                D.condLine([
+                  'Match',
+                  { select: 'all conditions', label: 'Match' },
+                ]) +
+                  '<div class="g-cap">A line of words and controls on its own.</div>',
+              )}</div>` +
+              g.rules([
+                '<b>Histogram.</b> One bar per range, lowest first; the last bar is open-ended. The number above a bar is how many items fall in it, the label below is its lowest value. Heights follow the square root of the count, so a small bar is still visible.',
+                '<b>The bars are the control.</b> Select one bar, or a first and a last bar, to set a range. Selecting the only selected bar again clears it. Each bar is a button: Tab moves between bars, Space or Enter selects.',
+                '<b>A range that does not sit on bar edges</b> keeps its exact value: bars wholly inside it are selected and a bar it partly covers is shaded. Selecting bars replaces it with a range on bar edges.',
+                '<b>Condition.</b> One outlined card per rule. Line one says how much, line two says when after “during”, then Remove. Words sit between the controls so the card reads as a sentence; no field labels.',
+                '<b>One filter, two views.</b> A segmented switch beside the heading changes between Histogram and Rules. It changes the view, never the filter.',
+                '<b>Applies on change.</b> No Apply button. The filter is written out as one sentence in a neutral notice, with the number of matching items.',
+              ]) +
+              g.note(
+                'Replaces',
+                'a rule made of five separate fields (Period, Amount, Unit, Minimum, Maximum), a second form for the sort period and two primary buttons.',
+              ),
+          },
+          {
             id: 'facts',
             title: 'Facts, stats and sections',
             body:

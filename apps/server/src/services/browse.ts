@@ -18,7 +18,12 @@ import {
   trackSourceLabels,
   type TrackQuery,
 } from '@repo/schemas/tracks'
-import { defaultListeningPeriod } from '@repo/schemas/listening'
+import {
+  defaultListeningPeriod,
+  listeningHistogramEdges,
+  type ListeningHistogram,
+  type ListeningPeriod,
+} from '@repo/schemas/listening'
 import { PersonRoleSchema } from '@repo/schemas/common'
 import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
@@ -27,7 +32,7 @@ import { mediaItem, album, film, libraryTrack, mediaCredit } from '@/schemas/db'
 import { listLoadedScrapePlugins } from '@/plugins/registry'
 import { normalizedTagSql, normalizeTagName } from './tag-state'
 import { albumAddedDateExpression } from './album-added-dates'
-import { createBrowseListening } from './browse-listening'
+import { createBrowseListening, type BrowseListening } from './browse-listening'
 import {
   albumFirstTagRows,
   albumsWithEnoughTags,
@@ -65,6 +70,10 @@ const facetCache = createDatabaseReadCache<z.infer<typeof FacetRowSchema>[]>({
   maxEntries: 4,
   maxValueBytes: 512 * 1024,
 })
+const histogramCache = createDatabaseReadCache<number[]>({
+  maxEntries: 64,
+  maxValueBytes: 256,
+})
 const dialect = new PgDialect()
 const trackSortAlbum = alias(mediaItem, 'track_sort_album')
 const trackSortAlbumName = sql`lower(coalesce(nullif(trim(${trackSortAlbum.title}), ''), nullif(trim(${libraryTrack.albumName}), '')))`
@@ -73,6 +82,29 @@ type BrowsePosition = {
   id: string
   position: number
   recordingGroup?: RecordingGroup
+  listeningScrobbles?: number
+}
+
+/** The one-based histogram bar of a count: how many edges are at or below it. */
+function listeningBar(value: SQL, edges: readonly number[]) {
+  return sql<number>`width_bucket(${value}, array[${sql.join(
+    edges.map((edge) => sql`${edge}::int`),
+    sql`, `,
+  )}])::int`
+}
+
+const HistogramRowsSchema = z.array(
+  z.object({
+    bar: z.number().int().positive(),
+    count: z.number().int().nonnegative(),
+  }),
+)
+
+function listeningHistogramCounts(edges: readonly number[], rows: unknown) {
+  const bars = new Map(
+    HistogramRowsSchema.parse(rows).map((row) => [row.bar, row.count]),
+  )
+  return edges.map((_, index) => bars.get(index + 1) ?? 0)
 }
 
 export type BrowseQueryOptions = {
@@ -369,6 +401,7 @@ function groupedTrackBrowse(
   sort: SQL,
   naturalOrder: SQL[],
   sharedArtistTags: boolean,
+  listening: BrowseListening | undefined,
 ) {
   const matches = db
     .select({ id: mediaItem.id, title: mediaItem.title })
@@ -390,9 +423,19 @@ function groupedTrackBrowse(
         : sql`extract(epoch from ${value}) * 1000`,
     )
   })
-  const groupPredicate = groupRanges.length
-    ? sql`where ${and(...groupRanges)}`
+  const groupConditions = listening?.condition
+    ? [...groupRanges, listening.condition]
+    : groupRanges
+  const groupPredicate = groupConditions.length
+    ? sql`where ${and(...groupConditions)}`
     : sql``
+  // Group counts for rules, the sort period and row values.
+  const groupListening = listening
+    ? sql`left join ${listening.source('recording')} on listening_counts.id = g.group_key`
+    : sql``
+  // A sort period without rules leaves membership alone.
+  const countedListening = listening?.condition ? groupListening : sql``
+  const listeningValue = sql`${listening?.sort ?? sql`null`} as listening_scrobbles`
   const groupStats = sql`${recordingRepresentatives}, ${recordingListening}`
   const grouped = sql`${memberships}, ${groupStats}`
   const hasListeningRange = query.ranges.some(
@@ -416,13 +459,13 @@ function groupedTrackBrowse(
   const trackColumns = sql`
     join ${libraryTrack} on ${libraryTrack.mediaItemId} = ${mediaItem.id}
     left join ${mediaItem} as ${trackSortAlbum} on ${trackSortAlbum.id} = ${libraryTrack.albumMediaItemId}`
-  const groupRows = sql`from recording_stats g
+  const groupRows = sql`from recording_stats g ${groupListening}
     join ${mediaItem} on ${mediaItem.id} = g.id ${trackColumns} ${groupPredicate}`
   const offset = (query.page - 1) * query.size
 
   async function readCount() {
-    const counted = groupRanges.length
-      ? sql`${memberships}, ${rangeStats} select count(*)::int as value from ${rangeGroups} g ${groupPredicate}`
+    const counted = groupConditions.length
+      ? sql`${memberships}, ${rangeStats} select count(*)::int as value from ${rangeGroups} g ${countedListening} ${groupPredicate}`
       : sql`${memberships} select count(distinct group_key)::int as value from recording_members`
     const total = await countCache(
       JSON.stringify(dialect.sqlToQuery(counted)),
@@ -438,12 +481,14 @@ function groupedTrackBrowse(
 
   async function readPage(limit: number) {
     const { rows } = await db.execute(sql`${grouped}
-      select ${recordingGroupProjection} ${groupRows}
+      select ${recordingGroupProjection}, ${listeningValue} ${groupRows}
       order by ${ordering(groupSort)} limit ${limit} offset ${offset}`)
     const items = RecordingGroupRowsSchema.parse(rows).slice(0, query.size)
     return {
       ids: items.map((row) => row.id),
-      listeningScrobbles: undefined,
+      listeningScrobbles: listening?.sort
+        ? new Map(items.map((row) => [row.id, row.listening_scrobbles ?? 0]))
+        : undefined,
       recordingGroups: new Map(items.map((row) => [row.id, row])),
       hasMore: rows.length > query.size,
     }
@@ -453,37 +498,83 @@ function groupedTrackBrowse(
     const ranks = browseRanks(positions, query.limitResults)
     if (!ranks.length) return []
     const { rows } = await db.execute(sql`${grouped}, ranked as (
-      select ${recordingGroupProjection}, row_number() over (order by ${ordering(groupSort)}) as rank
+      select ${recordingGroupProjection}, ${listeningValue},
+        row_number() over (order by ${ordering(groupSort)}) as rank
       ${groupRows}
-    ) select id, version_count, scrobbles, last_listened_at, date_added, rank::int
+    ) select id, version_count, scrobbles, last_listened_at, date_added,
+        listening_scrobbles, rank::int
       from ranked where rank <= ${Math.max(...ranks)} and ${inArray(sql`rank`, ranks)} order by rank`)
     return RecordingGroupPositionRowsSchema.parse(rows).map(
-      ({ rank, ...recordingGroup }) => ({
+      ({ rank, listening_scrobbles, ...recordingGroup }) => ({
         id: recordingGroup.id,
         position: rank - 1,
         recordingGroup,
+        ...(listening?.sort
+          ? { listeningScrobbles: listening_scrobbles ?? 0 }
+          : {}),
       }),
     )
   }
 
   async function readVersions(id: string) {
-    const eligibleGroups = groupRanges.length
-      ? sql`, ${rangeStats}, eligible as (select g.group_key from ${rangeGroups} g ${groupPredicate})`
+    const eligibleGroups = groupConditions.length
+      ? sql`, ${rangeStats}, eligible as (select g.group_key from ${rangeGroups} g ${countedListening} ${groupPredicate})`
+      : sql``
+    // Versions are tracks, so they carry and sort by their own counts.
+    const versionListening = listening?.sort
+      ? sql`left join ${listening.source('track')} on listening_counts.id = m.id`
       : sql``
     const { rows } = await db.execute(sql`${memberships}${eligibleGroups}
-    select m.id from recording_members m
+    select m.id, ${listeningValue} from recording_members m
     join recording_members target on target.group_key = m.group_key and target.id = ${id}
-    ${groupRanges.length ? sql`join eligible on eligible.group_key = m.group_key` : sql``}
-    join ${mediaItem} on ${mediaItem.id} = m.id ${trackColumns}
+    ${groupConditions.length ? sql`join eligible on eligible.group_key = m.group_key` : sql``}
+    join ${mediaItem} on ${mediaItem.id} = m.id ${trackColumns} ${versionListening}
     order by ${ordering(sort)} limit ${query.size + 1} offset ${offset}`)
-    const ids = z
-      .array(z.object({ id: z.string() }))
+    const versions = z
+      .array(
+        z.object({
+          id: z.string(),
+          listening_scrobbles: z.number().int().nonnegative().nullable(),
+        }),
+      )
       .parse(rows)
-      .map((row) => row.id)
-    return { ids: ids.slice(0, query.size), hasMore: ids.length > query.size }
+      .slice(0, query.size)
+    return {
+      ids: versions.map((row) => row.id),
+      listeningScrobbles: listening?.sort
+        ? new Map(versions.map((row) => [row.id, row.listening_scrobbles ?? 0]))
+        : undefined,
+      hasMore: rows.length > query.size,
+    }
   }
 
-  return { offset, readCount, readPage, readPositions, readVersions }
+  /** Recording groups per bar of the sort period's count, in one read. */
+  async function readHistogram(value: SQL, edges: readonly number[]) {
+    const groups = groupRanges.length
+      ? sql`, ${rangeStats} select ${listeningBar(value, edges)} as bar,
+          count(*)::int as count from ${rangeGroups} g`
+      : sql` select ${listeningBar(value, edges)} as bar, count(*)::int as count
+          from (select distinct group_key from recording_members) g`
+    const counted = sql`${memberships}${groups} ${groupListening} ${groupPredicate}
+      group by bar`
+    return histogramCache(
+      JSON.stringify(dialect.sqlToQuery(counted)),
+      async () =>
+        listeningHistogramCounts(edges, (await db.execute(counted)).rows),
+    )
+  }
+  const listeningSort = listening?.sort
+
+  return {
+    offset,
+    readCount,
+    readPage,
+    readPositions,
+    readVersions,
+    readHistogram: listeningSort
+      ? (edges: readonly number[]) => readHistogram(listeningSort, edges)
+      : undefined,
+  }
 }
 
 async function browseQueries(
@@ -496,25 +587,25 @@ async function browseQueries(
   const listeningPeriod =
     'listeningSort' in query ? query.listeningSort : undefined
   if (
-    mediaType !== 'album' &&
+    mediaType === 'film' &&
     (listeningFilter ||
       listeningPeriod ||
       query.sortBy === 'listeningScrobbles')
   )
     throw new ServerError({
       statusCode: 422,
-      message: 'Listening controls are only available for albums',
+      message: 'Listening controls are not available for films',
     })
   const listening =
-    mediaType === 'album'
-      ? createBrowseListening(
+    mediaType === 'film'
+      ? undefined
+      : createBrowseListening(
           listeningFilter,
           listeningPeriod ??
             (query.sortBy === 'listeningScrobbles'
               ? defaultListeningPeriod
               : undefined),
         )
-      : undefined
   if (listening?.sort)
     fields.push({
       key: 'listeningScrobbles',
@@ -560,7 +651,9 @@ async function browseQueries(
       )})`,
     )
   }
-  if (listening?.condition) conditions.push(listening.condition)
+  // A recording group's rules apply to the group's count, after grouping.
+  if (listening?.condition && !groupedTrackQuery)
+    conditions.push(listening.condition)
   conditions.push(...(options.conditions ?? []))
   if (!('includeArchived' in query) || query.includeArchived !== 'true')
     conditions.push(
@@ -622,6 +715,7 @@ async function browseQueries(
       sort,
       naturalOrder,
       sharedArtistTags,
+      listening,
     )
   const missing =
     options.sort?.field.key === sortField.key && options.sort.missingFirst
@@ -638,11 +732,15 @@ async function browseQueries(
     mediaType === 'track'
       ? eq(libraryTrack.mediaItemId, mediaItem.id)
       : sql`false`
+  const listeningJoin = sql`listening_counts.id = ${mediaItem.id}`
+  const listeningSubject = mediaType === 'track' ? 'track' : 'album'
   const base = (rank: SQL<number> = sql<number>`0`) => {
     const query = database
       .select({
         id: mediaItem.id,
-        listeningScrobbles: listening?.sort ?? sql<null>`null`,
+        listeningScrobbles: sql<
+          number | null
+        >`${listening?.sort ?? sql`null`}`.as('listening_scrobbles'),
         rank: rank.as('rank'),
       })
       .from(mediaItem)
@@ -664,10 +762,7 @@ async function browseQueries(
         )
       : tracks
     return listening
-      ? sorted.leftJoin(
-          listening.source,
-          sql`listening_counts.album_media_item_id = ${mediaItem.id}`,
-        )
+      ? sorted.leftJoin(listening.source(listeningSubject), listeningJoin)
       : sorted
   }
   // Cache the raw count by the actual predicate, including caller SQL options.
@@ -677,7 +772,9 @@ async function browseQueries(
   async function readCount() {
     const total = await countCache(
       JSON.stringify(
-        dialect.sqlToQuery(sql`${countedListening?.source ?? sql``} ${where}`),
+        dialect.sqlToQuery(
+          sql`${countedListening?.source(listeningSubject) ?? sql``} ${where}`,
+        ),
       ),
       async () => {
         const query = database
@@ -692,8 +789,8 @@ async function browseQueries(
         const rows = await (
           countedListening
             ? tracks.leftJoin(
-                countedListening.source,
-                sql`listening_counts.album_media_item_id = ${mediaItem.id}`,
+                countedListening.source(listeningSubject),
+                listeningJoin,
               )
             : tracks
         ).where(where)
@@ -736,7 +833,11 @@ async function browseQueries(
       .where(where)
       .as('ranked')
     const rows = await database
-      .select({ id: ranked.id, rank: sql<number>`${ranked.rank}::int` })
+      .select({
+        id: ranked.id,
+        rank: sql<number>`${ranked.rank}::int`,
+        listeningScrobbles: ranked.listeningScrobbles,
+      })
       .from(ranked)
       .where(
         and(
@@ -746,9 +847,46 @@ async function browseQueries(
           inArray(ranked.rank, ranks),
         ),
       )
-    return rows.map((row) => ({ id: row.id, position: row.rank - 1 }))
+    return rows.map((row) => ({
+      id: row.id,
+      position: row.rank - 1,
+      ...(listening?.sort
+        ? { listeningScrobbles: row.listeningScrobbles ?? 0 }
+        : {}),
+    }))
   }
-  return { offset, readCount, readPage, readPositions, readVersions: undefined }
+  /** Items per bar of the sort period's count, in one aggregate read. */
+  async function readHistogram(edges: readonly number[]) {
+    const items = base().where(where).as('histogram_items')
+    return histogramCache(
+      JSON.stringify([
+        edges,
+        dialect.sqlToQuery(
+          sql`${listening?.source(listeningSubject) ?? sql``} ${where}`,
+        ),
+      ]),
+      async () =>
+        listeningHistogramCounts(
+          edges,
+          await database
+            .select({
+              bar: listeningBar(sql`${items.listeningScrobbles}`, edges),
+              count: sql<number>`count(*)::int`,
+            })
+            .from(items)
+            // By position: the bar's edges are separate parameters each time.
+            .groupBy(sql`1`),
+        ),
+    )
+  }
+  return {
+    offset,
+    readCount,
+    readPage,
+    readPositions,
+    readVersions: undefined,
+    readHistogram: listening?.sort ? readHistogram : undefined,
+  }
 }
 
 type BrowseQuery = AlbumQuery | FilmQuery | TrackQuery
@@ -806,7 +944,33 @@ export async function queryTrackRecordingVersions(
     { ...query, groupRecordings: true },
     { conditions: [recordingTitleMatches(sql`${mediaItem.title}`, id)] },
   )
-  return readVersions ? readVersions(id) : { ids: [], hasMore: false }
+  return readVersions
+    ? readVersions(id)
+    : { ids: [], listeningScrobbles: undefined, hasMore: false }
+}
+
+/**
+ * How many items of a browse query fall in each bar of the period's count.
+ * The query's own listening rules, page, sort and result cap are left out;
+ * every other filter stays. Grouped tracks count recording groups.
+ */
+export async function queryListeningHistogram(
+  mediaType: 'album' | 'track',
+  query: AlbumQuery | TrackQuery,
+  period: ListeningPeriod,
+): Promise<ListeningHistogram> {
+  const edges = listeningHistogramEdges[mediaType]
+  const { readHistogram } = await browseQueries(mediaType, {
+    ...query,
+    listening: undefined,
+    listeningSort: period,
+    sortBy: 'listeningScrobbles',
+    limitResults: undefined,
+    page: 1,
+  })
+  if (!readHistogram)
+    throw new ServerError({ statusCode: 422, message: 'Choose a period' })
+  return { edges: [...edges], counts: await readHistogram(edges) }
 }
 
 /** The IDs at arbitrary positions of a browse query's order, in one read. */

@@ -203,6 +203,50 @@ describe('albums api', () => {
     )
   })
 
+  it('validates the album listening histogram period and forwards the query', async () => {
+    mockAppSession(true)
+    const histogram = {
+      edges: [0, 1, 5, 10, 20, 50, 100, 200],
+      counts: [2, 0, 1, 0, 0, 0, 0, 0],
+    }
+    const queryListeningHistogram = vi.fn().mockResolvedValue(histogram)
+    vi.doMock('@/services/browse', async (importOriginal) => ({
+      ...(await importOriginal<typeof import('@/services/browse')>()),
+      queryListeningHistogram,
+    }))
+    const { default: app } = await import('@/app')
+    for (const query of [
+      '',
+      'period=not-json',
+      new URLSearchParams({
+        period: JSON.stringify({ kind: 'dates' }),
+      }).toString(),
+    ])
+      expect(
+        (await app.request(`/api/v1/albums/listening-histogram?${query}`))
+          .status,
+      ).toBe(422)
+    expect(queryListeningHistogram).not.toHaveBeenCalled()
+    const listening = {
+      match: 'all',
+      rules: [{ period: { kind: 'all' }, max: 0 }],
+    }
+    const response = await app.request(
+      `/api/v1/albums/listening-histogram?${new URLSearchParams({
+        period: JSON.stringify({ kind: 'rolling', amount: 1, unit: 'years' }),
+        listening: JSON.stringify(listening),
+        q: 'fixture',
+      })}`,
+    )
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ data: histogram })
+    expect(queryListeningHistogram).toHaveBeenCalledExactlyOnceWith(
+      'album',
+      expect.objectContaining({ q: 'fixture', listening }),
+      { kind: 'rolling', amount: 1, unit: 'years' },
+    )
+  })
+
   it('returns album filter options for an authenticated request', async () => {
     listAlbumFilterOptions.mockResolvedValue([
       {

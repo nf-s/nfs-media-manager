@@ -11,12 +11,15 @@ export function FilterPanelSection({
   icon,
   count,
   defaultOpen = false,
+  onToggle,
   children,
 }: {
   title: string
   icon: ReactNode
   count?: number
   defaultOpen?: boolean
+  /** Told when the section opens or closes, to load its content on demand. */
+  onToggle?: (open: boolean) => void
   children: ReactNode
 }) {
   const [open, setOpen] = useState(defaultOpen)
@@ -24,7 +27,10 @@ export function FilterPanelSection({
     <details
       className="browse-disclosure"
       open={open}
-      onToggle={(event) => setOpen(event.currentTarget.open)}
+      onToggle={(event) => {
+        setOpen(event.currentTarget.open)
+        onToggle?.(event.currentTarget.open)
+      }}
     >
       <summary>
         {icon}

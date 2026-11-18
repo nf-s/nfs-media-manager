@@ -62,6 +62,8 @@ Import from `@repo/ui/components/ds/<file>` or `@repo/ui/components/ui/<file>`.
 | The head of an item                         | `DetailHeader`                                                                                                     | `ds/detail-header`                   |
 | The head of a page and its controls         | `PageHead`, `Toolbar`, `ToolbarCount`, `ToolbarEnd`                                                                | `ds/toolbar`                         |
 | Counts over time                            | `TrendChart`, `Sparkline`                                                                                          | `ds/trend-chart`                     |
+| A range of counts, set by its bars          | `Histogram`                                                                                                        | `ds/histogram`                       |
+| A filter rule written as a sentence         | `Condition`, `ConditionLine`                                                                                       | `ds/condition`                       |
 
 The components page states the rules for each one. The ones that matter most:
 
@@ -72,6 +74,7 @@ The components page states the rules for each one. The ones that matter most:
 - **Status** uses one vocabulary: Queued, Running, Waiting, Done, Failed, Cancelled, Paused, Never.
 - **Tabs** are for sections of one item; the segmented control is only for views and ranges.
 - **One chart.** `TrendChart` picks days, weeks, months, quarters or years so each point has enough in it to read as a line.
+- **A filter on a count** is one filter with two views: `Histogram` sets a range by its bars, `Condition` cards state it exactly. It applies on change and is written out as a sentence.
 - **No green** in any role.
 
 ## How it is organised

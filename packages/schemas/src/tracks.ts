@@ -330,6 +330,7 @@ export function getTrackBrowseValues(item: TrackListItem): BrowseValues {
     dateAdded: item.dateAdded ? Date.parse(item.dateAdded) : null,
     durationSec: item.durationSec,
     scrobbles: item.scrobbles,
+    listeningScrobbles: item.listeningScrobbles ?? null,
     lastListenedAt: item.lastListenedAt
       ? Date.parse(item.lastListenedAt)
       : null,

@@ -1144,6 +1144,34 @@
     return `<div data-chartbox><div class="ds-charthead"><span class="ds-muted ds-chart-caption" data-chart-caption></span>${o.extra || ''}${ranges.length > 1 ? seg(ranges, selected, { label: 'Range' }) : ''}</div><div class="ds-chart"${attrs({ 'data-chart': set, 'data-range': (ranges[selected] || 'All').toLowerCase(), 'data-unit': o.unit, 'data-height': o.height })}></div></div>`
   }
 
+  /* Histogram: bars are [label, count, state]; state is 'selected' or
+     'partial'. A bar with no count is still loading. */
+  function hist(bars, o = {}) {
+    const top = Math.max(1, ...bars.map(([, n]) => n || 0))
+    return `<div class="ds-hist" role="group"${attrs({ 'aria-label': o.label })}>${bars
+      .map(([label, n, state]) => {
+        const loading = n === undefined || n === null
+        return `<button type="button" class="ds-hist-bar"${attrs({ 'aria-pressed': String(state === 'selected'), 'data-partial': state === 'partial' })}><span class="ds-hist-count">${loading ? '' : n.toLocaleString('en')}</span>${loading ? '<span class="ds-hist-track ds-skel"></span>' : `<span class="ds-hist-track"><i style="height:${Math.round(Math.sqrt(n / top) * 100)}%"></i></span>`}<span>${esc(label)}</span></button>`
+      })
+      .join('')}</div>`
+  }
+
+  /* Condition: an outlined card of lines. Each line is a list of parts; a
+     part is a word, or an object for a control:
+     { select: 'At most' }, { number: 6 }, { date: '2019-01-01' } */
+  const condPart = (part) =>
+    typeof part === 'string'
+      ? `<span>${esc(part)}</span>`
+      : part.select !== undefined
+        ? select([part.select], { label: part.label })
+        : part.number !== undefined
+          ? `<input class="ds-input" type="number" min="0"${attrs({ value: part.number, 'aria-label': part.label })} />`
+          : `<input class="ds-input" type="date"${attrs({ value: part.date, 'aria-label': part.label })} />`
+  const condLine = (parts) =>
+    `<div class="ds-cond-line">${parts.map(condPart).join('')}</div>`
+  const cond = (lines) =>
+    `<div class="ds-cond">${lines.map(condLine).join('')}${btn('Remove', { icon: 'x', variant: 'ghost' })}</div>`
+
   function spark(values, o = {}) {
     const w = o.w || 72
     const h = o.h || 20
@@ -1392,6 +1420,9 @@
     shell,
     libraryNav,
     chartBox,
+    hist,
+    cond,
+    condLine,
     spark,
     sparkOf,
     sparkSeed,

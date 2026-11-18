@@ -1,106 +1,484 @@
+import { formatCount } from '@repo/ui/lib/format'
+import type { BrowseField } from '@repo/schemas/browse'
 import {
-  ListeningFilterSchema,
+  ListeningFilterParamSchema,
+  ListeningPeriodParamSchema,
   ListeningPeriodSchema,
+  ListeningRuleSchema,
+  defaultListeningPeriod,
+  listeningHistogramEdges,
+  type ListeningFilter,
+  type ListeningLibrary,
   type ListeningPeriod,
   type ListeningRule,
 } from '@repo/schemas/listening'
 
+export type ListeningView = 'histogram' | 'rules'
+
+/** The sort key and column for scrobbles in the chosen period. */
+export const listeningScrobblesKey = 'listeningScrobbles'
+
+/** The listening filter and the period for the Scrobbles column, from the URL. */
+export function parseListeningParams(searchParams: {
+  get: (name: string) => string | null
+}) {
+  const filter = ListeningFilterParamSchema.safeParse(
+    searchParams.get('listening'),
+  )
+  const period = ListeningPeriodParamSchema.safeParse(
+    searchParams.get('listeningSort'),
+  )
+  return {
+    listening:
+      filter.success && filter.data?.rules.length ? filter.data : undefined,
+    listeningSort: period.success ? period.data : undefined,
+  }
+}
+
+/** The Scrobbles column and sort for a period, named with the period. */
+export function listeningScrobblesField(
+  period: ListeningPeriod | undefined,
+): BrowseField {
+  return {
+    key: listeningScrobblesKey,
+    label: `Scrobbles, ${formatListeningPeriod(period ?? defaultListeningPeriod)}`,
+    type: 'number',
+    filterable: false,
+  }
+}
+
+const units = ['days', 'weeks', 'months', 'years'] as const
+export type ListeningUnit = (typeof units)[number]
+export const listeningUnits: readonly ListeningUnit[] = units
+
+/** The periods offered by name. `rolling` and `dates` are entered by hand. */
+const presetPeriods = {
+  r30d: { kind: 'rolling', amount: 30, unit: 'days' },
+  r90d: { kind: 'rolling', amount: 90, unit: 'days' },
+  r1y: { kind: 'rolling', amount: 1, unit: 'years' },
+  r2y: { kind: 'rolling', amount: 2, unit: 'years' },
+  r5y: { kind: 'rolling', amount: 5, unit: 'years' },
+  all: { kind: 'all' },
+} as const satisfies Record<string, ListeningPeriod>
+type PresetPeriod = keyof typeof presetPeriods
+const presetKeys: readonly PresetPeriod[] = [
+  'r30d',
+  'r90d',
+  'r1y',
+  'r2y',
+  'r5y',
+  'all',
+]
+
+export type ListeningPeriodChoice = PresetPeriod | 'rolling' | 'dates'
+export const listeningPeriodChoices: readonly ListeningPeriodChoice[] = [
+  'all',
+  'r30d',
+  'r90d',
+  'r1y',
+  'r2y',
+  'r5y',
+  'rolling',
+  'dates',
+]
+
 export type ListeningPeriodDraft = {
-  kind: ListeningPeriod['kind']
+  choice: ListeningPeriodChoice
   amount: string
-  unit: 'days' | 'weeks' | 'months' | 'years'
+  unit: ListeningUnit
   from: string
   to: string
 }
 
-export type ListeningRuleDraft = {
+/** `any` is a condition with no range chosen yet; it filters nothing. */
+export const listeningComparisons = [
+  'min',
+  'max',
+  'eq',
+  'between',
+  'none',
+] as const
+export type ListeningComparison = (typeof listeningComparisons)[number] | 'any'
+
+export type ListeningConditionDraft = {
   id: number
+  comparison: ListeningComparison
+  x: string
+  y: string
   period: ListeningPeriodDraft
-  min: string
-  max: string
+}
+
+export function isListeningUnit(value: string): value is ListeningUnit {
+  return units.some((unit) => unit === value)
+}
+export function isListeningPeriodChoice(
+  value: string,
+): value is ListeningPeriodChoice {
+  return listeningPeriodChoices.some((choice) => choice === value)
+}
+export function isListeningComparison(
+  value: string,
+): value is (typeof listeningComparisons)[number] {
+  return listeningComparisons.some((comparison) => comparison === value)
+}
+
+function presetOf(period: ListeningPeriod): PresetPeriod | undefined {
+  return presetKeys.find((key) => {
+    const preset = presetPeriods[key]
+    if (preset.kind === 'all') return period.kind === 'all'
+    return (
+      period.kind === 'rolling' &&
+      period.amount === preset.amount &&
+      period.unit === preset.unit
+    )
+  })
 }
 
 export function listeningPeriodDraft(
   period: ListeningPeriod,
 ): ListeningPeriodDraft {
   return {
-    kind: period.kind,
-    amount: period.kind === 'rolling' ? String(period.amount) : '2',
-    unit: period.kind === 'rolling' ? period.unit : 'years',
+    choice: presetOf(period) ?? (period.kind === 'dates' ? 'dates' : 'rolling'),
+    amount: period.kind === 'rolling' ? String(period.amount) : '18',
+    unit: period.kind === 'rolling' ? period.unit : 'months',
     from: period.kind === 'dates' ? (period.from ?? '') : '',
     to: period.kind === 'dates' ? (period.to ?? '') : '',
   }
 }
 
-export function listeningRuleDraft(
+/** The period a draft stands for, or nothing while it is incomplete. */
+export function listeningPeriodOf(
+  draft: ListeningPeriodDraft,
+): ListeningPeriod | undefined {
+  if (draft.choice !== 'rolling' && draft.choice !== 'dates')
+    return presetPeriods[draft.choice]
+  const parsed = ListeningPeriodSchema.safeParse(
+    draft.choice === 'rolling'
+      ? {
+          kind: 'rolling',
+          amount: draft.amount === '' ? undefined : Number(draft.amount),
+          unit: draft.unit,
+        }
+      : {
+          kind: 'dates',
+          from: draft.from || undefined,
+          to: draft.to || undefined,
+        },
+  )
+  return parsed.success ? parsed.data : undefined
+}
+
+export function listeningConditionDraft(
   rule: ListeningRule,
   id: number,
-): ListeningRuleDraft {
+): ListeningConditionDraft {
+  const period = listeningPeriodDraft(rule.period)
+  const { min, max } = rule
+  if (max === 0) return { id, comparison: 'none', x: '10', y: '20', period }
+  if (min !== undefined && max !== undefined)
+    return min === max
+      ? { id, comparison: 'eq', x: String(min), y: String(min + 10), period }
+      : { id, comparison: 'between', x: String(min), y: String(max), period }
+  if (min !== undefined)
+    return {
+      id,
+      comparison: 'min',
+      x: String(min),
+      y: String(min + 10),
+      period,
+    }
+  return { id, comparison: 'max', x: String(max ?? 0), y: '20', period }
+}
+
+/** A condition with no range yet, as the histogram shows before a bar is chosen. */
+export function emptyListeningCondition(
+  id: number,
+  period: ListeningPeriod,
+): ListeningConditionDraft {
   return {
     id,
-    period: listeningPeriodDraft(rule.period),
-    min: rule.min === undefined ? '' : String(rule.min),
-    max: rule.max === undefined ? '' : String(rule.max),
+    comparison: 'any',
+    x: '10',
+    y: '20',
+    period: listeningPeriodDraft(period),
   }
 }
 
-function periodInput(draft: ListeningPeriodDraft) {
-  switch (draft.kind) {
+function whole(text: string): number | undefined {
+  if (text.trim() === '') return undefined
+  const value = Number(text)
+  return Number.isSafeInteger(value) && value >= 0 ? value : undefined
+}
+
+/** The rule a draft stands for, or nothing while it is incomplete or `any`. */
+export function listeningRuleOf(
+  draft: ListeningConditionDraft,
+): ListeningRule | undefined {
+  const period = listeningPeriodOf(draft.period)
+  if (!period || draft.comparison === 'any') return undefined
+  if (draft.comparison === 'none') return { period, max: 0 }
+  const x = whole(draft.x)
+  if (x === undefined) return undefined
+  if (draft.comparison === 'min') return { period, min: x }
+  if (draft.comparison === 'max') return { period, max: x }
+  if (draft.comparison === 'eq') return { period, min: x, max: x }
+  const y = whole(draft.y)
+  return y === undefined || y < x ? undefined : { period, min: x, max: y }
+}
+
+/** The filter the drafts stand for. Incomplete conditions are left out. */
+export function listeningFilterOf(
+  match: ListeningFilter['match'],
+  drafts: readonly ListeningConditionDraft[],
+): ListeningFilter | undefined {
+  const rules = drafts.flatMap((draft) => {
+    const rule = listeningRuleOf(draft)
+    return rule && ListeningRuleSchema.safeParse(rule).success ? [rule] : []
+  })
+  return rules.length ? { match, rules } : undefined
+}
+
+function serializePeriod(period: ListeningPeriod) {
+  switch (period.kind) {
     case 'all':
-      return { kind: draft.kind }
+      return { kind: period.kind }
     case 'rolling':
-      return {
-        kind: draft.kind,
-        amount: Number(draft.amount),
-        unit: draft.unit,
-      }
+      return { kind: period.kind, amount: period.amount, unit: period.unit }
     case 'dates':
-      return {
-        kind: draft.kind,
-        from: draft.from || undefined,
-        to: draft.to || undefined,
-      }
+      return { kind: period.kind, from: period.from, to: period.to }
   }
 }
 
-export function parseListeningPeriodDraft(draft: ListeningPeriodDraft) {
-  return ListeningPeriodSchema.safeParse(periodInput(draft))
+/** One spelling for a period, whatever order its keys arrived in. */
+export function serializeListeningPeriod(period: ListeningPeriod): string {
+  return JSON.stringify(serializePeriod(period))
 }
 
-export function parseListeningFilterDraft(
-  match: 'all' | 'any',
-  rules: ListeningRuleDraft[],
-) {
-  return ListeningFilterSchema.safeParse({
-    match,
-    rules: rules.map((rule) => ({
-      period: periodInput(rule.period),
-      min: rule.min === '' ? undefined : Number(rule.min),
-      max: rule.max === '' ? undefined : Number(rule.max),
+/** One spelling for a filter, whatever order its keys arrived in. */
+export function serializeListeningFilter(
+  filter: ListeningFilter | undefined,
+): string {
+  if (!filter?.rules.length) return ''
+  return JSON.stringify({
+    match: filter.match,
+    rules: filter.rules.map((rule) => ({
+      period: serializePeriod(rule.period),
+      min: rule.min,
+      max: rule.max,
     })),
   })
 }
+
+/* Histogram ------------------------------------------------------------- */
+
+export type ListeningBar = {
+  min: number
+  /** The last bar has no upper bound. */
+  max: number | undefined
+  label: string
+}
+
+export function listeningBars(library: ListeningLibrary): ListeningBar[] {
+  const edges: readonly number[] = listeningHistogramEdges[library]
+  return edges.map((edge, index) => {
+    const next = edges[index + 1]
+    return {
+      min: edge,
+      max: next === undefined ? undefined : next - 1,
+      label: edge === 0 ? '0' : `${formatCount(edge)}+`,
+    }
+  })
+}
+
+export type ListeningBarState = 'selected' | 'partial' | undefined
+
+/** Which bars a rule covers: wholly, partly or not at all. */
+export function listeningBarStates(
+  bars: readonly ListeningBar[],
+  rule: ListeningRule | undefined,
+): ListeningBarState[] {
+  return bars.map((bar) => {
+    if (!rule) return undefined
+    const min = rule.min ?? 0
+    const inside =
+      min <= bar.min &&
+      (rule.max === undefined || (bar.max !== undefined && bar.max <= rule.max))
+    if (inside) return 'selected'
+    const touches =
+      (rule.max === undefined || rule.max >= bar.min) &&
+      (bar.max === undefined || min <= bar.max)
+    return touches ? 'partial' : undefined
+  })
+}
+
+function withBars(
+  draft: ListeningConditionDraft,
+  bars: readonly ListeningBar[],
+  range: { first: number; last: number } | undefined,
+): ListeningConditionDraft {
+  const first = range ? bars[range.first] : undefined
+  const last = range ? bars[range.last] : undefined
+  if (!first || !last) return { ...draft, comparison: 'any' }
+  const min = first.min === 0 ? undefined : first.min
+  const max = last.max
+  if (min === undefined && max === undefined)
+    return { ...draft, comparison: 'any' }
+  if (min === undefined && max === 0) return { ...draft, comparison: 'none' }
+  if (min === undefined) return { ...draft, comparison: 'max', x: String(max) }
+  if (max === undefined) return { ...draft, comparison: 'min', x: String(min) }
+  if (min === max) return { ...draft, comparison: 'eq', x: String(min) }
+  return { ...draft, comparison: 'between', x: String(min), y: String(max) }
+}
+
+/**
+ * Selecting a bar. With nothing selected, a range off the bar edges, or a
+ * bar inside a selected range, the bar becomes the whole range. The only
+ * selected bar clears. Any other bar extends the range to reach it.
+ */
+export function selectListeningBar(
+  draft: ListeningConditionDraft,
+  bars: readonly ListeningBar[],
+  index: number,
+): ListeningConditionDraft {
+  const states = listeningBarStates(bars, listeningRuleOf(draft))
+  const first = states.indexOf('selected')
+  const last = states.lastIndexOf('selected')
+  if (
+    first < 0 ||
+    states.includes('partial') ||
+    (first !== last && index >= first && index <= last)
+  )
+    return withBars(draft, bars, { first: index, last: index })
+  if (first === last && index === first) return withBars(draft, bars, undefined)
+  return withBars(draft, bars, {
+    first: Math.min(first, index),
+    last: Math.max(last, index),
+  })
+}
+
+/** The periods on the histogram's switch. Any other period is `custom`. */
+export const listeningRanges = ['r30d', 'r1y', 'r5y', 'all', 'custom'] as const
+export type ListeningRange = (typeof listeningRanges)[number]
+
+export function listeningRangeOf(draft: ListeningPeriodDraft): ListeningRange {
+  return listeningRanges.find((range) => range === draft.choice) ?? 'custom'
+}
+
+/** A named period the switch does not carry becomes one entered by hand. */
+export function periodForSwitch(
+  draft: ListeningPeriodDraft,
+): ListeningPeriodDraft {
+  if (draft.choice === 'rolling' || draft.choice === 'dates') return draft
+  if (listeningRangeOf(draft) !== 'custom') return draft
+  const preset = presetPeriods[draft.choice]
+  return preset.kind === 'rolling'
+    ? {
+        ...draft,
+        choice: 'rolling',
+        amount: String(preset.amount),
+        unit: preset.unit,
+      }
+    : draft
+}
+
+/** A period entered by hand that equals a named one shows as the named one. */
+export function periodForList(
+  draft: ListeningPeriodDraft,
+): ListeningPeriodDraft {
+  if (draft.choice !== 'rolling') return draft
+  const period = listeningPeriodOf(draft)
+  const preset = period ? presetOf(period) : undefined
+  return preset ? { ...draft, choice: preset } : draft
+}
+
+/* Wording --------------------------------------------------------------- */
+
+/** What a library counts: an album's or artist's track plays, a track's plays. */
+export function listeningNoun(library: ListeningLibrary) {
+  return library === 'track'
+    ? { one: 'play', other: 'plays' }
+    : { one: 'track play', other: 'track plays' }
+}
+type Noun = ReturnType<typeof listeningNoun>
+const trackPlays = listeningNoun('album')
 
 export function formatListeningPeriod(period: ListeningPeriod): string {
   switch (period.kind) {
     case 'all':
       return 'all time'
     case 'rolling':
-      return `last ${period.amount} ${period.amount === 1 ? period.unit.slice(0, -1) : period.unit}`
+      return period.amount === 1
+        ? `last ${period.unit.slice(0, -1)}`
+        : `last ${period.amount} ${period.unit}`
     case 'dates':
       if (period.from && period.to) return `${period.from} to ${period.to}`
       return period.from ? `from ${period.from}` : `through ${period.to}`
   }
 }
 
-export function formatListeningRule(rule: ListeningRule): string {
-  const count =
-    rule.min !== undefined && rule.max !== undefined
-      ? rule.min === rule.max
-        ? `${rule.min}`
-        : `${rule.min}–${rule.max}`
-      : rule.min !== undefined
-        ? `at least ${rule.min}`
-        : `at most ${rule.max}`
-  return `${count} scrobbles · ${formatListeningPeriod(rule.period)}`
+function during(period: ListeningPeriod): string {
+  switch (period.kind) {
+    case 'all':
+      return 'in total'
+    case 'rolling':
+      return `in the ${formatListeningPeriod(period)}`
+    case 'dates':
+      if (period.from && period.to)
+        return `between ${period.from} and ${period.to}`
+      return period.from ? `since ${period.from}` : `up to ${period.to}`
+  }
+}
+
+function clause(rule: ListeningRule, noun: Noun): string {
+  const plays = (count: number) =>
+    `${formatCount(count)} ${count === 1 ? noun.one : noun.other}`
+  const { min, max } = rule
+  if (max === 0) return `no ${noun.other}`
+  if (min !== undefined && max !== undefined)
+    return min === max
+      ? `exactly ${plays(min)}`
+      : `between ${formatCount(min)} and ${plays(max)}`
+  if (min !== undefined) return `at least ${plays(min)}`
+  return `at most ${plays(max ?? 0)}`
+}
+
+const capital = (text: string) => text.charAt(0).toUpperCase() + text.slice(1)
+
+/** A rule as its filter pill reads: `At most 6 track plays · all time`. */
+export function formatListeningRule(
+  rule: ListeningRule,
+  noun: Noun = trackPlays,
+): string {
+  return `${capital(clause(rule, noun))} · ${formatListeningPeriod(rule.period)}`
+}
+
+/** The whole filter as one sentence. */
+export function formatListeningFilter(
+  filter: ListeningFilter,
+  noun: Noun = trackPlays,
+): string {
+  const joined = filter.rules
+    .map((rule) => `${clause(rule, noun)} ${during(rule.period)}`)
+    .join(filter.match === 'all' ? ' and ' : ' or ')
+  return `${capital(joined)}.`
+}
+
+/** A bar's range and count in words, for its tooltip and accessible name. */
+export function formatListeningBar(
+  bar: ListeningBar,
+  noun: Noun,
+  count: number | undefined,
+  items: { one: string; other: string },
+): string {
+  const range =
+    bar.max === undefined
+      ? `${formatCount(bar.min)} or more ${noun.other}`
+      : bar.min === bar.max
+        ? bar.min === 0
+          ? `No ${noun.other}`
+          : `${formatCount(bar.min)} ${bar.min === 1 ? noun.one : noun.other}`
+        : `${formatCount(bar.min)} to ${formatCount(bar.max)} ${noun.other}`
+  return count === undefined
+    ? range
+    : `${range}: ${formatCount(count)} ${count === 1 ? items.one : items.other}`
 }

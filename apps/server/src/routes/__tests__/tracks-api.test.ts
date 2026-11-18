@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   additions: vi.fn(),
   browsePage: vi.fn(),
   browseCount: vi.fn(),
+  histogram: vi.fn(),
   recordingVersions: vi.fn(),
   positions: vi.fn(),
   diagnostics: vi.fn(),
@@ -34,6 +35,7 @@ vi.mock('@/services/tracks', () => ({
 vi.mock('@/services/browse', () => ({
   listBrowseFields: vi.fn(),
   queryBrowseCounts: mocks.browseCount,
+  queryListeningHistogram: mocks.histogram,
 }))
 vi.mock('@/services/track-match-diagnostics', () => ({
   listTrackMatchDiagnostics: mocks.diagnostics,
@@ -130,6 +132,85 @@ describe('tracks API', () => {
     )
     expect((await app.request(`/browse-count${query}`)).status).toBe(503)
     expect((await app.request(`/browse-page${query}`)).status).toBe(200)
+  })
+
+  it('forwards track listening rules and sort periods', async () => {
+    const listening = {
+      match: 'any',
+      rules: [
+        { period: { kind: 'rolling', amount: 2, unit: 'years' }, max: 0 },
+      ],
+    }
+    const listeningSort = { kind: 'dates', from: '2025-01-01' }
+    for (const query of [
+      'listening=not-json',
+      new URLSearchParams({
+        listening: JSON.stringify({
+          match: 'all',
+          rules: [{ period: { kind: 'all' } }],
+        }),
+      }).toString(),
+    ])
+      expect((await app.request(`/browse-page?${query}`)).status).toBe(422)
+    expect(mocks.browsePage).not.toHaveBeenCalled()
+    mocks.browsePage.mockResolvedValue({
+      items: [],
+      page: 1,
+      size: 24,
+      hasMore: false,
+    })
+    const query = new URLSearchParams({
+      listening: JSON.stringify(listening),
+      listeningSort: JSON.stringify(listeningSort),
+      sortBy: 'listeningScrobbles',
+      groupRecordings: 'true',
+    })
+    expect((await app.request(`/browse-page?${query}`)).status).toBe(200)
+    expect(mocks.browsePage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        listening,
+        listeningSort,
+        sortBy: 'listeningScrobbles',
+        groupRecordings: true,
+      }),
+    )
+  })
+
+  it('authorizes and validates a listening histogram read', async () => {
+    const period = JSON.stringify({ kind: 'all' })
+    mocks.session.mockResolvedValueOnce(null)
+    expect(
+      (await app.request(`/listening-histogram?period=${period}`)).status,
+    ).toBe(401)
+    for (const query of [
+      '',
+      'period=not-json',
+      `period=${JSON.stringify({ kind: 'rolling', amount: 0, unit: 'days' })}`,
+    ])
+      expect((await app.request(`/listening-histogram?${query}`)).status).toBe(
+        422,
+      )
+    expect(mocks.histogram).not.toHaveBeenCalled()
+
+    const histogram = {
+      edges: [0, 1, 2, 5, 10, 20, 50, 100],
+      counts: [3, 0, 1, 0, 0, 0, 0, 1],
+    }
+    mocks.histogram.mockResolvedValueOnce(histogram)
+    const response = await app.request(
+      `/listening-histogram?${new URLSearchParams({
+        period,
+        q: 'fixture',
+        groupRecordings: 'true',
+      })}`,
+    )
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ data: histogram })
+    expect(mocks.histogram).toHaveBeenCalledWith(
+      'track',
+      expect.objectContaining({ q: 'fixture', groupRecordings: true }),
+      { kind: 'all' },
+    )
   })
 
   it('authorizes and validates a read of tracks at positions', async () => {

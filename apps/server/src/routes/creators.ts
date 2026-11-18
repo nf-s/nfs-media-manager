@@ -25,6 +25,7 @@ import {
   ArtistDetailQuerySchema,
   ArtistHistoryPageSchema,
   ArtistHistoryQuerySchema,
+  ArtistListeningHistogramQuerySchema,
   ArtistMetadataPageSchema,
   ArtistMetadataItemSchema,
   ArtistSummarySchema,
@@ -52,12 +53,14 @@ import {
 import { FilmFilterOptionSchema } from '@repo/schemas/media'
 import { CoverageQuerySchema, CoverageSchema } from '@repo/schemas/coverage'
 import { ListeningSeriesSchema } from '@repo/schemas/lastfm'
+import { ListeningHistogramSchema } from '@repo/schemas/listening'
 import {
   MatchDiagnosticsPageSchema,
   MatchDiagnosticsQuerySchema,
 } from '@repo/schemas/match-diagnostics'
 import {
   artistBrowseCounts,
+  artistListeningHistogram,
   countArtistBrowse,
   listArtistBrowsePage,
   listArtistBrowseFacets,
@@ -209,6 +212,27 @@ export const artists: OpenAPIHono<AppEnv> = createOpenAPIApp()
       generateJsonResponse(
         c,
         await artistBrowseCounts(c.req.valid('query')),
+        200,
+      ),
+  )
+  .openapi(
+    createRoute({
+      method: 'get',
+      path: '/listening-histogram',
+      middleware: [authMiddleware()],
+      request: { query: ArtistListeningHistogramQuerySchema },
+      responses: {
+        ...protectedResponses,
+        200: json(
+          'Matching artists by scrobbles in a period, without the listening rules',
+          ListeningHistogramSchema,
+        ),
+      },
+    }),
+    async (c) =>
+      generateJsonResponse(
+        c,
+        await artistListeningHistogram(c.req.valid('query')),
         200,
       ),
   )

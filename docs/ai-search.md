@@ -15,7 +15,7 @@ Each request replaces the current search. It does not edit library records, star
 
 ## Listening and ratings
 
-Listening requests use the same [custom listening filters](lastfm-scrobbles.md) as the manual controls. They count linked, stored Last.fm **track scrobbles**, not full album plays. Complete the initial history sync before using them. Unlinked or unrecorded plays cannot contribute; stale history is flagged.
+Album listening requests use the same [custom listening filters](lastfm-scrobbles.md#custom-listening-filters-and-sorting) as the Listening section. AI search does not yet write listening conditions for Tracks or Artists; set those in the section. They count linked, stored Last.fm **track scrobbles**, not full album plays. Complete the initial history sync before using them. Unlinked or unrecorded plays cannot contribute; stale history is flagged.
 
 Vague terms have visible defaults: “only a little” means 1–10 scrobbles, “not much” means 0–10, “a lot” means at least 100, and “high RYM score” means at least 3.5/5. Explicit numbers override these choices. Earlier and recent listening are separate conditions; an all-time count is not substituted for listening before a cutoff. Date periods include both boundary days in UTC. Adjust any condition using the regular controls after applying it.
 

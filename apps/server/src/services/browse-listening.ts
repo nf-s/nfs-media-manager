@@ -54,8 +54,20 @@ export function listeningPeriodPredicate(
     : sql`true`
 }
 
-/** All requested counts share one grouped read; absent album rows count as zero. */
-export function createBrowseListening(
+/**
+ * What a count belongs to. A track counts the scrobbles of its linked names,
+ * as `library_track.scrobble_count` does. A recording group counts each
+ * linked name of its members once, as `recording_stats.scrobbles` does, and
+ * needs the `recording_members` CTE in scope.
+ */
+export type ListeningSubject = 'album' | 'track' | 'recording'
+
+/**
+ * The count columns a filter and a sort period need, one per distinct period,
+ * with the rules and the sort value written against `listening_counts`.
+ * Nothing when neither asks for a count.
+ */
+export function listeningCounts(
   filter: ListeningFilter | undefined,
   sortPeriod: ListeningPeriod | undefined,
   now = new Date(),
@@ -82,22 +94,73 @@ export function createBrowseListening(
   })
   const sort = sortPeriod ? count(sortPeriod) : undefined
   if (!periods.size) return undefined
-  const entries = [...periods.values()]
-  const columns = entries.map(
-    (entry) =>
-      sql`count(*) filter (where ${entry.predicate})::int as ${sql.identifier(entry.alias)}`,
-  )
   return {
-    source: sql`(select album_media_item_id, ${sql.join(columns, sql`, `)}
-      from lastfm_scrobble
-      where album_media_item_id is not null and (${sql.join(
-        entries.map((entry) => entry.predicate),
-        sql` or `,
-      )})
-      group by album_media_item_id) listening_counts`,
+    entries: [...periods.values()],
     condition: conditions.length
       ? sql`(${sql.join(conditions, filter?.match === 'any' ? sql` or ` : sql` and `)})`
       : undefined,
     sort,
   }
 }
+
+/**
+ * All requested counts share one grouped read. `source(subject)` is aliased
+ * `listening_counts` with the subject's key in `id`; absent rows count as zero.
+ */
+export function createBrowseListening(
+  filter: ListeningFilter | undefined,
+  sortPeriod: ListeningPeriod | undefined,
+  now = new Date(),
+) {
+  const requested = listeningCounts(filter, sortPeriod, now)
+  if (!requested) return undefined
+  const { entries, condition, sort } = requested
+  const counts = sql.join(
+    entries.map(
+      (entry) =>
+        sql`count(*) filter (where ${entry.predicate})::int as ${sql.identifier(entry.alias)}`,
+    ),
+    sql`, `,
+  )
+  const inPeriods = sql`(${sql.join(
+    entries.map((entry) => entry.predicate),
+    sql` or `,
+  )})`
+  // Every scrobble of a name has the same track links, so names are counted
+  // once and then added up per track or recording.
+  const nameSums = sql.join(
+    entries.map(
+      (entry) =>
+        sql`sum(listening_names.${sql.identifier(entry.alias)})::int as ${sql.identifier(entry.alias)}`,
+    ),
+    sql`, `,
+  )
+  const linkedNames = (links: SQL) => sql`from ${links}
+    join (select username, artist_key, track_key, ${counts}
+      from lastfm_scrobble where ${inPeriods}
+      group by username, artist_key, track_key) listening_names
+    on listening_names.username = linked.username
+      and listening_names.artist_key = linked.artist_key
+      and listening_names.track_key = linked.track_key`
+  function source(subject: ListeningSubject) {
+    if (subject === 'album')
+      return sql`(select album_media_item_id as id, ${counts}
+        from lastfm_scrobble
+        where album_media_item_id is not null and ${inPeriods}
+        group by album_media_item_id) listening_counts`
+    if (subject === 'track')
+      return sql`(select linked.track_media_item_id as id, ${nameSums}
+        ${linkedNames(sql`lastfm_track_link linked`)}
+        group by linked.track_media_item_id) listening_counts`
+    return sql`(select linked.group_key as id, ${nameSums}
+      ${linkedNames(sql`(select distinct m.group_key, l.username, l.artist_key, l.track_key
+        from recording_members m
+        join lastfm_track_link l on l.track_media_item_id = m.id) linked`)}
+      group by linked.group_key) listening_counts`
+  }
+  return { source, condition, sort }
+}
+
+export type BrowseListening = NonNullable<
+  ReturnType<typeof createBrowseListening>
+>

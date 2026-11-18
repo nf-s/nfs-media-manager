@@ -99,7 +99,7 @@ export function describeAiSearchPlan(
   }
   if (plan.listening?.rules.length) {
     descriptions.push(
-      `Listening · ${plan.listening.match === 'all' ? 'all rules' : 'any rule'}: ${plan.listening.rules.map(formatListeningRule).join('; ')}`,
+      `Listening · ${plan.listening.match === 'all' ? 'all conditions' : 'any condition'}: ${plan.listening.rules.map((rule) => formatListeningRule(rule)).join('; ')}`,
     )
   }
   const sort =

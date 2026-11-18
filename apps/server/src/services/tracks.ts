@@ -161,13 +161,17 @@ export async function loadTracks(ids: string[]): Promise<TrackListItem[]> {
   })
 }
 
+/** Browse values: a grouped row's totals and the count in a sort period. */
 function trackWithRecordingGroup(
   track: TrackListItem,
   group?: RecordingGroup,
+  listeningScrobbles?: number,
 ): TrackListItem {
-  if (!group || group.version_count === 1) return track
+  const item =
+    listeningScrobbles === undefined ? track : { ...track, listeningScrobbles }
+  if (!group || group.version_count === 1) return item
   return {
-    ...track,
+    ...item,
     scrobbles: group.scrobbles,
     lastListenedAt: group.last_listened_at,
     dateAdded: group.date_added,
@@ -176,13 +180,15 @@ function trackWithRecordingGroup(
 }
 
 export async function listTracks(query: TrackQuery) {
-  const { ids, totalCount, pageCount, recordingGroups } = await queryBrowseIds(
-    'track',
-    query,
-  )
+  const { ids, totalCount, pageCount, recordingGroups, listeningScrobbles } =
+    await queryBrowseIds('track', query)
   return {
     items: (await loadTracks(ids)).map((track) =>
-      trackWithRecordingGroup(track, recordingGroups?.get(track.id)),
+      trackWithRecordingGroup(
+        track,
+        recordingGroups?.get(track.id),
+        listeningScrobbles?.get(track.id),
+      ),
     ),
     totalCount,
     pageCount,
@@ -190,13 +196,15 @@ export async function listTracks(query: TrackQuery) {
 }
 
 export async function listTrackBrowsePage(query: TrackQuery) {
-  const { ids, hasMore, recordingGroups } = await queryBrowsePageIds(
-    'track',
-    query,
-  )
+  const { ids, hasMore, recordingGroups, listeningScrobbles } =
+    await queryBrowsePageIds('track', query)
   return {
     items: (await loadTracks(ids)).map((track) =>
-      trackWithRecordingGroup(track, recordingGroups?.get(track.id)),
+      trackWithRecordingGroup(
+        track,
+        recordingGroups?.get(track.id),
+        listeningScrobbles?.get(track.id),
+      ),
     ),
     page: query.page,
     size: query.size,
@@ -208,9 +216,16 @@ export async function listTrackRecordingVersions(
   id: string,
   query: TrackQuery,
 ) {
-  const { ids, hasMore } = await queryTrackRecordingVersions(id, query)
+  const { ids, hasMore, listeningScrobbles } =
+    await queryTrackRecordingVersions(id, query)
   return {
-    items: await loadTracks(ids),
+    items: (await loadTracks(ids)).map((track) =>
+      trackWithRecordingGroup(
+        track,
+        undefined,
+        listeningScrobbles?.get(track.id),
+      ),
+    ),
     page: query.page,
     size: query.size,
     hasMore,
@@ -227,12 +242,23 @@ export async function listTracksAtPositions(query: TrackPositionsQuery) {
     ]),
   )
   return {
-    items: rows.flatMap(({ id, position, recordingGroup }) => {
-      const item = items.get(id)
-      return item
-        ? [{ position, item: trackWithRecordingGroup(item, recordingGroup) }]
-        : []
-    }),
+    items: rows.flatMap(
+      ({ id, position, recordingGroup, listeningScrobbles }) => {
+        const item = items.get(id)
+        return item
+          ? [
+              {
+                position,
+                item: trackWithRecordingGroup(
+                  item,
+                  recordingGroup,
+                  listeningScrobbles,
+                ),
+              },
+            ]
+          : []
+      },
+    ),
   }
 }
 

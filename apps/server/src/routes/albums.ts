@@ -4,12 +4,18 @@ import {
   BrowseFieldSchema,
   BrowsePageSliceSchema,
 } from '@repo/schemas/browse'
-import { listBrowseFields, queryBrowseCounts } from '@/services/browse'
+import {
+  listBrowseFields,
+  queryBrowseCounts,
+  queryListeningHistogram,
+} from '@/services/browse'
+import { ListeningHistogramSchema } from '@repo/schemas/listening'
 import { createRoute, type OpenAPIHono } from '@hono/zod-openapi'
 import { z } from 'zod'
 import {
   AlbumDetailSchema,
   AlbumFilterOptionSchema,
+  AlbumListeningHistogramQuerySchema,
   AlbumListItemSchema,
   AlbumPatchSchema,
   AlbumQuerySchema,
@@ -135,6 +141,36 @@ app.openapi(
       await queryBrowseCounts('album', c.req.valid('query')),
       200,
     ),
+)
+
+app.openapi(
+  createRoute({
+    method: 'get',
+    path: '/listening-histogram',
+    middleware: [authMiddleware()],
+    request: { query: AlbumListeningHistogramQuerySchema },
+    responses: {
+      200: {
+        description:
+          'Albums per scrobble-count bar in a period, without listening rules',
+        content: {
+          'application/json': {
+            schema: createResponseSchema(ListeningHistogramSchema),
+          },
+        },
+      },
+      401: jsonErrorResponse('Unauthorized'),
+      422: validationErrorResponse,
+    },
+  }),
+  async (c) => {
+    const query = c.req.valid('query')
+    return generateJsonResponse(
+      c,
+      await queryListeningHistogram('album', query, query.period),
+      200,
+    )
+  },
 )
 
 app

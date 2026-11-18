@@ -73,7 +73,17 @@ import {
   sortedValueLabel,
 } from '@/utils/browse-items'
 import { playlistFilter } from '@/utils/playlist-links'
+import {
+  defaultListeningPeriod,
+  type ListeningFilter,
+} from '@repo/schemas/listening'
+import {
+  listeningScrobblesField,
+  listeningScrobblesKey,
+  parseListeningParams,
+} from '@/utils/listening-filters'
 import { RangeEditor } from './browse-controls'
+import { ListeningControls, ListeningFilterPills } from './listening-controls'
 import {
   TrackBrowseAlbum,
   TrackBrowseTags,
@@ -160,7 +170,11 @@ export default function TrackBrowser() {
   // One drawer at a time: the playlist drawer covers the track drawer.
   const selectedId =
     inspector?.root?.kind === 'track' ? inspector.root.id : null
-  const fields = useTrackBrowseFields()
+  const { listening, listeningSort } = parseListeningParams(searchParams)
+  const fields = [
+    ...useTrackBrowseFields(),
+    listeningScrobblesField(listeningSort),
+  ]
   const sortField = fields.find((field) => field.key === sortBy)
   const columnKeys = [
     ...new Set([
@@ -177,12 +191,19 @@ export default function TrackBrowser() {
   const widths = useColumnWidths(collection, (field) =>
     field.key === 'title' ? 280 : field.type === 'text' ? 180 : 110,
   )
+  const requestedListeningPeriod =
+    sortBy === listeningScrobblesKey ||
+    columnKeys.includes(listeningScrobblesKey)
+      ? (listeningSort ?? defaultListeningPeriod)
+      : undefined
   const queryKey = JSON.stringify({
     q,
     filters,
     ranges,
     sortBy,
     direction,
+    listening,
+    listeningSort: requestedListeningPeriod,
     ...(groupRecordings ? { groupRecordings } : {}),
     ...creator,
   })
@@ -236,7 +257,16 @@ export default function TrackBrowser() {
     setParams({ filters: JSON.stringify(next) }, !keepOpen)
   }
   function clearFilters() {
-    setParams({ q: null, filters: null, ranges: null, ...clearCreatorScope })
+    setParams({
+      q: null,
+      filters: null,
+      ranges: null,
+      listening: null,
+      ...clearCreatorScope,
+    })
+  }
+  function changeListening(next: ListeningFilter | undefined) {
+    setParams({ listening: next ? JSON.stringify(next) : null })
   }
   function openDetail(id: string, trigger?: HTMLElement) {
     inspector?.open({ kind: 'track', id }, trigger)
@@ -320,6 +350,9 @@ export default function TrackBrowser() {
     ...creator,
   })
   if (groupRecordings) params.set('groupRecordings', 'true')
+  if (listening) params.set('listening', JSON.stringify(listening))
+  if (requestedListeningPeriod)
+    params.set('listeningSort', JSON.stringify(requestedListeningPeriod))
   const versions = useTrackRecordingVersions(apiBaseUrl, queryKey, params)
   const expanded = versions.expanded
   const gridRow = expanded ? Math.floor(expanded.index / grid.columns) : -1
@@ -626,17 +659,25 @@ export default function TrackBrowser() {
     Number(Boolean(q)) +
     Number(Boolean(creator)) +
     filters.length +
-    ranges.length
+    ranges.length +
+    (listening?.rules.length ?? 0)
   const filterPills =
     activeFilterCount > 0 ? (
-      <TrackBrowseFilterChips
-        q={q}
-        creator={creator}
-        filters={filters}
-        ranges={ranges}
-        fields={fields}
-        setParams={setParams}
-      />
+      <>
+        <TrackBrowseFilterChips
+          q={q}
+          creator={creator}
+          filters={filters}
+          ranges={ranges}
+          fields={fields}
+          setParams={setParams}
+        />
+        <ListeningFilterPills
+          library="track"
+          filter={listening}
+          onChange={changeListening}
+        />
+      </>
     ) : null
 
   return (
@@ -692,6 +733,27 @@ export default function TrackBrowser() {
                   setParams({
                     ranges: ranges.length ? JSON.stringify(ranges) : null,
                   })
+                }
+              />
+              <ListeningControls
+                apiBaseUrl={apiBaseUrl}
+                library="track"
+                params={params}
+                filter={listening}
+                sortPeriod={listeningSort}
+                total={query.hasTotal ? total : undefined}
+                examples={slots
+                  .flatMap(({ item }) => (item ? [item] : []))
+                  .slice(0, 3)
+                  .map((item) => ({
+                    id: item.id,
+                    title: item.title,
+                    artworkUrl: item.artworkUrl,
+                    by: <TrackArtistLinks track={item} />,
+                  }))}
+                onFilterChange={changeListening}
+                onSortPeriodChange={(period) =>
+                  setParams({ listeningSort: JSON.stringify(period) })
                 }
               />
               {view === 'table' && (

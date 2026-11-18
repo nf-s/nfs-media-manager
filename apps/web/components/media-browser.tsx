@@ -54,9 +54,8 @@ import { Select } from '@repo/ui/components/ds/toolbar'
 import { formatItemCount, formatRuntime } from '@repo/ui/lib/format'
 import { SavedViewSchema } from '@repo/schemas/imports'
 import {
-  ListeningFilterParamSchema,
-  ListeningPeriodParamSchema,
   defaultListeningPeriod,
+  type ListeningFilter,
 } from '@repo/schemas/listening'
 import { PaginatedDataSchema } from '@repo/schemas/common'
 import {
@@ -102,7 +101,7 @@ import {
   BrowseTagBadges,
   RangeEditor,
 } from './browse-controls'
-import { ListeningControls } from './listening-controls'
+import { ListeningControls, ListeningFilterPills } from './listening-controls'
 import BrowseToolbar, { BrowseColumnsSection } from './browse-toolbar'
 import { FilterPanelSection } from './browse-filter-panel'
 import {
@@ -112,8 +111,8 @@ import {
 } from './browse-table'
 import { DetailLink } from './detail-link'
 import {
-  formatListeningPeriod,
-  formatListeningRule,
+  listeningScrobblesField,
+  parseListeningParams,
 } from '@/utils/listening-filters'
 import {
   cardDetails,
@@ -346,20 +345,11 @@ export default function MediaBrowser({
     searchParams.get('ranges'),
   )
   const ranges = rangesResult.success ? rangesResult.data : []
-  const listeningResult = ListeningFilterParamSchema.safeParse(
-    searchParams.get('listening'),
-  )
+  const listeningParams = parseListeningParams(searchParams)
   const listening =
-    mediaType === 'album' && listeningResult.success
-      ? listeningResult.data
-      : undefined
-  const listeningSortResult = ListeningPeriodParamSchema.safeParse(
-    searchParams.get('listeningSort'),
-  )
+    mediaType === 'album' ? listeningParams.listening : undefined
   const listeningSort =
-    mediaType === 'album' && listeningSortResult.success
-      ? listeningSortResult.data
-      : undefined
+    mediaType === 'album' ? listeningParams.listeningSort : undefined
   const listeningPeriod = listeningSort ?? defaultListeningPeriod
   const q = searchParams.get('q') ?? ''
   const includeArchived = searchParams.get('includeArchived') === 'true'
@@ -401,15 +391,7 @@ export default function MediaBrowser({
     (mediaType === 'album' ? albumBrowseFields : filmBrowseFields)
   const fields: BrowseField[] =
     mediaType === 'album'
-      ? [
-          ...baseFields,
-          {
-            key: 'listeningScrobbles',
-            label: `Scrobbles, ${formatListeningPeriod(listeningPeriod)}`,
-            type: 'number',
-            filterable: false,
-          },
-        ]
+      ? [...baseFields, listeningScrobblesField(listeningPeriod)]
       : baseFields
   const columnKeys = [
     ...new Set([
@@ -491,6 +473,9 @@ export default function MediaBrowser({
   }
   function changeFilters(next: BrowseFilter[]) {
     setParams({ filters: next.length ? JSON.stringify(next) : null })
+  }
+  function changeListening(next: ListeningFilter | undefined) {
+    setParams({ listening: next ? JSON.stringify(next) : null })
   }
   function clearFilters() {
     setParams({
@@ -1078,24 +1063,11 @@ export default function MediaBrowser({
           </BrowseFilterPill>
         )
       })}
-      {listening?.rules.map((rule, index) => (
-        <BrowseFilterPill
-          key={`listening:${index}`}
-          mode={listening.match === 'all' ? 'required' : 'any'}
-          removeLabel={`Remove listening rule: ${formatListeningRule(rule)}`}
-          onRemove={() => {
-            const rules = listening.rules.filter((_, i) => i !== index)
-            setParams({
-              listening: rules.length
-                ? JSON.stringify({ ...listening, rules })
-                : null,
-            })
-          }}
-        >
-          {listening.match === 'all' ? 'Required' : 'Any'} ·{' '}
-          {formatListeningRule(rule)}
-        </BrowseFilterPill>
-      ))}
+      <ListeningFilterPills
+        library="album"
+        filter={listening}
+        onChange={changeListening}
+      />
       <Button type="button" variant="link" size="xs" onClick={clearFilters}>
         Clear all
       </Button>
@@ -1316,20 +1288,24 @@ export default function MediaBrowser({
               />
               {mediaType === 'album' && (
                 <ListeningControls
-                  presentation="panel"
+                  apiBaseUrl={apiBaseUrl}
+                  library="album"
+                  params={params}
                   filter={listening}
                   sortPeriod={listeningSort}
-                  sorting={sortBy === 'listeningScrobbles'}
-                  onFilterChange={(filter) =>
-                    setParams({
-                      listening: filter ? JSON.stringify(filter) : null,
-                    })
-                  }
-                  onSortChange={(period) =>
-                    setParams({
-                      sortBy: 'listeningScrobbles',
-                      listeningSort: JSON.stringify(period),
-                    })
+                  total={query.hasTotal ? total : undefined}
+                  examples={slots
+                    .flatMap(({ item }) => (item ? [item] : []))
+                    .slice(0, 3)
+                    .map((item) => ({
+                      id: item.id,
+                      title: item.title,
+                      artworkUrl: item.artworkUrl,
+                      by: creators(item),
+                    }))}
+                  onFilterChange={changeListening}
+                  onSortPeriodChange={(period) =>
+                    setParams({ listeningSort: JSON.stringify(period) })
                   }
                 />
               )}

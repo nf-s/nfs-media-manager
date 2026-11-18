@@ -72,6 +72,15 @@ import {
   textValues,
 } from '@/utils/browse-items'
 import { aiSearchParams, mediaAiSearchTarget } from '@/utils/ai-search'
+import {
+  defaultListeningPeriod,
+  type ListeningFilter,
+} from '@repo/schemas/listening'
+import {
+  listeningScrobblesField,
+  listeningScrobblesKey,
+  parseListeningParams,
+} from '@/utils/listening-filters'
 import AiSearch from './ai-search'
 import {
   BrowseFilterChips,
@@ -80,6 +89,7 @@ import {
   RangeEditor,
 } from './browse-controls'
 import BrowseToolbar, { BrowseColumnsSection } from './browse-toolbar'
+import { ListeningControls, ListeningFilterPills } from './listening-controls'
 import {
   gridCardMin,
   parseBrowseView,
@@ -158,10 +168,11 @@ export default function ArtistBrowser() {
         z.array(BrowseFieldSchema),
       ),
   })
-  const fields = orderFields(
-    fieldsQuery.data ?? artistBrowseFields,
-    artistFieldOrder,
-  )
+  const { listening, listeningSort } = parseListeningParams(searchParams)
+  const fields = [
+    ...orderFields(fieldsQuery.data ?? artistBrowseFields, artistFieldOrder),
+    listeningScrobblesField(listeningSort),
+  ]
   const sortField = fields.find((field) => field.key === sortBy)
   const columnKeys = [
     ...new Set([
@@ -178,6 +189,11 @@ export default function ArtistBrowser() {
   const widths = useColumnWidths(collection, (field) =>
     field.key === 'name' ? 260 : field.type === 'text' ? 180 : 110,
   )
+  const requestedListeningPeriod =
+    sortBy === listeningScrobblesKey ||
+    columnKeys.includes(listeningScrobblesKey)
+      ? (listeningSort ?? defaultListeningPeriod)
+      : undefined
   const queryKey = JSON.stringify({
     q,
     filters,
@@ -186,6 +202,8 @@ export default function ArtistBrowser() {
     direction,
     playlistIds,
     limitResults,
+    listening,
+    listeningSort: requestedListeningPeriod,
   })
   const scrollIdentity = `${collection}:${queryKey}:${view}`
   const mobile = viewport.width <= 700
@@ -241,7 +259,11 @@ export default function ArtistBrowser() {
       ranges: null,
       playlistIds: null,
       limitResults: null,
+      listening: null,
     })
+  }
+  function changeListening(next: ListeningFilter | undefined) {
+    setParams({ listening: next ? JSON.stringify(next) : null })
   }
   function openDetail(id: string, trigger?: HTMLElement) {
     inspector?.open({ kind: 'artist', id }, trigger)
@@ -321,6 +343,10 @@ export default function ArtistBrowser() {
     direction,
     playlistIds: JSON.stringify(playlistIds),
     ...(limitResults ? { limitResults: String(limitResults) } : {}),
+    ...(listening ? { listening: JSON.stringify(listening) } : {}),
+    ...(requestedListeningPeriod
+      ? { listeningSort: JSON.stringify(requestedListeningPeriod) }
+      : {}),
   })
   const query = useVirtualBrowse({
     apiBaseUrl,
@@ -507,7 +533,8 @@ export default function ArtistBrowser() {
     Number(playlistIds.length > 0) +
     Number(Boolean(limitResults)) +
     filters.length +
-    ranges.length
+    ranges.length +
+    (listening?.rules.length ?? 0)
   const filterPills =
     activeFilterCount > 0 ? (
       <>
@@ -566,6 +593,11 @@ export default function ArtistBrowser() {
             </BrowseFilterPill>
           )
         })}
+        <ListeningFilterPills
+          library="artist"
+          filter={listening}
+          onChange={changeListening}
+        />
       </>
     ) : null
 
@@ -627,6 +659,30 @@ export default function ArtistBrowser() {
                   setParams({
                     ranges: ranges.length ? JSON.stringify(ranges) : null,
                   })
+                }
+              />
+              <ListeningControls
+                apiBaseUrl={apiBaseUrl}
+                library="artist"
+                params={params}
+                filter={listening}
+                sortPeriod={listeningSort}
+                total={query.hasTotal ? total : undefined}
+                examples={slots
+                  .flatMap(({ item }) => (item ? [item] : []))
+                  .slice(0, 3)
+                  .map((item) => ({
+                    id: item.id,
+                    title: item.name,
+                    artworkUrl: item.artworkUrl,
+                    by: formatItemCount(item.albumCount, {
+                      one: 'album',
+                      other: 'albums',
+                    }),
+                  }))}
+                onFilterChange={changeListening}
+                onSortPeriodChange={(period) =>
+                  setParams({ listeningSort: JSON.stringify(period) })
                 }
               />
               {view === 'table' && (

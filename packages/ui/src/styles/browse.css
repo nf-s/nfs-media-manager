@@ -148,6 +148,39 @@
   gap: var(--ds-3);
 }
 
+/* Conditions of a filter in the histogram view: the one being edited, and
+   the others folded to a line each */
+.browse-conditions {
+  display: grid;
+  gap: var(--ds-4);
+  min-width: 0;
+}
+.browse-conditions > * + * {
+  padding-top: var(--ds-4);
+  border-top: 1px solid var(--ds-line-soft);
+}
+.browse-condition {
+  display: grid;
+  gap: var(--ds-4);
+  min-width: 0;
+}
+.browse-condition-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ds-3);
+}
+.browse-condition-row {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-3);
+  min-height: var(--ds-h-sm);
+}
+.browse-condition-row > span {
+  flex: 1;
+  min-width: 0;
+}
+
 /* Column picker: entries in column order, each with a drag handle */
 .column-order {
   display: grid;

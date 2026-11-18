@@ -13,9 +13,11 @@ import {
   trackMatchDiagnosticFields,
 } from '@repo/schemas/match-diagnostics'
 import { ListeningSeriesSchema } from '@repo/schemas/lastfm'
+import { ListeningHistogramSchema } from '@repo/schemas/listening'
 import {
   TrackDetailSchema,
   TrackFilterOptionSchema,
+  TrackListeningHistogramQuerySchema,
   TrackListItemSchema,
   TrackMergeInputSchema,
   TrackMergeResultSchema,
@@ -39,7 +41,11 @@ import {
 } from '@/lib/openapi'
 import { generateJsonResponse } from '@/lib/response'
 import { authMiddleware, mutationOriginMiddleware } from '@/middlewares/auth'
-import { listBrowseFields, queryBrowseCounts } from '@/services/browse'
+import {
+  listBrowseFields,
+  queryBrowseCounts,
+  queryListeningHistogram,
+} from '@/services/browse'
 import {
   getTrackDetail,
   listTrackBrowsePage,
@@ -216,6 +222,36 @@ app.openapi(
       await queryBrowseCounts('track', c.req.valid('query')),
       200,
     ),
+)
+
+app.openapi(
+  createRoute({
+    method: 'get',
+    path: '/listening-histogram',
+    middleware: [authMiddleware()],
+    request: { query: TrackListeningHistogramQuerySchema },
+    responses: {
+      200: {
+        description:
+          'Tracks or recordings per scrobble-count bar in a period, without listening rules',
+        content: {
+          'application/json': {
+            schema: createResponseSchema(ListeningHistogramSchema),
+          },
+        },
+      },
+      401: jsonErrorResponse('Unauthorized'),
+      422: validationErrorResponse,
+    },
+  }),
+  async (c) => {
+    const query = c.req.valid('query')
+    return generateJsonResponse(
+      c,
+      await queryListeningHistogram('track', query, query.period),
+      200,
+    )
+  },
 )
 
 app

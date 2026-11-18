@@ -70,7 +70,7 @@ test('preview shows actual thresholds and listening logic independently of model
   assert.match(descriptions, /RYM rating: at least 4\/5/)
   assert.match(
     descriptions,
-    /all rules: at most 10 scrobbles · last 5 years; at least 100 scrobbles · through 2020-12-31/,
+    /all conditions: At most 10 track plays · last 5 years; At least 100 track plays · through 2020-12-31/,
   )
   assert.match(descriptions, /Sort: Scrobbles · last 5 years, ascending/)
 })

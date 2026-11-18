@@ -5,6 +5,7 @@ import { cn } from '../../lib/utils'
 /**
  * A message with at most one action. `attention` for something the owner
  * should act on, `danger` for a failure.
+ * `icon={false}` leaves the icon out, for a plain statement.
  */
 export function Notice({
   tone,

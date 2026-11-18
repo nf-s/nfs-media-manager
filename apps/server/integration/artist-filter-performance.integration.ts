@@ -253,3 +253,64 @@ it('counts each visible artist once per suggestion across profiles and playlists
     await listArtistBrowseFacets({ q: 'invisible', limitPerField: 25 }),
   ).toEqual([])
 })
+
+it('counts artist listening periods in one grouped read of the scrobbles', async () => {
+  await pool.query(`
+    insert into lastfm_track_link (username, artist_key, track_key, track_media_item_id, strategy)
+      select 'listener', 'fixture artist ' || ((n-1) % 5000 + 1), 'fixture track ' || n, 'track-' || n, 'exact'
+      from generate_series(1, 20000) n;
+    insert into lastfm_scrobble (id, username, listened_at, artist_name, track_name, artist_key, track_key, album_media_item_id)
+      select 'scrobble-' || n, 'listener', timestamp '2021-01-01' + n * interval '8 minutes',
+        'Fixture artist', 'Fixture track', 'fixture artist ' || ((n % 20000) % 5000 + 1),
+        'fixture track ' || (n % 20000 + 1),
+        case when n % 3 = 0 then null else 'album-' || ((n % 20000) % 5000 + 1) end
+      from generate_series(1, 300000) n;
+  `)
+  for (const table of ['lastfm_track_link', 'lastfm_scrobble'])
+    await pool.query('vacuum analyze ' + table)
+  const { refreshArtistListeningTotals } =
+    await import('@/services/artist-listening')
+  await refreshArtistListeningTotals(database)
+  const { artistListeningHistogram, countArtistBrowse, listArtistBrowsePage } =
+    await import('@/services/artist-browse')
+  const { ArtistListeningHistogramQuerySchema, ArtistQuerySchema } =
+    await import('@repo/schemas/creators')
+  const query = ArtistQuerySchema.parse({
+    listening: {
+      match: 'all',
+      rules: [
+        { period: { kind: 'all' }, min: 1 },
+        { period: { kind: 'dates', from: '2022-01-01' }, min: 1 },
+      ],
+    },
+    listeningSort: { kind: 'all' },
+    sortBy: 'listeningScrobbles',
+    direction: 'desc',
+    size: 50,
+  })
+  const page = await listArtistBrowsePage(query)
+  // Each artist has four tracks of 15 scrobbles, linked through the album
+  // and the track or through the track alone.
+  expect(page.items[0]).toMatchObject({
+    scrobbleCount: 60,
+    listeningScrobbles: 60,
+  })
+  expect(await countArtistBrowse(query)).toEqual({ totalCount: 5000 })
+  expect(
+    await artistListeningHistogram(
+      ArtistListeningHistogramQuerySchema.parse({ period: { kind: 'all' } }),
+    ),
+  ).toEqual({
+    edges: [0, 1, 10, 50, 100, 200, 500, 1000],
+    counts: [0, 0, 0, 5000, 0, 0, 0, 0],
+  })
+  for (const statement of [
+    'as "listeningScrobbles" from',
+    'select count(*)::int as count from',
+    'as counts',
+  ]) {
+    const plan = await explainServiceQuery(statement)
+    expect(plan.match(/on lastfm_scrobble/g)).toHaveLength(1)
+    expect(plan).toMatch(/CTE plays\n.*loops=1/)
+  }
+})

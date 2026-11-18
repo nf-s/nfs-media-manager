@@ -644,6 +644,29 @@ button.ds-pill:hover {
   font-size: var(--ds-text-sm);
 }
 
+/* Condition: one rule of a filter, read as a sentence of words and controls */
+.ds-cond {
+  display: grid;
+  gap: var(--ds-4);
+  min-width: 0;
+  padding: var(--ds-5);
+  border: 1px solid var(--ds-line);
+  border-radius: var(--ds-r-md);
+}
+.ds-cond-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ds-3);
+  min-width: 0;
+}
+.ds-cond-line .ds-input[type='number'] {
+  width: calc(var(--ds-row) * 2);
+}
+.ds-cond > .ds-btn {
+  justify-self: start;
+}
+
 /* 8 Toolbar ---------------------------------------------------------------
    Order: actions, search, sort, direction, filters, view, count.
    Table-only views use: search, count, then columns at the far end. */
@@ -1249,6 +1272,64 @@ button.ds-pill:hover {
   fill: var(--ds-ink-3);
   stroke: none;
   opacity: 0.12;
+}
+
+/* Histogram: how many items fall in each range. The bars are also the
+   control that sets the range. */
+.ds-hist {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: var(--ds-2);
+}
+.ds-hist-bar {
+  display: grid;
+  gap: var(--ds-2);
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--ds-r-xs);
+  background: none;
+  color: var(--ds-ink-3);
+  font-size: var(--ds-text-xs);
+  line-height: 16px;
+  text-align: center;
+  cursor: pointer;
+}
+.ds-hist-count {
+  min-height: 16px;
+  font-variant-numeric: tabular-nums;
+}
+.ds-hist-track {
+  display: flex;
+  align-items: flex-end;
+  height: calc(var(--ds-row) * 2);
+  border-radius: var(--ds-r-xs);
+  background: var(--ds-sunken);
+}
+.ds-hist-track i {
+  display: block;
+  width: 100%;
+  min-height: var(--ds-1);
+  border-radius: var(--ds-r-xs);
+  background: var(--ds-ink-4);
+}
+.ds-hist-bar:hover .ds-hist-track {
+  background: var(--ds-chip-hover);
+}
+.ds-hist-bar[aria-pressed='true'] {
+  color: var(--ds-ink);
+  font-weight: 500;
+}
+.ds-hist-bar[aria-pressed='true'] .ds-hist-track,
+.ds-hist-bar[data-partial] .ds-hist-track {
+  background: var(--ds-accent-soft);
+}
+.ds-hist-bar[aria-pressed='true'] .ds-hist-track i {
+  background: var(--ds-accent);
+}
+.ds-hist-bar[data-partial] .ds-hist-track i {
+  background: var(--ds-ink-3);
 }
 
 /* 14 Facts, stats, sections ------------------------------------------------- */
