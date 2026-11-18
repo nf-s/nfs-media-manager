@@ -8,6 +8,7 @@ import {
   SpotifyTrackSearchCandidateSchema,
   SpotifyTrackSearchInputSchema,
   SpotifyTrackSearchJobSchema,
+  SpotifyTrackSearchMarketSchema,
   SpotifyTrackSearchParamsSchema,
   SpotifyTrackSearchSchema,
   SpotifyTrackSearchStatusInputSchema,
@@ -45,6 +46,7 @@ const SearchOptionsSchema = SpotifyTrackSearchParamsSchema.extend({
   trackTitle: z.string().min(1).max(500),
   trackArtists: z.array(z.string()).optional(),
   groupKey: z.string().min(1),
+  market: SpotifyTrackSearchMarketSchema.optional(),
   query: z.string().min(1).max(200),
 })
 const StoredResultSchema = z.object({
@@ -152,12 +154,14 @@ export async function prepareSpotifyTrackSearch(
       statusCode: 409,
       message: 'The track is unavailable for this search.',
     })
-  await prepareSpotifyCatalogTrackSearch(userId)
+  const market = SearchOptionsSchema.shape.market.parse(input.market)
+  await prepareSpotifyCatalogTrackSearch(userId, market)
   return SearchOptionsSchema.parse({
     trackId,
     groupKey,
     ...target,
     trackTitle: target.trackTitle.slice(0, 500),
+    ...(market ? { market } : {}),
   })
 }
 
@@ -242,6 +246,7 @@ export async function runSpotifyTrackSearch(
       options.query,
       context.requestedByUserId,
       context.assertActive,
+      options.market,
     )
     if (!(await context.isActive())) return { outcome: 'stopped' }
     return {
@@ -275,6 +280,7 @@ export async function queueSpotifyTrackSearches(
     trackIds,
     batchId = nanoid(),
     freshness,
+    market,
   } = SpotifyTrackSearchInputSchema.parse(input)
   const eligible = await listTracksNeedingSpotifyMatch(db, [
     ...new Set(trackIds),
@@ -287,6 +293,7 @@ export async function queueSpotifyTrackSearches(
           trackId,
           batchId,
           ...(freshness?.length ? { freshness } : {}),
+          ...(market ? { market } : {}),
         },
         skipActive: true,
       })

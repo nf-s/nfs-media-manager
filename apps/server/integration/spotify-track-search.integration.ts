@@ -180,6 +180,25 @@ async function queueOne(freshness?: SpotifyTrackSearchFreshness) {
   return job
 }
 
+async function connectFixtureSpotifyAccount() {
+  const ownerHash = createHash('sha256').update(userId).digest('hex')
+  await fixture.insert(schema.providerSecret).values({
+    id: 'fixture-spotify-tokens',
+    provider: `spotify-account-${ownerHash}`,
+    key: 'tokens',
+    encryptedValue: encryptSecretValue(
+      JSON.stringify({
+        accessToken: 'fixture-owner-token',
+        refreshToken: 'fixture-refresh-token',
+        expiresAt: Date.now() + 3600 * 1000,
+        scope: 'user-library-read',
+        clientId: 'fixture-client',
+      }),
+    ),
+    lastUpdatedByUserId: userId,
+  })
+}
+
 function mockCandidates(...items: (typeof catalogTrack)[]) {
   request.mockImplementationOnce(async () => Response.json(spotifyTokenFixture))
   request.mockImplementationOnce(async () =>
@@ -700,6 +719,118 @@ it('records a real zero-result search as a successful attempt', async () => {
   expect(request).toHaveBeenCalledTimes(2)
 })
 
+it.each([
+  { is_playable: false },
+  { restrictions: { reason: 'market' } },
+  { restrictions: { reason: 'future-restriction' } },
+])(
+  'leaves an explicitly unavailable exact catalog track unlinked (%j)',
+  async (availability) => {
+    mockCandidates({ ...catalogTrack, ...availability })
+    const job = await queueOne()
+    await processQueuedJobs()
+
+    expect(await getSpotifyTrackSearch(recordingId, userId)).toMatchObject({
+      job: { jobId: job.id, status: 'succeeded', resultCount: 0 },
+      candidates: [],
+    })
+    expect(await fixture.select().from(schema.libraryTrack)).toMatchObject([
+      { mediaItemId: recordingId, spotifyTrackId: null },
+    ])
+  },
+)
+
+it('accepts an explicit market over the API when only app credentials are configured', async () => {
+  market = undefined
+  const { default: app } = await import('@/app')
+  const queue = (market?: string) =>
+    app.request('/api/v1/spotify/tracks/search', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        cookie: 'session=fixture',
+        origin: 'http://localhost:3000',
+      },
+      body: JSON.stringify({ trackIds: [recordingId], market }),
+    })
+
+  const missing = await queue()
+  expect(missing.status).toBe(422)
+  expect(await missing.json()).toMatchObject({
+    message: expect.stringContaining('Set Spotify Market in Providers'),
+  })
+  expect((await queue('au')).status).toBe(422)
+  expect(await fixture.select().from(schema.scrapeJob)).toHaveLength(0)
+  expect(request).not.toHaveBeenCalled()
+
+  const queued = await queue('AU')
+  expect(queued.status).toBe(200)
+  expect(await queued.json()).toMatchObject({ data: { queued: 1 } })
+  const [job] = (await listJobs({ mediaType: 'track' })).items
+  if (!job) throw new Error('Expected a queued Spotify track search')
+  expect(job.options.market).toBe('AU')
+  await bulkCancelJobs({ jobIds: [job.id], confirmRunning: false }, userId)
+  const retried = await retryJob(job.id, userId, false)
+  expect(retried.options.market).toBe('AU')
+  expect(request).not.toHaveBeenCalled()
+
+  await processQueuedJobs()
+  expect(request).toHaveBeenCalledTimes(2)
+  expect(
+    new URL(String(request.mock.calls[1]?.[0])).searchParams.get('market'),
+  ).toBe('AU')
+  expect(await getSpotifyTrackSearch(recordingId, userId)).toMatchObject({
+    job: { jobId: retried.id, status: 'succeeded', matchMethod: 'automatic' },
+  })
+  expect(await fixture.select().from(schema.providerSecret)).toHaveLength(0)
+})
+
+it('keeps the configured market ahead of the requested fallback', async () => {
+  await queueSpotifyTrackSearches(
+    { trackIds: [recordingId], market: 'NZ' },
+    userId,
+  )
+  await processQueuedJobs()
+  expect(request).toHaveBeenCalledTimes(2)
+  expect(
+    new URL(String(request.mock.calls[1]?.[0])).searchParams.get('market'),
+  ).toBe('AU')
+})
+
+it('keeps the connected account ahead of the requested fallback market', async () => {
+  market = undefined
+  await connectFixtureSpotifyAccount()
+  await queueSpotifyTrackSearches(
+    { trackIds: [recordingId], market: 'NZ' },
+    userId,
+  )
+  await processQueuedJobs()
+  expect(request).toHaveBeenCalledTimes(1)
+  const [input, init] = request.mock.calls[0] ?? []
+  expect(new URL(String(input)).searchParams.get('market')).toBeNull()
+  expect(new Headers(init?.headers).get('authorization')).toBe(
+    'Bearer fixture-owner-token',
+  )
+})
+
+it('requires configured app credentials when the explicit market is the only available option', async () => {
+  market = undefined
+  clientSecret = undefined
+  await expect(
+    queueSpotifyTrackSearches(
+      { trackIds: [recordingId], market: 'AU' },
+      userId,
+    ),
+  ).rejects.toMatchObject({
+    response: {
+      statusCode: 422,
+      message: expect.stringContaining('Configure Spotify Client ID'),
+    },
+  })
+  expect(await fixture.select().from(schema.scrapeJob)).toHaveLength(0)
+  expect(request).not.toHaveBeenCalled()
+})
+
 it.each([undefined, 'AU'])(
   'uses a connected Spotify account with market %s when client credentials are unavailable',
   async (configuredMarket) => {
@@ -720,22 +851,7 @@ it.each([undefined, 'AU'])(
     expect(await fixture.select().from(schema.scrapeJob)).toHaveLength(0)
     expect(request).not.toHaveBeenCalled()
 
-    const ownerHash = createHash('sha256').update(userId).digest('hex')
-    await fixture.insert(schema.providerSecret).values({
-      id: 'fixture-spotify-tokens',
-      provider: `spotify-account-${ownerHash}`,
-      key: 'tokens',
-      encryptedValue: encryptSecretValue(
-        JSON.stringify({
-          accessToken: 'fixture-owner-token',
-          refreshToken: 'fixture-refresh-token',
-          expiresAt: Date.now() + 3600 * 1000,
-          scope: 'user-library-read',
-          clientId: 'fixture-client',
-        }),
-      ),
-      lastUpdatedByUserId: userId,
-    })
+    await connectFixtureSpotifyAccount()
     const job = await queueOne()
     expect(request).not.toHaveBeenCalled()
     await processQueuedJobs()
@@ -821,7 +937,13 @@ it.each(['cancelled', 'covered'])(
 )
 
 it('keeps Spotify cooldowns and retries a cancelled search only once', async () => {
-  const original = await queueOne()
+  market = undefined
+  await queueSpotifyTrackSearches(
+    { trackIds: [recordingId], market: 'AU' },
+    userId,
+  )
+  const [original] = (await listJobs({ mediaType: 'track' })).items
+  if (!original) throw new Error('Expected a queued Spotify track search')
   await bulkCancelJobs({ jobIds: [original.id], confirmRunning: false }, userId)
   const retried = await retryJob(original.id, userId, false)
   expect(retried.id).not.toBe(original.id)

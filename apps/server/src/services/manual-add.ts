@@ -17,6 +17,7 @@ import {
 import {
   SPOTIFY_TRACK_SEARCH_LIMIT,
   SpotifyTrackSearchCandidateSchema,
+  SpotifyTrackSearchMarketSchema,
 } from '@repo/schemas/spotify-track-search'
 import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
@@ -154,7 +155,7 @@ function spotifyMarket(
   secrets: Record<string, string>,
 ): Record<string, string> {
   const market = secrets['market']
-  if (market && !/^[A-Z]{2}$/.test(market)) {
+  if (market && !SpotifyTrackSearchMarketSchema.safeParse(market).success) {
     throw new ServerError({
       statusCode: 422,
       message: 'Spotify market must be a two-letter uppercase country code.',
@@ -163,34 +164,55 @@ function spotifyMarket(
   return market ? { market } : {}
 }
 
-async function spotifyTrackSearchAccess(userId: string | null) {
+async function spotifyTrackSearchAccess(
+  userId: string | null,
+  market?: string,
+) {
+  const explicitMarket = SpotifyTrackSearchMarketSchema.optional().parse(market)
   const provider = await manualProvider('spotify', 'searching tracks', {
     requireCredentials: false,
   })
   const { secrets } = provider
   const params = spotifyMarket(secrets)
-  if (params.market && secrets.clientId?.trim() && secrets.clientSecret?.trim())
+  const hasClientCredentials =
+    Boolean(secrets.clientId?.trim()) && Boolean(secrets.clientSecret?.trim())
+  if (params.market && hasClientCredentials)
     return { provider, params, account: null }
   if (userId && (await getSpotifyAccountStatus(userId)).connected)
     return { provider, params, account: userId }
+  if (explicitMarket && hasClientCredentials)
+    return { provider, params: { market: explicitMarket }, account: null }
   throw new ServerError({
     statusCode: 422,
-    message: params.market
-      ? 'Configure Spotify Client ID and Client secret in Providers or connect a Spotify account to search tracks.'
-      : 'Set Spotify Market in Providers or connect a Spotify account before searching tracks.',
+    message:
+      params.market || explicitMarket
+        ? 'Configure Spotify Client ID and Client secret in Providers or connect a Spotify account to search tracks.'
+        : 'Set Spotify Market in Providers or connect a Spotify account before searching tracks.',
   })
 }
 
-export async function prepareSpotifyCatalogTrackSearch(userId: string | null) {
-  await spotifyTrackSearchAccess(userId)
+export async function prepareSpotifyCatalogTrackSearch(
+  userId: string | null,
+  market?: string,
+) {
+  await spotifyTrackSearchAccess(userId, market)
 }
+
+const UnavailableSpotifyCatalogTrackSchema = z.union([
+  z.object({ is_playable: z.literal(false) }),
+  z.object({ restrictions: z.object({ reason: z.string().trim().min(1) }) }),
+])
 
 export async function searchSpotifyTrackCandidates(
   query: string,
   userId: string | null,
   assertActive: () => Promise<void>,
+  market?: string,
 ) {
-  const { provider, params, account } = await spotifyTrackSearchAccess(userId)
+  const { provider, params, account } = await spotifyTrackSearchAccess(
+    userId,
+    market,
+  )
   return runProviderOperation(
     provider,
     async ({ secrets, request }) => {
@@ -214,6 +236,8 @@ export async function searchSpotifyTrackCandidates(
         )
       const seen = new Set<string>()
       return tracks.items.flatMap((item) => {
+        if (UnavailableSpotifyCatalogTrackSchema.safeParse(item).success)
+          return []
         const { track } = normalizeSpotifyTrackEntry({ item })
         if (!track || seen.has(track.spotifyTrackId)) return []
         const candidate = SpotifyTrackSearchCandidateSchema.safeParse({

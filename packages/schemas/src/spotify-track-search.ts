@@ -42,11 +42,20 @@ export type SpotifyTrackSearchFreshness = z.infer<
   typeof SpotifyTrackSearchFreshnessSchema
 >
 
+export const SpotifyTrackSearchMarketSchema = z
+  .string()
+  .length(2)
+  .regex(
+    /^[A-Z]{2}$/,
+    'Spotify market must be a two-letter uppercase country code.',
+  )
+
 export const SpotifyTrackSearchInputSchema =
   SpotifyTrackSearchStatusInputSchema.extend({
     batchId: id.optional(),
     confirmBroadRun: z.boolean().default(false),
     freshness: SpotifyTrackSearchFreshnessSchema.optional(),
+    market: SpotifyTrackSearchMarketSchema.optional(),
   }).refine((input) => input.trackIds.length <= 5 || input.confirmBroadRun, {
     message: 'Confirm searching more than five tracks',
     path: ['confirmBroadRun'],
