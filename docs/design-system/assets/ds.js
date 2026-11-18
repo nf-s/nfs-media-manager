@@ -923,6 +923,15 @@
   }
   const cache = {}
   const series = (name) => (cache[name] = cache[name] || SETS[name]())
+  /*
+   * The earliest scrobble of the whole library. "All" on every listening
+   * chart and every listening sparkline start here, not at the first scrobble
+   * of the item, so they all cover the same period.
+   */
+  const HISTORY_FROM = Date.UTC(2014, 2, 10)
+  const LISTENING = ['album', 'track', 'artist', 'playlist', 'recent']
+  const historyFrom = (name) =>
+    LISTENING.includes(name) ? HISTORY_FROM : undefined
 
   /*
    * Granularity follows the data, so the line reads as a line. Of day, week,
@@ -944,9 +953,9 @@
       )
     return Date.UTC(d.getUTCFullYear(), 0, 1)
   }
-  function bucket(days, range, maxPoints = 120) {
+  function bucket(days, range, maxPoints = 120, start = TODAY) {
     const spans = { '30d': 29, '90d': 89, '1y': 364, '5y': 1825 }
-    const first = days.length ? days[0].t : TODAY
+    const first = Math.min(days.length ? days[0].t : TODAY, start)
     const from =
       range in spans
         ? TODAY - spans[range] * DAY
@@ -1066,6 +1075,7 @@
       days,
       range,
       Math.min(120, Math.max(12, Math.floor(iw / 8))),
+      historyFrom(el.dataset.chart),
     )
     const tk = ticks(Math.max(1, ...points.map((p) => p.v)))
     const top = tk[tk.length - 1]
@@ -1185,15 +1195,34 @@
     return `<svg class="ds-spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" aria-hidden="true"><path data-area d="${d}L${w} ${h}L0 ${h}Z"/><path d="${d}"/></svg>`
   }
 
-  /* Sparkline of a named series: the last 12 complete months, or 30 days */
-  function sparkOf(set, range = '1y') {
-    const values = bucket(series(set), range)
-      .points.slice(0, -1)
-      .map((p) => p.v)
+  /*
+   * Sparkline of a named series: every month since the start of the
+   * listening history, or the last 30 days. Values merge into at most 16
+   * equal runs counted from the end, so only the oldest run can be short.
+   */
+  function sparkOf(set, range = 'all') {
+    let values
+    if (range === 'all') {
+      const months = new Map()
+      for (let t = HISTORY_FROM; t <= TODAY; t += DAY)
+        months.set(grainKey(t, 'month'), 0)
+      for (const d of series(set))
+        months.set(
+          grainKey(d.t, 'month'),
+          months.get(grainKey(d.t, 'month')) + d.v,
+        )
+      values = [...months.values()]
+    } else {
+      values = bucket(series(set), range)
+        .points.slice(0, -1)
+        .map((p) => p.v)
+    }
     const size = Math.ceil(values.length / 16)
     const merged = []
-    for (let i = 0; i < values.length; i += size)
-      merged.push(values.slice(i, i + size).reduce((s, v) => s + v, 0))
+    for (let end = values.length; end > 0; end -= size)
+      merged.unshift(
+        values.slice(Math.max(0, end - size), end).reduce((s, v) => s + v, 0),
+      )
     return spark(merged)
   }
   const sparkSeed = (seed) => {

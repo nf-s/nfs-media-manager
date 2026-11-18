@@ -111,6 +111,39 @@ test('all time never shows less than thirty days, even with no history', () => {
   assert.equal(recent.points.length, 30)
 })
 
+test('all time starts at the given start when it is earlier than the first sample', () => {
+  const samples = [
+    { t: utcDay('2024-03-01'), v: 6 },
+    { t: utcDay('2026-11-01'), v: 2 },
+  ]
+  const own = bucketTrend(samples, 'all', { today, finest: 'month' })
+  assert.equal(own.points[0]?.t, utcDay('2024-01-01'))
+  const shared = bucketTrend(samples, 'all', {
+    today,
+    finest: 'month',
+    from: utcDay('2010-06-20'),
+  })
+  assert.equal(shared.grain, 'year')
+  assert.equal(shared.points[0]?.t, utcDay('2010-01-01'))
+  assert.equal(shared.points.length, 17)
+  assert.equal(
+    shared.points.reduce((sum, point) => sum + point.v, 0),
+    8,
+  )
+  const later = bucketTrend(samples, 'all', {
+    today,
+    finest: 'month',
+    from: utcDay('2025-01-01'),
+  })
+  assert.equal(later.points[0]?.t, own.points[0]?.t)
+  const ranged = bucketTrend(samples, '1y', {
+    today,
+    finest: 'month',
+    from: utcDay('2010-06-20'),
+  })
+  assert.equal(ranged.points[0]?.t, utcDay('2025-11-01'))
+})
+
 test('monthly samples never use a grain finer than a month', () => {
   const samples = Array.from({ length: 140 }, (_, index) => ({
     t: Date.UTC(2015 + Math.floor(index / 12), index % 12, 1),
@@ -158,4 +191,5 @@ test('ticks, labels and sparklines stay small and round', () => {
   assert.equal(axisLabels(months, 'month', 1).length, 1)
   assert.equal(sparkValues(Array.from({ length: 52 }, () => 1)).length, 13)
   assert.deepEqual(sparkValues([1, 2, 3]), [1, 2, 3])
+  assert.deepEqual(sparkValues([1, 2, 3, 4, 5, 6, 7], 3), [1, 9, 18])
 })

@@ -339,6 +339,7 @@ export default function AlbumListening({
             key={track}
             days={track ? [] : summary.days}
             months={track ? data.months : summary.months}
+            from={summary.historyFrom ?? undefined}
             monthsOnly={Boolean(track)}
             ranges={track ? ['1y', '5y', 'all'] : undefined}
             extra={

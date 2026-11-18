@@ -8,10 +8,7 @@ import {
   SearchParamsContext,
 } from 'next/dist/shared/lib/hooks-client-context.shared-runtime'
 import { ArtistQuerySchema, ArtistSummarySchema } from '@repo/schemas/creators'
-import {
-  ARTIST_LISTENING_MONTHS,
-  artistBrowseFields,
-} from '@repo/schemas/artist-browse'
+import { artistBrowseFields } from '@repo/schemas/artist-browse'
 import { ConfigContext } from './providers'
 
 require.extensions['.css'] = (module) => {
@@ -131,15 +128,11 @@ test('Artists list uses 48px rows: round thumbnail, title, country, tag pills an
   assert.match(html, /title="Tag: Jazz" class="ds-pill"/)
   assert.match(
     html,
-    new RegExp(
-      `<span class="ds-w-num">Albums</span><span class="ds-w-num">Scrobbles</span><span class="ds-w-spark">${ARTIST_LISTENING_MONTHS} months</span>`,
-    ),
+    /<span class="ds-w-num">Albums<\/span><span class="ds-w-num">Scrobbles<\/span><span class="ds-w-spark">All time<\/span>/,
   )
   assert.match(
     html,
-    new RegExp(
-      `<span class="ds-w-num">4</span><span class="ds-w-num">1,234</span><span class="ds-w-spark"><svg class="ds-spark"[^>]*role="img" aria-label="Scrobbles per month for Example Artist, last ${ARTIST_LISTENING_MONTHS} months"`,
-    ),
+    /<span class="ds-w-num">4<\/span><span class="ds-w-num">1,234<\/span><span class="ds-w-spark"><svg class="ds-spark"[^>]*role="img" aria-label="Scrobbles for Example Artist, all time"/,
   )
   assert.ok((html.match(/data-placeholder=""/g) ?? []).length > 0)
   assert.doesNotMatch(html, /onDoubleClick|media-tile|list-row|browse-table/)

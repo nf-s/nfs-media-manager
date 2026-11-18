@@ -22,6 +22,7 @@ const series = ListeningSeriesSchema.parse({
   total: 21,
   firstDate: '2019-03-08',
   lastDate: '2026-11-12',
+  historyFrom: '2018-06-20',
   daysFrom: '2021-11-16',
   daysTo: '2026-11-16',
   days: [],
@@ -94,7 +95,7 @@ test('a stat with a trend draws a labelled sparkline beside its value', () => {
           value: '96',
           trend: {
             values: [0, 2, 5, 1, 0, 0, 3, 8, 4, 2, 6, 9],
-            label: '40 scrobbles in the last 12 months',
+            label: 'Scrobbles since 2014-03-10',
           },
         },
         { label: 'last played', value: '2026-11-12' },
@@ -103,16 +104,16 @@ test('a stat with a trend draws a labelled sparkline beside its value', () => {
   )
   assert.match(
     html,
-    /<span class="ds-stat-value">96<svg class="ds-spark" viewBox="0 0 72 20"[^>]*role="img" aria-label="40 scrobbles in the last 12 months">/,
+    /<span class="ds-stat-value">96<svg class="ds-spark" viewBox="0 0 72 20"[^>]*role="img" aria-label="Scrobbles since 2014-03-10">/,
   )
   assert.equal(html.match(/<svg/g)?.length, 1)
 })
 
-test('the scrobbles stat carries the last 12 months from the series', () => {
+test('the scrobbles stat carries every month since the history began', () => {
   const html = render(series)
   assert.match(
     html,
-    /<span class="ds-stat-value">21<svg class="ds-spark"[^>]*aria-label="12 scrobbles in the last 12 months">/,
+    /<span class="ds-stat-value">21<svg class="ds-spark"[^>]*aria-label="Scrobbles since 2018-06-20">/,
   )
   assert.match(
     html,
@@ -125,6 +126,7 @@ test('no chart while loading, after a failure, or with no scrobbles', () => {
   assert.equal(render(), plain)
   assert.equal(render(undefined, true), plain)
   assert.equal(render({ ...series, total: 0, months: [] }), plain)
+  assert.equal(render({ ...series, historyFrom: null }), plain)
 })
 
 test('stats led by the series show its total, trend and last date, and are empty before it loads', () => {
@@ -138,7 +140,7 @@ test('stats led by the series show its total, trend and last date, and are empty
   const loaded = render(series, false, stats)
   assert.match(
     loaded,
-    /<span class="ds-stat-value">21<svg class="ds-spark"[^>]*aria-label="12 scrobbles in the last 12 months">/,
+    /<span class="ds-stat-value">21<svg class="ds-spark"[^>]*aria-label="Scrobbles since 2018-06-20">/,
   )
   assert.match(
     loaded,

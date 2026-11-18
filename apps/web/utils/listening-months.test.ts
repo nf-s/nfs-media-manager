@@ -1,19 +1,41 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { recentListeningMonths } from './listening-months'
+import { listeningMonthsSince } from './listening-months'
 
-test('ends with the current UTC month, oldest first, with gaps as zero', () => {
+test('runs from the month of the start to the current UTC month, with gaps as zero', () => {
   assert.deepEqual(
-    recentListeningMonths(
+    listeningMonthsSince(
       [
-        { month: '2025-11', count: 4 },
         { month: '2025-12', count: 1 },
         { month: '2026-03', count: 7 },
         { month: '2026-11', count: 2 },
       ],
+      '2025-11-28',
       new Date('2026-11-17T09:00:00.000Z'),
     ),
-    [1, 0, 0, 7, 0, 0, 0, 0, 0, 0, 0, 2],
+    [0, 1, 0, 0, 7, 0, 0, 0, 0, 0, 0, 0, 2],
+  )
+})
+
+test('every item gets the same months, whenever its own scrobbles began', () => {
+  const now = new Date('2026-11-17T00:00:00.000Z')
+  const old = listeningMonthsSince(
+    [{ month: '2009-03', count: 9 }],
+    '2009-03-08',
+    now,
+  )
+  const recent = listeningMonthsSince(
+    [{ month: '2026-10', count: 4 }],
+    '2009-03-08',
+    now,
+  )
+  assert.equal(old.length, 213)
+  assert.equal(recent.length, old.length)
+  assert.equal(old[0], 9)
+  assert.equal(recent[recent.length - 2], 4)
+  assert.deepEqual(
+    listeningMonthsSince([], '2009-03-08', now),
+    Array.from({ length: 213 }, () => 0),
   )
 })
 
@@ -23,45 +45,53 @@ test('uses UTC month boundaries, not local time', () => {
     { month: '2026-11', count: 5 },
   ]
   assert.deepEqual(
-    recentListeningMonths(months, new Date('2026-10-31T23:59:59.999Z'), 2),
+    listeningMonthsSince(
+      months,
+      '2026-09-30',
+      new Date('2026-10-31T23:59:59.999Z'),
+    ),
     [0, 3],
   )
   assert.deepEqual(
-    recentListeningMonths(months, new Date('2026-11-01T00:00:00.000Z'), 2),
-    [3, 5],
+    listeningMonthsSince(
+      months,
+      '2026-09-30',
+      new Date('2026-11-01T00:00:00.000Z'),
+    ),
+    [0, 3, 5],
   )
 })
 
 test('crosses a year boundary', () => {
   assert.deepEqual(
-    recentListeningMonths(
+    listeningMonthsSince(
       [
         { month: '2025-12', count: 6 },
         { month: '2026-01', count: 2 },
       ],
+      '2025-11-01',
       new Date('2026-01-15T00:00:00.000Z'),
-      3,
     ),
     [0, 6, 2],
   )
 })
 
-test('an empty series is twelve zeros', () => {
+test('a start in the current month, or after it, is the current month alone', () => {
+  const months = [{ month: '2026-11', count: 2 }]
   assert.deepEqual(
-    recentListeningMonths([], new Date('2026-11-17T00:00:00.000Z')),
-    Array.from({ length: 12 }, () => 0),
-  )
-})
-
-test('a series that ended more than twelve months ago is all zeros', () => {
-  assert.deepEqual(
-    recentListeningMonths(
-      [
-        { month: '2019-03', count: 9 },
-        { month: '2025-11', count: 4 },
-      ],
+    listeningMonthsSince(
+      months,
+      '2026-11-17',
       new Date('2026-11-17T00:00:00.000Z'),
     ),
-    Array.from({ length: 12 }, () => 0),
+    [2],
+  )
+  assert.deepEqual(
+    listeningMonthsSince(
+      months,
+      '2026-12-01',
+      new Date('2026-11-17T00:00:00.000Z'),
+    ),
+    [2],
   )
 })

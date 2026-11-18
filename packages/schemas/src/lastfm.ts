@@ -108,6 +108,11 @@ export const ListeningSeriesSchema = z.object({
   firstDate: z.string().date().nullable(),
   /** UTC date of the latest linked scrobble. */
   lastDate: z.string().date().nullable(),
+  /**
+   * UTC date of the earliest stored scrobble of anything, linked or not:
+   * where every listening chart and sparkline starts. Null with none stored.
+   */
+  historyFrom: z.string().date().nullable(),
   /** First day `days` covers. Days before it are only in `months`. */
   daysFrom: z.string().date(),
   /** Last day `days` covers: the UTC date when the series was read. */

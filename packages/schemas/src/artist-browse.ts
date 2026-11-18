@@ -7,9 +7,6 @@ import {
 } from './browse'
 import type { ArtistSummary } from './creators'
 
-/** Months in an artist row's listening sparkline, ending with the current month. */
-export const ARTIST_LISTENING_MONTHS = 12
-
 export const artistBrowseFields: BrowseField[] = [
   { key: 'name', label: 'Artist', type: 'text', filterable: true },
   { key: 'playlist', label: 'Playlists', type: 'text', filterable: true },

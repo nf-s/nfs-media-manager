@@ -18,6 +18,7 @@ const SeriesRowsSchema = z
       total: z.coerce.number(),
       first_date: z.string().nullable(),
       last_date: z.string().nullable(),
+      history_from: z.string().nullable(),
       days: z.array(z.object({ date: z.string(), count: z.number() })),
       months: z.array(z.object({ month: z.string(), count: z.number() })),
     }),
@@ -25,6 +26,28 @@ const SeriesRowsSchema = z
   .length(1)
 
 const isoDate = (time: number) => new Date(time).toISOString().slice(0, 10)
+
+/**
+ * UTC date of the earliest stored scrobble of anything, linked or not. Every
+ * listening chart and sparkline starts here, so they all cover one period.
+ * It steps through the listeners and takes each one's first scrobble, both
+ * from the listener and time index; a plain minimum reads every scrobble.
+ */
+export const listeningHistoryStart = sql`(
+  with recursive listeners as (
+    (select username from lastfm_scrobble order by username limit 1)
+    union all
+    select (
+      select s.username from lastfm_scrobble s
+      where s.username > listeners.username order by s.username limit 1
+    ) from listeners where listeners.username is not null
+  )
+  select to_char(min((
+    select min(s.listened_at) from lastfm_scrobble s
+    where s.username = listeners.username
+  )), 'YYYY-MM-DD')
+  from listeners where listeners.username is not null
+)`
 
 /**
  * Counts the scrobbles `linked` selects, one `listened_at` row per scrobble.
@@ -50,6 +73,7 @@ async function listeningSeries(
           (select count(*) from linked) as total,
           (select to_char(min(listened_at), 'YYYY-MM-DD') from linked) as first_date,
           (select to_char(max(listened_at), 'YYYY-MM-DD') from linked) as last_date,
+          ${listeningHistoryStart} as history_from,
           coalesce((
             select json_agg(json_build_object('date', day, 'count', count) order by day)
             from (
@@ -74,6 +98,7 @@ async function listeningSeries(
     total: row?.total ?? 0,
     firstDate: row?.first_date ?? null,
     lastDate: row?.last_date ?? null,
+    historyFrom: row?.history_from ?? null,
     daysFrom,
     daysTo,
     days: row?.days ?? [],

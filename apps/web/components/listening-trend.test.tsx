@@ -20,6 +20,7 @@ const series = ListeningSeriesSchema.parse({
   total: 14,
   firstDate: '2019-03-08',
   lastDate: '2026-11-12',
+  historyFrom: '2012-06-20',
   daysFrom: '2021-11-16',
   daysTo: '2026-11-16',
   days: [
@@ -100,6 +101,16 @@ test('the trend shows totals, first and last played and the shared chart', () =>
     )
     assert.match(html, /aria-label="Range"/)
   }
+})
+
+test('all time starts where the whole history starts, not at the first scrobble of the item', () => {
+  const years = (html: string) =>
+    [...html.matchAll(/<text[^>]*>(\d{4})<\/text>/g)].map((match) => match[1])
+  assert.equal(years(render('album', series))[0], '2012')
+  assert.equal(
+    years(render('album', { ...series, historyFrom: '2019-03-08' }))[0],
+    '2019',
+  )
 })
 
 test('the trend shows a skeleton while loading, the empty state and a retryable error', () => {

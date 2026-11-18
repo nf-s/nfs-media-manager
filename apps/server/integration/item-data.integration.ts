@@ -196,6 +196,7 @@ describe('listening series', () => {
       total: 0,
       firstDate: null,
       lastDate: null,
+      historyFrom: null,
       daysFrom: '2021-11-16',
       daysTo: '2026-11-16',
       days: [],
@@ -225,6 +226,7 @@ describe('listening series', () => {
       total: 35,
       firstDate: '2015-05-10',
       lastDate: '2026-11-16',
+      historyFrom: '2015-05-10',
       daysFrom: '2021-11-16',
       daysTo: '2026-11-16',
       days: [
@@ -281,10 +283,16 @@ describe('listening series', () => {
       }),
       scrobbleRow('2026-11-01T00:00:00.000Z'),
       scrobbleRow('2026-11-01T00:00:00.000Z', { track: 'Unlinked Song' }),
+      scrobbleRow('2019-06-01T00:00:00.000Z', { track: 'Unlinked Song' }),
     ])
     const series = await getTrackListeningSeries('track-linked', NOW)
     const detail = await getTrackDetail('track-linked')
     expect(series.total).toBe(3)
+    // The history starts at the earliest scrobble of anything, linked or not.
+    expect(series).toMatchObject({
+      firstDate: '2024-01-02',
+      historyFrom: '2019-06-01',
+    })
     expect(series.months).toEqual(detail?.listening.months)
     expect(series.days).toEqual([
       { date: '2024-01-02', count: 1 },

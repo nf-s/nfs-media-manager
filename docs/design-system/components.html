@@ -549,10 +549,10 @@
             title: 'Trend chart and sparkline',
             body:
               `<p>One line chart for anything counted over time: scrobbles for an album, track, artist or playlist, API requests for a provider, jobs completed. Hover the chart for values.</p>` +
-              `<div class="g-cols">${g.spec(D.chartBox('album', { range: '1y', unit: 'scrobbles' }))}${g.spec(D.chartBox('recent', { ranges: ['30d', 'All'], range: 'All', unit: 'scrobbles' }) + '<div class="g-cap">An album added 22 days ago: the chart switches to days and still draws a line.</div>')}</div>` +
+              `<div class="g-cols">${g.spec(D.chartBox('album', { range: '1y', unit: 'scrobbles' }))}${g.spec(D.chartBox('recent', { ranges: ['30d', 'All'], range: '30d', unit: 'scrobbles' }) + '<div class="g-cap">An album first played 22 days ago, on 30d: the chart uses days and still draws a line. All starts where the whole listening history starts, so the album is flat until its first play.</div>')}</div>` +
               g.spec(
                 g.flow([
-                  g.item(D.sparkOf('album'), 'sparkline · 12 months'),
+                  g.item(D.sparkOf('album'), 'sparkline · all time'),
                   g.item(D.sparkOf('artist'), 'in table cells and stat tiles'),
                   g.item(D.sparkOf('requests', '30d'), '30 days'),
                 ]),
@@ -562,8 +562,8 @@
                 '<b>Granularity follows the data.</b> Of day, week, month, quarter and year, the chart takes the finest that averages three or more per point, with at least ten points on screen and no more than one point every 8px, so a narrow chart uses a coarser grain than a wide one. A sparse history falls back to the coarsest bucket that still gives ten points, and a short one is padded to 30 days, so one month of listening is thirty points, not one dot.',
                 '<b>Periods with no plays are zero,</b> so gaps read as gaps.',
                 '<b>The current, unfinished period</b> is dotted, so a part-month does not read as a drop.',
-                '<b>Ranges:</b> 30d, 1y, 5y, All. The caption states the measure and the granularity in use. A history that is stored by the day for a short time offers only the ranges it can fill: provider requests use 30d and 90d.',
-                '<b>Sparkline:</b> the same curve at 72 × 20px, without axes, for table cells and summaries.',
+                '<b>Ranges:</b> 30d, 1y, 5y, All. The caption states the measure and the granularity in use. <b>All on a listening chart starts at the earliest scrobble of the whole library,</b> not at the first scrobble of the item, so every album, track, artist and playlist is drawn over the same period and an item first played later is flat until then. A history that is stored by the day for a short time offers only the ranges it can fill: provider requests use 30d and 90d.',
+                '<b>Sparkline:</b> the same curve at 72 × 20px, without axes, for table cells and summaries. At most 16 points: longer series merge into equal runs counted from the end, so the latest point is a whole run. A listening sparkline covers every month since the earliest scrobble of the whole library, like All on the chart.',
               ]) +
               g.note(
                 'Replaces',
@@ -700,7 +700,7 @@
                         {
                           extra: D.sparkOf('album').replace(
                             'aria-hidden="true"',
-                            'role="img" aria-label="96 scrobbles in the last 12 months"',
+                            'role="img" aria-label="Scrobbles since 2014-03-10"',
                           ),
                         },
                       ],
@@ -713,7 +713,7 @@
                 '<b>Section.</b> A 12px semibold title, an optional count or note, and one action on the right, always a link button (All fields, Add to playlist, Manage tags). Sections are separated by a hairline, not boxes. On a phone the controls wrap under the title instead of widening the page.',
                 '<b>Facts.</b> Label above value, in a grid. Only fields a person reads; provider statistics live in Sources.',
                 '<b>Stat.</b> A large figure with its label beneath.',
-                '<b>Stat with a trend.</b> One stat in a row may carry a sparkline beside its figure: the 72 × 20px Sparkline of the last 12 UTC calendar months, oldest first, ending with the current month, as in the Artists list. Use it on the Scrobbles stat of an album, track, artist or playlist Overview. Its text alternative states the 12-month total, for example <i>96 scrobbles in the last 12 months</i>. While the series loads, if it fails, or when nothing is scrobbled, the stat shows without it. Rows without a trend look as before; on a phone, stats wrap whole and the sparkline stays beside its figure.',
+                '<b>Stat with a trend.</b> One stat in a row may carry a sparkline beside its figure: the 72 × 20px Sparkline of every UTC calendar month since the earliest scrobble of the whole library, oldest first, ending with the current month, as in the Artists list. Use it on the Scrobbles stat of an album, track, artist or playlist Overview. Its text alternative states where it starts, for example <i>Scrobbles since 2014-03-10</i>. While the series loads, if it fails, or when nothing is scrobbled, the stat shows without it. Rows without a trend look as before; on a phone, stats wrap whole and the sparkline stays beside its figure.',
               ]) +
               g.note(
                 'Replaces',

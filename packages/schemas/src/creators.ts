@@ -52,7 +52,10 @@ export const ArtistSummarySchema = CreatorIdentitySchema.extend({
   scrobbleCount: CountSchema.optional(),
   /** Scrobbles in the requested sort period; only when one was asked for. */
   listeningScrobbles: CountSchema.optional(),
-  /** Scrobbles per UTC month, oldest first, ending with the current month; in browse rows. */
+  /**
+   * Scrobbles per UTC month, oldest first, from the month of the earliest
+   * stored scrobble of anything to the current month; in browse rows.
+   */
   listeningMonths: z.array(CountSchema).optional(),
   browse: BrowseValuesSchema.default({}),
 })

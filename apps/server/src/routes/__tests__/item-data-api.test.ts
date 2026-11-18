@@ -41,6 +41,7 @@ const series = {
   total: 1,
   firstDate: '2026-11-01',
   lastDate: '2026-11-01',
+  historyFrom: '2012-06-20',
   daysFrom: '2021-11-16',
   daysTo: '2026-11-16',
   days: [{ date: '2026-11-01', count: 1 }],

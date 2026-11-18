@@ -21,6 +21,7 @@ const series = ListeningSeriesSchema.parse({
   total: 12,
   firstDate: '2019-11-02',
   lastDate: '2022-01-05',
+  historyFrom: '2012-06-20',
   daysFrom: '2021-11-16',
   daysTo: '2026-11-16',
   days: [{ date: '2022-01-05', count: 8 }],

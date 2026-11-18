@@ -81,6 +81,9 @@ function total(points: readonly TrendSample[]): number {
  *
  * `finest` is the grain of the samples themselves: daily samples can use
  * every grain, monthly samples only month and coarser.
+ *
+ * `from` is where "all" starts when it is earlier than the first sample, so
+ * charts of different items share one start.
  */
 export function bucketTrend(
   samples: readonly TrendSample[],
@@ -89,10 +92,11 @@ export function bucketTrend(
     today: number
     maxPoints?: number
     finest?: Extract<TrendGrain, 'day' | 'month'>
+    from?: number
   },
 ): TrendSeries {
   const { today, maxPoints = 120, finest = 'day' } = options
-  const first = samples[0]?.t ?? today
+  const first = Math.min(samples[0]?.t ?? today, options.from ?? today)
   const from =
     range === 'all'
       ? Math.min(first, today - 29 * DAY_MS)
@@ -122,13 +126,19 @@ export function bucketTrend(
   return dense ?? fallback ?? { grain: 'year', points: [] }
 }
 
-/** Merge a series down to at most `max` points for a sparkline. */
+/**
+ * Merge a series down to at most `max` points for a sparkline. Points are
+ * merged in equal runs counted from the end, so the latest point is always a
+ * whole run and only the oldest can be short.
+ */
 export function sparkValues(values: readonly number[], max = 16): number[] {
   const size = Math.max(1, Math.ceil(values.length / max))
   const merged: number[] = []
-  for (let index = 0; index < values.length; index += size)
-    merged.push(
-      values.slice(index, index + size).reduce((sum, value) => sum + value, 0),
+  for (let end = values.length; end > 0; end -= size)
+    merged.unshift(
+      values
+        .slice(Math.max(0, end - size), end)
+        .reduce((sum, value) => sum + value, 0),
     )
   return merged
 }
