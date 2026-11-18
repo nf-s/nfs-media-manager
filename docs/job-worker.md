@@ -75,6 +75,10 @@ availability. To change mode, pause the dispatcher, wait for its slots to
 drain, then choose Cloudflare or Local. Resume dispatch when ready. The
 existing pairing and provider safety limits apply across switches. A request
 with an uncertain outcome requires worker review before switching modes.
+When **Local worker needs review** appears, pause the queue, wait for active
+dispatches, and check the latest job and worker evidence. In the provider’s
+**Settings → Local worker**, choose **Review worker request** and confirm to
+acknowledge it. The execution window must expire first. The queue stays paused.
 Cloudflare execution uses the server-side Discogs credential. Local execution
 uses the credentials configured on that worker.
 

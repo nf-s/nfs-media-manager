@@ -228,3 +228,51 @@ test('pairing sends one no-store request and keeps only status in query and muta
     client.clear()
   }
 })
+
+test('acknowledging a worker request posts only review and refreshes provider safety and queue reads', async (t) => {
+  const client = new QueryClient()
+  const worker = providerLocalWorkerQuery('', 'fixture')
+  const reads = [
+    ['providers'],
+    ['providers', 'overview', 'all'],
+    ['jobs', 'dispatch', 'fixture'],
+  ]
+  client.setQueryData(worker.queryKey, { ...idle, blocked: true })
+  for (const key of reads) client.setQueryData(key, { paused: true })
+  const network = t.mock.method(
+    globalThis,
+    'fetch',
+    async (_input: RequestInfo | URL, init?: RequestInit) => {
+      assert.equal(init?.method, 'POST')
+      assert.equal(init?.body, '{"mode":"review"}')
+      return Response.json({
+        statusCode: 200,
+        message: 'OK',
+        data: { token: null, status: idle },
+      })
+    },
+  )
+  let review: (() => Promise<unknown>) | undefined
+  function ReviewControl() {
+    const control = useProviderLocalWorkerMode('fixture')
+    review = () => control.mutateAsync('review')
+    return null
+  }
+  try {
+    renderToStaticMarkup(
+      <QueryClientProvider client={client}>
+        <ReviewControl />
+      </QueryClientProvider>,
+    )
+    assert.ok(review)
+    await review()
+    assert.equal(network.mock.callCount(), 1)
+    assert.deepEqual(client.getQueryData(worker.queryKey), idle)
+    for (const key of reads) {
+      assert.equal(client.getQueryState(key)?.isInvalidated, true)
+      assert.deepEqual(client.getQueryData(key), { paused: true })
+    }
+  } finally {
+    client.clear()
+  }
+})

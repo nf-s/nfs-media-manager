@@ -55,7 +55,8 @@ export function useProviderLocalWorkerMode(provider: string) {
   const client = useQueryClient()
   const queryKey = workerKey(provider)
   return useMutation({
-    mutationFn: (mode: ProviderLocalWorkerStatus['mode']) =>
+    retry: false,
+    mutationFn: (mode: ProviderLocalWorkerStatus['mode'] | 'review') =>
       fetchApiData(
         apiBaseUrl,
         workerPath(provider),
@@ -67,9 +68,15 @@ export function useProviderLocalWorkerMode(provider: string) {
           ),
         },
       ),
-    onSuccess: async ({ status }) => {
+    onSuccess: async ({ status }, mode) => {
       await client.cancelQueries({ queryKey })
       client.setQueryData(queryKey, status)
+      if (mode === 'review')
+        await Promise.all([
+          client.invalidateQueries({ queryKey: ['providers'], exact: true }),
+          client.invalidateQueries({ queryKey: ['providers', 'overview'] }),
+          client.invalidateQueries({ queryKey: ['jobs'] }),
+        ])
     },
     onError: async () => {
       await client.invalidateQueries({ queryKey })

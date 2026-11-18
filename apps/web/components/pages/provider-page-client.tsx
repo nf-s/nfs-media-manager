@@ -66,6 +66,7 @@ import {
   ProviderDispatchReview,
   ProviderWorkerModeSwitch,
   ProviderWorkerPairing,
+  ProviderWorkerReview,
   dispatchStateLabel,
   useProviderDispatch,
   type ProviderDispatch,
@@ -409,6 +410,12 @@ function ProviderDetail({
                   {worker && <ProviderLocalWorkerBadge status={worker} />}
                   {provider.supportsJobDispatchControl && (
                     <>
+                      <ProviderWorkerReview
+                        worker={worker}
+                        dispatch={dispatch}
+                        control={changeMode}
+                        busy={pairing.request.isPending}
+                      />
                       <ProviderWorkerModeSwitch
                         worker={worker}
                         dispatch={dispatch}

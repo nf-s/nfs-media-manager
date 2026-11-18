@@ -338,6 +338,7 @@ export function ProviderWorkerModeSwitch({
   const { reviewing, update, status } = dispatch
   const nextMode = worker.mode === 'local' ? 'cloud' : 'local'
   const restriction = workerControlRestriction(worker, dispatch, 'switching')
+  const switching = changeMode.variables !== 'review'
   return (
     <>
       <span className="ds-actions">
@@ -352,7 +353,7 @@ export function ProviderWorkerModeSwitch({
           }
           onClick={() => changeMode.mutate(nextMode)}
         >
-          {changeMode.isPending
+          {switching && changeMode.isPending
             ? 'Switching...'
             : nextMode === 'cloud'
               ? 'Switch to Cloudflare'
@@ -360,9 +361,62 @@ export function ProviderWorkerModeSwitch({
         </Button>
         {restriction && <span className="ds-help">{restriction}</span>}
       </span>
-      {changeMode.isError && (
+      {switching && changeMode.isError && (
         <p role="alert">
           {changeMode.error.message || 'Could not switch transport.'}
+        </p>
+      )}
+    </>
+  )
+}
+
+export function ProviderWorkerReview({
+  worker,
+  dispatch,
+  control,
+  busy,
+}: {
+  worker?: ProviderLocalWorkerStatus
+  dispatch: ProviderDispatch
+  control: ReturnType<typeof useProviderLocalWorkerMode>
+  busy: boolean
+}) {
+  if (!worker?.blocked) return null
+  // The worker may retain an expired request until review. The server checks its deadline.
+  const drained = Boolean(dispatch.data?.paused && dispatch.active === 0)
+  const reviewing = control.variables === 'review'
+  const disabled =
+    busy ||
+    control.isPending ||
+    dispatch.update.isPending ||
+    !!dispatch.reviewing ||
+    dispatch.status.isError ||
+    !drained
+  return (
+    <>
+      <span className="ds-actions">
+        <ConfirmAction
+          question="Acknowledge the last worker request?"
+          details="Check the latest job and worker evidence before acknowledging. The queue stays paused."
+          confirmLabel="Acknowledge request"
+          disabled={disabled}
+          onConfirm={() => {
+            if (!disabled) control.mutate('review')
+          }}
+        >
+          {reviewing && control.isPending
+            ? 'Reviewing...'
+            : 'Review worker request'}
+        </ConfirmAction>
+        {!drained && (
+          <span className="ds-help">
+            Pause the queue and wait for active work to finish.
+          </span>
+        )}
+      </span>
+      {reviewing && control.isError && (
+        <p role="alert">
+          {control.error.message || 'Could not review the worker request.'}
         </p>
       )}
     </>

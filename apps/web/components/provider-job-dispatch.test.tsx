@@ -15,6 +15,7 @@ import {
   ProviderDispatchReview,
   ProviderWorkerModeSwitch,
   ProviderWorkerPairing,
+  ProviderWorkerReview,
   dispatchStateLabel,
   useProviderDispatch,
 } from './provider-job-dispatch'
@@ -63,6 +64,12 @@ function Dispatch({
       <ProviderDispatchReview dispatch={dispatch} />
       {configuration.supportsJobDispatchControl && (
         <>
+          <ProviderWorkerReview
+            worker={worker}
+            dispatch={dispatch}
+            control={changeMode}
+            busy={pairing.request.isPending}
+          />
           <ProviderWorkerModeSwitch
             worker={worker}
             dispatch={dispatch}
@@ -286,4 +293,32 @@ test('worker pairing waits for paused, drained dispatch and a clear worker', () 
       /Pause the queue and wait for active work to finish|Review the local request before pairing/,
     )
   }
+})
+
+test('worker review is a confirmed action for a blocked worker and a paused, drained dispatcher', () => {
+  assert.doesNotMatch(
+    render(paused, workerProvider, worker),
+    /Review worker request/,
+  )
+  const blocked = { ...worker, blocked: true, supportsModeSwitch: false }
+  const ready = render(paused, workerProvider, blocked)
+  assert.match(button(ready, 'Review worker request'), /aria-haspopup="dialog"/)
+  assert.doesNotMatch(button(ready, 'Review worker request'), /disabled=""/)
+  // Only the endpoint can decide whether a retained request has expired.
+  const retained = render(paused, workerProvider, { ...blocked, active: true })
+  assert.doesNotMatch(button(retained, 'Review worker request'), /disabled=""/)
+  const active = {
+    ...paused,
+    slots: [
+      { jobId: 'fixture-job', phase: 'running', expiresAt: 1700000000000 },
+    ],
+  }
+  for (const dispatch of [stopped, active, null])
+    assert.match(
+      button(
+        render(dispatch, workerProvider, blocked),
+        'Review worker request',
+      ),
+      /disabled=""/,
+    )
 })
