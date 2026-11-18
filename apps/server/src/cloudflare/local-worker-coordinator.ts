@@ -48,8 +48,8 @@ export class LocalRequestWorker extends DurableObject<CloudflareBindings> {
     })
   }
 
-  configure(policy: LocalWorkerPolicy, tokenHash: string) {
-    return this.worker.configure(policy, tokenHash)
+  configure(policy: LocalWorkerPolicy, tokenHash: string, mode?: 'local') {
+    return this.worker.configure(policy, tokenHash, mode)
   }
   revoke() {
     return this.worker.revoke()

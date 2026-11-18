@@ -97,6 +97,10 @@ const hybridPlugin: MediaProviderPlugin = {
   ...plugin,
   manifest: { ...plugin.manifest, localWorkerDefaultMode: 'local' },
 }
+const localOnlyPlugin = {
+  ...plugin,
+  manifest: { ...plugin.manifest, localWorkerRequired: true },
+}
 const status = {
   mode: 'local',
   configured: true,
@@ -591,6 +595,34 @@ describe('local worker owner controls', () => {
     expect(mocks.status).toHaveBeenCalledExactlyOnceWith('local')
   })
 
+  it('refuses to switch a local-only provider to cloud execution', async () => {
+    mocks.plugin.mockResolvedValue(localOnlyPlugin)
+    expect((await control({ mode: 'cloud' })).status).toBe(422)
+    expect(mocks.unconfigure).not.toHaveBeenCalled()
+    expect(mocks.setWorkerMode).not.toHaveBeenCalled()
+  })
+
+  it('reports mandatory local mode and pairs into local execution after a prior cloud selection', async () => {
+    mocks.plugin.mockResolvedValue(localOnlyPlugin)
+    mocks.status.mockResolvedValue({ ...status, mode: 'cloud' })
+    const response = await app.request(controlPath)
+    expect(await response.json()).toMatchObject({
+      data: {
+        mode: 'local',
+        supportsModeSwitch: false,
+        paired: false,
+        online: false,
+      },
+    })
+    expect(mocks.status).toHaveBeenCalledExactlyOnceWith('local')
+    expect((await control({ mode: 'pair' })).status).toBe(200)
+    expect(mocks.configure).toHaveBeenCalledExactlyOnceWith(
+      policy,
+      expect.any(String),
+      'local',
+    )
+  })
+
   it.each(['cloud', 'local'])(
     'switches hybrid providers to %s without changing pairing',
     async (mode) => {
@@ -768,6 +800,27 @@ describe('local worker transport RPC boundary', () => {
     expect(await transport(hybridPlugin)).toBeNull()
     expect(mocks.getPolicy).not.toHaveBeenCalled()
   })
+
+  it.each([
+    {
+      ...status,
+      mode: 'cloud',
+      configured: false,
+      paired: false,
+      online: false,
+    },
+    { ...status, mode: 'cloud' },
+    { ...status, paired: false, online: false },
+  ])(
+    'fails closed for a local-only provider without local execution: %j',
+    async (workerStatus) => {
+      mocks.status.mockResolvedValue(workerStatus)
+      await expect(transport(localOnlyPlugin)).rejects.toMatchObject({
+        recorded: true,
+      })
+      expect(mocks.enqueue).not.toHaveBeenCalled()
+    },
+  )
 
   it('rejects an off-policy URL without sending it to the worker', async () => {
     const selected = await transport()

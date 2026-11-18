@@ -1,5 +1,8 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
-import type { MediaProviderPlugin } from '@repo/media-plugin-sdk'
+import {
+  ProviderRequestError,
+  type MediaProviderPlugin,
+} from '@repo/media-plugin-sdk'
 
 export const LOCAL_WORKER_DISPATCH_WINDOW_MS = 12000
 
@@ -24,5 +27,13 @@ export function withProviderTransport<T>(
 export async function getProviderTransport(
   plugin: MediaProviderPlugin,
 ): Promise<ProviderTransport | null> {
-  return (await transports.getStore()?.(plugin)) ?? null
+  const transport = (await transports.getStore()?.(plugin)) ?? null
+  if (plugin.manifest.localWorkerRequired && !transport)
+    throw new ProviderRequestError(
+      'Provider requires a paired local worker',
+      'request-failed',
+      null,
+      true,
+    )
+  return transport
 }

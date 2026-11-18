@@ -90,6 +90,24 @@ afterEach(() => {
 })
 
 describe('local worker coordinator', () => {
+  it('re-pairs a local-only worker after a saved cloud selection and revokes its token', async () => {
+    const { coordinator } = fixture()
+    expect(await coordinator.setMode('cloud')).toBe(true)
+    expect(await coordinator.configure(policy, hash, 'local')).toBe(true)
+    expect(await coordinator.heartbeat(hash)).toBe(true)
+    expect(await coordinator.status()).toMatchObject({
+      mode: 'local',
+      online: true,
+    })
+    await coordinator.revoke()
+    expect(await coordinator.heartbeat(hash)).toBe(false)
+    expect(await coordinator.status()).toMatchObject({
+      mode: 'local',
+      paired: false,
+      online: false,
+    })
+  })
+
   describe('waiting for tasks', () => {
     beforeEach(() => vi.useFakeTimers())
     afterEach(() => vi.useRealTimers())

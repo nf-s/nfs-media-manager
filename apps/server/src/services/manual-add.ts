@@ -61,7 +61,14 @@ async function manualProvider(providerId: string, action: string) {
     plugin.manifest.secrets,
   )
   const worker = plugin.manifest.localWorker
-    ? await getProviderTransport(plugin)
+    ? await getProviderTransport(plugin).catch((error: unknown) => {
+        if (
+          !plugin.manifest.localWorkerRequired ||
+          !(error instanceof ProviderRequestError)
+        )
+          throw error
+        throw new ServerError({ statusCode: 422, message: error.message })
+      })
     : null
   if (
     !worker &&
