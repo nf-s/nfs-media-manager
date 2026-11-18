@@ -24,6 +24,9 @@ vi.mock('@/services/browse', () => ({
 vi.mock('@/services/source-navigation', () => ({
   getCollectionSourceLinks: vi.fn(async () => []),
 }))
+vi.mock('@/services/entity-relationships', () => ({
+  listAlbumRelationshipSources: vi.fn(async () => []),
+}))
 vi.mock('@/services/album-provider-details', () => ({
   getAlbumProviderDetails: vi.fn(async () => ({})),
 }))
