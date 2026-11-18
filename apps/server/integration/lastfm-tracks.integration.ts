@@ -590,6 +590,20 @@ describe('Last.fm tracks library', () => {
       track: { spotifyTrackId: null, spotifyMatch: 'unmatched' },
       matches: [{ provider: 'lastfm', name: 'SHARED SONG' }],
     })
+    expect(await getTrackDetail(standalone.id)).toMatchObject({
+      spotifyTrackId: null,
+      spotifyAlternate: standalone.spotifyAlternate,
+    })
+    const directDetail = await getTrackDetail('imported-recording')
+    expect(directDetail).toMatchObject({
+      spotifyTrackId: spotifyId('imported-recording'),
+    })
+    expect(directDetail).not.toHaveProperty('spotifyAlternate')
+    const missing = all.items.find((item) => item.name === 'No source')
+    if (!missing) throw new Error('Expected an unmatched album track')
+    const missingDetail = await getTrackDetail(missing.id)
+    expect(missingDetail).toMatchObject({ spotifyTrackId: null })
+    expect(missingDetail).not.toHaveProperty('spotifyAlternate')
     expect(
       all.items.find((item) => item.id === 'imported-recording'),
     ).not.toHaveProperty('spotifyAlternate')
@@ -767,6 +781,19 @@ describe('Last.fm tracks library', () => {
       value: 'Unmatched',
       label: 'Spotify match on this entry: Unmatched',
       count: 4,
+    })
+    await databaseClient
+      .update(schema.lastfmTrackSource)
+      .set({ manuallyMatched: true })
+      .where(eq(schema.lastfmTrackSource.trackMediaItemId, standalone.id))
+    const manualDetail = await getTrackDetail(standalone.id)
+    expect(manualDetail).toMatchObject({
+      lastfmSources: [{ manuallyMatched: true }],
+    })
+    expect(manualDetail).not.toHaveProperty('spotifyAlternate')
+    expect(await inspect({ playability: 'alternate' })).toMatchObject({
+      items: [],
+      totalCount: 0,
     })
     expect(request).not.toHaveBeenCalled()
   })
@@ -1061,7 +1088,8 @@ describe('Last.fm tracks library', () => {
       items: [{ id: 'valid-version' }],
       totalCount: 1,
     })
-    expect(await inspect({ playability: 'alternate' })).toMatchObject({
+    const alternates = await inspect({ playability: 'alternate' })
+    expect(alternates).toMatchObject({
       items: [
         {
           id: 'legacy-version',
@@ -1074,6 +1102,13 @@ describe('Last.fm tracks library', () => {
       ],
       totalCount: 1,
     })
+    expect(await getTrackDetail('legacy-version')).toMatchObject({
+      spotifyTrackId: invalidCharacter,
+      spotifyAlternate: alternates.items[0]?.spotifyAlternate,
+    })
+    const unavailableDetail = await getTrackDetail('legacy-standalone')
+    expect(unavailableDetail).toMatchObject({ spotifyTrackId: shortIdentifier })
+    expect(unavailableDetail).not.toHaveProperty('spotifyAlternate')
     expect(await inspect({ playability: 'unavailable' })).toMatchObject({
       items: [
         {

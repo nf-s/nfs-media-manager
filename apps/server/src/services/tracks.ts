@@ -1,6 +1,7 @@
 import { eq, sql, type SQL } from 'drizzle-orm'
 import { z } from 'zod'
 import type { BrowseFacetQuery } from '@repo/schemas/browse'
+import { spotifyIdPattern } from '@repo/schemas/playback'
 import {
   PlaylistAlbumSchema,
   PlaylistDetailSchema,
@@ -10,6 +11,7 @@ import {
   TrackListItemSchema,
   TrackScrobbleLinkStrategySchema,
   TrackSourceSchema,
+  TrackSpotifyAlternateSchema,
   TrackSpotifyMatchSchema,
   type PlaylistAlbum,
   type PlaylistDetail,
@@ -37,7 +39,7 @@ import {
   queryBrowsePositions,
   queryTrackRecordingVersions,
 } from './browse'
-import type { RecordingGroup } from './recording-groups'
+import { trackSpotifyAlternate, type RecordingGroup } from './recording-groups'
 import { refreshTrackAddedDates } from './spotify-playlists'
 import { getLastfmTrackNames } from './lastfm-track-names'
 import {
@@ -291,6 +293,15 @@ const SourceRowsSchema = z.array(
 const isoSeconds = (value: number | null) =>
   value === null ? null : new Date(value * 1000).toISOString()
 
+async function getTrackSpotifyAlternate(id: string) {
+  const result = await db.execute(trackSpotifyAlternate(id))
+  const [row] = z
+    .object({ alternate: TrackSpotifyAlternateSchema })
+    .array()
+    .parse(result.rows)
+  return row?.alternate
+}
+
 export async function getTrackDetail(id: string): Promise<TrackDetail | null> {
   const [item] = await loadTracks([id])
   if (!item) return null
@@ -326,9 +337,15 @@ export async function getTrackDetail(id: string): Promise<TrackDetail | null> {
         order by count(*) desc, l.artist_key, l.track_key limit 50`)
     ).rows,
   )
-  const lastfmSources = await getLastfmTrackNames(id)
+  const [lastfmSources, spotifyAlternate] = await Promise.all([
+    getLastfmTrackNames(id),
+    item.spotifyTrackId && spotifyIdPattern.test(item.spotifyTrackId)
+      ? undefined
+      : getTrackSpotifyAlternate(id),
+  ])
   return TrackDetailSchema.parse({
     ...item,
+    ...(spotifyAlternate ? { spotifyAlternate } : {}),
     lastfmSources,
     listening: {
       total: summary[0]?.total ?? 0,

@@ -5,6 +5,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { SearchParamsContext } from 'next/dist/shared/lib/hooks-client-context.shared-runtime'
 import { TrackDetailSchema, type TrackDetail } from '@repo/schemas/tracks'
+import type { SpotifyTrackSearchJob } from '@repo/schemas/spotify-track-search'
 import TrackDetailView, { TrackSources } from './track-detail'
 import { ConfigContext } from './providers'
 import { PlaybackViewContext } from './playback-provider'
@@ -70,11 +71,17 @@ function render(
   item: TrackDetail,
   filters = '',
   view: 'detail' | 'sources' = 'detail',
+  searchJob: SpotifyTrackSearchJob | null = null,
 ) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
   client.setQueryData(['track', item.id], item)
+  client.setQueryData(['tracks', 'spotify-track-search', item.id], {
+    job: searchJob,
+    query: item.title,
+    candidates: [],
+  })
   try {
     return renderToStaticMarkup(
       <QueryClientProvider client={client}>
@@ -198,6 +205,26 @@ test('tracks with a Spotify match keep album metadata, playback and every source
   assert.match(render(matched, '', 'sources'), /unique artist and title match/)
 })
 
+test('Sources offers Spotify search on uncovered tracks and opens a verified alternate directly', () => {
+  assert.match(render(scrobbled, '', 'sources'), />Search Spotify<\/button>/)
+  const alternate = render(
+    TrackDetailSchema.parse({
+      ...scrobbled,
+      spotifyAlternate: {
+        trackId: 'alternate-recording',
+        name: 'Synthetic track',
+        albumName: null,
+        identifier: '1234567890ABCDEFGHIJKL',
+      },
+    }),
+    '',
+    'sources',
+  )
+  assert.match(alternate, /Other Spotify version/)
+  assert.match(alternate, /href="\/tracks\/alternate-recording\?tab=sources"/)
+  assert.doesNotMatch(alternate, />Search Spotify<\/button>/)
+})
+
 test('album-derived Spotify IDs identify the stored track list that supplied them', () => {
   const html = render(
     TrackDetailSchema.parse({
@@ -211,6 +238,7 @@ test('album-derived Spotify IDs identify the stored track list that supplied the
     'sources',
   )
   assert.match(html, /stored track list supplied the Spotify track ID/)
+  assert.doesNotMatch(html, />Search Spotify<\/button>/)
   assert.doesNotMatch(html, /Spotify ID came from a playlist/)
 })
 

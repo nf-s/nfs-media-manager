@@ -1553,7 +1553,6 @@ async function processTaskJob(
     result.message,
     result.metadata ?? {},
     async (tx) => {
-      await result.persist?.(tx)
       if (result.options)
         await tx
           .update(scrapeJob)
@@ -1561,6 +1560,7 @@ async function processTaskJob(
             options: sql`${scrapeJob.options} || ${JSON.stringify(result.options)}::jsonb`,
           })
           .where(eq(scrapeJob.id, nextJob.id))
+      await result.persist?.(tx)
       if (result.outcome !== 'continue') return
       const nextJobId = await insertTaskJob(
         tx,

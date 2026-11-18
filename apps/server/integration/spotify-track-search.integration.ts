@@ -31,30 +31,26 @@ const userId = 'fixture-owner'
 const otherUserId = 'fixture-other'
 const recordingId = 'fixture-track'
 const candidateId = 'catalogtrack0000000000'
+const otherCandidateId = 'catalogtrack0000000001'
 const title = 'Night Signal: Live'
 const artistName = 'Example Artist'
 let market: string | undefined
 let clientSecret: string | undefined
-const searchBody = {
-  tracks: {
-    offset: 0,
-    items: [
-      {
-        type: 'track',
-        id: candidateId,
-        name: title,
-        duration_ms: 174000,
-        artists: [{ id: 'catalogartist000000000', name: artistName }],
-        album: {
-          id: 'catalogalbum0000000000',
-          name: 'Example Album',
-          images: [{ url: 'https://i.scdn.co/image/fixture' }],
-        },
-        external_ids: { isrc: 'aa-fi1-20-00001' },
-      },
-      { type: 'track', id: null },
-    ],
+const catalogTrack = {
+  type: 'track',
+  id: candidateId,
+  name: title,
+  duration_ms: 174000,
+  artists: [{ id: 'catalogartist000000000', name: artistName }],
+  album: {
+    id: 'catalogalbum0000000000',
+    name: 'Example Album',
+    images: [{ url: 'https://i.scdn.co/image/fixture' }],
   },
+  external_ids: { isrc: 'aa-fi1-20-00001' },
+}
+const searchBody = {
+  tracks: { offset: 0, items: [catalogTrack, { type: 'track', id: null }] },
 }
 
 vi.mock('@/lib/db', () => ({
@@ -98,7 +94,12 @@ import {
   retryJob,
 } from '@/services/jobs'
 import { listJobEntries } from '@/services/job-entries'
+import { refreshTrackLinks } from '@/services/track-links'
 import { listTrackMatchDiagnostics } from '@/services/track-match-diagnostics'
+import {
+  acceptSpotifyTrackSearch,
+  reconcileSavedSpotifyTrackSearch,
+} from '@/services/spotify-track-search-acceptance'
 import {
   getSpotifyTrackSearch,
   listSpotifyTrackSearchStatuses,
@@ -140,6 +141,8 @@ beforeEach(async () => {
     throw new Error('Unexpected offline provider request')
   })
   await fixture.delete(schema.scrapeJob)
+  await fixture.delete(schema.lastfmScrobble)
+  await fixture.delete(schema.track)
   await fixture.delete(schema.mediaItem)
   await fixture.delete(schema.artist)
   await fixture.delete(schema.providerRequestState)
@@ -175,6 +178,13 @@ async function queueOne(freshness?: SpotifyTrackSearchFreshness) {
   const [job] = (await listJobs({ mediaType: 'track' })).items
   if (!job) throw new Error('Expected a queued Spotify track search')
   return job
+}
+
+function mockCandidates(...items: (typeof catalogTrack)[]) {
+  request.mockImplementationOnce(async () => Response.json(spotifyTokenFixture))
+  request.mockImplementationOnce(async () =>
+    Response.json({ tracks: { items, offset: 0 } }),
+  )
 }
 
 it('queues explicit tracks once across concurrent selections and keeps the batch in Tracks Jobs', async () => {
@@ -234,13 +244,17 @@ it('queues explicit tracks once across concurrent selections and keeps the batch
   expect(request).not.toHaveBeenCalled()
 })
 
-it('stores a bounded, reviewed result with the job and returns it without searching again', async () => {
+it('links an exact catalog result at completion and keeps the saved results', async () => {
+  await fixture
+    .update(schema.mediaItem)
+    .set({ title: 'night  signal: LIVE' })
+    .where(eq(schema.mediaItem.id, recordingId))
   const job = await queueOne()
   await processQueuedJobs()
   const url = new URL(String(request.mock.calls[1]?.[0]))
   expect(request).toHaveBeenCalledTimes(2)
   expect(url.searchParams.get('q')).toBe(
-    'track:"Night Signal Live" artist:"Example Artist"',
+    'track:"night signal LIVE" artist:"Example Artist"',
   )
   expect(url.searchParams.get('type')).toBe('track')
   expect(url.searchParams.get('limit')).toBe('10')
@@ -248,7 +262,13 @@ it('stores a bounded, reviewed result with the job and returns it without search
 
   const stored = await getSpotifyTrackSearch(recordingId, userId)
   expect(stored).toMatchObject({
-    job: { jobId: job.id, status: 'succeeded', resultCount: 1 },
+    job: {
+      jobId: job.id,
+      status: 'succeeded',
+      resultCount: 1,
+      acceptedTrackId: recordingId,
+      matchMethod: 'automatic',
+    },
     candidates: [
       {
         spotifyTrackId: candidateId,
@@ -304,15 +324,299 @@ it('stores a bounded, reviewed result with the job and returns it without search
     ),
   ).toMatchObject({ queued: 0, skipped: 1 })
   expect(await fixture.select().from(schema.libraryTrack)).toMatchObject([
-    { mediaItemId: recordingId, spotifyTrackId: null },
+    { mediaItemId: recordingId, spotifyTrackId: candidateId },
   ])
+  expect(await reconcileSavedSpotifyTrackSearch(selection)).toEqual({
+    status: 'stale',
+  })
+  expect(await acceptSpotifyTrackSearch(selection)).toEqual({
+    targetId: recordingId,
+  })
+  expect(
+    (await getSpotifyTrackSearch(recordingId, userId)).job?.matchMethod,
+  ).toBe('automatic')
   expect(request).toHaveBeenCalledTimes(2)
-
-  await queueSpotifyTrackSearches({ trackIds: [recordingId] }, userId)
-  await expect(
-    fixture.transaction((tx) => readSpotifyTrackSearchCandidate(tx, selection)),
-  ).rejects.toMatchObject({ response: { statusCode: 409 } })
 })
+
+it.each([
+  {
+    reason: 'another artist',
+    candidate: {
+      ...catalogTrack,
+      artists: [{ id: 'anotherartist000000000', name: 'Another Artist' }],
+    },
+  },
+  {
+    reason: 'an additional billed artist',
+    candidate: {
+      ...catalogTrack,
+      artists: [
+        ...catalogTrack.artists,
+        { id: 'anotherartist000000000', name: 'Another Artist' },
+      ],
+    },
+  },
+  {
+    reason: 'a radio edit',
+    candidate: { ...catalogTrack, name: `${title} (Radio Edit)` },
+  },
+  {
+    reason: 'a different punctuation mark',
+    candidate: { ...catalogTrack, name: title.replace(':', '-') },
+  },
+])(
+  'keeps a catalog result for $reason available for review',
+  async ({ candidate }) => {
+    mockCandidates(candidate)
+    const job = await queueOne()
+    await processQueuedJobs()
+
+    expect(await getSpotifyTrackSearch(recordingId, userId)).toMatchObject({
+      job: { jobId: job.id, status: 'succeeded', resultCount: 1 },
+      candidates: [{ spotifyTrackId: candidateId }],
+    })
+    expect(
+      (await getSpotifyTrackSearch(recordingId, userId)).job?.acceptedTrackId,
+    ).toBeUndefined()
+    expect(await fixture.select().from(schema.libraryTrack)).toMatchObject([
+      { mediaItemId: recordingId, spotifyTrackId: null },
+    ])
+    await queueSpotifyTrackSearches({ trackIds: [recordingId] }, userId)
+    const selection = {
+      trackId: recordingId,
+      jobId: job.id,
+      spotifyTrackId: candidateId,
+      userId,
+    }
+    await expect(
+      fixture.transaction((tx) =>
+        readSpotifyTrackSearchCandidate(tx, selection),
+      ),
+    ).rejects.toMatchObject({ response: { statusCode: 409 } })
+  },
+)
+
+async function addListedRecording(spotifyTrackId?: string) {
+  const albumId = 'fixture-catalog-release'
+  const trackId = 'fixture-album-recording'
+  await fixture.insert(schema.mediaItem).values({
+    id: albumId,
+    slug: albumId,
+    title: catalogTrack.album.name,
+    mediaType: 'album',
+  })
+  await fixture.insert(schema.album).values({
+    mediaItemId: albumId,
+    spotifyUrl: `https://open.spotify.com/album/${catalogTrack.album.id}`,
+  })
+  await addTrack(trackId, title, spotifyTrackId)
+  await fixture
+    .update(schema.libraryTrack)
+    .set({
+      albumMediaItemId: albumId,
+      albumLinkStrategy: 'album-track-list',
+      durationSec: 174,
+    })
+    .where(eq(schema.libraryTrack.mediaItemId, trackId))
+  await fixture.insert(schema.track).values({
+    id: 'fixture-release-position',
+    title,
+    albumMediaItemId: albumId,
+    trackMediaItemId: trackId,
+    position: 2,
+    externalId: spotifyTrackId,
+    durationSec: 174,
+  })
+  return { albumId, trackId }
+}
+
+async function addScrobbledRecording() {
+  const username = 'fixture-listener'
+  const scrobble = {
+    id: 'fixture-listen',
+    username,
+    listenedAt: new Date('2025-01-02T00:00:00Z'),
+    artistName,
+    artistKey: artistName.toLowerCase(),
+    trackName: title,
+    trackKey: title.toLowerCase(),
+  }
+  await fixture
+    .delete(schema.mediaItem)
+    .where(eq(schema.mediaItem.id, recordingId))
+  await fixture.insert(schema.lastfmScrobble).values(scrobble)
+  await refreshTrackLinks(username)
+  const [source] = await fixture.select().from(schema.lastfmTrackSource)
+  if (!source) throw new Error('Expected a Last.fm recording')
+  return { source, scrobble, username }
+}
+
+it.each([undefined, candidateId])(
+  'reuses the exact album position for a Last.fm recording with existing Spotify ID %s',
+  async (spotifyTrackId) => {
+    const { source, scrobble, username } = await addScrobbledRecording()
+    const { albumId, trackId } = await addListedRecording(spotifyTrackId)
+    await queueSpotifyTrackSearches(
+      { trackIds: [source.trackMediaItemId] },
+      userId,
+    )
+    await processQueuedJobs()
+
+    expect(
+      await getSpotifyTrackSearch(source.trackMediaItemId, userId),
+    ).toMatchObject({
+      job: {
+        status: 'succeeded',
+        acceptedTrackId: trackId,
+        matchMethod: 'automatic',
+      },
+    })
+    expect(await fixture.select().from(schema.libraryTrack)).toMatchObject([
+      {
+        mediaItemId: trackId,
+        albumMediaItemId: albumId,
+        spotifyTrackId: candidateId,
+        scrobbleCount: 1,
+      },
+    ])
+    expect(await fixture.select().from(schema.track)).toMatchObject([
+      { trackMediaItemId: trackId, albumMediaItemId: albumId, position: 2 },
+    ])
+    await refreshTrackLinks(username)
+    expect(await fixture.select().from(schema.lastfmTrackSource)).toMatchObject(
+      [{ trackMediaItemId: trackId, manuallyMatched: false }],
+    )
+    expect(await fixture.select().from(schema.lastfmScrobble)).toMatchObject([
+      scrobble,
+    ])
+    expect(request).toHaveBeenCalledTimes(2)
+  },
+)
+
+it('respects the explicit choice to keep a recorded name separate', async () => {
+  const { source } = await addScrobbledRecording()
+  await fixture
+    .update(schema.lastfmTrackSource)
+    .set({ manuallyMatched: true })
+    .where(
+      eq(schema.lastfmTrackSource.trackMediaItemId, source.trackMediaItemId),
+    )
+  await queueSpotifyTrackSearches(
+    { trackIds: [source.trackMediaItemId] },
+    userId,
+  )
+  await processQueuedJobs()
+
+  expect(
+    await getSpotifyTrackSearch(source.trackMediaItemId, userId),
+  ).toMatchObject({
+    job: { status: 'succeeded', resultCount: 1 },
+  })
+  expect(await fixture.select().from(schema.libraryTrack)).toMatchObject([
+    { mediaItemId: source.trackMediaItemId, spotifyTrackId: null },
+  ])
+})
+
+it('previews and applies a saved exact match offline, and respects newer searches', async () => {
+  await fixture
+    .update(schema.libraryTrack)
+    .set({ durationSec: 144 })
+    .where(eq(schema.libraryTrack.mediaItemId, recordingId))
+  const job = await queueOne()
+  await processQueuedJobs()
+  expect(await fixture.select().from(schema.libraryTrack)).toMatchObject([
+    { spotifyTrackId: null },
+  ])
+  await fixture
+    .update(schema.libraryTrack)
+    .set({ durationSec: 174 })
+    .where(eq(schema.libraryTrack.mediaItemId, recordingId))
+  await fixture
+    .update(schema.scrapeJob)
+    .set({ options: sql`${schema.scrapeJob.options} - 'trackArtists'` })
+    .where(eq(schema.scrapeJob.id, job.id))
+  request.mockClear()
+  const selection = { trackId: recordingId, jobId: job.id, userId }
+  expect(
+    await reconcileSavedSpotifyTrackSearch({
+      ...selection,
+      userId: otherUserId,
+    }),
+  ).toEqual({
+    status: 'stale',
+  })
+  expect(
+    await reconcileSavedSpotifyTrackSearch(selection, { dryRun: true }),
+  ).toEqual({
+    status: 'matched',
+    targetId: recordingId,
+  })
+  expect(await fixture.select().from(schema.libraryTrack)).toMatchObject([
+    { spotifyTrackId: null },
+  ])
+  await queueSpotifyTrackSearches({ trackIds: [recordingId] }, otherUserId)
+  expect(await reconcileSavedSpotifyTrackSearch(selection)).toEqual({
+    status: 'stale',
+  })
+  expect(await fixture.select().from(schema.libraryTrack)).toMatchObject([
+    { spotifyTrackId: null },
+  ])
+  await fixture
+    .delete(schema.scrapeJob)
+    .where(eq(schema.scrapeJob.requestedByUserId, otherUserId))
+  expect(await reconcileSavedSpotifyTrackSearch(selection)).toEqual({
+    status: 'matched',
+    targetId: recordingId,
+  })
+  expect(await reconcileSavedSpotifyTrackSearch(selection)).toEqual({
+    status: 'stale',
+  })
+  expect(await fixture.select().from(schema.libraryTrack)).toMatchObject([
+    { spotifyTrackId: candidateId },
+  ])
+  expect(request).not.toHaveBeenCalled()
+})
+
+const otherEdition = {
+  ...catalogTrack,
+  id: otherCandidateId,
+  album: {
+    ...catalogTrack.album,
+    id: 'catalogalbum0000000001',
+    name: 'The Other Edition',
+  },
+}
+
+it.each([false, true])(
+  'requires known release evidence to select among exact editions (known release = %s)',
+  async (knownRelease) => {
+    if (knownRelease)
+      await fixture
+        .update(schema.libraryTrack)
+        .set({
+          spotifyAlbumId: otherEdition.album.id,
+          albumName: 'An older release title',
+        })
+        .where(eq(schema.libraryTrack.mediaItemId, recordingId))
+    mockCandidates(catalogTrack, otherEdition)
+    const job = await queueOne()
+    await processQueuedJobs()
+
+    expect(await getSpotifyTrackSearch(recordingId, userId)).toMatchObject({
+      job: { jobId: job.id, status: 'succeeded', resultCount: 2 },
+      candidates: [
+        { spotifyTrackId: candidateId },
+        { spotifyTrackId: otherCandidateId },
+      ],
+    })
+    expect(await fixture.select().from(schema.libraryTrack)).toMatchObject([
+      {
+        mediaItemId: recordingId,
+        spotifyTrackId: knownRelease ? otherCandidateId : null,
+      },
+    ])
+  },
+)
 
 it('skips a recording that gains a Spotify ID while queued', async () => {
   const job = await queueOne()
@@ -380,6 +684,9 @@ it('records a real zero-result search as a successful attempt', async () => {
     job: { jobId: job.id, status: 'succeeded', resultCount: 0 },
     candidates: [],
   })
+  expect(await fixture.select().from(schema.libraryTrack)).toMatchObject([
+    { mediaItemId: recordingId, spotifyTrackId: null },
+  ])
   expect(
     (await listSpotifyTrackSearchStatuses({ trackIds: [recordingId] }, userId))
       .items,
@@ -447,45 +754,71 @@ it.each([undefined, 'AU'])(
   },
 )
 
-it('discards candidates received after cancellation', async () => {
-  const job = await queueOne([{ provider: 'spotify', mode: 'never' }])
-  let finishSearch: (response: Response) => void = () => {
-    throw new Error('Search has not started')
-  }
-  const response = new Promise<Response>((resolve) => {
-    finishSearch = resolve
-  })
-  let startSearch: () => void = () => {}
-  const searching = new Promise<void>((resolve) => {
-    startSearch = resolve
-  })
-  request.mockImplementationOnce(async () => Response.json(spotifyTokenFixture))
-  request.mockImplementationOnce(async () => {
-    startSearch()
-    return response
-  })
-  const processing = processQueuedJobs()
-  await Promise.race([
-    searching,
-    processing.then(() => {
-      throw new Error('The job finished before the search request')
-    }),
-  ])
-  try {
-    await bulkCancelJobs({ jobIds: [job.id], confirmRunning: true }, userId)
-  } finally {
-    finishSearch(Response.json(searchBody))
-    await processing
-  }
-  expect(await getSpotifyTrackSearch(recordingId, userId)).toMatchObject({
-    job: { jobId: job.id, status: 'cancelled', resultCount: null },
-    candidates: [],
-  })
-  expect(
-    await fixture.select().from(schema.providerRequestState),
-  ).toMatchObject([{ failureCount: 0 }])
-  expect((await retryJob(job.id, userId, false)).status).toBe('queued')
-})
+it.each(['cancelled', 'covered'])(
+  'honours a search becoming %s while the provider request is in flight',
+  async (change) => {
+    const job = await queueOne([{ provider: 'spotify', mode: 'never' }])
+    let finishSearch: (response: Response) => void = () => {
+      throw new Error('Search has not started')
+    }
+    const response = new Promise<Response>((resolve) => {
+      finishSearch = resolve
+    })
+    let startSearch: () => void = () => {}
+    const searching = new Promise<void>((resolve) => {
+      startSearch = resolve
+    })
+    request.mockImplementationOnce(async () =>
+      Response.json(spotifyTokenFixture),
+    )
+    request.mockImplementationOnce(async () => {
+      startSearch()
+      return response
+    })
+    const processing = processQueuedJobs()
+    await Promise.race([
+      searching,
+      processing.then(() => {
+        throw new Error('The job finished before the search request')
+      }),
+    ])
+    try {
+      if (change === 'cancelled')
+        await bulkCancelJobs({ jobIds: [job.id], confirmRunning: true }, userId)
+      else
+        await fixture
+          .update(schema.libraryTrack)
+          .set({ spotifyTrackId: otherCandidateId })
+          .where(eq(schema.libraryTrack.mediaItemId, recordingId))
+    } finally {
+      finishSearch(Response.json(searchBody))
+      await processing
+    }
+    const search = await getSpotifyTrackSearch(recordingId, userId)
+    expect(search.job?.acceptedTrackId).toBeUndefined()
+    if (change === 'cancelled') {
+      expect(search).toMatchObject({
+        job: { jobId: job.id, status: 'cancelled', resultCount: null },
+        candidates: [],
+      })
+      expect((await retryJob(job.id, userId, false)).status).toBe('queued')
+    } else {
+      expect(search).toMatchObject({
+        job: { jobId: job.id, status: 'succeeded', resultCount: 1 },
+        candidates: [{ spotifyTrackId: candidateId }],
+      })
+    }
+    expect(await fixture.select().from(schema.libraryTrack)).toMatchObject([
+      {
+        mediaItemId: recordingId,
+        spotifyTrackId: change === 'covered' ? otherCandidateId : null,
+      },
+    ])
+    expect(
+      await fixture.select().from(schema.providerRequestState),
+    ).toMatchObject([{ failureCount: 0 }])
+  },
+)
 
 it('keeps Spotify cooldowns and retries a cancelled search only once', async () => {
   const original = await queueOne()
@@ -687,6 +1020,7 @@ it('skips Metadata selections whose search freshness changed before the queue re
 })
 
 it('reports saved search history on the retained track after acceptance changes the ID', async () => {
+  mockCandidates({ ...catalogTrack, name: 'Retained Recording' })
   const original = await queueOne()
   await processQueuedJobs()
   const completed = await getSpotifyTrackSearch(recordingId, userId)
@@ -737,5 +1071,15 @@ it('reports saved search history on the retained track after acceptance changes 
       (item) => item.id,
     ),
   ).toEqual([retained])
+  await fixture.insert(schema.scrapeJob).values({
+    id: 'earlier-fixture-search',
+    status: 'failed',
+    provider: 'spotify',
+    scope: { mediaType: 'track', mediaItemIds: [recordingId], limit: 1 },
+    options: { task: SPOTIFY_TRACK_SEARCH_TASK, trackId: recordingId },
+    requestedByUserId: userId,
+    createdAt: new Date('2024-01-01T00:00:00Z'),
+  })
+  expect(await getSpotifyTrackSearch(recordingId, userId)).toMatchObject(result)
   expect(request).not.toHaveBeenCalled()
 })

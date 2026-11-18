@@ -1,7 +1,11 @@
 import { z } from 'zod'
 import { DirectionSchema, PaginationQuerySchema } from './common'
 import { trackBrowseFields, type BrowseField } from './browse'
-import { TrackListItemSchema, TrackQuerySchema } from './tracks'
+import {
+  TrackListItemSchema,
+  TrackQuerySchema,
+  TrackSpotifyAlternateSchema,
+} from './tracks'
 import { selectionQueryFields } from './film-selection'
 import { SpotifyTrackSearchFreshnessSchema } from './spotify-track-search'
 
@@ -86,16 +90,7 @@ export const MatchDiagnosticsRowSchema = z.object({
   creator: z.string().nullable(),
   albumName: z.string().nullable().optional(),
   track: TrackListItemSchema.optional(),
-  spotifyAlternate: z
-    .object({
-      trackId: z.string(),
-      name: z.string(),
-      albumName: z.string().nullable(),
-      album: TrackListItemSchema.shape.album.optional(),
-      artworkUrl: TrackListItemSchema.shape.artworkUrl.optional(),
-      identifier: z.string(),
-    })
-    .optional(),
+  spotifyAlternate: TrackSpotifyAlternateSchema.optional(),
   mergeSourceId: z.string().optional(),
   sourceId: z.string().optional(),
   matches: z.array(

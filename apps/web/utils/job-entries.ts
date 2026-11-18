@@ -116,6 +116,13 @@ export function jobResult(
 
 export function spotifyTrackSearchResult(job: Pick<Job, 'options' | 'status'>) {
   if (!isSpotifyTrackSearchJob(job) || job.status !== 'succeeded') return null
+  if (
+    typeof job.options.acceptedTrackId === 'string' &&
+    job.options.acceptedTrackId
+  )
+    return job.options.matchMethod === 'automatic'
+      ? 'Matched automatically'
+      : 'Match confirmed'
   const count = job.options.resultCount
   return typeof count === 'number' && Number.isInteger(count) && count >= 0
     ? formatItemCount(count, { one: 'Spotify match', other: 'Spotify matches' })

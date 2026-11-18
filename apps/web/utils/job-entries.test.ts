@@ -162,6 +162,23 @@ test('a job links to its batch only when it has one', () => {
 })
 
 test('Spotify track search jobs show the saved candidate count', () => {
+  for (const { matchMethod, expected } of [
+    { matchMethod: 'automatic', expected: 'Matched automatically' },
+    { matchMethod: 'manual', expected: 'Match confirmed' },
+  ]) {
+    assert.equal(
+      spotifyTrackSearchResult({
+        options: {
+          task: SPOTIFY_TRACK_SEARCH_TASK,
+          resultCount: 1,
+          acceptedTrackId: 'linked-track',
+          matchMethod,
+        },
+        status: 'succeeded',
+      }),
+      expected,
+    )
+  }
   assert.equal(
     spotifyTrackSearchResult({
       options: { task: SPOTIFY_TRACK_SEARCH_TASK, resultCount: 2 },

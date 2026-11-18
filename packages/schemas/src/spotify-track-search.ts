@@ -81,6 +81,7 @@ export const SpotifyTrackSearchJobSchema = z.object({
   jobId: z.string(),
   status: JobStatusSchema,
   acceptedTrackId: trackId.optional(),
+  matchMethod: z.enum(['automatic', 'manual']).optional(),
   resultCount: z
     .number()
     .int()

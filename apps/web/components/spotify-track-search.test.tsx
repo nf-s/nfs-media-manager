@@ -88,6 +88,19 @@ test('only a successful search with candidates offers review', () => {
   )
   assert.match(accepted, /Matched track/)
   assert.doesNotMatch(accepted, /Review matches/)
+  const automatic = render(
+    <SpotifyTrackSearchJobCell
+      job={{
+        ...job,
+        acceptedTrackId: 'retained-recording',
+        matchMethod: 'automatic',
+      }}
+      onReview={onReview}
+    />,
+  )
+  assert.match(automatic, /Matched automatically/)
+  assert.match(automatic, /href="\/tracks\/retained-recording\?tab=sources"/)
+  assert.doesNotMatch(automatic, /Review matches/)
   const skipped = render(
     <SpotifyTrackSearchJobCell
       job={{ ...job, resultCount: null }}

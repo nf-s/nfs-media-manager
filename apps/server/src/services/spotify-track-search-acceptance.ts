@@ -11,7 +11,15 @@ import {
   removeOrphanTracks,
   spotifyAlbumReleaseIds,
 } from './album-library-tracks'
-import { readSpotifyTrackSearchCandidate } from './spotify-track-search'
+import {
+  readSpotifyTrackSearchCandidate,
+  readSpotifyTrackSearchForAutomaticMatch,
+} from './spotify-track-search'
+import {
+  spotifySearchConsistentRecording,
+  spotifySearchExactRelease,
+  spotifySearchRecordingEvidence,
+} from './spotify-track-search-evidence'
 import {
   replaceSpotifyTrackCredits,
   resolveSpotifyTrackIds,
@@ -24,6 +32,11 @@ import {
 } from './track-merges'
 
 type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0]
+type MatchMethod = 'automatic' | 'manual'
+type SearchScope = { trackId: string; jobId: string; userId: string | null }
+type ReconciliationResult =
+  | { status: 'matched'; targetId: string }
+  | { status: 'unmatched' | 'stale' }
 
 /** Confirming a recording must preserve independently recorded release positions and annotations. */
 async function checkRecordingTransfer(
@@ -97,6 +110,7 @@ async function storeConfirmedRecording(
   targetId: string,
   candidate: SpotifyTrackSearchCandidate,
   jobId: string,
+  matchMethod: MatchMethod,
 ) {
   const existing = await libraryRecording(tx, targetId)
   if (existing?.hidden)
@@ -109,6 +123,7 @@ async function storeConfirmedRecording(
       title: candidate.title,
       artists: candidate.artists,
       spotifyTrackId: candidate.spotifyTrackId,
+      matchMethod,
     },
     ...(candidate.artistCredits.length
       ? {
@@ -136,7 +151,9 @@ async function storeConfirmedRecording(
             ? existing.source
             : 'spotify-search',
         artworkUrl: sql`coalesce(${mediaItem.artworkUrl}, excluded.artwork_url)`,
-        metadata: sql`coalesce(${mediaItem.metadata}, '{}'::jsonb) || excluded.metadata`,
+        metadata: sql`coalesce(${mediaItem.metadata}, '{}'::jsonb) ||
+          case when ${matchMethod} = 'automatic' and ${mediaItem.metadata} ? 'spotifyTrackSearch'
+            then excluded.metadata - 'spotifyTrackSearch' else excluded.metadata end`,
         updatedAt: new Date(),
       },
     })
@@ -159,7 +176,10 @@ async function storeConfirmedRecording(
         durationSec: sql`coalesce(${libraryTrack.durationSec}, excluded.duration_sec)`,
         isrc: sql`coalesce(${libraryTrack.isrc}, excluded.isrc)`,
         spotifyAlbumId: sql`coalesce(excluded.spotify_album_id, ${libraryTrack.spotifyAlbumId})`,
-        albumName: sql`coalesce(excluded.album_name, ${libraryTrack.albumName})`,
+        albumName:
+          matchMethod === 'automatic'
+            ? sql`coalesce(${libraryTrack.albumName}, excluded.album_name)`
+            : sql`coalesce(excluded.album_name, ${libraryTrack.albumName})`,
         updatedAt: new Date(),
       },
     })
@@ -182,6 +202,120 @@ const AcceptedSchema = z.object({
   acceptedTrackId: z.string(),
   acceptedSpotifyTrackId: z.string(),
 })
+
+async function resolveRecordingTarget(
+  tx: Transaction,
+  source: { id: string; source: string | null },
+  candidate: SpotifyTrackSearchCandidate,
+) {
+  const resolved = await resolveSpotifyTrackIds(tx, [candidate])
+  return (
+    resolved.get(candidate.spotifyTrackId) ??
+    (source.source === 'lastfm'
+      ? spotifyTrackItemId(candidate.spotifyTrackId)
+      : source.id)
+  )
+}
+
+async function linkSpotifyRecording(
+  tx: Transaction,
+  { trackId, jobId }: SearchScope,
+  targetId: string,
+  candidate: SpotifyTrackSearchCandidate,
+  matchMethod: MatchMethod,
+) {
+  await storeConfirmedRecording(tx, targetId, candidate, jobId, matchMethod)
+  if (targetId !== trackId)
+    await transferTrackMemberships(tx, trackId, targetId, true)
+  await moveTrackScrobbleNames(
+    tx,
+    trackId,
+    targetId,
+    false,
+    trackId !== targetId,
+    matchMethod === 'manual' ? 'manual' : 'exact',
+  )
+  if (targetId !== trackId) await removeOrphanTracks(tx, [trackId])
+  await tx
+    .update(scrapeJob)
+    .set({
+      options: sql`${scrapeJob.options} || ${JSON.stringify({
+        acceptedTrackId: targetId,
+        acceptedSpotifyTrackId: candidate.spotifyTrackId,
+        matchMethod,
+      })}::jsonb`,
+    })
+    .where(eq(scrapeJob.id, jobId))
+}
+
+/** The worker calls this after saving the candidates, within its cancellation fence. */
+export async function reconcileSpotifyTrackSearchInTransaction(
+  tx: Transaction,
+  input: SearchScope,
+  dryRun = false,
+): Promise<ReconciliationResult> {
+  await lockLibraryTrackWrites(tx)
+  const candidates = await readSpotifyTrackSearchForAutomaticMatch(tx, input)
+  if (
+    !candidates ||
+    !(await listTracksNeedingSpotifyMatch(tx, [input.trackId])).length
+  )
+    return { status: 'stale' }
+  if (!candidates.length) return { status: 'unmatched' }
+
+  const source = await libraryRecording(tx, input.trackId)
+  const evidence = await spotifySearchRecordingEvidence(tx, input.trackId)
+  if (!source || !evidence || source.spotifyId !== null)
+    return { status: 'stale' }
+
+  // Different Spotify IDs stay reviewable when the release cannot distinguish them.
+  const exact = new Map(
+    candidates
+      .filter((candidate) => spotifySearchExactRelease(evidence, candidate))
+      .map((candidate) => [candidate.spotifyTrackId, candidate]),
+  )
+  const [candidate] = exact.values()
+  if (
+    exact.size !== 1 ||
+    !candidate ||
+    !spotifySearchConsistentRecording(evidence, candidate)
+  )
+    return { status: 'unmatched' }
+
+  const targetId = await resolveRecordingTarget(tx, source, candidate)
+  if (targetId !== source.id) {
+    const target = await libraryRecording(tx, targetId)
+    const targetEvidence =
+      target && (await spotifySearchRecordingEvidence(tx, targetId))
+    if (
+      target &&
+      (!targetEvidence ||
+        !spotifySearchExactRelease(targetEvidence, candidate) ||
+        !spotifySearchConsistentRecording(targetEvidence, candidate))
+    )
+      return { status: 'unmatched' }
+  }
+  try {
+    await checkRecordingTransfer(tx, source, targetId, candidate)
+  } catch (error) {
+    if (error instanceof ServerError && error.response.statusCode === 409)
+      return { status: 'unmatched' }
+    throw error
+  }
+  if (!dryRun)
+    await linkSpotifyRecording(tx, input, targetId, candidate, 'automatic')
+  return { status: 'matched', targetId }
+}
+
+/** Apply or preview a past search using its retained results without another Spotify request. */
+export function reconcileSavedSpotifyTrackSearch(
+  input: SearchScope,
+  { dryRun = false }: { dryRun?: boolean } = {},
+) {
+  return db.transaction((tx) =>
+    reconcileSpotifyTrackSearchInTransaction(tx, input, dryRun),
+  )
+}
 
 /** A reviewed catalog identity can reuse a Spotify or corroborated album recording. */
 export async function acceptSpotifyTrackSearch(input: {
@@ -228,30 +362,9 @@ export async function acceptSpotifyTrackSearch(input: {
         message:
           'This recording already has a Spotify match. Refresh the track to review it.',
       })
-    const resolved = await resolveSpotifyTrackIds(tx, [candidate])
-    const targetId =
-      resolved.get(spotifyTrackId) ??
-      (source.source === 'lastfm'
-        ? spotifyTrackItemId(spotifyTrackId)
-        : trackId)
+    const targetId = await resolveRecordingTarget(tx, source, candidate)
     await checkRecordingTransfer(tx, source, targetId, candidate)
-    await storeConfirmedRecording(tx, targetId, candidate, jobId)
-    if (targetId !== trackId)
-      await transferTrackMemberships(tx, trackId, targetId, true)
-    await moveTrackScrobbleNames(
-      tx,
-      trackId,
-      targetId,
-      false,
-      trackId !== targetId,
-    )
-    if (targetId !== trackId) await removeOrphanTracks(tx, [trackId])
-    await tx
-      .update(scrapeJob)
-      .set({
-        options: sql`${scrapeJob.options} || ${JSON.stringify({ acceptedTrackId: targetId, acceptedSpotifyTrackId: spotifyTrackId })}::jsonb`,
-      })
-      .where(eq(scrapeJob.id, jobId))
+    await linkSpotifyRecording(tx, input, targetId, candidate, 'manual')
     return { targetId }
   })
 }

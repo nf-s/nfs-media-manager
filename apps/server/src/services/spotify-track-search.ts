@@ -1,7 +1,7 @@
-import { and, desc, eq, inArray, sql } from 'drizzle-orm'
+import { and, desc, eq, inArray, or, sql } from 'drizzle-orm'
 import { nanoid } from 'nanoid'
 import { z } from 'zod'
-import { EnrichmentResultSchema } from '@repo/schemas/job'
+import { EnrichmentResultSchema, JobScopeSchema } from '@repo/schemas/job'
 import {
   SPOTIFY_TRACK_SEARCH_LIMIT,
   SPOTIFY_TRACK_SEARCH_TASK,
@@ -16,23 +16,22 @@ import {
   type SpotifyTrackSearchInput,
 } from '@repo/schemas/spotify-track-search'
 import { parseTrackNumberPrefix } from '@/lib/album-track-aliases'
+import { albumNameKey } from '@/lib/album-import-candidates'
 import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
 import { createStableId } from '@/lib/media-utils'
-import {
-  artist,
-  libraryTrack,
-  mediaCredit,
-  mediaItem,
-  scrapeJob,
-  scrapeJobLog,
-} from '@/schemas/db'
+import { libraryTrack, mediaItem, scrapeJob, scrapeJobLog } from '@/schemas/db'
 import { lockLibraryTrackWrites } from './album-library-tracks'
 import { createTaskJob, type TaskJobContext, type TaskJobResult } from './jobs'
 import {
   prepareSpotifyCatalogTrackSearch,
   searchSpotifyTrackCandidates,
 } from './manual-add'
+import { reconcileSpotifyTrackSearchInTransaction } from './spotify-track-search-acceptance'
+import {
+  sameSpotifySearchArtists,
+  spotifySearchArtistNames,
+} from './spotify-track-search-evidence'
 import {
   listTracksNeedingSpotifyMatch,
   spotifySearchRecordingId,
@@ -44,6 +43,7 @@ type SearchReader = Pick<typeof db, 'select' | 'selectDistinctOn'>
 
 const SearchOptionsSchema = SpotifyTrackSearchParamsSchema.extend({
   trackTitle: z.string().min(1).max(500),
+  trackArtists: z.array(z.string()).optional(),
   groupKey: z.string().min(1),
   query: z.string().min(1).max(200),
 })
@@ -60,7 +60,23 @@ const StoredResultSchema = z.object({
 })
 
 const searchTrackId = sql<string>`${scrapeJob.options}->>'trackId'`
+const retainedTrackId = spotifySearchRecordingId(sql`${scrapeJob.options}`)
 const isTrackSearch = sql`${scrapeJob.options}->>'task' = ${sql.raw(`'${SPOTIFY_TRACK_SEARCH_TASK}'`)}`
+const searchJobColumns = {
+  id: scrapeJob.id,
+  status: scrapeJob.status,
+  errorMessage: scrapeJob.errorMessage,
+  createdAt: scrapeJob.createdAt,
+  startedAt: scrapeJob.startedAt,
+  finishedAt: scrapeJob.finishedAt,
+  scope: scrapeJob.scope,
+  options: scrapeJob.options,
+  requestedByUserId: scrapeJob.requestedByUserId,
+}
+type SearchJob = Pick<
+  typeof scrapeJob.$inferSelect,
+  keyof typeof searchJobColumns
+>
 
 function searchOption(value: string, maxLength: number) {
   return value
@@ -79,10 +95,7 @@ async function trackSearchTarget(
     .select({
       title: mediaItem.title,
       sourceLabel: mediaItem.sourceLabel,
-      firstArtist: sql<string | null>`(select ${artist.name} from ${mediaCredit}
-        join ${artist} on ${artist.id} = ${mediaCredit.artistId}
-        where ${mediaCredit.mediaItemId} = ${mediaItem.id} and ${mediaCredit.role} = 'artist'
-        order by ${mediaCredit.billingOrder}, ${artist.id} limit 1)`,
+      artists: spotifySearchArtistNames(sql`${mediaItem.id}`),
     })
     .from(mediaItem)
     .innerJoin(libraryTrack, eq(libraryTrack.mediaItemId, mediaItem.id))
@@ -93,19 +106,16 @@ async function trackSearchTarget(
         sql`${mediaItem.metadata}->>'legacyHidden' is distinct from 'true'`,
       ),
     )
-  if (!track)
-    throw new ServerError({
-      statusCode: 404,
-      message: 'Library track not found.',
-    })
+  if (!track) return undefined
   const numbered =
     track.sourceLabel === 'lastfm'
       ? parseTrackNumberPrefix(track.title.trim())
       : undefined
   const title = searchOption(numbered?.title ?? track.title, 110)
-  const artistName = searchOption(track.firstArtist ?? '', 70)
+  const artistName = searchOption(track.artists[0] ?? '', 70)
   return {
-    trackTitle: track.title.trim().slice(0, 500),
+    trackTitle: track.title.trim(),
+    trackArtists: track.artists,
     query: title
       ? `track:"${title}"${artistName ? ` artist:"${artistName}"` : ''}`
       : '',
@@ -125,6 +135,11 @@ export async function prepareSpotifyTrackSearch(
 ) {
   const { trackId } = SpotifyTrackSearchParamsSchema.parse(input)
   const target = await trackSearchTarget(db, trackId)
+  if (!target)
+    throw new ServerError({
+      statusCode: 404,
+      message: 'Library track not found.',
+    })
   const groupKey = createStableId(
     SPOTIFY_TRACK_SEARCH_TASK,
     JSON.stringify([userId, trackId]),
@@ -138,7 +153,12 @@ export async function prepareSpotifyTrackSearch(
       message: 'The track is unavailable for this search.',
     })
   await prepareSpotifyCatalogTrackSearch(userId)
-  return SearchOptionsSchema.parse({ trackId, groupKey, ...target })
+  return SearchOptionsSchema.parse({
+    trackId,
+    groupKey,
+    ...target,
+    trackTitle: target.trackTitle.slice(0, 500),
+  })
 }
 
 /** Serialize the final eligibility and replay checks with track identity writes. */
@@ -233,6 +253,13 @@ export async function runSpotifyTrackSearch(
           { kind: SPOTIFY_TRACK_SEARCH_TASK, query: options.query, candidates },
         ],
       },
+      persist: async (tx) => {
+        await reconcileSpotifyTrackSearchInTransaction(tx, {
+          trackId: options.trackId,
+          userId: context.requestedByUserId,
+          jobId: context.jobId,
+        })
+      },
     }
   } catch (error) {
     if (!(await context.isActive())) return { outcome: 'stopped' }
@@ -296,31 +323,22 @@ function requesterIs(userId: string | null) {
 function latestTrackSearchJobs(
   database: SearchReader,
   trackIds: string[],
-  userId: string | null,
+  userId: string | null | undefined,
   scope: 'requested' | 'retained' = 'requested',
 ) {
-  const visibleId =
-    scope === 'retained'
-      ? spotifySearchRecordingId(sql`${scrapeJob.options}`)
-      : searchTrackId
+  const visibleId = scope === 'retained' ? retainedTrackId : searchTrackId
   const pastId =
     scope === 'retained'
       ? spotifySearchRecordingId(sql`previous.options`)
       : sql`previous.options->>'trackId'`
   const history = sql`from scrape_job previous
     where previous.options->>'task' = ${sql.raw(`'${SPOTIFY_TRACK_SEARCH_TASK}'`)}
-      and ${pastId} = ${visibleId}
-      and previous.requested_by_user_id is not distinct from ${userId}`
+      and previous.provider = 'spotify' and ${pastId} = ${visibleId}
+      ${userId === undefined ? sql`` : sql`and previous.requested_by_user_id is not distinct from ${userId}`}`
   return database
     .selectDistinctOn([visibleId], {
       trackId: visibleId,
-      id: scrapeJob.id,
-      status: scrapeJob.status,
-      errorMessage: scrapeJob.errorMessage,
-      createdAt: scrapeJob.createdAt,
-      startedAt: scrapeJob.startedAt,
-      finishedAt: scrapeJob.finishedAt,
-      options: scrapeJob.options,
+      ...searchJobColumns,
       lastAttemptAt:
         sql<Date | null>`(select max(previous.started_at) ${history}
       and (previous.status <> 'succeeded' or previous.options ? 'resultCount'))`.mapWith(
@@ -334,7 +352,12 @@ function latestTrackSearchJobs(
     })
     .from(scrapeJob)
     .where(
-      and(isTrackSearch, requesterIs(userId), inArray(visibleId, trackIds)),
+      and(
+        eq(scrapeJob.provider, 'spotify'),
+        isTrackSearch,
+        userId === undefined ? undefined : requesterIs(userId),
+        inArray(visibleId, trackIds),
+      ),
     )
     .orderBy(
       visibleId,
@@ -343,13 +366,12 @@ function latestTrackSearchJobs(
     )
 }
 
-function summarizeSearch(
-  job: Awaited<ReturnType<typeof latestTrackSearchJobs>>[number],
-) {
+function summarizeSearch(job: SearchJob) {
   return SpotifyTrackSearchJobSchema.parse({
     jobId: job.id,
     status: job.status,
     acceptedTrackId: job.options.acceptedTrackId,
+    matchMethod: job.options.matchMethod,
     resultCount: job.options.resultCount ?? null,
     errorMessage: job.errorMessage,
     createdAt: job.createdAt.toISOString(),
@@ -403,25 +425,86 @@ async function storedSearch(database: SearchReader, jobId: string) {
 }
 
 export async function getSpotifyTrackSearch(trackId: string, userId: string) {
-  const [retainedJob] = await latestTrackSearchJobs(
-    db,
-    [trackId],
-    userId,
-    'retained',
-  )
-  const job =
-    retainedJob ?? (await latestTrackSearchJobs(db, [trackId], userId))[0]
+  const [job] = await db
+    .select(searchJobColumns)
+    .from(scrapeJob)
+    .where(
+      and(
+        eq(scrapeJob.provider, 'spotify'),
+        isTrackSearch,
+        requesterIs(userId),
+        or(eq(searchTrackId, trackId), eq(retainedTrackId, trackId)),
+      ),
+    )
+    .orderBy(desc(scrapeJob.createdAt), desc(scrapeJob.id))
+    .limit(1)
   const stored =
     job?.status === 'succeeded' ? await storedSearch(db, job.id) : null
-  const query =
-    stored?.query ??
-    job?.options.query ??
-    (await trackSearchTarget(db, trackId)).query
+  let query = stored?.query ?? job?.options.query
+  if (query === undefined || query === null) {
+    const target = await trackSearchTarget(db, trackId)
+    if (!target)
+      throw new ServerError({
+        statusCode: 404,
+        message: 'Library track not found.',
+      })
+    query = target.query
+  }
   return SpotifyTrackSearchSchema.parse({
     job: job ? summarizeSearch(job) : null,
     query,
     candidates: stored?.candidates ?? [],
   })
+}
+
+/** Re-check the latest saved result and the current subject within the library write lock. */
+export async function readSpotifyTrackSearchForAutomaticMatch(
+  database: Transaction,
+  {
+    trackId,
+    jobId,
+    userId,
+  }: { trackId: string; jobId: string; userId: string | null },
+) {
+  const [job] = await latestTrackSearchJobs(database, [trackId], undefined)
+  if (
+    !job ||
+    job.id !== jobId ||
+    job.status !== 'succeeded' ||
+    job.requestedByUserId !== userId ||
+    !userId ||
+    job.options.acceptedTrackId !== undefined ||
+    job.options.acceptedSpotifyTrackId !== undefined
+  )
+    return null
+  const scope = JobScopeSchema.safeParse(job.scope)
+  if (
+    !scope.success ||
+    scope.data.mediaType !== 'track' ||
+    scope.data.mediaItemIds.length !== 1 ||
+    scope.data.mediaItemIds[0] !== trackId
+  )
+    return null
+  const saved = SearchOptionsSchema.safeParse(job.options)
+  if (!saved.success) return null
+  const target = await trackSearchTarget(database, trackId)
+  if (
+    !target ||
+    albumNameKey(target.trackTitle) !== albumNameKey(saved.data.trackTitle) ||
+    (!saved.data.trackArtists &&
+      albumNameKey(target.query) !== albumNameKey(saved.data.query)) ||
+    (saved.data.trackArtists &&
+      !sameSpotifySearchArtists(target.trackArtists, saved.data.trackArtists))
+  )
+    return null
+  const result = await storedSearch(database, jobId)
+  if (
+    !result ||
+    result.query !== saved.data.query ||
+    result.candidates.length !== job.options.resultCount
+  )
+    return null
+  return result.candidates
 }
 
 /** The caller holds the library track write lock throughout acceptance. */

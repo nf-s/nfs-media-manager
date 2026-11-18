@@ -186,6 +186,16 @@ export const TrackListItemSchema = z.object({
 })
 export type TrackListItem = z.infer<typeof TrackListItemSchema>
 
+export const TrackSpotifyAlternateSchema = z.object({
+  trackId: z.string(),
+  name: z.string(),
+  albumName: z.string().nullable(),
+  album: TrackListItemSchema.shape.album.optional(),
+  artworkUrl: TrackListItemSchema.shape.artworkUrl.optional(),
+  identifier: z.string(),
+})
+export type TrackSpotifyAlternate = z.infer<typeof TrackSpotifyAlternateSchema>
+
 const RecordedScrobbleKeySchema = z
   .string()
   .min(1)
@@ -283,6 +293,8 @@ export type TrackScrobbleRemoveInput = z.infer<
 >
 
 export const TrackDetailSchema = TrackListItemSchema.extend({
+  /** Playback coverage from a confirmed version when this entry has no usable Spotify ID. */
+  spotifyAlternate: TrackSpotifyAlternateSchema.optional(),
   /** Recorded names with strict Last.fm membership, most played first, up to 50. */
   lastfmSources: z.array(TrackLastfmSourceSchema),
   listening: z.object({

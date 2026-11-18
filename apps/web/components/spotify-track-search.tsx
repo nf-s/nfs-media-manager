@@ -8,6 +8,7 @@ import {
   useQueries,
   useQuery,
   useQueryClient,
+  type QueryClient,
 } from '@tanstack/react-query'
 import { X } from 'lucide-react'
 import { EnrichmentResultSchema } from '@repo/schemas/job'
@@ -20,6 +21,7 @@ import {
   SpotifyTrackSearchStatusSchema,
   type SpotifyTrackSearchCandidate,
   type SpotifyTrackSearchFreshness,
+  type SpotifyTrackSearchInput,
   type SpotifyTrackSearchJob,
 } from '@repo/schemas/spotify-track-search'
 import type { TrackListItem } from '@repo/schemas/tracks'
@@ -46,6 +48,43 @@ const TRACKS = { one: 'track', other: 'tracks' }
 const MATCHES = { one: 'match', other: 'matches' }
 const spotifySearchPath = '/api/v1/spotify/tracks/search'
 const spotifySearchKey = ['tracks', 'spotify-track-search']
+
+export function queueSpotifyTrackSearch(
+  apiBaseUrl: string,
+  input: SpotifyTrackSearchInput,
+) {
+  return fetchApiData(apiBaseUrl, spotifySearchPath, EnrichmentResultSchema, {
+    method: 'POST',
+    body: JSON.stringify(SpotifyTrackSearchInputSchema.parse(input)),
+  })
+}
+
+export function invalidateSpotifySearchJobs(client: QueryClient) {
+  return Promise.all([
+    client.invalidateQueries({ queryKey: ['tracks'] }),
+    client.invalidateQueries({ queryKey: ['jobs'] }),
+    client.invalidateQueries({ queryKey: ['job-activity'] }),
+  ])
+}
+
+/** The stored search remains readable by its original ID after an exact match reuses a library recording. */
+export function useSavedSpotifyTrackSearch(trackId: string) {
+  const { apiBaseUrl } = useConfig()
+  return useQuery({
+    queryKey: [...spotifySearchKey, trackId],
+    queryFn: ({ signal }) =>
+      fetchApiData(
+        apiBaseUrl,
+        `${spotifySearchPath}/${encodeURIComponent(trackId)}`,
+        SpotifyTrackSearchSchema,
+        { signal },
+      ),
+    refetchInterval: (query) =>
+      isActiveSpotifyTrackSearch(query.state.data?.job)
+        ? LASTFM_SYNC_POLL_MS
+        : false,
+  })
+}
 
 export function isActiveSpotifyTrackSearch(
   job: SpotifyTrackSearchJob | null | undefined,
@@ -126,16 +165,11 @@ export function SpotifyTrackSearchSelectionBar({
       return dispatchFilmSelection(
         ids,
         (chunk) =>
-          fetchApiData(apiBaseUrl, spotifySearchPath, EnrichmentResultSchema, {
-            method: 'POST',
-            body: JSON.stringify(
-              SpotifyTrackSearchInputSchema.parse({
-                trackIds: chunk,
-                batchId: batch,
-                confirmBroadRun: ids.length > 5,
-                freshness,
-              }),
-            ),
+          queueSpotifyTrackSearch(apiBaseUrl, {
+            trackIds: chunk,
+            batchId: batch,
+            confirmBroadRun: ids.length > 5,
+            freshness,
           }),
         setProgress,
       )
@@ -150,11 +184,7 @@ export function SpotifyTrackSearchSelectionBar({
     },
     onSettled: async () => {
       try {
-        await Promise.all([
-          client.invalidateQueries({ queryKey: ['tracks'] }),
-          client.invalidateQueries({ queryKey: ['jobs'] }),
-          client.invalidateQueries({ queryKey: ['job-activity'] }),
-        ])
+        await invalidateSpotifySearchJobs(client)
       } finally {
         onPendingChange(false)
       }
@@ -217,7 +247,7 @@ export function SpotifyTrackSearchSelectionBar({
               variant="primary"
               confirm={broad}
               question={`Search Spotify for ${formatItemCount(selectedIds.length, TRACKS)}?`}
-              details="Each search uses Spotify's request limits. Review the saved matches before linking a track."
+              details="Each track uses one search job. Unique exact matches link automatically."
               confirmLabel="Search Spotify tracks"
               disabled={disabled || queue.isPending}
               onConfirm={() => queue.mutate(selectedIds)}
@@ -231,48 +261,77 @@ export function SpotifyTrackSearchSelectionBar({
   )
 }
 
-export function SpotifyTrackSearchJobCell({
+export function SpotifyTrackSearchJobStatus({
+  job,
+}: {
+  job: SpotifyTrackSearchJob
+}) {
+  return (
+    <DetailLink kind="job" id={job.jobId}>
+      <Status
+        state={job.status === 'succeeded' ? 'done' : job.status}
+        title={job.errorMessage ?? undefined}
+      />
+    </DetailLink>
+  )
+}
+
+export function SpotifyTrackSearchResult({
   job,
   onReview,
   disabled,
+  currentTrackId,
 }: {
+  job: SpotifyTrackSearchJob
+  onReview?: () => void
+  disabled?: boolean
+  currentTrackId?: string
+}) {
+  if (job.status !== 'succeeded') return null
+  if (job.acceptedTrackId) {
+    if (job.acceptedTrackId === currentTrackId) return null
+    return (
+      <DetailLink kind="track" id={job.acceptedTrackId} tab="sources">
+        {job.matchMethod === 'automatic'
+          ? 'Matched automatically'
+          : 'Matched track'}
+      </DetailLink>
+    )
+  }
+  if (!job.resultCount)
+    return (
+      <span className="ds-muted">
+        {job.resultCount === null ? 'Search skipped' : 'No matches'}
+      </span>
+    )
+  return (
+    onReview && (
+      <Button
+        size="xs"
+        aria-haspopup="dialog"
+        disabled={disabled}
+        onClick={onReview}
+      >
+        Review matches
+      </Button>
+    )
+  )
+}
+
+export function SpotifyTrackSearchJobCell(props: {
   job: SpotifyTrackSearchJob | null | undefined
   onReview?: () => void
   disabled?: boolean
 }) {
-  if (!job) return <Status state="never" />
-  const succeeded = job.status === 'succeeded'
+  if (!props.job) return <Status state="never" />
   return (
     <div className="secondary-cell-actions">
-      <DetailLink kind="job" id={job.jobId}>
-        <Status
-          state={job.status === 'succeeded' ? 'done' : job.status}
-          title={job.errorMessage ?? undefined}
-        />
-      </DetailLink>
-      {job.acceptedTrackId && (
-        <DetailLink kind="track" id={job.acceptedTrackId} tab="sources">
-          Matched track
-        </DetailLink>
-      )}
-      {succeeded &&
-        !job.acceptedTrackId &&
-        (job.resultCount ? (
-          onReview && (
-            <Button
-              size="xs"
-              aria-haspopup="dialog"
-              disabled={disabled}
-              onClick={onReview}
-            >
-              Review matches
-            </Button>
-          )
-        ) : (
-          <span className="ds-muted">
-            {job.resultCount === null ? 'Search skipped' : 'No matches'}
-          </span>
-        ))}
+      <SpotifyTrackSearchJobStatus job={props.job} />
+      <SpotifyTrackSearchResult
+        job={props.job}
+        onReview={props.onReview}
+        disabled={props.disabled}
+      />
     </div>
   )
 }
@@ -329,15 +388,7 @@ export function SpotifyTrackSearchReview({
     jobId: string
     candidate: SpotifyTrackSearchCandidate
   } | null>(null)
-  const search = useQuery({
-    queryKey: [...spotifySearchKey, track.id],
-    queryFn: ({ signal }) =>
-      fetchApiData(apiBaseUrl, path, SpotifyTrackSearchSchema, { signal }),
-    refetchInterval: (query) =>
-      isActiveSpotifyTrackSearch(query.state.data?.job)
-        ? LASTFM_SYNC_POLL_MS
-        : false,
-  })
+  const search = useSavedSpotifyTrackSearch(track.id)
   const accept = useMutation({
     retry: false,
     mutationFn: (input: NonNullable<typeof chosen>) =>
@@ -358,7 +409,10 @@ export function SpotifyTrackSearchReview({
     onSuccess: async ({ targetId }) => {
       onMatched(targetId)
       onClose()
-      await invalidateScrobbleLinks(client)
+      await invalidateScrobbleLinks(
+        client,
+        track.id !== targetId ? track.id : undefined,
+      )
     },
   })
   useEffect(() => {
@@ -428,7 +482,9 @@ export function SpotifyTrackSearchReview({
               {errorMessage(accept.error, 'Could not save the Spotify match.')}
             </Notice>
           )}
-          {chosen ? (
+          {job?.acceptedTrackId ? (
+            <SpotifyTrackSearchResult job={job} />
+          ) : chosen && chosen.jobId === job?.jobId ? (
             <>
               <Section title="Spotify track to link">
                 <TrackIdentity track={chosen.candidate} />
@@ -471,7 +527,16 @@ export function SpotifyTrackSearchReview({
                     }
                     title={
                       <RowTitle>
-                        <span title={candidate.title}>{candidate.title}</span>
+                        <button
+                          type="button"
+                          title={candidate.title}
+                          aria-label={`Review ${candidate.title}${candidate.albumName ? ` from ${candidate.albumName}` : ''}`}
+                          onClick={() =>
+                            setChosen({ jobId: job.jobId, candidate })
+                          }
+                        >
+                          {candidate.title}
+                        </button>
                       </RowTitle>
                     }
                     by={[
@@ -484,26 +549,15 @@ export function SpotifyTrackSearchReview({
                       .filter(Boolean)
                       .join(' · ')}
                     action={
-                      <span className="ds-actions">
-                        <ServiceIconLinks
-                          links={[
-                            {
-                              provider: 'spotify',
-                              label: 'Spotify',
-                              url: candidate.spotifyUrl,
-                            },
-                          ]}
-                        />
-                        <Button
-                          size="xs"
-                          aria-label={`Review ${candidate.title}${candidate.albumName ? ` from ${candidate.albumName}` : ''}`}
-                          onClick={() =>
-                            setChosen({ jobId: job.jobId, candidate })
-                          }
-                        >
-                          Review
-                        </Button>
-                      </span>
+                      <ServiceIconLinks
+                        links={[
+                          {
+                            provider: 'spotify',
+                            label: 'Spotify',
+                            url: candidate.spotifyUrl,
+                          },
+                        ]}
+                      />
                     }
                   />
                 ))}

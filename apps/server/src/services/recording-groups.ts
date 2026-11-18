@@ -1,5 +1,6 @@
 import { sql, type SQL, type SQLWrapper } from 'drizzle-orm'
 import { z } from 'zod'
+import { spotifyIdPattern } from '@repo/schemas/playback'
 
 const RecordingGroupSchema = z.object({
   id: z.string(),
@@ -215,6 +216,58 @@ export function recordingRepresentatives(
     join library_track lt on lt.media_item_id = m.id
     where not exists (select 1 from recording_group_members g where g.id = m.id)
   )`
+}
+
+export function playableSpotifyId(id: SQL) {
+  return sql`coalesce(${id} collate "C" ~ ${spotifyIdPattern.source}, false)`
+}
+
+/** A playable sibling covers the recording while each release keeps its own identity. */
+export function spotifyAlternates(
+  scope: SQL,
+  options: { creatorId?: string; useTargetTitles?: boolean } = {},
+) {
+  const matches = sql`select target.id from (${scope}) target
+    where not ${playableSpotifyId(sql`target.spotify_track_id`)} and (
+      target.source_label is distinct from 'lastfm' or not exists (
+        select 1 from lastfm_track_source s
+        where s.track_media_item_id = target.id and s.manually_matched
+      )
+    )`
+  return sql`
+    ${recordingMemberships(matches, { ...options, includePeerMembers: true })},
+    ${recordingRepresentatives(playableSpotifyId(sql`lt.spotify_track_id`))},
+    spotify_alternates as materialized (
+      select m.id, r.id as track_id, alternate.title as name,
+        coalesce(playable.album_name, release.title) as album_name,
+        release.id as album_id, release.title as album_title,
+        coalesce(alternate.artwork_url, release.artwork_url) as artwork_url,
+        playable.spotify_track_id as identifier
+      from recording_matches target
+      join recording_group_members m using (id)
+      join recording_group_representatives r using (group_key)
+      join library_track playable on playable.media_item_id = r.id
+      join media_item alternate on alternate.id = r.id
+      left join media_item release on release.id = playable.album_media_item_id
+      where ${playableSpotifyId(sql`playable.spotify_track_id`)}
+    )`
+}
+
+export const spotifyAlternateValue = sql`case when a.track_id is not null then jsonb_build_object(
+  'trackId', a.track_id, 'name', a.name, 'albumName', a.album_name,
+  'identifier', a.identifier, 'artworkUrl', a.artwork_url,
+  'album', case when a.album_id is not null then jsonb_build_object(
+    'id', a.album_id, 'title', a.album_title
+  ) end
+) end`
+
+/** Only consider the editions of this target's title for a detail lookup. */
+export function trackSpotifyAlternate(id: string) {
+  const target = sql`select mi.id, mi.source_label, lt.spotify_track_id
+    from media_item mi join library_track lt on lt.media_item_id = mi.id
+    where mi.id = ${id} and ${visibleTrack}`
+  return sql`with ${spotifyAlternates(target, { useTargetTitles: true })}
+    select ${spotifyAlternateValue} as alternate from spotify_alternates a`
 }
 
 /** A stored event belongs to exactly one (account, artist, title) tuple. */

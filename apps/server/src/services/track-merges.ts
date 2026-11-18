@@ -155,29 +155,31 @@ async function assignScrobbleNames(
   sourceId: string,
   targetId: string,
   standalone: boolean,
+  method: 'manual' | 'exact' = 'manual',
 ) {
   const input = sql`jsonb_to_recordset(${JSON.stringify(names)}::jsonb)
     as r(username text, artist_key text, track_key text)`
   await tx.execute(sql`
     update lastfm_track_source s
-    set track_media_item_id = ${targetId}, manually_matched = true
+    set track_media_item_id = ${targetId}, manually_matched = ${method === 'manual'}
     from ${input}
     where s.username = r.username and s.artist_key = r.artist_key and s.track_key = r.track_key`)
   const removed = ChangedRowsSchema.parse(
     (
       await tx.execute(sql`
         delete from lastfm_track_link l using ${input}
-        where l.username = r.username and l.artist_key = r.artist_key and l.track_key = r.track_key
+        where ${method === 'manual'} and l.username = r.username and l.artist_key = r.artist_key and l.track_key = r.track_key
           and l.track_media_item_id <> ${targetId}
         returning l.track_media_item_id as id`)
     ).rows,
   )
   await tx.execute(sql`
     insert into lastfm_track_link (username, artist_key, track_key, track_media_item_id, strategy)
-    select r.username, r.artist_key, r.track_key, ${targetId}, 'manual'
+    select r.username, r.artist_key, r.track_key, ${targetId}, ${method}
     from ${input}
     on conflict (username, artist_key, track_key, track_media_item_id)
-      do update set strategy = excluded.strategy`)
+      do update set strategy = excluded.strategy
+      where excluded.strategy = 'manual' or lastfm_track_link.strategy <> 'manual'`)
   if (standalone && sourceId !== targetId)
     await removeOrphanTracks(tx, [sourceId])
   const affected = [
@@ -208,6 +210,7 @@ export async function moveTrackScrobbleNames(
   targetId: string,
   removeStandalone: boolean,
   transferListening = false,
+  method: 'manual' | 'exact' = 'manual',
 ) {
   const names = RecordedNamesSchema.parse(
     (
@@ -226,7 +229,14 @@ export async function moveTrackScrobbleNames(
     )
   }
   if (names.length || transferListening)
-    await assignScrobbleNames(tx, names, sourceId, targetId, removeStandalone)
+    await assignScrobbleNames(
+      tx,
+      names,
+      sourceId,
+      targetId,
+      removeStandalone,
+      method,
+    )
 }
 
 /** Match one recorded Last.fm artist/title group and leave other memberships in place. */

@@ -17,7 +17,6 @@ import { trackSpotifyMatchLabels } from '@repo/schemas/tracks'
 import { defaultListeningPeriod } from '@repo/schemas/listening'
 import type { ProviderFreshnessFilter } from '@repo/schemas/film-selection'
 import { SPOTIFY_TRACK_SEARCH_TASK } from '@repo/schemas/spotify-track-search'
-import { spotifyIdPattern } from '@repo/schemas/playback'
 import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
 import {
@@ -30,8 +29,9 @@ import {
 import { createDatabaseReadCache } from '@/lib/database-read-cache'
 import { artistTagMemberships } from './music-tags'
 import {
-  recordingMemberships,
-  recordingRepresentatives,
+  playableSpotifyId,
+  spotifyAlternates,
+  spotifyAlternateValue,
 } from './recording-groups'
 import { loadTracks } from './tracks'
 import { trackSpotifyMatchExpression } from './track-values'
@@ -148,41 +148,6 @@ const ordinaryFields = trackMatchDiagnosticFields.filter((field) =>
 const diagnosticFields = trackMatchDiagnosticFields.filter(
   (field) => !trackBrowseFieldKeys.has(field.key),
 )
-
-function playableSpotifyId(id: SQL) {
-  return sql`coalesce(${id} collate "C" ~ ${spotifyIdPattern.source}, false)`
-}
-
-/** A playable sibling covers the recording while each release keeps its own identity. */
-function spotifyAlternates(
-  scope: SQL,
-  options: { creatorId?: string; useTargetTitles?: boolean } = {},
-) {
-  const matches = sql`select target.id from (${scope}) target
-    where not ${playableSpotifyId(sql`target.spotify_track_id`)} and (
-      target.source_label is distinct from 'lastfm' or not exists (
-        select 1 from lastfm_track_source s
-        where s.track_media_item_id = target.id and s.manually_matched
-      )
-    )`
-  return sql`
-    ${recordingMemberships(matches, { ...options, includePeerMembers: true })},
-    ${recordingRepresentatives(playableSpotifyId(sql`lt.spotify_track_id`))},
-    spotify_alternates as materialized (
-      select m.id, r.id as track_id, alternate.title as name,
-        coalesce(playable.album_name, release.title) as album_name,
-        release.id as album_id, release.title as album_title,
-        coalesce(alternate.artwork_url, release.artwork_url) as artwork_url,
-        playable.spotify_track_id as identifier
-      from recording_matches target
-      join recording_group_members m using (id)
-      join recording_group_representatives r using (group_key)
-      join library_track playable on playable.media_item_id = r.id
-      join media_item alternate on alternate.id = r.id
-      left join media_item release on release.id = playable.album_media_item_id
-      where ${playableSpotifyId(sql`playable.spotify_track_id`)}
-    )`
-}
 
 function playabilityCondition(
   playability: TrackMatchDiagnosticsQuery['playability'],
@@ -560,14 +525,8 @@ export async function listTrackMatchDiagnostics(
     ${includeEvidence ? sql`page_matches as (${pageMatchEvidence(reuseEvidence)}),` : sql``}
     rows as (
       select p.*, ${includeEvidence ? sql`pm.matches` : sql`null::jsonb`} as matches,
-        case when a.track_id is not null then jsonb_build_object(
-          'trackId', a.track_id, 'name', a.name, 'albumName', a.album_name,
-          'identifier', a.identifier, 'artworkUrl', a.artwork_url,
-          'album', case when a.album_id is not null then jsonb_build_object(
-            'id', a.album_id, 'title', a.album_title
-          ) end
-        ) end as spotify_alternate,
-${includeEvidence ? pageMergeSourceId : sql`null::text`} as merge_source_id
+        ${spotifyAlternateValue} as spotify_alternate,
+        ${includeEvidence ? pageMergeSourceId : sql`null::text`} as merge_source_id
       from page p ${includeEvidence ? sql`left join page_matches pm on pm.id = p.id` : sql``}
       left join spotify_alternates a on a.id = p.id
     )
