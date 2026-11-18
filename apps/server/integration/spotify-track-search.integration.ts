@@ -5,9 +5,11 @@ import { eq, sql } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { migrate } from 'drizzle-orm/node-postgres/migrator'
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from 'vitest'
+import { z } from 'zod'
 import { TrackMatchDiagnosticsQuerySchema } from '@repo/schemas/match-diagnostics'
 import {
   SPOTIFY_TRACK_SEARCH_TASK,
+  SpotifyTrackSearchTargetConflictSchema,
   type SpotifyTrackSearchFreshness,
 } from '@repo/schemas/spotify-track-search'
 import { env } from '@/env'
@@ -106,6 +108,7 @@ import { listJobEntries } from '@/services/job-entries'
 import { refreshTrackLinks } from '@/services/track-links'
 import { removeScrobbleTrackMatch } from '@/services/track-merges'
 import { listTrackMatchDiagnostics } from '@/services/track-match-diagnostics'
+import { getTrackDetail } from '@/services/tracks'
 import {
   acceptSpotifyTrackSearch,
   reconcileSavedSpotifyTrackSearch,
@@ -459,7 +462,10 @@ async function addListedRecording(spotifyTrackId?: string) {
   return { albumId, trackId }
 }
 
-async function addScrobbledRecording(albums: string[] = []) {
+async function addScrobbledRecording(
+  albums: string[] = [],
+  recordedTitle = title,
+) {
   const username = 'fixture-listener'
   const scrobble = {
     id: 'fixture-listen',
@@ -467,8 +473,8 @@ async function addScrobbledRecording(albums: string[] = []) {
     listenedAt: new Date('2025-01-02T00:00:00Z'),
     artistName,
     artistKey: artistName.toLowerCase(),
-    trackName: title,
-    trackKey: title.toLowerCase(),
+    trackName: recordedTitle,
+    trackKey: recordedTitle.toLowerCase(),
   }
   await fixture
     .delete(schema.mediaItem)
@@ -488,6 +494,244 @@ async function addScrobbledRecording(albums: string[] = []) {
   if (!source) throw new Error('Expected a Last.fm recording')
   return { source, scrobble, scrobbles, username }
 }
+
+async function confirmStoredSpotifyCandidate(trackId: string) {
+  const search = await getSpotifyTrackSearch(trackId, userId)
+  expect(search.job).toMatchObject({ status: 'succeeded', resultCount: 1 })
+  expect(search.job?.acceptedTrackId).toBeUndefined()
+  const jobId = search.job?.jobId
+  if (!jobId) throw new Error('Expected a saved Spotify search')
+  const { default: app } = await import('@/app')
+  request.mockClear()
+  return app.request(`/api/v1/spotify/tracks/search/${trackId}/accept`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      cookie: 'session=fixture',
+      origin: 'http://localhost:3000',
+    },
+    body: JSON.stringify({ jobId, spotifyTrackId: candidateId }),
+  })
+}
+
+it.each([
+  {
+    reason: 'different recording and credits',
+    targetTitle: 'Daylight Chimes',
+    positionTitle: 'Daylight Chimes (Instrumental)',
+    durationSec: 265,
+    changeArtist: true,
+  },
+  { reason: 'unrelated billed artist', changeArtist: true },
+  {
+    reason: 'different native artist ID for the same credit',
+    conflictingArtistId: 'anotherartist000000000',
+  },
+  {
+    reason: 'different Spotify ID on the stored album position',
+    positionSpotifyId: otherCandidateId,
+  },
+  { reason: 'different known ISRC', isrc: 'AA-FI1-20-00002' },
+  {
+    reason: 'radio edit position',
+    positionTitle: 'Night Signal (Radio Edit)',
+  },
+  {
+    reason: 'remix position',
+    positionTitle: 'Night Signal - Example Remix',
+  },
+  {
+    reason: 'studio title with live candidate',
+    targetTitle: 'Night Signal',
+  },
+  {
+    reason: 'missing display title',
+    targetTitle: ' ',
+    positionTitle: 'Daylight Chimes',
+  },
+  {
+    reason: 'overlong display title',
+    targetTitle: 'Alternate title '.repeat(40),
+  },
+])(
+  'rejects manual confirmation with contradictory target evidence for $reason',
+  async ({
+    targetTitle = title,
+    positionTitle = title,
+    durationSec = 174,
+    changeArtist,
+    conflictingArtistId,
+    positionSpotifyId,
+    isrc,
+  }) => {
+    const { source } = await addScrobbledRecording([
+      catalogTrack.album.name,
+      catalogTrack.album.name,
+    ])
+    const sourceId = source.trackMediaItemId
+    const { trackId: targetId } = await addListedRecording(candidateId)
+    await fixture
+      .update(schema.mediaItem)
+      .set({
+        title: targetTitle,
+        ...(conflictingArtistId
+          ? {
+              metadata: {
+                spotifyArtistCredits: [
+                  { id: conflictingArtistId, name: artistName },
+                ],
+              },
+            }
+          : {}),
+      })
+      .where(eq(schema.mediaItem.id, targetId))
+    await fixture
+      .update(schema.libraryTrack)
+      .set({ durationSec, isrc })
+      .where(eq(schema.libraryTrack.mediaItemId, targetId))
+    await fixture
+      .update(schema.track)
+      .set({ title: positionTitle, durationSec, externalId: positionSpotifyId })
+      .where(eq(schema.track.trackMediaItemId, targetId))
+    if (changeArtist) {
+      await fixture
+        .insert(schema.artist)
+        .values({ id: 'second-fixture-artist', name: 'Second Fixture Artist' })
+      await fixture
+        .update(schema.mediaCredit)
+        .set({ artistId: 'second-fixture-artist' })
+        .where(eq(schema.mediaCredit.mediaItemId, targetId))
+    }
+    expect(
+      await queueSpotifyTrackSearches({ trackIds: [sourceId] }, userId),
+    ).toMatchObject({ queued: 1 })
+    await processQueuedJobs()
+    expect(request).toHaveBeenCalledTimes(2)
+
+    const scrobbles = await fixture
+      .select()
+      .from(schema.lastfmScrobble)
+      .orderBy(schema.lastfmScrobble.id)
+    const names = await fixture.select().from(schema.lastfmTrackSource)
+    const positions = await fixture.select().from(schema.track)
+    const response = await confirmStoredSpotifyCandidate(sourceId)
+    expect(response.status).toBe(409)
+    const payload = z
+      .object({ data: SpotifyTrackSearchTargetConflictSchema })
+      .parse(await response.json())
+    expect(payload.data).toEqual({
+      code: 'spotify-track-target-conflict',
+      trackId: targetId,
+      title: targetTitle.trim().slice(0, 500).trimEnd() || 'Library track',
+    })
+    expect(
+      await fixture
+        .select()
+        .from(schema.lastfmScrobble)
+        .orderBy(schema.lastfmScrobble.id),
+    ).toEqual(scrobbles)
+    expect(await fixture.select().from(schema.lastfmTrackSource)).toEqual(names)
+    expect(await fixture.select().from(schema.track)).toEqual(positions)
+    expect(await getTrackDetail(sourceId)).toMatchObject({
+      scrobbles: 2,
+      spotifyTrackId: null,
+    })
+    expect(await getTrackDetail(targetId)).toMatchObject({
+      scrobbles: 0,
+      spotifyTrackId: candidateId,
+    })
+    expect(
+      (await getSpotifyTrackSearch(sourceId, userId)).job?.acceptedTrackId,
+    ).toBeUndefined()
+    expect(request).not.toHaveBeenCalled()
+  },
+)
+
+it('confirms a manual alias with another stored alias, release variant and rounded duration on the retained track', async () => {
+  const { source, username, scrobble } = await addScrobbledRecording(
+    [catalogTrack.album.name],
+    'The Signal on a Misty Night',
+  )
+  const { albumId, trackId: targetId } = await addListedRecording(candidateId)
+  const sourceId = source.trackMediaItemId
+  const targetTitle = 'Night Signal - Live (2019 Remaster)'
+  await fixture
+    .update(schema.mediaItem)
+    .set({ title: targetTitle })
+    .where(eq(schema.mediaItem.id, targetId))
+  await fixture
+    .update(schema.libraryTrack)
+    .set({ durationSec: 175 })
+    .where(eq(schema.libraryTrack.mediaItemId, targetId))
+  await fixture
+    .update(schema.track)
+    .set({ title: targetTitle, durationSec: 175 })
+    .where(eq(schema.track.trackMediaItemId, targetId))
+  await fixture
+    .update(schema.album)
+    .set({
+      spotifyUrl: `https://open.spotify.com/album/${otherEdition.album.id}`,
+    })
+    .where(eq(schema.album.mediaItemId, albumId))
+  const priorName = {
+    username,
+    artistKey: scrobble.artistKey,
+    trackKey: 'previous recording alias',
+  }
+  await fixture.insert(schema.lastfmScrobble).values({
+    ...scrobble,
+    ...priorName,
+    id: 'previous-alias-scrobble',
+    trackName: 'Previous Recording Alias',
+    albumName: 'Previous Album Tag',
+    albumKey: 'previous album tag',
+  })
+  await fixture
+    .insert(schema.lastfmTrackSource)
+    .values({ ...priorName, trackMediaItemId: targetId, manuallyMatched: true })
+  await fixture
+    .insert(schema.lastfmTrackLink)
+    .values({ ...priorName, trackMediaItemId: targetId, strategy: 'manual' })
+  await refreshTrackLinks(username)
+
+  await queueSpotifyTrackSearches({ trackIds: [sourceId] }, userId)
+  await processQueuedJobs()
+  const scrobbles = await fixture
+    .select()
+    .from(schema.lastfmScrobble)
+    .orderBy(schema.lastfmScrobble.id)
+  const response = await confirmStoredSpotifyCandidate(sourceId)
+  expect(response.status).toBe(200)
+  expect(await response.json()).toMatchObject({ data: { targetId } })
+  await refreshTrackLinks(username)
+  expect(
+    await fixture
+      .select()
+      .from(schema.lastfmTrackSource)
+      .orderBy(schema.lastfmTrackSource.trackKey),
+  ).toMatchObject([
+    { ...priorName, trackMediaItemId: targetId, manuallyMatched: true },
+    {
+      trackKey: source.trackKey,
+      trackMediaItemId: targetId,
+      manuallyMatched: true,
+    },
+  ])
+  expect(
+    await fixture
+      .select()
+      .from(schema.lastfmScrobble)
+      .orderBy(schema.lastfmScrobble.id),
+  ).toEqual(scrobbles)
+  expect(await getTrackDetail(targetId)).toMatchObject({
+    title: targetTitle,
+    scrobbles: 2,
+    durationSec: 175,
+    album: { id: albumId },
+  })
+  expect(await getTrackDetail(sourceId)).toBeNull()
+  expect(request).not.toHaveBeenCalled()
+})
 
 it('links a standalone Last.fm name when one exact Spotify release supports its playback tags', async () => {
   const { source, scrobbles, username } = await addScrobbledRecording([

@@ -8,7 +8,11 @@ import {
   hasUnmatchedVersionAlbum,
 } from '@/lib/album-track-aliases'
 import type { db } from '@/lib/db'
-import { plainKey } from '@/lib/lastfm-album-matching'
+import {
+  artistKeys,
+  artistNameKey,
+  plainKey,
+} from '@/lib/lastfm-album-matching'
 import { trackBaseKey, trackVersionKey } from '@/lib/track-matching'
 import { spotifyAlbumReleaseIds } from './album-library-tracks'
 
@@ -47,6 +51,7 @@ type RecordingEvidence = z.infer<typeof RecordingEvidenceSchema>
 export async function spotifySearchRecordingEvidence(
   tx: Transaction,
   id: string,
+  { includeScrobbles = true }: { includeScrobbles?: boolean } = {},
 ) {
   const { rows } = await tx.execute(sql`
     with positions as (
@@ -61,9 +66,11 @@ export async function spotifySearchRecordingEvidence(
     ), recorded_names as (
       select s.track_key, s.artist_key, s.manually_matched, s.username
       from lastfm_track_source s where s.track_media_item_id = ${id}
+        ${includeScrobbles ? sql`` : sql`and false`}
       union
       select l.track_key, l.artist_key, l.strategy = 'manual', l.username
       from lastfm_track_link l where l.track_media_item_id = ${id}
+        ${includeScrobbles ? sql`` : sql`and false`}
     ), scrobbles as (
       select distinct s.track_name, s.artist_name, n.manually_matched, s.album_name, s.album_media_item_id
       from recorded_names n join lastfm_scrobble s using (username, artist_key, track_key)
@@ -183,12 +190,84 @@ export function spotifySearchHasAlternateVersion(
   )
 }
 
+const normalizedIsrc = (value: string) =>
+  value.trim().toUpperCase().replaceAll('-', '')
+const isrcPattern = /^[A-Z]{2}[A-Z0-9]{3}\d{7}$/
+
+/** Check the retained library recording's own evidence during an explicit match. */
+export function spotifySearchTargetConflicts(
+  recording: RecordingEvidence,
+  candidate: SpotifyTrackSearchCandidate,
+) {
+  const title = trackVersionKey(candidate.title)
+  if (
+    [recording.title, ...recording.position_titles].some(
+      (stored) => stored.trim() && trackVersionKey(stored) !== title,
+    )
+  )
+    return true
+
+  const urlId =
+    /^(?:https:\/\/open\.spotify\.com\/track\/|spotify:track:)([A-Za-z0-9]{22})(?:[/?#]|$)/.exec(
+      recording.spotify_url ?? '',
+    )?.[1]
+  if (
+    [...recording.track_ids, urlId].some(
+      (id) =>
+        id && spotifyIdPattern.test(id) && id !== candidate.spotifyTrackId,
+    )
+  )
+    return true
+
+  const currentIsrc = normalizedIsrc(recording.isrc ?? '')
+  const candidateIsrc = normalizedIsrc(candidate.isrc ?? '')
+  if (
+    currentIsrc !== candidateIsrc &&
+    isrcPattern.test(currentIsrc) &&
+    isrcPattern.test(candidateIsrc)
+  )
+    return true
+
+  const currentArtists = new Set(
+    recording.artists.flatMap(artistKeys).filter(Boolean),
+  )
+  const candidateArtists = new Set(
+    candidate.artists.flatMap(artistKeys).filter(Boolean),
+  )
+  if (
+    currentArtists.size &&
+    candidateArtists.size &&
+    ![...currentArtists].some((artist) => candidateArtists.has(artist))
+  )
+    return true
+  if (
+    recording.artist_credits.some((credit) => {
+      if (!spotifyIdPattern.test(credit.id)) return false
+      const known = candidate.artistCredits.filter(
+        ({ name }) => artistNameKey(name) === artistNameKey(credit.name),
+      )
+      return known.length > 0 && known.every(({ id }) => id !== credit.id)
+    })
+  )
+    return true
+
+  // A partial billing difference needs corroboration. Give rounded lengths
+  // the same five seconds of leeway as recording groups.
+  return (
+    candidate.durationSec > 0 &&
+    recording.durations.length > 0 &&
+    recording.durations.every(
+      (seconds) => Math.abs(seconds - candidate.durationSec) > 5,
+    ) &&
+    [...currentArtists].some((artist) => !candidateArtists.has(artist)) &&
+    [...candidateArtists].some((artist) => !currentArtists.has(artist))
+  )
+}
+
 export function spotifySearchConsistentRecording(
   recording: RecordingEvidence,
   candidate: SpotifyTrackSearchCandidate,
 ) {
-  const normalizedIsrc = (value: string) =>
-    value.trim().toUpperCase().replaceAll('-', '')
   return (
     (!recording.spotify_url ||
       recording.spotify_url === candidate.spotifyUrl) &&

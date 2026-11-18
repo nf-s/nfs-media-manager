@@ -4,11 +4,13 @@ import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import {
+  SpotifyTrackSearchCandidateSchema,
   SpotifyTrackSearchJobSchema,
   SpotifyTrackSearchSchema,
 } from '@repo/schemas/spotify-track-search'
 import { ConfigContext } from './providers'
 import {
+  SpotifyTrackSearchConfirmation,
   SpotifyTrackSearchJobCell,
   SpotifyTrackSearchReview,
   SpotifyTrackSearchSelectionBar,
@@ -23,6 +25,17 @@ const job = SpotifyTrackSearchJobSchema.parse({
   createdAt,
   startedAt: createdAt,
   finishedAt: createdAt,
+})
+const candidate = SpotifyTrackSearchCandidateSchema.parse({
+  spotifyTrackId: '1234567890ABCDEFGHIJKL',
+  title: 'Catalog recording',
+  artists: ['Example artist'],
+  albumName: 'Catalog album',
+  spotifyAlbumId: null,
+  durationSec: 192,
+  isrc: null,
+  artworkUrl: null,
+  spotifyUrl: 'https://open.spotify.com/track/1234567890ABCDEFGHIJKL',
 })
 
 function render(element: React.ReactNode, client = new QueryClient()) {
@@ -127,19 +140,7 @@ test('saved Spotify results show enough recording details for review before conf
     SpotifyTrackSearchSchema.parse({
       job,
       query: 'Example artist Stored recording',
-      candidates: [
-        {
-          spotifyTrackId: '1234567890ABCDEFGHIJKL',
-          title: 'Catalog recording',
-          artists: ['Example artist'],
-          albumName: 'Catalog album',
-          spotifyAlbumId: null,
-          durationSec: 192,
-          isrc: null,
-          artworkUrl: null,
-          spotifyUrl: 'https://open.spotify.com/track/1234567890ABCDEFGHIJKL',
-        },
-      ],
+      candidates: [candidate],
     }),
   )
   const html = render(
@@ -165,4 +166,67 @@ test('saved Spotify results show enough recording details for review before conf
     /https:\/\/open.spotify.com\/track\/1234567890ABCDEFGHIJKL/,
   )
   assert.doesNotMatch(html, /Confirm Spotify match/)
+})
+
+function renderConfirmation(failure: unknown) {
+  const inactive = () => assert.fail('Rendering must not invoke dialog actions')
+  return render(
+    <SpotifyTrackSearchConfirmation
+      candidate={candidate}
+      failure={failure}
+      pending={false}
+      onConfirm={inactive}
+      onChooseAnother={inactive}
+      onClose={inactive}
+    />,
+  )
+}
+
+test('a conflicting Spotify ID links to the existing recording and blocks repeat confirmation', () => {
+  const html = renderConfirmation({
+    statusCode: 409,
+    message: 'The library recording conflicts with this Spotify track.',
+    data: {
+      code: 'spotify-track-target-conflict',
+      trackId: 'existing-recording',
+      title: 'Existing library title',
+    },
+  })
+  assert.match(html, /role="alert"/)
+  assert.match(
+    html,
+    /The library recording conflicts with this Spotify track\./,
+  )
+  assert.match(
+    html,
+    /href="\/tracks\/existing-recording\?tab=sources"[^>]*>Open Sources for Existing library title<\/a>/,
+  )
+  assert.match(
+    html,
+    /<button[^>]* disabled=""[^>]*>Confirm Spotify match<\/button>/,
+  )
+  assert.match(
+    html,
+    /<button(?![^>]* disabled)[^>]*>Choose another track<\/button>/,
+  )
+  assert.doesNotMatch(html, /keep its listening history/)
+})
+
+test('ordinary or incomplete match errors remain retryable', () => {
+  for (const failure of [
+    { statusCode: 500, message: 'Try again later.' },
+    {
+      statusCode: 409,
+      message: 'Try again later.',
+      data: { code: 'spotify-track-target-conflict', trackId: 'missing-title' },
+    },
+  ]) {
+    const html = renderConfirmation(failure)
+    assert.match(html, /Try again later\./)
+    assert.match(
+      html,
+      /<button(?![^>]* disabled)[^>]*>Confirm Spotify match<\/button>/,
+    )
+    assert.doesNotMatch(html, /Open Sources for/)
+  }
 })

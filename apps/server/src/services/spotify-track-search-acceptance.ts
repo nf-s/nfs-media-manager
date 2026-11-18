@@ -1,6 +1,9 @@
 import { eq, sql } from 'drizzle-orm'
 import { z } from 'zod'
-import type { SpotifyTrackSearchCandidate } from '@repo/schemas/spotify-track-search'
+import {
+  SpotifyTrackSearchTargetConflictSchema,
+  type SpotifyTrackSearchCandidate,
+} from '@repo/schemas/spotify-track-search'
 import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
 import { slugifyParts } from '@/lib/media-utils'
@@ -20,6 +23,7 @@ import {
   spotifySearchExactRelease,
   spotifySearchHasAlternateVersion,
   spotifySearchRecordingEvidence,
+  spotifySearchTargetConflicts,
 } from './spotify-track-search-evidence'
 import {
   replaceSpotifyTrackCredits,
@@ -370,6 +374,23 @@ export async function acceptSpotifyTrackSearch(input: {
       })
     const targetId = await resolveRecordingTarget(tx, source, candidate)
     await checkRecordingTransfer(tx, source, targetId, candidate)
+    if (targetId !== trackId) {
+      const target = await spotifySearchRecordingEvidence(tx, targetId, {
+        includeScrobbles: false,
+      })
+      if (target && spotifySearchTargetConflicts(target, candidate))
+        throw new ServerError({
+          statusCode: 409,
+          message:
+            'This Spotify result conflicts with the library recording that would receive these scrobbles.',
+          data: SpotifyTrackSearchTargetConflictSchema.parse({
+            code: 'spotify-track-target-conflict',
+            trackId: targetId,
+            title:
+              target.title.trim().slice(0, 500).trimEnd() || 'Library track',
+          }),
+        })
+    }
     await linkSpotifyRecording(tx, input, targetId, candidate, 'manual')
     return { targetId }
   })

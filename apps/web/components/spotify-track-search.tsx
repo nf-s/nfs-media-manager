@@ -11,6 +11,7 @@ import {
   type QueryClient,
 } from '@tanstack/react-query'
 import { X } from 'lucide-react'
+import { z } from 'zod'
 import { EnrichmentResultSchema } from '@repo/schemas/job'
 import {
   SPOTIFY_TRACK_SEARCH_MARKET_REQUIRED,
@@ -21,6 +22,7 @@ import {
   SpotifyTrackSearchSchema,
   SpotifyTrackSearchStatusInputSchema,
   SpotifyTrackSearchStatusSchema,
+  SpotifyTrackSearchTargetConflictSchema,
   type SpotifyTrackSearchCandidate,
   type SpotifyTrackSearchFreshness,
   type SpotifyTrackSearchInput,
@@ -452,6 +454,84 @@ function TrackIdentity({
   )
 }
 
+const targetConflictStatus = 409
+const TargetConflictErrorSchema = z.object({
+  statusCode: z.literal(targetConflictStatus),
+  data: SpotifyTrackSearchTargetConflictSchema,
+})
+
+export function SpotifyTrackSearchConfirmation({
+  candidate,
+  failure,
+  pending,
+  onConfirm,
+  onChooseAnother,
+  onClose,
+}: {
+  candidate: SpotifyTrackSearchCandidate
+  failure: unknown
+  pending: boolean
+  onConfirm: () => void
+  onChooseAnother: () => void
+  onClose: () => void
+}) {
+  const parsed = TargetConflictErrorSchema.safeParse(failure)
+  const conflict = parsed.success ? parsed.data.data : undefined
+  return (
+    <>
+      <Section title="Spotify track to link">
+        <TrackIdentity track={candidate} />
+        {!conflict && (
+          <p className="ds-help">
+            Link this Spotify track to the recording and keep its listening
+            history.
+          </p>
+        )}
+      </Section>
+      {failure != null && (
+        <Notice tone="danger">
+          {errorMessage(failure, 'Could not save the Spotify match.')}
+          {conflict && (
+            <>
+              {' '}
+              <DetailLink
+                kind="track"
+                id={conflict.trackId}
+                tab="sources"
+                className="underline break-words"
+                onClick={(event) => {
+                  if (
+                    event.button === 0 &&
+                    !event.metaKey &&
+                    !event.altKey &&
+                    !event.ctrlKey &&
+                    !event.shiftKey
+                  )
+                    onClose()
+                }}
+              >
+                Open Sources for {conflict.title}
+              </DetailLink>
+            </>
+          )}
+        </Notice>
+      )}
+      <div className="ds-actions flex-wrap">
+        <Button
+          variant="primary"
+          disabled={pending || Boolean(conflict)}
+          onClick={onConfirm}
+        >
+          {pending ? 'Saving...' : 'Confirm Spotify match'}
+        </Button>
+        <Button disabled={pending} onClick={onChooseAnother}>
+          Choose another track
+        </Button>
+      </div>
+    </>
+  )
+}
+
 export function SpotifyTrackSearchReview({
   track,
   onClose,
@@ -481,6 +561,10 @@ export function SpotifyTrackSearchReview({
         SpotifyTrackSearchAcceptResultSchema,
         {
           method: 'POST',
+          errorData: {
+            status: targetConflictStatus,
+            schema: SpotifyTrackSearchTargetConflictSchema,
+          },
           body: JSON.stringify(
             SpotifyTrackSearchAcceptInputSchema.parse({
               jobId: input.jobId,
@@ -560,41 +644,17 @@ export function SpotifyTrackSearchReview({
               Could not load the saved Spotify search.
             </Notice>
           )}
-          {accept.isError && (
-            <Notice tone="danger">
-              {errorMessage(accept.error, 'Could not save the Spotify match.')}
-            </Notice>
-          )}
           {job?.acceptedTrackId ? (
             <SpotifyTrackSearchResult job={job} />
           ) : chosen && chosen.jobId === job?.jobId ? (
-            <>
-              <Section title="Spotify track to link">
-                <TrackIdentity track={chosen.candidate} />
-                <p className="ds-help">
-                  Link this Spotify track to the recording and keep its
-                  listening history.
-                </p>
-              </Section>
-              <div className="ds-actions">
-                <Button
-                  variant="primary"
-                  disabled={accept.isPending}
-                  onClick={() => accept.mutate(chosen)}
-                >
-                  {accept.isPending ? 'Saving...' : 'Confirm Spotify match'}
-                </Button>
-                <Button
-                  disabled={accept.isPending}
-                  onClick={() => {
-                    setChosen(null)
-                    accept.reset()
-                  }}
-                >
-                  Choose another track
-                </Button>
-              </div>
-            </>
+            <SpotifyTrackSearchConfirmation
+              candidate={chosen.candidate}
+              failure={accept.error}
+              pending={accept.isPending}
+              onConfirm={() => accept.mutate(chosen)}
+              onChooseAnother={() => setChosen(null)}
+              onClose={onClose}
+            />
           ) : job?.status === 'succeeded' && candidates.length > 0 ? (
             <Section title={formatItemCount(candidates.length, MATCHES)}>
               <List compact aria-label="Spotify track matches">
@@ -614,9 +674,10 @@ export function SpotifyTrackSearchReview({
                           type="button"
                           title={candidate.title}
                           aria-label={`Review ${candidate.title}${candidate.albumName ? ` from ${candidate.albumName}` : ''}`}
-                          onClick={() =>
+                          onClick={() => {
+                            accept.reset()
                             setChosen({ jobId: job.jobId, candidate })
-                          }
+                          }}
                         >
                           {candidate.title}
                         </button>

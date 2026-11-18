@@ -1,6 +1,12 @@
 import { z } from 'zod'
 
-function createEnvelopeSchema<TSchema extends z.ZodTypeAny>(dataSchema: TSchema) {
+type ApiRequestInit = RequestInit & {
+  errorData?: { status: number; schema: z.ZodType }
+}
+
+function createEnvelopeSchema<TSchema extends z.ZodTypeAny>(
+  dataSchema: TSchema,
+) {
   return z.object({
     statusCode: z.number().int(),
     message: z.string(),
@@ -12,7 +18,7 @@ export async function fetchApiData<TSchema extends z.ZodTypeAny>(
   apiBaseUrl: string,
   path: string,
   dataSchema: TSchema,
-  init?: RequestInit,
+  { errorData, ...init }: ApiRequestInit = {},
 ): Promise<z.infer<TSchema>> {
   const response = await fetch(`${apiBaseUrl}${path}`, {
     ...init,
@@ -30,11 +36,18 @@ export async function fetchApiData<TSchema extends z.ZodTypeAny>(
       statusCode: z.number().int().optional(),
       message: z.string().optional(),
       description: z.string().nullable().optional(),
+      data: z.unknown().optional(),
     })
     const parsedError = errorSchema.safeParse(json)
 
     if (parsedError.success) {
-      throw parsedError.data
+      const { data, ...error } = parsedError.data
+      const details =
+        errorData?.status === response.status &&
+        error.statusCode === response.status
+          ? errorData.schema.safeParse(data)
+          : undefined
+      throw details?.success ? { ...error, data: details.data } : error
     }
 
     throw new Error('Request failed')

@@ -3,6 +3,7 @@ import {
   SpotifyTrackSearchAcceptInputSchema,
   SpotifyTrackSearchAcceptResultSchema,
   SpotifyTrackSearchParamsSchema,
+  SpotifyTrackSearchTargetConflictSchema,
 } from '@repo/schemas/spotify-track-search'
 import {
   createOpenAPIApp,
@@ -45,7 +46,10 @@ app.openapi(
       },
       401: jsonErrorResponse('Unauthorized'),
       404: jsonErrorResponse('Track or stored candidate was not found'),
-      409: jsonErrorResponse('Track or search changed'),
+      409: jsonErrorResponse(
+        'Track or search changed, or the catalog candidate conflicts with an existing library recording',
+        createResponseSchema(SpotifyTrackSearchTargetConflictSchema.nullable()),
+      ),
       422: validationErrorResponse,
     },
   }),

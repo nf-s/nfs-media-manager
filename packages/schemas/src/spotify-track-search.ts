@@ -30,6 +30,11 @@ export const SpotifyTrackSearchAcceptInputSchema = z
 export const SpotifyTrackSearchAcceptResultSchema = z.object({
   targetId: trackId,
 })
+export const SpotifyTrackSearchTargetConflictSchema = z.object({
+  code: z.literal('spotify-track-target-conflict'),
+  trackId,
+  title: name,
+})
 
 export const SpotifyTrackSearchStatusInputSchema = z
   .object({ trackIds: z.array(trackId).min(1).max(100) })
