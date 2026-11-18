@@ -12,6 +12,7 @@ import {
   albumProviderDetailsMetadata,
 } from '@/lib/album-provider-details'
 import {
+  DiscogsReferenceIdSchema,
   albumBarcode,
   albumNameMatches,
   albumNames,
@@ -22,10 +23,6 @@ import {
 
 const IdSchema = z.number().int().positive().safe()
 const DISCOGS_API_ORIGIN = 'https://api.discogs.com'
-const ReferenceIdSchema = z
-  .string()
-  .regex(/^[1-9]\d*$/)
-  .refine((value) => Number.isSafeInteger(Number(value)))
 const SearchSchema = z.object({
   pagination: z.object({ items: z.number().int().nonnegative() }).optional(),
   results: z.array(
@@ -98,7 +95,7 @@ async function resolveDiscogsReference(
   if (reference)
     return {
       type: reference.referenceType === 'master' ? 'master' : 'release',
-      id: ReferenceIdSchema.parse(reference.externalId),
+      id: DiscogsReferenceIdSchema.parse(reference.externalId),
     }
   const barcode = albumBarcode(context)
   if (barcode) {

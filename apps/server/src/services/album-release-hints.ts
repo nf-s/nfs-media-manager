@@ -1,17 +1,26 @@
 import type { AlbumReleaseHint } from '@repo/media-plugin-sdk'
 import { sql, type SQL } from 'drizzle-orm'
 import { z } from 'zod'
+import { DiscogsRecordSchema } from '@/lib/album-provider-details'
 import { db } from '@/lib/db'
 import {
   AlbumReleaseDateSchema,
   SpotifyAlbumTypeSchema,
   SpotifyIdSchema,
 } from '@/lib/spotify-api'
-import { AlbumMbidSchema } from '@/plugins/builtin/album-provider-helpers'
+import {
+  AlbumMbidSchema,
+  DiscogsReferenceIdSchema,
+} from '@/plugins/builtin/album-provider-helpers'
 
 type ReleaseSource = AlbumReleaseHint['source']
 
-const sources: readonly ReleaseSource[] = ['spotify', 'musicbrainz']
+const sources: readonly ReleaseSource[] = ['spotify', 'musicbrainz', 'discogs']
+const ReferenceIdSchemas: Record<ReleaseSource, z.ZodType<string>> = {
+  spotify: SpotifyIdSchema,
+  musicbrainz: AlbumMbidSchema,
+  discogs: DiscogsReferenceIdSchema,
+}
 const SpotifyReferenceTypes = ['album', 'spotify']
 const ReleaseNameSchema = z.string().trim().min(1).max(500)
 const CreditedArtistSchema = z.object({ name: ReleaseNameSchema })
@@ -38,10 +47,28 @@ const MusicBrainzCreditSchema = z.union([
   CreditedArtistSchema,
   z.object({ artist: CreditedArtistSchema }).transform(({ artist }) => artist),
 ])
+const DiscogsMasterSchema = z.object({
+  id: z.union([
+    DiscogsRecordSchema.shape.id.transform(String),
+    DiscogsReferenceIdSchema,
+  ]),
+  title: ReleaseNameSchema,
+  year: z.unknown().optional(),
+  artists: z.unknown().optional(),
+})
+const DiscogsYearSchema = DiscogsRecordSchema.shape.year
+  .unwrap()
+  .min(1)
+  .max(9999)
 const EnvelopesSchema = z.object({
   data: z.unknown().optional(),
   spotify: z.unknown().optional(),
   releaseGroup: z.unknown().optional(),
+  master: z.unknown().optional(),
+  discogs: z
+    .object({ master: z.unknown().optional() })
+    .optional()
+    .catch(undefined),
   mb: z
     .object({ releaseGroup: z.unknown().optional() })
     .optional()
@@ -52,9 +79,11 @@ function matchingReference(
   source: ReleaseSource,
   { provider, referenceType }: { provider: string; referenceType: string },
 ) {
-  if (source === 'spotify')
-    return provider === source && SpotifyReferenceTypes.includes(referenceType)
-  return provider === source && referenceType === 'release-group'
+  if (provider !== source) return false
+  if (source === 'spotify') return SpotifyReferenceTypes.includes(referenceType)
+  if (source === 'discogs')
+    return referenceType === 'master' || referenceType === 'release'
+  return referenceType === 'release-group'
 }
 
 function releaseHint(
@@ -65,13 +94,21 @@ function releaseHint(
   credits: unknown,
 ): AlbumReleaseHint {
   const releaseDate = AlbumReleaseDateSchema.safeParse(date)
-  const year = releaseDate.success ? Number(releaseDate.data.slice(0, 4)) : 0
-  const releaseType = (
-    source === 'spotify' ? SpotifyAlbumTypeSchema : MusicBrainzTypeSchema
-  ).safeParse(type)
+  const year =
+    source === 'discogs'
+      ? DiscogsYearSchema.safeParse(date).data
+      : releaseDate.success
+        ? Number(releaseDate.data.slice(0, 4))
+        : undefined
+  const releaseType =
+    source === 'spotify'
+      ? SpotifyAlbumTypeSchema.safeParse(type).data
+      : source === 'musicbrainz'
+        ? MusicBrainzTypeSchema.safeParse(type).data
+        : undefined
   const artists = z
     .array(
-      source === 'spotify' ? CreditedArtistSchema : MusicBrainzCreditSchema,
+      source === 'musicbrainz' ? MusicBrainzCreditSchema : CreditedArtistSchema,
     )
     .min(1)
     .max(30)
@@ -80,7 +117,7 @@ function releaseHint(
     source,
     title,
     ...(year ? { year } : {}),
-    ...(releaseType.success ? { releaseType: releaseType.data } : {}),
+    ...(releaseType ? { releaseType } : {}),
     ...(artists.success
       ? { artists: artists.data.map(({ name }) => name) }
       : {}),
@@ -95,6 +132,25 @@ function readSnapshot(
 ): AlbumReleaseHint | undefined {
   const envelope = EnvelopesSchema.safeParse(payload).data
   if (!envelope) return
+  if (source === 'discogs') {
+    // Master and release identifiers occupy different namespaces.
+    const records =
+      provider === 'legacy-record'
+        ? [envelope.discogs?.master]
+        : [envelope.master, envelope.discogs?.master]
+    for (const record of records) {
+      const master = DiscogsMasterSchema.safeParse(record).data
+      if (master?.id !== externalId) continue
+      return releaseHint(
+        source,
+        master.title,
+        master.year,
+        undefined,
+        master.artists,
+      )
+    }
+    return
+  }
   if (source === 'spotify') {
     const records =
       provider === 'legacy-record'
@@ -133,6 +189,8 @@ function readSnapshot(
 function snapshotMatches(source: ReleaseSource, payload: SQL, id: string) {
   if (source === 'spotify')
     return sql`(${payload}->>'id' = ${id} or ${payload} #>> '{data,id}' = ${id} or ${payload} #>> '{spotify,id}' = ${id})`
+  if (source === 'discogs')
+    return sql`(${payload} #>> '{master,id}' = ${id} or ${payload} #>> '{discogs,master,id}' = ${id})`
   return sql`(${payload}->>'id' = ${id} or ${payload} #>> '{releaseGroup,id}' = ${id} or ${payload} #>> '{mb,releaseGroup,id}' = ${id})`
 }
 
@@ -172,21 +230,21 @@ export async function getAlbumReleaseHints(
       matchingReference(source, reference),
     )
     const primary = matching.filter(({ isPrimary }) => isPrimary)
-    const ids = [
-      ...new Set(
-        (primary.length ? primary : matching).map(
-          ({ externalId }) => externalId,
-        ),
-      ),
-    ]
+    const active = primary.length ? primary : matching
     const override = overrides.find((reference) =>
       matchingReference(source, reference),
     )
+    if (
+      source === 'discogs' &&
+      (override
+        ? override.referenceType !== 'master'
+        : active.some(({ referenceType }) => referenceType !== 'master'))
+    )
+      continue
+    const ids = [...new Set(active.map(({ externalId }) => externalId))]
     const candidateId =
       override?.externalId ?? (ids.length === 1 ? ids[0] : undefined)
-    const id = (
-      source === 'spotify' ? SpotifyIdSchema : AlbumMbidSchema
-    ).safeParse(candidateId).data
+    const id = ReferenceIdSchemas[source].safeParse(candidateId).data
     if (!id) continue
     const snapshots = await db.query.providerSnapshot.findMany({
       columns: { provider: true, payload: true },

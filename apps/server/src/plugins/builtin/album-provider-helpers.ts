@@ -12,6 +12,10 @@ import { isJsonRecord } from '@/lib/provider-normalizers'
 import { retryAfterTime } from '@/lib/request-policy'
 
 export const AlbumMbidSchema = z.string().uuid()
+export const DiscogsReferenceIdSchema = z
+  .string()
+  .regex(/^[1-9]\d*$/)
+  .refine((value) => Number.isSafeInteger(Number(value)))
 export const AlbumCountSchema = z.union([
   z.number().int().nonnegative().safe(),
   z

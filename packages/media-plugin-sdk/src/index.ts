@@ -248,7 +248,7 @@ export interface MediaPluginTestContext {
 }
 
 export interface AlbumReleaseHint {
-  source: 'spotify' | 'musicbrainz'
+  source: 'spotify' | 'musicbrainz' | 'discogs'
   title: string
   year?: number
   releaseType?: string
