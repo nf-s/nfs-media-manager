@@ -806,6 +806,7 @@ describe('YouTube subscription sync jobs with offline HTTP and a temporary datab
       likeCount: 7,
       commentCount: null,
       live: 'none',
+      watchedAt: null,
     })
     expect(stored.items[0]).toMatchObject({
       id: videoId('a3'),

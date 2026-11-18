@@ -186,14 +186,24 @@ it('counts the same filtered, capped browse set without blocking any row-only pa
     }),
   ])
 
-  capturedQueries.length = 0
-  expect(
-    await queryBrowseCount('track', {
-      ...query,
-      sortBy: 'title',
-      limitResults: 5,
-    }),
-  ).toEqual({ totalCount: 5 })
+  // The cache is versioned by the cluster's snapshot, so a commit anywhere in
+  // the cluster (autovacuum, another database) between the two counts is a
+  // miss by design. Read the pair again until nothing committed across it.
+  const snapshot = async () =>
+    (await pool.query('select pg_current_snapshot()::text as version')).rows
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const before = await snapshot()
+    await queryBrowseCount('track', { ...query, page: 3 })
+    capturedQueries.length = 0
+    expect(
+      await queryBrowseCount('track', {
+        ...query,
+        sortBy: 'title',
+        limitResults: 5,
+      }),
+    ).toEqual({ totalCount: 5 })
+    if (JSON.stringify(await snapshot()) === JSON.stringify(before)) break
+  }
   expect(capturedQueries.map(({ query }) => query)).toEqual([
     expect.stringContaining('pg_current_snapshot'),
   ])

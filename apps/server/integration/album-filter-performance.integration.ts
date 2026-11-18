@@ -147,8 +147,9 @@ async function expectOneProfileExpansion([query, params]: [string, unknown[]]) {
   ).toHaveLength(1)
 }
 
+// The page read is the only one that selects IDs with their rank.
 const isPageSql = (query: string) =>
-  query.includes('select "media_item"."id", null from "media_item"')
+  /select "media_item"\."id", .* as "rank" from "media_item"/.test(query)
 
 it('matches and counts albums through playlist track memberships in a set', async () => {
   const { listAlbumBrowsePage } = await import('@/services/media')
