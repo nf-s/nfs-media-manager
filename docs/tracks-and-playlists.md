@@ -110,6 +110,8 @@ The subsequent import reuses the stored library track when its Spotify ID is alr
 
 ## Browsing tracks
 
+Tracks Browse hides a standalone Last.fm entry with no album, playlist or Spotify ID when its exact scrobbled artist and title already count toward a visible album track or playable recording. An EP and an album can each keep their own row and show the same listens. If the last matching recording leaves the library, the standalone entry appears again. To inspect the original names or choose a recording manually, filter by **Source → Last.fm** or open **Tracks → Imports → Last.fm scrobbles**.
+
 List is the default Tracks view. Table columns default to Title, Artists, Album, Duration, Added, Scrobbles, Playlists and Tags. The title cell has the artwork and the Play and Add to queue pair; album and playlist names are links, without their own play buttons. List rows show artists and album under the title and Duration, Scrobbles and Added on the right. Grid cards show the release year and the active sort value (Added by default, or the length for text sorts). List, Grid and Table show artwork when available, including artwork inherited from the linked album. Use Table to enable the **Source** and **Spotify match** columns. Search, [AI search](ai-search.md), filters, ranges and sorting use the same URL parameters as albums.
 
 **Artist** groups by the first billed track artist, then release year and album name. **Album** sorts by album name, then release date. **Released** sorts by release date and keeps ties in album order. Both use the linked album's title and date when available, so edition names and dates reported for individual tracks do not split the release. Other sorts break ties by the album's billed artist, release year and title. The stored album position preserves disc and track order. Secondary keys stay ascending in either sort direction, with missing values last.
@@ -167,6 +169,8 @@ A recording can appear on more than one album track list. Track details show one
 | Artist and title | A credited artist of the track is credited on an album whose track list has the track.                                                                       |
 
 Track titles are compared without featured credits, remaster notes and "original mix" style qualifiers; a live, remix or edit title is a different track. Between several fitting albums the exact album title wins, then the earliest release. Hidden albums are not linked. There is no manual override.
+
+When an imported track and a generated album position share an exact Spotify release, title and artist credits, the app can reconcile a split identity. It keeps ambiguous matches and recordings with conflicting duration or independent edits separate. Album track-list updates, playlist imports and **Refresh matches** can repair existing pairs while preserving the album position, playlist dates and listening history.
 
 ## Scrobbles
 

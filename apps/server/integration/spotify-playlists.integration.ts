@@ -959,6 +959,232 @@ describe('Spotify playlist imports', () => {
     ])
   })
 
+  it('reconciles a legacy track on the same Spotify release when only title spacing differs', async () => {
+    await addAlbum('album-recording', 'Example Album', {
+      spotifyAlbumId: ALBUM,
+      tracks: ['First  Recording'],
+    })
+    const [legacy] = (await listTracks(trackQuery())).items
+    if (!legacy) throw new Error('Expected a track from the stored album')
+    entries[OWNED] = [
+      track('opening', {
+        title: 'First Recording',
+        album: 'Example Album',
+        albumId: ALBUM,
+      }),
+      track('openingep', {
+        title: 'First Recording',
+        album: 'Example EP',
+        albumId: spotifyId('exampleep'),
+      }),
+      track('openingedit', {
+        title: 'First Recording (Edit)',
+        album: 'Example Album',
+        albumId: ALBUM,
+      }),
+    ]
+    await importAll({
+      playlists: [chosen(OWNED, 'Morning')],
+      likedSongs: false,
+    })
+
+    const result = await listTracks(trackQuery())
+    expect(result.items).toHaveLength(3)
+    expect(result.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          title: 'First Recording',
+          sources: ['album', 'spotify'],
+          spotifyTrackId: spotifyId('opening'),
+        }),
+        expect.objectContaining({
+          albumName: 'Example EP',
+          sources: ['spotify'],
+          spotifyTrackId: spotifyId('openingep'),
+        }),
+        expect.objectContaining({
+          title: 'First Recording (Edit)',
+          sources: ['spotify'],
+          spotifyTrackId: spotifyId('openingedit'),
+        }),
+      ]),
+    )
+    expect(await getTrackDetail(legacy.id)).toBeNull()
+  })
+
+  it('reconciles an album track list added after the Spotify playlist', async () => {
+    entries[OWNED] = [
+      track('opening', {
+        title: 'First Recording',
+        album: 'Example Album',
+        albumId: ALBUM,
+      }),
+    ]
+    await importAll({
+      playlists: [chosen(OWNED, 'Morning')],
+      likedSongs: false,
+    })
+    const [imported] = (await listTracks(trackQuery())).items
+    if (!imported) throw new Error('Expected a track from Spotify')
+    await addAlbum('album-recording', 'Example Album', {
+      spotifyAlbumId: ALBUM,
+      tracks: ['First  Recording'],
+    })
+
+    expect((await listTracks(trackQuery())).items).toEqual([
+      expect.objectContaining({
+        id: imported.id,
+        sources: ['album', 'spotify'],
+        spotifyTrackId: spotifyId('opening'),
+      }),
+    ])
+    const [position] = await databaseClient.select().from(schema.track)
+    expect(position).toMatchObject({
+      title: 'First  Recording',
+      position: 1,
+      trackMediaItemId: imported.id,
+    })
+  })
+
+  it('reconciles a stored duplicate after the album gains its Spotify release ID', async () => {
+    await addAlbum('album-recording', 'Example Album', {
+      tracks: ['First  Recording'],
+    })
+    const [legacy] = (await listTracks(trackQuery())).items
+    if (!legacy) throw new Error('Expected a track from the stored album')
+    entries[OWNED] = [
+      track('opening', {
+        title: 'First Recording',
+        album: 'Example Album',
+        albumId: ALBUM,
+      }),
+    ]
+    await importAll({
+      playlists: [chosen(OWNED, 'Morning')],
+      likedSongs: false,
+    })
+    const split = (await listTracks(trackQuery())).items
+    expect(split).toHaveLength(2)
+    const imported = split.find((item) => item.spotifyTrackId)
+    if (!imported) throw new Error('Expected a track from Spotify')
+    const morning = await playlistId('Morning')
+    await databaseClient.insert(schema.playlistItem).values({
+      playlistId: morning,
+      mediaItemId: legacy.id,
+      position: 2,
+      addedAt: new Date('2023-01-01T00:00:00Z'),
+    })
+    await addScrobbles('The Examples', 'First Recording', 2)
+    const history = {
+      username: listener,
+      artistKey: 'the examples',
+      trackKey: 'first recording',
+      trackMediaItemId: legacy.id,
+    }
+    await databaseClient.insert(schema.lastfmTrackSource).values(history)
+    await databaseClient.insert(schema.lastfmTrackLink).values({
+      ...history,
+      strategy: 'exact',
+    })
+    await databaseClient.insert(schema.providerReference).values({
+      id: randomUUID(),
+      mediaItemId: 'album-recording',
+      provider: 'spotify',
+      referenceType: 'album',
+      externalId: ALBUM,
+    })
+
+    await relinkLastfmScrobbles()
+    const result = await listTracks(trackQuery())
+    expect(result.items).toEqual([
+      expect.objectContaining({
+        id: imported.id,
+        sources: ['album', 'lastfm', 'spotify'],
+        spotifyTrackId: spotifyId('opening'),
+        dateAdded: '2023-01-01T00:00:00.000Z',
+        scrobbles: 2,
+      }),
+    ])
+    const [position] = await databaseClient.select().from(schema.track)
+    expect(position).toMatchObject({
+      title: 'First  Recording',
+      position: 1,
+      trackMediaItemId: imported.id,
+    })
+    await relinkLastfmScrobbles()
+    expect((await listTracks(trackQuery())).items).toEqual(result.items)
+  })
+
+  it('keeps existing recordings separate when the same release has more than one matching Spotify ID', async () => {
+    await addAlbum('album-recording', 'Example Album', {
+      spotifyAlbumId: ALBUM,
+      tracks: ['First  Recording'],
+    })
+    entries[OWNED] = ['opening', 'alternate'].map((id) =>
+      track(id, {
+        title: 'First Recording',
+        album: 'Example Album',
+        albumId: ALBUM,
+      }),
+    )
+    await importAll({
+      playlists: [chosen(OWNED, 'Morning')],
+      likedSongs: false,
+    })
+
+    const result = await listTracks(trackQuery())
+    expect(result.items).toHaveLength(3)
+    expect(new Set(result.items.map((item) => item.spotifyTrackId))).toEqual(
+      new Set([null, spotifyId('alternate'), spotifyId('opening')]),
+    )
+  })
+
+  it('preserves generated album recordings with manual edits or conflicting durations', async () => {
+    await addAlbum('album-recording', 'Example Album', {
+      spotifyAlbumId: ALBUM,
+      tracks: ['First  Recording', 'Second  Recording'],
+    })
+    const [edited, timed] = (await listTracks(trackQuery())).items
+    if (!edited || !timed) throw new Error('Expected stored album tracks')
+    await databaseClient.insert(schema.mediaOverride).values({
+      id: 'track-override',
+      mediaItemId: edited.id,
+      field: 'title',
+      value: 'First Recording',
+    })
+    await databaseClient
+      .update(schema.libraryTrack)
+      .set({ durationSec: 130 })
+      .where(eq(schema.libraryTrack.mediaItemId, timed.id))
+    entries[OWNED] = ['First Recording', 'Second Recording'].map(
+      (title, index) =>
+        track(`opening${index}`, {
+          title,
+          album: 'Example Album',
+          albumId: ALBUM,
+        }),
+    )
+    await importAll({
+      playlists: [chosen(OWNED, 'Morning')],
+      likedSongs: false,
+    })
+
+    expect((await listTracks(trackQuery())).items).toHaveLength(4)
+    expect(await getTrackDetail(edited.id)).toMatchObject({
+      sources: ['album'],
+    })
+    expect(await getTrackDetail(timed.id)).toMatchObject({
+      sources: ['album'],
+      durationSec: 130,
+    })
+    expect(await databaseClient.select().from(schema.mediaOverride)).toEqual([
+      expect.objectContaining({
+        mediaItemId: edited.id,
+        value: 'First Recording',
+      }),
+    ])
+  })
+
   it('counts scrobbles towards tracks by artist and title', async () => {
     await addScrobbles('the examples', 'opening', 3)
     await addScrobbles('Examples', 'Night Drive (Other Remix)', 2)

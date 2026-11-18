@@ -37,6 +37,7 @@ import {
 } from './music-tags'
 import {
   albumTrackDurationExpression,
+  redundantLastfmTrackIds,
   trackSourcesExpression,
   trackSpotifyMatchExpression,
 } from './track-values'
@@ -58,6 +59,7 @@ const trackSortAlbumName = sql`lower(coalesce(nullif(trim(${trackSortAlbum.title
 export type BrowseQueryOptions = {
   conditions?: SQL[]
   sort?: { field: BrowseField; expression: SQL; missingFirst?: boolean }
+  includeLastfmSourceRows?: boolean
 }
 
 export async function listBrowseFields(
@@ -230,6 +232,16 @@ function matchesValue(key: string, value: string, mediaType: MediaType): SQL {
   return sql`exists (select 1 from jsonb_array_elements_text(case when jsonb_typeof(${expression}) = 'array' then ${expression} else jsonb_build_array(${expression}) end) filter_value(value) where lower(filter_value.value) = ${match})`
 }
 
+// The Last.fm source filter also powers the import matching table and its links.
+function requestsLastfmSource(query: BrowseQuery) {
+  return query.filters.some(
+    (filter) =>
+      filter.field === 'source' &&
+      filter.mode !== 'exclude' &&
+      filter.value.toLowerCase() === trackSourceLabels.lastfm.toLowerCase(),
+  )
+}
+
 async function browseQueries(
   mediaType: MediaType,
   query: AlbumQuery | FilmQuery | TrackQuery,
@@ -272,6 +284,14 @@ async function browseQueries(
   if (!sortField)
     throw new ServerError({ statusCode: 422, message: 'Unknown sort field' })
   const conditions: SQL[] = [eq(mediaItem.mediaType, mediaType)]
+  if (
+    mediaType === 'track' &&
+    !options.includeLastfmSourceRows &&
+    !requestsLastfmSource(query)
+  )
+    conditions.push(sql`(${mediaItem.sourceLabel} is distinct from 'lastfm' or not exists (
+      ${redundantLastfmTrackIds(sql`${mediaItem.id}`)}
+    ))`)
   if (query.creatorId) {
     const role = 'creatorRole' in query ? query.creatorRole : undefined
     const roles =
@@ -554,8 +574,9 @@ export async function queryBrowsePositions(
 export async function queryBrowseCount(
   mediaType: MediaType,
   query: BrowseQuery,
+  options: BrowseQueryOptions = {},
 ) {
-  const { readCount } = await browseQueries(mediaType, query)
+  const { readCount } = await browseQueries(mediaType, query, options)
   return { totalCount: await readCount() }
 }
 
@@ -594,7 +615,12 @@ export async function queryBrowseCounts(
   const unfiltered = unfilteredBrowseQuery(query)
   const [{ totalCount }, scope] = await Promise.all([
     queryBrowseCount(mediaType, query),
-    unfiltered ? queryBrowseCount(mediaType, unfiltered) : undefined,
+    unfiltered
+      ? queryBrowseCount(mediaType, unfiltered, {
+          includeLastfmSourceRows:
+            mediaType === 'track' && requestsLastfmSource(query),
+        })
+      : undefined,
   ])
   return {
     totalCount,
@@ -787,6 +813,10 @@ async function queryBrowseFacets(
   const sources = sharedArtistTags
     ? sql`with browse_artist_tags as materialized (${artistTagMemberships(mediaType)})`
     : sql``
+  const redundant =
+    mediaType === 'track'
+      ? sql`, redundant_lastfm_tracks as materialized (${redundantLastfmTrackIds()})`
+      : sql``
   const queries = fields.map((field) => {
     const source = textRows(field.key, mediaType, {
       normalizeTags: true,
@@ -800,18 +830,25 @@ async function queryBrowseFacets(
       )
       .map((word) => sql`value ilike ${`%${word.replace(/[\\%_]/g, '\\$&')}%`}`)
     const search = matches.length ? sql`and ${and(...matches)}` : sql``
+    // Choosing the Last.fm source explicitly includes its retained source rows.
+    const visibility =
+      mediaType !== 'track'
+        ? sql``
+        : field.key === 'source'
+          ? sql`and (value = ${trackSourceLabels.lastfm} or id not in (select id from redundant_lastfm_tracks))`
+          : sql`and id not in (select id from redundant_lastfm_tracks)`
     // Limit each field independently so common tags never crowd out titles or
     // rarer fields. Search the full value set before counting and limiting.
     return sql`(select ${field.key}::text as field, value, count(distinct id)::int as count
       from (${source}) values_for_field
-      where value is not null and value <> '' ${search}
+      where value is not null and value <> '' ${search} ${visibility}
       group by value
       order by case when lower(value) = ${query.q?.toLowerCase() ?? ''} then 0 else 1 end,
         count desc, value asc
       limit ${limit})`
   })
   const result = await db.execute(
-    sql`${sources} ${sql.join(queries, sql` union all `)}`,
+    sql`${sources}${redundant} ${sql.join(queries, sql` union all `)}`,
   )
   return z.array(FacetRowSchema).parse(result.rows)
 }

@@ -1,4 +1,4 @@
-import { sql } from 'drizzle-orm'
+import { inArray, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import {
   TrackAlbumLinkStrategySchema,
@@ -7,7 +7,10 @@ import {
 import { db } from '@/lib/db'
 import { refreshArtistListeningTotals } from './artist-listening'
 import { importLastfmLibraryTracks } from './lastfm-library-tracks'
-import { lockLibraryTrackWrites } from './album-library-tracks'
+import {
+  lockLibraryTrackWrites,
+  reconcileSpotifyAlbumRecordings,
+} from './album-library-tracks'
 import { spotifyAlbumId } from '@/lib/spotify-api'
 import {
   createScrobbleTrackMatcher,
@@ -89,6 +92,7 @@ async function libraryTracks(database: Transaction) {
 export async function linkTracksToAlbums() {
   await db.transaction(async (tx) => {
     await lockLibraryTrackWrites(tx)
+    await reconcileSpotifyAlbumRecordings(tx)
     const tracks = await libraryTracks(tx)
     if (!tracks.length) return
     const albums = AlbumRowsSchema.parse(
@@ -307,7 +311,10 @@ export async function linkScrobblesToTracks(account: string) {
 }
 
 /** Recount links after an identity change; never add already-counted summaries. */
-export async function refreshTrackListeningTotals(tx: Transaction) {
+export async function refreshTrackListeningTotals(
+  tx: Transaction,
+  trackIds?: string[],
+) {
   await tx.execute(sql`
       update library_track lt
       set scrobble_count = coalesce(c.count, 0), last_listened_at = c.last
@@ -318,9 +325,11 @@ export async function refreshTrackListeningTotals(tx: Transaction) {
         from lastfm_track_link l
         join lastfm_scrobble s on s.username = l.username
           and s.artist_key = l.artist_key and s.track_key = l.track_key
+        ${trackIds ? sql`where ${inArray(sql`l.track_media_item_id`, trackIds)}` : sql``}
         group by l.track_media_item_id
       ) c on c.id = base.media_item_id
       where lt.media_item_id = base.media_item_id
+        ${trackIds ? sql`and ${inArray(sql`lt.media_item_id`, trackIds)}` : sql``}
         and (lt.scrobble_count <> coalesce(c.count, 0)
           or lt.last_listened_at is distinct from c.last)`)
 }

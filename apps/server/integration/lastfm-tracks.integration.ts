@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import pg from 'pg'
-import { eq } from 'drizzle-orm'
+import { eq, inArray } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { migrate } from 'drizzle-orm/node-postgres/migrator'
 import {
@@ -42,10 +42,13 @@ import { refreshTrackLinks } from '@/services/track-links'
 import { replaceAlbumTracks } from '@/services/album-library-tracks'
 import { mergeLastfmTrack } from '@/services/track-merges'
 import { getAlbumDetail } from '@/services/media'
+import { queryBrowseCounts } from '@/services/browse'
 import {
   getTrackDetail,
+  listTrackBrowsePage,
   listTrackFilterOptions,
   listTracks,
+  listTracksAtPositions,
   removeImportedPlaylist,
 } from '@/services/tracks'
 
@@ -57,6 +60,12 @@ const spotifyId = (value: string) => value.padEnd(22, '0')
 const query = (input: Record<string, unknown> = {}) =>
   TrackQuerySchema.parse({ sortBy: 'title', direction: 'asc', ...input })
 const allTracks = async () => (await listTracks(query())).items
+const lastfmSourceQuery = () =>
+  query({
+    filters: JSON.stringify([
+      { field: 'source', value: 'Last.fm', mode: 'required' },
+    ]),
+  })
 
 async function credit(mediaItemId: string, name = ARTIST) {
   const artistId = createStableId('artist', name.toLowerCase())
@@ -362,6 +371,90 @@ describe('Last.fm tracks library', () => {
     )
   })
 
+  it('hides an albumless listening-only row once its exact history appears on a release', async () => {
+    const title = 'Shared Single'
+    await scrobble(title)
+    await refreshTrackLinks(LISTENER)
+    const [original] = await allTracks()
+    if (!original) throw new Error('Expected the original Last.fm track')
+    await album('fixture-ep', 'First EP', [
+      { title, spotifyId: spotifyId('eprecording') },
+    ])
+    await album('fixture-lp', 'Second Album', [
+      { title, spotifyId: spotifyId('lprecording') },
+    ])
+    await refreshTrackLinks(LISTENER)
+
+    const browse = await listTracks(query({ sortBy: 'artist' }))
+    expect(browse.items.map((item) => item.album?.id)).toEqual([
+      'fixture-ep',
+      'fixture-lp',
+    ])
+    expect(browse.items.map((item) => item.scrobbles)).toEqual([1, 1])
+    expect(await queryBrowseCounts('track', query())).toEqual({
+      totalCount: 2,
+      unfilteredCount: 2,
+    })
+    const secondPage = await listTrackBrowsePage(query({ page: 2, size: 1 }))
+    expect(secondPage).toMatchObject({
+      items: [{ id: browse.items[1]?.id }],
+      hasMore: false,
+    })
+    const positions = await listTracksAtPositions({
+      ...query(),
+      positions: [0, 1, 2],
+    })
+    expect(positions.items.map((row) => row.item.id)).toEqual(
+      browse.items.map((item) => item.id),
+    )
+    const facets = await listTrackFilterOptions({ q: title })
+    expect(facets).toContainEqual(
+      expect.objectContaining({ field: 'title', value: title, count: 2 }),
+    )
+    const source = await listTracks(lastfmSourceQuery())
+    expect(source.items.map((item) => item.id)).toEqual([original.id])
+    expect(await queryBrowseCounts('track', lastfmSourceQuery())).toEqual({
+      totalCount: 1,
+      unfilteredCount: 3,
+    })
+    expect(await listTrackFilterOptions({ q: 'source' })).toContainEqual(
+      expect.objectContaining({ field: 'source', value: 'Last.fm', count: 1 }),
+    )
+    expect((await getTrackDetail(original.id))?.listening.total).toBe(1)
+
+    await playlist('placeholder-membership', [original.id])
+    expect((await allTracks()).map((item) => item.id)).toContain(original.id)
+    await removeImportedPlaylist('placeholder-membership')
+    expect((await allTracks()).map((item) => item.id)).not.toContain(
+      original.id,
+    )
+
+    await databaseClient
+      .update(schema.mediaItem)
+      .set({ metadata: { legacyHidden: true } })
+      .where(
+        inArray(
+          schema.mediaItem.id,
+          browse.items.map((item) => item.id),
+        ),
+      )
+    expect((await allTracks()).map((item) => item.id)).toEqual([original.id])
+  })
+
+  it('keeps an albumless source when only a broader listening match shares its scrobbles', async () => {
+    await album('fixture-remaster', 'Remastered Album', [
+      { title: 'Opening (Remastered)', spotifyId: spotifyId('remastered') },
+    ])
+    await scrobble('Opening')
+    await refreshTrackLinks(LISTENER)
+    expect(
+      (await allTracks()).map((item) => [item.title, item.scrobbles]),
+    ).toEqual([
+      ['Opening', 1],
+      ['Opening (Remastered)', 1],
+    ])
+  })
+
   it('keeps mixed linked and unlinked album evidence separate from a Spotify edition', async () => {
     await album('linkededition', 'Linked Edition', [
       { title: 'Mixed Song', spotifyId: spotifyId('mixedrecording') },
@@ -382,7 +475,7 @@ describe('Last.fm tracks library', () => {
     await refreshTrackLinks(LISTENER)
 
     const items = await allTracks()
-    expect(items).toHaveLength(3)
+    expect(items).toHaveLength(2)
     expect(items.find((item) => item.sources.includes('album'))).toMatchObject({
       title: 'Mixed Song',
       spotifyTrackId: spotifyId('mixedrecording'),
@@ -390,7 +483,7 @@ describe('Last.fm tracks library', () => {
     expect(items.find((item) => item.id === 'mixedspotify')?.sources).toEqual([
       'spotify',
     ])
-    const standalone = items.find((item) => item.sources.includes('lastfm'))
+    const [standalone] = (await listTracks(lastfmSourceQuery())).items
     expect(standalone).toMatchObject({
       title: 'Mixed Song',
       sources: ['lastfm'],
@@ -765,8 +858,8 @@ describe('Last.fm tracks library', () => {
     })
     await refreshTrackLinks(LISTENER)
     const before = await allTracks()
-    expect(before).toHaveLength(2)
-    const source = before.find((item) => item.spotifyMatch === 'unmatched')
+    expect(before).toHaveLength(1)
+    const [source] = (await listTracks(lastfmSourceQuery())).items
     if (!source) throw new Error('Expected duplicate Last.fm fixture')
     expect(before.find((item) => item.id === 'merge-target')?.scrobbles).toBe(2)
     await playlist('source-playlist', [source.id])
