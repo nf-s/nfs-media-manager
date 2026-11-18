@@ -488,11 +488,18 @@ it('groups a broad listening page and count without rereading shared scrobbles',
       `explain (analyze, format json) ${query}`,
       params,
     )
-    const relations = PlanRowsSchema.parse(result.rows)
-      .flatMap((row) =>
-        row['QUERY PLAN'].flatMap((plan) => flattenPlan(plan.Plan)),
-      )
-      .filter((plan) => plan['Relation Name'] === 'lastfm_scrobble')
+    const plans = PlanRowsSchema.parse(result.rows).flatMap((row) =>
+      row['QUERY PLAN'].flatMap((plan) => flattenPlan(plan.Plan)),
+    )
+    const relations = plans.filter(
+      (plan) => plan['Relation Name'] === 'lastfm_scrobble',
+    )
     expect(relations.every((plan) => plan['Actual Loops'] === 0)).toBe(true)
+    // The tied scrobble counts must not repeatedly scan the full library.
+    expect(
+      plans.every(
+        (plan) => plan['Actual Rows'] * plan['Actual Loops'] < 100_000,
+      ),
+    ).toBe(true)
   }
 })

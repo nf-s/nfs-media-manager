@@ -4,23 +4,26 @@ import { cn } from '../../lib/utils'
 /**
  * The one table. Header 28px, rows 32px, identity column first, numbers
  * right-aligned. `align="end"` right-aligns a column; `sticky` pins it at the
- * given left offset and `stickyEdge` marks the last pinned column.
+ * given left offset and `stickyEdge` marks the last left-pinned column.
+ * `stickyEnd` pins a trailing action column to the right.
  */
 type CellLayout = {
   align?: 'end'
   sticky?: number
   stickyEdge?: boolean
+  stickyEnd?: boolean
 }
 
 function cellLayout(
-  { align, sticky, stickyEdge }: CellLayout,
+  { align, sticky, stickyEdge, stickyEnd }: CellLayout,
   style: React.CSSProperties | undefined,
 ) {
   const offset: Record<string, string> =
     sticky === undefined ? {} : { '--ds-sticky-left': `${sticky}px` }
+  const pinned = sticky === undefined ? undefined : stickyEdge ? 'edge' : ''
   return {
     'data-align': align,
-    'data-sticky': sticky === undefined ? undefined : stickyEdge ? 'edge' : '',
+    'data-sticky': stickyEnd ? 'end' : pinned,
     style: sticky === undefined ? style : { ...style, ...offset },
   }
 }
@@ -96,28 +99,38 @@ TableRow.displayName = 'TableRow'
 export const TableHead = React.forwardRef<
   HTMLTableCellElement,
   Omit<React.ThHTMLAttributes<HTMLTableCellElement>, 'align'> & CellLayout
->(({ className, align, sticky, stickyEdge, style, ...props }, ref) => (
-  <th
-    ref={ref}
-    scope="col"
-    className={className}
-    {...cellLayout({ align, sticky, stickyEdge }, style)}
-    {...props}
-  />
-))
+>(
+  (
+    { className, align, sticky, stickyEdge, stickyEnd, style, ...props },
+    ref,
+  ) => (
+    <th
+      ref={ref}
+      scope="col"
+      className={className}
+      {...cellLayout({ align, sticky, stickyEdge, stickyEnd }, style)}
+      {...props}
+    />
+  ),
+)
 TableHead.displayName = 'TableHead'
 
 export const TableCell = React.forwardRef<
   HTMLTableCellElement,
   Omit<React.TdHTMLAttributes<HTMLTableCellElement>, 'align'> & CellLayout
->(({ className, align, sticky, stickyEdge, style, ...props }, ref) => (
-  <td
-    ref={ref}
-    className={className}
-    {...cellLayout({ align, sticky, stickyEdge }, style)}
-    {...props}
-  />
-))
+>(
+  (
+    { className, align, sticky, stickyEdge, stickyEnd, style, ...props },
+    ref,
+  ) => (
+    <td
+      ref={ref}
+      className={className}
+      {...cellLayout({ align, sticky, stickyEdge, stickyEnd }, style)}
+      {...props}
+    />
+  ),
+)
 TableCell.displayName = 'TableCell'
 
 /** The sort control inside a column header. Shows an arrow only when active. */

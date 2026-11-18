@@ -423,10 +423,37 @@ it('deduplicates linked listening across editions and applies grouped ranges bef
     hasMore: false,
   })
 
-  // A materially different version stays separate even with both identifiers.
-  await pool.query(
-    `update library_track set duration_sec = 360 where media_item_id = 'edition-ep'`,
-  )
+  const dateRange = TrackQuerySchema.parse({
+    ...query,
+    ranges: [{ field: 'dateAdded', max: Date.parse('2026-01-01') }],
+  })
+  expect(await queryBrowseCounts('track', dateRange)).toEqual({
+    totalCount: 1,
+    unfilteredCount: 5,
+  })
+  expect(
+    await listTrackRecordingVersions('edition-album', dateRange),
+  ).toMatchObject({ items: [{ id: 'edition-album' }], hasMore: true })
+
+  const writer = await pool.connect()
+  try {
+    await listTrackBrowsePage(query)
+    logQuery.mockClear()
+    expect(await listTrackBrowsePage(query)).toMatchObject({ items: [grouped] })
+    expect(
+      logQuery.mock.calls.some(([sql]) => sql.includes('recording_matches')),
+    ).toBe(false)
+
+    // A different duration separates the versions, even across DB sessions.
+    await writer.query(
+      `update library_track set duration_sec = 360 where media_item_id = 'edition-ep'`,
+    )
+    const updated = await listTrackBrowsePage(query)
+    expect(updated.items).toMatchObject([{ id: 'edition-album', scrobbles: 2 }])
+    expect(updated.items[0]?.recordingGroup).toBeUndefined()
+  } finally {
+    writer.release()
+  }
   expect(await queryBrowseCounts('track', query)).toEqual({
     totalCount: 4,
     unfilteredCount: 6,
@@ -448,4 +475,54 @@ it('deduplicates linked listening across editions and applies grouped ranges bef
     totalCount: 4,
     unfilteredCount: 6,
   })
+})
+
+it('uses conflicting recording evidence from editions excluded by filters', async () => {
+  const { listTrackBrowsePage, listTrackRecordingVersions } =
+    await import('@/services/tracks')
+  await pool.query(`
+    insert into media_item (id, slug, media_type, title) values
+      ('guard-a', 'guard-a', 'track', 'Fixture guard'),
+      ('guard-b', 'guard-b', 'track', 'Fixture guard'),
+      ('guard-c', 'guard-c', 'track', 'Fixture guard');
+    insert into library_track (media_item_id, album_media_item_id, isrc) values
+      ('guard-a', 'album-1', null),
+      ('guard-b', 'album-1', 'USABC2600002'),
+      ('guard-c', 'album-2', 'USABC2600003');
+    insert into media_credit (media_item_id, artist_id, role)
+    select id, 'artist-a', 'artist' from media_item where id like 'guard-%';
+    insert into lastfm_track_link (username, artist_key, track_key, track_media_item_id, strategy)
+    select 'listener', 'fixture artist a', 'fixture guard', id, 'exact'
+    from media_item where id like 'guard-%';
+  `)
+  const query = TrackQuerySchema.parse({
+    groupRecordings: true,
+    q: 'fixture guard',
+    filters: [{ field: 'album', value: 'Fixture album one', mode: 'required' }],
+    sortBy: 'scrobbles',
+  })
+  const split = await listTrackBrowsePage(query)
+  expect(
+    split.items.map(({ id, recordingGroup }) => [id, recordingGroup]),
+  ).toEqual([
+    ['guard-a', undefined],
+    ['guard-b', undefined],
+  ])
+  expect(
+    (await listTrackRecordingVersions('guard-a', query)).items.map(
+      ({ id }) => id,
+    ),
+  ).toEqual(['guard-a'])
+
+  await pool.query(
+    `delete from lastfm_track_link where track_media_item_id = 'guard-c'`,
+  )
+  expect(await listTrackBrowsePage(query)).toMatchObject({
+    items: [{ id: 'guard-a', recordingGroup: { versionCount: 2 } }],
+  })
+  expect(
+    (await listTrackRecordingVersions('guard-a', query)).items.map(
+      ({ id }) => id,
+    ),
+  ).toEqual(['guard-a', 'guard-b'])
 })

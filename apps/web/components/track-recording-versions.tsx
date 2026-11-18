@@ -91,6 +91,7 @@ export function RecordingVersionsToggle({
       variant="ghost"
       size="xs"
       icon
+      className="shrink-0"
       aria-expanded={open}
       aria-label={label}
       title={label}

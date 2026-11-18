@@ -389,6 +389,7 @@
                 '<b>Identity cell.</b> Thumbnail, title, and the play pair at its end. The thumbnail is 24px; posters keep their shape.',
                 '<b>Numbers align right</b> in tabular figures. Dates are ISO (<code>2026-10-02</code>) so they sort and align as text.',
                 '<b>Nothing is clipped by the scrollbar.</b> The scroll area reserves its gutter and the last column keeps the 12px inset. When the table is wider than the panel the identity column stays in place and the rest scrolls beneath a soft edge.',
+                '<b>A trailing action can stay pinned.</b> The disclosure for grouped Tracks stays at the right edge during horizontal scrolling.',
                 "<b>Inside another item</b> the table drops the columns that the parent already answers: no Album or Artist column in an album's track list.",
                 '<b>Selection</b> shows the one inverse bar, attached to the bottom of the table, with the count on the left and actions on the right. The bar appears with a selection or a result to report and is hidden otherwise. An import preview keeps it, reading <code>0 selected of 128</code>, because choosing rows is the task.',
               ]) +
@@ -494,6 +495,7 @@
               g.rules([
                 '<b>Two lines, 48px,</b> with 40px artwork. The same row serves albums, tracks, artists, films and videos.',
                 '<b>Trailing values sit in fixed tracks,</b> so ratings, counts and dates line up down the list and can carry one small header.',
+                '<b>A trailing action goes after the values</b> and remains visible in a compact list. Reserve its space on rows without an action to keep the values aligned.',
                 '<b>List is for scanning with artwork;</b> Table is for comparing many fields. Both use the same play position and the same selection style.',
               ]) +
               g.note(

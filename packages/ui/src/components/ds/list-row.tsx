@@ -3,9 +3,9 @@ import { Slot } from '@radix-ui/react-slot'
 import { cn } from '../../lib/utils'
 
 /**
- * List row: 48px with a 40px thumbnail. Five tracks, always in this order:
- * thumbnail, title and creator, play pair, tags, trailing values. Wrap rows in
- * `List`; `compact` drops tags and trailing values for narrow containers.
+ * List row: 48px with a 40px thumbnail. Tracks in order: thumbnail, title and
+ * creator, play pair, tags, values, and an optional trailing action. Wrap rows
+ * in `List`; `compact` drops tags and values for narrow containers.
  */
 export function ListRow({
   thumb,
@@ -14,6 +14,7 @@ export function ListRow({
   play,
   tags,
   meta,
+  action,
   selected = false,
   playing = false,
   className,
@@ -25,6 +26,8 @@ export function ListRow({
   play?: ReactNode
   tags?: ReactNode
   meta?: ReactNode
+  /** Use null to reserve the slot on rows without an action. */
+  action?: ReactNode
   selected?: boolean
   playing?: boolean
 }) {
@@ -33,6 +36,7 @@ export function ListRow({
       className={cn('ds-row', className)}
       aria-selected={selected ? true : undefined}
       data-state={playing ? 'playing' : undefined}
+      data-action={action !== undefined ? '' : undefined}
       {...props}
     >
       {thumb}
@@ -43,6 +47,7 @@ export function ListRow({
       {play ?? <span />}
       <div className="ds-row-tags">{tags}</div>
       <div className="ds-row-meta">{meta}</div>
+      {action}
     </div>
   )
 }
@@ -87,15 +92,17 @@ export function ListHead({
   meta,
   thumbWidth = 40,
   playWidth = 50,
+  action = false,
 }: {
   title: ReactNode
   tags?: ReactNode
   meta?: ReactNode
   thumbWidth?: number
   playWidth?: number
+  action?: boolean
 }) {
   return (
-    <div className="ds-listhead">
+    <div className="ds-listhead" data-action={action ? '' : undefined}>
       <span style={{ width: thumbWidth }} />
       <span>{title}</span>
       <span style={{ width: playWidth }} />

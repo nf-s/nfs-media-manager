@@ -22,9 +22,11 @@ import {
   type ReactNode,
 } from 'react'
 import { useSearchParams } from 'next/navigation'
+import { Settings2 } from 'lucide-react'
 import {
   TableBody,
   TableCell,
+  TableHead,
   TableHeader,
   TableRow,
   TableScroll,
@@ -38,7 +40,6 @@ import {
   RowValue,
 } from '@repo/ui/components/ds/list-row'
 import { Skeleton } from '@repo/ui/components/ds/feedback'
-import { Button } from '@repo/ui/components/ui/button'
 import { EMPTY_VALUE, formatCount, formatDate } from '@repo/ui/lib/format'
 import {
   BrowseRangesParamSchema,
@@ -95,6 +96,7 @@ import {
   useTrackBrowseFields,
 } from './track-browse-controls'
 import BrowseToolbar, { BrowseColumnsSection } from './browse-toolbar'
+import { FilterPanelSection } from './browse-filter-panel'
 import {
   RecordingVersionsPager,
   RecordingVersionsStatus,
@@ -133,6 +135,7 @@ const collection = 'tracks'
 const headerHeight = 28
 const listRowHeight = 48
 const tableRowHeight = 32
+const versionsColumnWidth = 'calc(var(--ds-h-xs) + 2 * var(--ds-gutter))'
 const noun = { one: 'track', other: 'tracks' }
 
 export default function TrackBrowser() {
@@ -191,6 +194,14 @@ export default function TrackBrowser() {
   const widths = useColumnWidths(collection, (field) =>
     field.key === 'title' ? 280 : field.type === 'text' ? 180 : 110,
   )
+  const tableWidths = columns.map((field) => {
+    const width = `${widths.widthFor(field)}px`
+    // Leave room for both pinned columns, even in a narrow view.
+    return groupRecordings && field.key === 'title'
+      ? `clamp(0px, ${viewport.width}px - ${versionsColumnWidth}, ${width})`
+      : width
+  })
+  if (groupRecordings) tableWidths.push(versionsColumnWidth)
   const requestedListeningPeriod =
     sortBy === listeningScrobblesKey ||
     columnKeys.includes(listeningScrobblesKey)
@@ -482,11 +493,12 @@ export default function TrackBrowser() {
     )
   }
 
-  function browseTitle(item: TrackListItem, index: number, title: ReactNode) {
+  function cardTitle(item: TrackListItem, index: number) {
+    const title = <CardTitle>{trackLink(item)}</CardTitle>
     return item.recordingGroup ? (
-      <span className="ds-cell-id">
-        {versionToggle(item, index)}
+      <span className="ds-cell-id justify-between">
         {title}
+        {versionToggle(item, index)}
       </span>
     ) : (
       title
@@ -502,7 +514,6 @@ export default function TrackBrowser() {
     if (field.key === 'title')
       return (
         <span className="ds-cell-id">
-          {!child && versionToggle(item, index)}
           <ItemThumb
             kind="track"
             src={item.artworkUrl}
@@ -556,13 +567,17 @@ export default function TrackBrowser() {
             {renderValue(item, field, index, child)}
           </TableCell>
         ))}
+        {groupRecordings && (
+          <TableCell align="end" stickyEnd>
+            {!child && versionToggle(item, index)}
+          </TableCell>
+        )}
       </TableRow>
     )
   }
 
   function renderTrackListRow(item: TrackListItem, index?: number) {
     const child = index === undefined
-    const title = <RowTitle>{trackLink(item)}</RowTitle>
     return (
       <ListRow
         key={item.id}
@@ -578,7 +593,7 @@ export default function TrackBrowser() {
             target={{ kind: 'track', id: item.id }}
           />
         }
-        title={child ? title : browseTitle(item, index, title)}
+        title={<RowTitle>{trackLink(item)}</RowTitle>}
         by={
           child ? (
             item.album || item.albumName ? (
@@ -614,6 +629,13 @@ export default function TrackBrowser() {
             <RowValue kind="num">{formatCount(item.scrobbles)}</RowValue>
             <RowValue kind="date">{formatDate(item.dateAdded)}</RowValue>
           </>
+        }
+        action={
+          groupRecordings
+            ? child
+              ? null
+              : versionToggle(item, index)
+            : undefined
         }
       />
     )
@@ -703,17 +725,6 @@ export default function TrackBrowser() {
             onChange: sort,
             onDirectionChange: (direction) => setParams({ direction }),
           }}
-          sortControls={
-            <Button
-              type="button"
-              aria-pressed={groupRecordings}
-              onClick={() =>
-                setParams({ groupRecordings: String(!groupRecordings) })
-              }
-            >
-              Group recordings
-            </Button>
-          }
           filterCount={activeFilterCount}
           filters={
             <>
@@ -725,6 +736,25 @@ export default function TrackBrowser() {
                   {filterPills}
                 </ActiveFiltersSection>
               )}
+              <FilterPanelSection
+                title="Views"
+                icon={<Settings2 className="ds-i" data-size="sm" aria-hidden />}
+                defaultOpen
+              >
+                <label className="ds-checkrow">
+                  <input
+                    type="checkbox"
+                    className="ds-check"
+                    checked={groupRecordings}
+                    onChange={(event) =>
+                      setParams({
+                        groupRecordings: String(event.currentTarget.checked),
+                      })
+                    }
+                  />
+                  Group recordings
+                </label>
+              </FilterPanelSection>
               <RangeEditor
                 presentation="panel"
                 fields={fields.filter((field) => field.filterable)}
@@ -839,11 +869,7 @@ export default function TrackBrowser() {
                           overlay={playPair(item, index, 'tile')}
                         />
                       }
-                      title={browseTitle(
-                        item,
-                        index,
-                        <CardTitle>{trackLink(item)}</CardTitle>,
-                      )}
+                      title={cardTitle(item, index)}
                       by={<TrackArtistLinks track={item} />}
                       meta={cardMeta(item)}
                       tags={
@@ -870,6 +896,7 @@ export default function TrackBrowser() {
                 <ListHead
                   title="Track"
                   tags="Tags"
+                  action={groupRecordings}
                   meta={
                     <>
                       <RowValue kind="num">Duration</RowValue>
@@ -901,20 +928,15 @@ export default function TrackBrowser() {
                   ? total + 1 + (expanded ? versions.rowCount : 0)
                   : undefined
               }
-              style={{
-                width: columns.reduce(
-                  (sum, field) => sum + widths.widthFor(field),
-                  0,
-                ),
-              }}
+              style={{ width: `calc(${tableWidths.join(' + ')})` }}
             >
               <colgroup>
-                {columns.map((field) => (
-                  <col
-                    key={field.key}
-                    style={{ width: widths.widthFor(field) }}
-                  />
+                {columns.map((field, index) => (
+                  <col key={field.key} style={{ width: tableWidths[index] }} />
                 ))}
+                {groupRecordings && (
+                  <col style={{ width: versionsColumnWidth }} />
+                )}
               </colgroup>
               <TableHeader>
                 <TableRow>
@@ -929,12 +951,18 @@ export default function TrackBrowser() {
                       resizer={widths.resizer(field)}
                     />
                   ))}
+                  {groupRecordings && (
+                    <TableHead stickyEnd aria-label="Release versions" />
+                  )}
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {padTop > 0 && (
                   <tr className="bi-spacer" aria-hidden="true">
-                    <td colSpan={columns.length} style={{ height: padTop }} />
+                    <td
+                      colSpan={tableWidths.length}
+                      style={{ height: padTop }}
+                    />
                   </tr>
                 )}
                 {slots.map(({ item, index }) => {
@@ -950,6 +978,7 @@ export default function TrackBrowser() {
                             <Skeleton height={10} width="70%" />
                           </TableCell>
                         ))}
+                        {groupRecordings && <TableCell stickyEnd />}
                       </TableRow>
                     )
                   const rowIndex =
@@ -972,7 +1001,7 @@ export default function TrackBrowser() {
                         ) : (
                           <TableRow child aria-rowindex={rowIndex + 1}>
                             <TableCell
-                              colSpan={columns.length}
+                              colSpan={tableWidths.length}
                               className="ds-muted"
                             >
                               <RecordingVersionsStatus versions={versions} />
@@ -984,7 +1013,7 @@ export default function TrackBrowser() {
                           child
                           aria-rowindex={rowIndex + versions.rowCount}
                         >
-                          <TableCell colSpan={columns.length}>
+                          <TableCell colSpan={tableWidths.length}>
                             <RecordingVersionsPager versions={versions} />
                           </TableCell>
                         </TableRow>
@@ -995,7 +1024,7 @@ export default function TrackBrowser() {
                 {padBottom > 0 && (
                   <tr className="bi-spacer" aria-hidden="true">
                     <td
-                      colSpan={columns.length}
+                      colSpan={tableWidths.length}
                       style={{ height: padBottom }}
                     />
                   </tr>
