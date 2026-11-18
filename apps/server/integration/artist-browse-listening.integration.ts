@@ -28,6 +28,7 @@ vi.mock('@/lib/db', () => ({
   },
 }))
 vi.mock('@/plugins/registry', () => ({
+  listArtistEnrichmentProviderIds: async () => [],
   listLoadedScrapePlugins: async () => [],
 }))
 let created = false
