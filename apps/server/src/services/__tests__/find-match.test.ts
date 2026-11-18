@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   overrides: vi.fn(),
   references: vi.fn(),
   artist: vi.fn(),
+  releaseHints: vi.fn(),
 }))
 vi.mock('@/lib/db', () => ({
   db: {
@@ -36,6 +37,9 @@ vi.mock('@/services/artist-profiles', () => ({
   loadArtistProviderTarget: mocks.artist,
 }))
 vi.mock('@/services/album-imports', () => ({}))
+vi.mock('@/services/album-release-hints', () => ({
+  getAlbumReleaseHints: mocks.releaseHints,
+}))
 vi.mock('@/services/file-imports', () => ({}))
 
 import { ServerError } from '@/lib/error'
@@ -99,6 +103,30 @@ describe('find match', () => {
   })
   afterEach(() => vi.unstubAllGlobals())
 
+  it('supplies stored release evidence to an opted-in album match search', async () => {
+    const releaseHints = [
+      { source: 'musicbrainz', title: 'Fixture release group' },
+    ]
+    mocks.releaseHints.mockResolvedValue(releaseHints)
+    const search = vi.fn().mockResolvedValue([])
+    mocks.plugin.mockResolvedValue({
+      ...discogsPlugin,
+      manifest: { ...discogsPlugin.manifest, albumReleaseHints: true },
+      searchMatchCandidates: search,
+    })
+    await searchMatchCandidates({
+      kind: 'album',
+      id: 'album-1',
+      provider: 'discogs',
+    })
+    expect(mocks.releaseHints).toHaveBeenCalledWith('album-1')
+    expect(search).toHaveBeenCalledWith(
+      expect.objectContaining({
+        media: expect.objectContaining({ releaseHints }),
+      }),
+    )
+  })
+
   it('searches an album provider through its request policy and marks the stored record', async () => {
     mocks.request
       .mockResolvedValueOnce(Response.json(discogsResults(11, 'master')))
@@ -138,6 +166,7 @@ describe('find match', () => {
     expect(mocks.request).toHaveBeenCalledTimes(2)
     expect(mocks.success).toHaveBeenCalledWith('discogs')
     expect(fetch).not.toHaveBeenCalled()
+    expect(mocks.releaseHints).not.toHaveBeenCalled()
   })
 
   it('searches the text the owner typed', async () => {

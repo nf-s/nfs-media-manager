@@ -90,6 +90,7 @@ import {
 } from '@/schemas/db'
 import { applyProviderResultInTransaction } from '@/services/provider-state'
 import { getProviderReferenceHints } from '@/services/provider-reference-hints'
+import { getAlbumReleaseHints } from '@/services/album-release-hints'
 import { MAX_CONSECUTIVE_PROVIDER_FAILURES } from '@/lib/request-policy'
 import {
   resumeJobProvider,
@@ -677,6 +678,10 @@ async function processJob(
         mediaItemId,
         existingReferences: [...references, ...overrides],
       })
+      const releaseHints =
+        mediaRecord.mediaType === 'album' && plugin.manifest.albumReleaseHints
+          ? await getAlbumReleaseHints(mediaItemId)
+          : undefined
       const request = createProviderRequest(plugin, assertActive, {
         onRetry: async ({ error, attempt, retryAt }) => {
           const credentials = jobLogSecrets(secrets)
@@ -743,6 +748,7 @@ async function processJob(
             title: mediaRecord.title,
             artists: artists.map(({ name }) => name),
             releaseDate: mediaRecord.releaseDate?.toISOString(),
+            ...(releaseHints?.length ? { releaseHints } : {}),
           },
           existingReferences: [
             ...[...effectiveIds].map(([referenceType, externalId]) => ({

@@ -44,7 +44,7 @@ const ArtistSchema = z.object({
   id: z.string().optional(),
   name: z.string().min(1),
 })
-const ReleaseDateSchema = z
+export const AlbumReleaseDateSchema = z
   .string()
   .regex(/^\d{4}(?:-\d{2}(?:-\d{2})?)?$/)
   .refine((value) => {
@@ -60,6 +60,7 @@ const ReleaseDateSchema = z
       new Date(timestamp).toISOString().slice(0, 10) === day
     )
   }, 'Invalid Spotify release date')
+export const SpotifyAlbumTypeSchema = z.enum(['album', 'single', 'compilation'])
 export const SpotifyTrackSchema = z.object({
   id: SpotifyIdSchema.nullable(),
   name: z.string().min(1),
@@ -79,7 +80,8 @@ export const SpotifyAlbumSchema = z.object({
   name: z.string().min(1),
   artists: z.array(ArtistSchema).min(1),
   images: z.array(z.object({ url: HttpsUrlSchema })).default([]),
-  release_date: ReleaseDateSchema.optional(),
+  release_date: AlbumReleaseDateSchema.optional(),
+  album_type: SpotifyAlbumTypeSchema.optional(),
   release_date_precision: z.enum(['year', 'month', 'day']).optional(),
   total_tracks: z.number().int().nonnegative().optional(),
   external_ids: z
@@ -208,7 +210,7 @@ const SpotifyEpisodeSchema = z.object({
   name: z.string(),
   description: z.string().nullable().optional(),
   duration_ms: z.number().int().nonnegative(),
-  release_date: ReleaseDateSchema,
+  release_date: AlbumReleaseDateSchema,
   release_date_precision: z.enum(['year', 'month', 'day']),
   images: LooseImagesSchema,
 })
@@ -487,7 +489,7 @@ export function normalizeSpotifyTrackEntry(
   if (!parsed.success) return { track: null, reason: 'invalid' }
   const data = parsed.data
   const albumId = SpotifyIdSchema.safeParse(data.album?.id)
-  const releaseDate = ReleaseDateSchema.safeParse(data.album?.release_date)
+  const releaseDate = AlbumReleaseDateSchema.safeParse(data.album?.release_date)
   const addedAt = z
     .string()
     .datetime({ offset: true })

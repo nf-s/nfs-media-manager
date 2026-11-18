@@ -25,6 +25,7 @@ import {
 } from '@/plugins/builtin/artist-providers'
 import { getScrapePlugin } from '@/plugins/registry'
 import { scrapeJob, scrapeJobItem, scrapeJobLog } from '@/schemas/db'
+import { getAlbumReleaseHints } from './album-release-hints'
 import { identifierUrl } from './artist-provider-evidence'
 import { loadArtistProviderTarget } from './artist-profiles'
 import { providerOperation } from './manual-add'
@@ -111,6 +112,10 @@ async function searchMedia(
   )
     throw unavailable()
   const media = await loadMediaTarget(kind, input.id)
+  const releaseHints =
+    kind === 'album' && plugin.manifest.albumReleaseHints
+      ? await getAlbumReleaseHints(input.id)
+      : undefined
   const candidates = await providerOperation(
     input.provider,
     async (context, provider) => {
@@ -119,7 +124,10 @@ async function searchMedia(
         await provider.searchMatchCandidates({
           ...context,
           mediaType: kind,
-          media,
+          media: {
+            ...media,
+            ...(releaseHints?.length ? { releaseHints } : {}),
+          },
           ...(input.q ? { query: input.q } : {}),
         }),
       )

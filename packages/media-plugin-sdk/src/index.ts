@@ -247,11 +247,27 @@ export interface MediaPluginTestContext {
   ) => Promise<Response>
 }
 
+export interface AlbumReleaseHint {
+  source: 'spotify' | 'musicbrainz'
+  title: string
+  year?: number
+  releaseType?: string
+  artists?: readonly string[]
+}
+
+export interface MediaPluginMediaIdentity {
+  title: string
+  artists: string[]
+  releaseDate?: string
+  /** Stored album evidence for catalogue matching. Verify it against the candidate. */
+  releaseHints?: readonly AlbumReleaseHint[]
+}
+
 export interface MediaPluginScrapeContext {
   mediaItemId: string
   mediaType: PluginMediaType
   options?: Readonly<Record<string, JsonValue>>
-  media?: { title: string; artists: string[]; releaseDate?: string }
+  media?: MediaPluginMediaIdentity
   /** Current snapshots for this provider and the album's credited artists. */
   artistProfiles?: readonly {
     artistId: string
@@ -285,7 +301,7 @@ export function recordPluginDiagnostic(
 
 export interface MediaPluginMatchSearchContext extends MediaPluginTestContext {
   mediaType: PluginMediaType
-  media: { title: string; artists: string[]; releaseDate?: string }
+  media: MediaPluginMediaIdentity
   /**
    * Text the owner typed. Without it the plugin searches for `media` the way
    * its scrape does.
@@ -315,6 +331,7 @@ export interface MediaPluginManifest {
   requireExplicitSelection?: boolean
   identifierTypes?: string[]
   supportsNameLookup?: boolean
+  albumReleaseHints?: boolean
   /** Fetch and save missing artist profiles before a queued album lookup. */
   bootstrapAlbumArtists?: boolean
   sourceNavigation?: { collectionUrlTemplate?: string; tagUrlTemplate?: string }
@@ -481,6 +498,7 @@ export const MediaPluginManifestSchema = z
     requireExplicitSelection: z.boolean().optional(),
     identifierTypes: z.array(z.string().min(1)).optional(),
     supportsNameLookup: z.boolean().optional(),
+    albumReleaseHints: z.boolean().optional(),
     bootstrapAlbumArtists: z.boolean().optional(),
     sourceNavigation: z
       .object({

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   SpotifyEpisodesPageSchema,
   SpotifySavedShowsPageSchema,
+  normalizeSpotifyAlbum,
   normalizeSpotifyEpisode,
   normalizeSpotifyShow,
   normalizeSpotifyTrackEntry,
@@ -12,6 +13,16 @@ import {
 
 const TRACK_ID = 'T'.repeat(22)
 const ALBUM_ID = 'A'.repeat(22)
+
+it('retains a Spotify album type in the stored provider payload', () => {
+  const result = normalizeSpotifyAlbum({
+    id: ALBUM_ID,
+    name: 'Fixture compilation',
+    artists: [{ name: 'Fixture artist' }],
+    album_type: 'compilation',
+  })
+  expect(result.payload).toMatchObject({ album_type: 'compilation' })
+})
 
 function track(overrides: Record<string, unknown> = {}) {
   return {

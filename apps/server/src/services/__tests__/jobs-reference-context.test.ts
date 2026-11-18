@@ -96,11 +96,20 @@ describe('job reference context', () => {
         expect(context.mediaItemId).toBe('album-1')
         return { payload: {}, normalized: {} }
       })
+      const releaseHints = [{ source: 'spotify', title: 'Fixture edition' }]
+      const readReleaseHints = vi.fn(async () => releaseHints)
       vi.doMock('@/plugins/registry', () => ({
         getScrapePlugin: async () => ({
-          manifest: { id: 'fixture-provider', secrets: [] },
+          manifest: {
+            id: 'fixture-provider',
+            secrets: [],
+            albumReleaseHints: hasOverride,
+          },
           scrapeMediaItem: scrape,
         }),
+      }))
+      vi.doMock('@/services/album-release-hints', () => ({
+        getAlbumReleaseHints: readReleaseHints,
       }))
       vi.doMock('@/lib/provider-secrets', () => ({
         resolveProviderSecrets: () => ({}),
@@ -136,6 +145,10 @@ describe('job reference context', () => {
       expect(scrape).toHaveBeenCalledTimes(1)
       expect(recordOutcome).toHaveBeenCalledWith('success')
       const context = scrape.mock.calls[0]?.[0]
+      expect(context?.media?.releaseHints).toEqual(
+        hasOverride ? releaseHints : undefined,
+      )
+      expect(readReleaseHints).toHaveBeenCalledTimes(hasOverride ? 1 : 0)
       expect(context?.existingReferences).toEqual([
         hasOverride
           ? {
