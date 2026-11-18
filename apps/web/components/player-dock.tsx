@@ -8,6 +8,7 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  type DragEvent,
   type ReactNode,
 } from 'react'
 import { useMutation } from '@tanstack/react-query'
@@ -19,6 +20,7 @@ import {
   GripVertical,
   Laptop,
   ListMusic,
+  ListPlus,
   LoaderCircle,
   MonitorSpeaker,
   Pause,
@@ -467,72 +469,188 @@ function ItemText({ item }: { item: PlayableItem }) {
   )
 }
 
-function QueueList({ queue }: { queue: QueueEntry[] }) {
+/** The two lists of the queue panel that hold tracks still to play. */
+type QueueSection = 'queue' | 'upcoming'
+type Dragging = { section: QueueSection; key: string }
+/** Where a dragged row would land: before `entries[index]`, or at the end. */
+type DropPlace = { section: QueueSection; index: number }
+type QueueDrag = {
+  dragging: Dragging | null
+  place: DropPlace | null
+  start: (dragging: Dragging) => void
+  over: (place: DropPlace | null) => void
+  end: () => void
+}
+
+/** Rows shown from the source; the player resolves more than it lists. */
+const UPCOMING_SHOWN = 10
+
+/**
+ * A row can be dropped within its own list, and a source track into the
+ * manual queue. The source has no place for a queued item.
+ */
+function accepts(dragging: Dragging | null, section: QueueSection) {
+  return (
+    dragging !== null && (dragging.section === section || section === 'queue')
+  )
+}
+
+function useQueueDrag(): QueueDrag {
+  const [dragging, setDragging] = useState<Dragging | null>(null)
+  const [place, setPlace] = useState<DropPlace | null>(null)
+  return {
+    dragging,
+    place,
+    start: setDragging,
+    over: (next) =>
+      setPlace((shown) =>
+        shown?.section === next?.section && shown?.index === next?.index
+          ? shown
+          : next,
+      ),
+    end: () => {
+      setDragging(null)
+      setPlace(null)
+    },
+  }
+}
+
+function QueueRows({
+  section,
+  entries,
+  drag,
+}: {
+  section: QueueSection
+  entries: QueueEntry[]
+  drag: QueueDrag
+}) {
   const controls = usePlaybackControls()
-  const [dragged, setDragged] = useState<string | null>(null)
+  const queued = section === 'queue'
+  const from =
+    drag.dragging?.section === section
+      ? entries.findIndex((entry) => entry.key === drag.dragging?.key)
+      : -1
+  const move = queued ? controls.moveInQueue : controls.moveUpcoming
+  /** A drop that would leave the row where it is shows no place. */
+  const placeAt = (index: number) =>
+    from >= 0 && (index === from || index === from + 1) ? null : index
+  const shown = drag.place?.section === section ? drag.place.index : null
+  const drop = (index: number) => {
+    const dragged = drag.dragging
+    drag.end()
+    if (!dragged || !accepts(dragged, section)) return
+    if (dragged.section !== section) controls.queueUpcoming(dragged.key, index)
+    else if (from >= 0 && placeAt(index) !== null)
+      move(from, index > from ? index - 1 : index)
+  }
   return (
     <ol className="queue-list">
-      {queue.map((entry, index) => (
-        <li
-          key={entry.key}
-          className="queue-row"
-          data-dragging={dragged === entry.key}
-          draggable
-          onDragStart={(event) => {
-            setDragged(entry.key)
-            event.dataTransfer.effectAllowed = 'move'
-            event.dataTransfer.setData('text/plain', entry.item.title)
-          }}
-          onDragEnd={() => setDragged(null)}
-          onDragOver={(event) => {
-            if (dragged === null) return
-            event.preventDefault()
-            const from = queue.findIndex(
-              (candidate) => candidate.key === dragged,
-            )
-            if (from >= 0 && from !== index) controls.moveInQueue(from, index)
-          }}
-          onDrop={(event) => event.preventDefault()}
-        >
-          <span className="queue-grip" aria-hidden="true">
-            <GripVertical size={14} />
-          </span>
-          <button
-            type="button"
-            className="queue-item"
-            aria-label={`Play ${entry.item.title} now`}
-            onClick={() => controls.playFromQueue(entry.key)}
+      {entries.map((entry, index) => {
+        const { title } = entry.item
+        const play = queued ? `Play ${title} now` : `Skip to ${title}`
+        const remove = queued
+          ? `Remove ${title} from queue`
+          : `Remove ${title} from upcoming tracks`
+        /** The half of the row the pointer is over decides the side. */
+        const target = (event: DragEvent<HTMLLIElement>) => {
+          const box = event.currentTarget.getBoundingClientRect()
+          return event.clientY < box.top + box.height / 2 ? index : index + 1
+        }
+        return (
+          <li
+            key={entry.key}
+            className="queue-row"
+            data-dragging={from === index}
+            data-drop={
+              shown === index
+                ? 'before'
+                : shown === index + 1 && index === entries.length - 1
+                  ? 'after'
+                  : undefined
+            }
+            draggable
+            onDragStart={(event) => {
+              drag.start({ section, key: entry.key })
+              event.dataTransfer.effectAllowed = 'move'
+              event.dataTransfer.setData('text/plain', title)
+            }}
+            onDragEnd={drag.end}
+            onDragOver={(event) => {
+              if (!accepts(drag.dragging, section)) return
+              event.preventDefault()
+              event.stopPropagation()
+              const at = placeAt(target(event))
+              drag.over(at === null ? null : { section, index: at })
+            }}
+            onDrop={(event) => {
+              event.preventDefault()
+              drop(target(event))
+            }}
           >
-            <Artwork src={entry.item.artworkUrl} className="queue-art" />
-            <ItemText item={entry.item} />
-          </button>
-          <span className="queue-actions">
-            <button
-              type="button"
-              aria-label={`Move ${entry.item.title} up`}
-              disabled={index === 0}
-              onClick={() => controls.moveInQueue(index, index - 1)}
-            >
-              <ChevronUp size={14} aria-hidden="true" />
-            </button>
-            <button
-              type="button"
-              aria-label={`Move ${entry.item.title} down`}
-              disabled={index === queue.length - 1}
-              onClick={() => controls.moveInQueue(index, index + 1)}
-            >
-              <ChevronDown size={14} aria-hidden="true" />
-            </button>
-            <button
-              type="button"
-              aria-label={`Remove ${entry.item.title} from queue`}
-              onClick={() => controls.removeFromQueue(entry.key)}
-            >
-              <X size={14} aria-hidden="true" />
-            </button>
-          </span>
-        </li>
-      ))}
+            <span className="queue-grip" aria-hidden="true">
+              <GripVertical size={14} />
+            </span>
+            <span className="queue-item">
+              <Artwork src={entry.item.artworkUrl} className="queue-art" />
+              <ItemText item={entry.item} />
+            </span>
+            <span className="queue-actions">
+              <button
+                type="button"
+                aria-label={play}
+                title={play}
+                onClick={() =>
+                  queued
+                    ? controls.playFromQueue(entry.key)
+                    : controls.playUpcoming(entry.key)
+                }
+              >
+                <Play size={14} aria-hidden="true" />
+              </button>
+              {!queued && (
+                <button
+                  type="button"
+                  aria-label={`Move ${title} to queue`}
+                  title={`Move ${title} to queue`}
+                  onClick={() => controls.queueUpcoming(entry.key)}
+                >
+                  <ListPlus size={14} aria-hidden="true" />
+                </button>
+              )}
+              <button
+                type="button"
+                aria-label={`Move ${title} up`}
+                title={`Move ${title} up`}
+                disabled={index === 0}
+                onClick={() => move(index, index - 1)}
+              >
+                <ChevronUp size={14} aria-hidden="true" />
+              </button>
+              <button
+                type="button"
+                aria-label={`Move ${title} down`}
+                title={`Move ${title} down`}
+                disabled={index === entries.length - 1}
+                onClick={() => move(index, index + 1)}
+              >
+                <ChevronDown size={14} aria-hidden="true" />
+              </button>
+              <button
+                type="button"
+                aria-label={remove}
+                title={remove}
+                onClick={() =>
+                  queued
+                    ? controls.removeFromQueue(entry.key)
+                    : controls.removeUpcoming(entry.key)
+                }
+              >
+                <X size={14} aria-hidden="true" />
+              </button>
+            </span>
+          </li>
+        )
+      })}
     </ol>
   )
 }
@@ -545,8 +663,21 @@ function QueueContents({
   onNavigate: () => void
 }) {
   const { target, sharing } = view
+  const drag = useQueueDrag()
+  const upcoming = view.upcoming.slice(0, UPCOMING_SHOWN)
+  /** A source track dragged over the empty queue becomes its first entry. */
+  const intoEmptyQueue = drag.dragging?.section === 'upcoming'
+  const controls = usePlaybackControls()
   return (
-    <div className="queue-contents">
+    <div
+      className="queue-contents"
+      onDragOver={() => drag.over(null)}
+      onDragLeave={(event) => {
+        const to = event.relatedTarget
+        if (!(to instanceof Node) || !event.currentTarget.contains(to))
+          drag.over(null)
+      }}
+    >
       {sharing.role === 'follower' && (
         <p className="quiet">
           This queue is run from {sharing.driverName ?? 'another browser'}. A
@@ -601,9 +732,27 @@ function QueueContents({
             <p className="quiet">Press Next to start the queue.</p>
           )}
         {view.queue.length ? (
-          <QueueList queue={view.queue} />
+          <QueueRows section="queue" entries={view.queue} drag={drag} />
         ) : (
-          <p className="quiet">Nothing queued.</p>
+          <p
+            className="quiet queue-empty"
+            data-drop={drag.place?.section === 'queue' ? 'before' : undefined}
+            onDragOver={(event) => {
+              if (!intoEmptyQueue) return
+              event.preventDefault()
+              event.stopPropagation()
+              drag.over({ section: 'queue', index: 0 })
+            }}
+            onDrop={(event) => {
+              event.preventDefault()
+              const dragged = drag.dragging
+              drag.end()
+              if (dragged?.section === 'upcoming')
+                controls.queueUpcoming(dragged.key, 0)
+            }}
+          >
+            Nothing queued.
+          </p>
         )}
       </section>
       {view.queue.length > 0 && (
@@ -612,18 +761,8 @@ function QueueContents({
       {view.source && (
         <section>
           <h3>Next from {view.source.label}</h3>
-          {view.upcoming.length > 0 && (
-            <ol className="queue-list">
-              {view.upcoming.slice(0, 10).map((item, index) => (
-                <li key={`${item.uri}:${index}`} className="queue-row">
-                  <span className="queue-position">{index + 1}</span>
-                  <span className="queue-item">
-                    <Artwork src={item.artworkUrl} className="queue-art" />
-                    <ItemText item={item} />
-                  </span>
-                </li>
-              ))}
-            </ol>
+          {upcoming.length > 0 && (
+            <QueueRows section="upcoming" entries={upcoming} drag={drag} />
           )}
           {view.sourceLoading ? (
             <p className="quiet" role="status">

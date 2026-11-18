@@ -9,6 +9,7 @@ import type {
   PlaybackSnapshot,
   PlaybackSource,
   PlayedTrack,
+  QueueEntry,
 } from './playback'
 import {
   PlaybackApiError,
@@ -1092,7 +1093,10 @@ test('captures a source and loads only the tracks kept ahead until playback adva
     assert.equal(setup.engine.getState().current?.uri, sourceTrack(index).uri)
   }
   assert.equal(setup.engine.getState().source?.label, 'Tracks')
-  assert.equal(setup.engine.getState().upcoming[0]?.uri, sourceTrack(16).uri)
+  assert.equal(
+    setup.engine.getState().upcoming[0]?.item.uri,
+    sourceTrack(16).uri,
+  )
   assert.equal(Math.max(...loaded), 45)
   setup.engine.dispose()
 })
@@ -1126,7 +1130,10 @@ test('manual queue order takes priority and source resumes after the last queued
   setup.engine.next()
   await settle()
   assert.equal(setup.engine.getState().current, track)
-  assert.equal(setup.engine.getState().upcoming[0]?.uri, sourceTrack(1).uri)
+  assert.equal(
+    setup.engine.getState().upcoming[0]?.item.uri,
+    sourceTrack(1).uri,
+  )
   setup.engine.next()
   await settle()
   assert.equal(setup.engine.getState().current, queued)
@@ -1134,6 +1141,146 @@ test('manual queue order takes priority and source resumes after the last queued
   await settle()
   assert.equal(setup.engine.getState().current?.uri, sourceTrack(1).uri)
   assert.equal(setup.engine.getState().queue.length, 0)
+  setup.engine.dispose()
+})
+
+/** The upcoming source tracks as their numbers in the fixture source. */
+function upcomingNumbers(state: { upcoming: QueueEntry[] }, count = 5) {
+  return state.upcoming
+    .slice(0, count)
+    .map((entry) => Number(entry.item.uri.replace('spotify:track:source-', '')))
+}
+
+test('playing an upcoming source track skips to it and keeps the manual queue', async () => {
+  const setup = harness()
+  await playSource(setup, fixtureSource(40))
+  setup.engine.enqueue(track)
+  const target = setup.engine.getState().upcoming[3]
+  assert.equal(target?.item.uri, sourceTrack(4).uri)
+  setup.engine.playUpcoming(target?.key ?? '')
+  await settle()
+  const state = setup.engine.getState()
+  assert.equal(state.current?.uri, sourceTrack(4).uri)
+  // The tracks before it are passed over, and the source goes on after it.
+  assert.deepEqual(upcomingNumbers(state), [5, 6, 7, 8, 9])
+  assert.equal(state.upcoming.length, 30)
+  assert.deepEqual(
+    state.queue.map((entry) => entry.item.uri),
+    [track.uri],
+  )
+  // The device gets the track with the queue and the source tracks after it.
+  const started = setup.sent('play').at(-1) ?? ''
+  assert.ok(
+    started.includes(
+      `"uris":["${sourceTrack(4).uri}","${track.uri}","${sourceTrack(5).uri}"`,
+    ),
+    started,
+  )
+  setup.engine.next()
+  await settle()
+  assert.equal(setup.engine.getState().current, track)
+  setup.engine.next()
+  await settle()
+  assert.equal(setup.engine.getState().current?.uri, sourceTrack(5).uri)
+  // A key that is no longer upcoming starts nothing.
+  const plays = setup.sent('play').length
+  setup.engine.playUpcoming(target?.key ?? '')
+  await settle()
+  assert.equal(setup.sent('play').length, plays)
+  setup.engine.dispose()
+})
+
+test('upcoming source tracks play in the order they were moved into', async () => {
+  const setup = harness()
+  await playSource(setup, fixtureSource(40))
+  setup.engine.moveUpcoming(0, 2)
+  await settle()
+  assert.deepEqual(upcomingNumbers(setup.engine.getState()), [2, 3, 1, 4, 5])
+  assert.equal(
+    setup.engine.getState().announcement,
+    'Track 1: position 3 of upcoming tracks',
+  )
+  setup.engine.moveUpcoming(4, 0)
+  await settle()
+  assert.deepEqual(upcomingNumbers(setup.engine.getState()), [5, 2, 3, 1, 4])
+  // Moves outside the list change nothing.
+  setup.engine.moveUpcoming(0, -1)
+  setup.engine.moveUpcoming(0, 30)
+  setup.engine.moveUpcoming(30, 0)
+  await settle()
+  assert.deepEqual(upcomingNumbers(setup.engine.getState()), [5, 2, 3, 1, 4])
+  for (const index of [5, 2, 3, 1, 4, 6]) {
+    setup.engine.next()
+    await settle()
+    assert.equal(setup.engine.getState().current?.uri, sourceTrack(index).uri)
+  }
+  // The source is still read in its own order after the moved tracks.
+  assert.deepEqual(upcomingNumbers(setup.engine.getState()), [7, 8, 9, 10, 11])
+  assert.equal(setup.engine.getState().upcoming.length, 30)
+  setup.engine.dispose()
+})
+
+test('a track removed from the upcoming source tracks does not come back', async () => {
+  const setup = harness(() => 0)
+  await playSource(setup, fixtureSource(6))
+  const removed = setup.engine.getState().upcoming[1]
+  assert.equal(removed?.item.uri, sourceTrack(2).uri)
+  const plays = setup.sent('play').length
+  setup.engine.removeUpcoming(removed?.key ?? '')
+  await settle()
+  assert.deepEqual(upcomingNumbers(setup.engine.getState()), [1, 3, 4, 5])
+  assert.equal(
+    setup.engine.getState().announcement,
+    'Removed from upcoming tracks: Track 2',
+  )
+  assert.equal(setup.sent('play').length, plays)
+  // Shuffle draws again from the whole source, but not the removed track.
+  setup.engine.toggleShuffle()
+  await settle()
+  assert.deepEqual(upcomingNumbers(setup.engine.getState()), [1, 3, 4, 5])
+  setup.engine.toggleShuffle()
+  await settle()
+  for (const index of [1, 3, 4, 5]) {
+    setup.engine.next()
+    await settle()
+    assert.equal(setup.engine.getState().current?.uri, sourceTrack(index).uri)
+  }
+  assert.deepEqual(setup.engine.getState().upcoming, [])
+  setup.engine.dispose()
+})
+
+test('an upcoming source track moved to the queue plays from there and leaves the source', async () => {
+  const setup = harness()
+  await playSource(setup, fixtureSource(40))
+  setup.engine.enqueue(track)
+  const [first, , third] = setup.engine.getState().upcoming
+  const plays = setup.sent('play').length
+  // Without a position it goes to the end of the queue.
+  setup.engine.queueUpcoming(third?.key ?? '')
+  // With one it is placed there.
+  setup.engine.queueUpcoming(first?.key ?? '', 0)
+  await settle()
+  const state = setup.engine.getState()
+  assert.deepEqual(
+    state.queue.map((entry) => entry.item.uri),
+    [sourceTrack(1).uri, track.uri, sourceTrack(3).uri],
+  )
+  assert.equal(new Set(state.queue.map((entry) => entry.key)).size, 3)
+  assert.deepEqual(upcomingNumbers(state), [2, 4, 5, 6, 7])
+  assert.equal(state.upcoming.length, 30)
+  assert.equal(state.announcement, 'Moved to queue: Track 1')
+  assert.equal(setup.sent('play').length, plays)
+  for (const uri of [
+    sourceTrack(1).uri,
+    track.uri,
+    sourceTrack(3).uri,
+    sourceTrack(2).uri,
+    sourceTrack(4).uri,
+  ]) {
+    setup.engine.next()
+    await settle()
+    assert.equal(setup.engine.getState().current?.uri, uri)
+  }
   setup.engine.dispose()
 })
 
@@ -1175,7 +1322,7 @@ test('shuffle includes earlier unplayed rows without changing current playback o
   assert.equal(setup.sent('play').length, plays)
   assert.deepEqual(setup.engine.getState().queue, queued)
   assert.deepEqual(
-    setup.engine.getState().upcoming.map((item) => item.uri),
+    setup.engine.getState().upcoming.map((entry) => entry.item.uri),
     [0, 1, 2, 4, 5].map((index) => sourceTrack(index).uri),
   )
   setup.engine.clearQueue()
@@ -1185,7 +1332,7 @@ test('shuffle includes earlier unplayed rows without changing current playback o
   setup.engine.toggleShuffle()
   await settle()
   assert.deepEqual(
-    setup.engine.getState().upcoming.map((item) => item.uri),
+    setup.engine.getState().upcoming.map((entry) => entry.item.uri),
     [1, 2, 4, 5].map((index) => sourceTrack(index).uri),
   )
   setup.engine.dispose()
@@ -1200,13 +1347,16 @@ test('shuffled songs span source albums and do not repeat after toggling shuffle
   await playSource(setup, source, album)
   setup.engine.toggleShuffle()
   await settle()
-  assert.equal(setup.engine.getState().upcoming[0]?.uri, sourceTrack(5).uri)
+  assert.equal(
+    setup.engine.getState().upcoming[0]?.item.uri,
+    sourceTrack(5).uri,
+  )
   setup.engine.next()
   await settle()
   setup.engine.toggleShuffle()
   await settle()
   assert.deepEqual(
-    setup.engine.getState().upcoming.map((item) => item.uri),
+    setup.engine.getState().upcoming.map((entry) => entry.item.uri),
     [1, 2, 3, 4].map((index) => sourceTrack(index).uri),
   )
   setup.engine.dispose()
@@ -1258,7 +1408,9 @@ test('a shuffled list reads the tracks kept ahead in one request', async () => {
   assert.deepEqual(list.paged, [])
   const round = list.reads[1] ?? []
   assert.equal(new Set(round).size, 30)
-  const upcoming = setup.engine.getState().upcoming.map((item) => item.uri)
+  const upcoming = setup.engine
+    .getState()
+    .upcoming.map((entry) => entry.item.uri)
   assert.deepEqual(
     upcoming,
     round.map((index) => sourceTrack(index).uri),
@@ -1275,7 +1427,8 @@ test('a shuffled list reads the tracks kept ahead in one request', async () => {
   )
   assert.equal(setup.engine.getState().upcoming.length, 30)
   assert.equal(
-    new Set(setup.engine.getState().upcoming.map((item) => item.uri)).size,
+    new Set(setup.engine.getState().upcoming.map((entry) => entry.item.uri))
+      .size,
     30,
   )
   setup.engine.dispose()
@@ -1297,7 +1450,7 @@ test('a short shuffled list ends without reading a track twice', async () => {
   assert.deepEqual(
     setup.engine
       .getState()
-      .upcoming.map((item) => item.uri)
+      .upcoming.map((entry) => entry.item.uri)
       .sort(),
     [1, 2, 3, 4, 5, 6, 7].map((index) => sourceTrack(index).uri),
   )
@@ -1327,7 +1480,7 @@ test('tracks already read are shown while more of a shuffled list is read', asyn
   assert.equal(list.held.length, 1)
   assert.equal(setup.engine.getState().sourceLoading, true)
   assert.deepEqual(
-    setup.engine.getState().upcoming.map((item) => item.uri),
+    setup.engine.getState().upcoming.map((entry) => entry.item.uri),
     first.map((index) => sourceTrack(index).uri),
   )
 
@@ -1396,7 +1549,10 @@ test('previous returns to the preceding source song and next resumes without los
   setup.engine.next()
   await settle()
   assert.equal(setup.engine.getState().current?.uri, sourceTrack(1).uri)
-  assert.equal(setup.engine.getState().upcoming[0]?.uri, sourceTrack(2).uri)
+  assert.equal(
+    setup.engine.getState().upcoming[0]?.item.uri,
+    sourceTrack(2).uri,
+  )
   setup.engine.dispose()
 })
 
@@ -1419,7 +1575,10 @@ test('playing a queued item during the initial source lookup preserves the selec
   release([sourceTrack(0)])
   await settle()
   assert.equal(setup.engine.getState().current, track)
-  assert.equal(setup.engine.getState().upcoming[0]?.uri, sourceTrack(0).uri)
+  assert.equal(
+    setup.engine.getState().upcoming[0]?.item.uri,
+    sourceTrack(0).uri,
+  )
   setup.engine.next()
   await settle()
   assert.equal(setup.engine.getState().current?.uri, sourceTrack(0).uri)
@@ -1444,7 +1603,10 @@ test('shuffle changes during a pending next track use the latest source order', 
   await settle()
   assert.equal(setup.engine.getState().current?.uri, sourceTrack(1).uri)
   assert.equal(setup.engine.getState().starting, true)
-  assert.equal(setup.engine.getState().upcoming[0]?.uri, sourceTrack(2).uri)
+  assert.equal(
+    setup.engine.getState().upcoming[0]?.item.uri,
+    sourceTrack(2).uri,
+  )
   setup.engine.dispose()
 })
 
@@ -1464,7 +1626,7 @@ test('turning shuffle on during the initial lookup does not repeat the selected 
   await settle()
   assert.equal(setup.engine.getState().current?.uri, sourceTrack(0).uri)
   assert.deepEqual(
-    setup.engine.getState().upcoming.map((item) => item.uri),
+    setup.engine.getState().upcoming.map((entry) => entry.item.uri),
     [sourceTrack(1).uri, sourceTrack(2).uri],
   )
   setup.engine.dispose()
@@ -1528,7 +1690,10 @@ test('a rejected Spotify start retains the source song for retry and leaves the 
   const withFollowing =
     'play speaker {"uris":["spotify:track:source-0","spotify:track:single","spotify:track:source-1","spotify:track:source-2"]}'
   assert.deepEqual(setup.sent('play'), [withFollowing, withFollowing])
-  assert.equal(setup.engine.getState().upcoming[0]?.uri, sourceTrack(1).uri)
+  assert.equal(
+    setup.engine.getState().upcoming[0]?.item.uri,
+    sourceTrack(1).uri,
+  )
   setup.engine.dispose()
 })
 
@@ -1551,7 +1716,10 @@ test('previous follows the actual shuffled history and next restores the skipped
   setup.engine.next()
   await settle()
   assert.equal(setup.engine.getState().current?.uri, sourceTrack(4).uri)
-  assert.equal(setup.engine.getState().upcoming[0]?.uri, sourceTrack(3).uri)
+  assert.equal(
+    setup.engine.getState().upcoming[0]?.item.uri,
+    sourceTrack(3).uri,
+  )
   setup.engine.dispose()
 })
 
@@ -1566,7 +1734,7 @@ test('shuffle includes earlier unplayed songs within the selected album', async 
   setup.engine.toggleShuffle()
   await settle()
   assert.deepEqual(
-    setup.engine.getState().upcoming.map((item) => item.uri),
+    setup.engine.getState().upcoming.map((entry) => entry.item.uri),
     [sourceTrack(0).uri, sourceTrack(1).uri],
   )
   setup.engine.next()
@@ -1574,7 +1742,7 @@ test('shuffle includes earlier unplayed songs within the selected album', async 
   setup.engine.toggleShuffle()
   await settle()
   assert.deepEqual(
-    setup.engine.getState().upcoming.map((item) => item.uri),
+    setup.engine.getState().upcoming.map((entry) => entry.item.uri),
     [sourceTrack(1).uri],
   )
   setup.engine.dispose()
@@ -1594,7 +1762,7 @@ test('a later preview failure preserves earlier songs and retries from the faile
   await playSource(setup, source)
   assert.equal(setup.engine.getState().failure?.status, 'error')
   assert.deepEqual(
-    setup.engine.getState().upcoming.map((item) => item.uri),
+    setup.engine.getState().upcoming.map((entry) => entry.item.uri),
     Array.from({ length: 8 }, (_, index) => sourceTrack(index + 1).uri),
   )
   for (let index = 1; index <= 8; index += 1) {
@@ -1612,7 +1780,10 @@ test('a later preview failure preserves earlier songs and retries from the faile
   await settle()
   assert.equal(setup.engine.getState().current?.uri, sourceTrack(9).uri)
   assert.equal(setup.engine.getState().failure, null)
-  assert.equal(setup.engine.getState().upcoming[0]?.uri, sourceTrack(10).uri)
+  assert.equal(
+    setup.engine.getState().upcoming[0]?.item.uri,
+    sourceTrack(10).uri,
+  )
   setup.engine.dispose()
 })
 
@@ -1635,7 +1806,10 @@ test('a pending Next uses the resolved prefix even when a later preview entry fa
   release([sourceTrack(1)])
   await settle()
   assert.equal(setup.engine.getState().current?.uri, sourceTrack(1).uri)
-  assert.equal(setup.engine.getState().upcoming[0]?.uri, sourceTrack(2).uri)
+  assert.equal(
+    setup.engine.getState().upcoming[0]?.item.uri,
+    sourceTrack(2).uri,
+  )
   assert.equal(setup.engine.getState().failure?.status, 'error')
   setup.engine.dispose()
 })
@@ -1898,7 +2072,7 @@ test('the upcoming source tracks go to Spotify with the track, so they follow it
   await advance(3_000)
   const state = setup.engine.getState()
   assert.equal(state.current?.uri, sourceTrack(1).uri)
-  assert.equal(state.upcoming[0]?.uri, sourceTrack(2).uri)
+  assert.equal(state.upcoming[0]?.item.uri, sourceTrack(2).uri)
   assert.equal(state.target.kind, 'sonos')
   assert.equal(setup.sent('play').length, 1)
   setup.engine.dispose()
@@ -1928,7 +2102,7 @@ test('a skip made on the Sonos group past several sent tracks moves the queue to
   await advance(3_000)
   const state = setup.engine.getState()
   assert.equal(state.current?.uri, sourceTrack(3).uri)
-  assert.equal(state.upcoming[0]?.uri, sourceTrack(4).uri)
+  assert.equal(state.upcoming[0]?.item.uri, sourceTrack(4).uri)
   assert.equal(state.source?.label, 'Tracks')
   setup.engine.dispose()
 })
@@ -1967,7 +2141,10 @@ test('a device that moves on to the next sent track is followed without another 
   })
   await advance(3_000)
   assert.equal(setup.engine.getState().current?.uri, sourceTrack(1).uri)
-  assert.equal(setup.engine.getState().upcoming[0]?.uri, sourceTrack(2).uri)
+  assert.equal(
+    setup.engine.getState().upcoming[0]?.item.uri,
+    sourceTrack(2).uri,
+  )
   assert.deepEqual(setup.sent('play'), [
     'play speaker {"uris":["spotify:track:source-0","spotify:track:source-1","spotify:track:source-2","spotify:track:source-3","spotify:track:source-4"]}',
   ])
@@ -2026,7 +2203,10 @@ test('shuffle is remembered for lists and an album starts in order', async () =>
   assert.equal(setup.engine.getState().shuffle, true)
   await playSource(setup, { ...fixtureSource(5), kind: 'album' })
   assert.equal(setup.engine.getState().shuffle, false)
-  assert.equal(setup.engine.getState().upcoming[0]?.uri, sourceTrack(1).uri)
+  assert.equal(
+    setup.engine.getState().upcoming[0]?.item.uri,
+    sourceTrack(1).uri,
+  )
   // Shuffling this album leaves the remembered setting alone.
   setup.engine.toggleShuffle()
   assert.equal(setup.engine.getState().shuffle, true)
@@ -2036,7 +2216,10 @@ test('shuffle is remembered for lists and an album starts in order', async () =>
   setup.engine.play(sourceTrack(0), fixtureSource(5))
   await settle()
   assert.equal(setup.engine.getState().shuffle, true)
-  assert.equal(setup.engine.getState().upcoming[0]?.uri, sourceTrack(4).uri)
+  assert.equal(
+    setup.engine.getState().upcoming[0]?.item.uri,
+    sourceTrack(4).uri,
+  )
   setup.engine.toggleShuffle()
   assert.deepEqual(saved, [false])
   setup.engine.toggleShuffle()
@@ -2115,7 +2298,7 @@ test('a Sonos room is given the next track as soon as it has been read', async (
   assert.ok(next)
   // No report was read from the group in between.
   assert.equal(sonos.reads.length, reads)
-  assert.equal(sonos.loads[1], `RINCON_FIXTURE:1 append ${next.uri} play`)
+  assert.equal(sonos.loads[1], `RINCON_FIXTURE:1 append ${next.item.uri} play`)
   setup.engine.dispose()
 })
 
@@ -2164,7 +2347,7 @@ test('Next on a Sonos room skips in its queue and the queue is topped up', async
   assert.equal(shown.snapshot?.durationMs, 180_000)
   assert.equal(shown.snapshot?.positionMs, 0)
   assert.equal(shown.snapshot?.paused, false)
-  assert.equal(shown.upcoming[0]?.uri, sourceTrack(2).uri)
+  assert.equal(shown.upcoming[0]?.item.uri, sourceTrack(2).uri)
   assert.equal(sonos.reads.length, reads)
   await settle()
   assert.deepEqual(sonos.commands, ['RINCON_FIXTURE:1 next'])
@@ -2181,7 +2364,7 @@ test('Next on a Sonos room skips in its queue and the queue is topped up', async
   await advance(3_000)
   const state = setup.engine.getState()
   assert.equal(state.current?.uri, sourceTrack(2).uri)
-  assert.equal(state.upcoming[0]?.uri, sourceTrack(3).uri)
+  assert.equal(state.upcoming[0]?.item.uri, sourceTrack(3).uri)
   assert.deepEqual(sonos.commands, [
     'RINCON_FIXTURE:1 next',
     'RINCON_FIXTURE:1 next',
@@ -2404,7 +2587,7 @@ test('a Sonos room that moves on by itself is followed without another start', a
   await advance(3_000)
   const state = setup.engine.getState()
   assert.equal(state.current?.uri, sourceTrack(3).uri)
-  assert.equal(state.upcoming[0]?.uri, sourceTrack(4).uri)
+  assert.equal(state.upcoming[0]?.item.uri, sourceTrack(4).uri)
   assert.equal(
     sonos.loads.filter((load) => load.includes(' replace ')).length,
     1,
@@ -2748,7 +2931,7 @@ test('a saved session is picked up on another page from the track the device has
   const state = second.engine.getState()
   assert.equal(state.current?.uri, sourceTrack(2).uri)
   assert.equal(state.snapshot?.trackUri, sourceTrack(2).uri)
-  assert.equal(state.upcoming[0]?.uri, sourceTrack(3).uri)
+  assert.equal(state.upcoming[0]?.item.uri, sourceTrack(3).uri)
   assert.equal(state.source?.label, 'Tracks')
   assert.equal(state.target.kind, 'remote')
   assert.equal(state.starting, false)
@@ -3101,7 +3284,7 @@ test('the first page drives the session and a second page shows its queue', asyn
     shown.queue.map((entry) => entry.item.uri),
     [track.uri],
   )
-  assert.equal(shown.upcoming[0]?.uri, sourceTrack(1).uri)
+  assert.equal(shown.upcoming[0]?.item.uri, sourceTrack(1).uri)
   assert.equal(shown.source?.label, 'Tracks')
   assert.equal(shown.snapshot?.trackUri, sourceTrack(0).uri)
   // The follower has no queue of its own and has sent the device nothing.
@@ -3142,7 +3325,7 @@ test('a queue change on a follower moves the session to that page', async () => 
     taken.queue.map((entry) => entry.item.uri),
     [track.uri],
   )
-  assert.equal(taken.upcoming[0]?.uri, sourceTrack(1).uri)
+  assert.equal(taken.upcoming[0]?.item.uri, sourceTrack(1).uri)
   // Taking over restarted nothing on the device.
   assert.deepEqual(two.sent('play'), [])
 
@@ -3172,6 +3355,62 @@ test('a queue change on a follower moves the session to that page', async () => 
   two.close()
 })
 
+test('the upcoming tracks rearranged on one page are the same on the other', async () => {
+  const sessions = fakeSessions()
+  const one = page('Chrome on Mac', sessions)
+  await driveSource(one)
+  const two = page('Safari on iPhone', sessions, one.remote)
+  two.engine.watch()
+  two.sync.start()
+  await advance(500)
+  const shown = two.sync.getState().upcoming
+  assert.deepEqual(
+    shown.slice(0, 3).map((entry) => entry.key),
+    one.sync
+      .getState()
+      .upcoming.slice(0, 3)
+      .map((entry) => entry.key),
+  )
+
+  // A change made on the follower takes the session over and is made there.
+  two.sync.queueUpcoming(shown[1]?.key ?? '')
+  await advance(500)
+  two.sync.moveUpcoming(0, 1)
+  two.sync.removeUpcoming(shown[4]?.key ?? '')
+  await advance(500)
+  const taken = two.sync.getState()
+  assert.equal(taken.sharing.role, 'driver')
+  assert.deepEqual(
+    taken.queue.map((entry) => entry.item.uri),
+    [sourceTrack(2).uri],
+  )
+  assert.deepEqual(upcomingNumbers(taken), [3, 1, 4, 6, 7])
+  assert.deepEqual(two.sent('play'), [])
+
+  await advance(4_000)
+  const left = one.sync.getState()
+  assert.equal(left.sharing.role, 'follower')
+  assert.deepEqual(
+    left.queue.map((entry) => entry.item.uri),
+    [sourceTrack(2).uri],
+  )
+  assert.deepEqual(upcomingNumbers(left), [3, 1, 4, 6, 7])
+
+  // A page that takes the session back keeps the order and what was removed.
+  one.sync.playUpcoming(left.upcoming[1]?.key ?? '')
+  await advance(500)
+  const back = one.sync.getState()
+  assert.equal(back.sharing.role, 'driver')
+  assert.equal(back.current?.uri, sourceTrack(1).uri)
+  assert.deepEqual(upcomingNumbers(back), [4, 6, 7, 8, 9])
+  assert.deepEqual(
+    back.queue.map((entry) => entry.item.uri),
+    [sourceTrack(2).uri],
+  )
+  one.close()
+  two.close()
+})
+
 test('a follower takes the session over when the driver goes away', async () => {
   const sessions = fakeSessions()
   const one = page('Chrome on Mac', sessions)
@@ -3190,7 +3429,7 @@ test('a follower takes the session over when the driver goes away', async () => 
   assert.equal(state.sharing.role, 'driver')
   assert.equal(sessions.record.driver?.name, 'Safari on iPhone')
   assert.equal(state.current?.uri, sourceTrack(1).uri)
-  assert.equal(state.upcoming[0]?.uri, sourceTrack(2).uri)
+  assert.equal(state.upcoming[0]?.item.uri, sourceTrack(2).uri)
   assert.deepEqual(two.sent('play'), [])
   // What it took over is saved under its own name.
   await advance(1_000)
@@ -3235,7 +3474,7 @@ test('a closed page gives the session up and its reload carries it on', async ()
   assert.equal(state.sharing.role, 'driver')
   assert.equal(state.current?.uri, sourceTrack(0).uri)
   assert.equal(state.queue.length, 1)
-  assert.equal(state.upcoming[0]?.uri, sourceTrack(1).uri)
+  assert.equal(state.upcoming[0]?.item.uri, sourceTrack(1).uri)
   assert.deepEqual(again.sent('play'), [])
   again.close()
 })
@@ -3528,7 +3767,7 @@ test('a Sonos room that played on with every page closed is rejoined where it is
   assert.equal(shown.current?.uri, sourceTrack(3).uri)
   assert.equal(shown.snapshot?.trackUri, sourceTrack(3).uri)
   assert.equal(shown.snapshot?.paused, false)
-  assert.equal(shown.upcoming[0]?.uri, sourceTrack(4).uri)
+  assert.equal(shown.upcoming[0]?.item.uri, sourceTrack(4).uri)
   assert.deepEqual(shown.rejoin, {
     status: 'rejoined',
     device: 'Fixture kitchen',
@@ -3686,7 +3925,7 @@ test('a Spotify device that played on with every page closed is rejoined where i
   const again = await reopen(sessions, undefined, one.remote)
   const shown = again.sync.getState()
   assert.equal(shown.current?.uri, sourceTrack(5).uri)
-  assert.equal(shown.upcoming[0]?.uri, sourceTrack(6).uri)
+  assert.equal(shown.upcoming[0]?.item.uri, sourceTrack(6).uri)
   assert.deepEqual(shown.target, { kind: 'remote', device: speaker })
   assert.deepEqual(shown.rejoin, {
     status: 'rejoined',
@@ -4253,7 +4492,7 @@ test('other music put on as a track ran out is left playing', async () => {
   assert.equal(state.current, null)
   assert.equal(state.snapshot?.trackUri, fromTheApp.trackUri)
   assert.equal(state.source?.label, 'Tracks')
-  assert.equal(state.upcoming[0]?.uri, sourceTrack(1).uri)
+  assert.equal(state.upcoming[0]?.item.uri, sourceTrack(1).uri)
   one.close()
 })
 
@@ -4305,7 +4544,7 @@ test('a page that slept follows a device that played on and leaves other music a
   let state = one.sync.getState()
   assert.equal(state.current?.uri, sourceTrack(4).uri)
   assert.equal(state.snapshot?.trackUri, sourceTrack(4).uri)
-  assert.equal(state.upcoming[0]?.uri, sourceTrack(5).uri)
+  assert.equal(state.upcoming[0]?.item.uri, sourceTrack(5).uri)
   assert.equal(one.sent('play').length, played)
   // It is followed from there as before.
   one.remote.snapshot = playing(4, 198_000)
@@ -4321,7 +4560,7 @@ test('a page that slept follows a device that played on and leaves other music a
   assert.equal(state.current, null)
   assert.equal(state.snapshot?.trackUri, fromTheApp.trackUri)
   assert.equal(state.source?.label, 'Tracks')
-  assert.equal(state.upcoming[0]?.uri, sourceTrack(6).uri)
+  assert.equal(state.upcoming[0]?.item.uri, sourceTrack(6).uri)
   assert.equal(one.sent('play').length, played)
   one.close()
 })
@@ -4396,7 +4635,7 @@ test('the queue moves on past what Spotify played while every page was closed', 
   const shown = again.sync.getState()
   assert.equal(shown.current?.uri, sourceTrack(3).uri)
   assert.equal(shown.snapshot, null)
-  assert.equal(shown.upcoming[0]?.uri, sourceTrack(4).uri)
+  assert.equal(shown.upcoming[0]?.item.uri, sourceTrack(4).uri)
   assert.equal(shown.rejoin?.status, 'ended')
   assert.deepEqual(again.sent('play'), [])
   assert.equal(again.sent('history').length, 1)
@@ -4423,7 +4662,7 @@ test('nothing played while every page was closed leaves the saved track to start
   const shown = again.sync.getState()
   assert.equal(shown.current?.uri, sourceTrack(0).uri)
   assert.equal(shown.snapshot?.paused, true)
-  assert.equal(shown.upcoming[0]?.uri, sourceTrack(1).uri)
+  assert.equal(shown.upcoming[0]?.item.uri, sourceTrack(1).uri)
   assert.deepEqual(again.sent('play'), [])
   again.close()
 })
@@ -4441,7 +4680,7 @@ test('other music on the device does not stop the queue moving on past what was 
   const shown = again.sync.getState()
   assert.equal(shown.current, null)
   assert.equal(shown.snapshot?.trackUri, fromTheApp.trackUri)
-  assert.equal(shown.upcoming[0]?.uri, sourceTrack(2).uri)
+  assert.equal(shown.upcoming[0]?.item.uri, sourceTrack(2).uri)
   assert.equal(shown.rejoin?.status, 'changed')
   assert.deepEqual(again.sent('play'), [])
   again.close()
@@ -4458,7 +4697,7 @@ test('a list that ran out while every page was closed leaves the queue after it'
   const shown = again.sync.getState()
   assert.equal(shown.current, null)
   assert.equal(shown.snapshot, null)
-  assert.equal(shown.upcoming[0]?.uri, sourceTrack(31).uri)
+  assert.equal(shown.upcoming[0]?.item.uri, sourceTrack(31).uri)
   assert.equal(shown.rejoin?.status, 'ended')
   assert.deepEqual(again.sent('play'), [])
   assert.deepEqual(again.sent('history'), [])
@@ -4525,7 +4764,7 @@ test('a device that went quiet and plays on later through its tracks is followed
   assert.equal(state.current?.uri, sourceTrack(2).uri)
   assert.equal(state.snapshot?.trackUri, sourceTrack(2).uri)
   assert.equal(state.snapshot?.paused, false)
-  assert.equal(state.upcoming[0]?.uri, sourceTrack(3).uri)
+  assert.equal(state.upcoming[0]?.item.uri, sourceTrack(3).uri)
   // It is followed from there as before.
   one.remote.snapshot = playing(2, 198_000)
   await advance(3_000)
@@ -4547,7 +4786,7 @@ test('a device that went quiet and was left paused further on is picked up there
   assert.equal(state.current?.uri, sourceTrack(1).uri)
   assert.equal(state.snapshot?.paused, true)
   assert.equal(state.snapshot?.positionMs, 45_000)
-  assert.equal(state.upcoming[0]?.uri, sourceTrack(2).uri)
+  assert.equal(state.upcoming[0]?.item.uri, sourceTrack(2).uri)
   // Play carries on with what the device holds.
   one.sync.toggle()
   await settle()
@@ -4570,7 +4809,7 @@ test('other music found after a device went quiet is shown and the queue moved p
   assert.equal(state.current, null)
   assert.equal(state.snapshot?.trackUri, fromTheApp.trackUri)
   assert.equal(state.source?.label, 'Tracks')
-  assert.equal(state.upcoming[0]?.uri, sourceTrack(2).uri)
+  assert.equal(state.upcoming[0]?.item.uri, sourceTrack(2).uri)
   assert.equal(one.sent('play').length, played)
   one.close()
 })
@@ -4588,7 +4827,7 @@ test('a device that went quiet before the app closed is still rejoined when the 
   const shown = again.sync.getState()
   assert.equal(shown.current?.uri, sourceTrack(2).uri)
   assert.equal(shown.snapshot?.trackUri, sourceTrack(2).uri)
-  assert.equal(shown.upcoming[0]?.uri, sourceTrack(3).uri)
+  assert.equal(shown.upcoming[0]?.item.uri, sourceTrack(3).uri)
   assert.equal(shown.rejoin?.status, 'rejoined')
   assert.deepEqual(again.sent('play'), [])
   again.close()
@@ -4646,7 +4885,7 @@ test('a Sonos room that reported no track for a while is followed again when it 
   assert.equal(state.current?.uri, sourceTrack(2).uri)
   assert.equal(state.snapshot?.trackUri, sourceTrack(2).uri)
   assert.equal(state.snapshot?.paused, false)
-  assert.equal(state.upcoming[0]?.uri, sourceTrack(3).uri)
+  assert.equal(state.upcoming[0]?.item.uri, sourceTrack(3).uri)
   assert.deepEqual(state.target, { kind: 'room', room: kitchen })
   // Nothing on the room was started or loaded again.
   assert.deepEqual(sonos.commands, [])
