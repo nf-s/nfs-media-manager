@@ -1,4 +1,5 @@
 import type { AlbumListItem } from '@repo/schemas/media'
+import { spotifyIdPattern } from '@repo/schemas/playback'
 import { safeRatingHref } from './provider-ratings'
 
 export function spotifyAlbumUrl(
@@ -51,7 +52,7 @@ export function albumSpotifyUri(
 export function spotifyTrackUri(
   externalId: string | null | undefined,
 ): string | undefined {
-  return externalId && /^[A-Za-z0-9]{22}$/.test(externalId)
+  return externalId && spotifyIdPattern.test(externalId)
     ? `spotify:track:${externalId}`
     : undefined
 }

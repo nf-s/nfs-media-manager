@@ -4,6 +4,7 @@ import {
   AI_AUDIO_MAX_BYTES,
   AiSearchInputSchema,
   AiSearchInterpretationSchema,
+  AiSearchPlanSchema,
   AiTranscriptionInputSchema,
   AiSubscriptionInterpretationSchema,
   AiTranscriptionSchema,
@@ -59,6 +60,16 @@ const defaultSorts: Record<AiMediaLibrary, string> = {
   film: 'releaseDate desc',
   track: 'dateAdded desc',
   artist: 'name asc',
+}
+
+const AiBrowseSearchInterpretationSchema = AiSearchInterpretationSchema.extend({
+  plan: AiSearchPlanSchema.omit({ playability: true }).nullable(),
+})
+
+function mediaInterpretationSchema(context: AiSearchInput['context']) {
+  return context === 'matches'
+    ? AiSearchInterpretationSchema
+    : AiBrowseSearchInterpretationSchema
 }
 
 const albumListeningWarning =
@@ -127,6 +138,7 @@ export function aiSearchPrompt(
   now: Date,
   context?: AiSearchInput['context'],
 ) {
+  const matches = mediaType === 'track' && context === 'matches'
   const fields = searchFields(mediaType, context).map(
     ({ key, label, type, format, rating, filterable }) => ({
       key,
@@ -141,16 +153,21 @@ export function aiSearchPrompt(
   )
   return `Convert a request into a read-only ${mediaType} library search. Today is ${now.toISOString().slice(0, 10)} (UTC).
 Return ONLY one JSON object matching this schema:
-${JSON.stringify(z.toJSONSchema(AiSearchInterpretationSchema, { io: 'input' }))}
+${JSON.stringify(z.toJSONSchema(mediaInterpretationSchema(matches ? context : undefined), { io: 'input' }))}
 Supported fields: ${JSON.stringify(fields)}.
 Rules:
 ${sharedRules}
 - Search only the current library (${mediaType}). If the request requires another library, unavailable data, recommendations from outside the library, unsupported boolean grouping, or actions, return plan:null and explain the limitation or ask one concise clarification question. Never silently drop a requested condition.
-- A plan replaces the current search. Include every required key; use q:"", filters:[], ranges:[], listening:null, listeningSort:null, limitResults:null when unused. Use ${context === 'matches' ? 'title asc' : defaultSorts[mediaType]} by default.
+- A plan replaces the current search. Include every required key; use q:"", filters:[], ranges:[], listening:null, listeningSort:null, limitResults:null${matches ? ', playability:"all"' : ''} when unused. Use ${matches ? 'title asc' : defaultSorts[mediaType]} by default.
 - filters are exact, case-insensitive text matches. Genre/tag/keyword all use genre. Use canonical natural tag names without inventing matches or synonyms. All required filters are ANDed; all any filters form ONE OR group across fields; exclude means NOT. That OR group is ANDed with required, excluded, ranges and listening. Use required for 'rock and highly rated', any only for alternatives. Do not put a full natural-language sentence in q. q is a substring search for a residual title/name.
 - ranges have inclusive min/max and includeMissing:false unless explicitly requested. Do not turn missing ratings into zero. All ranges are ANDed. Use each field only once. Date range values are UTC epoch milliseconds, with an end date at 23:59:59.999. Respect each rating's scale. 'High RYM score' defaults to at least 3.5 out of 5, explained as an assumption. Other vague ratings default to 70% of their scale, explained. 'Top/best' sorts that rating descending; only cap results if a count was requested.
 ${listeningRules(mediaType, context)}
-${context === 'matches' ? `- In Tracks Matches use the exact matchProvider values ${JSON.stringify(Object.values(trackMatchProviderLabels))}. Missing a named provider uses its value with mode "exclude". Unmatched recordings use "${trackMatchProviderLabels.noRecording}" with mode "required" (no Spotify ID and no Last.fm recording evidence). For no evidence of any kind use "${trackMatchProviderLabels.noEvidence}". Discogs is a comparison of release track-list positions. Provider names, artist credits and recorded IDs have their own fields.` : ''}
+${
+  matches
+    ? `- In Tracks Matches use the exact matchProvider values ${JSON.stringify(Object.values(trackMatchProviderLabels))}. These describe evidence on each entry. Missing evidence from a named provider uses its value with mode "exclude". Spotify evidence means an ID stored on that entry. Unmatched recordings use "${trackMatchProviderLabels.noRecording}" with mode "required" (no stored Spotify ID and no Last.fm recording evidence). For no evidence of any kind use "${trackMatchProviderLabels.noEvidence}". Discogs is a comparison of release track-list positions. Provider names, artist credits and recorded IDs have their own fields.
+- Spotify playability is a separate condition, ANDed with the other conditions. Use playability:"playable" for any playable version, "direct" for playback using this entry's own valid Spotify ID, "alternate" if it can play only through another confirmed version, and "unavailable" if neither this entry nor another confirmed version can play. Ask whether the user means a missing match on this entry or no playable version if "missing Spotify" is ambiguous.`
+    : ''
+}
 ${explanationRule}`
 }
 
@@ -198,8 +215,13 @@ function modelOutput(value: unknown): unknown {
   return output
 }
 
-export function parseAiInterpretation(value: unknown) {
-  const parsed = AiSearchInterpretationSchema.safeParse(modelOutput(value))
+export function parseAiInterpretation(
+  value: unknown,
+  context?: AiSearchInput['context'],
+) {
+  const parsed = mediaInterpretationSchema(context).safeParse(
+    modelOutput(value),
+  )
   if (!parsed.success) invalidPlan()
   return parsed.data
 }
@@ -217,6 +239,11 @@ export function validateAiPlan(
   mediaType: AiMediaLibrary,
   context?: AiSearchInput['context'],
 ) {
+  if (
+    plan.playability !== undefined &&
+    (mediaType !== 'track' || context !== 'matches')
+  )
+    invalidPlan()
   const fields = new Map(
     searchFields(mediaType, context).map((field) => [field.key, field]),
   )
@@ -432,6 +459,7 @@ async function interpretMediaSearch(
       { role: 'system', content: aiSearchPrompt(mediaType, now, context) },
       { role: 'user', content: text },
     ]),
+    context,
   )
   const { plan } = interpretation
   const warnings: string[] = []

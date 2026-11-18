@@ -32,12 +32,15 @@ const knownDuration = sql`case when lt.duration_sec > 0 then lt.duration_sec end
 const visibleTrack = sql`mi.media_type = 'track'
   and mi.metadata->>'legacyHidden' is distinct from 'true'`
 
+function recordingTracksWithTitles(titles: SQL) {
+  return sql`select mi.id, target.title_key from media_item mi
+    join (${titles}) target on target.title_key = ${exactName(sql`mi.title`)}
+    where ${visibleTrack}`
+}
+
 function recordingVersionTracks(id: string) {
   return sql`recording_version_tracks as materialized (
-    select mi.id, target.title_key from media_item mi
-    join (select ${exactName(sql`title`)} as title_key from media_item where id = ${id}) target
-      on target.title_key = ${exactName(sql`mi.title`)}
-    where ${visibleTrack}
+    ${recordingTracksWithTitles(sql`select ${exactName(sql`title`)} as title_key from media_item where id = ${id}`)}
   ), `
 }
 
@@ -89,17 +92,30 @@ function recordingContenders(creatorId?: string) {
 /** Assign each matching track to one recording, using direct identity evidence. */
 export function recordingMemberships(
   matches: SQLWrapper,
-  creatorId?: string,
-  versionId?: string,
+  options: {
+    creatorId?: string
+    versionId?: string
+    includePeerMembers?: boolean
+    useTargetTitles?: boolean
+  } = {},
 ) {
-  const contenders =
+  const { creatorId, versionId, includePeerMembers, useTargetTitles } = options
+  const titledTracks =
     versionId !== undefined
-      ? sql`recording_contenders as (
+      ? sql`recording_version_tracks`
+      : useTargetTitles
+        ? sql`(${recordingTracksWithTitles(sql`
+            select distinct ${exactName(sql`mi.title`)} as title_key
+            from recording_matches target join media_item mi using (id)
+          `)})`
+        : undefined
+  const contenders = titledTracks
+    ? sql`recording_contenders as (
       select v.*, ${validIsrc(normalizedIsrc(sql`lt.isrc`))} as isrc, ${knownDuration} as duration_sec
-      from recording_version_tracks v join library_track lt on lt.media_item_id = v.id
+      from ${titledTracks} v join library_track lt on lt.media_item_id = v.id
       where v.title_key <> ''
     )`
-      : recordingContenders(creatorId)
+    : recordingContenders(creatorId)
   return sql`${versionId === undefined ? sql`` : recordingVersionTracks(versionId)}
     recording_matches as materialized (${matches}),
     ${contenders},
@@ -161,7 +177,7 @@ export function recordingMemberships(
     recording_group_members as materialized (
       select d.id, d.group_key from recording_duration_spans d
       where d.version_count > 1 and (d.span > 5) is not true
-        and d.id in (select id from recording_matches)
+        ${includePeerMembers ? sql`` : sql`and d.id in (select id from recording_matches)`}
     )`
 }
 
@@ -177,10 +193,13 @@ export const recordingCount = sql`
     - (select count(*) - count(distinct group_key) from recording_group_members))::int as value`
 
 /** Choose a playable edition first. Every ordering uses the same representative. */
-export const recordingRepresentatives = sql`
+export function recordingRepresentatives(
+  spotifyAvailable = sql`lt.spotify_track_id is not null`,
+) {
+  return sql`
   recording_group_representatives as (
     select m.group_key, count(*)::int as version_count, min(lt.date_added) as date_added,
-      (array_agg(m.id order by (lt.spotify_track_id is not null) desc,
+      (array_agg(m.id order by (${spotifyAvailable}) desc,
         (lt.album_media_item_id is not null) desc,
         coalesce(release.release_date, mi.release_date) asc nulls last, m.id))[1] as id
     from recording_group_members m
@@ -196,6 +215,7 @@ export const recordingRepresentatives = sql`
     join library_track lt on lt.media_item_id = m.id
     where not exists (select 1 from recording_group_members g where g.id = m.id)
   )`
+}
 
 /** A stored event belongs to exactly one (account, artist, title) tuple. */
 export const recordingListening = sql`

@@ -11,6 +11,7 @@ import {
 import { formatBrowseValue, type BrowseField } from '@repo/schemas/browse'
 import { subscriptionTypeLabels } from '@repo/schemas/subscriptions'
 import type { ListeningLibrary } from '@repo/schemas/listening'
+import { trackPlayabilityLabels } from '@repo/schemas/match-diagnostics'
 import {
   formatListeningPeriod,
   formatListeningRule,
@@ -60,6 +61,7 @@ export const subscriptionAiSearchTarget: AiSearchTarget<AiSubscriptionPlan> = {
 
 export function aiSearchParams(
   plan: AiSearchPlan,
+  context?: 'matches',
 ): Record<string, string | null> {
   return {
     q: plan.q || null,
@@ -72,6 +74,9 @@ export function aiSearchParams(
     sortBy: plan.sortBy,
     direction: plan.direction,
     limitResults: plan.limitResults === null ? null : String(plan.limitResults),
+    ...(context === 'matches'
+      ? { playability: plan.playability ?? 'all' }
+      : {}),
     item: null,
   }
 }
@@ -83,6 +88,8 @@ export function describeAiSearchPlan(
 ): string[] {
   const descriptions: string[] = []
   if (plan.q) descriptions.push(`Search: ${plan.q}`)
+  if (plan.playability && plan.playability !== 'all')
+    descriptions.push(trackPlayabilityLabels[plan.playability])
   for (const filter of plan.filters) {
     const mode =
       filter.mode === 'required'

@@ -161,7 +161,7 @@ export function TrackBrowseSearch({
         },
       }}
       onApply={(plan) => {
-        setParams(aiSearchParams(plan))
+        setParams(aiSearchParams(plan, matches ? 'matches' : undefined))
         setDraft('')
       }}
     />

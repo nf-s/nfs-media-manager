@@ -4,7 +4,11 @@ Open **Matches** in Tracks, Albums, Artists, Films or Subscriptions. Each table 
 
 ## Tracks
 
-Use **Match status** to switch between **All tracks**, **Unmatched recordings**, **No matches at all**, **Missing Spotify**, **Missing Last.fm** and **Missing Discogs album evidence**. **Unmatched recordings** selects tracks with neither a Spotify ID nor Last.fm recording evidence. **No matches at all** also requires the Discogs album position to be empty.
+Use **Playability → No playable version** to find recordings you cannot play from Spotify in your library. **Any playable version** includes both direct matches and other confirmed versions of the same recording. Choose **Playable on this entry** or **Playable via another version** to see each separately. An album or playlist filter narrows the entries you see. A confirmed Spotify version on a different release still counts.
+
+**Match status** checks the entry's own provider evidence. **Missing Spotify on this entry** includes releases without their own Spotify ID. When another version is playable, the Spotify cell links to it, and Play and Add to queue use that version. Both library entries keep their identities. Existing Missing Spotify bookmarks open with **No playable version** selected. Choose **Any playability** to include every entry missing a direct match.
+
+**Unmatched recordings** requires the entry to have neither a direct Spotify ID nor Last.fm recording evidence. **No matches at all** also requires the Discogs album position to be empty. **Missing Last.fm** and **Missing Discogs album evidence** check the entry's corresponding provider evidence.
 
 Combine a match filter with track filters such as artist, album, playlist and source, or with scrobble, date and duration ranges. Provider names, artist credits and recorded identifiers have their own autocomplete fields. Required, Any and Exclude use the same rules as Tracks Browse. Use **AI search** to build a query, or **Filters → Columns** to choose and reorder the table's columns. Drag column edges or use the arrow keys on a focused edge to resize them.
 

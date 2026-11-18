@@ -13,6 +13,7 @@ import {
   trackMatchProviderLabels,
   type TrackMatchDiagnosticsQuery,
 } from '@repo/schemas/match-diagnostics'
+import { spotifyIdPattern } from '@repo/schemas/playback'
 import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
 import {
@@ -24,6 +25,10 @@ import {
 } from './browse'
 import { createDatabaseReadCache } from '@/lib/database-read-cache'
 import { artistTagMemberships } from './music-tags'
+import {
+  recordingMemberships,
+  recordingRepresentatives,
+} from './recording-groups'
 import { loadTracks } from './tracks'
 
 const providers = [
@@ -125,9 +130,67 @@ const trackTables = sql`from media_item join library_track on library_track.medi
   left join media_item track_sort_album on track_sort_album.id = library_track.album_media_item_id`
 const visibleTracks = sql`media_item.media_type = 'track'
   and media_item.metadata->>'legacyHidden' is distinct from 'true'`
-const diagnosticFields = trackMatchDiagnosticFields.filter(
-  (field) => !trackBrowseFields.some((browse) => browse.key === field.key),
+const trackBrowseFieldKeys = new Set(
+  trackBrowseFields.map((field) => field.key),
 )
+const ordinaryFields = trackMatchDiagnosticFields.filter((field) =>
+  trackBrowseFieldKeys.has(field.key),
+)
+const diagnosticFields = trackMatchDiagnosticFields.filter(
+  (field) => !trackBrowseFieldKeys.has(field.key),
+)
+
+function playableSpotifyId(id: SQL) {
+  return sql`coalesce(${id} collate "C" ~ ${spotifyIdPattern.source}, false)`
+}
+
+/** A playable sibling covers the recording while each release keeps its own identity. */
+function spotifyAlternates(
+  scope: SQL,
+  options: { creatorId?: string; useTargetTitles?: boolean } = {},
+) {
+  const matches = sql`select target.id from (${scope}) target
+    where not ${playableSpotifyId(sql`target.spotify_track_id`)} and (
+      target.source_label is distinct from 'lastfm' or not exists (
+        select 1 from lastfm_track_source s
+        where s.track_media_item_id = target.id and s.manually_matched
+      )
+    )`
+  return sql`
+    ${recordingMemberships(matches, { ...options, includePeerMembers: true })},
+    ${recordingRepresentatives(playableSpotifyId(sql`lt.spotify_track_id`))},
+    spotify_alternates as materialized (
+      select m.id, r.id as track_id, alternate.title as name,
+        coalesce(playable.album_name, release.title) as album_name,
+        release.id as album_id, release.title as album_title,
+        coalesce(alternate.artwork_url, release.artwork_url) as artwork_url,
+        playable.spotify_track_id as identifier
+      from recording_matches target
+      join recording_group_members m using (id)
+      join recording_group_representatives r using (group_key)
+      join library_track playable on playable.media_item_id = r.id
+      join media_item alternate on alternate.id = r.id
+      left join media_item release on release.id = playable.album_media_item_id
+      where ${playableSpotifyId(sql`playable.spotify_track_id`)}
+    )`
+}
+
+function playabilityCondition(
+  playability: TrackMatchDiagnosticsQuery['playability'],
+) {
+  const direct = playableSpotifyId(sql`library_track.spotify_track_id`)
+  const alternate = sql`coverage.id is not null`
+  switch (playability) {
+    case 'direct':
+      return direct
+    case 'alternate':
+      return alternate
+    case 'playable':
+      return sql`(${direct} or ${alternate})`
+    case 'unavailable':
+      return sql`not (${direct} or ${alternate})`
+  }
+}
 
 function presenceValues(spotify: SQL, lastfm: SQL, discogs: SQL) {
   return [
@@ -147,13 +210,13 @@ function presenceValues(spotify: SQL, lastfm: SQL, discogs: SQL) {
 
 function providerValues() {
   const labels = presenceValues(
-    sql`coalesce(m.spotify, false)`,
+    sql`r.spotify_track_id is not null`,
     sql`coalesce(m.lastfm, false)`,
     sql`coalesce(m.discogs, false)`,
   )
   return sql`select r.id, p.value from records r
     left join (
-      select id, bool_or(provider = 'spotify') as spotify, bool_or(provider = 'lastfm') as lastfm,
+      select id, bool_or(provider = 'lastfm') as lastfm,
         bool_or(provider = 'discogs') as discogs from evidence group by id
     ) m on m.id = r.id
     cross join lateral (values ${sql.join(
@@ -170,7 +233,8 @@ function evidenceValues(field: string) {
     return sql`select e.id, ${column.value} as value from evidence e
       where e.provider = ${column.provider}`
   return sql`select e.id, coalesce(e.name, e.identifier) as value from evidence e
-    where e.provider = ${field}`
+    where e.provider = ${field}
+    ${field === 'spotify' ? sql`union all select id, name as value from spotify_alternates` : sql``}`
 }
 
 function evidenceFilter(filter: BrowseFilter) {
@@ -230,6 +294,16 @@ export async function listTrackMatchDiagnostics(query: DiagnosticsQuery) {
   const order = sql.join(ordering, sql`, `)
   const filters = query.filters ?? []
   const words = [...new Set(query.q?.split(/\s+/).filter(Boolean))]
+  const playability = playabilityCondition(query.playability)
+  const filtersByCoverage =
+    playability !== undefined && query.playability !== 'direct'
+  const coverageJoin = filtersByCoverage
+    ? sql`left join spotify_alternates coverage on coverage.id = ${trackId}`
+    : sql``
+  // Display alone needs only the current page's recordings. Search, filters
+  // and ordering need coverage before pagination so all rows are considered.
+  const needsCoverageBeforePage =
+    words.length > 0 || sortBy === 'spotify' || filtersByCoverage
   const sharedArtistTags = words.length > 1
   const supportingProviders = new Set<string>()
   if (words.length || sortBy === 'matchProvider')
@@ -259,17 +333,20 @@ export async function listTrackMatchDiagnostics(query: DiagnosticsQuery) {
       evidenceFilter,
     ),
   ]
-  if (query.creatorId)
-    conditions.push(sql`exists (
-    select 1 from media_credit c where c.media_item_id = media_item.id
-      and c.role = 'artist' and c.artist_id = ${query.creatorId}
-  )`)
+  if (playability) conditions.push(playability)
+  const creator = query.creatorId
+    ? sql`exists (select 1 from media_credit c where c.media_item_id = media_item.id
+        and c.role = 'artist' and c.artist_id = ${query.creatorId})`
+    : sql`true`
+  if (query.creatorId) conditions.push(creator)
   for (const word of words) {
     const pattern = `%${word.replace(/[\\%_]/g, '\\$&')}%`
     conditions.push(sql`media_item.id in (
       ${trackBrowseSearchIds(pattern, sharedArtistTags)} union all
       select e.id from evidence e where
         e.name ilike ${pattern} or e.creator ilike ${pattern} or e.identifier ilike ${pattern}
+      union all select a.id from spotify_alternates a where
+        a.name ilike ${pattern} or a.album_name ilike ${pattern}
     )`)
   }
   const where = sql`where ${sql.join(conditions, sql` and `)}`
@@ -278,7 +355,7 @@ export async function listTrackMatchDiagnostics(query: DiagnosticsQuery) {
     query.limitResults === undefined
       ? query.size
       : Math.max(0, query.limitResults - offset)
-  const count = sql`(select count(*)::int ${trackTables} ${where})`
+  const count = sql`(select count(*)::int ${trackTables} ${coverageJoin} ${where})`
   const total =
     query.limitResults === undefined
       ? count
@@ -293,9 +370,18 @@ export async function listTrackMatchDiagnostics(query: DiagnosticsQuery) {
     `
         : sql``
     }
+    ${
+      needsCoverageBeforePage
+        ? sql`${spotifyAlternates(
+            sql`select media_item.id, media_item.source_label, library_track.spotify_track_id
+              ${trackTables} where ${visibleTracks} and ${creator}`,
+            { creatorId: query.creatorId },
+          )},`
+        : sql``
+    }
     page_ids as (
       select array(
-        select media_item.id ${trackTables}
+        select media_item.id ${trackTables} ${coverageJoin}
         ${
           providerSort
             ? sql`left join (select id, min(lower(value)) as value
@@ -312,6 +398,11 @@ export async function listTrackMatchDiagnostics(query: DiagnosticsQuery) {
       join unnest((select ids from page_ids)) with ordinality positions(id, rank)
         on positions.id = media_item.id
     ),
+    ${
+      needsCoverageBeforePage
+        ? sql``
+        : sql`${spotifyAlternates(sql`select id, source_label, spotify_track_id from page`, { useTargetTitles: true })},`
+    }
     page_matches as (
       select e.id, jsonb_agg(jsonb_build_object('provider', e.provider, 'name', e.name,
         'creator', e.creator, 'identifier', e.identifier) ||
@@ -323,6 +414,13 @@ export async function listTrackMatchDiagnostics(query: DiagnosticsQuery) {
     ),
     rows as (
       select p.*, pm.matches,
+        case when a.track_id is not null then jsonb_build_object(
+          'trackId', a.track_id, 'name', a.name, 'albumName', a.album_name,
+          'identifier', a.identifier, 'artworkUrl', a.artwork_url,
+          'album', case when a.album_id is not null then jsonb_build_object(
+            'id', a.album_id, 'title', a.album_title
+          ) end
+        ) end as spotify_alternate,
         (select min(source_id) from (
           select s.track_media_item_id as source_id from lastfm_track_source s where s.track_media_item_id = p.id
           union
@@ -333,11 +431,13 @@ export async function listTrackMatchDiagnostics(query: DiagnosticsQuery) {
           and (ids.source_id = p.id or (p.source_label = 'spotify' and p.spotify_track_id is not null))
         having count(*) = 1) as merge_source_id
       from page p left join page_matches pm on pm.id = p.id
+      left join spotify_alternates a on a.id = p.id
     )
     select ${total} as total_count,
       coalesce(jsonb_agg(jsonb_build_object('id', id, 'name', name, 'creator', creator, 'albumName', album_name,
         'matches', coalesce(matches, '[]'::jsonb)) ||
-        case when merge_source_id is null then '{}'::jsonb else jsonb_build_object('mergeSourceId', merge_source_id) end
+        case when merge_source_id is null then '{}'::jsonb else jsonb_build_object('mergeSourceId', merge_source_id) end ||
+        case when spotify_alternate is null then '{}'::jsonb else jsonb_build_object('spotifyAlternate', spotify_alternate) end
         order by rank), '[]'::jsonb) as items from rows`)
   const page = z
     .object({
@@ -384,7 +484,7 @@ export async function listTrackMatchDiagnosticsFacets(input: BrowseFacetQuery) {
     listBrowseFacets(
       'track',
       { ...query, limitPerField: limit },
-      { includeLastfmSourceRows: true },
+      { includeLastfmSourceRows: true, fields: ordinaryFields },
     ),
     diagnosticFacetCache(JSON.stringify({ ...query, limit }), async () => {
       const fields = diagnosticFields.map((field) =>

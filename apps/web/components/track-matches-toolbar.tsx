@@ -2,7 +2,10 @@
 
 import type { ReactNode } from 'react'
 import type { BrowseField, BrowseFilter } from '@repo/schemas/browse'
-import type { TrackMatchDiagnosticsQuery } from '@repo/schemas/match-diagnostics'
+import {
+  trackPlayabilityLabels,
+  type TrackMatchDiagnosticsQuery,
+} from '@repo/schemas/match-diagnostics'
 import { Select } from '@repo/ui/components/ds/toolbar'
 import { useRailSlot } from '@/hooks/useRailSlot'
 import {
@@ -19,7 +22,7 @@ import {
   ColumnChoices,
   PlacedFilters,
 } from './browse-items'
-import { RangeEditor } from './browse-controls'
+import { BrowseFilterPill, RangeEditor } from './browse-controls'
 import BrowseToolbar, { BrowseColumnsSection } from './browse-toolbar'
 import {
   TrackBrowseFilterChips,
@@ -33,6 +36,7 @@ export function clearTrackMatchesFilters(setParams: SetParams) {
   setParams({
     q: null,
     filters: null,
+    playability: null,
     ranges: null,
     limitResults: null,
     ...clearCreatorScope,
@@ -67,7 +71,14 @@ export default function TrackMatchesToolbar({
   onResetOrder?: () => void
 }) {
   const railSlot = useRailSlot()
-  const { q = '', filters, ranges, limitResults, creatorId } = query
+  const {
+    q = '',
+    filters,
+    ranges,
+    limitResults,
+    creatorId,
+    playability = 'all',
+  } = query
   const creator: CreatorBrowseScope | undefined = creatorId
     ? { creatorId }
     : undefined
@@ -75,18 +86,30 @@ export default function TrackMatchesToolbar({
     Number(Boolean(q)) +
     Number(Boolean(creator)) +
     Number(limitResults !== undefined) +
+    Number(playability !== 'all') +
     filters.length +
     ranges.length
   const pills = activeCount ? (
-    <TrackBrowseFilterChips
-      q={q}
-      filters={filters}
-      ranges={ranges}
-      creator={creator}
-      fields={fields}
-      limitResults={limitResults}
-      setParams={setParams}
-    />
+    <>
+      {playability !== 'all' && (
+        <BrowseFilterPill
+          mode="required"
+          removeLabel="Remove playability filter"
+          onRemove={() => setParams({ playability: 'all' })}
+        >
+          {trackPlayabilityLabels[playability]}
+        </BrowseFilterPill>
+      )}
+      <TrackBrowseFilterChips
+        q={q}
+        filters={filters}
+        ranges={ranges}
+        creator={creator}
+        fields={fields}
+        limitResults={limitResults}
+        setParams={setParams}
+      />
+    </>
   ) : null
   const preset = trackMatchPreset(filters)
   function clearFilters() {
@@ -96,26 +119,44 @@ export default function TrackMatchesToolbar({
     <>
       <BrowseToolbar
         actions={
-          <Select
-            aria-label="Match status"
-            className="browse-order"
-            value={preset}
-            onChange={(event) => {
-              const next = applyTrackMatchPreset(filters, event.target.value)
-              setParams({ filters: next.length ? JSON.stringify(next) : null })
-            }}
-          >
-            {preset === 'custom' && (
-              <option value="custom" disabled>
-                Custom match filters
-              </option>
-            )}
-            {trackMatchPresets.map(({ key, label }) => (
-              <option key={key} value={key}>
-                {label}
-              </option>
-            ))}
-          </Select>
+          <>
+            <Select
+              aria-label="Match status"
+              className="browse-order"
+              value={preset}
+              onChange={(event) => {
+                const next = applyTrackMatchPreset(filters, event.target.value)
+                setParams({
+                  filters: next.length ? JSON.stringify(next) : null,
+                })
+              }}
+            >
+              {preset === 'custom' && (
+                <option value="custom" disabled>
+                  Custom match filters
+                </option>
+              )}
+              {trackMatchPresets.map(({ key, label }) => (
+                <option key={key} value={key}>
+                  {label}
+                </option>
+              ))}
+            </Select>
+            <Select
+              aria-label="Playability"
+              className="browse-order"
+              value={playability}
+              onChange={(event) =>
+                setParams({ playability: event.target.value })
+              }
+            >
+              {Object.entries(trackPlayabilityLabels).map(([key, label]) => (
+                <option key={key} value={key}>
+                  {label}
+                </option>
+              ))}
+            </Select>
+          </>
         }
         search={
           <TrackBrowseSearch

@@ -9,8 +9,25 @@ export const MatchDiagnosticsQuerySchema = PaginationQuerySchema.extend({
   direction: DirectionSchema.default('asc'),
 })
 
+export const TrackPlayabilitySchema = z.enum([
+  'all',
+  'playable',
+  'direct',
+  'alternate',
+  'unavailable',
+])
+export type TrackPlayability = z.infer<typeof TrackPlayabilitySchema>
+export const trackPlayabilityLabels: Record<TrackPlayability, string> = {
+  all: 'Any playability',
+  playable: 'Any playable version',
+  direct: 'Playable on this entry',
+  alternate: 'Playable via another version',
+  unavailable: 'No playable version',
+}
+
 export const TrackMatchDiagnosticsQuerySchema =
   MatchDiagnosticsQuerySchema.extend({
+    playability: TrackPlayabilitySchema.optional(),
     creatorId: TrackQuerySchema.shape.creatorId,
     filters: TrackQuerySchema.shape.filters,
     ranges: TrackQuerySchema.shape.ranges,
@@ -36,7 +53,11 @@ const diagnosticText = (key: string, label: string): BrowseField => ({
 })
 
 export const trackMatchDiagnosticFields: BrowseField[] = [
-  ...trackBrowseFields,
+  ...trackBrowseFields.map((field) =>
+    field.key === 'spotifyMatch'
+      ? { ...field, label: 'Spotify match on this entry' }
+      : field,
+  ),
   diagnosticText('matchProvider', 'Provider match'),
   diagnosticText('spotifyName', 'Spotify track name'),
   diagnosticText('spotifyArtist', 'Spotify artist'),
@@ -54,6 +75,16 @@ export const MatchDiagnosticsRowSchema = z.object({
   creator: z.string().nullable(),
   albumName: z.string().nullable().optional(),
   track: TrackListItemSchema.optional(),
+  spotifyAlternate: z
+    .object({
+      trackId: z.string(),
+      name: z.string(),
+      albumName: z.string().nullable(),
+      album: TrackListItemSchema.shape.album.optional(),
+      artworkUrl: TrackListItemSchema.shape.artworkUrl.optional(),
+      identifier: z.string(),
+    })
+    .optional(),
   mergeSourceId: z.string().optional(),
   sourceId: z.string().optional(),
   matches: z.array(

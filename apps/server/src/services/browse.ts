@@ -428,7 +428,7 @@ function groupedTrackBrowse(
     sharedArtistTags
       ? sql`browse_artist_tags as (${artistTagMemberships('track')}), `
       : sql``
-  }${recordingMemberships(matches, query.creatorId, versionId)}`
+  }${recordingMemberships(matches, { creatorId: query.creatorId, versionId })}`
   const groupRanges = query.ranges.flatMap((range) => {
     const value = recordingGroupValue(range.field)
     if (!value) return []
@@ -455,14 +455,15 @@ function groupedTrackBrowse(
   // Period counts are added up over every matching track of a group.
   const members = sql`${memberships}, ${recordingVersionMembers}`
   const scoped = listening ? members : memberships
-  const groupStats = sql`${recordingRepresentatives}, ${recordingListening}`
+  const representatives = recordingRepresentatives()
+  const groupStats = sql`${representatives}, ${recordingListening}`
   const grouped = sql`${scoped}, ${groupStats}`
   const hasListeningRange = query.ranges.some(
     (range) => range.field === 'scrobbles' || range.field === 'lastListenedAt',
   )
   const rangeStats = hasListeningRange
     ? groupStats
-    : sql`${recordingRepresentatives}, ${recordingDates}`
+    : sql`${representatives}, ${recordingDates}`
   const rangeGroups = hasListeningRange
     ? sql`recording_stats`
     : sql`recording_dates`
@@ -1263,10 +1264,10 @@ const FacetRowSchema = z.object({
 export async function listBrowseFacets(
   mediaType: MediaType,
   input: Partial<BrowseFacetQuery> = {},
-  options: { includeLastfmSourceRows?: boolean } = {},
+  options: { includeLastfmSourceRows?: boolean; fields?: BrowseField[] } = {},
 ) {
   const query = BrowseFacetQuerySchema.parse(input)
-  const fields = (await listBrowseFields(mediaType)).filter(
+  const fields = (options.fields ?? (await listBrowseFields(mediaType))).filter(
     (field) => field.type === 'text' && field.filterable,
   )
   const rows = await facetCache(

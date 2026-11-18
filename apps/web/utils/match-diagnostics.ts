@@ -2,6 +2,7 @@ import {
   MatchDiagnosticsPageSchema,
   MatchDiagnosticsQuerySchema,
   TrackMatchDiagnosticsQuerySchema,
+  TrackPlayabilitySchema,
   trackMatchProviderLabels,
   type MatchDiagnosticsQuery,
   type TrackMatchDiagnosticsQuery,
@@ -68,9 +69,18 @@ export function trackMatchDiagnosticsQuery(
   const limit = TrackQuerySchema.shape.limitResults.safeParse(
     params.get('limitResults') ?? undefined,
   )
+  const filters = parseTrackFilters(params.get('filters'))
+  const explicit = TrackPlayabilitySchema.safeParse(params.get('playability'))
+  // Existing Missing Spotify bookmarks are a work queue for recordings with no playable version.
+  const playability = explicit.success
+    ? explicit.data
+    : trackMatchPreset(filters) === 'missing-spotify'
+      ? 'unavailable'
+      : 'all'
   return {
     q: (params.get('q') ?? '').slice(0, 200),
-    filters: parseTrackFilters(params.get('filters')),
+    filters,
+    playability,
     ranges: ranges.success ? ranges.data : [],
     sortBy:
       sortBy === 'name'
@@ -100,6 +110,8 @@ export function loadTrackMatchDiagnosticsPage(
   if (query.filters.length) params.set('filters', JSON.stringify(query.filters))
   if (query.ranges.length) params.set('ranges', JSON.stringify(query.ranges))
   if (query.creatorId) params.set('creatorId', query.creatorId)
+  if (query.playability && query.playability !== 'all')
+    params.set('playability', query.playability)
   if (query.limitResults !== undefined)
     params.set('limitResults', String(query.limitResults))
   return fetchApiData(
@@ -133,7 +145,7 @@ export const trackMatchPresets: TrackMatchPreset[] = [
   },
   {
     key: 'missing-spotify',
-    label: 'Missing Spotify',
+    label: 'Missing Spotify on this entry',
     value: trackMatchProviderLabels.spotify,
     mode: 'exclude',
   },

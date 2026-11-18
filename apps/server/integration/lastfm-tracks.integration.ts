@@ -66,7 +66,8 @@ const LISTENER = 'fixture-listener'
 const ARTIST = 'Example Artist'
 const FIRST_LISTEN = '2020-02-01T12:00:00.000Z'
 const LAST_LISTEN = '2024-03-02T13:00:00.000Z'
-const spotifyId = (value: string) => value.padEnd(22, '0')
+const spotifyId = (value: string) =>
+  value.replace(/[^A-Za-z0-9]/g, '').padEnd(22, '0')
 const query = (input: Record<string, unknown> = {}) =>
   TrackQuerySchema.parse({ sortBy: 'title', direction: 'asc', ...input })
 const allTracks = async () => (await listTracks(query())).items
@@ -118,7 +119,12 @@ async function scrobble(
 async function spotifyTrack(
   id: string,
   title: string,
-  options: { album?: string; artist?: string; albumId?: string } = {},
+  options: {
+    album?: string
+    artist?: string
+    albumId?: string
+    durationSec?: number
+  } = {},
 ) {
   await databaseClient.insert(schema.mediaItem).values({
     id,
@@ -133,7 +139,7 @@ async function spotifyTrack(
     spotifyUrl: `https://open.spotify.com/track/${spotifyId(id)}`,
     albumName: options.album ?? null,
     albumMediaItemId: options.albumId ?? null,
-    durationSec: 180,
+    durationSec: options.durationSec ?? 180,
   })
   await credit(id, options.artist)
 }
@@ -281,12 +287,30 @@ describe('Last.fm tracks library', () => {
       trackMatchProviderLabels
     const all = await inspect()
     expect(all.totalCount).toBe(6)
+    expect(await inspect({ playability: 'all' })).toEqual(all)
     const standalone = all.items.find((item) => item.id === item.mergeSourceId)
     if (!standalone) throw new Error('Expected a standalone Last.fm row')
     expect((await allTracks()).map((item) => item.id)).not.toContain(
       standalone.id,
     )
     expect(standalone.track?.sources).toContain('lastfm')
+    expect(standalone).toMatchObject({
+      spotifyAlternate: {
+        trackId: 'imported-recording',
+        name: 'Shared Song',
+        albumName: 'Playlist Edition',
+        identifier: spotifyId('imported-recording'),
+      },
+      track: { spotifyTrackId: null, spotifyMatch: 'unmatched' },
+      matches: [{ provider: 'lastfm', name: 'SHARED SONG' }],
+    })
+    expect(
+      all.items.find((item) => item.id === 'imported-recording'),
+    ).not.toHaveProperty('spotifyAlternate')
+    const bySpotify = await inspect({ sortBy: 'spotify', size: 3 })
+    expect(new Set(bySpotify.items.map((item) => item.id))).toEqual(
+      new Set([standalone.id, 'imported-recording', 'variant-recording']),
+    )
 
     const withoutRecording = { filters: JSON.stringify([match(noRecording)]) }
     expect(titles(await inspect(withoutRecording))).toEqual([
@@ -314,13 +338,25 @@ describe('Last.fm tracks library', () => {
     expect(
       titles(await inspect({ filters: JSON.stringify([match(discogs)]) })),
     ).toEqual(['Context only'])
+    const missingSpotify = {
+      filters: JSON.stringify([match(spotify, 'exclude'), match(lastfm)]),
+    }
+    expect(titles(await inspect(missingSpotify))).toEqual(['SHARED SONG'])
     expect(
-      titles(
-        await inspect({
-          filters: JSON.stringify([match(spotify, 'exclude'), match(lastfm)]),
-        }),
-      ),
-    ).toEqual(['SHARED SONG'])
+      await inspect({ ...missingSpotify, playability: 'unavailable' }),
+    ).toMatchObject({ items: [], totalCount: 0 })
+    expect(await inspect({ playability: 'alternate' })).toMatchObject({
+      items: [{ id: standalone.id }],
+      totalCount: 1,
+    })
+    const direct = await inspect({ playability: 'direct' })
+    expect(new Set(direct.items.map((item) => item.id))).toEqual(
+      new Set(['imported-recording', 'variant-recording']),
+    )
+    const playable = await inspect({ playability: 'playable' })
+    expect(new Set(playable.items.map((item) => item.id))).toEqual(
+      new Set([standalone.id, 'imported-recording', 'variant-recording']),
+    )
     expect(
       (
         await inspect({
@@ -414,6 +450,11 @@ describe('Last.fm tracks library', () => {
         }),
         expect.objectContaining({
           field: 'matchProvider',
+          value: spotify,
+          count: 2,
+        }),
+        expect.objectContaining({
+          field: 'matchProvider',
           value: lastfm,
           count: 3,
         }),
@@ -429,6 +470,293 @@ describe('Last.fm tracks library', () => {
         }),
       ]),
     )
+    expect(
+      await listTrackMatchDiagnosticsFacets(
+        BrowseFacetQuerySchema.parse({
+          q: 'Spotify match on this entry Unmatched',
+        }),
+      ),
+    ).toContainEqual({
+      field: 'spotifyMatch',
+      value: 'Unmatched',
+      label: 'Spotify match on this entry: Unmatched',
+      count: 4,
+    })
+    expect(request).not.toHaveBeenCalled()
+  })
+
+  it('filters unavailable scrobbles after checking recording evidence outside the selected source', async () => {
+    const albumId = 'original-edition'
+    const albumName = 'Original Edition'
+    const titles = [
+      'Covered Song',
+      'Missing Song',
+      'Edited Song (Radio Edit)',
+      'Ambiguous Song',
+    ]
+    await album(
+      albumId,
+      albumName,
+      titles.map((title, index) => ({ title, durationSec: 180 + index })),
+    )
+    for (const title of titles)
+      await scrobble(title, { album: albumName, albumId })
+    await refreshTrackLinks(LISTENER)
+
+    const { spotify, lastfm } = trackMatchProviderLabels
+    const scope = [
+      { field: 'matchProvider', value: lastfm, mode: 'required' },
+      { field: 'source', value: 'Album track list', mode: 'required' },
+    ]
+    const missingSpotify = JSON.stringify([
+      ...scope,
+      { field: 'matchProvider', value: spotify, mode: 'exclude' },
+    ])
+    const inspect = (input: Record<string, unknown> = {}) =>
+      listTrackMatchDiagnostics(
+        TrackMatchDiagnosticsQuerySchema.parse({
+          creatorId: createStableId('artist', ARTIST.toLowerCase()),
+          filters: JSON.stringify(scope),
+          ranges: JSON.stringify([{ field: 'scrobbles', min: 1 }]),
+          sortBy: 'durationSec',
+          direction: 'desc',
+          ...input,
+        }),
+      )
+    const unavailable = { playability: 'unavailable' }
+    expect((await inspect(unavailable)).items.map((item) => item.name)).toEqual(
+      [...titles].reverse(),
+    )
+
+    await spotifyTrack('covered-edition', 'Covered Song', {
+      album: 'Later Edition',
+    })
+    await spotifyTrack('studio-edition', 'Edited Song', {
+      album: 'Studio Edition',
+    })
+    await spotifyTrack('short-edition', 'Ambiguous Song', {
+      album: 'Short Edition',
+    })
+    await spotifyTrack('long-edition', 'Ambiguous Song', {
+      album: 'Long Edition',
+      durationSec: 210,
+    })
+    await playlist('new-editions', [
+      'covered-edition',
+      'studio-edition',
+      'short-edition',
+      'long-edition',
+    ])
+    await refreshTrackLinks(LISTENER)
+
+    const missing = await inspect({ ...unavailable, page: 1, size: 2 })
+    expect(missing).toMatchObject({ totalCount: 3, pageCount: 2 })
+    expect(missing.items.map((item) => item.name)).toEqual([
+      'Ambiguous Song',
+      'Edited Song (Radio Edit)',
+    ])
+    expect(
+      await inspect({
+        ...unavailable,
+        filters: missingSpotify,
+        page: 2,
+        size: 2,
+      }),
+    ).toMatchObject({
+      totalCount: 3,
+      pageCount: 2,
+      items: [{ name: 'Missing Song' }],
+    })
+    expect(
+      await inspect({
+        playability: 'alternate',
+        filters: missingSpotify,
+        q: 'Original Edition',
+      }),
+    ).toMatchObject({
+      totalCount: 1,
+      items: [
+        {
+          name: 'Covered Song',
+          spotifyAlternate: {
+            trackId: 'covered-edition',
+            name: 'Covered Song',
+            albumName: 'Later Edition',
+            identifier: spotifyId('covered-edition'),
+          },
+          matches: [{ provider: 'lastfm', name: 'Covered Song' }],
+          track: { spotifyTrackId: null, scrobbles: 1 },
+        },
+      ],
+    })
+    expect(
+      (
+        await inspect({ playability: 'alternate', q: 'Later Edition' })
+      ).items.map((item) => item.name),
+    ).toEqual(['Covered Song'])
+    await removeImportedPlaylist('new-editions')
+    expect((await inspect(unavailable)).items.map((item) => item.name)).toEqual(
+      [...titles].reverse(),
+    )
+    expect(request).not.toHaveBeenCalled()
+  })
+
+  it('uses a shared recording identifier for playability while preserving direct provider evidence', async () => {
+    const title = 'Catalogue Song'
+    const isrc = 'ZZABC2000001'
+    await album('catalogue-original', 'Catalogue Original', [
+      { title, durationSec: 181 },
+    ])
+    const [original] = await allTracks()
+    if (!original) throw new Error('Expected an album track position')
+    await album('catalogue-alternate', 'Catalogue Alternate', [])
+    await spotifyTrack('catalogue-spotify', title, {
+      album: 'Catalogue Alternate',
+      albumId: 'catalogue-alternate',
+    })
+    await playlist('catalogue-playlist', ['catalogue-spotify'])
+
+    const { noRecording, noEvidence, spotify } = trackMatchProviderLabels
+    const inspect = (input: Record<string, unknown>) =>
+      listTrackMatchDiagnostics(TrackMatchDiagnosticsQuerySchema.parse(input))
+    const withProvider = (value: string) =>
+      inspect({
+        filters: JSON.stringify([
+          { field: 'matchProvider', value, mode: 'required' },
+        ]),
+      })
+    const facetCounts = async () =>
+      (await listTrackMatchDiagnosticsFacets(BrowseFacetQuerySchema.parse({})))
+        .filter((facet) => facet.field === 'matchProvider')
+        .map(({ value, count }) => ({ value, count }))
+    const withoutEvidence = {
+      items: [{ id: original.id, matches: [] }],
+      totalCount: 1,
+    }
+    expect(await inspect({ playability: 'unavailable' })).toMatchObject(
+      withoutEvidence,
+    )
+    const facets = await facetCounts()
+    expect(facets).toEqual(
+      expect.arrayContaining([
+        { value: noRecording, count: 1 },
+        { value: noEvidence, count: 1 },
+        { value: spotify, count: 1 },
+      ]),
+    )
+
+    await databaseClient
+      .update(schema.libraryTrack)
+      .set({ isrc })
+      .where(
+        inArray(schema.libraryTrack.mediaItemId, [
+          original.id,
+          'catalogue-spotify',
+        ]),
+      )
+    expect(await inspect({ playability: 'unavailable' })).toMatchObject({
+      items: [],
+      totalCount: 0,
+    })
+    expect(await inspect({ playability: 'alternate' })).toMatchObject({
+      items: [
+        {
+          id: original.id,
+          spotifyAlternate: {
+            trackId: 'catalogue-spotify',
+            album: { id: 'catalogue-alternate', title: 'Catalogue Alternate' },
+            artworkUrl: 'https://example.com/album-artwork.jpg',
+          },
+        },
+      ],
+      totalCount: 1,
+    })
+    expect(await withProvider(noRecording)).toMatchObject(withoutEvidence)
+    expect(await withProvider(noEvidence)).toMatchObject(withoutEvidence)
+    expect(await facetCounts()).toEqual(facets)
+
+    await databaseClient
+      .update(schema.mediaItem)
+      .set({ metadata: { legacyHidden: true } })
+      .where(eq(schema.mediaItem.id, 'catalogue-spotify'))
+    expect(await inspect({ playability: 'unavailable' })).toMatchObject(
+      withoutEvidence,
+    )
+    expect(await withProvider(spotify)).toMatchObject({
+      items: [],
+      totalCount: 0,
+    })
+    expect(request).not.toHaveBeenCalled()
+  })
+
+  it('preserves malformed Spotify identifiers as evidence while requiring a valid ID to play', async () => {
+    await spotifyTrack('legacy-version', 'Shared Recording')
+    await spotifyTrack('valid-version', 'Shared Recording')
+    await spotifyTrack('legacy-standalone', 'Standalone Recording')
+    await playlist('legacy-playlist', [
+      'legacy-version',
+      'valid-version',
+      'legacy-standalone',
+    ])
+    await databaseClient
+      .update(schema.libraryTrack)
+      .set({ isrc: 'ZZABC2000002' })
+      .where(
+        inArray(schema.libraryTrack.mediaItemId, [
+          'legacy-version',
+          'valid-version',
+        ]),
+      )
+    const invalidCharacter = `${spotifyId('legacy-version').slice(0, 21)}-`
+    const shortIdentifier = 'legacylocaltrack'
+    await databaseClient
+      .update(schema.libraryTrack)
+      .set({ spotifyTrackId: invalidCharacter, spotifyUrl: null })
+      .where(eq(schema.libraryTrack.mediaItemId, 'legacy-version'))
+    await databaseClient
+      .update(schema.libraryTrack)
+      .set({ spotifyTrackId: shortIdentifier, spotifyUrl: null })
+      .where(eq(schema.libraryTrack.mediaItemId, 'legacy-standalone'))
+
+    const inspect = (input: Record<string, unknown>) =>
+      listTrackMatchDiagnostics(TrackMatchDiagnosticsQuerySchema.parse(input))
+    expect(await inspect({ playability: 'direct' })).toMatchObject({
+      items: [{ id: 'valid-version' }],
+      totalCount: 1,
+    })
+    expect(await inspect({ playability: 'alternate' })).toMatchObject({
+      items: [
+        {
+          id: 'legacy-version',
+          matches: [{ provider: 'spotify', identifier: invalidCharacter }],
+          spotifyAlternate: {
+            trackId: 'valid-version',
+            identifier: spotifyId('valid-version'),
+          },
+        },
+      ],
+      totalCount: 1,
+    })
+    expect(await inspect({ playability: 'unavailable' })).toMatchObject({
+      items: [
+        {
+          id: 'legacy-standalone',
+          matches: [{ provider: 'spotify', identifier: shortIdentifier }],
+        },
+      ],
+      totalCount: 1,
+    })
+    expect(
+      await inspect({
+        filters: JSON.stringify([
+          {
+            field: 'matchProvider',
+            value: trackMatchProviderLabels.spotify,
+            mode: 'required',
+          },
+        ]),
+      }),
+    ).toMatchObject({ totalCount: 3 })
     expect(request).not.toHaveBeenCalled()
   })
 
@@ -479,7 +807,7 @@ describe('Last.fm tracks library', () => {
       (await inspect({ q: 'Other Edition', sortBy: 'album' })).items.map(
         (item) => item.id,
       ),
-    ).toEqual(['imported-recording'])
+    ).toEqual(['imported-recording', standalone.id])
     expect(imported?.matches).toEqual(
       expect.arrayContaining([
         {

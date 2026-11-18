@@ -8,6 +8,7 @@ import {
 } from './browse'
 import { DirectionSchema } from './common'
 import { ListeningFilterSchema, ListeningPeriodSchema } from './listening'
+import { TrackPlayabilitySchema } from './match-diagnostics'
 import {
   SubscriptionDaySchema,
   SubscriptionSearchFieldsSchema,
@@ -60,6 +61,7 @@ export const AiSearchPlanSchema = z
     limitResults: z.number().int().min(1).max(10000).nullable(),
     listening: ListeningFilterSchema.nullable(),
     listeningSort: ListeningPeriodSchema.nullable(),
+    playability: TrackPlayabilitySchema.optional(),
   })
   .strict()
 export type AiSearchPlan = z.infer<typeof AiSearchPlanSchema>

@@ -94,7 +94,7 @@ describe('AI search interpretation', () => {
       {
         mediaType: 'track',
         context: 'matches',
-        text: 'First twenty tracks missing Spotify',
+        text: 'First twenty track entries without their own Spotify match',
       },
       now,
     )
@@ -104,6 +104,41 @@ describe('AI search interpretation', () => {
     )
     expect(aiSearchPrompt('track', now)).not.toContain('matchProvider')
     expect(() => validateAiPlan(expected, 'track')).toThrow()
+    expect(mocks.database).not.toHaveBeenCalled()
+  })
+
+  it('applies Spotify playability alongside provider evidence in Tracks Matches only', async () => {
+    const expected: AiSearchPlan = {
+      ...plan({
+        filters: [
+          { field: 'matchProvider', value: 'Last.fm', mode: 'required' },
+        ],
+        sortBy: 'title',
+        direction: 'asc',
+      }),
+      playability: 'unavailable',
+    }
+    mocks.text.mockResolvedValue(completion(interpretation(expected)))
+    const text = 'Tracks with Last.fm evidence and no playable Spotify version'
+    const result = await interpretAiSearch(
+      { mediaType: 'track', context: 'matches', text },
+      now,
+    )
+    expect(result.plan).toEqual(expected)
+    expect(aiSearchPrompt('track', now, 'matches')).toContain('"playability"')
+    expect(aiSearchPrompt('track', now)).not.toContain('"playability"')
+    await expect(
+      interpretAiSearch({ mediaType: 'track', text }, now),
+    ).rejects.toThrow('unsupported search')
+    mocks.text.mockResolvedValue(
+      completion({
+        ...interpretation(),
+        plan: { ...expected, playability: 'unknown' },
+      }),
+    )
+    await expect(
+      interpretAiSearch({ mediaType: 'track', context: 'matches', text }, now),
+    ).rejects.toThrow('unsupported search')
     expect(mocks.database).not.toHaveBeenCalled()
   })
 

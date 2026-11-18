@@ -7,6 +7,7 @@ import {
 } from '@repo/schemas/ai-search'
 import { albumBrowseFields, trackBrowseFields } from '@repo/schemas/browse'
 import { artistBrowseFields } from '@repo/schemas/artist-browse'
+import { trackMatchDiagnosticFields } from '@repo/schemas/match-diagnostics'
 import {
   aiSearchParams,
   aiSubscriptionSearchParams,
@@ -15,6 +16,7 @@ import {
   mediaAiSearchTarget,
   subscriptionAiSearchTarget,
 } from './ai-search'
+import { trackMatchDiagnosticsQuery } from './match-diagnostics'
 import {
   parseSubscriptionBrowseState,
   updateSubscriptionSearch,
@@ -131,6 +133,42 @@ test('track plans use the album URL parameters and clear unused listening state'
     'Scrobbles: at least 1, at most 10',
     'Sort: Scrobbles, descending',
   ])
+})
+
+test('Tracks Matches applies AI playability and keeps older evidence-only plans independent', () => {
+  const evidenceOnly = AiSearchPlanSchema.parse({
+    ...plan,
+    filters: [{ field: 'matchProvider', value: 'Spotify', mode: 'exclude' }],
+    ranges: [],
+    listening: null,
+    listeningSort: null,
+    sortBy: 'title',
+  })
+  const playableAlternate = AiSearchPlanSchema.parse({
+    ...evidenceOnly,
+    playability: 'alternate',
+  })
+  const target = mediaAiSearchTarget(
+    'track',
+    trackMatchDiagnosticFields,
+    'matches',
+  )
+  assert.ok(
+    target.describe(playableAlternate).includes('Playable via another version'),
+  )
+  for (const search of [evidenceOnly, playableAlternate]) {
+    const params = new URLSearchParams({ playability: 'unavailable' })
+    for (const [key, value] of Object.entries(
+      aiSearchParams(search, target.context),
+    )) {
+      if (value === null) params.delete(key)
+      else params.set(key, value)
+    }
+    const query = trackMatchDiagnosticsQuery(params)
+    assert.equal(query.playability, search.playability ?? 'all')
+    assert.deepEqual(query.filters, evidenceOnly.filters)
+  }
+  assert.ok(!('playability' in aiSearchParams(playableAlternate)))
 })
 
 test('artist plans use the shared search parameters and describe every applied condition', () => {

@@ -168,6 +168,7 @@ test('Tracks Matches sends the shared search, filters, ranges, limit and creator
   })
   const params = new URLSearchParams({
     q: 'Example title',
+    playability: 'alternate',
     filters: JSON.stringify([
       { field: 'lastfmArtist', mode: 'exclude', value: 'Wrong Artist' },
     ]),
@@ -194,6 +195,7 @@ test('Tracks Matches sends the shared search, filters, ranges, limit and creator
   assert.equal(requests[0]?.pathname, '/api/v1/tracks/match-diagnostics')
   assert.deepEqual(Object.fromEntries(requests[0]?.searchParams ?? []), {
     q: 'Example title',
+    playability: 'alternate',
     filters: JSON.stringify(state.filters),
     ranges: JSON.stringify(state.ranges),
     creatorId: 'fixture-artist',
@@ -205,6 +207,32 @@ test('Tracks Matches sends the shared search, filters, ranges, limit and creator
   })
   assert.equal(requests[1]?.pathname, '/api/v1/tracks/match-diagnostics/facets')
   assert.equal(requests[1]?.searchParams.get('q'), 'spotify')
+})
+
+test('older Missing Spotify links open the unavailable queue, and explicit playability wins', () => {
+  const params = new URLSearchParams({
+    filters: JSON.stringify(applyTrackMatchPreset([], 'missing-spotify')),
+    sortBy: 'scrobbles',
+  })
+  assert.equal(trackMatchDiagnosticsQuery(params).playability, 'unavailable')
+  for (const mode of [
+    'all',
+    'playable',
+    'direct',
+    'alternate',
+    'unavailable',
+  ]) {
+    params.set('playability', mode)
+    assert.equal(trackMatchDiagnosticsQuery(params).playability, mode)
+    assert.equal(
+      trackMatchPreset(trackMatchDiagnosticsQuery(params).filters),
+      'missing-spotify',
+    )
+  }
+  assert.equal(
+    trackMatchDiagnosticsQuery(new URLSearchParams()).playability,
+    'all',
+  )
 })
 
 test('Tracks Matches surfaces its presets and shared Browse controls, and can display ordinary track columns', async () => {
@@ -258,6 +286,9 @@ test('Tracks Matches surfaces its presets and shared Browse controls, and can di
     'Unmatched recordings',
     'No matches at all',
     'Missing Spotify',
+    'Any playable version',
+    'Playable via another version',
+    'No playable version',
     'Missing Last.fm',
     'Missing Discogs album evidence',
     'Search titles, artists, albums, playlists...',
@@ -272,6 +303,56 @@ test('Tracks Matches surfaces its presets and shared Browse controls, and can di
   assert.match(html, />4:05<\/td>/)
   assert.match(html, />25<\/td>/)
   assert.ok(html.indexOf('Resize Scrobbles') < html.indexOf('Resize Duration'))
+})
+
+test('a Spotify alternate links to the other library entry and identifies its release', async () => {
+  const html = await render(
+    'track',
+    MatchDiagnosticsPageSchema.parse({
+      totalCount: 2,
+      pageCount: 1,
+      providers: [{ key: 'spotify', label: 'Spotify' }],
+      items: [
+        {
+          id: 'ep-entry',
+          name: 'Example Song',
+          creator: 'Example Artist',
+          matches: [],
+          spotifyAlternate: {
+            trackId: 'album-entry',
+            name: 'Example Song',
+            albumName: 'Example Album',
+            identifier: 'fixture-recording',
+          },
+        },
+        {
+          id: 'album-entry',
+          name: 'Example Song',
+          creator: 'Example Artist',
+          matches: [
+            {
+              provider: 'spotify',
+              name: 'Example Song',
+              creator: 'Example Artist',
+              identifier: 'fixture-recording',
+            },
+          ],
+        },
+      ],
+    }),
+  )
+  assert.match(
+    html,
+    /href="\/tracks\/album-entry\?tab=sources">Other version · Example Album<\/a>/,
+  )
+  assert.match(
+    html,
+    /href="\/tracks\/album-entry\?tab=sources">Example Song · Example Artist<\/a>/,
+  )
+  assert.doesNotMatch(
+    html,
+    /href="\/tracks\/ep-entry\?tab=sources">Other version/,
+  )
 })
 
 test('track rows show canonical and recorded identities and use the separate source for review and merge', async () => {

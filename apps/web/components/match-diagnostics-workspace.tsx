@@ -59,6 +59,7 @@ import {
 } from './detail-inspector-context'
 import { DetailLink } from './detail-link'
 import { LibraryTrackPlayButton } from './play-controls'
+import type { LibraryTrackSource } from '@/utils/playback'
 import { useConfig } from './providers'
 import {
   SecondaryCell,
@@ -165,6 +166,24 @@ function providerIdentity(match: MatchDiagnosticsRow['matches'][number]) {
   )
 }
 
+function playableMatchTrack(
+  item: MatchDiagnosticsRow,
+): LibraryTrackSource | undefined {
+  const track = item.track
+  const alternate = item.spotifyAlternate
+  if (!track || !alternate) return track
+  return {
+    id: alternate.trackId,
+    spotifyTrackId: alternate.identifier,
+    title: alternate.name,
+    artists: track.artists,
+    artistCredits: track.artistCredits,
+    album: alternate.album ?? null,
+    albumName: alternate.albumName,
+    artworkUrl: alternate.artworkUrl ?? null,
+  }
+}
+
 function ProviderMatchCell({
   item,
   library,
@@ -181,6 +200,47 @@ function ProviderMatchCell({
   )
   const first = matches[0]
   const identity = first ? providerIdentity(first) : null
+  if (
+    library === 'track' &&
+    provider.key === 'spotify' &&
+    item.spotifyAlternate
+  ) {
+    const alternate = item.spotifyAlternate
+    const label = alternate.albumName
+      ? `Other version · ${alternate.albumName}`
+      : 'Other Spotify version'
+    const alternateIdentity = [
+      alternate.name,
+      alternate.albumName,
+      alternate.identifier,
+    ]
+      .filter(Boolean)
+      .join(' · ')
+    return (
+      <SecondaryCell
+        text={label}
+        label={`Spotify version of ${item.name}`}
+        details={
+          first ? (
+            <ul>
+              <li>{alternateIdentity}</li>
+              <li>
+                <DetailLink kind="track" id={item.id} tab="sources">
+                  Stored Spotify ID on this entry · {first.identifier}
+                </DetailLink>
+              </li>
+            </ul>
+          ) : (
+            alternateIdentity
+          )
+        }
+      >
+        <DetailLink kind="track" id={alternate.trackId} tab="sources">
+          {label}
+        </DetailLink>
+      </SecondaryCell>
+    )
+  }
   if (!first || !identity) return <EmptyValue />
   const display =
     matches.length === 1 ? identity : `${identity} (+${matches.length - 1})`
@@ -444,6 +504,7 @@ export default function MatchDiagnosticsWorkspace({
     : undefined
   const hasTrackFilters = Boolean(
     q ||
+    (trackQuery.playability && trackQuery.playability !== 'all') ||
     trackQuery.filters.length ||
     trackQuery.ranges.length ||
     trackQuery.creatorId ||
@@ -475,6 +536,8 @@ export default function MatchDiagnosticsWorkspace({
     const next = close
       ? withoutDetailEntries(path, current)
       : new URLSearchParams(current)
+    if ('filters' in updates && !('playability' in updates))
+      next.set('playability', trackQuery.playability ?? 'all')
     for (const [key, value] of Object.entries(updates)) {
       if (value === null || value === '') next.delete(key)
       else next.set(key, value)
@@ -523,7 +586,8 @@ export default function MatchDiagnosticsWorkspace({
           }
         />
       )
-    if (column.key === 'name' || column.key === 'title')
+    if (column.key === 'name' || column.key === 'title') {
+      const playable = playableMatchTrack(item)
       return (
         <SecondaryCell text={item.name}>
           <span className="ds-cell-id">
@@ -538,12 +602,13 @@ export default function MatchDiagnosticsWorkspace({
             <DetailLink kind={library} id={item.id} className="ds-cell-title">
               {item.name}
             </DetailLink>
-            {item.track && (
-              <LibraryTrackPlayButton track={item.track} place="row" />
+            {playable && (
+              <LibraryTrackPlayButton track={playable} place="row" />
             )}
           </span>
         </SecondaryCell>
       )
+    }
     if (column.key !== 'actions' && column.browseField && item.track)
       return (
         <TrackBrowseValue

@@ -1,5 +1,7 @@
 import { z } from 'zod'
 
+export const spotifyIdPattern = /^[A-Za-z0-9]{22}$/
+
 /**
  * The player's shared session: what one signed-in account is playing and has
  * queued, saved so a reload or another device can carry on with it.
