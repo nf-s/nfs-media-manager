@@ -43,13 +43,14 @@ export function BrowseColumnFilterSection<Value extends string>(
 }
 
 /**
- * The browse toolbar. Order: actions, search, sort, direction, filters,
+ * The browse toolbar. Order: actions, search, sort, direction, sort controls, filters,
  * view, density (Grid only), count.
  */
 export default function BrowseToolbar<Key extends string>({
   actions,
   search,
   sort,
+  sortControls,
   filters,
   filterCount = 0,
   view,
@@ -60,6 +61,7 @@ export default function BrowseToolbar<Key extends string>({
   actions?: ReactNode
   search: ReactNode
   sort: BrowseSort<Key>
+  sortControls?: ReactNode
   filters?: ReactNode
   filterCount?: number
   view: BrowseView
@@ -112,6 +114,7 @@ export default function BrowseToolbar<Key extends string>({
           )}
         </Button>
       )}
+      {sortControls}
       {filters && (
         <BrowseFilterPanel count={filterCount}>{filters}</BrowseFilterPanel>
       )}

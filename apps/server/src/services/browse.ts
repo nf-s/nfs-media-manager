@@ -43,6 +43,17 @@ import {
   trackSourcesExpression,
   trackSpotifyMatchExpression,
 } from './track-values'
+import {
+  recordingGroupProjection,
+  recordingGroupValue,
+  recordingListening,
+  recordingMemberships,
+  recordingRepresentatives,
+  recordingTitleMatches,
+  RecordingGroupPositionRowsSchema,
+  RecordingGroupRowsSchema,
+  type RecordingGroup,
+} from './recording-groups'
 
 type MediaType = 'album' | 'film' | 'track'
 
@@ -57,6 +68,12 @@ const facetCache = createDatabaseReadCache<z.infer<typeof FacetRowSchema>[]>({
 const dialect = new PgDialect()
 const trackSortAlbum = alias(mediaItem, 'track_sort_album')
 const trackSortAlbumName = sql`lower(coalesce(nullif(trim(${trackSortAlbum.title}), ''), nullif(trim(${libraryTrack.albumName}), '')))`
+
+type BrowsePosition = {
+  id: string
+  position: number
+  recordingGroup?: RecordingGroup
+}
 
 export type BrowseQueryOptions = {
   conditions?: SQL[]
@@ -261,18 +278,21 @@ function browseFieldConditions(
         statusCode: 422,
         message: 'Unknown numeric filter',
       })
-    const value = numericExpression(range.field, mediaType)
-    const bounds: SQL[] = [sql`${value} is not null`]
-    if (range.min !== undefined) bounds.push(sql`${value} >= ${range.min}`)
-    if (range.max !== undefined) bounds.push(sql`${value} <= ${range.max}`)
-    const predicate = sql`(${sql.join(bounds, sql` and `)})`
     conditions.push(
-      range.includeMissing
-        ? sql`(${predicate} or ${value} is null)`
-        : predicate,
+      rangeCondition(range, numericExpression(range.field, mediaType)),
     )
   }
   return conditions
+}
+
+function rangeCondition(range: BrowseRange, value: SQL) {
+  const bounds: SQL[] = [sql`${value} is not null`]
+  if (range.min !== undefined) bounds.push(sql`${value} >= ${range.min}`)
+  if (range.max !== undefined) bounds.push(sql`${value} <= ${range.max}`)
+  const predicate = sql`(${sql.join(bounds, sql` and `)})`
+  return range.includeMissing
+    ? sql`(${predicate} or ${value} is null)`
+    : predicate
 }
 
 /** Apply ordinary and source-evidence filters as one set of Browse predicates. */
@@ -337,6 +357,135 @@ function requestsLastfmSource(query: BrowseQuery) {
   )
 }
 
+function browseRanks(positions: number[], limitResults?: number) {
+  return [...new Set(positions)]
+    .filter((position) => position < (limitResults ?? Infinity))
+    .map((position) => position + 1)
+}
+
+function groupedTrackBrowse(
+  query: TrackQuery,
+  where: SQL | undefined,
+  sort: SQL,
+  naturalOrder: SQL[],
+  sharedArtistTags: boolean,
+) {
+  const matches = db
+    .select({ id: mediaItem.id, title: mediaItem.title })
+    .from(mediaItem)
+    .innerJoin(libraryTrack, eq(libraryTrack.mediaItemId, mediaItem.id))
+    .where(where)
+  const memberships = sql`with ${
+    sharedArtistTags
+      ? sql`browse_artist_tags as (${artistTagMemberships('track')}), `
+      : sql``
+  }${recordingMemberships(matches)}`
+  const groupRanges = query.ranges.flatMap((range) => {
+    const value = recordingGroupValue(range.field)
+    if (!value) return []
+    return rangeCondition(
+      range,
+      range.field === 'scrobbles'
+        ? value
+        : sql`extract(epoch from ${value}) * 1000`,
+    )
+  })
+  const groupPredicate = groupRanges.length
+    ? sql`where ${and(...groupRanges)}`
+    : sql``
+  const groupStats = sql`${recordingRepresentatives}, ${recordingListening}`
+  const grouped = sql`${memberships}, ${groupStats}`
+  const hasListeningRange = query.ranges.some(
+    (range) => range.field === 'scrobbles' || range.field === 'lastListenedAt',
+  )
+  const rangeStats = hasListeningRange ? groupStats : recordingRepresentatives
+  const rangeGroups = hasListeningRange
+    ? sql`recording_stats`
+    : sql`recording_representatives`
+  const groupSort = recordingGroupValue(query.sortBy) ?? sort
+  const direction = query.direction === 'asc' ? sql`asc` : sql`desc`
+  const ordering = (primary: SQL) =>
+    sql.join(
+      [
+        sql`${primary} ${direction} nulls last`,
+        ...naturalOrder,
+        sql`${mediaItem.id}`,
+      ],
+      sql`, `,
+    )
+  const trackColumns = sql`
+    join ${libraryTrack} on ${libraryTrack.mediaItemId} = ${mediaItem.id}
+    left join ${mediaItem} as ${trackSortAlbum} on ${trackSortAlbum.id} = ${libraryTrack.albumMediaItemId}`
+  const groupRows = sql`from recording_stats g
+    join ${mediaItem} on ${mediaItem.id} = g.id ${trackColumns} ${groupPredicate}`
+  const offset = (query.page - 1) * query.size
+
+  async function readCount() {
+    const counted = groupRanges.length
+      ? sql`${memberships}, ${rangeStats} select count(*)::int as value from ${rangeGroups} g ${groupPredicate}`
+      : sql`${memberships} select count(distinct group_key)::int as value from recording_members`
+    const total = await countCache(
+      JSON.stringify(dialect.sqlToQuery(counted)),
+      async () => {
+        const { rows } = await db.execute(counted)
+        return z
+          .object({ value: z.number().int().nonnegative() })
+          .parse(rows[0]).value
+      },
+    )
+    return Math.min(total, query.limitResults ?? Number.MAX_SAFE_INTEGER)
+  }
+
+  async function readPage(limit: number) {
+    const { rows } = await db.execute(sql`${grouped}
+      select ${recordingGroupProjection} ${groupRows}
+      order by ${ordering(groupSort)} limit ${limit} offset ${offset}`)
+    const items = RecordingGroupRowsSchema.parse(rows).slice(0, query.size)
+    return {
+      ids: items.map((row) => row.id),
+      listeningScrobbles: undefined,
+      recordingGroups: new Map(items.map((row) => [row.id, row])),
+      hasMore: rows.length > query.size,
+    }
+  }
+
+  async function readPositions(positions: number[]): Promise<BrowsePosition[]> {
+    const ranks = browseRanks(positions, query.limitResults)
+    if (!ranks.length) return []
+    const { rows } = await db.execute(sql`${grouped}, ranked as (
+      select ${recordingGroupProjection}, row_number() over (order by ${ordering(groupSort)}) as rank
+      ${groupRows}
+    ) select id, version_count, scrobbles, last_listened_at, date_added, rank::int
+      from ranked where rank <= ${Math.max(...ranks)} and ${inArray(sql`rank`, ranks)} order by rank`)
+    return RecordingGroupPositionRowsSchema.parse(rows).map(
+      ({ rank, ...recordingGroup }) => ({
+        id: recordingGroup.id,
+        position: rank - 1,
+        recordingGroup,
+      }),
+    )
+  }
+
+  async function readVersions(id: string) {
+    const eligibleGroups = groupRanges.length
+      ? sql`, ${rangeStats}, eligible as (select g.group_key from ${rangeGroups} g ${groupPredicate})`
+      : sql``
+    const { rows } = await db.execute(sql`${memberships}${eligibleGroups}
+    select m.id from recording_members m
+    join recording_members target on target.group_key = m.group_key and target.id = ${id}
+    ${groupRanges.length ? sql`join eligible on eligible.group_key = m.group_key` : sql``}
+    join ${mediaItem} on ${mediaItem.id} = m.id ${trackColumns}
+    order by ${ordering(sort)} limit ${query.size + 1} offset ${offset}`)
+    const ids = z
+      .array(z.object({ id: z.string() }))
+      .parse(rows)
+      .map((row) => row.id)
+    return { ids: ids.slice(0, query.size), hasMore: ids.length > query.size }
+  }
+
+  return { offset, readCount, readPage, readPositions, readVersions }
+}
+
 async function browseQueries(
   mediaType: MediaType,
   query: AlbumQuery | FilmQuery | TrackQuery,
@@ -378,15 +527,23 @@ async function browseQueries(
   const sortField = byKey.get(query.sortBy)
   if (!sortField)
     throw new ServerError({ statusCode: 422, message: 'Unknown sort field' })
+  const groupedTrackQuery =
+    mediaType === 'track' && 'groupRecordings' in query && query.groupRecordings
+      ? query
+      : undefined
   const conditions: SQL[] = [eq(mediaItem.mediaType, mediaType)]
   if (
     mediaType === 'track' &&
     !options.includeLastfmSourceRows &&
     !requestsLastfmSource(query)
   )
-    conditions.push(sql`(${mediaItem.sourceLabel} is distinct from 'lastfm' or not exists (
-      ${redundantLastfmTrackIds(sql`${mediaItem.id}`)}
-    ))`)
+    conditions.push(
+      groupedTrackQuery
+        ? sql`${mediaItem.id} not in (${redundantLastfmTrackIds()})`
+        : sql`(${mediaItem.sourceLabel} is distinct from 'lastfm' or not exists (
+          ${redundantLastfmTrackIds(sql`${mediaItem.id}`)}
+        ))`,
+    )
   if (query.creatorId) {
     const role = 'creatorRole' in query ? query.creatorRole : undefined
     const roles =
@@ -415,7 +572,14 @@ async function browseQueries(
   if ('sourceKind' in query && query.sourceKind)
     conditions.push(eq(film.sourceKind, query.sourceKind))
   conditions.push(
-    ...browseFieldConditions(mediaType, filters, query.ranges, byKey),
+    ...browseFieldConditions(
+      mediaType,
+      filters,
+      groupedTrackQuery
+        ? query.ranges.filter((range) => !recordingGroupValue(range.field))
+        : query.ranges,
+      byKey,
+    ),
   )
   // Every word must appear in at least one text field; words may match
   // different fields.
@@ -449,6 +613,16 @@ async function browseQueries(
         : albumTagOrder
           ? sql`lower(album_tag_order.name)`
           : browseSortExpression(sortField, mediaType)
+  const naturalOrder =
+    mediaType === 'track' ? trackNaturalOrder(sortField.key) : []
+  if (groupedTrackQuery)
+    return groupedTrackBrowse(
+      groupedTrackQuery,
+      where,
+      sort,
+      naturalOrder,
+      sharedArtistTags,
+    )
   const missing =
     options.sort?.field.key === sortField.key && options.sort.missingFirst
       ? sql`nulls first`
@@ -529,8 +703,6 @@ async function browseQueries(
     return Math.min(total, query.limitResults ?? Number.MAX_SAFE_INTEGER)
   }
   const offset = (query.page - 1) * query.size
-  const naturalOrder =
-    mediaType === 'track' ? trackNaturalOrder(sortField.key) : []
 
   async function readPage(limit: number) {
     const rows = await base()
@@ -544,6 +716,7 @@ async function browseQueries(
       listeningScrobbles: listening?.sort
         ? new Map(items.map((row) => [row.id, row.listeningScrobbles ?? 0]))
         : undefined,
+      recordingGroups: undefined,
       hasMore: rows.length > query.size,
     }
   }
@@ -552,10 +725,8 @@ async function browseQueries(
    * numbers the rows as far as the deepest position, where a page for each
    * position would order the result again every time.
    */
-  async function readPositions(positions: number[]) {
-    const ranks = [...new Set(positions)]
-      .filter((position) => position < (query.limitResults ?? Infinity))
-      .map((position) => position + 1)
+  async function readPositions(positions: number[]): Promise<BrowsePosition[]> {
+    const ranks = browseRanks(positions, query.limitResults)
     if (!ranks.length) return []
     const ordering = sql.join(
       [order, ...naturalOrder, sql`${mediaItem.id}`],
@@ -577,7 +748,7 @@ async function browseQueries(
       )
     return rows.map((row) => ({ id: row.id, position: row.rank - 1 }))
   }
-  return { offset, readCount, readPage, readPositions }
+  return { offset, readCount, readPage, readPositions, readVersions: undefined }
 }
 
 type BrowseQuery = AlbumQuery | FilmQuery | TrackQuery
@@ -593,12 +764,13 @@ export async function queryBrowseIds(
     options,
   )
   const totalCount = await readCount()
-  const { ids, listeningScrobbles } = await readPage(
+  const { ids, listeningScrobbles, recordingGroups } = await readPage(
     Math.min(query.size, Math.max(0, totalCount - offset)),
   )
   return {
     ids,
     listeningScrobbles,
+    recordingGroups,
     totalCount,
     pageCount: Math.ceil(totalCount / query.size),
   }
@@ -615,8 +787,26 @@ export async function queryBrowsePageIds(
       ? query.size + 1
       : Math.max(0, query.limitResults - offset)
   if (!remaining)
-    return { ids: [], listeningScrobbles: undefined, hasMore: false }
+    return {
+      ids: [],
+      listeningScrobbles: undefined,
+      recordingGroups: undefined,
+      hasMore: false,
+    }
   return readPage(Math.min(query.size + 1, remaining))
+}
+
+/** Bounded pages of release rows from the current recording's filtered membership. */
+export async function queryTrackRecordingVersions(
+  id: string,
+  query: TrackQuery,
+) {
+  const { readVersions } = await browseQueries(
+    'track',
+    { ...query, groupRecordings: true },
+    { conditions: [recordingTitleMatches(sql`${mediaItem.title}`, id)] },
+  )
+  return readVersions ? readVersions(id) : { ids: [], hasMore: false }
 }
 
 /** The IDs at arbitrary positions of a browse query's order, in one read. */

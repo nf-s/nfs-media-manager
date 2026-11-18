@@ -32,6 +32,7 @@ type VirtualBrowseOptions = {
   scrollTop: number
   viewportHeight: number
   headerHeight: number
+  extraRowHeights?: ReadonlyMap<number, number>
 }
 
 function useBrowsePages<Item extends z.ZodTypeAny>(
@@ -47,6 +48,7 @@ function useBrowsePages<Item extends z.ZodTypeAny>(
     scrollTop,
     viewportHeight,
     headerHeight,
+    extraRowHeights,
   }: VirtualBrowseOptions,
 ) {
   const PageSchema = BrowsePageSliceSchema(itemSchema)
@@ -95,6 +97,7 @@ function useBrowsePages<Item extends z.ZodTypeAny>(
     scrollTop,
     viewportHeight,
     headerHeight,
+    extraRowHeights,
     totalCount: count.data?.totalCount,
   })
   const conflict =

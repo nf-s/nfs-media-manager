@@ -37,6 +37,11 @@ export const defaultTrackColumns = [
   'genre',
 ]
 
+export function trackGroupingEnabled(sortBy: string, override: string | null) {
+  if (override === 'true' || override === 'false') return override === 'true'
+  return sortBy === 'scrobbles' || sortBy === 'lastListenedAt'
+}
+
 export const trackScrobbleRuleLabels: Record<
   TrackScrobbleLinkStrategy,
   string

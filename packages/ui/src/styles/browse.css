@@ -402,7 +402,7 @@
     flex-basis: 100%;
   }
   /* The sort keeps a readable width; what does not fit beside it wraps */
-  .browse-order {
+  .ds-select.browse-order {
     flex: 1;
     min-width: calc(var(--ds-rail) / 2);
     max-width: none;

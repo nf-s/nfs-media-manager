@@ -6,7 +6,10 @@ import pg from 'pg'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { ArtistQuerySchema } from '@repo/schemas/creators'
 import { AlbumQuerySchema } from '@repo/schemas/media'
-import { TrackQuerySchema } from '@repo/schemas/tracks'
+import {
+  TrackPositionsQuerySchema,
+  TrackQuerySchema,
+} from '@repo/schemas/tracks'
 import { SubscriptionItemQuerySchema } from '@repo/schemas/subscriptions'
 import { env } from '@/env'
 import * as schema from '@/schemas/db'
@@ -307,4 +310,142 @@ it('returns the unfiltered subscription total of subscribed sources', async () =
       SubscriptionItemQuerySchema.parse({ q: 'bread' }),
     ),
   ).toEqual({ totalCount: 1, unfilteredCount: 3 })
+})
+
+it('deduplicates linked listening across editions and applies grouped ranges before pagination', async () => {
+  const {
+    listTrackBrowsePage,
+    listTrackRecordingVersions,
+    listTracksAtPositions,
+  } = await import('@/services/tracks')
+  const { queryBrowseCounts } = await import('@/services/browse')
+  const { refreshTrackListeningTotals } = await import('@/services/track-links')
+  await pool.query(`
+    insert into media_item (id, slug, media_type, title) values
+      ('edition-album', 'edition-album', 'track', 'Fixture recording'),
+      ('edition-ep', 'edition-ep', 'track', 'Fixture recording'),
+      ('edition-edit', 'edition-edit', 'track', 'Fixture recording (Radio Edit)'),
+      ('edition-remix', 'edition-remix', 'track', 'Fixture recording (Remix)');
+    insert into library_track (media_item_id, album_media_item_id, spotify_track_id, isrc, duration_sec, date_added) values
+      ('edition-album', 'album-1', '0000000000000000000001', 'USABC2600001', 180, '2026-01-02'),
+      ('edition-ep', 'album-2', null, 'USABC2600001', 179, '2026-01-01'),
+      ('edition-edit', null, null, 'USABC2600001', 180, '2026-01-03'),
+      ('edition-remix', null, null, 'USABC2600001', 180, '2026-01-03');
+    insert into media_credit (media_item_id, artist_id, role)
+    select id, 'artist-a', 'artist' from media_item where id like 'edition-%';
+    insert into lastfm_track_link (username, artist_key, track_key, track_media_item_id, strategy) values
+      ('listener', 'fixture artist a', 'fixture recording', 'edition-album', 'exact'),
+      ('listener', 'fixture artist a', 'fixture recording', 'edition-ep', 'exact'),
+      ('listener', 'fixture artist a', 'fixture recording album name', 'edition-album', 'normalized'),
+      ('listener', 'fixture artist a', 'fixture recording ep name', 'edition-ep', 'normalized');
+    insert into lastfm_scrobble (id, username, listened_at, artist_name, track_name, artist_key, track_key) values
+      ('edition-event-1', 'listener', '2026-02-01T03:04:05.123', 'Fixture artist A', 'Fixture recording', 'fixture artist a', 'fixture recording'),
+      ('edition-event-2', 'listener', '2026-02-02T03:04:05.123', 'Fixture artist A', 'Fixture recording album name', 'fixture artist a', 'fixture recording album name'),
+      ('edition-event-3', 'listener', '2026-02-03T03:04:05.123', 'Fixture artist A', 'Fixture recording ep name', 'fixture artist a', 'fixture recording ep name');
+  `)
+  await database.transaction(async (tx) => refreshTrackListeningTotals(tx))
+
+  const query = TrackQuerySchema.parse({
+    groupRecordings: true,
+    q: 'fixture recording',
+    sortBy: 'scrobbles',
+    size: 1,
+  })
+  const grouped = {
+    id: 'edition-album',
+    scrobbles: 3,
+    dateAdded: '2026-01-01T00:00:00.000Z',
+    lastListenedAt: '2026-02-03T03:04:05.123Z',
+    recordingGroup: { versionCount: 2 },
+  }
+  expect(await listTrackBrowsePage(query)).toMatchObject({
+    items: [grouped],
+    hasMore: true,
+  })
+  expect(
+    await listTrackBrowsePage({ ...query, sortBy: 'lastListenedAt' }),
+  ).toMatchObject({
+    items: [grouped],
+    hasMore: true,
+  })
+  expect(await queryBrowseCounts('track', query)).toEqual({
+    totalCount: 3,
+    unfilteredCount: 5,
+  })
+  expect(
+    await listTracksAtPositions(
+      TrackPositionsQuerySchema.parse({
+        ...query,
+        positions: '0,1,2',
+        limitResults: 1,
+      }),
+    ),
+  ).toMatchObject({ items: [{ position: 0, item: grouped }] })
+
+  const recordingRange = TrackQuerySchema.parse({
+    ...query,
+    ranges: [{ field: 'scrobbles', min: 3 }],
+  })
+  expect(await queryBrowseCounts('track', recordingRange)).toEqual({
+    totalCount: 1,
+    unfilteredCount: 5,
+  })
+  const first = await listTrackRecordingVersions(
+    'edition-album',
+    recordingRange,
+  )
+  const second = await listTrackRecordingVersions('edition-album', {
+    ...recordingRange,
+    page: 2,
+  })
+  expect(first).toMatchObject({
+    items: [{ id: 'edition-album', scrobbles: 2 }],
+    hasMore: true,
+  })
+  expect(second).toMatchObject({
+    items: [{ id: 'edition-ep', scrobbles: 2 }],
+    hasMore: false,
+  })
+  expect(first.items[0]?.recordingGroup).toBeUndefined()
+
+  const filtered = TrackQuerySchema.parse({
+    ...query,
+    filters: [{ field: 'album', value: 'Fixture album two', mode: 'required' }],
+  })
+  expect(await listTrackBrowsePage(filtered)).toMatchObject({
+    items: [{ id: 'edition-ep', scrobbles: 2 }],
+    hasMore: false,
+  })
+  expect(
+    await listTrackRecordingVersions('edition-ep', filtered),
+  ).toMatchObject({
+    items: [{ id: 'edition-ep' }],
+    hasMore: false,
+  })
+
+  // A materially different version stays separate even with both identifiers.
+  await pool.query(
+    `update library_track set duration_sec = 360 where media_item_id = 'edition-ep'`,
+  )
+  expect(await queryBrowseCounts('track', query)).toEqual({
+    totalCount: 4,
+    unfilteredCount: 6,
+  })
+  expect(
+    await listTrackRecordingVersions('edition-album', query),
+  ).toMatchObject({
+    items: [{ id: 'edition-album' }],
+    hasMore: false,
+  })
+
+  await pool.query(`
+    update library_track set duration_sec = 180, isrc = 'unknown'
+      where media_item_id in ('edition-album', 'edition-ep');
+    update lastfm_track_link set username = 'second-listener'
+      where track_media_item_id = 'edition-ep' and strategy = 'exact';
+  `)
+  expect(await queryBrowseCounts('track', query)).toEqual({
+    totalCount: 4,
+    unfilteredCount: 6,
+  })
 })

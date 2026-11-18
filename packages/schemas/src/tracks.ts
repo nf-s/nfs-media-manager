@@ -164,6 +164,10 @@ export const TrackListItemSchema = z.object({
   isrc: z.string().nullable(),
   scrobbles: z.number().int().nonnegative(),
   lastListenedAt: z.string().nullable(),
+  /** Matching release versions represented by this grouped Browse row. */
+  recordingGroup: z
+    .object({ versionCount: z.number().int().min(2) })
+    .optional(),
 })
 export type TrackListItem = z.infer<typeof TrackListItemSchema>
 
@@ -241,6 +245,12 @@ const TrackFiltersParamSchema = z.preprocess((value) => {
 
 export const TrackQuerySchema = PaginationQuerySchema.extend({
   creatorId: CreatorIdSchema.optional(),
+  groupRecordings: z
+    .union([
+      z.boolean(),
+      z.enum(['true', 'false']).transform((value) => value === 'true'),
+    ])
+    .optional(),
   limitResults: z.coerce.number().int().min(1).max(10000).optional(),
   q: z.string().optional(),
   filters: TrackFiltersParamSchema,

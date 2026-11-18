@@ -45,11 +45,17 @@ const track = TrackListItemSchema.parse({
   scrobbles: 1204,
   lastListenedAt: null,
 })
+const groupedTrack = TrackListItemSchema.parse({
+  ...track,
+  recordingGroup: { versionCount: 2 },
+})
 
 async function render(
   search = '',
   total = 250,
   counts?: { totalCount: number; unfilteredCount: number },
+  grouped = false,
+  otherCounts?: { totalCount: number; unfilteredCount: number },
 ) {
   const { default: TrackBrowser } = await import('./track-browser')
   const client = new QueryClient({
@@ -62,22 +68,33 @@ async function render(
     ranges: [],
     sortBy: params.get('sortBy') ?? 'dateAdded',
     direction: params.get('direction') === 'asc' ? 'asc' : 'desc',
+    ...(grouped ? { groupRecordings: true } : {}),
   })
   const countParams = new URLSearchParams({
     q: params.get('q') ?? '',
     filters: '[]',
     ranges: '[]',
   })
+  if (grouped) countParams.set('groupRecordings', 'true')
   countParams.sort()
   if (counts)
     client.setQueryData(
       ['tracks', 'browse-count', countParams.toString()],
       counts,
     )
+  if (otherCounts) {
+    if (grouped) countParams.delete('groupRecordings')
+    else countParams.set('groupRecordings', 'true')
+    countParams.sort()
+    client.setQueryData(
+      ['tracks', 'browse-count', countParams.toString()],
+      otherCounts,
+    )
+  }
   client.setQueryData(['ai-status'], { available: true, reason: null })
   client.setQueryData(['tracks', 'fields'], trackBrowseFields)
   client.setQueryData(['tracks', 'browse', identity, 1], {
-    items: total ? [track] : [],
+    items: total ? [grouped ? groupedTrack : track] : [],
     page: 1,
     size: 100,
     hasMore: total > 100,
@@ -126,6 +143,31 @@ test('Tracks start in the Table view; Grid shows the density control', async () 
   assert.match(compact, /grid-template-columns:repeat\(8, minmax\(0, 1fr\)\)/)
   const roomy = await render('view=grid&density=roomy')
   assert.match(roomy, /grid-template-columns:repeat\(4, minmax\(0, 1fr\)\)/)
+})
+
+test('Group recordings follows the sort unless the URL sets an override', async () => {
+  const shown = [
+    /aria-pressed="true">Group recordings<\/button>/,
+    /aria-expanded="false" aria-label="Show 2 release versions for Example Song"/,
+  ]
+  for (const search of [
+    'sortBy=scrobbles',
+    'view=list&sortBy=lastListenedAt',
+    'view=grid&sortBy=artist&groupRecordings=true',
+  ]) {
+    const html = await render(search, 1, undefined, true)
+    for (const pattern of shown) assert.match(html, pattern)
+  }
+  for (const search of [
+    'sortBy=artist',
+    'sortBy=album',
+    'sortBy=dateAdded',
+    'sortBy=scrobbles&groupRecordings=false',
+  ]) {
+    const html = await render(search)
+    assert.match(html, /aria-pressed="false">Group recordings<\/button>/)
+    assert.doesNotMatch(html, /aria-label="Show 2 release versions/)
+  }
 })
 
 test('Tracks list rows: thumbnail, title, artists and album, play pair, tags and values', async () => {
@@ -227,6 +269,34 @@ test('a filtered Tracks count reads N of M', async () => {
     unfilteredCount: 1024,
   })
   assert.match(html, /role="status">1 of 1,024 tracks<\/span>/)
+})
+
+test('grouped and individual Tracks keep separate cached counts', async () => {
+  const grouped = { totalCount: 2, unfilteredCount: 4 }
+  const individual = { totalCount: 3, unfilteredCount: 5 }
+  for (const sortBy of ['scrobbles', 'lastListenedAt']) {
+    const html = await render(
+      `q=Example&sortBy=${sortBy}`,
+      2,
+      grouped,
+      true,
+      individual,
+    )
+    assert.match(html, /role="status">2 of 4 tracks<\/span>/)
+  }
+  for (const sort of [
+    'sortBy=artist',
+    'sortBy=scrobbles&groupRecordings=false',
+  ]) {
+    const html = await render(
+      `q=Example&${sort}`,
+      3,
+      individual,
+      false,
+      grouped,
+    )
+    assert.match(html, /role="status">3 of 5 tracks<\/span>/)
+  }
 })
 
 test('an empty Tracks library and an empty search say different things', async () => {

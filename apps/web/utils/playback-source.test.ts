@@ -11,6 +11,7 @@ import {
   createAlbumPlaybackSource,
   createBrowsePlaybackSource,
   createPlaylistPlaybackSource,
+  restorePlaybackSource,
 } from './playback-source'
 import { browsePageSize } from './virtual-browse'
 
@@ -142,6 +143,7 @@ test('a browse source stays lazy and retains its query beyond the visible page',
     ranges: '[]',
     sortBy: 'title',
     direction: 'asc',
+    groupRecordings: 'true',
   })
   const source = createBrowsePlaybackSource({
     ...options,
@@ -151,6 +153,7 @@ test('a browse source stays lazy and retains its query beyond the visible page',
     href: '/tracks?q=Fixture&sortBy=title&direction=asc',
   })
   params.set('q', 'Changed view')
+  params.delete('groupRecordings')
   assert.equal(calls.length, 0)
   assert.equal(source.startIndex, 500)
   assert.equal(source.href, '/tracks?q=Fixture&sortBy=title&direction=asc')
@@ -163,6 +166,7 @@ test('a browse source stays lazy and retains its query beyond the visible page',
   assert.equal(calls[0]?.searchParams.get('sortBy'), 'title')
   assert.equal(calls[0]?.searchParams.get('direction'), 'asc')
   assert.equal(calls[0]?.searchParams.get('ranges'), '[]')
+  assert.equal(calls[0]?.searchParams.get('groupRecordings'), 'true')
   assert.match(calls[0]?.searchParams.get('filters') ?? '', /Fixture artist/)
   await source.load(500)
   assert.equal(calls.length, 1)
@@ -186,7 +190,7 @@ test('the clicked track starts without fetching and unplayable or missing rows a
   assert.equal(network.mock.callCount(), 1)
 })
 
-test('tracks spread over a list are read in one request for their positions', async (t) => {
+test('tracks spread over a grouped list keep the group query for their positions', async (t) => {
   const calls: URL[] = []
   t.mock.method(globalThis, 'fetch', async (input: RequestInfo | URL) => {
     const url = new URL(String(input))
@@ -216,6 +220,7 @@ test('tracks spread over a list are read in one request for their positions', as
       q: 'Fixture',
       sortBy: 'title',
       direction: 'asc',
+      groupRecordings: 'true',
       page: '3',
       size: '100',
     }),
@@ -242,6 +247,7 @@ test('tracks spread over a list are read in one request for their positions', as
   assert.equal(calls[0]?.searchParams.get('q'), 'Fixture')
   assert.equal(calls[0]?.searchParams.get('sortBy'), 'title')
   assert.equal(calls[0]?.searchParams.get('direction'), 'asc')
+  assert.equal(calls[0]?.searchParams.get('groupRecordings'), 'true')
   assert.equal(calls[0]?.searchParams.has('page'), false)
   assert.equal(calls[0]?.searchParams.has('size'), false)
 
@@ -260,6 +266,20 @@ test('tracks spread over a list are read in one request for their positions', as
     'Fixture track',
   )
   assert.equal(calls.length, 3)
+
+  assert.ok(source.descriptor)
+  const restored = restorePlaybackSource(options.apiBaseUrl, {
+    label: source.label,
+    href: source.href,
+    length: source.length,
+    startIndex: source.startIndex,
+    descriptor: source.descriptor,
+  })
+  assert.equal(
+    (await restored.loadScattered?.([640]))?.[0]?.[0]?.title,
+    'Track 640',
+  )
+  assert.equal(calls[3]?.searchParams.get('groupRecordings'), 'true')
 
   const albums = createBrowsePlaybackSource({
     ...options,

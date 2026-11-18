@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { TrackPositionsQuerySchema, TrackQuerySchema } from '../src/tracks'
 import {
   buildAlbumBrowseFilterLabel,
   buildFilmBrowseFilterLabel,
@@ -10,6 +11,25 @@ import {
 } from '../src/media'
 
 describe('browse filter helpers', () => {
+  it('keeps recording grouping opt-in for API and playback queries', () => {
+    expect(TrackQuerySchema.parse({}).groupRecordings).toBeUndefined()
+    expect(
+      TrackQuerySchema.parse({ groupRecordings: 'false' }).groupRecordings,
+    ).toBe(false)
+    expect(
+      TrackQuerySchema.parse({ groupRecordings: true }).groupRecordings,
+    ).toBe(true)
+    expect(
+      TrackPositionsQuerySchema.parse({
+        groupRecordings: 'true',
+        positions: '0,4',
+      }).groupRecordings,
+    ).toBe(true)
+    expect(
+      TrackQuerySchema.safeParse({ groupRecordings: 'maybe' }).success,
+    ).toBe(false)
+  })
+
   it('serializes and parses album filters', () => {
     const serializedFilters = serializeAlbumBrowseFilters([
       {

@@ -427,3 +427,62 @@ it('preserves membership, match labels, album precedence and literal text search
   )
   expect(fetch).not.toHaveBeenCalled()
 })
+
+it('groups a broad listening page and count without rereading shared scrobbles', async () => {
+  const { queryBrowseCount, queryBrowsePageIds } =
+    await import('@/services/browse')
+  const query = TrackQuerySchema.parse({
+    groupRecordings: true,
+    sortBy: 'scrobbles',
+    size: 25,
+  })
+  const baseline = await queryBrowseCount('track', query)
+  await pool.query(`
+    insert into media_item (id, slug, title, media_type)
+    select 'edition-' || n, 'edition-' || n, mi.title, 'track'
+    from generate_series(1, 2500) n join media_item mi on mi.id = 'song-' || n;
+    insert into library_track (media_item_id, spotify_track_id, scrobble_count, last_listened_at)
+    select 'edition-' || n, lpad((n + 20000)::text, 22, '0'), 40, timestamp '2026-01-01'
+    from generate_series(1, 2500) n;
+    update library_track lt set scrobble_count = 40, last_listened_at = timestamp '2026-01-01'
+    from generate_series(1, 2500) n where lt.media_item_id = 'song-' || n;
+    insert into media_credit (media_item_id, artist_id, role)
+    select 'edition-' || n, 'artist', 'artist' from generate_series(1, 2500) n;
+    insert into lastfm_track_link (username, artist_key, track_key, track_media_item_id, strategy)
+    select 'listener', 'synthetic performer', 'synthetic song ' || n, prefix || n, 'exact'
+    from generate_series(1, 2500) n cross join (values ('song-'), ('edition-')) editions(prefix);
+    insert into lastfm_scrobble (id, username, listened_at, artist_name, track_name, artist_key, track_key)
+    select 'event-' || n || '-' || event, 'listener', timestamp '2026-01-01' - (40 - event) * interval '1 minute',
+      'Synthetic Performer', 'Synthetic song ' || n, 'synthetic performer', 'synthetic song ' || n
+    from generate_series(1, 2500) n cross join generate_series(1, 40) event;
+    analyze media_item; analyze library_track; analyze media_credit;
+    analyze lastfm_track_link; analyze lastfm_scrobble;
+  `)
+  capturedQueries.length = 0
+  const first = await queryBrowsePageIds('track', query)
+  expect(first.ids).toHaveLength(25)
+  expect(first.hasMore).toBe(true)
+  expect(
+    [...(first.recordingGroups?.values() ?? [])].map(
+      ({ version_count, scrobbles }) => [version_count, scrobbles],
+    ),
+  ).toEqual(Array.from({ length: 25 }, () => [2, 40]))
+  expect(await queryBrowseCount('track', query)).toEqual(baseline)
+
+  const queries = capturedQueries.filter(
+    ({ query }) => !query.includes('pg_current_snapshot'),
+  )
+  expect(queries).toHaveLength(2)
+  for (const { query, params } of queries) {
+    const result = await pool.query(
+      `explain (analyze, format json) ${query}`,
+      params,
+    )
+    const relations = PlanRowsSchema.parse(result.rows)
+      .flatMap((row) =>
+        row['QUERY PLAN'].flatMap((plan) => flattenPlan(plan.Plan)),
+      )
+      .filter((plan) => plan['Relation Name'] === 'lastfm_scrobble')
+    expect(relations.every((plan) => plan['Actual Loops'] === 0)).toBe(true)
+  }
+})

@@ -35,7 +35,9 @@ import {
   queryBrowseIds,
   queryBrowsePageIds,
   queryBrowsePositions,
+  queryTrackRecordingVersions,
 } from './browse'
+import type { RecordingGroup } from './recording-groups'
 import { refreshTrackAddedDates } from './spotify-playlists'
 import {
   lockLibraryTrackWrites,
@@ -159,13 +161,54 @@ export async function loadTracks(ids: string[]): Promise<TrackListItem[]> {
   })
 }
 
+function trackWithRecordingGroup(
+  track: TrackListItem,
+  group?: RecordingGroup,
+): TrackListItem {
+  if (!group || group.version_count === 1) return track
+  return {
+    ...track,
+    scrobbles: group.scrobbles,
+    lastListenedAt: group.last_listened_at,
+    dateAdded: group.date_added,
+    recordingGroup: { versionCount: group.version_count },
+  }
+}
+
 export async function listTracks(query: TrackQuery) {
-  const { ids, totalCount, pageCount } = await queryBrowseIds('track', query)
-  return { items: await loadTracks(ids), totalCount, pageCount }
+  const { ids, totalCount, pageCount, recordingGroups } = await queryBrowseIds(
+    'track',
+    query,
+  )
+  return {
+    items: (await loadTracks(ids)).map((track) =>
+      trackWithRecordingGroup(track, recordingGroups?.get(track.id)),
+    ),
+    totalCount,
+    pageCount,
+  }
 }
 
 export async function listTrackBrowsePage(query: TrackQuery) {
-  const { ids, hasMore } = await queryBrowsePageIds('track', query)
+  const { ids, hasMore, recordingGroups } = await queryBrowsePageIds(
+    'track',
+    query,
+  )
+  return {
+    items: (await loadTracks(ids)).map((track) =>
+      trackWithRecordingGroup(track, recordingGroups?.get(track.id)),
+    ),
+    page: query.page,
+    size: query.size,
+    hasMore,
+  }
+}
+
+export async function listTrackRecordingVersions(
+  id: string,
+  query: TrackQuery,
+) {
+  const { ids, hasMore } = await queryTrackRecordingVersions(id, query)
   return {
     items: await loadTracks(ids),
     page: query.page,
@@ -184,9 +227,11 @@ export async function listTracksAtPositions(query: TrackPositionsQuery) {
     ]),
   )
   return {
-    items: rows.flatMap(({ id, position }) => {
+    items: rows.flatMap(({ id, position, recordingGroup }) => {
       const item = items.get(id)
-      return item ? [{ position, item }] : []
+      return item
+        ? [{ position, item: trackWithRecordingGroup(item, recordingGroup) }]
+        : []
     }),
   }
 }

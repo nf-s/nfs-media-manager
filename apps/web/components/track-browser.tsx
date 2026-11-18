@@ -13,7 +13,14 @@ import {
 } from './detail-inspector-context'
 import { sameDetail, withoutDetailEntries } from '@/utils/detail-inspector'
 
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import {
+  Fragment,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react'
 import { useSearchParams } from 'next/navigation'
 import {
   TableBody,
@@ -24,12 +31,14 @@ import {
 } from '@repo/ui/components/ui/table'
 import { Card, CardTitle } from '@repo/ui/components/ds/card'
 import {
+  List,
   ListHead,
   ListRow,
   RowTitle,
   RowValue,
 } from '@repo/ui/components/ds/list-row'
 import { Skeleton } from '@repo/ui/components/ds/feedback'
+import { Button } from '@repo/ui/components/ui/button'
 import { EMPTY_VALUE, formatCount, formatDate } from '@repo/ui/lib/format'
 import {
   BrowseRangesParamSchema,
@@ -49,12 +58,14 @@ import {
   defaultTrackColumns,
   formatTrackDuration,
   parseTrackFilters,
+  trackGroupingEnabled,
   withTrackFilter,
 } from '@/utils/track-browse'
 import {
   columnOrderParam,
   hasCustomColumnOrder,
   formatFieldValue,
+  gridRowGap,
   itemGridGeometry,
   nextSortDirection,
   orderColumns,
@@ -74,6 +85,12 @@ import {
   useTrackBrowseFields,
 } from './track-browse-controls'
 import BrowseToolbar, { BrowseColumnsSection } from './browse-toolbar'
+import {
+  RecordingVersionsPager,
+  RecordingVersionsStatus,
+  RecordingVersionsToggle,
+  useTrackRecordingVersions,
+} from './track-recording-versions'
 import { LibraryTrackPlayButton } from './play-controls'
 import { createBrowsePlaybackSource } from '@/utils/playback-source'
 import {
@@ -136,6 +153,10 @@ export default function TrackBrowser() {
   const q = searchParams.get('q') ?? ''
   const sortBy = canonicalBrowseKey(searchParams.get('sortBy') ?? 'dateAdded')
   const direction = searchParams.get('direction') === 'asc' ? 'asc' : 'desc'
+  const groupRecordings = trackGroupingEnabled(
+    sortBy,
+    searchParams.get('groupRecordings'),
+  )
   // One drawer at a time: the playlist drawer covers the track drawer.
   const selectedId =
     inspector?.root?.kind === 'track' ? inspector.root.id : null
@@ -162,6 +183,7 @@ export default function TrackBrowser() {
     ranges,
     sortBy,
     direction,
+    ...(groupRecordings ? { groupRecordings } : {}),
     ...creator,
   })
   const scrollIdentity = `${collection}:${queryKey}:${view}`
@@ -189,6 +211,11 @@ export default function TrackBrowser() {
     const pathname = `/${collection}`
     const current = new URLSearchParams(window.location.search)
     const params = close ? withoutDetailEntries(pathname, current) : current
+    if (
+      Object.hasOwn(updates, 'sortBy') &&
+      canonicalBrowseKey(updates.sortBy ?? 'dateAdded') !== sortBy
+    )
+      params.delete('groupRecordings')
     for (const [key, value] of Object.entries(updates)) {
       if (value === null || value === '') params.delete(key)
       else params.set(key, value)
@@ -292,6 +319,20 @@ export default function TrackBrowser() {
     direction,
     ...creator,
   })
+  if (groupRecordings) params.set('groupRecordings', 'true')
+  const versions = useTrackRecordingVersions(apiBaseUrl, queryKey, params)
+  const expanded = versions.expanded
+  const gridRow = expanded ? Math.floor(expanded.index / grid.columns) : -1
+  const versionsHeight =
+    versions.rowCount * (view === 'table' ? tableRowHeight : listRowHeight)
+  const extraRowHeights = expanded
+    ? new Map([
+        [
+          view === 'grid' ? gridRow : expanded.index,
+          versionsHeight + (view === 'grid' ? gridRowGap : 0),
+        ],
+      ])
+    : undefined
   const query = useVirtualBrowse({
     apiBaseUrl,
     collection,
@@ -302,11 +343,25 @@ export default function TrackBrowser() {
     rowHeight,
     scrollTop,
     viewportHeight: viewport.height,
+    extraRowHeights,
     headerHeight:
       view === 'table' || (view === 'list' && !mobile) ? headerHeight : 0,
     itemSchema: TrackListItemSchema,
   })
   const { total, slots, padTop, padBottom } = query
+  const expandedSlot = slots.find(
+    ({ index }) => index === expanded?.index,
+  )?.item
+  const expandedVisible =
+    expandedSlot?.id === expanded?.id && Boolean(expandedSlot?.recordingGroup)
+  const collapseVersions = versions.collapse
+  useEffect(() => {
+    if (expandedSlot && !expandedVisible) collapseVersions()
+  }, [collapseVersions, expandedSlot, expandedVisible])
+  const gridPanelAfter = Math.min(query.end, (gridRow + 1) * grid.columns) - 1
+  const gridRowTemplate = expandedVisible
+    ? `repeat(${gridRow - query.start / grid.columns + 1}, ${grid.cardHeight}px) ${versionsHeight}px`
+    : undefined
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       if (event.defaultPrevented) return
@@ -329,11 +384,19 @@ export default function TrackBrowser() {
         !target.matches('.media-inspector')
       )
         return
-      const current = slots.findIndex(({ item }) => item?.id === selectedId)
-      const next = slots[current + (event.key === 'ArrowDown' ? 1 : -1)]?.item
+      const visibleIds = slots.flatMap(({ item }) => [
+        item?.id,
+        ...(expanded && expanded.id === item?.id
+          ? versions.items
+              .filter((version) => version.id !== expanded.id)
+              .map((version) => version.id)
+          : []),
+      ])
+      const current = visibleIds.indexOf(selectedId)
+      const next = visibleIds[current + (event.key === 'ArrowDown' ? 1 : -1)]
       if (current < 0 || !next) return
       event.preventDefault()
-      inspector?.replace({ kind: 'track', id: next.id })
+      inspector?.replace({ kind: 'track', id: next })
     }
     document.addEventListener('keydown', onKeyDown)
     return () => document.removeEventListener('keydown', onKeyDown)
@@ -368,34 +431,179 @@ export default function TrackBrowser() {
     )
   }
 
-  function trackLink(item: TrackListItem, className?: string) {
+  function trackLink(
+    item: TrackListItem,
+    className?: string,
+    label = item.title,
+  ) {
     return (
-      <DetailLink
-        kind="track"
-        id={item.id}
-        className={className}
-        title={item.title}
-      >
-        {item.title}
+      <DetailLink kind="track" id={item.id} className={className} title={label}>
+        {label}
       </DetailLink>
     )
   }
 
-  function renderValue(item: TrackListItem, field: BrowseField, index: number) {
+  function versionToggle(item: TrackListItem, index: number) {
+    return (
+      <RecordingVersionsToggle track={item} index={index} versions={versions} />
+    )
+  }
+
+  function browseTitle(item: TrackListItem, index: number, title: ReactNode) {
+    return item.recordingGroup ? (
+      <span className="ds-cell-id">
+        {versionToggle(item, index)}
+        {title}
+      </span>
+    ) : (
+      title
+    )
+  }
+
+  function renderValue(
+    item: TrackListItem,
+    field: BrowseField,
+    index: number,
+    child: boolean,
+  ) {
     if (field.key === 'title')
       return (
         <span className="ds-cell-id">
+          {!child && versionToggle(item, index)}
           <ItemThumb
             kind="track"
             src={item.artworkUrl}
             title={item.title}
             target={{ kind: 'track', id: item.id }}
           />
-          {trackLink(item, 'ds-cell-title')}
-          {playPair(item, index)}
+          {trackLink(
+            item,
+            'ds-cell-title',
+            child
+              ? (item.albumName ?? item.album?.title ?? 'Release unknown')
+              : item.title,
+          )}
+          {child ? (
+            <LibraryTrackPlayButton track={item} />
+          ) : (
+            playPair(item, index)
+          )}
         </span>
       )
     return <TrackBrowseValue track={item} field={field} onFilter={addFilter} />
+  }
+
+  function renderTrackTableRow(
+    item: TrackListItem,
+    index: number,
+    rowIndex: number,
+    child = false,
+  ) {
+    return (
+      <TableRow
+        key={item.id}
+        data-item-index={child ? undefined : index}
+        selected={
+          item.id === selectedId && (!child || expanded?.id !== item.id)
+        }
+        aria-rowindex={rowIndex}
+        child={child}
+      >
+        {columns.map((field) => (
+          <TableCell
+            key={field.key}
+            align={field.type === 'number' ? 'end' : undefined}
+            sticky={field.key === 'title' ? 0 : undefined}
+            stickyEdge={field.key === 'title'}
+            title={formatFieldValue(
+              field,
+              getTrackBrowseValues(item)[field.key],
+            )}
+          >
+            {renderValue(item, field, index, child)}
+          </TableCell>
+        ))}
+      </TableRow>
+    )
+  }
+
+  function renderTrackListRow(item: TrackListItem, index?: number) {
+    const child = index === undefined
+    const title = <RowTitle>{trackLink(item)}</RowTitle>
+    return (
+      <ListRow
+        key={item.id}
+        data-item-index={index}
+        selected={
+          item.id === selectedId && (!child || expanded?.id !== item.id)
+        }
+        thumb={
+          <ItemThumb
+            kind="track"
+            src={item.artworkUrl}
+            title={item.title}
+            target={{ kind: 'track', id: item.id }}
+          />
+        }
+        title={child ? title : browseTitle(item, index, title)}
+        by={
+          child ? (
+            item.album || item.albumName ? (
+              <TrackBrowseAlbum track={item} />
+            ) : (
+              'Release unknown'
+            )
+          ) : (
+            <>
+              <TrackArtistLinks track={item} />
+              {(item.album || item.albumName) && (
+                <>
+                  {' '}
+                  · <TrackBrowseAlbum track={item} />
+                </>
+              )}
+            </>
+          )
+        }
+        play={
+          child ? (
+            <LibraryTrackPlayButton track={item} />
+          ) : (
+            playPair(item, index)
+          )
+        }
+        tags={<TrackBrowseTags track={item} onFilter={addFilter} />}
+        meta={
+          <>
+            <RowValue kind="num">
+              {formatTrackDuration(item.durationSec)}
+            </RowValue>
+            <RowValue kind="num">{formatCount(item.scrobbles)}</RowValue>
+            <RowValue kind="date">{formatDate(item.dateAdded)}</RowValue>
+          </>
+        }
+      />
+    )
+  }
+
+  function renderVersionList(inGrid = false) {
+    function renderControls(content: ReactNode) {
+      return <ListRow thumb={<span />} title={content} />
+    }
+    return (
+      <List
+        role="group"
+        aria-label="Release versions"
+        compact={mobile}
+        style={inGrid ? { gridColumn: '1 / -1' } : undefined}
+      >
+        {versions.items.length
+          ? versions.items.map((item) => renderTrackListRow(item))
+          : renderControls(<RecordingVersionsStatus versions={versions} />)}
+        {versions.needsPager &&
+          renderControls(<RecordingVersionsPager versions={versions} />)}
+      </List>
+    )
   }
 
   function cardMeta(item: TrackListItem) {
@@ -454,6 +662,17 @@ export default function TrackBrowser() {
             onChange: sort,
             onDirectionChange: (direction) => setParams({ direction }),
           }}
+          sortControls={
+            <Button
+              type="button"
+              aria-pressed={groupRecordings}
+              onClick={() =>
+                setParams({ groupRecordings: String(!groupRecordings) })
+              }
+            >
+              Group recordings
+            </Button>
+          }
           filterCount={activeFilterCount}
           filters={
             <>
@@ -541,35 +760,44 @@ export default function TrackBrowser() {
               padTop={padTop}
               columns={grid.columns}
               cardHeight={grid.cardHeight}
+              rowTemplate={gridRowTemplate}
             >
-              {slots.map(({ item, index }) =>
-                item ? (
-                  <Card
-                    key={item.id}
-                    data-item-index={index}
-                    selected={item.id === selectedId}
-                    art={
-                      <ItemArt
-                        kind="track"
-                        src={item.artworkUrl}
-                        title={item.title}
-                        target={{ kind: 'track', id: item.id }}
-                        overlay={playPair(item, index, 'tile')}
-                      />
-                    }
-                    title={<CardTitle>{trackLink(item)}</CardTitle>}
-                    by={<TrackArtistLinks track={item} />}
-                    meta={cardMeta(item)}
-                    tags={
-                      compactCards ? undefined : (
-                        <TrackBrowseTags track={item} onFilter={addFilter} />
-                      )
-                    }
-                  />
-                ) : (
-                  <CardSkeleton key={`slot-${index}`} />
-                ),
-              )}
+              {slots.map(({ item, index }) => (
+                <Fragment key={item?.id ?? `slot-${index}`}>
+                  {item ? (
+                    <Card
+                      data-item-index={index}
+                      selected={item.id === selectedId}
+                      art={
+                        <ItemArt
+                          kind="track"
+                          src={item.artworkUrl}
+                          title={item.title}
+                          target={{ kind: 'track', id: item.id }}
+                          overlay={playPair(item, index, 'tile')}
+                        />
+                      }
+                      title={browseTitle(
+                        item,
+                        index,
+                        <CardTitle>{trackLink(item)}</CardTitle>,
+                      )}
+                      by={<TrackArtistLinks track={item} />}
+                      meta={cardMeta(item)}
+                      tags={
+                        compactCards ? undefined : (
+                          <TrackBrowseTags track={item} onFilter={addFilter} />
+                        )
+                      }
+                    />
+                  ) : (
+                    <CardSkeleton />
+                  )}
+                  {expandedVisible &&
+                    index === gridPanelAfter &&
+                    renderVersionList(true)}
+                </Fragment>
+              ))}
             </VirtualCards>
           ) : view === 'list' ? (
             <VirtualRows
@@ -592,46 +820,10 @@ export default function TrackBrowser() {
             >
               {slots.map(({ item, index }) =>
                 item ? (
-                  <ListRow
-                    key={item.id}
-                    data-item-index={index}
-                    selected={item.id === selectedId}
-                    thumb={
-                      <ItemThumb
-                        kind="track"
-                        src={item.artworkUrl}
-                        title={item.title}
-                        target={{ kind: 'track', id: item.id }}
-                      />
-                    }
-                    title={<RowTitle>{trackLink(item)}</RowTitle>}
-                    by={
-                      <>
-                        <TrackArtistLinks track={item} />
-                        {(item.album || item.albumName) && (
-                          <>
-                            {' '}
-                            · <TrackBrowseAlbum track={item} />
-                          </>
-                        )}
-                      </>
-                    }
-                    play={playPair(item, index)}
-                    tags={<TrackBrowseTags track={item} onFilter={addFilter} />}
-                    meta={
-                      <>
-                        <RowValue kind="num">
-                          {formatTrackDuration(item.durationSec)}
-                        </RowValue>
-                        <RowValue kind="num">
-                          {formatCount(item.scrobbles)}
-                        </RowValue>
-                        <RowValue kind="date">
-                          {formatDate(item.dateAdded)}
-                        </RowValue>
-                      </>
-                    }
-                  />
+                  <Fragment key={item.id}>
+                    {renderTrackListRow(item, index)}
+                    {expanded?.id === item.id && renderVersionList()}
+                  </Fragment>
                 ) : (
                   <RowSkeleton key={`slot-${index}`} />
                 ),
@@ -642,7 +834,11 @@ export default function TrackBrowser() {
               className="ds-table"
               data-layout="fixed"
               aria-label="Tracks"
-              aria-rowcount={query.hasTotal ? total + 1 : undefined}
+              aria-rowcount={
+                query.hasTotal
+                  ? total + 1 + (expanded ? versions.rowCount : 0)
+                  : undefined
+              }
               style={{
                 width: columns.reduce(
                   (sum, field) => sum + widths.widthFor(field),
@@ -679,43 +875,61 @@ export default function TrackBrowser() {
                     <td colSpan={columns.length} style={{ height: padTop }} />
                   </tr>
                 )}
-                {slots.map(({ item, index }) =>
-                  item ? (
-                    <TableRow
-                      key={item.id}
-                      data-item-index={index}
-                      selected={item.id === selectedId}
-                      aria-rowindex={index + 2}
-                    >
-                      {columns.map((field) => (
-                        <TableCell
-                          key={field.key}
-                          align={field.type === 'number' ? 'end' : undefined}
-                          sticky={field.key === 'title' ? 0 : undefined}
-                          stickyEdge={field.key === 'title'}
-                          title={formatFieldValue(
-                            field,
-                            getTrackBrowseValues(item)[field.key],
-                          )}
+                {slots.map(({ item, index }) => {
+                  if (!item)
+                    return (
+                      <TableRow
+                        key={`slot-${index}`}
+                        aria-hidden="true"
+                        data-placeholder=""
+                      >
+                        {columns.map((field) => (
+                          <TableCell key={field.key}>
+                            <Skeleton height={10} width="70%" />
+                          </TableCell>
+                        ))}
+                      </TableRow>
+                    )
+                  const rowIndex =
+                    index +
+                    2 +
+                    (expanded && index > expanded.index ? versions.rowCount : 0)
+                  return (
+                    <Fragment key={item.id}>
+                      {renderTrackTableRow(item, index, rowIndex)}
+                      {expanded?.id === item.id &&
+                        (versions.items.length ? (
+                          versions.items.map((version, offset) =>
+                            renderTrackTableRow(
+                              version,
+                              index,
+                              rowIndex + offset + 1,
+                              true,
+                            ),
+                          )
+                        ) : (
+                          <TableRow child aria-rowindex={rowIndex + 1}>
+                            <TableCell
+                              colSpan={columns.length}
+                              className="ds-muted"
+                            >
+                              <RecordingVersionsStatus versions={versions} />
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      {expanded?.id === item.id && versions.needsPager && (
+                        <TableRow
+                          child
+                          aria-rowindex={rowIndex + versions.rowCount}
                         >
-                          {renderValue(item, field, index)}
-                        </TableCell>
-                      ))}
-                    </TableRow>
-                  ) : (
-                    <TableRow
-                      key={`slot-${index}`}
-                      aria-hidden="true"
-                      data-placeholder=""
-                    >
-                      {columns.map((field) => (
-                        <TableCell key={field.key}>
-                          <Skeleton height={10} width="70%" />
-                        </TableCell>
-                      ))}
-                    </TableRow>
-                  ),
-                )}
+                          <TableCell colSpan={columns.length}>
+                            <RecordingVersionsPager versions={versions} />
+                          </TableCell>
+                        </TableRow>
+                      )}
+                    </Fragment>
+                  )
+                })}
                 {padBottom > 0 && (
                   <tr className="bi-spacer" aria-hidden="true">
                     <td

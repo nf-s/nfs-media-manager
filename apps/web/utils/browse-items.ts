@@ -17,7 +17,7 @@ import {
  */
 const gridGutter = 12 // --ds-gutter, each side
 const columnGap = 16 // --ds-6
-const rowGap = 20 // --ds-7
+export const gridRowGap = 20 // --ds-7
 /** --ds-2 above the first row and --ds-8 below the last. */
 const gridPadding = 4 + 24
 /** Artwork margin, title, creator and meta line, and the gaps between them. */
@@ -49,12 +49,12 @@ export function itemGridGeometry({
   const cardHeight = Math.round(
     cardWidth * ratio + cardTextHeight + (tags ? cardTagsHeight : 0),
   )
-  return { columns, cardHeight, rowHeight: cardHeight + rowGap }
+  return { columns, cardHeight, rowHeight: cardHeight + gridRowGap }
 }
 
 /** Height of the virtual grid for `height` reserved by the scroller. */
 export function itemGridHeight(height: number) {
-  return height > 0 ? height - rowGap + gridPadding : 0
+  return height > 0 ? height - gridRowGap + gridPadding : 0
 }
 
 /**

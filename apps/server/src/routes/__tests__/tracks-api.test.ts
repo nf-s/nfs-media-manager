@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   additions: vi.fn(),
   browsePage: vi.fn(),
   browseCount: vi.fn(),
+  recordingVersions: vi.fn(),
   positions: vi.fn(),
   diagnostics: vi.fn(),
   matchFacets: vi.fn(),
@@ -26,6 +27,7 @@ vi.mock('@/services/tracks', () => ({
   getTrackDetail: vi.fn(),
   listTrackBrowsePage: mocks.browsePage,
   listTrackFilterOptions: vi.fn(),
+  listTrackRecordingVersions: mocks.recordingVersions,
   listTracks: vi.fn(),
   listTracksAtPositions: mocks.positions,
 }))
@@ -153,6 +155,32 @@ describe('tracks API', () => {
         q: 'fixture',
         sortBy: 'artist',
         direction: 'asc',
+      }),
+    )
+  })
+
+  it('authorizes and validates bounded pages of recording versions', async () => {
+    const path = '/fixture-track/recordings'
+    mocks.session.mockResolvedValueOnce(null)
+    expect((await app.request(path)).status).toBe(401)
+    expect((await app.request(`${path}?size=101`)).status).toBe(422)
+    expect((await app.request(`${path}?filters=invalid`)).status).toBe(422)
+    expect(mocks.recordingVersions).not.toHaveBeenCalled()
+
+    const page = { items: [], page: 2, size: 20, hasMore: false }
+    mocks.recordingVersions.mockResolvedValueOnce(page)
+    const response = await app.request(
+      `${path}?page=2&size=20&q=fixture&groupRecordings=true`,
+    )
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ data: page })
+    expect(mocks.recordingVersions).toHaveBeenCalledWith(
+      'fixture-track',
+      expect.objectContaining({
+        page: 2,
+        size: 20,
+        q: 'fixture',
+        groupRecordings: true,
       }),
     )
   })

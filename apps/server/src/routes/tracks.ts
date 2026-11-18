@@ -44,6 +44,7 @@ import {
   getTrackDetail,
   listTrackBrowsePage,
   listTrackFilterOptions,
+  listTrackRecordingVersions,
   listTracks,
   listTracksAtPositions,
 } from '@/services/tracks'
@@ -291,6 +292,41 @@ app
       generateJsonResponse(
         c,
         await listTrackFilterOptions(c.req.valid('query')),
+        200,
+      ),
+  )
+  .openapi(
+    createRoute({
+      method: 'get',
+      path: '/:id/recordings',
+      middleware: [authMiddleware()],
+      request: {
+        params: z.object({ id: z.string().min(1).max(200) }),
+        query: TrackQuerySchema,
+      },
+      responses: {
+        200: {
+          description:
+            'Release versions of a recording in the current browse results',
+          content: {
+            'application/json': {
+              schema: createResponseSchema(
+                BrowsePageSliceSchema(TrackListItemSchema),
+              ),
+            },
+          },
+        },
+        401: jsonErrorResponse('Unauthorized'),
+        422: validationErrorResponse,
+      },
+    }),
+    async (c) =>
+      generateJsonResponse(
+        c,
+        await listTrackRecordingVersions(
+          c.req.valid('param').id,
+          c.req.valid('query'),
+        ),
         200,
       ),
   )

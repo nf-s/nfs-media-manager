@@ -437,18 +437,21 @@ export function VirtualCards({
   padTop,
   columns,
   cardHeight,
+  rowTemplate,
   children,
 }: {
   height: number
   padTop: number
   columns: number
   cardHeight: number
+  rowTemplate?: string
   children: ReactNode
 }) {
   const layout: CSSProperties = {
     top: padTop,
     gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
     gridAutoRows: cardHeight,
+    gridTemplateRows: rowTemplate,
   }
   return (
     <div className="bi-virtual" style={{ height: itemGridHeight(height) }}>
