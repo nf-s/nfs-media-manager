@@ -27,6 +27,8 @@ export const trackPlayabilityLabels: Record<TrackPlayability, string> = {
 
 export const TrackMatchDiagnosticsQuerySchema =
   MatchDiagnosticsQuerySchema.extend({
+    /** Coverage lists read library recordings without hydrating provider payloads. */
+    view: z.enum(['providers', 'spotify-coverage']).optional(),
     playability: TrackPlayabilitySchema.optional(),
     creatorId: TrackQuerySchema.shape.creatorId,
     filters: TrackQuerySchema.shape.filters,

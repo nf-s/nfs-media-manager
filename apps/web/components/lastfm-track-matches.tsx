@@ -6,9 +6,8 @@ import { LibraryTrackInlinePlayButtons } from './play-controls'
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { BrowseFilter } from '@repo/schemas/browse'
-import { PaginatedDataSchema } from '@repo/schemas/common'
+import type { TrackPlayability } from '@repo/schemas/match-diagnostics'
 import {
-  TrackListItemSchema,
   trackSourceLabels,
   trackSpotifyMatchLabels,
   type TrackListItem,
@@ -27,7 +26,13 @@ import {
   TableState,
 } from '@repo/ui/components/ui/table'
 import { useVirtualTable } from '@/hooks/useVirtualTable'
-import { fetchApiData } from '@/utils/api'
+import { spotifyTrackUri } from '@/utils/album-links'
+import {
+  loadTrackMatchDiagnosticsPage,
+  playableMatchTrack,
+} from '@/utils/match-diagnostics'
+import { libraryMatchesHref } from '@/utils/media-scope'
+import { spotifyWebUrl } from '@/utils/playback'
 import { tracksHref } from '@/utils/track-browse'
 import { trackServiceLinks } from '@/utils/track-links'
 import {
@@ -54,15 +59,20 @@ const source: BrowseFilter = {
   value: trackSourceLabels.lastfm,
   mode: 'required',
 }
-const unmatched: BrowseFilter = {
-  field: 'spotifyMatch',
-  value: trackSpotifyMatchLabels.unmatched,
-  mode: 'required',
-}
-const TrackPageSchema = PaginatedDataSchema(TrackListItemSchema)
 type MatchStatus = 'needs-match' | 'matched'
 type MatchSort = 'title' | 'artist' | 'album' | 'scrobbles' | 'spotifyMatch'
 type MatchDirection = 'asc' | 'desc'
+const defaultSortBy = 'scrobbles'
+const defaultDirection = 'desc'
+const matchPageSize = 100
+const missingSpotifyHref = `${libraryMatchesHref('track')}?${new URLSearchParams(
+  {
+    filters: JSON.stringify([source]),
+    playability: 'unavailable',
+    sortBy: defaultSortBy,
+    direction: defaultDirection,
+  },
+)}`
 const matchColumns: readonly (TableColumn & { key: MatchSort })[] = [
   { key: 'title', label: 'Track', required: true },
   { key: 'artist', label: 'Artist' },
@@ -75,22 +85,14 @@ const matchStatuses: Array<{ value: MatchStatus; label: string }> = [
   { value: 'matched', label: 'Matched' },
 ]
 
-/** Album-derived playback IDs still need a stored Spotify recording to merge into. */
-export function lastfmTrackMatchFilters(
+function lastfmTrackMatchPlayability(
   statuses: readonly MatchStatus[],
-): BrowseFilter[] {
-  if (statuses.length !== 1) return [source]
-  return [
-    source,
-    {
-      field: 'spotifyMatch',
-      value: trackSpotifyMatchLabels['spotify-import'],
-      mode: statuses[0] === 'matched' ? 'required' : 'exclude',
-    },
-  ]
+): TrackPlayability {
+  if (statuses.length !== 1) return 'all'
+  return statuses[0] === 'matched' ? 'playable' : 'unavailable'
 }
 
-export function loadLastfmTracksToMatch(
+export async function loadLastfmTracksToMatch(
   apiBaseUrl: string,
   {
     q,
@@ -107,17 +109,26 @@ export function loadLastfmTracksToMatch(
   },
   signal?: AbortSignal,
 ) {
-  const params = new URLSearchParams({
-    q,
-    page: String(page),
-    size: '100',
-    sortBy,
-    direction,
-    filters: JSON.stringify(lastfmTrackMatchFilters(statuses)),
-  })
-  return fetchApiData(apiBaseUrl, `/api/v1/tracks?${params}`, TrackPageSchema, {
+  const result = await loadTrackMatchDiagnosticsPage(
+    apiBaseUrl,
+    {
+      q,
+      page,
+      size: matchPageSize,
+      sortBy: sortBy === 'spotifyMatch' ? 'spotifyCoverage' : sortBy,
+      direction,
+      filters: [source],
+      ranges: [],
+      playability: lastfmTrackMatchPlayability(statuses),
+      view: 'spotify-coverage',
+    },
     signal,
+  )
+  const items = result.items.map(({ track, spotifyAlternate }) => {
+    if (!track) throw new Error('Last.fm match result is missing a track.')
+    return { track, spotifyAlternate }
   })
+  return { ...result, items }
 }
 
 export function LastfmTrackMatchList() {
@@ -125,15 +136,15 @@ export function LastfmTrackMatchList() {
   const [draft, setDraft] = useState('')
   const [query, setQuery] = useState('')
   const [statuses, setStatuses] = useState<MatchStatus[]>(['needs-match'])
-  const [sortBy, setSortBy] = useState<MatchSort>('scrobbles')
-  const [direction, setDirection] = useState<MatchDirection>('desc')
+  const [sortBy, setSortBy] = useState<MatchSort>(defaultSortBy)
+  const [direction, setDirection] = useState<MatchDirection>(defaultDirection)
   const [selected, setSelected] = useState<TrackListItem | null>(null)
   const [matchedId, setMatchedId] = useState<string | null>(null)
   const columns = useTableColumns('lastfm-track-matches', [
     ...matchColumns,
     { key: 'actions', label: 'Actions', required: true },
   ])
-  const statusesKey = JSON.stringify(statuses)
+  const playability = lastfmTrackMatchPlayability(statuses)
   useEffect(() => {
     const timer = window.setTimeout(() => setQuery(draft.trim()), 250)
     return () => window.clearTimeout(timer)
@@ -143,11 +154,11 @@ export function LastfmTrackMatchList() {
       'tracks',
       'lastfm-matching',
       query,
-      statusesKey,
+      playability,
       sortBy,
       direction,
     ],
-    pageSize: 100,
+    pageSize: matchPageSize,
     loadPage: (page, _size, signal) =>
       loadLastfmTracksToMatch(
         apiBaseUrl,
@@ -266,75 +277,99 @@ export function LastfmTrackMatchList() {
               <SecondaryVirtualRows
                 window={tracks}
                 colSpan={columns.count}
-                renderRow={(track) => (
-                  <TableRow
-                    key={track.id}
-                    data-selected={selected?.id === track.id || undefined}
-                  >
-                    <TableCell>
-                      <div className="secondary-cell-actions">
-                        <LibraryTrackInlinePlayButtons track={track} />
-                        <SecondaryCell text={track.title}>
-                          <DetailLink kind="track" id={track.id}>
-                            {track.title}
-                          </DetailLink>
-                        </SecondaryCell>
-                        <ServiceIconLinks links={trackServiceLinks(track)} />
-                      </div>
-                    </TableCell>
-                    {columns.visible('artist') && (
+                renderRow={({ track, spotifyAlternate }) => {
+                  const playable = playableMatchTrack(track, spotifyAlternate)
+                  const spotifyUri = spotifyTrackUri(playable.spotifyTrackId)
+                  const spotifyUrl = spotifyWebUrl(spotifyUri ?? null)
+                  const matchLabel = spotifyAlternate
+                    ? 'Other Spotify version'
+                    : trackSpotifyMatchLabels[
+                        spotifyUri ? track.spotifyMatch : 'unmatched'
+                      ]
+                  return (
+                    <TableRow
+                      key={track.id}
+                      data-selected={selected?.id === track.id || undefined}
+                    >
                       <TableCell>
-                        <SecondaryCell text={track.artists.join(', ')}>
-                          {track.artists.join(', ') || '-'}
-                        </SecondaryCell>
+                        <div className="secondary-cell-actions">
+                          <LibraryTrackInlinePlayButtons track={playable} />
+                          <SecondaryCell text={track.title}>
+                            <DetailLink kind="track" id={track.id}>
+                              {track.title}
+                            </DetailLink>
+                          </SecondaryCell>
+                          <ServiceIconLinks
+                            links={trackServiceLinks({ ...track, spotifyUrl })}
+                          />
+                        </div>
                       </TableCell>
-                    )}
-                    {columns.visible('album') && (
+                      {columns.visible('artist') && (
+                        <TableCell>
+                          <SecondaryCell text={track.artists.join(', ')}>
+                            {track.artists.join(', ') || '-'}
+                          </SecondaryCell>
+                        </TableCell>
+                      )}
+                      {columns.visible('album') && (
+                        <TableCell>
+                          <SecondaryCell text={track.albumName ?? '-'}>
+                            {track.albumName ?? '-'}
+                          </SecondaryCell>
+                        </TableCell>
+                      )}
+                      {columns.visible('scrobbles') && (
+                        <TableCell align="end" className="ds-num">
+                          {formatCount(track.scrobbles)}
+                        </TableCell>
+                      )}
+                      {columns.visible('spotifyMatch') && (
+                        <TableCell>
+                          <SecondaryCell text={matchLabel}>
+                            {spotifyAlternate ? (
+                              <DetailLink
+                                kind="track"
+                                id={spotifyAlternate.trackId}
+                                tab="sources"
+                              >
+                                {matchLabel}
+                              </DetailLink>
+                            ) : (
+                              matchLabel
+                            )}
+                          </SecondaryCell>
+                        </TableCell>
+                      )}
                       <TableCell>
-                        <SecondaryCell text={track.albumName ?? '-'}>
-                          {track.albumName ?? '-'}
-                        </SecondaryCell>
-                      </TableCell>
-                    )}
-                    {columns.visible('scrobbles') && (
-                      <TableCell align="end" className="ds-num">
-                        {formatCount(track.scrobbles)}
-                      </TableCell>
-                    )}
-                    {columns.visible('spotifyMatch') && (
-                      <TableCell>
-                        <SecondaryCell
-                          text={trackSpotifyMatchLabels[track.spotifyMatch]}
-                        >
-                          {trackSpotifyMatchLabels[track.spotifyMatch]}
-                        </SecondaryCell>
-                      </TableCell>
-                    )}
-                    <TableCell>
-                      <div className="secondary-cell-actions">
-                        <Button size="xs" variant="ghost" asChild>
-                          <DetailLink kind="track" id={track.id} tab="sources">
-                            Scrobbled names
-                          </DetailLink>
-                        </Button>
-                        {track.sources.includes('lastfm') && (
-                          <Button
-                            size="xs"
-                            aria-label={`Merge Last.fm names for ${track.title}`}
-                            aria-haspopup="dialog"
-                            disabled={changing || tracks.isError}
-                            onClick={() => {
-                              setMatchedId(null)
-                              setSelected(track)
-                            }}
-                          >
-                            Merge names
+                        <div className="secondary-cell-actions">
+                          <Button size="xs" variant="ghost" asChild>
+                            <DetailLink
+                              kind="track"
+                              id={track.id}
+                              tab="sources"
+                            >
+                              Scrobbled names
+                            </DetailLink>
                           </Button>
-                        )}
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                )}
+                          {track.sources.includes('lastfm') && (
+                            <Button
+                              size="xs"
+                              aria-label={`Merge Last.fm names for ${track.title}`}
+                              aria-haspopup="dialog"
+                              disabled={changing || tracks.isError}
+                              onClick={() => {
+                                setMatchedId(null)
+                                setSelected(track)
+                              }}
+                            >
+                              Merge names
+                            </Button>
+                          )}
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  )
+                }}
               />
             )}
           </TableBody>
@@ -344,22 +379,30 @@ export function LastfmTrackMatchList() {
   )
 }
 
-export async function loadLastfmTrackMatchCounts(apiBaseUrl: string) {
-  async function count(filters: BrowseFilter[]) {
-    const params = new URLSearchParams({
-      size: '1',
-      filters: JSON.stringify(filters),
-    })
-    const result = await fetchApiData(
+export async function loadLastfmTrackMatchCounts(
+  apiBaseUrl: string,
+  signal?: AbortSignal,
+) {
+  async function count(playability: TrackPlayability) {
+    const result = await loadTrackMatchDiagnosticsPage(
       apiBaseUrl,
-      `/api/v1/tracks?${params}`,
-      PaginatedDataSchema(TrackListItemSchema),
+      {
+        page: 1,
+        size: 1,
+        sortBy: defaultSortBy,
+        direction: defaultDirection,
+        filters: [source],
+        ranges: [],
+        playability,
+        view: 'spotify-coverage',
+      },
+      signal,
     )
     return result.totalCount
   }
   const [total, withoutSpotify] = await Promise.all([
-    count([source]),
-    count([source, unmatched]),
+    count('all'),
+    count('unavailable'),
   ])
   return { total, withoutSpotify }
 }
@@ -370,7 +413,7 @@ export default function LastfmTrackMatches() {
   const status = useLastfmSyncStatus()
   const counts = useQuery({
     queryKey: ['tracks', 'lastfm-match-counts'],
-    queryFn: () => loadLastfmTrackMatchCounts(apiBaseUrl),
+    queryFn: ({ signal }) => loadLastfmTrackMatchCounts(apiBaseUrl, signal),
   })
   const refresh = useMutation({
     mutationFn: () => refreshScrobbleLinks(apiBaseUrl, client),
@@ -405,7 +448,7 @@ export default function LastfmTrackMatches() {
             {
               label: 'No Spotify match',
               value: (
-                <Link href={tracksHref([source, unmatched])}>
+                <Link href={missingSpotifyHref}>
                   {formatCount(counts.data.withoutSpotify)}
                 </Link>
               ),
@@ -414,9 +457,11 @@ export default function LastfmTrackMatches() {
         />
       )}
       <p className="ds-muted">
-        Spotify links come from existing Spotify imports or a unique title in
-        the linked album’s stored track list. Open Scrobbled names to add, move
-        or remove a name. Merge names moves all recorded names to another track.
+        Needs match shows tracks without a usable Spotify ID or a verified
+        Spotify version in your library. Spotify matches can reuse recordings
+        from stored album track lists, playlists or Liked Songs. Open Scrobbled
+        names to add, move or remove a name. Merge names moves all recorded
+        names to another track.
       </p>
       <span className="ds-actions">
         <Button

@@ -13,6 +13,7 @@ import {
   trackMatchProviderLabels,
   type TrackMatchDiagnosticsQuery,
 } from '@repo/schemas/match-diagnostics'
+import { trackSpotifyMatchLabels } from '@repo/schemas/tracks'
 import { spotifyIdPattern } from '@repo/schemas/playback'
 import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
@@ -259,11 +260,38 @@ function evidenceFilter(filter: BrowseFilter) {
     where e.provider = ${column.provider} and lower(${column.value}) = lower(${filter.value}::text))`
 }
 
+function pageMatchEvidence(reuseEvidence: boolean) {
+  return sql`select e.id, jsonb_agg(jsonb_build_object('provider', e.provider, 'name', e.name,
+        'creator', e.creator, 'identifier', e.identifier) ||
+        case when e.provider = 'lastfm' then jsonb_build_object('artistKey', e.artist_key, 'trackKey', e.track_key)
+        when e.album_id is not null then jsonb_build_object('albumId', e.album_id)
+        else '{}'::jsonb end order by e.provider, e.name, e.creator, e.identifier, e.album_id) as matches
+      from ${reuseEvidence ? sql`evidence` : sql`(${trackEvidence(sql`page`, allEvidenceProviders)})`} e
+      join page p on p.id = e.id group by e.id`
+}
+
+const pageMergeSourceId = sql`(select min(source_id) from (
+          select s.track_media_item_id as source_id from lastfm_track_source s where s.track_media_item_id = p.id
+          union
+          select s.track_media_item_id from lastfm_track_link l join lastfm_track_source s
+            using (username, artist_key, track_key) where l.track_media_item_id = p.id
+        ) ids join media_item source on source.id = ids.source_id
+        where source.source_label is distinct from 'spotify' and source.metadata->>'legacyHidden' is distinct from 'true'
+          and (ids.source_id = p.id or (p.source_label = 'spotify' and p.spotify_track_id is not null))
+        having count(*) = 1)`
+
+const spotifyCoverageOrder = sql`case
+  when ${playableSpotifyId(sql`library_track.spotify_track_id`)} then
+    case when media_item.source_label = 'spotify' then ${trackSpotifyMatchLabels['spotify-import']}::text else ${trackSpotifyMatchLabels['album-track-list']}::text end
+  when coverage.id is not null then 'Other Spotify version'
+  else ${trackSpotifyMatchLabels.unmatched}::text end`
+
 type DiagnosticsQuery = Omit<TrackMatchDiagnosticsQuery, 'filters' | 'ranges'> &
   Partial<Pick<TrackMatchDiagnosticsQuery, 'filters' | 'ranges'>>
 
 /** Include source-only rows here so a redundant or incorrect match can be repaired. */
 export async function listTrackMatchDiagnostics(query: DiagnosticsQuery) {
+  const includeEvidence = query.view !== 'spotify-coverage'
   const sortBy = query.sortBy
   const providerSort =
     allEvidenceProviders.has(sortBy) ||
@@ -271,13 +299,15 @@ export async function listTrackMatchDiagnostics(query: DiagnosticsQuery) {
     sortBy === 'matchProvider'
   const diagnosticSort = providerSort
     ? sql`provider_order.value`
-    : sortBy === 'name'
-      ? sql`lower(media_item.title)`
-      : sortBy === 'creator'
-        ? sql`lower(${trackCreator})`
-        : sortBy === 'spotifyId'
-          ? sql`lower(library_track.spotify_track_id)`
-          : undefined
+    : sortBy === 'spotifyCoverage'
+      ? spotifyCoverageOrder
+      : sortBy === 'name'
+        ? sql`lower(media_item.title)`
+        : sortBy === 'creator'
+          ? sql`lower(${trackCreator})`
+          : sortBy === 'spotifyId'
+            ? sql`lower(library_track.spotify_track_id)`
+            : undefined
   const direction = query.direction === 'desc' ? sql`desc` : sql`asc`
   const ordering = diagnosticSort
     ? [
@@ -297,16 +327,17 @@ export async function listTrackMatchDiagnostics(query: DiagnosticsQuery) {
   const playability = playabilityCondition(query.playability)
   const filtersByCoverage =
     playability !== undefined && query.playability !== 'direct'
-  const coverageJoin = filtersByCoverage
+  const joinsCoverage = filtersByCoverage || sortBy === 'spotifyCoverage'
+  const coverageJoin = joinsCoverage
     ? sql`left join spotify_alternates coverage on coverage.id = ${trackId}`
     : sql``
   // Display alone needs only the current page's recordings. Search, filters
   // and ordering need coverage before pagination so all rows are considered.
   const needsCoverageBeforePage =
-    words.length > 0 || sortBy === 'spotify' || filtersByCoverage
+    words.length > 0 || sortBy === 'spotify' || joinsCoverage
   const sharedArtistTags = words.length > 1
   const supportingProviders = new Set<string>()
-  if (words.length || sortBy === 'matchProvider')
+  if ((words.length && includeEvidence) || sortBy === 'matchProvider')
     for (const provider of allEvidenceProviders)
       supportingProviders.add(provider)
   else if (providerSort)
@@ -324,27 +355,39 @@ export async function listTrackMatchDiagnostics(query: DiagnosticsQuery) {
     )
       supportingProviders.add('discogs')
   }
-  const conditions = [
+  // These conditions restrict the entries being reviewed. Sibling candidates
+  // can still come from any source or release.
+  const sources = filters.filter(
+    (filter) => filter.field === 'source' && filter.mode === 'required',
+  )
+  const scope = [
     visibleTracks,
+    ...trackBrowseFieldConditions(sources, [], ordinaryFields, evidenceFilter),
+  ]
+  if (query.creatorId)
+    scope.push(sql`exists (select 1 from media_credit c where c.media_item_id = media_item.id
+        and c.role = 'artist' and c.artist_id = ${query.creatorId})`)
+  const visibleScope = sql.join(scope, sql` and `)
+  const conditions = [
+    visibleScope,
     ...trackBrowseFieldConditions(
-      filters,
+      filters.filter((filter) => !sources.includes(filter)),
       query.ranges ?? [],
       trackMatchDiagnosticFields,
       evidenceFilter,
     ),
   ]
   if (playability) conditions.push(playability)
-  const creator = query.creatorId
-    ? sql`exists (select 1 from media_credit c where c.media_item_id = media_item.id
-        and c.role = 'artist' and c.artist_id = ${query.creatorId})`
-    : sql`true`
-  if (query.creatorId) conditions.push(creator)
   for (const word of words) {
     const pattern = `%${word.replace(/[\\%_]/g, '\\$&')}%`
     conditions.push(sql`media_item.id in (
-      ${trackBrowseSearchIds(pattern, sharedArtistTags)} union all
-      select e.id from evidence e where
-        e.name ilike ${pattern} or e.creator ilike ${pattern} or e.identifier ilike ${pattern}
+      ${trackBrowseSearchIds(pattern, sharedArtistTags)}
+      ${
+        includeEvidence
+          ? sql`union all select e.id from evidence e where
+        e.name ilike ${pattern} or e.creator ilike ${pattern} or e.identifier ilike ${pattern}`
+          : sql``
+      }
       union all select a.id from spotify_alternates a where
         a.name ilike ${pattern} or a.album_name ilike ${pattern}
     )`)
@@ -365,7 +408,7 @@ export async function listTrackMatchDiagnostics(query: DiagnosticsQuery) {
     with ${sharedArtistTags ? sql`browse_artist_tags as materialized (${artistTagMemberships('track')}),` : sql``} ${
       supportingProviders.size
         ? sql`
-      records as not materialized (${records} ${trackTables} where ${visibleTracks}),
+      records as not materialized (${records} ${trackTables} where ${visibleScope}),
       evidence as materialized (${trackEvidence(sql`records`, supportingProviders)}),
     `
         : sql``
@@ -374,7 +417,7 @@ export async function listTrackMatchDiagnostics(query: DiagnosticsQuery) {
       needsCoverageBeforePage
         ? sql`${spotifyAlternates(
             sql`select media_item.id, media_item.source_label, library_track.spotify_track_id
-              ${trackTables} where ${visibleTracks} and ${creator}`,
+              ${trackTables} where ${visibleScope}`,
             { creatorId: query.creatorId },
           )},`
         : sql``
@@ -403,17 +446,9 @@ export async function listTrackMatchDiagnostics(query: DiagnosticsQuery) {
         ? sql``
         : sql`${spotifyAlternates(sql`select id, source_label, spotify_track_id from page`, { useTargetTitles: true })},`
     }
-    page_matches as (
-      select e.id, jsonb_agg(jsonb_build_object('provider', e.provider, 'name', e.name,
-        'creator', e.creator, 'identifier', e.identifier) ||
-        case when e.provider = 'lastfm' then jsonb_build_object('artistKey', e.artist_key, 'trackKey', e.track_key)
-        when e.album_id is not null then jsonb_build_object('albumId', e.album_id)
-        else '{}'::jsonb end order by e.provider, e.name, e.creator, e.identifier, e.album_id) as matches
-      from ${reuseEvidence ? sql`evidence` : sql`(${trackEvidence(sql`page`, allEvidenceProviders)})`} e
-      join page p on p.id = e.id group by e.id
-    ),
+    ${includeEvidence ? sql`page_matches as (${pageMatchEvidence(reuseEvidence)}),` : sql``}
     rows as (
-      select p.*, pm.matches,
+      select p.*, ${includeEvidence ? sql`pm.matches` : sql`null::jsonb`} as matches,
         case when a.track_id is not null then jsonb_build_object(
           'trackId', a.track_id, 'name', a.name, 'albumName', a.album_name,
           'identifier', a.identifier, 'artworkUrl', a.artwork_url,
@@ -421,16 +456,8 @@ export async function listTrackMatchDiagnostics(query: DiagnosticsQuery) {
             'id', a.album_id, 'title', a.album_title
           ) end
         ) end as spotify_alternate,
-        (select min(source_id) from (
-          select s.track_media_item_id as source_id from lastfm_track_source s where s.track_media_item_id = p.id
-          union
-          select s.track_media_item_id from lastfm_track_link l join lastfm_track_source s
-            using (username, artist_key, track_key) where l.track_media_item_id = p.id
-        ) ids join media_item source on source.id = ids.source_id
-        where source.source_label is distinct from 'spotify' and source.metadata->>'legacyHidden' is distinct from 'true'
-          and (ids.source_id = p.id or (p.source_label = 'spotify' and p.spotify_track_id is not null))
-        having count(*) = 1) as merge_source_id
-      from page p left join page_matches pm on pm.id = p.id
+${includeEvidence ? pageMergeSourceId : sql`null::text`} as merge_source_id
+      from page p ${includeEvidence ? sql`left join page_matches pm on pm.id = p.id` : sql``}
       left join spotify_alternates a on a.id = p.id
     )
     select ${total} as total_count,
@@ -453,7 +480,7 @@ export async function listTrackMatchDiagnostics(query: DiagnosticsQuery) {
   )
   return MatchDiagnosticsPageSchema.parse({
     items: page.items.map((item) => ({ ...item, track: tracks.get(item.id) })),
-    providers,
+    providers: includeEvidence ? providers : [],
     totalCount: page.total_count,
     pageCount: Math.ceil(page.total_count / query.size),
   })

@@ -5,6 +5,7 @@ import {
   TrackPlayabilitySchema,
   trackMatchProviderLabels,
   type MatchDiagnosticsQuery,
+  type MatchDiagnosticsRow,
   type TrackMatchDiagnosticsQuery,
 } from '@repo/schemas/match-diagnostics'
 import {
@@ -16,6 +17,7 @@ import { TrackQuerySchema } from '@repo/schemas/tracks'
 import { fetchApiData } from './api'
 import { parseCreatorBrowseScope } from './creator-browse'
 import type { LibraryView } from './media-scope'
+import type { LibraryTrackSource } from './playback'
 import { parseTrackFilters } from './track-browse'
 
 export const matchDiagnosticsPageSize = 50
@@ -112,6 +114,7 @@ export function loadTrackMatchDiagnosticsPage(
   if (query.creatorId) params.set('creatorId', query.creatorId)
   if (query.playability && query.playability !== 'all')
     params.set('playability', query.playability)
+  if (query.view === 'spotify-coverage') params.set('view', query.view)
   if (query.limitResults !== undefined)
     params.set('limitResults', String(query.limitResults))
   return fetchApiData(
@@ -120,6 +123,23 @@ export function loadTrackMatchDiagnosticsPage(
     MatchDiagnosticsPageSchema,
     { signal },
   )
+}
+
+export function playableMatchTrack(
+  track: LibraryTrackSource,
+  alternate: MatchDiagnosticsRow['spotifyAlternate'],
+): LibraryTrackSource {
+  if (!alternate) return track
+  return {
+    id: alternate.trackId,
+    spotifyTrackId: alternate.identifier,
+    title: alternate.name,
+    artists: track.artists,
+    artistCredits: track.artistCredits,
+    album: alternate.album ?? null,
+    albumName: alternate.albumName,
+    artworkUrl: alternate.artworkUrl ?? null,
+  }
 }
 
 type TrackMatchPreset = {

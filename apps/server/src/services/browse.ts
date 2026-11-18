@@ -250,6 +250,12 @@ function numericExpression(key: string, mediaType: MediaType): SQL {
 
 function matchesValue(key: string, value: string, mediaType: MediaType): SQL {
   const match = sql`lower(${value}::text)`
+  if (
+    mediaType === 'track' &&
+    key === 'source' &&
+    value.toLowerCase() === trackSourceLabels.lastfm.toLowerCase()
+  )
+    return sql`exists (select 1 from lastfm_track_source s where s.track_media_item_id = ${mediaItem.id})`
   if (['artist', 'director', 'actor', 'writer'].includes(key)) {
     return sql`exists (select 1 from media_credit c join artist a on a.id = c.artist_id where c.media_item_id = ${mediaItem.id} and c.role = ${key} and lower(a.name) = ${match})`
   }

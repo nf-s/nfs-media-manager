@@ -4,10 +4,10 @@ import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { LastfmSyncStatusSchema } from '@repo/schemas/lastfm'
+import type { MatchDiagnosticsRow } from '@repo/schemas/match-diagnostics'
 import { TrackListItemSchema, type TrackListItem } from '@repo/schemas/tracks'
 import LastfmTrackMatches, {
   LastfmTrackMatchList,
-  lastfmTrackMatchFilters,
   loadLastfmTrackMatchCounts,
   loadLastfmTracksToMatch,
 } from './lastfm-track-matches'
@@ -56,20 +56,30 @@ function render(status = stored) {
   }
 }
 
-test('track imports explain stored-history matching and link to unmatched tracks', () => {
+const filters = [{ field: 'source', value: 'Last.fm', mode: 'required' }]
+
+test('track imports explain stored-history matching and link to Last.fm tracks without a playable Spotify version', () => {
   const html = render()
   assert.match(html, />Refresh matches<\/button>/)
   assert.match(html, /This makes no Last.fm or Spotify requests/)
   assert.match(html, /No Spotify match/)
   const links = [...html.matchAll(/href="([^"]+)"/g)].map(
-    (match) => new URL(match[1] ?? '', 'http://localhost'),
+    (match) =>
+      new URL(match[1]?.replaceAll('&amp;', '&') ?? '', 'http://localhost'),
+  )
+  const missing = links.find((url) => url.pathname === '/tracks/matches')
+  assert.equal(missing?.searchParams.get('playability'), 'unavailable')
+  assert.equal(missing?.searchParams.get('sortBy'), 'scrobbles')
+  assert.equal(missing?.searchParams.get('direction'), 'desc')
+  assert.deepEqual(
+    JSON.parse(missing?.searchParams.get('filters') ?? '[]'),
+    filters,
   )
   assert.ok(
-    links.some((url) =>
-      JSON.parse(url.searchParams.get('filters') ?? '[]').some(
-        (filter: { field: string; value: string }) =>
-          filter.field === 'spotifyMatch' && filter.value === 'Unmatched',
-      ),
+    links.some(
+      (url) =>
+        url.pathname === '/tracks' &&
+        url.searchParams.get('filters') === JSON.stringify(filters),
     ),
   )
   assert.doesNotMatch(html, /Import Last.fm tracks/)
@@ -111,20 +121,26 @@ const lastfmTrack = TrackListItemSchema.parse({
   lastListenedAt: null,
 })
 
-function renderList(items: TrackListItem[]) {
+function diagnosticRow(
+  track: TrackListItem,
+  spotifyAlternate?: MatchDiagnosticsRow['spotifyAlternate'],
+) {
+  return {
+    id: track.id,
+    name: track.title,
+    creator: track.artists.join(', '),
+    matches: [],
+    track,
+    spotifyAlternate,
+  }
+}
+
+function renderList(items: ReturnType<typeof diagnosticRow>[]) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
   client.setQueryData(
-    [
-      'tracks',
-      'lastfm-matching',
-      '',
-      '["needs-match"]',
-      'scrobbles',
-      'desc',
-      1,
-    ],
+    ['tracks', 'lastfm-matching', '', 'unavailable', 'scrobbles', 'desc', 1],
     { page: 1, size: 100, totalCount: items.length, pageCount: 1, items },
   )
   try {
@@ -145,71 +161,73 @@ function renderList(items: TrackListItem[]) {
   }
 }
 
-test('needs match includes unmatched and album-derived identities, while all remains Last.fm scoped', () => {
-  const source = { field: 'source', value: 'Last.fm', mode: 'required' }
-  assert.deepEqual(lastfmTrackMatchFilters(['needs-match']), [
-    source,
-    { field: 'spotifyMatch', value: 'Spotify import', mode: 'exclude' },
-  ])
-  assert.deepEqual(lastfmTrackMatchFilters(['matched']), [
-    source,
-    { field: 'spotifyMatch', value: 'Spotify import', mode: 'required' },
-  ])
-  assert.deepEqual(lastfmTrackMatchFilters([]), [source])
-  assert.deepEqual(lastfmTrackMatchFilters(['needs-match', 'matched']), [
-    source,
-  ])
-})
-
-test('matching list searches, sorts and paginates stored tracks on the server with cancellation', async (t) => {
+test('matching list requests Spotify coverage, search, sort and pagination on the server with cancellation', async (t) => {
   const signal = new AbortController().signal
+  const requestedPlayability: Array<string | null> = []
   const fetch = t.mock.method(
     globalThis,
     'fetch',
     async (url: RequestInfo | URL, init?: RequestInit) => {
       const request = new URL(String(url))
-      assert.equal(request.pathname, '/api/v1/tracks')
+      assert.equal(request.pathname, '/api/v1/tracks/match-diagnostics')
       assert.equal(request.searchParams.get('q'), 'Example artist')
       assert.equal(request.searchParams.get('page'), '2')
       assert.equal(request.searchParams.get('size'), '100')
-      assert.equal(request.searchParams.get('sortBy'), 'artist')
+      assert.equal(
+        request.searchParams.get('sortBy'),
+        request.searchParams.get('playability') === 'playable'
+          ? 'spotifyCoverage'
+          : 'artist',
+      )
       assert.equal(request.searchParams.get('direction'), 'asc')
+      assert.equal(request.searchParams.get('view'), 'spotify-coverage')
       assert.deepEqual(
         JSON.parse(request.searchParams.get('filters') ?? '[]'),
-        lastfmTrackMatchFilters(['needs-match']),
+        filters,
       )
+      requestedPlayability.push(request.searchParams.get('playability'))
       assert.equal(init?.signal, signal)
       assert.equal(init?.method, undefined)
       return Response.json({
         statusCode: 200,
         message: 'OK',
         data: {
-          page: 2,
-          size: 100,
           totalCount: 101,
           pageCount: 2,
-          items: [lastfmTrack],
+          providers: [],
+          items: [diagnosticRow(lastfmTrack)],
         },
       })
     },
   )
-  const result = await loadLastfmTracksToMatch(
-    'http://localhost:4001',
-    {
-      q: 'Example artist',
-      statuses: ['needs-match'],
-      page: 2,
-      sortBy: 'artist',
-      direction: 'asc',
-    },
-    signal,
-  )
-  assert.equal(result.items[0]?.id, lastfmTrack.id)
-  assert.equal(result.totalCount, 101)
-  assert.equal(fetch.mock.callCount(), 1)
+  const selections: Array<
+    Parameters<typeof loadLastfmTracksToMatch>[1]['statuses']
+  > = [['needs-match'], ['matched'], [], ['needs-match', 'matched']]
+  for (const statuses of selections) {
+    const result = await loadLastfmTracksToMatch(
+      'http://localhost:4001',
+      {
+        q: 'Example artist',
+        statuses,
+        page: 2,
+        sortBy: statuses[0] === 'matched' ? 'spotifyMatch' : 'artist',
+        direction: 'asc',
+      },
+      signal,
+    )
+    assert.equal(result.items[0]?.track.id, lastfmTrack.id)
+    assert.equal(result.totalCount, 101)
+  }
+  assert.deepEqual(requestedPlayability, [
+    'unavailable',
+    'playable',
+    null,
+    null,
+  ])
+  assert.equal(fetch.mock.callCount(), 4)
 })
 
-test('matching rows expose stored metadata, service icons and actions for both eligible match types', () => {
+test('matching rows preserve album provenance, service icons and name actions', () => {
   const fallback = TrackListItemSchema.parse({
     ...lastfmTrack,
     id: 'album-derived',
@@ -218,7 +236,7 @@ test('matching rows expose stored metadata, service icons and actions for both e
     spotifyTrackId: '1234567890ABCDEFGHIJKL',
     spotifyUrl: 'https://open.spotify.com/track/1234567890ABCDEFGHIJKL',
   })
-  const html = renderList([lastfmTrack, fallback])
+  const html = renderList([diagnosticRow(lastfmTrack), diagnosticRow(fallback)])
   assert.match(html, /aria-label="Search Last.fm tracks"/)
   assert.match(html, /aria-label="Last.fm tracks to match"/)
   assert.match(html, /aria-label="Merge Last.fm names for Stored recording"/)
@@ -244,13 +262,15 @@ test('matching rows expose stored metadata, service icons and actions for both e
 
 test('matched Spotify rows open Sources and can merge their Last.fm names', () => {
   const html = renderList([
-    TrackListItemSchema.parse({
-      ...lastfmTrack,
-      spotifyMatch: 'spotify-import',
-      spotifyTrackId: '1234567890ABCDEFGHIJKL',
-      spotifyUrl: 'https://open.spotify.com/track/1234567890ABCDEFGHIJKL',
-      sources: ['lastfm', 'spotify'],
-    }),
+    diagnosticRow(
+      TrackListItemSchema.parse({
+        ...lastfmTrack,
+        spotifyMatch: 'spotify-import',
+        spotifyTrackId: '1234567890ABCDEFGHIJKL',
+        spotifyUrl: 'https://open.spotify.com/track/1234567890ABCDEFGHIJKL',
+        sources: ['lastfm', 'spotify'],
+      }),
+    ),
   ])
   assert.match(
     html,
@@ -262,19 +282,54 @@ test('matched Spotify rows open Sources and can merge their Last.fm names', () =
   assert.doesNotMatch(html, /<dialog|Confirm merge/)
 })
 
+test('a verified alternate has its own match label, Spotify link and recording details', () => {
+  const html = renderList([
+    diagnosticRow(lastfmTrack, {
+      trackId: 'spotify-alternate',
+      name: 'Stored recording',
+      albumName: 'Alternate album',
+      identifier: '1234567890ABCDEFGHIJKL',
+    }),
+  ])
+  assert.match(html, /Other Spotify version/)
+  assert.match(html, /href="\/tracks\/spotify-alternate\?tab=sources"/)
+  assert.match(
+    html,
+    /https:\/\/open.spotify.com\/track\/1234567890ABCDEFGHIJKL/,
+  )
+  assert.match(html, /aria-label="Merge Last.fm names for Stored recording"/)
+  assert.doesNotMatch(html, /Unmatched|Album track list/)
+})
+
+test('a malformed stored Spotify ID without an alternate is unmatched', () => {
+  const html = renderList([
+    diagnosticRow(
+      TrackListItemSchema.parse({
+        ...lastfmTrack,
+        spotifyMatch: 'album-track-list',
+        spotifyTrackId: 'invalid',
+        spotifyUrl: 'https://open.spotify.com/track/invalid',
+      }),
+    ),
+  ])
+  assert.match(html, /Unmatched/)
+  assert.doesNotMatch(html, /Album track list|Open Spotify/)
+})
+
 test('match counts use source membership and effective Spotify matching filters', async (t) => {
   const queries: URLSearchParams[] = []
   t.mock.method(globalThis, 'fetch', async (url: RequestInfo | URL) => {
-    const params = new URL(String(url)).searchParams
+    const request = new URL(String(url))
+    assert.equal(request.pathname, '/api/v1/tracks/match-diagnostics')
+    const params = request.searchParams
     queries.push(params)
     return Response.json({
       statusCode: 200,
       message: 'OK',
       data: {
         items: [],
-        totalCount: params.get('filters')?.includes('spotifyMatch') ? 2 : 3,
-        page: 1,
-        size: 1,
+        totalCount: params.get('playability') === 'unavailable' ? 2 : 3,
+        providers: [],
         pageCount: 3,
       },
     })
@@ -283,14 +338,14 @@ test('match counts use source membership and effective Spotify matching filters'
     total: 3,
     withoutSpotify: 2,
   })
-  assert.equal(queries.length, 2)
+  assert.deepEqual(
+    queries.map((params) => params.get('playability')),
+    [null, 'unavailable'],
+  )
   for (const params of queries) {
     assert.equal(params.get('size'), '1')
-    assert.deepEqual(JSON.parse(params.get('filters') ?? '[]')[0], {
-      field: 'source',
-      value: 'Last.fm',
-      mode: 'required',
-    })
+    assert.equal(params.get('view'), 'spotify-coverage')
+    assert.deepEqual(JSON.parse(params.get('filters') ?? '[]'), filters)
   }
 })
 

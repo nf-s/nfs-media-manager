@@ -602,6 +602,57 @@ describe('Last.fm tracks library', () => {
     expect(request).not.toHaveBeenCalled()
   })
 
+  it('filters the Last.fm import worklist by Spotify recording coverage before sorting and paging', async () => {
+    await album('original', 'Original Release', [
+      { title: 'Third Song', spotifyId: spotifyId('direct') },
+      { title: 'Second Song', durationSec: 180 },
+    ])
+    await album('other', 'Other Release', [])
+    await spotifyTrack('other-recording', 'Second Song', {
+      album: 'Other Release',
+      albumId: 'other',
+    })
+    await spotifyTrack('playlist-recording', 'First Song')
+    await playlist('songs', ['playlist-recording', 'other-recording'])
+    for (const title of ['Third Song', 'Second Song'])
+      await scrobble(title, { album: 'Original Release', albumId: 'original' })
+    await scrobble('First Song')
+    await scrobble('Missing Song')
+    await refreshTrackLinks(LISTENER)
+
+    const inspect = (options: Record<string, unknown>) =>
+      listTrackMatchDiagnostics(
+        TrackMatchDiagnosticsQuerySchema.parse({
+          filters: JSON.stringify([
+            { field: 'source', value: 'Last.fm', mode: 'required' },
+          ]),
+          view: 'spotify-coverage',
+          sortBy: 'spotifyCoverage',
+          direction: 'asc',
+          ...options,
+        }),
+      )
+    const all = await inspect({})
+    expect(all.items.map((row) => row.name)).toEqual([
+      'Third Song',
+      'Second Song',
+      'First Song',
+      'Missing Song',
+    ])
+    expect(all.items.every((row) => row.matches.length === 0)).toBe(true)
+    expect(all.items[1]?.spotifyAlternate?.trackId).toBe('other-recording')
+    expect(
+      await inspect({ playability: 'unavailable', size: 1 }),
+    ).toMatchObject({ items: [{ name: 'Missing Song' }], totalCount: 1 })
+    expect(
+      await inspect({ playability: 'playable', size: 1, page: 3 }),
+    ).toMatchObject({ items: [{ name: 'First Song' }], totalCount: 3 })
+    expect(
+      await inspect({ q: 'Second Other', playability: 'playable' }),
+    ).toMatchObject({ items: [{ name: 'Second Song' }], totalCount: 1 })
+    expect(request).not.toHaveBeenCalled()
+  })
+
   it('uses a shared recording identifier for playability while preserving direct provider evidence', async () => {
     const title = 'Catalogue Song'
     const isrc = 'ZZABC2000001'

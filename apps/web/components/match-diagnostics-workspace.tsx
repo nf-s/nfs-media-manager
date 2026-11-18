@@ -47,6 +47,7 @@ import {
   matchDiagnosticsKey,
   matchDiagnosticsPageSize,
   matchDiagnosticsSort,
+  playableMatchTrack,
   trackMatchDiagnosticsQuery,
 } from '@/utils/match-diagnostics'
 import { libraryMatchesHref, type LibraryView } from '@/utils/media-scope'
@@ -59,7 +60,6 @@ import {
 } from './detail-inspector-context'
 import { DetailLink } from './detail-link'
 import { LibraryTrackPlayButton } from './play-controls'
-import type { LibraryTrackSource } from '@/utils/playback'
 import { useConfig } from './providers'
 import {
   SecondaryCell,
@@ -164,24 +164,6 @@ function providerIdentity(match: MatchDiagnosticsRow['matches'][number]) {
   return (
     [match.name, match.creator].filter(Boolean).join(' · ') || match.identifier
   )
-}
-
-function playableMatchTrack(
-  item: MatchDiagnosticsRow,
-): LibraryTrackSource | undefined {
-  const track = item.track
-  const alternate = item.spotifyAlternate
-  if (!track || !alternate) return track
-  return {
-    id: alternate.trackId,
-    spotifyTrackId: alternate.identifier,
-    title: alternate.name,
-    artists: track.artists,
-    artistCredits: track.artistCredits,
-    album: alternate.album ?? null,
-    albumName: alternate.albumName,
-    artworkUrl: alternate.artworkUrl ?? null,
-  }
 }
 
 function ProviderMatchCell({
@@ -587,7 +569,9 @@ export default function MatchDiagnosticsWorkspace({
         />
       )
     if (column.key === 'name' || column.key === 'title') {
-      const playable = playableMatchTrack(item)
+      const playable = item.track
+        ? playableMatchTrack(item.track, item.spotifyAlternate)
+        : undefined
       return (
         <SecondaryCell text={item.name}>
           <span className="ds-cell-id">

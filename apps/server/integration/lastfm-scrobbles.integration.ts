@@ -37,6 +37,7 @@ vi.mock('@/lib/db', () => ({
 vi.mock('@/plugins/registry', () => ({
   getScrapePlugin: async (id: string) =>
     id === 'lastfm' ? lastfmPlugin : null,
+  listLoadedScrapePlugins: async () => [],
 }))
 // One page per job and no pacing, so every page boundary chains a follow-on job.
 vi.mock('@/services/lastfm-scrobbles', async (importOriginal) => {
@@ -202,6 +203,16 @@ async function addAlbum(id: string, title: string) {
 
 describe('Last.fm scrobble sync jobs with offline HTTP and a temporary database', () => {
   it('runs as chained jobs, stores every dated scrobble, links albums and fills browse fields', async () => {
+    const spotifyTrackId = 'firsttrack000000000000'
+    await databaseClient.transaction((tx) =>
+      replaceAlbumTracks(tx, 'album-fixture', [
+        { title: 'First Track', position: 1, externalId: spotifyTrackId },
+      ]),
+    )
+    const { getAlbumDetail } = await import('@/services/media')
+    const [recording] = (await getAlbumDetail('album-fixture'))?.tracks ?? []
+    if (!recording) throw new Error('Expected the stored album track')
+
     respond(
       page(1, 2, [
         nowPlaying,
@@ -280,6 +291,17 @@ describe('Last.fm scrobble sync jobs with offline HTTP and a temporary database'
       scrobblesLast1y: 1,
       scrobblesLast5y: 1,
     })
+    expect((await getAlbumDetail('album-fixture'))?.tracks).toMatchObject([
+      {
+        position: 1,
+        track: {
+          id: recording.track.id,
+          sources: ['album', 'lastfm'],
+          scrobbles: 2,
+          spotifyTrackId,
+        },
+      },
+    ])
   })
 
   it('returns the active job instead of queueing a second sync', async () => {

@@ -103,7 +103,11 @@ import {
   listPlaylists,
 } from '@/services/playlist-directory'
 import { getAlbumPlaylists } from '@/services/album-playlists'
-import { listAlbumFilterOptions, listAlbums } from '@/services/media'
+import {
+  getAlbumDetail,
+  listAlbumFilterOptions,
+  listAlbums,
+} from '@/services/media'
 import { relinkLastfmScrobbles } from '@/services/lastfm-scrobbles'
 import { mergeLastfmTrack } from '@/services/track-merges'
 import { SPOTIFY_PLAYLIST_ADD_TRACK_TASK } from '@repo/schemas/track-playlist-additions'
@@ -956,6 +960,60 @@ describe('Spotify playlist imports', () => {
       .where(eq(schema.mediaCredit.mediaItemId, before.id))
     expect(credits.map((credit) => credit.artistId)).toEqual([
       'legacy-example-artist',
+    ])
+  })
+
+  it('keeps the album recording and its Last.fm history when Spotify imports the same track ID', async () => {
+    const albumId = 'album-recording'
+    await addAlbum(albumId, 'Example Album', {
+      spotifyAlbumId: ALBUM,
+      tracks: ['Opening', 'Closing'],
+      trackIds: [spotifyId('opening'), spotifyId('closing')],
+    })
+    await addScrobbles('The Examples', 'Opening', 2)
+    await databaseClient.update(schema.lastfmScrobble).set({
+      albumName: 'Example Album',
+      albumKey: albumNameKey('Example Album'),
+    })
+    await relinkLastfmScrobbles()
+    const [opening, closing] = (await getAlbumDetail(albumId))?.tracks ?? []
+    if (!opening || !closing) throw new Error('Expected both album tracks')
+    expect(opening.track).toMatchObject({
+      sources: ['album', 'lastfm'],
+      scrobbles: 2,
+    })
+
+    entries[OWNED] = ['Closing', 'Opening'].map((title) =>
+      track(title.toLowerCase(), {
+        title,
+        album: 'Example Album',
+        albumId: ALBUM,
+      }),
+    )
+    await importAll({
+      playlists: [chosen(OWNED, 'Morning')],
+      likedSongs: false,
+    })
+
+    expect((await listTracks(trackQuery())).items).toMatchObject([
+      { id: closing.track.id, sources: ['album', 'spotify'], scrobbles: 0 },
+      {
+        id: opening.track.id,
+        sources: ['album', 'lastfm', 'spotify'],
+        scrobbles: 2,
+      },
+    ])
+    expect((await getAlbumDetail(albumId))?.tracks).toMatchObject([
+      { position: 1, track: { id: opening.track.id, scrobbles: 2 } },
+      { position: 2, track: { id: closing.track.id, scrobbles: 0 } },
+    ])
+    const detail = await getPlaylistDetail(
+      await playlistId('Morning'),
+      detailQuery(),
+    )
+    expect(detail.items.items).toMatchObject([
+      { position: 1, track: { id: closing.track.id, scrobbles: 0 } },
+      { position: 2, track: { id: opening.track.id, scrobbles: 2 } },
     ])
   })
 
