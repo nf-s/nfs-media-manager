@@ -53,6 +53,10 @@ import { FilmFilterOptionSchema } from '@repo/schemas/media'
 import { CoverageQuerySchema, CoverageSchema } from '@repo/schemas/coverage'
 import { ListeningSeriesSchema } from '@repo/schemas/lastfm'
 import {
+  MatchDiagnosticsPageSchema,
+  MatchDiagnosticsQuerySchema,
+} from '@repo/schemas/match-diagnostics'
+import {
   artistBrowseCounts,
   countArtistBrowse,
   listArtistBrowsePage,
@@ -94,6 +98,7 @@ import {
 } from '@/services/creators'
 import { getArtistListeningSeries } from '@/services/listening-series'
 import { getArtistCoverage } from '@/services/metadata-coverage'
+import { listArtistMatchDiagnostics } from '@/services/artist-match-diagnostics'
 
 const json = <T extends z.ZodTypeAny>(description: string, schema: T) => ({
   description,
@@ -117,6 +122,27 @@ const ArtistSourceParams = CreatorParamsSchema.extend({
 })
 
 export const artists: OpenAPIHono<AppEnv> = createOpenAPIApp()
+  .openapi(
+    createRoute({
+      method: 'get',
+      path: '/match-diagnostics',
+      middleware: [authMiddleware()],
+      request: { query: MatchDiagnosticsQuerySchema },
+      responses: {
+        ...protectedResponses,
+        200: json(
+          'Stored artist identities by provider',
+          MatchDiagnosticsPageSchema,
+        ),
+      },
+    }),
+    async (c) =>
+      generateJsonResponse(
+        c,
+        await listArtistMatchDiagnostics(c.req.valid('query')),
+        200,
+      ),
+  )
   .openapi(
     createRoute({
       method: 'get',

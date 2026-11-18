@@ -13,6 +13,12 @@ import {
   vi,
 } from 'vitest'
 import { TrackQuerySchema, getTrackBrowseValues } from '@repo/schemas/tracks'
+import { BrowseFacetQuerySchema } from '@repo/schemas/browse'
+import {
+  MatchDiagnosticsQuerySchema,
+  TrackMatchDiagnosticsQuerySchema,
+  trackMatchProviderLabels,
+} from '@repo/schemas/match-diagnostics'
 import { env } from '@/env'
 import { albumNameKey } from '@/lib/album-import-candidates'
 import { createStableId } from '@/lib/media-utils'
@@ -41,6 +47,10 @@ vi.mock('@/plugins/registry', () => ({
 import { refreshTrackLinks } from '@/services/track-links'
 import { replaceAlbumTracks } from '@/services/album-library-tracks'
 import { mergeLastfmTrack } from '@/services/track-merges'
+import {
+  listTrackMatchDiagnostics,
+  listTrackMatchDiagnosticsFacets,
+} from '@/services/track-match-diagnostics'
 import { getAlbumDetail } from '@/services/media'
 import { queryBrowseCounts } from '@/services/browse'
 import {
@@ -224,6 +234,363 @@ afterAll(async () => {
 })
 
 describe('Last.fm tracks library', () => {
+  it('filters and counts track matches across Browse fields, provider evidence and retained Last.fm rows', async () => {
+    await spotifyTrack('imported-recording', 'Shared Song', {
+      album: 'Playlist Edition',
+    })
+    await spotifyTrack('variant-recording', 'Shared Song', {
+      album: 'Other Edition',
+    })
+    await playlist('saved-recordings', ['imported-recording'])
+    await playlist('other-recordings', ['variant-recording'])
+    await album('catalogue-release', 'Original Release', [
+      { title: 'Context only', durationSec: 121 },
+      { title: 'No source', durationSec: 245 },
+      { title: 'Zed no source', durationSec: 56 },
+    ])
+    await scrobble('SHARED SONG')
+    await refreshTrackLinks(LISTENER)
+    await databaseClient.insert(schema.providerCurrentState).values({
+      id: 'discogs-track-evidence',
+      mediaItemId: 'catalogue-release',
+      provider: 'discogs',
+      status: 'ready',
+      checksum: 'fixture',
+      payload: {
+        release: {
+          tracklist: [
+            {
+              title: 'Context only',
+              type_: 'track',
+              artists: [{ name: 'Guest%Producer' }],
+            },
+          ],
+        },
+      },
+    })
+    const inspect = (input: Record<string, unknown> = {}) =>
+      listTrackMatchDiagnostics(TrackMatchDiagnosticsQuerySchema.parse(input))
+    const match = (
+      value: string,
+      mode: 'required' | 'exclude' = 'required',
+    ) => ({ field: 'matchProvider', value, mode })
+    const titles = (page: Awaited<ReturnType<typeof inspect>>) =>
+      page.items.map((item) => item.name)
+
+    const { noRecording, noEvidence, spotify, lastfm, discogs } =
+      trackMatchProviderLabels
+    const all = await inspect()
+    expect(all.totalCount).toBe(6)
+    const standalone = all.items.find((item) => item.id === item.mergeSourceId)
+    if (!standalone) throw new Error('Expected a standalone Last.fm row')
+    expect((await allTracks()).map((item) => item.id)).not.toContain(
+      standalone.id,
+    )
+    expect(standalone.track?.sources).toContain('lastfm')
+
+    const withoutRecording = { filters: JSON.stringify([match(noRecording)]) }
+    expect(titles(await inspect(withoutRecording))).toEqual([
+      'Context only',
+      'No source',
+      'Zed no source',
+    ])
+    const withoutEvidence = { filters: JSON.stringify([match(noEvidence)]) }
+    expect(titles(await inspect(withoutEvidence))).toEqual([
+      'No source',
+      'Zed no source',
+    ])
+    expect(
+      await inspect({ ...withoutEvidence, size: 1, page: 2 }),
+    ).toMatchObject({
+      totalCount: 2,
+      pageCount: 2,
+      items: [{ name: 'Zed no source', matches: [] }],
+    })
+    expect(titles(await inspect({ size: 3, page: 2 }))).toEqual([
+      'SHARED SONG',
+      'Shared Song',
+      'Zed no source',
+    ])
+    expect(
+      titles(await inspect({ filters: JSON.stringify([match(discogs)]) })),
+    ).toEqual(['Context only'])
+    expect(
+      titles(
+        await inspect({
+          filters: JSON.stringify([match(spotify, 'exclude'), match(lastfm)]),
+        }),
+      ),
+    ).toEqual(['SHARED SONG'])
+    expect(
+      (
+        await inspect({
+          filters: JSON.stringify([
+            { field: 'lastfmName', value: 'shared song' },
+          ]),
+        })
+      ).items
+        .map((item) => item.id)
+        .sort(),
+    ).toEqual([standalone.id, 'imported-recording', 'variant-recording'].sort())
+    expect(
+      titles(
+        await inspect({
+          filters: JSON.stringify([
+            { field: 'spotifyName', value: 'Shared Song' },
+            { field: 'title', value: 'No source' },
+          ]),
+        }),
+      ),
+    ).toEqual(['No source', 'Shared Song', 'Shared Song'])
+    expect(
+      await inspect({
+        filters: JSON.stringify([
+          {
+            field: 'spotifyId',
+            value: spotifyId('imported-recording'),
+            mode: 'exclude',
+          },
+        ]),
+        sortBy: 'spotifyId',
+        size: 1,
+      }),
+    ).toMatchObject({
+      totalCount: 5,
+      items: [{ id: 'variant-recording' }],
+    })
+    const browseFilters = [
+      { field: 'source', value: 'Album track list', mode: 'required' },
+      { field: 'albumTag', value: 'Electronic', mode: 'required' },
+    ]
+    const browseRanges = [{ field: 'durationSec', min: 121 }]
+    const sorted = {
+      filters: JSON.stringify(browseFilters),
+      ranges: JSON.stringify(browseRanges),
+      sortBy: 'durationSec',
+      direction: 'desc',
+    }
+    expect((await inspect(sorted)).items.map((item) => item.id)).toEqual(
+      (await listTracks(query(sorted))).items.map((item) => item.id),
+    )
+    expect(await inspect({ ...sorted, page: 2, size: 1 })).toMatchObject({
+      totalCount: 2,
+      pageCount: 2,
+      items: [{ name: 'Context only', track: { durationSec: 121 } }],
+    })
+    expect(
+      await inspect({ ...sorted, page: 2, size: 1, limitResults: 1 }),
+    ).toMatchObject({ totalCount: 1, pageCount: 1, items: [] })
+    expect(
+      await inspect({
+        creatorId: createStableId('artist', ARTIST.toLowerCase()),
+      }),
+    ).toMatchObject({ totalCount: 6 })
+    expect(titles(await inspect({ q: 'Electronic Guest%Producer' }))).toEqual([
+      'Context only',
+    ])
+    expect(titles(await inspect({ q: 'Electronic Guest_Producer' }))).toEqual(
+      [],
+    )
+    const mbid = '11111111-1111-4111-8111-111111111111'
+    await databaseClient.update(schema.lastfmScrobble).set({ trackMbid: mbid })
+    expect(titles(await inspect({ q: `saved-recordings ${mbid}` }))).toEqual([
+      'Shared Song',
+    ])
+
+    const facets = await listTrackMatchDiagnosticsFacets(
+      BrowseFacetQuerySchema.parse({}),
+    )
+    expect(facets).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          field: 'title',
+          value: 'SHARED SONG',
+          count: 1,
+        }),
+        expect.objectContaining({
+          field: 'lastfmName',
+          value: 'SHARED SONG',
+          count: 3,
+        }),
+        expect.objectContaining({
+          field: 'matchProvider',
+          value: lastfm,
+          count: 3,
+        }),
+        expect.objectContaining({
+          field: 'matchProvider',
+          value: noRecording,
+          count: 3,
+        }),
+        expect.objectContaining({
+          field: 'matchProvider',
+          value: noEvidence,
+          count: 2,
+        }),
+      ]),
+    )
+    expect(request).not.toHaveBeenCalled()
+  })
+
+  it('compares imported, scrobbled and album-position names and keeps separate sources available to merge', async () => {
+    await spotifyTrack('imported-recording', 'Studio Song', {
+      album: 'Other Edition',
+    })
+    await playlist('saved-recordings', ['imported-recording'])
+    await album('catalogue-release', 'Original Release', [
+      { title: 'Studio Song', spotifyId: spotifyId('albumrecording') },
+    ])
+    await scrobble('STUDIO SONG')
+    await refreshTrackLinks(LISTENER)
+    await databaseClient.insert(schema.providerCurrentState).values({
+      id: 'discogs-track-evidence',
+      mediaItemId: 'catalogue-release',
+      provider: 'discogs',
+      status: 'ready',
+      checksum: 'fixture',
+      payload: {
+        release: {
+          tracklist: [
+            { title: 'Disc one', type_: 'heading' },
+            {
+              title: 'Catalogue spelling',
+              type_: 'track',
+              artists: [{ name: 'Credited guest' }],
+            },
+          ],
+        },
+      },
+    })
+
+    const inspect = (input: Record<string, unknown> = {}) =>
+      listTrackMatchDiagnostics(MatchDiagnosticsQuerySchema.parse(input))
+    const page = await inspect()
+    expect(page.totalCount).toBe(3)
+    const standalone = page.items.find((item) => item.id === item.mergeSourceId)
+    if (!standalone) throw new Error('Expected a separate scrobble source')
+    const imported = page.items.find((item) => item.id === 'imported-recording')
+    expect(imported).toMatchObject({
+      name: 'Studio Song',
+      creator: ARTIST,
+      albumName: 'Other Edition',
+      mergeSourceId: standalone.id,
+    })
+    expect(
+      (await inspect({ q: 'Other Edition', sortBy: 'album' })).items.map(
+        (item) => item.id,
+      ),
+    ).toEqual(['imported-recording'])
+    expect(imported?.matches).toEqual(
+      expect.arrayContaining([
+        {
+          provider: 'lastfm',
+          name: 'STUDIO SONG',
+          creator: ARTIST,
+          identifier: null,
+          artistKey: albumNameKey(ARTIST),
+          trackKey: albumNameKey('STUDIO SONG'),
+        },
+        {
+          provider: 'spotify',
+          name: 'Studio Song',
+          creator: ARTIST,
+          identifier: spotifyId('imported-recording'),
+        },
+      ]),
+    )
+    const searched = await inspect({ q: 'catalogue guest', size: 1 })
+    expect(searched).toMatchObject({
+      totalCount: 1,
+      items: [
+        {
+          matches: expect.arrayContaining([
+            {
+              provider: 'discogs',
+              name: 'Catalogue spelling',
+              creator: 'Credited guest',
+              identifier: null,
+              albumId: 'catalogue-release',
+            },
+            {
+              provider: 'spotify',
+              name: null,
+              creator: null,
+              identifier: spotifyId('albumrecording'),
+            },
+          ]),
+        },
+      ],
+    })
+    expect((await inspect({ sortBy: 'discogs', size: 1 })).items[0]?.id).toBe(
+      searched.items[0]?.id,
+    )
+    expect(
+      await inspect({ q: 'catalogue guest', size: 1, page: 2 }),
+    ).toMatchObject({ totalCount: 1, items: [] })
+    expect((await inspect({ q: '%' })).totalCount).toBe(0)
+    expect(request).not.toHaveBeenCalled()
+  })
+
+  it('reads the last stored Spotify track list after a partial album import', async () => {
+    const mediaItemId = 'partial-release'
+    const externalId = spotifyId('savedposition')
+    await album(mediaItemId, 'Partial Release', [
+      { title: 'Library title', spotifyId: externalId },
+    ])
+    const evidence = {
+      mediaItemId,
+      provider: 'spotify',
+      payload: {},
+      checksum: 'fixture',
+    }
+    await databaseClient.insert(schema.providerSnapshot).values({
+      ...evidence,
+      id: 'full-spotify',
+      source: 'scrape',
+      normalizedData: {
+        tracks: [
+          { externalId, title: 'Provider title', artists: ['Provider credit'] },
+        ],
+      },
+    })
+    await databaseClient.insert(schema.providerCurrentState).values({
+      ...evidence,
+      id: 'partial-spotify',
+      status: 'ready',
+      normalizedData: { tracks: [] },
+    })
+    const compare = () =>
+      listTrackMatchDiagnostics(
+        MatchDiagnosticsQuerySchema.parse({ sortBy: 'spotify' }),
+      )
+    expect((await compare()).items[0]?.matches).toEqual([
+      {
+        provider: 'spotify',
+        name: 'Provider title',
+        creator: 'Provider credit',
+        identifier: externalId,
+      },
+    ])
+    await databaseClient
+      .update(schema.providerCurrentState)
+      .set({
+        normalizedData: {
+          tracks: [
+            { externalId: spotifyId('different'), title: 'Other title' },
+          ],
+        },
+      })
+      .where(eq(schema.providerCurrentState.id, 'partial-spotify'))
+    expect((await compare()).items[0]?.matches).toEqual([
+      {
+        provider: 'spotify',
+        name: null,
+        creator: null,
+        identifier: externalId,
+      },
+    ])
+  })
+
   it('imports stored names once with listening history and no invented metadata', async () => {
     await scrobble('Uncatalogued Song', { album: 'Uncatalogued Album' })
     await scrobble('Uncatalogued Song', {

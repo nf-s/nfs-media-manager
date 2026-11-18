@@ -7,13 +7,18 @@ import {
   Download,
   LayoutGrid,
   Layers,
+  ListChecks,
   ListMusic,
   Tag,
   Users,
   type LucideIcon,
 } from 'lucide-react'
 import { Count } from '@repo/ui/components/ds/pill'
-import { scopedHref, type LibraryView } from '@/utils/media-scope'
+import {
+  libraryMatchesHref,
+  scopedHref,
+  type LibraryView,
+} from '@/utils/media-scope'
 import {
   providerNeedsAttention,
   providerOverviewOptions,
@@ -35,6 +40,13 @@ type NavItem = {
 
 /** Each library's own pages. Jobs and Providers sit once, under System. */
 export function libraryNavigation(view: LibraryView): NavItem[] {
+  const matches = {
+    href: libraryMatchesHref(view),
+    label: 'Matches',
+    Icon: ListChecks,
+    section: libraryMatchesHref(view),
+    exact: true,
+  }
   if (view === 'track')
     return [
       {
@@ -43,6 +55,7 @@ export function libraryNavigation(view: LibraryView): NavItem[] {
         Icon: LayoutGrid,
         section: '/tracks',
       },
+      matches,
       {
         href: scopedHref('/playlists', 'track'),
         label: 'Playlists',
@@ -64,6 +77,7 @@ export function libraryNavigation(view: LibraryView): NavItem[] {
         Icon: LayoutGrid,
         section: '/artists',
       },
+      matches,
     ]
   if (view === 'subscription')
     return [
@@ -74,6 +88,7 @@ export function libraryNavigation(view: LibraryView): NavItem[] {
         section: '/subscriptions',
         exact: true,
       },
+      matches,
       {
         href: '/subscriptions/channels',
         label: 'Channels',
@@ -95,6 +110,7 @@ export function libraryNavigation(view: LibraryView): NavItem[] {
       Icon: LayoutGrid,
       section: film ? '/films' : '/albums',
     },
+    matches,
     ...(film
       ? [
           {
@@ -136,7 +152,9 @@ export function libraryNavigation(view: LibraryView): NavItem[] {
 function isCurrent(path: string, item: Pick<NavItem, 'section' | 'exact'>) {
   return item.exact
     ? path === item.section
-    : path === item.section || path.startsWith(`${item.section}/`)
+    : path === item.section ||
+        (path.startsWith(`${item.section}/`) &&
+          path !== `${item.section}/matches`)
 }
 
 function NavLink({

@@ -9,6 +9,8 @@ import {
   BrowseFacetQuerySchema,
   type BrowseFacetQuery,
   type BrowseField,
+  type BrowseFilter,
+  type BrowseRange,
 } from '@repo/schemas/browse'
 import type { AlbumQuery, FilmQuery } from '@repo/schemas/media'
 import {
@@ -232,6 +234,99 @@ function matchesValue(key: string, value: string, mediaType: MediaType): SQL {
   return sql`exists (select 1 from jsonb_array_elements_text(case when jsonb_typeof(${expression}) = 'array' then ${expression} else jsonb_build_array(${expression}) end) filter_value(value) where lower(filter_value.value) = ${match})`
 }
 
+function browseFieldConditions(
+  mediaType: MediaType,
+  filters: BrowseFilter[],
+  ranges: BrowseRange[],
+  fields: ReadonlyMap<string, BrowseField>,
+  extraMatch?: (filter: BrowseFilter) => SQL | undefined,
+) {
+  const conditions: SQL[] = []
+  const any: SQL[] = []
+  for (const filter of filters) {
+    if (fields.get(filter.field)?.type !== 'text')
+      throw new ServerError({ statusCode: 422, message: 'Unknown text filter' })
+    const match =
+      extraMatch?.(filter) ??
+      matchesValue(filter.field, filter.value, mediaType)
+    if (filter.mode === 'exclude') conditions.push(sql`not (${match})`)
+    else if (filter.mode === 'required') conditions.push(match)
+    else any.push(match)
+  }
+  if (any.length) conditions.push(sql`(${sql.join(any, sql` or `)})`)
+  for (const range of ranges) {
+    const field = fields.get(range.field)
+    if (!field || field.type === 'text' || range.field === 'listeningScrobbles')
+      throw new ServerError({
+        statusCode: 422,
+        message: 'Unknown numeric filter',
+      })
+    const value = numericExpression(range.field, mediaType)
+    const bounds: SQL[] = [sql`${value} is not null`]
+    if (range.min !== undefined) bounds.push(sql`${value} >= ${range.min}`)
+    if (range.max !== undefined) bounds.push(sql`${value} <= ${range.max}`)
+    const predicate = sql`(${sql.join(bounds, sql` and `)})`
+    conditions.push(
+      range.includeMissing
+        ? sql`(${predicate} or ${value} is null)`
+        : predicate,
+    )
+  }
+  return conditions
+}
+
+/** Apply ordinary and source-evidence filters as one set of Browse predicates. */
+export function trackBrowseFieldConditions(
+  filters: BrowseFilter[],
+  ranges: BrowseRange[],
+  fields: BrowseField[],
+  extraMatch: (filter: BrowseFilter) => SQL | undefined,
+) {
+  return browseFieldConditions(
+    'track',
+    filters,
+    ranges,
+    new Map(fields.map((field) => [field.key, field])),
+    extraMatch,
+  )
+}
+
+function browseTextSearchIds(
+  mediaType: MediaType,
+  fields: BrowseField[],
+  search: string,
+  sharedArtistTags: boolean,
+) {
+  // Album tags and artist tags together cover the default music Tags field.
+  const expressions = fields
+    .filter(
+      (field) =>
+        field.type === 'text' &&
+        !(
+          (mediaType === 'album' || mediaType === 'track') &&
+          field.key === 'genre'
+        ),
+    )
+    .map(
+      (field) => sql`select id from (
+      ${textRows(field.key, mediaType, { includeArchived: true, sharedArtistTags })}
+    ) searchable_values where value ilike ${search}`,
+    )
+  return sql.join(expressions, sql` union all `)
+}
+
+export function trackBrowseSearchIds(
+  search: string,
+  sharedArtistTags: boolean,
+) {
+  return browseTextSearchIds(
+    'track',
+    trackBrowseFields,
+    search,
+    sharedArtistTags,
+  )
+}
+
 // The Last.fm source filter also powers the import matching table and its links.
 function requestsLastfmSource(query: BrowseQuery) {
   return query.filters.some(
@@ -319,41 +414,12 @@ async function browseQueries(
     filters.push({ field: 'genre', value: query.tag, mode: 'required' })
   if ('sourceKind' in query && query.sourceKind)
     conditions.push(eq(film.sourceKind, query.sourceKind))
-  const any: SQL[] = []
-  for (const filter of filters) {
-    if (byKey.get(filter.field)?.type !== 'text')
-      throw new ServerError({ statusCode: 422, message: 'Unknown text filter' })
-    const match = matchesValue(filter.field, filter.value, mediaType)
-    if (filter.mode === 'exclude') conditions.push(sql`not (${match})`)
-    else if (filter.mode === 'required') conditions.push(match)
-    else any.push(match)
-  }
-  if (any.length) conditions.push(sql`(${sql.join(any, sql` or `)})`)
-  for (const range of query.ranges) {
-    const field = byKey.get(range.field)
-    if (!field || field.type === 'text' || range.field === 'listeningScrobbles')
-      throw new ServerError({
-        statusCode: 422,
-        message: 'Unknown numeric filter',
-      })
-    const value = numericExpression(range.field, mediaType)
-    const bounds: SQL[] = [sql`${value} is not null`]
-    if (range.min !== undefined) bounds.push(sql`${value} >= ${range.min}`)
-    if (range.max !== undefined) bounds.push(sql`${value} <= ${range.max}`)
-    const predicate = sql`(${sql.join(bounds, sql` and `)})`
-    conditions.push(
-      range.includeMissing
-        ? sql`(${predicate} or ${value} is null)`
-        : predicate,
-    )
-  }
+  conditions.push(
+    ...browseFieldConditions(mediaType, filters, query.ranges, byKey),
+  )
   // Every word must appear in at least one text field; words may match
   // different fields.
   const music = mediaType === 'album' || mediaType === 'track'
-  // Album tags and artist tags together already cover the default Tags field.
-  const textFields = fields.filter(
-    (field) => field.type === 'text' && !(music && field.key === 'genre'),
-  )
   const words = new Set(query.q?.split(/\s+/).filter(Boolean))
   const sharedArtistTags = music && words.size > 1
   const database = sharedArtistTags
@@ -363,13 +429,8 @@ async function browseQueries(
     : db
   for (const word of words) {
     const search = `%${word.replace(/[\\%_]/g, '\\$&')}%`
-    const expressions = textFields.map(
-      (field) => sql`select id from (
-      ${textRows(field.key, mediaType, { includeArchived: true, sharedArtistTags })}
-    ) searchable_values where value ilike ${search}`,
-    )
     conditions.push(
-      sql`${mediaItem.id} in (${sql.join(expressions, sql` union all `)})`,
+      sql`${mediaItem.id} in (${browseTextSearchIds(mediaType, fields, search, sharedArtistTags)})`,
     )
   }
   const where = and(...conditions)
@@ -387,10 +448,7 @@ async function browseQueries(
         ? options.sort.expression
         : albumTagOrder
           ? sql`lower(album_tag_order.name)`
-          : (directSortExpression(sortField.key, mediaType) ??
-            (sortField.type === 'text'
-              ? sql`lower(${textExpression(sortField.key, mediaType)})`
-              : numericExpression(sortField.key, mediaType)))
+          : browseSortExpression(sortField, mediaType)
   const missing =
     options.sort?.field.key === sortField.key && options.sort.missingFirst
       ? sql`nulls first`
@@ -649,6 +707,29 @@ function directSortExpression(key: string, mediaType: MediaType): SQL | null {
   return null
 }
 
+function browseSortExpression(field: BrowseField, mediaType: MediaType) {
+  return (
+    directSortExpression(field.key, mediaType) ??
+    (field.type === 'text'
+      ? sql`lower(${textExpression(field.key, mediaType)})`
+      : numericExpression(field.key, mediaType))
+  )
+}
+
+/** Ordering for an ordinary track field over media_item, library_track and track_sort_album. */
+export function trackBrowseOrder(
+  sortBy: string,
+  direction: TrackQuery['direction'],
+) {
+  const field = trackBrowseFields.find((entry) => entry.key === sortBy)
+  if (!field) return
+  return [
+    sql`${browseSortExpression(field, 'track')} ${direction === 'desc' ? sql`desc` : sql`asc`} nulls last`,
+    ...trackNaturalOrder(sortBy),
+    sql`${mediaItem.id}`,
+  ]
+}
+
 function firstTrackArtist(mediaItemId: SQL) {
   return sql`(select lower(a.name)
     from media_credit c join artist a on a.id = c.artist_id
@@ -781,14 +862,15 @@ const FacetRowSchema = z.object({
 export async function listBrowseFacets(
   mediaType: MediaType,
   input: Partial<BrowseFacetQuery> = {},
+  options: { includeLastfmSourceRows?: boolean } = {},
 ) {
   const query = BrowseFacetQuerySchema.parse(input)
   const fields = (await listBrowseFields(mediaType)).filter(
     (field) => field.type === 'text' && field.filterable,
   )
   const rows = await facetCache(
-    JSON.stringify([mediaType, fields, query]),
-    () => queryBrowseFacets(mediaType, fields, query),
+    JSON.stringify([mediaType, fields, query, options]),
+    () => queryBrowseFacets(mediaType, fields, query, options),
   )
   return rows
     .map((row) => ({
@@ -798,23 +880,49 @@ export async function listBrowseFacets(
     .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label))
 }
 
+export function browseFacetRows(
+  field: BrowseField,
+  source: SQL,
+  query: BrowseFacetQuery,
+  limit: number,
+  visibility = sql``,
+) {
+  const words = (query.q ?? '').toLowerCase().split(/\s+/).filter(Boolean)
+  const matches = words
+    .filter(
+      (word) =>
+        field.key === 'title' ||
+        !`${field.label}:`.toLowerCase().includes(word),
+    )
+    .map((word) => sql`value ilike ${`%${word.replace(/[\\%_]/g, '\\$&')}%`}`)
+  const search = matches.length ? sql`and ${and(...matches)}` : sql``
+  // Limit each field independently so common values never crowd out other fields.
+  return sql`(select ${field.key}::text as field, value, count(distinct id)::int as count
+    from (${source}) values_for_field
+    where value is not null and value <> '' ${search} ${visibility}
+    group by value
+    order by case when lower(value) = ${query.q?.toLowerCase() ?? ''} then 0 else 1 end,
+      count desc, value asc
+    limit ${limit})`
+}
+
 async function queryBrowseFacets(
   mediaType: MediaType,
   fields: BrowseField[],
   query: BrowseFacetQuery,
+  options: { includeLastfmSourceRows?: boolean },
 ) {
   if (!fields.length) return []
   const limit = Math.min(
     query.limitPerField,
     Math.max(1, Math.floor(1000 / fields.length)),
   )
-  const words = (query.q ?? '').toLowerCase().split(/\s+/).filter(Boolean)
   const sharedArtistTags = mediaType === 'album' || mediaType === 'track'
   const sources = sharedArtistTags
     ? sql`with browse_artist_tags as materialized (${artistTagMemberships(mediaType)})`
     : sql``
   const redundant =
-    mediaType === 'track'
+    mediaType === 'track' && !options.includeLastfmSourceRows
       ? sql`, redundant_lastfm_tracks as materialized (${redundantLastfmTrackIds()})`
       : sql``
   const queries = fields.map((field) => {
@@ -822,30 +930,22 @@ async function queryBrowseFacets(
       normalizeTags: true,
       sharedArtistTags,
     })
-    const matches = words
-      .filter(
-        (word) =>
-          field.key === 'title' ||
-          !`${field.label}:`.toLowerCase().includes(word),
-      )
-      .map((word) => sql`value ilike ${`%${word.replace(/[\\%_]/g, '\\$&')}%`}`)
-    const search = matches.length ? sql`and ${and(...matches)}` : sql``
     // Choosing the Last.fm source explicitly includes its retained source rows.
     const visibility =
-      mediaType !== 'track'
+      mediaType !== 'track' || options.includeLastfmSourceRows
         ? sql``
         : field.key === 'source'
           ? sql`and (value = ${trackSourceLabels.lastfm} or id not in (select id from redundant_lastfm_tracks))`
           : sql`and id not in (select id from redundant_lastfm_tracks)`
-    // Limit each field independently so common tags never crowd out titles or
-    // rarer fields. Search the full value set before counting and limiting.
-    return sql`(select ${field.key}::text as field, value, count(distinct id)::int as count
-      from (${source}) values_for_field
-      where value is not null and value <> '' ${search} ${visibility}
-      group by value
-      order by case when lower(value) = ${query.q?.toLowerCase() ?? ''} then 0 else 1 end,
-        count desc, value asc
-      limit ${limit})`
+    return browseFacetRows(
+      field,
+      source,
+      query,
+      limit,
+      options.includeLastfmSourceRows && mediaType === 'track'
+        ? sql`and id in (select media_item_id from library_track)`
+        : visibility,
+    )
   })
   const result = await db.execute(
     sql`${sources}${redundant} ${sql.join(queries, sql` union all `)}`,

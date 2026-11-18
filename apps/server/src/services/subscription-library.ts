@@ -7,11 +7,17 @@ import {
   type BrowseFilter,
 } from '@repo/schemas/browse'
 import {
+  MatchDiagnosticsPageSchema,
+  type MatchDiagnosticsQuery,
+} from '@repo/schemas/match-diagnostics'
+import {
+  SubscriptionItemIdSchema,
   SubscriptionItemPageSchema,
   SubscriptionItemSchema,
   SubscriptionPublishedPrecisionSchema,
   SubscriptionRangeFieldSchema,
   SubscriptionSourceDetailSchema,
+  SubscriptionSourceIdSchema,
   SubscriptionSourceListSchema,
   SubscriptionTextFieldSchema,
   SubscriptionTypeSchema,
@@ -408,6 +414,78 @@ export async function listSubscriptionItems(
     totalCount,
     page: query.page,
     size: query.size,
+    pageCount: Math.ceil(totalCount / query.size),
+  })
+}
+
+const SubscriptionDiagnosticRowsSchema = z.array(
+  z.object({
+    id: SubscriptionItemIdSchema,
+    source_id: SubscriptionSourceIdSchema,
+    type: SubscriptionTypeSchema,
+    title: z.string(),
+    source_title: z.string(),
+  }),
+)
+
+/** Videos and episodes are stored by native ID together with their source ID. */
+export async function listSubscriptionMatchDiagnostics(
+  query: MatchDiagnosticsQuery,
+) {
+  const provider = SubscriptionTypeSchema.safeParse(query.sortBy)
+  let sort: SQL
+  if (provider.success)
+    sort = sql`case when i.type = ${provider.data} then lower(i.title) end`
+  else if (query.sortBy === 'creator') sort = sql`lower(s.title)`
+  else if (query.sortBy === 'name') sort = sql`lower(i.title)`
+  else
+    throw new ServerError({
+      statusCode: 422,
+      message: 'Unknown subscription diagnostics sort.',
+    })
+
+  const direction = query.direction === 'asc' ? sql`asc` : sql`desc`
+  const conditions = (query.q ?? '')
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((word) => {
+      const pattern = `%${word.replace(/[\\%_]/g, '\\$&')}%`
+      return sql`(i.title ilike ${pattern} or s.title ilike ${pattern}
+        or i.id ilike ${pattern} or s.id ilike ${pattern})`
+    })
+  const members = sql`from subscription_item i
+    join subscription_source s on s.id = i.source_id
+    where ${sql.join([sql`s.subscribed`, ...conditions], sql` and `)}`
+  const [count, page] = await Promise.all([
+    db.execute(sql`select count(*) as total ${members}`),
+    db.execute(sql`
+      select i.id, i.source_id, i.type, i.title, s.title as source_title
+      ${members}
+      order by ${sort} ${direction} nulls last, lower(i.title), i.id
+      limit ${query.size} offset ${(query.page - 1) * query.size}
+    `),
+  ])
+  const totalCount = TotalRowsSchema.parse(count.rows)[0]?.total ?? 0
+  return MatchDiagnosticsPageSchema.parse({
+    providers: [
+      { key: 'youtube', label: 'YouTube' },
+      { key: 'spotify', label: 'Spotify' },
+    ],
+    items: SubscriptionDiagnosticRowsSchema.parse(page.rows).map((row) => ({
+      id: row.id,
+      name: row.title,
+      creator: row.source_title,
+      sourceId: row.source_id,
+      matches: [
+        {
+          provider: row.type,
+          name: row.title,
+          creator: row.source_title,
+          identifier: row.id,
+        },
+      ],
+    })),
+    totalCount,
     pageCount: Math.ceil(totalCount / query.size),
   })
 }

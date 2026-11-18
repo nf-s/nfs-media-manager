@@ -568,7 +568,8 @@ test('main navigation has one Browse destination and preserves current browse fi
     html,
     /aria-current="page" href="\/albums\?q=artist&amp;view=table&amp;filters=%5B%5D">Browse/,
   )
-  assert.equal(navLinks(html).length, 6)
+  assert.equal(navLinks(html).length, 7)
+  assert.match(html, /href="\/albums\/matches">Matches/)
   assert.doesNotMatch(html, /href="\/artists/)
   assert.match(html, /href="\/playlists\?mediaType=album">Playlists/)
   assert.doesNotMatch(
@@ -577,7 +578,8 @@ test('main navigation has one Browse destination and preserves current browse fi
   )
   const detail = renderNavigation('/films/one', '')
   assert.match(detail, /aria-current="page" href="\/films">Browse/)
-  assert.equal(navLinks(detail).length, 7)
+  assert.equal(navLinks(detail).length, 8)
+  assert.match(detail, /href="\/films\/matches">Matches/)
   assert.match(detail, /href="\/people\?mediaType=film">People/)
   assert.match(detail, /href="\/collections\?mediaType=film">Collections/)
   assert.doesNotMatch(detail, />Playlists</)
@@ -824,9 +826,10 @@ test('Spotify configuration names exact API callback without switching the signe
   )
 })
 
-test('Subscriptions navigation has Browse, Channels, Imports, Jobs and Providers', () => {
+test('Subscriptions navigation has Browse, Matches, Channels, Imports, Jobs and Providers', () => {
   const html = renderNavigation('/subscriptions', 'q=talk')
-  assert.equal(navLinks(html).length, 5)
+  assert.equal(navLinks(html).length, 6)
+  assert.match(html, /href="\/subscriptions\/matches">Matches/)
   assert.match(
     html,
     /aria-current="page" href="\/subscriptions\?q=talk">Browse/,

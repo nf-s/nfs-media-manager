@@ -40,9 +40,14 @@ export type AiSearchLibrary = z.infer<typeof AiSearchLibrarySchema>
 export const AiSearchInputSchema = z
   .object({
     mediaType: AiSearchLibrarySchema,
+    context: z.literal('matches').optional(),
     text: z.string().trim().min(1).max(AI_SEARCH_MAX_TEXT),
   })
   .strict()
+  .refine((input) => !input.context || input.mediaType === 'track', {
+    path: ['context'],
+    message: 'Match filters are available in Tracks.',
+  })
 export type AiSearchInput = z.infer<typeof AiSearchInputSchema>
 
 export const AiSearchPlanSchema = z

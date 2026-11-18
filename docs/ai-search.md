@@ -19,7 +19,7 @@ Listening requests use the same [custom listening filters](lastfm-scrobbles.md) 
 
 Vague terms have visible defaults: “only a little” means 1–10 scrobbles, “not much” means 0–10, “a lot” means at least 100, and “high RYM score” means at least 3.5/5. Explicit numbers override these choices. Earlier and recent listening are separate conditions; an all-time count is not substituted for listening before a cutoff. Date periods include both boundary days in UTC. Adjust any condition using the regular controls after applying it.
 
-Tracks have no listening rules. A track request uses the track's **Scrobbles** and **Last listened** values, which count all-time linked scrobbles, so counts within a period ask for clarification. The track table has no result limit, so “top 10” sorts without capping.
+Tracks use the **Scrobbles** and **Last listened** fields for all-time listening. Requests for counts within a listening period ask for clarification. In **Tracks → Browse**, “top 10” sorts the full result. In **Tracks → Matches**, AI search can apply a requested limit and combine track fields with provider evidence. For example, “the 10 most scrobbled tracks missing Spotify” excludes Spotify matches, sorts by scrobble count and limits the result to ten.
 
 Scores come from stored metadata. Searches do not fetch fresh ratings, and missing scores are excluded unless requested otherwise. AI search supports the public built-in fields; installation-specific plugin fields remain available through manual filters.
 

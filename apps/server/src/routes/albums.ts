@@ -46,8 +46,40 @@ import { getAlbumListening } from '@/services/lastfm-scrobbles'
 import { getAlbumListeningSeries } from '@/services/listening-series'
 import { AlbumPlaylistsSchema } from '@repo/schemas/tracks'
 import { getAlbumPlaylists } from '@/services/album-playlists'
+import {
+  MatchDiagnosticsPageSchema,
+  MatchDiagnosticsQuerySchema,
+} from '@repo/schemas/match-diagnostics'
+import { listMediaMatchDiagnostics } from '@/services/media-match-diagnostics'
 
 const app: OpenAPIHono<AppEnv> = createOpenAPIApp()
+
+app.openapi(
+  createRoute({
+    method: 'get',
+    path: '/match-diagnostics',
+    middleware: [authMiddleware()],
+    request: { query: MatchDiagnosticsQuerySchema },
+    responses: {
+      200: {
+        description: 'Library albums and their stored provider matches',
+        content: {
+          'application/json': {
+            schema: createResponseSchema(MatchDiagnosticsPageSchema),
+          },
+        },
+      },
+      401: jsonErrorResponse('Unauthorized'),
+      422: validationErrorResponse,
+    },
+  }),
+  async (c) =>
+    generateJsonResponse(
+      c,
+      await listMediaMatchDiagnostics('album', c.req.valid('query')),
+      200,
+    ),
+)
 
 app.openapi(
   createRoute({

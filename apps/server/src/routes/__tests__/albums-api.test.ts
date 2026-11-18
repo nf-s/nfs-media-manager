@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const listAlbums = vi.fn()
 const listAlbumFilterOptions = vi.fn()
+const listMediaMatchDiagnostics = vi.fn()
 
 function mockAppSession(authenticated: boolean) {
   vi.doMock('@/env', () => ({
@@ -48,6 +49,9 @@ function mockAppSession(authenticated: boolean) {
     getFilmDetail: vi.fn(),
     patchFilm: vi.fn(),
   }))
+  vi.doMock('@/services/media-match-diagnostics', () => ({
+    listMediaMatchDiagnostics,
+  }))
 }
 
 describe('albums api', () => {
@@ -56,7 +60,48 @@ describe('albums api', () => {
     vi.clearAllMocks()
     listAlbums.mockReset()
     listAlbumFilterOptions.mockReset()
+    listMediaMatchDiagnostics.mockReset()
   })
+
+  it('requires authentication to read stored matches', async () => {
+    mockAppSession(false)
+    const { default: app } = await import('@/app')
+    expect((await app.request('/api/v1/albums/match-diagnostics')).status).toBe(
+      401,
+    )
+    expect((await app.request('/api/v1/films/match-diagnostics')).status).toBe(
+      401,
+    )
+    expect(listMediaMatchDiagnostics).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['albums', 'album'],
+    ['films', 'film'],
+  ])(
+    'validates and scopes the diagnostics query for %s',
+    async (path, kind) => {
+      mockAppSession(true)
+      const page = { providers: [], items: [], totalCount: 0, pageCount: 0 }
+      listMediaMatchDiagnostics.mockResolvedValue(page)
+      const { default: app } = await import('@/app')
+      const endpoint = `/api/v1/${path}/match-diagnostics`
+      expect((await app.request(`${endpoint}?size=101`)).status).toBe(422)
+
+      const response = await app.request(
+        `${endpoint}?q=Example&sortBy=creator&direction=desc&page=3&size=20`,
+      )
+      expect(response.status).toBe(200)
+      expect(await response.json()).toMatchObject({ data: page })
+      expect(listMediaMatchDiagnostics).toHaveBeenCalledExactlyOnceWith(kind, {
+        q: 'Example',
+        sortBy: 'creator',
+        direction: 'desc',
+        page: 3,
+        size: 20,
+      })
+    },
+  )
 
   it('returns 401 when album list is unauthenticated', async () => {
     mockAppSession(false)

@@ -9,6 +9,10 @@ import {
   BrowsePageSliceSchema,
 } from '@repo/schemas/browse'
 import {
+  MatchDiagnosticsPageSchema,
+  MatchDiagnosticsQuerySchema,
+} from '@repo/schemas/match-diagnostics'
+import {
   SubscriptionFilterOptionSchema,
   SubscriptionItemPageSchema,
   SubscriptionItemParamsSchema,
@@ -43,6 +47,7 @@ import {
   listSubscriptionBrowsePage,
   listSubscriptionFacets,
   listSubscriptionItems,
+  listSubscriptionMatchDiagnostics,
   listSubscriptionSources,
   setSubscriptionItemWatched,
 } from '@/services/subscription-library'
@@ -81,6 +86,29 @@ const statusResponse = (description: string) =>
   json(description, SubscriptionSyncStatusSchema)
 
 const app: OpenAPIHono<AppEnv> = createOpenAPIApp()
+
+app.openapi(
+  createRoute({
+    method: 'get',
+    path: '/match-diagnostics',
+    middleware: [authMiddleware()],
+    request: { query: MatchDiagnosticsQuerySchema },
+    responses: {
+      200: json(
+        'Stored video, episode and source identities',
+        MatchDiagnosticsPageSchema,
+      ),
+      401: jsonErrorResponse('Unauthorized'),
+      422: validationErrorResponse,
+    },
+  }),
+  async (c) =>
+    generateJsonResponse(
+      c,
+      await listSubscriptionMatchDiagnostics(c.req.valid('query')),
+      200,
+    ),
+)
 
 app.openapi(
   createRoute({

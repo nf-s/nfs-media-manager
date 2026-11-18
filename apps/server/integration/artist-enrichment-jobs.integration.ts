@@ -135,6 +135,115 @@ afterAll(async () => {
 })
 
 describe('artist enrichment through queued jobs and stored evidence', () => {
+  it('compares stored artist names, retains conflicting IDs, and pages provider sorts', async () => {
+    const secondArtist = 'second-artist'
+    await databaseClient.insert(schema.artist).values({
+      id: secondArtist,
+      name: 'The Second Fixture',
+    })
+    await seedArtistAlbum('second-album', secondArtist)
+    await providerEvidence('album-fixture', 'discogs', {
+      release: {
+        artists: [
+          { id: 100, name: 'Artist Fixture (2)' },
+          { id: 200, name: 'Artist Fixture (3)' },
+          { id: 300, name: 'Another Artist' },
+        ],
+      },
+    })
+    const snapshots = [
+      {
+        id: 'fixture-profile',
+        artistId,
+        provider: 'musicbrainz',
+        normalizedData: {
+          name: 'Zulu Artist',
+          externalId: artistMbid,
+          tags: [],
+        },
+        payload: { fixturePrivateField: 'stored-payload-only' },
+      },
+      {
+        id: 'second-profile',
+        artistId: secondArtist,
+        provider: 'musicbrainz',
+        normalizedData: {
+          name: 'Alpha Artist',
+          externalId: duplicateMbid,
+          tags: [],
+        },
+        payload: {},
+      },
+    ] satisfies (typeof schema.artistProviderSnapshot.$inferInsert)[]
+    await databaseClient.insert(schema.artistProviderSnapshot).values(snapshots)
+    await databaseClient.insert(schema.artistProviderCurrentState).values(
+      snapshots.map((snapshot) => ({
+        artistId: snapshot.artistId,
+        provider: snapshot.provider,
+        latestSnapshotId: snapshot.id,
+      })),
+    )
+
+    const { listArtistMatchDiagnostics } =
+      await import('@/services/artist-match-diagnostics')
+    const first = await listArtistMatchDiagnostics({
+      page: 1,
+      size: 1,
+      direction: 'asc',
+      sortBy: 'name',
+    })
+    expect(first).toMatchObject({
+      totalCount: 2,
+      pageCount: 2,
+      items: [
+        {
+          id: artistId,
+          name: artistName,
+          matches: [
+            {
+              provider: 'discogs',
+              name: 'Artist Fixture (2)',
+              identifier: '100',
+            },
+            {
+              provider: 'discogs',
+              name: 'Artist Fixture (3)',
+              identifier: '200',
+            },
+            {
+              provider: 'musicbrainz',
+              name: 'Zulu Artist',
+              identifier: artistMbid,
+            },
+          ],
+        },
+      ],
+    })
+    expect(JSON.stringify(first)).not.toContain('stored-payload-only')
+    const query = {
+      page: 1,
+      size: 1,
+      direction: 'asc',
+      sortBy: 'musicbrainz',
+    } satisfies Parameters<typeof listArtistMatchDiagnostics>[0]
+    expect(await listArtistMatchDiagnostics(query)).toMatchObject({
+      items: [{ id: secondArtist }],
+    })
+    expect(
+      await listArtistMatchDiagnostics({ ...query, page: 2 }),
+    ).toMatchObject({ items: [{ id: artistId }] })
+    expect(
+      await listArtistMatchDiagnostics({ ...query, page: 3 }),
+    ).toMatchObject({ items: [], totalCount: 2 })
+    expect(
+      await listArtistMatchDiagnostics({ ...query, q: 'zulu' }),
+    ).toMatchObject({ items: [{ id: artistId }], totalCount: 1 })
+    expect(
+      await listArtistMatchDiagnostics({ ...query, q: 'Another Artist' }),
+    ).toMatchObject({ items: [], totalCount: 0 })
+    expect(request).not.toHaveBeenCalled()
+  })
+
   it('shows stored album artist identifiers before any artist enrichment', async () => {
     await providerEvidence('album-fixture', 'spotify', {
       id: spotifyAlbumId,
@@ -872,6 +981,63 @@ describe('artist enrichment through queued jobs and stored evidence', () => {
     ).toMatchObject([
       { scrapeJobId: current.id, normalizedData: { externalId: artistMbid } },
     ])
+  })
+
+  it('corrects a confirmed artist profile and keeps its earlier identity in history', async () => {
+    const { enqueueArtistEnrichment } =
+      await import('@/services/artist-enrichment')
+    const { processQueuedJobs } = await import('@/services/jobs')
+    const { listCurrentArtistProfiles, listArtistProfileHistory } =
+      await import('@/services/artist-profiles')
+    const { listArtistMatchDiagnostics } =
+      await import('@/services/artist-match-diagnostics')
+
+    const provider = 'musicbrainz'
+    const previous = await enqueueArtistEnrichment(
+      { artistId, provider, providerArtistId: duplicateMbid },
+      null,
+    )
+    request.mockResolvedValueOnce(
+      Response.json({
+        ...artistProfile,
+        id: duplicateMbid,
+        name: 'Namesake Fixture',
+      }),
+    )
+    await processQueuedJobs()
+    expect(await listCurrentArtistProfiles(artistId)).toMatchObject([
+      { scrapeJobId: previous.id, profile: { externalId: duplicateMbid } },
+    ])
+
+    const correction = await enqueueArtistEnrichment(
+      { artistId, provider, providerArtistId: artistMbid },
+      null,
+    )
+    request.mockResolvedValueOnce(Response.json(artistProfile))
+    await processQueuedJobs()
+    expect(await listCurrentArtistProfiles(artistId)).toMatchObject([
+      { scrapeJobId: correction.id, profile: { externalId: artistMbid } },
+    ])
+    expect(
+      (await listArtistProfileHistory(artistId, 2))
+        .map((snapshot) => snapshot.scrapeJobId)
+        .sort(),
+    ).toEqual([correction.id, previous.id].sort())
+    expect(
+      await listArtistMatchDiagnostics({
+        page: 1,
+        size: 10,
+        direction: 'asc',
+        sortBy: 'name',
+      }),
+    ).toMatchObject({
+      items: [
+        {
+          id: artistId,
+          matches: [{ provider, name: artistName, identifier: artistMbid }],
+        },
+      ],
+    })
   })
 
   it('uses track-linked Spotify credits, Discogs credits and the Last.fm scrobble artist MBID', async () => {

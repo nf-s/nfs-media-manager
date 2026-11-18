@@ -1,7 +1,6 @@
 'use client'
 
 import { TrackArtistLinks } from './creator-links'
-import { CreatorScopeChip } from './creator-scope-chip'
 import {
   clearCreatorScope,
   parseCreatorBrowseScope,
@@ -16,8 +15,6 @@ import { sameDetail, withoutDetailEntries } from '@/utils/detail-inspector'
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { useQuery } from '@tanstack/react-query'
-import { z } from 'zod'
 import {
   TableBody,
   TableCell,
@@ -32,15 +29,11 @@ import {
   RowTitle,
   RowValue,
 } from '@repo/ui/components/ds/list-row'
-import { EmptyValue, Pill, PillLabel, Pills } from '@repo/ui/components/ds/pill'
 import { Skeleton } from '@repo/ui/components/ds/feedback'
 import { EMPTY_VALUE, formatCount, formatDate } from '@repo/ui/lib/format'
-import { PaginatedDataSchema } from '@repo/schemas/common'
 import {
-  BrowseFieldSchema,
   BrowseRangesParamSchema,
   canonicalBrowseKey,
-  trackBrowseFields,
   type BrowseField,
   type BrowseFilter,
 } from '@repo/schemas/browse'
@@ -50,17 +43,12 @@ import {
   type TrackListItem,
 } from '@repo/schemas/tracks'
 import { useConfig } from './providers'
-import { fetchApiData } from '@/utils/api'
 import { useVirtualBrowse } from '@/hooks/useVirtualBrowse'
-import { useBrowseFacets } from '@/hooks/useBrowseFacets'
 import { useRailSlot } from '@/hooks/useRailSlot'
-import { matchingTitleFilters } from '@/utils/browse-suggestions'
 import {
   defaultTrackColumns,
   formatTrackDuration,
   parseTrackFilters,
-  trackFieldOrder,
-  trackTitleSuggestions,
   withTrackFilter,
 } from '@/utils/track-browse'
 import {
@@ -70,20 +58,21 @@ import {
   itemGridGeometry,
   nextSortDirection,
   orderColumns,
-  orderFields,
   parseColumnOrder,
   sortedValueLabel,
-  textValues,
 } from '@/utils/browse-items'
-import { aiSearchParams, mediaAiSearchTarget } from '@/utils/ai-search'
 import { playlistFilter } from '@/utils/playlist-links'
-import AiSearch from './ai-search'
+import { RangeEditor } from './browse-controls'
 import {
-  BrowseFilterChips,
-  BrowseFilterPill,
-  BrowseTagBadges,
-  RangeEditor,
-} from './browse-controls'
+  TrackBrowseAlbum,
+  TrackBrowseTags,
+  TrackBrowseValue,
+} from './track-browse-cells'
+import {
+  TrackBrowseFilterChips,
+  TrackBrowseSearch,
+  useTrackBrowseFields,
+} from './track-browse-controls'
 import BrowseToolbar, { BrowseColumnsSection } from './browse-toolbar'
 import { LibraryTrackPlayButton } from './play-controls'
 import { createBrowsePlaybackSource } from '@/utils/playback-source'
@@ -113,7 +102,6 @@ import {
 } from './browse-items'
 
 const collection = 'tracks'
-const PageSchema = PaginatedDataSchema(TrackListItemSchema)
 /** --ds-head, --ds-row-media and --ds-row. */
 const headerHeight = 28
 const listRowHeight = 48
@@ -124,7 +112,6 @@ export default function TrackBrowser() {
   const { apiBaseUrl } = useConfig()
   const searchParams = useSearchParams()
   const [ready, setReady] = useState(false)
-  const [draft, setDraft] = useState('')
   const [scroll, setScroll] = useState({ identity: '', top: 0 })
   const [viewport, setViewport] = useState({ width: 1000, height: 800 })
   const [gridLayout, setGridLayout] = useState<{
@@ -152,19 +139,7 @@ export default function TrackBrowser() {
   // One drawer at a time: the playlist drawer covers the track drawer.
   const selectedId =
     inspector?.root?.kind === 'track' ? inspector.root.id : null
-  const fieldsQuery = useQuery({
-    queryKey: [collection, 'fields'],
-    queryFn: () =>
-      fetchApiData(
-        apiBaseUrl,
-        `/api/v1/${collection}/fields`,
-        z.array(BrowseFieldSchema),
-      ),
-  })
-  const fields = orderFields(
-    fieldsQuery.data ?? trackBrowseFields,
-    trackFieldOrder,
-  )
+  const fields = useTrackBrowseFields()
   const sortField = fields.find((field) => field.key === sortBy)
   const columnKeys = [
     ...new Set([
@@ -232,9 +207,6 @@ export default function TrackBrowser() {
   function addFilter(filter: BrowseFilter, keepOpen = false) {
     const next = withTrackFilter(filters, filter)
     setParams({ filters: JSON.stringify(next) }, !keepOpen)
-  }
-  function changeFilters(next: BrowseFilter[]) {
-    setParams({ filters: next.length ? JSON.stringify(next) : null })
   }
   function clearFilters() {
     setParams({ q: null, filters: null, ranges: null, ...clearCreatorScope })
@@ -335,48 +307,6 @@ export default function TrackBrowser() {
     itemSchema: TrackListItemSchema,
   })
   const { total, slots, padTop, padBottom } = query
-  const facets = useBrowseFacets(apiBaseUrl, collection, draft, ready)
-  const titleFilters = matchingTitleFilters(facets.data ?? [], facets.search)
-  const titleMatches = useQuery({
-    queryKey: [
-      collection,
-      'title-suggestions',
-      titleFilters,
-      ...(creator ? [creator] : []),
-    ],
-    enabled: ready && titleFilters.length > 0,
-    queryFn: ({ signal }) => {
-      const params = new URLSearchParams({
-        page: '1',
-        size: '100',
-        filters: JSON.stringify(titleFilters),
-        sortBy: 'title',
-        direction: 'asc',
-        ...creator,
-      })
-      return fetchApiData(
-        apiBaseUrl,
-        `/api/v1/${collection}?${params}`,
-        PageSchema,
-        { signal },
-      )
-    },
-  })
-  const titlesLoading =
-    facets.isDebouncing ||
-    facets.isPending ||
-    (titleFilters.length > 0 && titleMatches.isPending)
-  const titleItems =
-    !titlesLoading && draft.trim() && titleFilters.length > 0
-      ? trackTitleSuggestions(titleMatches.data?.items ?? [])
-      : []
-  const options = (facets.data ?? []).filter(
-    (option) =>
-      !filters.some(
-        (filter) =>
-          filter.field === option.field && filter.value === option.value,
-      ),
-  )
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       if (event.defaultPrevented) return
@@ -451,57 +381,6 @@ export default function TrackBrowser() {
     )
   }
 
-  function albumLink(item: TrackListItem) {
-    if (item.album)
-      return (
-        <DetailLink
-          kind="album"
-          id={item.album.id}
-          title={`Open ${item.album.title} in the album library`}
-        >
-          {item.albumName ?? item.album.title}
-        </DetailLink>
-      )
-    if (item.albumName)
-      return (
-        <span className="ds-muted" title="Not in the album library">
-          {item.albumName}
-        </span>
-      )
-    return null
-  }
-
-  function tags(item: TrackListItem, field = 'genre') {
-    return (
-      <BrowseTagBadges
-        field={field}
-        tags={field === 'artistTag' ? item.artistTags : item.albumTags}
-        artistTags={field === 'genre' ? item.artistTags : undefined}
-        onFilter={addFilter}
-        max={2}
-      />
-    )
-  }
-
-  function playlists(item: TrackListItem) {
-    if (!item.playlists.length) return <EmptyValue />
-    return (
-      <Pills max={2} label="Playlists">
-        {item.playlists.map((playlist) => (
-          <Pill asChild key={playlist.id}>
-            <DetailLink
-              kind="playlist"
-              id={playlist.id}
-              title={`Open ${playlist.name}`}
-            >
-              <PillLabel>{playlist.name}</PillLabel>
-            </DetailLink>
-          </Pill>
-        ))}
-      </Pills>
-    )
-  }
-
   function renderValue(item: TrackListItem, field: BrowseField, index: number) {
     if (field.key === 'title')
       return (
@@ -516,36 +395,7 @@ export default function TrackBrowser() {
           {playPair(item, index)}
         </span>
       )
-    if (field.key === 'artist') return <TrackArtistLinks track={item} />
-    if (field.key === 'album') return albumLink(item) ?? <EmptyValue />
-    if (field.key === 'playlist') return playlists(item)
-    const value = getTrackBrowseValues(item)[field.key]
-    if (
-      field.key === 'genre' ||
-      field.key === 'albumTag' ||
-      field.key === 'artistTag'
-    )
-      return textValues(value).length ? tags(item, field.key) : <EmptyValue />
-    if (field.type === 'text' && field.filterable) {
-      const values = textValues(value)
-      if (!values.length) return <EmptyValue />
-      return (
-        <Pills max={2} label={field.label}>
-          {values.map((value) => (
-            <Pill asChild key={value}>
-              <button
-                type="button"
-                title={`Filter ${field.label}: ${value}`}
-                onClick={() => addFilter({ field: field.key, value })}
-              >
-                <PillLabel>{value}</PillLabel>
-              </button>
-            </Pill>
-          ))}
-        </Pills>
-      )
-    }
-    return formatFieldValue(field, value)
+    return <TrackBrowseValue track={item} field={field} onFilter={addFilter} />
   }
 
   function cardMeta(item: TrackListItem) {
@@ -571,52 +421,14 @@ export default function TrackBrowser() {
     ranges.length
   const filterPills =
     activeFilterCount > 0 ? (
-      <>
-        {creator && (
-          <CreatorScopeChip
-            scope={creator}
-            onRemove={() => setParams(clearCreatorScope)}
-          />
-        )}
-        {q && (
-          <BrowseFilterPill
-            removeLabel="Remove search"
-            onRemove={() => setParams({ q: null })}
-          >
-            Search: {q}
-          </BrowseFilterPill>
-        )}
-        <BrowseFilterChips
-          filters={filters}
-          fields={fields}
-          onChange={changeFilters}
-        />
-        {ranges.map((range) => {
-          const field = fields.find((field) => field.key === range.field)
-          const bound = (value: number | undefined) =>
-            value === undefined
-              ? '*'
-              : field
-                ? formatFieldValue(field, value)
-                : String(value)
-          const label = `${field?.label ?? range.field}: ${bound(range.min)} to ${bound(range.max)}${range.includeMissing ? ' + missing' : ''}`
-          return (
-            <BrowseFilterPill
-              key={range.field}
-              removeLabel={`Remove ${label}`}
-              onRemove={() =>
-                setParams({
-                  ranges: JSON.stringify(
-                    ranges.filter((item) => item.field !== range.field),
-                  ),
-                })
-              }
-            >
-              {label}
-            </BrowseFilterPill>
-          )
-        })}
-      </>
+      <TrackBrowseFilterChips
+        q={q}
+        creator={creator}
+        filters={filters}
+        ranges={ranges}
+        fields={fields}
+        setParams={setParams}
+      />
     ) : null
 
   return (
@@ -624,31 +436,15 @@ export default function TrackBrowser() {
       <div className="browse-main">
         <BrowseToolbar
           search={
-            <AiSearch
-              target={mediaAiSearchTarget('track', fields)}
+            <TrackBrowseSearch
+              fields={fields}
+              filters={filters}
+              creator={creator}
               queryIdentity={queryKey}
-              autocomplete={{
-                items: titleItems,
-                titlesLoading,
-                titlesError:
-                  facets.isError ||
-                  (titleFilters.length > 0 && titleMatches.isError),
-                onOpenItem: openDetail,
-                options,
-                placeholder: 'Search titles, artists, albums, playlists...',
-                value: draft,
-                onFocus: facets.activate,
-                onValueChange: setDraft,
-                onAddFilter: addFilter,
-                onApplyText: (value) => {
-                  setParams({ q: value || null })
-                  setDraft('')
-                },
-              }}
-              onApply={(plan) => {
-                setParams(aiSearchParams(plan))
-                setDraft('')
-              }}
+              onOpenItem={openDetail}
+              onAddFilter={addFilter}
+              setParams={setParams}
+              ready={ready}
             />
           }
           sort={{
@@ -764,7 +560,11 @@ export default function TrackBrowser() {
                     title={<CardTitle>{trackLink(item)}</CardTitle>}
                     by={<TrackArtistLinks track={item} />}
                     meta={cardMeta(item)}
-                    tags={compactCards ? undefined : tags(item)}
+                    tags={
+                      compactCards ? undefined : (
+                        <TrackBrowseTags track={item} onFilter={addFilter} />
+                      )
+                    }
                   />
                 ) : (
                   <CardSkeleton key={`slot-${index}`} />
@@ -809,12 +609,15 @@ export default function TrackBrowser() {
                       <>
                         <TrackArtistLinks track={item} />
                         {(item.album || item.albumName) && (
-                          <> · {albumLink(item)}</>
+                          <>
+                            {' '}
+                            · <TrackBrowseAlbum track={item} />
+                          </>
                         )}
                       </>
                     }
                     play={playPair(item, index)}
-                    tags={tags(item)}
+                    tags={<TrackBrowseTags track={item} onFilter={addFilter} />}
                     meta={
                       <>
                         <RowValue kind="num">

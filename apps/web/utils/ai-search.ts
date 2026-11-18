@@ -24,6 +24,7 @@ export type AiSearchResult<Plan> = {
 /** The library the AI search control searches, how it reads the response and how it lists a plan. */
 export type AiSearchTarget<Plan> = {
   mediaType: AiSearchLibrary
+  context?: 'matches'
   responseSchema: z.ZodType<AiSearchResult<Plan>>
   describe: (plan: Plan) => string[]
 }
@@ -31,9 +32,11 @@ export type AiSearchTarget<Plan> = {
 export function mediaAiSearchTarget(
   mediaType: AiMediaLibrary,
   fields: BrowseField[],
+  context?: 'matches',
 ): AiSearchTarget<AiSearchPlan> {
   return {
     mediaType,
+    context,
     responseSchema: AiSearchResponseSchema,
     describe: (plan) => describeAiSearchPlan(plan, fields),
   }

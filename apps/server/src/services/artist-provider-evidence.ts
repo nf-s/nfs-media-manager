@@ -65,12 +65,11 @@ function evidenceProviders(
     : [provider]
 }
 
-function evidenceQuery(
-  artistId: string,
-  name: string,
-  provider: ArtistProfileProvider,
+/** Native credits connected to the target artists' library albums and tracks. */
+export function artistCreditEvidenceQuery(
+  targets: SQL,
+  providers: readonly ArtistProfileProvider[],
 ) {
-  const providers = evidenceProviders(provider)
   const nativeCredits = providers.map((source) => {
     const id =
       source === 'musicbrainz'
@@ -93,7 +92,7 @@ function evidenceQuery(
       sql`, `,
     )
     return sql`
-      select ${id} as external_id, ${artistName} as name, ${creditedName} as credited_name,
+      select m.artist_id, m.artist_name, ${id} as external_id, ${artistName} as name, ${creditedName} as credited_name,
         state.provider, m.media_type::text as kind, m.id, m.title,
         state.latest_snapshot_id as snapshot_id, snapshot.scrape_job_id as job_id,
         coalesce(snapshot.created_at, state.last_successful_at, state.updated_at) as created_at
@@ -104,18 +103,17 @@ function evidenceQuery(
       where state.provider = ${source} and state.status = 'ready'
     `
   })
-  const trackEvidence =
-    provider === 'spotify'
-      ? sql`
+  const spotifyEvidence = providers.includes('spotify')
+    ? sql`
       union all
-      select credit.artist->>'id', credit.artist->>'name', null::text,
+      select m.artist_id, m.artist_name, credit.artist->>'id', credit.artist->>'name', null::text,
         'spotify', 'track', m.id, m.title, null::text, job.id, job.created_at
       from linked_music m
       left join scrape_job job on job.id = m.metadata#>>'{spotifyArtistCreditsSource,jobId}'
       cross join lateral jsonb_path_query(m.metadata, '$.spotifyArtistCredits[*]'::jsonpath) as credit(artist)
       where m.media_type = 'track'
       union all
-      select credit.artist->>'id', credit.artist->>'name', null::text,
+      select m.artist_id, m.artist_name, credit.artist->>'id', credit.artist->>'name', null::text,
         'spotify', 'album', album.id, album.title,
         coalesce(history.id, state.latest_snapshot_id),
         case when history.id is not null then history.scrape_job_id else snapshot.scrape_job_id end,
@@ -151,38 +149,54 @@ function evidenceQuery(
         jsonb_build_object('track_id', album_track.spotify_track_id)) as credit(artist)
       where album_track.spotify_track_id is not null
     `
-      : providers.includes('lastfm')
-        ? sql`
+    : sql``
+  const listeningEvidence = providers.includes('lastfm')
+    ? sql`
         union all
-        select scrobble.artist_mbid, scrobble.artist_name, null::text,
+        select m.artist_id, m.artist_name, scrobble.artist_mbid, scrobble.artist_name, null::text,
           'lastfm', 'album', m.id, m.title, null::text, null::text, min(scrobble.created_at)
         from linked_music m
         join lastfm_scrobble scrobble on scrobble.album_media_item_id = m.id
         where scrobble.artist_mbid is not null
-        group by scrobble.artist_mbid, scrobble.artist_name, m.id, m.title
+        group by m.artist_id, m.artist_name, scrobble.artist_mbid, scrobble.artist_name, m.id, m.title
         union all
-        select scrobble.artist_mbid, scrobble.artist_name, null::text,
+        select m.artist_id, m.artist_name, scrobble.artist_mbid, scrobble.artist_name, null::text,
           'lastfm', 'track', m.id, m.title, null::text, null::text, min(scrobble.created_at)
         from linked_music m
         join lastfm_track_source source on source.track_media_item_id = m.id
         join lastfm_scrobble scrobble on scrobble.username = source.username
           and scrobble.artist_key = source.artist_key and scrobble.track_key = source.track_key
         where scrobble.artist_mbid is not null
-        group by scrobble.artist_mbid, scrobble.artist_name, m.id, m.title
+        group by m.artist_id, m.artist_name, scrobble.artist_mbid, scrobble.artist_name, m.id, m.title
       `
-        : sql``
+    : sql``
   return sql`
     with linked_music as (
-      select m.id, m.title, m.media_type, m.metadata
-      from media_credit c join media_item m on m.id = c.media_item_id
-      where c.artist_id = ${artistId} and c.role = 'artist'
+      select target.id as artist_id, target.name as artist_name,
+        m.id, m.title, m.media_type, m.metadata
+      from (${targets}) target join media_credit c on c.artist_id = target.id
+      join media_item m on m.id = c.media_item_id
+      where c.role = 'artist'
         and m.media_type in ('album', 'track')
         and m.metadata->>'legacyHidden' is distinct from 'true'
-    ), evidence as (
-      ${sql.join(nativeCredits, sql` union all `)}
-      ${trackEvidence}
+    )
+    ${sql.join(nativeCredits, sql` union all `)}
+    ${spotifyEvidence}
+    ${listeningEvidence}
+  `
+}
+
+function evidenceQuery(
+  artistId: string,
+  name: string,
+  provider: ArtistProfileProvider,
+) {
+  const providers = evidenceProviders(provider)
+  return sql`
+    with evidence as (
+      (${artistCreditEvidenceQuery(sql`select ${artistId}::text as id, ${name}::text as name`, providers)})
       union all
-      select snapshot.normalized_data->>'externalId', ${name}, null::text,
+      select ${artistId}, ${name}, snapshot.normalized_data->>'externalId', ${name}, null::text,
         snapshot.provider, 'artist', ${artistId}, ${name}, snapshot.id,
         snapshot.scrape_job_id, snapshot.created_at
       from artist_provider_current_state state

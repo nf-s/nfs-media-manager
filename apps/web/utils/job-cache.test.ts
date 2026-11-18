@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { QueryClient, QueryObserver } from '@tanstack/react-query'
 import { JobActivitySchema, JobPageSchema } from '@repo/schemas/job'
+import { matchDiagnosticsKey } from './match-diagnostics'
 import {
   invalidateChangedJobActivity,
   jobActivityPollInterval,
@@ -108,6 +109,9 @@ test('completed or partially stopped work invalidates derived library views whil
     const client = new QueryClient()
     const keys = [
       ['tracks', 'browse', 'example'],
+      [...matchDiagnosticsKey('track'), 'unmatched', 1],
+      [...matchDiagnosticsKey('artist'), 1],
+      [...matchDiagnosticsKey('subscription'), 1],
       ['track', 'example-track'],
       ['artist', 'example-artist', 'history'],
       ['artists'],

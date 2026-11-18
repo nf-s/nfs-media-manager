@@ -17,6 +17,7 @@ export function browseFacetOptions(
   apiBaseUrl: string,
   collection: BrowseFacetCollection,
   search: string,
+  matches = false,
 ) {
   // Bound suggestion requests, not the user's full-text filter draft.
   const query = BrowseFacetQuerySchema.parse({ q: search.trim().slice(0, 200) })
@@ -25,11 +26,11 @@ export function browseFacetOptions(
     limitPerField: String(query.limitPerField),
   })
   return queryOptions({
-    queryKey: [collection, 'facets', query.q ?? ''],
+    queryKey: [collection, matches ? 'match-facets' : 'facets', query.q ?? ''],
     queryFn: ({ signal }) =>
       fetchApiData(
         apiBaseUrl,
-        `/api/v1/${collection}/facets?${params}`,
+        `/api/v1/${collection}${matches ? '/match-diagnostics' : ''}/facets?${params}`,
         z.array(FilmFilterOptionSchema),
         { signal },
       ),

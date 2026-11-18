@@ -37,8 +37,40 @@ import {
   FilmSelectionPageSchema,
 } from '@repo/schemas/film-selection'
 import { listFilmSelection } from '@/services/film-selection'
+import {
+  MatchDiagnosticsPageSchema,
+  MatchDiagnosticsQuerySchema,
+} from '@repo/schemas/match-diagnostics'
+import { listMediaMatchDiagnostics } from '@/services/media-match-diagnostics'
 
 const app: OpenAPIHono<AppEnv> = createOpenAPIApp()
+
+app.openapi(
+  createRoute({
+    method: 'get',
+    path: '/match-diagnostics',
+    middleware: [authMiddleware()],
+    request: { query: MatchDiagnosticsQuerySchema },
+    responses: {
+      200: {
+        description: 'Library films and their stored provider matches',
+        content: {
+          'application/json': {
+            schema: createResponseSchema(MatchDiagnosticsPageSchema),
+          },
+        },
+      },
+      401: jsonErrorResponse('Unauthorized'),
+      422: validationErrorResponse,
+    },
+  }),
+  async (c) =>
+    generateJsonResponse(
+      c,
+      await listMediaMatchDiagnostics('film', c.req.valid('query')),
+      200,
+    ),
+)
 
 app.openapi(
   createRoute({

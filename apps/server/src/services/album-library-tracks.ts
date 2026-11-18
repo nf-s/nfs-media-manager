@@ -25,7 +25,8 @@ const SpotifyReleaseIdsSchema = z.array(z.object({ spotify_id: z.string() }))
 
 /** Share the library-track writer lock with imports, retention and merges. */
 export async function lockLibraryTrackWrites(database: Transaction) {
-  await database.execute(sql`select pg_advisory_xact_lock(614105)`)
+  // The worker holds 614105 for its entire session on a separate connection.
+  await database.execute(sql`select pg_advisory_xact_lock(614106)`)
 }
 
 /** Replaces a complete list while retaining any matching library recordings. */

@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   sources: vi.fn(),
   source: vi.fn(),
   counts: vi.fn(),
+  diagnostics: vi.fn(),
   status: vi.fn(),
   queue: vi.fn(),
   schedule: vi.fn(),
@@ -27,6 +28,7 @@ vi.mock('@/services/subscription-library', () => ({
   listSubscriptionSources: mocks.sources,
   getSubscriptionSource: mocks.source,
   subscriptionBrowseCounts: mocks.counts,
+  listSubscriptionMatchDiagnostics: mocks.diagnostics,
 }))
 vi.mock('@/services/subscription-sync', () => ({
   getSubscriptionSyncStatus: mocks.status,
@@ -96,6 +98,7 @@ describe('subscriptions API', () => {
       ['GET', '/', undefined],
       ['GET', '/fields', undefined],
       ['GET', '/facets?q=orbit', undefined],
+      ['GET', '/match-diagnostics', undefined],
       ['GET', '/sources', undefined],
       ['GET', `/sources/${EPISODE}`, undefined],
       ['GET', `/${EPISODE}`, undefined],
@@ -107,6 +110,30 @@ describe('subscriptions API', () => {
       expect((await send(method, path, body)).status).toBe(401)
     for (const fn of Object.values(mocks).filter((fn) => fn !== mocks.session))
       expect(fn).not.toHaveBeenCalled()
+  })
+
+  it('routes paginated diagnostics before subscription item IDs', async () => {
+    const diagnostics = {
+      items: [],
+      providers: [],
+      totalCount: 0,
+      pageCount: 0,
+    }
+    mocks.diagnostics.mockResolvedValue(diagnostics)
+    const response = await send(
+      'GET',
+      '/match-diagnostics?page=2&size=20&sortBy=youtube&direction=desc&q=orbit',
+    )
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ data: diagnostics })
+    expect(mocks.diagnostics).toHaveBeenCalledExactlyOnceWith({
+      page: 2,
+      size: 20,
+      sortBy: 'youtube',
+      direction: 'desc',
+      q: 'orbit',
+    })
+    expect(mocks.item).not.toHaveBeenCalled()
   })
 
   it('rejects invalid input and other origins before service work', async () => {

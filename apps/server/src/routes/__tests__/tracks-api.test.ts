@@ -4,11 +4,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({
   session: vi.fn(),
   merge: vi.fn(),
+  matchScrobble: vi.fn(),
   addTrack: vi.fn(),
   additions: vi.fn(),
   browsePage: vi.fn(),
   browseCount: vi.fn(),
   positions: vi.fn(),
+  diagnostics: vi.fn(),
+  matchFacets: vi.fn(),
 }))
 vi.mock('@/env', () => ({
   env: {
@@ -30,7 +33,14 @@ vi.mock('@/services/browse', () => ({
   listBrowseFields: vi.fn(),
   queryBrowseCounts: mocks.browseCount,
 }))
-vi.mock('@/services/track-merges', () => ({ mergeLastfmTrack: mocks.merge }))
+vi.mock('@/services/track-match-diagnostics', () => ({
+  listTrackMatchDiagnostics: mocks.diagnostics,
+  listTrackMatchDiagnosticsFacets: mocks.matchFacets,
+}))
+vi.mock('@/services/track-merges', () => ({
+  matchScrobbleTrack: mocks.matchScrobble,
+  mergeLastfmTrack: mocks.merge,
+}))
 vi.mock('@/services/spotify-track-playlist-additions', () => ({
   queueSpotifyTrackPlaylistAddition: mocks.addTrack,
   listSpotifyTrackPlaylistAdditions: mocks.additions,
@@ -147,6 +157,70 @@ describe('tracks API', () => {
     )
   })
 
+  it('validates owner-only match diagnostics before reading stored identities', async () => {
+    mocks.session.mockResolvedValueOnce(null)
+    expect((await app.request('/match-diagnostics')).status).toBe(401)
+    expect((await app.request('/match-diagnostics?size=101')).status).toBe(422)
+    expect(mocks.diagnostics).not.toHaveBeenCalled()
+    mocks.diagnostics.mockResolvedValueOnce({
+      items: [],
+      providers: [],
+      totalCount: 0,
+      pageCount: 0,
+    })
+    expect(
+      (await app.request('/match-diagnostics?q=fixture&sortBy=lastfm')).status,
+    ).toBe(200)
+    expect(mocks.diagnostics).toHaveBeenCalledWith(
+      expect.objectContaining({ q: 'fixture', sortBy: 'lastfm' }),
+    )
+  })
+
+  it('exposes match-specific fields, bounded facets and combined track filters', async () => {
+    for (const path of [
+      '/match-diagnostics/fields',
+      '/match-diagnostics/facets',
+    ]) {
+      mocks.session.mockResolvedValueOnce(null)
+      expect((await app.request(path)).status).toBe(401)
+    }
+    const fields = await app.request('/match-diagnostics/fields')
+    expect(await fields.json()).toMatchObject({
+      data: expect.arrayContaining([
+        expect.objectContaining({ key: 'matchProvider' }),
+        expect.objectContaining({ key: 'scrobbles' }),
+      ]),
+    })
+    expect(
+      (await app.request('/match-diagnostics/facets?limitPerField=90')).status,
+    ).toBe(422)
+    mocks.matchFacets.mockResolvedValueOnce([])
+    expect(
+      (await app.request('/match-diagnostics/facets?q=artist')).status,
+    ).toBe(200)
+    expect(mocks.matchFacets).toHaveBeenCalledWith(
+      expect.objectContaining({ q: 'artist' }),
+    )
+    const filters = [
+      { field: 'matchProvider', value: 'Spotify', mode: 'exclude' },
+    ]
+    const ranges = [{ field: 'scrobbles', min: 1, includeMissing: false }]
+    mocks.diagnostics.mockResolvedValueOnce({
+      items: [],
+      providers: [],
+      totalCount: 0,
+      pageCount: 0,
+    })
+    const params = new URLSearchParams({
+      filters: JSON.stringify(filters),
+      ranges: JSON.stringify(ranges),
+    })
+    expect((await app.request(`/match-diagnostics?${params}`)).status).toBe(200)
+    expect(mocks.diagnostics).toHaveBeenCalledWith(
+      expect.objectContaining({ filters, ranges }),
+    )
+  })
+
   it('requires owner authentication before merging', async () => {
     mocks.session.mockResolvedValue(null)
     expect((await send({ targetId: 'target' })).status).toBe(401)
@@ -156,6 +230,40 @@ describe('tracks API', () => {
     })
     expect((await send({ targetId: 'target' })).status).toBe(403)
     expect(mocks.merge).not.toHaveBeenCalled()
+  })
+
+  it('authorizes and validates a correction of one stored Last.fm name', async () => {
+    const path = '/source/scrobble-match'
+    const origin = 'http://localhost:3001'
+    const input = {
+      artistKey: 'example artist',
+      trackKey: 'example track',
+      targetId: 'target',
+    }
+    for (const body of [
+      {},
+      { ...input, artistKey: '' },
+      { ...input, trackKey: ' ' },
+      { ...input, username: 'different-account' },
+    ])
+      expect((await send(body, origin, path)).status).toBe(422)
+    expect((await send(input, 'https://evil.invalid', path)).status).toBe(403)
+    mocks.session.mockResolvedValueOnce(null)
+    expect((await send(input, origin, path)).status).toBe(401)
+    mocks.session.mockResolvedValueOnce({
+      user: { id: 'user-2', email: 'guest@example.com', role: 'user' },
+      session: { id: 'session-2', userId: 'user-2' },
+    })
+    expect((await send(input, origin, path)).status).toBe(403)
+    expect(mocks.matchScrobble).not.toHaveBeenCalled()
+
+    mocks.matchScrobble.mockResolvedValueOnce({ targetId: 'target' })
+    const response = await send(input, origin, path)
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({
+      data: { targetId: 'target' },
+    })
+    expect(mocks.matchScrobble).toHaveBeenCalledExactlyOnceWith('source', input)
   })
 
   it('rejects invalid input and cross-origin requests before service work', async () => {

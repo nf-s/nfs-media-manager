@@ -7,9 +7,10 @@ import {
   QueryClientProvider,
   QueryObserver,
 } from '@tanstack/react-query'
-import { TrackListItemSchema } from '@repo/schemas/tracks'
+import { TrackListItemSchema, TrackQuerySchema } from '@repo/schemas/tracks'
 import TrackMerge, {
   canMergeLastfmTrack,
+  changeTrackScrobbleMatch,
   loadTrackMergeCandidates,
   mergeLibraryTrack,
   TrackMergePanel,
@@ -193,6 +194,86 @@ test('review identifies both records and explains what is retained before confir
   assert.match(pending, /disabled=""[^>]*>Choose another track/)
 })
 
+test('a playable peer opens merge review with the exact named target', () => {
+  const html = render(
+    <TrackMergePanel
+      track={source}
+      initialTarget={target}
+      onClose={unexpectedAction}
+      onMerged={unexpectedAction}
+    />,
+  )
+  assert.match(html, /Last.fm record to merge/)
+  assert.match(html, /Spotify track to keep/)
+  assert.match(html, /Fixture Song - Album Version/)
+  assert.match(html, />Confirm merge<\/button>/)
+  assert.doesNotMatch(html, /Search Spotify library tracks/)
+})
+
+test('scrobble correction reviews the recorded name and both track identities', () => {
+  const html = render(
+    <TrackMergeReview
+      source={target}
+      target={albumMatched}
+      correction={{
+        artistKey: 'fixture artist',
+        trackKey: 'recorded song',
+        artistName: 'Recorded Artist',
+        trackName: 'Recorded Song',
+      }}
+      pending={false}
+      onConfirm={unexpectedAction}
+      onBack={unexpectedAction}
+    />,
+  )
+  assert.match(html, /Confirm scrobble match/)
+  assert.match(html, /Recorded Song/)
+  assert.match(html, /Recorded Artist/)
+  assert.match(html, /Fixture Song - Album Version/)
+  assert.match(html, /Album-derived Fixture/)
+  assert.match(html, />Confirm match<\/button>/)
+  assert.doesNotMatch(html, /Confirm merge/)
+})
+
+test('scrobble correction sends only stable name keys and the reviewed target', async (t) => {
+  const network = t.mock.method(
+    globalThis,
+    'fetch',
+    async (input: string, options: RequestInit) => {
+      assert.equal(
+        input,
+        'http://example.test/api/v1/tracks/lastfm%2Ffixture/scrobble-match',
+      )
+      assert.equal(options.method, 'POST')
+      assert.deepEqual(JSON.parse(String(options.body)), {
+        artistKey: 'fixture artist',
+        trackKey: 'recorded song',
+        targetId: albumMatched.id,
+      })
+      return Response.json({
+        statusCode: 200,
+        message: 'OK',
+        data: { targetId: albumMatched.id },
+      })
+    },
+  )
+  assert.deepEqual(
+    await changeTrackScrobbleMatch(
+      'http://example.test',
+      source.id,
+      albumMatched,
+      {
+        artistKey: 'fixture artist',
+        trackKey: 'recorded song',
+        artistName: 'Recorded Artist',
+        trackName: 'Recorded Song',
+      },
+    ),
+    { targetId: albumMatched.id },
+  )
+  assert.equal(network.mock.callCount(), 1)
+})
+
 test('candidate search restricts stored tracks to native Spotify imports before pagination', async (t) => {
   const network = t.mock.method(
     globalThis,
@@ -226,6 +307,37 @@ test('candidate search restricts stored tracks to native Spotify imports before 
     2,
   )
   assert.deepEqual(result.items, [target])
+  assert.equal(network.mock.callCount(), 1)
+})
+
+test('correction candidates exclude unmatched tracks with the browse filter contract', async (t) => {
+  const network = t.mock.method(globalThis, 'fetch', async (input: string) => {
+    const url = new URL(input)
+    const query = TrackQuerySchema.parse(Object.fromEntries(url.searchParams))
+    assert.equal(query.q, 'Fixture')
+    assert.deepEqual(query.filters, [
+      { field: 'spotifyMatch', value: 'Unmatched', mode: 'exclude' },
+    ])
+    return Response.json({
+      statusCode: 200,
+      message: 'OK',
+      data: {
+        items: [albumMatched],
+        page: 1,
+        size: 20,
+        totalCount: 1,
+        pageCount: 1,
+      },
+    })
+  })
+  const result = await loadTrackMergeCandidates(
+    'http://example.test',
+    'Fixture',
+    1,
+    undefined,
+    true,
+  )
+  assert.deepEqual(result.items, [albumMatched])
   assert.equal(network.mock.callCount(), 1)
 })
 

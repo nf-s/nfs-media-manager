@@ -8,6 +8,7 @@ import {
   TrackListItemSchema,
   TrackMergeInputSchema,
   TrackMergeResultSchema,
+  TrackScrobbleMatchInputSchema,
   trackSpotifyMatchLabels,
   type TrackListItem,
 } from '@repo/schemas/tracks'
@@ -39,6 +40,13 @@ import ServiceIconLinks from './service-icon-links'
 const TrackPageSchema = PaginatedDataSchema(TrackListItemSchema)
 const SEARCH_RESULTS = 20
 
+export type TrackScrobbleCorrection = {
+  artistKey: string
+  trackKey: string
+  artistName: string | null
+  trackName: string | null
+}
+
 export function canMergeLastfmTrack(track: TrackListItem) {
   return (
     track.sources.includes('lastfm') && track.spotifyMatch !== 'spotify-import'
@@ -51,6 +59,7 @@ export async function loadTrackMergeCandidates(
   query: string,
   page: number,
   signal?: AbortSignal,
+  includeAlbumTracks = false,
 ) {
   const params = new URLSearchParams({
     q: query,
@@ -61,14 +70,42 @@ export async function loadTrackMergeCandidates(
     filters: JSON.stringify([
       {
         field: 'spotifyMatch',
-        value: trackSpotifyMatchLabels['spotify-import'],
-        mode: 'required',
+        value:
+          trackSpotifyMatchLabels[
+            includeAlbumTracks ? 'unmatched' : 'spotify-import'
+          ],
+        mode: includeAlbumTracks ? 'exclude' : 'required',
       },
     ]),
   })
   return fetchApiData(apiBaseUrl, `/api/v1/tracks?${params}`, TrackPageSchema, {
     signal,
   })
+}
+
+export async function changeTrackScrobbleMatch(
+  apiBaseUrl: string,
+  sourceId: string,
+  target: TrackListItem,
+  { artistKey, trackKey }: TrackScrobbleCorrection,
+) {
+  if (target.id === sourceId || !target.spotifyTrackId)
+    throw new Error('Choose another track with a Spotify ID.')
+  return fetchApiData(
+    apiBaseUrl,
+    `/api/v1/tracks/${encodeURIComponent(sourceId)}/scrobble-match`,
+    TrackMergeResultSchema,
+    {
+      method: 'POST',
+      body: JSON.stringify(
+        TrackScrobbleMatchInputSchema.parse({
+          artistKey,
+          trackKey,
+          targetId: target.id,
+        }),
+      ),
+    },
+  )
 }
 
 /** Submits only the reviewed pair; the server rechecks current membership. */
@@ -110,16 +147,49 @@ function TrackIdentity({ track }: { track: TrackListItem }) {
 export function TrackMergeReview({
   source,
   target,
+  correction,
   pending,
   onConfirm,
   onBack,
 }: {
   source: TrackListItem
   target: TrackListItem
+  correction?: TrackScrobbleCorrection
   pending: boolean
   onConfirm: () => void
   onBack: () => void
 }) {
+  if (correction)
+    return (
+      <div role="group" aria-label="Confirm scrobble match">
+        <Section title="Last.fm record" flush>
+          <div className="dtl-identity">
+            <strong>{correction.trackName ?? source.title}</strong>
+            <span>{correction.artistName ?? source.artists.join(', ')}</span>
+          </div>
+        </Section>
+        <Section title="Current track">
+          <TrackIdentity track={source} />
+        </Section>
+        <Section title="Spotify track to match">
+          <TrackIdentity track={target} />
+        </Section>
+        <Section>
+          <p>
+            Listening history for this recorded name moves to the selected
+            track. Both tracks keep their releases and playlists.
+          </p>
+        </Section>
+        <div className="ds-actions">
+          <Button variant="primary" disabled={pending} onClick={onConfirm}>
+            {pending ? 'Saving...' : 'Confirm match'}
+          </Button>
+          <Button disabled={pending} onClick={onBack}>
+            Choose another track
+          </Button>
+        </div>
+      </div>
+    )
   return (
     <div role="group" aria-label="Confirm track merge">
       <Section title="Last.fm record to merge" flush>
@@ -152,10 +222,14 @@ export function TrackMergeReview({
 
 export function TrackMergePanel({
   track,
+  initialTarget,
+  correction,
   onClose,
   onMerged,
 }: {
   track: TrackListItem
+  initialTarget?: TrackListItem
+  correction?: TrackScrobbleCorrection
   onClose: () => void
   onMerged: (targetId: string) => void
 }) {
@@ -163,24 +237,40 @@ export function TrackMergePanel({
   const client = useQueryClient()
   const dialog = useRef<HTMLDialogElement>(null)
   const titleId = useId()
-  const [draft, setDraft] = useState(track.title.slice(0, 200))
+  const [draft, setDraft] = useState(
+    (correction?.trackName ?? track.title).slice(0, 200),
+  )
   const query = useDeferredValue(draft.trim())
-  const [target, setTarget] = useState<TrackListItem | null>(null)
+  const [target, setTarget] = useState<TrackListItem | null>(
+    initialTarget ?? null,
+  )
   const candidates = useVirtualTable({
-    queryKey: ['tracks', 'merge-candidates', query],
+    queryKey: [
+      'tracks',
+      correction ? 'scrobble-match-candidates' : 'merge-candidates',
+      query,
+    ],
     pageSize: SEARCH_RESULTS,
     enabled: target === null && query.length > 0,
     loadPage: (page, _size, signal) =>
-      loadTrackMergeCandidates(apiBaseUrl, query, page, signal),
+      loadTrackMergeCandidates(
+        apiBaseUrl,
+        query,
+        page,
+        signal,
+        correction !== undefined,
+      ),
   })
   const merge = useMutation({
     retry: false,
     mutationFn: (chosen: TrackListItem) =>
-      mergeLibraryTrack(apiBaseUrl, track, chosen),
+      correction
+        ? changeTrackScrobbleMatch(apiBaseUrl, track.id, chosen, correction)
+        : mergeLibraryTrack(apiBaseUrl, track, chosen),
     onSuccess: async (result) => {
       onMerged(result.targetId)
       onClose()
-      await invalidateScrobbleLinks(client, track.id)
+      await invalidateScrobbleLinks(client, correction ? undefined : track.id)
     },
   })
   useEffect(() => {
@@ -213,12 +303,16 @@ export function TrackMergePanel({
       <div className="dtl-dialog-inner">
         <div className="ds-inspector-bar">
           <div className="ds-crumbs">
-            <b id={titleId}>Track match</b>
+            <b id={titleId}>
+              {correction ? 'Change scrobble match' : 'Track match'}
+            </b>
           </div>
           <Button
             variant="ghost"
             icon
-            aria-label="Close track merge"
+            aria-label={
+              correction ? 'Close scrobble match' : 'Close track merge'
+            }
             disabled={merge.isPending}
             onClick={onClose}
           >
@@ -230,6 +324,7 @@ export function TrackMergePanel({
             <TrackMergeReview
               source={track}
               target={target}
+              correction={correction}
               pending={merge.isPending}
               onConfirm={() => merge.mutate(target)}
               onBack={() => {
@@ -240,9 +335,11 @@ export function TrackMergePanel({
           ) : (
             <>
               <TrackIdentity track={track} />
-              <span className="ds-muted">
-                {formatCount(track.scrobbles)} scrobbles
-              </span>
+              {!correction && (
+                <span className="ds-muted">
+                  {formatCount(track.scrobbles)} scrobbles
+                </span>
+              )}
               <label className="ds-field">
                 <span className="ds-label">Spotify library track</span>
                 <Input
@@ -298,7 +395,9 @@ export function TrackMergePanel({
                       <TableBody>
                         {candidates.hasTotal && !candidates.total && (
                           <TableState colSpan={4}>
-                            No imported Spotify tracks found.
+                            {correction
+                              ? 'No tracks with Spotify IDs found.'
+                              : 'No imported Spotify tracks found.'}
                           </TableState>
                         )}
                         {(!candidates.isError || candidates.hasTotal) && (
@@ -307,7 +406,9 @@ export function TrackMergePanel({
                             colSpan={4}
                             renderRow={(item) =>
                               item.id === track.id ||
-                              item.spotifyMatch !== 'spotify-import' ? (
+                              (correction
+                                ? !item.spotifyTrackId
+                                : item.spotifyMatch !== 'spotify-import') ? (
                                 <tr aria-hidden="true">
                                   <td
                                     colSpan={4}
@@ -348,10 +449,10 @@ export function TrackMergePanel({
                                   <TableCell align="end">
                                     <Button
                                       size="xs"
-                                      aria-label={`Merge with ${item.title} by ${item.artists.join(', ')}`}
+                                      aria-label={`${correction ? 'Match to' : 'Merge with'} ${item.title} by ${item.artists.join(', ')}`}
                                       onClick={() => setTarget(item)}
                                     >
-                                      Merge
+                                      {correction ? 'Match' : 'Merge'}
                                     </Button>
                                   </TableCell>
                                 </TableRow>
@@ -368,7 +469,12 @@ export function TrackMergePanel({
           )}
           {merge.isError && (
             <Notice tone="danger">
-              {errorMessage(merge.error, 'Could not merge these tracks.')}
+              {errorMessage(
+                merge.error,
+                correction
+                  ? 'Could not change the scrobble match.'
+                  : 'Could not merge these tracks.',
+              )}
             </Notice>
           )}
         </div>

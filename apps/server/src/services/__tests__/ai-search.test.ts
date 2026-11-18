@@ -82,6 +82,31 @@ beforeEach(() => {
 })
 
 describe('AI search interpretation', () => {
+  it('interprets provider absence only in the track comparison workspace', async () => {
+    const expected = plan({
+      filters: [{ field: 'matchProvider', value: 'Spotify', mode: 'exclude' }],
+      sortBy: 'title',
+      direction: 'asc',
+      limitResults: 20,
+    })
+    mocks.text.mockResolvedValue(completion(interpretation(expected)))
+    const result = await interpretAiSearch(
+      {
+        mediaType: 'track',
+        context: 'matches',
+        text: 'First twenty tracks missing Spotify',
+      },
+      now,
+    )
+    expect(result.plan).toEqual(expected)
+    expect(aiSearchPrompt('track', now, 'matches')).toContain(
+      'No recording matches',
+    )
+    expect(aiSearchPrompt('track', now)).not.toContain('matchProvider')
+    expect(() => validateAiPlan(expected, 'track')).toThrow()
+    expect(mocks.database).not.toHaveBeenCalled()
+  })
+
   it('keeps recent and earlier listening as separate ANDed periods', async () => {
     const expected = plan({
       listening: {

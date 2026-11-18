@@ -139,6 +139,8 @@ A track's detail shows its sources, playlists (each opens the playlist drawer), 
 
 ### Reviewing duplicates
 
+In **Tracks → Matches**, choose **Change match** beside a recorded Last.fm artist and title. Select a library track with a stored Spotify ID, including an ID from an album track list, and confirm. The selected listening history moves to that recording and later syncs retain the choice. To replace an earlier choice, open **Change match** for the recorded name on its current track.
+
 On a Last.fm-backed track without an imported Spotify identity, **Merge with Spotify track** searches existing imported library tracks. Select the recording to keep, compare its artist, title, album and Spotify link, then confirm. Nothing is selected or merged automatically. The merge retains the chosen Spotify track, transfers Last.fm source memberships and playlist memberships, and preserves listening history. If the original recording is still listed on an album with its own Spotify ID, that position keeps its recording. A saved manual source association prevents later Last.fm refreshes from recreating the duplicate, including when recorded album names differ. These source associations are labelled **Manually matched** in track details.
 
 This action does not merge two different imported Spotify identities or search Spotify's remote catalogue. Different releases and versions may legitimately be separate; the retained recording is an explicit choice.

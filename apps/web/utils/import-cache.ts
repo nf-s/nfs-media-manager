@@ -39,6 +39,7 @@ export function invalidateImportedLibrary(client: QueryClient) {
         'film',
         'tracks',
         'track',
+        'artists',
         'history',
         'jobs',
         'job-activity',

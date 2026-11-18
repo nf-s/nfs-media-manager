@@ -7,6 +7,11 @@ import {
   BrowsePageSliceSchema,
 } from '@repo/schemas/browse'
 import { PaginatedDataSchema } from '@repo/schemas/common'
+import {
+  MatchDiagnosticsPageSchema,
+  TrackMatchDiagnosticsQuerySchema,
+  trackMatchDiagnosticFields,
+} from '@repo/schemas/match-diagnostics'
 import { ListeningSeriesSchema } from '@repo/schemas/lastfm'
 import {
   TrackDetailSchema,
@@ -17,6 +22,7 @@ import {
   TrackPositionsQuerySchema,
   TrackPositionsSchema,
   TrackQuerySchema,
+  TrackScrobbleMatchInputSchema,
 } from '@repo/schemas/tracks'
 import {
   TrackPlaylistAdditionInputSchema,
@@ -41,7 +47,11 @@ import {
   listTracks,
   listTracksAtPositions,
 } from '@/services/tracks'
-import { mergeLastfmTrack } from '@/services/track-merges'
+import { matchScrobbleTrack, mergeLastfmTrack } from '@/services/track-merges'
+import {
+  listTrackMatchDiagnostics,
+  listTrackMatchDiagnosticsFacets,
+} from '@/services/track-match-diagnostics'
 import { getTrackListeningSeries } from '@/services/listening-series'
 import {
   listSpotifyTrackPlaylistAdditions,
@@ -49,6 +59,80 @@ import {
 } from '@/services/spotify-track-playlist-additions'
 
 const app: OpenAPIHono<AppEnv> = createOpenAPIApp()
+
+app.openapi(
+  createRoute({
+    method: 'get',
+    path: '/match-diagnostics',
+    middleware: [authMiddleware()],
+    request: { query: TrackMatchDiagnosticsQuerySchema },
+    responses: {
+      200: {
+        description: 'Stored track names and provider identities',
+        content: {
+          'application/json': {
+            schema: createResponseSchema(MatchDiagnosticsPageSchema),
+          },
+        },
+      },
+      401: jsonErrorResponse('Unauthorized'),
+      422: validationErrorResponse,
+    },
+  }),
+  async (c) =>
+    generateJsonResponse(
+      c,
+      await listTrackMatchDiagnostics(c.req.valid('query')),
+      200,
+    ),
+)
+
+app.openapi(
+  createRoute({
+    method: 'get',
+    path: '/match-diagnostics/fields',
+    middleware: [authMiddleware()],
+    responses: {
+      200: {
+        description: 'Track comparison filter and sort fields',
+        content: {
+          'application/json': {
+            schema: createResponseSchema(z.array(BrowseFieldSchema)),
+          },
+        },
+      },
+      401: jsonErrorResponse('Unauthorized'),
+    },
+  }),
+  async (c) => generateJsonResponse(c, trackMatchDiagnosticFields, 200),
+)
+
+app.openapi(
+  createRoute({
+    method: 'get',
+    path: '/match-diagnostics/facets',
+    middleware: [authMiddleware()],
+    request: { query: BrowseFacetQuerySchema },
+    responses: {
+      200: {
+        description: 'Stored track and match filter suggestions',
+        content: {
+          'application/json': {
+            schema: createResponseSchema(z.array(TrackFilterOptionSchema)),
+          },
+        },
+      },
+      401: jsonErrorResponse('Unauthorized'),
+      422: validationErrorResponse,
+    },
+  }),
+  async (c) =>
+    generateJsonResponse(
+      c,
+      await listTrackMatchDiagnosticsFacets(c.req.valid('query')),
+      200,
+    ),
+)
 
 app.openapi(
   createRoute({
@@ -280,6 +364,50 @@ app
         200,
       )
     },
+  )
+  .openapi(
+    createRoute({
+      method: 'post',
+      path: '/:id/scrobble-match',
+      middleware: [authMiddleware(), mutationOriginMiddleware()],
+      request: {
+        params: z.object({
+          id: z
+            .string()
+            .min(1)
+            .max(500)
+            .refine((id) => !id.includes('\0'), 'Invalid track ID'),
+        }),
+        body: {
+          content: {
+            'application/json': { schema: TrackScrobbleMatchInputSchema },
+          },
+          required: true,
+        },
+      },
+      responses: {
+        200: {
+          description:
+            'Matched one recorded Last.fm name to the selected Spotify track',
+          content: {
+            'application/json': {
+              schema: createResponseSchema(TrackMergeResultSchema),
+            },
+          },
+        },
+        401: jsonErrorResponse('Unauthorized'),
+        403: jsonErrorResponse('Forbidden'),
+        404: jsonErrorResponse('Track not found'),
+        409: jsonErrorResponse('Last.fm name cannot be matched'),
+        422: validationErrorResponse,
+      },
+    }),
+    async (c) =>
+      generateJsonResponse(
+        c,
+        await matchScrobbleTrack(c.req.valid('param').id, c.req.valid('json')),
+        200,
+      ),
   )
   .openapi(
     createRoute({

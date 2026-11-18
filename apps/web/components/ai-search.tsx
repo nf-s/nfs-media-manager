@@ -180,6 +180,7 @@ export default function AiSearch<Plan>({
     }
     const input = AiSearchInputSchema.safeParse({
       mediaType: target.mediaType,
+      context: target.context,
       text,
     })
     if (!input.success) {

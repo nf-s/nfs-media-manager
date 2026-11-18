@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import pg from 'pg'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { migrate } from 'drizzle-orm/node-postgres/migrator'
-import { eq } from 'drizzle-orm'
+import { eq, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import {
   afterAll,
@@ -17,6 +17,7 @@ import {
 import type { Job } from '@repo/schemas/job'
 import { env } from '@/env'
 import * as schema from '@/schemas/db'
+import { lockLibraryTrackWrites } from '@/services/album-library-tracks'
 import type { JobWorker } from '@/services/job-worker'
 
 const database = `job_worker_test_${randomUUID().replaceAll('-', '')}`
@@ -134,6 +135,16 @@ async function job(id: string) {
 }
 
 describe('exclusive worker lifecycle', () => {
+  it('allows track writes while the worker owns its session lock', async () => {
+    await start()
+    await expect(
+      databaseClient.transaction(async (tx) => {
+        await tx.execute(sql`set local lock_timeout = '1s'`)
+        await lockLibraryTrackWrites(tx)
+      }),
+    ).resolves.toBeUndefined()
+  })
+
   it('recovers running jobs/items once, preserving queued/completed rows and retained data', async () => {
     await seedJob('orphan', 'running', [
       'succeeded',

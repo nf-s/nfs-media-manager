@@ -191,6 +191,29 @@ export type TrackMergeInput = z.infer<typeof TrackMergeInputSchema>
 export const TrackMergeResultSchema = z.object({ targetId: z.string().min(1) })
 export type TrackMergeResult = z.infer<typeof TrackMergeResultSchema>
 
+const RecordedScrobbleKeySchema = z
+  .string()
+  .min(1)
+  .max(1000)
+  .refine(
+    (key) => key === key.trim() && !key.includes('\0'),
+    'Invalid recorded name key',
+  )
+
+export const TrackScrobbleMatchInputSchema = TrackMergeInputSchema.extend({
+  targetId: z
+    .string()
+    .trim()
+    .min(1)
+    .max(500)
+    .refine((id) => !id.includes('\0'), 'Invalid track ID'),
+  artistKey: RecordedScrobbleKeySchema,
+  trackKey: RecordedScrobbleKeySchema,
+})
+export type TrackScrobbleMatchInput = z.infer<
+  typeof TrackScrobbleMatchInputSchema
+>
+
 export const TrackDetailSchema = TrackListItemSchema.extend({
   /** Recorded names with strict Last.fm membership, most played first, up to 50. */
   lastfmSources: z.array(TrackLastfmSourceSchema),
@@ -207,6 +230,7 @@ export const TrackDetailSchema = TrackListItemSchema.extend({
 export type TrackDetail = z.infer<typeof TrackDetailSchema>
 
 const TrackFiltersParamSchema = z.preprocess((value) => {
+  if (Array.isArray(value)) return value
   if (typeof value !== 'string' || value.length === 0) return []
   try {
     return JSON.parse(value)

@@ -4,6 +4,7 @@ import { sql } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { migrate } from 'drizzle-orm/node-postgres/migrator'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
+import { MatchDiagnosticsQuerySchema } from '@repo/schemas/match-diagnostics'
 import {
   SubscriptionItemQuerySchema,
   type SubscriptionItem,
@@ -269,6 +270,57 @@ afterAll(async () => {
 const visible = items.filter((item) => item.sourceId !== RETIRED)
 
 describe('subscription items', () => {
+  it('pages the native item and source identities of subscribed providers', async () => {
+    const { listSubscriptionMatchDiagnostics } = await library()
+    const options = MatchDiagnosticsQuerySchema.parse({
+      q: 'orbit',
+      sortBy: 'spotify',
+      direction: 'desc',
+      size: 1,
+    })
+    const episode = spotifyId('OrbitEpisodeTwo')
+    expect(await listSubscriptionMatchDiagnostics(options)).toMatchObject({
+      totalCount: 3,
+      pageCount: 3,
+      items: [
+        {
+          id: episode,
+          name: 'Rendezvous and docking',
+          creator: 'Orbit Talk',
+          sourceId: ORBIT_TALK,
+          matches: [
+            {
+              provider: 'spotify',
+              name: 'Rendezvous and docking',
+              creator: 'Orbit Talk',
+              identifier: episode,
+            },
+          ],
+        },
+      ],
+    })
+    expect(
+      await listSubscriptionMatchDiagnostics({ ...options, page: 3 }),
+    ).toMatchObject({
+      items: [
+        {
+          id: videoId('k1'),
+          sourceId: KEPLER,
+          matches: [{ provider: 'youtube', identifier: videoId('k1') }],
+        },
+      ],
+    })
+    expect(
+      await listSubscriptionMatchDiagnostics({ ...options, page: 4 }),
+    ).toMatchObject({ items: [], totalCount: 3, pageCount: 3 })
+    expect(
+      await listSubscriptionMatchDiagnostics({ ...options, q: videoId('r1') }),
+    ).toMatchObject({ items: [], totalCount: 0 })
+    expect(
+      await listSubscriptionMatchDiagnostics({ ...options, q: episode }),
+    ).toMatchObject({ items: [{ id: episode }], totalCount: 1 })
+  })
+
   it('shares ranked and source filters between count-only and row-only browse', async () => {
     const { countSubscriptionBrowseItems, listSubscriptionBrowsePage } =
       await library()
@@ -359,6 +411,7 @@ describe('subscription items', () => {
       publishedAt: '2026-03-01T00:00:00.000Z',
       publishedPrecision: 'day',
       durationSec: 1800,
+      watchedAt: null,
       url: `https://open.spotify.com/episode/${spotifyId('OrbitEpisodeOne')}`,
       artworkUrl: 'https://i.scdn.example/orbit-one.jpg',
     })

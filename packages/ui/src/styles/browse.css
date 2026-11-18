@@ -18,6 +18,9 @@
 .browse-workspace {
   height: 100%;
 }
+.browse-workspace > .ds-toolbar {
+  flex-shrink: 0;
+}
 .browse-workspace > .ds-notice,
 .browse-notice {
   margin: 0 var(--ds-gutter) var(--ds-4);

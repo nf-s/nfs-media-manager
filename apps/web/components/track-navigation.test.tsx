@@ -78,6 +78,25 @@ test('Tracks navigation offers only supported destinations without changing libr
   assert.match(html, /href="\/providers">Providers</)
 })
 
+test('each library activates Matches without activating Browse', () => {
+  for (const path of [
+    '/tracks',
+    '/albums',
+    '/artists',
+    '/films',
+    '/subscriptions',
+  ]) {
+    const html = render(`${path}/matches`, 'q=fixture', <AppNavigation />)
+    assert.ok(
+      html.includes(
+        `aria-current="page" href="${path}/matches?q=fixture">Matches`,
+      ),
+    )
+    assert.ok(html.includes(`href="${path}">Browse`))
+    assert.ok(!html.includes(`aria-current="page" href="${path}">Browse`))
+  }
+})
+
 test('Artists is a library choice with Browse, including legacy artist links', () => {
   for (const search of ['', 'mediaType=album', 'mediaType=track']) {
     const html = render(

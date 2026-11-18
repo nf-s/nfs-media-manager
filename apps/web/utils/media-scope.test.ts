@@ -54,6 +54,33 @@ test('creator and channel pages retain their own library context', () => {
   )
 })
 
+test('library switches keep the Matches destination and scope its query', () => {
+  assert.equal(
+    switchLibraryHref('/tracks/matches', 'q=fixture', 'track'),
+    '/tracks/matches?q=fixture',
+  )
+  assert.equal(
+    switchLibraryHref('/tracks/matches', 'q=fixture', 'album'),
+    '/albums/matches',
+  )
+  assert.equal(
+    switchLibraryHref('/albums/matches', 'sortBy=spotify', 'artist'),
+    '/artists/matches',
+  )
+  assert.equal(
+    switchLibraryHref('/artists/matches', '', 'film'),
+    '/films/matches',
+  )
+  assert.equal(
+    switchLibraryHref('/films/matches', '', 'subscription'),
+    '/subscriptions/matches',
+  )
+  assert.equal(
+    switchLibraryHref('/subscriptions/matches', '', 'track'),
+    '/tracks/matches',
+  )
+})
+
 test('Artists has independent browse and metadata destinations across library switches', () => {
   for (const path of ['/artists', '/artists/one']) {
     assert.equal(workspaceScopeForPath(path, 'album'), 'artist')

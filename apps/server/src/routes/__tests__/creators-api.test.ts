@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   browse: vi.fn(),
   count: vi.fn(),
   facets: vi.fn(),
+  diagnostics: vi.fn(),
   metadataBrowse: vi.fn(),
   selection: vi.fn(),
   createSnapshot: vi.fn(),
@@ -43,6 +44,9 @@ vi.mock('@/services/artist-browse', () => ({
   countArtistBrowse: mocks.count,
   listArtistBrowseFacets: mocks.facets,
   listArtistMetadataBrowsePage: mocks.metadataBrowse,
+}))
+vi.mock('@/services/artist-match-diagnostics', () => ({
+  listArtistMatchDiagnostics: mocks.diagnostics,
 }))
 vi.mock('@/services/creators', () => ({
   getArtist: mocks.artist,
@@ -100,6 +104,7 @@ describe('creator API', () => {
       '/artists/facets',
       '/artists/browse-page',
       '/artists/browse-count',
+      '/artists/match-diagnostics',
       '/artists/metadata/browse-page',
       '/artists/metadata/browse-count',
       '/artists/metadata/selections/fixture-selection',
@@ -131,6 +136,29 @@ describe('creator API', () => {
       (mock) => mock !== mocks.session,
     ))
       expect(mock).not.toHaveBeenCalled()
+  })
+
+  it('routes artist match diagnostics before the artist ID route', async () => {
+    const diagnostics = {
+      items: [],
+      providers: [{ key: 'spotify', label: 'Spotify' }],
+      totalCount: 0,
+      pageCount: 0,
+    }
+    mocks.diagnostics.mockResolvedValue(diagnostics)
+    const response = await app.request(
+      '/artists/match-diagnostics?page=3&size=10&q=fixture&sortBy=spotify&direction=desc',
+    )
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ data: diagnostics })
+    expect(mocks.diagnostics).toHaveBeenCalledExactlyOnceWith({
+      page: 3,
+      size: 10,
+      q: 'fixture',
+      sortBy: 'spotify',
+      direction: 'desc',
+    })
+    expect(mocks.artist).not.toHaveBeenCalled()
   })
 
   it('validates metadata filters and routes the directory before artist IDs', async () => {

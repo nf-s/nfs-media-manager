@@ -72,6 +72,7 @@ export async function invalidateScrobbleLinks(
         'lastfm-links',
         'tracks',
         'track',
+        'artists',
         'playlists',
         'playlist',
         'album-playlists',

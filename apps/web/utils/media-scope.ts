@@ -142,6 +142,10 @@ function libraryHome(scope: LibraryView) {
           : '/subscriptions'
 }
 
+export function libraryMatchesHref(view: LibraryView) {
+  return `${libraryHome(view)}/matches`
+}
+
 export function switchMediaScopeHref(
   path: string,
   search: string,
@@ -207,6 +211,7 @@ export function switchLibraryHref(
   const current = new URLSearchParams(search)
   const shown = libraryViewForPath(path, current.get('mediaType'))
   if (shown === view) return `${path}${current.size ? `?${current}` : ''}`
+  if (path === libraryMatchesHref(shown)) return libraryMatchesHref(view)
   if (view === 'artist') return switchMediaScopeHref(path, search, view)
   if (isUnder(path, '/playlists'))
     return view === 'album' || view === 'track'

@@ -80,7 +80,9 @@ type InspectorOptions = {
 
 export function AppDetailInspector() {
   const pathname = usePathname()
-  return detailBrowseKind(pathname) ? null : <DetailInspector />
+  return detailBrowseKind(pathname) || pathname === '/tracks/matches' ? null : (
+    <DetailInspector />
+  )
 }
 
 /** The same frame serves the browse pages and workspaces outside Browse. */
