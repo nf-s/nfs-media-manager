@@ -75,7 +75,33 @@ test('preview shows actual thresholds and listening logic independently of model
   assert.match(descriptions, /Sort: Scrobbles · last 5 years, ascending/)
 })
 
-test('track plans use the album URL parameters and clear album-only listening state', () => {
+test('a track preview counts plays and an artist preview track plays', () => {
+  const listening = AiSearchPlanSchema.parse({
+    ...plan,
+    filters: [],
+    ranges: [],
+    listening: {
+      match: 'any',
+      rules: [
+        { period: { kind: 'rolling', amount: 1, unit: 'years' }, max: 0 },
+      ],
+    },
+  })
+  assert.match(
+    describeAiSearchPlan(listening, trackBrowseFields, 'track').join('\n'),
+    /Listening · any condition: No plays · last year/,
+  )
+  assert.match(
+    describeAiSearchPlan(listening, artistBrowseFields, 'artist').join('\n'),
+    /Listening · any condition: No track plays · last year/,
+  )
+  assert.deepEqual(
+    mediaAiSearchTarget('track', trackBrowseFields).describe(listening),
+    describeAiSearchPlan(listening, trackBrowseFields, 'track'),
+  )
+})
+
+test('track plans use the album URL parameters and clear unused listening state', () => {
   const trackPlan = AiSearchPlanSchema.parse({
     q: 'live',
     filters: [{ field: 'playlist', value: 'Road trip', mode: 'required' }],

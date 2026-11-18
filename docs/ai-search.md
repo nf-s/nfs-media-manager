@@ -8,22 +8,24 @@ Examples:
 - “Show albums I used to listen to a lot, but haven't listened to much in the last five years.”
 - “Show unwatched films rated at least 8 on IMDb, newest first.”
 - “Tracks from my Road trip playlist I've never played.”
+- “Tracks I played a lot before 2020 but not in the last year.”
 - “Artists in my Road trip playlist with at least three albums, sorted by name.”
+- “The 20 artists I played most in the last six months.”
 - “Long woodworking videos from @examplechannel published this year, most viewed first.”
 
 Each request replaces the current search. It does not edit library records, start scrapes or discover media outside the library. A request that cannot be expressed with the available filters asks for clarification instead of applying a partial search. Review the generated conditions: a model can misinterpret a request even when its output passes validation.
 
 ## Listening and ratings
 
-Album listening requests use the same [custom listening filters](lastfm-scrobbles.md#custom-listening-filters-and-sorting) as the Listening section. AI search does not yet write listening conditions for Tracks or Artists; set those in the section. They count linked, stored Last.fm **track scrobbles**, not full album plays. Complete the initial history sync before using them. Unlinked or unrecorded plays cannot contribute; stale history is flagged.
+Album, track and artist listening requests use the same [custom listening filters](lastfm-scrobbles.md#custom-listening-filters-and-sorting) as the Listening section: count conditions over all time, a rolling period or a date range, and a sort by scrobbles in one period. They count linked, stored Last.fm scrobbles as that section does. An album's count is **track scrobbles**, not full album plays; an artist's is every scrobble linked to a library album or track credited to the artist. Complete the initial history sync before using them. Unlinked or unrecorded plays cannot contribute; stale history is flagged.
 
 Vague terms have visible defaults: “only a little” means 1–10 scrobbles, “not much” means 0–10, “a lot” means at least 100, and “high RYM score” means at least 3.5/5. Explicit numbers override these choices. Earlier and recent listening are separate conditions; an all-time count is not substituted for listening before a cutoff. Date periods include both boundary days in UTC. Adjust any condition using the regular controls after applying it.
 
-Tracks use the **Scrobbles** and **Last listened** fields for all-time listening. Requests for counts within a listening period ask for clarification. In **Tracks → Browse**, “top 10” sorts the full result. In **Tracks → Matches**, AI search can apply a requested limit and combine track fields with provider evidence. For example, “the 10 most scrobbled tracks missing Spotify” excludes Spotify matches, sorts by scrobble count and limits the result to ten.
+Tracks use the **Scrobbles** and **Last listened** fields when every listening condition is all-time, and listening conditions as soon as one names a period. In **Tracks → Browse**, “top 10” sorts the full result. **Tracks → Matches** has no listening conditions: requests for counts within a period ask for clarification there. It can apply a requested limit and combine track fields with provider evidence. For example, “the 10 most scrobbled tracks missing Spotify” excludes Spotify matches, sorts by scrobble count and limits the result to ten.
 
 Scores come from stored metadata. Searches do not fetch fresh ratings, and missing scores are excluded unless requested otherwise. AI search supports the public built-in fields; installation-specific plugin fields remain available through manual filters.
 
-Artists supports stored names, playlists, tags, countries, types, providers, added dates and library album, track and playlist counts. Those counts describe library memberships. Artist listening history, ratings and scrape freshness are not AI search fields; requests that need them ask for clarification. In metadata selection, AI replaces the normal search conditions while retaining the separately selected provider freshness filters.
+Artists supports stored names, playlists, tags, countries, types, providers, added dates and library album, track and playlist counts. Those counts describe library memberships. Artist listening uses listening conditions and the period sort; the most recent listen, ratings and scrape freshness are not artist AI search fields, and requests that need them ask for clarification. In metadata selection, AI replaces the normal search conditions, listening conditions included, while retaining the separately selected provider freshness filters.
 
 ## Subscriptions
 

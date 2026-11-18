@@ -1,6 +1,7 @@
 import type { ArtistEnrichmentResult } from '@repo/schemas/artist-profiles'
 import { ArtistMetadataQuerySchema } from '@repo/schemas/creators'
 import type { ArtistSelectionSnapshotPage } from '@repo/schemas/artist-selection'
+import { parseListeningParams } from './listening-filters'
 
 export function artistMetadataQuery(params: URLSearchParams) {
   const fields = ArtistMetadataQuerySchema.shape
@@ -29,6 +30,7 @@ export function artistMetadataQuery(params: URLSearchParams) {
     filters: filters.success ? filters.data : [],
     ranges: ranges.success ? ranges.data : [],
     limitResults: limit.success ? limit.data : undefined,
+    ...parseListeningParams(params),
   })
 }
 

@@ -112,7 +112,7 @@ Searches use the existing Spotify dispatcher, request spacing, cooldowns and acc
 
 ### Custom listening filters and sorting
 
-Open **Filters** in the Albums, Tracks or Artists browse toolbar, then expand **Listening** to filter by linked, stored Last.fm scrobbles. The section has two views of the same filter, chosen with the **Histogram** / **Rules** switch; the choice is remembered in the browser. Every change applies at once.
+Open **Filters** in the Albums, Tracks or Artists browse toolbar, or in album or artist metadata selection, then expand **Listening** to filter by linked, stored Last.fm scrobbles. The section has two views of the same filter, chosen with the **Histogram** / **Rules** switch; the choice is remembered in the browser. Every change applies at once.
 
 **Histogram** (the default) shows how the library, under the other active search, tag and range filters, spreads across play counts in one period. Choose the period with **30d**, **1y**, **5y**, **All** or **Custom**, then select one bar, or a first and last bar, to keep the items in that range. Selecting the only selected bar clears it. A range written in Rules that ends inside a bar marks that bar as partly covered. Further conditions fold to one line each under the chart, with **Edit** to bring one onto the chart and a remove button; **Add period** adds another.
 

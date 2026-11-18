@@ -10,7 +10,12 @@ import {
 } from '@repo/schemas/ai-search'
 import { formatBrowseValue, type BrowseField } from '@repo/schemas/browse'
 import { subscriptionTypeLabels } from '@repo/schemas/subscriptions'
-import { formatListeningPeriod, formatListeningRule } from './listening-filters'
+import type { ListeningLibrary } from '@repo/schemas/listening'
+import {
+  formatListeningPeriod,
+  formatListeningRule,
+  listeningNoun,
+} from './listening-filters'
 import { subscriptionSortLabels } from './subscriptions'
 import { formatVideoDuration } from './youtube'
 
@@ -38,7 +43,12 @@ export function mediaAiSearchTarget(
     mediaType,
     context,
     responseSchema: AiSearchResponseSchema,
-    describe: (plan) => describeAiSearchPlan(plan, fields),
+    describe: (plan) =>
+      describeAiSearchPlan(
+        plan,
+        fields,
+        mediaType === 'film' ? undefined : mediaType,
+      ),
   }
 }
 
@@ -69,6 +79,7 @@ export function aiSearchParams(
 export function describeAiSearchPlan(
   plan: AiSearchPlan,
   fields: BrowseField[],
+  library: ListeningLibrary = 'album',
 ): string[] {
   const descriptions: string[] = []
   if (plan.q) descriptions.push(`Search: ${plan.q}`)
@@ -99,7 +110,7 @@ export function describeAiSearchPlan(
   }
   if (plan.listening?.rules.length) {
     descriptions.push(
-      `Listening · ${plan.listening.match === 'all' ? 'all conditions' : 'any condition'}: ${plan.listening.rules.map((rule) => formatListeningRule(rule)).join('; ')}`,
+      `Listening · ${plan.listening.match === 'all' ? 'all conditions' : 'any condition'}: ${plan.listening.rules.map((rule) => formatListeningRule(rule, listeningNoun(library))).join('; ')}`,
     )
   }
   const sort =

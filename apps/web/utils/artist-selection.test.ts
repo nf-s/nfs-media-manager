@@ -53,6 +53,34 @@ test('invalid artist browse fields do not erase valid freshness and playlist sel
   assert.deepEqual(query.playlistIds, ['fixture-playlist'])
 })
 
+test('the artist selection reads listening rules and the Scrobbles period from the URL', () => {
+  const listening = {
+    match: 'all',
+    rules: [{ period: { kind: 'rolling', amount: 1, unit: 'years' }, min: 10 }],
+  }
+  const query = artistMetadataQuery(
+    new URLSearchParams({
+      sortBy: 'listeningScrobbles',
+      direction: 'desc',
+      listening: JSON.stringify(listening),
+      listeningSort: '{"kind":"all"}',
+    }),
+  )
+  assert.equal(query.sortBy, 'listeningScrobbles')
+  assert.deepEqual(query.listening, listening)
+  assert.deepEqual(query.listeningSort, { kind: 'all' })
+  const invalid = artistMetadataQuery(
+    new URLSearchParams({
+      q: 'Fixture',
+      listening: '{invalid',
+      listeningSort: '7',
+    }),
+  )
+  assert.equal(invalid.q, 'Fixture')
+  assert.equal(invalid.listening, undefined)
+  assert.equal(invalid.listeningSort, undefined)
+})
+
 const job = JobSchema.parse({
   id: 'fixture-job',
   provider: 'musicbrainz',

@@ -24,6 +24,7 @@ import {
   type ArtistProviderMetadata,
 } from '@repo/schemas/creators'
 import { artistBrowseFields } from '@repo/schemas/artist-browse'
+import { defaultListeningPeriod } from '@repo/schemas/listening'
 import { BrowseCountSchema, BrowsePageSliceSchema } from '@repo/schemas/browse'
 import { Notice } from '@repo/ui/components/ds/feedback'
 import { Button } from '@repo/ui/components/ui/button'
@@ -34,7 +35,11 @@ import {
   TableSelectionBar,
   TableState,
 } from '@repo/ui/components/ui/table'
-import { formatCount, formatDateTime } from '@repo/ui/lib/format'
+import {
+  formatCount,
+  formatDateTime,
+  formatItemCount,
+} from '@repo/ui/lib/format'
 import { useCountedVirtualTable } from '@/hooks/useVirtualTable'
 import { useBrowseFacets } from '@/hooks/useBrowseFacets'
 import { fetchApiData } from '@/utils/api'
@@ -46,6 +51,10 @@ import {
   dispatchArtistSnapshot,
 } from '@/utils/artist-selection'
 import { updateJobSelection } from '@/utils/job-selection'
+import {
+  listeningScrobblesField,
+  listeningScrobblesKey,
+} from '@/utils/listening-filters'
 import { artistProviderLabels } from './artist-identifier-sources'
 import { useArtistPlaylistFilter } from './artist-playlist-filter'
 import {
@@ -61,6 +70,7 @@ import {
   providerFreshnessOptions,
   providerFreshnessValue,
 } from './film-selection-table'
+import { ListeningControls } from './listening-controls'
 import { useConfig } from './providers'
 import { useSourceAvailability, useSourceCatalog } from './provider-sources'
 import AiSearch from './ai-search'
@@ -73,13 +83,14 @@ import {
   useTableColumns,
 } from './secondary-table'
 
-const artistColumns: {
+type ArtistColumn = {
   key: string
   label: string
   required?: boolean
   defaultVisible?: boolean
   align?: 'end'
-}[] = [
+}
+const artistColumns: ArtistColumn[] = [
   { key: 'name', label: 'Artist', required: true },
   { key: 'albumCount', label: 'Albums', defaultVisible: false, align: 'end' },
   { key: 'trackCount', label: 'Tracks', defaultVisible: false, align: 'end' },
@@ -138,6 +149,35 @@ export default function ArtistMetadataTable({
   const q = query.q ?? ''
   const [draft, setDraft] = useState('')
   const facets = useBrowseFacets(apiBaseUrl, 'artists', draft, !pending)
+  const libraryColumns: ArtistColumn[] = [
+    ...artistColumns,
+    {
+      key: listeningScrobblesKey,
+      label: listeningScrobblesField(query.listeningSort).label,
+      defaultVisible: false,
+      align: 'end',
+    },
+  ]
+  const columns = useTableColumns('artist-metadata-selection', [
+    ...libraryColumns,
+    ...providers.map((provider) => ({
+      key: `provider-${provider}`,
+      label: `${artistProviderLabels[provider]} · Last scraped`,
+    })),
+  ])
+  // The period is read only for its column or sort.
+  const listeningSort =
+    query.sortBy === listeningScrobblesKey ||
+    columns.visible(listeningScrobblesKey)
+      ? (query.listeningSort ?? defaultListeningPeriod)
+      : undefined
+  // The histogram counts the library under the browse filters alone.
+  const listeningParams = new URLSearchParams({
+    q,
+    filters: JSON.stringify(query.filters),
+    ranges: JSON.stringify(query.ranges),
+    ...playlist.filters,
+  })
   const params = new URLSearchParams({
     q,
     sortBy: query.sortBy,
@@ -149,6 +189,8 @@ export default function ArtistMetadataTable({
       ? {}
       : { limitResults: String(query.limitResults) }),
     ...(query.provider ? { provider: query.provider } : {}),
+    ...(query.listening ? { listening: JSON.stringify(query.listening) } : {}),
+    ...(listeningSort ? { listeningSort: JSON.stringify(listeningSort) } : {}),
     ...playlist.filters,
   })
   const identity = params.toString()
@@ -159,7 +201,8 @@ export default function ArtistMetadataTable({
     generation.current += 1
   }
   const countParams = new URLSearchParams(params)
-  for (const key of ['sortBy', 'direction', 'provider']) countParams.delete(key)
+  for (const key of ['sortBy', 'direction', 'provider', 'listeningSort'])
+    countParams.delete(key)
   const countIdentity = countParams.toString()
   const catalog = useSourceCatalog()
   const available = (catalog.data ?? []).filter(
@@ -206,14 +249,7 @@ export default function ArtistMetadataTable({
         : false,
   })
   const artists = counted.window
-  const columns = useTableColumns('artist-metadata-selection', [
-    ...artistColumns,
-    ...providers.map((provider) => ({
-      key: `provider-${provider}`,
-      label: `${artistProviderLabels[provider]} · Last scraped`,
-    })),
-  ])
-  const visible = artistColumns.filter((column) => columns.visible(column.key))
+  const visible = libraryColumns.filter((column) => columns.visible(column.key))
   const visibleProviders = providers.filter((provider) =>
     columns.visible(`provider-${provider}`),
   )
@@ -417,6 +453,7 @@ export default function ArtistMetadataTable({
           filters: query.filters,
           ranges: query.ranges,
           limitResults: query.limitResults,
+          listening: query.listening,
         }}
         otherFiltersActive={
           query.playlistIds.length > 0 || query.freshness.length > 0
@@ -440,6 +477,7 @@ export default function ArtistMetadataTable({
               next.limitResults === undefined
                 ? null
                 : String(next.limitResults),
+            listening: next.listening ? JSON.stringify(next.listening) : null,
           })
         }
         onClear={() =>
@@ -450,6 +488,7 @@ export default function ArtistMetadataTable({
             playlistIds: null,
             freshness: null,
             limitResults: null,
+            listening: null,
           })
         }
         search={
@@ -551,7 +590,33 @@ export default function ArtistMetadataTable({
           )
         }
         columns={columns.controls}
-      />
+      >
+        <ListeningControls
+          apiBaseUrl={apiBaseUrl}
+          library="artist"
+          params={listeningParams}
+          filter={query.listening}
+          sortPeriod={query.listeningSort}
+          total={artists.hasTotal ? artists.total : undefined}
+          examples={artists.loadedSlots.slice(0, 3).map(({ item }) => ({
+            id: item.id,
+            title: item.name,
+            artworkUrl: item.artworkUrl,
+            by: formatItemCount(item.albumCount, {
+              one: 'album',
+              other: 'albums',
+            }),
+          }))}
+          onFilterChange={(listening) =>
+            setParams({
+              listening: listening ? JSON.stringify(listening) : null,
+            })
+          }
+          onSortPeriodChange={(period) =>
+            setParams({ listeningSort: JSON.stringify(period) })
+          }
+        />
+      </MetadataSelectionToolbar>
       {(artists.isError ||
         catalog.isError ||
         createSnapshot.isError ||
@@ -788,7 +853,9 @@ export default function ArtistMetadataTable({
                             ? artist.albumCount
                             : column.key === 'trackCount'
                               ? artist.trackCount
-                              : artist.playlistCount,
+                              : column.key === listeningScrobblesKey
+                                ? (artist.listeningScrobbles ?? 0)
+                                : artist.playlistCount,
                         )
                       )}
                     </TableCell>

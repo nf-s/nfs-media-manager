@@ -422,13 +422,15 @@ describe('AI search interpretation', () => {
 })
 
 describe('AI track search', () => {
-  it('states the track sort default and forbids listening rules and caps in the prompt', () => {
+  it('states the track sort default, period listening rules and no caps in the prompt', () => {
     const prompt = aiSearchPrompt('track', now)
     expect(prompt).toContain('read-only track library search')
     expect(prompt).toContain('Use dateAdded desc by default')
     expect(prompt).toContain(
-      'Track plans MUST have listening:null, listeningSort:null and limitResults:null',
+      'A scrobble count within a period MUST use listening rules',
     )
+    expect(prompt).toContain('sortBy:"listeningScrobbles"')
+    expect(prompt).toContain('Track results cannot be capped')
     expect(prompt).toContain('"key":"albumLink"')
     expect(prompt).not.toContain('ratingRymValue')
   })
@@ -470,6 +472,53 @@ describe('AI track search', () => {
     expect(mocks.sync).not.toHaveBeenCalled()
   })
 
+  it('applies track listening rules and a period sort after a completed sync', async () => {
+    const expected = plan({
+      listening: {
+        match: 'all',
+        rules: [
+          { period: { kind: 'rolling', amount: 1, unit: 'years' }, max: 0 },
+          { period: { kind: 'all' }, min: 100 },
+        ],
+      },
+      sortBy: 'listeningScrobbles',
+      listeningSort: { kind: 'rolling', amount: 5, unit: 'years' },
+    })
+    mocks.text.mockResolvedValue(completion(interpretation(expected)))
+    const result = await interpretAiSearch(
+      {
+        mediaType: 'track',
+        text: 'Tracks I played a lot but not in the last year, most played in the last five years first',
+      },
+      now,
+    )
+    expect(result.plan).toEqual(expected)
+    expect(result.warnings).toEqual([
+      expect.stringContaining('linked to library tracks'),
+    ])
+    expect(mocks.sync).toHaveBeenCalledOnce()
+  })
+
+  it('keeps listening rules and the period sort out of Tracks Matches', () => {
+    const prompt = aiSearchPrompt('track', now, 'matches')
+    expect(prompt).toContain(
+      'Track plans MUST have listening:null and listeningSort:null',
+    )
+    for (const search of [
+      plan({
+        sortBy: 'title',
+        listening: {
+          match: 'all',
+          rules: [{ period: { kind: 'all' }, max: 0 }],
+        },
+      }),
+      plan({ sortBy: 'listeningScrobbles', listeningSort: { kind: 'all' } }),
+    ])
+      expect(() => validateAiPlan(search, 'track', 'matches')).toThrow(
+        'unsupported search',
+      )
+  })
+
   it('does not apply a track scrobble plan without a completed history sync', async () => {
     mocks.sync.mockResolvedValue({ state: 'running', lastCompletedAt: null })
     mocks.text.mockResolvedValue(
@@ -490,11 +539,9 @@ describe('AI track search', () => {
   })
 
   it.each([
-    plan({
-      listening: { match: 'all', rules: [{ period: { kind: 'all' }, max: 0 }] },
-    }),
+    plan({ listening: { match: 'all', rules: [] } }),
     plan({ listeningSort: { kind: 'all' } }),
-    plan({ sortBy: 'listeningScrobbles', listeningSort: { kind: 'all' } }),
+    plan({ sortBy: 'listeningScrobbles' }),
     plan({ limitResults: 10 }),
     plan({ sortBy: 'scrobblesLast1y' }),
     plan({ sortBy: 'ratingRymValue' }),
@@ -503,7 +550,7 @@ describe('AI track search', () => {
       ranges: [{ field: 'scrobblesLast5y', min: 1, includeMissing: false }],
     }),
   ])(
-    'rejects listening rules, caps and unsupported fields on tracks',
+    'rejects incomplete listening plans, caps and unsupported fields on tracks',
     (search) => {
       expect(() => validateAiPlan(search, 'track')).toThrow(
         'unsupported search',
@@ -521,6 +568,10 @@ describe('AI artist search', () => {
     expect(prompt).toContain('"key":"albumCount"')
     expect(prompt).toContain("never plays or an artist's complete discography")
     expect(prompt).toContain('scrape freshness are not artist search fields')
+    expect(prompt).toContain(
+      'personal listening MUST use listening rules, never the scrobbles range or sort',
+    )
+    expect(prompt).toContain('sortBy:"listeningScrobbles"')
     expect(prompt).not.toContain('ratingRymValue')
   })
 
@@ -560,12 +611,68 @@ describe('AI artist search', () => {
     expect(mocks.plugins).not.toHaveBeenCalled()
   })
 
+  it('applies artist listening rules and a period sort after a completed sync', async () => {
+    const expected = plan({
+      listening: {
+        match: 'any',
+        rules: [
+          { period: { kind: 'rolling', amount: 6, unit: 'months' }, min: 50 },
+          {
+            period: { kind: 'dates', from: '2020-01-01', to: '2020-12-31' },
+            min: 200,
+          },
+        ],
+      },
+      sortBy: 'listeningScrobbles',
+      direction: 'desc',
+      listeningSort: { kind: 'rolling', amount: 6, unit: 'months' },
+      limitResults: 20,
+    })
+    mocks.text.mockResolvedValue(completion(interpretation(expected)))
+    const result = await interpretAiSearch(
+      {
+        mediaType: 'artist',
+        text: 'The 20 artists I played most in the last six months',
+      },
+      now,
+    )
+    expect(result.plan).toEqual(expected)
+    expect(result.warnings).toEqual([
+      expect.stringContaining('credited to the artist'),
+    ])
+    expect(mocks.sync).toHaveBeenCalledOnce()
+  })
+
+  it('does not apply an artist listening plan without a completed history sync', async () => {
+    mocks.sync.mockResolvedValue({ state: 'running', lastCompletedAt: null })
+    mocks.text.mockResolvedValue(
+      completion(
+        interpretation(
+          plan({
+            sortBy: 'name',
+            direction: 'asc',
+            listening: {
+              match: 'all',
+              rules: [{ period: { kind: 'all' }, max: 0 }],
+            },
+          }),
+        ),
+      ),
+    )
+    const result = await interpretAiSearch(
+      { mediaType: 'artist', text: 'Artists I have never played' },
+      now,
+    )
+    expect(result.plan).toBeNull()
+    expect(result.explanation).toContain('Complete the Last.fm history sync')
+  })
+
   it.each([
-    {
-      listening: { match: 'all', rules: [{ period: { kind: 'all' }, max: 0 }] },
-    },
+    { listening: { match: 'all', rules: [] } },
     { listeningSort: { kind: 'all' } },
+    { sortBy: 'listeningScrobbles' },
     { sortBy: 'scrobbles' },
+    { ranges: [{ field: 'scrobbles', max: 0, includeMissing: false }] },
     { sortBy: 'ratingRymValue' },
     { filters: [{ field: 'album', value: 'Example album' }] },
     { ranges: [{ field: 'lastScrapedAt', max: 1000, includeMissing: false }] },
