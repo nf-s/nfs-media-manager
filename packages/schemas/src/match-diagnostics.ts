@@ -143,17 +143,38 @@ const AlbumMetacriticEvidenceSchema = z
     },
   )
 
+const AlbumMetacriticRejectionTargetSchema =
+  AlbumMatchRejectionInputSchema.extend({
+    provider: z.literal('google-custom-search'),
+    sourceProvider: z.enum([
+      'google-custom-search',
+      'legacy-record',
+      'legacy-browser',
+    ]),
+    referenceType: z.literal('metacritic-url'),
+  })
+
+export const AlbumMetacriticCandidatesInputSchema = z.strictObject({
+  rejected: AlbumMetacriticRejectionTargetSchema,
+})
+export type AlbumMetacriticCandidatesInput = z.infer<
+  typeof AlbumMetacriticCandidatesInputSchema
+>
+
+export const AlbumMetacriticCandidateSchema = z.object({
+  url: AlbumMetacriticUrlSchema,
+  title: z.string().min(1).max(1000),
+  description: z.string().max(4000),
+  indexedDate: z.iso.date().optional(),
+})
+
+export const AlbumMetacriticCandidatesSchema = z.object({
+  items: z.array(AlbumMetacriticCandidateSchema).max(10),
+})
+
 export const AlbumMetacriticCorrectionInputSchema = z
   .strictObject({
-    rejected: AlbumMatchRejectionInputSchema.extend({
-      provider: z.literal('google-custom-search'),
-      sourceProvider: z.enum([
-        'google-custom-search',
-        'legacy-record',
-        'legacy-browser',
-      ]),
-      referenceType: z.literal('metacritic-url'),
-    }),
+    rejected: AlbumMetacriticRejectionTargetSchema,
     replacement: z.strictObject({
       url: AlbumMetacriticUrlSchema,
       title: z.string().trim().min(1).max(1000),

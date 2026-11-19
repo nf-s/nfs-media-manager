@@ -6,6 +6,7 @@ const listMediaMatchDiagnostics = vi.fn()
 const rejectAlbumMatch = vi.fn()
 const listAlbumMatchRejections = vi.fn()
 const correctAlbumMetacriticMatch = vi.fn()
+const searchAlbumMetacriticCandidates = vi.fn()
 
 function mockAppSession(authenticated: boolean) {
   vi.doMock('@/env', () => ({
@@ -61,6 +62,7 @@ function mockAppSession(authenticated: boolean) {
   }))
   vi.doMock('@/services/album-metacritic-corrections', () => ({
     correctAlbumMetacriticMatch,
+    searchAlbumMetacriticCandidates,
   }))
 }
 
@@ -74,6 +76,7 @@ describe('albums api', () => {
     rejectAlbumMatch.mockReset()
     listAlbumMatchRejections.mockReset()
     correctAlbumMetacriticMatch.mockReset()
+    searchAlbumMetacriticCandidates.mockReset()
   })
 
   const rejectionEndpoint = '/api/v1/albums/album-fixture/match-rejections'
@@ -92,6 +95,51 @@ describe('albums api', () => {
       body: JSON.stringify(body),
     }
   }
+
+  it('validates authorization and the exact Metacritic candidate search selector', async () => {
+    const endpoint = '/api/v1/albums/album-fixture/metacritic-candidates'
+    const selector = {
+      rejected: {
+        ...rejectionTarget,
+        referenceType: 'metacritic-url',
+        identifier: 'https://www.metacritic.com/music/rejected-fixture',
+      },
+    }
+    mockAppSession(false)
+    const { default: unauthenticated } = await import('@/app')
+    expect(
+      (await unauthenticated.request(endpoint, rejectRequest(selector))).status,
+    ).toBe(401)
+    vi.resetModules()
+    mockAppSession(true)
+    const { default: app } = await import('@/app')
+    expect(
+      (
+        await app.request(
+          endpoint,
+          rejectRequest({ rejected: rejectionTarget }),
+        )
+      ).status,
+    ).toBe(422)
+    expect(
+      (
+        await app.request(
+          endpoint,
+          rejectRequest({ ...selector, query: 'arbitrary search' }),
+        )
+      ).status,
+    ).toBe(422)
+    expect(searchAlbumMetacriticCandidates).not.toHaveBeenCalled()
+    searchAlbumMetacriticCandidates.mockResolvedValue({ items: [] })
+    const response = await app.request(endpoint, rejectRequest(selector))
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ data: { items: [] } })
+    expect(searchAlbumMetacriticCandidates).toHaveBeenCalledExactlyOnceWith(
+      'album-fixture',
+      selector,
+    )
+    expect(correctAlbumMetacriticMatch).not.toHaveBeenCalled()
+  })
 
   it('requires authorization and an observed Metacritic release URL for a correction', async () => {
     const endpoint = '/api/v1/albums/album-fixture/metacritic-correction'
