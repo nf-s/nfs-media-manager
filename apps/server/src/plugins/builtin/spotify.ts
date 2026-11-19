@@ -20,7 +20,7 @@ const artistKey = (names: string[]) =>
   JSON.stringify([...new Set(names.map(nameKey))].sort())
 const quoteSearchValue = (value: string) => `"${value.replace(/["\\]/g, ' ')}"`
 
-function spotifyMarket(
+export function spotifyMarket(
   secrets: Record<string, string>,
 ): Record<string, string> {
   const market = secrets['market']

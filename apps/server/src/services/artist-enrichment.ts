@@ -31,7 +31,11 @@ import {
   resolveLegacyArtistRelationships,
   saveArtistProviderResult,
 } from './artist-profiles'
-import { listStoredArtistProviderCandidates } from './artist-provider-evidence'
+import {
+  listSpotifyArtistRecordings,
+  listStoredArtistProviderCandidates,
+} from './artist-provider-evidence'
+import { listArtistScrobbledTitles } from './artist-listening'
 import { createTaskJob, type TaskJobContext, type TaskJobResult } from './jobs'
 import {
   createProviderRequest,
@@ -221,6 +225,15 @@ export async function runArtistEnrichment(
       request: createProviderRequest(plugin, context.assertActive),
       recordDiagnostic: diagnostics.recordDiagnostic,
       searched: () => context.progress({ pagesRead: 1, totalPages }),
+      ...(builtin === 'lastfm' && !id
+        ? {
+            loadLastfmRecordings: () =>
+              listArtistScrobbledTitles(db, artistId, target.name),
+          }
+        : {}),
+      ...(builtin === 'spotify' && !id
+        ? { spotifyRecordings: await listSpotifyArtistRecordings(artistId) }
+        : {}),
     }
     const lookup = builtin
       ? lookupArtistProvider(builtin, target.name, id, requestContext)

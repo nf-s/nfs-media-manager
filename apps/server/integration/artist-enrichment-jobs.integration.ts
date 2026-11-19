@@ -24,6 +24,7 @@ import {
 } from '@repo/media-plugin-sdk'
 import { env } from '@/env'
 import { musicbrainzPlugin } from '@/plugins/builtin/musicbrainz'
+import { spotifyPlugin } from '@/plugins/builtin/spotify'
 import * as schema from '@/schemas/db'
 
 const database = 'artist_jobs_' + randomUUID().replaceAll('-', '')
@@ -61,27 +62,30 @@ vi.mock('@/lib/db', () => ({
 }))
 vi.mock('@/plugins/registry', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/plugins/registry')>()),
-  getScrapePlugin: async (id: string) =>
-    id === 'musicbrainz'
-      ? {
-          ...musicbrainzPlugin,
-          manifest: {
-            ...musicbrainzPlugin.manifest,
-            rateLimit: {
-              ...musicbrainzPlugin.manifest.rateLimit,
-              minTimeMs: 0,
-            },
-          },
-        }
-      : id === fixturePlugin.manifest.id
-        ? fixturePlugin
-        : null,
+  getScrapePlugin: async (id: string) => {
+    if (id === fixturePlugin.manifest.id) return fixturePlugin
+    const plugin = [musicbrainzPlugin, spotifyPlugin].find(
+      ({ manifest }) => manifest.id === id,
+    )
+    return (
+      plugin && {
+        ...plugin,
+        manifest: {
+          ...plugin.manifest,
+          rateLimit: { ...plugin.manifest.rateLimit, minTimeMs: 0 },
+        },
+      }
+    )
+  },
 }))
 vi.mock('@/lib/provider-secrets', () => ({
   resolveProviderSecrets: () => ({
     appName: 'OfflineFixture',
     appVersion: '2.0',
     contact: 'offline@example.test',
+    clientId: 'fixture-client',
+    clientSecret: 'fixture-client-secret',
+    market: 'AU',
   }),
 }))
 
@@ -92,6 +96,12 @@ const duplicateMbid = '22222222-2222-4222-8222-222222222222'
 const spotifyAlbumId = '0123456789abcdefghijkl'
 const spotifyTrackId = '0123456789abcdefghijkm'
 const spotifyArtistId = '0123456789abcdefghijkn'
+const duplicateSpotifyArtistId = '0123456789abcdefghijko'
+const spotifyRecordings = [
+  { spotifyTrackId, title: 'Fixture Recording A' },
+  { spotifyTrackId: '0123456789abcdefghijkp', title: 'Fixture Recording B' },
+  { spotifyTrackId: '0123456789abcdefghijkq', title: 'Fixture Recording C' },
+]
 const artistProfile = {
   id: artistMbid,
   name: artistName,
@@ -111,6 +121,25 @@ async function seedArtistAlbum(id: string, targetArtist = artistId) {
     artistId: targetArtist,
     role: 'artist',
   })
+}
+
+async function seedArtistRecording(
+  id: string,
+  spotifyTrackId: string,
+  title: string,
+) {
+  await databaseClient.insert(schema.mediaItem).values({
+    id,
+    slug: id,
+    title,
+    mediaType: 'track',
+  })
+  await databaseClient
+    .insert(schema.libraryTrack)
+    .values({ mediaItemId: id, spotifyTrackId })
+  await databaseClient
+    .insert(schema.mediaCredit)
+    .values({ mediaItemId: id, artistId, role: 'artist' })
 }
 
 async function providerEvidence(
@@ -1353,6 +1382,85 @@ describe('artist enrichment through queued jobs and stored evidence', () => {
     expect(await databaseClient.select().from(schema.providerSnapshot)).toEqual(
       [],
     )
+  })
+
+  it('identifies an otherwise ambiguous Spotify artist from two distinct recordings', async () => {
+    const { enqueueArtistEnrichment } =
+      await import('@/services/artist-enrichment')
+    const { getJob, processQueuedJobs } = await import('@/services/jobs')
+    for (const recording of spotifyRecordings)
+      await seedArtistRecording(
+        recording.spotifyTrackId,
+        recording.spotifyTrackId,
+        recording.title,
+      )
+    const profile = { id: spotifyArtistId, name: artistName, type: 'artist' }
+    request.mockImplementation(async (url) => {
+      const requestUrl = new URL(String(url))
+      const path = requestUrl.pathname
+      if (path === '/api/token')
+        return Response.json({
+          access_token: 'fixture-token',
+          token_type: 'Bearer',
+          expires_in: 3600,
+        })
+      if (path === '/v1/search')
+        return Response.json({
+          artists: {
+            total: 2,
+            items: [profile, { ...profile, id: duplicateSpotifyArtistId }],
+          },
+        })
+      if (path === '/v1/artists/' + spotifyArtistId)
+        return Response.json(profile)
+      const recording = spotifyRecordings.find(
+        ({ spotifyTrackId }) => path === '/v1/tracks/' + spotifyTrackId,
+      )
+      if (recording) {
+        expect(requestUrl.searchParams.get('market')).toBe('AU')
+        return Response.json({
+          id: recording.spotifyTrackId,
+          name: recording.title,
+          artists: [
+            { id: duplicateSpotifyArtistId, name: 'Fixture Collaborator' },
+            profile,
+          ],
+        })
+      }
+      throw new Error('Unexpected request')
+    })
+    const queued = await enqueueArtistEnrichment(
+      { provider: 'spotify', artistId },
+      null,
+    )
+    await processQueuedJobs()
+    expect(await getJob(queued.id)).toMatchObject({ status: 'succeeded' })
+    expect(
+      request.mock.calls.map(([url]) => new URL(String(url)).pathname),
+    ).toEqual([
+      '/api/token',
+      ...spotifyRecordings
+        .slice(0, 2)
+        .map(({ spotifyTrackId }) => '/v1/tracks/' + spotifyTrackId),
+      '/v1/artists/' + spotifyArtistId,
+    ])
+    const [snapshot] = await databaseClient
+      .select()
+      .from(schema.artistProviderSnapshot)
+    expect(snapshot).toMatchObject({
+      artistId,
+      scrapeJobId: queued.id,
+      normalizedData: { externalId: spotifyArtistId },
+      payload: {
+        artist: profile,
+        recordingVerification: spotifyRecordings
+          .slice(0, 2)
+          .map((recording) => ({ ...recording, artistId: spotifyArtistId })),
+      },
+    })
+    expect(
+      await databaseClient.select().from(schema.libraryTrack),
+    ).toHaveLength(3)
   })
 
   it('retains conflicting linked IDs as job diagnostics and lets a direct correction bypass the conflict', async () => {

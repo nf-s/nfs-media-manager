@@ -6,15 +6,18 @@ import {
   type ArtistProviderId,
   type ArtistProviderSnapshot,
 } from '@repo/schemas/artist-profiles'
+import { spotifyIdPattern } from '@repo/schemas/playback'
 import { sql, type SQL } from 'drizzle-orm'
 import { z } from 'zod'
 import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
+import { SpotifyIdSchema } from '@/lib/spotify-api'
 import { listCurrentArtistProfiles } from './artist-profiles'
 import {
   artistNameKey,
   artistSearchNameMatches,
   normalizeArtistProviderId,
+  spotifyArtistRecordingLimit,
   type ArtistCandidate,
 } from '@/plugins/builtin/artist-providers'
 
@@ -272,6 +275,31 @@ export async function listStoredArtistProviderCandidates(
     }
   }
   return values
+}
+
+const SpotifyArtistRecordingRowsSchema = z.array(
+  z.object({
+    spotifyTrackId: SpotifyIdSchema,
+    title: z.string().trim().min(1),
+  }),
+)
+
+/** Only visible library recordings with native Spotify track IDs can verify an artist credit. */
+export async function listSpotifyArtistRecordings(artistId: string) {
+  const { rows } = await db.execute(sql`
+    select track.spotify_track_id as "spotifyTrackId", m.title
+    from media_credit c
+    join media_item m on m.id = c.media_item_id
+    join library_track track on track.media_item_id = m.id
+    where c.artist_id = ${artistId} and c.role = 'artist'
+      and m.media_type = 'track'
+      and m.metadata->>'legacyHidden' is distinct from 'true'
+      and m.title ~ '[^[:space:]]'
+      and track.spotify_track_id collate "C" ~ ${spotifyIdPattern.source}
+    order by track.spotify_track_id
+    limit ${spotifyArtistRecordingLimit}
+  `)
+  return SpotifyArtistRecordingRowsSchema.parse(rows)
 }
 
 export function identifierUrl(provider: ArtistProfileProvider, id: string) {

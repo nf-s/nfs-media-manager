@@ -137,6 +137,20 @@ async function ids(input: z.input<typeof ArtistQuerySchema>) {
 }
 
 describe('artist listening rules', () => {
+  it('reads distinct recording titles from the artist’s own linked listens', async () => {
+    const { listArtistScrobbledTitles } =
+      await import('@/services/artist-listening')
+    expect(
+      await listArtistScrobbledTitles(database, 'artist-a', 'Fixture artist A'),
+    ).toEqual(['fixture track a', 'fixture other a'])
+    expect(
+      await listArtistScrobbledTitles(database, 'artist-c', 'Fixture artist C'),
+    ).toEqual(['fixture track c'])
+    expect(
+      await listArtistScrobbledTitles(database, 'artist-b', 'Fixture artist A'),
+    ).toEqual([])
+  })
+
   it('counts each linked scrobble once and zero for artists without any', async () => {
     expect(
       await ids({
