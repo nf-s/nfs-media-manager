@@ -1120,7 +1120,7 @@ describe('temporary Postgres tag provenance and media-scoped merges', () => {
       {
         field: 'genre',
         value: 'cross kind',
-        label: 'Tags: cross kind',
+        label: 'Tags: Cross Kind',
         count: 2,
       },
     ])
