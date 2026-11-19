@@ -797,7 +797,7 @@ export const providerResponse = pgTable(
     provider: text('provider').notNull(),
     attempt: integer('attempt').notNull(),
     ordinal: integer('ordinal').notNull(),
-    phase: text('phase', { enum: ['media', 'artist'] }).notNull(),
+    phase: text('phase', { enum: ['media', 'artist', 'task'] }).notNull(),
     method: text('method').notNull(),
     requestUrl: text('request_url'),
     requestKey: text('request_key'),

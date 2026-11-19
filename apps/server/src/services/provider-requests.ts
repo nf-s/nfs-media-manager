@@ -1232,6 +1232,11 @@ export function createProviderRequest(
               paired,
             )
             const diagnosticBody = (() => {
+              if (configuration.beginResponseCapture?.scopedBodyPolicy)
+                return {
+                  state: 'unavailable',
+                  reason: 'policy',
+                } satisfies CapturedProviderBody
               if (recordingResponse && transport)
                 return {
                   state: 'unavailable',

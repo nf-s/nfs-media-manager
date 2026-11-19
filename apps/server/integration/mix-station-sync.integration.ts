@@ -1,4 +1,7 @@
 import { randomUUID } from 'node:crypto'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import pg from 'pg'
 import { and, eq, sql } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/node-postgres'
@@ -85,11 +88,15 @@ vi.mock('@/plugins/registry', async () => {
 })
 // The stations are read through fake adapters that request the fixture hosts
 // through the real request gate.
-vi.mock('@/lib/mix-stations', () => ({
-  get mixStationAdapters() {
-    return adapters
-  },
-}))
+const useRealStationAdapters = vi.hoisted(() => ({ enabled: false }))
+vi.mock('@/lib/mix-stations', async (importOriginal) => {
+  const real = await importOriginal<typeof import('@/lib/mix-stations')>()
+  return {
+    get mixStationAdapters() {
+      return useRealStationAdapters.enabled ? real.mixStationAdapters : adapters
+    },
+  }
+})
 // Two steps per job, so longer syncs chain follow-on jobs.
 vi.mock('@/services/mix-station-sync', async (importOriginal) => {
   const actual =
@@ -102,7 +109,7 @@ vi.mock('@/services/mix-station-sync', async (importOriginal) => {
     ) =>
       actual.runMixStationSyncJob(station, context, {
         maxSteps: 2,
-        adapter: adapters[station],
+        adapter: useRealStationAdapters.enabled ? undefined : adapters[station],
       }),
   }
 })
@@ -522,6 +529,7 @@ beforeAll(async () => {
   await migrate(databaseClient, { migrationsFolder: './drizzle' })
 })
 beforeEach(async () => {
+  useRealStationAdapters.enabled = false
   fixtures.rinse = rinseLibrary()
   fixtures.lotradio = lotRadioLibrary()
   Object.assign(api, {
@@ -557,6 +565,73 @@ afterAll(async () => {
 })
 
 describe('mix station sync jobs with offline HTTP and a temporary database', () => {
+  it('stores exact station task evidence and replays it without touching the station or library', async () => {
+    useRealStationAdapters.enabled = true
+    const text = '{ "entries": [], "futureNumber": 9007199254740993123 }'
+    request.mockImplementation(async (url) => {
+      if (
+        String(url) !==
+        'https://www.rinse.fm/api/query/v1/shows/filter?offset=0'
+      )
+        throw new Error('Unexpected fixture request')
+      return new Response(text, {
+        headers: { 'content-type': 'application/json' },
+      })
+    })
+    await syncToEnd()
+    const [job] = await syncJobs()
+    expect(job?.status).toBe('succeeded')
+    if (!job) throw new Error('Missing station fixture job')
+    const { readProviderResponseAttempt } =
+      await import('@/services/provider-response-history')
+    const rows = await readProviderResponseAttempt({
+      jobId: job.id,
+      jobItemId: null,
+      attempt: 1,
+    })
+    expect(rows).toMatchObject([
+      {
+        artistId: null,
+        capture: {
+          phase: 'task',
+          ordinal: 1,
+          response: { body: { state: 'captured', text, redacted: false } },
+        },
+      },
+    ])
+    expect(job.options['providerReplaySteps']).toMatchObject([
+      {
+        operation: 'listShows',
+        args: { page: null, at: expect.any(String) },
+      },
+    ])
+    const { runProviderReplayCommand } =
+      await import('../scripts/replay-provider-response')
+    const directory = await mkdtemp(join(tmpdir(), 'fixture-station-replay-'))
+    try {
+      const filename = join(directory, 'report.json')
+      await runProviderReplayCommand([
+        'replay',
+        '--job',
+        job.id,
+        '--task',
+        '--attempt',
+        '1',
+        '--output',
+        filename,
+      ])
+      expect(JSON.parse(await readFile(filename, 'utf8'))).toMatchObject({
+        task: 'rinse-mix-sync',
+        provider: 'rinse',
+        result: [{ entries: [], next: null }],
+      })
+      expect(request).toHaveBeenCalledTimes(1)
+      expect(await databaseClient.$count(schema.subscriptionItem)).toBe(0)
+    } finally {
+      await rm(directory, { recursive: true })
+    }
+  })
+
   it('reads the catalogue and every show as chained jobs on the first run', async () => {
     expect((await status()).account).toEqual({
       configured: true,

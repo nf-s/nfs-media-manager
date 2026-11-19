@@ -25,6 +25,19 @@ type RequestInput = Parameters<MediaPluginTestContext['request']>
 type RequestIdentity = ProviderResponseCapture['request']
 type ResponseEvidence = ProviderResponseCapture['response']
 type CaptureBody = ResponseEvidence['body']
+type PublicArchiveRequest = {
+  readOnlyBody?: readonly (string | number | boolean | null)[]
+  sanitizeBody?: (
+    body: CaptureBody,
+    contentType: string | null,
+    secrets: readonly string[],
+  ) => CaptureBody
+}
+export type PublicProviderCapturePolicy = (
+  url: URL,
+  init?: RequestInit,
+) => PublicArchiveRequest | null
+
 type ArchiveSanitizer = (input: {
   contentType: string | null
   text: string
@@ -79,9 +92,12 @@ function requestSecrets(
 function requestDescriptor(
   [input, init, options]: RequestInput,
   configuredSecrets: readonly string[],
+  capturePolicy?: PublicProviderCapturePolicy,
 ) {
   const url = new URL(input)
   const method = (init?.method ?? 'GET').toUpperCase()
+  const policyMatch = capturePolicy?.(url, init)
+  if (capturePolicy && !policyMatch) return null
   if (
     /^(?:accounts|oauth|auth)\./i.test(url.hostname) ||
     accountPath.test(url.pathname)
@@ -103,7 +119,7 @@ function requestDescriptor(
     url.password ||
     scrubText(path, secrets) !== path
   )
-    return { identity: { method, url: null, key: null }, secrets }
+    return { identity: { method, url: null, key: null }, secrets, policyMatch }
   url.hash = ''
   url.searchParams.sort()
   const entries = [...url.searchParams]
@@ -119,8 +135,8 @@ function requestDescriptor(
   const safeHeaders = trafficHeaders.map((name) => headers.get(name))
   const replayable =
     known &&
-    (method === 'GET' || method === 'HEAD') &&
-    init?.body == null &&
+    (((method === 'GET' || method === 'HEAD') && init?.body == null) ||
+      (method === 'POST' && policyMatch?.readOnlyBody !== undefined)) &&
     safeHeaders.every(
       (value) => value === null || !containsSecret(value, secrets),
     )
@@ -139,12 +155,13 @@ function requestDescriptor(
               safeHeaders,
               options?.notFoundOn404 === true,
               options?.requireLocalTransport === true,
+              ...(policyMatch?.readOnlyBody ? [policyMatch.readOnlyBody] : []),
             ]),
           )
           .digest('hex')
       : null,
   }
-  return { identity, secrets }
+  return { identity, secrets, policyMatch }
 }
 
 export function pairedProviderResponseCapture(result: unknown) {
@@ -196,6 +213,7 @@ export function createProviderResponseRecorder(
   secrets: readonly string[],
   sanitizeResponseCapture?: ArchiveSanitizer,
   sanitizeNativeJsonResponseCapture?: MediaProviderPlugin['sanitizeNativeJsonResponseCapture'],
+  capturePolicy?: PublicProviderCapturePolicy,
 ) {
   let ordinal = 0
   let retainedBytes = 0
@@ -209,7 +227,7 @@ export function createProviderResponseRecorder(
   ) => {
     const begin = (...request: RequestInput) => {
       try {
-        const descriptor = requestDescriptor(request, secrets)
+        const descriptor = requestDescriptor(request, secrets, capturePolicy)
         if (!descriptor) return undefined
         const nextOrdinal = ++ordinal
         return async (
@@ -283,11 +301,10 @@ export function createProviderResponseRecorder(
               !sanitizeResponseCapture ||
               !body.redacted)
           ) {
-            body = sanitizeProviderResponseBody(
-              body,
-              contentType,
-              descriptor.secrets,
-            )
+            const sanitize =
+              descriptor.policyMatch?.sanitizeBody ??
+              sanitizeProviderResponseBody
+            body = sanitize(body, contentType, descriptor.secrets)
           }
           if (body.state === 'captured') {
             const size = Buffer.byteLength(body.text)
@@ -324,7 +341,10 @@ export function createProviderResponseRecorder(
         return undefined
       }
     }
-    return Object.assign(begin, { assertStored })
+    return Object.assign(begin, {
+      assertStored,
+      scopedBodyPolicy: capturePolicy !== undefined,
+    })
   }
   return Object.assign(forPhase, { assertStored, storageError: () => failure })
 }
@@ -339,6 +359,7 @@ export type BeginProviderResponseCapture = ReturnType<
  */
 type ReplayOptions = {
   secrets?: readonly string[]
+  capturePolicy?: PublicProviderCapturePolicy
   projectNativeResponse?: (
     archive: ProviderResponseCapture,
     input: RequestInput[0],
@@ -381,7 +402,11 @@ export function createProviderResponseReplay(
           expires_in: 3600,
         })
       }
-      const descriptor = requestDescriptor(parameters, options.secrets ?? [])
+      const descriptor = requestDescriptor(
+        parameters,
+        options.secrets ?? [],
+        options.capturePolicy,
+      )
       const capture = archive[next]
       const key = descriptor?.identity.key
       if (!key || !capture || (phase !== undefined && capture.phase !== phase))

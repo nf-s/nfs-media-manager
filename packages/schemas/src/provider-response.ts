@@ -34,7 +34,7 @@ const requestUrl = z
   }, 'Expected an HTTP URL without credentials, query or fragment')
   .nullable()
 
-const phase = z.enum(['media', 'artist'])
+const phase = z.enum(['media', 'artist', 'task'])
 const status = z.number().int().min(100).max(599).nullable()
 const receivedAt = z.string().datetime().nullable()
 

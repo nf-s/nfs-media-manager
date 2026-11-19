@@ -5,6 +5,7 @@ import { z } from 'zod'
 import { ProviderRequestError } from '@repo/media-plugin-sdk'
 import {
   MixIdSchema,
+  MIX_STATION_SYNC_TASKS,
   MixShowIdSchema,
   type MixStation,
   type SubscriptionSyncSchedule,
@@ -18,6 +19,11 @@ import type {
   StationRequest,
   StationShow,
 } from '@/lib/mix-station'
+import { mixStationCapturePolicy } from '@/lib/mix-station-archive'
+import {
+  createProviderResponseRecorder,
+  ProviderResponseStorageError,
+} from '@/lib/provider-response-history'
 import { mixStationAdapters } from '@/lib/mix-stations'
 import { mixStationPlugins } from '@/plugins/builtin/mix-stations'
 import {
@@ -34,6 +40,12 @@ import {
   recordProviderFailure,
   recordProviderSuccess,
 } from './provider-requests'
+import { saveProviderResponseCapture } from './provider-response-history'
+import {
+  appendProviderTaskReplayStep,
+  type ProviderTaskReplayStep,
+} from './provider-task-replay'
+import { validateMixStationStep } from './mix-station-replay'
 import { subscriptionSearchVector } from './subscription-library'
 import {
   dueSubscriptionSyncUsers,
@@ -688,6 +700,61 @@ async function syncFeedPage(
   return step
 }
 
+function recordStationAdapter(
+  adapter: MixStationAdapter,
+  jobId: string,
+  assertActive: () => Promise<void>,
+): MixStationAdapter {
+  const station = adapter.station
+  async function record(step: ProviderTaskReplayStep) {
+    await assertActive()
+    await appendProviderTaskReplayStep(
+      jobId,
+      station,
+      MIX_STATION_SYNC_TASKS[station],
+      validateMixStationStep(step),
+    )
+  }
+  const catalogue = adapter.catalogue
+  const getShow = adapter.getShow
+  const at = () => new Date().toISOString()
+  return {
+    ...adapter,
+    catalogue: catalogue && {
+      async listShows(request, page) {
+        await record({ operation: 'listShows', args: { at: at(), page } })
+        return catalogue.listShows(request, page)
+      },
+      async listShowEpisodes(request, show, page) {
+        await record({
+          operation: 'listShowEpisodes',
+          args: { at: at(), page, show },
+        })
+        return catalogue.listShowEpisodes(request, show, page)
+      },
+    },
+    getShow:
+      getShow &&
+      (async (request, handle) => {
+        await record({ operation: 'getShow', args: { at: at(), handle } })
+        return getShow(request, handle)
+      }),
+    async listFeed(request, mode, page, since) {
+      await record({
+        operation: 'listFeed',
+        args: {
+          at: at(),
+          mode,
+          page,
+          since: since?.toISOString() ?? null,
+          action: adapter.archiveAction?.() ?? null,
+        },
+      })
+      return adapter.listFeed(request, mode, page, since)
+    },
+  }
+}
+
 type ChunkOptions = {
   maxSteps?: number
   budgetMs?: number
@@ -705,10 +772,31 @@ type ChunkOptions = {
  */
 export async function runMixStationSyncJob(
   station: MixStation,
-  context: LastfmSyncJobContext,
+  context: LastfmSyncJobContext & { jobId?: string },
   options: ChunkOptions = {},
 ): Promise<LastfmSyncJobResult> {
-  const adapter = options.adapter ?? mixStationAdapters[station]
+  const source = options.adapter ?? mixStationAdapters[station]
+  const jobId = context.jobId
+  const adapter =
+    jobId && !options.adapter
+      ? recordStationAdapter(source, jobId, context.assertActive)
+      : source
+  const capture =
+    jobId && !options.adapter
+      ? createProviderResponseRecorder(
+          (capture) =>
+            saveProviderResponseCapture({
+              jobId,
+              provider: station,
+              attempt: 1,
+              capture,
+            }),
+          [],
+          undefined,
+          undefined,
+          mixStationCapturePolicy(station, source.archiveAction),
+        )
+      : undefined
   const plugin = mixStationPlugins[station]
   const maxSteps = options.maxSteps ?? CHUNK_STEPS
   const deadline = Date.now() + (options.budgetMs ?? CHUNK_BUDGET_MS)
@@ -720,7 +808,9 @@ export async function runMixStationSyncJob(
   )
   let steps = 0
   try {
-    const request = createProviderRequest(plugin, context.assertActive)
+    const request = createProviderRequest(plugin, context.assertActive, {
+      beginResponseCapture: capture?.('task'),
+    })
     for (;;) {
       if (!(await context.isActive())) return { outcome: 'stopped' }
       const run = await claim(station, token)
@@ -791,14 +881,19 @@ export async function runMixStationSyncJob(
         message: `Paused: ${error.message.replace(/\.$/, '')}. Stored mixes are kept; the schedule resumes the sync after ${resumeAfter.toISOString()}.`,
       }
     }
-    if (!(error instanceof ServerError))
+    if (
+      !(error instanceof ServerError) &&
+      !(error instanceof ProviderResponseStorageError)
+    )
       await recordProviderFailure(plugin, error)
     await db
       .update(subscriptionSync)
       .set({
         status: 'failed',
         errorMessage:
-          error instanceof ProviderRequestError || error instanceof ServerError
+          error instanceof ProviderRequestError ||
+          error instanceof ServerError ||
+          error instanceof ProviderResponseStorageError
             ? error.message
             : `${stationName(station)} sync failed or returned invalid data. No further requests were made.`,
         leaseToken: null,

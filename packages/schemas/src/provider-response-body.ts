@@ -25,6 +25,9 @@ export const ProviderResponseBodySchema = z.discriminatedUnion('state', [
     state: z.literal('captured'),
     text: z.string().max(MAX_PROVIDER_RESPONSE_BYTES),
     redacted: z.boolean().optional(),
+    retainedRepresentation: z
+      .enum(['station-discovery', 'station-episode-data'])
+      .optional(),
   }),
   z.object({
     state: z.literal('local'),

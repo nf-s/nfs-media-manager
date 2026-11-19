@@ -26,11 +26,16 @@ import {
 import { listArtistScrobbledRecordings } from '@/services/artist-listening'
 import { listSpotifyArtistRecordings } from '@/services/artist-provider-evidence'
 import { readProviderResponseAttempt } from '@/services/provider-response-history'
+import { getJobTask } from '@repo/schemas/job'
+import {
+  ProviderTaskReplayStepsSchema,
+  replayProviderTask,
+} from '@/services/provider-task-replay'
 import { replayScrapeProvider } from '@/services/provider-response-replay'
 
 const usage =
   'replay-provider-response.ts <export|replay> --job ID --attempt N ' +
-  '[--item ID] [--artist ID] --output PRIVATE_FILE ' +
+  '[--item ID] [--artist ID] [--task] --output PRIVATE_FILE ' +
   '[--context PRIVATE_FILE] [--native PRIVATE_FILE]'
 
 type Scope = z.infer<typeof ProviderReplayScopeSchema>
@@ -49,6 +54,7 @@ export function parseReplayArguments(args: string[]) {
     options: {
       job: { type: 'string' },
       attempt: { type: 'string' },
+      task: { type: 'boolean' },
       item: { type: 'string' },
       artist: { type: 'string' },
       context: { type: 'string' },
@@ -62,13 +68,14 @@ export function parseReplayArguments(args: string[]) {
     jobItemId: values.item ?? null,
     artistId: values.artist ?? null,
     attempt: Number(values.attempt),
+    ...(values.task ? { task: true } : {}),
   })
   if (
     (action !== 'export' && action !== 'replay') ||
     positionals.length !== 1 ||
     !scope.success ||
     !values.output ||
-    (action === 'export' && (values.context || values.native))
+    ((action === 'export' || values.task) && (values.context || values.native))
   )
     throw new ReplayCommandError(usage)
   return {
@@ -398,6 +405,61 @@ export async function runProviderReplayCommand(args: string[]) {
   )
   const scrub = (value: unknown) =>
     sanitizeProviderPayload(value, jobLogSecrets({}))
+  if (scope.task) {
+    const task = getJobTask(job.options)
+    if (
+      !task ||
+      rows.some(
+        ({ artistId, capture }) =>
+          artistId !== null || capture.phase !== 'task',
+      )
+    )
+      throw new ReplayCommandError(
+        'The selected job does not own these task responses.',
+      )
+    const steps = ProviderTaskReplayStepsSchema.safeParse(
+      job.options['providerReplaySteps'],
+    )
+    if (command.action === 'export') {
+      await writePrivateJson(command.output, {
+        version: 1,
+        scope,
+        provider: job.provider,
+        task,
+        steps: steps.success ? steps.data : null,
+        responses: rows,
+      })
+      process.stdout.write('Saved private provider response export.\n')
+      return
+    }
+    if (!steps.success)
+      throw new ReplayCommandError(
+        'The selected task has no valid saved replay recipe.',
+      )
+    const fetch = globalThis.fetch
+    globalThis.fetch = async () => {
+      throw new ReplayCommandError(
+        'Live requests are disabled during provider replay.',
+      )
+    }
+    const result = await replayProviderTask(
+      task,
+      job.provider,
+      steps.data,
+      rows.map(({ capture }) => capture),
+    ).finally(() => {
+      globalThis.fetch = fetch
+    })
+    await writePrivateJson(command.output, {
+      version: 1,
+      scope,
+      provider: job.provider,
+      task,
+      result: scrub(result),
+    })
+    process.stdout.write('Saved private provider replay report.\n')
+    return
+  }
   const readContext = async () => {
     const reconstructed = command.context
       ? await readPrivateJson(command.context, 4 * 1024 * 1024)
