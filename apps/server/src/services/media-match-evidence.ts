@@ -189,14 +189,37 @@ function encodedUrlLength(value: SQL) {
 
 const legacyTypedTitle =
   '(?i)^(?:Reviews of |Lists with )?(.+) by (.+) \\((?:Album|EP|Mixtape|Compilation|Single|DJ Mix)[,);]'
-const legacyUntypedTitle =
-  '(?i)^(.+) by (.+) - (?:RYM(?:/Sonemic)?|Rate Your Music)$'
+const legacyRymSuffix = ' - (?:RYM(?:/Sonemic)?|Rate Your Music)$'
+const legacyUntypedTitle = '(?i)^(.+) by (.+)' + legacyRymSuffix
 const legacyMetacriticTitle =
   '(?i)^(?:(?:Critic|User) Reviews for )?(.+) by (.+?)(?: Reviews and Tracks)? - Metacritic$'
 const ambiguousPageTitle = '(?i) by .+ by |[.]{3}|…'
 
 function rymTitleParts(title: SQL) {
   return sql`coalesce(regexp_match(${title}, ${legacyTypedTitle}), regexp_match(${title}, ${legacyUntypedTitle}))`
+}
+
+/** Use the structured album and artist to resolve literal ellipses or a second "by" in the heading. */
+function archivedRymPageParts(pageMap: SQL) {
+  const albumEntities = sql`${pageMap}->'musicalbum'`
+  const artistEntities = sql`${pageMap}->'musicgroup'`
+  const truncatedEnd = '([.]{3}|…)$'
+  return sql`(select case
+    when page.title !~ ${ambiguousPageTitle} then ${rymTitleParts(sql`page.title`)}
+    when page.title ~* ${legacyRymSuffix}
+      and jsonb_array_length(${jsonArray(albumEntities)}) = 1
+      and jsonb_array_length(${jsonArray(artistEntities)}) = 1
+      and page.album !~ ${truncatedEnd} and credited.heading !~ ${truncatedEnd}
+      and (credited.heading = page.album || ' by ' || page.artist
+        or starts_with(credited.heading, page.album || ' by ' || page.artist || ' / '))
+      then array[page.album, substr(credited.heading, length(page.album) + 5)]
+    end
+    from (values (
+      ${stringValue(sql`${pageMap} #> '{metatags,0,og:title}'`)},
+      ${stringValue(sql`${albumEntities} #> '{0,name}'`)},
+      ${stringValue(sql`${artistEntities} #> '{0,name}'`)}
+    )) page(title, album, artist)
+    cross join lateral (select trim(regexp_replace(page.title, ${legacyRymSuffix}, '', 'i')) as heading) credited)`
 }
 
 /** Reads each selected Google result from the raw import or its cleaned browse row. */
@@ -216,9 +239,9 @@ export function legacyAlbumGoogleMatchEvidence() {
       ('metacriticGoogle', 'metacritic', 'mc', ${legacyMetacriticUrl}::text, 1, 'metacritic-url')
     ) site(raw_key, browse_key, fallback_key, url_pattern, match_priority, reference_type)
     cross join lateral (
-      select provider, latest_snapshot_id, title, page_title, url
+      select provider, latest_snapshot_id, title, page_parts, url
       from (
-        select source.provider, source.latest_snapshot_id, fields.title, fields.page_title, selected.url,
+        select source.provider, source.latest_snapshot_id, fields.title, fields.page_parts, selected.url,
           ${legacyGooglePriority} as priority, fields.key_priority,
           first_value(selected.url) over (order by ${legacyGooglePriority}, fields.key_priority) as selected_url
         from provider_current_state source
@@ -229,8 +252,8 @@ export function legacyAlbumGoogleMatchEvidence() {
           case when site.browse_key = 'rym'
             and ${rawMatch}->'rawResponse'->>'link' = ${rawMatch}->>'link'
             and jsonb_array_length(${jsonArray(sql`${rawMatch} #> '{rawResponse,pagemap,metatags}'`)}) = 1
-            then ${stringValue(sql`${rawMatch} #> '{rawResponse,pagemap,metatags,0,og:title}'`)}
-          end as page_title,
+            then ${archivedRymPageParts(sql`${rawMatch} #> '{rawResponse,pagemap}'`)}
+          end as page_parts,
           case when source.provider = 'legacy-browser'
             then ${stringValue(sql`${cleanedMatch}->'href'`)}
             else ${stringValue(sql`${rawMatch}->'link'`)} end as raw_url,
@@ -256,14 +279,14 @@ export function legacyAlbumGoogleMatchEvidence() {
           )
       ) candidates
       where url = selected_url
-      order by (title is not null) desc, (title is null and page_title is not null) desc, priority, key_priority
+      order by (title is not null) desc, (title is null and page_parts is not null) desc, priority, key_priority
       limit 1
     ) saved
     cross join lateral (
       select case
         when site.browse_key = 'rym' then coalesce(
           ${rymTitleParts(sql`saved.title`)},
-          case when saved.page_title !~ ${ambiguousPageTitle} then ${rymTitleParts(sql`saved.page_title`)} end
+          saved.page_parts
         )
         when saved.title !~ ${ambiguousPageTitle}
           then regexp_match(saved.title, ${legacyMetacriticTitle})
