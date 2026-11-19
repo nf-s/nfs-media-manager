@@ -11,6 +11,8 @@ const normalizedKey = (value: string) =>
   value.toLowerCase().replace(/[^a-z0-9]/g, '')
 export const sensitiveKey = (value: string) =>
   sensitive.test(normalizedKey(value))
+// A JSON boolean can describe permission to use a token without carrying it.
+const tokenCapability = /^can[A-Z][A-Za-z]*Token$/
 const collection = /^(?:collages?|collections?)$/
 const personalCollection =
   /^(?:(?:personal|private|user|my|own)(?:collages?|collections?)|(?:collages?|collections?)(?:personal|private|owned|mine))$/
@@ -145,26 +147,29 @@ export function sanitizeProviderResponseBody(
         redacted: body.redacted === true || text !== body.text,
       }
     }
-    // Inspect the raw document too, so an overwritten duplicate key cannot
-    // conceal a known secret or sensitive text from the parsed object.
-    let changed = scrubText(body.text, secrets) !== body.text
-    if (!changed) {
-      for (const { 0: token, index } of body.text.matchAll(
-        /"(?:[^"\\]|\\.)*"/g,
-      )) {
+    // Inspect each literal before trusting the original bytes. Parsing an
+    // object alone would hide a credential overwritten by a duplicate key.
+    let changed = false
+    const member = /\s*:/y
+    const booleanMember = /\s*:\s*(?:true|false)\s*(?=[,}])/y
+    const probe = body.text.replace(
+      /"(?:[^"\\]|\\.)*"/g,
+      (token, offset: number) => {
+        if (changed) return token
         const decoded: unknown = JSON.parse(token)
-        if (
-          typeof decoded === 'string' &&
-          (scrubText(decoded, secrets) !== decoded ||
-            (index !== undefined &&
-              sensitiveKey(decoded) &&
-              /^\s*:/.test(body.text.slice(index + token.length))))
-        ) {
-          changed = true
-          break
-        }
-      }
-    }
+        if (typeof decoded !== 'string') return token
+        if (scrubText(decoded, secrets) !== decoded) changed = true
+        if (!sensitiveKey(decoded)) return token
+        const end = offset + token.length
+        booleanMember.lastIndex = end
+        if (tokenCapability.test(decoded) && booleanMember.test(body.text))
+          return '""'
+        member.lastIndex = end
+        if (member.test(body.text)) changed = true
+        return token
+      },
+    )
+    if (!changed) changed = scrubText(probe, secrets) !== probe
     const privateContainers = new WeakSet<object>()
     const privateRecords = new WeakSet<object>()
     const cleaned = JSON.stringify(
@@ -191,7 +196,8 @@ export function sanitizeProviderResponseBody(
           }
         }
         if (
-          sensitiveKey(key) ||
+          (sensitiveKey(key) &&
+            !(typeof value === 'boolean' && tokenCapability.test(key))) ||
           containsSecret(key, secrets) ||
           (privateRecords.has(this) && personalLabel.test(field))
         ) {

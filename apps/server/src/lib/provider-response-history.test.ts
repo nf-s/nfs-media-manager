@@ -39,6 +39,50 @@ function fixture() {
 describe('provider response archive', () => {
   afterEach(() => vi.unstubAllGlobals())
 
+  it('keeps validated native boolean token capabilities byte-for-byte', async () => {
+    const { capture, archive } = fixture()
+    const text =
+      '{ "canRefreshToken": true, "metadata": [{ "canRefreshToken": false }, { "canRefreshToken": true }] }'
+    await capture(
+      { state: 'captured', text, redacted: true },
+      [fixtureUrl],
+      true,
+    )
+    expect(archive[0]?.response.body).toEqual({
+      state: 'captured',
+      text,
+      redacted: true,
+    })
+  })
+
+  it('does not treat non-boolean token fields or duplicate credential values as capabilities', async () => {
+    const { capture, archive } = fixture()
+    const text =
+      '{"canRefreshToken":"opaque-fixture","canRefreshToken":true,"metadata":[{"canRefreshToken":{"value":1}},{"canRefreshToken":"true"},{"canRefreshToken":1},{"accessToken":true},{"accessToken":"secret-value"},{"canRefreshToken":false}]}'
+    await capture({ state: 'captured', text }, [fixtureUrl], true)
+    expect(archive[0]?.response.body).toEqual({
+      state: 'captured',
+      text: '{"canRefreshToken":true,"metadata":[{},{},{},{},{},{"canRefreshToken":false}]}',
+      redacted: true,
+    })
+  })
+
+  it('retains conservative redaction for unstructured token fields', async () => {
+    const { capture, archive } = fixture()
+    await capture(
+      { state: 'captured', text: 'canRefreshToken=true' },
+      [fixtureUrl],
+      true,
+      200,
+      'text/plain',
+    )
+    expect(archive[0]?.response.body).toEqual({
+      state: 'captured',
+      text: 'canRefreshToken=[REDACTED]',
+      redacted: true,
+    })
+  })
+
   it('records full paginated evidence and maps previously ignored fields offline', async () => {
     const fetch = vi.fn(async () => {
       throw new Error('Network disabled')
