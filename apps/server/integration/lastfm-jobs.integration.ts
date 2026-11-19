@@ -108,7 +108,196 @@ const base = {
   url: 'https://www.last.fm/music/Artist+fixture/Album+fixture',
 }
 
+const spotifyTracks = [60, 73, 85, 97, 110, 122, 134, 146, 158, 170].map(
+  (durationSec, index) => ({ title: `Album track ${index + 1}`, durationSec }),
+)
+
+async function seedSpotifyTracks() {
+  const id = '0123456789012345678901'
+  await databaseClient.transaction(async (tx) => {
+    await replaceAlbumTracks(
+      tx,
+      'album-fixture',
+      spotifyTracks.map((track, index) => ({ ...track, position: index + 1 })),
+    )
+    await tx.insert(schema.providerReference).values({
+      id: 'spotify-fixture-reference',
+      mediaItemId: 'album-fixture',
+      provider: 'spotify',
+      referenceType: 'album',
+      externalId: id,
+      isPrimary: true,
+    })
+    await tx.insert(schema.providerSnapshot).values({
+      id: 'spotify-fixture-snapshot',
+      mediaItemId: 'album-fixture',
+      provider: 'spotify',
+      source: 'scrape',
+      checksum: 'spotify-fixture',
+      payload: {
+        id,
+        name: base.name,
+        album_type: 'album',
+        total_tracks: spotifyTracks.length,
+        tracks: {
+          offset: 0,
+          next: null,
+          total: spotifyTracks.length,
+          items: spotifyTracks.map((track, index) => ({
+            name: track.title,
+            duration_ms: track.durationSec * 1000,
+            disc_number: 1,
+            track_number: index + 1,
+          })),
+        },
+      },
+    })
+  })
+}
+
+const shortProgram = [
+  { name: 'Album track 1', duration: 220 },
+  { name: 'Album track 2', duration: 250 },
+  { name: 'Single mix', duration: 300 },
+  { name: 'Instrumental', duration: null },
+]
+
 describe('Last.fm adapter through queue and persistence, with offline HTTP', () => {
+  it('holds a short conflicting Last.fm program during automatic name lookup', async () => {
+    await seedSpotifyTracks()
+    const scrape = vi.spyOn(lastfmPlugin, 'scrapeMediaItem')
+    const job = await runJob({
+      album: { ...base, tracks: { track: shortProgram } },
+    }).finally(() => {
+      const hints = scrape.mock.calls[0]?.[0].media?.releaseHints
+      scrape.mockRestore()
+      expect(hints).toMatchObject([
+        {
+          source: 'spotify',
+          trackEvidence: { exactSequence: true, tracks: spotifyTracks },
+        },
+      ])
+    })
+
+    expect(job?.status).toBe('failed')
+    expect(
+      job?.logs.find((log) => log.level === 'error')?.metadata,
+    ).toMatchObject({
+      classification: 'ambiguous',
+    })
+    expect(
+      await databaseClient.select().from(schema.providerCurrentState),
+    ).toEqual([])
+    expect(
+      (await databaseClient.select().from(schema.providerSnapshot)).map(
+        ({ provider }) => provider,
+      ),
+    ).toEqual(['spotify'])
+    const { getProviderSafety } = await import('@/services/provider-requests')
+    expect(await getProviderSafety('lastfm')).toMatchObject({
+      consecutiveFailures: 0,
+      halted: false,
+    })
+  })
+
+  it.each(['url', 'mbid'])(
+    'keeps a reviewed Last.fm %s despite the short program',
+    async (referenceType) => {
+      await seedSpotifyTracks()
+      const mbid = '11111111-1111-4111-8111-111111111111'
+      await databaseClient.insert(schema.providerReferenceOverride).values({
+        id: 'reviewed-fixture-reference',
+        mediaItemId: 'album-fixture',
+        provider: 'lastfm',
+        referenceType,
+        externalId: referenceType === 'mbid' ? mbid : base.url,
+      })
+      expect(
+        (
+          await runJob({
+            album: { ...base, mbid, tracks: { track: shortProgram } },
+          })
+        )?.status,
+      ).toBe('succeeded')
+    },
+  )
+
+  it.each([
+    {
+      evidence: 'one possible timing alignment',
+      track: shortProgram.map((entry, index) =>
+        index === 0 ? { ...entry, duration: 180 } : entry,
+      ),
+    },
+    {
+      evidence: 'too few observed durations',
+      track: shortProgram.map((entry, index) =>
+        index === 2 ? { ...entry, duration: null } : entry,
+      ),
+    },
+    {
+      evidence: 'a continuous program',
+      track: { name: 'Continuous album', duration: 1100 },
+    },
+    {
+      evidence: 'a complete program with alternate metadata',
+      track: spotifyTracks.map((_, index) => ({
+        name: `Localized track ${index + 1}`,
+        duration: 320 + index * 20,
+      })),
+    },
+  ])('keeps automatic lookup with $evidence', async ({ track }) => {
+    await seedSpotifyTracks()
+    expect(
+      (await runJob({ album: { ...base, tracks: { track } } }))?.status,
+    ).toBe('succeeded')
+  })
+
+  it('keeps automatic lookup when the library has no complete Spotify evidence', async () => {
+    expect(
+      (
+        await runJob({
+          album: { ...base, tracks: { track: shortProgram } },
+        })
+      )?.status,
+    ).toBe('succeeded')
+  })
+
+  it('keeps a replayed response when its track hint has an inconsistent count', async () => {
+    const scrape = lastfmPlugin.scrapeMediaItem
+    if (!scrape) throw new Error('Missing Last.fm album scraper')
+    await expect(
+      scrape({
+        mediaItemId: 'album-fixture',
+        mediaType: 'album',
+        media: {
+          title: base.name,
+          artists: [base.artist],
+          releaseHints: [
+            {
+              source: 'spotify',
+              title: base.name,
+              releaseType: 'album',
+              trackEvidence: {
+                exactSequence: true,
+                libraryTracks: spotifyTracks.length + 1,
+                matchedTracks: spotifyTracks.length,
+                tracks: spotifyTracks,
+              },
+            },
+          ],
+        },
+        existingReferences: [],
+        secrets: { apiKey: 'offline-fixture-key' },
+        request: async () =>
+          Response.json({
+            album: { ...base, tracks: { track: shortProgram } },
+          }),
+        log: async () => {},
+      }),
+    ).resolves.toMatchObject({ normalized: { tracks: expect.any(Array) } })
+  })
+
   it('passes the top-tags opt-in through a job and merges an existing tag across sources', async () => {
     const { lockTagWrites, upsertProviderTags } =
       await import('@/services/tag-state')

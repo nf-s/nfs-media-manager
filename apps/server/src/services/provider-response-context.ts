@@ -303,7 +303,7 @@ export async function reconstructProviderReplayContext(
         ? getAlbumReleaseHints(
             mediaItemId,
             rejections,
-            job.provider === 'discogs',
+            job.provider === 'discogs' || job.provider === 'lastfm',
           )
         : undefined,
       record.mediaType === 'album' && plugin?.manifest.bootstrapAlbumArtists

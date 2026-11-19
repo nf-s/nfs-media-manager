@@ -805,7 +805,8 @@ async function processJob(
           ? await getAlbumReleaseHints(
               mediaItemId,
               rejections,
-              plugin.manifest.id === 'discogs',
+              plugin.manifest.id === 'discogs' ||
+                plugin.manifest.id === 'lastfm',
             )
           : undefined
       const artistProfiles =

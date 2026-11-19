@@ -1,12 +1,15 @@
 import {
   PluginResultSchema,
+  ProviderItemAmbiguousError,
   ProviderItemNotFoundError,
   ProviderRequestError,
   type MediaProviderPlugin,
   type MediaPluginScrapeContext,
   type MediaPluginTestContext,
+  type PluginReference,
 } from '@repo/media-plugin-sdk'
 import { z } from 'zod'
+import { albumNameKey } from '@/lib/album-import-candidates'
 import {
   LastFmAlbumSchema,
   LastFmSnapshotSchema,
@@ -14,6 +17,7 @@ import {
   albumProviderDetailsMetadata,
   lastFmAlbumTagEvidence,
 } from '@/lib/album-provider-details'
+import { albumTrackTitleKey } from '@/lib/lastfm-album-matching'
 import {
   AlbumMbidSchema,
   albumNames,
@@ -37,8 +41,8 @@ export function lastFmErrorCode(
 
 function lastFmLookup(
   context: MediaPluginScrapeContext,
+  reference: PluginReference | undefined,
 ): Record<string, string> {
-  const reference = albumReference(context, 'lastfm', 'mbid', 'url')
   if (reference?.referenceType === 'mbid')
     return { mbid: AlbumMbidSchema.parse(reference.externalId) }
   if (reference) {
@@ -56,6 +60,44 @@ function lastFmLookup(
   const names = albumNames(context)
   // A MusicBrainz release-group ID is not a Last.fm album/release MBID.
   return { artist: names.artist, album: names.title }
+}
+
+function conflictsWithFullAlbum(
+  context: MediaPluginScrapeContext,
+  tracks: readonly { name: string; duration?: number }[],
+) {
+  if (tracks.length < 3 || tracks.length > 4) return false
+  const evidence = context.media?.releaseHints?.find(
+    (hint) => hint.source === 'spotify' && hint.releaseType === 'album',
+  )?.trackEvidence
+  if (!evidence?.exactSequence) return false
+  const library = evidence.tracks
+  if (
+    !library ||
+    library.length !== evidence.libraryTracks ||
+    tracks.length * 2 > library.length
+  )
+    return false
+
+  const durations = tracks.flatMap(({ duration }) =>
+    duration && duration > 0 ? [duration] : [],
+  )
+  if (durations.length < 3) return false
+
+  const titles = new Set(library.map(({ title }) => albumNameKey(title)))
+  const variants = new Set(
+    library.map(({ title }) => albumTrackTitleKey(title)),
+  )
+  const sharedTitles = tracks.filter(
+    ({ name }) =>
+      titles.has(albumNameKey(name)) || variants.has(albumTrackTitleKey(name)),
+  )
+  if (sharedTitles.length * 2 > tracks.length) return false
+
+  // Even one possible recording alignment is enough to leave the match alone.
+  return !durations.some((seconds) =>
+    library.some(({ durationSec }) => Math.abs(seconds - durationSec) <= 10),
+  )
 }
 
 export async function requestLastFm(
@@ -132,6 +174,7 @@ export const lastfmPlugin: MediaProviderPlugin = {
     mediaTypes: ['album'],
     identifierTypes: ['mbid', 'url'],
     supportsNameLookup: true,
+    albumReleaseHints: true,
     // Last.fm's HTTP 5xx responses are backend faults, not throttling: wait
     // briefly before the next request without opening a provider cooldown.
     // Rate limits and access denials keep their own cooldown and halt.
@@ -204,7 +247,8 @@ export const lastfmPlugin: MediaProviderPlugin = {
   },
   async scrapeMediaItem(context) {
     requireAlbum(context, 'Last.fm')
-    const lookup = lastFmLookup(context)
+    const reference = albumReference(context, 'lastfm', 'mbid', 'url')
+    const lookup = lastFmLookup(context, reference)
     const username = context.secrets['username']?.trim()
     const info = await requestLastFm(context, 'album.getInfo', {
       ...lookup,
@@ -229,6 +273,11 @@ export const lastfmPlugin: MediaProviderPlugin = {
       lookup['mbid'].toLowerCase() !== album.mbid.toLowerCase()
     )
       throw new Error('Last.fm returned a different MBID.')
+    const albumTracks = album.tracks?.track ?? []
+    if (!reference && conflictsWithFullAlbum(context, albumTracks))
+      throw new ProviderItemAmbiguousError(
+        'The short Last.fm track list conflicts with the verified library album.',
+      )
     const includeTopTags = context.options?.['includeTopTags'] === true
     const payload = includeTopTags
       ? {
@@ -255,7 +304,7 @@ export const lastfmPlugin: MediaProviderPlugin = {
     if (includeTopTags && context.options?.['tagsOnly'] === true)
       return PluginResultSchema.parse({ payload, normalized: { tags } })
 
-    const tracks = (album.tracks?.track ?? []).map((track, index) => ({
+    const tracks = albumTracks.map((track, index) => ({
       title: track.name,
       position: index + 1,
       durationSec: track.duration,

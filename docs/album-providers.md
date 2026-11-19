@@ -115,6 +115,8 @@ Future explicit scrapes retain these details from responses already needed by th
 
 ### Last.fm Response Audit
 
+An automatic Last.fm name lookup can require review when a complete Spotify album tracklist confirms a longer library album. A response with three or four tracks, at most half as many as the library, needs at least three known durations, at most half shared track titles, and no possible duration alignment within ten seconds to trigger review. This keeps the response in job diagnostics without installing it or counting it toward a provider stop. Existing Last.fm URLs and MBIDs continue to take precedence. Single-track continuous mixes and responses without enough track evidence follow the regular lookup.
+
 An album job with `options: { "includeTopTags": true }` requests [album.getTopTags](https://www.last.fm/api/show/album.getTopTags) after a successful `album.getInfo`. It uses the resolved album identity and the same provider request gate. No other job gains an extra request. The snapshot preserves the original album and the dedicated response separately. Last.fm's count is a relative weight out of 100, not a vote count. The adapter retains all returned rows in the raw response but only adds dedicated tags with weight at least 10 to the usual album tag merge. Ordinary album tags are retained even if absent from the dedicated list.
 
 For tag enrichment without replacing tracks, artwork, links or other canonical fields, set both `includeTopTags: true` and `tagsOnly: true`. Use one explicit album per job.
