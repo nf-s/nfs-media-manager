@@ -162,13 +162,16 @@ describe('artist provider lookups', () => {
     expect(context.request).toHaveBeenCalledTimes(1)
   })
 
-  it('preserves the explicit Last.fm artist not found result', async () => {
-    const context = responses({ error: 6, message: 'Artist not found' })
-    await expect(
-      lookupArtistProvider('lastfm', artistName, mbid, context),
-    ).rejects.toBeInstanceOf(ProviderItemNotFoundError)
-    expect(context.request).toHaveBeenCalledTimes(1)
-  })
+  it.each(['Artist not found', 'The artist you supplied could not be found'])(
+    'classifies Last.fm artist.getInfo error 6 with message %j as not found',
+    async (message) => {
+      const context = responses({ error: 6, message })
+      await expect(
+        lookupArtistProvider('lastfm', artistName, mbid, context),
+      ).rejects.toBeInstanceOf(ProviderItemNotFoundError)
+      expect(context.request).toHaveBeenCalledTimes(1)
+    },
+  )
 
   it('rejects Discogs numeric suffix ambiguities without reading any artist details', async () => {
     const context = responses({
