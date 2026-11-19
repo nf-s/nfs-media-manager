@@ -166,6 +166,17 @@ export const LastfmSpotifySearchGroupSchema = z
   })
   .strict()
 
+export const LastfmGroupTracksSchema = z.object({
+  items: z.array(
+    z.object({
+      name: z.string().min(1),
+      plays: z.number().int().positive(),
+      trackMbids: z.array(z.string().min(1)),
+      albumMbids: z.array(z.string().min(1)),
+    }),
+  ),
+})
+
 export const LastfmSpotifySearchInputSchema = z
   .object({
     groups: z.array(LastfmSpotifySearchGroupSchema).min(1).max(100),

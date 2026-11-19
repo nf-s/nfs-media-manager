@@ -6,6 +6,7 @@ import {
   LastfmCallbackQuerySchema,
   LastfmCallbackStateSchema,
   LastfmDisconnectResultSchema,
+  LastfmGroupTracksSchema,
   LastfmLinkQuerySchema,
   LastfmLinkReportSchema,
   LastfmLinkUpdateSchema,
@@ -39,6 +40,7 @@ import {
 } from '@/middlewares/auth'
 import {
   getLastfmLinkReport,
+  getLastfmGroupTracks,
   getLastfmSyncStatus,
   relinkLastfmScrobbles,
   setLastfmAlbumLink,
@@ -176,6 +178,33 @@ const app: OpenAPIHono<AppEnv> = createOpenAPIApp()
       generateJsonResponse(
         c,
         await getLastfmLinkReport(c.req.valid('query')),
+        200,
+      ),
+  )
+  .openapi(
+    createRoute({
+      method: 'get',
+      path: '/links/tracks',
+      middleware: [authMiddleware()],
+      request: { query: LastfmSpotifySearchGroupSchema },
+      responses: {
+        200: {
+          description:
+            'Distinct stored track names, identifiers and play counts for one scrobbled album group',
+          content: {
+            'application/json': {
+              schema: createResponseSchema(LastfmGroupTracksSchema),
+            },
+          },
+        },
+        401: jsonErrorResponse('Unauthorized'),
+        422: validationErrorResponse,
+      },
+    }),
+    async (c) =>
+      generateJsonResponse(
+        c,
+        await getLastfmGroupTracks(c.req.valid('query')),
         200,
       ),
   )

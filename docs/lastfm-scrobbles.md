@@ -2,6 +2,8 @@
 
 The app can store every scrobble from one Last.fm account and use it for album listening charts, per-track counts, browse filters and the [Tracks library](tracks-and-playlists.md#lastfm-tracks). This is separate from the [Last.fm album metadata provider](album-providers.md), which looks up one album per job.
 
+To compare a scrobbled album with library track lists, `GET /api/v1/lastfm/links/tracks` takes the recorded `artistName` and `albumName` and returns distinct track names, identifiers and play counts across that group. It reads stored listening history.
+
 ## Setup
 
 Add the Last.fm API key and username in the Last.fm provider's Settings (`/providers/lastfm?tab=settings`), or set `LASTFM_API_KEY` and `LASTFM_USERNAME`. The account's recent listening must be public; the sync uses the API key only and has no Last.fm sign-in.

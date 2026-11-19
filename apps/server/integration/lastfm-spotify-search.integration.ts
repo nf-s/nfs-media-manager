@@ -153,6 +153,43 @@ async function queuedId() {
 }
 
 describe('scrobbled album Spotify searches through persistent jobs', () => {
+  it('reads distinct track evidence only for the configured account and exact album group', async () => {
+    const { getLastfmGroupTracks } = await import('@/services/lastfm-scrobbles')
+    await addGroup()
+    await addGroup(group.albumName, group.artistName, 'other-fixture-account')
+    await addGroup('Another Album')
+    await databaseClient.insert(schema.lastfmScrobble).values({
+      id: randomUUID(),
+      username: account,
+      listenedAt: new Date('2026-01-02T12:00:00Z'),
+      artistName: group.artistName,
+      albumName: group.albumName,
+      trackName: 'Opening',
+      artistKey: albumNameKey(group.artistName),
+      albumKey: albumNameKey(group.albumName),
+      trackKey: 'opening',
+      trackMbid: '22222222-2222-4222-8222-222222222222',
+      albumMbid: '33333333-3333-4333-8333-333333333333',
+    })
+    expect(await getLastfmGroupTracks(group)).toEqual({
+      items: [
+        {
+          name: 'Opening',
+          plays: 2,
+          trackMbids: ['22222222-2222-4222-8222-222222222222'],
+          albumMbids: ['33333333-3333-4333-8333-333333333333'],
+        },
+      ],
+    })
+    expect(
+      await getLastfmGroupTracks({
+        artistName: group.artistName,
+        albumName: 'Missing Album',
+      }),
+    ).toEqual({ items: [] })
+    expect(request).not.toHaveBeenCalled()
+  })
+
   it('queues each explicit unlinked group once, skips active/linked/missing targets and does not search during queueing or reads', async () => {
     await addGroup()
     const second = await addGroup('Second Album')
