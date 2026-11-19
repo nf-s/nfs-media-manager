@@ -53,10 +53,10 @@ export async function mapArchivedAlbum(input: ArchivedAlbumReplayInput) {
       if (body.state !== 'captured' || capture.response.status !== 200)
         throw new Error('Archived native response is unavailable')
       if (
-        capture.ordinal === input.captures.length &&
-        archiveSha256(new URL(request).href) !== input.supplementRequestKey
+        capture.ordinal === input.boundDetail.ordinal &&
+        archiveSha256(new URL(request).href) !== input.boundDetail.requestKey
       )
-        throw new Error('Supplement request differs from the reviewed detail')
+        throw new Error('Archive request differs from the reviewed detail')
       const source: unknown = JSON.parse(body.text)
       const projected: unknown = await projector(source, new URL(request))
       projectedResponses += 1
@@ -64,22 +64,19 @@ export async function mapArchivedAlbum(input: ArchivedAlbumReplayInput) {
     },
   })
 
-  const artist = input.artist
-  let artistProfiles
-  if (artist) {
+  const artistProfiles = []
+  for (const { id, name, providerArtistId } of input.artistLookups) {
     if (!adapter.scrapeArtist || !adapter.manifest.bootstrapAlbumArtists)
       throw new Error('Archived artist lookup does not match the adapter')
     const result = PluginArtistResultSchema.parse(
       await adapter.scrapeArtist({
-        artist,
-        providerArtistId: null,
+        artist: { id, name },
+        providerArtistId,
         request: replay.requestFor('artist'),
         secrets: {},
       }),
     )
-    artistProfiles = [
-      { artistId: artist.id, name: artist.name, payload: result.payload },
-    ]
+    artistProfiles.push({ artistId: id, name, payload: result.payload })
   }
   const result = PluginResultSchema.parse(
     await adapter.scrapeMediaItem({
@@ -88,7 +85,7 @@ export async function mapArchivedAlbum(input: ArchivedAlbumReplayInput) {
       media: input.media,
       options: input.options,
       existingReferences: input.existingReferences,
-      artistProfiles,
+      artistProfiles: artistProfiles.length ? artistProfiles : undefined,
       isRejectedMatch: createAlbumMatchRejectionPredicate(
         input.provider,
         input.rejections,

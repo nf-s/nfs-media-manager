@@ -58,26 +58,31 @@ async function main(args: string[]) {
   const plan = ArchivedAlbumReplayPlanSchema.parse(
     JSON.parse(bytes.toString('utf8')),
   )
-  const archiveFile = plan.supplement.archiveFile
+  const archiveFile =
+    plan.version === 1 ? plan.supplement.archiveFile : undefined
   if (
-    ![plan.adapter, plan.projector, ...plan.dependencies, archiveFile].every(
-      ({ path }) => isAbsolute(path),
+    (archiveFile && !isAbsolute(archiveFile.path)) ||
+    ![plan.adapter, plan.projector, ...plan.dependencies].every(({ path }) =>
+      isAbsolute(path),
     )
   )
     throw new ArchivedAlbumReplayError(
       'Use absolute paths to the reviewed code and archive.',
     )
-  const archiveBytes = await readPrivateFile(
-    archiveFile.path,
-    32 * 1024 * 1024 + 4096,
-  )
-  if (archiveSha256(archiveBytes) !== archiveFile.sha256)
-    throw new ArchivedAlbumReplayError(
-      'The independent archive differs from the reviewed file.',
+  let detail
+  if (archiveFile) {
+    const archiveBytes = await readPrivateFile(
+      archiveFile.path,
+      32 * 1024 * 1024 + 4096,
     )
-  const detail = ArchivedAlbumReplayDetailSchema.parse(
-    JSON.parse(archiveBytes.toString('utf8')),
-  )
+    if (archiveSha256(archiveBytes) !== archiveFile.sha256)
+      throw new ArchivedAlbumReplayError(
+        'The independent archive differs from the reviewed file.',
+      )
+    detail = ArchivedAlbumReplayDetailSchema.parse(
+      JSON.parse(archiveBytes.toString('utf8')),
+    )
+  }
   const { commitArchivedAlbumReplay } =
     await import('@/services/archived-album-replay')
   const { db } = await import('@/lib/db')

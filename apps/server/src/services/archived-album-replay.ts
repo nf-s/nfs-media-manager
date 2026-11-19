@@ -2,6 +2,7 @@ import { isDeepStrictEqual } from 'node:util'
 import { and, asc, eq, inArray, sql } from 'drizzle-orm'
 import { nanoid } from 'nanoid'
 import {
+  JsonValueSchema,
   PluginResultSchema,
   type PluginReference,
 } from '@repo/media-plugin-sdk'
@@ -22,6 +23,7 @@ import { runIsolatedArchivedReplay } from '@/lib/archived-album-replay-process'
 import { createAlbumMatchRejectionPredicate } from '@/lib/album-match-identities'
 import { albumEvidenceTrackNames } from '@/lib/album-release-track-evidence'
 import { db } from '@/lib/db'
+import { checksumJson } from '@/lib/media-utils'
 import { nativeProviderReplayRequestKey } from '@/lib/provider-response-history'
 import {
   mediaItem,
@@ -54,13 +56,13 @@ function bindArchivedResponses(
   plan: ArchivedAlbumReplayPlan,
   originals: ResponseRow[],
   finishedAt: Date,
-  archive: ArchivedAlbumReplayDetail,
-): ProviderResponseCapture[] {
+  archive?: ArchivedAlbumReplayDetail,
+) {
   requireReview(
     originals.length === plan.originals.length,
     'The failed attempt no longer has the reviewed response sequence.',
   )
-  const captures = originals.map((row, index) => {
+  const captures: ProviderResponseCapture[] = originals.map((row, index) => {
     const pin = plan.originals[index]
     const body = row.body
     requireReview(
@@ -96,34 +98,79 @@ function bindArchivedResponses(
       },
     })
   })
+  const firstMedia = captures.findIndex(({ phase }) => phase === 'media')
   requireReview(
-    captures.some(({ phase }) => phase === 'media') &&
-      captures.filter(({ phase }) => phase === 'artist').length <= 1 &&
-      captures.slice(1).every(({ phase }) => phase === 'media'),
-    'The reviewed attempt must contain one album lookup and at most one artist lookup.',
+    firstMedia >= 0 &&
+      captures.slice(firstMedia).every(({ phase }) => phase === 'media'),
+    'The reviewed artist lookups must precede the album lookups.',
   )
-  const detail = plan.supplement
+  const detail = plan.version === 1 ? plan.supplement : plan.detail
   const destination = new URL(detail.requestUrl)
   requireReview(
     destination.protocol === 'https:' &&
       !destination.username &&
       !destination.password &&
       !destination.hash &&
-      Date.parse(detail.capturedAt) > finishedAt.getTime() &&
-      Date.parse(detail.capturedAt) <= Date.now() &&
-      archive.capturedAt === Date.parse(detail.capturedAt) &&
-      archive.id === detail.archiveId &&
-      archiveSha256(destination.href) === detail.archiveRequestKey &&
-      archive.requestKey === detail.archiveRequestKey &&
-      archive.sha256 === detail.sha256 &&
-      archiveSha256(archive.text) === detail.sha256 &&
-      Buffer.byteLength(archive.text) === archive.retainedBytes &&
-      archive.retainedBytes <= MAX_PROVIDER_RESPONSE_BYTES,
-    'The independent detail response does not match its reviewed provenance.',
+      archiveSha256(destination.href) === detail.archiveRequestKey,
+    'The exact detail request differs from the reviewed archive.',
   )
   const detailKey = nativeProviderReplayRequestKey(
     destination.href,
     detail.notFoundOn404,
+  )
+  if (plan.version === 2) {
+    const rowIndex = originals.findIndex(
+      ({ id }) => id === plan.detail.responseId,
+    )
+    const row = originals[rowIndex]
+    const pin = plan.originals[rowIndex]
+    const detailRows = originals.flatMap(({ requestKey }, index) =>
+      requestKey === detailKey ? [index] : [],
+    )
+    requireReview(
+      !archive &&
+        row &&
+        pin &&
+        row.phase === 'media' &&
+        row.requestKey === detailKey &&
+        row.receivedAt &&
+        row.receivedAt <= finishedAt &&
+        rowIndex === detailRows.at(-1) &&
+        detailRows.every(
+          (index) => plan.originals[index]?.sha256 === pin.sha256,
+        ),
+      'The reviewed group detail is not the final consistent response from the failed attempt.',
+    )
+    return {
+      captures,
+      boundDetail: {
+        ordinal: row.ordinal,
+        requestKey: detail.archiveRequestKey,
+      },
+      provenance: {
+        detail: {
+          origin: 'original-failed-attempt',
+          responseId: row.id,
+          ordinal: row.ordinal,
+          requestKey: detail.archiveRequestKey,
+          bodySha256: pin.sha256,
+        },
+      },
+    }
+  }
+  const supplement = plan.supplement
+  requireReview(
+    archive &&
+      Date.parse(supplement.capturedAt) > finishedAt.getTime() &&
+      Date.parse(supplement.capturedAt) <= Date.now() &&
+      archive.capturedAt === Date.parse(supplement.capturedAt) &&
+      archive.id === supplement.archiveId &&
+      archive.requestKey === supplement.archiveRequestKey &&
+      archive.sha256 === supplement.sha256 &&
+      archiveSha256(archive.text) === supplement.sha256 &&
+      Buffer.byteLength(archive.text) === archive.retainedBytes &&
+      archive.retainedBytes <= MAX_PROVIDER_RESPONSE_BYTES,
+    'The independent detail response does not match its reviewed provenance.',
   )
   requireReview(
     captures.every(({ request }) => request.key !== detailKey),
@@ -141,7 +188,7 @@ function bindArchivedResponses(
       response: {
         status: 200,
         contentType: 'application/json',
-        receivedAt: detail.capturedAt,
+        receivedAt: supplement.capturedAt,
         body: {
           state: 'captured',
           text: archive.text,
@@ -150,13 +197,30 @@ function bindArchivedResponses(
       },
     }),
   )
-  return captures
+  return {
+    captures,
+    boundDetail: {
+      ordinal: captures.length,
+      requestKey: supplement.archiveRequestKey,
+    },
+    provenance: {
+      supplement: {
+        origin: 'independent-reviewed-detail',
+        archiveId: supplement.archiveId,
+        capturedAt: supplement.capturedAt,
+        requestKey: supplement.archiveRequestKey,
+        bodySha256: supplement.sha256,
+        archiveFileSha256: supplement.archiveFile.sha256,
+        receiptSha256: supplement.receiptSha256,
+      },
+    },
+  }
 }
 
 export async function commitArchivedAlbumReplay(
   plan: ArchivedAlbumReplayPlan,
   planSha256: string,
-  archive: ArchivedAlbumReplayDetail,
+  archive?: ArchivedAlbumReplayDetail,
 ) {
   return db.transaction(async (tx) => {
     // Use the ordinary queue/retry lock and acquire provider writer locks
@@ -345,6 +409,20 @@ export async function commitArchivedAlbumReplay(
         hint,
         'A pinned snapshot does not contain the active linked edition.',
       )
+      if ('evidence' in anchor) {
+        const { evidence } = anchor
+        requireReview(
+          evidence.title === hint.title &&
+            isDeepStrictEqual(evidence.artists, hint.artists) &&
+            (evidence.year === undefined || evidence.year === hint.year) &&
+            (evidence.releaseDate === undefined ||
+              evidence.releaseDate === hint.releaseDate) &&
+            (evidence.completeTracks === undefined ||
+              (hint.trackEvidence?.exactSequence &&
+                evidence.completeTracks === hint.trackEvidence.libraryTracks)),
+          'The pinned source no longer proves its reviewed release evidence.',
+        )
+      }
       releaseHints.push(hint)
     }
 
@@ -359,20 +437,36 @@ export async function commitArchivedAlbumReplay(
         ),
       )
       .orderBy(asc(providerResponse.ordinal))
-    const captures = bindArchivedResponses(
+    const { captures, boundDetail, provenance } = bindArchivedResponses(
       plan,
       originals,
       original.finishedAt,
       archive,
     )
-    const artistRow = originals.find(({ phase }) => phase === 'artist')
-    const artist = credits.find(
-      (credit) => credit.artistId === artistRow?.artistId,
-    )?.artist
+    const artistRows = originals.filter(({ phase }) => phase === 'artist')
     requireReview(
-      !artistRow || artist,
-      'The archived artist is outside the album credit.',
+      plan.version === 1
+        ? artistRows.length <= 1
+        : isDeepStrictEqual(
+            artistRows.map(({ artistId }) => artistId),
+            plan.artistLookups.map(({ artistId }) => artistId),
+          ),
+      'The archived artist lookups changed after review.',
     )
+    const artistLookups = artistRows.map(({ artistId }, index) => {
+      const artist = credits.find(
+        (credit) => credit.artistId === artistId,
+      )?.artist
+      requireReview(artist, 'The archived artist is outside the album credit.')
+      return {
+        id: artist.id,
+        name: artist.name,
+        providerArtistId:
+          plan.version === 2
+            ? (plan.artistLookups[index]?.providerArtistId ?? null)
+            : null,
+      }
+    })
     requireReview(
       !createAlbumMatchRejectionPredicate(
         plan.provider,
@@ -383,15 +477,17 @@ export async function commitArchivedAlbumReplay(
       }),
       'The reviewed release group was rejected.',
     )
-    const spotify = releaseHints.find(({ source }) => source === 'spotify')
-    requireReview(
-      spotify?.title === plan.library.title &&
-        spotify.releaseDate === plan.library.date &&
-        isDeepStrictEqual(spotify.artists, plan.library.artists) &&
-        spotify.trackEvidence?.exactSequence &&
-        spotify.trackEvidence.libraryTracks === plan.library.tracks.length,
-      'The stored Spotify edition no longer proves the reviewed ordered tracks.',
-    )
+    if (plan.version === 1) {
+      const spotify = releaseHints.find(({ source }) => source === 'spotify')
+      requireReview(
+        spotify?.title === plan.library.title &&
+          spotify.releaseDate === plan.library.date &&
+          isDeepStrictEqual(spotify.artists, plan.library.artists) &&
+          spotify.trackEvidence?.exactSequence &&
+          spotify.trackEvidence.libraryTracks === plan.library.tracks.length,
+        'The stored Spotify edition no longer proves the reviewed ordered tracks.',
+      )
+    }
     const existingReferences: PluginReference[] = references.map(
       (reference) => ({
         referenceType: reference.referenceType,
@@ -408,7 +504,7 @@ export async function commitArchivedAlbumReplay(
       provider: plan.provider,
       albumId: plan.albumId,
       groupId: plan.groupId,
-      artist: artist ? { id: artist.id, name: artist.name } : undefined,
+      artistLookups,
       media: {
         title: plan.library.title,
         artists: plan.library.artists,
@@ -419,7 +515,7 @@ export async function commitArchivedAlbumReplay(
       rejections,
       options: typeof limit === 'number' ? { matchEvidenceLimit: limit } : {},
       captures,
-      supplementRequestKey: plan.supplement.archiveRequestKey,
+      boundDetail,
     })
     const output = PluginResultSchema.parse(
       await runIsolatedArchivedReplay(input),
@@ -432,10 +528,32 @@ export async function commitArchivedAlbumReplay(
         reference.isPrimary,
       'The archived adapter did not reproduce the reviewed release group.',
     )
+    if (plan.version === 2)
+      requireReview(
+        checksumJson(output) === plan.reviewedResultSha256,
+        'The archived adapter output differs from the reviewed release metadata.',
+      )
 
     const id = nanoid()
     const now = new Date()
-    const detail = plan.supplement
+    const archivedReplay = JsonValueSchema.parse(
+      JSON.parse(
+        JSON.stringify({
+          sourceJobItemId: item.id,
+          sourceAttempt: plan.attempt,
+          originals: plan.originals,
+          ...provenance,
+          ...(plan.version === 2
+            ? { reviewedResultSha256: plan.reviewedResultSha256 }
+            : {}),
+          anchors: plan.anchors,
+          adapterSha256: plan.adapter.sha256,
+          projectorSha256: plan.projector.sha256,
+          dependencySha256: plan.dependencies.map(({ sha256 }) => sha256),
+          groupId: plan.groupId,
+        }),
+      ),
+    )
     await tx.insert(scrapeJob).values({
       id,
       provider: plan.provider,
@@ -450,25 +568,7 @@ export async function commitArchivedAlbumReplay(
           : {}),
         retryOf: original.id,
         archivedReplayPlanSha256: planSha256,
-        archivedReplay: {
-          sourceJobItemId: item.id,
-          sourceAttempt: plan.attempt,
-          originals: plan.originals,
-          supplement: {
-            origin: 'independent-reviewed-detail',
-            archiveId: detail.archiveId,
-            capturedAt: detail.capturedAt,
-            requestKey: detail.archiveRequestKey,
-            bodySha256: detail.sha256,
-            archiveFileSha256: detail.archiveFile.sha256,
-            receiptSha256: detail.receiptSha256,
-          },
-          anchors: plan.anchors,
-          adapterSha256: plan.adapter.sha256,
-          projectorSha256: plan.projector.sha256,
-          dependencySha256: plan.dependencies.map(({ sha256 }) => sha256),
-          groupId: plan.groupId,
-        },
+        archivedReplay,
       },
     })
     await applyProviderResultInTransaction(

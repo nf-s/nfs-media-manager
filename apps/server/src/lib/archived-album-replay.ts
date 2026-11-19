@@ -14,76 +14,130 @@ const pin = z
 
 export class ArchivedAlbumReplayError extends Error {}
 
-export const ArchivedAlbumReplayPlanSchema = z
+const planFields = {
+  jobId: id,
+  jobItemId: id,
+  attempt: z.number().int().positive(),
+  provider: id,
+  albumId: id,
+  adapter: pin,
+  projector: pin,
+  dependencies: z.array(pin).max(32),
+  groupId: id,
+  library: z
+    .object({
+      title: z.string().min(1),
+      artists: z.array(z.string().min(1)).min(1).max(32),
+      date: z.string().date(),
+      tracks: z.array(z.string().min(1)).min(1).max(100),
+    })
+    .strict(),
+  originals: z
+    .array(z.object({ responseId: id, sha256: digest }).strict())
+    .min(1)
+    .max(8),
+}
+
+const anchor = z
   .object({
+    provider: z.enum(['spotify', 'musicbrainz', 'discogs']),
+    referenceType: id,
+    recordId: id,
+    snapshotId: id,
+    snapshotProvider: z.enum([
+      'spotify',
+      'musicbrainz',
+      'discogs',
+      'legacy-record',
+    ]),
+  })
+  .strict()
+
+const detailRequest = {
+  requestUrl: z.string().url().max(2048),
+  archiveRequestKey: digest,
+  notFoundOn404: z.boolean(),
+}
+
+const independentPlan = z
+  .object({
+    ...planFields,
     version: z.literal(1),
-    jobId: id,
-    jobItemId: id,
-    attempt: z.number().int().positive(),
-    provider: id,
-    albumId: id,
-    adapter: pin,
-    projector: pin,
-    dependencies: z.array(pin).max(32),
-    groupId: id,
-    library: z
-      .object({
-        title: z.string().min(1),
-        artists: z.array(z.string().min(1)).min(1).max(32),
-        date: z.string().date(),
-        tracks: z.array(z.string().min(1)).min(1).max(100),
-      })
-      .strict(),
-    anchors: z
-      .array(
-        z
-          .object({
-            provider: z.enum(['spotify', 'musicbrainz', 'discogs']),
-            referenceType: id,
-            recordId: id,
-            snapshotId: id,
-            snapshotProvider: z.enum([
-              'spotify',
-              'musicbrainz',
-              'discogs',
-              'legacy-record',
-            ]),
-          })
-          .strict(),
-      )
-      .min(1)
-      .max(3),
-    originals: z
-      .array(z.object({ responseId: id, sha256: digest }).strict())
-      .min(1)
-      .max(8),
+    anchors: z.array(anchor).min(1).max(3),
     supplement: z
       .object({
+        ...detailRequest,
         receiptSha256: digest,
         archiveId: z.string().uuid(),
         archiveFile: pin,
         capturedAt: z.string().datetime(),
-        requestUrl: z.string().url().max(2048),
-        archiveRequestKey: digest,
-        notFoundOn404: z.boolean(),
         sha256: digest,
       })
       .strict(),
   })
   .strict()
-  .refine(
-    ({ anchors, originals }) =>
+
+const originalPlan = z
+  .object({
+    ...planFields,
+    version: z.literal(2),
+    anchors: z
+      .array(
+        anchor.extend({
+          evidence: z
+            .object({
+              title: z.string().min(1),
+              artists: z.array(z.string().min(1)).min(1).max(32),
+              year: z.number().int().positive().optional(),
+              releaseDate: z.string().min(4).max(10).optional(),
+              completeTracks: z.number().int().positive().optional(),
+            })
+            .strict(),
+        }),
+      )
+      .min(1)
+      .max(3),
+    detail: z.object({ ...detailRequest, responseId: id }).strict(),
+    artistLookups: z
+      .array(
+        z
+          .object({
+            artistId: id,
+            providerArtistId: id.nullable(),
+          })
+          .strict(),
+      )
+      .max(7),
+    reviewedResultSha256: digest,
+  })
+  .strict()
+
+export const ArchivedAlbumReplayPlanSchema = z
+  .discriminatedUnion('version', [independentPlan, originalPlan])
+  .refine((plan) => {
+    const { anchors, originals } = plan
+    return (
       new Set(originals.map(({ responseId }) => responseId)).size ===
         originals.length &&
       new Set(anchors.map(({ provider }) => provider)).size ===
         anchors.length &&
-      anchors.some(({ provider }) => provider === 'spotify') &&
       anchors.every(
         ({ provider, snapshotProvider }) =>
           snapshotProvider === provider || snapshotProvider === 'legacy-record',
-      ),
-    'The reviewed originals and active source records must be unambiguous',
-  )
+      ) &&
+      (plan.version === 1
+        ? plan.anchors.some(({ provider }) => provider === 'spotify')
+        : plan.originals.some(
+            ({ responseId }) => responseId === plan.detail.responseId,
+          ) &&
+          plan.anchors.some(
+            ({ evidence }) =>
+              evidence.completeTracks === plan.library.tracks.length,
+          ) &&
+          new Set(plan.artistLookups.map(({ artistId }) => artistId)).size ===
+            plan.artistLookups.length)
+    )
+  }, 'The reviewed originals and active source records must be unambiguous')
 
 export type ArchivedAlbumReplayPlan = z.infer<
   typeof ArchivedAlbumReplayPlanSchema
@@ -115,7 +169,9 @@ export const ArchivedAlbumReplayInputSchema = z.object({
   provider: id,
   albumId: id,
   groupId: id,
-  artist: z.object({ id, name: z.string() }).optional(),
+  artistLookups: z
+    .array(z.object({ id, name: z.string(), providerArtistId: id.nullable() }))
+    .max(7),
   media: z.object({
     title: z.string(),
     artists: z.array(z.string()),
@@ -152,8 +208,11 @@ export const ArchivedAlbumReplayInputSchema = z.object({
     }),
   ),
   options: z.record(z.string(), JsonValueSchema),
-  captures: z.array(ProviderResponseCaptureSchema).min(2).max(9),
-  supplementRequestKey: digest,
+  captures: z.array(ProviderResponseCaptureSchema).min(1).max(9),
+  boundDetail: z.object({
+    ordinal: z.number().int().positive(),
+    requestKey: digest,
+  }),
 })
 
 export type ArchivedAlbumReplayInput = z.infer<

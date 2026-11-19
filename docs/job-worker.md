@@ -332,3 +332,10 @@ status, error and response bodies remain available on that job. The replacement
 records the independently reviewed detail's provenance and leaves live scrape
 freshness unchanged. Repeat the same plan with a new receipt path to recover the
 existing result without applying it again.
+
+When the failed attempt already contains the group detail, use a version 2 plan
+to pin that response's ID and request fingerprint within the original sequence.
+Include the ordered artist lookups and the reviewed adapter result's digest.
+The command checks the pinned active sources' titles and credits, any declared
+edition dates, and an exact complete track sequence from at least one source.
+It records the group detail as evidence from the original attempt.

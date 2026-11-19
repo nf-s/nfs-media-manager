@@ -10,12 +10,14 @@ import { and, eq, sql } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { readMigrationFiles } from 'drizzle-orm/migrator'
 import pg from 'pg'
-import { afterAll, beforeAll, expect, it } from 'vitest'
+import { afterEach, beforeEach, expect, it } from 'vitest'
+import { PluginResultSchema } from '@repo/media-plugin-sdk'
 import { z } from 'zod'
 import {
   archiveSha256,
   ArchivedAlbumReplayPlanSchema,
 } from '@/lib/archived-album-replay'
+import { checksumJson } from '@/lib/media-utils'
 import { nativeProviderReplayRequestKey } from '@/lib/provider-response-history'
 import * as schema from '@/schemas/db'
 
@@ -45,7 +47,7 @@ let pool: pg.Pool | undefined
 let fixtureUrl: URL
 let database: ReturnType<typeof drizzle<typeof schema>>
 
-beforeAll(async () => {
+beforeEach(async () => {
   if (!adminUrl || process.platform !== 'darwin') return
   const url = new URL(adminUrl)
   if (!['localhost', '127.0.0.1', '[::1]'].includes(url.hostname) || url.search)
@@ -181,7 +183,7 @@ beforeAll(async () => {
   })
 })
 
-afterAll(async () => {
+afterEach(async () => {
   await pool?.end()
   if (admin) {
     await admin.query(`drop database if exists ${fixtureId}`)
@@ -190,9 +192,9 @@ afterAll(async () => {
   if (directory) await rm(directory, { force: true, recursive: true })
 })
 
-it.skipIf(!adminUrl || process.platform !== 'darwin')(
-  'replays a scoped native archive, rejects changed evidence and commits metadata once',
-  async () => {
+it.skipIf(!adminUrl || process.platform !== 'darwin').each([false, true])(
+  'commits only the reviewed native replay once (original-only: %s)',
+  async (originalOnly) => {
     const pin = async (name: string, contents: string) => {
       const path = join(directory, name)
       await writeFile(path, contents, { flag: 'wx', mode: 0o600 })
@@ -216,6 +218,7 @@ it.skipIf(!adminUrl || process.platform !== 'darwin')(
           server.on('error', (error) => ['EPERM', 'EACCES'].includes(error.code) ? resolve() : reject(error))
           server.listen(0, '127.0.0.1', () => server.close(() => reject(Error('Child network is enabled'))))
         })
+        if (${originalOnly}) await (await request('${detailUrl}', { method: 'GET' }, { requireLocalTransport: true, notFoundOn404: true })).json()
         const { id } = await (await request('${browseUrl}', { method: 'GET' }, { requireLocalTransport: true })).json()
         const detail = await (await request('https://example.test/detail?id=' + id, { method: 'GET' }, { requireLocalTransport: true, notFoundOn404: true })).json()
         return { payload: detail, normalized: {
@@ -245,23 +248,7 @@ it.skipIf(!adminUrl || process.platform !== 'darwin')(
     const archiveId = randomUUID()
     const requestKey = archiveSha256(detailUrl)
     const sha256 = archiveSha256(detail)
-    const archiveFile = await pin(
-      archiveId + '.json',
-      JSON.stringify({
-        version: 1,
-        id: archiveId,
-        action: 'detail',
-        status: 200,
-        capturedAt: Date.parse(capturedAt),
-        requestKey,
-        retainedBytes: Buffer.byteLength(detail),
-        sha256,
-        redacted: false,
-        text: detail,
-      }),
-    )
-    const plan = ArchivedAlbumReplayPlanSchema.parse({
-      version: 1,
+    const planScope = {
       jobId: originalJobId,
       jobItemId: originalItemId,
       attempt: 1,
@@ -277,29 +264,157 @@ it.skipIf(!adminUrl || process.platform !== 'darwin')(
         artists: ['Fixture Artist'],
         tracks: ['Opening Track'],
       },
-      anchors: [
-        {
-          provider: 'spotify',
-          referenceType: 'album',
-          recordId: spotifyId,
-          snapshotId: 'fixture-spotify-snapshot',
-          snapshotProvider: 'spotify',
-        },
-      ],
       originals: [
         { responseId: 'fixture-response', sha256: archiveSha256(body) },
       ],
-      supplement: {
-        receiptSha256: archiveSha256('fixture-receipt'),
-        archiveId,
-        archiveFile,
-        capturedAt,
-        requestUrl: detailUrl,
-        archiveRequestKey: requestKey,
-        notFoundOn404: true,
-        sha256,
-      },
-    })
+    }
+    const detailRequest = {
+      requestUrl: detailUrl,
+      archiveRequestKey: requestKey,
+      notFoundOn404: true,
+    }
+    function independentPlan(archiveFile: { path: string; sha256: string }) {
+      return {
+        ...planScope,
+        version: 1,
+        anchors: [
+          {
+            provider: 'spotify',
+            referenceType: 'album',
+            recordId: spotifyId,
+            snapshotId: 'fixture-spotify-snapshot',
+            snapshotProvider: 'spotify',
+          },
+        ],
+        supplement: {
+          ...detailRequest,
+          receiptSha256: archiveSha256('fixture-receipt'),
+          archiveId,
+          archiveFile,
+          capturedAt,
+          sha256,
+        },
+      }
+    }
+    async function originalPlan() {
+      // This source edition has a different date from the library and supplies
+      // the complete exact sequence independently of Spotify.
+      const payload = {
+        master: {
+          id: 123,
+          title: 'Fixture Album',
+          year: 2003,
+          artists: [{ name: 'Fixture Artist' }],
+          tracklist: [{ title: 'Opening Track', type_: 'track' }],
+        },
+      }
+      await database
+        .update(schema.providerReference)
+        .set({
+          provider: 'discogs',
+          referenceType: 'master',
+          externalId: '123',
+        })
+        .where(eq(schema.providerReference.mediaItemId, albumId))
+      await database
+        .update(schema.providerSnapshot)
+        .set({ provider: 'discogs', payload })
+        .where(eq(schema.providerSnapshot.id, 'fixture-spotify-snapshot'))
+      await database
+        .update(schema.providerCurrentState)
+        .set({ provider: 'discogs', payload })
+        .where(eq(schema.providerCurrentState.id, 'fixture-spotify-state'))
+      await database
+        .update(schema.providerResponse)
+        .set({ ordinal: 2 })
+        .where(eq(schema.providerResponse.id, 'fixture-response'))
+      const detailResponse: Omit<
+        typeof schema.providerResponse.$inferInsert,
+        'id' | 'ordinal'
+      > = {
+        jobId: originalJobId,
+        jobItemId: originalItemId,
+        provider,
+        attempt: 1,
+        phase: 'media',
+        method: 'GET',
+        requestUrl: 'https://example.test/detail',
+        requestKey: nativeProviderReplayRequestKey(detailUrl, true),
+        status: 200,
+        retry: 1,
+        receivedAt: finishedAt,
+        contentType: 'application/json',
+        bodyState: 'captured',
+        retainedBytes: Buffer.byteLength(detail),
+        body: { state: 'captured', text: detail },
+      }
+      await database.insert(schema.providerResponse).values([
+        { ...detailResponse, id: 'fixture-catalogue-detail', ordinal: 1 },
+        { ...detailResponse, id: 'fixture-detail', ordinal: 3 },
+      ])
+      const expected = PluginResultSchema.parse({
+        payload: {
+          id: '42',
+          genre: 'Fixture Genre',
+          collection: 'Fixture Collection',
+        },
+        normalized: {
+          references: [
+            { referenceType: 'group', externalId: '42', isPrimary: true },
+          ],
+          tags: [{ name: 'Fixture Genre', kind: 'genre' }],
+          playlists: [{ name: 'Fixture Collection', kind: 'collection' }],
+        },
+      })
+      return {
+        ...planScope,
+        version: 2,
+        artistLookups: [],
+        originals: [
+          { responseId: 'fixture-catalogue-detail', sha256 },
+          ...planScope.originals,
+          { responseId: 'fixture-detail', sha256 },
+        ],
+        anchors: [
+          {
+            provider: 'discogs',
+            referenceType: 'master',
+            recordId: '123',
+            snapshotId: 'fixture-spotify-snapshot',
+            snapshotProvider: 'discogs',
+            evidence: {
+              title: 'Fixture Album',
+              year: 2003,
+              artists: ['Fixture Artist'],
+              completeTracks: 1,
+            },
+          },
+        ],
+        detail: { ...detailRequest, responseId: 'fixture-detail' },
+        reviewedResultSha256: checksumJson(expected),
+      }
+    }
+    const plan = ArchivedAlbumReplayPlanSchema.parse(
+      originalOnly
+        ? await originalPlan()
+        : independentPlan(
+            await pin(
+              archiveId + '.json',
+              JSON.stringify({
+                version: 1,
+                id: archiveId,
+                action: 'detail',
+                status: 200,
+                capturedAt: Date.parse(capturedAt),
+                requestKey,
+                retainedBytes: Buffer.byteLength(detail),
+                sha256,
+                redacted: false,
+                text: detail,
+              }),
+            ),
+          ),
+    )
     expect(
       ArchivedAlbumReplayPlanSchema.safeParse({ ...plan, normalized: {} })
         .success,
@@ -309,7 +424,11 @@ it.skipIf(!adminUrl || process.platform !== 'darwin')(
       database.query.scrapeJob.findFirst({
         where: eq(schema.scrapeJob.id, originalJobId),
       })
-    const command = async (label: string, digest = planFile.sha256) => {
+    const command = async (
+      label: string,
+      digest = planFile.sha256,
+      path = planFile.path,
+    ) => {
       const output = join(directory, label + '.json')
       await run(
         process.execPath,
@@ -318,7 +437,7 @@ it.skipIf(!adminUrl || process.platform !== 'darwin')(
           loader,
           fileURLToPath(requestUrl),
           '--plan',
-          planFile.path,
+          path,
           '--sha256',
           digest,
           '--output',
@@ -344,6 +463,20 @@ it.skipIf(!adminUrl || process.platform !== 'darwin')(
     await expect(
       command('wrong-digest', archiveSha256('wrong')),
     ).rejects.toThrow('differs from the digest')
+    if (plan.version === 2) {
+      const changedResult = await pin(
+        'different-result.json',
+        JSON.stringify({
+          ...plan,
+          reviewedResultSha256: archiveSha256('a different normalized result'),
+        }),
+      )
+      await expect(
+        command('changed-result', changedResult.sha256, changedResult.path),
+      ).rejects.toThrow(
+        'The archived adapter output differs from the reviewed release metadata.',
+      )
+    }
     const response = eq(schema.providerResponse.id, 'fixture-response')
     await database
       .update(schema.providerResponse)
@@ -376,26 +509,40 @@ it.skipIf(!adminUrl || process.platform !== 'darwin')(
       errorMessage: 'Saved job failure',
       options: { retryJobId: receipt.jobId },
     })
-    expect(
-      await database.query.scrapeJob.findFirst({
-        where: eq(schema.scrapeJob.id, receipt.jobId),
-      }),
-    ).toMatchObject({
+    const replacement = await database.query.scrapeJob.findFirst({
+      where: eq(schema.scrapeJob.id, receipt.jobId),
+    })
+    expect(replacement).toMatchObject({
       status: 'succeeded',
       options: {
         retryOf: originalJobId,
-        archivedReplay: {
-          supplement: { origin: 'independent-reviewed-detail' },
-        },
+        archivedReplay: originalOnly
+          ? {
+              detail: {
+                origin: 'original-failed-attempt',
+                responseId: 'fixture-detail',
+                ordinal: 3,
+              },
+            }
+          : { supplement: { origin: 'independent-reviewed-detail' } },
       },
     })
-    expect(await database.query.providerResponse.findMany()).toMatchObject([
-      {
+    if (originalOnly)
+      expect(replacement?.options.archivedReplay).not.toHaveProperty(
+        'supplement',
+      )
+    const responseRows = await database.query.providerResponse.findMany()
+    expect(responseRows).toHaveLength(originalOnly ? 3 : 1)
+    expect(responseRows).toContainEqual(
+      expect.objectContaining({
         id: 'fixture-response',
         jobId: originalJobId,
         body: { state: 'captured', text: body },
-      },
-    ])
+      }),
+    )
+    expect(responseRows.every(({ jobId }) => jobId === originalJobId)).toBe(
+      true,
+    )
     expect(
       await database.query.providerSnapshot.findMany({
         where: eq(schema.providerSnapshot.provider, provider),
