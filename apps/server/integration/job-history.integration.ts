@@ -1,4 +1,7 @@
 import { randomUUID } from 'node:crypto'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import pg from 'pg'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { migrate } from 'drizzle-orm/node-postgres/migrator'
@@ -57,7 +60,10 @@ vi.mock('@/lib/db', () => ({
   },
 }))
 vi.mock('@/plugins/registry', () => ({
-  getScrapePlugin: async () => plugin,
+  getScrapePlugin: async (provider: string) =>
+    provider === 'lastfm'
+      ? (await import('@/plugins/builtin/lastfm')).lastfmPlugin
+      : plugin,
   listLoadedScrapePlugins: async () => [plugin],
 }))
 // Queueing a sync needs no connected account here; the sync itself never runs.
@@ -142,6 +148,345 @@ async function seedJob(
 }
 
 describe('media job history and dismissal', () => {
+  it('retains the exact ordered HTTP evidence through failures and replays without eager bodies', async () => {
+    const { getJobData } = await import('@/services/job-data')
+    const {
+      getJobProviderResponse,
+      listJobProviderResponses,
+      readProviderResponseAttempt,
+      saveProviderResponseCapture,
+    } = await import('@/services/provider-response-history')
+    const { ProviderResponsePageSchema, ProviderResponseSchema } =
+      await import('@repo/schemas/provider-response')
+    const provider = plugin.manifest.id
+    await seedJob('response-job', 'failed')
+    await seedJob('response-other', 'failed')
+    await databaseClient
+      .update(schema.scrapeJobItem)
+      .set({ attemptCount: 1 })
+      .where(eq(schema.scrapeJobItem.id, 'response-job-item'))
+
+    const first = {
+      ordinal: 1,
+      phase: 'media',
+      request: {
+        method: 'GET',
+        url: 'https://example.invalid/search',
+        key: 'a'.repeat(64),
+      },
+      response: {
+        status: 200,
+        receivedAt: '2025-01-01T00:00:00.000Z',
+        contentType: 'application/json',
+        body: { state: 'captured', text: '{"marker":"saved-response"}' },
+      },
+    } satisfies import('@repo/schemas/provider-response').ProviderResponseCapture
+    const scope = {
+      jobId: 'response-job',
+      jobItemId: 'response-job-item',
+      attempt: 1,
+      provider,
+    }
+
+    await saveProviderResponseCapture({ ...scope, capture: first })
+    await saveProviderResponseCapture({
+      ...scope,
+      capture: {
+        ...first,
+        response: {
+          ...first.response,
+          body: { state: 'captured', text: 'replacement' },
+        },
+      },
+    })
+    await saveProviderResponseCapture({
+      ...scope,
+      capture: {
+        ...first,
+        ordinal: 2,
+        response: {
+          ...first.response,
+          status: 429,
+          body: { state: 'unavailable', reason: 'byte-limit' },
+        },
+      },
+    })
+    await expect(
+      saveProviderResponseCapture({
+        ...scope,
+        jobId: 'response-other',
+        capture: first,
+      }),
+    ).rejects.toThrow(/scope does not match/)
+
+    const page = ProviderResponsePageSchema.parse(
+      await listJobProviderResponses(scope.jobId, { page: 1, size: 1 }),
+    )
+    expect(page).toMatchObject({
+      totalCount: 2,
+      pageCount: 2,
+      items: [{ ordinal: 1, bodyState: 'captured' }],
+    })
+    expect(page.items[0]).not.toHaveProperty('body')
+    expect(page.items[0]).not.toHaveProperty('requestKey')
+    const summary = page.items[0]
+    if (!summary) throw new Error('Missing provider response summary')
+    const full = ProviderResponseSchema.parse(
+      await getJobProviderResponse(scope.jobId, summary.id),
+    )
+    expect(full.body).toEqual(first.response.body)
+    expect(full.requestKey).toBe(first.request.key)
+    expect(await readProviderResponseAttempt(scope)).toMatchObject([
+      {
+        capture: {
+          ordinal: 1,
+          request: { key: first.request.key },
+          response: { status: 200 },
+        },
+      },
+      { capture: { ordinal: 2, response: { status: 429 } } },
+    ])
+    expect(await readProviderResponseAttempt({ ...scope, attempt: 2 })).toEqual(
+      [],
+    )
+    await expect(
+      getJobProviderResponse('response-other', summary.id),
+    ).rejects.toMatchObject({ statusCode: 404 })
+    expect(
+      await listJobProviderResponses('response-other', { page: 1, size: 100 }),
+    ).toMatchObject({ totalCount: 0 })
+    expect(JSON.stringify(await getJobData(scope.jobId))).not.toContain(
+      'saved-response',
+    )
+
+    const second = await listJobProviderResponses(scope.jobId, {
+      page: 2,
+      size: 1,
+    })
+    expect(second.items).toMatchObject([
+      { ordinal: 2, status: 429, bodyState: 'unavailable', retainedBytes: 0 },
+    ])
+    await databaseClient
+      .delete(schema.scrapeJob)
+      .where(eq(schema.scrapeJob.id, scope.jobId))
+    expect(await databaseClient.select().from(schema.providerResponse)).toEqual(
+      [],
+    )
+  })
+
+  it('replays a saved job with current job-bound lookup fields and detects a changed reference', async () => {
+    const { runProviderReplayCommand } =
+      await import('../scripts/replay-provider-response')
+    const { createProviderResponseRecorder } =
+      await import('@/lib/provider-response-history')
+    const { saveProviderResponseCapture } =
+      await import('@/services/provider-response-history')
+    const { lastFmSparseAlbumFixture } =
+      await import('@/plugins/builtin/__tests__/fixtures/lastfm')
+    const jobId = 'offline-fixture-job'
+    const jobItemId = 'offline-fixture-item'
+    const mediaItemId = 'offline-fixture-album'
+    const artistId = 'offline-fixture-artist'
+    const provider = 'lastfm'
+    const attempt = 1
+    await databaseClient.insert(schema.mediaItem).values({
+      id: mediaItemId,
+      mediaType: 'album',
+      slug: 'offline-fixture-album',
+      title: 'Example Album',
+    })
+    await databaseClient
+      .insert(schema.artist)
+      .values({ id: artistId, name: 'Example Artist' })
+    try {
+      await databaseClient.insert(schema.mediaCredit).values({
+        mediaItemId,
+        artistId,
+        role: 'artist',
+        billingOrder: 0,
+      })
+      await databaseClient.insert(schema.scrapeJob).values({
+        id: jobId,
+        provider,
+        status: 'failed',
+        options: {},
+        scope: { mediaItemIds: [mediaItemId], mediaType: 'album', limit: 1 },
+      })
+      await databaseClient.insert(schema.scrapeJobItem).values({
+        id: jobItemId,
+        jobId,
+        mediaItemId,
+        provider,
+        attemptCount: attempt,
+        status: 'failed',
+      })
+      const store = createProviderResponseRecorder(
+        (capture) =>
+          saveProviderResponseCapture({
+            jobId,
+            jobItemId,
+            provider,
+            attempt,
+            capture,
+          }),
+        [],
+      )
+      const url = new URL('https://ws.audioscrobbler.com/2.0/')
+      url.search = new URLSearchParams({
+        method: 'album.getInfo',
+        format: 'json',
+        api_key: 'placeholder-fixture',
+        autocorrect: '1',
+        artist: 'Example Artist',
+        album: 'Example Album',
+      }).toString()
+      const record = store('media')(url)
+      if (!record) throw new Error('Missing recorded success fixture')
+      await record({
+        status: 200,
+        receivedAt: '2025-01-01T00:00:00.000Z',
+        contentType: 'application/json',
+        body: {
+          state: 'captured',
+          text: JSON.stringify(lastFmSparseAlbumFixture),
+        },
+      })
+
+      const directory = await mkdtemp(
+        join(tmpdir(), 'provider-replay-integration-'),
+      )
+      try {
+        const jobArguments = [
+          '--job',
+          jobId,
+          '--item',
+          jobItemId,
+          '--attempt',
+          String(attempt),
+          '--output',
+        ]
+        const report = join(directory, 'report.json')
+        await runProviderReplayCommand(['replay', ...jobArguments, report])
+        expect(JSON.parse(await readFile(report, 'utf8'))).toMatchObject({
+          contextSource: 'current-library',
+          result: [
+            {
+              normalized: {
+                tracks: [{ title: 'Track 1' }, { title: 'Track 2' }],
+              },
+            },
+          ],
+        })
+        expect(
+          await databaseClient.select().from(schema.providerSnapshot),
+        ).toEqual([])
+        await databaseClient
+          .update(schema.mediaItem)
+          .set({ title: 'Revised release title' })
+          .where(eq(schema.mediaItem.id, mediaItemId))
+        await expect(
+          runProviderReplayCommand([
+            'replay',
+            ...jobArguments,
+            join(directory, 'mismatch.json'),
+          ]),
+        ).rejects.toThrow(/differs from the recorded request/)
+        await runProviderReplayCommand([
+          'export',
+          ...jobArguments,
+          join(directory, 'export.json'),
+        ])
+        expect(
+          JSON.parse(await readFile(join(directory, 'export.json'), 'utf8')),
+        ).toMatchObject({
+          context: {
+            inputs: [
+              { context: { media: { title: 'Revised release title' } } },
+            ],
+          },
+          responses: [{ capture: { response: { status: 200 } } }],
+        })
+        expect(network).not.toHaveBeenCalled()
+      } finally {
+        await rm(directory, { recursive: true })
+      }
+    } finally {
+      await databaseClient
+        .delete(schema.mediaCredit)
+        .where(eq(schema.mediaCredit.mediaItemId, mediaItemId))
+      await databaseClient
+        .delete(schema.artist)
+        .where(eq(schema.artist.id, artistId))
+    }
+  })
+
+  it('supports task-level artist evidence with an opaque local reference', async () => {
+    const {
+      getJobProviderResponse,
+      listJobProviderResponses,
+      saveProviderResponseCapture,
+    } = await import('@/services/provider-response-history')
+    await seedJob('artist-response-job', 'failed', 'film-1', false)
+    const artistId = 'fixture-response-artist'
+    await databaseClient
+      .insert(schema.artist)
+      .values({ id: artistId, name: 'Fixture response artist' })
+    try {
+      await saveProviderResponseCapture({
+        jobId: 'artist-response-job',
+        provider: plugin.manifest.id,
+        artistId,
+        attempt: 1,
+        capture: {
+          ordinal: 1,
+          phase: 'artist',
+          request: { method: 'GET', url: null },
+          response: {
+            status: 200,
+            receivedAt: '2025-01-01T00:00:00.000Z',
+            contentType: 'application/json',
+            body: {
+              state: 'local',
+              reference: 'opaque_fixture_ref',
+              retainedBytes: 16 * 1024 * 1024,
+            },
+          },
+        },
+      })
+      const { items } = await listJobProviderResponses('artist-response-job', {
+        page: 1,
+        size: 100,
+      })
+      expect(items).toMatchObject([
+        {
+          artistId,
+          jobItemId: null,
+          phase: 'artist',
+          bodyState: 'local',
+          retainedBytes: 16 * 1024 * 1024,
+        },
+      ])
+      const summary = items[0]
+      if (!summary) throw new Error('Missing task response summary')
+      expect(
+        (await getJobProviderResponse('artist-response-job', summary.id)).body,
+      ).toEqual({
+        state: 'local',
+        reference: 'opaque_fixture_ref',
+        retainedBytes: 16 * 1024 * 1024,
+      })
+    } finally {
+      await databaseClient
+        .delete(schema.artist)
+        .where(eq(schema.artist.id, artistId))
+    }
+    const { items } = await listJobProviderResponses('artist-response-job', {
+      page: 1,
+      size: 100,
+    })
+    expect(items).toMatchObject([{ artistId: null, phase: 'artist' }])
+  })
+
   it('exposes exact-job snapshots without substituting other attempts or imports', async () => {
     const { getJobData } = await import('@/services/job-data')
     const { JobDataSchema } = await import('@repo/schemas/job')

@@ -15,6 +15,7 @@ import {
   uniqueIndex,
 } from 'drizzle-orm/pg-core'
 import type { JsonValue } from '@repo/media-plugin-sdk'
+import type { ProviderResponseBody } from '@repo/schemas/provider-response'
 import type {
   ArtistProfile,
   ArtistProviderId,
@@ -778,6 +779,65 @@ export const scrapeJobLog = pgTable(
     createdAt: timestamp('created_at').defaultNow().notNull(),
   },
   (table) => [index('scrape_job_log_job_idx').on(table.jobId)],
+)
+
+export const providerResponse = pgTable(
+  'provider_response',
+  {
+    id: text('id').primaryKey(),
+    jobId: text('job_id')
+      .notNull()
+      .references(() => scrapeJob.id, { onDelete: 'cascade' }),
+    jobItemId: text('job_item_id').references(() => scrapeJobItem.id, {
+      onDelete: 'cascade',
+    }),
+    artistId: text('artist_id').references(() => artist.id, {
+      onDelete: 'set null',
+    }),
+    provider: text('provider').notNull(),
+    attempt: integer('attempt').notNull(),
+    ordinal: integer('ordinal').notNull(),
+    phase: text('phase', { enum: ['media', 'artist'] }).notNull(),
+    method: text('method').notNull(),
+    requestUrl: text('request_url'),
+    requestKey: text('request_key'),
+    status: integer('status'),
+    receivedAt: timestamp('received_at'),
+    contentType: text('content_type'),
+    retry: integer('retry'),
+    notFound: boolean('not_found').default(false).notNull(),
+    bodyState: text('body_state', {
+      enum: ['captured', 'local', 'unavailable'],
+    }).notNull(),
+    retainedBytes: integer('retained_bytes').notNull(),
+    body: jsonb('body').$type<ProviderResponseBody>().notNull(),
+  },
+  (table) => [
+    index('provider_response_job_order_idx').on(
+      table.jobId,
+      table.attempt,
+      table.ordinal,
+      table.id,
+    ),
+    uniqueIndex('provider_response_item_attempt_uidx')
+      .on(table.jobId, table.jobItemId, table.attempt, table.ordinal)
+      .where(sql`${table.jobItemId} is not null`),
+    uniqueIndex('provider_response_task_attempt_uidx')
+      .on(table.jobId, table.attempt, table.ordinal)
+      .where(sql`${table.jobItemId} is null`),
+    check(
+      'provider_response_sequence_check',
+      sql`${table.attempt} > 0 and ${table.ordinal} > 0`,
+    ),
+    check(
+      'provider_response_body_state_check',
+      sql`${table.bodyState} = ${table.body}->>'state'`,
+    ),
+    check(
+      'provider_response_size_check',
+      sql`${table.retainedBytes} between 0 and 16777216`,
+    ),
+  ],
 )
 
 export const providerSnapshot = pgTable(

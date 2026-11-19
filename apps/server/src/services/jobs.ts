@@ -78,6 +78,11 @@ import {
   createJobDiagnostics,
   providerResponseEvidence,
 } from '@/lib/job-diagnostics'
+import {
+  createProviderResponseRecorder,
+  providerResponseSecretValues,
+  ProviderResponseStorageError,
+} from '@/lib/provider-response-history'
 import { scrapeMediaType } from '@/lib/scrape-media-type'
 import { sanitizeAlbumProviderResult } from '@/lib/spotify-audio-features'
 import { importMediaTypeExpression } from '@/lib/import-media-type'
@@ -121,6 +126,7 @@ import {
   recordProviderFailure,
   recordProviderSuccess,
 } from '@/services/provider-requests'
+import { saveProviderResponseCapture } from './provider-response-history'
 import {
   prepareLastfmSpotifySearch,
   runLastfmSpotifySearch,
@@ -661,6 +667,9 @@ async function processJob(
     })
     let secrets: Record<string, string> = {}
     let diagnostics: ReturnType<typeof createJobDiagnostics> | undefined
+    let storageError:
+      | (() => ProviderResponseStorageError | undefined)
+      | undefined
     let succeeded = false
     try {
       const rejections =
@@ -696,7 +705,9 @@ async function processJob(
         providerSecrets,
         plugin.manifest.secrets,
       )
-      diagnostics = createJobDiagnostics(jobLogSecrets(secrets))
+      diagnostics = createJobDiagnostics(jobLogSecrets(secrets), {
+        protectProviderResponses: plugin.sanitizeResponseCapture !== undefined,
+      })
 
       const referenceHints = await getProviderReferenceHints({
         provider: plugin.manifest.id,
@@ -704,33 +715,53 @@ async function processJob(
         mediaItemId,
         existingReferences: [...references, ...overrides],
       })
-      const request = createProviderRequest(plugin, assertActive, {
-        onRetry: async ({ error, attempt, retryAt }) => {
-          const credentials = jobLogSecrets(secrets)
-          const details = jobErrorDetails(error, credentials)
-          const evidence = providerResponseEvidence(error, credentials)
-          const message =
-            `Retrying request (attempt ${attempt}) after ${details.name}: ${details.message}`.slice(
-              0,
-              1000,
+      const capture = createProviderResponseRecorder(
+        (capture, artistId) =>
+          saveProviderResponseCapture({
+            jobId: nextJob.id,
+            jobItemId: item.id,
+            provider: plugin.manifest.id,
+            attempt: item.attemptCount + 1,
+            artistId,
+            capture,
+          }),
+        providerResponseSecretValues(secrets),
+        plugin.sanitizeResponseCapture,
+      )
+      storageError = capture.storageError
+      const requestFor = (artistId?: string) =>
+        createProviderRequest(plugin, assertActive, {
+          beginResponseCapture: capture(
+            artistId ? 'artist' : 'media',
+            artistId,
+          ),
+          onRetry: async ({ error, attempt, retryAt }) => {
+            const credentials = jobLogSecrets(secrets)
+            const details = jobErrorDetails(error, credentials)
+            const evidence = providerResponseEvidence(error, credentials)
+            const message =
+              `Retrying request (attempt ${attempt}) after ${details.name}: ${details.message}`.slice(
+                0,
+                1000,
+              )
+            await withRunningJob(nextJob.id, (tx) =>
+              logJob(
+                nextJob.id,
+                'warn',
+                message,
+                {
+                  mediaItemId,
+                  error: details,
+                  attempt,
+                  retryAt: new Date(retryAt).toISOString(),
+                  ...(evidence.length ? { diagnostics: evidence } : {}),
+                },
+                tx,
+              ),
             )
-          await withRunningJob(nextJob.id, (tx) =>
-            logJob(
-              nextJob.id,
-              'warn',
-              message,
-              {
-                mediaItemId,
-                error: details,
-                attempt,
-                retryAt: new Date(retryAt).toISOString(),
-                ...(evidence.length ? { diagnostics: evidence } : {}),
-              },
-              tx,
-            ),
-          )
-        },
-      })
+          },
+        })
+      const request = requestFor()
       const artists = mediaRecord.credits
         .filter((credit) => credit.role === 'artist')
         .sort((a, b) => a.billingOrder - b.billingOrder)
@@ -771,11 +802,12 @@ async function processJob(
               artists,
               {
                 secrets,
-                request,
+                requestFor,
                 recordDiagnostic: diagnostics.recordDiagnostic,
               },
               assertActive,
               async (artistId, result) => {
+                capture.assertStored()
                 await withRunningJob(nextJob.id, (tx) =>
                   saveArtistProviderResult(
                     artistId,
@@ -851,6 +883,7 @@ async function processJob(
           },
         }),
       )
+      capture.assertStored()
       const result =
         mediaRecord.mediaType === 'album'
           ? sanitizeAlbumProviderResult(scraped.payload, scraped.normalized)
@@ -895,12 +928,15 @@ async function processJob(
       })
       if (!saved) return
       succeeded = true
-    } catch (error) {
-      if (error instanceof JobExecutionControlError) throw error
+    } catch (caught) {
+      if (caught instanceof JobExecutionControlError) throw caught
+      const error = storageError?.() ?? caught
+      const evidenceStorageFailed =
+        error instanceof ProviderResponseStorageError
       const notFound = isProviderItemNotFoundError(error)
       const stoppedBeforeRequest = error === stoppedError
       const handled = await withRunningJob(nextJob.id, async (tx) => {
-        if (!notFound && !stoppedBeforeRequest) {
+        if (!notFound && !stoppedBeforeRequest && !evidenceStorageFailed) {
           // Account only for still-active jobs, then latch before persistence.
           // Late errors from cancelled jobs must not stop sibling dispatch.
           execution.failures += 1
@@ -944,7 +980,7 @@ async function processJob(
           },
           tx,
         )
-        if (notFound || stoppedBeforeRequest) return
+        if (notFound || stoppedBeforeRequest || evidenceStorageFailed) return
         const safety = await getProviderSafety(plugin.manifest.id)
         if (
           execution.failures >= MAX_CONSECUTIVE_PROVIDER_FAILURES ||

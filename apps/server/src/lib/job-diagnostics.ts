@@ -1,6 +1,7 @@
 import {
   JsonValueSchema,
   PluginDiagnosticSchema,
+  sanitizeProviderResponseBody,
   type JsonValue,
   type PluginDiagnostic,
 } from '@repo/media-plugin-sdk'
@@ -358,7 +359,10 @@ export function providerResponseEvidence(
   return evidence
 }
 
-export function createJobDiagnostics(secrets: string[]) {
+export function createJobDiagnostics(
+  secrets: string[],
+  options: { protectProviderResponses?: boolean } = {},
+) {
   const entries: PluginDiagnostic[] = []
   const credentials = secrets.filter(Boolean)
   let truncated = false
@@ -366,8 +370,30 @@ export function createJobDiagnostics(secrets: string[]) {
   return {
     recordDiagnostic(diagnostic: unknown): void {
       if (truncated) return
-      const safe = sanitizeJobDiagnostic(diagnostic, credentials)
+      let safe = sanitizeJobDiagnostic(diagnostic, credentials)
       if (!safe) return
+      if (options.protectProviderResponses) {
+        // The response archive owns full markup and its opt-in parser policy.
+        // Legacy diagnostic strings can be truncated or of unknown provenance.
+        const body = sanitizeProviderResponseBody(
+          {
+            state: 'captured',
+            text: JSON.stringify(safe, (_key, value: unknown) =>
+              typeof value === 'string' && /<\/?[a-z][^>]*>/i.test(value)
+                ? '[omitted markup diagnostic]'
+                : value,
+            ),
+          },
+          'application/json',
+          credentials,
+        )
+        if (body.state !== 'captured') return
+        const protectedDiagnostic = PluginDiagnosticSchema.safeParse(
+          JSON.parse(body.text),
+        )
+        if (!protectedDiagnostic.success) return
+        safe = protectedDiagnostic.data
+      }
       if (
         entries.length >= MAX_ENTRIES - 1 ||
         Buffer.byteLength(JSON.stringify([...entries, safe, marker])) >

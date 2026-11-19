@@ -17,6 +17,11 @@ import { db } from '@/lib/db'
 import { env } from '@/env'
 import { ServerError } from '@/lib/error'
 import { createJobDiagnostics } from '@/lib/job-diagnostics'
+import {
+  createProviderResponseRecorder,
+  providerResponseSecretValues,
+  ProviderResponseStorageError,
+} from '@/lib/provider-response-history'
 import { jobLogSecrets } from '@/lib/job-errors'
 import { resolveProviderSecrets } from '@/lib/provider-secrets'
 import {
@@ -42,6 +47,7 @@ import {
   recordProviderFailure,
   recordProviderSuccess,
 } from './provider-requests'
+import { saveProviderResponseCapture } from './provider-response-history'
 
 const ArtistEnrichmentOptionsSchema = ArtistEnrichmentInputSchema.extend({
   artistId: z.string().min(1),
@@ -109,10 +115,9 @@ async function lookupPluginArtist(
 export async function collectAlbumArtistProfiles(
   plugin: MediaProviderPlugin,
   artists: MediaPluginArtistContext['artist'][],
-  context: Pick<
-    MediaPluginArtistContext,
-    'secrets' | 'request' | 'recordDiagnostic'
-  >,
+  context: Pick<MediaPluginArtistContext, 'secrets' | 'recordDiagnostic'> & {
+    requestFor: (artistId: string) => MediaPluginArtistContext['request']
+  },
   assertActive: () => Promise<void>,
   persist: (
     artistId: string,
@@ -131,7 +136,9 @@ export async function collectAlbumArtistProfiles(
     await assertActive()
     try {
       const result = await lookupPluginArtist(scrapeArtist, provider, {
-        ...context,
+        secrets: context.secrets,
+        recordDiagnostic: context.recordDiagnostic,
+        request: context.requestFor(artist.id),
         artist,
         providerArtistId: null,
       })
@@ -189,6 +196,7 @@ export async function runArtistEnrichment(
   input: Record<string, unknown>,
 ): Promise<TaskJobResult> {
   let diagnostics: ReturnType<typeof createJobDiagnostics> | undefined
+  let storageError: (() => ProviderResponseStorageError | undefined) | undefined
   try {
     const { artistId, provider, providerArtistId } =
       ArtistEnrichmentOptionsSchema.parse(input)
@@ -197,7 +205,9 @@ export async function runArtistEnrichment(
     if (!target)
       throw new ServerError({ statusCode: 404, message: 'Artist not found.' })
     const { plugin, secrets, builtin } = await artistProvider(provider)
-    diagnostics = createJobDiagnostics(jobLogSecrets(secrets))
+    diagnostics = createJobDiagnostics(jobLogSecrets(secrets), {
+      protectProviderResponses: plugin.sanitizeResponseCapture !== undefined,
+    })
     const savedOrExplicitId = providerArtistId ?? target.providerArtistId
     let id = savedOrExplicitId
     if (!id && builtin) {
@@ -225,9 +235,24 @@ export async function runArtistEnrichment(
       Boolean(id && normalizeArtistProviderId('musicbrainz', id))
     let totalPages = !builtin || id ? 1 : 2
     await context.progress({ pagesRead: 0, totalPages })
+    const capture = createProviderResponseRecorder(
+      (capture) =>
+        saveProviderResponseCapture({
+          jobId: context.jobId,
+          artistId,
+          provider,
+          attempt: 1,
+          capture,
+        }),
+      providerResponseSecretValues(secrets),
+      plugin.sanitizeResponseCapture,
+    )
+    storageError = capture.storageError
     const requestContext = {
       secrets,
-      request: createProviderRequest(plugin, context.assertActive),
+      request: createProviderRequest(plugin, context.assertActive, {
+        beginResponseCapture: capture('artist', artistId),
+      }),
       recordDiagnostic: diagnostics.recordDiagnostic,
       searched: () => {
         totalPages = 2
@@ -260,12 +285,16 @@ export async function runArtistEnrichment(
           })
         : Promise.reject(new Error('Artist provider is unavailable.'))
     const result = await lookup.catch(async (error: unknown) => {
-      if (await context.isActive()) {
+      if (
+        !(storageError?.() || error instanceof ProviderResponseStorageError) &&
+        (await context.isActive())
+      ) {
         if (artistLookupMiss(error)) await recordProviderSuccess(provider)
         else await recordProviderFailure(plugin, error)
       }
       throw error
     })
+    capture.assertStored()
     await context.assertActive()
     await recordProviderSuccess(provider)
     return {
@@ -280,8 +309,9 @@ export async function runArtistEnrichment(
           tx,
         ),
     }
-  } catch (error) {
+  } catch (caught) {
     if (!(await context.isActive())) return { outcome: 'stopped' }
+    const error = storageError?.() ?? caught
     const classification = artistLookupAmbiguous(error)
       ? 'ambiguous'
       : isProviderItemNotFoundError(error)

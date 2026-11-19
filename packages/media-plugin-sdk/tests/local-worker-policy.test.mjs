@@ -148,3 +148,29 @@ test('local worker results allow Discogs quota headers without arbitrary headers
     false,
   )
 })
+
+test('the native capture and projected response share the existing relay byte budget', () => {
+  const limit = 2 * 1024 * 1024
+  const response = {
+    kind: 'response',
+    id: '00000000-0000-4000-8000-000000000001',
+    status: 200,
+    headers: {},
+    body: 'x'.repeat(limit - 2),
+  }
+  const evidence = (text) => ({
+    contentType: 'application/json',
+    body: { state: 'captured', text },
+  })
+  assert.equal(
+    LocalWorkerResultSchema.safeParse({ ...response, capture: evidence('é') })
+      .success,
+    true,
+  )
+  assert.equal(
+    LocalWorkerResultSchema.safeParse({ ...response, capture: evidence('éx') })
+      .success,
+    false,
+  )
+  assert.equal(LocalWorkerResultSchema.safeParse(response).success, true)
+})

@@ -85,10 +85,12 @@ function matchesHash(expected: string | null, supplied: string): boolean {
 
 function identicalResult(a: LocalWorkerResult, b: LocalWorkerResult): boolean {
   if (a.id !== b.id || a.kind !== b.kind) return false
+  if (JSON.stringify(a.capture) !== JSON.stringify(b.capture)) return false
   if (a.kind === 'error' && b.kind === 'error') return a.error === b.error
   if (a.kind !== 'response' || b.kind !== 'response') return false
   return (
     a.status === b.status &&
+    a.nativeBody?.redacted === b.nativeBody?.redacted &&
     a.body === b.body &&
     Object.keys(a.headers).length === Object.keys(b.headers).length &&
     Object.entries(a.headers).every(([key, value]) => b.headers[key] === value)

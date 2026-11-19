@@ -183,6 +183,33 @@ describe('bounded job diagnostics', () => {
     })
   })
 
+  it('omits markup and private collection names from opt-in provider diagnostics', () => {
+    const collector = createJobDiagnostics([], {
+      protectProviderResponses: true,
+    })
+    collector.recordDiagnostic({
+      stage: 'fixture.response',
+      evidence: {
+        html: '<form><input value="fixture-private"></form>',
+        collages: [
+          { id: 1, visibility: 'private', name: 'fixture-private-collage' },
+          { id: 2, name: 'Public shared catalogue' },
+        ],
+      },
+    })
+    const [entry] = collector.snapshot()
+    expect(entry).toMatchObject({
+      evidence: {
+        html: '[omitted markup diagnostic]',
+        collages: [
+          { id: 1, visibility: 'private' },
+          { id: 2, name: 'Public shared catalogue' },
+        ],
+      },
+    })
+    expect(JSON.stringify(entry)).not.toContain('fixture-private')
+  })
+
   it('bounds the whole collection, snapshots by value and never throws on malformed input', () => {
     const collector = createJobDiagnostics(['fixture-secret'])
     collector.recordDiagnostic({

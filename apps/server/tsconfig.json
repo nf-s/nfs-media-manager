@@ -12,6 +12,9 @@
       "@repo/schemas/entity-relationships": [
         "../../packages/schemas/dist/entity-relationships"
       ],
+      "@repo/schemas/provider-response-body": [
+        "../../packages/schemas/dist/provider-response-body"
+      ],
       "@repo/schemas/*": ["../../packages/schemas/src/*"],
       "@repo/media-plugin-sdk": [
         "../../packages/media-plugin-sdk/src/index.ts"

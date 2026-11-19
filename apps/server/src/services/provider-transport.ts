@@ -3,14 +3,26 @@ import {
   ProviderRequestError,
   type MediaProviderPlugin,
 } from '@repo/media-plugin-sdk'
+import type { ProviderResponseCapture } from '@repo/schemas/provider-response'
 
 export const LOCAL_WORKER_DISPATCH_WINDOW_MS = 12000
+
+export type PairedProviderResponseCapture = Pick<
+  ProviderResponseCapture['response'],
+  'body' | 'contentType'
+> & { status?: number; representation?: 'adapter' | 'native' }
 
 export interface ProviderTransport {
   execute(
     url: string,
     timing: { dispatchBefore: number; expiresAt: number },
-  ): Promise<Response>
+  ): Promise<
+    | Response
+    | {
+        response: Response
+        providerResponseCapture: PairedProviderResponseCapture
+      }
+  >
 }
 type ResolveTransport = (
   plugin: MediaProviderPlugin,

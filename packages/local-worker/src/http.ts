@@ -1,6 +1,7 @@
 import { lookup } from 'node:dns'
 import { request } from 'node:https'
 import { BlockList, isIP } from 'node:net'
+import type { LocalWorkerCapture } from '@repo/media-plugin-sdk/local-worker'
 import { WorkerError, trustedOrigin } from './config.js'
 
 const blocked = new BlockList()
@@ -44,6 +45,9 @@ export interface HttpResponse {
   status: number
   headers: Headers
   body: ReadableStream<Uint8Array> | null
+  capture?: LocalWorkerCapture
+  /** Set by a local privacy filter when the relay body is also the native evidence. */
+  nativeBody?: { redacted: boolean }
 }
 
 export interface HttpOptions {

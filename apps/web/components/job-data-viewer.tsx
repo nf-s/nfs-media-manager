@@ -11,6 +11,7 @@ import { formatCount, formatDateTime } from '@repo/ui/lib/format'
 import { jobDataOptions } from '@/utils/job-data'
 import { useConfig } from './providers'
 import JsonTree from './json-tree'
+import { JobProviderResponses } from './job-provider-responses'
 
 type DataJob = Pick<Job, 'id' | 'status'>
 
@@ -62,6 +63,7 @@ export function StoredJobData({ job }: { job: DataJob }) {
 
   return (
     <div className="ops-data" aria-busy={result.isFetching}>
+      <JobProviderResponses key={job.id} job={job} />
       {result.isPending && (
         <p className="ds-help" role="status">
           Loading stored JSON...
@@ -85,9 +87,7 @@ export function StoredJobData({ job }: { job: DataJob }) {
       )}
       {empty && (
         <p role="status" className="ds-help">
-          {job.status === 'queued' || job.status === 'running'
-            ? 'No response saved yet.'
-            : 'No response JSON was saved for this job. Older failed responses cannot be recovered.'}
+          No snapshots or diagnostics saved.
         </p>
       )}
       {data && !empty && (

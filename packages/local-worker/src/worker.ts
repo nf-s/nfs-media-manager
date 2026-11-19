@@ -268,6 +268,22 @@ export class LocalWorker {
               : 'network',
       }
     }
+    const archive = response.capture?.body
+    let capture = response.capture
+    if (capture && archive?.state === 'captured') {
+      const text = redact(archive.text, this.config)
+      capture = {
+        ...capture,
+        body: {
+          ...archive,
+          text,
+          redacted: archive.redacted || text !== archive.text,
+        },
+      }
+    }
+    const evidence = capture
+      ? { capture: { ...capture, status: response.status } }
+      : {}
     const headers: Record<string, string> = {}
     for (const [key, value] of response.headers) {
       const clean = redact(value, this.config)
@@ -292,9 +308,10 @@ export class LocalWorker {
         throw new BodyTooLargeError()
     } catch (error) {
       if (response.status >= 200 && response.status < 300) {
-        return {
+        const failed = LocalWorkerResultSchema.safeParse({
           kind: 'error',
           id: task.id,
+          ...evidence,
           error:
             error instanceof BodyTooLargeError
               ? 'response-too-large'
@@ -303,7 +320,8 @@ export class LocalWorker {
                 : timeout.aborted
                   ? 'timeout'
                   : 'network',
-        }
+        })
+        return failed.success ? failed.data : failure('policy')
       }
       // Preserve access/rate-limit evidence even when an error body is unreadable.
       body = ''
@@ -314,6 +332,9 @@ export class LocalWorker {
       status: response.status,
       headers,
       body,
+      ...(response.nativeBody && capture?.body.state !== 'unavailable'
+        ? { nativeBody: response.nativeBody }
+        : evidence),
     })
     return result.success ? result.data : failure('policy')
   }
