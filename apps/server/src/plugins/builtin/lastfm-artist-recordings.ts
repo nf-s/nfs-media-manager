@@ -20,14 +20,17 @@ function exactNameKey(name: string) {
 export function lastFmArtistUrl(value: string) {
   const parsed = AlbumHttpUrlSchema.safeParse(value)
   if (!parsed.success) return null
-  const url = new URL(parsed.data)
-  if (!['www.last.fm', 'last.fm'].includes(url.hostname) || url.port)
-    return null
-  const slug = /^\/music\/([^/]+)\/?$/.exec(url.pathname)?.[1]
+  const path = /^https?:\/\/(?:www\.)?last\.fm(\/[^?#]*)/i.exec(
+    parsed.data.trim(),
+  )?.[1]
+  // Last.fm uses this route for the same artist page with redirection disabled.
+  const slug = /^\/music\/(?:\+noredirect\/)?([^/\\\r\n\t]+)\/?$/.exec(
+    path ?? '',
+  )?.[1]
   if (!slug || slug.startsWith('+')) return null
   try {
     const name = decodeURIComponent(slug.replaceAll('+', ' ')).trim()
-    if (!name) return null
+    if (!name || name === '.' || name === '..') return null
     return {
       name,
       url:
