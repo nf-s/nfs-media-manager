@@ -339,3 +339,9 @@ Include the ordered artist lookups and the reviewed adapter result's digest.
 The command checks the pinned active sources' titles and credits, any declared
 edition dates, and an exact complete track sequence from at least one source.
 It records the group detail as evidence from the original attempt.
+
+Either plan can pin a response retained on the paired worker. Use the original
+response ID and the file named by its local archive reference. The command checks
+the saved receipt, size, digest, and the worker's request fingerprint, then maps
+the body inside the sandbox. The original response stays a local receipt. The
+replacement records the archive reference and fingerprints.

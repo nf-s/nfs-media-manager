@@ -8,6 +8,7 @@ import {
 } from '@repo/media-plugin-sdk'
 import { getJobDismissal, getJobTask } from '@repo/schemas/job'
 import {
+  MAX_LOCAL_PROVIDER_RESPONSE_BYTES,
   MAX_PROVIDER_RESPONSE_BYTES,
   ProviderResponseCaptureSchema,
   type ProviderResponseCapture,
@@ -17,6 +18,7 @@ import {
   ArchivedAlbumReplayError,
   ArchivedAlbumReplayInputSchema,
   type ArchivedAlbumReplayDetail,
+  type ArchivedAlbumReplayLocalBody,
   type ArchivedAlbumReplayPlan,
 } from '@/lib/archived-album-replay'
 import { runIsolatedArchivedReplay } from '@/lib/archived-album-replay-process'
@@ -51,17 +53,34 @@ function requireReview(condition: unknown, message: string): asserts condition {
 }
 
 type ResponseRow = typeof providerResponse.$inferSelect
+type LocalReceiptProvenance = {
+  origin: 'paired-worker-local'
+  responseId: string
+  ordinal: number
+  archiveId: string
+  retainedBytes: number
+  requestKey: string
+  appRequestKey: string
+  bodySha256: string
+  archiveFileSha256: string
+}
 
 function bindArchivedResponses(
   plan: ArchivedAlbumReplayPlan,
   originals: ResponseRow[],
   finishedAt: Date,
-  archive?: ArchivedAlbumReplayDetail,
+  archive: ArchivedAlbumReplayDetail | undefined,
+  localOriginals: ReadonlyMap<string, ArchivedAlbumReplayLocalBody>,
 ) {
   requireReview(
     originals.length === plan.originals.length,
     'The failed attempt no longer has the reviewed response sequence.',
   )
+  const localBodies: Array<{
+    ordinal: number
+    archive: ArchivedAlbumReplayLocalBody
+  }> = []
+  const localProvenance: LocalReceiptProvenance[] = []
   const captures: ProviderResponseCapture[] = originals.map((row, index) => {
     const pin = plan.originals[index]
     const body = row.body
@@ -78,13 +97,50 @@ function bindArchivedResponses(
         // The worker numbers the first transport attempt as 1.
         (row.retry === null || row.retry === 1) &&
         !row.notFound &&
-        row.requestKey &&
-        row.bodyState === 'captured' &&
-        body.state === 'captured' &&
-        Buffer.byteLength(body.text) === row.retainedBytes &&
-        archiveSha256(body.text) === pin.sha256,
+        row.requestKey,
       'An original response differs from the reviewed archive.',
     )
+    if (row.bodyState === 'local') {
+      const localPin = pin.localArchive
+      const retained = localOriginals.get(row.id)
+      requireReview(
+        body.state === 'local' &&
+          localPin &&
+          retained &&
+          retained.id === localPin.archiveId &&
+          body.reference === retained.id &&
+          body.retainedBytes === row.retainedBytes &&
+          row.retainedBytes === retained.retainedBytes &&
+          retained.retainedBytes === Buffer.byteLength(retained.text) &&
+          retained.retainedBytes <= MAX_LOCAL_PROVIDER_RESPONSE_BYTES &&
+          retained.status === row.status &&
+          retained.requestKey === localPin.requestKey &&
+          retained.sha256 === pin.sha256 &&
+          archiveSha256(retained.text) === pin.sha256,
+        'A local archive differs from its original response receipt.',
+      )
+      localBodies.push({ ordinal: row.ordinal, archive: retained })
+      localProvenance.push({
+        origin: 'paired-worker-local',
+        responseId: row.id,
+        ordinal: row.ordinal,
+        archiveId: retained.id,
+        retainedBytes: retained.retainedBytes,
+        requestKey: retained.requestKey,
+        appRequestKey: row.requestKey,
+        bodySha256: retained.sha256,
+        archiveFileSha256: localPin.file.sha256,
+      })
+    } else
+      requireReview(
+        !pin.localArchive &&
+          !localOriginals.has(row.id) &&
+          row.bodyState === 'captured' &&
+          body.state === 'captured' &&
+          Buffer.byteLength(body.text) === row.retainedBytes &&
+          archiveSha256(body.text) === pin.sha256,
+        'An original response differs from the reviewed archive.',
+      )
     return ProviderResponseCaptureSchema.parse({
       ordinal: row.ordinal,
       phase: row.phase,
@@ -98,6 +154,10 @@ function bindArchivedResponses(
       },
     })
   })
+  requireReview(
+    localBodies.length === localOriginals.size,
+    'The reviewed local archives are outside the response sequence.',
+  )
   const firstMedia = captures.findIndex(({ phase }) => phase === 'media')
   requireReview(
     firstMedia >= 0 &&
@@ -143,6 +203,8 @@ function bindArchivedResponses(
     )
     return {
       captures,
+      localBodies,
+      localProvenance,
       boundDetail: {
         ordinal: row.ordinal,
         requestKey: detail.archiveRequestKey,
@@ -199,6 +261,8 @@ function bindArchivedResponses(
   )
   return {
     captures,
+    localBodies,
+    localProvenance,
     boundDetail: {
       ordinal: captures.length,
       requestKey: supplement.archiveRequestKey,
@@ -220,7 +284,8 @@ function bindArchivedResponses(
 export async function commitArchivedAlbumReplay(
   plan: ArchivedAlbumReplayPlan,
   planSha256: string,
-  archive?: ArchivedAlbumReplayDetail,
+  archive: ArchivedAlbumReplayDetail | undefined,
+  localOriginals: ReadonlyMap<string, ArchivedAlbumReplayLocalBody>,
 ) {
   return db.transaction(async (tx) => {
     // Use the ordinary queue/retry lock and acquire provider writer locks
@@ -437,12 +502,14 @@ export async function commitArchivedAlbumReplay(
         ),
       )
       .orderBy(asc(providerResponse.ordinal))
-    const { captures, boundDetail, provenance } = bindArchivedResponses(
-      plan,
-      originals,
-      original.finishedAt,
-      archive,
-    )
+    const { captures, boundDetail, localBodies, localProvenance, provenance } =
+      bindArchivedResponses(
+        plan,
+        originals,
+        original.finishedAt,
+        archive,
+        localOriginals,
+      )
     const artistRows = originals.filter(({ phase }) => phase === 'artist')
     requireReview(
       plan.version === 1
@@ -515,6 +582,7 @@ export async function commitArchivedAlbumReplay(
       rejections,
       options: typeof limit === 'number' ? { matchEvidenceLimit: limit } : {},
       captures,
+      localBodies,
       boundDetail,
     })
     const output = PluginResultSchema.parse(
@@ -541,7 +609,13 @@ export async function commitArchivedAlbumReplay(
         JSON.stringify({
           sourceJobItemId: item.id,
           sourceAttempt: plan.attempt,
-          originals: plan.originals,
+          originals: plan.originals.map(({ responseId, sha256 }) => ({
+            responseId,
+            sha256,
+          })),
+          ...(localProvenance.length
+            ? { localOriginals: localProvenance }
+            : {}),
           ...provenance,
           ...(plan.version === 2
             ? { reviewedResultSha256: plan.reviewedResultSha256 }

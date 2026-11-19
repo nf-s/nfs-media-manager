@@ -7,7 +7,9 @@ import {
   archiveSha256,
   ArchivedAlbumReplayDetailSchema,
   ArchivedAlbumReplayError,
+  ArchivedAlbumReplayLocalBodySchema,
   ArchivedAlbumReplayPlanSchema,
+  type ArchivedAlbumReplayLocalBody,
 } from '@/lib/archived-album-replay'
 
 async function readPrivateFile(path: string, maxBytes: number) {
@@ -36,6 +38,20 @@ async function readPrivateFile(path: string, maxBytes: number) {
   }
 }
 
+async function readPinnedArchive(pin: { path: string; sha256: string }) {
+  if (!isAbsolute(pin.path))
+    throw new ArchivedAlbumReplayError(
+      'Use an absolute path to the reviewed archive.',
+    )
+  const bytes = await readPrivateFile(pin.path, 32 * 1024 * 1024 + 4096)
+  if (archiveSha256(bytes) !== pin.sha256)
+    throw new ArchivedAlbumReplayError(
+      'The archive differs from the reviewed file.',
+    )
+  const decoded: unknown = JSON.parse(bytes.toString('utf8'))
+  return decoded
+}
+
 async function main(args: string[]) {
   const { values } = parseArgs({
     args,
@@ -61,7 +77,6 @@ async function main(args: string[]) {
   const archiveFile =
     plan.version === 1 ? plan.supplement.archiveFile : undefined
   if (
-    (archiveFile && !isAbsolute(archiveFile.path)) ||
     ![plan.adapter, plan.projector, ...plan.dependencies].every(({ path }) =>
       isAbsolute(path),
     )
@@ -69,19 +84,20 @@ async function main(args: string[]) {
     throw new ArchivedAlbumReplayError(
       'Use absolute paths to the reviewed code and archive.',
     )
-  let detail
-  if (archiveFile) {
-    const archiveBytes = await readPrivateFile(
-      archiveFile.path,
-      32 * 1024 * 1024 + 4096,
-    )
-    if (archiveSha256(archiveBytes) !== archiveFile.sha256)
-      throw new ArchivedAlbumReplayError(
-        'The independent archive differs from the reviewed file.',
+  const detail = archiveFile
+    ? ArchivedAlbumReplayDetailSchema.parse(
+        await readPinnedArchive(archiveFile),
       )
-    detail = ArchivedAlbumReplayDetailSchema.parse(
-      JSON.parse(archiveBytes.toString('utf8')),
-    )
+    : undefined
+  const localOriginals = new Map<string, ArchivedAlbumReplayLocalBody>()
+  for (const { responseId, localArchive } of plan.originals) {
+    if (localArchive)
+      localOriginals.set(
+        responseId,
+        ArchivedAlbumReplayLocalBodySchema.parse(
+          await readPinnedArchive(localArchive.file),
+        ),
+      )
   }
   const { commitArchivedAlbumReplay } =
     await import('@/services/archived-album-replay')
@@ -89,7 +105,12 @@ async function main(args: string[]) {
   const output = await open(values.output, 'wx', 0o600)
   let wroteReceipt = false
   try {
-    const result = await commitArchivedAlbumReplay(plan, sha256, detail)
+    const result = await commitArchivedAlbumReplay(
+      plan,
+      sha256,
+      detail,
+      localOriginals,
+    )
     await output.writeFile(
       JSON.stringify({ version: 1, sha256, ...result }) + '\n',
     )

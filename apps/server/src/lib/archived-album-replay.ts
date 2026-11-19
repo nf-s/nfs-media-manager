@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { z } from 'zod'
 import { JsonValueSchema, PluginReferenceSchema } from '@repo/media-plugin-sdk'
 import {
+  MAX_LOCAL_PROVIDER_RESPONSE_BYTES,
   MAX_PROVIDER_RESPONSE_BYTES,
   ProviderResponseCaptureSchema,
 } from '@repo/schemas/provider-response'
@@ -33,7 +34,22 @@ const planFields = {
     })
     .strict(),
   originals: z
-    .array(z.object({ responseId: id, sha256: digest }).strict())
+    .array(
+      z
+        .object({
+          responseId: id,
+          sha256: digest,
+          localArchive: z
+            .object({
+              archiveId: z.string().uuid(),
+              file: pin,
+              requestKey: digest,
+            })
+            .strict()
+            .optional(),
+        })
+        .strict(),
+    )
     .min(1)
     .max(8),
 }
@@ -162,6 +178,20 @@ export type ArchivedAlbumReplayDetail = z.infer<
   typeof ArchivedAlbumReplayDetailSchema
 >
 
+export const ArchivedAlbumReplayLocalBodySchema =
+  ArchivedAlbumReplayDetailSchema.extend({
+    retainedBytes: z
+      .number()
+      .int()
+      .positive()
+      .max(MAX_LOCAL_PROVIDER_RESPONSE_BYTES),
+    text: z.string().min(1).max(MAX_LOCAL_PROVIDER_RESPONSE_BYTES),
+  })
+
+export type ArchivedAlbumReplayLocalBody = z.infer<
+  typeof ArchivedAlbumReplayLocalBodySchema
+>
+
 export const ArchivedAlbumReplayInputSchema = z.object({
   adapter: pin,
   projector: pin,
@@ -209,6 +239,15 @@ export const ArchivedAlbumReplayInputSchema = z.object({
   ),
   options: z.record(z.string(), JsonValueSchema),
   captures: z.array(ProviderResponseCaptureSchema).min(1).max(9),
+  localBodies: z
+    .array(
+      z.object({
+        ordinal: z.number().int().positive(),
+        archive: ArchivedAlbumReplayLocalBodySchema,
+      }),
+    )
+    .max(8)
+    .default([]),
   boundDetail: z.object({
     ordinal: z.number().int().positive(),
     requestKey: digest,

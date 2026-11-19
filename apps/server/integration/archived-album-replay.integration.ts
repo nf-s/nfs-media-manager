@@ -192,26 +192,46 @@ afterEach(async () => {
   if (directory) await rm(directory, { force: true, recursive: true })
 })
 
-it.skipIf(!adminUrl || process.platform !== 'darwin').each([false, true])(
-  'commits only the reviewed native replay once (original-only: %s)',
-  async (originalOnly) => {
+it.skipIf(!adminUrl || process.platform !== 'darwin').each([
+  { originalOnly: false, local: false },
+  { originalOnly: true, local: false },
+  { originalOnly: false, local: true },
+  { originalOnly: true, local: true },
+])(
+  'commits the reviewed native replay once (original-only: $originalOnly, local: $local)',
+  async ({ originalOnly, local }) => {
     const pin = async (name: string, contents: string) => {
       const path = join(directory, name)
       await writeFile(path, contents, { flag: 'wx', mode: 0o600 })
       return { path, sha256: archiveSha256(contents) }
     }
+    const artistUrl = 'https://example.test/artist?name=Fixture+Artist'
+    const artistBody = JSON.stringify({ miss: true })
+    const artistOffset = local ? 1 : 0
+    const sdkUrl = new URL(
+      '../../../packages/media-plugin-sdk/dist/index.js',
+      import.meta.url,
+    ).href
     const adapter = await pin(
       'fixture-adapter.mjs',
       `
     import { createServer } from 'node:net'
+    import { ProviderItemNotFoundError } from '${sdkUrl}'
     export default {
       manifest: {
         id: 'fixture-provider', displayName: 'Fixture', description: '', mediaTypes: ['album'],
         localWorkerRequired: true,
-        localWorker: { origin: 'https://example.test', paths: ['/browse', '/detail'], credentialHeaders: [], queryParameters: ['id'] },
+        localWorker: { origin: 'https://example.test', paths: ['/artist', '/browse', '/detail'], credentialHeaders: [], queryParameters: ['id', 'name'] },
+        bootstrapAlbumArtists: ${local},
         rateLimit: { maxConcurrent: 1, minTimeMs: 0 }, secrets: [],
       },
-      async scrapeMediaItem({ request, secrets }) {
+      async scrapeArtist({ request }) {
+        const record = await (await request('${artistUrl}', { method: 'GET' }, { requireLocalTransport: true, notFoundOn404: true })).json()
+        if (record.miss) throw new ProviderItemNotFoundError('No exact artist match')
+        throw Error('The test archive should contain an artist miss')
+      },
+      async scrapeMediaItem({ request, secrets, artistProfiles }) {
+        if (artistProfiles?.length) throw Error('The artist miss should not add a profile')
         if (Object.keys(secrets).length || process.env.DATABASE_URL) throw Error('Unexpected credentials')
         if (process.platform === 'darwin') await new Promise((resolve, reject) => {
           const server = createServer()
@@ -233,7 +253,9 @@ it.skipIf(!adminUrl || process.platform !== 'darwin').each([false, true])(
     const projector = await pin(
       'fixture-projector.mjs',
       `
-    export default (source, url) => url.pathname === '/browse'
+    export default (source, url) => url.pathname === '/artist'
+      ? { miss: source.miss }
+      : url.pathname === '/browse'
       ? { id: source.nearby }
       : { id: source.release.group, genre: source.release.genre, collection: source.release.collection }
   `,
@@ -248,6 +270,66 @@ it.skipIf(!adminUrl || process.platform !== 'darwin').each([false, true])(
     const archiveId = randomUUID()
     const requestKey = archiveSha256(detailUrl)
     const sha256 = archiveSha256(detail)
+    const browseSha256 = archiveSha256(body)
+    const reference = randomUUID()
+    const artistSha256 = archiveSha256(artistBody)
+    const artistRequestKey = archiveSha256(artistUrl)
+    const localReceipt: {
+      state: 'local'
+      reference: string
+      retainedBytes: number
+    } = {
+      state: 'local',
+      reference,
+      retainedBytes: Buffer.byteLength(artistBody),
+    }
+    let localArchive
+    if (local) {
+      const file = await pin(
+        reference + '.json',
+        JSON.stringify({
+          version: 1,
+          id: reference,
+          action: 'artist',
+          status: 200,
+          capturedAt: +finishedAt,
+          requestKey: artistRequestKey,
+          retainedBytes: localReceipt.retainedBytes,
+          sha256: artistSha256,
+          redacted: false,
+          text: artistBody,
+        }),
+      )
+      localArchive = {
+        archiveId: reference,
+        file,
+        requestKey: artistRequestKey,
+      }
+      await database
+        .update(schema.providerResponse)
+        .set({ ordinal: 2 })
+        .where(eq(schema.providerResponse.id, 'fixture-response'))
+      await database.insert(schema.providerResponse).values({
+        id: 'fixture-artist-response',
+        jobId: originalJobId,
+        jobItemId: originalItemId,
+        provider,
+        artistId: 'fixture-artist',
+        attempt: 1,
+        ordinal: 1,
+        phase: 'artist',
+        method: 'GET',
+        requestUrl: 'https://example.test/artist',
+        requestKey: nativeProviderReplayRequestKey(artistUrl, true),
+        status: 200,
+        retry: 1,
+        receivedAt: finishedAt,
+        contentType: 'application/json',
+        bodyState: 'local',
+        retainedBytes: localReceipt.retainedBytes,
+        body: localReceipt,
+      })
+    }
     const planScope = {
       jobId: originalJobId,
       jobItemId: originalItemId,
@@ -265,7 +347,16 @@ it.skipIf(!adminUrl || process.platform !== 'darwin').each([false, true])(
         tracks: ['Opening Track'],
       },
       originals: [
-        { responseId: 'fixture-response', sha256: archiveSha256(body) },
+        ...(localArchive
+          ? [
+              {
+                responseId: 'fixture-artist-response',
+                sha256: artistSha256,
+                localArchive,
+              },
+            ]
+          : []),
+        { responseId: 'fixture-response', sha256: browseSha256 },
       ],
     }
     const detailRequest = {
@@ -326,7 +417,7 @@ it.skipIf(!adminUrl || process.platform !== 'darwin').each([false, true])(
         .where(eq(schema.providerCurrentState.id, 'fixture-spotify-state'))
       await database
         .update(schema.providerResponse)
-        .set({ ordinal: 2 })
+        .set({ ordinal: 2 + artistOffset })
         .where(eq(schema.providerResponse.id, 'fixture-response'))
       const detailResponse: Omit<
         typeof schema.providerResponse.$inferInsert,
@@ -349,8 +440,12 @@ it.skipIf(!adminUrl || process.platform !== 'darwin').each([false, true])(
         body: { state: 'captured', text: detail },
       }
       await database.insert(schema.providerResponse).values([
-        { ...detailResponse, id: 'fixture-catalogue-detail', ordinal: 1 },
-        { ...detailResponse, id: 'fixture-detail', ordinal: 3 },
+        {
+          ...detailResponse,
+          id: 'fixture-catalogue-detail',
+          ordinal: 1 + artistOffset,
+        },
+        { ...detailResponse, id: 'fixture-detail', ordinal: 3 + artistOffset },
       ])
       const expected = PluginResultSchema.parse({
         payload: {
@@ -369,10 +464,13 @@ it.skipIf(!adminUrl || process.platform !== 'darwin').each([false, true])(
       return {
         ...planScope,
         version: 2,
-        artistLookups: [],
+        artistLookups: local
+          ? [{ artistId: 'fixture-artist', providerArtistId: null }]
+          : [],
         originals: [
+          ...planScope.originals.slice(0, artistOffset),
           { responseId: 'fixture-catalogue-detail', sha256 },
-          ...planScope.originals,
+          ...planScope.originals.slice(artistOffset),
           { responseId: 'fixture-detail', sha256 },
         ],
         anchors: [
@@ -478,6 +576,25 @@ it.skipIf(!adminUrl || process.platform !== 'darwin').each([false, true])(
       )
     }
     const response = eq(schema.providerResponse.id, 'fixture-response')
+    if (local) {
+      const artistResponse = eq(
+        schema.providerResponse.id,
+        'fixture-artist-response',
+      )
+      await database
+        .update(schema.providerResponse)
+        .set({
+          body: { ...localReceipt, reference: randomUUID() },
+        })
+        .where(artistResponse)
+      await expect(command('changed-receipt')).rejects.toThrow(
+        'A local archive differs from its original response receipt.',
+      )
+      await database
+        .update(schema.providerResponse)
+        .set({ body: localReceipt })
+        .where(artistResponse)
+    }
     await database
       .update(schema.providerResponse)
       .set({ retry: 2 })
@@ -521,7 +638,7 @@ it.skipIf(!adminUrl || process.platform !== 'darwin').each([false, true])(
               detail: {
                 origin: 'original-failed-attempt',
                 responseId: 'fixture-detail',
-                ordinal: 3,
+                ordinal: 3 + artistOffset,
               },
             }
           : { supplement: { origin: 'independent-reviewed-detail' } },
@@ -531,8 +648,32 @@ it.skipIf(!adminUrl || process.platform !== 'darwin').each([false, true])(
       expect(replacement?.options.archivedReplay).not.toHaveProperty(
         'supplement',
       )
+    if (local) {
+      expect(replacement?.options.archivedReplay).toMatchObject({
+        localOriginals: [
+          {
+            origin: 'paired-worker-local',
+            responseId: 'fixture-artist-response',
+            archiveId: reference,
+            bodySha256: artistSha256,
+            requestKey: artistRequestKey,
+          },
+        ],
+      })
+      expect(JSON.stringify(replacement?.options.archivedReplay)).not.toContain(
+        directory,
+      )
+    }
     const responseRows = await database.query.providerResponse.findMany()
-    expect(responseRows).toHaveLength(originalOnly ? 3 : 1)
+    expect(responseRows).toHaveLength((originalOnly ? 3 : 1) + artistOffset)
+    if (local)
+      expect(responseRows).toContainEqual(
+        expect.objectContaining({
+          id: 'fixture-artist-response',
+          jobId: originalJobId,
+          body: localReceipt,
+        }),
+      )
     expect(responseRows).toContainEqual(
       expect.objectContaining({
         id: 'fixture-response',

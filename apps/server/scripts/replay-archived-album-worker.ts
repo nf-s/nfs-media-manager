@@ -2,6 +2,8 @@ import { readFile } from 'node:fs/promises'
 import { pathToFileURL } from 'node:url'
 import {
   isMediaProviderPlugin,
+  isProviderItemAmbiguousError,
+  isProviderItemNotFoundError,
   JsonValueSchema,
   PluginArtistResultSchema,
   PluginResultSchema,
@@ -47,18 +49,41 @@ export async function mapArchivedAlbum(input: ArchivedAlbumReplayInput) {
     throw new Error('This adapter cannot replay the reviewed album')
 
   let projectedResponses = 0
+  const localBodies = new Map(
+    input.localBodies.map(({ ordinal, archive }) => [ordinal, archive]),
+  )
+  if (localBodies.size !== input.localBodies.length)
+    throw new Error('Archived response has duplicate local bodies')
   const replay = createProviderResponseReplay(input.captures, {
     async projectNativeResponse(capture, request) {
       const body = capture.response.body
-      if (body.state !== 'captured' || capture.response.status !== 200)
+      if (capture.response.status !== 200 || body.state === 'unavailable')
         throw new Error('Archived native response is unavailable')
+      const url = new URL(request)
+      const requestKey = archiveSha256(url.href)
       if (
         capture.ordinal === input.boundDetail.ordinal &&
-        archiveSha256(new URL(request).href) !== input.boundDetail.requestKey
+        requestKey !== input.boundDetail.requestKey
       )
         throw new Error('Archive request differs from the reviewed detail')
-      const source: unknown = JSON.parse(body.text)
-      const projected: unknown = await projector(source, new URL(request))
+      let text
+      if (body.state === 'captured') text = body.text
+      else {
+        const retained = localBodies.get(capture.ordinal)
+        if (
+          !retained ||
+          retained.id !== body.reference ||
+          retained.retainedBytes !== body.retainedBytes ||
+          retained.requestKey !== requestKey
+        )
+          throw new Error(
+            'Archived local response differs from the original request',
+          )
+        text = retained.text
+        localBodies.delete(capture.ordinal)
+      }
+      const source: unknown = JSON.parse(text)
+      const projected: unknown = await projector(source, url)
       projectedResponses += 1
       return Response.json(JsonValueSchema.parse(projected))
     },
@@ -68,15 +93,24 @@ export async function mapArchivedAlbum(input: ArchivedAlbumReplayInput) {
   for (const { id, name, providerArtistId } of input.artistLookups) {
     if (!adapter.scrapeArtist || !adapter.manifest.bootstrapAlbumArtists)
       throw new Error('Archived artist lookup does not match the adapter')
-    const result = PluginArtistResultSchema.parse(
-      await adapter.scrapeArtist({
-        artist: { id, name },
-        providerArtistId,
-        request: replay.requestFor('artist'),
-        secrets: {},
-      }),
-    )
-    artistProfiles.push({ artistId: id, name, payload: result.payload })
+    try {
+      const result = PluginArtistResultSchema.parse(
+        await adapter.scrapeArtist({
+          artist: { id, name },
+          providerArtistId,
+          request: replay.requestFor('artist'),
+          secrets: {},
+        }),
+      )
+      artistProfiles.push({ artistId: id, name, payload: result.payload })
+    } catch (error) {
+      // The ordinary album job can continue after an artist lookup miss.
+      if (
+        !isProviderItemNotFoundError(error) &&
+        !isProviderItemAmbiguousError(error)
+      )
+        throw error
+    }
   }
   const result = PluginResultSchema.parse(
     await adapter.scrapeMediaItem({
@@ -96,7 +130,7 @@ export async function mapArchivedAlbum(input: ArchivedAlbumReplayInput) {
     }),
   )
   replay.assertComplete()
-  if (projectedResponses !== input.captures.length)
+  if (projectedResponses !== input.captures.length || localBodies.size)
     throw new Error('Every archived response must be native worker evidence')
   const [reference] = result.normalized.references
   if (
