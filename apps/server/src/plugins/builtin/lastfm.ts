@@ -96,7 +96,9 @@ export async function requestLastFm(
     if (
       method === 'artist.getInfo' &&
       error.error === 6 &&
-      /^artist not found\.?$/i.test(error.message.trim())
+      /^(?:artist not found|the artist you supplied could not be found)\.?$/i.test(
+        error.message.trim(),
+      )
     )
       throw new ProviderItemNotFoundError('Last.fm artist not found.')
     if (method.startsWith('artist.'))
