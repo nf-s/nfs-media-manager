@@ -16,6 +16,7 @@ import { eq } from 'drizzle-orm'
 import { env } from '@/env'
 import { ServerError } from '@/lib/error'
 import { discogsPlugin } from '@/plugins/builtin/discogs'
+import { lastfmPlugin } from '@/plugins/builtin/lastfm'
 import { musicbrainzPlugin } from '@/plugins/builtin/musicbrainz'
 import * as schema from '@/schemas/db'
 
@@ -59,12 +60,15 @@ vi.mock('@/plugins/registry', async (importOriginal) => ({
   getScrapePlugin: async (id: string) => {
     if (id === 'musicbrainz') return fixturePlugin
     if (id === 'discogs') return discogsFixturePlugin
+    if (id === 'lastfm') return lastfmPlugin
     return null
   },
 }))
 vi.mock('@/lib/provider-secrets', () => ({
   resolveProviderSecrets: () => ({
     token: 'discogs-fixture-token',
+    apiKey: 'fixture-lastfm',
+    username: 'fixture-listener',
     appName: 'OfflineFixture',
     appVersion: '2.0',
     contact: 'offline@example.test',
@@ -126,6 +130,124 @@ async function runJob(id: string) {
 }
 
 describe('find match', () => {
+  it('previews an alternate album tracklist through the request gate without saving data or sending a username', async () => {
+    const { previewAlbumCandidate } =
+      await import('@/services/album-candidate-preview')
+    const url = 'https://www.last.fm/music/Fixture+Artist/Alternate'
+    request.mockResolvedValueOnce(
+      Response.json({
+        album: {
+          name: 'Alternate',
+          artist: 'Fixture Artist',
+          url,
+          tracks: { track: [{ name: 'First Track', duration: '200' }] },
+        },
+      }),
+    )
+    const result = await previewAlbumCandidate({
+      albumId,
+      provider: 'lastfm',
+      referenceType: 'url',
+      externalId: url,
+    })
+    expect(result).toEqual({
+      title: 'Alternate',
+      artists: ['Fixture Artist'],
+      url,
+      date: null,
+      masterId: null,
+      mainReleaseId: null,
+      trackCount: 1,
+      tracks: [{ position: 1, title: 'First Track', durationSec: 200 }],
+    })
+    expect(request).toHaveBeenCalledTimes(1)
+    const outgoing = new URL(String(request.mock.calls[0]?.[0]))
+    expect(outgoing.searchParams.get('method')).toBe('album.getInfo')
+    expect(outgoing.searchParams.has('username')).toBe(false)
+    expect(
+      await databaseClient.select().from(schema.providerSnapshot),
+    ).toHaveLength(0)
+    expect(
+      await databaseClient.select().from(schema.providerReference),
+    ).toHaveLength(0)
+    await databaseClient.insert(schema.mediaOverride).values({
+      id: 'fixture-match-rejection',
+      mediaItemId: albumId,
+      field: 'albumMatchRejection',
+      value: {
+        provider: 'lastfm',
+        sourceProvider: 'lastfm',
+        snapshotId: 'archive',
+        referenceType: 'url',
+        identifier: url,
+      },
+    })
+    await expect(
+      previewAlbumCandidate({
+        albumId,
+        provider: 'lastfm',
+        referenceType: 'url',
+        externalId: url,
+      }),
+    ).rejects.toMatchObject({ response: { statusCode: 409 } })
+    expect(request).toHaveBeenCalledTimes(1)
+    request.mockResolvedValueOnce(
+      Response.json({
+        album: { name: 'Alternate', artist: 'Fixture Artist', url },
+      }),
+    )
+    await expect(
+      previewAlbumCandidate({
+        albumId,
+        provider: 'lastfm',
+        referenceType: 'url',
+        externalId: url + '+edition',
+      }),
+    ).rejects.toMatchObject({ response: { statusCode: 409 } })
+    expect(request).toHaveBeenCalledTimes(2)
+  })
+
+  it('returns Discogs master and main release IDs with the inspected track names', async () => {
+    const { previewAlbumCandidate } =
+      await import('@/services/album-candidate-preview')
+    const artist = { id: 3, name: 'Fixture Artist' }
+    const record = {
+      title: 'Album Fixture',
+      artists: [artist],
+      tracklist: [
+        {
+          position: 'A1',
+          type_: 'track',
+          title: 'First Track',
+          duration: '3:10',
+        },
+      ],
+    }
+    request.mockResolvedValueOnce(
+      Response.json({ ...record, id: 11, main_release: 22, year: 2020 }),
+    )
+    request.mockResolvedValueOnce(
+      Response.json({ ...record, id: 22, master_id: 11 }),
+    )
+    const result = await previewAlbumCandidate({
+      albumId,
+      provider: 'discogs',
+      referenceType: 'master',
+      externalId: '11',
+    })
+    expect(result).toMatchObject({
+      title: 'Album Fixture',
+      masterId: '11',
+      mainReleaseId: '22',
+      date: '2020',
+      tracks: [{ title: 'First Track', durationSec: 190 }],
+    })
+    expect(request).toHaveBeenCalledTimes(2)
+    expect(
+      await databaseClient.select().from(schema.providerSnapshot),
+    ).toHaveLength(0)
+  })
+
   it('keeps rejected evidence through a concurrent refresh and retries with a different exact match', async () => {
     const { rejectAlbumMatch } =
       await import('@/services/album-match-rejections')

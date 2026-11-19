@@ -26,6 +26,8 @@ Open a provider cell to inspect its Sources row. Use **Find match** where provid
 
 In Albums, **Google Custom Search (legacy)** shows the saved Rate Your Music title first. Open the cell details to see the selected release URL and any saved Metacritic match. When only a link survives, the cell shows the URL. Selecting a match opens the Sources row for the import that supplied it.
 
+An authenticated candidate preview at `POST /api/v1/find-match/preview` reads the tracks for one explicit Discogs or Last.fm album identifier. It returns the provider title, artists, track count and up to 500 ordered tracks. The provider's request limits apply. Previewing preserves the album's current match.
+
 For an incorrect album match, open the provider cell, choose **Mark incorrect**, and confirm the identifier. The decision is specific to that album and identity. **Match history** keeps the provider, identifier and date after a replacement arrives. The original snapshot stays available in Sources.
 
 Use **Refresh** in Sources to run a supported provider again. The lookup skips rejected identities. A different successful match becomes current. If the provider has no acceptable replacement, the earlier evidence remains marked incorrect. Google Custom Search is retired. Rate Your Music can be looked up with the indexed search provider.

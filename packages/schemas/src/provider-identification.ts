@@ -16,6 +16,22 @@ export const AlbumHttpUrlSchema = z
     }
   }, 'Expected a public HTTP URL')
 
+export const LastFmUrlSchema = AlbumHttpUrlSchema.refine((value) => {
+  try {
+    const url = new URL(value)
+    const segments = url.pathname.replace(/\/$/, '').split('/')
+    const names = segments.slice(segments[2] === '+noredirect' ? 3 : 2)
+    return (
+      ['www.last.fm', 'last.fm'].includes(url.hostname) &&
+      segments[1] === 'music' &&
+      names.length === 2 &&
+      names.every((name) => name.length > 0)
+    )
+  } catch {
+    return false
+  }
+}, 'Expected a Last.fm album URL')
+
 export const AlbumRymUrlSchema = AlbumHttpUrlSchema.refine((value) => {
   try {
     const url = new URL(value)
