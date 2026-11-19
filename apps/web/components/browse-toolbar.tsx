@@ -3,7 +3,12 @@
 import type { ReactNode } from 'react'
 import { ArrowDown, ArrowUp, Columns3, Filter } from 'lucide-react'
 import { Button } from '@repo/ui/components/ui/button'
-import { Select, Toolbar, ToolbarCount } from '@repo/ui/components/ds/toolbar'
+import {
+  Select,
+  Toolbar,
+  ToolbarCount,
+  ToolbarEnd,
+} from '@repo/ui/components/ds/toolbar'
 import type { BrowseView, GridDensity } from '@/utils/media-grid'
 import { BrowseDensitySwitch, BrowseViewSwitch } from './browse-controls'
 import BrowseFilterPanel, { FilterPanelSection } from './browse-filter-panel'
@@ -44,7 +49,7 @@ export function BrowseColumnFilterSection<Value extends string>(
 
 /**
  * The browse toolbar. Order: actions, search, sort, direction, filters,
- * view, density (Grid only), count.
+ * view, density (Grid only), count, end.
  */
 export default function BrowseToolbar<Key extends string>({
   actions,
@@ -56,6 +61,7 @@ export default function BrowseToolbar<Key extends string>({
   onViewChange,
   density,
   count,
+  end,
 }: {
   actions?: ReactNode
   search: ReactNode
@@ -71,6 +77,8 @@ export default function BrowseToolbar<Key extends string>({
     onChange: (density: GridDensity) => void
   }
   count?: ReactNode
+  /** Links that leave the list, such as Show in Tracks inside a detail. */
+  end?: ReactNode
 }) {
   const nextDirection = sort.direction === 'asc' ? 'desc' : 'asc'
   const directionLabel =
@@ -123,6 +131,7 @@ export default function BrowseToolbar<Key extends string>({
         />
       )}
       {count != null && <ToolbarCount>{count}</ToolbarCount>}
+      {end && <ToolbarEnd>{end}</ToolbarEnd>}
     </Toolbar>
   )
 }

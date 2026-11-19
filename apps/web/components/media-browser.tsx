@@ -7,12 +7,10 @@ import { CreatorScopeChip } from './creator-scope-chip'
 import {
   clearCreatorScope,
   parseCreatorBrowseScope,
+  type CreatorBrowseScope,
 } from '@/utils/creator-browse'
-import {
-  replaceWorkspaceUrl,
-  useDetailInspector,
-} from './detail-inspector-context'
-import { sameDetail, withoutDetailEntries } from '@/utils/detail-inspector'
+import { useDetailInspector } from './detail-inspector-context'
+import { sameDetail } from '@/utils/detail-inspector'
 
 import Link from 'next/link'
 import {
@@ -23,7 +21,6 @@ import {
   type ReactNode,
 } from 'react'
 import { createPortal } from 'react-dom'
-import { useSearchParams } from 'next/navigation'
 import { useQuery } from '@tanstack/react-query'
 import { z } from 'zod'
 import { ListMusic, Settings2 } from 'lucide-react'
@@ -83,6 +80,15 @@ import { useConfig } from './providers'
 import { usePlayback } from './playback-provider'
 import { fetchApiData } from '@/utils/api'
 import { useVirtualBrowse } from '@/hooks/useVirtualBrowse'
+import {
+  useEmbeddedBrowse,
+  usePageBrowse,
+  type BrowseHost,
+} from '@/hooks/useBrowseHost'
+import {
+  embeddedScrollClass,
+  type EmbeddedBrowse,
+} from '@/utils/embedded-browse'
 import { useBrowseFacets } from '@/hooks/useBrowseFacets'
 import {
   listRowHeight,
@@ -315,6 +321,61 @@ export default function MediaBrowser({
 }: {
   mediaType: 'album' | 'film'
 }) {
+  return (
+    <MediaBrowse
+      mediaType={mediaType}
+      host={usePageBrowse(mediaType === 'album' ? 'albums' : 'films')}
+    />
+  )
+}
+
+/**
+ * The Albums or Films browser inside a detail, held to one creator's items.
+ * It has every control of the Browse page; Show in Albums or Show in Films
+ * shows the same result there.
+ */
+export function EmbeddedMediaBrowser({
+  mediaType,
+  creator,
+  storage,
+  sort,
+  filterPanel,
+}: {
+  mediaType: 'album' | 'film'
+  creator: CreatorBrowseScope
+  /** Names the list's view, layout and column widths in browser storage. */
+  storage: string
+  sort: EmbeddedBrowse['sort']
+  /** Controls of the detail that choose the scope, such as a person's role. */
+  filterPanel?: { controls: ReactNode; count: number }
+}) {
+  const host = useEmbeddedBrowse(
+    mediaType === 'album' ? 'albums' : 'films',
+    { scope: creator, storage, mediaType, sort },
+    defaultBrowseView(mediaType),
+  )
+  return (
+    <MediaBrowse
+      mediaType={mediaType}
+      host={host}
+      scope={creator}
+      filterPanel={filterPanel}
+    />
+  )
+}
+
+function MediaBrowse({
+  mediaType,
+  host,
+  scope,
+  filterPanel,
+}: {
+  mediaType: 'album' | 'film'
+  host: BrowseHost
+  /** The creator a list inside a detail is held to. */
+  scope?: CreatorBrowseScope
+  filterPanel?: { controls: ReactNode; count: number }
+}) {
   const collection = mediaType === 'album' ? 'albums' : 'films'
   const noun =
     mediaType === 'album'
@@ -322,8 +383,9 @@ export default function MediaBrowser({
       : { one: 'film', other: 'films' }
   const { apiBaseUrl } = useConfig()
   const playback = usePlayback()
-  const searchParams = useSearchParams()
-  const [ready, setReady] = useState(false)
+  const { embedded } = host
+  const searchParams = host.params
+  const [ready, setReady] = useState(embedded)
   const [draft, setDraft] = useState('')
   const [adding, setAdding] = useState(false)
   const [scroll, setScroll] = useState({ identity: '', top: 0 })
@@ -338,9 +400,11 @@ export default function MediaBrowser({
   const scroller = useRef<HTMLDivElement>(null)
   const browser = useRef<HTMLElement>(null)
   const inspector = useDetailInspector()
-  const railSlot = useRailSlot()
+  const pageRail = useRailSlot()
+  // Inside a detail the active filters sit in a row above the results.
+  const railSlot = embedded ? null : pageRail
   const filters = parseFilters(searchParams.get('filters'))
-  const creator = parseCreatorBrowseScope(searchParams, mediaType)
+  const creator = scope ?? parseCreatorBrowseScope(searchParams, mediaType)
   const rangesResult = BrowseRangesParamSchema.safeParse(
     searchParams.get('ranges'),
   )
@@ -376,7 +440,7 @@ export default function MediaBrowser({
   const details = parseCardDetails(searchParams.get('overlays'))
   const density = useGridDensity(searchParams.get('density'))
   const selectedId =
-    inspector?.root?.kind === mediaType ? inspector.root.id : null
+    !embedded && inspector?.root?.kind === mediaType ? inspector.root.id : null
   const fieldsQuery = useQuery({
     queryKey: [collection, 'fields'],
     queryFn: () =>
@@ -447,23 +511,12 @@ export default function MediaBrowser({
       : previousScrollTop
 
   function setParams(updates: Record<string, string | null>, close = false) {
-    const pathname = `/${collection}`
-    const current = new URLSearchParams(window.location.search)
-    const params = close ? withoutDetailEntries(pathname, current) : current
-    for (const [key, value] of Object.entries(updates)) {
-      if (value === null || value === '') params.delete(key)
-      else params.set(key, value)
-    }
-    params.delete('page')
-    replaceWorkspaceUrl(`${pathname}${params.size ? `?${params}` : ''}`, !close)
-    try {
-      window.localStorage.setItem(
-        `browse:${collection}`,
-        withoutDetailEntries(pathname, params).toString(),
-      )
-    } catch {
-      /* URL state still works when browser storage is unavailable. */
-    }
+    host.update((params) => {
+      for (const [key, value] of Object.entries(updates)) {
+        if (value === null || value === '') params.delete(key)
+        else params.set(key, value)
+      }
+    }, close)
   }
   function addFilter(filter: BrowseFilter, keepOpen = false) {
     const next = filters.some((item) => sameBrowseFilter(item, filter))
@@ -484,7 +537,7 @@ export default function MediaBrowser({
       ranges: null,
       limitResults: null,
       listening: null,
-      ...clearCreatorScope,
+      ...(scope ? {} : clearCreatorScope),
     })
   }
   function openDetail(id: string, trigger?: HTMLElement) {
@@ -508,7 +561,7 @@ export default function MediaBrowser({
   function saveWidths(next: Record<string, number>) {
     setWidths(next)
     try {
-      localStorage.setItem(`widths:${collection}`, JSON.stringify(next))
+      localStorage.setItem(`widths:${host.storage}`, JSON.stringify(next))
     } catch {
       /* Width changes remain usable for this session. */
     }
@@ -516,18 +569,23 @@ export default function MediaBrowser({
 
   useEffect(() => {
     try {
-      const saved = restoreSavedBrowse(window.localStorage, collection)
+      // The saved Browse state belongs to the Browse page.
+      const saved = embedded
+        ? null
+        : restoreSavedBrowse(window.localStorage, collection)
       if (!window.location.search && saved)
         window.history.replaceState(null, '', `/${collection}?${saved}`)
       const parsed = WidthsSchema.safeParse(
-        JSON.parse(window.localStorage.getItem(`widths:${collection}`) ?? '{}'),
+        JSON.parse(
+          window.localStorage.getItem(`widths:${host.storage}`) ?? '{}',
+        ),
       )
       if (parsed.success) setWidths(parsed.data)
     } catch {
       /* Ignore unavailable storage or malformed saved preferences. */
     }
     setReady(true)
-  }, [collection])
+  }, [collection, embedded, host.storage])
   useEffect(() => {
     const element = scroller.current
     if (!element) return
@@ -713,11 +771,15 @@ export default function MediaBrowser({
       event.preventDefault()
       inspector?.replace({ kind: mediaType, id: next.id })
     }
+    // Inside a detail the list hears Escape before the drawer that holds it.
+    const keys = embedded ? browser.current : null
     document.addEventListener('pointerdown', onPointerDown)
-    document.addEventListener('keydown', onKeyDown)
+    if (keys) keys.addEventListener('keydown', onKeyDown)
+    else document.addEventListener('keydown', onKeyDown)
     return () => {
       document.removeEventListener('pointerdown', onPointerDown)
-      document.removeEventListener('keydown', onKeyDown)
+      if (keys) keys.removeEventListener('keydown', onKeyDown)
+      else document.removeEventListener('keydown', onKeyDown)
     }
   })
   const widthFor = (field: BrowseField) =>
@@ -883,7 +945,9 @@ export default function MediaBrowser({
         apiBaseUrl,
         collection: 'albums',
         params,
-        href: `/albums?${searchParams.size ? searchParams : params}`,
+        href:
+          host.browseHref ??
+          `/albums?${searchParams.size ? searchParams : params}`,
         label: 'Albums',
         total: length,
         startIndex: index,
@@ -999,9 +1063,11 @@ export default function MediaBrowser({
     )
   }
 
+  // The creator a list inside a detail is held to is not a filter.
+  const creatorFilter = scope ? undefined : creator
   const activeFilterCount =
     Number(Boolean(q)) +
-    Number(Boolean(creator)) +
+    Number(Boolean(creatorFilter)) +
     filters.length +
     ranges.length +
     (listening?.rules.length ?? 0) +
@@ -1009,9 +1075,9 @@ export default function MediaBrowser({
   const hasActiveFilters = activeFilterCount > 0
   const activeFilters: ReactNode = hasActiveFilters ? (
     <>
-      {creator && (
+      {creatorFilter && (
         <CreatorScopeChip
-          scope={creator}
+          scope={creatorFilter}
           film={mediaType === 'film'}
           onRemove={() => setParams(clearCreatorScope)}
         />
@@ -1076,42 +1142,52 @@ export default function MediaBrowser({
 
   const emptyState =
     query.hasTotal && !query.isError && total === 0 ? (
-      hasActiveFilters ? (
+      hasActiveFilters || filterPanel?.count ? (
         <State
           title={`No ${noun.other} match`}
           action={
-            <Button type="button" onClick={clearFilters}>
-              Clear filters
-            </Button>
+            hasActiveFilters && (
+              <Button type="button" onClick={clearFilters}>
+                Clear filters
+              </Button>
+            )
           }
         />
       ) : (
         <State
           title={`No ${noun.other} yet`}
           action={
-            <Button type="button" onClick={() => setAdding(true)}>
-              Add {mediaType}
-            </Button>
+            !embedded && (
+              <Button type="button" onClick={() => setAdding(true)}>
+                Add {mediaType}
+              </Button>
+            )
           }
         />
       )
     ) : null
 
   return (
-    <section className="browse-page" aria-label={collection} ref={browser}>
-      <div className="browse-column">
+    <section
+      className={embedded ? undefined : 'browse-page'}
+      aria-label={collection}
+      ref={browser}
+    >
+      <div className={embedded ? undefined : 'browse-column'}>
         <BrowseToolbar
           actions={
-            <>
-              <Button type="button" onClick={() => setAdding(true)}>
-                Add {mediaType}
-              </Button>
-              {mediaType === 'film' && (
-                <Button asChild variant="ghost">
-                  <Link href="/jobs?refresh=films">Refresh</Link>
+            !embedded && (
+              <>
+                <Button type="button" onClick={() => setAdding(true)}>
+                  Add {mediaType}
                 </Button>
-              )}
-            </>
+                {mediaType === 'film' && (
+                  <Button asChild variant="ghost">
+                    <Link href="/jobs?refresh=films">Refresh</Link>
+                  </Button>
+                )}
+              </>
+            )
           }
           search={
             <AiSearch
@@ -1149,9 +1225,10 @@ export default function MediaBrowser({
             onChange: sort,
             onDirectionChange: (direction) => setParams({ direction }),
           }}
-          filterCount={activeFilterCount}
+          filterCount={activeFilterCount + (filterPanel?.count ?? 0)}
           filters={
             <>
+              {filterPanel?.controls}
               {hasActiveFilters && (
                 <section
                   className="browse-drawer-active"
@@ -1227,7 +1304,7 @@ export default function MediaBrowser({
                           )
                           if (view)
                             setParams({
-                              ...clearCreatorScope,
+                              ...(scope ? {} : clearCreatorScope),
                               filters: JSON.stringify(view.filters),
                               ranges: JSON.stringify(view.ranges),
                               sortBy: view.sortBy,
@@ -1348,11 +1425,24 @@ export default function MediaBrowser({
                 Retry count
               </Button>
             ) : !query.isCounting ? (
-              formatItemCount(total, noun, query.unfilteredTotal)
+              formatItemCount(
+                total,
+                noun,
+                embedded ? undefined : query.unfilteredTotal,
+              )
             ) : query.isPending ? (
               'Loading...'
             ) : (
               'Counting...'
+            )
+          }
+          end={
+            host.browseHref && (
+              <Button variant="link" asChild>
+                <Link href={host.browseHref}>
+                  {`Show in ${mediaType === 'album' ? 'Albums' : 'Films'}`}
+                </Link>
+              </Button>
             )
           }
         />
@@ -1374,9 +1464,10 @@ export default function MediaBrowser({
               </div>
             )}
         <div
-          className="browse-scroller"
+          className={`browse-scroller${embedded ? ` ${embeddedScrollClass}` : ''}`}
           data-view={view}
           data-touch={grid.mobile ? '' : undefined}
+          data-inspector-scroll={embedded ? '' : undefined}
           ref={scroller}
           role="region"
           aria-label={`${collection} ${view}`}
@@ -1724,22 +1815,24 @@ export default function MediaBrowser({
           }}
         />
       )}
-      <DetailInspector
-        media={{
-          onFilter:
-            inspector?.active?.kind === mediaType ? addFilter : undefined,
-          onFiltersChange:
-            inspector?.active?.kind === mediaType ? changeFilters : undefined,
-          highlightField:
-            inspector?.active?.kind === mediaType ? sortBy : undefined,
-          browseMetric:
-            sameDetail(inspector?.root, inspector?.active) &&
-            sortField?.key === 'listeningScrobbles' &&
-            selectedListeningCount !== undefined
-              ? { field: sortField, value: selectedListeningCount }
-              : undefined,
-        }}
-      />
+      {!embedded && (
+        <DetailInspector
+          media={{
+            onFilter:
+              inspector?.active?.kind === mediaType ? addFilter : undefined,
+            onFiltersChange:
+              inspector?.active?.kind === mediaType ? changeFilters : undefined,
+            highlightField:
+              inspector?.active?.kind === mediaType ? sortBy : undefined,
+            browseMetric:
+              sameDetail(inspector?.root, inspector?.active) &&
+              sortField?.key === 'listeningScrobbles' &&
+              selectedListeningCount !== undefined
+                ? { field: sortField, value: selectedListeningCount }
+                : undefined,
+          }}
+        />
+      )}
     </section>
   )
 }

@@ -360,6 +360,15 @@ test('collection card views retain filtering, nested links, and bounded renderin
       entry,
       { kind: 'film', id: 'film-1' },
     ])
+    // The same films in Browse, in the view the list has now.
+    const browse = /href="([^"]+)"[^>]*>Show in Films<\/a>/.exec(drawer)?.[1]
+    assert.ok(browse)
+    const films = new URL(browse.replaceAll('&amp;', '&'), 'http://localhost')
+    assert.equal(films.pathname, '/films')
+    assert.deepEqual(JSON.parse(films.searchParams.get('filters') ?? ''), [
+      { field: 'collection', value: collection.name, mode: 'required' },
+    ])
+    assert.equal(films.searchParams.get('view'), view)
   }
 })
 

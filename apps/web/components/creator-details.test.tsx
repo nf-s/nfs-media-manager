@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mock, test } from 'node:test'
+import { before, mock, test } from 'node:test'
 import type { ReactNode } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
@@ -9,25 +9,39 @@ import {
 } from 'next/dist/shared/lib/hooks-client-context.shared-runtime'
 import { ArtistDetailSchema, PersonDetailSchema } from '@repo/schemas/creators'
 import { AlbumListItemSchema, FilmListItemSchema } from '@repo/schemas/media'
-import { SubscriptionSourceDetailSchema } from '@repo/schemas/subscriptions'
+import {
+  SubscriptionSourceDetailSchema,
+  mixBrowseFields,
+  subscriptionBrowseFields,
+} from '@repo/schemas/subscriptions'
 import { ProviderSummarySchema } from '@repo/schemas/provider'
 import {
   DetailInspectorProvider,
   InspectorEntryContext,
 } from './detail-inspector-context'
-import { ArtistDetail } from './artist-detail'
+import type { ArtistDetail as ArtistDetailComponent } from './artist-detail'
 import { ArtistIdentifierSourceRow } from './artist-identifier-sources'
-import { PersonDetail } from './person-detail'
+import type { PersonDetail as PersonDetailComponent } from './person-detail'
 import { ConfigContext } from './providers'
 import { detailEntries, type DetailEntry } from '@/utils/detail-inspector'
+import { embeddedScrollClass } from '@/utils/embedded-browse'
 
-// Node cannot load the subscription CSS module. The rendered class names are not under test.
+// Node cannot load the Browse CSS modules. The rendered class names are not under test.
 require.extensions['.css'] = (module) => {
   module.exports = {}
 }
 
-const network = mock.method(globalThis, 'fetch', async () => {
+async function forbidden(): Promise<Response> {
   throw new Error('Network forbidden in creator detail UI tests')
+}
+const network = mock.method(globalThis, 'fetch', forbidden)
+
+// The details load after the CSS hook, since their Browse lists import CSS modules.
+let ArtistDetail: typeof ArtistDetailComponent
+let PersonDetail: typeof PersonDetailComponent
+before(async () => {
+  ArtistDetail = (await import('./artist-detail')).ArtistDetail
+  PersonDetail = (await import('./person-detail')).PersonDetail
 })
 
 const timestamp = '2026-01-01T00:00:00.000Z'
@@ -143,36 +157,106 @@ function assertNestedViewControls(
     )
 }
 
-function render({
-  pathname,
-  search = '',
-  children,
-  cache,
-}: {
+type RenderOptions = {
   pathname: string
   search?: string
   children: ReactNode
-  cache: [unknown[], unknown][]
-}) {
+  cache: [readonly unknown[], unknown][]
+}
+
+function markup(
+  client: QueryClient,
+  { pathname, search = '', children }: RenderOptions,
+) {
+  return renderToStaticMarkup(
+    <QueryClientProvider client={client}>
+      <ConfigContext.Provider
+        value={{
+          appUrl: 'http://localhost:3001',
+          apiBaseUrl: 'http://localhost:4001',
+        }}
+      >
+        <PathnameContext.Provider value={pathname}>
+          <SearchParamsContext.Provider value={new URLSearchParams(search)}>
+            {children}
+          </SearchParamsContext.Provider>
+        </PathnameContext.Provider>
+      </ConfigContext.Provider>
+    </QueryClientProvider>,
+  )
+}
+
+function seededClient(cache: RenderOptions['cache']) {
   const client = new QueryClient()
   for (const [key, data] of cache) client.setQueryData(key, data)
+  return client
+}
+
+/**
+ * Renders a detail whose Browse list answers from fixtures. The first pass
+ * names the list's queries and records the requests they would make; the
+ * second shows the items.
+ */
+async function renderBrowse(options: RenderOptions, items: unknown[] = []) {
+  const first = seededClient(options.cache)
+  const requests: URL[] = []
+  const answers: [readonly unknown[], unknown][] = []
   try {
-    return renderToStaticMarkup(
-      <QueryClientProvider client={client}>
-        <ConfigContext.Provider
-          value={{
-            appUrl: 'http://localhost:3001',
-            apiBaseUrl: 'http://localhost:4001',
-          }}
-        >
-          <PathnameContext.Provider value={pathname}>
-            <SearchParamsContext.Provider value={new URLSearchParams(search)}>
-              {children}
-            </SearchParamsContext.Provider>
-          </PathnameContext.Provider>
-        </ConfigContext.Provider>
-      </QueryClientProvider>,
-    )
+    markup(first, options)
+    const queries = first
+      .getQueryCache()
+      .getAll()
+      .filter(
+        ({ queryKey }) =>
+          queryKey[1] === 'browse' || queryKey[1] === 'browse-count',
+      )
+    for (const { queryKey } of queries)
+      answers.push([
+        queryKey,
+        queryKey[1] === 'browse'
+          ? {
+              items,
+              page: 1,
+              size: 100,
+              hasMore: false,
+              totalCount: items.length,
+            }
+          : { totalCount: items.length, unfilteredCount: items.length },
+      ])
+    network.mock.mockImplementation(async (input) => {
+      requests.push(
+        new URL(input instanceof Request ? input.url : String(input)),
+      )
+      return Response.json(
+        { statusCode: 500, message: 'Fixture' },
+        {
+          status: 500,
+        },
+      )
+    })
+    await Promise.allSettled(queries.map((query) => query.fetch()))
+  } finally {
+    network.mock.mockImplementation(forbidden)
+    network.mock.resetCalls()
+    first.clear()
+  }
+  const html = render({ ...options, cache: [...options.cache, ...answers] })
+  return { html, requests }
+}
+
+/** The one request made to a Browse endpoint. */
+function request(requests: URL[], pathname: string) {
+  const matching = requests.filter((url) => url.pathname === pathname)
+  assert.equal(matching.length, 1, `Expected one request to ${pathname}`)
+  const [url] = matching
+  assert.ok(url)
+  return url.searchParams
+}
+
+function render(options: RenderOptions) {
+  const client = seededClient(options.cache)
+  try {
+    return markup(client, options)
   } finally {
     client.clear()
     assert.equal(network.mock.callCount(), 0)
@@ -231,45 +315,36 @@ test('artist overview displays profile evidence and independent music filters wi
   ])
 })
 
-test('copied artist album Grid preserves the parent detail and playback controls', () => {
+test('copied artist album Grid preserves the parent detail and playback controls', async () => {
   const entry: DetailEntry = {
     kind: 'artist',
     id: artist.id,
     view: 'tab=albums&view=grid',
   }
-  const html = render({
-    pathname: '/artists',
-    search: new URLSearchParams({
-      inspect: JSON.stringify([entry]),
-    }).toString(),
-    cache: [
-      [['artist', artist.id], artist],
-      [
-        [
-          'artist',
-          artist.id,
-          'albums',
-          'size=50&sortBy=title&direction=asc',
-          1,
-        ],
-        page(album),
-      ],
-    ],
-    children: (
-      <DetailInspectorProvider>
-        <InspectorEntryContext.Provider
-          value={{ active: entry, replaceView: () => {} }}
-        >
-          <ArtistDetail id={artist.id} />
-        </InspectorEntryContext.Provider>
-      </DetailInspectorProvider>
-    ),
-  })
+  const { html } = await renderBrowse(
+    {
+      pathname: '/artists',
+      search: new URLSearchParams({
+        inspect: JSON.stringify([entry]),
+      }).toString(),
+      cache: [[['artist', artist.id], artist]],
+      children: (
+        <DetailInspectorProvider>
+          <InspectorEntryContext.Provider
+            value={{ active: entry, replaceView: () => {} }}
+          >
+            <ArtistDetail id={artist.id} />
+          </InspectorEntryContext.Provider>
+        </DetailInspectorProvider>
+      ),
+    },
+    [album],
+  )
   assert.match(html, /aria-label="Play Synthetic album[^"]*"/)
   assertNestedViewControls(html, 'Grid')
   assert.match(
     html,
-    /class="browse-nested-item"[^>]*><article class="ds-card"><span class="ds-art">/,
+    /<article class="ds-card" data-item-index="0"[^>]*><span class="ds-art">/,
   )
   const target = destination(html, 'Synthetic album')
   assert.deepEqual(detailEntries(target.pathname, target.searchParams), [
@@ -278,33 +353,105 @@ test('copied artist album Grid preserves the parent detail and playback controls
   ])
 })
 
-test('artist albums start in Grid and tracks in Table, each with layout controls', () => {
-  for (const { tab, sortBy, active } of [
-    { tab: 'albums', sortBy: 'title', active: 'Grid' },
-    { tab: 'tracks', sortBy: 'title', active: 'Table' },
-  ] satisfies { tab: string; sortBy: string; active: 'Grid' | 'Table' }[]) {
-    const html = render({
+test('the artist Albums tab is the Albums browser held to the artist', async () => {
+  const { html, requests } = await renderBrowse(
+    {
+      pathname: `/artists/${artist.id}`,
+      search: 'tab=albums',
+      children: <ArtistDetail id={artist.id} />,
+      cache: [[['artist', artist.id], artist]],
+    },
+    [album],
+  )
+  for (const endpoint of ['browse-page', 'browse-count']) {
+    const params = request(requests, `/api/v1/albums/${endpoint}`)
+    assert.equal(params.get('creatorId'), artist.id)
+  }
+  const page = request(requests, '/api/v1/albums/browse-page')
+  assert.equal(page.get('sortBy'), 'title')
+  assert.equal(page.get('direction'), 'asc')
+  assertNestedViewControls(html, 'Grid')
+  assert.match(html, /aria-label="Search albums"|placeholder="Search albums"/)
+  assert.match(html, /role="status">1 album<\/span>/)
+  // The artist holds the list; it is not a filter to remove.
+  assert.match(html, />Filters<\/button>/)
+  assert.doesNotMatch(html, /Remove artist filter|Clear all/)
+  // No page rail, drawer or page actions inside the detail.
+  assert.doesNotMatch(html, /class="browse-page"|ds-rail-label|>Add album</)
+  assert.ok(html.includes(embeddedScrollClass))
+  assert.match(html, /data-inspector-scroll=""/)
+  const browse = destination(html, 'Show in Albums')
+  assert.equal(browse.pathname, '/albums')
+  assert.deepEqual(Object.fromEntries(browse.searchParams), {
+    creatorId: artist.id,
+    sortBy: 'title',
+    direction: 'asc',
+    view: 'grid',
+    density: 'standard',
+  })
+})
+
+test('artist album settings cannot remove or change the artist', async () => {
+  const { html, requests } = await renderBrowse({
+    pathname: `/artists/${artist.id}`,
+    search: new URLSearchParams({
+      tab: 'albums',
+      q: 'Synthetic',
+      creatorId: 'other-artist',
+      sortBy: 'releaseDate',
+      direction: 'desc',
+      view: 'table',
+    }).toString(),
+    children: <ArtistDetail id={artist.id} />,
+    cache: [[['artist', artist.id], artist]],
+  })
+  for (const endpoint of ['browse-page', 'browse-count']) {
+    const params = request(requests, `/api/v1/albums/${endpoint}`)
+    assert.equal(params.get('creatorId'), artist.id)
+    assert.equal(params.get('q'), 'Synthetic')
+  }
+  assertNestedViewControls(html, 'Table')
+  // Only the search counts as a filter, and clearing filters leaves the artist.
+  assert.match(html, />Filters · 1<\/button>/)
+  assert.match(html, /Search: Synthetic/)
+  assert.doesNotMatch(html, /Remove artist filter/)
+  assert.match(html, /<strong>No albums match<\/strong>/)
+  const browse = destination(html, 'Show in Albums')
+  assert.equal(browse.searchParams.get('creatorId'), artist.id)
+  assert.equal(browse.searchParams.get('q'), 'Synthetic')
+  assert.equal(browse.searchParams.get('sortBy'), 'releaseDate')
+  assert.equal(browse.searchParams.get('direction'), 'desc')
+  assert.equal(browse.searchParams.get('view'), 'table')
+})
+
+test('artist albums start in Grid and tracks in Table, each held to the artist', async () => {
+  for (const { tab, collection, active } of [
+    { tab: 'albums', collection: 'Albums', active: 'Grid' },
+    { tab: 'tracks', collection: 'Tracks', active: 'Table' },
+  ] satisfies {
+    tab: string
+    collection: string
+    active: 'Grid' | 'Table'
+  }[]) {
+    const { html, requests } = await renderBrowse({
       pathname: `/artists/${artist.id}`,
       search: `tab=${tab}`,
       children: <ArtistDetail id={artist.id} />,
-      cache: [
-        [['artist', artist.id], artist],
-        [
-          [
-            'artist',
-            artist.id,
-            tab,
-            `size=50&sortBy=${sortBy}&direction=asc`,
-            1,
-          ],
-          page(),
-        ],
-      ],
+      cache: [[['artist', artist.id], artist]],
     })
+    for (const endpoint of ['browse-page', 'browse-count'])
+      assert.equal(
+        request(requests, `/api/v1/${tab}/${endpoint}`).get('creatorId'),
+        artist.id,
+      )
     assertNestedViewControls(html, active)
     // Card size sits with the view switch while the Grid view is shown.
     assert.equal(html.includes('aria-label="Grid density"'), active === 'Grid')
-    assert.ok(html.includes(`No ${tab} stored.`))
+    const browse = destination(html, `Show in ${collection}`)
+    assert.equal(browse.pathname, `/${tab}`)
+    assert.equal(browse.searchParams.get('creatorId'), artist.id)
+    assert.equal(browse.searchParams.get('sortBy'), 'title')
+    assert.equal(browse.searchParams.get('direction'), 'asc')
   }
 })
 
@@ -602,64 +749,78 @@ test('identifier provenance names and links the actual album, provider and job',
   assert.ok(html.includes(spotifyArtistId))
 })
 
-test('person details open films and pass the selected credit role to Browse', () => {
-  const html = render({
-    pathname: `/people/${person.id}`,
-    search: 'role=director',
-    children: <PersonDetail id={person.id} />,
-    cache: [
-      [['person', person.id], person],
-      [
-        [
-          'person',
-          person.id,
-          'films',
-          'size=50&sortBy=title&direction=asc&role=director',
-          1,
-        ],
-        page(film),
-      ],
-    ],
-  })
+test('person films are the Films browser held to the person and the chosen role', async () => {
+  const { html, requests } = await renderBrowse(
+    {
+      pathname: `/people/${person.id}`,
+      search: 'role=director',
+      children: <PersonDetail id={person.id} />,
+      cache: [[['person', person.id], person]],
+    },
+    [film],
+  )
+  for (const endpoint of ['browse-page', 'browse-count']) {
+    const params = request(requests, `/api/v1/films/${endpoint}`)
+    assert.equal(params.get('creatorId'), person.id)
+    assert.equal(params.get('creatorRole'), 'director')
+  }
+  const page = request(requests, '/api/v1/films/browse-page')
+  assert.equal(page.get('sortBy'), 'title')
+  assert.equal(page.get('direction'), 'asc')
   assert.equal(destination(html, film.title).pathname, `/films/${film.id}`)
-  assert.match(html, /Director, Actor/)
   assertNestedViewControls(html, 'Grid')
   assert.match(
     html,
-    /class="browse-nested-item"[^>]*><article class="ds-card"><span class="ds-art" data-ratio="poster">/,
+    /<article class="ds-card" data-item-index="0"[^>]*><span class="ds-art" data-ratio="poster">/,
   )
-  for (const role of person.roles) {
-    const target = destination(html, `Filter films as ${role}`)
-    assert.equal(target.pathname, '/films')
-    assert.equal(target.searchParams.get('creatorId'), person.id)
-    assert.equal(target.searchParams.get('creatorRole'), role)
-  }
+  // The role control counts; the person is not a removable filter.
+  assert.match(html, />Filters · 1<\/button>/)
+  assert.doesNotMatch(html, /Remove director filter/)
+  const browse = destination(html, 'Show in Films')
+  assert.equal(browse.pathname, '/films')
+  assert.equal(browse.searchParams.get('creatorId'), person.id)
+  assert.equal(browse.searchParams.get('creatorRole'), 'director')
+  assert.equal(browse.searchParams.get('sortBy'), 'title')
+  assert.equal(browse.searchParams.get('direction'), 'asc')
+  assert.equal(browse.searchParams.get('view'), 'grid')
 })
 
-test('copied person film List keeps the stored paging and role filter', () => {
-  const html = render({
+test('person films without a chosen role include every credit', async () => {
+  const { html, requests } = await renderBrowse({
     pathname: `/people/${person.id}`,
-    search: 'view=list&role=director&sortBy=runtimeMinutes&direction=desc',
     children: <PersonDetail id={person.id} />,
-    cache: [
-      [['person', person.id], person],
-      [
-        [
-          'person',
-          person.id,
-          'films',
-          'size=50&sortBy=runtimeMinutes&direction=desc&role=director',
-          1,
-        ],
-        page(film),
-      ],
-    ],
+    cache: [[['person', person.id], person]],
   })
-  assertNestedViewControls(html, 'List')
-  assert.match(
-    html,
-    /class="browse-nested-item"[^>]*><div class="ds-row">.*?class="ds-thumb" data-ratio="poster"/,
+  for (const endpoint of ['browse-page', 'browse-count']) {
+    const params = request(requests, `/api/v1/films/${endpoint}`)
+    assert.equal(params.get('creatorId'), person.id)
+    assert.equal(params.has('creatorRole'), false)
+  }
+  assert.match(html, />Filters<\/button>/)
+  assert.match(html, /<strong>No films yet<\/strong>/)
+  assert.doesNotMatch(html, />Add film</)
+  assert.equal(
+    destination(html, 'Show in Films').searchParams.has('creatorRole'),
+    false,
   )
+})
+
+test('copied person film List keeps its sort and role', async () => {
+  const { html, requests } = await renderBrowse(
+    {
+      pathname: `/people/${person.id}`,
+      search: 'view=list&role=director&sortBy=runtimeMinutes&direction=desc',
+      children: <PersonDetail id={person.id} />,
+      cache: [[['person', person.id], person]],
+    },
+    [film],
+  )
+  const page = request(requests, '/api/v1/films/browse-page')
+  assert.equal(page.get('sortBy'), 'runtimeMinutes')
+  assert.equal(page.get('direction'), 'desc')
+  assert.equal(page.get('creatorRole'), 'director')
+  assertNestedViewControls(html, 'List')
+  assert.match(html, /class="ds-thumb" data-ratio="poster"/)
   assert.match(html, /aria-label="Sort by"/)
   assert.match(html, />Filters · 1<\/button>/)
   assert.equal(destination(html, film.title).pathname, `/films/${film.id}`)
@@ -703,6 +864,10 @@ test('film Browse uses the creator scope for its query and names the removable r
   assert.match(html, /aria-label="Remove director filter"/)
   assert.match(html, /Clear all/)
   assert.match(html, /No films match/)
+  // The page keeps its own frame and actions, and has no link to itself.
+  assert.match(html, /<section class="browse-page" aria-label="films">/)
+  assert.match(html, />Add film</)
+  assert.doesNotMatch(html, /Show in Films|data-inspector-scroll/)
 })
 
 test('channel details show saved podcast episodes and scope Browse to the exact channel ID', async () => {
@@ -738,33 +903,39 @@ test('channel details show saved podcast episodes and scope Browse to the exact 
       artworkUrl: null,
     }),
   })
-  const html = render({
-    pathname: `/channels/${id}`,
-    search: 'view=grid',
-    children: <ChannelDetail id={id} />,
-    cache: [
-      [['subscriptions', 'source', id], data],
-      [
-        [
-          'subscriptions',
-          'source',
-          id,
-          'items',
-          'size=50&sortBy=publishedAt&direction=desc',
-          1,
-        ],
-        data.items,
+  const { html, requests } = await renderBrowse(
+    {
+      pathname: `/channels/${id}`,
+      search: 'view=grid',
+      children: <ChannelDetail id={id} />,
+      cache: [
+        [['subscriptions', 'source', id], data],
+        [['subscriptions', 'fields'], subscriptionBrowseFields],
       ],
-    ],
-  })
+    },
+    data.items.items,
+  )
+  const list = request(requests, '/api/v1/subscriptions/browse-page')
+  assert.equal(list.get('sourceId'), id)
+  assert.equal(list.get('sortBy'), 'publishedAt')
+  assert.equal(list.get('direction'), 'desc')
   assert.match(html, /Synthetic description\./)
   assert.match(html, /Reading history/)
+  assert.match(html, /<h3>Episodes<\/h3>/)
+  assert.match(html, /placeholder="Search titles, channels, podcasts, tags..."/)
   assertNestedViewControls(html, 'Grid')
   assert.match(
     html,
-    /<article class="ds-card"><span class="ds-art" data-ratio="video">/,
+    /<article class="ds-card" data-item-index="0"><span class="ds-art" data-ratio="video">/,
   )
-  assert.match(html, /class="ds-card-by">2026<\/span>/)
+  // The channel is not a removable filter.
+  assert.doesNotMatch(html, /Remove channel filter/)
+  const browse = destination(html, 'Show in Subscriptions')
+  assert.equal(browse.pathname, '/subscriptions')
+  assert.equal(browse.searchParams.get('sourceId'), id)
+  assert.equal(browse.searchParams.get('sortBy'), 'publishedAt')
+  assert.equal(browse.searchParams.get('direction'), 'desc')
+  assert.equal(browse.searchParams.get('view'), 'grid')
   assert.equal(
     destination(html, 'Synthetic episode').pathname,
     `/subscriptions/${episodeId}`,
@@ -827,28 +998,37 @@ test('show details list stored mixes square and filter Mixes by the exact show I
     },
     items: page(mixItem),
   })
-  const html = render({
-    pathname: `/mixes/shows/${showId}`,
-    search: 'view=grid',
-    children: <ChannelDetail id={showId} library="mixes" />,
-    cache: [
-      [['mixes', 'source', showId], data],
-      [
-        [
-          'mixes',
-          'source',
-          showId,
-          'items',
-          'size=50&sortBy=publishedAt&direction=desc',
-          1,
-        ],
-        data.items,
+  const { html, requests } = await renderBrowse(
+    {
+      pathname: `/mixes/shows/${showId}`,
+      search: 'view=grid',
+      children: <ChannelDetail id={showId} library="mixes" />,
+      cache: [
+        [['mixes', 'source', showId], data],
+        [['mixes', 'fields'], mixBrowseFields],
       ],
-    ],
-  })
+    },
+    data.items.items,
+  )
+  const list = request(requests, '/api/v1/subscriptions/browse-page')
+  assert.equal(list.get('sourceId'), showId)
+  assert.equal(list.get('library'), 'mixes')
   assert.match(html, /<div class="ds-kicker">Show<\/div>/)
   assert.doesNotMatch(html, /Subscribed/)
-  assert.match(html, /<article class="ds-card"><span class="ds-art">/)
+  assert.match(html, /<h3>Mixes<\/h3>/)
+  assert.match(html, /placeholder="Search titles, shows, artists, tags..."/)
+  assert.match(
+    html,
+    /<article class="ds-card" data-item-index="0"><span class="ds-art">/,
+  )
+  // The show is not a removable filter.
+  assert.doesNotMatch(html, /Remove show filter/)
+  const browse = destination(html, 'Show in Mixes')
+  assert.equal(browse.pathname, '/mixes')
+  assert.equal(browse.searchParams.get('sourceId'), showId)
+  assert.equal(browse.searchParams.get('sortBy'), 'publishedAt')
+  assert.equal(browse.searchParams.get('direction'), 'desc')
+  assert.equal(browse.searchParams.get('view'), 'grid')
   assert.equal(
     destination(html, 'Example Morning Show 2026-04-02').pathname,
     `/mixes/${mixItem.id}`,

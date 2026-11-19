@@ -7,6 +7,7 @@ import {
   type PlaylistEntrySort,
   type PlaylistPresentation,
 } from '@repo/schemas/tracks'
+import type { BrowseView } from './media-grid'
 import type { MediaScope } from './media-scope'
 
 const PlaylistEntrySettingsSchema = PlaylistDetailQuerySchema.omit({
@@ -79,9 +80,100 @@ export function playlistAlbumsHref(name: string) {
   return `/albums?${playlistFilterParams(name)}`
 }
 
+/**
+ * The Browse order that matches each order of a playlist's own list. Playlist
+ * position, the date added to the playlist and the entry columns have none.
+ */
+const playlistBrowseSorts: Partial<Record<PlaylistEntrySort, string>> = {
+  title: 'title',
+  artists: 'artist',
+  album: 'album',
+  duration: 'durationSec',
+  releaseDate: 'releaseDate',
+  scrobbles: 'scrobbles',
+  lastListened: 'lastListenedAt',
+}
+
+/**
+ * Tracks or Albums filtered to one playlist, with the search, order and view
+ * its own list has now. An order Browse does not have is left to Browse.
+ */
+export function playlistBrowseHref(
+  contents: PlaylistPresentation,
+  name: string,
+  list: {
+    q?: string
+    sortBy: PlaylistEntrySort
+    direction: 'asc' | 'desc'
+    view: BrowseView
+  },
+) {
+  const params = playlistFilterParams(name)
+  const q = list.q?.trim()
+  if (q) params.set('q', q)
+  const sortBy = playlistBrowseSorts[list.sortBy]
+  if (sortBy && (contents === 'tracks' || sortBy !== 'album')) {
+    params.set('sortBy', sortBy)
+    params.set('direction', list.direction)
+  }
+  params.set('view', list.view)
+  return `/${contents}?${params}`
+}
+
 /** The library Browse view filtered to members of one stored collection. */
 export function collectionItemsHref(mediaType: MediaScope, name: string) {
   return `/${mediaType}s?${new URLSearchParams({ filters: JSON.stringify([{ field: 'collection', value: name, mode: 'required' } satisfies BrowseFilter]) })}`
+}
+
+/**
+ * The Browse order that matches each order of a collection's own list.
+ * Collection position, source and watched have none.
+ */
+const collectionBrowseSorts: Readonly<Record<string, string>> = {
+  title: 'title',
+  artists: 'artist',
+  releaseDate: 'releaseDate',
+  durationSec: 'durationSec',
+  runtimeMinutes: 'runtimeMinutes',
+  dateAdded: 'dateAdded',
+}
+
+/**
+ * Films or Albums filtered to one collection, with the search, watched
+ * filter, order and view its own list has now.
+ */
+export function collectionBrowseHref(
+  mediaType: MediaScope,
+  name: string,
+  list: {
+    q?: string
+    watchedStates?: readonly ('watched' | 'unwatched')[]
+    sortBy: string
+    direction: 'asc' | 'desc'
+    view: BrowseView
+  },
+) {
+  const filters: BrowseFilter[] = [
+    { field: 'collection', value: name, mode: 'required' },
+  ]
+  // Both states together are every film, which needs no filter.
+  const [watched, other] = list.watchedStates ?? []
+  if (watched && !other)
+    filters.push({
+      field: 'watched',
+      value: watched === 'watched' ? 'Yes' : 'No',
+      mode: 'required',
+    })
+  const params = new URLSearchParams({ filters: JSON.stringify(filters) })
+  const q = list.q?.trim()
+  if (q) params.set('q', q)
+  const sortBy = collectionBrowseSorts[list.sortBy]
+  if (sortBy) {
+    params.set('sortBy', sortBy)
+    params.set('direction', list.direction)
+  }
+  params.set('view', list.view)
+  return `/${mediaType}s?${params}`
 }
 
 export function trackHref(id: string) {

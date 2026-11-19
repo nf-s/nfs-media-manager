@@ -12,13 +12,11 @@ import {
   ArtistTrackPageSchema,
   type ArtistDetail as Artist,
 } from '@repo/schemas/creators'
-import type { AlbumListItem } from '@repo/schemas/media'
 import {
   SubscriptionItemPageSchema,
   type SubscriptionItem,
 } from '@repo/schemas/subscriptions'
 import { formatTagName } from '@repo/schemas/tags'
-import type { TrackListItem } from '@repo/schemas/tracks'
 import { Art, ArtFallback } from '@repo/ui/components/ds/artwork'
 import { Card, CardGrid, CardTitle } from '@repo/ui/components/ds/card'
 import {
@@ -37,14 +35,10 @@ import {
   TableRow,
 } from '@repo/ui/components/ui/table'
 import { TabsContent } from '@repo/ui/components/ui/tabs'
-import {
-  EMPTY_VALUE,
-  formatCount,
-  formatDate,
-  formatTrackLength,
-} from '@repo/ui/lib/format'
+import { EMPTY_VALUE, formatCount, formatDate } from '@repo/ui/lib/format'
 import { fetchApiData } from '@/utils/api'
 import { artistBrowseHref, artistTagBrowseHref } from '@/utils/creator-browse'
+import { browseStateKeys } from '@/utils/embedded-browse'
 import { safeRatingHref } from '@/utils/provider-ratings'
 import {
   formatSubscriptionDuration,
@@ -58,7 +52,6 @@ import {
 import { CreatorDetailState } from './creator-detail-state'
 import { DetailMore } from './detail-more'
 import {
-  CreatorLibraryDate,
   CreatorLibraryTable,
   CreatorLibraryTitle,
   type CreatorLibraryColumn,
@@ -74,7 +67,9 @@ import {
 } from './detail-frame'
 import { AlbumPlay, TrackRowPlay } from './detail-play'
 import { ScrobbleStats } from './listening-stats'
+import { EmbeddedTrackBrowser } from './track-browser'
 import { ListeningTrend } from './listening-trend'
+import { EmbeddedMediaBrowser } from './media-browser'
 import { MetadataCoverage } from './metadata-coverage'
 import { useConfig } from './providers'
 import { useTableWidths } from './secondary-table'
@@ -101,8 +96,6 @@ const artistTabAliases = {
   playlists: 'overview',
   history: 'sources',
 } satisfies Record<string, ArtistTab>
-/** Table settings that belong to the Albums and Tracks tabs. */
-const tabViewKeys = ['q', 'sortBy', 'direction', 'view']
 
 /** A title cell: the link, then the play pair at its end. */
 function TitleCell({
@@ -131,85 +124,6 @@ function TitleCell({
     </span>
   )
 }
-
-const albumColumns: CreatorLibraryColumn<AlbumListItem>[] = [
-  {
-    key: 'title',
-    label: 'Album',
-    width: 300,
-    fill: true,
-    required: true,
-    render: (album) => (
-      <TitleCell
-        kind="album"
-        id={album.id}
-        title={album.title}
-        play={<AlbumPlay album={album} place="row" />}
-      />
-    ),
-  },
-  {
-    key: 'releaseDate',
-    label: 'Released',
-    width: 110,
-    render: (album) => <CreatorLibraryDate value={album.releaseDate} />,
-  },
-  {
-    key: 'dateAdded',
-    label: 'Added',
-    width: 110,
-    render: (album) => <CreatorLibraryDate value={album.dateAdded} />,
-  },
-]
-
-const trackColumns: CreatorLibraryColumn<TrackListItem>[] = [
-  {
-    key: 'title',
-    label: 'Track',
-    width: 240,
-    fill: true,
-    required: true,
-    render: (track) => (
-      <TitleCell
-        kind="track"
-        id={track.id}
-        title={track.title}
-        context={track.album?.title ?? track.albumName ?? undefined}
-        play={<TrackRowPlay track={track} />}
-      />
-    ),
-  },
-  {
-    key: 'durationSec',
-    label: 'Duration',
-    width: 90,
-    align: 'end',
-    render: (track) =>
-      formatTrackLength(
-        track.durationSec === null ? null : track.durationSec * 1000,
-      ),
-  },
-  {
-    key: 'scrobbles',
-    label: 'Scrobbles',
-    width: 100,
-    align: 'end',
-    render: (track) => formatCount(track.scrobbles),
-  },
-  {
-    key: 'releaseDate',
-    label: 'Released',
-    width: 110,
-    render: (track) => <CreatorLibraryDate value={track.releaseDate} />,
-  },
-  {
-    key: 'dateAdded',
-    label: 'Added',
-    width: 110,
-    defaultVisible: false,
-    render: (track) => <CreatorLibraryDate value={track.dateAdded} />,
-  },
-]
 
 function MixBroadcast({ mix }: { mix: SubscriptionItem }) {
   return (
@@ -598,7 +512,8 @@ export function ArtistDetail({ id }: { id: string }) {
   const { apiBaseUrl } = useConfig()
   const { tab, setTab } = useDetailTab(artistTabs, {
     aliases: artistTabAliases,
-    reset: tabViewKeys,
+    // Each tab's list has its own search, filters, sort and view.
+    reset: browseStateKeys,
   })
   const path = `/api/v1/artists/${encodeURIComponent(id)}`
   const query = useQuery({
@@ -689,42 +604,17 @@ export function ArtistDetail({ id }: { id: string }) {
           />
         </TabsContent>
         <TabsContent value="albums">
-          <CreatorLibraryTable
-            kind="album"
-            queryKey={['artist', id, 'albums']}
-            path={`${path}/albums`}
-            schema={ArtistAlbumPageSchema}
-            columns={albumColumns}
-            card={(album) => ({
-              title: album.title,
-              artworkUrl: album.artworkUrl,
-              metadata: album.releaseDate && (
-                <CreatorLibraryDate value={album.releaseDate} />
-              ),
-              actions: <AlbumPlay album={album} place="row" />,
-            })}
-            label="albums"
-            defaultSort={{ key: 'title', direction: 'asc' }}
+          <EmbeddedMediaBrowser
+            mediaType="album"
+            creator={{ creatorId: artist.id }}
+            storage="artist-albums"
+            sort={{ key: 'title', direction: 'asc' }}
           />
         </TabsContent>
         <TabsContent value="tracks">
-          <CreatorLibraryTable
-            kind="track"
-            queryKey={['artist', id, 'tracks']}
-            path={`${path}/tracks`}
-            schema={ArtistTrackPageSchema}
-            columns={trackColumns}
-            card={(track) => ({
-              title: track.title,
-              artworkUrl: track.artworkUrl,
-              subtitle: track.album?.title ?? track.albumName ?? undefined,
-              metadata:
-                track.durationSec !== null &&
-                formatTrackLength(track.durationSec * 1000),
-              actions: <TrackRowPlay track={track} />,
-            })}
-            label="tracks"
-            defaultSort={{ key: 'title', direction: 'asc' }}
+          <EmbeddedTrackBrowser
+            creator={{ creatorId: artist.id }}
+            storage="artist-tracks"
           />
         </TabsContent>
         {artist.mixCount > 0 && (

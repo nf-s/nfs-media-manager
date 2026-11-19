@@ -8,7 +8,6 @@ import {
 } from 'next/dist/shared/lib/hooks-client-context.shared-runtime'
 import { CoverageSchema, type CoverageSubject } from '@repo/schemas/coverage'
 import { ArtistDetailSchema } from '@repo/schemas/creators'
-import { ArtistDetail } from './artist-detail'
 import {
   CoverageReview,
   MetadataCoverage,
@@ -29,6 +28,10 @@ import {
   coverageQueueRequest,
 } from '@/utils/metadata-coverage'
 
+// The artist detail holds the Browse lists, whose search imports a stylesheet.
+require.extensions['.css'] = (module) => {
+  module.exports = {}
+}
 const network = mock.method(globalThis, 'fetch', async () => {
   throw new Error('Network forbidden in coverage tests')
 })
@@ -557,7 +560,8 @@ const artistDetail = ArtistDetailSchema.parse({
   playlistCount: 0,
 })
 
-function renderArtist(search: string) {
+async function renderArtist(search: string) {
+  const { ArtistDetail } = await import('./artist-detail')
   const client = new QueryClient()
   client.setQueryData(['artist', artistDetail.id], artistDetail)
   client.setQueryData(coverageKey('artist', artistDetail.id), coverage)
@@ -584,8 +588,8 @@ function renderArtist(search: string) {
   }
 }
 
-test('an artist shows Coverage in its own tab, not in Overview', () => {
-  const overview = renderArtist('')
+test('an artist shows Coverage in its own tab, not in Overview', async () => {
+  const overview = await renderArtist('')
   const tabs = [...overview.matchAll(/role="tab"[^>]*>([^<]+)</g)].map(
     (match) => match[1],
   )
@@ -600,7 +604,7 @@ test('an artist shows Coverage in its own tab, not in Overview', () => {
   assert.doesNotMatch(overview, /<h3>Coverage<\/h3>/)
   assert.doesNotMatch(overview, /Coverage by provider/)
 
-  const tab = renderArtist('tab=coverage')
+  const tab = await renderArtist('tab=coverage')
   assert.match(tab, /aria-selected="true"[^>]*>Coverage</)
   assert.match(tab, /<h3>Coverage<\/h3>/)
   assert.match(tab, /42 albums · stale after 180 days/)

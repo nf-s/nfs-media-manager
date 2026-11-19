@@ -4,28 +4,21 @@ import { useQuery } from '@tanstack/react-query'
 import { UserRound } from 'lucide-react'
 import {
   PersonDetailSchema,
-  PersonFilmPageSchema,
   type PersonDetail as Person,
 } from '@repo/schemas/creators'
-import type { FilmListItem } from '@repo/schemas/media'
 import {
   DetailActionsSpacer,
   DetailHeader,
 } from '@repo/ui/components/ds/detail-header'
 import { Section, Stats } from '@repo/ui/components/ds/facts'
 import { TabsContent } from '@repo/ui/components/ui/tabs'
-import { formatCount, formatRuntime } from '@repo/ui/lib/format'
+import { formatCount } from '@repo/ui/lib/format'
 import { fetchApiData } from '@/utils/api'
 import { personFilmsHref, personRoleLabels } from '@/utils/creator-browse'
 import { CreatorDetailState } from './creator-detail-state'
 import { DetailMore } from './detail-more'
-import {
-  CreatorLibraryDate,
-  CreatorLibraryTable,
-  CreatorLibraryTitle,
-  type CreatorLibraryColumn,
-} from './creator-library-table'
 import { DetailArt, DetailTabs, useDetailTab } from './detail-frame'
+import { EmbeddedMediaBrowser } from './media-browser'
 import { usePersonRoleFilter } from './person-role-filter'
 import { ProviderSources } from './provider-sources'
 import { useConfig } from './providers'
@@ -108,7 +101,7 @@ export function PersonDetail({ id }: { id: string }) {
             />
           </Section>
           <Section title="Films" note={formatCount(person.filmCount)}>
-            <PersonFilms person={person} path={`${path}/films`} />
+            <PersonFilms person={person} />
           </Section>
         </TabsContent>
         <TabsContent value="sources">
@@ -122,90 +115,18 @@ export function PersonDetail({ id }: { id: string }) {
   )
 }
 
-function PersonFilms({ person, path }: { person: Person; path: string }) {
+/** The person's films; the role control holds them to one credit role. */
+function PersonFilms({ person }: { person: Person }) {
   const roles = usePersonRoleFilter()
-  function creditRoles(film: FilmListItem) {
-    return person.roles
-      .filter((role) =>
-        film.credits.some(
-          (credit) =>
-            credit.role === role &&
-            (credit.id === null
-              ? credit.name === person.name
-              : credit.id === person.id),
-        ),
-      )
-      .map((role) => personRoleLabels[role])
-      .join(', ')
-  }
-  const columns: CreatorLibraryColumn<FilmListItem>[] = [
-    {
-      key: 'title',
-      label: 'Film',
-      width: 240,
-      fill: true,
-      required: true,
-      filter: roles.control,
-      render: (film) => (
-        <CreatorLibraryTitle
-          kind="film"
-          id={film.id}
-          title={film.title}
-          context={creditRoles(film)}
-        />
-      ),
-    },
-    {
-      key: 'releaseDate',
-      label: 'Released',
-      width: 110,
-      render: (film) => <CreatorLibraryDate value={film.releaseDate} />,
-    },
-    {
-      key: 'runtimeMinutes',
-      label: 'Runtime',
-      width: 90,
-      align: 'end',
-      render: (film) => formatRuntime(film.runtimeMinutes),
-    },
-    {
-      key: 'watched',
-      label: 'Watched',
-      width: 90,
-      render: (film) => (film.watched ? 'Yes' : 'No'),
-    },
-    {
-      key: 'dateAdded',
-      label: 'Added',
-      width: 110,
-      defaultVisible: false,
-      render: (film) => <CreatorLibraryDate value={film.dateAdded} />,
-    },
-  ]
   return (
-    <CreatorLibraryTable
-      kind="film"
-      queryKey={['person', person.id, 'films']}
-      path={path}
-      schema={PersonFilmPageSchema}
-      columns={columns}
-      card={(film) => ({
-        title: film.title,
-        artworkUrl: film.artworkUrl,
-        subtitle: creditRoles(film),
-        metadata: [
-          film.releaseDate?.slice(0, 4),
-          film.runtimeMinutes === null
-            ? undefined
-            : formatRuntime(film.runtimeMinutes),
-          film.watched ? 'Watched' : undefined,
-        ]
-          .filter(Boolean)
-          .join(' · '),
-      })}
-      label="films"
-      defaultSort={{ key: 'title', direction: 'asc' }}
-      filters={roles.filters}
+    <EmbeddedMediaBrowser
+      mediaType="film"
+      creator={{
+        creatorId: person.id,
+        ...(roles.filters ? { creatorRole: roles.filters.role } : {}),
+      }}
+      storage="person-films"
+      sort={{ key: 'title', direction: 'asc' }}
       filterPanel={roles.filterPanel}
     />
   )

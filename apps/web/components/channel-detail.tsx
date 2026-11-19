@@ -2,11 +2,8 @@
 
 import { Check, Radio, Tv } from 'lucide-react'
 import {
-  SubscriptionSourceDetailSchema,
-  subscriptionLibraryLabels,
   type SubscriptionSourceDetail,
   subscriptionTypeLabels,
-  type SubscriptionItem,
   type SubscriptionLibrary,
 } from '@repo/schemas/subscriptions'
 import {
@@ -16,23 +13,15 @@ import {
 import { Section } from '@repo/ui/components/ds/facts'
 import { Button } from '@repo/ui/components/ui/button'
 import { TabsContent } from '@repo/ui/components/ui/tabs'
-import { EMPTY_VALUE, formatCount } from '@repo/ui/lib/format'
 import { useSubscriptionSource } from '@/hooks/useSubscriptionSource'
+import { browseStateKeys } from '@/utils/embedded-browse'
 import {
-  formatSubscriptionDuration,
-  formatSubscriptionPublished,
   formatSubscriptionSourceSize,
-  subscriptionArtworkUrl,
   subscriptionLibraryPages,
   subscriptionSourceHref,
 } from '@/utils/subscriptions'
 import { CreatorDetailState } from './creator-detail-state'
 import { DetailMore } from './detail-more'
-import {
-  CreatorLibraryTable,
-  CreatorLibraryTitle,
-  type CreatorLibraryColumn,
-} from './creator-library-table'
 import {
   DetailArt,
   DetailTabs,
@@ -40,71 +29,12 @@ import {
   useDetailTab,
 } from './detail-frame'
 import { ProviderSources } from './provider-sources'
+import { EmbeddedSubscriptionBrowser } from './subscription-browser'
 
 type ChannelTab = 'overview' | 'sources'
 const channelTabs: readonly [ChannelTab, ...ChannelTab[]] = [
   'overview',
   'sources',
-]
-
-const itemPageSchema = SubscriptionSourceDetailSchema.transform(
-  ({ items }) => items,
-)
-function libraryItemColumns(
-  library: SubscriptionLibrary,
-): CreatorLibraryColumn<SubscriptionItem>[] {
-  return [
-    {
-      key: 'title',
-      label: 'Title',
-      width: 250,
-      fill: true,
-      required: true,
-      render: (item) => (
-        <CreatorLibraryTitle
-          kind={subscriptionLibraryPages[library].itemKind}
-          id={item.id}
-          title={item.title}
-        />
-      ),
-    },
-    {
-      key: 'publishedAt',
-      label: subscriptionLibraryLabels[library].published,
-      width: 130,
-      className: 'whitespace-nowrap',
-      render: (item) => (
-        <time dateTime={item.publishedAt}>
-          {formatSubscriptionPublished(
-            item.publishedAt,
-            item.publishedPrecision,
-          )}
-        </time>
-      ),
-    },
-    {
-      key: 'durationSec',
-      label: 'Duration',
-      width: 90,
-      align: 'end',
-      render: formatSubscriptionDuration,
-    },
-  ]
-}
-const itemColumns = libraryItemColumns('subscriptions')
-const mixColumns = libraryItemColumns('mixes')
-const videoColumns: CreatorLibraryColumn<SubscriptionItem>[] = [
-  ...itemColumns,
-  {
-    key: 'viewCount',
-    label: 'Views',
-    width: 90,
-    align: 'end',
-    render: (item) =>
-      item.type === 'youtube' && item.viewCount !== null
-        ? formatCount(item.viewCount)
-        : EMPTY_VALUE,
-  },
 ]
 
 /** A channel or podcast in Subscriptions, or a station's show in Mixes. */
@@ -115,9 +45,10 @@ export function ChannelDetail({
   id: string
   library?: SubscriptionLibrary
 }) {
-  const path = `/api/v1/subscriptions/sources/${encodeURIComponent(id)}`
   const { tab, setTab } = useDetailTab(channelTabs, {
     aliases: { videos: 'overview', episodes: 'overview' },
+    // The list's search, filters, sort and view belong to the Overview tab.
+    reset: browseStateKeys,
   })
   const query = useSubscriptionSource(id, library)
   const page = subscriptionLibraryPages[library]
@@ -134,7 +65,6 @@ export function ChannelDetail({
     return (
       <ShowDetail
         id={id}
-        path={path}
         source={source}
         tab={tab}
         setTab={setTab}
@@ -220,27 +150,11 @@ export function ChannelDetail({
             </Section>
           )}
           <Section title={isVideo ? 'Videos' : 'Episodes'}>
-            <CreatorLibraryTable
-              kind="subscription"
-              queryKey={['subscriptions', 'source', id, 'items']}
-              path={path}
-              schema={itemPageSchema}
-              columns={isVideo ? videoColumns : itemColumns}
-              card={(item) => ({
-                title: item.title,
-                artworkUrl: subscriptionArtworkUrl(item),
-                subtitle: formatSubscriptionPublished(
-                  item.publishedAt,
-                  item.publishedPrecision,
-                ),
-                metadata:
-                  item.durationSec !== null ||
-                  (item.type === 'youtube' && item.live !== 'none')
-                    ? formatSubscriptionDuration(item)
-                    : undefined,
-              })}
-              label={isVideo ? 'videos' : 'episodes'}
-              defaultSort={{ key: 'publishedAt', direction: 'desc' }}
+            <EmbeddedSubscriptionBrowser
+              library="subscriptions"
+              sourceId={id}
+              storage="channel-items"
+              sort={{ key: 'publishedAt', direction: 'desc' }}
             />
           </Section>
         </TabsContent>
@@ -264,7 +178,6 @@ export function ChannelDetail({
 /** A station show: no subscription to show, mixes listed square like albums. */
 function ShowDetail({
   id,
-  path,
   source,
   tab,
   setTab,
@@ -272,7 +185,6 @@ function ShowDetail({
   retry,
 }: {
   id: string
-  path: string
   source: SubscriptionSourceDetail['source']
   tab: ChannelTab
   setTab: (tab: string) => void
@@ -333,26 +245,11 @@ function ShowDetail({
             </Section>
           )}
           <Section title="Mixes">
-            <CreatorLibraryTable
-              kind="mix"
-              queryKey={['mixes', 'source', id, 'items']}
-              path={path}
-              schema={itemPageSchema}
-              columns={mixColumns}
-              card={(item) => ({
-                title: item.title,
-                artworkUrl: subscriptionArtworkUrl(item),
-                subtitle: formatSubscriptionPublished(
-                  item.publishedAt,
-                  item.publishedPrecision,
-                ),
-                metadata:
-                  item.durationSec === null
-                    ? undefined
-                    : formatSubscriptionDuration(item),
-              })}
-              label="mixes"
-              defaultSort={{ key: 'publishedAt', direction: 'desc' }}
+            <EmbeddedSubscriptionBrowser
+              library="mixes"
+              sourceId={id}
+              storage="show-mixes"
+              sort={{ key: 'publishedAt', direction: 'desc' }}
             />
           </Section>
         </TabsContent>

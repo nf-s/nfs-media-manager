@@ -97,7 +97,7 @@ Filters follow the [browse filter rules](requirements/search.md):
 - Selecting a mix opens details: its show (which opens show details), station, broadcast date, length, artists, tags (each a filter), description, **Open on** the station and, when there is a recording link, **Open recording**. The header leads with **Listened**, which records or clears the current time. `/mixes/:id` is the standalone page.
 - With nothing synced, the page says "No mixes yet" with Open Imports.
 
-`/mixes/shows` lists every stored show in the shared table, filterable by name and station, with Stored mixes and Latest mix; Episodes (the station's own count), Description and History can be added. A name opens show details with its mixes and a **Filter mixes** action. `/mixes/shows/:id` is the standalone page.
+`/mixes/shows` lists every stored show in the shared table, filterable by name and station, with Stored mixes and Latest mix; Episodes (the station's own count), Description and History can be added. A name opens show details with its mixes and a **Filter mixes** action. The mixes are the Mixes browser held to the show ([BROWSE-03c](requirements/browsing.md)), starting newest first in Table; **Show in Mixes** opens the same result on the page. `/mixes/shows/:id` is the standalone page.
 
 ## API
 

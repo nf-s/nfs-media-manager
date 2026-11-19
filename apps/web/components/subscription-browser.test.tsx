@@ -785,3 +785,189 @@ test('the shows list is the channels table for Mixes with stations and stored mi
   assert.match(html, /aria-label="Filter mixes by Example Breakfast"/)
   assert.doesNotMatch(html, /YouTube|Podcast/)
 })
+
+/**
+ * The browser inside a channel or show detail, held to `sourceId`, with the
+ * detail URL's `search`. The cache answers only requests that carry the source.
+ */
+async function renderEmbedded({
+  library = 'subscriptions',
+  sourceId = channelId,
+  search = '',
+  total = 2,
+  inspect,
+}: {
+  library?: 'subscriptions' | 'mixes'
+  sourceId?: string
+  search?: string
+  total?: number
+  /** Opens a page drawer on this item around the detail. */
+  inspect?: string
+} = {}) {
+  const { EmbeddedSubscriptionBrowser } = await import('./subscription-browser')
+  const { DetailInspectorProvider } = await import('./detail-inspector-context')
+  const settings = new URLSearchParams(search)
+  if (!settings.has('sortBy')) {
+    settings.set('sortBy', 'publishedAt')
+    settings.set('direction', 'desc')
+  }
+  const { identity, params } = subscriptionBrowseQuery(
+    { ...parseSubscriptionBrowseState(settings, library), sourceId },
+    library,
+  )
+  assert.equal(params.get('sourceId'), sourceId)
+  const countParams = new URLSearchParams(params)
+  for (const key of ['sortBy', 'direction']) countParams.delete(key)
+  countParams.sort()
+  const items = library === 'mixes' ? [mix] : [video, episode]
+  const detailSearch = new URLSearchParams(search)
+  if (inspect)
+    detailSearch.set(
+      'inspect',
+      JSON.stringify([{ kind: 'subscription', id: inspect }]),
+    )
+  return render(
+    <DetailInspectorProvider>
+      <EmbeddedSubscriptionBrowser
+        library={library}
+        sourceId={sourceId}
+        storage={library === 'mixes' ? 'show-mixes' : 'channel-items'}
+        sort={{ key: 'publishedAt', direction: 'desc' }}
+      />
+    </DetailInspectorProvider>,
+    [
+      [['ai-status'], { available: true, reason: null }],
+      [
+        [library, 'fields'],
+        library === 'mixes' ? mixBrowseFields : subscriptionBrowseFields,
+      ],
+      [
+        [library, 'browse-count', countParams.toString()],
+        { totalCount: total, unfilteredCount: 128 },
+      ],
+      [
+        [library, 'browse', identity, 1],
+        {
+          page: 1,
+          size: 100,
+          totalCount: total,
+          pageCount: Math.ceil(total / 100),
+          items: total ? items : [],
+        },
+      ],
+    ],
+    detailSearch.toString(),
+    library === 'mixes' ? `/mixes/shows/${sourceId}` : `/channels/${sourceId}`,
+  )
+}
+
+test('Subscriptions inside a detail keep every Browse control and none of the page', async () => {
+  const html = await renderEmbedded()
+  assert.match(html, /placeholder="Search titles, channels, podcasts, tags..."/)
+  assert.match(html, /aria-label="Sort by"/)
+  assert.match(html, /aria-label="Browse views"/)
+  // The rows come from the source-scoped page and count requests.
+  assert.match(html, />Bread basics</)
+  assert.match(html, /role="status">2 items<\/span>/)
+  assert.doesNotMatch(html, /2 of 128/)
+  // No page frame for the app shell to size, and the list scrolls in a box.
+  assert.doesNotMatch(html, /class="media-browser"|class="browse-main"/)
+  assert.match(
+    html,
+    /class="[^"]*browse-scroll bi-scroll max-h-\[min\(420px,50dvh\)\][^"]*"[^>]*data-inspector-scroll=""/,
+  )
+  // The list starts as a table, newest first, as the old channel list did.
+  assert.match(html, /data-view="table"/)
+  assert.match(
+    html,
+    new RegExp(
+      `<a class="ds-btn" data-variant="link" href="/subscriptions\\?sourceId=${channelId}&amp;sortBy=publishedAt&amp;direction=desc&amp;view=table&amp;density=standard">Show in Subscriptions</a>`,
+    ),
+  )
+  const { default: SubscriptionBrowser } =
+    await import('./subscription-browser')
+  const page = render(<SubscriptionBrowser />, browseData('', 2), '')
+  assert.match(page, /class="media-browser"/)
+  assert.doesNotMatch(page, /data-inspector-scroll|Show in Subscriptions/)
+})
+
+test('Subscriptions inside a detail are held to their source, which is not a filter', async () => {
+  const html = await renderEmbedded()
+  assert.doesNotMatch(html, /Remove channel filter|Channel: |Clear all/)
+
+  const searched = await renderEmbedded({ search: 'q=bread' })
+  assert.match(searched, /class="ds-rail-chips bi-filter-row"/)
+  assert.match(searched, /Search: bread/)
+  assert.match(searched, />Clear all</)
+  assert.doesNotMatch(searched, /Remove channel filter/)
+
+  // An empty source is empty, not a filter without matches.
+  const empty = await renderEmbedded({ total: 0 })
+  assert.match(empty, /No subscriptions yet/)
+  assert.doesNotMatch(empty, /No subscriptions match/)
+})
+
+test('Show in Subscriptions and Show in Mixes carry the source and the list settings', async () => {
+  const changed = await renderEmbedded({
+    search: 'q=bread&sortBy=likeCount&direction=asc&view=grid&density=compact',
+  })
+  assert.match(
+    changed,
+    new RegExp(
+      `href="/subscriptions\\?sourceId=${channelId}&amp;q=bread&amp;sortBy=likeCount&amp;direction=asc&amp;view=grid&amp;density=compact">Show in Subscriptions<`,
+    ),
+  )
+
+  const mixes = await renderEmbedded({
+    library: 'mixes',
+    sourceId: mixShowId,
+    search: 'sortBy=durationSec&direction=asc&view=grid&density=standard',
+  })
+  assert.match(
+    mixes,
+    new RegExp(
+      `href="/mixes\\?sourceId=${mixShowId}&amp;sortBy=durationSec&amp;direction=asc&amp;view=grid&amp;density=standard">Show in Mixes<`,
+    ),
+  )
+  assert.match(mixes, /placeholder="Search titles, shows, artists, tags..."/)
+  assert.doesNotMatch(mixes, /Remove show filter|Show: /)
+  // The grid shows the value the list is sorted by.
+  assert.match(mixes, /data-view="grid"/)
+  assert.match(mixes, /<span>Duration [^<]+<\/span>/)
+})
+
+test('a list inside a detail leaves the page drawer and its selected row to the page', async () => {
+  const embedded = await renderEmbedded({ inspect: video.id })
+  assert.match(embedded, />Bread basics</)
+  assert.doesNotMatch(embedded, /aria-selected="true"|inspector-backdrop/)
+
+  const { default: SubscriptionBrowser } =
+    await import('./subscription-browser')
+  const { DetailInspectorProvider } = await import('./detail-inspector-context')
+  const search = `view=table&inspect=${encodeURIComponent(
+    JSON.stringify([{ kind: 'subscription', id: video.id }]),
+  )}`
+  const noNavigation = () => {
+    throw new Error('Unexpected navigation')
+  }
+  const router = {
+    back: noNavigation,
+    forward: noNavigation,
+    refresh: noNavigation,
+    hmrRefresh: noNavigation,
+    push: noNavigation,
+    replace: noNavigation,
+    prefetch: noNavigation,
+  }
+  const page = render(
+    <AppRouterContext.Provider value={router}>
+      <DetailInspectorProvider>
+        <SubscriptionBrowser />
+      </DetailInspectorProvider>
+    </AppRouterContext.Provider>,
+    browseData(search, 2),
+    search,
+  )
+  assert.match(page, /aria-selected="true"/)
+  assert.match(page, /inspector-backdrop/)
+})

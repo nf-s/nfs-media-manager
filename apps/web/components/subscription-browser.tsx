@@ -2,7 +2,6 @@
 
 import Link from 'next/link'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { useSearchParams } from 'next/navigation'
 import { useQuery } from '@tanstack/react-query'
 import { z } from 'zod'
 import { Search } from 'lucide-react'
@@ -48,8 +47,21 @@ import { useRailSlot } from '@/hooks/useRailSlot'
 import { useGridDensity } from '@/hooks/useGridDensity'
 import { useSubscriptionSource } from '@/hooks/useSubscriptionSource'
 import { useColumnWidths } from '@/hooks/useColumnWidths'
+import {
+  useEmbeddedBrowse,
+  usePageBrowse,
+  type BrowseHost,
+} from '@/hooks/useBrowseHost'
+import {
+  embeddedScrollClass,
+  type EmbeddedBrowse,
+} from '@/utils/embedded-browse'
 import { matchingTitleFilters } from '@/utils/browse-suggestions'
-import { gridCardMin, preserveGridScroll } from '@/utils/media-grid'
+import {
+  defaultBrowseView,
+  gridCardMin,
+  preserveGridScroll,
+} from '@/utils/media-grid'
 import {
   aiMixSearchParams,
   aiSubscriptionSearchParams,
@@ -74,7 +86,6 @@ import {
   subscriptionSortLabelsFor,
   subscriptionSortOptions,
   subscriptionTitleSuggestions,
-  updateSubscriptionSearch,
   withSubscriptionFilter,
 } from '@/utils/subscriptions'
 import {
@@ -91,11 +102,8 @@ import {
 } from '@/utils/browse-items'
 import { DetailInspector } from './detail-inspector'
 import { DetailLink } from './detail-link'
-import {
-  replaceWorkspaceUrl,
-  useDetailInspector,
-} from './detail-inspector-context'
-import { sameDetail, withoutDetailEntries } from '@/utils/detail-inspector'
+import { useDetailInspector } from './detail-inspector-context'
+import { sameDetail } from '@/utils/detail-inspector'
 import AiSearch from './ai-search'
 import {
   BrowseFilterChips,
@@ -152,13 +160,63 @@ export default function SubscriptionBrowser({
 }: {
   library?: SubscriptionLibrary
 }) {
+  const host = usePageBrowse(
+    subscriptionLibraryPages[library].collection,
+    savedSubscriptionSearch,
+  )
+  return <SubscriptionBrowse host={host} library={library} />
+}
+
+/**
+ * The Subscriptions or Mixes browser inside a detail, held to one channel,
+ * podcast or show. It has every control of the library's page; Show in
+ * Subscriptions or Show in Mixes shows the same result there.
+ */
+export function EmbeddedSubscriptionBrowser({
+  library,
+  sourceId,
+  storage,
+  sort,
+}: {
+  library: SubscriptionLibrary
+  sourceId: string
+  /** Names the list's view and column widths in browser storage. */
+  storage: string
+  sort: EmbeddedBrowse['sort']
+}) {
+  const page = subscriptionLibraryPages[library]
+  const host = useEmbeddedBrowse(
+    page.collection,
+    {
+      scope: { sourceId },
+      storage,
+      // Mixes are square, like albums.
+      mediaType: library === 'mixes' ? 'album' : 'subscription',
+      sort,
+    },
+    defaultBrowseView(page.itemKind),
+  )
+  return <SubscriptionBrowse host={host} library={library} scope={sourceId} />
+}
+
+function SubscriptionBrowse({
+  host,
+  library,
+  scope,
+}: {
+  host: BrowseHost
+  library: SubscriptionLibrary
+  /** The channel, podcast or show a list inside a detail is held to. */
+  scope?: string
+}) {
   const page = subscriptionLibraryPages[library]
   const { collection, path: libraryPath, itemKind, sourceKind } = page
   const labels = subscriptionLibraryLabels[library]
   const mixes = library === 'mixes'
   const { apiBaseUrl } = useConfig()
-  const searchParams = useSearchParams()
-  const [ready, setReady] = useState(false)
+  const { embedded } = host
+  const searchParams = host.params
+  const [ready, setReady] = useState(embedded)
   const [draft, setDraft] = useState('')
   const [scroll, setScroll] = useState({ identity: '', top: 0 })
   const [gridLayout, setGridLayout] = useState<{
@@ -169,20 +227,25 @@ export default function SubscriptionBrowser({
   const [viewport, setViewport] = useState({ width: 1000, height: 800 })
   const scroller = useRef<HTMLDivElement>(null)
   const inspector = useDetailInspector()
-  const railSlot = useRailSlot()
-  const state = parseSubscriptionBrowseState(
+  const pageRail = useRailSlot()
+  // Inside a detail the active filters sit in a row above the results.
+  const railSlot = embedded ? null : pageRail
+  const parsed = parseSubscriptionBrowseState(
     new URLSearchParams(searchParams),
     library,
   )
+  const state = scope ? { ...parsed, sourceId: scope } : parsed
   const { q, filters, ranges, view, sourceId } = state
+  // The source a list inside a detail is held to is not a filter.
+  const sourceFilter = scope ? undefined : sourceId
   const { identity, params, sortBy, direction } = subscriptionBrowseQuery(
     state,
     library,
   )
-  const sourceTitle = useSubscriptionSource(sourceId, library).data?.source
+  const sourceTitle = useSubscriptionSource(sourceFilter, library).data?.source
     .title
   const selectedId =
-    inspector?.root?.kind === itemKind ? inspector.root.id : null
+    !embedded && inspector?.root?.kind === itemKind ? inspector.root.id : null
   const libraryQuery = new URLSearchParams(subscriptionLibraryParams(library))
   const fieldsQuery = useQuery({
     queryKey: [collection, 'fields'],
@@ -215,7 +278,7 @@ export default function SubscriptionBrowser({
   const columns = orderedFields.filter((field) =>
     columnKeys.includes(field.key),
   )
-  const widths = useColumnWidths(collection, (field: BrowseField) =>
+  const widths = useColumnWidths(host.storage, (field: BrowseField) =>
     field.key === 'title'
       ? 340
       : field.key === 'source' || field.key === 'artist'
@@ -244,18 +307,12 @@ export default function SubscriptionBrowser({
       : previousScrollTop
 
   function setParams(updates: Record<string, string | null>, close = false) {
-    const next = updateSubscriptionSearch(window.location.search, updates)
-    const params = close ? withoutDetailEntries(libraryPath, next) : next
-    const url = `${libraryPath}${params.size ? `?${params}` : ''}`
-    replaceWorkspaceUrl(url, !close)
-    try {
-      window.localStorage.setItem(
-        `browse:${collection}`,
-        savedSubscriptionSearch(withoutDetailEntries(libraryPath, params)),
-      )
-    } catch {
-      /* URL state still works when browser storage is unavailable. */
-    }
+    host.update((params) => {
+      for (const [key, value] of Object.entries(updates)) {
+        if (value === null || value === '') params.delete(key)
+        else params.set(key, value)
+      }
+    }, close)
   }
   function addFilter(filter: BrowseFilter) {
     setParams(
@@ -272,7 +329,7 @@ export default function SubscriptionBrowser({
       fields: null,
       filters: null,
       ranges: null,
-      sourceId: null,
+      ...(scope ? {} : { sourceId: null }),
     })
   }
   function openDetail(id: string, trigger?: HTMLElement) {
@@ -286,6 +343,8 @@ export default function SubscriptionBrowser({
   }
 
   useEffect(() => {
+    // The saved Browse state belongs to the library's page.
+    if (embedded) return
     try {
       const saved = window.localStorage.getItem(`browse:${collection}`)
       if (!window.location.search && saved)
@@ -294,7 +353,7 @@ export default function SubscriptionBrowser({
       /* Ignore unavailable storage or malformed saved preferences. */
     }
     setReady(true)
-  }, [collection, libraryPath])
+  }, [collection, embedded, libraryPath])
   useEffect(() => {
     const element = scroller.current
     if (!element) return
@@ -414,6 +473,8 @@ export default function SubscriptionBrowser({
       ),
   )
   useEffect(() => {
+    // Arrow keys step through the page's own list, not one inside a detail.
+    if (embedded) return
     function onKeyDown(event: KeyboardEvent) {
       if (event.defaultPrevented) return
       const target = event.target instanceof Element ? event.target : null
@@ -561,13 +622,13 @@ export default function SubscriptionBrowser({
   const activeFilterCount =
     Number(Boolean(q)) +
     Number(showFieldsChip) +
-    Number(Boolean(sourceId)) +
+    Number(Boolean(sourceFilter)) +
     filters.length +
     ranges.length
   const filterPills =
     activeFilterCount > 0 ? (
       <>
-        {sourceId && (
+        {sourceFilter && (
           <BrowseFilterPill
             mode="required"
             removeLabel={`Remove ${labels.source.toLowerCase()} filter`}
@@ -638,8 +699,11 @@ export default function SubscriptionBrowser({
   }
 
   return (
-    <section className="media-browser" aria-label={page.name}>
-      <div className="browse-main">
+    <section
+      className={embedded ? undefined : 'media-browser'}
+      aria-label={page.name}
+    >
+      <div className={embedded ? undefined : 'browse-main'}>
         <BrowseToolbar
           search={
             mixes ? (
@@ -750,9 +814,16 @@ export default function SubscriptionBrowser({
             <BrowseItemsCount
               query={query}
               total={total}
-              unfiltered={query.unfilteredTotal}
+              unfiltered={embedded ? undefined : query.unfilteredTotal}
               noun={page.items}
             />
+          }
+          end={
+            host.browseHref && (
+              <Button variant="link" asChild>
+                <Link href={host.browseHref}>{`Show in ${page.name}`}</Link>
+              </Button>
+            )
           }
         />
         {filterPills && (
@@ -764,7 +835,10 @@ export default function SubscriptionBrowser({
           query={query}
           total={total}
           noun={page.plural}
-          filtered={hasSubscriptionFilters(state)}
+          filtered={hasSubscriptionFilters({
+            ...state,
+            sourceId: sourceFilter,
+          })}
           onClear={clearFilters}
           empty={
             <State
@@ -780,8 +854,9 @@ export default function SubscriptionBrowser({
           }
         />
         <TableScroll
-          className="browse-scroll bi-scroll"
+          className={`browse-scroll bi-scroll${embedded ? ` ${embeddedScrollClass}` : ''}`}
           data-view={view}
+          data-inspector-scroll={embedded ? '' : undefined}
           ref={scroller}
           role="region"
           aria-label={`${page.name} ${view}`}
@@ -979,7 +1054,7 @@ export default function SubscriptionBrowser({
           )}
         </TableScroll>
       </div>
-      {mixes ? (
+      {embedded ? null : mixes ? (
         <DetailInspector
           mix={{ initialItem: activeItem, onFilter: addFilter }}
         />

@@ -590,6 +590,39 @@ test('a playback return URL restores the playlist table search and sorting', asy
   assert.match(html, /matching entries/)
 })
 
+test('the playlist list links to Browse with its own search, order and view', async () => {
+  const params = new URLSearchParams({
+    playlist: 'playlist-1',
+    playlistView: playlistEntryViewParam('playlist-1', {
+      ...playlistEntryView(null, 'playlist-1'),
+      sortBy: 'title',
+      direction: 'desc',
+      q: 'Fixture',
+    }),
+  })
+  const html = drawerOf(await render(params.toString()))
+  const href = html.match(/href="([^"]+)"[^>]*>Show in Tracks<\/a>/)?.[1]
+  assert.ok(href)
+  const url = new URL(href.replaceAll('&amp;', '&'), 'http://localhost')
+  assert.equal(url.pathname, '/tracks')
+  assert.deepEqual(JSON.parse(url.searchParams.get('filters') ?? ''), [
+    { field: 'playlist', value: summary.name, mode: 'required' },
+  ])
+  assert.equal(url.searchParams.get('q'), 'Fixture')
+  assert.equal(url.searchParams.get('sortBy'), 'title')
+  assert.equal(url.searchParams.get('direction'), 'desc')
+  assert.equal(url.searchParams.get('view'), 'table')
+
+  const albums = drawerOf(
+    await render(
+      'playlist=playlist-1',
+      detail({ ...summary, presentation: 'albums' }),
+    ),
+  )
+  assert.match(albums, /href="\/albums\?[^"]+"[^>]*>Show in Albums<\/a>/)
+  assert.doesNotMatch(albums, /Show in Tracks/)
+})
+
 test('a playlist inspector link restores Details independently of the workspace view', async () => {
   const entry: DetailEntry = {
     kind: 'playlist',

@@ -1,5 +1,6 @@
 'use client'
 
+import Link from 'next/link'
 import { DetailLink } from './detail-link'
 import { useDeferredValue } from 'react'
 import { useQuery } from '@tanstack/react-query'
@@ -45,7 +46,10 @@ import {
 } from '@repo/ui/components/ui/table'
 import { useVirtualTable } from '@/hooks/useVirtualTable'
 import { useNestedGridDensity } from '@/hooks/useGridDensity'
-import { collectionItemsHref } from '@/utils/playlist-links'
+import {
+  collectionBrowseHref,
+  collectionItemsHref,
+} from '@/utils/playlist-links'
 import type { MediaScope } from '@/utils/media-scope'
 import { defaultBrowseView, parseBrowseView } from '@/utils/media-grid'
 import { clientQueryDefaults } from '@/utils/query-cache'
@@ -341,6 +345,23 @@ export function CollectionEntries({
                   : undefined,
               )
             : undefined
+        }
+        end={
+          summary && (
+            <Button variant="link" asChild>
+              <Link
+                href={collectionBrowseHref(mediaType, summary.name, {
+                  q,
+                  watchedStates,
+                  sortBy,
+                  direction,
+                  view: presentation,
+                })}
+              >
+                {album ? 'Show in Albums' : 'Show in Films'}
+              </Link>
+            </Button>
+          )
         }
       />
       {query.isError && (

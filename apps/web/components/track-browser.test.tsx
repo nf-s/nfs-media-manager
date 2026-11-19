@@ -329,3 +329,129 @@ test('an empty Tracks library and an empty search say different things', async (
   assert.match(search, />Clear filters</)
   assert.match(search, /Search: nothing/)
 })
+
+const creator = { creatorId: 'artist-example' }
+
+/** The Tracks browser inside an artist's detail page, at `search`. */
+async function renderEmbedded(search = 'tab=tracks') {
+  const { EmbeddedTrackBrowser } = await import('./track-browser')
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  const params = new URLSearchParams(search)
+  const q = params.get('q') ?? ''
+  const identity = JSON.stringify({
+    q,
+    filters: [],
+    ranges: [],
+    sortBy: params.get('sortBy') ?? 'title',
+    direction: params.get('direction') ?? 'asc',
+    ...creator,
+  })
+  const countParams = new URLSearchParams({
+    q,
+    filters: '[]',
+    ranges: '[]',
+    ...creator,
+  })
+  countParams.sort()
+  client.setQueryData(['tracks', 'browse-count', countParams.toString()], {
+    totalCount: 1,
+    unfilteredCount: 1024,
+  })
+  client.setQueryData(['ai-status'], { available: true, reason: null })
+  client.setQueryData(['tracks', 'fields'], trackBrowseFields)
+  client.setQueryData(['tracks', 'browse', identity, 1], {
+    items: [track],
+    page: 1,
+    size: 100,
+    hasMore: false,
+    totalCount: 1,
+  })
+  try {
+    return renderToStaticMarkup(
+      <QueryClientProvider client={client}>
+        <ConfigContext.Provider
+          value={{
+            appUrl: 'http://localhost:3001',
+            apiBaseUrl: 'http://localhost:4001',
+          }}
+        >
+          <PathnameContext.Provider value="/artists/artist-example">
+            <SearchParamsContext.Provider value={params}>
+              <EmbeddedTrackBrowser creator={creator} storage="artist-tracks" />
+            </SearchParamsContext.Provider>
+          </PathnameContext.Provider>
+        </ConfigContext.Provider>
+      </QueryClientProvider>,
+    )
+  } finally {
+    client.clear()
+    assert.equal(network.mock.callCount(), 0)
+  }
+}
+
+test('Tracks inside a detail keep every Browse control and none of the page', async () => {
+  const html = await renderEmbedded()
+  // The same search, sort, direction, Filters and view switch as the page.
+  assert.match(
+    html,
+    /placeholder="Search titles, artists, albums, playlists..."/,
+  )
+  assert.match(html, /aria-label="Sort by"/)
+  assert.match(html, /aria-label="Sort descending"/)
+  assert.match(html, /aria-haspopup="dialog"/)
+  assert.match(html, /aria-label="Browse views"/)
+  assert.match(html, />Example Song</)
+  // No page frame for the app shell to size, and the list scrolls in a box.
+  assert.doesNotMatch(html, /class="media-browser"|class="browse-main"/)
+  assert.match(
+    html,
+    /class="[^"]*browse-scroll bi-scroll max-h-\[min\(420px,50dvh\)\][^"]*"[^>]*data-inspector-scroll=""/,
+  )
+  // The page list scrolls with the page frame instead.
+  const page = await render()
+  assert.match(page, /class="media-browser"/)
+  assert.doesNotMatch(page, /data-inspector-scroll|Show in Tracks/)
+})
+
+test('Tracks inside a detail are held to their creator, which is not a filter', async () => {
+  const html = await renderEmbedded()
+  // The count is the creator's own, not a share of the library.
+  assert.match(html, /role="status">1 track<\/span>/)
+  assert.doesNotMatch(html, /Remove artist filter|Clear all/)
+
+  const searched = await renderEmbedded('tab=tracks&q=Example')
+  assert.match(searched, /class="ds-rail-chips bi-filter-row"/)
+  assert.match(searched, /Search: Example/)
+  assert.match(searched, />Clear all</)
+  assert.doesNotMatch(searched, /Remove artist filter/)
+
+  // On the Tracks page the same creator is a filter that can be removed.
+  const page = await render(`creatorId=${creator.creatorId}`)
+  assert.match(page, /Remove artist filter/)
+})
+
+test('Show in Tracks carries the creator and the list settings', async () => {
+  const fresh = await renderEmbedded()
+  assert.match(
+    fresh,
+    /<a class="ds-btn" data-variant="link" href="\/tracks\?creatorId=artist-example&amp;sortBy=title&amp;direction=asc&amp;view=table&amp;density=standard">Show in Tracks<\/a>/,
+  )
+  const changed = await renderEmbedded(
+    'tab=tracks&q=Example&sortBy=scrobbles&direction=desc&view=grid&density=compact&groupRecordings=false',
+  )
+  assert.match(
+    changed,
+    /href="\/tracks\?creatorId=artist-example&amp;q=Example&amp;groupRecordings=false&amp;sortBy=scrobbles&amp;direction=desc&amp;view=grid&amp;density=compact">Show in Tracks</,
+  )
+  assert.match(changed, /data-view="grid"/)
+  // A standard card shows the value the list is sorted by beside the year.
+  const sorted = await renderEmbedded(
+    'tab=tracks&sortBy=scrobbles&direction=desc&view=grid&groupRecordings=false',
+  )
+  assert.match(
+    sorted,
+    /class="ds-card-meta"><span>2019<\/span><span>[^<]*1,204/,
+  )
+})

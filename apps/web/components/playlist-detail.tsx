@@ -1,5 +1,6 @@
 'use client'
 
+import Link from 'next/link'
 import { useDeferredValue, useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ListMusic } from 'lucide-react'
@@ -59,6 +60,7 @@ import {
   PlaylistTabSchema,
   playlistTracksHref,
   playlistAlbumsHref,
+  playlistBrowseHref,
   playlistAlbumSorts,
   playlistPresentationLabels,
   playlistHref,
@@ -428,6 +430,21 @@ function PlaylistEntries({
             filter={filter}
             onChange={setFilter}
           />
+          {/* Browse has no Metadata gaps filter, so it could not show the same rows. */}
+          {!filter && (
+            <Button variant="link" size="xs" asChild>
+              <Link
+                href={playlistBrowseHref(contents, playlist.name, {
+                  q,
+                  sortBy,
+                  direction,
+                  view: shownView,
+                })}
+              >
+                {albums ? 'Show in Albums' : 'Show in Tracks'}
+              </Link>
+            </Button>
+          )}
         </>
       }
     >

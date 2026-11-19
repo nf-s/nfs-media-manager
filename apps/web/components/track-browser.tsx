@@ -4,14 +4,12 @@ import { TrackArtistLinks } from './creator-links'
 import {
   clearCreatorScope,
   parseCreatorBrowseScope,
+  type CreatorBrowseScope,
 } from '@/utils/creator-browse'
 
 import { DetailInspector } from './detail-inspector'
-import {
-  replaceWorkspaceUrl,
-  useDetailInspector,
-} from './detail-inspector-context'
-import { sameDetail, withoutDetailEntries } from '@/utils/detail-inspector'
+import { useDetailInspector } from './detail-inspector-context'
+import { sameDetail } from '@/utils/detail-inspector'
 
 import {
   Fragment,
@@ -21,8 +19,9 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import { useSearchParams } from 'next/navigation'
+import Link from 'next/link'
 import { Settings2 } from 'lucide-react'
+import { Button } from '@repo/ui/components/ui/button'
 import {
   TableBody,
   TableCell,
@@ -54,6 +53,12 @@ import {
 import { useConfig } from './providers'
 import { useVirtualBrowse } from '@/hooks/useVirtualBrowse'
 import { useRailSlot } from '@/hooks/useRailSlot'
+import {
+  useEmbeddedBrowse,
+  usePageBrowse,
+  type BrowseHost,
+} from '@/hooks/useBrowseHost'
+import { embeddedScrollClass } from '@/utils/embedded-browse'
 import {
   defaultTrackColumns,
   formatTrackDuration,
@@ -137,9 +142,46 @@ const tableRowHeight = 32
 const noun = { one: 'track', other: 'tracks' }
 
 export default function TrackBrowser() {
+  return <TrackBrowse host={usePageBrowse(collection)} />
+}
+
+/**
+ * The Tracks browser inside a detail, held to one creator's tracks. It has
+ * every control of the Tracks page; Show in Tracks shows the same result there.
+ */
+export function EmbeddedTrackBrowser({
+  creator,
+  storage,
+}: {
+  creator: CreatorBrowseScope
+  /** Names the list's view and column widths in browser storage. */
+  storage: string
+}) {
+  const host = useEmbeddedBrowse(
+    collection,
+    {
+      scope: creator,
+      storage,
+      mediaType: 'album',
+      sort: { key: 'title', direction: 'asc' },
+    },
+    defaultBrowseView('track'),
+  )
+  return <TrackBrowse host={host} scope={creator} />
+}
+
+function TrackBrowse({
+  host,
+  scope,
+}: {
+  host: BrowseHost
+  /** The creator a list inside a detail is held to. */
+  scope?: CreatorBrowseScope
+}) {
   const { apiBaseUrl } = useConfig()
-  const searchParams = useSearchParams()
-  const [ready, setReady] = useState(false)
+  const { embedded } = host
+  const searchParams = host.params
+  const [ready, setReady] = useState(embedded)
   const [scroll, setScroll] = useState({ identity: '', top: 0 })
   const [viewport, setViewport] = useState({ width: 1000, height: 800 })
   const [gridLayout, setGridLayout] = useState<{
@@ -149,14 +191,16 @@ export default function TrackBrowser() {
   } | null>(null)
   const scroller = useRef<HTMLDivElement>(null)
   const inspector = useDetailInspector()
-  const railSlot = useRailSlot()
+  const pageRail = useRailSlot()
+  // Inside a detail the active filters sit in a row above the results.
+  const railSlot = embedded ? null : pageRail
   const view = parseBrowseView(
     searchParams.get('view'),
     defaultBrowseView('track'),
   )
   const density = useGridDensity(searchParams.get('density'))
   const filters = parseTrackFilters(searchParams.get('filters'))
-  const creator = parseCreatorBrowseScope(searchParams, 'track')
+  const creator = scope ?? parseCreatorBrowseScope(searchParams, 'track')
   const rangesResult = BrowseRangesParamSchema.safeParse(
     searchParams.get('ranges'),
   )
@@ -170,7 +214,7 @@ export default function TrackBrowser() {
   )
   // One drawer at a time: the playlist drawer covers the track drawer.
   const selectedId =
-    inspector?.root?.kind === 'track' ? inspector.root.id : null
+    !embedded && inspector?.root?.kind === 'track' ? inspector.root.id : null
   const { listening, listeningSort } = parseListeningParams(searchParams)
   const fields = [
     ...useTrackBrowseFields(),
@@ -190,7 +234,7 @@ export default function TrackBrowser() {
     columnKeys.includes(field.key),
   )
   const widths = useColumnWidths(
-    collection,
+    host.storage,
     (field: BrowseField) =>
       field.key === 'title' ? 280 : field.type === 'text' ? 180 : 110,
     // Leave room for the title, disclosure and playback controls on grouped rows.
@@ -241,28 +285,17 @@ export default function TrackBrowser() {
       : previousScrollTop
 
   function setParams(updates: Record<string, string | null>, close = false) {
-    const pathname = `/${collection}`
-    const current = new URLSearchParams(window.location.search)
-    const params = close ? withoutDetailEntries(pathname, current) : current
-    if (
-      Object.hasOwn(updates, 'sortBy') &&
-      canonicalBrowseKey(updates.sortBy ?? 'dateAdded') !== sortBy
-    )
-      params.delete('groupRecordings')
-    for (const [key, value] of Object.entries(updates)) {
-      if (value === null || value === '') params.delete(key)
-      else params.set(key, value)
-    }
-    params.delete('page')
-    replaceWorkspaceUrl(`${pathname}${params.size ? `?${params}` : ''}`, !close)
-    try {
-      window.localStorage.setItem(
-        `browse:${collection}`,
-        withoutDetailEntries(pathname, params).toString(),
+    host.update((params) => {
+      if (
+        Object.hasOwn(updates, 'sortBy') &&
+        canonicalBrowseKey(updates.sortBy ?? 'dateAdded') !== sortBy
       )
-    } catch {
-      /* URL state still works when browser storage is unavailable. */
-    }
+        params.delete('groupRecordings')
+      for (const [key, value] of Object.entries(updates)) {
+        if (value === null || value === '') params.delete(key)
+        else params.set(key, value)
+      }
+    }, close)
   }
   function addFilter(filter: BrowseFilter, keepOpen = false) {
     const next = withTrackFilter(filters, filter)
@@ -274,7 +307,7 @@ export default function TrackBrowser() {
       filters: null,
       ranges: null,
       listening: null,
-      ...clearCreatorScope,
+      ...(scope ? {} : clearCreatorScope),
     })
   }
   function changeListening(next: ListeningFilter | undefined) {
@@ -294,6 +327,8 @@ export default function TrackBrowser() {
   }
 
   useEffect(() => {
+    // The saved Browse state belongs to the Tracks page.
+    if (embedded) return
     try {
       const saved = restoreSavedBrowse(window.localStorage, collection)
       if (!window.location.search && saved)
@@ -302,7 +337,7 @@ export default function TrackBrowser() {
       /* Ignore unavailable storage or malformed saved preferences. */
     }
     setReady(true)
-  }, [])
+  }, [embedded])
   useEffect(() => {
     const element = scroller.current
     if (!element) return
@@ -408,6 +443,8 @@ export default function TrackBrowser() {
     ? `repeat(${gridRow - query.start / grid.columns + 1}, ${grid.cardHeight}px) ${versionsHeight}px`
     : undefined
   useEffect(() => {
+    // Arrow keys step through the page's own list, not one inside a detail.
+    if (embedded) return
     function onKeyDown(event: KeyboardEvent) {
       if (event.defaultPrevented) return
       const target = event.target instanceof Element ? event.target : null
@@ -457,7 +494,9 @@ export default function TrackBrowser() {
         apiBaseUrl,
         collection: 'tracks',
         params,
-        href: `/tracks?${searchParams.size ? searchParams : params}`,
+        href:
+          host.browseHref ??
+          `/tracks?${searchParams.size ? searchParams : params}`,
         label: 'Tracks',
         total: length,
         startIndex: index,
@@ -670,9 +709,11 @@ export default function TrackBrowser() {
     )
   }
 
+  // The creator a list inside a detail is held to is not a filter.
+  const creatorFilter = scope ? undefined : creator
   const activeFilterCount =
     Number(Boolean(q)) +
-    Number(Boolean(creator)) +
+    Number(Boolean(creatorFilter)) +
     filters.length +
     ranges.length +
     (listening?.rules.length ?? 0)
@@ -681,7 +722,7 @@ export default function TrackBrowser() {
       <>
         <TrackBrowseFilterChips
           q={q}
-          creator={creator}
+          creator={creatorFilter}
           filters={filters}
           ranges={ranges}
           fields={fields}
@@ -696,8 +737,11 @@ export default function TrackBrowser() {
     ) : null
 
   return (
-    <section className="media-browser" aria-label={collection}>
-      <div className="browse-main">
+    <section
+      className={embedded ? undefined : 'media-browser'}
+      aria-label={collection}
+    >
+      <div className={embedded ? undefined : 'browse-main'}>
         <BrowseToolbar
           search={
             <TrackBrowseSearch
@@ -809,9 +853,16 @@ export default function TrackBrowser() {
             <BrowseItemsCount
               query={query}
               total={total}
-              unfiltered={query.unfilteredTotal}
+              unfiltered={embedded ? undefined : query.unfilteredTotal}
               noun={noun}
             />
+          }
+          end={
+            host.browseHref && (
+              <Button variant="link" asChild>
+                <Link href={host.browseHref}>Show in Tracks</Link>
+              </Button>
+            )
           }
         />
         {filterPills && (
@@ -827,8 +878,9 @@ export default function TrackBrowser() {
           onClear={clearFilters}
         />
         <TableScroll
-          className="browse-scroll bi-scroll"
+          className={`browse-scroll bi-scroll${embedded ? ` ${embeddedScrollClass}` : ''}`}
           data-view={view}
+          data-inspector-scroll={embedded ? '' : undefined}
           ref={scroller}
           role="region"
           aria-label={`${collection} ${view}`}
@@ -1023,12 +1075,14 @@ export default function TrackBrowser() {
           )}
         </TableScroll>
       </div>
-      <DetailInspector
-        track={{ onFilter: addFilter }}
-        playlist={{
-          filterTracks: (playlist) => filterByPlaylist(playlist.name),
-        }}
-      />
+      {!embedded && (
+        <DetailInspector
+          track={{ onFilter: addFilter }}
+          playlist={{
+            filterTracks: (playlist) => filterByPlaylist(playlist.name),
+          }}
+        />
+      )}
     </section>
   )
 }
