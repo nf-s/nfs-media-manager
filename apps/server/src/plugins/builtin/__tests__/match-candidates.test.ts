@@ -7,6 +7,7 @@ import {
 } from '@repo/media-plugin-sdk'
 import { listBuiltinScrapePlugins } from '../index'
 import { discogsPlugin } from '../discogs'
+import { lastfmPlugin } from '../lastfm'
 import { musicbrainzPlugin } from '../musicbrainz'
 import { spotifyPlugin } from '../spotify'
 import { tmdbPlugin } from '../tmdb'
@@ -55,13 +56,13 @@ function requestUrl(request: ReturnType<typeof replies>, index: number) {
 }
 
 describe('provider match candidates', () => {
-  it('is offered only by providers whose scrape already searches', () => {
+  it('is offered by providers with catalog candidate searches', () => {
     expect(
       listBuiltinScrapePlugins()
         .filter((plugin) => plugin.searchMatchCandidates)
         .map((plugin) => plugin.manifest.id)
         .sort(),
-    ).toEqual(['discogs', 'musicbrainz', 'spotify', 'tmdb'])
+    ).toEqual(['discogs', 'lastfm', 'musicbrainz', 'spotify', 'tmdb'])
     expect(isMediaProviderPlugin(spotifyPlugin)).toBe(true)
     expect(
       isMediaProviderPlugin({
@@ -108,6 +109,69 @@ describe('provider match candidates', () => {
     ).toEqual([])
     expect(requestUrl(typed, 1).searchParams.get('q')).toBe('Other words')
     expect(typed).toHaveBeenCalledTimes(2)
+  })
+
+  it('searches Last.fm album titles without sending the account username', async () => {
+    const url = 'https://www.last.fm/music/Example+Artist/Example+Album'
+    const request = replies({
+      results: {
+        albummatches: {
+          album: [
+            { name: 'Example Album', artist: 'Example Artist', url, mbid: '' },
+          ],
+        },
+      },
+    })
+    const search = context(request)
+    search.secrets = { ...search.secrets, username: 'fixture-account' }
+    expect(await lastfmPlugin.searchMatchCandidates?.(search)).toEqual([
+      {
+        referenceType: 'url',
+        externalId: url,
+        title: 'Example Album',
+        subtitle: 'Example Artist',
+        url,
+      },
+    ])
+    const params = requestUrl(request, 0).searchParams
+    expect(params.get('method')).toBe('album.search')
+    expect(params.get('album')).toBe('Example Album')
+    expect(params.get('limit')).toBe('10')
+    expect(params.has('username')).toBe(false)
+    expect(request).toHaveBeenCalledTimes(1)
+  })
+
+  it('preserves the URL alongside the Last.fm release MBID for rejection checks', async () => {
+    const url = 'https://www.last.fm/music/Example+Artist/Example+Album'
+    const request = replies({
+      results: {
+        albummatches: {
+          album: [
+            {
+              name: 'Example Album',
+              artist: 'Example Artist',
+              url,
+              mbid: groupId,
+            },
+          ],
+        },
+      },
+    })
+    expect(
+      await lastfmPlugin.searchMatchCandidates?.(context(request)),
+    ).toMatchObject([{ referenceType: 'mbid', externalId: groupId, url }])
+  })
+
+  it('handles an empty Last.fm search and sends an edited search term', async () => {
+    const request = replies({ results: { albummatches: { album: [] } } })
+    expect(
+      await lastfmPlugin.searchMatchCandidates?.(
+        context(request, { query: 'Alternate title' }),
+      ),
+    ).toEqual([])
+    expect(requestUrl(request, 0).searchParams.get('album')).toBe(
+      'Alternate title',
+    )
   })
 
   it('lists MusicBrainz release groups with their artists and first release', async () => {

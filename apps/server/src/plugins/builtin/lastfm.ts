@@ -64,6 +64,7 @@ export async function requestLastFm(
   method:
     | 'album.getInfo'
     | 'album.getTopTags'
+    | 'album.search'
     | 'artist.search'
     | 'artist.getInfo'
     | 'artist.getTopTracks'
@@ -75,7 +76,9 @@ export async function requestLastFm(
     method,
     format: 'json',
     api_key: albumSecret(context, 'apiKey', 'Last.fm'),
-    ...(method.startsWith('album.') ? { autocorrect: '1' } : {}),
+    ...(['album.getInfo', 'album.getTopTags'].includes(method)
+      ? { autocorrect: '1' }
+      : {}),
     ...params,
   }).toString()
   const payload = await requestAlbumJson(
@@ -170,6 +173,34 @@ export const lastfmPlugin: MediaProviderPlugin = {
         filterable: true,
       },
     ],
+  },
+  async searchMatchCandidates(context) {
+    if (context.mediaType !== 'album')
+      throw new Error('Last.fm searches only support albums.')
+    const response = await requestLastFm(context, 'album.search', {
+      album: context.query ?? context.media.title,
+      limit: '10',
+    })
+    const album = z.object({
+      name: z.string().min(1),
+      artist: z.string().min(1),
+      url: LastFmUrlSchema,
+      mbid: z.union([AlbumMbidSchema, z.literal('')]).optional(),
+    })
+    const { results } = z
+      .object({
+        results: z.object({
+          albummatches: z.object({ album: z.array(album).max(10) }),
+        }),
+      })
+      .parse(response)
+    return results.albummatches.album.map(({ name, artist, url, mbid }) => ({
+      referenceType: mbid ? 'mbid' : 'url',
+      externalId: mbid || url,
+      title: name,
+      subtitle: artist,
+      url,
+    }))
   },
   async scrapeMediaItem(context) {
     requireAlbum(context, 'Last.fm')
