@@ -344,8 +344,11 @@
     `<dl class="ds-facts">${list.map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${v}</dd></div>`).join('')}</dl>`
   const kv = (list) =>
     `<dl class="ds-kv">${list.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${v}</dd>`).join('')}</dl>`
-  const stat = (value, label, o = {}) =>
-    `<div class="ds-stat"${attrs({ 'data-tone': o.tone })}><span class="ds-stat-value">${value}${o.extra || ''}</span><span class="ds-stat-label">${esc(label)}</span></div>`
+  /* o.href makes the whole stat a link to the page the figure comes from. */
+  const stat = (value, label, o = {}) => {
+    const tag = o.href ? 'a' : 'div'
+    return `<${tag} class="ds-stat"${attrs({ 'data-tone': o.tone, href: o.href, title: o.title })}><span class="ds-stat-value">${value}${o.extra || ''}</span><span class="ds-stat-label">${esc(label)}</span></${tag}>`
+  }
   const stats = (list) =>
     `<div class="ds-stats">${list.map((s) => stat(...s)).join('')}</div>`
 

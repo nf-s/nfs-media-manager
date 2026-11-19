@@ -58,7 +58,10 @@ import { invalidateMediaItem } from '@/utils/query-cache'
 import { withoutDetailEntries } from '@/utils/detail-inspector'
 import { scopedHref } from '@/utils/media-scope'
 import { createAlbumPlaybackSource } from '@/utils/playback-source'
-import { getDetailProviderLinks, ratingScore } from '@/utils/provider-ratings'
+import {
+  getDetailProviderLinks,
+  type ProviderRating,
+} from '@/utils/provider-ratings'
 import { albumSpotifyDestination } from '@/utils/album-links'
 import MediaSources, { MediaEditHistory } from './media-sources'
 import MetadataSourceControl from './metadata-source-control'
@@ -82,7 +85,7 @@ import {
   FilterPill,
   OpenAtProvider,
   RatingCards,
-  ratingSource,
+  ratingStat,
   useDetailTab,
 } from './detail-frame'
 
@@ -108,6 +111,11 @@ const tabAliases = {
   tracks: 'overview',
   playlists: 'overview',
 } satisfies Record<string, 'overview' | 'sources'>
+
+/** The ratings an album overview leads with. Each opens its source page. */
+function albumHeadlineRatings(ratings: ProviderRating[]) {
+  return ratings.filter((rating) => rating.score !== undefined).slice(0, 2)
+}
 
 /** Release dates are calendar days; they are shown as stored. */
 function releaseDay(value: string | null) {
@@ -540,6 +548,7 @@ export default function MediaDetail({
     item.links,
     item.mediaType === 'album' ? albumSpotifyDestination(item) : undefined,
     item.providerReferences,
+    item.mediaType === 'album' ? albumHeadlineRatings : undefined,
   )
   const [primaryLink, ...otherLinks] = serviceLinks(providers.links)
   const creators = item.credits.filter(
@@ -678,9 +687,7 @@ export default function MediaDetail({
 
   let overview: ReactNode
   if (item.mediaType === 'album') {
-    const ratings = providers.ratings.filter(
-      (rating) => rating.score !== undefined,
-    )
+    const ratings = albumHeadlineRatings(providers.ratings)
     const scrobbles = values.scrobbles
     const lastListened = values.lastListenedAt
     const stats: StatItem[] = [
@@ -696,10 +703,7 @@ export default function MediaDetail({
         label: 'scrobbles',
         value: typeof scrobbles === 'number' ? formatCount(scrobbles) : '0',
       },
-      ...ratings.slice(0, 2).map((rating) => ({
-        label: ratingSource(rating),
-        value: ratingScore(rating),
-      })),
+      ...ratings.map(ratingStat),
       {
         label: 'last played',
         value:
@@ -769,11 +773,7 @@ export default function MediaDetail({
       browseFields,
       values,
       highlightField,
-      [
-        'scrobbles',
-        'lastListenedAt',
-        ...ratings.slice(0, 2).map((rating) => rating.key),
-      ],
+      ['scrobbles', 'lastListenedAt', ...ratings.map((rating) => rating.key)],
     )
     overview = (
       <div className="dtl-overview">

@@ -116,12 +116,19 @@ function linkProvider(link: ProviderLink): string {
   return link.provider
 }
 
+/**
+ * An item's ratings and its other provider links. A provider whose rating is
+ * displayed opens from that rating, so its link is left out of `links`;
+ * `displayed` picks those ratings when a screen does not show them all.
+ */
 export function getDetailProviderLinks(
   fields: BrowseField[],
   values: BrowseValues,
   links: ProviderLink[],
   spotifyUrl?: string | null,
   references: AlbumListItem['providerReferences'] = [],
+  displayed: (ratings: ProviderRating[]) => ProviderRating[] = (ratings) =>
+    ratings,
 ): { ratings: ProviderRating[]; links: ProviderLink[]; trailerUrl?: string } {
   const trailerUrl = links.flatMap((link) => {
     if (link.provider !== 'youtube-trailer') return []
@@ -179,7 +186,7 @@ export function getDetailProviderLinks(
     ]
   })
   const linkedProviders = new Set(
-    ratings
+    displayed(ratings)
       .filter((rating) => rating.href)
       .map((rating) => ratingSite(rating.display.provider)),
   )

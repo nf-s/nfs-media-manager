@@ -143,6 +143,56 @@ test('detail ratings link to stored destinations, not importer identities', () =
   assert.deepEqual(result.links, [])
 })
 
+test('a provider whose rating is not displayed keeps its link', () => {
+  const fields: BrowseField[] = [
+    { ...field, key: 'rymScore', rating: { provider: 'rym', scale: 5 } },
+    {
+      ...field,
+      key: 'discogsScore',
+      rating: { provider: 'discogs', scale: 5 },
+    },
+    {
+      ...field,
+      key: 'metaScore',
+      rating: { provider: 'metacritic', scale: 100 },
+    },
+  ]
+  const result = getDetailProviderLinks(
+    fields,
+    { rymScore: 4, metaScore: 80 },
+    [
+      {
+        provider: 'rym',
+        label: 'RYM',
+        url: 'https://rateyourmusic.com/release/album/example/',
+      },
+      {
+        provider: 'discogs',
+        label: 'Discogs',
+        url: 'https://www.discogs.com/master/1',
+      },
+      {
+        provider: 'metacritic',
+        label: 'Metacritic',
+        url: 'https://www.metacritic.com/music/example',
+      },
+    ],
+    undefined,
+    [],
+    (ratings) =>
+      ratings.filter((rating) => rating.score !== undefined).slice(0, 1),
+  )
+  assert.deepEqual(
+    result.ratings.map((rating) => rating.display.provider),
+    ['rym', 'discogs', 'metacritic'],
+  )
+  // Discogs has no score and Metacritic is past the displayed ratings.
+  assert.deepEqual(
+    result.links.map((link) => link.provider),
+    ['discogs', 'metacritic'],
+  )
+})
+
 test('imported RYM scores link to the actual returned review page', () => {
   const url =
     'https://rateyourmusic.com/music-review/cyarbrough/marina-herlop/dja-dja/302502412'

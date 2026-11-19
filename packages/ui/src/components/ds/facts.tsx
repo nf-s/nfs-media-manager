@@ -41,23 +41,58 @@ export type StatItem = {
   tone?: 'attention' | 'danger'
   /** A sparkline beside the value. */
   trend?: StatTrend
+  /** The figure in full, shown on hover. */
+  title?: string
+  /** The page the figure comes from. The whole stat opens it in a new tab. */
+  href?: string
 }
 
-/** Headline figures. Four at most; one may carry a sparkline. */
+/**
+ * Headline figures. Four at most; one may carry a sparkline. A figure taken
+ * from another site may link to its page there and looks like the others.
+ */
 export function Stats({ items }: { items: readonly StatItem[] }) {
   return (
     <div className="ds-stats">
-      {items.map((item) => (
-        <div key={item.label} className="ds-stat" data-tone={item.tone}>
-          <span className="ds-stat-value">
-            {item.value}
-            {item.trend && (
-              <Sparkline values={item.trend.values} label={item.trend.label} />
-            )}
-          </span>
-          <span className="ds-stat-label">{item.label}</span>
-        </div>
-      ))}
+      {items.map((item) => {
+        const content = (
+          <>
+            <span className="ds-stat-value">
+              {item.value}
+              {item.trend && (
+                <Sparkline
+                  values={item.trend.values}
+                  label={item.trend.label}
+                />
+              )}
+            </span>
+            <span className="ds-stat-label">{item.label}</span>
+          </>
+        )
+        return item.href ? (
+          <a
+            key={item.label}
+            className="ds-stat"
+            data-tone={item.tone}
+            href={item.href}
+            target="_blank"
+            rel="noopener noreferrer"
+            title={item.title}
+            aria-label={`${item.title ?? `${item.label}.`} Opens in a new tab.`}
+          >
+            {content}
+          </a>
+        ) : (
+          <div
+            key={item.label}
+            className="ds-stat"
+            data-tone={item.tone}
+            title={item.title}
+          >
+            {content}
+          </div>
+        )
+      })}
     </div>
   )
 }

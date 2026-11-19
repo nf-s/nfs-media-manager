@@ -5,6 +5,7 @@ import { useEffect, useState, type MouseEvent, type ReactNode } from 'react'
 import { ArrowLeft, ExternalLink } from 'lucide-react'
 import type { BrowseFilter } from '@repo/schemas/browse'
 import { Art, ArtFallback, type ArtRatio } from '@repo/ui/components/ds/artwork'
+import type { StatItem } from '@repo/ui/components/ds/facts'
 import { Count, Pill, PillLabel, Pills } from '@repo/ui/components/ds/pill'
 import { Button } from '@repo/ui/components/ui/button'
 import { Tabs, TabsList, TabsTrigger } from '@repo/ui/components/ui/tabs'
@@ -214,6 +215,19 @@ export function OpenAtProvider({
 /** The short name of a rating's source: "Rate Your Music" rather than "RYM rating". */
 export function ratingSource(rating: ProviderRating) {
   return rating.display.shortLabel ?? rating.label.replace(/ rating$/, '')
+}
+
+/**
+ * A rating as a headline figure. It opens the page that supplied the score; a
+ * provider's homepage is not that page, so it is not linked.
+ */
+export function ratingStat(rating: ProviderRating): StatItem {
+  return {
+    label: ratingSource(rating),
+    value: ratingScore(rating),
+    title: ratingDescription(rating),
+    href: rating.homepageLink ? undefined : safeRatingHref(rating.href),
+  }
 }
 
 /** One small card per rating: score and source, with the vote count on hover. */

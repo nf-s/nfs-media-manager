@@ -124,8 +124,16 @@
         `<div class="ds-table-wrap">${table(cols, rows, { row: (r) => ({ 'data-state': r.n === 2 ? 'playing' : r.n === 5 ? 'hover' : undefined }) })}</div>`
       const albumSummary = stats([
         ['412', 'scrobbles', { extra: D.sparkOf('album') }],
-        ['3.71', 'Rate Your Music'],
-        ['4.4', 'Discogs'],
+        [
+          '3.71',
+          'Rate Your Music',
+          { href: '#', title: 'RYM rating: 3.71 out of 5. 4,218 votes.' },
+        ],
+        [
+          '4.4',
+          'Discogs',
+          { href: '#', title: 'Discogs rating: 4.4 out of 5. 312 votes.' },
+        ],
         ['2026-11-09', 'last played'],
       ])
       const albumTags =
@@ -600,7 +608,7 @@
                 ],
               )}</div><div>${g.label('Now', 'new')}${inspectorFrame(albumInspector(0, albumOverview), 900)}</div></div>` +
               g.rules([
-                '<b>Summary:</b> scrobbles with an all-time sparkline, the headline ratings and last played. Provider statistics (votes, have, want, listeners) move to each source.',
+                '<b>Summary:</b> scrobbles with an all-time sparkline, the headline ratings and last played. Each rating opens the page that supplied its score, in a new tab; a provider with no rating shown keeps its icon in the header. Provider statistics (votes, have, want, listeners) move to each source.',
                 '<b>Tracks are a compact table</b> in the overview: number, title, duration, scrobbles. No toolbar, no Artist or Album column. An Artist column appears only on a compilation. Past 20 tracks the list shows the first 20 and a Show all button.',
                 '<b>Each tag group is its own section</b> (Album tags, Artist tags; Genres, Keywords on a film), merged across providers and set flush left like Playlists and Details. A tag saved on the item carries a sources icon inside its pill: it lists the providers that supplied the tag for this item, each with its page and its job. Artist tags come from the artist, so they have no icon here.',
                 '<b>Details</b> holds six facts. All fields opens the full list with the source of each.',
