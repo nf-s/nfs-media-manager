@@ -35,6 +35,7 @@ export type CapturedProviderBody =
         | 'read-failed'
         | 'unsupported-format'
         | 'local-response'
+        | 'policy'
     }
 
 type ProviderResponseEvidence = {

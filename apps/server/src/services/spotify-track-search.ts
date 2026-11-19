@@ -247,6 +247,7 @@ export async function runSpotifyTrackSearch(
       context.requestedByUserId,
       context.assertActive,
       options.market,
+      context.jobId,
     )
     if (!(await context.isActive())) return { outcome: 'stopped' }
     return {

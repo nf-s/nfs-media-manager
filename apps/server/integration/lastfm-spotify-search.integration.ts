@@ -35,6 +35,7 @@ const pool = new pg.Pool({ ...connection, database })
 const databaseClient = drizzle(pool, { schema })
 const request = vi.fn<typeof fetch>()
 let account = 'fixture-listener'
+vi.mock('@/lib/load-workspace-env', () => ({ loadWorkspaceEnv: () => {} }))
 vi.mock('@/lib/db', () => ({
   get db() {
     return databaseClient
@@ -65,6 +66,11 @@ import {
   retryJob,
 } from '@/services/jobs'
 import { getJobData } from '@/services/job-data'
+import { readProviderResponseAttempt } from '@/services/provider-response-history'
+import {
+  ProviderTaskReplayStepsSchema,
+  replayProviderTask,
+} from '@/services/provider-task-replay'
 import {
   getLastfmLinkReport,
   setLastfmAlbumLink,
@@ -88,6 +94,7 @@ beforeEach(async () => {
     if (url.pathname === '/v1/search')
       return Response.json({
         albums: { items: [spotifyAlbumFixture()], total: 1, offset: 0 },
+        catalogEvidence: { revision: 7 },
       })
     throw new Error('Unexpected offline provider request')
   })
@@ -243,6 +250,37 @@ describe('scrobbled album Spotify searches through persistent jobs', () => {
         result: { items: [{ title: 'Example Album' }] },
       },
     ])
+    const savedJob = await getJob(id)
+    const steps = ProviderTaskReplayStepsSchema.parse(
+      savedJob?.options.providerReplaySteps,
+    )
+    const responses = await readProviderResponseAttempt({
+      jobId: id,
+      attempt: 1,
+    })
+    expect(responses).toHaveLength(1)
+    const captures = responses.map(({ capture }) => capture)
+    expect(captures[0]).toMatchObject({
+      phase: 'task',
+      request: { url: 'https://api.spotify.com/v1/search' },
+      response: {
+        body: {
+          state: 'captured',
+          text: expect.stringContaining('catalogEvidence'),
+        },
+      },
+    })
+    expect(JSON.stringify(captures)).not.toContain(
+      spotifyTokenFixture.access_token,
+    )
+    expect(
+      await replayProviderTask(
+        LASTFM_SPOTIFY_SEARCH_TASK,
+        'spotify',
+        steps,
+        captures,
+      ),
+    ).toEqual([stored.result])
     expect(await databaseClient.select().from(schema.mediaItem)).toEqual([])
     expect(await databaseClient.select().from(schema.providerSnapshot)).toEqual(
       [],
@@ -275,6 +313,27 @@ describe('scrobbled album Spotify searches through persistent jobs', () => {
     expect((await getLastfmSpotifySearch(group)).job?.status).toBe('failed')
     expect((await getLastfmSpotifySearch(second)).job?.status).toBe('queued')
     expect((await getLastfmSpotifySearch(group)).result).toBeNull()
+    const failed = (await getLastfmSpotifySearch(group)).job
+    expect(failed).not.toBeNull()
+    if (!failed) throw new Error('Missing failed search')
+    expect(
+      await readProviderResponseAttempt({ jobId: failed.jobId, attempt: 1 }),
+    ).toMatchObject([
+      {
+        artistId: null,
+        capture: {
+          phase: 'task',
+          request: { url: 'https://api.spotify.com/v1/search' },
+          response: {
+            status: 429,
+            body: {
+              state: 'captured',
+              text: expect.stringContaining('Rate limit exceeded'),
+            },
+          },
+        },
+      },
+    ])
     const [safety] = await databaseClient
       .select()
       .from(schema.providerRequestState)

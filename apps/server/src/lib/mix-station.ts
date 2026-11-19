@@ -92,6 +92,8 @@ export type StationFeedPage = StationPage<StationFeedEntry> & {
  */
 export interface MixStationAdapter {
   station: MixStation
+  /** Already discovered public archive action for the current adapter instance. */
+  archiveAction?: () => string | null
   /** The show catalogue and each show's episodes; null for a feed-only station. */
   catalogue: {
     listShows: (

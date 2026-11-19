@@ -75,7 +75,7 @@ export const LotRadioEpisodePageSchema = z.object({
 type LotRadioEpisodePage = z.infer<typeof LotRadioEpisodePageSchema>
 
 /** `(0,t.createServerReference)("<id>",t.callServer,void 0,t.findSourceMapURL,"getEpisodes")` */
-const ACTION_REFERENCE =
+export const lotRadioActionReference =
   /createServerReference\)?\(\s*"([0-9a-f]{40,42})"\s*,[^()"]*"getEpisodes"\s*\)/
 const SCRIPT_SRC = /<script\b[^>]*\bsrc="(\/_next\/static\/[^"]+\.js)"/g
 const CHUNK_PATH = /\/_next\/static\/[A-Za-z0-9/_.~-]+\.js/g
@@ -105,7 +105,7 @@ async function discoverAction(request: StationRequest): Promise<string> {
       await request(new URL(path, LOT_RADIO_URL)),
       'script chunk',
     )
-    const id = ACTION_REFERENCE.exec(chunk)?.[1]
+    const id = lotRadioActionReference.exec(chunk)?.[1]
     if (id) return id
   }
   throw new Error('The Lot Radio index no longer names its episode action')
@@ -116,10 +116,10 @@ async function discoverAction(request: StationRequest): Promise<string> {
  * data can hold resolved: escaped `$` strings, dates, omitted values and long
  * strings sent as separate text rows.
  */
-export function lotRadioFlightRows(text: string): unknown[] {
+export function lotRadioFlightFrames(text: string) {
   const bytes = Buffer.from(text, 'utf8')
   const texts = new Map<string, string>()
-  const rows: string[] = []
+  const rows: { id: string; json: string }[] = []
   let at = 0
   while (at < bytes.length) {
     const newline = bytes.indexOf(0x0a, at)
@@ -141,9 +141,14 @@ export function lotRadioFlightRows(text: string): unknown[] {
       at = comma + 1 + length
       continue
     }
-    rows.push(bytes.toString('utf8', colon + 1, lineEnd))
+    rows.push({ id, json: bytes.toString('utf8', colon + 1, lineEnd) })
     at = lineEnd + 1
   }
+  return { rows, texts }
+}
+
+export function lotRadioFlightRows(text: string): unknown[] {
+  const { rows, texts } = lotRadioFlightFrames(text)
   const revive = (_key: string, value: unknown): unknown => {
     if (typeof value !== 'string' || !value.startsWith('$')) return value
     if (value.startsWith('$$')) return value.slice(1)
@@ -153,7 +158,7 @@ export function lotRadioFlightRows(text: string): unknown[] {
   }
   return rows.flatMap((row) => {
     try {
-      return [JSON.parse(row, revive)]
+      return [JSON.parse(row.json, revive)]
     } catch {
       return []
     }
@@ -314,8 +319,9 @@ export function normalizeLotRadioItem(
  */
 export function createLotRadioAdapter(
   now: () => Date = () => new Date(),
+  initialAction: string | null = null,
 ): MixStationAdapter {
-  let action: string | null = null
+  let action = initialAction
 
   const readPage = async (
     request: StationRequest,
@@ -338,6 +344,7 @@ export function createLotRadioAdapter(
 
   return {
     station: 'lotradio',
+    archiveAction: () => action,
     catalogue: null,
     getShow: null,
     listFeed: async (request, mode, page, since) => {

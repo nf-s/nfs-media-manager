@@ -1,5 +1,4 @@
 import { eq } from 'drizzle-orm'
-import { z } from 'zod'
 import {
   PluginResultSchema,
   ProviderRequestError,
@@ -15,20 +14,20 @@ import {
   type ManualMediaSearchInput,
 } from '@repo/schemas/manual-add'
 import {
-  SPOTIFY_TRACK_SEARCH_LIMIT,
   SPOTIFY_TRACK_SEARCH_MARKET_REQUIRED,
-  SpotifyTrackSearchCandidateSchema,
+  SPOTIFY_TRACK_SEARCH_TASK,
   SpotifyTrackSearchMarketSchema,
 } from '@repo/schemas/spotify-track-search'
+import { LASTFM_SPOTIFY_SEARCH_TASK } from '@repo/schemas/lastfm'
 import { db } from '@/lib/db'
+import {
+  ProviderResponseStorageError,
+  createProviderResponseRecorder,
+  providerResponseSecretValues,
+} from '@/lib/provider-response-history'
 import { ServerError } from '@/lib/error'
 import { resolveProviderSecrets } from '@/lib/provider-secrets'
-import {
-  SpotifyAlbumSchema,
-  normalizeSpotifyAlbum,
-  normalizeSpotifyTrackEntry,
-  spotifyJson,
-} from '@/lib/spotify-api'
+import { normalizeSpotifyAlbum } from '@/lib/spotify-api'
 import { AlbumImportCandidateSchema } from '@/lib/album-import-candidates'
 import { spotifyClientToken } from '@/plugins/builtin/spotify'
 import { searchTmdbMovies, tmdbPosterUrl } from '@/plugins/builtin/tmdb'
@@ -45,6 +44,16 @@ import {
   recordProviderFailure,
   recordProviderSuccess,
 } from './provider-requests'
+import { saveProviderResponseCapture } from './provider-response-history'
+import {
+  projectSpotifyCatalogAlbums,
+  searchSpotifyCatalogAlbums,
+  searchSpotifyCatalogTracks,
+} from './provider-search-task-replay'
+import {
+  appendProviderTaskReplayStep,
+  type ProviderTaskReplayStep,
+} from './provider-task-replay'
 import { getProviderTransport } from './provider-transport'
 import { getSpotifyAccountStatus, spotifyAccountToken } from './spotify-oauth'
 
@@ -140,7 +149,11 @@ async function runProviderOperation<T>(
     return result
   } catch (error) {
     await assertActive?.()
-    if (error instanceof ServerError) throw error
+    if (
+      error instanceof ServerError ||
+      error instanceof ProviderResponseStorageError
+    )
+      throw error
     await recordProviderFailure(plugin, error)
     throw new ServerError({
       statusCode: 422,
@@ -152,9 +165,7 @@ async function runProviderOperation<T>(
   }
 }
 
-function spotifyMarket(
-  secrets: Record<string, string>,
-): Record<string, string> {
+function spotifyMarket(secrets: Record<string, string>): { market?: string } {
   const market = secrets['market']
   if (market && !SpotifyTrackSearchMarketSchema.safeParse(market).success) {
     throw new ServerError({
@@ -198,16 +209,36 @@ export async function prepareSpotifyCatalogTrackSearch(
   await spotifyTrackSearchAccess(userId, market)
 }
 
-const UnavailableSpotifyCatalogTrackSchema = z.union([
-  z.object({ is_playable: z.literal(false) }),
-  z.object({ restrictions: z.object({ reason: z.string().trim().min(1) }) }),
-])
+async function catalogJobRequest(
+  jobId: string,
+  task: typeof LASTFM_SPOTIFY_SEARCH_TASK | typeof SPOTIFY_TRACK_SEARCH_TASK,
+  step: ProviderTaskReplayStep,
+  plugin: MediaProviderPlugin,
+  secrets: Record<string, string>,
+  assertActive?: () => Promise<void>,
+) {
+  await appendProviderTaskReplayStep(jobId, 'spotify', task, step)
+  const recorder = createProviderResponseRecorder(
+    (capture) =>
+      saveProviderResponseCapture({
+        jobId,
+        provider: 'spotify',
+        attempt: 1,
+        capture,
+      }),
+    providerResponseSecretValues(secrets),
+  )
+  return createProviderRequest(plugin, assertActive, {
+    beginResponseCapture: recorder('task'),
+  })
+}
 
 export async function searchSpotifyTrackCandidates(
   query: string,
   userId: string | null,
   assertActive: () => Promise<void>,
   market?: string,
+  jobId?: string,
 ) {
   const { provider, params, account } = await spotifyTrackSearchAccess(
     userId,
@@ -215,39 +246,25 @@ export async function searchSpotifyTrackCandidates(
   )
   return runProviderOperation(
     provider,
-    async ({ secrets, request }) => {
+    async ({ secrets, request }, plugin) => {
       const token = account
         ? await spotifyAccountToken(account, request)
         : await spotifyClientToken(secrets, request)
-      const { tracks } = z
-        .object({
-          tracks: z.object({
-            items: z.array(z.unknown()).max(SPOTIFY_TRACK_SEARCH_LIMIT),
-            offset: z.literal(0),
-          }),
-        })
-        .parse(
-          await spotifyJson(request, token, 'search', {
-            ...params,
-            q: query,
-            type: 'track',
-            limit: String(SPOTIFY_TRACK_SEARCH_LIMIT),
-          }),
-        )
-      const seen = new Set<string>()
-      return tracks.items.flatMap((item) => {
-        if (UnavailableSpotifyCatalogTrackSchema.safeParse(item).success)
-          return []
-        const { track } = normalizeSpotifyTrackEntry({ item })
-        if (!track || seen.has(track.spotifyTrackId)) return []
-        const candidate = SpotifyTrackSearchCandidateSchema.safeParse({
-          ...track,
-          spotifyUrl: `https://open.spotify.com/track/${track.spotifyTrackId}`,
-        })
-        if (!candidate.success) return []
-        seen.add(track.spotifyTrackId)
-        return [candidate.data]
-      })
+      const input = { ...params, query }
+      const lookup = jobId
+        ? await catalogJobRequest(
+            jobId,
+            SPOTIFY_TRACK_SEARCH_TASK,
+            {
+              operation: 'track-search',
+              args: input,
+            },
+            plugin,
+            secrets,
+            assertActive,
+          )
+        : request
+      return searchSpotifyCatalogTracks(lookup, token, input)
     },
     assertActive,
   )
@@ -273,67 +290,51 @@ function filmCandidate(
 export async function searchManualMedia(
   input: ManualMediaSearchInput,
   assertActive?: () => Promise<void>,
+  jobId?: string,
 ) {
   const options = ManualMediaSearchInputSchema.parse(input)
   if (options.mediaType === 'album') {
     const page = await providerOperation(
       'spotify',
-      async ({ secrets, request }) => {
+      async ({ secrets, request }, plugin) => {
         const market = spotifyMarket(secrets)
         const token = await spotifyClientToken(secrets, request)
-        return z
-          .object({
-            albums: z.object({
-              items: z.array(SpotifyAlbumSchema).max(10),
-              total: z.number().int().nonnegative(),
-              offset: z.number().int().nonnegative(),
-            }),
-          })
-          .parse(
-            await spotifyJson(request, token, 'search', {
-              ...market,
-              q: options.q,
-              type: 'album',
-              limit: '10',
-              offset: String((options.page - 1) * 10),
-            }),
-          ).albums
+        const input = { ...market, query: options.q, page: options.page }
+        const lookup = jobId
+          ? await catalogJobRequest(
+              jobId,
+              LASTFM_SPOTIFY_SEARCH_TASK,
+              {
+                operation: 'album-search',
+                args: input,
+              },
+              plugin,
+              secrets,
+              assertActive,
+            )
+          : request
+        return searchSpotifyCatalogAlbums(lookup, token, input)
       },
       assertActive,
     )
-    if (page.offset !== (options.page - 1) * 10) {
-      throw new ServerError({
-        statusCode: 422,
-        message: 'Spotify returned an unexpected search page.',
-      })
-    }
+    const result = projectSpotifyCatalogAlbums(page, options.page)
     const candidates = page.items.map((item) =>
       AlbumImportCandidateSchema.parse({
         provider: 'spotify',
-        source: `https://open.spotify.com/album/${item.id}`,
+        source: 'https://open.spotify.com/album/' + item.id,
         result: normalizeSpotifyAlbum(item),
       }),
     )
     const matches = await matchAlbumCandidates(candidates)
-    return ManualMediaSearchResultSchema.parse({
-      items: page.items.map((item, index) => ({
-        externalId: item.id,
-        title: item.name,
-        subtitle: item.artists.map((artist) => artist.name).join(', '),
-        releaseDate: item.release_date ?? null,
-        artworkUrl: item.images[0]?.url ?? null,
-        url: `https://open.spotify.com/album/${item.id}`,
+    return {
+      ...result,
+      items: result.items.map((item, index) => ({
+        ...item,
         mediaItemId: matches[index]?.error
           ? null
           : (matches[index]?.id ?? null),
       })),
-      page: options.page,
-      totalCount: Math.min(page.total, 500),
-      hasMore:
-        options.page < 50 &&
-        page.items.length > 0 &&
-        page.offset + page.items.length < page.total,
-    })
+    }
   }
   const page = await providerOperation('tmdb', (context) =>
     searchTmdbMovies(context, options.q, options.page),

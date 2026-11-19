@@ -1301,7 +1301,8 @@ export async function createTaskJob(
   const definition = taskJobs.get(task)
   if (!definition)
     throw new ServerError({ statusCode: 422, message: 'Unknown job task' })
-  const input = scheduling.taskOptions ?? {}
+  const { providerReplaySteps: _historicalSteps, ...input } =
+    scheduling.taskOptions ?? {}
   const provider = taskProvider(definition, input)
   if (!provider)
     throw new ServerError({ statusCode: 422, message: 'Invalid task provider' })
@@ -1630,6 +1631,7 @@ async function processTaskJob(
       ),
     )
     const details = jobErrorDetails(error, credentials)
+    const evidenceStorageFailed = error instanceof ProviderResponseStorageError
     const evidence = providerResponseEvidence(error, credentials)
     const diagnostics = Array.isArray(metadata.diagnostics)
       ? [...metadata.diagnostics, ...evidence]
@@ -1645,7 +1647,7 @@ async function processTaskJob(
         ...(classification ? { classification } : {}),
       },
       async (tx) => {
-        if (classification) return
+        if (classification || evidenceStorageFailed) return
         execution.failures += 1
         const safety = await getProviderSafety(plugin.manifest.id)
         if (
@@ -1665,7 +1667,7 @@ async function processTaskJob(
         }
       },
     )
-    if (handled && !classification)
+    if (handled && !classification && !evidenceStorageFailed)
       await control?.recordOutcome(execution.stopped ? 'stopped' : 'failure')
   }
   if (result.outcome === 'failed') {

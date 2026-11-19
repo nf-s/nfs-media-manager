@@ -225,6 +225,39 @@ describe('scrape-provider request evidence', () => {
     ])
   })
 
+  it('keeps a scoped response policy from leaking into duplicate error diagnostics', async () => {
+    const archive: ProviderResponseCapture[] = []
+    const recorder = createProviderResponseRecorder(
+      async (entry) => {
+        archive.push(entry)
+      },
+      [],
+      undefined,
+      undefined,
+      () => ({
+        sanitizeBody: () => ({ state: 'unavailable', reason: 'policy' }),
+      }),
+    )
+    const request = createProviderRequest(plugin(), undefined, {
+      beginResponseCapture: recorder('task'),
+    })
+    mocks.fetch.mockResolvedValueOnce(
+      Response.json({ adPlacements: ['synthetic-value'] }, { status: 500 }),
+    )
+    const error: unknown = await request(
+      'https://fixture.invalid/metadata',
+    ).catch((cause: unknown) => cause)
+    expect(archive[0]?.response.body).toEqual({
+      state: 'unavailable',
+      reason: 'policy',
+    })
+    expect(providerResponseEvidence(error, [])).toMatchObject([
+      {
+        evidence: { responseBody: { state: 'unavailable', reason: 'policy' } },
+      },
+    ])
+  })
+
   it('does not keep a bare legacy local error response as original evidence', async () => {
     const { request, archive } = setup()
     const error: unknown = await withProviderTransport(

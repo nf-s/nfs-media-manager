@@ -16,8 +16,8 @@ import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
 import { createStableId } from '@/lib/media-utils'
 import { mediaItem, scrapeJob, scrapeJobLog } from '@/schemas/db'
-import { createTaskJob, type TaskJobResult } from './jobs'
-import { getLastfmAccount, type LastfmSyncJobContext } from './lastfm-scrobbles'
+import { createTaskJob, type TaskJobContext, type TaskJobResult } from './jobs'
+import { getLastfmAccount } from './lastfm-scrobbles'
 import { prepareManualMediaSearch, searchManualMedia } from './manual-add'
 
 type SearchGroup = z.infer<typeof LastfmSpotifySearchGroupSchema>
@@ -110,7 +110,7 @@ export async function prepareLastfmSpotifySearch(
 }
 
 export async function runLastfmSpotifySearch(
-  context: LastfmSyncJobContext,
+  context: TaskJobContext,
   input: Record<string, unknown>,
 ): Promise<TaskJobResult> {
   try {
@@ -139,6 +139,7 @@ export async function runLastfmSpotifySearch(
     const result = await searchManualMedia(
       { mediaType: 'album', q: options.query, page: 1 },
       context.assertActive,
+      context.jobId,
     )
     if (!(await context.isActive())) return { outcome: 'stopped' }
     return {

@@ -63,8 +63,10 @@ const otherEdition = {
 }
 const searchBody = {
   tracks: { offset: 0, items: [catalogTrack, { type: 'track', id: null }] },
+  catalogEvidence: { revision: 7 },
 }
 
+vi.mock('@/lib/load-workspace-env', () => ({ loadWorkspaceEnv: () => {} }))
 vi.mock('@/lib/db', () => ({
   get db() {
     return fixture
@@ -106,6 +108,11 @@ import {
   retryJob,
 } from '@/services/jobs'
 import { listJobEntries } from '@/services/job-entries'
+import { readProviderResponseAttempt } from '@/services/provider-response-history'
+import {
+  ProviderTaskReplayStepsSchema,
+  replayProviderTask,
+} from '@/services/provider-task-replay'
 import { replaceAlbumTracks } from '@/services/album-library-tracks'
 import { refreshTrackLinks } from '@/services/track-links'
 import { removeScrobbleTrackMatch } from '@/services/track-merges'
@@ -318,6 +325,39 @@ it('links an exact catalog result at completion and keeps the saved results', as
       },
     ],
   })
+  const savedJob = await getJob(job.id)
+  const steps = ProviderTaskReplayStepsSchema.parse(
+    savedJob?.options.providerReplaySteps,
+  )
+  const responses = await readProviderResponseAttempt({
+    jobId: job.id,
+    attempt: 1,
+  })
+  expect(responses).toHaveLength(1)
+  const captures = responses.map(({ capture }) => capture)
+  expect(captures[0]).toMatchObject({
+    phase: 'task',
+    request: { url: 'https://api.spotify.com/v1/search' },
+    response: {
+      body: {
+        state: 'captured',
+        text: expect.stringContaining('catalogEvidence'),
+      },
+    },
+  })
+  expect(JSON.stringify(captures)).not.toContain(
+    spotifyTokenFixture.access_token,
+  )
+  expect(
+    await replayProviderTask(
+      SPOTIFY_TRACK_SEARCH_TASK,
+      'spotify',
+      steps,
+      captures,
+    ),
+  ).toEqual([stored.candidates])
+  expect(request).toHaveBeenCalledTimes(2)
+
   expect(
     (await listSpotifyTrackSearchStatuses({ trackIds: [recordingId] }, userId))
       .items,

@@ -19,6 +19,7 @@ import {
   loadArtistProviderTarget,
   loadCurrentArtistPayloads,
 } from './artist-profiles'
+import { isProviderReplayTask } from '@/lib/provider-task-scope'
 import { getProviderReferenceHints } from './provider-reference-hints'
 
 const id = z.string().min(1).max(200)
@@ -28,8 +29,15 @@ export const ProviderReplayScopeSchema = z
     jobItemId: id.nullable(),
     artistId: id.nullable(),
     attempt: z.number().int().positive(),
+    task: z.literal(true).optional(),
   })
-  .refine((scope) => scope.jobItemId !== null || scope.artistId !== null)
+  .refine((scope) =>
+    scope.task
+      ? scope.jobItemId === null &&
+        scope.artistId === null &&
+        scope.attempt === 1
+      : scope.jobItemId !== null || scope.artistId !== null,
+  )
 
 const hint = z.object({
   source: z.enum(['spotify', 'musicbrainz', 'discogs']),
@@ -152,6 +160,10 @@ export async function readProviderReplayJobScope(
     return item ? { ...job, mediaItemId: item.mediaItemId } : null
   }
 
+  if (scope.task)
+    return isProviderReplayTask(getJobTask(job.options), job.provider)
+      ? { ...job, mediaItemId: null }
+      : null
   return getJobTask(job.options) === ARTIST_ENRICHMENT_TASK &&
     job.options['artistId'] === scope.artistId
     ? { ...job, mediaItemId: null }

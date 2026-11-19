@@ -245,6 +245,30 @@ pnpm --filter @repo/server exec tsx scripts/replay-provider-response.ts replay \
   --job fixture-job --item fixture-item --attempt 1 --output /private/replay-report.json
 ```
 
+For a station sync or a Spotify candidate-search task, use `--task` instead
+of an item or artist identifier.
+
+```sh
+pnpm --filter @repo/server exec tsx scripts/replay-provider-response.ts replay \
+  --job fixture-task --task --attempt 1 --output /private/task-report.json
+```
+
+Station jobs replay the saved catalogue or feed calls against the archived
+responses. Each continuation job has its own transcript. Rinse FM and NTS
+archive safe catalogue JSON and recognized sitemap XML. The Lot Radio
+retains the public discovery references and episode-bearing Flight rows
+needed by the adapter, omitting unrelated page and script data. The viewer
+and export identify these responses as discovery references or episode data
+rows. The request fingerprint includes the canonical arguments of that specific
+read-only archive POST. Unsupported content, detected account or ad fields
+and the shared capture limits can make a body unavailable. The archive
+stores up to 10 MiB per response and 64 MiB per attempt.
+
+Spotify matching tasks replay the saved catalogue query and market without
+exchanging tokens or reading listening or account history. Replayed album
+candidates have no linked library item because replay skips live-library
+reconciliation.
+
 For an artist enrichment task supply `--artist` instead of `--item`. For an album
 job that bootstrapped an artist, use both to select just that artist's responses.
 Export writes a new owner-only file and preserves the recorded ordering and body
