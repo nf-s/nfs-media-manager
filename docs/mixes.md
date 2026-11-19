@@ -45,7 +45,7 @@ While a sync reads shows, the page counts shows read of the total. While it read
 
 ### Size of a first sync
 
-Requests are spaced at least a second apart, so a first sync takes about as many seconds as it makes requests. As observed in November 2026:
+Requests are spaced at least a second apart. Saving each page takes longer than that: in the hosted deployment a step took four to nine seconds in November 2026, so the first sync of Rinse FM runs for about four hours and of NTS for about eleven, as a chain of jobs. Requests observed then:
 
 | Station       | Requests       |
 | ------------- | -------------- |
