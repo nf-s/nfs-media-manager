@@ -573,8 +573,13 @@ export const artists: OpenAPIHono<AppEnv> = createOpenAPIApp()
       },
       responses: {
         ...artistResponses,
-        200: json('Queue an artist lookup for one provider', JobSchema),
-        409: jsonErrorResponse('Provider configuration or queue conflict'),
+        200: json(
+          'Queue an artist lookup or saved match verification',
+          JobSchema,
+        ),
+        409: jsonErrorResponse(
+          'Queue conflict or snapshot is no longer current',
+        ),
         429: jsonErrorResponse('Provider is cooling down or halted'),
       },
     }),

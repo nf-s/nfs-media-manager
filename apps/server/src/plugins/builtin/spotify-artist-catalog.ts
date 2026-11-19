@@ -43,11 +43,7 @@ function quoteSearchValue(value: string) {
   return '"' + value.replace(/["\\]/g, ' ') + '"'
 }
 
-/** Corroborate an ambiguous artist lookup using two independently recorded titles. */
-export async function verifySpotifyArtistCatalogRecordings(
-  context: MediaPluginTestContext,
-  name: string,
-  token: string,
+export function selectSpotifyCatalogRecordings(
   recordings: readonly SpotifyArtistCatalogRecording[],
 ) {
   const distinct = new Map<string, { title: string; release: string }>()
@@ -57,7 +53,25 @@ export async function verifySpotifyArtistCatalogRecordings(
     distinct.set(key, { title, release: albumName })
     if (distinct.size === 2) break
   }
-  const [first, second] = distinct.values()
+  return [...distinct.values()]
+}
+
+type SpotifyCatalogCredit = {
+  spotifyTrackId: string
+  title: string
+  release: string
+  artistId: string
+}
+
+/** Corroborate an ambiguous artist lookup using two independently recorded titles. */
+export async function verifySpotifyArtistCatalogRecordings(
+  context: MediaPluginTestContext,
+  name: string,
+  token: string,
+  recordings: readonly SpotifyArtistCatalogRecording[],
+  conflictingCredits?: (credits: SpotifyCatalogCredit[]) => void,
+) {
+  const [first, second] = selectSpotifyCatalogRecordings(recordings)
   if (!first || !second) return null
 
   const market = spotifyMarket(context.secrets)
@@ -81,13 +95,7 @@ export async function verifySpotifyArtistCatalogRecordings(
     if (items.length !== total) return null
     const matches = new Map<
       string,
-      {
-        spotifyTrackId: string
-        title: string
-        release: string
-        artistId: string
-        artistName: string
-      }
+      SpotifyCatalogCredit & { artistName: string }
     >()
     for (const track of items) {
       const [primary] = track.artists
@@ -103,43 +111,58 @@ export async function verifySpotifyArtistCatalogRecordings(
         track.album.artists[0]?.id !== primary.id
       )
         continue
-      if (
-        track.artists.some(
-          (artist) =>
-            artist.id !== primary.id && albumNameKey(artist.name) === artistKey,
-        )
+      const namesake = track.artists.find(
+        (artist) =>
+          artist.id !== primary.id && albumNameKey(artist.name) === artistKey,
       )
-        return null
-      matches.set(primary.id, {
+      const credit = {
         spotifyTrackId: track.id,
         title: track.name,
         release: track.album.name,
         artistId: primary.id,
+      }
+      if (namesake) {
+        conflictingCredits?.([credit, { ...credit, artistId: namesake.id }])
+        return null
+      }
+      matches.set(primary.id, {
+        ...credit,
         artistName: primary.name,
       })
     }
+    if (matches.size > 1)
+      conflictingCredits?.(
+        [...matches.values()]
+          .slice(0, 2)
+          .map(({ spotifyTrackId, title, release, artistId }) => ({
+            spotifyTrackId,
+            title,
+            release,
+            artistId,
+          })),
+      )
     return matches.size === 1 ? (matches.values().next().value ?? null) : null
   }
   const firstMatch = await searchRecording(first)
   if (!firstMatch) return null
   const secondMatch = await searchRecording(second)
-  if (
-    !secondMatch ||
-    firstMatch.artistId !== secondMatch.artistId ||
-    firstMatch.spotifyTrackId === secondMatch.spotifyTrackId
-  )
+  if (!secondMatch || firstMatch.spotifyTrackId === secondMatch.spotifyTrackId)
     return null
-  const { artistId, artistName } = firstMatch
+  const matched = [firstMatch, secondMatch].map(
+    ({ spotifyTrackId, title, release, artistId }) => ({
+      spotifyTrackId,
+      title,
+      release,
+      artistId,
+    }),
+  )
+  if (firstMatch.artistId !== secondMatch.artistId) {
+    conflictingCredits?.(matched)
+    return null
+  }
   return {
-    artistId,
-    artistName,
-    recordings: [firstMatch, secondMatch].map(
-      ({ spotifyTrackId, title, release, artistId }) => ({
-        spotifyTrackId,
-        title,
-        release,
-        artistId,
-      }),
-    ),
+    artistId: firstMatch.artistId,
+    artistName: firstMatch.artistName,
+    recordings: matched,
   }
 }
