@@ -4,6 +4,63 @@ import { spotifyAlbumId } from '@/lib/spotify-api'
 
 type AlbumMatchIdentity = Pick<PluginReference, 'referenceType' | 'externalId'>
 
+export const discogsAlbumReferenceTypes = ['master', 'release']
+
+type OwnedReference = { provider: string; referenceType: string }
+
+export function isDiscogsAlbumReference(reference: OwnedReference) {
+  return (
+    reference.provider === 'discogs' &&
+    discogsAlbumReferenceTypes.includes(reference.referenceType)
+  )
+}
+
+function sameReference(left: AlbumMatchIdentity, right: AlbumMatchIdentity) {
+  return (
+    left.referenceType === right.referenceType &&
+    left.externalId === right.externalId
+  )
+}
+
+/** Resolve overrides in chronological order before applying rejections. */
+export function effectiveReferenceOverrides<
+  Reference extends AlbumMatchIdentity & OwnedReference,
+>(
+  overrides: readonly Reference[],
+  isRejected: (reference: Reference) => boolean = () => false,
+) {
+  const discogsHistory = overrides.filter(isDiscogsAlbumReference)
+  const newestDiscogs = discogsHistory.at(-1)
+  const latest = new Map(
+    overrides
+      .filter(
+        (reference) =>
+          !isDiscogsAlbumReference(reference) || reference === newestDiscogs,
+      )
+      .map((reference) => [reference.referenceType, reference]),
+  )
+  const active = [...latest.values()].filter(
+    (reference) => !isRejected(reference),
+  )
+  const discogs =
+    newestDiscogs && active.includes(newestDiscogs) ? newestDiscogs : undefined
+
+  function keepStoredReference(
+    reference: AlbumMatchIdentity &
+      OwnedReference & { metadata?: PluginReference['metadata'] | null },
+  ) {
+    if (!newestDiscogs || !isDiscogsAlbumReference(reference)) return true
+    if (discogs) return false
+    // A fresh search can independently find an earlier choice.
+    return (
+      reference.metadata?.['discogsSearchMatch'] === true ||
+      !discogsHistory.some((previous) => sameReference(previous, reference))
+    )
+  }
+
+  return { active, latestCount: latest.size, discogs, keepStoredReference }
+}
+
 export type RejectedAlbumIdentity = {
   provider: string
   sourceProvider: string

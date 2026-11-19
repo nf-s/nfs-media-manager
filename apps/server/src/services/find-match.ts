@@ -18,7 +18,10 @@ import {
   type UnresolvedMatchQuery,
 } from '@repo/schemas/find-match'
 import { db } from '@/lib/db'
-import { createAlbumMatchRejectionPredicate } from '@/lib/album-match-identities'
+import {
+  createAlbumMatchRejectionPredicate,
+  effectiveReferenceOverrides,
+} from '@/lib/album-match-identities'
 import { ServerError } from '@/lib/error'
 import {
   normalizeArtistProviderId,
@@ -74,6 +77,7 @@ async function currentMediaIdentifiers(
   kind: 'album' | 'film',
   id: string,
   provider: string,
+  isRejectedMatch: ReturnType<typeof createAlbumMatchRejectionPredicate>,
 ) {
   const shared = kind === 'film' ? SHARED_FILM_REFERENCES : []
   const overrides = await db.query.providerReferenceOverride.findMany({
@@ -90,11 +94,18 @@ async function currentMediaIdentifiers(
   const references = await db.query.providerReference.findMany({
     where: (table, operators) => operators.eq(table.mediaItemId, id),
   })
+  const discardRejected = provider === 'discogs' ? isRejectedMatch : undefined
+  const { active, keepStoredReference } = effectiveReferenceOverrides(
+    overrides,
+    discardRejected,
+  )
   const current = new Map(
-    overrides.map((override) => [override.referenceType, override.externalId]),
+    active.map((override) => [override.referenceType, override.externalId]),
   )
   for (const reference of references)
     if (
+      keepStoredReference(reference) &&
+      !discardRejected?.(reference) &&
       !current.has(reference.referenceType) &&
       (reference.provider === provider ||
         shared.includes(reference.referenceType))
@@ -143,7 +154,12 @@ async function searchMedia(
     undefined,
     'searching',
   )
-  const current = await currentMediaIdentifiers(kind, input.id, input.provider)
+  const current = await currentMediaIdentifiers(
+    kind,
+    input.id,
+    input.provider,
+    isRejectedMatch,
+  )
   return MatchSearchResultSchema.parse({
     provider: input.provider,
     query: input.q ?? mediaQuery(media),

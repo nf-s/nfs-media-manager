@@ -3,6 +3,8 @@ import { sql, type SQL } from 'drizzle-orm'
 import { z } from 'zod'
 import {
   createAlbumMatchRejectionPredicate,
+  effectiveReferenceOverrides,
+  isDiscogsAlbumReference,
   type RejectedAlbumIdentity,
 } from '@/lib/album-match-identities'
 import { DiscogsRecordSchema } from '@/lib/album-provider-details'
@@ -95,7 +97,7 @@ export function matchesAlbumReleaseReference(
   if (provider !== source) return false
   if (source === 'spotify') return SpotifyReferenceTypes.includes(referenceType)
   if (source === 'discogs')
-    return referenceType === 'master' || referenceType === 'release'
+    return isDiscogsAlbumReference({ provider, referenceType })
   return referenceType === 'release-group'
 }
 
@@ -253,6 +255,7 @@ export async function getAlbumReleaseHints(
         referenceType: true,
         externalId: true,
         isPrimary: true,
+        metadata: true,
       },
       where: (table, operators) =>
         operators.and(
@@ -289,20 +292,31 @@ export async function getAlbumReleaseHints(
       source,
       rejections,
     )
+    const sourceOverrides = overrides.filter((reference) =>
+      matchesAlbumReleaseReference(source, reference),
+    )
+    const discogsSelection =
+      source === 'discogs'
+        ? effectiveReferenceOverrides(
+            [...sourceOverrides].reverse(),
+            isRejectedMatch,
+          )
+        : undefined
     const matching = references.filter(
       (reference) =>
         matchesAlbumReleaseReference(source, reference) &&
+        (discogsSelection?.keepStoredReference(reference) ?? true) &&
         !isRejectedMatch(reference),
     )
     const primary = matching.filter(({ isPrimary }) => isPrimary)
     const active = primary.length ? primary : matching
-    const latestOverride = overrides.find((reference) =>
-      matchesAlbumReleaseReference(source, reference),
-    )
+    const latestOverride = sourceOverrides[0]
     const override =
-      latestOverride && !isRejectedMatch(latestOverride)
-        ? latestOverride
-        : undefined
+      source === 'discogs'
+        ? discogsSelection?.discogs
+        : latestOverride && !isRejectedMatch(latestOverride)
+          ? latestOverride
+          : undefined
     if (
       source === 'discogs' &&
       (override

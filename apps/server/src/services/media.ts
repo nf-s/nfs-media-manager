@@ -33,6 +33,8 @@ import { nanoid } from 'nanoid'
 import { db } from '@/lib/db'
 import {
   createAlbumMatchRejectionPredicate,
+  discogsAlbumReferenceTypes,
+  isDiscogsAlbumReference,
   type RejectedAlbumIdentity,
 } from '@/lib/album-match-identities'
 import { AlbumMetacriticUrlSchema } from '@repo/schemas/provider-identification'
@@ -844,13 +846,19 @@ export async function patchAlbum(
     }
 
     for (const override of input.referenceOverrides ?? []) {
+      const discogs = isDiscogsAlbumReference(override)
       await tx
         .delete(providerReference)
         .where(
           and(
             eq(providerReference.mediaItemId, id),
             eq(providerReference.provider, override.provider),
-            eq(providerReference.referenceType, override.referenceType),
+            discogs
+              ? inArray(
+                  providerReference.referenceType,
+                  discogsAlbumReferenceTypes,
+                )
+              : eq(providerReference.referenceType, override.referenceType),
           ),
         )
 
@@ -875,6 +883,8 @@ export async function patchAlbum(
         externalId: override.externalId,
         note: input.note ?? null,
         createdByUserId: userId,
+        // Album edits serialize on the media row. Record the time of selection.
+        createdAt: discogs ? sql`clock_timestamp()` : undefined,
       })
     }
   })

@@ -97,6 +97,7 @@ beforeEach(async () => {
   })
   await databaseClient.delete(schema.scrapeJob)
   await databaseClient.delete(schema.mediaItem)
+  await databaseClient.delete(schema.providerSnapshot)
   await databaseClient.delete(schema.artist)
   await databaseClient.delete(schema.providerRequestState)
   await databaseClient.delete(schema.providerRequestEvent)
@@ -127,6 +128,115 @@ async function runJob(id: string) {
     canContinue: async () => true,
     recordOutcome: async () => {},
   })
+}
+
+const discogsRelease = { referenceType: 'release', externalId: '11' }
+const discogsMaster = { referenceType: 'master', externalId: '22' }
+const discogsRecord = {
+  title: 'Album Fixture',
+  artists: [{ id: 3, name: artistName }],
+}
+
+function mockDiscogsLookup(searchMatches = true) {
+  request.mockImplementation(async (url) => {
+    const path = new URL(String(url))
+    if (path.pathname === '/database/search') {
+      const candidate =
+        path.searchParams.get('type') === 'master'
+          ? discogsMaster
+          : discogsRelease
+      return Response.json({
+        results: searchMatches
+          ? [
+              {
+                type: candidate.referenceType,
+                id: Number(candidate.externalId),
+                title: `${artistName} - ${discogsRecord.title}`,
+              },
+            ]
+          : [],
+      })
+    }
+    if (path.pathname === '/masters/22')
+      return Response.json({ ...discogsRecord, id: 22, main_release: 33 })
+    if (path.pathname === '/releases/33')
+      return Response.json({ ...discogsRecord, id: 33, master_id: 22 })
+    if (path.pathname === '/releases/11')
+      return Response.json({ ...discogsRecord, id: 11 })
+    throw new Error('Unexpected Discogs fixture request.')
+  })
+}
+
+async function selectDiscogs(choice: typeof discogsRelease) {
+  const { patchAlbum } = await import('@/services/media')
+  await patchAlbum(
+    albumId,
+    { referenceOverrides: [{ ...choice, provider: 'discogs' }] },
+    null,
+  )
+}
+
+async function enqueueDiscogs() {
+  const { createJob } = await import('@/services/jobs')
+  return createJob(
+    CreateJobSchema.parse({
+      provider: 'discogs',
+      scope: { mediaItemIds: [albumId] },
+      options: { force: true },
+    }),
+    null,
+  )
+}
+
+async function runDiscogs(id: string) {
+  const { getJob, processQueuedJobById } = await import('@/services/jobs')
+  await processQueuedJobById(id, 'discogs', {
+    canContinue: async () => true,
+    recordOutcome: async () => {},
+  })
+  return getJob(id)
+}
+
+async function discogsReplayReferences(jobId: string) {
+  const { reconstructProviderReplayContext } =
+    await import('@/services/provider-response-context')
+  const item = await databaseClient.query.scrapeJobItem.findFirst({
+    where: eq(schema.scrapeJobItem.jobId, jobId),
+  })
+  if (!item) throw new Error('Expected a Discogs job item.')
+  const replay = await reconstructProviderReplayContext(
+    { jobId, jobItemId: item.id, artistId: null, attempt: 1 },
+    { provider: 'discogs', mediaItemId: albumId, options: {} },
+    [{ phase: 'media', artistId: null }],
+  )
+  const input = replay?.inputs[0]
+  if (input?.phase !== 'media')
+    throw new Error('Expected a media replay context.')
+  return input.context.existingReferences
+}
+
+async function findDiscogsMatches() {
+  const { searchMatchCandidates } = await import('@/services/find-match')
+  const result = await searchMatchCandidates({
+    kind: 'album',
+    id: albumId,
+    provider: 'discogs',
+  })
+  return result.items
+}
+
+async function insertOldDiscogsReference(choice: typeof discogsRelease) {
+  await databaseClient.insert(schema.providerReference).values({
+    ...choice,
+    id: 'stale-discogs-reference',
+    mediaItemId: albumId,
+    provider: 'discogs',
+    isPrimary: true,
+  })
+}
+
+function lookupPaths() {
+  return request.mock.calls.map(([url]) => new URL(String(url)).pathname)
 }
 
 describe('find match', () => {
@@ -246,6 +356,168 @@ describe('find match', () => {
     expect(
       await databaseClient.select().from(schema.providerSnapshot),
     ).toHaveLength(0)
+  })
+
+  it.each([
+    [
+      'release to master and back',
+      [discogsRelease, discogsMaster, discogsRelease],
+    ],
+    [
+      'master to release and back',
+      [discogsMaster, discogsRelease, discogsMaster],
+    ],
+  ])('uses one selected Discogs reference for %s', async (_name, choices) => {
+    mockDiscogsLookup()
+    for (const choice of choices) {
+      await selectDiscogs(choice)
+      expect(
+        await databaseClient.select().from(schema.providerReference),
+      ).toEqual([expect.objectContaining(choice)])
+
+      // Simulate a stored reference left by the previous version of the app.
+      await insertOldDiscogsReference(
+        choice === discogsMaster ? discogsRelease : discogsMaster,
+      )
+      const job = await enqueueDiscogs()
+      expect(await discogsReplayReferences(job.id)).toEqual([
+        {
+          ...choice,
+          isPrimary: true,
+          metadata: { sourceProvider: 'discogs', manualOverride: true },
+        },
+      ])
+
+      const matches = await findDiscogsMatches()
+      expect(matches).toHaveLength(2)
+      expect(matches.filter(({ current }) => current)).toEqual([
+        expect.objectContaining(choice),
+      ])
+
+      request.mockClear()
+      expect(await runDiscogs(job.id)).toMatchObject({ status: 'succeeded' })
+      expect(lookupPaths()).toEqual(
+        choice === discogsMaster
+          ? ['/masters/22', '/releases/33']
+          : ['/releases/11'],
+      )
+      expect(
+        await databaseClient.select().from(schema.providerReference),
+      ).toEqual([expect.objectContaining(choice)])
+      expect(await databaseClient.select().from(schema.externalLink)).toEqual([
+        expect.objectContaining({
+          url: `https://www.discogs.com/${choice.referenceType}/${choice.externalId}`,
+        }),
+      ])
+    }
+    const overrides = await databaseClient
+      .select()
+      .from(schema.providerReferenceOverride)
+      .orderBy(schema.providerReferenceOverride.createdAt)
+    expect(
+      overrides.map(({ referenceType, externalId }) => ({
+        referenceType,
+        externalId,
+      })),
+    ).toEqual(choices)
+  })
+
+  it('requires fresh Discogs evidence after rejecting the newest selection', async () => {
+    const { rejectAlbumMatch } =
+      await import('@/services/album-match-rejections')
+    await selectDiscogs(discogsRelease)
+    await selectDiscogs(discogsMaster)
+    mockDiscogsLookup()
+    const initial = await enqueueDiscogs()
+    expect(await runDiscogs(initial.id)).toMatchObject({ status: 'succeeded' })
+    const original = await databaseClient.query.providerSnapshot.findFirst({
+      where: eq(schema.providerSnapshot.scrapeJobId, initial.id),
+    })
+    if (!original) throw new Error('Expected a Discogs snapshot.')
+    await rejectAlbumMatch(
+      albumId,
+      {
+        provider: 'discogs',
+        sourceProvider: 'discogs',
+        snapshotId: original.id,
+        referenceType: discogsMaster.referenceType,
+        identifier: discogsMaster.externalId,
+      },
+      null,
+    )
+    await insertOldDiscogsReference(discogsRelease)
+
+    const noMatch = await enqueueDiscogs()
+    expect(await discogsReplayReferences(noMatch.id)).toEqual([])
+    expect(await findDiscogsMatches()).toEqual([
+      expect.objectContaining({ ...discogsRelease, current: false }),
+    ])
+    request.mockClear()
+    mockDiscogsLookup(false)
+    expect(await runDiscogs(noMatch.id)).toMatchObject({ status: 'failed' })
+    expect(lookupPaths()).toEqual(['/database/search', '/database/search'])
+    expect(await databaseClient.select().from(schema.providerSnapshot)).toEqual(
+      [original],
+    )
+
+    const rediscovered = await enqueueDiscogs()
+    request.mockClear()
+    mockDiscogsLookup()
+    expect(await runDiscogs(rediscovered.id)).toMatchObject({
+      status: 'succeeded',
+    })
+    expect(lookupPaths()).toEqual([
+      '/database/search',
+      '/database/search',
+      '/releases/11',
+    ])
+    expect(await findDiscogsMatches()).toEqual([
+      expect.objectContaining({ ...discogsRelease, current: true }),
+    ])
+    request.mockClear()
+    expect(await runDiscogs((await enqueueDiscogs()).id)).toMatchObject({
+      status: 'succeeded',
+    })
+    expect(lookupPaths()).toEqual(['/releases/11'])
+
+    await expect(selectDiscogs(discogsMaster)).rejects.toMatchObject({
+      response: { statusCode: 409 },
+    })
+    expect(
+      await databaseClient.select().from(schema.providerReferenceOverride),
+    ).toHaveLength(2)
+    expect(await databaseClient.select().from(schema.providerSnapshot)).toEqual(
+      expect.arrayContaining([original]),
+    )
+  })
+
+  it('keeps a newer Discogs selection when an older lookup is still running', async () => {
+    await selectDiscogs(discogsRelease)
+    const job = await enqueueDiscogs()
+    let finishRequest = () => {}
+    const requestHold = new Promise<void>((resolve) => {
+      finishRequest = resolve
+    })
+    request.mockImplementationOnce(async () => {
+      await requestHold
+      return Response.json({ ...discogsRecord, id: 11 })
+    })
+    const pending = runDiscogs(job.id)
+    try {
+      await vi.waitFor(() => expect(lookupPaths()).toEqual(['/releases/11']))
+      await selectDiscogs(discogsMaster)
+    } finally {
+      finishRequest()
+      await pending
+    }
+    expect(await pending).toMatchObject({ status: 'failed' })
+    expect(await databaseClient.select().from(schema.providerSnapshot)).toEqual(
+      [],
+    )
+    expect(
+      await databaseClient.select().from(schema.providerReference),
+    ).toEqual([expect.objectContaining(discogsMaster)])
+    expect(await databaseClient.select().from(schema.externalLink)).toEqual([])
   })
 
   it('keeps rejected evidence through a concurrent refresh and retries with a different exact match', async () => {

@@ -8,7 +8,10 @@ import {
 import { ARTIST_ENRICHMENT_TASK } from '@repo/schemas/artist-profiles'
 import { JsonValueSchema } from '@repo/schemas/common'
 import { getJobTask } from '@repo/schemas/job'
-import { createAlbumMatchRejectionPredicate } from '@/lib/album-match-identities'
+import {
+  createAlbumMatchRejectionPredicate,
+  effectiveReferenceOverrides,
+} from '@/lib/album-match-identities'
 import { db } from '@/lib/db'
 import { getBuiltinScrapePlugin } from '@/plugins/builtin'
 import { spotifyArtistRecordingLimit } from '@/plugins/builtin/artist-providers'
@@ -252,10 +255,12 @@ export async function reconstructProviderReplayContext(
       rejections,
     )
     const existingReferences: PluginReference[] = []
+    const { active, keepStoredReference } = effectiveReferenceOverrides(
+      overrides,
+      rejected,
+    )
     const effective = new Map(
-      [...new Map(overrides.map((row) => [row.referenceType, row])).values()]
-        .filter((row) => !rejected(row))
-        .map((row) => [row.referenceType, row.externalId]),
+      active.map((row) => [row.referenceType, row.externalId]),
     )
     for (const [referenceType, externalId] of effective)
       existingReferences.push({
@@ -269,7 +274,12 @@ export async function reconstructProviderReplayContext(
         Number(right.provider === job.provider) -
         Number(left.provider === job.provider),
     )) {
-      if (effective.has(row.referenceType) || rejected(row)) continue
+      if (
+        effective.has(row.referenceType) ||
+        !keepStoredReference(row) ||
+        rejected(row)
+      )
+        continue
       const metadata = { ...row.metadata }
       delete metadata['manualOverride']
       existingReferences.push({

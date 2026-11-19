@@ -66,7 +66,10 @@ import {
 import { and, asc, desc, eq, inArray, or, sql } from 'drizzle-orm'
 import { nanoid } from 'nanoid'
 import { db } from '@/lib/db'
-import { createAlbumMatchRejectionPredicate } from '@/lib/album-match-identities'
+import {
+  createAlbumMatchRejectionPredicate,
+  effectiveReferenceOverrides,
+} from '@/lib/album-match-identities'
 import { ServerError } from '@/lib/error'
 import {
   jobErrorDetails,
@@ -684,14 +687,14 @@ async function processJob(
         plugin.manifest.id,
         rejections,
       )
+      const {
+        active: overrides,
+        latestCount,
+        keepStoredReference,
+      } = effectiveReferenceOverrides(storedOverrides, isRejectedMatch)
       const references = storedReferences.filter(
-        (reference) => !isRejectedMatch(reference),
-      )
-      const latestOverrides = new Map(
-        storedOverrides.map((override) => [override.referenceType, override]),
-      )
-      const overrides = [...latestOverrides.values()].filter(
-        (reference) => !isRejectedMatch(reference),
+        (reference) =>
+          keepStoredReference(reference) && !isRejectedMatch(reference),
       )
       const effectiveIds = new Map(
         overrides.map(({ referenceType, externalId }) => [
@@ -779,7 +782,7 @@ async function processJob(
       const artistNames = artists.map(({ name }) => name)
       if (
         (references.length < storedReferences.length ||
-          overrides.length < latestOverrides.size ||
+          overrides.length < latestCount ||
           availableHints.length < referenceHints.length) &&
         !canIdentifyMedia(plugin.manifest, {
           ...mediaRecord,

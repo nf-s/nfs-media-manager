@@ -7,7 +7,11 @@ import {
   type JsonValue,
 } from '@repo/media-plugin-sdk'
 import { db } from '@/lib/db'
-import { createAlbumMatchRejectionPredicate } from '@/lib/album-match-identities'
+import {
+  createAlbumMatchRejectionPredicate,
+  effectiveReferenceOverrides,
+  isDiscogsAlbumReference,
+} from '@/lib/album-match-identities'
 import { filmAddedDate } from '@/lib/film-added-date'
 import { resolveFileImportPatches } from '@/lib/file-import-patches'
 import { sanitizeAlbumProviderResult } from '@/lib/spotify-audio-features'
@@ -85,12 +89,28 @@ async function replaceProviderReferences(
       asc(providerReferenceOverride.createdAt),
       asc(providerReferenceOverride.id),
     )
-  const effective = new Map(
-    overrides.map((override) => [override.referenceType, override.externalId]),
+  const { active, discogs, keepStoredReference } = effectiveReferenceOverrides(
+    overrides,
+    isRejectedMatch,
   )
-  for (const [referenceType, externalId] of effective)
-    if (isRejectedMatch?.({ referenceType, externalId }))
-      effective.delete(referenceType)
+  if (
+    providerId === 'discogs' &&
+    isRejectedMatch &&
+    references.some((reference) => {
+      const owned = { ...reference, provider: providerId }
+      if (!isDiscogsAlbumReference(owned)) return false
+      return discogs
+        ? reference.referenceType !== discogs.referenceType ||
+            reference.externalId !== discogs.externalId
+        : !keepStoredReference(owned)
+    })
+  )
+    throw new ProviderItemNotFoundError(
+      'The Discogs selection changed during lookup. Refresh to use the current selection.',
+    )
+  const effective = new Map(
+    active.map((override) => [override.referenceType, override.externalId]),
+  )
   const effectiveReferences: PluginNormalizedResult['references'] =
     references.map((reference) => ({
       ...reference,

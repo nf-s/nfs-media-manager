@@ -107,13 +107,19 @@ function hasRejectedMaster(
 
 async function resolveDiscogsReference(
   context: MediaPluginScrapeContext,
-): Promise<{ type: 'master' | 'release'; id: string; fromSearch: boolean }> {
+): Promise<{
+  type: 'master' | 'release'
+  id: string
+  fromSearch: boolean
+  previousSearchMatch?: boolean
+}> {
   const reference = albumReference(context, 'discogs', 'master', 'release')
   if (reference)
     return {
       type: reference.referenceType === 'master' ? 'master' : 'release',
       id: DiscogsReferenceIdSchema.parse(reference.externalId),
       fromSearch: false,
+      previousSearchMatch: reference.metadata?.['discogsSearchMatch'] === true,
     }
   const isRejected = (item: z.infer<typeof SearchSchema>['results'][number]) =>
     context.isRejectedMatch?.({
@@ -453,6 +459,9 @@ export const discogsPlugin: MediaProviderPlugin = {
             referenceType: reference.type,
             externalId: String(record.id),
             isPrimary: true,
+            ...((reference.fromSearch || reference.previousSearchMatch) && {
+              metadata: { discogsSearchMatch: true },
+            }),
           },
         ],
         links: [
