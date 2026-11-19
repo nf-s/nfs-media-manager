@@ -15,6 +15,7 @@ import {
   type ArtistDetailQuery,
   type ArtistHistoryQuery,
   type ArtistMetadataQuery,
+  type ArtistMixQuery,
   type ArtistPlaylistQuery,
   type ArtistQuery,
   type ArtistTrackQuery,
@@ -55,6 +56,10 @@ import {
   artistFreshnessConditions,
   loadArtistMetadata,
 } from './artist-metadata'
+import {
+  countMixesNamingArtist,
+  listMixesNamingArtist,
+} from './subscription-library'
 
 const identityColumns = {
   id: artist.id,
@@ -206,12 +211,14 @@ export async function getArtist(id: string, query: ArtistDetailQuery = {}) {
     .from(directory)
   if (!summary)
     throw new ServerError({ statusCode: 404, message: 'Artist not found' })
-  const [providers, history] = await Promise.all([
+  const [providers, history, mixCount] = await Promise.all([
     listCurrentArtistProfiles(id),
     query.includeHistory === 'false' ? [] : listArtistProfileHistory(id, 20),
+    countMixesNamingArtist(summary.name),
   ])
   return ArtistDetailSchema.parse({
     ...summary,
+    mixCount,
     identifiers: await listArtistIdentifiers(id, summary.name, providers),
     createdAt: summary.createdAt.toISOString(),
     profile: combineProfiles(providers),
@@ -345,6 +352,18 @@ export async function listArtistTracks(id: string, query: ArtistTrackQuery) {
     pageCount,
     items: await loadTracks(ids),
   }
+}
+
+/** Stored station mixes naming the artist; station names are matched, not linked. */
+export async function listArtistMixes(id: string, query: ArtistMixQuery) {
+  await requireCreator(id, 'artist')
+  const [row] = await db
+    .select({ name: artist.name })
+    .from(artist)
+    .where(eq(artist.id, id))
+  if (!row)
+    throw new ServerError({ statusCode: 404, message: 'Artist not found' })
+  return listMixesNamingArtist(row.name, query)
 }
 
 export async function listArtistPlaylists(

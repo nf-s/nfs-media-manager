@@ -13,6 +13,9 @@ import { BulkCancelJobsResultSchema } from '@repo/schemas/job'
 import {
   SubscriptionSyncScheduleSchema,
   SubscriptionSyncStatusSchema,
+  subscriptionLibraryOf,
+  subscriptionTypeLabels,
+  type SubscriptionLibrary,
   type SubscriptionSyncSchedule,
   type SubscriptionSyncStatus,
   type SubscriptionType,
@@ -32,19 +35,30 @@ import { dispatchJobCancellation } from '@/utils/job-bulk-actions'
 import { canCancelJob } from '@/utils/job-selection'
 import { youtubeScheduleLabels, youtubeSyncPollInterval } from '@/utils/youtube'
 import { syncStatusStates } from '@/utils/run-status'
+import { subscriptionLibraryPages } from '@/utils/subscriptions'
 import { ConfirmAction } from './confirm-action'
 
-/** How each provider's sync names its sources and items. */
-export const subscriptionSyncWording: Record<
-  SubscriptionType,
-  {
-    name: string
-    sources: string
-    items: string
-    listing: string
-    paused: string
+type SyncWording = {
+  name: string
+  sources: string
+  items: string
+  listing: string
+  paused: string
+}
+
+/** A station's archive is its shows, then their mixes. */
+function stationWording(name: string): SyncWording {
+  return {
+    name,
+    sources: 'shows',
+    items: 'mixes',
+    listing: 'Reading shows',
+    paused: `Paused: the ${name} request limit was reached.`,
   }
-> = {
+}
+
+/** How each provider's sync names its sources and items. */
+export const subscriptionSyncWording: Record<SubscriptionType, SyncWording> = {
   youtube: {
     name: 'YouTube',
     sources: 'channels',
@@ -59,6 +73,9 @@ export const subscriptionSyncWording: Record<
     listing: 'Reading saved podcasts',
     paused: 'Paused: the Spotify request limit was reached.',
   },
+  rinse: stationWording(subscriptionTypeLabels.rinse),
+  nts: stationWording(subscriptionTypeLabels.nts),
+  lotradio: stationWording(subscriptionTypeLabels.lotradio),
 }
 
 const NotAvailableSchema = z.object({ statusCode: z.literal(404) })
@@ -71,22 +88,40 @@ export function subscriptionSyncQueryKey(provider: SubscriptionType) {
   return ['subscription-sync', provider]
 }
 
-/** "12 of 40", or the source-list step before sources are counted. */
-export function subscriptionSourceProgress(
-  status: Pick<
-    SubscriptionSyncStatus,
-    'provider' | 'state' | 'phase' | 'sourcesDone' | 'sourcesTotal'
-  >,
-) {
+type SyncProgress = Pick<
+  SubscriptionSyncStatus,
+  'provider' | 'state' | 'phase' | 'sourcesDone' | 'sourcesTotal'
+>
+
+/**
+ * A station run that reads its mixes from a feed has no show total: it
+ * counts the feed pages read instead.
+ */
+function isFeedRun(status: SyncProgress) {
+  return (
+    status.phase === 'items' &&
+    status.sourcesTotal === 0 &&
+    subscriptionLibraryOf(status.provider) === 'mixes'
+  )
+}
+
+/** "12 of 40", the source-list step before sources are counted, or the number of feed pages read. */
+export function subscriptionSourceProgress(status: SyncProgress) {
   if (status.state === 'running' && status.phase === 'sources')
     return subscriptionSyncWording[status.provider].listing
   if (status.phase === null) return EMPTY_VALUE
+  if (isFeedRun(status)) return formatCount(status.sourcesDone)
   return `${formatCount(status.sourcesDone)} of ${formatCount(status.sourcesTotal)}`
 }
 
-/** Refreshes everything a sync can change. */
-export function invalidateSubscriptionLibrary(client: QueryClient) {
-  return client.invalidateQueries({ queryKey: ['subscriptions'] })
+/** Refreshes everything a sync can change in its library. */
+export function invalidateSubscriptionLibrary(
+  client: QueryClient,
+  library: SubscriptionLibrary = 'subscriptions',
+) {
+  return client.invalidateQueries({
+    queryKey: [subscriptionLibraryPages[library].collection],
+  })
 }
 
 /** The provider's sync status, or null when this server has no sync for it. */
@@ -190,7 +225,9 @@ export function SubscriptionSync({
             value: <Status state={syncStatusStates[data.state]} />,
           },
           {
-            label: `${capitalized(wording.sources)} read`,
+            label: isFeedRun(data)
+              ? 'Pages read'
+              : `${capitalized(wording.sources)} read`,
             value: subscriptionSourceProgress(data),
           },
           {
@@ -318,9 +355,12 @@ export default function SubscriptionSyncPanel({
   const previousState = useRef(state)
   useEffect(() => {
     if (previousState.current === 'running' && state && state !== 'running')
-      void invalidateSubscriptionLibrary(client)
+      void invalidateSubscriptionLibrary(
+        client,
+        subscriptionLibraryOf(provider),
+      )
     previousState.current = state
-  }, [state, client])
+  }, [state, client, provider])
 
   if (status.isPending)
     return (

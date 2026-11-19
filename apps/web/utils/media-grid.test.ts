@@ -401,3 +401,8 @@ test('every Browse grid has three densities: three phone columns compact, the de
           .columns,
       )
 })
+
+test('mix grids use the square album card widths', () => {
+  for (const density of gridDensities)
+    assert.equal(gridCardMin('mix', density), gridCardMin('album', density))
+})

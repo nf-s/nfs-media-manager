@@ -5,6 +5,7 @@ import {
   albumImportDestinations,
   csvImportHref,
   importDestinations,
+  mixImportDestinations,
   resolveCsvFormat,
   subscriptionImportDestinations,
   trackImportDestinations,
@@ -104,6 +105,18 @@ test('track imports offer only Spotify playlists and Last.fm tracks', () => {
       id: '/imports/lastfm',
       href: '/imports/lastfm',
       label: 'Last.fm tracks',
+    },
+  ])
+})
+
+test('Mixes destinations are one sync page per station, without import history', () => {
+  assert.deepEqual(mixImportDestinations(), [
+    { id: '/imports/rinse', href: '/imports/rinse', label: 'Rinse FM' },
+    { id: '/imports/nts', href: '/imports/nts', label: 'NTS' },
+    {
+      id: '/imports/lotradio',
+      href: '/imports/lotradio',
+      label: 'The Lot Radio',
     },
   ])
 })

@@ -25,6 +25,7 @@ export const providerLibraryOptions: readonly {
   { value: 'film', label: 'Films' },
   { value: 'artist', label: 'Artists' },
   { value: 'subscription', label: 'Subscriptions' },
+  { value: 'mix', label: 'Mixes' },
 ]
 
 const roleLabels: Record<ProviderLibrary, string> = {
@@ -32,6 +33,7 @@ const roleLabels: Record<ProviderLibrary, string> = {
   film: 'Films',
   artist: 'Artists',
   subscription: 'Subscriptions',
+  mix: 'Mixes',
   account: 'Account',
 }
 

@@ -30,6 +30,8 @@ import {
   ArtistMetadataItemSchema,
   ArtistSummarySchema,
   ArtistMetadataQuerySchema,
+  ArtistMixPageSchema,
+  ArtistMixQuerySchema,
   ArtistPageSchema,
   ArtistPlaylistPageSchema,
   ArtistPlaylistQuerySchema,
@@ -93,6 +95,7 @@ import {
   getPerson,
   listArtistAlbums,
   listArtistMetadata,
+  listArtistMixes,
   listArtistPlaylists,
   listArtists,
   listArtistTracks,
@@ -443,6 +446,27 @@ export const artists: OpenAPIHono<AppEnv> = createOpenAPIApp()
       generateJsonResponse(
         c,
         await listArtistTracks(c.req.valid('param').id, c.req.valid('query')),
+        200,
+      ),
+  )
+  .openapi(
+    createRoute({
+      method: 'get',
+      path: '/:id/mixes',
+      middleware: [authMiddleware()],
+      request: { params: CreatorParamsSchema, query: ArtistMixQuerySchema },
+      responses: {
+        ...artistResponses,
+        200: json(
+          'Stored station mixes billing this artist or on a show of its name',
+          ArtistMixPageSchema,
+        ),
+      },
+    }),
+    async (c) =>
+      generateJsonResponse(
+        c,
+        await listArtistMixes(c.req.valid('param').id, c.req.valid('query')),
         200,
       ),
   )

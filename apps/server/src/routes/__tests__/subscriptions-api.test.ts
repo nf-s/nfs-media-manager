@@ -55,6 +55,8 @@ function send(
 }
 
 const EPISODE = 'EpisodeFixture00000001'
+const MIX = 'nts.synthetic-show-2026-03-01'
+const MIX_SHOW = 'nts.synthetic-show'
 const query = (params: Record<string, string>) =>
   `/?${new URLSearchParams(params)}`
 
@@ -96,12 +98,16 @@ describe('subscriptions API', () => {
     mocks.session.mockResolvedValue(null)
     const requests: Array<[string, string, unknown]> = [
       ['GET', '/', undefined],
+      ['GET', '/?library=mixes', undefined],
       ['GET', '/fields', undefined],
+      ['GET', '/fields?library=mixes', undefined],
       ['GET', '/facets?q=orbit', undefined],
       ['GET', '/match-diagnostics', undefined],
       ['GET', '/sources', undefined],
       ['GET', `/sources/${EPISODE}`, undefined],
       ['GET', `/${EPISODE}`, undefined],
+      ['GET', `/${MIX}`, undefined],
+      ['PATCH', `/${MIX}`, { watchedAt: null }],
       ['GET', '/sync/youtube', undefined],
       ['POST', '/sync/youtube', {}],
       ['PUT', '/sync/youtube/settings', { schedule: 'daily' }],
@@ -190,6 +196,7 @@ describe('subscriptions API', () => {
       (await send('GET', `/sources/${EPISODE}?page=2&size=12&q=orbit`)).status,
     ).toBe(200)
     expect(mocks.source).toHaveBeenCalledWith(EPISODE, {
+      library: 'subscriptions',
       q: 'orbit',
       fields: 'all',
       direction: 'desc',
@@ -221,6 +228,7 @@ describe('subscriptions API', () => {
     expect(response.status).toBe(200)
     expect(await response.json()).toMatchObject({ data: page })
     expect(mocks.items).toHaveBeenCalledWith({
+      library: 'subscriptions',
       q: 'orbit',
       sourceId: EPISODE,
       fields: 'all',
@@ -234,18 +242,147 @@ describe('subscriptions API', () => {
 
     mocks.facets.mockResolvedValue([])
     expect((await send('GET', '/facets?q=orbit')).status).toBe(200)
-    expect(mocks.facets).toHaveBeenCalledWith({ q: 'orbit', limitPerField: 25 })
+    expect(mocks.facets).toHaveBeenCalledWith({
+      q: 'orbit',
+      limitPerField: 25,
+      library: 'subscriptions',
+    })
     mocks.sources.mockResolvedValue({ items: [] })
     expect((await send('GET', '/sources?type=spotify')).status).toBe(200)
-    expect(mocks.sources).toHaveBeenCalledWith({ type: 'spotify' })
+    expect(mocks.sources).toHaveBeenCalledWith({
+      library: 'subscriptions',
+      type: 'spotify',
+    })
 
     const fields = await send('GET', '/fields')
     expect(fields.status).toBe(200)
+    const keys = (
+      (await fields.json()) as { data: Array<{ key: string }> }
+    ).data.map((field) => field.key)
+    expect(keys).toContain('durationSec')
+    expect(keys).toContain('viewCount')
+    expect(keys).not.toContain('artist')
+  })
+
+  it('passes the Mixes library to every list, facet, field and source read', async () => {
+    const page = { items: [], totalCount: 0, page: 1, size: 24, pageCount: 0 }
+    mocks.items.mockResolvedValue(page)
+    const filters = [
+      { field: 'artist', value: 'Synthetic DJ', mode: 'required' },
+      { field: 'type', value: 'NTS', mode: 'any' },
+    ]
+    const ranges = [{ field: 'durationSec', min: 3600, includeMissing: true }]
     expect(
-      ((await fields.json()) as { data: Array<{ key: string }> }).data.map(
-        (field) => field.key,
-      ),
-    ).toContain('durationSec')
+      (
+        await send(
+          'GET',
+          query({
+            library: 'mixes',
+            filters: JSON.stringify(filters),
+            ranges: JSON.stringify(ranges),
+            sortBy: 'durationSec',
+          }),
+        )
+      ).status,
+    ).toBe(200)
+    expect(mocks.items).toHaveBeenCalledWith({
+      library: 'mixes',
+      fields: 'all',
+      filters,
+      ranges,
+      sortBy: 'durationSec',
+      direction: 'desc',
+      page: 1,
+      size: 24,
+    })
+    mocks.counts.mockResolvedValue({ totalCount: 0, unfilteredCount: 0 })
+    expect((await send('GET', '/browse-count?library=mixes')).status).toBe(200)
+    expect(mocks.counts).toHaveBeenCalledWith(
+      expect.objectContaining({ library: 'mixes' }),
+    )
+    mocks.facets.mockResolvedValue([])
+    expect((await send('GET', '/facets?library=mixes&q=house')).status).toBe(
+      200,
+    )
+    expect(mocks.facets).toHaveBeenCalledWith({
+      q: 'house',
+      limitPerField: 25,
+      library: 'mixes',
+    })
+    mocks.sources.mockResolvedValue({ items: [] })
+    expect((await send('GET', '/sources?library=mixes&type=nts')).status).toBe(
+      200,
+    )
+    expect(mocks.sources).toHaveBeenCalledWith({
+      library: 'mixes',
+      type: 'nts',
+    })
+    mocks.source.mockResolvedValue({ source: { id: MIX_SHOW }, items: {} })
+    expect((await send('GET', `/sources/${MIX_SHOW}`)).status).toBe(200)
+    expect(mocks.source).toHaveBeenCalledWith(
+      MIX_SHOW,
+      expect.objectContaining({ library: 'subscriptions' }),
+    )
+
+    const fields = await send('GET', '/fields?library=mixes')
+    expect(fields.status).toBe(200)
+    expect(
+      ((await fields.json()) as { data: Array<{ key: string; label: string }> })
+        .data,
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ key: 'artist', label: 'Artist' }),
+        expect.objectContaining({ key: 'source', label: 'Show' }),
+        expect.objectContaining({ key: 'type', label: 'Station' }),
+      ]),
+    )
+    expect(
+      (
+        (await (await send('GET', '/fields?library=mixes')).json()) as {
+          data: Array<{ key: string }>
+        }
+      ).data.map((field) => field.key),
+    ).not.toContain('viewCount')
+  })
+
+  it('rejects fields of the other library with 422 before service work', async () => {
+    const invalid: Array<Record<string, string>> = [
+      { filters: JSON.stringify([{ field: 'artist', value: 'Synthetic DJ' }]) },
+      {
+        library: 'subscriptions',
+        filters: JSON.stringify([{ field: 'artist', value: 'Synthetic DJ' }]),
+      },
+      { library: 'mixes', ranges: JSON.stringify([{ field: 'viewCount' }]) },
+      { library: 'mixes', ranges: JSON.stringify([{ field: 'likeCount' }]) },
+      { library: 'mixes', ranges: JSON.stringify([{ field: 'commentCount' }]) },
+      { library: 'mixes', sortBy: 'viewCount' },
+      { library: 'films' },
+    ]
+    for (const params of invalid) {
+      expect((await send('GET', query(params))).status).toBe(422)
+      expect(
+        (await send('GET', `/browse-page?${new URLSearchParams(params)}`))
+          .status,
+      ).toBe(422)
+    }
+    expect((await send('GET', '/fields?library=films')).status).toBe(422)
+    expect((await send('GET', '/facets?library=films')).status).toBe(422)
+    expect((await send('GET', '/sources?type=nts')).status).toBe(422)
+    expect(
+      (await send('GET', '/sources?library=mixes&type=youtube')).status,
+    ).toBe(422)
+    for (const fn of Object.values(mocks).filter((fn) => fn !== mocks.session))
+      expect(fn).not.toHaveBeenCalled()
+  })
+
+  it('reads and marks one mix by ID without a library parameter', async () => {
+    mocks.item.mockResolvedValue({ id: MIX, type: 'nts' })
+    expect((await send('GET', `/${MIX}`)).status).toBe(200)
+    expect(mocks.item).toHaveBeenCalledWith(MIX)
+    const watchedAt = '2026-09-21T18:30:00.000Z'
+    mocks.watched.mockResolvedValue({ id: MIX, watchedAt })
+    expect((await send('PATCH', `/${MIX}`, { watchedAt })).status).toBe(200)
+    expect(mocks.watched).toHaveBeenCalledWith(MIX, { watchedAt })
   })
 
   it('answers 404 for an item outside the library', async () => {

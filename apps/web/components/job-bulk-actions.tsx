@@ -23,6 +23,7 @@ import {
   canRetryJob,
   isScrobbleSyncJob,
   isScrobbleSpotifySearchJob,
+  isMixSyncJob,
   isSubscriptionSyncJob,
   jobTaskTitle,
   unfinishedJobItems,
@@ -150,6 +151,7 @@ export default function JobBulkActions({
   const syncRetries = retryJobs.filter(isScrobbleSyncJob).length
   const searchRetries = retryJobs.filter(isScrobbleSpotifySearchJob).length
   const subscriptionRetries = retryJobs.filter(isSubscriptionSyncJob).length
+  const mixRetries = retryJobs.filter(isMixSyncJob).length
   const reviewKey = (next: JobAction | null) =>
     jobReviewKey(next, selectedJobs, targetsFor(next), selectedBatches)
   const selectionKey = reviewKey(selectedAction)
@@ -171,7 +173,8 @@ export default function JobBulkActions({
   const confirmed =
     reviewing &&
     selectedAction === 'retry' &&
-    itemCount + syncRetries + searchRetries + subscriptionRetries > 5
+    itemCount + syncRetries + searchRetries + subscriptionRetries + mixRetries >
+      5
   const actionLabel =
     selectedAction === 'retry'
       ? retriesRunning
@@ -344,6 +347,12 @@ export default function JobBulkActions({
                   Resume {subscriptionRetries} subscription{' '}
                   {subscriptionRetries === 1 ? 'sync' : 'syncs'}. Provider
                   quotas and cooldowns apply.
+                </p>
+              )}
+              {selectedAction === 'retry' && mixRetries > 0 && (
+                <p>
+                  Resume {mixRetries} mix {mixRetries === 1 ? 'sync' : 'syncs'}.
+                  Provider cooldowns apply.
                 </p>
               )}
               {selectedAction === 'retry' && searchRetries > 0 && (

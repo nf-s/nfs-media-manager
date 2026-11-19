@@ -168,3 +168,25 @@ test('activity updates refetch mounted job lists in the background and keep stal
     client.clear()
   }
 })
+
+test('finished mix syncs refresh the Mixes library and the station sync status', async () => {
+  const client = new QueryClient()
+  const keys = [
+    ['mixes', 'browse', 'example', 1],
+    ['mixes', 'sources'],
+    ['mixes', 'item', 'nts.example-mix'],
+    ['subscription-sync', 'nts'],
+  ]
+  for (const key of keys) client.setQueryData(key, ['cached'])
+  try {
+    await invalidateChangedJobActivity(
+      client,
+      { ...idle, running: 1 },
+      { ...idle, completed: 1 },
+    )
+    for (const key of keys)
+      assert.equal(client.getQueryState(key)?.isInvalidated, true)
+  } finally {
+    client.clear()
+  }
+})

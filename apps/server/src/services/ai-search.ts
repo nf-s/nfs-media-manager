@@ -6,9 +6,14 @@ import {
   AiSearchInterpretationSchema,
   AiSearchPlanSchema,
   AiTranscriptionInputSchema,
+  AiMixInterpretationSchema,
+  AiMixSearchResponseSchema,
   AiSubscriptionInterpretationSchema,
+  AiSubscriptionSearchResponseSchema,
   AiTranscriptionSchema,
   type AiMediaLibrary,
+  type AiMixInterpretedPlan,
+  type AiMixSearchResponse,
   type AiSearchInput,
   type AiSearchPlan,
   type AiSearchResponse,
@@ -28,6 +33,11 @@ import {
   trackBrowseFields,
   type BrowseField,
 } from '@repo/schemas/browse'
+import {
+  MixStationSchema,
+  subscriptionTypeLabels,
+  type SubscriptionLibrary,
+} from '@repo/schemas/subscriptions'
 import { ServerError } from '@/lib/error'
 import { aiAvailable, runAiText, runAiTranscription } from '@/lib/workers-ai'
 import { getLastfmSyncStatus } from './lastfm-scrobbles'
@@ -38,8 +48,8 @@ import {
 } from './subscription-source-names'
 
 // Only public, built-in field definitions leave the server. Never include the
-// library vocabulary, plugin manifests, listening records, subscribed channel
-// or podcast names or provider secrets.
+// library vocabulary, plugin manifests, listening records, subscribed channel,
+// podcast or station show names or provider secrets.
 function searchFields(
   mediaType: AiMediaLibrary,
   context?: AiSearchInput['context'],
@@ -234,6 +244,12 @@ export function parseAiSubscriptionInterpretation(value: unknown) {
   return parsed.data
 }
 
+export function parseAiMixInterpretation(value: unknown) {
+  const parsed = AiMixInterpretationSchema.safeParse(modelOutput(value))
+  if (!parsed.success) invalidPlan()
+  return parsed.data
+}
+
 export function validateAiPlan(
   plan: AiSearchPlan,
   mediaType: AiMediaLibrary,
@@ -327,6 +343,9 @@ const webSearchRule = (item: string, fields: string, excluded: string) =>
 - fields:"title" leaves descriptions out of the search; use it only when the request asks for titles only, otherwise "all".`
 const publishedRule = `- publishedFrom and publishedTo are inclusive YYYY-MM-DD UTC days. Convert relative periods such as 'last month' to explicit days and state them in assumptions.`
 const uncappedRule = `Results cannot be capped. For 'top N' or 'most viewed' requests sort accordingly and state in assumptions that every match is listed.`
+const relevanceRule = `Sort by relevance desc when q is set and publishedAt desc otherwise, unless the request asks for another order.`
+const sourceNamesRule = (sources: string, written: string, stored: string) =>
+  `- sourceNames lists each ${sources} the request names, as written${written}, without guessing, completing or adding names. They are matched to ${stored} after this step; an item from any listed source matches. Use [] when none is named.`
 
 export function aiSubscriptionSearchPrompt(now: Date) {
   return `Convert a request into a read-only search of stored YouTube videos from subscribed channels and episodes of saved Spotify podcasts. Today is ${now.toISOString().slice(0, 10)} (UTC).
@@ -335,9 +354,9 @@ ${JSON.stringify(z.toJSONSchema(AiSubscriptionInterpretationSchema, { io: 'input
 Rules:
 ${sharedRules}
 - Search only stored videos and episodes. If the request requires another library, discovery on YouTube or Spotify, data that is not stored (subscriber counts, watch or listening history, playback progress), unsupported boolean grouping, or actions, return plan:null and explain the limitation or ask one concise clarification question. Never silently drop a requested condition.
-- A plan replaces the current search. Include every key; use q:"", fields:"all", sourceNames:[], types:[], publishedFrom:null, publishedTo:null, durationMinSec:null, durationMaxSec:null when unused. Sort by relevance desc when q is set and publishedAt desc otherwise, unless the request asks for another order.
+- A plan replaces the current search. Include every key; use q:"", fields:"all", sourceNames:[], types:[], publishedFrom:null, publishedTo:null, durationMinSec:null, durationMaxSec:null when unused. ${relevanceRule}
 ${webSearchRule('video or episode', 'title, tags, channel or podcast name', 'filler such as "videos" or "episodes", or channel or podcast names, types, lengths or dates')}
-- sourceNames lists each YouTube channel or podcast the request names, as written (title or @handle), without guessing, completing or adding names. They are matched to subscribed channels and saved podcasts after this step; an item from any listed source matches. Use [] when none is named.
+${sourceNamesRule('YouTube channel or podcast', ' (title or @handle)', 'subscribed channels and saved podcasts')}
 - types: ["youtube"] for YouTube videos only, ["spotify"] for podcast episodes only, [] for both.
 - durationMinSec and durationMaxSec are inclusive lengths in seconds. Under 4 minutes is durationMaxSec:239, 4 to 20 minutes is 240 to 1200, over 20 minutes is durationMinSec:1201, 'over an hour' is durationMinSec:3601. State a length chosen for a vague term in assumptions.
 ${publishedRule}
@@ -345,10 +364,32 @@ ${publishedRule}
 ${explanationRule}`
 }
 
-/** Checks a Subscriptions plan against what the Subscriptions page can apply. */
-export function validateAiSubscriptionPlan(
-  plan: AiSubscriptionInterpretedPlan,
-) {
+const stationList = MixStationSchema.options
+  .map((station) => `"${station}" (${subscriptionTypeLabels[station]})`)
+  .join(', ')
+
+export function aiMixSearchPrompt(now: Date) {
+  return `Convert a request into a read-only search of stored radio mixes and show episodes archived from the stations ${MixStationSchema.options.map((station) => subscriptionTypeLabels[station]).join(', ')}. Today is ${now.toISOString().slice(0, 10)} (UTC).
+Return ONLY one JSON object matching this schema:
+${JSON.stringify(z.toJSONSchema(AiMixInterpretationSchema, { io: 'input' }))}
+Rules:
+${sharedRules}
+- Search only stored mixes. If the request requires another library, discovery on a station's site, data that is not stored (play counts, listening history, playback progress), unsupported boolean grouping, or actions, return plan:null and explain the limitation or ask one concise clarification question. Never silently drop a requested condition.
+- A plan replaces the current search. Include every key; use q:"", fields:"all", sourceNames:[], stations:[], filters:[], publishedFrom:null, publishedTo:null, durationMinSec:null, durationMaxSec:null when unused. ${relevanceRule}
+${webSearchRule('mix', 'title, show name, billed artists, tags', 'filler such as "mixes", "sets" or "shows", or show names, stations, artists, tags, lengths or dates')}
+${sourceNamesRule('station show', '', 'stored station shows')} A DJ or artist is an artist filter, not a show, unless the request calls it a show.
+- stations: ${stationList}. List each station asked for; [] for every station.
+- filters hold billed artists (field "artist", the whole name as written) and tags (field "genre", a canonical natural genre name such as "house" or "jazz", without inventing synonyms; a broad genre also matches the genres beneath it). Each is an exact, case-insensitive match. All required filters are ANDed; exclude means NOT; every any filter and every named show form ONE OR group, ANDed with the rest. Use required for a single artist or tag and for 'A and B'; use any only for alternatives such as 'A or B'.
+- durationMinSec and durationMaxSec are inclusive lengths in seconds. 'Under an hour' is durationMaxSec:3599, 'over an hour' is durationMinSec:3601, 'two hours or longer' is durationMinSec:7200. State a length chosen for a vague term in assumptions.
+${publishedRule} They bound the broadcast date.
+- sortBy is relevance (only with a non-empty q, always desc), publishedAt (broadcast date), title, source (show) or durationSec; direction is asc or desc. ${uncappedRule}
+${explanationRule}`
+}
+
+type StoredItemPlan = AiSubscriptionInterpretedPlan | AiMixInterpretedPlan
+
+/** The checks both Subscriptions and Mixes plans share. */
+function validateStoredItemPlan(plan: StoredItemPlan, kinds: string[]) {
   const searching = Boolean(plan.q.trim())
   if (plan.sortBy === 'relevance' && (!searching || plan.direction !== 'desc'))
     invalidPlan()
@@ -359,13 +400,32 @@ export function validateAiSubscriptionPlan(
     plan.publishedFrom > plan.publishedTo
   )
     invalidPlan()
-  if (new Set(plan.types).size !== plan.types.length) invalidPlan()
+  if (new Set(kinds).size !== kinds.length) invalidPlan()
   if (
     plan.durationMinSec !== null &&
     plan.durationMaxSec !== null &&
     plan.durationMinSec > plan.durationMaxSec
   )
     invalidPlan()
+}
+
+/** Checks a Subscriptions plan against what the Subscriptions page can apply. */
+export function validateAiSubscriptionPlan(
+  plan: AiSubscriptionInterpretedPlan,
+) {
+  validateStoredItemPlan(plan, plan.types)
+}
+
+/** Checks a Mixes plan against what the Mixes page can apply. */
+export function validateAiMixPlan(plan: AiMixInterpretedPlan) {
+  validateStoredItemPlan(plan, plan.stations)
+  for (const [index, filter] of plan.filters.entries())
+    if (
+      plan.filters
+        .slice(0, index)
+        .some((previous) => sameBrowseFilter(previous, filter))
+    )
+      invalidPlan()
 }
 
 type SourceNoun = { one: string; many: string }
@@ -403,6 +463,59 @@ async function resolveSourceNames<
   return { sources: [...sources.values()], warnings }
 }
 
+const sourceNouns: Record<
+  SubscriptionLibrary,
+  SourceNoun & { unresolved: string }
+> = {
+  subscriptions: {
+    one: 'subscribed channel or podcast',
+    many: 'subscribed channels and podcasts',
+    unresolved:
+      'Some names do not match exactly one subscribed channel or podcast. Use the name or @handle shown in Channels.',
+  },
+  mixes: {
+    one: 'station show',
+    many: 'station shows',
+    unresolved:
+      'Some names do not match exactly one station show. Use the name shown in Shows.',
+  },
+}
+
+/**
+ * Matches a plan's source names to the library's own sources. Null with
+ * warnings when a name matches none or several: a partial source filter would
+ * silently drop a requested source.
+ */
+async function resolvePlanSources(
+  library: SubscriptionLibrary,
+  names: string[],
+) {
+  const noun = sourceNouns[library]
+  const resolved = await resolveSourceNames(
+    names,
+    () => listSubscribedSourceNames(library),
+    noun,
+  )
+  if (resolved.warnings.length)
+    return {
+      sources: null,
+      clarification: {
+        plan: null,
+        explanation: noun.unresolved,
+        assumptions: [],
+        warnings: resolved.warnings.slice(0, 10),
+      },
+    }
+  return {
+    sources: resolved.sources.map(({ id, type, title }) => ({
+      id,
+      type,
+      title,
+    })),
+    clarification: null,
+  }
+}
+
 async function interpretSubscriptionSearch(
   text: string,
   now: Date,
@@ -417,35 +530,44 @@ async function interpretSubscriptionSearch(
   if (!plan) return { ...interpretation, plan: null, warnings: [] }
   validateAiSubscriptionPlan(plan)
   const { sourceNames, ...query } = plan
-  const resolved = await resolveSourceNames(
+  const { sources, clarification } = await resolvePlanSources(
+    'subscriptions',
     sourceNames,
-    () => listSubscribedSourceNames(),
-    {
-      one: 'subscribed channel or podcast',
-      many: 'subscribed channels and podcasts',
+  )
+  return AiSubscriptionSearchResponseSchema.parse(
+    clarification ?? {
+      ...interpretation,
+      plan: { ...query, sources },
+      warnings: [],
     },
   )
-  // A partial source filter would silently drop a requested source.
-  if (resolved.warnings.length)
-    return {
-      plan: null,
-      explanation:
-        'Some names do not match exactly one subscribed channel or podcast. Use the name or @handle shown in Channels.',
-      assumptions: [],
-      warnings: resolved.warnings.slice(0, 10),
-    }
-  return {
-    ...interpretation,
-    plan: {
-      ...query,
-      sources: resolved.sources.map(({ id, type, title }) => ({
-        id,
-        type,
-        title,
-      })),
+}
+
+async function interpretMixSearch(
+  text: string,
+  now: Date,
+): Promise<AiMixSearchResponse> {
+  const interpretation = parseAiMixInterpretation(
+    await runAiText([
+      { role: 'system', content: aiMixSearchPrompt(now) },
+      { role: 'user', content: text },
+    ]),
+  )
+  const { plan } = interpretation
+  if (!plan) return { ...interpretation, plan: null, warnings: [] }
+  validateAiMixPlan(plan)
+  const { sourceNames, ...query } = plan
+  const { sources, clarification } = await resolvePlanSources(
+    'mixes',
+    sourceNames,
+  )
+  return AiMixSearchResponseSchema.parse(
+    clarification ?? {
+      ...interpretation,
+      plan: { ...query, sources },
+      warnings: [],
     },
-    warnings: [],
-  }
+  )
 }
 
 async function interpretMediaSearch(
@@ -509,16 +631,19 @@ async function interpretMediaSearch(
 }
 
 /**
- * Album, film, track and artist requests return a browse plan; `subscription` returns
- * a Subscriptions plan.
+ * Album, film, track and artist requests return a browse plan; `subscription`
+ * returns a Subscriptions plan and `mix` a Mixes plan.
  */
 export async function interpretAiSearch(
   input: AiSearchInput,
   now = new Date(),
-): Promise<AiSearchResponse | AiSubscriptionSearchResponse> {
+): Promise<
+  AiSearchResponse | AiSubscriptionSearchResponse | AiMixSearchResponse
+> {
   const request = AiSearchInputSchema.parse(input)
   if (request.mediaType === 'subscription')
     return interpretSubscriptionSearch(request.text, now)
+  if (request.mediaType === 'mix') return interpretMixSearch(request.text, now)
   return interpretMediaSearch(
     request.mediaType,
     request.text,

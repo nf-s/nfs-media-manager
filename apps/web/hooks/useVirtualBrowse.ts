@@ -23,7 +23,10 @@ const DefaultItemSchema = z.union([AlbumListItemSchema, FilmListItemSchema])
 
 type VirtualBrowseOptions = {
   apiBaseUrl: string
+  /** Names the library in query keys. */
   collection: string
+  /** The API collection when it differs, as for Mixes read from Subscriptions. */
+  endpoint?: string
   identity: string
   params: URLSearchParams
   enabled: boolean
@@ -40,6 +43,7 @@ function useBrowsePages<Item extends z.ZodTypeAny>(
   {
     apiBaseUrl,
     collection,
+    endpoint = collection,
     identity,
     params,
     enabled,
@@ -63,7 +67,7 @@ function useBrowsePages<Item extends z.ZodTypeAny>(
     queryFn: ({ signal }) =>
       fetchApiData(
         apiBaseUrl,
-        `/api/v1/${collection}/browse-count?${countParams}`,
+        `/api/v1/${endpoint}/browse-count?${countParams}`,
         BrowseCountSchema,
         { signal },
       ),
@@ -77,7 +81,7 @@ function useBrowsePages<Item extends z.ZodTypeAny>(
     query.set('size', String(size))
     const result = await fetchApiData(
       apiBaseUrl,
-      `/api/v1/${collection}/browse-page?${query}`,
+      `/api/v1/${endpoint}/browse-page?${query}`,
       PageSchema,
       { signal },
     )

@@ -1,8 +1,14 @@
 import type {
+  MixStation,
   SubscriptionSyncSchedule,
   SubscriptionSyncStatus,
   SubscriptionType,
 } from '@repo/schemas/subscriptions'
+import {
+  getMixStationSyncStatus,
+  setMixStationSyncSchedule,
+} from './mix-station-sync'
+import { queueMixStationSync } from './mix-station-sync-jobs'
 import {
   getSpotifyPodcastSyncStatus,
   setSpotifyPodcastSyncSchedule,
@@ -14,7 +20,7 @@ import {
 } from './youtube-sync'
 import { queueYoutubeSync } from './youtube-sync-jobs'
 
-/** What the Subscriptions sync endpoints need from each provider. */
+/** What the Subscriptions and Mixes sync endpoints need from each provider. */
 export type SubscriptionSyncProvider = {
   /** Stored state only; no provider requests. */
   status: (userId: string) => Promise<SubscriptionSyncStatus>
@@ -25,6 +31,13 @@ export type SubscriptionSyncProvider = {
     schedule: SubscriptionSyncSchedule,
   ) => Promise<SubscriptionSyncStatus>
 }
+
+const mixStation = (station: MixStation): SubscriptionSyncProvider => ({
+  status: (userId) => getMixStationSyncStatus(station, userId),
+  queue: (userId) => queueMixStationSync(station, userId),
+  setSchedule: (userId, schedule) =>
+    setMixStationSyncSchedule(station, userId, schedule),
+})
 
 const providers: Record<SubscriptionType, SubscriptionSyncProvider> = {
   youtube: {
@@ -37,6 +50,9 @@ const providers: Record<SubscriptionType, SubscriptionSyncProvider> = {
     queue: queueSpotifyPodcastSync,
     setSchedule: setSpotifyPodcastSyncSchedule,
   },
+  rinse: mixStation('rinse'),
+  nts: mixStation('nts'),
+  lotradio: mixStation('lotradio'),
 }
 
 export async function getSubscriptionSyncStatus(

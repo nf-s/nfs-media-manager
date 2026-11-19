@@ -34,6 +34,7 @@ const batchNouns: Record<string, { one: string; other: string }> = {
   film: { one: 'film', other: 'films' },
   artist: { one: 'artist', other: 'artists' },
   subscription: { one: 'subscription sync', other: 'subscription syncs' },
+  mix: { one: 'mix sync', other: 'mix syncs' },
 }
 
 /** `Library import`, else `Batch`; the target says how many items. */

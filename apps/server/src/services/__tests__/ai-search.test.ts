@@ -1,8 +1,11 @@
 import { Buffer } from 'node:buffer'
+import { is, SQL } from 'drizzle-orm'
+import { PgDialect } from 'drizzle-orm/pg-core'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   AI_AUDIO_MAX_BYTES,
   AiSearchPlanSchema,
+  type AiMixInterpretedPlan,
   type AiSearchPlan,
   type AiSubscriptionInterpretedPlan,
 } from '@repo/schemas/ai-search'
@@ -31,10 +34,14 @@ vi.mock('@/lib/db', () => ({ db: { execute: mocks.database } }))
 import {
   aiSearchPrompt,
   aiSearchStatus,
+  aiMixSearchPrompt,
+  aiSubscriptionSearchPrompt,
   interpretAiSearch,
   parseAiInterpretation,
+  parseAiMixInterpretation,
   parseAiSubscriptionInterpretation,
   transcribeAiAudio,
+  validateAiMixPlan,
   validateAiPlan,
   validateAiSubscriptionPlan,
 } from '../ai-search'
@@ -786,6 +793,14 @@ function subscriptionInterpretation(search: AiSubscriptionInterpretedPlan) {
   return { ...interpretation(null), plan: search }
 }
 
+const dialect = new PgDialect()
+/** The parameters of each source-name read, to see which library it asked for. */
+function sourceReadParams() {
+  return mocks.database.mock.calls.map(([query]) =>
+    is(query, SQL) ? dialect.sqlToQuery(query).params : null,
+  )
+}
+
 describe('AI Subscriptions search', () => {
   beforeEach(() => {
     mocks.database.mockResolvedValue({ rows: sourceRows })
@@ -834,6 +849,8 @@ describe('AI Subscriptions search', () => {
       warnings: [],
     })
     expect(mocks.database).toHaveBeenCalledOnce()
+    // Only YouTube channels and podcasts are read, never station shows.
+    expect(sourceReadParams()).toEqual([['youtube', 'spotify']])
   })
 
   it('never sends stored channel or podcast names to the model', async () => {
@@ -960,6 +977,226 @@ describe('AI Subscriptions search', () => {
     expect(matchSourceName('example', channelRows).status).toBe('ambiguous')
     expect(matchSourceName('@', channelRows).status).toBe('missing')
     expect(matchSourceName('missing', channelRows).status).toBe('missing')
+  })
+})
+
+const mixShowRows = [
+  {
+    id: 'nts.warehouse-hours',
+    type: 'nts',
+    title: 'Warehouse Hours',
+    handle: 'warehouse-hours',
+  },
+  {
+    id: 'rinse.warehouse-weekly',
+    type: 'rinse',
+    title: 'Warehouse Weekly',
+    handle: null,
+  },
+  {
+    id: 'lotradio.dawn-chorus',
+    type: 'lotradio',
+    title: 'Dawn Chorus',
+    handle: null,
+  },
+]
+function mixPlan(
+  overrides: Partial<AiMixInterpretedPlan> = {},
+): AiMixInterpretedPlan {
+  return {
+    q: '',
+    fields: 'all',
+    sourceNames: [],
+    stations: [],
+    filters: [],
+    publishedFrom: null,
+    publishedTo: null,
+    durationMinSec: null,
+    durationMaxSec: null,
+    sortBy: 'publishedAt',
+    direction: 'desc',
+    ...overrides,
+  }
+}
+function mixInterpretation(search: AiMixInterpretedPlan) {
+  return { ...interpretation(null), plan: search }
+}
+
+describe('AI Mixes search', () => {
+  beforeEach(() => {
+    mocks.database.mockResolvedValue({ rows: mixShowRows })
+  })
+
+  it('resolves show names against station shows only and keeps stations, artists and tags', async () => {
+    mocks.text.mockResolvedValue(
+      completion(
+        mixInterpretation(
+          mixPlan({
+            q: 'dub',
+            sourceNames: ['dawn chorus'],
+            stations: ['lotradio', 'nts'],
+            filters: [
+              { field: 'artist', value: 'Synthetic DJ', mode: 'required' },
+              { field: 'genre', value: 'house', mode: 'any' },
+            ],
+            durationMinSec: 3601,
+            publishedFrom: '2026-10-01',
+            sortBy: 'relevance',
+          }),
+        ),
+      ),
+    )
+    const result = await interpretAiSearch(
+      {
+        mediaType: 'mix',
+        text: 'Long dub sets by Synthetic DJ on Dawn Chorus since October',
+      },
+      now,
+    )
+    expect(result).toEqual({
+      plan: {
+        q: 'dub',
+        fields: 'all',
+        sources: [
+          {
+            id: 'lotradio.dawn-chorus',
+            type: 'lotradio',
+            title: 'Dawn Chorus',
+          },
+        ],
+        stations: ['lotradio', 'nts'],
+        filters: [
+          { field: 'artist', value: 'Synthetic DJ', mode: 'required' },
+          { field: 'genre', value: 'house', mode: 'any' },
+        ],
+        publishedFrom: '2026-10-01',
+        publishedTo: null,
+        durationMinSec: 3601,
+        durationMaxSec: null,
+        sortBy: 'relevance',
+        direction: 'desc',
+      },
+      explanation: 'Search the selected library.',
+      assumptions: [],
+      warnings: [],
+    })
+    expect(sourceReadParams()).toEqual([['rinse', 'nts', 'lotradio']])
+  })
+
+  it('describes stations, artists and tags without stored show names', async () => {
+    mocks.text.mockResolvedValue(
+      completion(
+        mixInterpretation(mixPlan({ sourceNames: ['warehouse hours'] })),
+      ),
+    )
+    await interpretAiSearch(
+      { mediaType: 'mix', text: 'mixes from warehouse hours' },
+      now,
+    )
+    const sent = JSON.stringify(mocks.text.mock.calls)
+    for (const text of [
+      'radio mixes',
+      'Rinse FM',
+      'NTS',
+      'The Lot Radio',
+      '\\"lotradio\\"',
+      'field \\"artist\\"',
+      'field \\"genre\\"',
+      'durationMinSec:3601',
+    ])
+      expect(sent).toContain(text)
+    for (const show of mixShowRows) {
+      expect(sent).not.toContain(show.title)
+      expect(sent).not.toContain(show.id)
+    }
+    expect(aiMixSearchPrompt(now)).not.toContain('viewCount')
+    expect(aiSubscriptionSearchPrompt(now)).not.toContain('Rinse FM')
+  })
+
+  it('does not read shows when the request names none', async () => {
+    mocks.text.mockResolvedValue(
+      completion(mixInterpretation(mixPlan({ stations: ['rinse'] }))),
+    )
+    const result = await interpretAiSearch(
+      { mediaType: 'mix', text: 'Rinse FM mixes' },
+      now,
+    )
+    expect(result.plan).toMatchObject({ sources: [], stations: ['rinse'] })
+    expect(mocks.database).not.toHaveBeenCalled()
+  })
+
+  it('returns ambiguous and missing show names as warnings without a partial filter', async () => {
+    mocks.text.mockResolvedValue(
+      completion(
+        mixInterpretation(
+          mixPlan({ sourceNames: ['warehouse', 'Orbit Talk'] }),
+        ),
+      ),
+    )
+    expect(
+      await interpretAiSearch(
+        { mediaType: 'mix', text: 'Warehouse and Orbit Talk' },
+        now,
+      ),
+    ).toEqual({
+      plan: null,
+      explanation: expect.stringContaining('station show'),
+      assumptions: [],
+      warnings: [
+        '"warehouse" matches several station shows: Warehouse Hours, Warehouse Weekly.',
+        'No station show matches "Orbit Talk".',
+      ],
+    })
+  })
+
+  it.each([
+    mixPlan({ sortBy: 'relevance' }),
+    mixPlan({ fields: 'title' }),
+    mixPlan({ publishedFrom: '2026-10-31', publishedTo: '2026-10-01' }),
+    mixPlan({ durationMinSec: 7200, durationMaxSec: 3600 }),
+    mixPlan({ stations: ['nts', 'nts'] }),
+    mixPlan({
+      filters: [
+        { field: 'genre', value: 'House', mode: 'any' },
+        { field: 'genre', value: 'house ', mode: 'required' },
+      ],
+    }),
+  ])('rejects Mixes plans the page cannot apply', (search) => {
+    expect(() => validateAiMixPlan(search)).toThrow('unsupported search')
+  })
+
+  it.each([
+    { ...mixPlan(), types: [] },
+    { ...mixPlan(), stations: ['youtube'] },
+    { ...mixPlan(), sortBy: 'viewCount' },
+    { ...mixPlan(), filters: [{ field: 'source', value: 'x', mode: 'any' }] },
+  ])('rejects unsupported Mixes fields at the model boundary', (search) => {
+    expect(() =>
+      parseAiMixInterpretation(
+        completion({ ...interpretation(), plan: search }),
+      ),
+    ).toThrow('unsupported search')
+  })
+
+  it('accepts artists and tags in each mode and every Mixes sort', () => {
+    for (const sortBy of [
+      'title',
+      'source',
+      'durationSec',
+      'watchedAt',
+    ] as const)
+      expect(() =>
+        validateAiMixPlan(
+          mixPlan({
+            sortBy,
+            filters: [
+              { field: 'artist', value: 'A', mode: 'any' },
+              { field: 'artist', value: 'B', mode: 'any' },
+              { field: 'genre', value: 'jazz', mode: 'exclude' },
+            ],
+          }),
+        ),
+      ).not.toThrow()
   })
 })
 

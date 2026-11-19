@@ -44,6 +44,7 @@ const BREAD = channelId('bread')
 const RETIRED = channelId('retired')
 const ORBIT_TALK = spotifyId('OrbitTalkShow')
 const KITCHEN = spotifyId('QuietKitchenShow')
+const STATION_SHOW = 'nts.orbit-talk'
 
 /** Many videos, so filter values and sorts reach past the first page of 100. */
 const BREAD_COUNT = 120
@@ -259,6 +260,32 @@ beforeAll(async () => {
       }
     }),
   )
+  // A station show and mix that match many searches, filters and facets
+  // below. They belong to Mixes, so no Subscriptions result counts them.
+  await databaseClient.insert(schema.subscriptionSource).values({
+    id: STATION_SHOW,
+    type: 'nts',
+    title: 'Orbit Talk',
+    handle: 'keplerlab',
+  })
+  const stationTags = ['Spaceflight', 'Baking', 'Rare Rye']
+  await databaseClient.insert(schema.subscriptionItem).values({
+    id: `${STATION_SHOW}-1`,
+    sourceId: STATION_SHOW,
+    type: 'nts',
+    title: 'Transfer orbits explained',
+    description: 'Sourdough at dawn',
+    tags: stationTags,
+    artists: ['Bread Bench'],
+    publishedAt: new Date('2026-06-01T00:00:00Z'),
+    durationSec: 1200,
+    search: subscriptionSearchVector(
+      sql`${'Transfer orbits explained'}::text`,
+      sql`${'Orbit Talk'}::text`,
+      sql`${[...stationTags, 'Bread Bench'].join(' ')}::text`,
+      sql`${'Sourdough at dawn'}::text`,
+    ),
+  })
 })
 afterAll(async () => {
   await pool.end()
@@ -778,5 +805,32 @@ describe('subscription facets and sources', () => {
       await expect(getSubscriptionSource(id, query)).rejects.toMatchObject({
         response: { statusCode: 404 },
       })
+  })
+
+  it('leaves station shows and mixes out of every Subscriptions read', async () => {
+    const { getSubscriptionItem, listSubscriptionSources } = await library()
+    const { listSubscribedSourceNames } =
+      await import('@/services/subscription-source-names')
+    expect(
+      (await listSubscriptionSources()).items.map((source) => source.id),
+    ).not.toContain(STATION_SHOW)
+    expect(
+      (await listSubscribedSourceNames('subscriptions')).map(
+        (source) => source.id,
+      ),
+    ).not.toContain(STATION_SHOW)
+    expect(
+      (await listSubscriptionSources({ library: 'mixes' })).items.map(
+        (source) => source.id,
+      ),
+    ).toEqual([STATION_SHOW])
+    expect((await all({ q: 'orbit' }, 100)).ids).not.toContain(
+      `${STATION_SHOW}-1`,
+    )
+    // Read by ID, the mix is found in its own library.
+    expect(await getSubscriptionItem(`${STATION_SHOW}-1`)).toMatchObject({
+      type: 'nts',
+      artists: ['Bread Bench'],
+    })
   })
 })

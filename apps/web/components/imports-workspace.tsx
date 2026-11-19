@@ -34,6 +34,7 @@ import {
   albumImportDestinations,
   csvImportHref,
   importDestinations,
+  mixImportDestinations,
   resolveCsvFormat,
   subscriptionImportDestinations,
   trackImportDestinations,
@@ -161,7 +162,9 @@ export default function ImportsWorkspace({
                   ? trackImportDestinations()
                   : mediaType === 'subscription'
                     ? subscriptionImportDestinations()
-                    : importDestinations(data.formats.data ?? [])
+                    : mediaType === 'mix'
+                      ? mixImportDestinations()
+                      : importDestinations(data.formats.data ?? [])
               ).map((item) => ({
                 ...item,
                 href: scopedHref(item.href, mediaType),

@@ -5,6 +5,7 @@ import {
   AI_AUDIO_MAX_BYTES,
   AiSearchInputSchema,
   AiSearchResponseSchema,
+  AiMixSearchResponseSchema,
   AiStatusSchema,
   AiSubscriptionSearchResponseSchema,
   AiTranscriptionInputSchema,
@@ -66,13 +67,14 @@ app.openapi(
     responses: {
       200: {
         description:
-          'Validated search interpretation: a browse plan for album, film, track and artist and a Subscriptions plan for subscription',
+          'Validated search interpretation: a browse plan for album, film, track and artist, a Subscriptions plan for subscription and a Mixes plan for mix',
         content: {
           'application/json': {
             schema: createResponseSchema(
               z.union([
                 AiSearchResponseSchema,
                 AiSubscriptionSearchResponseSchema,
+                AiMixSearchResponseSchema,
               ]),
             ),
           },

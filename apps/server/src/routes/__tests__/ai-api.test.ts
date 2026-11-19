@@ -152,6 +152,50 @@ describe('AI API', () => {
     })
   })
 
+  it('forwards Mixes requests and returns their plans', async () => {
+    mockAppSession(true)
+    const mixResult = {
+      plan: {
+        q: '',
+        fields: 'all',
+        stations: ['nts'],
+        filters: [{ field: 'artist', value: 'Synthetic DJ', mode: 'required' }],
+        publishedFrom: null,
+        publishedTo: null,
+        durationMinSec: 3601,
+        durationMaxSec: null,
+        sortBy: 'publishedAt',
+        direction: 'desc',
+        sources: [
+          { id: 'nts.warehouse-hours', type: 'nts', title: 'Warehouse Hours' },
+        ],
+      },
+      explanation: 'Long NTS mixes by one artist on one show.',
+      assumptions: [],
+      warnings: [],
+    }
+    search.mockResolvedValueOnce(mixResult)
+    const { default: app } = await import('@/app')
+    const mixes = await app.request(
+      '/api/v1/ai/search',
+      jsonRequest({ mediaType: 'mix', text: 'Long Synthetic DJ sets on NTS' }),
+    )
+    expect(mixes.status).toBe(200)
+    expect(await mixes.json()).toMatchObject({ data: mixResult })
+    expect(search).toHaveBeenCalledWith({
+      mediaType: 'mix',
+      text: 'Long Synthetic DJ sets on NTS',
+    })
+    expect(
+      (
+        await app.request(
+          '/api/v1/ai/search',
+          jsonRequest({ mediaType: 'mixes', text: 'Mixes' }),
+        )
+      ).status,
+    ).toBe(422)
+  })
+
   it('forwards track, artist and Subscriptions requests and returns their plans', async () => {
     mockAppSession(true)
     const trackResult = {

@@ -48,6 +48,9 @@ import {
 } from '@repo/schemas/spotify-track-search'
 import { YOUTUBE_SYNC_TASK } from '@repo/schemas/youtube'
 import {
+  MIX_STATION_SYNC_TASKS,
+  MIX_SYNC_TASKS,
+  MixStationSchema,
   SPOTIFY_PODCAST_SYNC_TASK,
   SUBSCRIPTION_SYNC_TASKS,
 } from '@repo/schemas/subscriptions'
@@ -135,6 +138,10 @@ import {
   prepareSpotifyPodcastSyncRun,
   runSpotifyPodcastSyncJob,
 } from '@/services/spotify-podcast-sync'
+import {
+  prepareMixStationSyncRun,
+  runMixStationSyncJob,
+} from '@/services/mix-station-sync'
 import {
   prepareSpotifyTrackPlaylistAddition,
   runSpotifyTrackPlaylistAddition,
@@ -1099,6 +1106,17 @@ const taskJobs = new Map<string, TaskJobDefinition>([
       run: (context) => runSpotifyPodcastSyncJob(context),
     },
   ],
+  ...MixStationSchema.options.map((station): [string, TaskJobDefinition] => [
+    MIX_STATION_SYNC_TASKS[station],
+    {
+      provider: station,
+      prepare: async (userId) => {
+        await prepareMixStationSyncRun(station, userId)
+        return {}
+      },
+      run: (context) => runMixStationSyncJob(station, context),
+    },
+  ]),
 ])
 
 function taskProvider(
@@ -1118,10 +1136,11 @@ async function insertTaskJob(
   message: string,
 ): Promise<string> {
   const jobId = nanoid()
-  // Artist and subscription tasks have no album or film media item scope.
+  // Artist, subscription and mix tasks have no album or film media item scope.
   const nonMediaTask =
     options.task === ARTIST_ENRICHMENT_TASK ||
-    SUBSCRIPTION_SYNC_TASKS.some((task) => task === options.task)
+    SUBSCRIPTION_SYNC_TASKS.some((task) => task === options.task) ||
+    MIX_SYNC_TASKS.some((task) => task === options.task)
   const trackSearch =
     options.task === SPOTIFY_TRACK_SEARCH_TASK
       ? SpotifyTrackSearchParamsSchema.parse(options)
@@ -1957,6 +1976,9 @@ export async function jobSortField(query: JobListQuery) {
     when ${LASTFM_SCROBBLE_SYNC_TASK} then 'Scrobble sync'
     when ${YOUTUBE_SYNC_TASK} then 'YouTube subscription sync'
     when ${SPOTIFY_PODCAST_SYNC_TASK} then 'Spotify podcast sync'
+    when ${MIX_STATION_SYNC_TASKS.rinse} then 'Rinse FM mix sync'
+    when ${MIX_STATION_SYNC_TASKS.nts} then 'NTS mix sync'
+    when ${MIX_STATION_SYNC_TASKS.lotradio} then 'The Lot Radio mix sync'
     when ${SPOTIFY_PLAYLIST_LISTING_TASK} then 'Spotify playlist list'
     when ${SPOTIFY_PLAYLIST_IMPORT_TASK} then
       case when ${table.options}->>'source' = 'spotify-liked' then 'Spotify Liked Songs import'
@@ -2223,6 +2245,7 @@ async function readJobActivity() {
   const tracks = jobsInMediaScope('track')
   const artists = jobsInMediaScope('artist')
   const subscriptions = jobsInMediaScope('subscription')
+  const mixes = jobsInMediaScope('mix')
   const importScope = importMediaTypeExpression(libraryImport.result)
   const [counts] = await db
     .select({
@@ -2245,6 +2268,9 @@ async function readJobActivity() {
       subscriptionQueued: sql<number>`count(*) filter (where status = 'queued' and ${subscriptions})::int`,
       subscriptionRunning: sql<number>`count(*) filter (where status = 'running' and ${subscriptions})::int`,
       subscriptionFailed: sql<number>`count(*) filter (where ${jobsNeedingAttention()} and ${subscriptions})::int`,
+      mixQueued: sql<number>`count(*) filter (where status = 'queued' and ${mixes})::int`,
+      mixRunning: sql<number>`count(*) filter (where status = 'running' and ${mixes})::int`,
+      mixFailed: sql<number>`count(*) filter (where ${jobsNeedingAttention()} and ${mixes})::int`,
     })
     .from(scrapeJob)
   const [imports] = await db
@@ -2298,13 +2324,20 @@ async function readJobActivity() {
         failed: counts?.subscriptionFailed ?? 0,
         imports: 0,
       },
+      {
+        mediaType: 'mix',
+        queued: counts?.mixQueued ?? 0,
+        running: counts?.mixRunning ?? 0,
+        failed: counts?.mixFailed ?? 0,
+        imports: 0,
+      },
     ],
   })
 }
 
 /**
- * Artist enrichment and subscription syncs have their own libraries. Legacy
- * jobs were stored with the album scope, so the task decides.
+ * Artist enrichment, subscription syncs and mix syncs have their own
+ * libraries. Legacy jobs were stored with the album scope, so the task decides.
  */
 function jobsInMediaScope(
   mediaType: NonNullable<z.infer<typeof JobListQuerySchema>['mediaType']>,
@@ -2314,6 +2347,11 @@ function jobsInMediaScope(
     sql`, `,
   )})`
   if (mediaType === 'subscription') return subscriptionSync
+  const mixSync = sql`coalesce(${scrapeJob.options}->>'task', '') in (${sql.join(
+    MIX_SYNC_TASKS.map((task) => sql`${task}`),
+    sql`, `,
+  )})`
+  if (mediaType === 'mix') return mixSync
   const artistEnrichment = sql`coalesce(${scrapeJob.options}->>'task', '') = ${ARTIST_ENRICHMENT_TASK}`
   if (mediaType === 'artist') return artistEnrichment
   if (mediaType === 'track')
@@ -2321,7 +2359,7 @@ function jobsInMediaScope(
   return sql`((${scrapeJob.scope}->>'mediaType' = ${mediaType} or exists (
     select 1 from scrape_job_item scoped_item join media_item scoped_media on scoped_media.id = scoped_item.media_item_id
     where scoped_item.job_id = ${scrapeJob.id} and scoped_media.media_type = ${mediaType}
-  )) and not ${subscriptionSync} and not (${artistEnrichment}))`
+  )) and not ${subscriptionSync} and not ${mixSync} and not (${artistEnrichment}))`
 }
 
 export async function cancelQueuedJobs(

@@ -1,14 +1,20 @@
+import { MixStationSchema } from '@repo/schemas/subscriptions'
+import { mixStationImportHref } from './import-navigation'
+
 export type MediaScope = 'album' | 'film'
 /**
  * The library that Jobs and Providers are scoped to. Subscriptions
- * (YouTube channels and Spotify podcasts) has no media items or tags.
+ * (YouTube channels and Spotify podcasts) and Mixes (radio station archives)
+ * have no media items or tags.
  */
-export type WorkspaceScope = MediaScope | 'artist' | 'subscription'
+export type WorkspaceScope = MediaScope | 'artist' | 'subscription' | 'mix'
 /**
  * What the library selector shows. Tracks has its own browse, playlists and
  * imports navigation; it has no tag management or per-track metadata jobs.
  */
-export type LibraryView = WorkspaceScope | 'track'
+export type Library = WorkspaceScope | 'track'
+/** A library with a Matches page: every library except Mixes. */
+export type LibraryView = Exclude<Library, 'mix'>
 
 const trackViewPaths = ['/tracks', '/playlists']
 const trackImportPaths = [
@@ -25,6 +31,8 @@ const subscriptionPaths = [
   '/imports/youtube',
   '/imports/spotify-podcasts',
 ]
+const mixStationImports = MixStationSchema.options.map(mixStationImportHref)
+const mixPaths = ['/mixes', ...mixStationImports]
 
 function isUnder(path: string, root: string) {
   return path === root || path.startsWith(`${root}/`)
@@ -41,12 +49,13 @@ export function systemLibraryFilter(
   return value === 'album' ||
     value === 'film' ||
     value === 'artist' ||
-    value === 'subscription'
+    value === 'subscription' ||
+    value === 'mix'
     ? value
     : null
 }
 
-export function parseLibraryView(value: string | null): LibraryView | null {
+export function parseLibraryView(value: string | null): Library | null {
   return value === 'track' ? value : systemLibraryFilter(value)
 }
 
@@ -85,16 +94,19 @@ export function workspaceScopeForPath(
   if (isUnder(path, '/artists')) return 'artist'
   if (subscriptionPaths.some((root) => isUnder(path, root)))
     return 'subscription'
+  if (mixPaths.some((root) => isUnder(path, root))) return 'mix'
   return (
     pathMediaScope(path) ??
-    (value === 'subscription' || value === 'artist' ? value : mediaScope(value))
+    (value === 'subscription' || value === 'artist' || value === 'mix'
+      ? value
+      : mediaScope(value))
   )
 }
 
 export function libraryViewForPath(
   path: string,
   value: string | null,
-): LibraryView {
+): Library {
   if (isUnder(path, '/playlists') && value === 'album') return 'album'
   if (isUnder(path, '/artists')) return 'artist'
   return trackViewPaths.some((root) => isUnder(path, root)) ||
@@ -117,7 +129,7 @@ export function trackScopeRedirect(path: string, value: string | null) {
   return null
 }
 
-export function scopedHref(href: string, mediaType: LibraryView) {
+export function scopedHref(href: string, mediaType: Library) {
   const hashIndex = href.indexOf('#')
   const hash = hashIndex < 0 ? '' : href.slice(hashIndex)
   const destination = hashIndex < 0 ? href : href.slice(0, hashIndex)
@@ -127,7 +139,7 @@ export function scopedHref(href: string, mediaType: LibraryView) {
   return `${path}?${params}${hash}`
 }
 
-function libraryHome(scope: LibraryView) {
+function libraryHome(scope: Library) {
   return scope === 'track'
     ? '/tracks'
     : scope === 'artist'
@@ -136,7 +148,18 @@ function libraryHome(scope: LibraryView) {
         ? '/albums'
         : scope === 'film'
           ? '/films'
-          : '/subscriptions'
+          : scope === 'mix'
+            ? '/mixes'
+            : '/subscriptions'
+}
+
+/** Where Imports opens for a library: the first sync page where it has no import history. */
+export function libraryImportsHome(scope: Library) {
+  return scope === 'subscription'
+    ? '/imports/youtube'
+    : scope === 'mix'
+      ? (mixStationImports[0] ?? '/imports')
+      : '/imports'
 }
 
 export function libraryMatchesHref(view: LibraryView) {
@@ -164,6 +187,7 @@ export function switchMediaScopeHref(
       '/films',
       '/collections',
       '/subscriptions',
+      '/mixes',
       '/artists',
       '/people',
       '/channels',
@@ -188,9 +212,9 @@ export function switchMediaScopeHref(
   ) {
     destination = '/jobs'
   }
-  // Subscriptions has Imports, Jobs and Providers, but no Tags or metadata jobs.
-  if (mediaType === 'subscription') {
-    if (imports) destination = '/imports/youtube'
+  // Subscriptions and Mixes have Imports, Jobs and Providers, but no Tags or metadata jobs.
+  if (mediaType === 'subscription' || mediaType === 'mix') {
+    if (imports) destination = libraryImportsHome(mediaType)
     else if (isUnder(path, '/jobs')) destination = '/jobs'
     else if (!isUnder(path, '/providers')) return libraryHome(mediaType)
   }
@@ -204,17 +228,15 @@ export function switchMediaScopeHref(
   )
 }
 
-export function switchLibraryHref(
-  path: string,
-  search: string,
-  view: LibraryView,
-) {
+export function switchLibraryHref(path: string, search: string, view: Library) {
   // System pages are not part of a library: choosing one opens its home.
   if (isSystemPath(path)) return libraryHome(view)
   const current = new URLSearchParams(search)
   const shown = libraryViewForPath(path, current.get('mediaType'))
   if (shown === view) return `${path}${current.size ? `?${current}` : ''}`
-  if (path === libraryMatchesHref(shown)) return libraryMatchesHref(view)
+  // Mixes has no Matches page.
+  if (shown !== 'mix' && view !== 'mix' && path === libraryMatchesHref(shown))
+    return libraryMatchesHref(view)
   if (view === 'artist') return switchMediaScopeHref(path, search, view)
   if (isUnder(path, '/playlists'))
     return view === 'album' || view === 'track'
@@ -233,10 +255,7 @@ export function switchLibraryHref(
       : '/tracks'
   if (shown === 'track')
     return isUnder(path, '/imports')
-      ? scopedHref(
-          view === 'subscription' ? '/imports/youtube' : '/imports',
-          view,
-        )
+      ? scopedHref(libraryImportsHome(view), view)
       : libraryHome(view)
   return switchMediaScopeHref(path, search, view)
 }

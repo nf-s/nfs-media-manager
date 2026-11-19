@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   history: vi.fn(),
   person: vi.fn(),
   albums: vi.fn(),
+  mixes: vi.fn(),
   playlists: vi.fn(),
   artists: vi.fn(),
   metadata: vi.fn(),
@@ -55,6 +56,7 @@ vi.mock('@/services/creators', () => ({
   getArtistHistory: mocks.history,
   getPerson: mocks.person,
   listArtistAlbums: mocks.albums,
+  listArtistMixes: mocks.mixes,
   listArtistPlaylists: mocks.playlists,
   listArtists: mocks.artists,
   listArtistMetadata: mocks.metadata,
@@ -113,6 +115,7 @@ describe('creator API', () => {
       '/artists/fixture',
       '/artists/fixture/albums',
       '/artists/fixture/tracks',
+      '/artists/fixture/mixes',
       '/artists/fixture/playlists',
       '/artists/fixture/history',
       '/people',
@@ -437,6 +440,32 @@ describe('creator API', () => {
       sortBy: 'title',
       direction: 'asc',
     })
+  })
+
+  it('pages an artist’s mixes newest first and validates the Mixes sorts', async () => {
+    for (const query of ['sortBy=viewCount', 'sortBy=relevance', 'size=101'])
+      expect(
+        (await app.request(`/artists/fixture/mixes?${query}`)).status,
+      ).toBe(422)
+    expect(mocks.mixes).not.toHaveBeenCalled()
+    const page = { items: [], totalCount: 0, page: 2, size: 5, pageCount: 0 }
+    mocks.mixes.mockResolvedValue(page)
+    const response = await app.request(
+      '/artists/fixture/mixes?page=2&size=5&q=warehouse',
+    )
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ data: page })
+    expect(mocks.mixes).toHaveBeenCalledWith('fixture', {
+      q: 'warehouse',
+      page: 2,
+      size: 5,
+      sortBy: 'publishedAt',
+      direction: 'desc',
+    })
+    mocks.mixes.mockRejectedValue(
+      new ServerError({ statusCode: 404, message: 'Artist not found' }),
+    )
+    expect((await app.request('/artists/missing/mixes')).status).toBe(404)
   })
 
   it('queues only a single provider for the selected artist and owner', async () => {

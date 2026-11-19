@@ -101,6 +101,7 @@ export async function listProviders(): Promise<ProviderSummary[]> {
         surface: provider.surface,
         mediaTypes: provider.mediaTypes,
         subscriptions: provider.subscriptions,
+        mixes: provider.mixes,
         rateLimit: {
           ...provider.rateLimit,
           ...(budgetStatus ? { requestBudget: budgetStatus.budget } : {}),

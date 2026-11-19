@@ -1,14 +1,22 @@
 'use client'
 
 import { skipToken, useQuery } from '@tanstack/react-query'
-import { SubscriptionSourceDetailSchema } from '@repo/schemas/subscriptions'
+import {
+  SubscriptionSourceDetailSchema,
+  type SubscriptionLibrary,
+} from '@repo/schemas/subscriptions'
 import { useConfig } from '@/components/providers'
 import { fetchApiData } from '@/utils/api'
+import { subscriptionLibraryPages } from '@/utils/subscriptions'
 
-export function useSubscriptionSource(id?: string) {
+/** One channel, podcast or show; its ID alone finds it, the library names the cache entry. */
+export function useSubscriptionSource(
+  id?: string,
+  library: SubscriptionLibrary = 'subscriptions',
+) {
   const { apiBaseUrl } = useConfig()
   return useQuery({
-    queryKey: ['subscriptions', 'source', id],
+    queryKey: [subscriptionLibraryPages[library].collection, 'source', id],
     queryFn: id
       ? ({ signal }) =>
           fetchApiData(

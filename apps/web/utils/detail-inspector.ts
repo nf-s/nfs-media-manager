@@ -8,6 +8,7 @@ const browseDetailKinds = {
   '/films': 'film',
   '/tracks': 'track',
   '/subscriptions': 'subscription',
+  '/mixes': 'mix',
 }
 
 const DetailTargetSchema = z.object({
@@ -17,10 +18,12 @@ const DetailTargetSchema = z.object({
     'track',
     'playlist',
     'subscription',
+    'mix',
     'collection',
     'artist',
     'person',
     'channel',
+    'show',
     'job',
     'user',
     'tag',
@@ -122,11 +125,13 @@ function legacyDetail(pathname: string, params: URLSearchParams) {
     film: ['item', 'tab'],
     track: ['item'],
     subscription: ['item'],
+    mix: ['item'],
     playlist: ['item', 'playlist', 'tab', 'playlistView'],
     collection: ['collection', 'tab'],
     artist: [],
     person: [],
     channel: [],
+    show: [],
     job: ['jobId', 'tab'],
     user: [],
     tag: [],
@@ -193,10 +198,12 @@ export const detailKindNames: Record<DetailTarget['kind'], string> = {
   track: 'Track',
   playlist: 'Playlist',
   subscription: 'Subscription',
+  mix: 'Mix',
   collection: 'Collection',
   artist: 'Artist',
   person: 'Person',
   channel: 'Channel',
+  show: 'Show',
   job: 'Job',
   user: 'Account',
   tag: 'Tag',
@@ -208,6 +215,8 @@ type LibraryPage = { path: string; label: string }
 const libraries = {
   channels: { path: '/subscriptions/channels', label: 'Channels' },
   subscriptions: { path: '/subscriptions', label: 'Subscriptions' },
+  shows: { path: '/mixes/shows', label: 'Shows' },
+  mixes: { path: '/mixes', label: 'Mixes' },
   albums: { path: '/albums', label: 'Albums' },
   films: { path: '/films', label: 'Films' },
   tracks: { path: '/tracks', label: 'Tracks' },
@@ -231,10 +240,12 @@ const kindLibraries: Record<DetailTarget['kind'], LibraryPage> = {
   track: libraries.tracks,
   playlist: libraries.playlists,
   subscription: libraries.subscriptions,
+  mix: libraries.mixes,
   collection: libraries.collections,
   artist: libraries.artists,
   person: libraries.people,
   channel: libraries.channels,
+  show: libraries.shows,
   job: libraries.jobs,
   user: libraries.account,
   tag: libraries.tags,
@@ -324,6 +335,13 @@ export function detailPageHref(target: DetailTarget, view?: URLSearchParams) {
     else if (params.get('mediaType') !== 'film') params.delete('mediaType')
     return detailLocation(`/collections/${id}`, params)
   }
-  const collection = target.kind === 'person' ? 'people' : `${target.kind}s`
+  const collection =
+    target.kind === 'person'
+      ? 'people'
+      : target.kind === 'mix'
+        ? 'mixes'
+        : target.kind === 'show'
+          ? 'mixes/shows'
+          : `${target.kind}s`
   return detailLocation(`/${collection}/${id}`, new URLSearchParams(view))
 }

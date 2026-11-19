@@ -37,11 +37,17 @@ describe('provider summary', () => {
     secrets: [],
     pluginPath: null,
   }
-  it('marks Subscriptions providers and defaults to other libraries', () => {
-    expect(ProviderSummarySchema.parse(summary).subscriptions).toBe(false)
+  it('marks Subscriptions and Mixes providers and defaults to other libraries', () => {
+    expect(ProviderSummarySchema.parse(summary)).toMatchObject({
+      subscriptions: false,
+      mixes: false,
+    })
     expect(
       ProviderSummarySchema.parse({ ...summary, subscriptions: true })
         .subscriptions,
     ).toBe(true)
+    expect(ProviderSummarySchema.parse({ ...summary, mixes: true }).mixes).toBe(
+      true,
+    )
   })
 })

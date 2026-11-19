@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
+  MixSubscriptionItemSchema,
   SpotifySubscriptionItemSchema,
   SubscriptionSourceSchema,
   YoutubeSubscriptionItemSchema,
@@ -19,11 +20,18 @@ import {
   savedSubscriptionSearch,
   subscriptionArtworkUrl,
   subscriptionBrowseQuery,
+  isSubscriptionSort,
+  parseSubscriptionType,
   subscriptionGridGeometry,
+  subscriptionLibraryPages,
   subscriptionRangeLabel,
   subscriptionSort,
+  subscriptionSortLabelsFor,
   subscriptionSortOptions,
+  subscriptionSourceColumnsFor,
   subscriptionSourceHref,
+  subscriptionSourcesHref,
+  subscriptionsHref,
   subscriptionTitleSuggestions,
   updateSubscriptionSearch,
   withSubscriptionFilter,
@@ -434,4 +442,115 @@ test('channel column filters union types and intersect history before sorting', 
     }).length,
     2,
   )
+})
+
+const mix = MixSubscriptionItemSchema.parse({
+  type: 'nts',
+  id: 'nts.example-late-show-2026-05-01',
+  sourceId: 'nts.example-late-show',
+  sourceTitle: 'Example Late Show',
+  sourceThumbnailUrl: 'https://images.example.test/late-show.jpg',
+  title: 'Example Late Show with Guest Selector',
+  description: 'First Track - Example Artist\nSecond Track - Another Artist',
+  tags: ['ambient'],
+  publishedAt: '2026-05-01T00:00:00.000Z',
+  publishedPrecision: 'day',
+  durationSec: 7200,
+  url: 'https://www.nts.live/shows/example-late-show/episodes/2026-05-01',
+  artworkUrl: null,
+  artists: ['Guest Selector'],
+  audioUrl: null,
+})
+
+test('Mixes browse state carries its library, drops count sorts and links to its own pages', () => {
+  const state = parseSubscriptionBrowseState(
+    new URLSearchParams('q=ambient&sortBy=viewCount'),
+    'mixes',
+  )
+  assert.equal(state.sortBy, null)
+  const query = subscriptionBrowseQuery(state, 'mixes')
+  assert.equal(query.params.get('library'), 'mixes')
+  assert.equal(query.sortBy, 'relevance')
+  // Subscriptions keeps its parameters without a library.
+  assert.equal(
+    subscriptionBrowseQuery(
+      parseSubscriptionBrowseState(new URLSearchParams()),
+    ).params.has('library'),
+    false,
+  )
+  assert.equal(
+    subscriptionBrowseQuery(
+      parseSubscriptionBrowseState(new URLSearchParams()),
+      'mixes',
+    ).identity ===
+      subscriptionBrowseQuery(
+        parseSubscriptionBrowseState(new URLSearchParams()),
+      ).identity,
+    false,
+  )
+  assert.deepEqual(subscriptionSortOptions('', 'mixes'), [
+    'publishedAt',
+    'title',
+    'source',
+    'durationSec',
+    'watchedAt',
+  ])
+  assert.equal(isSubscriptionSort('likeCount', 'mixes'), false)
+  assert.equal(isSubscriptionSort('likeCount'), true)
+  const labels = subscriptionSortLabelsFor('mixes')
+  assert.equal(labels.publishedAt, 'Broadcast')
+  assert.equal(labels.source, 'Show')
+  assert.equal(labels.watchedAt, 'Listened')
+  assert.equal(subscriptionSortLabelsFor('subscriptions').source, 'Channel')
+  assert.equal(
+    subscriptionSourceHref(mix.sourceId, 'mixes'),
+    '/mixes?sourceId=nts.example-late-show',
+  )
+  assert.equal(
+    subscriptionsHref([{ field: 'artist', value: 'Guest Selector' }], 'mixes'),
+    `/mixes?${new URLSearchParams({ filters: JSON.stringify([{ field: 'artist', value: 'Guest Selector' }]) })}`,
+  )
+  assert.equal(subscriptionSourcesHref('mixes', 'nts'), '/mixes/shows?type=nts')
+  assert.equal(subscriptionLibraryPages.mixes.collection, 'mixes')
+  assert.equal(
+    subscriptionLibraryPages.mixes.importsHref,
+    '/imports/rinse?mediaType=mix',
+  )
+  assert.equal(subscriptionArtworkUrl(mix), mix.sourceThumbnailUrl)
+  assert.equal(formatSubscriptionDuration(mix), '2:00:00')
+})
+
+test('show columns and type filters stay within each library', () => {
+  assert.deepEqual(
+    subscriptionSourceColumnsFor.mixes.map((column) => column.label),
+    [
+      'Show',
+      'Station',
+      'Stored mixes',
+      'Latest mix',
+      'Episodes',
+      'Description',
+      'History',
+    ],
+  )
+  assert.equal(parseSubscriptionType('nts', 'mixes'), 'nts')
+  assert.equal(parseSubscriptionType('nts', 'subscriptions'), null)
+  assert.equal(parseSubscriptionType('youtube', 'mixes'), null)
+  assert.deepEqual(
+    parseSubscriptionTypes('["youtube","rinse","lotradio"]', 'mixes'),
+    ['rinse', 'lotradio'],
+  )
+  const show = SubscriptionSourceSchema.parse({
+    type: 'rinse',
+    id: 'rinse.example-breakfast',
+    title: 'Example Breakfast',
+    description: null,
+    thumbnailUrl: null,
+    url: 'https://www.rinse.fm/shows/example-breakfast',
+    storedItems: 3,
+    latestItemAt: null,
+    historyComplete: false,
+    itemTotal: 1,
+  })
+  assert.equal(formatSubscriptionSourceSize(show), '1 episode')
 })

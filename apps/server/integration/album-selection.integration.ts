@@ -820,6 +820,7 @@ describe('album selection and safe scheduling', () => {
         failed: 0,
         imports: 0,
       },
+      { mediaType: 'mix', queued: 0, running: 0, failed: 0, imports: 0 },
     ])
   })
   it('uses successful scrape dates only and keeps freshness provider-specific', async () => {

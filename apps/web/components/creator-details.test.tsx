@@ -790,3 +790,156 @@ test('channel details show saved podcast episodes and scope Browse to the exact 
   assert.ok(table.includes(id))
   assert.doesNotMatch(table, /Refresh/)
 })
+
+const showId = 'lotradio.example-morning-show'
+const mixItem = {
+  type: 'lotradio',
+  id: 'lotradio.example-morning-show-2026-04-02',
+  sourceId: showId,
+  sourceTitle: 'Example Morning Show',
+  sourceThumbnailUrl: null,
+  title: 'Example Morning Show 2026-04-02',
+  description: 'Opening Track - Synthetic artist\nClosing Track - Another Name',
+  tags: ['house'],
+  publishedAt: '2026-04-02T09:00:00.000Z',
+  publishedPrecision: 'day',
+  durationSec: 3600,
+  url: 'https://www.thelotradio.com/shows/example-morning-show/2026-04-02',
+  artworkUrl: null,
+  artists: ['Synthetic artist'],
+  audioUrl: null,
+}
+
+test('show details list stored mixes square and filter Mixes by the exact show ID', async () => {
+  const { ChannelDetail } = await import('./channel-detail')
+  const data = SubscriptionSourceDetailSchema.parse({
+    source: {
+      type: 'lotradio',
+      id: showId,
+      title: 'Example Morning Show',
+      description: null,
+      thumbnailUrl: null,
+      url: 'https://www.thelotradio.com/shows/example-morning-show',
+      storedItems: 1,
+      latestItemAt: mixItem.publishedAt,
+      historyComplete: true,
+      itemTotal: null,
+    },
+    items: page(mixItem),
+  })
+  const html = render({
+    pathname: `/mixes/shows/${showId}`,
+    search: 'view=grid',
+    children: <ChannelDetail id={showId} library="mixes" />,
+    cache: [
+      [['mixes', 'source', showId], data],
+      [
+        [
+          'mixes',
+          'source',
+          showId,
+          'items',
+          'size=50&sortBy=publishedAt&direction=desc',
+          1,
+        ],
+        data.items,
+      ],
+    ],
+  })
+  assert.match(html, /<div class="ds-kicker">Show<\/div>/)
+  assert.doesNotMatch(html, /Subscribed/)
+  assert.match(html, /<article class="ds-card"><span class="ds-art">/)
+  assert.equal(
+    destination(html, 'Example Morning Show 2026-04-02').pathname,
+    `/mixes/${mixItem.id}`,
+  )
+  assert.equal(
+    destination(html, 'Filter mixes').searchParams.get('sourceId'),
+    showId,
+  )
+  assert.equal(destination(html, 'Filter mixes').pathname, '/mixes')
+  assert.match(
+    html,
+    /aria-label="Open on The Lot Radio \(opens in a new tab\)"/,
+  )
+})
+
+test('an artist with mixes has a Mixes tab and a latest mixes list that open mix and show details', () => {
+  const withMixes = ArtistDetailSchema.parse({ ...artist, mixCount: 1 })
+  const path = `/api/v1/artists/${artist.id}`
+  const overview = render({
+    pathname: `/artists/${artist.id}`,
+    children: <ArtistDetail id={artist.id} />,
+    cache: [
+      [['artist', artist.id], withMixes],
+      [
+        [
+          'artist-overview',
+          path,
+          'mixes',
+          'page=1&size=5&sortBy=publishedAt&direction=desc',
+        ],
+        page(mixItem),
+      ],
+    ],
+  })
+  const tabs = [...overview.matchAll(/role="tab"[^>]*>([^<]+)</g)].map(
+    (match) => match[1],
+  )
+  assert.deepEqual(tabs, [
+    'Overview',
+    'Albums',
+    'Tracks',
+    'Mixes',
+    'Listening',
+    'Coverage',
+    'Sources',
+  ])
+  assert.match(overview, /aria-label="Latest mixes"/)
+  assert.equal(
+    destination(overview, 'Example Morning Show 2026-04-02').pathname,
+    `/mixes/${mixItem.id}`,
+  )
+  assert.equal(
+    destination(overview, 'Example Morning Show').pathname,
+    `/mixes/shows/${showId}`,
+  )
+  const tab = render({
+    pathname: `/artists/${artist.id}`,
+    search: 'tab=mixes',
+    children: <ArtistDetail id={artist.id} />,
+    cache: [
+      [['artist', artist.id], withMixes],
+      [
+        [
+          'artist',
+          artist.id,
+          'mixes',
+          'size=50&sortBy=publishedAt&direction=desc',
+          1,
+        ],
+        page(mixItem),
+      ],
+    ],
+  })
+  assert.match(tab, /role="tab" aria-selected="true"[^>]*>Mixes/)
+  assertNestedViewControls(tab)
+  assert.match(tab, /<table class="ds-table" aria-label="mixes"/)
+  assert.equal(
+    destination(tab, 'Example Morning Show 2026-04-02').pathname,
+    `/mixes/${mixItem.id}`,
+  )
+})
+
+test('an artist without mixes has no Mixes tab or list', () => {
+  const html = render({
+    pathname: `/artists/${artist.id}`,
+    search: 'tab=mixes',
+    children: <ArtistDetail id={artist.id} />,
+    cache: [[['artist', artist.id], artist]],
+  })
+  assert.doesNotMatch(html, />Mixes</)
+  assert.doesNotMatch(html, /Latest mixes/)
+  // An old Mixes link opens the Overview instead of an empty tab.
+  assert.match(html, /role="tab" aria-selected="true"[^>]*>Overview/)
+})

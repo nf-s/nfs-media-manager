@@ -1,19 +1,24 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
+  AiMixPlanSchema,
   AiSearchPlanSchema,
   AiSubscriptionPlanSchema,
+  type AiMixPlan,
   type AiSubscriptionPlan,
 } from '@repo/schemas/ai-search'
 import { albumBrowseFields, trackBrowseFields } from '@repo/schemas/browse'
 import { artistBrowseFields } from '@repo/schemas/artist-browse'
 import { trackMatchDiagnosticFields } from '@repo/schemas/match-diagnostics'
 import {
+  aiMixSearchParams,
   aiSearchParams,
   aiSubscriptionSearchParams,
+  describeAiMixPlan,
   describeAiSearchPlan,
   describeAiSubscriptionPlan,
   mediaAiSearchTarget,
+  mixAiSearchTarget,
   subscriptionAiSearchTarget,
 } from './ai-search'
 import { trackMatchDiagnosticsQuery } from './match-diagnostics'
@@ -331,4 +336,77 @@ test('Subscriptions plan review lists sources, type, dates, durations and sort',
     }).success,
     false,
   )
+})
+
+function mixPlan(overrides: Partial<AiMixPlan> = {}) {
+  return AiMixPlanSchema.parse({
+    q: '',
+    fields: 'all',
+    sources: [],
+    stations: [],
+    filters: [],
+    publishedFrom: null,
+    publishedTo: null,
+    durationMinSec: null,
+    durationMaxSec: null,
+    sortBy: 'publishedAt',
+    direction: 'desc',
+    ...overrides,
+  })
+}
+
+test('Mixes plans set shows, stations, artists and tags on the Mixes URL and are reviewed in its words', () => {
+  const plan = mixPlan({
+    q: 'garage',
+    sources: [
+      {
+        id: 'rinse.example-breakfast',
+        type: 'rinse',
+        title: 'Example Breakfast',
+      },
+    ],
+    stations: ['rinse'],
+    filters: [{ field: 'artist', value: 'Guest Selector', mode: 'required' }],
+    publishedFrom: '2026-06-01',
+    durationMinSec: 3600,
+    sortBy: 'watchedAt',
+    direction: 'asc',
+  })
+  const search = updateSubscriptionSearch(
+    'view=list&item=rinse.old',
+    aiMixSearchParams(plan),
+  )
+  const state = parseSubscriptionBrowseState(search, 'mixes')
+  assert.equal(state.q, 'garage')
+  assert.equal(state.view, 'list')
+  assert.equal(search.has('item'), false)
+  assert.deepEqual(state.filters, [
+    { field: 'source', value: 'Example Breakfast', mode: 'any' },
+    { field: 'type', value: 'Rinse FM', mode: 'required' },
+    { field: 'artist', value: 'Guest Selector', mode: 'required' },
+  ])
+  assert.equal(state.sortBy, 'watchedAt')
+  assert.equal(state.direction, 'asc')
+  assert.deepEqual(describeAiMixPlan(plan), [
+    'Search: garage',
+    'Shows: Example Breakfast',
+    'Station: Rinse FM',
+    'Required · Artist: Guest Selector',
+    'Broadcast: 2026-06-01 to *',
+    'Duration: 1:00:00 to *',
+    'Sort: Listened, ascending',
+  ])
+  assert.equal(mixAiSearchTarget.mediaType, 'mix')
+  assert.equal(
+    mixAiSearchTarget.responseSchema.safeParse({
+      plan,
+      explanation: 'Mixes of one show.',
+      assumptions: [],
+      warnings: [],
+    }).success,
+    true,
+  )
+  assert.deepEqual(describeAiMixPlan(mixPlan({ sortBy: 'relevance' })), [
+    'Sort: Relevance',
+  ])
 })

@@ -1,24 +1,37 @@
 import { describe, expect, it } from 'vitest'
 import {
+  AiMixInterpretedPlanSchema,
+  AiMixPlanSchema,
   AiSubscriptionInterpretedPlanSchema,
   AiSubscriptionPlanSchema,
   AiSearchInputSchema,
+  aiMixBrowseQuery,
   aiSubscriptionBrowseQuery,
+  type AiMixPlan,
   type AiSubscriptionPlan,
 } from '../src/ai-search'
+import { ArtistDetailSchema, ArtistMixQuerySchema } from '../src/creators'
 import {
   SPOTIFY_PODCAST_SYNC_TASK,
   SUBSCRIPTION_SYNC_TASKS,
   SubscriptionDaySchema,
+  SubscriptionFacetQuerySchema,
   SubscriptionItemParamsSchema,
   SubscriptionItemPatchSchema,
   SubscriptionItemQuerySchema,
   SubscriptionItemSchema,
+  SubscriptionLibraryQuerySchema,
   SubscriptionSourceIdSchema,
+  SubscriptionSourceQuerySchema,
+  SubscriptionSourceSchema,
   SubscriptionSyncParamsSchema,
   getSubscriptionBrowseValues,
+  mixBrowseFields,
   subscriptionBrowseFields,
+  subscriptionBrowseFieldsFor,
   subscriptionItemUrl,
+  subscriptionLibraryOf,
+  subscriptionLibraryTypes,
   subscriptionSourceUrl,
 } from '../src/subscriptions'
 
@@ -26,6 +39,8 @@ const CHANNEL = 'UCabcdefghijklmnopqrstuv'
 const VIDEO = 'abcdefghijk'
 const SHOW = 'ShowFixture00000000001'
 const EPISODE = 'EpisodeFixture00000001'
+const MIX_SHOW = 'nts.synthetic-show'
+const MIX = 'nts.synthetic-show-2026-03-01'
 
 const shared = {
   sourceTitle: 'Synthetic Source',
@@ -95,8 +110,9 @@ describe('subscription identifiers', () => {
 })
 
 describe('subscription item query', () => {
-  it('defaults to every field, descending and no sort', () => {
+  it('defaults to the Subscriptions library, every field, descending and no sort', () => {
     expect(SubscriptionItemQuerySchema.parse({})).toEqual({
+      library: 'subscriptions',
       fields: 'all',
       filters: [],
       ranges: [],
@@ -136,6 +152,7 @@ describe('subscription item query', () => {
         size: '100',
       }),
     ).toEqual({
+      library: 'subscriptions',
       q: 'orbit',
       fields: 'title',
       filters: [
@@ -340,6 +357,327 @@ describe('AI subscription plan', () => {
     expect(
       AiSubscriptionInterpretedPlanSchema.safeParse({ ...rest, ...overrides })
         .success,
+    ).toBe(false)
+  })
+})
+
+describe('Mixes library', () => {
+  const mix = {
+    type: 'nts',
+    id: MIX,
+    sourceId: MIX_SHOW,
+    ...shared,
+    url: 'https://www.nts.live/shows/synthetic-show/episodes/2026-03-01',
+    artworkUrl: 'https://media.example/synthetic.jpg',
+    artists: ['Synthetic DJ', 'Second Guest'],
+    audioUrl: 'https://audio.example/synthetic.mp3',
+  }
+
+  it('puts station rows in Mixes and provider rows in Subscriptions', () => {
+    expect(subscriptionLibraryTypes).toEqual({
+      subscriptions: ['youtube', 'spotify'],
+      mixes: ['rinse', 'nts', 'lotradio'],
+    })
+    for (const type of subscriptionLibraryTypes.mixes)
+      expect(subscriptionLibraryOf(type)).toBe('mixes')
+    for (const type of subscriptionLibraryTypes.subscriptions)
+      expect(subscriptionLibraryOf(type)).toBe('subscriptions')
+    expect(SubscriptionItemParamsSchema.safeParse({ id: MIX }).success).toBe(
+      true,
+    )
+    expect(SubscriptionSourceIdSchema.safeParse(MIX_SHOW).success).toBe(true)
+    expect(
+      SubscriptionItemParamsSchema.safeParse({ id: 'bbc.show-1' }).success,
+    ).toBe(false)
+  })
+
+  it('maps a mix with its stored addresses, billed artists and no library artists by default', () => {
+    expect(SubscriptionItemSchema.parse(mix)).toEqual({
+      ...mix,
+      watchedAt: null,
+      libraryArtists: [],
+    })
+    expect(
+      SubscriptionItemSchema.safeParse({ ...mix, type: 'youtube' }).success,
+    ).toBe(false)
+    expect(subscriptionItemUrl('nts', MIX, mix.url)).toBe(mix.url)
+    expect(subscriptionItemUrl('rinse', 'rinse.x', null)).toBe(
+      'https://www.rinse.fm',
+    )
+    expect(subscriptionItemUrl('youtube', VIDEO, 'https://other.example')).toBe(
+      `https://www.youtube.com/watch?v=${VIDEO}`,
+    )
+    expect(
+      SubscriptionSourceSchema.parse({
+        type: 'lotradio',
+        id: 'lotradio.synthetic',
+        title: 'Synthetic Show',
+        description: null,
+        thumbnailUrl: null,
+        url: subscriptionSourceUrl('lotradio', 'lotradio.synthetic', null),
+        storedItems: 1,
+        latestItemAt: null,
+        historyComplete: true,
+        itemTotal: null,
+      }),
+    ).toMatchObject({ url: 'https://www.thelotradio.com' })
+  })
+
+  it('reads a mix as its station label and billed artists, without counts', () => {
+    expect(
+      getSubscriptionBrowseValues(SubscriptionItemSchema.parse(mix)),
+    ).toMatchObject({
+      type: 'NTS',
+      source: 'Synthetic Source',
+      artist: ['Synthetic DJ', 'Second Guest'],
+      genre: ['fixture'],
+      viewCount: null,
+      watched: 'No',
+    })
+  })
+
+  it('names the shared fields as Mixes and has artists but no counts', () => {
+    expect(subscriptionBrowseFieldsFor('mixes')).toBe(mixBrowseFields)
+    expect(subscriptionBrowseFieldsFor('subscriptions')).toBe(
+      subscriptionBrowseFields,
+    )
+    expect(
+      Object.fromEntries(
+        mixBrowseFields.map((field) => [`${field.key}`, field.label]),
+      ),
+    ).toEqual({
+      title: 'Title',
+      source: 'Show',
+      type: 'Station',
+      artist: 'Artist',
+      genre: 'Tags',
+      description: 'Description',
+      publishedAt: 'Broadcast',
+      durationSec: 'Duration',
+      watched: 'Listened',
+      watchedAt: 'Listened',
+    })
+  })
+
+  it('accepts the Mixes filters, ranges and sorts', () => {
+    expect(
+      SubscriptionItemQuerySchema.parse({
+        library: 'mixes',
+        filters: JSON.stringify([
+          { field: 'artist', value: 'Synthetic DJ', mode: 'required' },
+          { field: 'type', value: 'NTS' },
+          { field: 'genre', value: 'house', mode: 'exclude' },
+          { field: 'watched', value: 'No' },
+        ]),
+        ranges: JSON.stringify([
+          { field: 'publishedAt', min: 0 },
+          { field: 'durationSec', max: 3600, includeMissing: true },
+          { field: 'watchedAt', min: 0 },
+        ]),
+        sortBy: 'durationSec',
+      }),
+    ).toMatchObject({
+      library: 'mixes',
+      filters: [
+        { field: 'artist', value: 'Synthetic DJ', mode: 'required' },
+        { field: 'type', value: 'NTS' },
+        { field: 'genre', value: 'house', mode: 'exclude' },
+        { field: 'watched', value: 'No' },
+      ],
+      sortBy: 'durationSec',
+    })
+  })
+
+  it.each([
+    { library: 'films' },
+    { library: 'mixes', ranges: JSON.stringify([{ field: 'viewCount' }]) },
+    {
+      library: 'mixes',
+      ranges: JSON.stringify([{ field: 'commentCount', min: 1 }]),
+    },
+    { library: 'mixes', sortBy: 'likeCount' },
+    {
+      library: 'subscriptions',
+      filters: JSON.stringify([{ field: 'artist', value: 'x' }]),
+    },
+  ])(
+    'rejects fields outside the library: $library $ranges$sortBy$filters',
+    (input) => {
+      expect(SubscriptionItemQuerySchema.safeParse(input).success).toBe(false)
+    },
+  )
+
+  it('scopes sources, facets and fields to one library', () => {
+    expect(SubscriptionSourceQuerySchema.parse({})).toEqual({
+      library: 'subscriptions',
+    })
+    expect(
+      SubscriptionSourceQuerySchema.parse({ library: 'mixes', type: 'nts' }),
+    ).toEqual({ library: 'mixes', type: 'nts' })
+    expect(
+      SubscriptionSourceQuerySchema.safeParse({ type: 'nts' }).success,
+    ).toBe(false)
+    expect(
+      SubscriptionSourceQuerySchema.safeParse({
+        library: 'mixes',
+        type: 'youtube',
+      }).success,
+    ).toBe(false)
+    expect(SubscriptionFacetQuerySchema.parse({ q: 'house' })).toEqual({
+      q: 'house',
+      limitPerField: 25,
+      library: 'subscriptions',
+    })
+    expect(
+      SubscriptionFacetQuerySchema.parse({ library: 'mixes' }).library,
+    ).toBe('mixes')
+    expect(
+      SubscriptionLibraryQuerySchema.safeParse({ library: 'x' }).success,
+    ).toBe(false)
+  })
+
+  it('pages an artist’s mixes newest first by default', () => {
+    expect(ArtistMixQuerySchema.parse({})).toEqual({
+      page: 1,
+      size: 24,
+      sortBy: 'publishedAt',
+      direction: 'desc',
+    })
+    for (const sortBy of ['title', 'source', 'durationSec', 'watchedAt'])
+      expect(ArtistMixQuerySchema.safeParse({ sortBy }).success).toBe(true)
+    for (const sortBy of ['relevance', 'viewCount', 'name'])
+      expect(ArtistMixQuerySchema.safeParse({ sortBy }).success).toBe(false)
+    expect(ArtistDetailSchema.shape.mixCount.parse(undefined)).toBe(0)
+  })
+})
+
+describe('AI mix plan', () => {
+  const plan: AiMixPlan = {
+    q: 'warehouse',
+    fields: 'all',
+    stations: ['nts'],
+    filters: [
+      { field: 'artist', value: 'Synthetic DJ', mode: 'required' },
+      { field: 'genre', value: 'house', mode: 'any' },
+    ],
+    publishedFrom: '2026-01-01',
+    publishedTo: null,
+    durationMinSec: 3601,
+    durationMaxSec: null,
+    sortBy: 'relevance',
+    direction: 'desc',
+    sources: [{ id: MIX_SHOW, type: 'nts', title: 'Synthetic Show' }],
+  }
+
+  it('is a library of the AI search input', () => {
+    expect(AiSearchInputSchema.parse({ mediaType: 'mix', text: 'x' })).toEqual({
+      mediaType: 'mix',
+      text: 'x',
+    })
+    expect(AiMixPlanSchema.parse(plan)).toEqual(plan)
+    const { sources, ...interpreted } = plan
+    expect(sources).toHaveLength(1)
+    expect(
+      AiMixInterpretedPlanSchema.safeParse({
+        ...interpreted,
+        sourceNames: ['Synthetic Show'],
+      }).success,
+    ).toBe(true)
+  })
+
+  it('becomes the Mixes browse filters with stations, artists and tags', () => {
+    expect(aiMixBrowseQuery(plan)).toEqual({
+      q: 'warehouse',
+      fields: 'all',
+      filters: [
+        { field: 'source', value: 'Synthetic Show', mode: 'any' },
+        { field: 'type', value: 'NTS', mode: 'required' },
+        { field: 'artist', value: 'Synthetic DJ', mode: 'required' },
+        { field: 'genre', value: 'house', mode: 'any' },
+      ],
+      ranges: [
+        {
+          field: 'publishedAt',
+          min: Date.parse('2026-01-01T00:00:00.000Z'),
+          includeMissing: false,
+        },
+        { field: 'durationSec', min: 3601, includeMissing: false },
+      ],
+      sortBy: 'relevance',
+      direction: 'desc',
+    })
+    // Two stations exclude the third, so the any-of group stays the shows'.
+    expect(
+      aiMixBrowseQuery({
+        ...plan,
+        stations: ['rinse', 'lotradio'],
+        filters: [],
+        sources: [],
+      }).filters,
+    ).toEqual([{ field: 'type', value: 'NTS', mode: 'exclude' }])
+    for (const stations of [[], ['rinse', 'nts', 'lotradio']] as const)
+      expect(
+        aiMixBrowseQuery({
+          ...plan,
+          stations: [...stations],
+          filters: [],
+          sources: [],
+        }).filters,
+      ).toEqual([])
+  })
+
+  it.each([
+    { stations: ['youtube'] },
+    { sortBy: 'viewCount' },
+    { filters: [{ field: 'source', value: 'x', mode: 'any' }] },
+    { filters: [{ field: 'artist', value: 'x' }] },
+    { types: [] },
+  ])('rejects mix plans outside the contract: %o', (overrides) => {
+    const { sources, ...rest } = plan
+    expect(sources).toHaveLength(1)
+    expect(
+      AiMixInterpretedPlanSchema.safeParse({
+        ...rest,
+        sourceNames: [],
+        ...overrides,
+      }).success,
+    ).toBe(false)
+  })
+
+  it('keeps stations and station shows out of Subscriptions plans', () => {
+    expect(
+      AiMixPlanSchema.safeParse({
+        ...plan,
+        sources: [{ id: CHANNEL, type: 'youtube', title: 'Channel' }],
+      }).success,
+    ).toBe(false)
+    expect(
+      AiSubscriptionPlanSchema.safeParse({
+        q: '',
+        fields: 'all',
+        types: ['nts'],
+        publishedFrom: null,
+        publishedTo: null,
+        durationMinSec: null,
+        durationMaxSec: null,
+        sortBy: 'publishedAt',
+        direction: 'desc',
+        sources: [],
+      }).success,
+    ).toBe(false)
+    expect(
+      AiSubscriptionPlanSchema.safeParse({
+        q: '',
+        fields: 'all',
+        types: [],
+        publishedFrom: null,
+        publishedTo: null,
+        durationMinSec: null,
+        durationMaxSec: null,
+        sortBy: 'publishedAt',
+        direction: 'desc',
+        sources: [{ id: MIX_SHOW, type: 'nts', title: 'Synthetic Show' }],
+      }).success,
     ).toBe(false)
   })
 })

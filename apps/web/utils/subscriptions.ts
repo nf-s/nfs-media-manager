@@ -6,13 +6,17 @@ import {
   type BrowseRange,
 } from '@repo/schemas/browse'
 import {
+  MixSortSchema,
   SubscriptionItemQuerySchema,
   SubscriptionSearchFieldsSchema,
   SubscriptionSortSchema,
   SubscriptionSourceIdSchema,
   SubscriptionTypeSchema,
+  subscriptionLibraryLabels,
+  subscriptionLibraryTypes,
   subscriptionTypeLabels,
   type SubscriptionItem,
+  type SubscriptionLibrary,
   type SubscriptionPublishedPrecision,
   type SubscriptionSort,
   type SubscriptionSource,
@@ -32,36 +36,115 @@ import {
   type BrowseView,
   type GridDensity,
 } from './media-grid'
+import { libraryImportsHome, scopedHref } from './media-scope'
 import { formatVideoDuration } from './youtube'
 
-/** API collection, page path and browser storage key suffix. */
-export const subscriptionCollection = 'subscriptions'
-export const subscriptionsPath = '/subscriptions'
-export const subscriptionImportsHref = '/imports/youtube?mediaType=subscription'
+type Noun = { one: string; other: string }
+type SubscriptionLibraryPage = {
+  collection: 'subscriptions' | 'mixes'
+  path: string
+  sourcesPath: string
+  importsHref: string
+  itemKind: 'subscription' | 'mix'
+  sourceKind: 'channel' | 'show'
+  name: string
+  items: Noun
+  plural: string
+  sources: Noun
+  sourcesTitle: string
+}
+
+/**
+ * Where each library lives in the app. Both read the Subscriptions API; the
+ * collection names the library in query keys and browser storage, so the two
+ * never share a cache entry or saved view.
+ */
+export const subscriptionLibraryPages: Record<
+  SubscriptionLibrary,
+  SubscriptionLibraryPage
+> = {
+  subscriptions: {
+    collection: 'subscriptions',
+    path: '/subscriptions',
+    sourcesPath: '/subscriptions/channels',
+    importsHref: '/imports/youtube?mediaType=subscription',
+    itemKind: 'subscription',
+    sourceKind: 'channel',
+    name: 'Subscriptions',
+    items: { one: 'item', other: 'items' },
+    plural: 'subscriptions',
+    sources: { one: 'channel', other: 'channels' },
+    sourcesTitle: 'Channels',
+  },
+  mixes: {
+    collection: 'mixes',
+    path: '/mixes',
+    sourcesPath: '/mixes/shows',
+    importsHref: scopedHref(libraryImportsHome('mix'), 'mix'),
+    itemKind: 'mix',
+    sourceKind: 'show',
+    name: 'Mixes',
+    items: { one: 'mix', other: 'mixes' },
+    plural: 'mixes',
+    sources: { one: 'show', other: 'shows' },
+    sourcesTitle: 'Shows',
+  },
+}
+
+/** API parameters that select a library; Subscriptions is the API default. */
+export function subscriptionLibraryParams(
+  library: SubscriptionLibrary,
+): Record<string, string> {
+  return library === 'mixes' ? { library } : {}
+}
+
 /** URL parameters of the open drawer; changing them keeps the page and is not saved. */
 export const subscriptionDrawerParams = ['item']
 
 /** Column, picker and sort order: identity, creator, properties, dates, counts, pills. */
-export const subscriptionFieldOrder = [
-  'title',
-  'source',
-  'type',
-  'publishedAt',
-  'durationSec',
-  'watchedAt',
-  'viewCount',
-  'likeCount',
-  'commentCount',
-  'genre',
-]
+export const subscriptionFieldOrders: Record<SubscriptionLibrary, string[]> = {
+  subscriptions: [
+    'title',
+    'source',
+    'type',
+    'publishedAt',
+    'durationSec',
+    'watchedAt',
+    'viewCount',
+    'likeCount',
+    'commentCount',
+    'genre',
+  ],
+  mixes: [
+    'title',
+    'source',
+    'type',
+    'artist',
+    'publishedAt',
+    'durationSec',
+    'watchedAt',
+    'genre',
+  ],
+}
+export const subscriptionFieldOrder = subscriptionFieldOrders.subscriptions
 
-export const defaultSubscriptionColumns = [
-  'title',
-  'source',
-  'publishedAt',
-  'durationSec',
-  'watchedAt',
-]
+export const defaultSubscriptionColumnsFor: Record<
+  SubscriptionLibrary,
+  string[]
+> = {
+  subscriptions: ['title', 'source', 'publishedAt', 'durationSec', 'watchedAt'],
+  mixes: [
+    'title',
+    'source',
+    'type',
+    'artist',
+    'publishedAt',
+    'durationSec',
+    'watchedAt',
+  ],
+}
+export const defaultSubscriptionColumns =
+  defaultSubscriptionColumnsFor.subscriptions
 
 export type SubscriptionSearchFields = 'title' | 'all'
 
@@ -92,6 +175,7 @@ export function parseSubscriptionRanges(value: string | null): BrowseRange[] {
 
 export function parseSubscriptionBrowseState(
   params: URLSearchParams,
+  library: SubscriptionLibrary = 'subscriptions',
 ): SubscriptionBrowseState {
   const sort = SubscriptionSortSchema.safeParse(params.get('sortBy'))
   const fields = SubscriptionSearchFieldsSchema.safeParse(params.get('fields'))
@@ -103,7 +187,8 @@ export function parseSubscriptionBrowseState(
     fields: fields.success ? fields.data : 'all',
     filters: parseSubscriptionFilters(params.get('filters')),
     ranges: parseSubscriptionRanges(params.get('ranges')),
-    sortBy: sort.success ? sort.data : null,
+    sortBy:
+      sort.success && isSubscriptionSort(sort.data, library) ? sort.data : null,
     direction: params.get('direction') === 'asc' ? 'asc' : 'desc',
     view: parseBrowseView(params.get('view')),
     columns: columns === null ? null : columns.split(',').filter(Boolean),
@@ -131,21 +216,47 @@ export const subscriptionSortLabels: Record<SubscriptionSort, string> = {
   commentCount: 'Comments',
 }
 
-export function subscriptionSortOptions(q: string): SubscriptionSort[] {
+/** Sort labels in the library's own words: a mix's show, broadcast and listened dates. */
+export function subscriptionSortLabelsFor(
+  library: SubscriptionLibrary,
+): Record<SubscriptionSort, string> {
+  const labels = subscriptionLibraryLabels[library]
+  return {
+    ...subscriptionSortLabels,
+    publishedAt: labels.published,
+    source: labels.source,
+    watchedAt: labels.watched,
+  }
+}
+
+export function subscriptionSortOptions(
+  q: string,
+  library: SubscriptionLibrary = 'subscriptions',
+): SubscriptionSort[] {
   return SubscriptionSortSchema.options.filter(
-    (option) => option !== 'relevance' || q,
+    (option) =>
+      (option !== 'relevance' || q) && isSubscriptionSort(option, library),
   )
 }
 
-export function isSubscriptionSort(key: string): key is SubscriptionSort {
-  return SubscriptionSortSchema.safeParse(key).success
+export function isSubscriptionSort(
+  key: string,
+  library: SubscriptionLibrary = 'subscriptions',
+): key is SubscriptionSort {
+  // Mixes have no view, like or comment counts.
+  return (
+    library === 'mixes' ? MixSortSchema : SubscriptionSortSchema
+  ).safeParse(key).success
 }
 
 /** The API parameters for a state, and the identity that resets the virtual scroller. */
-export function subscriptionBrowseQuery(state: SubscriptionBrowseState) {
+export function subscriptionBrowseQuery(
+  state: SubscriptionBrowseState,
+  library: SubscriptionLibrary = 'subscriptions',
+) {
   const sortBy = subscriptionSort(state)
   const direction = sortBy === 'relevance' ? 'desc' : state.direction
-  const params = new URLSearchParams()
+  const params = new URLSearchParams(subscriptionLibraryParams(library))
   if (state.q) {
     params.set('q', state.q)
     params.set('fields', state.fields)
@@ -195,22 +306,38 @@ export function withSubscriptionFilter(
     : [...filters, filter]
 }
 
-export function subscriptionsHref(filters: BrowseFilter[]) {
+export function subscriptionsHref(
+  filters: BrowseFilter[],
+  library: SubscriptionLibrary = 'subscriptions',
+) {
+  const path = subscriptionLibraryPages[library].path
   return filters.length
-    ? `${subscriptionsPath}?${new URLSearchParams({ filters: JSON.stringify(filters) })}`
-    : subscriptionsPath
+    ? `${path}?${new URLSearchParams({ filters: JSON.stringify(filters) })}`
+    : path
 }
 
-/** Browse page filtered to one channel or podcast. */
-export function subscriptionSourceHref(id: string) {
-  return `${subscriptionsPath}?${new URLSearchParams({ sourceId: id })}`
+/** Browse page filtered to one channel, podcast or show. */
+export function subscriptionSourceHref(
+  id: string,
+  library: SubscriptionLibrary = 'subscriptions',
+) {
+  return `${subscriptionLibraryPages[library].path}?${new URLSearchParams({ sourceId: id })}`
+}
+
+/** The library's channel or show list, optionally filtered to one type. */
+export function subscriptionSourcesHref(
+  library: SubscriptionLibrary,
+  type?: SubscriptionType,
+) {
+  const path = subscriptionLibraryPages[library].sourcesPath
+  return type ? `${path}?${new URLSearchParams({ type })}` : path
 }
 
 export function subscriptionTypeFilter(type: SubscriptionType): BrowseFilter {
   return { field: 'type', value: subscriptionTypeLabels[type] }
 }
 
-/** A YouTube thumbnail, or the episode artwork with the show's as fallback. */
+/** A YouTube thumbnail, or the episode or mix artwork with the show's as fallback. */
 export function subscriptionArtworkUrl(item: SubscriptionItem) {
   return item.type === 'youtube'
     ? youtubeThumbnailUrl(item.id)
@@ -339,12 +466,14 @@ export type SubscriptionSourceSort =
   | 'handle'
   | 'historyComplete'
 
-export const subscriptionSourceColumns: Array<{
+export type SubscriptionSourceColumn = {
   key: SubscriptionSourceSort
   label: string
   numeric?: boolean
   defaultVisible?: boolean
-}> = [
+}
+
+const subscriptionSourceColumns: SubscriptionSourceColumn[] = [
   { key: 'title', label: 'Name' },
   { key: 'type', label: 'Type' },
   { key: 'storedItems', label: 'Stored items', numeric: true },
@@ -355,30 +484,62 @@ export const subscriptionSourceColumns: Array<{
   { key: 'historyComplete', label: 'History', defaultVisible: false },
 ]
 
+/** A station show has no handle; its size is the station's episode count. */
+const mixSourceColumns: SubscriptionSourceColumn[] = [
+  { key: 'title', label: 'Show' },
+  { key: 'type', label: 'Station' },
+  { key: 'storedItems', label: 'Stored mixes', numeric: true },
+  { key: 'latestItemAt', label: 'Latest mix' },
+  { key: 'size', label: 'Episodes', numeric: true, defaultVisible: false },
+  { key: 'description', label: 'Description', defaultVisible: false },
+  { key: 'historyComplete', label: 'History', defaultVisible: false },
+]
+
+export const subscriptionSourceColumnsFor: Record<
+  SubscriptionLibrary,
+  SubscriptionSourceColumn[]
+> = {
+  subscriptions: subscriptionSourceColumns,
+  mixes: mixSourceColumns,
+}
+
 export function subscriptionSourceSort(
   value: string | null,
+  library: SubscriptionLibrary = 'subscriptions',
 ): SubscriptionSourceSort {
   return (
-    subscriptionSourceColumns.find((column) => column.key === value)?.key ??
-    'title'
+    subscriptionSourceColumnsFor[library].find((column) => column.key === value)
+      ?.key ?? 'title'
   )
 }
 
+function inLibrary(
+  type: SubscriptionType,
+  library: SubscriptionLibrary | undefined,
+) {
+  return !library || subscriptionLibraryTypes[library].includes(type)
+}
+
+/** A type in the URL; with a library, only that library's types. */
 export function parseSubscriptionType(
   value: string | null,
+  library?: SubscriptionLibrary,
 ): SubscriptionType | null {
   const result = SubscriptionTypeSchema.safeParse(value)
-  return result.success ? result.data : null
+  return result.success && inLibrary(result.data, library) ? result.data : null
 }
 
 export function parseSubscriptionTypes(
   value: string | null,
+  library?: SubscriptionLibrary,
 ): SubscriptionType[] {
   try {
     const result = SubscriptionTypeSchema.array().safeParse(
       value ? JSON.parse(value) : [],
     )
-    return result.success ? result.data : []
+    return result.success
+      ? result.data.filter((type) => inLibrary(type, library))
+      : []
   } catch {
     return []
   }

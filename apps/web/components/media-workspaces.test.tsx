@@ -1008,3 +1008,93 @@ test('the shared metadata toolbar places active chips above search and count', a
   assert.ok(chips > -1 && chips < freshness && freshness < toolbar)
   assert.ok(toolbar < search && search < count)
 })
+
+test('Mixes navigation has Browse, Shows and Imports, then Jobs and Providers, and no Matches', () => {
+  const html = renderNavigation('/mixes', 'q=late')
+  assert.equal(navLinks(html).length, 5)
+  assert.match(html, /aria-current="page" href="\/mixes\?q=late">Browse/)
+  assert.match(html, /href="\/mixes\/shows">Shows/)
+  assert.match(html, /href="\/imports\/rinse\?mediaType=mix">Imports/)
+  assert.match(html, /href="\/jobs">Jobs/)
+  assert.match(html, /href="\/providers">Providers/)
+  assert.doesNotMatch(
+    html,
+    /Matches|Tags|Playlists|Collections|Channels|href="\/(albums|films|subscriptions)/,
+  )
+  const shows = renderNavigation('/mixes/shows', '')
+  assert.match(shows, /aria-current="page" href="\/mixes\/shows">Shows/)
+  assert.doesNotMatch(shows, /aria-current="page" href="\/mixes">/)
+  const station = renderNavigation('/imports/lotradio', '')
+  assert.match(
+    station,
+    /aria-current="page" href="\/imports\/rinse\?mediaType=mix">Imports/,
+  )
+})
+
+test('library selector lists Mixes and selects it on its pages', () => {
+  function unexpectedNavigation() {
+    throw new Error('Navigation forbidden during rendering')
+  }
+  for (const path of ['/mixes', '/mixes/shows', '/imports/nts']) {
+    const html = render(
+      path,
+      '',
+      <AppRouterContext.Provider
+        value={{
+          back: unexpectedNavigation,
+          forward: unexpectedNavigation,
+          refresh: unexpectedNavigation,
+          push: unexpectedNavigation,
+          replace: unexpectedNavigation,
+          prefetch: unexpectedNavigation,
+        }}
+      >
+        <LibrarySelector />
+      </AppRouterContext.Provider>,
+    )
+    assert.match(html, /<option value="mix" selected="">Mixes<\/option>/)
+    assert.match(html, /<option value="subscription">Subscriptions<\/option>/)
+  }
+})
+
+test('Mixes imports list one sync page per station only', () => {
+  const html = render(
+    '/imports/nts',
+    'mediaType=mix',
+    <ImportsWorkspace>
+      <span>Station</span>
+    </ImportsWorkspace>,
+  )
+  for (const [station, label] of [
+    ['rinse', 'Rinse FM'],
+    ['nts', 'NTS'],
+    ['lotradio', 'The Lot Radio'],
+  ])
+    assert.match(
+      html,
+      new RegExp(`href="/imports/${station}\\?mediaType=mix">.*?${label}<`),
+    )
+  assert.doesNotMatch(
+    html,
+    /Recent imports|YouTube|Spotify podcasts|Spotify saved albums|Album CSV/,
+  )
+})
+
+test('Jobs and Providers offer Mixes as a library filter', () => {
+  const jobs = render(
+    '/jobs',
+    'mediaType=mix',
+    <JobsWorkspace>
+      <JobsPageClient />
+    </JobsWorkspace>,
+  )
+  assert.match(
+    jobs,
+    /<a class="ds-tab" aria-current="page" href="\/jobs\?mediaType=mix">Activity<\/a>/,
+  )
+  assert.match(jobs, /<option value="mix" selected="">Mixes<\/option>/)
+  assert.match(
+    render('/providers', 'mediaType=mix', <ProvidersPageClient />),
+    /<option value="mix" selected="">Mixes<\/option>/,
+  )
+})

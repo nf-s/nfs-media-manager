@@ -1144,12 +1144,15 @@ export const subscriptionSource = pgTable(
   'subscription_source',
   {
     id: text('id').primaryKey(),
-    // youtube or spotify.
+    // youtube or spotify (Subscriptions), or a station: rinse, nts, lotradio (Mixes).
     type: text('type').notNull(),
     title: text('title').notNull(),
+    // A YouTube handle, or a station show's slug on the station's site.
     handle: text('handle'),
     description: text('description'),
     thumbnailUrl: text('thumbnail_url'),
+    // A station show's page; YouTube and Spotify addresses derive from the ID.
+    url: text('url'),
     uploadsPlaylistId: text('uploads_playlist_id'),
     subscriberCount: bigint('subscriber_count', { mode: 'number' }),
     // The provider's total when the source was last listed: Spotify's episode
@@ -1179,12 +1182,12 @@ export const subscriptionSource = pgTable(
     ),
     check(
       'subscription_source_type_check',
-      sql`${table.type} in ('youtube', 'spotify')`,
+      sql`${table.type} in ('youtube', 'spotify', 'rinse', 'nts', 'lotradio')`,
     ),
   ],
 )
 
-// YouTube videos and Spotify episodes; the type matches the source's.
+// YouTube videos, Spotify episodes and station mixes; the type matches the source's.
 export const subscriptionItem = pgTable(
   'subscription_item',
   {
@@ -1196,6 +1199,12 @@ export const subscriptionItem = pgTable(
     title: text('title').notNull(),
     description: text('description').notNull().default(''),
     tags: jsonb('tags').$type<string[]>().notNull().default([]),
+    // Station mixes: the billed performers as the station names them.
+    artists: jsonb('artists').$type<string[]>().notNull().default([]),
+    // Station mixes: the episode's page, and its recording (a file, a stream
+    // or its SoundCloud or Mixcloud page) when the station gives one.
+    url: text('url'),
+    audioUrl: text('audio_url'),
     // UTC, as reported by the provider.
     publishedAt: timestamp('published_at', {
       mode: 'date',
@@ -1213,7 +1222,7 @@ export const subscriptionItem = pgTable(
     artworkUrl: text('artwork_url'),
     // UTC. Set by the owner, never by a sync; null when not watched.
     watchedAt: timestamp('watched_at', { mode: 'date', withTimezone: false }),
-    // Title (A), source title and tags (B), description (D).
+    // Title (A), source title, tags and artists (B), description (D).
     search: tsvector('search').notNull(),
     ...timestampColumns,
   },
@@ -1252,8 +1261,14 @@ export const subscriptionSync = pgTable(
     userId: text('user_id')
       .notNull()
       .references(() => user.id, { onDelete: 'cascade' }),
-    // youtube or spotify.
+    // youtube, spotify or a station.
     provider: text('provider').notNull(),
+    // Stations: a full read of the archive has completed, so later runs read
+    // only the station's recent additions.
+    historyComplete: boolean('history_complete').notNull().default(false),
+    // Stations: a feed page of this run ended before reaching the last
+    // completed run, so the run leaves the archive to be read in full again.
+    feedTruncated: boolean('feed_truncated').notNull().default(false),
     // running, paused, failed, complete, or idle before the first run.
     status: text('status').notNull(),
     schedule: text('schedule').notNull().default('daily'),

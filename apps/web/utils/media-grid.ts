@@ -157,7 +157,13 @@ export const cardGrid = {
 
 const cardLines = { art: 6, line: 2, title: 18, by: 16, meta: 18, tags: 20 }
 
-export type GridKind = 'album' | 'film' | 'track' | 'artist' | 'subscription'
+export type GridKind =
+  | 'album'
+  | 'film'
+  | 'track'
+  | 'artist'
+  | 'subscription'
+  | 'mix'
 
 /**
  * Smallest card width per density, in px, as in `CardGrid min`. Standard is
@@ -170,6 +176,8 @@ const cardMin: Record<GridKind, Record<GridDensity, number>> = {
   film: { compact: 96, standard: 118, roomy: 160 },
   artist: { compact: 96, standard: 120, roomy: 160 },
   subscription: { compact: 96, standard: 200, roomy: 280 },
+  /** Mix artwork is square, as an album's. */
+  mix: { compact: 96, standard: 164, roomy: 220 },
 }
 
 export function gridCardMin(kind: GridKind, density: GridDensity) {

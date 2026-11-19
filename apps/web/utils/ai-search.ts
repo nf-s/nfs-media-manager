@@ -1,9 +1,12 @@
 import type { z } from 'zod'
 import {
+  AiMixSearchResponseSchema,
   AiSearchResponseSchema,
   AiSubscriptionSearchResponseSchema,
+  aiMixBrowseQuery,
   aiSubscriptionBrowseQuery,
   type AiMediaLibrary,
+  type AiMixPlan,
   type AiSearchLibrary,
   type AiSearchPlan,
   type AiSubscriptionPlan,
@@ -17,7 +20,10 @@ import {
   formatListeningRule,
   listeningNoun,
 } from './listening-filters'
-import { subscriptionSortLabels } from './subscriptions'
+import {
+  subscriptionSortLabels,
+  subscriptionSortLabelsFor,
+} from './subscriptions'
 import { formatVideoDuration } from './youtube'
 
 export type AiSearchResult<Plan> = {
@@ -57,6 +63,12 @@ export const subscriptionAiSearchTarget: AiSearchTarget<AiSubscriptionPlan> = {
   mediaType: 'subscription',
   responseSchema: AiSubscriptionSearchResponseSchema,
   describe: describeAiSubscriptionPlan,
+}
+
+export const mixAiSearchTarget: AiSearchTarget<AiMixPlan> = {
+  mediaType: 'mix',
+  responseSchema: AiMixSearchResponseSchema,
+  describe: describeAiMixPlan,
 }
 
 export function aiSearchParams(
@@ -176,6 +188,63 @@ export function describeAiSubscriptionPlan(plan: AiSubscriptionPlan): string[] {
     plan.sortBy === 'relevance'
       ? `Sort: ${subscriptionSortLabels.relevance}`
       : `Sort: ${subscriptionSortLabels[plan.sortBy]}, ${plan.direction === 'asc' ? 'ascending' : 'descending'}`,
+  )
+  return descriptions
+}
+
+/** Mixes browse parameters for a plan, replacing every search parameter as for Subscriptions. */
+export function aiMixSearchParams(
+  plan: AiMixPlan,
+): Record<string, string | null> {
+  const query = aiMixBrowseQuery(plan)
+  return {
+    q: query.q || null,
+    fields: query.q && query.fields === 'title' ? 'title' : null,
+    filters: query.filters.length ? JSON.stringify(query.filters) : null,
+    ranges: query.ranges.length ? JSON.stringify(query.ranges) : null,
+    sortBy: query.sortBy,
+    direction: query.sortBy === 'relevance' ? null : query.direction,
+    item: null,
+  }
+}
+
+const mixFilterLabels: Record<AiMixPlan['filters'][number]['field'], string> = {
+  artist: 'Artist',
+  genre: 'Tags',
+}
+
+export function describeAiMixPlan(plan: AiMixPlan): string[] {
+  const sortLabels = subscriptionSortLabelsFor('mixes')
+  const descriptions: string[] = []
+  if (plan.q)
+    descriptions.push(
+      `Search: ${plan.q}${plan.fields === 'title' ? ' (titles only)' : ''}`,
+    )
+  if (plan.sources.length)
+    descriptions.push(
+      `Shows: ${plan.sources.map((source) => source.title).join(', ')}`,
+    )
+  const stations = [...new Set(plan.stations)]
+  if (stations.length)
+    descriptions.push(
+      `Station: ${stations.map((station) => subscriptionTypeLabels[station]).join(', ')}`,
+    )
+  for (const filter of plan.filters)
+    descriptions.push(
+      `${filter.mode === 'required' ? 'Required' : filter.mode === 'exclude' ? 'Exclude' : 'Any'} · ${mixFilterLabels[filter.field]}: ${filter.value}`,
+    )
+  if (plan.publishedFrom || plan.publishedTo)
+    descriptions.push(
+      `Broadcast: ${plan.publishedFrom ?? '*'} to ${plan.publishedTo ?? '*'}`,
+    )
+  if (plan.durationMinSec !== null || plan.durationMaxSec !== null)
+    descriptions.push(
+      `Duration: ${plan.durationMinSec === null ? '*' : formatVideoDuration(plan.durationMinSec)} to ${plan.durationMaxSec === null ? '*' : formatVideoDuration(plan.durationMaxSec)}`,
+    )
+  descriptions.push(
+    plan.sortBy === 'relevance'
+      ? `Sort: ${sortLabels.relevance}`
+      : `Sort: ${sortLabels[plan.sortBy]}, ${plan.direction === 'asc' ? 'ascending' : 'descending'}`,
   )
   return descriptions
 }

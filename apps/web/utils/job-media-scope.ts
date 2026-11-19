@@ -1,20 +1,27 @@
 import type { Job } from '@repo/schemas/job'
-import { isArtistEnrichmentJob, isSubscriptionSyncJob } from './job-selection'
-import type { LibraryView, MediaScope } from './media-scope'
+import {
+  isArtistEnrichmentJob,
+  isMixSyncJob,
+  isSubscriptionSyncJob,
+} from './job-selection'
+import type { Library, MediaScope } from './media-scope'
 
-/** Task identity preserves the library of artist and subscription jobs with legacy album scopes. */
-export function jobMediaScope(job: Job): LibraryView | null {
+/** Task identity preserves the library of artist, subscription and mix jobs with legacy album scopes. */
+export function jobMediaScope(job: Job): Library | null {
   if (isSubscriptionSyncJob(job)) return 'subscription'
+  if (isMixSyncJob(job)) return 'mix'
   if (isArtistEnrichmentJob(job)) return 'artist'
   return (
     job.items.find((item) => item.mediaType)?.mediaType ?? job.scope.mediaType
   )
 }
 
-export function jobMatchesScope(job: Job, scope: LibraryView) {
+export function jobMatchesScope(job: Job, scope: Library) {
   if (isSubscriptionSyncJob(job)) return scope === 'subscription'
+  if (isMixSyncJob(job)) return scope === 'mix'
   if (isArtistEnrichmentJob(job)) return scope === 'artist'
-  if (scope === 'subscription' || scope === 'artist') return false
+  if (scope === 'subscription' || scope === 'artist' || scope === 'mix')
+    return false
   const typed = job.items.filter((item) => item.mediaType !== null)
   return typed.length
     ? typed.some((item) => item.mediaType === scope)

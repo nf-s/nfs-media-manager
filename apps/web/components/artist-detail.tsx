@@ -13,6 +13,10 @@ import {
   type ArtistDetail as Artist,
 } from '@repo/schemas/creators'
 import type { AlbumListItem } from '@repo/schemas/media'
+import {
+  SubscriptionItemPageSchema,
+  type SubscriptionItem,
+} from '@repo/schemas/subscriptions'
 import type { TrackListItem } from '@repo/schemas/tracks'
 import { Art, ArtFallback } from '@repo/ui/components/ds/artwork'
 import { Card, CardGrid, CardTitle } from '@repo/ui/components/ds/card'
@@ -42,6 +46,11 @@ import { fetchApiData } from '@/utils/api'
 import { artistBrowseHref, artistTagBrowseHref } from '@/utils/creator-browse'
 import { safeRatingHref } from '@/utils/provider-ratings'
 import {
+  formatSubscriptionDuration,
+  formatSubscriptionPublished,
+  subscriptionArtworkUrl,
+} from '@/utils/subscriptions'
+import {
   ArtistProfileLinks,
   ArtistProfileSources,
 } from './artist-profile-sources'
@@ -50,6 +59,7 @@ import { DetailMore } from './detail-more'
 import {
   CreatorLibraryDate,
   CreatorLibraryTable,
+  CreatorLibraryTitle,
   type CreatorLibraryColumn,
 } from './creator-library-table'
 import { DetailLink } from './detail-link'
@@ -59,6 +69,7 @@ import {
   FilterPill,
   PlaylistPills,
   useDetailTab,
+  type DetailTabItem,
 } from './detail-frame'
 import { AlbumPlay, TrackRowPlay } from './detail-play'
 import { ScrobbleStats } from './listening-stats'
@@ -70,6 +81,7 @@ type ArtistTab =
   | 'overview'
   | 'albums'
   | 'tracks'
+  | 'mixes'
   | 'listening'
   | 'coverage'
   | 'sources'
@@ -77,6 +89,7 @@ const artistTabs: readonly [ArtistTab, ...ArtistTab[]] = [
   'overview',
   'albums',
   'tracks',
+  'mixes',
   'listening',
   'coverage',
   'sources',
@@ -186,6 +199,47 @@ const trackColumns: CreatorLibraryColumn<TrackListItem>[] = [
   },
 ]
 
+function MixBroadcast({ mix }: { mix: SubscriptionItem }) {
+  return (
+    <time dateTime={mix.publishedAt}>
+      {formatSubscriptionPublished(mix.publishedAt, mix.publishedPrecision)}
+    </time>
+  )
+}
+
+/** Mixes billing the artist or named after it; the show opens its details. */
+const mixColumns: CreatorLibraryColumn<SubscriptionItem>[] = [
+  {
+    key: 'title',
+    label: 'Mix',
+    required: true,
+    render: (mix) => (
+      <CreatorLibraryTitle kind="mix" id={mix.id} title={mix.title} />
+    ),
+  },
+  {
+    key: 'source',
+    label: 'Show',
+    render: (mix) => (
+      <DetailLink kind="show" id={mix.sourceId}>
+        {mix.sourceTitle}
+      </DetailLink>
+    ),
+  },
+  {
+    key: 'publishedAt',
+    label: 'Broadcast',
+    className: 'whitespace-nowrap',
+    render: (mix) => <MixBroadcast mix={mix} />,
+  },
+  {
+    key: 'durationSec',
+    label: 'Duration',
+    align: 'end',
+    render: formatSubscriptionDuration,
+  },
+]
+
 /** A short list for the Overview, read from the same endpoint as its tab. */
 function useOverviewList<Schema extends z.ZodTypeAny>(
   path: string,
@@ -253,6 +307,12 @@ function ArtistOverview({
     'playlists',
     { size: '24', sortBy: 'name', direction: 'asc' },
     ArtistPlaylistPageSchema,
+  )
+  const mixes = useOverviewList(
+    path,
+    'mixes',
+    { size: '5', sortBy: 'publishedAt', direction: 'desc' },
+    SubscriptionItemPageSchema,
   )
   const library = artist.albumCount > 0 ? 'albums' : 'tracks'
   return (
@@ -413,6 +473,58 @@ function ArtistOverview({
           )}
         </Section>
       )}
+      {artist.mixCount > 0 && (
+        <Section
+          title="Latest mixes"
+          note={formatCount(artist.mixCount)}
+          aside={
+            <Button variant="link" size="xs" onClick={() => showTab('mixes')}>
+              All mixes
+            </Button>
+          }
+        >
+          {mixes.data ? (
+            <Table aria-label="Latest mixes">
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Title</TableHead>
+                  <TableHead>Show</TableHead>
+                  <TableHead>Broadcast</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {mixes.data.items.map((mix) => (
+                  <TableRow key={mix.id}>
+                    <TableCell>
+                      <DetailLink
+                        className="ds-cell-title"
+                        kind="mix"
+                        id={mix.id}
+                      >
+                        {mix.title}
+                      </DetailLink>
+                    </TableCell>
+                    <TableCell>
+                      <DetailLink kind="show" id={mix.sourceId}>
+                        {mix.sourceTitle}
+                      </DetailLink>
+                    </TableCell>
+                    <TableCell>
+                      <MixBroadcast mix={mix} />
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          ) : (
+            <ListState
+              pending={mixes.isPending}
+              label="mixes"
+              retry={() => mixes.refetch()}
+            />
+          )}
+        </Section>
+      )}
       {artist.playlistCount > 0 && (
         <Section title="Playlists" note={formatCount(artist.playlistCount)}>
           {playlists.data ? (
@@ -480,6 +592,20 @@ export function ArtistDetail({ id }: { id: string }) {
     artist.profile.artworkUrl ?? artist.artworkUrl ?? undefined,
   )
   const { profile } = artist
+  const allTabs: DetailTabItem<ArtistTab>[] = [
+    { value: 'overview', label: 'Overview' },
+    { value: 'albums', label: 'Albums', count: artist.albumCount },
+    { value: 'tracks', label: 'Tracks', count: artist.trackCount },
+    { value: 'mixes', label: 'Mixes', count: artist.mixCount },
+    { value: 'listening', label: 'Listening' },
+    { value: 'coverage', label: 'Coverage' },
+    { value: 'sources', label: 'Sources' },
+  ]
+  // Mixes is shown only for an artist with mixes.
+  const tabs = allTabs.filter(
+    (item) => item.value !== 'mixes' || artist.mixCount > 0,
+  )
+  const shownTab = tab === 'mixes' && artist.mixCount === 0 ? 'overview' : tab
   return (
     <article className="dtl-detail">
       {query.isRefetchError && (
@@ -519,16 +645,9 @@ export function ArtistDetail({ id }: { id: string }) {
       />
       <DetailTabs
         label="Artist details"
-        value={tab}
+        value={shownTab}
         onChange={setTab}
-        tabs={[
-          { value: 'overview', label: 'Overview' },
-          { value: 'albums', label: 'Albums', count: artist.albumCount },
-          { value: 'tracks', label: 'Tracks', count: artist.trackCount },
-          { value: 'listening', label: 'Listening' },
-          { value: 'coverage', label: 'Coverage' },
-          { value: 'sources', label: 'Sources' },
-        ]}
+        tabs={tabs}
       >
         <TabsContent value="overview">
           <ArtistOverview
@@ -576,6 +695,25 @@ export function ArtistDetail({ id }: { id: string }) {
             defaultSort={{ key: 'title', direction: 'asc' }}
           />
         </TabsContent>
+        {artist.mixCount > 0 && (
+          <TabsContent value="mixes">
+            <CreatorLibraryTable
+              kind="mix"
+              queryKey={['artist', id, 'mixes']}
+              path={`${path}/mixes`}
+              schema={SubscriptionItemPageSchema}
+              columns={mixColumns}
+              card={(mix) => ({
+                title: mix.title,
+                artworkUrl: subscriptionArtworkUrl(mix),
+                subtitle: mix.sourceTitle,
+                metadata: <MixBroadcast mix={mix} />,
+              })}
+              label="mixes"
+              defaultSort={{ key: 'publishedAt', direction: 'desc' }}
+            />
+          </TabsContent>
+        )}
         <TabsContent value="listening">
           <ListeningTrend kind="artist" id={artist.id} />
         </TabsContent>

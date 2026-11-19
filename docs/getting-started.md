@@ -132,6 +132,10 @@ Open **Imports → Spotify**, connect your account and approve read-only saved-a
 
 The optional Subscriptions library searches videos from the YouTube channels you subscribe to and episodes of the Spotify podcasts you save. YouTube needs a Google OAuth client and a one-time sign-in; podcasts use the Spotify account connected for albums. Follow the [Subscriptions guide](subscriptions.md).
 
+### Mixes
+
+The optional Mixes library stores the archives of Rinse FM, NTS and The Lot Radio as links, filterable by artist and tag. It needs no account or key: open **Mixes → Imports**, choose a station and **Sync now**. A first sync of a large station takes hours. See the [Mixes guide](mixes.md).
+
 ## Your first import and metadata refresh
 
 1. Choose a library, then **Imports** and the matching file format.

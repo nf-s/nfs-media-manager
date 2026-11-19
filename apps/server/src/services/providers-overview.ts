@@ -26,15 +26,18 @@ import {
 type Library = z.infer<typeof ProviderOverviewQuerySchema>['mediaType']
 type SecretRow = typeof providerSecret.$inferSelect
 
-// The same scoping as the Providers page: Subscriptions lists its own
-// providers; other account-level providers appear in both media libraries.
+// The same scoping as the Providers page: Subscriptions and Mixes list their
+// own providers; other account-level providers appear in both media libraries.
 function inLibrary(provider: ProviderCatalogEntry, library: Library) {
   if (library === undefined) return true
   if (library === 'subscription') return provider.subscriptions
+  if (library === 'mix') return provider.mixes
   if (library === 'artist') return Boolean(provider.supportsArtistEnrichment)
   return (
     provider.mediaTypes.includes(library) ||
-    (provider.mediaTypes.length === 0 && !provider.subscriptions)
+    (provider.mediaTypes.length === 0 &&
+      !provider.subscriptions &&
+      !provider.mixes)
   )
 }
 
@@ -42,6 +45,7 @@ function roles(provider: ProviderCatalogEntry) {
   const result: ProviderOverviewItem['roles'] = [...provider.mediaTypes]
   if (provider.supportsArtistEnrichment) result.push('artist')
   if (provider.subscriptions) result.push('subscription')
+  if (provider.mixes) result.push('mix')
   if (provider.mediaTypes.length === 0) result.push('account')
   return result
 }

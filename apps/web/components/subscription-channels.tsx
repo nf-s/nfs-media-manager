@@ -6,8 +6,10 @@ import { useSearchParams } from 'next/navigation'
 import { useQuery } from '@tanstack/react-query'
 import {
   SubscriptionSourceListSchema,
-  SubscriptionTypeSchema,
+  subscriptionLibraryLabels,
+  subscriptionLibraryTypes,
   subscriptionTypeLabels,
+  type SubscriptionLibrary,
   type SubscriptionSource,
 } from '@repo/schemas/subscriptions'
 import { Button } from '@repo/ui/components/ui/button'
@@ -36,8 +38,9 @@ import {
   formatSubscriptionSourceSize,
   parseSubscriptionType,
   parseSubscriptionTypes,
-  subscriptionImportsHref,
-  subscriptionSourceColumns,
+  subscriptionLibraryPages,
+  subscriptionLibraryParams,
+  subscriptionSourceColumnsFor,
   subscriptionSourceHref,
   subscriptionSourceSort,
   type SubscriptionSourceSort,
@@ -53,18 +56,24 @@ import {
 } from './secondary-table'
 import { RetryButton } from './browse-items'
 
-function useSubscriptionSources() {
+function useSubscriptionSources(library: SubscriptionLibrary) {
   const { apiBaseUrl } = useConfig()
+  const params = new URLSearchParams(subscriptionLibraryParams(library))
   return useQuery({
-    queryKey: ['subscriptions', 'sources'],
+    queryKey: [subscriptionLibraryPages[library].collection, 'sources'],
     queryFn: ({ signal }) =>
       fetchApiData(
         apiBaseUrl,
-        '/api/v1/subscriptions/sources',
+        `/api/v1/subscriptions/sources${params.size ? `?${params}` : ''}`,
         SubscriptionSourceListSchema,
         { signal },
       ),
   })
+}
+
+const emptyHelp: Record<SubscriptionLibrary, string> = {
+  subscriptions: 'Sync channels and podcasts in',
+  mixes: 'Sync station archives in',
 }
 
 function replaceParams(updates: Record<string, string | string[] | null>) {
@@ -80,22 +89,28 @@ function replaceParams(updates: Record<string, string | string[] | null>) {
   )
 }
 
-/** One cell of a channel row; the cells follow the table's column order. */
+/** One cell of a channel or show row; the cells follow the table's column order. */
 function SourceCell({
   source,
   column,
+  library,
 }: {
   source: SubscriptionSource
   column: SubscriptionSourceSort
+  library: SubscriptionLibrary
 }) {
+  const page = subscriptionLibraryPages[library]
   switch (column) {
     case 'title':
       return (
         <TableCell sticky={0} stickyEdge>
           <span className="ds-cell-id">
-            <MediaThumb kind="person" src={source.thumbnailUrl} />
+            <MediaThumb
+              kind={library === 'mixes' ? 'album' : 'person'}
+              src={source.thumbnailUrl}
+            />
             <DetailLink
-              kind="channel"
+              kind={page.sourceKind}
               id={source.id}
               className="ds-cell-title"
               title={source.title}
@@ -115,9 +130,9 @@ function SourceCell({
             label={`History for ${source.title}`}
           >
             <Link
-              href={subscriptionSourceHref(source.id)}
-              title={`Filter subscriptions by ${source.title}`}
-              aria-label={`Filter subscriptions by ${source.title}`}
+              href={subscriptionSourceHref(source.id, library)}
+              title={`Filter ${page.plural} by ${source.title}`}
+              aria-label={`Filter ${page.plural} by ${source.title}`}
             >
               {formatCount(source.storedItems)}
             </Link>
@@ -189,39 +204,53 @@ function SourceRow({
   source,
   columns,
   selected,
+  library,
 }: {
   source: SubscriptionSource
   columns: readonly { key: SubscriptionSourceSort }[]
   selected: boolean
+  library: SubscriptionLibrary
 }) {
   return (
     <TableRow selected={selected}>
       {columns.map((column) => (
-        <SourceCell key={column.key} source={source} column={column.key} />
+        <SourceCell
+          key={column.key}
+          source={source}
+          column={column.key}
+          library={library}
+        />
       ))}
     </TableRow>
   )
 }
 
-export default function SubscriptionChannels() {
+/** Subscribed channels and podcasts, or a station's shows in Mixes. */
+export default function SubscriptionChannels({
+  library = 'subscriptions',
+}: {
+  library?: SubscriptionLibrary
+}) {
+  const page = subscriptionLibraryPages[library]
+  const sourceColumns = subscriptionSourceColumnsFor[library]
   const columns = useTableColumns(
-    'subscription-channels',
-    subscriptionSourceColumns,
+    library === 'mixes' ? 'mix-shows' : 'subscription-channels',
+    sourceColumns,
     { reorder: true },
   )
   const shownColumns = columns
-    .order(subscriptionSourceColumns)
+    .order(sourceColumns)
     .filter((column) => columns.visible(column.key))
   const search = useSearchParams()
   const inspector = useDetailInspector()
   const selectedId =
-    inspector?.root?.kind === 'channel' ? inspector.root.id : null
-  const sources = useSubscriptionSources()
-  const sortBy = subscriptionSourceSort(search.get('sortBy'))
+    inspector?.root?.kind === page.sourceKind ? inspector.root.id : null
+  const sources = useSubscriptionSources(library)
+  const sortBy = subscriptionSourceSort(search.get('sortBy'), library)
   const direction = search.get('direction') === 'desc' ? 'desc' : 'asc'
-  const type = parseSubscriptionType(search.get('type'))
+  const type = parseSubscriptionType(search.get('type'), library)
   const types = search.has('types')
-    ? parseSubscriptionTypes(search.get('types'))
+    ? parseSubscriptionTypes(search.get('types'), library)
     : type
       ? [type]
       : []
@@ -254,10 +283,12 @@ export default function SubscriptionChannels() {
     direction,
   })
   const narrowed = Boolean(q || types.length || history.length)
-  const noun = { one: 'channel', other: 'channels' }
+  const noun = page.sources
+  const tableLabel = library === 'mixes' ? 'Shows' : 'Channels and podcasts'
+  const typeLabel = subscriptionLibraryLabels[library].type
   return (
-    <section className="bi-workspace" aria-label="Channels">
-      <PageHead title="Channels" />
+    <section className="bi-workspace" aria-label={page.sourcesTitle}>
+      <PageHead title={page.sourcesTitle} />
       <SecondaryTableToolbar
         search={
           <SecondaryTableSearch
@@ -284,10 +315,10 @@ export default function SubscriptionChannels() {
       <SecondaryTableScroll
         className="min-h-0 flex-1"
         role="region"
-        aria-label="Channels and podcasts"
+        aria-label={tableLabel}
         aria-busy={sources.isFetching}
       >
-        <table className="ds-table" aria-label="Channels and podcasts">
+        <table className="ds-table" aria-label={tableLabel}>
           <TableHeader>
             <TableRow>
               {shownColumns.map((column) => (
@@ -304,8 +335,8 @@ export default function SubscriptionChannels() {
                   filter={
                     column.key === 'type' ? (
                       <SecondaryColumnFilter
-                        label="Type"
-                        options={SubscriptionTypeSchema.options.map(
+                        label={typeLabel}
+                        options={subscriptionLibraryTypes[library].map(
                           (value) => ({
                             value,
                             label: subscriptionTypeLabels[value],
@@ -350,12 +381,12 @@ export default function SubscriptionChannels() {
               <TableState colSpan={columns.count} error={sources.isError}>
                 {sources.isError ? (
                   <>
-                    Could not load channels.{' '}
+                    Could not load {noun.other}.{' '}
                     <RetryButton onClick={() => sources.refetch()} />
                   </>
                 ) : all.length ? (
                   <>
-                    No channels match.{' '}
+                    No {noun.other} match.{' '}
                     <Button
                       size="xs"
                       onClick={() => {
@@ -368,8 +399,8 @@ export default function SubscriptionChannels() {
                   </>
                 ) : (
                   <>
-                    No channels yet. Sync channels and podcasts in{' '}
-                    <Link href={subscriptionImportsHref}>Imports</Link>.
+                    No {noun.other} yet. {emptyHelp[library]}{' '}
+                    <Link href={page.importsHref}>Imports</Link>.
                   </>
                 )}
               </TableState>
@@ -380,6 +411,7 @@ export default function SubscriptionChannels() {
                 source={source}
                 columns={shownColumns}
                 selected={source.id === selectedId}
+                library={library}
               />
             ))}
           </TableBody>

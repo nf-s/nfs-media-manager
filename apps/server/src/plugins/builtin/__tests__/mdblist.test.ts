@@ -602,6 +602,7 @@ describe('MDBList keyword provider', () => {
       ...mdblistPlugin.manifest,
       surface: 'provider',
       subscriptions: false,
+      mixes: false,
       supportsScrape: true,
       supportsLegacyImport: false,
       pluginPath: null,

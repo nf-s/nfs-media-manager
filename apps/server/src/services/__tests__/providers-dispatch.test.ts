@@ -33,6 +33,7 @@ const provider: ProviderCatalogEntry = {
   secrets: [],
   surface: 'provider',
   subscriptions: false,
+  mixes: false,
   supportsScrape: true,
   supportsLegacyImport: false,
   pluginPath: null,

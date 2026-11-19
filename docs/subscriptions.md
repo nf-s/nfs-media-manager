@@ -4,6 +4,8 @@ The Subscriptions library stores the channels one YouTube account subscribes to 
 
 The library is separate from albums, films and tracks. It has no metadata scrapes or tags of its own; a video's tags are the uploader's.
 
+[Mixes](mixes.md) stores radio station archives in the same tables and reads them through the same API with `library=mixes`. A row's type decides its library, so nothing on this page lists a mix, and a station sync never changes a YouTube or podcast row.
+
 ## Navigation
 
 - **Subscriptions** is a choice in the library selector, with **Browse** (`/subscriptions`), **Channels** (`/subscriptions/channels`) and **Imports**. Tags and Playlists are not shown. **Jobs** and **Providers** sit once under System and filter by library; `mediaType=subscription` selects Subscriptions.
@@ -127,7 +129,7 @@ Filters follow the [browse filter rules](requirements/search.md) of the other li
 
 ## API
 
-Every endpoint requires the owner session. All read stored rows only, except the `PATCH`, which writes one item's watched date.
+Every endpoint requires the owner session. All read stored rows only, except the `PATCH`, which writes one item's watched date. The list, facet, field and source endpoints take `library`, which defaults to `subscriptions`; a filter, range or sort of the other library is rejected with HTTP 422.
 
 | Endpoint                                                                                                   | Purpose                                                                                                               |
 | ---------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |

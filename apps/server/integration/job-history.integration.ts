@@ -16,7 +16,10 @@ import type { MediaProviderPlugin } from '@repo/media-plugin-sdk'
 import { getJobDismissal, type Job } from '@repo/schemas/job'
 import { ARTIST_ENRICHMENT_TASK } from '@repo/schemas/artist-profiles'
 import { LASTFM_SCROBBLE_SYNC_TASK } from '@repo/schemas/lastfm'
-import { SPOTIFY_PODCAST_SYNC_TASK } from '@repo/schemas/subscriptions'
+import {
+  MIX_STATION_SYNC_TASKS,
+  SPOTIFY_PODCAST_SYNC_TASK,
+} from '@repo/schemas/subscriptions'
 import { YOUTUBE_SYNC_TASK } from '@repo/schemas/youtube'
 import { env } from '@/env'
 import * as schema from '@/schemas/db'
@@ -612,7 +615,7 @@ describe('media job history and dismissal', () => {
     expect(history.items[0]?.options.dismissal).toBeUndefined()
   })
 
-  it('lists subscription syncs only in the Subscriptions library', async () => {
+  it('lists subscription syncs only in the Subscriptions library and mix syncs only in Mixes', async () => {
     const { createTaskJob, getJobActivity, listJobs } =
       await import('@/services/jobs')
     await seedJob('film-job', 'failed')
@@ -646,15 +649,24 @@ describe('media job history and dismissal', () => {
         'running',
         null,
       ),
+      taskJob(
+        'rinse-mixes',
+        'rinse',
+        MIX_STATION_SYNC_TASKS.rinse,
+        'failed',
+        null,
+      ),
+      taskJob('nts-mixes', 'nts', MIX_STATION_SYNC_TASKS.nts, 'queued', null),
     ])
     const queued = await createTaskJob(YOUTUBE_SYNC_TASK, null)
     expect(queued.scope.mediaType).toBeNull()
 
-    const ids = async (mediaType: 'album' | 'film' | 'subscription') =>
+    const ids = async (mediaType: 'album' | 'film' | 'subscription' | 'mix') =>
       (await listJobs({ mediaType })).items.map((job) => job.id).sort()
     expect(await ids('subscription')).toEqual(
       [queued.id, 'old-youtube', 'podcasts'].sort(),
     )
+    expect(await ids('mix')).toEqual(['nts-mixes', 'rinse-mixes'])
     expect(await ids('album')).toEqual(['scrobbles'])
     expect(await ids('film')).toEqual(['film-job'])
     expect(
@@ -676,6 +688,7 @@ describe('media job history and dismissal', () => {
         failed: 1,
         imports: 0,
       },
+      { mediaType: 'mix', queued: 1, running: 0, failed: 1, imports: 0 },
     ])
   })
 

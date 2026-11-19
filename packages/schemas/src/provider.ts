@@ -208,6 +208,8 @@ export const ProviderSummarySchema = z.object({
   mediaTypes: z.array(z.enum(['album', 'film'])),
   /** The provider fills the Subscriptions library and is listed in its Providers. */
   subscriptions: z.boolean().default(false),
+  /** The provider fills the Mixes library and is listed in its Providers. */
+  mixes: z.boolean().default(false),
   rateLimit: z.object({
     maxConcurrent: z.number().int().positive(),
     concurrentRequests: z.boolean().optional(),
@@ -325,6 +327,7 @@ export const ProviderLibrarySchema = z.enum([
   'film',
   'artist',
   'subscription',
+  'mix',
 ])
 
 export const ProviderOverviewQuerySchema = z.object({
@@ -355,7 +358,7 @@ export const ProviderOverviewItemSchema = z.object({
   group: z.enum(['account', 'metadata']),
   /** Libraries the provider supplies, plus `account` for account-level syncs. */
   roles: z.array(
-    z.enum(['album', 'film', 'artist', 'subscription', 'account']),
+    z.enum(['album', 'film', 'artist', 'subscription', 'mix', 'account']),
   ),
   connection: z.object({
     state: ProviderConnectionStateSchema,

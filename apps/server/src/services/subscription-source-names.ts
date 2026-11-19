@@ -3,8 +3,10 @@ import { z } from 'zod'
 import {
   SubscriptionSourceIdSchema,
   SubscriptionTypeSchema,
+  type SubscriptionLibrary,
 } from '@repo/schemas/subscriptions'
 import { db } from '@/lib/db'
+import { inSubscriptionLibrary } from './subscription-library'
 
 const SourceNameRowsSchema = z.array(
   z.object({
@@ -25,13 +27,18 @@ export type SourceNameMatch<Source extends NamedSource> =
   | { status: 'missing' }
   | { status: 'ambiguous'; candidates: Source[] }
 
-/** Titles and handles of subscribed channels and podcasts; read on the server only. */
-export async function listSubscribedSourceNames() {
+/**
+ * Titles and handles of one library's sources: subscribed channels and
+ * podcasts, or station shows. Read on the server only.
+ */
+export async function listSubscribedSourceNames(
+  library: SubscriptionLibrary = 'subscriptions',
+) {
   return SourceNameRowsSchema.parse(
     (
       await db.execute(sql`
         select id, type, title, handle from subscription_source
-        where subscribed
+        where subscribed and ${inSubscriptionLibrary(sql`type`, library)}
         order by lower(title), id`)
     ).rows,
   )

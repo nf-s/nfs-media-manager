@@ -17,6 +17,7 @@ import {
 import { AlbumListItemSchema, FilmListItemSchema } from './media'
 import { TrackListItemSchema } from './tracks'
 import { BrowseValuesSchema } from './browse'
+import { MixSortSchema, SubscriptionItemPageSchema } from './subscriptions'
 import {
   ListeningFilterParamSchema,
   ListeningHistogramPeriodParamSchema,
@@ -64,6 +65,11 @@ export const ArtistPageSchema = PaginatedDataSchema(ArtistSummarySchema)
 export type ArtistPage = z.infer<typeof ArtistPageSchema>
 
 export const ArtistDetailSchema = ArtistSummarySchema.extend({
+  /**
+   * Stored station mixes billing the artist's name or on a show of that name,
+   * ignoring case; station names are not library artist identities.
+   */
+  mixCount: CountSchema.default(0),
   identifiers: z.array(ArtistIdentifierSchema),
   profile: ArtistProfileSchema,
   providers: z.array(ArtistProviderSnapshotSchema),
@@ -189,6 +195,15 @@ export const ArtistTrackQuerySchema = CreatorQuerySchema.extend({
 export type ArtistTrackQuery = z.infer<typeof ArtistTrackQuerySchema>
 export const ArtistTrackPageSchema = PaginatedDataSchema(TrackListItemSchema)
 export type ArtistTrackPage = z.infer<typeof ArtistTrackPageSchema>
+
+/** Newest first by default; `q` uses the Mixes search syntax. */
+export const ArtistMixQuerySchema = CreatorQuerySchema.extend({
+  sortBy: MixSortSchema.exclude(['relevance']).default('publishedAt'),
+  direction: DirectionSchema.default('desc'),
+})
+export type ArtistMixQuery = z.infer<typeof ArtistMixQuerySchema>
+export const ArtistMixPageSchema = SubscriptionItemPageSchema
+export type ArtistMixPage = z.infer<typeof ArtistMixPageSchema>
 
 export const ArtistPlaylistQuerySchema = CreatorQuerySchema.extend({
   sortBy: z

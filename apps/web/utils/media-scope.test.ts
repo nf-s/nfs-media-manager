@@ -3,7 +3,10 @@ import { test } from 'node:test'
 import { JobSchema } from '@repo/schemas/job'
 import { ARTIST_ENRICHMENT_TASK } from '@repo/schemas/artist-profiles'
 import { SPOTIFY_TRACK_SEARCH_TASK } from '@repo/schemas/spotify-track-search'
-import { SPOTIFY_PODCAST_SYNC_TASK } from '@repo/schemas/subscriptions'
+import {
+  MIX_STATION_SYNC_TASKS,
+  SPOTIFY_PODCAST_SYNC_TASK,
+} from '@repo/schemas/subscriptions'
 import { YOUTUBE_SYNC_TASK } from '@repo/schemas/youtube'
 import {
   isSystemPath,
@@ -580,4 +583,89 @@ test('Metadata selects from the linked library, then the rail, then Albums', () 
   assert.equal(metadataLibrary('subscription', 'artist'), 'artist')
   assert.equal(metadataLibrary(null, 'track'), 'track')
   assert.equal(metadataLibrary(null), 'album')
+})
+
+test('Mixes is a separate library scoped by path or mediaType', () => {
+  for (const path of [
+    '/mixes',
+    '/mixes/shows',
+    '/mixes/shows/nts.example-show',
+    '/mixes/nts.example-mix',
+    '/imports/rinse',
+    '/imports/nts',
+    '/imports/lotradio',
+  ]) {
+    assert.equal(workspaceScopeForPath(path, 'subscription'), 'mix')
+    assert.equal(libraryViewForPath(path, 'album'), 'mix')
+  }
+  for (const path of ['/jobs', '/providers', '/imports'])
+    assert.equal(libraryViewForPath(path, 'mix'), 'mix')
+  assert.equal(libraryViewForPath('/mixes-other', null), 'film')
+  assert.equal(systemLibraryFilter('mix'), 'mix')
+  assert.equal(parseLibraryView('mix'), 'mix')
+  assert.equal(
+    scopedHref('/jobs?status=failed', 'mix'),
+    '/jobs?status=failed&mediaType=mix',
+  )
+})
+
+test('switching to and from Mixes keeps Imports, Jobs and Providers and otherwise browses', () => {
+  for (const path of ['/albums', '/subscriptions/channels', '/tracks', '/tags'])
+    assert.equal(
+      switchLibraryHref(path, 'mediaType=album&q=title', 'mix'),
+      '/mixes',
+    )
+  // Mixes has no Matches page.
+  assert.equal(switchLibraryHref('/albums/matches', '', 'mix'), '/mixes')
+  assert.equal(
+    switchLibraryHref('/imports/youtube', 'mediaType=subscription', 'mix'),
+    '/imports/rinse?mediaType=mix',
+  )
+  assert.equal(
+    switchLibraryHref('/imports/spotify-playlists', 'mediaType=track', 'mix'),
+    '/imports/rinse?mediaType=mix',
+  )
+  assert.equal(
+    switchLibraryHref('/mixes', 'q=late&view=list', 'mix'),
+    '/mixes?q=late&view=list',
+  )
+  assert.equal(switchLibraryHref('/imports/nts', '', 'mix'), '/imports/nts')
+  assert.equal(
+    switchLibraryHref('/mixes/shows', '', 'subscription'),
+    '/subscriptions',
+  )
+  assert.equal(switchLibraryHref('/mixes', '', 'track'), '/tracks')
+  assert.equal(switchLibraryHref('/mixes/shows', '', 'album'), '/albums')
+  assert.equal(
+    switchLibraryHref('/imports/lotradio', 'mediaType=mix', 'album'),
+    '/imports?mediaType=album',
+  )
+  assert.equal(
+    switchLibraryHref('/imports/nts', '', 'subscription'),
+    '/imports/youtube?mediaType=subscription',
+  )
+  assert.equal(
+    switchMediaScopeHref('/jobs/one', 'status=failed', 'mix'),
+    '/jobs?status=failed&mediaType=mix',
+  )
+  assert.equal(
+    switchMediaScopeHref('/providers', '', 'mix'),
+    '/providers?mediaType=mix',
+  )
+  assert.equal(switchMediaScopeHref('/tags', '', 'mix'), '/mixes')
+})
+
+test('mix syncs belong only to Mixes', () => {
+  const scopes: Array<'album' | null> = ['album', null]
+  for (const task of Object.values(MIX_STATION_SYNC_TASKS))
+    for (const mediaType of scopes) {
+      const sync = taskJob(task, mediaType)
+      assert.equal(jobMediaScope(sync), 'mix')
+      assert.equal(jobMatchesScope(sync, 'mix'), true)
+      assert.equal(jobMatchesScope(sync, 'subscription'), false)
+      assert.equal(jobMatchesScope(sync, 'album'), false)
+    }
+  assert.equal(jobMatchesScope(job('album'), 'mix'), false)
+  assert.equal(jobMatchesScope(taskJob(YOUTUBE_SYNC_TASK, null), 'mix'), false)
+  assert.equal(metadataLibrary('mix', 'artist'), 'artist')
 })

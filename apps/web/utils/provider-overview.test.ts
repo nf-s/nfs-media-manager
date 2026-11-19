@@ -8,6 +8,7 @@ import {
   legacyProviderHref,
   parseProviderLibrary,
   parseProviderTab,
+  providerLibraryOptions,
   providerHref,
   providerJobsHref,
   providerMarkText,
@@ -164,5 +165,13 @@ test('marks and worker labels are short', () => {
       worker: { paired: true, online: false, blocked: false },
     }),
     'Local worker · offline',
+  )
+})
+
+test('Mixes is a provider library with its own label', () => {
+  assert.equal(parseProviderLibrary('mix'), 'mix')
+  assert.deepEqual(
+    providerLibraryOptions.map((option) => option.label),
+    ['All libraries', 'Albums', 'Films', 'Artists', 'Subscriptions', 'Mixes'],
   )
 })

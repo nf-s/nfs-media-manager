@@ -9,6 +9,11 @@ import { discogsPlugin } from '@/plugins/builtin/discogs'
 import { serplyPlugin } from '@/plugins/builtin/serply'
 import { youtubePlugin } from '@/plugins/builtin/youtube'
 import { sonosPlugin } from '@/plugins/builtin/sonos'
+import {
+  lotRadioPlugin,
+  ntsPlugin,
+  rinsePlugin,
+} from '@/plugins/builtin/mix-stations'
 
 const builtinScrapePlugins = [
   omdbPlugin,
@@ -21,6 +26,9 @@ const builtinScrapePlugins = [
   serplyPlugin,
   youtubePlugin,
   sonosPlugin,
+  rinsePlugin,
+  ntsPlugin,
+  lotRadioPlugin,
 ] satisfies MediaProviderPlugin[]
 
 export function getBuiltinScrapePlugin(

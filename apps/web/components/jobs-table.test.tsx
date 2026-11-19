@@ -14,6 +14,7 @@ import {
   type JobEntry,
 } from '@repo/schemas/job'
 import { ARTIST_ENRICHMENT_TASK } from '@repo/schemas/artist-profiles'
+import { MIX_STATION_SYNC_TASKS } from '@repo/schemas/subscriptions'
 import {
   ProviderSummarySchema,
   type ProviderSummary,
@@ -74,7 +75,7 @@ function key(params: URLSearchParams, provider?: string) {
     batchId ? 'table' : 'entries',
     provider
       ? null
-      : (['album', 'film', 'artist', 'subscription'].find(
+      : (['album', 'film', 'artist', 'subscription', 'mix'].find(
           (value) => value === params.get('mediaType'),
         ) ?? null),
     '[]',
@@ -374,4 +375,45 @@ test('job links retain workspace filters and append to the inspector history', (
     { kind: 'film', id: 'example-film', view: 'tab=sources' },
     { kind: 'job', id: job.id },
   ])
+})
+
+test('the Mixes filter lists the station providers and names each station sync', () => {
+  const station = (id: string, displayName: string, mixes: boolean) =>
+    ProviderSummarySchema.parse({
+      id,
+      displayName,
+      description: '',
+      surface: 'provider',
+      mediaTypes: [],
+      mixes,
+      rateLimit: { maxConcurrent: 1, minTimeMs: 0 },
+      supportsScrape: false,
+      supportsLegacyImport: false,
+      secrets: [],
+      pluginPath: null,
+    })
+  const catalog = [
+    station('rinse', 'Rinse FM', true),
+    station('nts', 'NTS', true),
+    station('lotradio', 'The Lot Radio', true),
+    station('youtube', 'YouTube fixture', false),
+  ]
+  const sync = JobSchema.parse({
+    ...job,
+    provider: 'nts',
+    status: 'running',
+    scope: { mediaType: null },
+    options: { task: MIX_STATION_SYNC_TASKS.nts },
+  })
+  const html = render(
+    'mediaType=mix',
+    undefined,
+    [{ kind: 'job', job: sync }],
+    catalog,
+  )
+  assert.match(html, /<option value="mix" selected="">Mixes<\/option>/)
+  assert.match(html, /NTS mix sync/)
+  for (const name of ['Rinse FM', 'The Lot Radio'])
+    assert.match(html, new RegExp(name))
+  assert.doesNotMatch(html, /YouTube fixture/)
 })

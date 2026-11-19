@@ -17,6 +17,7 @@ Start with [getting started](getting-started.md) for installation or [applicatio
 - [Sonos](sonos.md): connecting a Sonos account, for playing Spotify on Sonos rooms and controlling them.
 - [Last.fm scrobble history](lastfm-scrobbles.md): syncing scrobbles, album linking, listening charts and browse fields.
 - [Subscriptions](subscriptions.md): YouTube channels and Spotify podcasts in one library: setup, sync, search, filters and API.
+- [Mixes](mixes.md): the archives of Rinse FM, NTS and The Lot Radio as links, with artist and tag filters: sync, search and API.
 - [AI search and voice input](ai-search.md): natural-language filters, voice search and Cloudflare configuration.
 - [Local provider plugins](local-plugins.md): optional integrations outside this repository.
 - [Album provider behavior](album-providers.md) and [film providers](film-keyword-providers.md): supported metadata and lookup limits.

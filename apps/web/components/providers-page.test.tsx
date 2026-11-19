@@ -340,3 +340,28 @@ test('loading, empty and error states', () => {
   )
   assert.match(failed, />Retry</)
 })
+
+test('the Mixes filter lists the station providers under their library', () => {
+  const names: Record<string, string> = {
+    rinse: 'Rinse FM',
+    nts: 'NTS',
+    lotradio: 'The Lot Radio',
+  }
+  const stations = Object.entries(names).map(([id, name]) =>
+    provider({
+      id,
+      name,
+      description: '',
+      roles: ['mix'],
+      connection: { state: 'not-required', method: 'none', detail: null },
+    }),
+  )
+  const html = render('mediaType=mix', (client) =>
+    client.setQueryData(['providers', 'overview', 'mix'], overview(stations)),
+  )
+  assert.match(html, /<option value="mix" selected="">Mixes<\/option>/)
+  // Without a description a provider is described by its libraries.
+  for (const name of Object.values(names))
+    assert.match(row(html, name), />Mixes</)
+  assert.doesNotMatch(html, /Fixture Ratings|Fixture Films/)
+})

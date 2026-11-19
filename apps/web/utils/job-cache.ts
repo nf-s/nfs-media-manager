@@ -74,6 +74,7 @@ export function invalidateChangedJobActivity(
       'lastfm-links',
       'album-picker',
       'subscriptions',
+      'mixes',
     ])
       keys.add(key)
   }

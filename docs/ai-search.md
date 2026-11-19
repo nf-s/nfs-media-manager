@@ -1,6 +1,6 @@
 # AI search and voice input
 
-Type a request into the album, film, track, artist or Subscriptions search box, then choose **AI search** below **Filter by text** in the suggestions. Artist metadata selection uses the same search box. Or use the microphone inside the search box and choose **Stop recording and search** when finished. Dictation transcribes the request and runs the search automatically. Successful searches immediately apply the resulting filters. Use the eye icon inside the search box to review the original request, interpretation, applied conditions and assumptions. The resulting filters use the normal browse controls and survive reloads and detail navigation.
+Type a request into the album, film, track, artist, Subscriptions or Mixes search box, then choose **AI search** below **Filter by text** in the suggestions. Artist metadata selection uses the same search box. Or use the microphone inside the search box and choose **Stop recording and search** when finished. Dictation transcribes the request and runs the search automatically. Successful searches immediately apply the resulting filters. Use the eye icon inside the search box to review the original request, interpretation, applied conditions and assumptions. The resulting filters use the normal browse controls and survive reloads and detail navigation.
 
 Examples:
 
@@ -32,6 +32,12 @@ Artists supports stored names, playlists, tags, countries, types, providers, add
 A Subscriptions request (`mediaType: subscription`) returns a plan over [the combined library](subscriptions.md#searching) of videos and podcast episodes: the search text, **Titles only**, channels and podcasts, type, published days, a duration range in seconds, and the sort. Plain-language lengths become ranges: under 4 minutes is at most 239 seconds, 4 to 20 minutes is 240 to 1,200, and over 20 minutes is at least 1,201. Views, likes and comments exist only for YouTube videos. Data that is not stored, such as watch history, asks for clarification. The Subscriptions browse page sends this request.
 
 The model returns channel and podcast names as written in the request. The server matches each one to a subscribed channel or saved podcast, ignoring case: an exact title or @handle first, then a part of one title or handle. If a name matches no source or several, nothing is applied and the review lists the name, with candidates for an ambiguous name. The applied plan becomes the page's ordinary browse filters: one Any filter per channel or podcast, a Required type filter when one type is asked for, and inclusive UTC ranges.
+
+## Mixes
+
+A Mixes request (`mediaType: mix`) returns a plan over [stored station mixes](mixes.md#searching): the search text, **Titles only**, shows, stations, artist and tag filters in Any, Required or Exclude mode, broadcast days, a duration range in seconds, and the sort. A DJ or artist becomes an artist filter unless the request calls it a show. A tag filter also matches the tags beneath it in the album hierarchy. Data that is not stored, such as play counts, asks for clarification. The Mixes browse page sends this request.
+
+Show names are matched to stored shows as channel names are in Subscriptions: an exact title first, then a part of one title, and a name that matches no show or several applies nothing.
 
 ## Models and configuration
 

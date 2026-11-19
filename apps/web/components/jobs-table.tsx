@@ -62,7 +62,7 @@ import {
 } from '@repo/ui/lib/format'
 import { fetchApiData } from '@/utils/api'
 import { useVirtualTable } from '@/hooks/useVirtualTable'
-import { parseLibraryView, type LibraryView } from '@/utils/media-scope'
+import { parseLibraryView, type Library } from '@/utils/media-scope'
 import {
   activeJobProgressLabel,
   canCancelJob,
@@ -112,13 +112,14 @@ const headerHeight = 28
 const selectionWidth = 36
 const batchPageSize = 25
 
-const libraryOptions: { value: LibraryView | ''; label: string }[] = [
+const libraryOptions: { value: Library | ''; label: string }[] = [
   { value: '', label: 'All libraries' },
   { value: 'album', label: 'Albums' },
   { value: 'track', label: 'Tracks' },
   { value: 'film', label: 'Films' },
   { value: 'artist', label: 'Artists' },
   { value: 'subscription', label: 'Subscriptions' },
+  { value: 'mix', label: 'Mixes' },
 ]
 
 type ColumnKey =
@@ -259,13 +260,15 @@ export function JobsTable({ provider }: { provider?: string }) {
   const providerOptions = (providers.data ?? []).filter((item) =>
     library === 'subscription'
       ? item.subscriptions
-      : library === 'artist'
-        ? supportsArtistEnrichment(item)
-        : library === 'track'
-          ? item.id === 'spotify'
-          : library
-            ? item.mediaTypes.some((kind) => kind === library)
-            : item.surface === 'provider',
+      : library === 'mix'
+        ? item.mixes
+        : library === 'artist'
+          ? supportsArtistEnrichment(item)
+          : library === 'track'
+            ? item.id === 'spotify'
+            : library
+              ? item.mediaTypes.some((kind) => kind === library)
+              : item.surface === 'provider',
   )
   const filters = {
     ...(library ? { mediaType: library } : {}),

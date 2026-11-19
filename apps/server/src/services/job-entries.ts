@@ -8,7 +8,10 @@ import {
   type JobEntryPage,
 } from '@repo/schemas/job'
 import { ARTIST_ENRICHMENT_TASK } from '@repo/schemas/artist-profiles'
-import { SUBSCRIPTION_SYNC_TASKS } from '@repo/schemas/subscriptions'
+import {
+  MIX_SYNC_TASKS,
+  SUBSCRIPTION_SYNC_TASKS,
+} from '@repo/schemas/subscriptions'
 import { db } from '@/lib/db'
 import { libraryImport, scrapeJob } from '@/schemas/db'
 import { jobListWhere, jobSortField, loadListedJobs } from '@/services/jobs'
@@ -51,6 +54,10 @@ async function loadBatches(ids: string[], now: number) {
     SUBSCRIPTION_SYNC_TASKS.map((task) => sql`${task}`),
     sql`, `,
   )
+  const mixTasks = sql.join(
+    MIX_SYNC_TASKS.map((task) => sql`${task}`),
+    sql`, `,
+  )
   const task = sql`coalesce(${scrapeJob.options}->>'task', '')`
   const scopeType = sql`${scrapeJob.scope}->>'mediaType'`
   const [rows, imports] = await Promise.all([
@@ -72,6 +79,7 @@ async function loadBatches(ids: string[], now: number) {
         mediaType: sql<string | null>`case
           when bool_and(${task} = ${ARTIST_ENRICHMENT_TASK}) then 'artist'
           when bool_and(${task} in (${subscriptionTasks})) then 'subscription'
+          when bool_and(${task} in (${mixTasks})) then 'mix'
           when count(${scopeType}) = count(*) and count(distinct ${scopeType}) = 1 then min(${scopeType})
           end`,
         createdAt: epochMs(sql`min(${scrapeJob.createdAt})`),

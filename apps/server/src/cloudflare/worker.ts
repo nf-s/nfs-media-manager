@@ -26,6 +26,7 @@ import { dispatchQueuedImports, executeQueuedImport } from '@/services/imports'
 import { queueDueLastfmSync } from '@/services/lastfm-sync-jobs'
 import { queueDueYoutubeSync } from '@/services/youtube-sync-jobs'
 import { queueDueSpotifyPodcastSync } from '@/services/spotify-podcast-sync-jobs'
+import { queueDueMixStationSync } from '@/services/mix-station-sync-jobs'
 import { queueDueSpotifyPlaylistSyncs } from '@/services/spotify-playlist-sync'
 import { withCloudQueue } from '@/lib/runtime'
 import {
@@ -295,6 +296,7 @@ export default {
         await queueDueLastfmSync()
         await queueDueYoutubeSync()
         await queueDueSpotifyPodcastSync()
+        await queueDueMixStationSync()
         await queueDueSpotifyPlaylistSyncs()
         for (const plugin of await listLoadedScrapePlugins()) {
           await bindings.PROVIDER_COORDINATORS.getByName(

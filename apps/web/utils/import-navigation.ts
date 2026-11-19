@@ -1,5 +1,10 @@
 import type { z } from 'zod'
 import type { FileImportFormatSchema } from '@repo/schemas/imports'
+import {
+  MixStationSchema,
+  subscriptionTypeLabels,
+  type MixStation,
+} from '@repo/schemas/subscriptions'
 
 type ImportFormat = z.infer<typeof FileImportFormatSchema>
 
@@ -96,4 +101,18 @@ export function subscriptionImportDestinations() {
       label: 'Spotify podcasts',
     },
   ]
+}
+
+/** A station's import page, which shows its sync. */
+export function mixStationImportHref(station: MixStation) {
+  return `/imports/${station}`
+}
+
+/** The Mixes library has no import history; each station page shows its own sync. */
+export function mixImportDestinations() {
+  return MixStationSchema.options.map((station) => ({
+    id: mixStationImportHref(station),
+    href: mixStationImportHref(station),
+    label: subscriptionTypeLabels[station],
+  }))
 }

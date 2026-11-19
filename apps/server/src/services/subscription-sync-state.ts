@@ -2,6 +2,7 @@ import { and, desc, eq, inArray, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import { YOUTUBE_SYNC_TASK } from '@repo/schemas/youtube'
 import {
+  MIX_STATION_SYNC_TASKS,
   SPOTIFY_PODCAST_SYNC_TASK,
   SubscriptionSyncScheduleSchema,
   SubscriptionSyncStatusSchema,
@@ -9,6 +10,7 @@ import {
   type SubscriptionSyncSchedule,
   type SubscriptionSyncStatus,
   type SubscriptionType,
+  subscriptionLibraryOf,
 } from '@repo/schemas/subscriptions'
 import { db } from '@/lib/db'
 import { scrapeJob, subscriptionSync } from '@/schemas/db'
@@ -17,6 +19,7 @@ import { scrapeJob, subscriptionSync } from '@/schemas/db'
 export const subscriptionSyncTasks: Record<SubscriptionType, string> = {
   youtube: YOUTUBE_SYNC_TASK,
   spotify: SPOTIFY_PODCAST_SYNC_TASK,
+  ...MIX_STATION_SYNC_TASKS,
 }
 
 const SCHEDULE_MINUTES: Record<SubscriptionSyncSchedule, number | null> = {
@@ -82,7 +85,9 @@ const CountsSchema = z
 
 /**
  * The stored sync state of one provider: its checkpoint, latest job, schedule
- * and the subscribed sources and items of its type. No provider requests.
+ * and the subscribed sources and items of its type. A station never
+ * unsubscribes a show, so all of its shows and mixes count. No provider
+ * requests.
  */
 export async function readSubscriptionSyncStatus(
   provider: SubscriptionType,
@@ -94,15 +99,17 @@ export async function readSubscriptionSyncStatus(
     .from(subscriptionSync)
     .where(subscriptionSyncRun(userId, provider))
   const job = await latestSyncJob(provider)
+  const counted =
+    subscriptionLibraryOf(provider) === 'mixes' ? sql`true` : sql`s.subscribed`
   const counts = CountsSchema.parse(
     (
       await db.execute(sql`
         select
-          (select count(*) from subscription_source
-            where type = ${provider} and subscribed) as sources,
+          (select count(*) from subscription_source s
+            where s.type = ${provider} and ${counted}) as sources,
           (select count(*) from subscription_item i
             join subscription_source s on s.id = i.source_id
-            where s.type = ${provider} and s.subscribed) as items`)
+            where s.type = ${provider} and ${counted}) as items`)
     ).rows,
   )
   const state = syncState(row, job)

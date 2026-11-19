@@ -284,3 +284,44 @@ test('a job in a batch shows the batch before the job', () => {
     ],
   )
 })
+
+test('mixes and shows open in the inspector with their own library pages', () => {
+  const mix: DetailEntry = { kind: 'mix', id: 'nts.example-mix' }
+  const show: DetailEntry = { kind: 'show', id: 'nts.example-show' }
+  assert.equal(detailPageHref(mix), '/mixes/nts.example-mix')
+  assert.equal(detailPageHref(show), '/mixes/shows/nts.example-show')
+  assert.equal(
+    detailPageHref(mix, new URLSearchParams({ q: 'late' })),
+    '/mixes/nts.example-mix?q=late',
+  )
+  // A Browse link that names an item opens it as a mix.
+  assert.deepEqual(
+    detailEntries('/mixes', new URLSearchParams({ item: 'nts.example-mix' })),
+    [mix],
+  )
+  assert.deepEqual(detailCrumbTrail('/mixes', [mix, show], new Map()), [
+    { label: 'Mixes', to: 'library' },
+    { label: 'Mix', to: 'entry', index: 0 },
+    { label: 'Show', to: 'current' },
+  ])
+  assert.deepEqual(detailCrumbTrail('/mixes/shows', [show], new Map())[0], {
+    label: 'Shows',
+    to: 'library',
+  })
+  assert.deepEqual(detailCrumbTrail('/', [show], new Map())[0], {
+    label: 'Shows',
+    to: 'href',
+    href: '/mixes/shows',
+  })
+  assert.deepEqual(detailCrumbTrail('/', [mix], new Map())[0], {
+    label: 'Mixes',
+    to: 'href',
+    href: '/mixes',
+  })
+  // Subscriptions keeps its kinds and pages.
+  assert.equal(detailPageHref({ kind: 'channel', id: 'c' }), '/channels/c')
+  assert.equal(
+    detailPageHref({ kind: 'subscription', id: 's' }),
+    '/subscriptions/s',
+  )
+})

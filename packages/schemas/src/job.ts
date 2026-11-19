@@ -109,6 +109,7 @@ export const JobLibrarySchema = z.enum([
   'track',
   'artist',
   'subscription',
+  'mix',
 ])
 
 export const JobListQuerySchema = z.object({

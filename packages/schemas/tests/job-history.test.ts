@@ -79,8 +79,8 @@ describe('job history contracts', () => {
     ).toBe(false)
   })
 
-  it('scopes jobs to albums, films, artists or the Subscriptions library', () => {
-    for (const mediaType of ['album', 'film', 'artist', 'subscription'])
+  it('scopes jobs to albums, films, artists or the Subscriptions or Mixes library', () => {
+    for (const mediaType of ['album', 'film', 'artist', 'subscription', 'mix'])
       expect(JobListQuerySchema.parse({ mediaType }).mediaType).toBe(mediaType)
     expect(JobListQuerySchema.safeParse({ mediaType: 'youtube' }).success).toBe(
       false,

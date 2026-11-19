@@ -103,6 +103,7 @@ function catalogEntry(id: string): ProviderCatalogEntry {
     ...plugin.manifest,
     surface: 'provider',
     subscriptions: false,
+    mixes: false,
     supportsScrape: true,
     supportsLegacyImport: false,
     pluginPath: null,

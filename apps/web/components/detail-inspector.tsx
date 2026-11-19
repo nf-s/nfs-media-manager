@@ -62,10 +62,12 @@ const labels = {
   track: 'Track details',
   playlist: 'Playlist details',
   subscription: 'Subscription details',
+  mix: 'Mix details',
   collection: 'Film collection details',
   artist: 'Artist details',
   person: 'Person details',
   channel: 'Channel details',
+  show: 'Show details',
   job: 'Job details',
   user: 'User panel',
   tag: 'Tag details',
@@ -75,7 +77,11 @@ type InspectorOptions = {
   media?: Omit<ComponentProps<typeof MediaDetail>, 'id' | 'mediaType'>
   track?: Pick<ComponentProps<typeof TrackDetail>, 'onFilter'>
   playlist?: Pick<ComponentProps<typeof PlaylistDetail>, 'filterTracks'>
-  subscription?: Omit<ComponentProps<typeof SubscriptionItemDetails>, 'id'>
+  subscription?: Omit<
+    ComponentProps<typeof SubscriptionItemDetails>,
+    'id' | 'library'
+  >
+  mix?: Omit<ComponentProps<typeof SubscriptionItemDetails>, 'id' | 'library'>
 }
 
 export function AppDetailInspector() {
@@ -153,7 +159,7 @@ export function DetailInspector(options: InspectorOptions) {
   const pageParams =
     detailBrowseKind(pathname) === activeKind ||
     (pathname === `/${activeKind}s` &&
-      !['artist', 'person', 'channel'].includes(activeKind))
+      !['artist', 'person', 'channel', 'show'].includes(activeKind))
       ? withoutDetailEntries(pathname, new URLSearchParams(params))
       : new URLSearchParams()
   const viewParams = new URLSearchParams(target.view)
@@ -341,10 +347,18 @@ function InspectorContent({
         <PersonDetail id={target.id} />
       ) : target.kind === 'channel' ? (
         <ChannelDetail id={target.id} />
+      ) : target.kind === 'show' ? (
+        <ChannelDetail id={target.id} library="mixes" />
       ) : target.kind === 'track' ? (
         <TrackDetail id={target.id} {...options.track} onMerged={onMerged} />
       ) : target.kind === 'subscription' ? (
         <SubscriptionItemDetails id={target.id} {...options.subscription} />
+      ) : target.kind === 'mix' ? (
+        <SubscriptionItemDetails
+          id={target.id}
+          library="mixes"
+          {...options.mix}
+        />
       ) : (
         <MediaDetail
           mediaType={target.kind}

@@ -34,9 +34,11 @@ import {
   SubscriptionItemPageSchema,
   SubscriptionItemSchema,
   getSubscriptionBrowseValues,
-  subscriptionBrowseFields,
+  subscriptionBrowseFieldsFor,
+  subscriptionLibraryLabels,
   subscriptionTypeLabels,
   type SubscriptionItem,
+  type SubscriptionLibrary,
 } from '@repo/schemas/subscriptions'
 import { useConfig } from './providers'
 import { fetchApiData } from '@/utils/api'
@@ -48,11 +50,13 @@ import { useSubscriptionSource } from '@/hooks/useSubscriptionSource'
 import { matchingTitleFilters } from '@/utils/browse-suggestions'
 import { gridCardMin, preserveGridScroll } from '@/utils/media-grid'
 import {
+  aiMixSearchParams,
   aiSubscriptionSearchParams,
+  mixAiSearchTarget,
   subscriptionAiSearchTarget,
 } from '@/utils/ai-search'
 import {
-  defaultSubscriptionColumns,
+  defaultSubscriptionColumnsFor,
   formatCompactSubscriptionCount,
   formatSubscriptionDuration,
   formatSubscriptionPublished,
@@ -62,14 +66,13 @@ import {
   savedSubscriptionSearch,
   subscriptionArtworkUrl,
   subscriptionBrowseQuery,
-  subscriptionCollection,
-  subscriptionFieldOrder,
-  subscriptionImportsHref,
+  subscriptionFieldOrders,
+  subscriptionLibraryPages,
+  subscriptionLibraryParams,
   subscriptionRangeLabel,
-  subscriptionSortLabels,
+  subscriptionSortLabelsFor,
   subscriptionSortOptions,
   subscriptionTitleSuggestions,
-  subscriptionsPath,
   updateSubscriptionSearch,
   withSubscriptionFilter,
 } from '@/utils/subscriptions'
@@ -117,20 +120,42 @@ import {
   useColumnWidths,
 } from './browse-items'
 
-const collection = subscriptionCollection
 /** --ds-head, --ds-row-media and --ds-row. */
 const headerHeight = 28
 const listRowHeight = 48
 const tableRowHeight = 32
-const noun = { one: 'item', other: 'items' }
-/** Sorts whose value the card does not already show. */
-const cardSortKeys = new Set(['watchedAt', 'likeCount', 'commentCount'])
+/** Sorts whose value the card does not already show; a mix card has no length badge. */
+const cardSortKeys: Record<SubscriptionLibrary, Set<string>> = {
+  subscriptions: new Set(['watchedAt', 'likeCount', 'commentCount']),
+  mixes: new Set(['watchedAt', 'durationSec']),
+}
 const searchFieldOptions: Array<{ value: 'all' | 'title'; label: string }> = [
   { value: 'all', label: 'Titles and descriptions' },
   { value: 'title', label: 'Titles only' },
 ]
+const searchPlaceholders: Record<SubscriptionLibrary, string> = {
+  subscriptions: 'Search titles, channels, podcasts, tags...',
+  mixes: 'Search titles, shows, artists, tags...',
+}
+const emptyLibraryHelp: Record<SubscriptionLibrary, string> = {
+  subscriptions: 'Sync channels and podcasts in Imports.',
+  mixes: 'Sync station archives in Imports.',
+}
 
-export default function SubscriptionBrowser() {
+/**
+ * Browse for Subscriptions (YouTube videos and podcast episodes) or Mixes
+ * (radio station archives). Both read the Subscriptions API; `library`
+ * decides the labels, the cache and storage keys and the item kinds.
+ */
+export default function SubscriptionBrowser({
+  library = 'subscriptions',
+}: {
+  library?: SubscriptionLibrary
+}) {
+  const page = subscriptionLibraryPages[library]
+  const { collection, path: libraryPath, itemKind, sourceKind } = page
+  const labels = subscriptionLibraryLabels[library]
+  const mixes = library === 'mixes'
   const { apiBaseUrl } = useConfig()
   const searchParams = useSearchParams()
   const [ready, setReady] = useState(false)
@@ -145,26 +170,35 @@ export default function SubscriptionBrowser() {
   const scroller = useRef<HTMLDivElement>(null)
   const inspector = useDetailInspector()
   const railSlot = useRailSlot()
-  const state = parseSubscriptionBrowseState(new URLSearchParams(searchParams))
+  const state = parseSubscriptionBrowseState(
+    new URLSearchParams(searchParams),
+    library,
+  )
   const { q, filters, ranges, view, sourceId } = state
-  const { identity, params, sortBy, direction } = subscriptionBrowseQuery(state)
-  const sourceTitle = useSubscriptionSource(sourceId).data?.source.title
+  const { identity, params, sortBy, direction } = subscriptionBrowseQuery(
+    state,
+    library,
+  )
+  const sourceTitle = useSubscriptionSource(sourceId, library).data?.source
+    .title
   const selectedId =
-    inspector?.root?.kind === 'subscription' ? inspector.root.id : null
+    inspector?.root?.kind === itemKind ? inspector.root.id : null
+  const libraryQuery = new URLSearchParams(subscriptionLibraryParams(library))
   const fieldsQuery = useQuery({
     queryKey: [collection, 'fields'],
     queryFn: () =>
       fetchApiData(
         apiBaseUrl,
-        `/api/v1/${collection}/fields`,
+        `/api/v1/subscriptions/fields${libraryQuery.size ? `?${libraryQuery}` : ''}`,
         z.array(BrowseFieldSchema),
       ),
   })
   const fields = orderFields(
-    fieldsQuery.data ?? subscriptionBrowseFields,
-    subscriptionFieldOrder,
+    fieldsQuery.data ?? subscriptionBrowseFieldsFor(library),
+    subscriptionFieldOrders[library],
   )
   const sortField = fields.find((field) => field.key === sortBy)
+  const sortLabels = subscriptionSortLabelsFor(library)
   // Watched Yes/No is a filter; the Watched column shows the date.
   const columnFields = fields.filter(
     (field) => field.key !== 'description' && field.key !== 'watched',
@@ -172,7 +206,8 @@ export default function SubscriptionBrowser() {
   const columnKeys = [
     ...new Set([
       'title',
-      ...(state.columns?.map(canonicalBrowseKey) ?? defaultSubscriptionColumns),
+      ...(state.columns?.map(canonicalBrowseKey) ??
+        defaultSubscriptionColumnsFor[library]),
     ]),
   ]
   const columnOrder = parseColumnOrder(searchParams.get('columnOrder'))
@@ -183,7 +218,7 @@ export default function SubscriptionBrowser() {
   const widths = useColumnWidths(collection, (field) =>
     field.key === 'title'
       ? 340
-      : field.key === 'source'
+      : field.key === 'source' || field.key === 'artist'
         ? 200
         : field.key === 'genre'
           ? 220
@@ -197,8 +232,8 @@ export default function SubscriptionBrowser() {
   const compactCards = density === 'compact'
   const grid = itemGridGeometry({
     width: viewport.width,
-    min: gridCardMin('subscription', density),
-    ratio: 9 / 16,
+    min: gridCardMin(mixes ? 'mix' : 'subscription', density),
+    ratio: mixes ? 1 : 9 / 16,
     tags: !compactCards,
   })
   const scrollIdentity = `${collection}:${identity}:${view}`
@@ -210,15 +245,13 @@ export default function SubscriptionBrowser() {
 
   function setParams(updates: Record<string, string | null>, close = false) {
     const next = updateSubscriptionSearch(window.location.search, updates)
-    const params = close ? withoutDetailEntries(subscriptionsPath, next) : next
-    const url = `${subscriptionsPath}${params.size ? `?${params}` : ''}`
+    const params = close ? withoutDetailEntries(libraryPath, next) : next
+    const url = `${libraryPath}${params.size ? `?${params}` : ''}`
     replaceWorkspaceUrl(url, !close)
     try {
       window.localStorage.setItem(
         `browse:${collection}`,
-        savedSubscriptionSearch(
-          withoutDetailEntries(subscriptionsPath, params),
-        ),
+        savedSubscriptionSearch(withoutDetailEntries(libraryPath, params)),
       )
     } catch {
       /* URL state still works when browser storage is unavailable. */
@@ -243,7 +276,7 @@ export default function SubscriptionBrowser() {
     })
   }
   function openDetail(id: string, trigger?: HTMLElement) {
-    inspector?.open({ kind: 'subscription', id }, trigger)
+    inspector?.open({ kind: itemKind, id }, trigger)
   }
   function sort(key: string) {
     setParams({
@@ -256,12 +289,12 @@ export default function SubscriptionBrowser() {
     try {
       const saved = window.localStorage.getItem(`browse:${collection}`)
       if (!window.location.search && saved)
-        window.history.replaceState(null, '', `${subscriptionsPath}?${saved}`)
+        window.history.replaceState(null, '', `${libraryPath}?${saved}`)
     } catch {
       /* Ignore unavailable storage or malformed saved preferences. */
     }
     setReady(true)
-  }, [])
+  }, [collection, libraryPath])
   useEffect(() => {
     const element = scroller.current
     if (!element) return
@@ -315,6 +348,7 @@ export default function SubscriptionBrowser() {
   const query = useVirtualBrowse({
     apiBaseUrl,
     collection,
+    endpoint: 'subscriptions',
     identity,
     params,
     enabled: ready,
@@ -333,7 +367,7 @@ export default function SubscriptionBrowser() {
   })
   const { total, slots, padTop, padBottom } = query
   const activeItem =
-    inspector?.active?.kind === 'subscription'
+    inspector?.active?.kind === itemKind
       ? slots.find(({ item }) => item?.id === inspector.active?.id)?.item
       : undefined
   const facets = useBrowseFacets(apiBaseUrl, collection, draft, ready)
@@ -354,10 +388,11 @@ export default function SubscriptionBrowser() {
         sortBy: 'title',
         direction: 'asc',
         ...(sourceId ? { sourceId } : {}),
+        ...subscriptionLibraryParams(library),
       })
       return fetchApiData(
         apiBaseUrl,
-        `/api/v1/${collection}?${params}`,
+        `/api/v1/subscriptions?${params}`,
         SubscriptionItemPageSchema,
         { signal },
       )
@@ -404,7 +439,7 @@ export default function SubscriptionBrowser() {
       const next = slots[current + (event.key === 'ArrowDown' ? 1 : -1)]?.item
       if (current < 0 || !next) return
       event.preventDefault()
-      inspector?.replace({ kind: 'subscription', id: next.id })
+      inspector?.replace({ kind: itemKind, id: next.id })
     }
     document.addEventListener('keydown', onKeyDown)
     return () => document.removeEventListener('keydown', onKeyDown)
@@ -426,7 +461,7 @@ export default function SubscriptionBrowser() {
   function itemLink(item: SubscriptionItem, className?: string) {
     return (
       <DetailLink
-        kind="subscription"
+        kind={itemKind}
         id={item.id}
         className={className}
         title={item.title}
@@ -438,7 +473,7 @@ export default function SubscriptionBrowser() {
 
   function channelLink(item: SubscriptionItem) {
     return (
-      <DetailLink kind="channel" id={item.sourceId}>
+      <DetailLink kind={sourceKind} id={item.sourceId}>
         {item.sourceTitle}
       </DetailLink>
     )
@@ -451,10 +486,10 @@ export default function SubscriptionBrowser() {
   function thumb(item: SubscriptionItem) {
     return (
       <ItemThumb
-        kind="video"
+        kind={mixes ? 'album' : 'video'}
         src={subscriptionArtworkUrl(item)}
         title={item.title}
-        target={{ kind: 'subscription', id: item.id }}
+        target={{ kind: itemKind, id: item.id }}
         contain={item.type === 'spotify'}
       />
     )
@@ -495,7 +530,7 @@ export default function SubscriptionBrowser() {
   }
 
   function cardMeta(item: SubscriptionItem) {
-    const sorted = cardSortKeys.has(sortBy)
+    const sorted = cardSortKeys[library].has(sortBy)
       ? sortedValueLabel(sortField, getSubscriptionBrowseValues(item)[sortBy])
       : null
     return (
@@ -528,10 +563,10 @@ export default function SubscriptionBrowser() {
         {sourceId && (
           <BrowseFilterPill
             mode="required"
-            removeLabel="Remove channel filter"
+            removeLabel={`Remove ${labels.source.toLowerCase()} filter`}
             onRemove={() => setParams({ sourceId: null })}
           >
-            {sourceTitle ? `Channel: ${sourceTitle}` : 'Channel'}
+            {sourceTitle ? `${labels.source}: ${sourceTitle}` : labels.source}
           </BrowseFilterPill>
         )}
         {q && (
@@ -576,44 +611,57 @@ export default function SubscriptionBrowser() {
       </>
     ) : null
 
+  const autocomplete = {
+    items: titleItems,
+    titlesLoading,
+    titlesError:
+      facets.isError || (titleFilters.length > 0 && titleMatches.isError),
+    onOpenItem: openDetail,
+    options,
+    placeholder: searchPlaceholders[library],
+    value: draft,
+    onFocus: facets.activate,
+    onValueChange: setDraft,
+    onAddFilter: addFilter,
+    onApplyText: (value: string) => {
+      setParams({ q: value.slice(0, 200) || null }, true)
+      setDraft('')
+    },
+  }
+
   return (
-    <section className="media-browser" aria-label="Subscriptions">
+    <section className="media-browser" aria-label={page.name}>
       <div className="browse-main">
         <BrowseToolbar
           search={
-            <AiSearch
-              target={subscriptionAiSearchTarget}
-              queryIdentity={identity}
-              autocomplete={{
-                items: titleItems,
-                titlesLoading,
-                titlesError:
-                  facets.isError ||
-                  (titleFilters.length > 0 && titleMatches.isError),
-                onOpenItem: openDetail,
-                options,
-                placeholder: 'Search titles, channels, podcasts, tags...',
-                value: draft,
-                onFocus: facets.activate,
-                onValueChange: setDraft,
-                onAddFilter: addFilter,
-                onApplyText: (value) => {
-                  setParams({ q: value.slice(0, 200) || null }, true)
+            mixes ? (
+              <AiSearch
+                target={mixAiSearchTarget}
+                queryIdentity={identity}
+                autocomplete={autocomplete}
+                onApply={(plan) => {
+                  setParams(aiMixSearchParams(plan))
                   setDraft('')
-                },
-              }}
-              onApply={(plan) => {
-                setParams(aiSubscriptionSearchParams(plan))
-                setDraft('')
-              }}
-            />
+                }}
+              />
+            ) : (
+              <AiSearch
+                target={subscriptionAiSearchTarget}
+                queryIdentity={identity}
+                autocomplete={autocomplete}
+                onApply={(plan) => {
+                  setParams(aiSubscriptionSearchParams(plan))
+                  setDraft('')
+                }}
+              />
+            )
           }
           sort={{
             key: sortBy,
             direction: sortBy === 'relevance' ? undefined : direction,
-            options: subscriptionSortOptions(q).map((key) => ({
+            options: subscriptionSortOptions(q, library).map((key) => ({
               key,
-              label: subscriptionSortLabels[key],
+              label: sortLabels[key],
             })),
             onChange: sort,
             onDirectionChange: (direction) => setParams({ sortBy, direction }),
@@ -641,7 +689,7 @@ export default function SubscriptionBrowser() {
                       <input
                         type="radio"
                         className="ds-check"
-                        name="subscription-search-fields"
+                        name={`${itemKind}-search-fields`}
                         checked={state.fields === value}
                         onChange={() =>
                           setParams({ fields: value === 'all' ? null : value })
@@ -695,7 +743,7 @@ export default function SubscriptionBrowser() {
               query={query}
               total={total}
               unfiltered={query.unfilteredTotal}
-              noun={noun}
+              noun={page.items}
             />
           }
         />
@@ -707,19 +755,19 @@ export default function SubscriptionBrowser() {
         <BrowseItemsStates
           query={query}
           total={total}
-          noun="subscriptions"
+          noun={page.plural}
           filtered={hasSubscriptionFilters(state)}
           onClear={clearFilters}
           empty={
             <State
-              title="No subscriptions yet"
+              title={`No ${page.plural} yet`}
               action={
                 <Button asChild>
-                  <Link href={subscriptionImportsHref}>Open Imports</Link>
+                  <Link href={page.importsHref}>Open Imports</Link>
                 </Button>
               }
             >
-              Sync channels and podcasts in Imports.
+              {emptyLibraryHelp[library]}
             </State>
           }
         />
@@ -728,7 +776,7 @@ export default function SubscriptionBrowser() {
           data-view={view}
           ref={scroller}
           role="region"
-          aria-label={`Subscriptions ${view}`}
+          aria-label={`${page.name} ${view}`}
           onScroll={(event) =>
             setScroll({
               identity: scrollIdentity,
@@ -745,7 +793,12 @@ export default function SubscriptionBrowser() {
             >
               {slots.map(({ item, index }) => {
                 if (!item)
-                  return <CardSkeleton key={`slot-${index}`} ratio="video" />
+                  return (
+                    <CardSkeleton
+                      key={`slot-${index}`}
+                      ratio={mixes ? undefined : 'video'}
+                    />
+                  )
                 const duration = formatSubscriptionDuration(item)
                 return (
                   <Card
@@ -754,12 +807,16 @@ export default function SubscriptionBrowser() {
                     selected={item.id === selectedId}
                     art={
                       <ItemArt
-                        kind="video"
+                        kind={mixes ? 'album' : 'video'}
                         src={subscriptionArtworkUrl(item)}
                         title={item.title}
-                        target={{ kind: 'subscription', id: item.id }}
+                        target={{ kind: itemKind, id: item.id }}
                         contain={item.type === 'spotify'}
-                        badge={duration === EMPTY_VALUE ? undefined : duration}
+                        badge={
+                          mixes || duration === EMPTY_VALUE
+                            ? undefined
+                            : duration
+                        }
                       />
                     }
                     title={<CardTitle>{itemLink(item)}</CardTitle>}
@@ -782,9 +839,9 @@ export default function SubscriptionBrowser() {
                   playWidth={0}
                   meta={
                     <>
-                      <RowValue kind="date">Published</RowValue>
+                      <RowValue kind="date">{labels.published}</RowValue>
                       <RowValue kind="num">Duration</RowValue>
-                      <RowValue kind="num">Views</RowValue>
+                      {!mixes && <RowValue kind="num">Views</RowValue>}
                     </>
                   }
                 />
@@ -806,16 +863,21 @@ export default function SubscriptionBrowser() {
                         <RowValue kind="num">
                           {formatSubscriptionDuration(item)}
                         </RowValue>
-                        <RowValue kind="num">
-                          {item.type === 'youtube' && item.viewCount !== null
-                            ? formatCount(item.viewCount)
-                            : EMPTY_VALUE}
-                        </RowValue>
+                        {!mixes && (
+                          <RowValue kind="num">
+                            {item.type === 'youtube' && item.viewCount !== null
+                              ? formatCount(item.viewCount)
+                              : EMPTY_VALUE}
+                          </RowValue>
+                        )}
                       </>
                     }
                   />
                 ) : (
-                  <RowSkeleton key={`slot-${index}`} ratio="video" />
+                  <RowSkeleton
+                    key={`slot-${index}`}
+                    ratio={mixes ? undefined : 'video'}
+                  />
                 ),
               )}
             </VirtualRows>
@@ -823,7 +885,7 @@ export default function SubscriptionBrowser() {
             <table
               className="ds-table"
               data-layout="fixed"
-              aria-label="Subscriptions"
+              aria-label={page.name}
               aria-rowcount={query.hasTotal ? total + 1 : undefined}
               style={{
                 width: columns.reduce(
@@ -847,7 +909,7 @@ export default function SubscriptionBrowser() {
                       key={field.key}
                       field={field}
                       identity={field.key === 'title'}
-                      sortable={isSubscriptionSort(field.key)}
+                      sortable={isSubscriptionSort(field.key, library)}
                       sortBy={sortBy}
                       direction={sortBy === 'relevance' ? undefined : direction}
                       onSort={sort}
@@ -909,9 +971,15 @@ export default function SubscriptionBrowser() {
           )}
         </TableScroll>
       </div>
-      <DetailInspector
-        subscription={{ initialItem: activeItem, onFilter: addFilter }}
-      />
+      {mixes ? (
+        <DetailInspector
+          mix={{ initialItem: activeItem, onFilter: addFilter }}
+        />
+      ) : (
+        <DetailInspector
+          subscription={{ initialItem: activeItem, onFilter: addFilter }}
+        />
+      )}
     </section>
   )
 }

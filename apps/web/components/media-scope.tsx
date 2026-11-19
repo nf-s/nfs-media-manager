@@ -15,7 +15,7 @@ import {
   switchLibraryHref,
   trackScopeRedirect,
   workspaceScopeForPath,
-  type LibraryView,
+  type Library,
 } from '@/utils/media-scope'
 
 export function useMediaScope() {
@@ -39,9 +39,9 @@ export function useLibraryView() {
 
 const lastLibraryKey = 'media-manager:library'
 const lastLibraryListeners = new Set<() => void>()
-let lastLibrary: LibraryView | null = null
+let lastLibrary: Library | null = null
 
-function readLastLibrary(): LibraryView {
+function readLastLibrary(): Library {
   if (lastLibrary === null) {
     try {
       lastLibrary =
@@ -54,7 +54,7 @@ function readLastLibrary(): LibraryView {
   return lastLibrary
 }
 
-function rememberLibrary(view: LibraryView) {
+function rememberLibrary(view: Library) {
   if (readLastLibrary() === view) return
   lastLibrary = view
   try {
@@ -76,11 +76,11 @@ function subscribeLastLibrary(listener: () => void) {
  * The library the rail shows. Jobs and Providers belong to no library, so the
  * rail keeps the library that was open before them.
  */
-export function useRailLibraryView(): LibraryView {
+export function useRailLibraryView(): Library {
   const path = usePathname()
   const view = useLibraryView()
   const system = isSystemPath(path)
-  const last = useSyncExternalStore<LibraryView>(
+  const last = useSyncExternalStore<Library>(
     subscribeLastLibrary,
     readLastLibrary,
     () => 'album',
@@ -113,6 +113,7 @@ export function LibrarySelector() {
       <option value="artist">Artists</option>
       <option value="film">Films</option>
       <option value="subscription">Subscriptions</option>
+      <option value="mix">Mixes</option>
     </select>
   )
 }

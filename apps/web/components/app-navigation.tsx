@@ -16,9 +16,10 @@ import {
 } from 'lucide-react'
 import { Count } from '@repo/ui/components/ds/pill'
 import {
+  libraryImportsHome,
   libraryMatchesHref,
   scopedHref,
-  type LibraryView,
+  type Library as LibraryName,
 } from '@/utils/media-scope'
 import {
   providerNeedsAttention,
@@ -40,7 +41,30 @@ type NavItem = {
 }
 
 /** Each library's own pages. Jobs and Providers sit once, under System. */
-export function libraryNavigation(view: LibraryView): NavItem[] {
+export function libraryNavigation(view: LibraryName): NavItem[] {
+  // Mixes has no Matches page.
+  if (view === 'mix')
+    return [
+      {
+        href: '/mixes',
+        label: 'Browse',
+        Icon: LayoutGrid,
+        section: '/mixes',
+        exact: true,
+      },
+      {
+        href: '/mixes/shows',
+        label: 'Shows',
+        Icon: Users,
+        section: '/mixes/shows',
+      },
+      {
+        href: scopedHref(libraryImportsHome('mix'), 'mix'),
+        label: 'Imports',
+        Icon: Download,
+        section: '/imports',
+      },
+    ]
   const matches = {
     href: libraryMatchesHref(view),
     label: 'Matches',

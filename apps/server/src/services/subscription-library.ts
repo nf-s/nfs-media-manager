@@ -1,48 +1,60 @@
 import { and, sql, type SQL } from 'drizzle-orm'
 import { PgDialect } from 'drizzle-orm/pg-core'
 import { z } from 'zod'
-import {
-  BrowseFacetQuerySchema,
-  type BrowseFacetQuery,
-  type BrowseFilter,
-} from '@repo/schemas/browse'
+import { type BrowseFilter } from '@repo/schemas/browse'
+import type { ArtistMixQuery } from '@repo/schemas/creators'
 import {
   MatchDiagnosticsPageSchema,
   type MatchDiagnosticsQuery,
 } from '@repo/schemas/match-diagnostics'
 import {
+  SubscriptionFacetQuerySchema,
   SubscriptionItemIdSchema,
   SubscriptionItemPageSchema,
   SubscriptionItemSchema,
+  SubscriptionProviderSchema,
   SubscriptionPublishedPrecisionSchema,
   SubscriptionRangeFieldSchema,
   SubscriptionSourceDetailSchema,
   SubscriptionSourceIdSchema,
   SubscriptionSourceListSchema,
+  SubscriptionSourceQuerySchema,
   SubscriptionTextFieldSchema,
   SubscriptionTypeSchema,
-  subscriptionBrowseFields,
+  subscriptionBrowseFieldsFor,
   subscriptionItemUrl,
+  subscriptionLibraryHasRange,
+  subscriptionLibraryHasSort,
+  subscriptionLibraryHasTextFilter,
+  subscriptionLibraryOf,
+  subscriptionLibraryTypes,
   subscriptionSourceUrl,
   subscriptionTypeLabels,
+  type SubscriptionFacetQuery,
   type SubscriptionItem,
   type SubscriptionItemPage,
   type SubscriptionItemPatch,
   type SubscriptionItemQuery,
+  type SubscriptionLibrary,
   type SubscriptionSort,
   type SubscriptionType,
 } from '@repo/schemas/subscriptions'
 import { db } from '@/lib/db'
 import { createDatabaseReadCache } from '@/lib/database-read-cache'
 import { ServerError } from '@/lib/error'
+import { visibleArtist } from './entity-relationships'
+import { matchingTagNames } from './music-tags'
+import { normalizedTagSql, normalizeTagName } from './tag-state'
 
 // Every query reads stored rows only and makes no provider requests. In SQL,
-// `i` is a subscription_item and `s` its subscription_source.
+// `i` is a subscription_item and `s` its subscription_source. A row belongs
+// to the library of its type; lists, counts and facets read one library.
 
 /**
  * Title (A), source title and tags (B), description (D): English stems for
- * word forms, then the same fields unstemmed for partial words. Migration 0021
- * rebuilt stored YouTube rows with the same expression.
+ * word forms, then the same fields unstemmed for partial words. A mix's billed
+ * artists go with its tags, so search and the artist lookups find them.
+ * Migration 0021 rebuilt stored YouTube rows with the same expression.
  */
 export function subscriptionSearchVector(
   title: SQL,
@@ -60,6 +72,17 @@ export function subscriptionSearchVector(
 
 const isoSeconds = (value: number | null) =>
   value === null ? null : new Date(value * 1000).toISOString()
+
+/** The row's type is one of the library's. */
+export function inSubscriptionLibrary(type: SQL, library: SubscriptionLibrary) {
+  return sql`${type} in (${sql.join(
+    subscriptionLibraryTypes[library].map((value) => sql`${value}`),
+    sql`, `,
+  )})`
+}
+
+/** Compares names ignoring case and surrounding spaces. */
+const nameKey = (value: SQL) => sql`lower(btrim(${value}))`
 
 const CountSchema = z.coerce.number().nullable()
 
@@ -151,6 +174,9 @@ const ItemRowsSchema = z.array(
     comment_count: CountSchema,
     live: z.enum(['none', 'live', 'upcoming']).catch('none'),
     artwork_url: z.string().nullable(),
+    artists: z.array(z.string()),
+    url: z.string().nullable(),
+    audio_url: z.string().nullable(),
     watched: z.coerce.number().nullable(),
     total: z.coerce.number().optional(),
   }),
@@ -159,6 +185,8 @@ type SubscriptionItemRow = z.infer<typeof ItemRowsSchema>[number]
 
 /** A page of stored items from subscribed sources. */
 type SubscriptionItemSearch = {
+  /** Reads rows of this library only; a read by ID leaves it out. */
+  library?: SubscriptionLibrary
   /** Web-search syntax over the stored search text. */
   text?: string
   /** `title` leaves the description out of a ranked search. */
@@ -174,7 +202,7 @@ type SubscriptionItemSearch = {
 /**
  * Searches items of subscribed sources. A search made only of stop words,
  * such as "The Who", or of punctuation has no lexemes to match; it falls back
- * to the literal text in the item or source title.
+ * to the literal text in the item or source title, or a mix's billed artist.
  */
 async function subscriptionSearchQueries(search: SubscriptionItemSearch) {
   const text = search.text || null
@@ -190,8 +218,18 @@ async function subscriptionSearchQueries(search: SubscriptionItemSearch) {
   const where = sql.join(
     [
       sql`s.subscribed`,
+      ...(search.library
+        ? [inSubscriptionLibrary(sql`i.type`, search.library)]
+        : []),
       ...(literal
-        ? [sql`(i.title ilike ${pattern} or s.title ilike ${pattern})`]
+        ? [
+            sql`(i.title ilike ${pattern} or s.title ilike ${pattern}${
+              search.library === 'mixes'
+                ? sql` or exists (select 1 from jsonb_array_elements_text(i.artists) billed(value)
+                    where billed.value ilike ${pattern})`
+                : sql``
+            })`,
+          ]
         : []),
       ...(ranked
         ? [
@@ -218,8 +256,8 @@ async function subscriptionSearchQueries(search: SubscriptionItemSearch) {
           s.thumbnail_url as source_thumbnail_url, i.title, i.description,
           i.tags, extract(epoch from i.published_at)::float8 as published,
           i.published_precision, i.duration_sec, i.view_count, i.like_count,
-          i.comment_count, i.live, i.artwork_url,
-          extract(epoch from i.watched_at)::float8 as watched
+          i.comment_count, i.live, i.artwork_url, i.artists, i.url,
+          i.audio_url, extract(epoch from i.watched_at)::float8 as watched
           ${withCount ? sql`, count(*) over () as total` : sql``}
         ${members}
         order by ${search.order(ranked)}, i.id
@@ -243,8 +281,15 @@ async function searchSubscriptionItemRows(search: SubscriptionItemSearch) {
   return { rows, totalCount }
 }
 
-function subscriptionItem(row: SubscriptionItemRow): SubscriptionItem {
+type LibraryArtist = { id: string; name: string }
+
+function subscriptionItem(
+  row: SubscriptionItemRow,
+  libraryArtists: LibraryArtist[] = [],
+): SubscriptionItem {
   const shared = {
+    id: row.id,
+    sourceId: row.source_id,
     sourceTitle: row.source_title,
     sourceThumbnailUrl: row.source_thumbnail_url,
     title: row.title,
@@ -253,51 +298,79 @@ function subscriptionItem(row: SubscriptionItemRow): SubscriptionItem {
     publishedAt: new Date(row.published * 1000).toISOString(),
     publishedPrecision: row.published_precision,
     durationSec: row.duration_sec > 0 ? row.duration_sec : null,
-    url: subscriptionItemUrl(row.type, row.id),
+    url: subscriptionItemUrl(row.type, row.id, row.url),
     watchedAt: isoSeconds(row.watched),
   }
-  return SubscriptionItemSchema.parse(
-    row.type === 'youtube'
-      ? {
-          type: row.type,
-          id: row.id,
-          sourceId: row.source_id,
-          ...shared,
-          viewCount: row.view_count,
-          likeCount: row.like_count,
-          commentCount: row.comment_count,
-          live: row.live,
-        }
-      : {
-          type: row.type,
-          id: row.id,
-          sourceId: row.source_id,
-          ...shared,
-          artworkUrl: row.artwork_url,
-        },
-  )
+  if (row.type === 'youtube')
+    return SubscriptionItemSchema.parse({
+      type: row.type,
+      ...shared,
+      viewCount: row.view_count,
+      likeCount: row.like_count,
+      commentCount: row.comment_count,
+      live: row.live,
+    })
+  if (row.type === 'spotify')
+    return SubscriptionItemSchema.parse({
+      type: row.type,
+      ...shared,
+      artworkUrl: row.artwork_url,
+    })
+  return SubscriptionItemSchema.parse({
+    type: row.type,
+    ...shared,
+    artworkUrl: row.artwork_url,
+    artists: row.artists,
+    audioUrl: row.audio_url,
+    libraryArtists,
+  })
 }
 
-const typeLabel = sql`(case i.type when 'youtube' then ${subscriptionTypeLabels.youtube}::text when 'spotify' then ${subscriptionTypeLabels.spotify}::text end)`
+const typeLabel = sql`(case i.type ${sql.join(
+  SubscriptionTypeSchema.options.map(
+    (type) => sql`when ${type} then ${subscriptionTypeLabels[type]}::text`,
+  ),
+  sql` `,
+)} end)`
 
 const textValues: Record<z.infer<typeof SubscriptionTextFieldSchema>, SQL> = {
   title: sql`i.title`,
   source: sql`s.title`,
   type: typeLabel,
+  artist: sql`artist.value`,
   genre: sql`tag.value`,
   // Yes or No, as the film Watched field.
   watched: sql`(case when i.watched_at is null then 'No'::text else 'Yes'::text end)`,
 }
 
-/** Exact, case-insensitive matches, as the other libraries' text filters. */
-function filterMatch(filter: BrowseFilter) {
+/** Facets read one row per value of an array field. */
+const textValueRows: Partial<
+  Record<z.infer<typeof SubscriptionTextFieldSchema>, SQL>
+> = {
+  artist: sql`cross join lateral jsonb_array_elements_text(i.artists) artist(value)`,
+  genre: sql`cross join lateral jsonb_array_elements_text(i.tags) tag(value)`,
+}
+
+/**
+ * Exact, case-insensitive matches, as the other libraries' text filters. A
+ * mix's tags are music genres: a tag filter resolves merged names and matches
+ * the visible tags beneath it in the album tag hierarchy, by normalized name.
+ */
+function filterMatch(filter: BrowseFilter, library: SubscriptionLibrary) {
   const field = SubscriptionTextFieldSchema.safeParse(filter.field)
-  if (!field.success)
+  if (!field.success || !subscriptionLibraryHasTextFilter(library, field.data))
     throw new ServerError({ statusCode: 422, message: 'Unknown text filter' })
   const value = sql`lower(${filter.value}::text)`
-  return field.data === 'genre'
-    ? sql`exists (select 1 from jsonb_array_elements_text(i.tags) tag(value) where lower(tag.value) = ${value})`
-    : sql`lower(${textValues[field.data]}) = ${value}`
+  if (field.data === 'genre' && library === 'mixes')
+    return sql`exists (select 1 from jsonb_array_elements_text(i.tags) tag(value)
+      where ${normalizedTagSql(sql`tag.value`)} in (
+        ${matchingTagNames(normalizeTagName(filter.value), 'album')}
+      ))`
+  if (field.data === 'genre')
+    return sql`exists (select 1 from jsonb_array_elements_text(i.tags) tag(value) where lower(tag.value) = ${value})`
+  if (field.data === 'artist')
+    return sql`exists (select 1 from jsonb_array_elements_text(i.artists) artist(value) where lower(artist.value) = ${value})`
+  return sql`lower(${textValues[field.data]}) = ${value}`
 }
 
 // Durations of zero are unknown: a live stream or premiere that has not finished.
@@ -361,11 +434,12 @@ function subscriptionBrowseSearch(
   query: SubscriptionItemQuery,
   sourceId = query.sourceId,
 ): SubscriptionItemSearch {
+  const { library } = query
   const conditions =
     sourceId === undefined ? [] : [sql`i.source_id = ${sourceId}`]
   const any: SQL[] = []
   for (const filter of query.filters) {
-    const match = filterMatch(filter)
+    const match = filterMatch(filter, library)
     if (filter.mode === 'exclude') conditions.push(sql`not (${match})`)
     else if (filter.mode === 'required') conditions.push(match)
     else any.push(match)
@@ -373,7 +447,7 @@ function subscriptionBrowseSearch(
   if (any.length) conditions.push(sql`(${sql.join(any, sql` or `)})`)
   for (const range of query.ranges) {
     const field = SubscriptionRangeFieldSchema.safeParse(range.field)
-    if (!field.success)
+    if (!field.success || !subscriptionLibraryHasRange(library, field.data))
       throw new ServerError({
         statusCode: 422,
         message: 'Unknown numeric filter',
@@ -392,7 +466,10 @@ function subscriptionBrowseSearch(
     )
   }
   const sortBy = query.sortBy ?? (query.q ? 'relevance' : 'publishedAt')
+  if (!subscriptionLibraryHasSort(library, sortBy))
+    throw new ServerError({ statusCode: 422, message: 'Unknown sort' })
   return {
+    library,
     text: query.q,
     fields: query.fields,
     conditions,
@@ -402,37 +479,91 @@ function subscriptionBrowseSearch(
   }
 }
 
+async function subscriptionItemPage(
+  search: SubscriptionItemSearch,
+): Promise<SubscriptionItemPage> {
+  const { rows, totalCount } = await searchSubscriptionItemRows(search)
+  return SubscriptionItemPageSchema.parse({
+    items: rows.map((row) => subscriptionItem(row)),
+    totalCount,
+    page: search.page,
+    size: search.size,
+    pageCount: Math.ceil(totalCount / search.size),
+  })
+}
+
 export async function listSubscriptionItems(
   query: SubscriptionItemQuery,
   sourceId = query.sourceId,
 ): Promise<SubscriptionItemPage> {
-  const { rows, totalCount } = await searchSubscriptionItemRows(
-    subscriptionBrowseSearch(query, sourceId),
-  )
-  return SubscriptionItemPageSchema.parse({
-    items: rows.map(subscriptionItem),
-    totalCount,
+  return subscriptionItemPage(subscriptionBrowseSearch(query, sourceId))
+}
+
+/**
+ * Mixes billing the name, or on a show of that name, ignoring case and
+ * surrounding spaces. The search text holds both, so its index narrows the
+ * rows before the exact comparison; a name without letters or digits has no
+ * words to look up and is compared on every mix.
+ */
+function artistMixes(name: string, query: ArtistMixQuery) {
+  const key = nameKey(sql`${name}::text`)
+  const named = sql`(${nameKey(sql`s.title`)} = ${key} or exists (
+    select 1 from jsonb_array_elements_text(i.artists) billed(value)
+    where ${nameKey(sql`billed.value`)} = ${key}))`
+  const search = subscriptionBrowseSearch({
+    library: 'mixes',
+    q: query.q,
+    fields: 'all',
+    filters: [],
+    ranges: [],
+    sortBy: query.sortBy,
+    direction: query.direction,
     page: query.page,
     size: query.size,
-    pageCount: Math.ceil(totalCount / query.size),
   })
+  search.conditions.push(
+    name.match(WORD_PARTS)
+      ? sql`i.search @@ plainto_tsquery('simple', ${name}) and ${named}`
+      : named,
+  )
+  return search
+}
+
+/** A page of the mixes that bill a library artist's name or are on its show. */
+export async function listMixesNamingArtist(
+  name: string,
+  query: ArtistMixQuery,
+) {
+  return subscriptionItemPage(artistMixes(name, query))
+}
+
+export async function countMixesNamingArtist(name: string) {
+  const { readCount } = await subscriptionSearchQueries(
+    artistMixes(name, {
+      page: 1,
+      size: 1,
+      sortBy: 'publishedAt',
+      direction: 'desc',
+    }),
+  )
+  return readCount()
 }
 
 const SubscriptionDiagnosticRowsSchema = z.array(
   z.object({
     id: SubscriptionItemIdSchema,
     source_id: SubscriptionSourceIdSchema,
-    type: SubscriptionTypeSchema,
+    type: SubscriptionProviderSchema,
     title: z.string(),
     source_title: z.string(),
   }),
 )
 
-/** Videos and episodes are stored by native ID together with their source ID. */
+/** Videos and episodes are stored by native ID together with their source ID; mixes are left out. */
 export async function listSubscriptionMatchDiagnostics(
   query: MatchDiagnosticsQuery,
 ) {
-  const provider = SubscriptionTypeSchema.safeParse(query.sortBy)
+  const provider = SubscriptionProviderSchema.safeParse(query.sortBy)
   let sort: SQL
   if (provider.success)
     sort = sql`case when i.type = ${provider.data} then lower(i.title) end`
@@ -455,7 +586,14 @@ export async function listSubscriptionMatchDiagnostics(
     })
   const members = sql`from subscription_item i
     join subscription_source s on s.id = i.source_id
-    where ${sql.join([sql`s.subscribed`, ...conditions], sql` and `)}`
+    where ${sql.join(
+      [
+        sql`s.subscribed`,
+        inSubscriptionLibrary(sql`i.type`, 'subscriptions'),
+        ...conditions,
+      ],
+      sql` and `,
+    )}`
   const [count, page] = await Promise.all([
     db.execute(sql`select count(*) as total ${members}`),
     db.execute(sql`
@@ -496,7 +634,7 @@ export async function listSubscriptionBrowsePage(query: SubscriptionItemQuery) {
   )
   const rows = await readPage(query.size + 1)
   return {
-    items: rows.slice(0, query.size).map(subscriptionItem),
+    items: rows.slice(0, query.size).map((row) => subscriptionItem(row)),
     page: query.page,
     size: query.size,
     hasMore: rows.length > query.size,
@@ -542,7 +680,36 @@ export async function subscriptionBrowseCounts(query: SubscriptionItemQuery) {
   return { totalCount, unfilteredCount: unfiltered?.totalCount ?? totalCount }
 }
 
-/** One stored item of a subscribed source, for a link to a row outside the loaded pages. */
+const LibraryArtistRowsSchema = z.array(
+  z.object({ id: z.string(), name: z.string() }),
+)
+
+/**
+ * Library artists, with albums or tracks to show, whose name equals one of
+ * the names ignoring case and surrounding spaces. Reads only; no artist is
+ * created for a station's names.
+ */
+async function libraryArtistsNamed(names: string[]) {
+  const keys = [...new Set(names.map((name) => name.trim()))].filter(Boolean)
+  if (!keys.length) return []
+  return LibraryArtistRowsSchema.parse(
+    (
+      await db.execute(sql`
+        select artist.id, artist.name from artist
+        where ${nameKey(sql`artist.name`)} in (${sql.join(
+          keys.map((key) => nameKey(sql`${key}::text`)),
+          sql`, `,
+        )}) and ${visibleArtist}
+        order by lower(artist.name), artist.id`)
+    ).rows,
+  )
+}
+
+/**
+ * One stored item of a subscribed source, of either library, for a link to a
+ * row outside the loaded pages. A mix carries the library artists named by
+ * its billed artists or its show.
+ */
 export async function getSubscriptionItem(id: string) {
   const { rows } = await searchSubscriptionItemRows({
     fields: 'all',
@@ -552,7 +719,13 @@ export async function getSubscriptionItem(id: string) {
     size: 1,
   })
   const [row] = rows
-  return row ? subscriptionItem(row) : null
+  if (!row) return null
+  return subscriptionItem(
+    row,
+    subscriptionLibraryOf(row.type) === 'mixes'
+      ? await libraryArtistsNamed([...row.artists, row.source_title])
+      : [],
+  )
 }
 
 const UpdatedRowsSchema = z.array(z.object({ id: z.string() }))
@@ -592,6 +765,7 @@ const SourceRowsSchema = z.array(
     handle: z.string().nullable(),
     description: z.string().nullable(),
     thumbnail_url: z.string().nullable(),
+    url: z.string().nullable(),
     subscriber_count: CountSchema,
     item_total: CountSchema,
     history_complete: z.boolean(),
@@ -600,20 +774,24 @@ const SourceRowsSchema = z.array(
   }),
 )
 
-/** Every subscribed channel and podcast with its stored item count. */
-export async function listSubscriptionSources(
-  input: { type?: SubscriptionType; id?: string } = {},
-) {
+/** Sources with their stored item counts; a read by ID leaves the library out. */
+async function readSubscriptionSources(input: {
+  library?: SubscriptionLibrary
+  type?: SubscriptionType
+  id?: string
+}) {
   const rows = SourceRowsSchema.parse(
     (
       await db.execute(sql`
         select s.id, s.type, s.title, s.handle, s.description, s.thumbnail_url,
-          s.subscriber_count, s.item_total, s.history_complete,
+          s.url, s.subscriber_count, s.item_total, s.history_complete,
           count(i.id) as stored,
           extract(epoch from max(i.published_at))::float8 as latest
         from subscription_source s
         left join subscription_item i on i.source_id = s.id
-        where s.subscribed ${input.type ? sql`and s.type = ${input.type}` : sql``}
+        where s.subscribed
+          ${input.library ? sql`and ${inSubscriptionLibrary(sql`s.type`, input.library)}` : sql``}
+          ${input.type ? sql`and s.type = ${input.type}` : sql``}
           ${input.id === undefined ? sql`` : sql`and s.id = ${input.id}`}
         group by s.id
         order by lower(s.title), s.id`)
@@ -626,7 +804,7 @@ export async function listSubscriptionSources(
         title: row.title,
         description: row.description,
         thumbnailUrl: row.thumbnail_url,
-        url: subscriptionSourceUrl(row.type, row.id),
+        url: subscriptionSourceUrl(row.type, row.id, row.url),
         storedItems: row.stored,
         latestItemAt: isoSeconds(row.latest),
         historyComplete: row.history_complete,
@@ -643,18 +821,32 @@ export async function listSubscriptionSources(
   })
 }
 
+/**
+ * Every subscribed channel and podcast, or every station show, with its
+ * stored item count.
+ */
+export async function listSubscriptionSources(
+  input: z.input<typeof SubscriptionSourceQuerySchema> = {},
+) {
+  return readSubscriptionSources(SubscriptionSourceQuerySchema.parse(input))
+}
+
+/** A channel, podcast or show and its items, read in the library of its type. */
 export async function getSubscriptionSource(
   id: string,
   query: SubscriptionItemQuery,
 ) {
   const {
     items: [source],
-  } = await listSubscriptionSources({ id })
+  } = await readSubscriptionSources({ id })
   if (!source)
     throw new ServerError({ statusCode: 404, message: 'Channel not found' })
   return SubscriptionSourceDetailSchema.parse({
     source,
-    items: await listSubscriptionItems(query, id),
+    items: await listSubscriptionItems(
+      { ...query, library: subscriptionLibraryOf(source.type) },
+      id,
+    ),
   })
 }
 
@@ -668,22 +860,20 @@ const facetCache = createDatabaseReadCache<z.infer<typeof FacetRowSchema>[]>({
   maxValueBytes: 512 * 1024,
 })
 
-const facetFields = subscriptionBrowseFields.filter(
-  (field) => field.type === 'text' && field.filterable,
-)
+const facetFields = (library: SubscriptionLibrary) =>
+  subscriptionBrowseFieldsFor(library).filter(
+    (field) => field.type === 'text' && field.filterable,
+  )
 
-async function queryFacets(query: BrowseFacetQuery) {
+async function queryFacets(query: SubscriptionFacetQuery) {
+  const fields = facetFields(query.library)
   const limit = Math.min(
     query.limitPerField,
-    Math.max(1, Math.floor(1000 / facetFields.length)),
+    Math.max(1, Math.floor(1000 / fields.length)),
   )
   const words = (query.q ?? '').toLowerCase().split(/\s+/).filter(Boolean)
-  const queries = facetFields.map((field) => {
+  const queries = fields.map((field) => {
     const key = SubscriptionTextFieldSchema.parse(field.key)
-    const tags =
-      key === 'genre'
-        ? sql`cross join lateral jsonb_array_elements_text(i.tags) tag(value)`
-        : sql``
     // A word in the field's label, such as "channel", selects the field
     // instead of filtering its values.
     const matches = words
@@ -698,8 +888,8 @@ async function queryFacets(query: BrowseFacetQuery) {
         count(distinct id)::int as count
       from (select i.id, ${textValues[key]} as value
         from subscription_item i
-        join subscription_source s on s.id = i.source_id ${tags}
-        where s.subscribed) values_for_field
+        join subscription_source s on s.id = i.source_id ${textValueRows[key] ?? sql``}
+        where s.subscribed and ${inSubscriptionLibrary(sql`i.type`, query.library)}) values_for_field
       where value is not null and value <> '' ${search}
       group by lower(value)
       order by case when lower(value) = ${query.q?.toLowerCase() ?? ''} then 0 else 1 end,
@@ -711,18 +901,20 @@ async function queryFacets(query: BrowseFacetQuery) {
 }
 
 /**
- * Filter suggestions for title, channel, type and tag values, counted over
- * every item of a subscribed source and limited per field.
+ * Filter suggestions for each text field of one library (title, channel or
+ * show, type or station, artist and tag values), counted over every item of
+ * that library and limited per field.
  */
 export async function listSubscriptionFacets(
-  input: Partial<BrowseFacetQuery> = {},
+  input: Partial<SubscriptionFacetQuery> = {},
 ) {
-  const query = BrowseFacetQuerySchema.parse(input)
+  const query = SubscriptionFacetQuerySchema.parse(input)
+  const fields = facetFields(query.library)
   const rows = await facetCache(JSON.stringify(query), () => queryFacets(query))
   return rows
     .map((row) => ({
       ...row,
-      label: `${facetFields.find((field) => field.key === row.field)?.label ?? row.field}: ${row.value}`,
+      label: `${fields.find((field) => field.key === row.field)?.label ?? row.field}: ${row.value}`,
     }))
     .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label))
 }

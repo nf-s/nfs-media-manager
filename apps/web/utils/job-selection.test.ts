@@ -10,7 +10,12 @@ import {
   SPOTIFY_PLAYLIST_ADD_ALBUM_TASK,
   SPOTIFY_PLAYLIST_LISTING_TASK,
 } from '@repo/schemas/tracks'
-import { SPOTIFY_PODCAST_SYNC_TASK } from '@repo/schemas/subscriptions'
+import {
+  MIX_STATION_SYNC_TASKS,
+  MixStationSchema,
+  SPOTIFY_PODCAST_SYNC_TASK,
+  type MixStation,
+} from '@repo/schemas/subscriptions'
 import { YOUTUBE_SYNC_TASK } from '@repo/schemas/youtube'
 import { ARTIST_ENRICHMENT_TASK } from '@repo/schemas/artist-profiles'
 import {
@@ -20,6 +25,7 @@ import {
   canRetryJob,
   isScrobbleSyncJob,
   isScrobbleSpotifySearchJob,
+  isMixSyncJob,
   isSpotifyPodcastSyncJob,
   isSubscriptionSyncJob,
   isYoutubeSyncJob,
@@ -451,5 +457,31 @@ test('a missing anchor falls back to one row and a missing target does nothing',
   assert.deepEqual(
     updateJobSelection(['a'], rows, 'removed', 'a', true, true),
     ['a'],
+  )
+})
+
+test('station mix syncs are titled task jobs that resume on retry', () => {
+  const titles: Record<MixStation, string> = {
+    rinse: 'Rinse FM mix sync',
+    nts: 'NTS mix sync',
+    lotradio: 'The Lot Radio mix sync',
+  }
+  for (const station of MixStationSchema.options) {
+    const title = titles[station]
+    const sync: Job = {
+      ...scrobbleSync,
+      id: `${station}-sync`,
+      provider: station,
+      options: { task: MIX_STATION_SYNC_TASKS[station] },
+    }
+    assert.equal(isMixSyncJob(sync), true)
+    assert.equal(isSubscriptionSyncJob(sync), false)
+    assert.equal(jobTaskTitle(sync), title)
+    assert.equal(canRetryJob(sync), true)
+    assert.equal(canRetryJob({ ...sync, status: 'succeeded' }), false)
+  }
+  assert.equal(
+    isMixSyncJob({ options: { task: SPOTIFY_PODCAST_SYNC_TASK } }),
+    false,
   )
 })

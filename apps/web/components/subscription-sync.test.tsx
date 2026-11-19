@@ -10,8 +10,12 @@ import {
   type SubscriptionSyncStatus,
 } from '@repo/schemas/subscriptions'
 import { ConfigContext } from './providers'
+import MixStationImportPageClient from './pages/mix-station-import-page-client'
 import SpotifyPodcastsPageClient from './pages/spotify-podcasts-page-client'
-import { subscriptionSourceProgress } from './subscription-sync'
+import {
+  invalidateSubscriptionLibrary,
+  subscriptionSourceProgress,
+} from './subscription-sync'
 
 const sync = SubscriptionSyncStatusSchema.parse({
   provider: 'spotify',
@@ -148,10 +152,7 @@ test('an unconnected or unconfigured account says so and offers Connect', () => 
   assert.match(unconnected, /<button[^>]*disabled=""[^>]*>Sync now<\/button>/)
   const unconfigured = render(null, account(false, false))
   assert.match(unconfigured, /Spotify is not configured\./)
-  assert.match(
-    unconfigured,
-    /href="\/providers\/spotify\?tab=settings"/,
-  )
+  assert.match(unconfigured, /href="\/providers\/spotify\?tab=settings"/)
   assert.match(
     unconfigured,
     /<button[^>]*disabled=""[^>]*>Connect Spotify<\/button>/,
@@ -167,4 +168,86 @@ test('the Spotify OAuth return is confirmed or reported', () => {
     render(sync, account(true, false), 'spotify=error'),
     /role="alert">.*<span>Spotify did not connect\. Try again\.<\/span>/,
   )
+})
+
+const stationSync = SubscriptionSyncStatusSchema.parse({
+  ...sync,
+  provider: 'nts',
+  job: { id: 'job-9', status: 'running' },
+  sourcesDone: 2,
+  sourcesTotal: 5,
+  storedSources: 5,
+  storedItems: 80,
+})
+
+function renderStation(status: SubscriptionSyncStatus) {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  client.setQueryData(['subscription-sync', status.provider], status)
+  const network = mock.method(globalThis, 'fetch', async () => {
+    throw new Error('Network forbidden')
+  })
+  try {
+    return renderToStaticMarkup(
+      <QueryClientProvider client={client}>
+        <ConfigContext.Provider
+          value={{ apiBaseUrl: 'http://localhost', appUrl: 'http://localhost' }}
+        >
+          <SearchParamsContext.Provider value={new URLSearchParams()}>
+            <MixStationImportPageClient station="nts" />
+          </SearchParamsContext.Provider>
+        </ConfigContext.Provider>
+      </QueryClientProvider>,
+    )
+  } finally {
+    client.clear()
+    assert.equal(network.mock.callCount(), 0)
+    network.mock.restore()
+  }
+}
+
+test('a station page shows its sync of shows and mixes and the schedule, without an account', () => {
+  const html = renderStation(stationSync)
+  assert.match(html, /<h1>NTS<\/h1>/)
+  assert.match(html, /href="\/mixes\/shows\?type=nts">Shows</)
+  assert.match(html, /<dt>Shows read<\/dt><dd>2 of 5<\/dd>/)
+  assert.match(html, /<dt>New mixes this run<\/dt>/)
+  assert.match(html, /<dt>Stored mixes<\/dt><dd>80<\/dd>/)
+  assert.match(html, /href="\/jobs\/job-9">View current job/)
+  assert.match(html, /<label[^>]*>Schedule<\/label>/)
+  assert.doesNotMatch(html, /Account|Connect|podcast|episode|channel/i)
+})
+
+test('a station feed run counts pages instead of shows', () => {
+  const feed = { ...stationSync, sourcesDone: 7, sourcesTotal: 0 }
+  assert.equal(subscriptionSourceProgress(feed), '7')
+  assert.equal(
+    subscriptionSourceProgress({ ...feed, phase: 'sources' }),
+    'Reading shows',
+  )
+  const html = renderStation(feed)
+  assert.match(html, /<dt>Pages read<\/dt><dd>7<\/dd>/)
+  assert.doesNotMatch(html, /of 0|role="progressbar"/)
+  // A podcast run with no podcasts still reads as a count of sources.
+  assert.equal(
+    subscriptionSourceProgress({ ...sync, sourcesDone: 0, sourcesTotal: 0 }),
+    '0 of 0',
+  )
+})
+
+test('a finished sync refreshes only its own library', async () => {
+  const client = new QueryClient()
+  client.setQueryData(['mixes', 'browse', 'x', 1], { items: [] })
+  client.setQueryData(['subscriptions', 'browse', 'x', 1], { items: [] })
+  await invalidateSubscriptionLibrary(client, 'mixes')
+  assert.equal(
+    client.getQueryState(['mixes', 'browse', 'x', 1])?.isInvalidated,
+    true,
+  )
+  assert.equal(
+    client.getQueryState(['subscriptions', 'browse', 'x', 1])?.isInvalidated,
+    false,
+  )
+  client.clear()
 })

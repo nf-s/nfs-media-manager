@@ -16,8 +16,12 @@ import {
   SPOTIFY_PLAYLIST_LISTING_TASK,
 } from '@repo/schemas/tracks'
 import {
+  MIX_STATION_SYNC_TASKS,
+  MIX_SYNC_TASKS,
+  MixStationSchema,
   SPOTIFY_PODCAST_SYNC_TASK,
   SUBSCRIPTION_SYNC_TASKS,
+  subscriptionTypeLabels,
 } from '@repo/schemas/subscriptions'
 import { SPOTIFY_PLAYLIST_ADD_TRACK_TASK } from '@repo/schemas/track-playlist-additions'
 import { SPOTIFY_TRACK_SEARCH_TASK } from '@repo/schemas/spotify-track-search'
@@ -48,6 +52,22 @@ export function isSpotifyPodcastSyncJob(job: Pick<Job, 'options'>): boolean {
 export function isSubscriptionSyncJob(job: Pick<Job, 'options'>): boolean {
   const task = getJobTask(job.options)
   return SUBSCRIPTION_SYNC_TASKS.some((name) => name === task)
+}
+
+/** Station syncs, which fill the Mixes library; retrying one resumes the sync. */
+export function isMixSyncJob(job: Pick<Job, 'options'>): boolean {
+  const task = getJobTask(job.options)
+  return MIX_SYNC_TASKS.some((name) => name === task)
+}
+
+/** The station a mix sync job reads, or null for any other job. */
+function mixSyncStation(job: Pick<Job, 'options'>) {
+  const task = getJobTask(job.options)
+  return (
+    MixStationSchema.options.find(
+      (station) => MIX_STATION_SYNC_TASKS[station] === task,
+    ) ?? null
+  )
 }
 
 export function isScrobbleSpotifySearchJob(job: Pick<Job, 'options'>): boolean {
@@ -87,6 +107,8 @@ export function jobTaskTitle(job: Pick<Job, 'options'>): string | null {
   if (isScrobbleSyncJob(job)) return 'Scrobble sync'
   if (isYoutubeSyncJob(job)) return 'YouTube subscription sync'
   if (isSpotifyPodcastSyncJob(job)) return 'Spotify podcast sync'
+  const station = mixSyncStation(job)
+  if (station) return `${subscriptionTypeLabels[station]} mix sync`
   if (isPlaylistImportJob(job)) {
     const { source, name } = job.options
     if (source === 'spotify-liked') return 'Spotify Liked Songs import'
@@ -147,6 +169,7 @@ export function canRetryJob(job: Job): boolean {
       isScrobbleSyncJob(job) ||
       isYoutubeSyncJob(job) ||
       isSpotifyPodcastSyncJob(job) ||
+      isMixSyncJob(job) ||
       isScrobbleSpotifySearchJob(job) ||
       isSpotifyTrackSearchJob(job) ||
       isArtistEnrichmentJob(job) ||

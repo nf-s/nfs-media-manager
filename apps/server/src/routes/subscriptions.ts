@@ -4,7 +4,6 @@ import type { Context } from 'hono'
 import { z } from 'zod'
 import {
   BrowseCountSchema,
-  BrowseFacetQuerySchema,
   BrowseFieldSchema,
   BrowsePageSliceSchema,
 } from '@repo/schemas/browse'
@@ -13,12 +12,14 @@ import {
   MatchDiagnosticsQuerySchema,
 } from '@repo/schemas/match-diagnostics'
 import {
+  SubscriptionFacetQuerySchema,
   SubscriptionFilterOptionSchema,
   SubscriptionItemPageSchema,
   SubscriptionItemParamsSchema,
   SubscriptionItemPatchSchema,
   SubscriptionItemQuerySchema,
   SubscriptionItemSchema,
+  SubscriptionLibraryQuerySchema,
   SubscriptionSourceDetailSchema,
   SubscriptionSourceListSchema,
   SubscriptionSourceParamsSchema,
@@ -27,7 +28,7 @@ import {
   SubscriptionSyncParamsSchema,
   SubscriptionSyncSettingsSchema,
   SubscriptionSyncStatusSchema,
-  subscriptionBrowseFields,
+  subscriptionBrowseFieldsFor,
 } from '@repo/schemas/subscriptions'
 import { env } from '@/env'
 import { ServerError } from '@/lib/error'
@@ -161,12 +162,19 @@ app.openapi(
     method: 'get',
     path: '/fields',
     middleware: [authMiddleware()],
+    request: { query: SubscriptionLibraryQuerySchema },
     responses: {
-      200: json('Browse fields', z.array(BrowseFieldSchema)),
+      200: json('Browse fields of the library', z.array(BrowseFieldSchema)),
       401: jsonErrorResponse('Unauthorized'),
+      422: validationErrorResponse,
     },
   }),
-  (c) => generateJsonResponse(c, subscriptionBrowseFields, 200),
+  (c) =>
+    generateJsonResponse(
+      c,
+      subscriptionBrowseFieldsFor(c.req.valid('query').library),
+      200,
+    ),
 )
 
 app.openapi(
@@ -177,7 +185,7 @@ app.openapi(
     request: { query: SubscriptionItemQuerySchema },
     responses: {
       200: json(
-        'Stored videos and podcast episodes from subscribed sources; no provider requests',
+        'Stored videos and podcast episodes from subscribed sources, or stored station mixes; no provider requests',
         SubscriptionItemPageSchema,
       ),
       401: jsonErrorResponse('Unauthorized'),
@@ -197,10 +205,10 @@ app.openapi(
     method: 'get',
     path: '/facets',
     middleware: [authMiddleware()],
-    request: { query: BrowseFacetQuerySchema },
+    request: { query: SubscriptionFacetQuerySchema },
     responses: {
       200: json(
-        'Title, channel, type and tag filters with whole-library counts',
+        'Title, channel or show, type or station, artist and tag filters with whole-library counts',
         z.array(SubscriptionFilterOptionSchema),
       ),
       401: jsonErrorResponse('Unauthorized'),
@@ -223,7 +231,7 @@ app.openapi(
     request: { query: SubscriptionSourceQuerySchema },
     responses: {
       200: json(
-        'Subscribed channels and podcasts with their stored item counts',
+        'Subscribed channels and podcasts, or station shows, with their stored item counts',
         SubscriptionSourceListSchema,
       ),
       401: jsonErrorResponse('Unauthorized'),
@@ -249,7 +257,7 @@ app.openapi(
     },
     responses: {
       200: json(
-        'Subscribed channel or podcast and its stored items',
+        'Subscribed channel, podcast or station show and its stored items',
         SubscriptionSourceDetailSchema,
       ),
       401: jsonErrorResponse('Unauthorized'),
@@ -359,7 +367,7 @@ app.openapi(
     request: { params: SubscriptionItemParamsSchema },
     responses: {
       200: json(
-        'One stored video or episode of a subscribed source',
+        'One stored video, episode or mix; a mix carries its library artists',
         SubscriptionItemSchema,
       ),
       401: jsonErrorResponse('Unauthorized'),
@@ -391,7 +399,7 @@ app.openapi(
     },
     responses: {
       200: json(
-        'Set or clear the watched date of a stored video or episode',
+        'Set or clear the watched (or listened) date of a stored video, episode or mix',
         SubscriptionItemSchema,
       ),
       401: jsonErrorResponse('Unauthorized'),
