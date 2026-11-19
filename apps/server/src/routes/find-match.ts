@@ -1,5 +1,7 @@
 import { createRoute, type OpenAPIHono } from '@hono/zod-openapi'
 import {
+  AlbumCandidatePreviewSchema,
+  AlbumCandidatePreviewInputSchema,
   MatchSearchInputSchema,
   MatchSearchResultSchema,
   UnresolvedMatchListSchema,
@@ -12,6 +14,7 @@ import {
   validationErrorResponse,
   type AppEnv,
 } from '@/lib/openapi'
+import { previewAlbumCandidate } from '@/services/album-candidate-preview'
 import { ServerError } from '@/lib/error'
 import { generateJsonResponse } from '@/lib/response'
 import { authMiddleware, mutationOriginMiddleware } from '@/middlewares/auth'
@@ -22,6 +25,43 @@ import {
 
 const app: OpenAPIHono<AppEnv> = createOpenAPIApp()
 app.use('*', mutationOriginMiddleware())
+app.openapi(
+  createRoute({
+    method: 'post',
+    path: '/preview',
+    middleware: [authMiddleware()],
+    request: {
+      body: {
+        required: true,
+        content: {
+          'application/json': { schema: AlbumCandidatePreviewInputSchema },
+        },
+      },
+    },
+    responses: {
+      200: {
+        description:
+          'Track and release evidence for one album candidate without saving a match',
+        content: {
+          'application/json': {
+            schema: createResponseSchema(AlbumCandidatePreviewSchema),
+          },
+        },
+      },
+      401: jsonErrorResponse('Unauthorized'),
+      404: jsonErrorResponse('Album not found'),
+      409: jsonErrorResponse('Candidate previously rejected'),
+      422: validationErrorResponse,
+    },
+  }),
+  async (c) =>
+    generateJsonResponse(
+      c,
+      await previewAlbumCandidate(c.req.valid('json')),
+      200,
+    ),
+)
+
 app.openapi(
   createRoute({
     method: 'post',

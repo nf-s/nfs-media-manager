@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   session: vi.fn(),
   search: vi.fn(),
   unresolved: vi.fn(),
+  preview: vi.fn(),
 }))
 vi.mock('@/env', () => ({
   env: {
@@ -15,6 +16,9 @@ vi.mock('@/lib/auth', () => ({ auth: { api: { getSession: mocks.session } } }))
 vi.mock('@/services/find-match', () => ({
   searchMatchCandidates: mocks.search,
   listUnresolvedMatches: mocks.unresolved,
+}))
+vi.mock('@/services/album-candidate-preview', () => ({
+  previewAlbumCandidate: mocks.preview,
 }))
 import { ServerError } from '@/lib/error'
 import findMatch from '../find-match'
@@ -67,6 +71,35 @@ describe('find match API', () => {
     ).toBe(422)
     expect(mocks.search).not.toHaveBeenCalled()
     expect(mocks.unresolved).not.toHaveBeenCalled()
+  })
+
+  it('previews tracks for an explicit album candidate without choosing it', async () => {
+    const input = {
+      albumId: 'album-1',
+      provider: 'discogs',
+      referenceType: 'master',
+      externalId: '12',
+    }
+    mocks.preview.mockResolvedValue({
+      title: 'Example Album',
+      artists: ['Example Artist'],
+      url: 'https://www.discogs.com/master/12',
+      tracks: [],
+      trackCount: 0,
+    })
+    const call = (body: unknown) =>
+      findMatch.request('/preview', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          origin: 'http://localhost:3001',
+        },
+        body: JSON.stringify(body),
+      })
+    expect((await call({ ...input, externalId: 'invalid' })).status).toBe(422)
+    expect(mocks.preview).not.toHaveBeenCalled()
+    expect((await call(input)).status).toBe(200)
+    expect(mocks.preview).toHaveBeenCalledWith(input)
   })
 
   it('returns candidates and unresolved lookups in the response envelope', async () => {

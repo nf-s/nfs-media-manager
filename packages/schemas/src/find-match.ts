@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { ProviderSiteUrlSchema } from './provider'
+import { LastFmUrlSchema } from './provider-identification'
 
 /** The library items Find match serves. */
 export const MatchKindSchema = z.enum(['album', 'film', 'artist'])
@@ -67,3 +68,54 @@ export const UnresolvedMatchListSchema = z.object({
   items: z.array(UnresolvedMatchSchema).max(100),
 })
 export type UnresolvedMatchList = z.infer<typeof UnresolvedMatchListSchema>
+
+const albumCandidate = z.object({ albumId: z.string().trim().min(1).max(500) })
+export const AlbumCandidatePreviewInputSchema = z.union([
+  albumCandidate
+    .extend({
+      provider: z.literal('discogs'),
+      referenceType: z.enum(['master', 'release']),
+      externalId: z
+        .string()
+        .max(16)
+        .regex(/^[1-9]\d*$/)
+        .refine((id) => Number.isSafeInteger(Number(id))),
+    })
+    .strict(),
+  albumCandidate
+    .extend({
+      provider: z.literal('lastfm'),
+      referenceType: z.literal('url'),
+      externalId: z.string().max(1000).pipe(LastFmUrlSchema),
+    })
+    .strict(),
+  albumCandidate
+    .extend({
+      provider: z.literal('lastfm'),
+      referenceType: z.literal('mbid'),
+      externalId: z.string().uuid(),
+    })
+    .strict(),
+])
+export type AlbumCandidatePreviewInput = z.infer<
+  typeof AlbumCandidatePreviewInputSchema
+>
+
+export const AlbumCandidatePreviewSchema = z.object({
+  title: z.string().min(1),
+  artists: z.array(z.string().min(1)),
+  url: ProviderSiteUrlSchema,
+  date: z.string().nullable(),
+  masterId: z.string().nullable(),
+  mainReleaseId: z.string().nullable(),
+  trackCount: z.number().int().nonnegative(),
+  tracks: z
+    .array(
+      z.object({
+        title: z.string().min(1),
+        position: z.number().int().positive(),
+        durationSec: z.number().int().nonnegative().nullable(),
+      }),
+    )
+    .max(500),
+})
