@@ -1,4 +1,5 @@
 import {
+  isProviderItemNotFoundError,
   JsonValueSchema,
   ProviderItemNotFoundError,
   type JsonValue,
@@ -9,6 +10,7 @@ import {
   type ArtistProfileProvider,
 } from '@repo/schemas/artist-profiles'
 import { z } from 'zod'
+import { albumNameKey } from '@/lib/album-import-candidates'
 import { sanitizeProviderPayload } from '@/lib/job-diagnostics'
 import { jobLogSecrets } from '@/lib/job-errors'
 import { SpotifyIdSchema, spotifyJson } from '@/lib/spotify-api'
@@ -19,10 +21,15 @@ import {
 } from './album-provider-helpers'
 import { discogsRequest } from './discogs'
 import { requestLastFm } from './lastfm'
+import {
+  corroborateLastFmArtist,
+  lastFmArtistUrl,
+} from './lastfm-artist-recordings'
 import { musicBrainzRequest, musicBrainzText } from './musicbrainz'
-import { spotifyClientToken } from './spotify'
+import { spotifyClientToken, spotifyMarket } from './spotify'
 
 const searchLimit = 5
+export const spotifyArtistRecordingLimit = 2
 const ArtistNameSchema = z.string().trim().min(1)
 const ArtistMbidSchema = AlbumMbidSchema.transform((value) =>
   value.toLowerCase(),
@@ -51,28 +58,13 @@ const SpotifyArtistSchema = z.object({
   images: z.array(z.object({ url: z.string() })).optional(),
   genres: z.array(ArtistNameSchema).optional(),
 })
+const SpotifyArtistRecordingSchema = z.object({
+  id: SpotifyIdSchema,
+  name: ArtistNameSchema,
+  artists: z.array(SpotifyArtistSchema.pick({ id: true, name: true })),
+})
 
-function lastFmArtistUrl(value: string) {
-  const parsed = AlbumHttpUrlSchema.safeParse(value)
-  if (!parsed.success) return null
-  const url = new URL(parsed.data)
-  if (!['www.last.fm', 'last.fm'].includes(url.hostname) || url.port)
-    return null
-  const slug = /^\/music\/([^/]+)\/?$/.exec(url.pathname)?.[1]
-  if (!slug || slug.startsWith('+')) return null
-  try {
-    const name = decodeURIComponent(slug.replaceAll('+', ' ')).trim()
-    if (!name) return null
-    return {
-      name,
-      url:
-        'https://www.last.fm/music/' +
-        encodeURIComponent(name).replaceAll('%20', '+'),
-    }
-  } catch {
-    return null
-  }
-}
+export type SpotifyArtistRecording = { spotifyTrackId: string; title: string }
 
 const LastFmArtistUrlSchema = z.string().transform((value, context) => {
   const link = lastFmArtistUrl(value)
@@ -178,6 +170,8 @@ function artworkUrl(value: string | undefined) {
 type ArtistRequestContext = MediaPluginTestContext & {
   recordDiagnostic(diagnostic: unknown): void
   searched(): Promise<void>
+  spotifyRecordings?: readonly SpotifyArtistRecording[]
+  loadLastfmRecordings?: () => Promise<readonly string[]>
 }
 
 type ArtistSearchContext = MediaPluginTestContext & {
@@ -185,7 +179,10 @@ type ArtistSearchContext = MediaPluginTestContext & {
 }
 
 /** A search result with what Find match shows beside its name. */
-export type ArtistSearchCandidate = ArtistCandidate & { artworkUrl?: string }
+export type ArtistSearchCandidate = ArtistCandidate & {
+  artworkUrl?: string
+  url?: string
+}
 
 /** One page of the provider's artist search: the request a lookup makes by name. */
 async function searchArtistProvider(
@@ -248,6 +245,7 @@ async function searchArtistProvider(
         candidates: results.artistmatches.artist.map((artist) => ({
           id: artist.mbid || artist.url.url,
           name: artist.name,
+          url: artist.url.url,
         })),
       }
     }
@@ -331,7 +329,63 @@ export async function searchArtistCandidates(
   return result.candidates
 }
 
-/** Each lookup reads at most one search page and one artist record. */
+async function verifySpotifyArtistRecordings(
+  context: ArtistRequestContext,
+  name: string,
+  token: string,
+) {
+  const recordings =
+    context.spotifyRecordings?.slice(0, spotifyArtistRecordingLimit) ?? []
+  const params = spotifyMarket(context.secrets)
+  const verified: (SpotifyArtistRecording & { artistId: string })[] = []
+  for (const recording of recordings) {
+    const { spotifyTrackId, title } = recording
+    const response = await spotifyJson(
+      context.request,
+      token,
+      'tracks/' + spotifyTrackId,
+      params,
+      { notFoundOn404: true },
+    ).catch((error: unknown) => {
+      if (!isProviderItemNotFoundError(error)) throw error
+      return null
+    })
+    const track = SpotifyArtistRecordingSchema.safeParse(response)
+    if (
+      !track.success ||
+      track.data.id !== spotifyTrackId ||
+      albumNameKey(track.data.name) !== albumNameKey(title)
+    )
+      continue
+    const artistIds = [
+      ...new Set(
+        track.data.artists
+          .filter(
+            (artist) => artistNameKey(artist.name) === artistNameKey(name),
+          )
+          .map(({ id }) => id),
+      ),
+    ]
+    const [artistId] = artistIds
+    if (!artistId) continue
+    const previous = verified[0]
+    if (artistIds.length > 1 || (previous && previous.artistId !== artistId)) {
+      context.recordDiagnostic({
+        stage: 'artist.recording-conflict',
+        evidence: {
+          verified,
+          spotifyTrackId,
+          artistIds: artistIds.slice(0, searchLimit),
+        },
+      })
+      throw new ArtistSearchAmbiguousError()
+    }
+    verified.push({ spotifyTrackId, title, artistId })
+  }
+  return verified.length === recordings.length ? verified : []
+}
+
+/** A name search may also check bounded recording evidence before fetching the artist profile. */
 export async function lookupArtistProvider(
   provider: ArtistProfileProvider,
   name: string,
@@ -345,7 +399,11 @@ export async function lookupArtistProvider(
     recordDiagnostic: context.recordDiagnostic,
   }
   const secrets = jobLogSecrets(context.secrets)
-  const lookup: { match?: ArtistCandidate } = {}
+  const lookup: {
+    match?: ArtistCandidate
+    recordingMbid?: string
+    recordingUrl?: string
+  } = {}
   async function find(spotifyToken = '') {
     const { response, total, candidates } = await searchArtistProvider(
       provider,
@@ -355,19 +413,44 @@ export async function lookupArtistProvider(
     )
     evidence.search = response
     await context.searched()
-    const match = selectArtist(
-      provider,
-      name,
-      total,
-      candidates.map(({ id, name, details }) => ({
-        id,
+    try {
+      lookup.match = selectArtist(
+        provider,
         name,
-        ...(details ? { details } : {}),
-      })),
-      context.recordDiagnostic,
-    )
-    lookup.match = match
-    return match.id
+        total,
+        candidates.map(({ id, name, details }) => ({
+          id,
+          name,
+          ...(details ? { details } : {}),
+        })),
+        context.recordDiagnostic,
+      )
+    } catch (error) {
+      if (
+        !(error instanceof ArtistSearchAmbiguousError) ||
+        provider !== 'lastfm' ||
+        total <= candidates.length ||
+        !context.loadLastfmRecordings
+      )
+        throw error
+      const verified = await corroborateLastFmArtist(
+        name,
+        candidates,
+        context.loadLastfmRecordings,
+        providerContext,
+      )
+      if (!verified) throw error
+      lookup.match = verified.candidate
+      lookup.recordingMbid = verified.artistMbid
+      lookup.recordingUrl = verified.artistUrl
+      evidence.topTracks = verified.response
+      evidence.recordingVerification = {
+        matchedTitles: verified.matchedTitles,
+        artistMbid: verified.artistMbid ?? null,
+        artistUrl: verified.artistUrl ?? null,
+      }
+    }
+    return lookup.match.id
   }
   let id = providerArtistId
     ? normalizeArtistProviderId(provider, providerArtistId)
@@ -380,6 +463,20 @@ export async function lookupArtistProvider(
     case 'spotify': {
       const token = await spotifyClientToken(context.secrets, context.request)
       secrets.push(token)
+      if (!id && context.spotifyRecordings?.length) {
+        const verified = await verifySpotifyArtistRecordings(
+          context,
+          name,
+          token,
+        )
+        const [first] = verified
+        if (first) {
+          id = first.artistId
+          lookup.match = { id, name }
+          evidence.recordingVerification = verified
+          await context.searched()
+        }
+      }
       if (!id) id = await find(token)
       evidence.artist = JsonValueSchema.parse(
         await spotifyJson(
@@ -418,7 +515,11 @@ export async function lookupArtistProvider(
           }),
         })
         .parse(evidence.artist)
-      if (id !== (link ? artist.url.url : artist.mbid))
+      if (
+        id !== (link ? artist.url.url : artist.mbid) ||
+        (lookup.recordingMbid && lookup.recordingMbid !== artist.mbid) ||
+        (lookup.recordingUrl && lookup.recordingUrl !== artist.url.url)
+      )
         throw new Error('Last.fm returned a different artist than requested.')
       profile = {
         name: artist.name,

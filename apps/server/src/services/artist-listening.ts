@@ -1,7 +1,45 @@
 import { inArray, sql } from 'drizzle-orm'
+import { z } from 'zod'
+import { albumNameKey } from '@/lib/album-import-candidates'
 import type { db } from '@/lib/db'
 
 type Executor = Pick<typeof db, 'execute'>
+
+/** Recorded titles credited to this artist, excluding other performers on shared releases. */
+export async function listArtistScrobbledTitles(
+  database: Executor,
+  artistId: string,
+  name: string,
+) {
+  const artistKey = albumNameKey(name)
+  const { rows } = await database.execute(sql`
+    with credited as materialized (
+      select c.media_item_id, m.media_type
+      from media_credit c join media_item m on m.id = c.media_item_id
+      where c.artist_id = ${artistId} and c.role = 'artist'
+        and m.metadata->>'legacyHidden' is distinct from 'true'
+    ), plays as (
+      select s.id, s.track_name, s.track_key from credited c
+      join lastfm_scrobble s on s.album_media_item_id = c.media_item_id
+      where c.media_type = 'album' and s.artist_key = ${artistKey}
+      union
+      select s.id, s.track_name, s.track_key from credited c
+      join lastfm_track_link l on l.track_media_item_id = c.media_item_id
+      join lastfm_scrobble s using (username, artist_key, track_key)
+      where c.media_type = 'track' and l.artist_key = ${artistKey}
+      union
+      select s.id, s.track_name, s.track_key from credited c
+      join lastfm_track_source l on l.track_media_item_id = c.media_item_id
+      join lastfm_scrobble s using (username, artist_key, track_key)
+      where c.media_type = 'track' and l.artist_key = ${artistKey}
+    )
+    select min(track_name) as title from plays group by track_key
+    order by count(*) desc, track_key limit 50`)
+  return z
+    .array(z.object({ title: z.string() }))
+    .parse(rows)
+    .map(({ title }) => title)
+}
 
 /**
  * Stores each artist's scrobble count: every scrobble linked to a library

@@ -65,7 +65,8 @@ export async function requestLastFm(
     | 'album.getInfo'
     | 'album.getTopTags'
     | 'artist.search'
-    | 'artist.getInfo',
+    | 'artist.getInfo'
+    | 'artist.getTopTracks',
   params: Record<string, string>,
 ) {
   const url = new URL('https://ws.audioscrobbler.com/2.0/')

@@ -12,6 +12,15 @@ import {
 
 const artistName = 'Artist Fixture'
 const spotifyId = '0123456789abcdefghijkl'
+const competingSpotifyId = '0123456789abcdefghijkm'
+const spotifyTrack = {
+  spotifyTrackId: '0123456789abcdefghijkn',
+  title: 'Fixture Recording',
+}
+const secondSpotifyTrack = {
+  spotifyTrackId: '0123456789abcdefghijko',
+  title: 'Second Recording',
+}
 const mbid = '11111111-1111-4111-8111-111111111111'
 const lastFmUrl = 'https://www.last.fm/music/Artist+Fixture'
 const lastFmKey = 'fixture-lastfm-key'
@@ -79,6 +88,112 @@ describe('artist provider lookups', () => {
     expect(context.searched).not.toHaveBeenCalled()
   })
 
+  const spotifyToken = {
+    access_token: 'fixture-token',
+    token_type: 'Bearer',
+    expires_in: 3600,
+  }
+  const spotifyArtist = { id: spotifyId, name: artistName, type: 'artist' }
+  const competingSpotifyArtist = { ...spotifyArtist, id: competingSpotifyId }
+  const spotifyRecording = {
+    id: spotifyTrack.spotifyTrackId,
+    name: spotifyTrack.title,
+    artists: [spotifyArtist],
+  }
+  const mockPaths = (context: ReturnType<typeof responses>) =>
+    context.request.mock.calls.map(([url]) => new URL(String(url)).pathname)
+
+  it.each([
+    {
+      recordings: [
+        {
+          ...spotifyRecording,
+          artists: [spotifyArtist, competingSpotifyArtist],
+        },
+      ],
+    },
+    {
+      recordings: [
+        spotifyRecording,
+        {
+          id: secondSpotifyTrack.spotifyTrackId,
+          name: secondSpotifyTrack.title,
+          artists: [competingSpotifyArtist],
+        },
+      ],
+    },
+  ])(
+    'declines conflicting exact Spotify credits from recordings %#',
+    async ({ recordings }) => {
+      const context = {
+        ...responses(spotifyToken, ...recordings),
+        spotifyRecordings: [spotifyTrack, secondSpotifyTrack],
+      }
+      await expect(
+        lookupArtistProvider('spotify', artistName, null, context),
+      ).rejects.toBeInstanceOf(ArtistSearchAmbiguousError)
+      expect(mockPaths(context)).toEqual([
+        '/api/token',
+        ...context.spotifyRecordings
+          .slice(0, recordings.length)
+          .map(({ spotifyTrackId }) => '/v1/tracks/' + spotifyTrackId),
+      ])
+      expect(context.recordDiagnostic).toHaveBeenCalledWith(
+        expect.objectContaining({ stage: 'artist.recording-conflict' }),
+      )
+    },
+  )
+
+  it.each([
+    { ...spotifyRecording, id: secondSpotifyTrack.spotifyTrackId },
+    { ...spotifyRecording, name: 'A different recording' },
+    {
+      ...spotifyRecording,
+      artists: [{ ...spotifyArtist, name: 'Fixture Collaborator' }],
+    },
+  ])(
+    'uses ordinary name search when a Spotify recording fails verification %#',
+    async (recording) => {
+      const context = {
+        ...responses(
+          spotifyToken,
+          recording,
+          { artists: { total: 1, items: [competingSpotifyArtist] } },
+          competingSpotifyArtist,
+        ),
+        spotifyRecordings: [spotifyTrack],
+      }
+      const result = await lookupArtistProvider(
+        'spotify',
+        artistName,
+        null,
+        context,
+      )
+      expect(result.profile.externalId).toBe(competingSpotifyId)
+      expect(result.payload).not.toHaveProperty('recordingVerification')
+      expect(mockPaths(context)).toEqual([
+        '/api/token',
+        '/v1/tracks/' + spotifyTrack.spotifyTrackId,
+        '/v1/search',
+        '/v1/artists/' + competingSpotifyId,
+      ])
+    },
+  )
+
+  it('keeps an explicit Spotify artist ID authoritative and checks the profile ID', async () => {
+    const context = {
+      ...responses(spotifyToken, spotifyArtist),
+      spotifyRecordings: [spotifyTrack],
+    }
+    await expect(
+      lookupArtistProvider('spotify', artistName, competingSpotifyId, context),
+    ).rejects.toThrow('Provider returned a different artist than requested.')
+    expect(mockPaths(context)).toEqual([
+      '/api/token',
+      '/v1/artists/' + competingSpotifyId,
+    ])
+  })
+
   it('retains the canonical Last.fm artist URL when the artist has no MBID', async () => {
     const artist = { name: artistName, url: lastFmUrl, mbid: '' }
     const context = responses(
@@ -119,6 +234,48 @@ describe('artist provider lookups', () => {
     expect(detail.searchParams.get('autocorrect')).toBe('0')
     expect(context.request).toHaveBeenCalledTimes(2)
   })
+
+  it.each([false, true])(
+    'verifies a truncated Last.fm search against recordings and the final profile (changed ID: %s)',
+    async (changedId) => {
+      const artist = { name: artistName, mbid, url: lastFmUrl }
+      const titles = ['Fixture Recording', 'Another Recording']
+      const context = {
+        ...responses(
+          {
+            results: {
+              'opensearch:totalResults': '30',
+              artistmatches: { artist: [artist] },
+            },
+          },
+          { toptracks: { track: titles.map((name) => ({ name, artist })) } },
+          {
+            artist: {
+              ...artist,
+              url: changedId ? lastFmUrl + '+Alternative' : lastFmUrl,
+            },
+          },
+        ),
+        loadLastfmRecordings: vi.fn(async () => titles),
+      }
+      const result = lookupArtistProvider('lastfm', artistName, null, context)
+      if (changedId)
+        await expect(result).rejects.toThrow('different artist than requested')
+      else
+        await expect(result).resolves.toMatchObject({
+          profile: { externalId: mbid },
+          payload: {
+            recordingVerification: {
+              matchedTitles: titles,
+              artistMbid: mbid,
+              artistUrl: lastFmUrl,
+            },
+          },
+        })
+      expect(context.loadLastfmRecordings).toHaveBeenCalledOnce()
+      expect(context.request).toHaveBeenCalledTimes(3)
+    },
+  )
 
   it('retains the numeric Last.fm error code without the upstream message', async () => {
     const context = responses({
