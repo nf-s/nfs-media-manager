@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type {
+  MediaPluginScrapeContext,
   MediaPluginTestContext,
   PluginReference,
 } from '@repo/media-plugin-sdk'
@@ -279,7 +280,11 @@ describe('replay using current built-in normalizers', () => {
   it('replays Last.fm top-track corroboration using scoped recording input in memory', async () => {
     const artist = { name: artistName, mbid, url: artistUrl }
     const titles = ['Synthetic Recording', 'Another Synthetic Recording']
-    const recordings = { loadLastfmRecordings: vi.fn(async () => titles) }
+    const recordings = {
+      loadLastfmRecordings: vi.fn(async () =>
+        titles.map((title) => ({ title, albumName: null })),
+      ),
+    }
     const { archive, request } = archiveRequests('artist', [
       {
         results: {
@@ -316,6 +321,36 @@ describe('replay using current built-in normalizers', () => {
     await expect(
       replayScrapeProvider('lastfm', archive, [input]),
     ).rejects.toThrow('complete')
+    expect(fetch).not.toHaveBeenCalled()
+  })
+  it('replays a prior album match rejection using its scoped predicate', async () => {
+    const album = spotifyAlbumFixture()
+    const { archive, request } = archiveRequests('media', [
+      spotifyTokenFixture,
+      { albums: { total: 1, items: [album] } },
+    ])
+    const context = {
+      mediaItemId: 'fixture-rejected-album',
+      mediaType: 'album',
+      media: {
+        title: album.name,
+        artists: album.artists.map(({ name }) => name),
+      },
+      existingReferences: [],
+      secrets: sharedSecrets,
+      log,
+      isRejectedMatch: ({ externalId }: { externalId: string }) =>
+        externalId === album.id,
+    } satisfies Omit<MediaPluginScrapeContext, 'request'>
+    const scrape = getBuiltinScrapePlugin('spotify')?.scrapeMediaItem
+    if (!scrape) throw new Error('Missing Spotify test adapter')
+    await expect(scrape({ ...context, request })).rejects.toMatchObject({
+      name: 'ProviderItemNotFoundError',
+    })
+    expect(archive).toHaveLength(1)
+    await expect(
+      replayScrapeProvider('spotify', archive, [{ phase: 'media', context }]),
+    ).rejects.toMatchObject({ name: 'ProviderItemNotFoundError' })
     expect(fetch).not.toHaveBeenCalled()
   })
 })

@@ -2,10 +2,20 @@ import { open } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { parseArgs } from 'node:util'
 import { z } from 'zod'
+import {
+  isProviderArtistSearchAmbiguousError,
+  isProviderItemNotFoundError,
+} from '@repo/media-plugin-sdk'
 import { MAX_PROVIDER_RESPONSE_BYTES } from '@repo/schemas/provider-response'
+import { createAlbumMatchRejectionPredicate } from '@/lib/album-match-identities'
+import { readAlbumMatchRejections } from '@/services/album-match-rejections'
 import { db } from '@/lib/db'
 import { jobLogSecrets } from '@/lib/job-errors'
 import { sanitizeProviderPayload } from '@/lib/job-diagnostics'
+import {
+  ArtistSearchAmbiguousError,
+  normalizeArtistProviderId,
+} from '@/plugins/builtin/artist-providers'
 import { getBuiltinScrapePlugin } from '@/plugins/builtin'
 import {
   ProviderReplayContextSchema,
@@ -13,7 +23,7 @@ import {
   readProviderReplayJobScope,
   reconstructProviderReplayContext,
 } from '@/services/provider-response-context'
-import { listArtistScrobbledTitles } from '@/services/artist-listening'
+import { listArtistScrobbledRecordings } from '@/services/artist-listening'
 import { listSpotifyArtistRecordings } from '@/services/artist-provider-evidence'
 import { readProviderResponseAttempt } from '@/services/provider-response-history'
 import { replayScrapeProvider } from '@/services/provider-response-replay'
@@ -266,6 +276,32 @@ export function recordedArtistLookupByName(
   })
 }
 
+export function recordedLastfmInferredMbid(
+  rows: CaptureRow[],
+  artistId: string,
+) {
+  const relevant = rows.filter(
+    (row) => row.artistId === artistId && row.capture.phase === 'artist',
+  )
+  const first = relevant[0]?.capture.response.body
+  if (
+    first?.state !== 'captured' ||
+    !recordedArtistLookupByName('lastfm', relevant.slice(1), artistId)
+  )
+    return undefined
+  try {
+    const parsed = z
+      .object({ artist: z.object({ mbid: z.string() }) })
+      .safeParse(JSON.parse(first.text))
+    return parsed.success
+      ? (normalizeArtistProviderId('musicbrainz', parsed.data.artist.mbid) ??
+          undefined)
+      : undefined
+  } catch {
+    return undefined
+  }
+}
+
 async function offlineInputs(
   context: Context,
   placeholderNames: string[],
@@ -279,9 +315,25 @@ async function offlineInputs(
   const results: ReplayInput[] = []
   for (const input of context.inputs) {
     if (input.phase === 'media') {
+      const rejections =
+        input.context.mediaType === 'album'
+          ? await readAlbumMatchRejections(db, input.context.mediaItemId)
+          : []
+      const isRejectedMatch = createAlbumMatchRejectionPredicate(
+        context.provider,
+        rejections,
+      )
       results.push({
         phase: 'media',
-        context: { ...input.context, secrets, log: async () => {} },
+        context: {
+          ...input.context,
+          existingReferences: input.context.existingReferences.filter(
+            (reference) => !isRejectedMatch(reference),
+          ),
+          ...(rejections.length ? { isRejectedMatch } : {}),
+          secrets,
+          log: async () => {},
+        },
       })
       continue
     }
@@ -291,24 +343,37 @@ async function offlineInputs(
       bootstrap: input.bootstrap,
       context: { ...input.context, secrets },
     }
-    if (!input.bootstrap && providerArtistId === null) {
+    if (
+      !input.bootstrap &&
+      (providerArtistId === null || input.inferredLastfmMbid)
+    ) {
       const trackIds = recordedSpotifyTracks(rows, artist.id)
-      if (context.provider === 'spotify' && trackIds.length) {
-        const recordings =
-          input.spotifyRecordings ??
-          (await listSpotifyArtistRecordings(artist.id))
+      if (context.provider === 'spotify') {
+        const recordings = trackIds.length
+          ? (input.spotifyRecordings ??
+            (await listSpotifyArtistRecordings(artist.id)))
+          : undefined
         if (
-          trackIds.some((id, index) => recordings[index]?.spotifyTrackId !== id)
+          trackIds.some(
+            (id, index) => recordings?.[index]?.spotifyTrackId !== id,
+          )
         )
           throw new ReplayCommandError(
             'The saved Spotify recording requests differ from the replay recording inputs.',
           )
-        result.recordings = { spotifyRecordings: recordings }
+        result.recordings = {
+          spotifyRecordings: recordings,
+          loadSpotifyCatalogRecordings: () =>
+            listArtistScrobbledRecordings(db, artist.id, artist.name, {
+              requireRelease: true,
+            }),
+        }
       } else if (context.provider === 'lastfm') {
         // Follow the same bounded lookup in memory without exporting listening history.
         result.recordings = {
+          inferredLastfmMbid: input.inferredLastfmMbid,
           loadLastfmRecordings: () =>
-            listArtistScrobbledTitles(db, artist.id, artist.name),
+            listArtistScrobbledRecordings(db, artist.id, artist.name),
         }
       }
     }
@@ -343,6 +408,10 @@ export async function runProviderReplayCommand(args: string[]) {
             phase.phase === 'artist'
               ? {
                   ...phase,
+                  inferredLastfmMbid:
+                    job.provider === 'lastfm'
+                      ? recordedLastfmInferredMbid(rows, phase.artistId)
+                      : undefined,
                   lookupByName: recordedArtistLookupByName(
                     job.provider,
                     rows,
@@ -459,7 +528,7 @@ export async function runProviderReplayCommand(args: string[]) {
     )
   }
   try {
-    const result = await replayScrapeProvider(
+    const replay = await replayScrapeProvider(
       job.provider,
       captures,
       await offlineInputs(
@@ -497,19 +566,34 @@ export async function runProviderReplayCommand(args: string[]) {
             }
           : {}),
       },
+    ).then(
+      (result) => ({
+        outcome: 'mapped',
+        result: scrub(
+          result.map((entry) =>
+            'normalized' in entry
+              ? { normalized: entry.normalized }
+              : { profile: entry.profile },
+          ),
+        ),
+      }),
+      (error: unknown) => {
+        if (isProviderItemNotFoundError(error))
+          return { outcome: 'not-found', result: [] }
+        if (
+          error instanceof ArtistSearchAmbiguousError ||
+          isProviderArtistSearchAmbiguousError(error)
+        )
+          return { outcome: 'ambiguous', result: [] }
+        throw error
+      },
     )
     await writePrivateJson(command.output, {
       version: 1,
       scope,
       provider: job.provider,
       contextSource: command.context ? 'supplied' : 'current-library',
-      result: scrub(
-        result.map((entry) =>
-          'normalized' in entry
-            ? { normalized: entry.normalized }
-            : { profile: entry.profile },
-        ),
-      ),
+      ...replay,
     })
     process.stdout.write('Saved private provider replay report.\n')
   } finally {
