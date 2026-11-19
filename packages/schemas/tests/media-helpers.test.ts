@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import {
   getBrowseValues,
   BrowseFilterSchema,
+  formatBrowseFilterValue,
+  formatBrowseValue,
   sameBrowseFilter,
   filmBrowseFields,
   albumBrowseFields,
@@ -101,6 +103,25 @@ describe('keyword browse values', () => {
         { field: 'genre', value: 'art history' },
       ),
     ).toBe(false)
+  })
+  it('shows tag values in one letter case and every other value as stored', () => {
+    expect(formatBrowseFilterValue('genre', 'indie rock')).toBe('Indie Rock')
+    expect(formatBrowseFilterValue('keyword', 'based on novel or book')).toBe(
+      'Based on Novel or Book',
+    )
+    expect(formatBrowseFilterValue('artistTag', 'UK garage')).toBe('UK Garage')
+    expect(formatBrowseFilterValue('source', 'spotify saved albums')).toBe(
+      'spotify saved albums',
+    )
+    const tags = albumBrowseFields.find((field) => field.key === 'genre')
+    const country = albumBrowseFields.find((field) => field.key === 'country')
+    if (!tags || !country) throw new Error('Expected the album browse fields')
+    expect(formatBrowseValue(tags, ['dream pop', 'shoegaze'])).toBe(
+      'Dream Pop, Shoegaze',
+    )
+    expect(formatBrowseValue(country, ['united kingdom'])).toBe(
+      'united kingdom',
+    )
   })
   it('combines film keywords with tags without duplicates', () => {
     const values = getBrowseValues({

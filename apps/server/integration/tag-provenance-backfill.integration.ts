@@ -247,6 +247,42 @@ describe('offline provenance transaction', () => {
     expect(
       response.items.find((row) => row.provider === 'musicbrainz')?.link?.url,
     ).toBe('https://musicbrainz.org/tag/arena%20rock')
+    expect(response.items.map((row) => row.jobId)).toEqual([
+      undefined,
+      undefined,
+    ])
+    // A provider's current snapshot names the job that saved its tags.
+    await database.insert(schema.scrapeJob).values({
+      id: 'mb-job',
+      provider: 'musicbrainz',
+      scope: { mediaType: 'album', mediaItemIds: ['album'], limit: 1 },
+      options: {},
+    })
+    await database
+      .update(schema.providerSnapshot)
+      .set({ scrapeJobId: 'mb-job' })
+      .where(eq(schema.providerSnapshot.id, 'musicbrainz'))
+    await database.insert(schema.providerCurrentState).values({
+      id: 'mb-state',
+      mediaItemId: 'album',
+      provider: 'musicbrainz',
+      latestSnapshotId: 'musicbrainz',
+      checksum: 'raw-mb',
+      payload: {},
+      status: 'succeeded',
+    })
+    const traced = await getTagProvenance({
+      mediaId: 'album',
+      name: 'Arena Rock',
+      page: 1,
+      size: 25,
+    })
+    expect(
+      traced.items.find((row) => row.provider === 'musicbrainz')?.jobId,
+    ).toBe('mb-job')
+    expect(
+      traced.items.find((row) => row.provider === 'discogs')?.jobId,
+    ).toBeUndefined()
     expect(fetch).not.toHaveBeenCalled()
   })
   it('keeps source summaries and pagination consistent while retaining unrelated unknown origins', async () => {

@@ -232,6 +232,20 @@ export async function getTagProvenance(
     .select({ id: mediaItem.id, title: mediaItem.title })
     .from(mediaItem)
     .where(inArray(mediaItem.id, exampleIds))
+  // Every scrape saves the provider's tags again; its current snapshot is the
+  // latest job to have done so for the item.
+  const jobs = await db
+    .select({
+      mediaItemId: providerCurrentState.mediaItemId,
+      provider: providerCurrentState.provider,
+      jobId: providerSnapshot.scrapeJobId,
+    })
+    .from(providerCurrentState)
+    .innerJoin(
+      providerSnapshot,
+      eq(providerSnapshot.id, providerCurrentState.latestSnapshotId),
+    )
+    .where(inArray(providerCurrentState.mediaItemId, exampleIds))
   const tmdbMediaIds = [
     ...new Set(
       rows
@@ -341,6 +355,12 @@ export async function getTagProvenance(
               ? 'No direct tag URL is available; this item contains the original tag.'
               : 'No supported source URL could be resolved from the stored identifiers.'
             : undefined,
+        jobId:
+          jobs.find(
+            (job) =>
+              job.mediaItemId === exampleMediaId &&
+              job.provider === row.provider,
+          )?.jobId ?? undefined,
       }
     }),
     totalCount: total?.count ?? 0,

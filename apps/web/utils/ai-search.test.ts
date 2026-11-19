@@ -73,7 +73,7 @@ test('a new search clears listening constraints from a previous search', () => {
 
 test('preview shows actual thresholds and listening logic independently of model explanation', () => {
   const descriptions = describeAiSearchPlan(plan, albumBrowseFields).join('\n')
-  assert.match(descriptions, /Required · Tags: rock/)
+  assert.match(descriptions, /Required · Tags: Rock/)
   assert.match(descriptions, /RYM rating: at least 4\/5/)
   assert.match(
     descriptions,

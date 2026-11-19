@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { ArtistProfileSchema } from '@repo/schemas/artist-profiles'
 import { uniqueMusicTags } from '@repo/schemas/music-tags'
 import { artistBrowseFields } from '@repo/schemas/artist-browse'
+import { formatTagName } from '@repo/schemas/tags'
 import {
   BrowsePageSliceSchema,
   type BrowseFacetQuery,
@@ -591,7 +592,7 @@ export async function listArtistBrowseFacets(query: BrowseFacetQuery) {
   return rows
     .map((row) => ({
       ...row,
-      label: `${fields.find((field) => field.key === row.field)?.label ?? row.field}: ${row.value}`,
+      label: `${fields.find((field) => field.key === row.field)?.label ?? row.field}: ${row.field === 'genre' ? formatTagName(row.value) : row.value}`,
     }))
     .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label))
 }

@@ -25,6 +25,7 @@ import {
   type ListeningPeriod,
 } from '@repo/schemas/listening'
 import { PersonRoleSchema } from '@repo/schemas/common'
+import { formatTagName } from '@repo/schemas/tags'
 import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
 import { createDatabaseReadCache } from '@/lib/database-read-cache'
@@ -1319,7 +1320,8 @@ export async function listBrowseFacets(
   return rows
     .map((row) => ({
       ...row,
-      label: `${fields.find((field) => field.key === row.field)?.label ?? row.field}: ${row.value}`,
+      // A tag value is its normalized name; the label shows the display name.
+      label: `${fields.find((field) => field.key === row.field)?.label ?? row.field}: ${tagFacetFields.includes(row.field) ? formatTagName(row.value) : row.value}`,
     }))
     .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label))
 }

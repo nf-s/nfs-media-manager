@@ -3,7 +3,12 @@
 import { Fragment, useDeferredValue, useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { useVirtualTable } from '@/hooks/useVirtualTable'
-import { TagPageSchema, type TagSortKey } from '@repo/schemas/tags'
+import { useTagDetailParam } from '@/hooks/useTagDetailParam'
+import {
+  formatTagName,
+  TagPageSchema,
+  type TagSortKey,
+} from '@repo/schemas/tags'
 import { Button } from '@repo/ui/components/ui/button'
 import {
   TableCell,
@@ -75,7 +80,6 @@ export default function TagsPageClient({
   const query = useDeferredValue(search.trim())
   const placement =
     !hidden && params.get('placement') === 'unplaced' ? 'unplaced' : 'any'
-  const selectedTagId = params.get('tag')
   const [selected, setSelected] = useState<string[]>([])
   const [anchor, setAnchor] = useState<string | null>(null)
   const [pending, setPending] = useState(false)
@@ -141,17 +145,7 @@ export default function TagsPageClient({
   function openTag(id: string) {
     inspector?.open({ kind: 'tag', id: tagDetailId(tagScope, id) })
   }
-  useEffect(() => {
-    if (!selectedTagId || !inspector) return
-    const next = new URLSearchParams(window.location.search)
-    next.delete('tag')
-    window.history.replaceState(
-      null,
-      '',
-      `${window.location.pathname}${next.size ? `?${next}` : ''}`,
-    )
-    inspector.open({ kind: 'tag', id: tagDetailId(tagScope, selectedTagId) })
-  }, [selectedTagId, inspector, tagScope])
+  useTagDetailParam(tagScope)
   return (
     <section className="sec-page">
       <PageHead title={hidden ? 'Hidden tags' : 'Tags'} />
@@ -312,7 +306,7 @@ export default function TagsPageClient({
                       <input
                         type="checkbox"
                         className="ds-check"
-                        aria-label={`Select ${tag.name}`}
+                        aria-label={`Select ${formatTagName(tag.name)}`}
                         checked={selected.includes(tag.id)}
                         disabled={pending}
                         onClick={(event) => {
@@ -339,13 +333,13 @@ export default function TagsPageClient({
                     </TableCell>
                     {columns.visible('name') && (
                       <TableCell sticky={CHECK_WIDTH} stickyEdge>
-                        <SecondaryCell text={tag.name}>
+                        <SecondaryCell text={formatTagName(tag.name)}>
                           <DetailLink
                             className="ds-cell-title"
                             kind="tag"
                             id={tagDetailId(tagScope, tag.id)}
                           >
-                            {tag.name}
+                            {formatTagName(tag.name)}
                           </DetailLink>
                         </SecondaryCell>
                       </TableCell>
@@ -375,7 +369,7 @@ export default function TagsPageClient({
                           text={
                             tag.parents.length
                               ? tag.parents
-                                  .map((parent) => parent.name)
+                                  .map((parent) => formatTagName(parent.name))
                                   .join(', ')
                               : undefined
                           }
@@ -388,7 +382,7 @@ export default function TagsPageClient({
                                     kind="tag"
                                     id={tagDetailId(tagScope, parent.id)}
                                   >
-                                    {parent.name}
+                                    {formatTagName(parent.name)}
                                   </DetailLink>
                                 </Fragment>
                               ))
@@ -410,7 +404,7 @@ export default function TagsPageClient({
                               ? tag.mergedNames.join(', ')
                               : undefined
                           }
-                          label={`Merged names for ${tag.name}`}
+                          label={`Merged names for ${formatTagName(tag.name)}`}
                         >
                           {tag.mergedNames.join(', ') || EMPTY_VALUE}
                         </SecondaryCell>

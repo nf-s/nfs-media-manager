@@ -19,6 +19,7 @@ import {
 import {
   BrowseFieldSchema,
   getBrowseValues,
+  formatBrowseFilterValue,
   formatBrowseValue,
   filmIdentificationStatus,
   albumBrowseFields,
@@ -60,6 +61,7 @@ import { createAlbumPlaybackSource } from '@/utils/playback-source'
 import { getDetailProviderLinks, ratingScore } from '@/utils/provider-ratings'
 import { albumSpotifyDestination } from '@/utils/album-links'
 import MediaSources, { MediaEditHistory } from './media-sources'
+import MetadataSourceControl from './metadata-source-control'
 import { BrowseFilterChips } from './browse-controls'
 import { FilterIndicator } from './filter-affordance'
 import { CreatorLinks } from './creator-links'
@@ -127,6 +129,7 @@ function FilterPills({
   onFilter,
   selected,
   max,
+  sourcesFor,
 }: {
   field: string
   values: readonly string[]
@@ -134,6 +137,8 @@ function FilterPills({
   selected: readonly BrowseFilter[]
   /** Shows this many, then a button for the rest. */
   max?: number
+  /** The item whose sources each tag offers, from an icon inside its pill. */
+  sourcesFor?: string
 }) {
   const [all, setAll] = useState(false)
   const shown = max === undefined || all ? values : values.slice(0, max)
@@ -144,13 +149,24 @@ function FilterPills({
         const active = selected.find((filter) =>
           sameBrowseFilter(filter, { field, value }),
         )
+        const label = formatBrowseFilterValue(field, value)
         return (
           <FilterPill
             key={value}
-            label={value}
+            label={label}
             mode={active ? (active.mode ?? 'any') : undefined}
-            title={`Filter ${field}: ${value}. Shift-click to keep details open.`}
+            title={`Filter ${field}: ${label}. Shift-click to keep details open.`}
             onClick={(event) => onFilter({ field, value }, event.shiftKey)}
+            action={
+              sourcesFor && (
+                <MetadataSourceControl
+                  field="genre"
+                  name={value}
+                  mediaId={sourcesFor}
+                  inPill
+                />
+              )
+            }
           />
         )
       })}
@@ -629,6 +645,8 @@ export default function MediaDetail({
       field: string
       values: string[]
       max?: number
+      /** Tags saved on this item, which can show where they came from. */
+      sources?: boolean
     }[],
   ) => {
     const shown = sections.filter((section) => section.values.length > 0)
@@ -652,6 +670,7 @@ export default function MediaDetail({
           max={section.max}
           onFilter={filter}
           selected={selectedFilters}
+          sourcesFor={section.sources ? item.id : undefined}
         />
       </Section>
     ))
@@ -792,6 +811,7 @@ export default function MediaDetail({
               label: 'Album tags',
               field: 'genre',
               values: item.tags.map((tag) => tag.name),
+              sources: true,
             },
             { label: 'Artist tags', field: 'artistTag', values: artistTags },
           ])}
@@ -901,8 +921,14 @@ export default function MediaDetail({
         </div>
         <div className="dtl-side">
           {tagSection([
-            { label: 'Genres', field: 'genre', values: genres },
-            { label: 'Keywords', field: 'genre', values: keywords, max: 6 },
+            { label: 'Genres', field: 'genre', values: genres, sources: true },
+            {
+              label: 'Keywords',
+              field: 'genre',
+              values: keywords,
+              max: 6,
+              sources: true,
+            },
           ])}
           <DetailsSection mediaItemId={item.id} facts={facts} />
           {collections.length > 0 && (

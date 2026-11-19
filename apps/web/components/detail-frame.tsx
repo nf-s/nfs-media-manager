@@ -139,13 +139,18 @@ export function DetailPage({
   )
 }
 
-/** A value that filters its library when clicked, shown in its filter mode. */
+/**
+ * A value that filters its library when clicked, shown in its filter mode.
+ * `action` is a second control inside the pill, after the label, such as a
+ * tag's sources.
+ */
 export function FilterPill({
   label,
   title,
   mode,
   onClick,
   href,
+  action,
 }: {
   label: string
   title?: string
@@ -153,17 +158,27 @@ export function FilterPill({
   mode?: BrowseFilter['mode']
   onClick?: (event: MouseEvent<HTMLButtonElement>) => void
   href?: string
+  action?: ReactNode
 }) {
+  const className = action ? 'browse-pill-action' : undefined
+  const value = href ? (
+    <Link href={href} title={title} prefetch={false} className={className}>
+      <PillLabel>{label}</PillLabel>
+    </Link>
+  ) : (
+    <button type="button" title={title} onClick={onClick} className={className}>
+      <PillLabel>{label}</PillLabel>
+    </button>
+  )
   return (
     <Pill asChild size="md" mode={mode}>
-      {href ? (
-        <Link href={href} title={title} prefetch={false}>
-          <PillLabel>{label}</PillLabel>
-        </Link>
+      {action ? (
+        <span className="browse-filter-pill">
+          {value}
+          {action}
+        </span>
       ) : (
-        <button type="button" title={title} onClick={onClick}>
-          <PillLabel>{label}</PillLabel>
-        </button>
+        value
       )}
     </Pill>
   )

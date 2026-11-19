@@ -2,6 +2,7 @@ import { z } from 'zod'
 import type { AlbumListItem, FilmListItem } from './media'
 import { isSpotifyAudioFeatureKey } from './audio-features'
 import { musicDisplayTags } from './music-tags'
+import { formatTagName } from './tags'
 
 export const RatingDisplaySchema = z.object({
   provider: z.string().min(1),
@@ -248,6 +249,16 @@ export function canonicalBrowseKey(key: string): string {
   return key === 'keyword' || key === 'tag' ? 'genre' : key
 }
 
+/** Whether a field's values are tag names, matched whatever their case. */
+export function isTagBrowseField(key: string): boolean {
+  return ['genre', 'albumTag', 'artistTag'].includes(canonicalBrowseKey(key))
+}
+
+/** A filter value as the interface shows it: a tag in its display form. */
+export function formatBrowseFilterValue(field: string, value: string): string {
+  return isTagBrowseField(field) ? formatTagName(value) : value
+}
+
 export const BrowseKeySchema = BrowseFieldSchema.shape.key
   .refine(
     (key) => !isSpotifyAudioFeatureKey(key),
@@ -268,7 +279,7 @@ export function sameBrowseFilter(
   if (field !== canonicalBrowseKey(right.field)) return false
   const normalize = (value: string) =>
     value.normalize('NFC').replace(/\s+/gu, ' ').trim().toLowerCase()
-  return ['genre', 'albumTag', 'artistTag'].includes(field)
+  return isTagBrowseField(field)
     ? normalize(left.value) === normalize(right.value)
     : left.value === right.value
 }
@@ -386,8 +397,12 @@ export function formatBrowseValue(
   value: BrowseValues[string] | undefined,
 ): string {
   if (value === null || value === undefined) return '-'
-  if (Array.isArray(value)) return value.join(', ')
-  if (typeof value !== 'number') return value
+  if (Array.isArray(value))
+    return value
+      .map((entry) => formatBrowseFilterValue(field.key, entry))
+      .join(', ')
+  if (typeof value !== 'number')
+    return formatBrowseFilterValue(field.key, value)
   if (field.type === 'date') {
     const date = new Date(value)
     return Number.isNaN(date.getTime()) ? '-' : date.toISOString().slice(0, 10)

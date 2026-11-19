@@ -1,15 +1,26 @@
 import assert from 'node:assert/strict'
-import { mock, test } from 'node:test'
+import { before, mock, test } from 'node:test'
 import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { SearchParamsContext } from 'next/dist/shared/lib/hooks-client-context.shared-runtime'
 import { TrackDetailSchema, type TrackDetail } from '@repo/schemas/tracks'
 import type { SpotifyTrackSearchJob } from '@repo/schemas/spotify-track-search'
-import TrackDetailView, { TrackSources } from './track-detail'
 import { ConfigContext } from './providers'
 import { PlaybackViewContext } from './playback-provider'
 import { idlePlaybackState } from '@/utils/playback-engine'
+
+// The detail page imports a CSS module, which Node cannot load; class names are not under test.
+require.extensions['.css'] = (module) => {
+  module.exports = {}
+}
+let TrackDetailView: typeof import('./track-detail').default
+let TrackSources: typeof import('./track-detail').TrackSources
+before(async () => {
+  const detail = await import('./track-detail')
+  TrackDetailView = detail.default
+  TrackSources = detail.TrackSources
+})
 
 const network = mock.method(globalThis, 'fetch', async () => {
   throw new Error('Network forbidden in UI tests')
@@ -185,9 +196,15 @@ test('tracks with a Spotify match keep album metadata, playback and every source
   ])
   assert.match(html, /<h3>Album tags<\/h3>/)
   assert.match(html, /<h3>Artist tags<\/h3>/)
-  assert.deepEqual(pillHref(html, 'Synth-pop'), [
+  assert.deepEqual(pillHref(html, 'Synth-Pop'), [
     { field: 'artistTag', value: 'Synth-pop' },
   ])
+  // Album tags are saved on the library album, which can show their sources.
+  assert.match(
+    html,
+    /<button type="button"[^>]*aria-label="Sources for Electronic"[^>]*class="browse-pill-action"/,
+  )
+  assert.doesNotMatch(html, /Sources for Synth-Pop/)
   assert.match(html, /4:03/)
   assert.match(html, /aria-label="Play Synthetic track">.*Play<\/button>/)
   assert.match(

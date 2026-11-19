@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { X } from 'lucide-react'
 import { useVirtualTable } from '@/hooks/useVirtualTable'
 import {
+  formatTagName,
   TagDetailSchema,
   type SetTagParentsInput,
   type Tag,
@@ -64,7 +65,7 @@ function TagManagement({ tag }: { tag: Tag }) {
       {candidate && (
         <p className="ds-actions">
           <span>
-            Merge with: <strong>{candidate.name}</strong>
+            Merge with: <strong>{formatTagName(candidate.name)}</strong>
           </span>
           <Button
             variant="link"
@@ -122,9 +123,9 @@ function TagHierarchySections({ detail }: { detail: TagDetailData }) {
             {tag.parents.map((parent) => (
               <BrowseFilterPill
                 key={parent.id}
-                label={`Open ${parent.name}`}
+                label={`Open ${formatTagName(parent.name)}`}
                 onActivate={inspector ? () => openTag(parent.id) : undefined}
-                removeLabel={`Remove parent ${parent.name}`}
+                removeLabel={`Remove parent ${formatTagName(parent.name)}`}
                 onRemove={() => {
                   if (pending) return
                   change({
@@ -134,7 +135,7 @@ function TagHierarchySections({ detail }: { detail: TagDetailData }) {
                   })
                 }}
               >
-                {parent.name}
+                {formatTagName(parent.name)}
               </BrowseFilterPill>
             ))}
           </Pills>
@@ -165,9 +166,9 @@ function TagHierarchySections({ detail }: { detail: TagDetailData }) {
             {children.map((child) => (
               <BrowseFilterPill
                 key={child.id}
-                label={`Open ${child.name}`}
+                label={`Open ${formatTagName(child.name)}`}
                 onActivate={inspector ? () => openTag(child.id) : undefined}
-                removeLabel={`Remove subtag ${child.name}`}
+                removeLabel={`Remove subtag ${formatTagName(child.name)}`}
                 onRemove={() => {
                   if (pending) return
                   change({
@@ -177,7 +178,7 @@ function TagHierarchySections({ detail }: { detail: TagDetailData }) {
                   })
                 }}
               >
-                {child.name}
+                {formatTagName(child.name)}
               </BrowseFilterPill>
             ))}
           </Pills>
@@ -250,7 +251,7 @@ export function TagDetail({
     <article className="dtl-detail">
       <DetailHeader
         kind="Tag"
-        title={data.tag.name}
+        title={formatTagName(data.tag.name)}
         by={data.tag.mediaType === 'album' ? 'Album tag' : 'Film tag'}
         facts={[
           `${formatCount(data.tag.mediaCount)} items`,
@@ -267,7 +268,7 @@ export function TagDetail({
           <>
             <DetailActionsSpacer />
             <DetailMore
-              crumb={{ title: data.tag.name }}
+              crumb={{ title: formatTagName(data.tag.name) }}
               items={[
                 {
                   label: `Browse ${library} with this tag`,

@@ -13,5 +13,10 @@
   max-height: min(420px, calc(100dvh - 2 * var(--ds-4)));
   overflow: auto;
   overscroll-behavior: contain;
+  /* Opened from inside a pill, the panel keeps the page's text, not the pill's */
+  color: var(--ds-ink);
   font-size: var(--ds-text-sm);
+  font-weight: 400;
+  line-height: var(--ds-leading);
+  white-space: normal;
 }

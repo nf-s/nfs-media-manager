@@ -2,7 +2,7 @@
 
 import { useDeferredValue, useState } from 'react'
 import { useVirtualTable } from '@/hooks/useVirtualTable'
-import { TagPageSchema, type Tag } from '@repo/schemas/tags'
+import { formatTagName, TagPageSchema, type Tag } from '@repo/schemas/tags'
 import { Notice } from '@repo/ui/components/ds/feedback'
 import { Button } from '@repo/ui/components/ui/button'
 import { Input } from '@repo/ui/components/ui/input'
@@ -116,7 +116,7 @@ export function TagPicker({
                               onPick(item)
                             }}
                           >
-                            {item.name}
+                            {formatTagName(item.name)}
                             {item.hidden ? ' (hidden)' : ''}
                             {reason ? ` (${reason})` : ''}
                           </Button>

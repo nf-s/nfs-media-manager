@@ -362,6 +362,8 @@ button.ds-pill:hover {
 .ds-pill-label {
   min-width: 0;
   overflow: hidden;
+  /* The clip box needs room for descenders; the pill's own line is 1 */
+  line-height: var(--ds-leading);
   text-overflow: ellipsis;
 }
 .ds-pills:not([data-wrap]) > .ds-pill:first-child {

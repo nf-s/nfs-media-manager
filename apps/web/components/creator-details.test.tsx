@@ -225,7 +225,7 @@ test('artist overview displays profile evidence and independent music filters wi
     assert.equal(target.searchParams.get('creatorId'), artist.id)
     assert.equal(target.searchParams.has('filters'), false)
   }
-  const tags = destination(html, '<span class="ds-pill-label">Synth-pop</span>')
+  const tags = destination(html, '<span class="ds-pill-label">Synth-Pop</span>')
   assert.deepEqual(JSON.parse(tags.searchParams.get('filters') ?? '[]'), [
     { field: 'artistTag', value: 'Synth-pop', mode: 'required' },
   ])

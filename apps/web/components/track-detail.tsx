@@ -5,7 +5,11 @@ import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { AudioLines, Disc3 } from 'lucide-react'
 import { musicDisplayTags } from '@repo/schemas/music-tags'
-import { sameBrowseFilter, type BrowseFilter } from '@repo/schemas/browse'
+import {
+  formatBrowseFilterValue,
+  sameBrowseFilter,
+  type BrowseFilter,
+} from '@repo/schemas/browse'
 import {
   TrackDetailSchema,
   trackSourceLabels,
@@ -53,6 +57,7 @@ import ServiceIconLinks, { serviceLinks } from './service-icon-links'
 import { canMergeLastfmTrack, TrackMergePanel } from './track-merge'
 import { DetailMore } from './detail-more'
 import { TrackLastfmSources } from './track-lastfm-sources'
+import MetadataSourceControl from './metadata-source-control'
 import { TrackSpotifySource } from './track-spotify-source'
 import TrackAppearsOn from './track-playlist-additions'
 
@@ -71,10 +76,13 @@ function FilterValues({
   field,
   values,
   onFilter,
+  sourcesFor,
 }: {
   field: string
   values: readonly string[]
   onFilter?: OnFilter
+  /** The album whose sources each tag offers, from an icon inside its pill. */
+  sourcesFor?: string
 }) {
   const params = useSearchParams()
   const active = parseTrackFilters(params.get('filters'))
@@ -84,20 +92,31 @@ function FilterValues({
         const filter = trackFilter({ field, value })
         const current = active.find((item) => sameBrowseFilter(item, filter))
         const mode = current ? (current.mode ?? 'any') : undefined
+        const label = formatBrowseFilterValue(field, value)
+        const action = sourcesFor && (
+          <MetadataSourceControl
+            field="genre"
+            name={value}
+            mediaId={sourcesFor}
+            inPill
+          />
+        )
         return onFilter ? (
           <FilterPill
             key={value}
-            label={value}
+            label={label}
             mode={mode}
-            title={`Filter ${field}: ${value}. Shift-click to keep details open.`}
+            title={`Filter ${field}: ${label}. Shift-click to keep details open.`}
             onClick={(event) => onFilter(filter, event.shiftKey)}
+            action={action}
           />
         ) : (
           <FilterPill
             key={value}
-            label={value}
+            label={label}
             mode={mode}
             href={tracksHref([filter])}
+            action={action}
           />
         )
       })}
@@ -136,8 +155,18 @@ function TrackOverview({
     .filter((tag) => tag.source === 'artist')
     .map((tag) => tag.name)
   const tags = [
-    { label: 'Album tags', field: 'albumTag', values: item.albumTags },
-    { label: 'Artist tags', field: 'artistTag', values: artistTags },
+    {
+      label: 'Album tags',
+      field: 'albumTag',
+      values: item.albumTags,
+      sourcesFor: item.album?.id,
+    },
+    {
+      label: 'Artist tags',
+      field: 'artistTag',
+      values: artistTags,
+      sourcesFor: undefined,
+    },
   ].filter((group) => group.values.length > 0)
   return (
     <div className="dtl-overview">
@@ -193,6 +222,7 @@ function TrackOverview({
               field={group.field}
               values={group.values}
               onFilter={onFilter}
+              sourcesFor={group.sourcesFor}
             />
           </Section>
         ))}

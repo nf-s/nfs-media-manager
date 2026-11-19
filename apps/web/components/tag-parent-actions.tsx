@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import {
+  formatTagName,
   SetTagParentsResultSchema,
   type SetTagParentsInput,
   type Tag,
@@ -97,9 +98,9 @@ export default function TagParentActions({
           onComplete(
             result.completed,
             mode === 'add' && target
-              ? `Added parent ${target.name} to ${updated}.`
+              ? `Added parent ${formatTagName(target.name)} to ${updated}.`
               : target
-                ? `Moved ${updated} under ${target.name}.`
+                ? `Moved ${updated} under ${formatTagName(target.name)}.`
                 : `Removed parents from ${updated}.`,
             false,
           )
@@ -114,7 +115,7 @@ export default function TagParentActions({
       {parent ? (
         <p className="ds-actions">
           <span>
-            Parent tag: <strong>{parent.name}</strong>
+            Parent tag: <strong>{formatTagName(parent.name)}</strong>
           </span>
           <Button
             variant="link"

@@ -11,7 +11,11 @@ import {
   type AiSearchPlan,
   type AiSubscriptionPlan,
 } from '@repo/schemas/ai-search'
-import { formatBrowseValue, type BrowseField } from '@repo/schemas/browse'
+import {
+  formatBrowseFilterValue,
+  formatBrowseValue,
+  type BrowseField,
+} from '@repo/schemas/browse'
 import { subscriptionTypeLabels } from '@repo/schemas/subscriptions'
 import type { ListeningLibrary } from '@repo/schemas/listening'
 import { trackPlayabilityLabels } from '@repo/schemas/match-diagnostics'
@@ -111,7 +115,9 @@ export function describeAiSearchPlan(
           : 'Any'
     const label =
       fields.find((field) => field.key === filter.field)?.label ?? filter.field
-    descriptions.push(`${mode} · ${label}: ${filter.value}`)
+    descriptions.push(
+      `${mode} · ${label}: ${formatBrowseFilterValue(filter.field, filter.value)}`,
+    )
   }
   for (const range of plan.ranges) {
     const field = fields.find((field) => field.key === range.field)

@@ -210,7 +210,7 @@ test('Tracks list rows: thumbnail, title, artists and album, play pair, tags and
   )
   assert.match(
     html,
-    /<span class="ds-pills" role="group" aria-label="Tags">.*?dream pop.*?shoegaze.*?<span class="ds-more" title="1 more">\+1<\/span>/,
+    /<span class="ds-pills" role="group" aria-label="Tags">.*?Dream Pop.*?Shoegaze.*?<span class="ds-more" title="1 more">\+1<\/span>/,
   )
   assert.match(
     html,

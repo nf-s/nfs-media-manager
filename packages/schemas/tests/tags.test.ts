@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
   CreateTagSchema,
+  formatTagName,
+  normalizeTagName,
   MergeTagsSchema,
   SetTagParentsSchema,
   TagListQuerySchema,
@@ -158,5 +160,71 @@ describe('tag contracts', () => {
       expect(
         CreateTagSchema.safeParse({ mediaType: 'film', name }).success,
       ).toBe(false)
+  })
+
+  it('a tag name is shown in title case whatever case it was stored in', () => {
+    for (const [stored, shown] of [
+      ['indie rock', 'Indie Rock'],
+      ['Indie Rock', 'Indie Rock'],
+      ['INDIE ROCK', 'Indie Rock'],
+      ['  dream   pop ', 'Dream Pop'],
+      ['gangster', 'Gangster'],
+      ['1980s', '1980s'],
+      ['60s pop', '60s Pop'],
+      ['夜の港', '夜の港'],
+      ['música popular brasileira', 'Música Popular Brasileira'],
+      ['ßtraße', 'ßtraße'],
+      ['', ''],
+    ] as const)
+      expect(formatTagName(stored)).toBe(shown)
+  })
+
+  it('minor words stay in lower case inside a name only', () => {
+    for (const [stored, shown] of [
+      ['based on novel or book', 'Based on Novel or Book'],
+      ['coming of age', 'Coming of Age'],
+      ['drum and bass', 'Drum and Bass'],
+      ['the beatles', 'The Beatles'],
+      ['sleeping in', 'Sleeping In'],
+      ['man vs. nature', 'Man vs. Nature'],
+      ['rock-and-roll', 'Rock-and-Roll'],
+      ['rio de janeiro', 'Rio de Janeiro'],
+      ["rock 'n' roll", "Rock 'n' Roll"],
+      ["women's rights", "Women's Rights"],
+      ['love, and other drugs', 'Love, and Other Drugs'],
+      ['artist (the band)', 'Artist (The Band)'],
+    ] as const)
+      expect(formatTagName(stored)).toBe(shown)
+  })
+
+  it('joined words and abbreviations keep their usual capitals', () => {
+    for (const [stored, shown] of [
+      ['lo-fi', 'Lo-Fi'],
+      ['post-punk', 'Post-Punk'],
+      ['singer/songwriter', 'Singer/Songwriter'],
+      ['r&b', 'R&B'],
+      ['rnb', 'RnB'],
+      ['k-pop', 'K-Pop'],
+      ['hi-nrg', 'Hi-NRG'],
+      ['uk garage', 'UK Garage'],
+      ['edm', 'EDM'],
+      ['tv movie', 'TV Movie'],
+      ['world war ii', 'World War II'],
+      ['lgbtq+ stories', 'LGBTQ+ Stories'],
+      ['artificial intelligence (a.i.)', 'Artificial Intelligence (A.I.)'],
+      ['sci-fi', 'Sci-Fi'],
+      ['2-step', '2-Step'],
+      ['3d', '3D'],
+    ] as const)
+      expect(formatTagName(stored)).toBe(shown)
+  })
+
+  it('formatting only changes letter case', () => {
+    for (const stored of [
+      'Rock & Roll',
+      'ambient  atmospheric house',
+      'İstanbul',
+    ])
+      expect(formatTagName(stored).toLowerCase()).toBe(normalizeTagName(stored))
   })
 })

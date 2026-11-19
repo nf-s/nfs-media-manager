@@ -1,5 +1,5 @@
-import TagsPageClient from '@/components/pages/tags-page-client'
+import TagHierarchyPageClient from '@/components/pages/tag-hierarchy-page-client'
 
 export default function TagsPage() {
-  return <TagsPageClient />
+  return <TagHierarchyPageClient />
 }

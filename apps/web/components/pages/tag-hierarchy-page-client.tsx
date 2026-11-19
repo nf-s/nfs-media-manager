@@ -6,6 +6,7 @@ import { useSearchParams } from 'next/navigation'
 import { ChevronDown, ChevronRight } from 'lucide-react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
+  formatTagName,
   CreateTagResultSchema,
   TagHierarchySchema,
   type Tag,
@@ -28,6 +29,7 @@ import {
   TableState,
 } from '@repo/ui/components/ui/table'
 import { formatCount, formatItemCount } from '@repo/ui/lib/format'
+import { useTagDetailParam } from '@/hooks/useTagDetailParam'
 import { useConfig } from '@/components/providers'
 import { DetailLink } from '@/components/detail-link'
 import { replaceWorkspaceUrl } from '@/components/detail-inspector-context'
@@ -78,7 +80,7 @@ function NewTagForm({
       }),
     onSuccess: async (created) => {
       await invalidateTags(client)
-      onCreated(created.name)
+      onCreated(formatTagName(created.name))
     },
   })
   return (
@@ -106,7 +108,7 @@ function NewTagForm({
       {parent ? (
         <p className="ds-actions">
           <span>
-            Parent tag: <strong>{parent.name}</strong>
+            Parent tag: <strong>{formatTagName(parent.name)}</strong>
           </span>
           <Button
             type="button"
@@ -169,6 +171,7 @@ export default function TagHierarchyPageClient() {
   const params = useSearchParams()
   const mediaType = useMediaScope()
   const tagScope = mediaType === 'film' ? 'film' : 'album'
+  useTagDetailParam(tagScope)
   const search = params.get('q') ?? ''
   const query = useDeferredValue(search.trim())
   // Rows shown or hidden by hand; a new search or library starts over.
@@ -254,7 +257,7 @@ export default function TagHierarchyPageClient() {
           )}
         </ToolbarCount>
         {unplaced > 0 && (
-          <Link href={scopedHref('/tags?placement=unplaced', tagScope)}>
+          <Link href={scopedHref('/tags/all?placement=unplaced', tagScope)}>
             {formatItemCount(unplaced, TAGS)} outside the hierarchy
           </Link>
         )}
@@ -357,7 +360,7 @@ export default function TagHierarchyPageClient() {
                         size="xs"
                         icon
                         aria-expanded={row.expanded}
-                        aria-label={`${row.expanded ? 'Hide' : 'Show'} subtags of ${row.node.name}`}
+                        aria-label={`${row.expanded ? 'Hide' : 'Show'} subtags of ${formatTagName(row.node.name)}`}
                         onClick={() => toggle(row.key)}
                       >
                         {row.expanded ? (
@@ -373,9 +376,9 @@ export default function TagHierarchyPageClient() {
                       className="ds-cell-title"
                       kind="tag"
                       id={tagDetailId(tagScope, row.node.id)}
-                      title={row.node.name}
+                      title={formatTagName(row.node.name)}
                     >
-                      {row.node.name}
+                      {formatTagName(row.node.name)}
                     </DetailLink>
                     {row.node.hidden && <Status state="paused">Hidden</Status>}
                   </span>

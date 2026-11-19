@@ -24,12 +24,12 @@ export default function TagsWorkspace({
               {
                 id: '/tags',
                 href: scopedHref('/tags', mediaType),
-                label: 'All',
+                label: 'Hierarchy',
               },
               {
-                id: '/tags/hierarchy',
-                href: scopedHref('/tags/hierarchy', mediaType),
-                label: 'Hierarchy',
+                id: '/tags/all',
+                href: scopedHref('/tags/all', mediaType),
+                label: 'All',
               },
               {
                 id: '/tags/hidden',

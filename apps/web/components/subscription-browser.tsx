@@ -480,7 +480,14 @@ export default function SubscriptionBrowser({
   }
 
   function itemTags(item: SubscriptionItem) {
-    return <BrowseTagBadges tags={item.tags} onFilter={addFilter} max={2} />
+    return (
+      <BrowseTagBadges
+        tags={item.tags}
+        onFilter={addFilter}
+        max={2}
+        storedNames
+      />
+    )
   }
 
   function thumb(item: SubscriptionItem) {
@@ -589,6 +596,7 @@ export default function SubscriptionBrowser({
           filters={filters}
           fields={fields}
           onChange={changeFilters}
+          storedTagNames
         />
         {ranges.map((range) => {
           const label = subscriptionRangeLabel(range, fields)

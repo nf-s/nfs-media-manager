@@ -11,7 +11,7 @@ test('distinguishes the canonical name from visible merged names', () => {
       mergedNames={['art-history', 'history of art', 'Art History']}
     />,
   )
-  assert.match(html, /<strong>Art history<\/strong>/)
+  assert.match(html, /<strong>Art History<\/strong>/)
   assert.match(
     html,
     /Merged from: <\/span>art-history, history of art, Art History/,

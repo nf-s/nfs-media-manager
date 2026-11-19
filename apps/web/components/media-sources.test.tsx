@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mock, test } from 'node:test'
+import { before, mock, test } from 'node:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { SearchParamsContext } from 'next/dist/shared/lib/hooks-client-context.shared-runtime'
@@ -18,9 +18,17 @@ import {
 import { AlbumListeningSchema } from '@repo/schemas/lastfm'
 import { MediaProvenanceSchema } from '@repo/schemas/provenance'
 import { InspectorEntryContext } from './detail-inspector-context'
-import MediaDetail from './media-detail'
 import MediaSources from './media-sources'
 import { ConfigContext } from './providers'
+
+// The detail page imports a CSS module, which Node cannot load; class names are not under test.
+require.extensions['.css'] = (module) => {
+  module.exports = {}
+}
+let MediaDetail: typeof import('./media-detail').default
+before(async () => {
+  MediaDetail = (await import('./media-detail')).default
+})
 
 const network = mock.method(globalThis, 'fetch', async () => {
   throw new Error('Network forbidden in media Sources UI tests')
@@ -291,6 +299,43 @@ test('album Overview links collection memberships to album collection details', 
       html,
       /Fixture playlist|https:\/\/example\.test\/collections\/fixture/,
     )
+  } finally {
+    client.clear()
+    assert.equal(network.mock.callCount(), 0)
+  }
+})
+
+test('album tags show in one letter case and each offers its sources for that album', () => {
+  const album = AlbumDetailSchema.parse({
+    ...albumWithCollections,
+    id: 'album-with-tags',
+    tags: [{ name: 'dream pop', kind: 'genre' }],
+    artistTags: ['shoegaze'],
+  })
+  const client = new QueryClient()
+  client.setQueryData(['album', album.id], album)
+  try {
+    const html = renderToStaticMarkup(
+      <QueryClientProvider client={client}>
+        <ConfigContext.Provider
+          value={{
+            appUrl: 'https://app.example.test',
+            apiBaseUrl: 'https://api.example.test',
+          }}
+        >
+          <SearchParamsContext.Provider value={new URLSearchParams()}>
+            <MediaDetail mediaType="album" id={album.id} />
+          </SearchParamsContext.Provider>
+        </ConfigContext.Provider>
+      </QueryClientProvider>,
+    )
+    assert.match(
+      html,
+      /<span class="ds-pill browse-filter-pill" data-size="md"><button type="button"[^>]*class="browse-pill-action"><span class="ds-pill-label">Dream Pop<\/span><\/button><button type="button"[^>]*aria-label="Sources for Dream Pop"[^>]*class="browse-pill-action">/,
+    )
+    // Artist tags are not saved on the album, so they have no sources here.
+    assert.match(html, /<span class="ds-pill-label">Shoegaze<\/span>/)
+    assert.doesNotMatch(html, /Sources for Shoegaze/)
   } finally {
     client.clear()
     assert.equal(network.mock.callCount(), 0)

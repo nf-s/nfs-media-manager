@@ -12,13 +12,13 @@ test('tags render as filter pills: the first three and a count, never clipped or
     <BrowseTagBadges tags={tags} onFilter={() => {}} />,
   )
   assert.match(html, /<span class="ds-pills" role="group" aria-label="Tags">/)
-  for (const tag of tags.slice(0, 3))
+  for (const tag of ['Tag One', 'Tag Two', 'Tag Three'])
     assert.ok(
       html.includes(
         `<button type="button" title="Tag: ${tag}" class="ds-pill"><span class="ds-pill-label">${tag}</span></button>`,
       ),
     )
-  assert.doesNotMatch(html, /Tag four|Tag five/)
+  assert.doesNotMatch(html, /Tag Four|Tag Five/)
   assert.match(html, /<span class="ds-more" title="2 more">\+2<\/span>/)
   const two = renderToStaticMarkup(
     <BrowseTagBadges tags={tags} onFilter={() => {}} max={2} />,
@@ -35,10 +35,10 @@ test('artist tags shown in place of album tags use the outline pill', () => {
       onFilter={() => {}}
     />,
   )
-  assert.match(html, /title="Tag: Album tag" class="ds-pill">/)
+  assert.match(html, /title="Tag: Album Tag" class="ds-pill">/)
   assert.match(
     html,
-    /title="Artist tag: Artist tag" class="ds-pill" data-tone="outline"><span class="ds-pill-label">Artist tag<\/span><span class="sr-only">, artist tag<\/span>/,
+    /title="Artist tag: Artist Tag" class="ds-pill" data-tone="outline"><span class="ds-pill-label">Artist Tag<\/span><span class="sr-only">, artist tag<\/span>/,
   )
   const complete = renderToStaticMarkup(
     <BrowseTagBadges
@@ -47,7 +47,23 @@ test('artist tags shown in place of album tags use the outline pill', () => {
       onFilter={() => {}}
     />,
   )
-  assert.doesNotMatch(complete, /Artist tag/)
+  assert.doesNotMatch(complete, /Artist Tag/)
+})
+
+test('library tags show in one letter case; tags from outside the library show as stored', () => {
+  const filters: unknown[] = []
+  const library = renderToStaticMarkup(
+    <BrowseTagBadges
+      tags={['indie rock', 'UK garage']}
+      onFilter={(filter) => filters.push(filter)}
+    />,
+  )
+  assert.match(library, /title="Tag: Indie Rock"/)
+  assert.match(library, /<span class="ds-pill-label">UK Garage<\/span>/)
+  const stored = renderToStaticMarkup(
+    <BrowseTagBadges tags={['indie rock']} onFilter={() => {}} storedNames />,
+  )
+  assert.match(stored, /<span class="ds-pill-label">indie rock<\/span>/)
 })
 
 test('missing grid artwork retains its title and album or film aspect ratio', () => {

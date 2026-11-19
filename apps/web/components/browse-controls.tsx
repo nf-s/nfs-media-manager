@@ -19,6 +19,7 @@ import {
 import { Select } from '@repo/ui/components/ds/toolbar'
 import {
   BrowseRangeSchema,
+  formatBrowseFilterValue,
   type BrowseField,
   type BrowseRange,
   type BrowseFilter,
@@ -30,6 +31,7 @@ import {
   type GridDensity,
 } from '@/utils/media-grid'
 import { musicDisplayTags } from '@repo/schemas/music-tags'
+import { formatTagName } from '@repo/schemas/tags'
 
 const views = [
   {
@@ -97,7 +99,9 @@ export function BrowseDensitySwitch({
 /**
  * An item's tags as pills that add a filter. Shows the first `max` and a
  * `+N` count; the pills are never clipped or scrolled. Artist tags shown in
- * place of missing album tags use the outline pill.
+ * place of missing album tags use the outline pill. `storedNames` shows tags
+ * from outside the tag library, such as a subscription's, as their source
+ * wrote them.
  */
 export function BrowseTagBadges({
   field = 'genre',
@@ -106,6 +110,7 @@ export function BrowseTagBadges({
   onFilter,
   className,
   max = 3,
+  storedNames = false,
 }: {
   field?: string
   tags: string[]
@@ -113,6 +118,7 @@ export function BrowseTagBadges({
   onFilter: (filter: BrowseFilter) => void
   className?: string
   max?: number
+  storedNames?: boolean
 }) {
   const shown =
     artistTags === undefined
@@ -124,30 +130,33 @@ export function BrowseTagBadges({
   if (shown.length === 0) return null
   return (
     <Pills label="Tags" max={max} className={className}>
-      {shown.map(({ name: tag, source }) => (
-        <Pill
-          asChild
-          key={tag}
-          tone={source === 'artist' ? 'outline' : undefined}
-        >
-          <button
-            type="button"
-            title={`${source === 'artist' ? 'Artist tag' : 'Tag'}: ${tag}`}
-            onClick={(event) => {
-              event.stopPropagation()
-              onFilter({
-                field: source === 'artist' ? 'artistTag' : field,
-                value: tag,
-              })
-            }}
+      {shown.map(({ name: tag, source }) => {
+        const label = storedNames ? tag : formatTagName(tag)
+        return (
+          <Pill
+            asChild
+            key={tag}
+            tone={source === 'artist' ? 'outline' : undefined}
           >
-            <PillLabel>{tag}</PillLabel>
-            {source === 'artist' && (
-              <span className="sr-only">, artist tag</span>
-            )}
-          </button>
-        </Pill>
-      ))}
+            <button
+              type="button"
+              title={`${source === 'artist' ? 'Artist tag' : 'Tag'}: ${label}`}
+              onClick={(event) => {
+                event.stopPropagation()
+                onFilter({
+                  field: source === 'artist' ? 'artistTag' : field,
+                  value: tag,
+                })
+              }}
+            >
+              <PillLabel>{label}</PillLabel>
+              {source === 'artist' && (
+                <span className="sr-only">, artist tag</span>
+              )}
+            </button>
+          </Pill>
+        )
+      })}
     </Pills>
   )
 }
@@ -217,14 +226,17 @@ export function BrowseFilterPill({
   )
 }
 
+/** `storedTagNames` shows tag values from outside the tag library as stored. */
 export function BrowseFilterChips({
   filters,
   fields,
   onChange,
+  storedTagNames = false,
 }: {
   filters: BrowseFilter[]
   fields: BrowseField[]
   onChange: (filters: BrowseFilter[]) => void
+  storedTagNames?: boolean
 }) {
   return filters.map((filter, index) => {
     const label =
@@ -241,6 +253,9 @@ export function BrowseFilterChips({
           : 'required'
     const fieldLabel =
       fields.find((field) => field.key === filter.field)?.label ?? filter.field
+    const value = storedTagNames
+      ? filter.value
+      : formatBrowseFilterValue(filter.field, filter.value)
     return (
       <BrowseFilterPill
         key={`${filter.field}:${filter.value}`}
@@ -254,9 +269,9 @@ export function BrowseFilterChips({
           )
         }
         onRemove={() => onChange(filters.filter((_, i) => i !== index))}
-        removeLabel={`Remove ${filter.value} filter`}
+        removeLabel={`Remove ${value} filter`}
       >
-        {label} · {fieldLabel}: {filter.value}
+        {label} · {fieldLabel}: {value}
       </BrowseFilterPill>
     )
   })

@@ -170,8 +170,20 @@
 
   function pill(label, o = {}) {
     const tagName = o.static ? 'span' : 'a'
-    return `<${tagName} class="ds-pill"${attrs({ href: o.static ? undefined : '#', 'data-mode': o.mode, 'data-tone': o.tone, 'data-size': o.size })}>${o.icon ? icon(o.icon) : ''}<span class="ds-pill-label">${esc(label)}</span>${o.remove ? icon('x') : ''}</${tagName}>`
+    return `<${tagName} class="ds-pill"${attrs({ href: o.static ? undefined : '#', 'data-mode': o.mode, 'data-tone': o.tone, 'data-size': o.size })}>${o.icon ? icon(o.icon) : ''}<span class="ds-pill-label">${esc(label)}</span>${o.remove ? icon('x') : ''}${o.sources ? icon('layers') : ''}</${tagName}>`
   }
+
+  /* Tag names show in title case, as the app's formatTagName writes them */
+  const TAG_MINOR = new Set(['a', 'an', 'and', 'of', 'on', 'or', 'the', 'to'])
+  const tagLabel = (name) =>
+    name
+      .split(' ')
+      .map((word, i, words) =>
+        i > 0 && i < words.length - 1 && TAG_MINOR.has(word)
+          ? word
+          : word.charAt(0).toUpperCase() + word.slice(1),
+      )
+      .join(' ')
 
   function pills(list, o = {}) {
     const max = o.max || list.length
@@ -590,7 +602,7 @@
       duration,
       plays,
       rym,
-      tags,
+      tags: tags.map(tagLabel),
       art: seed === 7 ? null : undefined,
     }),
   )
@@ -701,7 +713,7 @@
     tracks,
     plays,
     added,
-    tags,
+    tags: tags.map(tagLabel),
     art: i === 6 ? null : undefined,
   }))
 
@@ -777,7 +789,7 @@
     mc: r[1],
     rt: r[2],
     lb: r[3],
-    tags,
+    tags: tags.map(tagLabel),
     watched,
     added,
   }))

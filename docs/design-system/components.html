@@ -188,18 +188,22 @@
             body:
               g.spec(
                 g.flow([
-                  g.item(pill('dream pop'), 'tag · 20'),
-                  g.item(pill('dream pop', { size: 'md' }), 'tag · 24'),
+                  g.item(pill('Dream Pop'), 'tag · 20'),
+                  g.item(pill('Dream Pop', { size: 'md' }), 'tag · 24'),
                   g.item(
-                    pill('shoegaze', { mode: 'any', remove: true }),
+                    pill('Dream Pop', { size: 'md', sources: true }),
+                    'tag on a detail page · sources',
+                  ),
+                  g.item(
+                    pill('Shoegaze', { mode: 'any', remove: true }),
                     'filter · any',
                   ),
                   g.item(
-                    pill('ethereal', { mode: 'required', remove: true }),
+                    pill('Ethereal', { mode: 'required', remove: true }),
                     'filter · required',
                   ),
                   g.item(
-                    pill('live', { mode: 'exclude', remove: true }),
+                    pill('Live', { mode: 'exclude', remove: true }),
                     'filter · excluded',
                   ),
                   g.item(
@@ -227,7 +231,10 @@
               g.rules([
                 '<b>One shape.</b> Fully rounded, 20px in rows and cards, 24px in detail sections and filter rails.',
                 '<b>A pill is never cut off.</b> A row of pills shows the ones that fit and a <code>+N</code> count. The full set is in the detail panel.',
-                '<b>Clicking a tag filters</b> the current library by it, everywhere. Where a tag comes from is shown in Sources, not beside each pill.',
+                '<b>Clicking a tag filters</b> the current library by it, everywhere.',
+                '<b>Tag names are in title case</b> whatever case their source used: Indie Rock, Based on Novel or Book, UK Garage. One formatter writes them; the stored name and the filter value are not changed.',
+                '<b>A tag on a detail page carries a sources icon</b> inside the pill when the tag is saved on that item. It lists where the tag came from for the item, with the provider page and the job. Rows, cards and tables show the tag alone.',
+                '<b>The label keeps its descenders.</b> The pill has a line of 1; the label inside has the body line height, so the clip that shortens a long tag never cuts a g, p or y.',
                 '<b>Provider marks</b> are neutral in rows, tables and cards. The placeholders here stand in for single-colour glyphs; brand colour is not used in repeated content.',
               ]) +
               g.note(

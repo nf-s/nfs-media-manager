@@ -75,6 +75,7 @@ test('shows original names, aggregator provenance and source URLs as separate li
             url: 'https://www.imdb.com/search/title/?keywords=art-history',
           },
           linkKind: 'tag',
+          jobId: 'job-1',
         },
       ]}
     />,
@@ -85,6 +86,8 @@ test('shows original names, aggregator provenance and source URLs as separate li
   assert.match(html, /target="_blank"/)
   assert.match(html, /rel="noopener noreferrer"/)
   assert.doesNotMatch(html, /Merged elsewhere/)
+  // The provider's job for the item is one click away.
+  assert.match(html, /<a[^>]*href="\/jobs\/job-1"[^>]*>View job<\/a>/)
 })
 
 test('marks global merged origins and missing links honestly without inventing a URL', () => {

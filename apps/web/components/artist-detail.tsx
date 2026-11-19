@@ -17,6 +17,7 @@ import {
   SubscriptionItemPageSchema,
   type SubscriptionItem,
 } from '@repo/schemas/subscriptions'
+import { formatTagName } from '@repo/schemas/tags'
 import type { TrackListItem } from '@repo/schemas/tracks'
 import { Art, ArtFallback } from '@repo/ui/components/ds/artwork'
 import { Card, CardGrid, CardTitle } from '@repo/ui/components/ds/card'
@@ -550,9 +551,9 @@ function ArtistOverview({
             {profile.tags.map((tag) => (
               <FilterPill
                 key={tag}
-                label={tag}
+                label={formatTagName(tag)}
                 href={artistTagBrowseHref(library, tag)}
-                title={`Filter ${library} by artist tag ${tag}`}
+                title={`Filter ${library} by artist tag ${formatTagName(tag)}`}
               />
             ))}
           </span>

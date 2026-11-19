@@ -9,6 +9,155 @@ export function normalizeTagName(name: string): string {
   return tagDisplayName(name).toLowerCase()
 }
 
+/** Words a tag name keeps in lower case unless they start or end it. */
+const TAG_MINOR_WORDS = new Set([
+  'a',
+  'an',
+  'and',
+  'as',
+  'at',
+  'but',
+  'by',
+  'de',
+  'del',
+  'du',
+  'for',
+  'from',
+  'in',
+  'into',
+  'n',
+  'nor',
+  'of',
+  'on',
+  'or',
+  'the',
+  'to',
+  'via',
+  'vs',
+  'with',
+])
+
+/** Abbreviations and names whose capitals are not the first letter alone. */
+const TAG_FIXED_WORDS = new Map(
+  [
+    '3D',
+    '4K',
+    'ADHD',
+    'AFI',
+    'AI',
+    'AIDS',
+    'AOR',
+    'ATL',
+    'BBC',
+    'BDSM',
+    'C86',
+    'CCM',
+    'CG',
+    'CGI',
+    'CIA',
+    'DC',
+    'DIY',
+    'DJ',
+    'DMV',
+    'DNA',
+    'DnB',
+    'DVD',
+    'EAI',
+    'EBM',
+    'ECM',
+    'EDM',
+    'EP',
+    'EU',
+    'FBI',
+    'GDR',
+    'HBO',
+    'HIV',
+    'IDM',
+    'II',
+    'III',
+    'IMAX',
+    'IRA',
+    'IV',
+    'KC',
+    'KGB',
+    'KKK',
+    'LAPD',
+    'LGBT',
+    'LGBTQ',
+    'LP',
+    'LSD',
+    'MC',
+    'MCU',
+    'MPB',
+    'MTV',
+    'NASA',
+    'NRG',
+    'NSA',
+    'NWOBHM',
+    'NYC',
+    'NYPD',
+    'NZ',
+    'OC',
+    'OCD',
+    'OKC',
+    'OST',
+    'POV',
+    'PTSD',
+    'RnB',
+    'RVA',
+    'STL',
+    'TV',
+    'TX',
+    'UFO',
+    'UK',
+    'UKG',
+    'US',
+    'USA',
+    'USSR',
+    'VGM',
+    'VHS',
+    'VTuber',
+    'WWI',
+    'WWII',
+  ].map((word) => [word.toLowerCase(), word]),
+)
+
+/**
+ * A tag name as the app shows it, whatever case its source used:
+ * `Indie Rock`, `Based on Novel or Book`, `UK Garage`, `Lo-Fi`, `R&B`.
+ * Every word starts with a capital except a minor word inside the name.
+ * The stored name and the filter value keep their own spelling.
+ */
+export function formatTagName(name: string): string {
+  const words = normalizeTagName(name).split(/([\s\-/&+.()[\]"“”:;,!?]+)/u)
+  // Even entries are words, some of them empty beside a leading separator.
+  const filled = words.flatMap((word, index) =>
+    index % 2 === 0 && word ? [index] : [],
+  )
+  const first = filled.at(0)
+  const last = filled.at(-1)
+  return words
+    .map((word, index) => {
+      // Odd entries are the separators the split kept.
+      if (index % 2 === 1 || !word) return word
+      const fixed = TAG_FIXED_WORDS.get(word)
+      if (fixed) return fixed
+      // A minor word follows a space, hyphen or comma: `a` in `(a.i.)` does not.
+      if (
+        index !== first &&
+        index !== last &&
+        TAG_MINOR_WORDS.has(word) &&
+        /^[\s\-,]+$/u.test(words[index - 1] ?? '')
+      )
+        return word
+      const initial = word.charAt(0)
+      const capital = initial.toUpperCase()
+      // A letter such as ß has no single capital; leave the word as it is.
+      return capital.length === 1 ? capital + word.slice(1) : word
+    })
+    .join('')
+}
+
 export const SourceNavigationLinkSchema = z.object({
   provider: z.string(),
   providerLabel: z.string(),
@@ -98,6 +247,8 @@ export const TagProvenanceSourceSchema = TagSourceSchema.extend({
   linkKind: z.enum(['tag', 'item', 'provider-item']).nullable(),
   itemTitle: z.string().optional(),
   linkNote: z.string().optional(),
+  // The provider's latest job for the item this row describes.
+  jobId: z.string().optional(),
 })
 export const TagProvenancePageSchema = PaginatedDataSchema(
   TagProvenanceSourceSchema,

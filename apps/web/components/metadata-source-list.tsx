@@ -1,6 +1,7 @@
 import React, { type Ref, type UIEventHandler } from 'react'
 import type { TagProvenancePage } from '@repo/schemas/tags'
 import ServiceIconLinks from './service-icon-links'
+import { DetailLink } from './detail-link'
 import { relevantTagSources } from '../utils/tag-actions'
 import { TableState } from '@repo/ui/components/ui/table'
 import {
@@ -102,6 +103,11 @@ export default function MetadataSourceList({
             </span>
           )}
           {source.linkNote && <div className="ds-muted">{source.linkNote}</div>}
+          {source.jobId && (
+            <DetailLink kind="job" id={source.jobId}>
+              View job
+            </DetailLink>
+          )}
         </li>
       ))}
     </ul>
@@ -183,6 +189,16 @@ export function VirtualTagSources({
                             },
                           ]}
                         />
+                      )}
+                    {source.jobId &&
+                      (!linksOnly || source.onMedia !== false) && (
+                        <DetailLink
+                          className="ds-muted"
+                          kind="job"
+                          id={source.jobId}
+                        >
+                          Job
+                        </DetailLink>
                       )}
                   </div>
                 </td>

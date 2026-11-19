@@ -4,7 +4,9 @@ A tag can have parent tags. A filter on a tag also matches every visible tag ben
 
 ## Using it
 
-**Tags → Hierarchy** lists the tags that have a parent or a subtag as a tree. Each row shows the items carrying the tag itself, the items carrying it or any visible tag beneath it, and the number of direct subtags. Rows start collapsed. Search lists matching tags with the tags above them. A tag with several parents is listed under each. **New tag** creates a tag with no items, used to group other tags, optionally under a parent.
+**Tags** opens on **Hierarchy** (`/tags`), with **All** at `/tags/all` and **Hidden** at `/tags/hidden`. The earlier `/tags/hierarchy` address redirects to `/tags`.
+
+Hierarchy lists the tags that have a parent or a subtag as a tree. Each row shows the items carrying the tag itself, the items carrying it or any visible tag beneath it, and the number of direct subtags. Rows start collapsed. Search lists matching tags with the tags above them. A tag with several parents is listed under each. **New tag** creates a tag with no items, used to group other tags, optionally under a parent.
 
 Parents are edited in three places:
 
@@ -15,6 +17,10 @@ Parents are edited in three places:
 The All table has a Parents column and an optional Subtags column.
 
 In Browse, a tag suggestion that has subtags shows both numbers, for example `1,204 · 38 subtags`. The first is the number of items the filter matches. Required and Exclude apply to the tag with its subtags as one group.
+
+## Names
+
+Album and film tag names are shown in title case whatever case their source used: `Indie Rock`, `Based on Novel or Book`, `UK Garage`, `Synth-Pop`. `formatTagName` in `@repo/schemas/tags` writes every one of them, including filter pills and Browse suggestions. A minor word such as `of` or `the` stays in lower case inside a name, and a fixed list keeps abbreviations such as `UK`, `DJ` and `LGBTQ` in capitals. Stored names, filter values, merged names and the original names in Sources are not changed. Subscription tags are free text and are shown as stored.
 
 ## Rules
 

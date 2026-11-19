@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import {
+  formatTagName,
   MergeTagsResultSchema,
   SetTagVisibilityResultSchema,
   type Tag,
@@ -127,7 +128,7 @@ export default function TagActions({
               <option value="">Choose name to keep...</option>
               {tags.map((tag) => (
                 <option key={tag.id} value={tag.id}>
-                  {tag.name}
+                  {formatTagName(tag.name)}
                 </option>
               ))}
             </Select>
@@ -159,10 +160,10 @@ export default function TagActions({
       {confirming && target && (
         <div className="dtl-stack" role="group" aria-label="Confirm tag merge">
           <p>
-            Merge {tags.length - 1} tags into <strong>{target.name}</strong> in
-            the {mediaType === 'album' ? 'album' : 'film'} library only?
-            Original names and sources are retained; future imports use this
-            name.{' '}
+            Merge {tags.length - 1} tags into{' '}
+            <strong>{formatTagName(target.name)}</strong> in the{' '}
+            {mediaType === 'album' ? 'album' : 'film'} library only? Original
+            names and sources are retained; future imports use this name.{' '}
             {tags.some((tag) => tag.hidden) &&
               'The merged tag will stay hidden until explicitly unhidden.'}
           </p>

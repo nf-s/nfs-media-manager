@@ -5,10 +5,12 @@ import React, {
   useId,
   useRef,
   useState,
+  type ComponentProps,
   type ReactNode,
 } from 'react'
 import { Layers3 } from 'lucide-react'
 import {
+  formatTagName,
   TagProvenancePageSchema,
   type SourceNavigationLink,
 } from '@repo/schemas/tags'
@@ -82,9 +84,12 @@ function TagSources({
 
 function SourcePopover({
   name,
+  inPill = false,
   children,
 }: {
   name: string
+  /** The trigger is an action inside a pill, not a button beside a value. */
+  inPill?: boolean
   children: ReactNode | ((close: () => void) => ReactNode)
 }) {
   const id = useId()
@@ -113,34 +118,42 @@ function SourcePopover({
       window.removeEventListener('scroll', position, true)
     }
   }, [open])
+  const triggerProps = {
+    type: 'button',
+    ref: trigger,
+    popoverTarget: id,
+    'aria-label': `Sources for ${name}`,
+    title: `Sources for ${name}`,
+    'aria-expanded': open,
+    'aria-controls': id,
+    onClick: (event) => event.stopPropagation(),
+    onDoubleClick: (event) => event.stopPropagation(),
+    onKeyDown: (event) => {
+      if (event.key === 'Enter' || event.key === ' ') event.stopPropagation()
+      if (event.key === 'Escape' && open) {
+        event.preventDefault()
+        event.stopPropagation()
+        panel.current?.hidePopover()
+      }
+    },
+  } satisfies ComponentProps<'button'>
   return (
     <>
-      <Button
-        type="button"
-        ref={trigger}
-        size="xs"
-        variant="ghost"
-        icon
-        className={styles.control}
-        popoverTarget={id}
-        aria-label={`Sources for ${name}`}
-        title={`Sources for ${name}`}
-        aria-expanded={open}
-        aria-controls={id}
-        onClick={(event) => event.stopPropagation()}
-        onDoubleClick={(event) => event.stopPropagation()}
-        onKeyDown={(event) => {
-          if (event.key === 'Enter' || event.key === ' ')
-            event.stopPropagation()
-          if (event.key === 'Escape' && open) {
-            event.preventDefault()
-            event.stopPropagation()
-            panel.current?.hidePopover()
-          }
-        }}
-      >
-        <Layers3 className="ds-i" data-size="sm" aria-hidden="true" />
-      </Button>
+      {inPill ? (
+        <button {...triggerProps} className="browse-pill-action">
+          <Layers3 className="ds-i" aria-hidden="true" />
+        </button>
+      ) : (
+        <Button
+          {...triggerProps}
+          size="xs"
+          variant="ghost"
+          icon
+          className={styles.control}
+        >
+          <Layers3 className="ds-i" data-size="sm" aria-hidden="true" />
+        </Button>
+      )}
       <div
         ref={panel}
         id={id}
@@ -197,6 +210,7 @@ export default function MetadataSourceControl({
   collectionSources = [],
   tagId,
   onManage,
+  inPill = false,
 }: {
   field: string
   name: string
@@ -205,6 +219,8 @@ export default function MetadataSourceControl({
   collectionSources?: SourceNavigationLink[]
   tagId?: string
   onManage?: (id: string) => void
+  /** Renders the control as an action inside the tag's pill. */
+  inPill?: boolean
 }) {
   const [managed, setManaged] = useState<{
     id: string
@@ -256,7 +272,7 @@ export default function MetadataSourceControl({
     return null
   return (
     <>
-      <SourcePopover name={name}>
+      <SourcePopover name={formatTagName(name)} inPill={inPill}>
         {(close) => (
           <TagSources
             mediaId={mediaId}
