@@ -15,6 +15,7 @@ import { CreateJobSchema } from '@repo/schemas/job'
 import { eq } from 'drizzle-orm'
 import { env } from '@/env'
 import { ServerError } from '@/lib/error'
+import { discogsPlugin } from '@/plugins/builtin/discogs'
 import { musicbrainzPlugin } from '@/plugins/builtin/musicbrainz'
 import * as schema from '@/schemas/db'
 
@@ -41,6 +42,13 @@ const fixturePlugin = {
     rateLimit: { ...musicbrainzPlugin.manifest.rateLimit, minTimeMs: 0 },
   },
 }
+const discogsFixturePlugin = {
+  ...discogsPlugin,
+  manifest: {
+    ...discogsPlugin.manifest,
+    rateLimit: { ...discogsPlugin.manifest.rateLimit, minTimeMs: 0 },
+  },
+}
 vi.mock('@/lib/db', () => ({
   get db() {
     return databaseClient
@@ -48,11 +56,15 @@ vi.mock('@/lib/db', () => ({
 }))
 vi.mock('@/plugins/registry', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/plugins/registry')>()),
-  getScrapePlugin: async (id: string) =>
-    id === 'musicbrainz' ? fixturePlugin : null,
+  getScrapePlugin: async (id: string) => {
+    if (id === 'musicbrainz') return fixturePlugin
+    if (id === 'discogs') return discogsFixturePlugin
+    return null
+  },
 }))
 vi.mock('@/lib/provider-secrets', () => ({
   resolveProviderSecrets: () => ({
+    token: 'discogs-fixture-token',
     appName: 'OfflineFixture',
     appVersion: '2.0',
     contact: 'offline@example.test',
@@ -243,6 +255,79 @@ describe('find match', () => {
       '/ws/2/release-group/',
       `/ws/2/release-group/${secondMbid}`,
     ])
+  })
+
+  it('keeps bounded Discogs matches in review without tripping the provider stop', async () => {
+    const { createJob, getJob, processQueuedJobById } =
+      await import('@/services/jobs')
+    const { getProviderSafety } = await import('@/services/provider-requests')
+    const recordOutcome = vi.fn(async () => {})
+    const execute = async () => {
+      const job = await createJob(
+        CreateJobSchema.parse({
+          provider: 'discogs',
+          scope: { mediaItemIds: [albumId] },
+        }),
+        null,
+      )
+      await processQueuedJobById(job.id, 'discogs', {
+        canContinue: async () => true,
+        recordOutcome,
+      })
+      return getJob(job.id)
+    }
+
+    for (let index = 0; index < 5; index += 1) {
+      request.mockResolvedValueOnce(
+        Response.json({
+          pagination: { items: 6 },
+          results: [
+            { id: 11, type: 'master', title: 'Artist Fixture - Album Fixture' },
+          ],
+        }),
+      )
+      const failed = await execute()
+      expect(failed).toMatchObject({
+        status: 'failed',
+        summary: { actions: ['find-match', 'retry'] },
+      })
+      expect(failed?.logs).toContainEqual(
+        expect.objectContaining({
+          level: 'error',
+          canMarkBenign: false,
+          metadata: expect.objectContaining({
+            classification: 'ambiguous',
+            diagnostics: expect.arrayContaining([
+              expect.objectContaining({ stage: 'discogs.response' }),
+            ]),
+          }),
+        }),
+      )
+    }
+    expect(recordOutcome).not.toHaveBeenCalled()
+    expect(await getProviderSafety('discogs')).toMatchObject({
+      consecutiveFailures: 0,
+      cooldownUntil: null,
+      halted: false,
+    })
+    expect(request).toHaveBeenCalledTimes(5)
+    expect(
+      await databaseClient
+        .select()
+        .from(schema.providerSnapshot)
+        .where(eq(schema.providerSnapshot.provider, 'discogs')),
+    ).toEqual([])
+
+    request.mockResolvedValueOnce(
+      Response.json({ message: 'Fixture service error' }, { status: 500 }),
+    )
+    expect((await execute())?.status).toBe('failed')
+    expect(recordOutcome).toHaveBeenCalledExactlyOnceWith('stopped')
+    expect(await getProviderSafety('discogs')).toMatchObject({
+      consecutiveFailures: 1,
+      cooldownUntil: expect.any(String),
+      halted: false,
+    })
   })
 
   it('lists the artists an ambiguous lookup kept without a new request', async () => {

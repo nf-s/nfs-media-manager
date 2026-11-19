@@ -59,6 +59,7 @@ import {
   PluginResultSchema,
   ProviderItemNotFoundError,
   ProviderRequestError,
+  isProviderItemAmbiguousError,
   isProviderItemNotFoundError,
   type MediaProviderPlugin,
 } from '@repo/media-plugin-sdk'
@@ -936,10 +937,18 @@ async function processJob(
       const error = storageError?.() ?? caught
       const evidenceStorageFailed =
         error instanceof ProviderResponseStorageError
-      const notFound = isProviderItemNotFoundError(error)
+      const classification = isProviderItemNotFoundError(error)
+        ? 'not-found'
+        : isProviderItemAmbiguousError(error)
+          ? 'ambiguous'
+          : null
       const stoppedBeforeRequest = error === stoppedError
       const handled = await withRunningJob(nextJob.id, async (tx) => {
-        if (!notFound && !stoppedBeforeRequest && !evidenceStorageFailed) {
+        if (
+          !classification &&
+          !stoppedBeforeRequest &&
+          !evidenceStorageFailed
+        ) {
           // Account only for still-active jobs, then latch before persistence.
           // Late errors from cancelled jobs must not stop sibling dispatch.
           execution.failures += 1
@@ -979,11 +988,12 @@ async function processJob(
             mediaItemId,
             error: details,
             ...(evidence.length ? { diagnostics: evidence } : {}),
-            ...(notFound ? { classification: 'not-found' } : {}),
+            ...(classification ? { classification } : {}),
           },
           tx,
         )
-        if (notFound || stoppedBeforeRequest || evidenceStorageFailed) return
+        if (classification || stoppedBeforeRequest || evidenceStorageFailed)
+          return
         const safety = await getProviderSafety(plugin.manifest.id)
         if (
           execution.failures >= MAX_CONSECUTIVE_PROVIDER_FAILURES ||
@@ -1016,7 +1026,7 @@ async function processJob(
         }
       })
       if (!handled) stopped = true
-      else if (!notFound && !stoppedBeforeRequest)
+      else if (!classification && !stoppedBeforeRequest)
         await control?.recordOutcome(execution.stopped ? 'stopped' : 'failure')
     }
     if (succeeded) await control?.recordOutcome('success')

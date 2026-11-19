@@ -455,6 +455,32 @@ export function isProviderItemNotFoundError(
   )
 }
 
+const providerItemAmbiguousBrand = Symbol.for(
+  '@repo/media-plugin-sdk/ProviderItemAmbiguousError',
+)
+
+export class ProviderItemAmbiguousError extends Error {
+  readonly [providerItemAmbiguousBrand] = true
+
+  constructor(message: string) {
+    super(message)
+    this.name = 'ProviderItemAmbiguousError'
+  }
+}
+
+export function isProviderItemAmbiguousError(
+  error: unknown,
+): error is ProviderItemAmbiguousError {
+  return (
+    error instanceof Error &&
+    error.name === 'ProviderItemAmbiguousError' &&
+    providerItemAmbiguousBrand in error &&
+    error[providerItemAmbiguousBrand] === true &&
+    !('cause' in error) &&
+    !('errors' in error)
+  )
+}
+
 const providerArtistSearchAmbiguousBrand = Symbol.for(
   '@repo/media-plugin-sdk/ProviderArtistSearchAmbiguousError',
 )

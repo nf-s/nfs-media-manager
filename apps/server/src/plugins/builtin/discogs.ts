@@ -1,5 +1,6 @@
 import {
   PluginResultSchema,
+  ProviderItemAmbiguousError,
   ProviderItemNotFoundError,
   type MediaProviderPlugin,
   type MediaPluginScrapeContext,
@@ -120,7 +121,7 @@ async function resolveDiscogsReference(
       return { type: 'release', id: String(eligible[0].id) }
     if (!context.media?.title || !context.media.artists.length) {
       if (eligible.length || (pagination && pagination.items > results.length))
-        throw new Error(
+        throw new ProviderItemAmbiguousError(
           'Discogs barcode match is ambiguous. Set a master or release ID.',
         )
       throw new ProviderItemNotFoundError('Discogs found no barcode match.')
@@ -135,7 +136,7 @@ async function resolveDiscogsReference(
       release_title: names.title,
     })
     if (pagination && pagination.items > results.length)
-      throw new Error(
+      throw new ProviderItemAmbiguousError(
         'Discogs search exceeds the bounded matching window. Set a master or release ID.',
       )
     const matches = results.filter(
@@ -150,7 +151,7 @@ async function resolveDiscogsReference(
     if (matches.length === 1 && matches[0])
       return { type, id: String(matches[0].id) }
     if (matches.length > 1)
-      throw new Error(
+      throw new ProviderItemAmbiguousError(
         'Discogs search is ambiguous. Set a master or release ID.',
       )
   }
