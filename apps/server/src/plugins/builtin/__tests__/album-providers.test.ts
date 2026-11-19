@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   MediaPluginManifestSchema,
+  ProviderItemAmbiguousError,
   ProviderItemNotFoundError,
   ProviderRequestError,
   type MediaPluginScrapeContext,
@@ -546,6 +547,81 @@ describe('Discogs album adapter', () => {
       }),
     )
     expect(request).toHaveBeenCalledTimes(4)
+  })
+
+  it('skips barcode hits in a rejected master while accepting a different edition family', async () => {
+    const request = replies(
+      {
+        results: [
+          {
+            id: 23,
+            type: 'release',
+            master_id: 11,
+            title: 'Example Artist - Example Album',
+          },
+          {
+            id: 22,
+            type: 'release',
+            master_id: 12,
+            title: 'Example Artist - Example Album',
+          },
+        ],
+      },
+      { ...release, master_id: 12 },
+    )
+    const result = await scrape(
+      discogsPlugin,
+      context({
+        existingReferences: [ref('spotify', 'upc', '123456789012')],
+        isRejectedMatch: ({ referenceType, externalId }) =>
+          referenceType === 'master' && externalId === '11',
+        request,
+      }),
+    )
+    expect(result.normalized.references).toContainEqual(
+      expect.objectContaining({ referenceType: 'release', externalId: '22' }),
+    )
+    expect(request).toHaveBeenCalledTimes(2)
+  })
+
+  it('checks the hydrated parent when an automatic release search omitted the master ID', async () => {
+    const request = replies(
+      { results: [] },
+      {
+        results: [
+          { id: 22, type: 'release', title: 'Example Artist - Example Album' },
+        ],
+      },
+      { ...release, master_id: 11 },
+    )
+    await expect(
+      scrape(
+        discogsPlugin,
+        context({
+          request,
+          isRejectedMatch: ({ referenceType, externalId }) =>
+            referenceType === 'master' && externalId === '11',
+        }),
+      ),
+    ).rejects.toBeInstanceOf(ProviderItemAmbiguousError)
+    expect(request).toHaveBeenCalledTimes(3)
+  })
+
+  it('keeps a separately selected edition available after its master was rejected', async () => {
+    const request = replies({ ...release, master_id: 11 })
+    const result = await scrape(
+      discogsPlugin,
+      context({
+        existingReferences: [ref('discogs', 'release', '22')],
+        isRejectedMatch: ({ referenceType, externalId }) =>
+          referenceType === 'master' && externalId === '11',
+        request,
+      }),
+    )
+    expect(result.normalized.references).toContainEqual(
+      expect.objectContaining({ referenceType: 'release', externalId: '22' }),
+    )
+    expect(request).toHaveBeenCalledTimes(1)
   })
 
   it('uses the search result master id, not master_id=0, and rejects unrelated main releases', async () => {

@@ -89,20 +89,35 @@ export async function discogsRequest(
   return payload
 }
 
+function hasRejectedMaster(
+  context: MediaPluginScrapeContext,
+  masterId: number | undefined,
+) {
+  return (
+    !!masterId &&
+    context.isRejectedMatch?.({
+      referenceType: 'master',
+      externalId: String(masterId),
+    })
+  )
+}
+
 async function resolveDiscogsReference(
   context: MediaPluginScrapeContext,
-): Promise<{ type: 'master' | 'release'; id: string }> {
+): Promise<{ type: 'master' | 'release'; id: string; fromSearch: boolean }> {
   const reference = albumReference(context, 'discogs', 'master', 'release')
   if (reference)
     return {
       type: reference.referenceType === 'master' ? 'master' : 'release',
       id: DiscogsReferenceIdSchema.parse(reference.externalId),
+      fromSearch: false,
     }
   const isRejected = (item: z.infer<typeof SearchSchema>['results'][number]) =>
     context.isRejectedMatch?.({
       referenceType: item.type,
       externalId: String(item.id),
-    })
+    }) ||
+    (item.type === 'release' && hasRejectedMaster(context, item.master_id))
   const barcode = albumBarcode(context)
   if (barcode) {
     const payload = await discogsRequest(context, 'database/search', {
@@ -118,7 +133,7 @@ async function resolveDiscogsReference(
       eligible[0]?.type === 'release' &&
       (pagination === undefined || pagination.items === results.length)
     )
-      return { type: 'release', id: String(eligible[0].id) }
+      return { type: 'release', id: String(eligible[0].id), fromSearch: true }
     if (!context.media?.title || !context.media.artists.length) {
       if (eligible.length || (pagination && pagination.items > results.length))
         throw new ProviderItemAmbiguousError(
@@ -149,7 +164,7 @@ async function resolveDiscogsReference(
         ),
     )
     if (matches.length === 1 && matches[0])
-      return { type, id: String(matches[0].id) }
+      return { type, id: String(matches[0].id), fromSearch: true }
     if (matches.length > 1)
       throw new ProviderItemAmbiguousError(
         'Discogs search is ambiguous. Set a master or release ID.',
@@ -263,6 +278,14 @@ export const discogsPlugin: MediaProviderPlugin = {
     const record = DiscogsRecordSchema.parse(payload)
     if (String(record.id) !== reference.id)
       throw new Error('Discogs returned a different identifier.')
+    if (
+      reference.fromSearch &&
+      reference.type === 'release' &&
+      hasRejectedMaster(context, record.master_id)
+    )
+      throw new ProviderItemAmbiguousError(
+        'This Discogs edition belongs to a rejected master. Review the edition before selecting it.',
+      )
     let releasePayload = reference.type === 'release' ? payload : undefined
     if (reference.type === 'master') {
       if (!record.main_release)
