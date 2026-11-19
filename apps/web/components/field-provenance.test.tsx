@@ -125,10 +125,13 @@ test('All fields lists each value with the providers that supply it and marks ed
   const html = render(provenance)
   assert.match(
     html,
-    /<table class="ds-table" data-layout="fixed" aria-label="All fields">/,
+    /<table class="ds-table" data-layout="fixed" aria-label="All fields" style="min-width:560px"><colgroup><col style="width:130px"\/><col\/><col style="width:170px"\/><col style="width:100px"\/><\/colgroup>/,
   )
   for (const header of ['Field', 'Value', 'Source', 'Updated'])
-    assert.match(html, new RegExp(`>${header}</th>`))
+    assert.match(
+      html,
+      new RegExp(`>${header}<span class="ds-th-resizer" role="separator"`),
+    )
   assert.match(html, /title="Harbour Lights">Harbour Lights</)
   assert.match(html, /class="ds-mark" title="Spotify">SP</)
   assert.match(html, /\+1 differs/)

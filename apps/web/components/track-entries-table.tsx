@@ -81,20 +81,44 @@ function GapPills({ gaps }: { gaps: readonly EntryGap[] }) {
 }
 
 const entryColumns: (TableColumn & { key: TrackEntryColumn })[] = [
-  { key: 'position', label: 'Position' },
-  { key: 'title', label: 'Title', required: true },
-  { key: 'artists', label: 'Artists' },
-  { key: 'album', label: 'Album' },
-  { key: 'duration', label: 'Duration' },
-  { key: 'added', label: 'Added' },
-  { key: 'releaseDate', label: 'Released', defaultVisible: false },
-  { key: 'scrobbles', label: 'Scrobbles', defaultVisible: false },
-  { key: 'lastListened', label: 'Last listened', defaultVisible: false },
-  { key: 'kind', label: 'Type' },
-  { key: 'source', label: 'Source', defaultVisible: false },
-  { key: 'spotifyMatch', label: 'Spotify match', defaultVisible: false },
-  { key: 'externalId', label: 'Spotify ID', defaultVisible: false },
+  { key: 'position', label: 'Position', width: 72 },
+  { key: 'title', label: 'Title', width: 240, required: true, fill: true },
+  { key: 'artists', label: 'Artists', width: 160 },
+  { key: 'album', label: 'Album', width: 160 },
+  { key: 'duration', label: 'Duration', width: 90 },
+  { key: 'added', label: 'Added', width: 110 },
+  {
+    key: 'releaseDate',
+    label: 'Released',
+    width: 110,
+    defaultVisible: false,
+  },
+  { key: 'scrobbles', label: 'Scrobbles', width: 90, defaultVisible: false },
+  {
+    key: 'lastListened',
+    label: 'Last listened',
+    width: 110,
+    defaultVisible: false,
+  },
+  { key: 'kind', label: 'Type', width: 90 },
+  { key: 'source', label: 'Source', width: 140, defaultVisible: false },
+  {
+    key: 'spotifyMatch',
+    label: 'Spotify match',
+    width: 140,
+    defaultVisible: false,
+  },
+  {
+    key: 'externalId',
+    label: 'Spotify ID',
+    width: 200,
+    defaultVisible: false,
+  },
 ]
+/** Width of the row selection column in a list of entries with gaps. */
+const selectionWidth = 36
+/** Room for two gap pills and the count of the rest. */
+const gapsWidth = 220
 
 export function trackEntryKey(entry: PlaylistEntry) {
   return entry.kind === 'track'
@@ -394,6 +418,11 @@ export function TrackEntriesTable({
   // The window's geometry reads the same stored density (`useVirtualTable`).
   const [density, setDensity] = useNestedGridDensity('album')
   const colSpan = columns.count + (gaps ? 2 : 0)
+  const layout = columns.layout([
+    ...(gaps ? [selectionWidth] : []),
+    ...visible.map(({ key }) => key),
+    ...(gaps ? [gapsWidth] : []),
+  ])
   return (
     <>
       <BrowseToolbar
@@ -461,11 +490,13 @@ export function TrackEntriesTable({
             className="ds-table"
             aria-label={labels.table}
             aria-rowcount={pending ? undefined : window.total + 1}
+            {...layout.table}
           >
+            {layout.colgroup}
             <TableHeader>
               <TableRow>
                 {gaps && (
-                  <TableHead className="sec-check-cell">
+                  <TableHead>
                     <span className="sr-only">Select</span>
                   </TableHead>
                 )}
@@ -487,6 +518,7 @@ export function TrackEntriesTable({
                       key === 'kind' &&
                       typeFilter && <SecondaryColumnFilter {...typeFilter} />
                     }
+                    resizer={columns.resizer(key)}
                   />
                 ))}
                 {gaps && <TableHead>{gaps.label}</TableHead>}
@@ -508,7 +540,7 @@ export function TrackEntriesTable({
                       selected={gaps?.selected.has(row.key)}
                     >
                       {gaps && (
-                        <TableCell className="sec-check-cell">
+                        <TableCell>
                           <input
                             type="checkbox"
                             className="ds-check"

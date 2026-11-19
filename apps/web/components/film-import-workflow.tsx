@@ -397,10 +397,16 @@ export default function FilmImportWorkflow({
                   : []
               }
               columns={[
-                { key: 'title', label: 'Film', value: (item) => item.title },
+                {
+                  key: 'title',
+                  label: 'Film',
+                  width: 280,
+                  value: (item) => item.title,
+                },
                 {
                   key: 'identifiers',
                   label: 'Identifiers',
+                  width: 160,
                   value: (item) =>
                     item.needsIdentification
                       ? 'Needs ID'
@@ -417,6 +423,7 @@ export default function FilmImportWorkflow({
                 {
                   key: 'changes',
                   label: 'Changes',
+                  width: 260,
                   value: (item) => changeSummary(item),
                   render: (item) => (
                     <SecondaryCell

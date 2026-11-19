@@ -45,22 +45,6 @@
   border: 0;
 }
 
-/* Column resize handle on the header's right edge */
-.bi-resizer {
-  position: absolute;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  width: var(--ds-3);
-  cursor: col-resize;
-  touch-action: none;
-}
-.bi-resizer:hover,
-.bi-resizer:focus-visible {
-  background: var(--ds-line);
-  outline: 0;
-}
-
 .bi-notice {
   margin: 0 var(--ds-gutter) var(--ds-4);
 }

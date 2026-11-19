@@ -132,6 +132,7 @@ export default function ImportsPageClient() {
           {
             key: 'createdAt',
             label: 'Started',
+            width: 170,
             sticky: 0,
             stickyEdge: true,
             value: (run) => Date.parse(run.createdAt),
@@ -153,6 +154,7 @@ export default function ImportsPageClient() {
           {
             key: 'status',
             label: 'Status',
+            width: 130,
             filter: (
               <SecondaryColumnFilter
                 label="Import status"
@@ -167,16 +169,23 @@ export default function ImportsPageClient() {
             value: (run) => run.status,
             render: (run) => <Status state={runStatusStates[run.status]} />,
           },
-          { key: 'stage', label: 'Stage', value: (run) => run.stage },
+          {
+            key: 'stage',
+            label: 'Stage',
+            width: 140,
+            value: (run) => run.stage,
+          },
           {
             key: 'progress',
             label: 'Progress',
+            width: 140,
             value: (run) => (run.total ? run.processed / run.total : null),
             render: (run) => <ImportProgress run={run} />,
           },
           {
             key: 'processed',
             label: 'Processed',
+            width: 100,
             defaultVisible: false,
             align: 'end',
             value: (run) => run.processed,
@@ -184,6 +193,7 @@ export default function ImportsPageClient() {
           {
             key: 'total',
             label: 'Total',
+            width: 90,
             defaultVisible: false,
             align: 'end',
             value: (run) => run.total,
@@ -191,6 +201,7 @@ export default function ImportsPageClient() {
           {
             key: 'result',
             label: 'Result',
+            width: 320,
             value: (run) => run.errorMessage ?? resultSummary(run),
             render: (run) => (
               <SecondaryCell
@@ -239,6 +250,7 @@ export default function ImportsPageClient() {
           {
             key: 'finishedAt',
             label: 'Finished',
+            width: 150,
             defaultVisible: false,
             value: (run) =>
               run.finishedAt ? Date.parse(run.finishedAt) : null,
@@ -249,6 +261,7 @@ export default function ImportsPageClient() {
           {
             key: 'created',
             label: 'Created',
+            width: 90,
             defaultVisible: false,
             align: 'end',
             value: (run) => run.result?.created,
@@ -256,6 +269,7 @@ export default function ImportsPageClient() {
           {
             key: 'updated',
             label: 'Updated',
+            width: 90,
             defaultVisible: false,
             align: 'end',
             value: (run) => run.result?.updated,
@@ -263,6 +277,7 @@ export default function ImportsPageClient() {
           {
             key: 'unchanged',
             label: 'Unchanged',
+            width: 100,
             defaultVisible: false,
             align: 'end',
             value: (run) => run.result?.unchanged,
@@ -270,6 +285,7 @@ export default function ImportsPageClient() {
           {
             key: 'skipped',
             label: 'Skipped',
+            width: 90,
             defaultVisible: false,
             align: 'end',
             value: (run) => run.result?.skipped,
@@ -277,6 +293,7 @@ export default function ImportsPageClient() {
           {
             key: 'failed',
             label: 'Failed',
+            width: 80,
             defaultVisible: false,
             align: 'end',
             value: (run) => run.result?.failed,

@@ -6,6 +6,10 @@ import { cn } from '../../lib/utils'
  * right-aligned. `align="end"` right-aligns a column; `sticky` pins it at the
  * given left offset and `stickyEdge` marks the last left-pinned column.
  * `stickyEnd` pins a trailing action column to the right.
+ *
+ * Column widths: `layout="fixed"` with `TableColumns` gives every column a set
+ * width, so loading rows never move the columns. A header's `resizer` is the
+ * handle on its right edge that changes that column's width.
  */
 type CellLayout = {
   align?: 'end'
@@ -61,6 +65,24 @@ export const Table = React.forwardRef<
 ))
 Table.displayName = 'Table'
 
+/**
+ * The widths of a `layout="fixed"` table's columns, in pixels and in column
+ * order. A column without a width takes the room that is left.
+ */
+export function TableColumns({
+  widths,
+}: {
+  widths: readonly (number | undefined)[]
+}) {
+  return (
+    <colgroup>
+      {widths.map((width, index) => (
+        <col key={index} style={{ width }} />
+      ))}
+    </colgroup>
+  )
+}
+
 export const TableHeader = React.forwardRef<
   HTMLTableSectionElement,
   React.HTMLAttributes<HTMLTableSectionElement>
@@ -109,10 +131,24 @@ TableRow.displayName = 'TableRow'
 
 export const TableHead = React.forwardRef<
   HTMLTableCellElement,
-  Omit<React.ThHTMLAttributes<HTMLTableCellElement>, 'align'> & CellLayout
+  Omit<React.ThHTMLAttributes<HTMLTableCellElement>, 'align'> &
+    CellLayout & {
+      /** The width handle: a separator with pointer and arrow-key handlers. */
+      resizer?: React.HTMLAttributes<HTMLSpanElement>
+    }
 >(
   (
-    { className, align, sticky, stickyEdge, stickyEnd, style, ...props },
+    {
+      className,
+      align,
+      sticky,
+      stickyEdge,
+      stickyEnd,
+      style,
+      resizer,
+      children,
+      ...props
+    },
     ref,
   ) => (
     <th
@@ -121,7 +157,10 @@ export const TableHead = React.forwardRef<
       className={className}
       {...cellLayout({ align, sticky, stickyEdge, stickyEnd }, style)}
       {...props}
-    />
+    >
+      {children}
+      {resizer && <span className="ds-th-resizer" {...resizer} />}
+    </th>
   ),
 )
 TableHead.displayName = 'TableHead'

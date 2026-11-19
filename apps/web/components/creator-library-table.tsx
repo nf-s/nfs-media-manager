@@ -162,6 +162,7 @@ export function CreatorLibraryTable<Row extends { id: string }>({
   const visible = table
     .order(columns)
     .filter((column) => table.visible(column.key))
+  const layout = table.layout(visible.map((column) => column.key))
   const narrowed = Boolean(search || (filters && Object.keys(filters).length))
   const empty = narrowed ? `No matching ${label}.` : `No ${label} stored.`
 
@@ -282,7 +283,9 @@ export function CreatorLibraryTable<Row extends { id: string }>({
             className="ds-table"
             aria-label={label}
             aria-rowcount={total === undefined ? undefined : total + 1}
+            {...layout.table}
           >
+            {layout.colgroup}
             <TableHeader>
               <TableRow>
                 {visible.map((column, index) =>
@@ -293,6 +296,7 @@ export function CreatorLibraryTable<Row extends { id: string }>({
                       align={column.align}
                       sticky={index === 0 ? 0 : undefined}
                       stickyEdge={index === 0}
+                      resizer={table.resizer(column.key)}
                     >
                       <span className="sr-only">{column.label}</span>
                     </TableHead>
@@ -320,6 +324,7 @@ export function CreatorLibraryTable<Row extends { id: string }>({
                       sticky={index === 0 ? 0 : undefined}
                       stickyEdge={index === 0}
                       filter={column.filter}
+                      resizer={table.resizer(column.key)}
                     />
                   ),
                 )}

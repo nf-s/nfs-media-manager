@@ -59,13 +59,21 @@ function CollectionDirectory({ mediaType }: { mediaType: MediaScope }) {
   const columns: Array<{
     key: CollectionBrowseSort | 'source'
     label: string
+    width: number
     required?: boolean
     defaultVisible?: boolean
+    fill?: boolean
   }> = [
-    { key: 'name', label: 'Collection', required: true },
-    { key: countKey, label: album ? 'Albums' : 'Films' },
-    { key: 'source', label: 'Source', defaultVisible: false },
-    { key: 'createdAt', label: 'Added', defaultVisible: false },
+    {
+      key: 'name',
+      label: 'Collection',
+      width: 320,
+      required: true,
+      fill: true,
+    },
+    { key: countKey, label: album ? 'Albums' : 'Films', width: 90 },
+    { key: 'source', label: 'Source', width: 140, defaultVisible: false },
+    { key: 'createdAt', label: 'Added', width: 110, defaultVisible: false },
   ]
   const [search, setSearch] = useState('')
   const q = useDeferredValue(search.trim())
@@ -74,6 +82,8 @@ function CollectionDirectory({ mediaType }: { mediaType: MediaScope }) {
   const directoryKey = `${mediaType}-collections`
   const table = useTableColumns(directoryKey, columns)
   const includeSources = table.visible('source')
+  const shown = columns.filter((column) => table.visible(column.key))
+  const layout = table.layout(shown.map((column) => column.key))
   const inspector = useDetailInspector()
   const selectedId =
     inspector?.root?.kind === 'collection' &&
@@ -182,28 +192,34 @@ function CollectionDirectory({ mediaType }: { mediaType: MediaScope }) {
           className="ds-table"
           aria-label={collectionLabel}
           aria-rowcount={query.hasTotal ? query.total + 1 : undefined}
+          {...layout.table}
         >
+          {layout.colgroup}
           <TableHeader>
             <TableRow>
-              {columns
-                .filter((column) => table.visible(column.key))
-                .map((column) =>
-                  column.key === 'source' ? (
-                    <TableHead key={column.key}>{column.label}</TableHead>
-                  ) : (
-                    <SecondaryTableHead
-                      key={column.key}
-                      sortKey={column.key}
-                      label={column.label}
-                      sortBy={sortBy}
-                      direction={direction}
-                      onSort={onSort}
-                      align={column.key === countKey ? 'end' : undefined}
-                      sticky={column.key === 'name' ? 0 : undefined}
-                      stickyEdge={column.key === 'name'}
-                    />
-                  ),
-                )}
+              {shown.map((column) =>
+                column.key === 'source' ? (
+                  <TableHead
+                    key={column.key}
+                    resizer={table.resizer(column.key)}
+                  >
+                    {column.label}
+                  </TableHead>
+                ) : (
+                  <SecondaryTableHead
+                    key={column.key}
+                    sortKey={column.key}
+                    label={column.label}
+                    sortBy={sortBy}
+                    direction={direction}
+                    onSort={onSort}
+                    align={column.key === countKey ? 'end' : undefined}
+                    sticky={column.key === 'name' ? 0 : undefined}
+                    stickyEdge={column.key === 'name'}
+                    resizer={table.resizer(column.key)}
+                  />
+                ),
+              )}
             </TableRow>
           </TableHeader>
           <TableBody>

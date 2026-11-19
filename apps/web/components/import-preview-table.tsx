@@ -94,6 +94,7 @@ export default function ImportPreviewTable<
     render?: (item: Item) => ReactNode
     defaultVisible?: boolean
     align?: 'end'
+    width?: number
   }[]
 }) {
   const visibility = useTableColumns(storageKey, columns)
@@ -132,6 +133,10 @@ export default function ImportPreviewTable<
     setAnchor(null)
   }
   const shown = columns.filter((column) => visibility.visible(column.key))
+  const layout = visibility.layout([
+    CHECK_WIDTH,
+    ...shown.map((column) => column.key),
+  ])
   return (
     <>
       <Toolbar>
@@ -156,10 +161,15 @@ export default function ImportPreviewTable<
           role="region"
           aria-label="Import preview"
         >
-          <table className="ds-table" aria-label="Import preview">
+          <table
+            className="ds-table"
+            aria-label="Import preview"
+            {...layout.table}
+          >
+            {layout.colgroup}
             <thead>
               <tr>
-                <TableHead className="sec-check-cell" sticky={0}>
+                <TableHead sticky={0}>
                   <input
                     ref={all}
                     type="checkbox"
@@ -181,6 +191,7 @@ export default function ImportPreviewTable<
                     align={column.align}
                     sticky={index === 0 ? CHECK_WIDTH : undefined}
                     stickyEdge={index === 0}
+                    resizer={visibility.resizer(column.key)}
                     filter={
                       column.key === filterColumn && filters.length ? (
                         <SecondaryColumnFilter
@@ -228,7 +239,7 @@ export default function ImportPreviewTable<
                     key={item.row}
                     selected={selected.includes(item.row)}
                   >
-                    <TableCell className="sec-check-cell" sticky={0}>
+                    <TableCell sticky={0}>
                       <input
                         type="checkbox"
                         className="ds-check"

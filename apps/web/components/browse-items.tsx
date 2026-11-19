@@ -1,16 +1,8 @@
 'use client'
 
-import {
-  useEffect,
-  useRef,
-  useState,
-  type CSSProperties,
-  type HTMLAttributes,
-  type ReactNode,
-} from 'react'
+import { type CSSProperties, type HTMLAttributes, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { Filter, RefreshCw } from 'lucide-react'
-import { z } from 'zod'
 import type { BrowseField } from '@repo/schemas/browse'
 import { Button } from '@repo/ui/components/ui/button'
 import { TableHead, TableSortButton } from '@repo/ui/components/ui/table'
@@ -25,84 +17,6 @@ import { DetailLink } from './detail-link'
 import { FilterPanelSection } from './browse-filter-panel'
 import { MediaArt, MediaThumb, type ArtworkKind } from './media-artwork'
 import { ColumnOrderList } from './column-order'
-
-const WidthsSchema = z.record(z.string(), z.number().min(70).max(650))
-const minWidth = 70
-const maxWidth = 650
-
-/** Table column widths, resizable by pointer or arrow keys and kept in browser storage. */
-export function useColumnWidths(
-  collection: string,
-  defaultWidth: (field: BrowseField) => number,
-  minimumWidths: Partial<Record<string, number>> = {},
-) {
-  const [widths, setWidths] = useState<Record<string, number>>({})
-  const resize = useRef<{ key: string; x: number; width: number } | null>(null)
-  useEffect(() => {
-    try {
-      const parsed = WidthsSchema.safeParse(
-        JSON.parse(window.localStorage.getItem(`widths:${collection}`) ?? '{}'),
-      )
-      if (parsed.success) setWidths(parsed.data)
-    } catch {
-      /* Ignore unavailable storage or malformed saved widths. */
-    }
-  }, [collection])
-  const clamp = (key: string, width: number) =>
-    Math.max(minimumWidths[key] ?? minWidth, Math.min(maxWidth, width))
-  const widthFor = (field: BrowseField) =>
-    clamp(field.key, widths[field.key] ?? defaultWidth(field))
-  function save(next: Record<string, number>) {
-    setWidths(next)
-    try {
-      window.localStorage.setItem(`widths:${collection}`, JSON.stringify(next))
-    } catch {
-      /* Width changes remain usable for this session. */
-    }
-  }
-  function resizer(field: BrowseField): HTMLAttributes<HTMLSpanElement> {
-    return {
-      role: 'separator',
-      'aria-label': `Resize ${field.label}`,
-      'aria-orientation': 'vertical',
-      tabIndex: 0,
-      onKeyDown: (event) => {
-        if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
-        event.preventDefault()
-        save({
-          ...widths,
-          [field.key]: clamp(
-            field.key,
-            widthFor(field) + (event.key === 'ArrowRight' ? 10 : -10),
-          ),
-        })
-      },
-      onPointerDown: (event) => {
-        event.currentTarget.setPointerCapture(event.pointerId)
-        resize.current = {
-          key: field.key,
-          x: event.clientX,
-          width: widthFor(field),
-        }
-      },
-      onPointerMove: (event) => {
-        if (resize.current?.key === field.key)
-          setWidths({
-            ...widths,
-            [field.key]: clamp(
-              field.key,
-              resize.current.width + event.clientX - resize.current.x,
-            ),
-          })
-      },
-      onPointerUp: () => {
-        resize.current = null
-        save(widths)
-      },
-    }
-  }
-  return { widthFor, resizer }
-}
 
 /**
  * A browse table header: the sort control and a resize handle. The identity
@@ -134,6 +48,7 @@ export function BrowseItemsHead({
       aria-sort={
         active ? (direction === 'asc' ? 'ascending' : 'descending') : undefined
       }
+      resizer={resizer}
     >
       {sortable ? (
         <TableSortButton
@@ -146,7 +61,6 @@ export function BrowseItemsHead({
       ) : (
         field.label
       )}
-      <span className="bi-resizer" {...resizer} />
     </TableHead>
   )
 }

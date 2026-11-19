@@ -142,7 +142,7 @@ test('the table view uses the one table with a pinned title, right-aligned numbe
     /<th scope="col" aria-sort="descending"><button type="button" class="ds-th-sort" title="Sort by Published">Published<svg/,
   )
   // Type is not a sort key, so its header is plain text.
-  assert.match(html, /<th scope="col">Type<span class="bi-resizer"/)
+  assert.match(html, /<th scope="col">Type<span class="ds-th-resizer"/)
   assert.match(html, /<th scope="col" data-align="end"><button[^>]*>Duration/)
   assert.doesNotMatch(html, /[↑↓]/)
   // Two loaded rows; the rest of the visible window waits for its page.
@@ -769,7 +769,10 @@ test('the shows list is the channels table for Mixes with stations and stored mi
     '/mixes/shows',
   )
   assert.match(html, /<h1>Shows<\/h1>/)
-  assert.match(html, /<table class="ds-table" aria-label="Shows">/)
+  assert.match(
+    html,
+    /<table class="ds-table" aria-label="Shows" data-layout="fixed"/,
+  )
   const heads = [...html.matchAll(/title="Sort by ([^"]+)"/g)].map(
     ([, label]) => label,
   )

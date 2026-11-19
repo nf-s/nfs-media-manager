@@ -377,22 +377,6 @@
   min-width: 0;
 }
 
-/* Table headers: the width handle on the right edge of each sortable header */
-.browse-th .browse-resizer {
-  position: absolute;
-  top: 0;
-  right: 0;
-  width: var(--ds-3);
-  height: 100%;
-  cursor: col-resize;
-  touch-action: none;
-}
-.browse-th .browse-resizer:hover,
-.browse-th .browse-resizer:focus-visible {
-  outline: 0;
-  box-shadow: inset -2px 0 0 var(--ds-line);
-}
-
 /* Ratings: inline marks in rows, cards in the detail overview */
 .browse-ratings {
   display: flex;

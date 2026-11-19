@@ -21,6 +21,8 @@ export function PeopleWorkspace() {
     {
       key: 'name',
       label: 'Person',
+      width: 300,
+      fill: true,
       required: true,
       filter: roles.control,
       render: (person) => (
@@ -30,24 +32,28 @@ export function PeopleWorkspace() {
     {
       key: 'filmCount',
       label: 'Films',
+      width: 90,
       align: 'end',
       render: (person) => formatCount(person.filmCount),
     },
     {
       key: 'directorCount',
       label: 'As director',
+      width: 110,
       align: 'end',
       render: (person) => formatCount(person.directorCount),
     },
     {
       key: 'actorCount',
       label: 'As actor',
+      width: 100,
       align: 'end',
       render: (person) => formatCount(person.actorCount),
     },
     {
       key: 'createdAt',
       label: 'Added',
+      width: 110,
       defaultVisible: false,
       render: (person) => (
         <time dateTime={person.createdAt}>{formatDate(person.createdAt)}</time>

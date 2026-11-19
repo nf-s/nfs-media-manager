@@ -8,6 +8,7 @@ import {
   useRef,
   useState,
   type ComponentProps,
+  type HTMLAttributes,
   type ReactNode,
 } from 'react'
 import { z } from 'zod'
@@ -22,6 +23,7 @@ import {
 import { Button } from '@repo/ui/components/ui/button'
 import {
   TableCell,
+  TableColumns,
   TableHead,
   TableRow,
   TableScroll,
@@ -41,6 +43,12 @@ import {
   type TableValue,
 } from '@/utils/secondary-table'
 import { orderColumns } from '@/utils/browse-items'
+import {
+  defaultColumnWidth,
+  tableColumnLayout,
+  tableWidthLimits,
+} from '@/utils/column-widths'
+import { useColumnWidths } from '@/hooks/useColumnWidths'
 import { ColumnOrderList } from './column-order'
 
 /** Column placement in the one table: right-aligned numbers and pinned identity. */
@@ -602,6 +610,7 @@ export function SecondaryDataTable<T>({
     columns.find((column) => column.key === key)?.value(row),
   )
   const total = totalCount ?? rows.length
+  const layout = visibility.layout(shown.map((column) => column.key))
   const hasToolbar =
     Boolean(search) ||
     Boolean(filters) ||
@@ -641,7 +650,8 @@ export function SecondaryDataTable<T>({
         aria-label={label}
         aria-busy={busy}
       >
-        <table className="ds-table" aria-label={label}>
+        <table className="ds-table" aria-label={label} {...layout.table}>
+          {layout.colgroup}
           <thead>
             <tr>
               {shown.map((column) =>
@@ -652,6 +662,7 @@ export function SecondaryDataTable<T>({
                     align={column.align}
                     sticky={column.sticky}
                     stickyEdge={column.stickyEdge}
+                    resizer={visibility.resizer(column.key)}
                   >
                     {column.label}
                   </TableHead>
@@ -667,6 +678,7 @@ export function SecondaryDataTable<T>({
                     sticky={column.sticky}
                     stickyEdge={column.stickyEdge}
                     filter={column.filter}
+                    resizer={visibility.resizer(column.key)}
                     onSort={(key) =>
                       setSort({
                         key,
@@ -794,6 +806,7 @@ export function SecondaryTableHead<Key extends string>({
   disabled,
   children,
   filter,
+  resizer,
   align,
   sticky,
   stickyEdge,
@@ -807,6 +820,8 @@ export function SecondaryTableHead<Key extends string>({
   disabled?: boolean
   children?: ReactNode
   filter?: ReactNode
+  /** The column's width handle, from `useTableColumns().resizer`. */
+  resizer?: HTMLAttributes<HTMLSpanElement>
 } & ColumnLayout) {
   const active = sortKey === sortBy
   return (
@@ -818,6 +833,7 @@ export function SecondaryTableHead<Key extends string>({
       aria-sort={
         active ? (direction === 'asc' ? 'ascending' : 'descending') : 'none'
       }
+      resizer={resizer}
     >
       <div className="secondary-table-heading">
         <TableSortButton
@@ -840,6 +856,79 @@ export type TableColumn = {
   label: string
   defaultVisible?: boolean
   required?: boolean
+  /** The default width in pixels. The reader can change it; it is saved per table. */
+  width?: number
+  /** `false` for a column of row actions: it keeps its width and has no handle. */
+  resizable?: false
+  /**
+   * This column takes the room left in the table, in place of the last one.
+   * Set it on the identity column when the last column is a number, a date or
+   * a status.
+   */
+  fill?: boolean
+}
+
+/**
+ * The props and colgroup of a fixed-layout table. `entries` are the displayed
+ * columns in order: a key, or a pixel width for a column that cannot be
+ * resized. Every column keeps its width except the one that takes the room
+ * that is left: `fill` when it is displayed, otherwise the last keyed one.
+ */
+export function fixedTableLayout(
+  entries: readonly (string | number)[],
+  widthFor: (key: string) => number,
+  fill?: string,
+) {
+  const { widths, minWidth } = tableColumnLayout(entries, widthFor, fill)
+  const table: { 'data-layout': 'fixed'; style: { minWidth: number } } = {
+    'data-layout': 'fixed',
+    style: { minWidth },
+  }
+  return { table, colgroup: <TableColumns widths={widths} /> }
+}
+
+/**
+ * A table's column widths, kept in browser storage and changed with the handle
+ * on each header. `layout` takes the displayed columns in order, a key for each
+ * of `columns` and a pixel width for each column that is not one of them
+ * (selection, artwork), and returns the table's `fixedTableLayout`. `resizer`
+ * gives a column's header its width handle.
+ */
+export function useTableWidths(
+  storageKey: string,
+  columns: readonly TableColumn[],
+) {
+  const widths = useColumnWidths(
+    `table:${storageKey}`,
+    (column: TableColumn) => column.width ?? defaultColumnWidth,
+    undefined,
+    tableWidthLimits,
+  )
+  function column(columnKey: string): TableColumn {
+    return (
+      columns.find((item) => item.key === columnKey) ?? {
+        key: columnKey,
+        label: columnKey,
+      }
+    )
+  }
+  const widthFor = (columnKey: string) => widths.widthFor(column(columnKey))
+  function layout(entries: readonly (string | number)[]) {
+    return fixedTableLayout(
+      entries.map((entry) =>
+        typeof entry === 'string' && column(entry).resizable === false
+          ? widthFor(entry)
+          : entry,
+      ),
+      widthFor,
+      columns.find((item) => item.fill)?.key,
+    )
+  }
+  function resizer(columnKey: string) {
+    const item = column(columnKey)
+    return item.resizable === false ? undefined : widths.resizer(item)
+  }
+  return { layout, resizer, reset: widths.reset }
 }
 
 const HiddenColumnsSchema = z.array(z.string())
@@ -855,10 +944,12 @@ function readSavedKeys(key: string) {
 }
 
 /**
- * Which columns a table shows, kept in browser storage. With `reorder`, the
- * picker also moves columns and `order` puts a table's columns in the chosen
- * order; the first column is the identity column and stays first. A table
- * that renders its cells one by one leaves `reorder` off.
+ * Which columns a table shows and how wide they are, kept in browser storage.
+ * With `reorder`, the picker also moves columns and `order` puts a table's
+ * columns in the chosen order; the first column is the identity column and
+ * stays first. A table that renders its cells one by one leaves `reorder` off.
+ * `layout` and `resizer` are the table's `useTableWidths`; Reset columns also
+ * returns every column to its default width.
  */
 export function useTableColumns(
   storageKey: string,
@@ -882,6 +973,7 @@ export function useTableColumns(
   useEffect(() => {
     setSavedOrder(readSavedKeys(orderKey))
   }, [orderKey])
+  const widths = useTableWidths(storageKey, columns)
   const pinned = columns[0]?.key
   const customOrder =
     configurable && reorder && savedOrder?.key === orderKey
@@ -967,6 +1059,7 @@ export function useTableColumns(
         onClick={() => {
           save(defaults)
           saveOrder(null)
+          widths.reset()
         }}
       >
         Reset columns
@@ -977,12 +1070,14 @@ export function useTableColumns(
     visible,
     count,
     order,
+    layout: widths.layout,
+    resizer: widths.resizer,
     options,
-    controls: options ? <TableColumns>{options}</TableColumns> : null,
+    controls: options ? <ColumnsMenu>{options}</ColumnsMenu> : null,
   }
 }
 
-function TableColumns({ children }: { children: ReactNode }) {
+function ColumnsMenu({ children }: { children: ReactNode }) {
   const id = useId()
   const trigger = useRef<HTMLButtonElement>(null)
   const panel = useRef<HTMLDivElement>(null)

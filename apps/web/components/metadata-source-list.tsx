@@ -3,11 +3,12 @@ import type { TagProvenancePage } from '@repo/schemas/tags'
 import ServiceIconLinks from './service-icon-links'
 import { DetailLink } from './detail-link'
 import { relevantTagSources } from '../utils/tag-actions'
-import { TableState } from '@repo/ui/components/ui/table'
+import { TableHead, TableState } from '@repo/ui/components/ui/table'
 import {
   SecondaryCell,
   SecondaryTableScroll,
   SecondaryVirtualRows,
+  useTableWidths,
   type SecondaryVirtualWindow,
 } from './secondary-table'
 
@@ -116,6 +117,12 @@ export default function MetadataSourceList({
 
 type Source = TagProvenancePage['items'][number]
 
+/** Narrow enough for the 330px source popover; the source takes any room left. */
+const tagSourceColumns = [
+  { key: 'tag', label: 'Stored tag', width: 160 },
+  { key: 'source', label: 'Source', width: 140 },
+]
+
 export function VirtualTagSources({
   query,
   label,
@@ -131,6 +138,8 @@ export function VirtualTagSources({
   label: string
   linksOnly?: boolean
 }) {
+  const widths = useTableWidths('tag-sources', tagSourceColumns)
+  const layout = widths.layout(tagSourceColumns.map((column) => column.key))
   return (
     <SecondaryTableScroll
       ref={query.scroller}
@@ -144,11 +153,16 @@ export function VirtualTagSources({
         className="ds-table"
         aria-label={label}
         aria-rowcount={query.hasTotal ? query.total + 1 : undefined}
+        {...layout.table}
       >
+        {layout.colgroup}
         <thead>
           <tr>
-            <th>Stored tag</th>
-            <th>Source</th>
+            {tagSourceColumns.map((column) => (
+              <TableHead key={column.key} resizer={widths.resizer(column.key)}>
+                {column.label}
+              </TableHead>
+            ))}
           </tr>
         </thead>
         <tbody>

@@ -112,6 +112,7 @@ import {
   restoreSavedBrowse,
 } from '@/utils/media-grid'
 import { useGridDensity } from '@/hooks/useGridDensity'
+import { useColumnWidths } from '@/hooks/useColumnWidths'
 import { DetailLink } from './detail-link'
 import {
   ActiveFiltersSection,
@@ -126,7 +127,6 @@ import {
   RowSkeleton,
   VirtualCards,
   VirtualRows,
-  useColumnWidths,
 } from './browse-items'
 
 const collection = 'tracks'
@@ -191,7 +191,7 @@ export default function TrackBrowser() {
   )
   const widths = useColumnWidths(
     collection,
-    (field) =>
+    (field: BrowseField) =>
       field.key === 'title' ? 280 : field.type === 'text' ? 180 : 110,
     // Leave room for the title, disclosure and playback controls on grouped rows.
     groupRecordings ? { title: 180 } : undefined,

@@ -8,7 +8,7 @@ import {
 import type { ProviderSummary } from '@repo/schemas/provider'
 import { Notice } from '@repo/ui/components/ds/feedback'
 import { Button } from '@repo/ui/components/ui/button'
-import { TableState } from '@repo/ui/components/ui/table'
+import { TableHead, TableState } from '@repo/ui/components/ui/table'
 import { useVirtualTable } from '@/hooks/useVirtualTable'
 import { fetchApiData } from '@/utils/api'
 import { artistProviderLabel } from '@/utils/artist-providers'
@@ -18,7 +18,14 @@ import {
   SecondaryCell,
   SecondaryTableScroll,
   SecondaryVirtualRows,
+  useTableWidths,
 } from './secondary-table'
+
+/** Fits the 600px detail inspector; the identifier takes any room left. */
+const identifierSourceColumns = [
+  { key: 'source', label: 'Source', width: 300 },
+  { key: 'identifier', label: 'Identifier', width: 200 },
+]
 
 export function ArtistIdentifierSourceRow({
   source,
@@ -82,6 +89,13 @@ export function ArtistIdentifierSources({
   catalog?: readonly ProviderSummary[]
 }) {
   const { apiBaseUrl } = useConfig()
+  const widths = useTableWidths(
+    'artist-identifier-sources',
+    identifierSourceColumns,
+  )
+  const layout = widths.layout(
+    identifierSourceColumns.map((column) => column.key),
+  )
   const query = useVirtualTable({
     queryKey: ['artist', id, 'identifier-sources', identifier.provider],
     pageSize: 25,
@@ -126,15 +140,22 @@ export function ArtistIdentifierSources({
       >
         <table
           className="ds-table"
-          data-layout="fixed"
           data-rows="two"
           aria-label={label}
           aria-rowcount={query.hasTotal ? query.total + 1 : undefined}
+          {...layout.table}
         >
+          {layout.colgroup}
           <thead>
             <tr>
-              <th>Source</th>
-              <th style={{ width: '34%' }}>Identifier</th>
+              {identifierSourceColumns.map((column) => (
+                <TableHead
+                  key={column.key}
+                  resizer={widths.resizer(column.key)}
+                >
+                  {column.label}
+                </TableHead>
+              ))}
             </tr>
           </thead>
           <tbody>

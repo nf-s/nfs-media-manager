@@ -340,6 +340,8 @@ export default function UserPageClient() {
           {
             key: 'name',
             label: 'Name',
+            width: 220,
+            fill: true,
             required: true,
             sticky: 0,
             stickyEdge: true,
@@ -348,6 +350,7 @@ export default function UserPageClient() {
           {
             key: 'start',
             label: 'Prefix',
+            width: 120,
             value: (key) => key.start,
             render: (key) => (
               <SecondaryCell>
@@ -358,6 +361,7 @@ export default function UserPageClient() {
           {
             key: 'status',
             label: 'Status',
+            width: 120,
             value: (key) => apiKeyStatus(key, now),
             render: (key) => {
               const status = apiKeyStatus(key, now)
@@ -374,6 +378,7 @@ export default function UserPageClient() {
           {
             key: 'createdAt',
             label: 'Created',
+            width: 150,
             value: (key) => Date.parse(key.createdAt),
             render: (key) => (
               <SecondaryCell>{dateLabel(key.createdAt)}</SecondaryCell>
@@ -382,6 +387,7 @@ export default function UserPageClient() {
           {
             key: 'expiresAt',
             label: 'Expires',
+            width: 150,
             value: (key) => (key.expiresAt ? Date.parse(key.expiresAt) : null),
             render: (key) => (
               <SecondaryCell>{dateLabel(key.expiresAt)}</SecondaryCell>
@@ -390,6 +396,7 @@ export default function UserPageClient() {
           {
             key: 'lastRequest',
             label: 'Last used',
+            width: 150,
             value: (key) =>
               key.lastRequest ? Date.parse(key.lastRequest) : null,
             render: (key) => (
@@ -399,6 +406,8 @@ export default function UserPageClient() {
           {
             key: 'actions',
             label: 'Actions',
+            width: 100,
+            resizable: false,
             sortable: false,
             required: true,
             align: 'end',

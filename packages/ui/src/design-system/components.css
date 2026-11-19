@@ -833,6 +833,21 @@ button.ds-pill:hover {
   width: 12px;
   height: 12px;
 }
+/* Column width handle on the right edge of a header */
+.ds-th-resizer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: var(--ds-3);
+  cursor: col-resize;
+  touch-action: none;
+}
+.ds-th-resizer:hover,
+.ds-th-resizer:focus-visible {
+  background: var(--ds-line);
+  outline: 0;
+}
 .ds-cell-id {
   display: flex;
   align-items: center;

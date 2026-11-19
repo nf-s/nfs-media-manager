@@ -83,6 +83,21 @@ import { runStatusStates } from '@/utils/run-status'
 const NAMES = { one: 'name', other: 'names' }
 /** Width of the selection column; the artist name is pinned after it. */
 const CHECK_WIDTH = 36
+/** Room for the two row actions: Link album and Add new album. */
+const ACTIONS_WIDTH = 80
+const linkColumnWidths: Record<LastfmLinkSort, number> = {
+  artistName: 180,
+  albumName: 200,
+  scrobbles: 90,
+  lastListenedAt: 110,
+  reason: 120,
+  libraryAlbum: 200,
+  spotifySearch: 140,
+}
+const linkColumns = lastfmLinkColumns.map((column) => ({
+  ...column,
+  width: linkColumnWidths[column.key],
+}))
 
 function LinkRow({
   group,
@@ -112,7 +127,7 @@ function LinkRow({
         : EMPTY_VALUE
   return (
     <TableRow selected={checked}>
-      <TableCell className="sec-check-cell" sticky={0}>
+      <TableCell sticky={0}>
         <input
           type="checkbox"
           className="ds-check"
@@ -240,8 +255,16 @@ function LinkRow({
 
 export default function LastfmLinks() {
   const columns = useTableColumns('lastfm-links', [
-    ...lastfmLinkColumns,
+    ...linkColumns,
     { key: 'actions', label: 'Actions' },
+  ])
+  const shownColumns = linkColumns.filter((column) =>
+    columns.visible(column.key),
+  )
+  const layout = columns.layout([
+    CHECK_WIDTH,
+    ...shownColumns.map((column) => column.key),
+    ...(columns.visible('actions') ? [ACTIONS_WIDTH] : []),
   ])
   const { apiBaseUrl } = useConfig()
   const client = useQueryClient()
@@ -381,6 +404,8 @@ export default function LastfmLinks() {
                 {
                   key: 'reason',
                   label: 'Status',
+                  width: 220,
+                  fill: true,
                   value: (row) => lastfmLinkReasonLabels[row.reason],
                   render: (row) => (
                     <Button
@@ -404,6 +429,7 @@ export default function LastfmLinks() {
                 {
                   key: 'groups',
                   label: 'Scrobbled names',
+                  width: 140,
                   align: 'end',
                   value: (row) => row.groups,
                   render: (row) => formatCount(row.groups),
@@ -411,6 +437,7 @@ export default function LastfmLinks() {
                 {
                   key: 'scrobbles',
                   label: 'Scrobbles',
+                  width: 100,
                   align: 'end',
                   value: (row) => row.scrobbles,
                   render: (row) => formatCount(row.scrobbles),
@@ -483,10 +510,15 @@ export default function LastfmLinks() {
           aria-label="Scrobble links"
           aria-busy={links.isFetching}
         >
-          <table className="ds-table" aria-label="Scrobble links">
+          <table
+            className="ds-table"
+            aria-label="Scrobble links"
+            {...layout.table}
+          >
+            {layout.colgroup}
             <TableHeader>
               <TableRow>
-                <TableHead className="sec-check-cell" sticky={0}>
+                <TableHead sticky={0}>
                   <input
                     ref={all}
                     type="checkbox"
@@ -504,42 +536,41 @@ export default function LastfmLinks() {
                     }}
                   />
                 </TableHead>
-                {lastfmLinkColumns
-                  .filter((column) => columns.visible(column.key))
-                  .map((column) => (
-                    <SecondaryTableHead
-                      key={column.key}
-                      sortKey={column.key}
-                      label={column.label}
-                      align={column.key === 'scrobbles' ? 'end' : undefined}
-                      sticky={
-                        column.key === 'artistName' ? CHECK_WIDTH : undefined
-                      }
-                      stickyEdge={column.key === 'artistName'}
-                      filter={
-                        column.key === 'reason' ? (
-                          <SecondaryColumnFilter
-                            label="Link status"
-                            options={lastfmLinkFilters.filter(
-                              (
-                                option,
-                              ): option is {
-                                value: LastfmLinkFilter
-                                label: string
-                              } => option.value !== '',
-                            )}
-                            value={reasons}
-                            onChange={setReasons}
-                            disabled={queuePending}
-                          />
-                        ) : undefined
-                      }
-                      sortBy={sortBy}
-                      direction={sortDirection}
-                      onSort={sort}
-                      disabled={queuePending}
-                    />
-                  ))}
+                {shownColumns.map((column) => (
+                  <SecondaryTableHead
+                    key={column.key}
+                    sortKey={column.key}
+                    label={column.label}
+                    align={column.key === 'scrobbles' ? 'end' : undefined}
+                    sticky={
+                      column.key === 'artistName' ? CHECK_WIDTH : undefined
+                    }
+                    stickyEdge={column.key === 'artistName'}
+                    filter={
+                      column.key === 'reason' ? (
+                        <SecondaryColumnFilter
+                          label="Link status"
+                          options={lastfmLinkFilters.filter(
+                            (
+                              option,
+                            ): option is {
+                              value: LastfmLinkFilter
+                              label: string
+                            } => option.value !== '',
+                          )}
+                          value={reasons}
+                          onChange={setReasons}
+                          disabled={queuePending}
+                        />
+                      ) : undefined
+                    }
+                    sortBy={sortBy}
+                    direction={sortDirection}
+                    onSort={sort}
+                    disabled={queuePending}
+                    resizer={columns.resizer(column.key)}
+                  />
+                ))}
                 {columns.visible('actions') && (
                   <TableHead align="end">
                     <span className="sr-only">Actions</span>

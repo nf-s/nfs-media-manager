@@ -377,8 +377,15 @@
                 `<div class="ds-table-wrap">${table(
                   [
                     D.checkCol((r, i) => i === 1 || i === 2, { sticky: true }),
-                    { ...D.COLS.albums[0], sticky: 36, edge: true },
-                    ...D.COLS.albums.slice(1),
+                    {
+                      ...D.COLS.albums[0],
+                      sticky: 36,
+                      edge: true,
+                      resize: true,
+                    },
+                    ...D.COLS.albums
+                      .slice(1)
+                      .map((column) => ({ ...column, resize: true })),
                   ],
                   A.slice(0, 6),
                   {
@@ -478,6 +485,7 @@
                 '<b>Column order</b> is the same for every resource: identity, creator, parent, properties, dates, counts, ratings, then pill columns. See Browse screens for each resource.',
                 '<b>Identity cell.</b> Thumbnail, title, and the play pair at its end. The thumbnail is 24px; posters keep their shape.',
                 '<b>Numbers align right</b> in tabular figures. Dates are ISO (<code>2026-10-02</code>) so they sort and align as text.',
+                "<b>Column widths are set, not measured.</b> Every column has a default width, so rows that are still loading never move the columns. A handle on the right edge of each data column's header changes its width (<code>TableHead resizer</code>): drag it, or focus it and use the Left and Right keys; double-click returns the default. It shows only on hover and focus. Widths are saved per table. Selection and small action columns keep a fixed width. One column takes the room that is left: the identity column where the last column is a number, a date or a status, otherwise the last data column.",
                 '<b>Nothing is clipped by the scrollbar.</b> The scroll area reserves its gutter and the last column keeps the 12px inset. When the table is wider than the panel the identity column stays in place and the rest scrolls beneath a soft edge.',
                 '<b>Child rows nest to any depth.</b> Each level indents the first cell by one more step (<code>TableRow depth</code>; <code>child</code> is depth 1). A row that has child rows carries a ghost icon button with a chevron before its title that shows or hides them; a row without children keeps an empty space of the same width so titles line up.',
                 '<b>Grouped tracks</b> place the release versions button immediately after the title link in the pinned identity cell.',

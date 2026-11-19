@@ -142,6 +142,8 @@ function PersonFilms({ person, path }: { person: Person; path: string }) {
     {
       key: 'title',
       label: 'Film',
+      width: 240,
+      fill: true,
       required: true,
       filter: roles.control,
       render: (film) => (
@@ -156,22 +158,26 @@ function PersonFilms({ person, path }: { person: Person; path: string }) {
     {
       key: 'releaseDate',
       label: 'Released',
+      width: 110,
       render: (film) => <CreatorLibraryDate value={film.releaseDate} />,
     },
     {
       key: 'runtimeMinutes',
       label: 'Runtime',
+      width: 90,
       align: 'end',
       render: (film) => formatRuntime(film.runtimeMinutes),
     },
     {
       key: 'watched',
       label: 'Watched',
+      width: 90,
       render: (film) => (film.watched ? 'Yes' : 'No'),
     },
     {
       key: 'dateAdded',
       label: 'Added',
+      width: 110,
       defaultVisible: false,
       render: (film) => <CreatorLibraryDate value={film.dateAdded} />,
     },

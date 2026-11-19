@@ -22,6 +22,7 @@ import {
 } from '@/utils/playback-source'
 import type { PlaybackSource } from '@/utils/playback'
 import { useDetailView } from './detail-inspector-context'
+import { useTableWidths } from './secondary-table'
 import { DetailLink } from './detail-link'
 import { TrackArtistLinks } from './creator-links'
 import { TrackRowPlay, useTrackPlayback } from './detail-play'
@@ -31,7 +32,9 @@ type TrackEntry = Extract<PlaylistEntry, { kind: 'track' }>
 type Column = {
   key: TrackEntryColumn
   label: string
+  width: number
   end?: boolean
+  fill?: boolean
 }
 
 /** Tracks beyond this are behind Show all. */
@@ -111,14 +114,16 @@ export default function AlbumTracksTable({ album }: { album: AlbumDetail }) {
   const detail = useDetailView()
   const [expanded, setExpanded] = useState(false)
   const view = albumTrackView(detail.params.get('albumTrackView'), album.id)
-  const artists: Column = { key: 'artists', label: 'Artists' }
+  const artists: Column = { key: 'artists', label: 'Artists', width: 140 }
   const columns: Column[] = [
-    { key: 'position', label: '#', end: true },
-    { key: 'title', label: 'Title' },
+    { key: 'position', label: '#', width: 56, end: true },
+    { key: 'title', label: 'Title', width: 200, fill: true },
     ...(albumIsCompilation(album) ? [artists] : []),
-    { key: 'duration', label: 'Duration', end: true },
-    { key: 'scrobbles', label: 'Scrobbles', end: true },
+    { key: 'duration', label: 'Duration', width: 90, end: true },
+    { key: 'scrobbles', label: 'Scrobbles', width: 90, end: true },
   ]
+  const widths = useTableWidths('album-overview-tracks', columns)
+  const layout = widths.layout(columns.map((column) => column.key))
   const ordered = useMemo(
     () =>
       sortTableRows<TrackEntry, TrackEntryColumn>(
@@ -151,7 +156,8 @@ export default function AlbumTracksTable({ album }: { album: AlbumDetail }) {
   }
   return (
     <>
-      <Table aria-label="Album tracks">
+      <Table aria-label="Album tracks" {...layout.table}>
+        {layout.colgroup}
         <TableHeader>
           <TableRow>
             {columns.map((column) => {
@@ -167,6 +173,7 @@ export default function AlbumTracksTable({ album }: { album: AlbumDetail }) {
                         : 'descending'
                       : undefined
                   }
+                  resizer={widths.resizer(column.key)}
                 >
                   <TableSortButton
                     direction={active ? view.direction : undefined}

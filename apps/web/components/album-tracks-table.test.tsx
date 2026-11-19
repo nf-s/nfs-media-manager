@@ -139,7 +139,10 @@ function returnParams() {
 test('album track tables are compact and restore a playback source sort', async () => {
   const html = await render(returnParams())
   assert.doesNotMatch(html, /aria-label="(Grid|List|Table) view"|type="search"/)
-  assert.match(html, /<table class="ds-table" aria-label="Album tracks">/)
+  assert.match(
+    html,
+    /<table class="ds-table" data-layout="fixed" aria-label="Album tracks"/,
+  )
   assert.match(
     html,
     /<th scope="col" aria-sort="descending"><button type="button" class="ds-th-sort">Title/,

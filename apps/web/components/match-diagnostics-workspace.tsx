@@ -37,7 +37,9 @@ import {
   formatItemCount,
 } from '@repo/ui/lib/format'
 import { useVirtualTable } from '@/hooks/useVirtualTable'
+import { useColumnWidths } from '@/hooks/useColumnWidths'
 import { fetchApiData } from '@/utils/api'
+import { defaultColumnWidth } from '@/utils/column-widths'
 import {
   columnOrderParam,
   formatFieldValue,
@@ -65,7 +67,7 @@ import {
 import { libraryMatchesHref, type LibraryView } from '@/utils/media-scope'
 import { withTrackFilter } from '@/utils/track-browse'
 import { AlbumMatchHistory } from './album-match-history'
-import { BrowseItemsHead, ItemThumb, useColumnWidths } from './browse-items'
+import { BrowseItemsHead, ItemThumb } from './browse-items'
 import { ConfirmAction } from './confirm-action'
 import { DetailInspector } from './detail-inspector'
 import {
@@ -83,6 +85,7 @@ import {
   SecondaryTableSearch,
   SecondaryTableToolbar,
   SecondaryVirtualRows,
+  fixedTableLayout,
   useTableColumns,
   type TableColumn,
 } from './secondary-table'
@@ -161,17 +164,32 @@ function matchColumns(
     ]
   }
   return [
-    { key: 'name', label: labels.name, sortKey: 'name', required: true },
+    {
+      key: 'name',
+      label: labels.name,
+      width: 280,
+      fill: true,
+      sortKey: 'name',
+      required: true,
+    },
     ...(labels.creator
-      ? [{ key: 'creator', label: labels.creator, sortKey: 'creator' }]
+      ? [
+          {
+            key: 'creator',
+            label: labels.creator,
+            width: 200,
+            sortKey: 'creator',
+          },
+        ]
       : []),
     ...providers.map((provider) => ({
       key: `provider:${provider.key}`,
       label: provider.label,
+      width: 180,
       sortKey: provider.key,
       provider,
     })),
-    { key: 'actions', label: 'Actions' },
+    { key: 'actions', label: 'Actions', width: 84, resizable: false },
   ]
 }
 
@@ -562,9 +580,28 @@ export default function MatchDiagnosticsWorkspace({
   const trackSortFields = trackColumnFields.filter(
     ({ key }) => key !== 'actions',
   )
-  const widths = useColumnWidths('tracks-matches', (field) =>
-    field.key === 'title' ? 280 : field.type === 'text' ? 180 : 110,
+  // The Last.fm match shares its cell with Change match.
+  const widths = useColumnWidths('tracks-matches', (field: BrowseField) =>
+    field.key === 'title'
+      ? 280
+      : field.key === 'lastfm'
+        ? 260
+        : field.type === 'text'
+          ? 180
+          : 110,
   )
+  const shownKeys = shown.map((column) => column.key)
+  // Tracks keeps the widths saved under its Browse fields, Actions included.
+  const layout = tracks
+    ? fixedTableLayout(
+        shownKeys,
+        (key) => {
+          const field = shown.find((column) => column.key === key)?.browseField
+          return field ? widths.widthFor(field) : defaultColumnWidth
+        },
+        'title',
+      )
+    : table.layout(shownKeys)
   const labels = libraryLabels[library]
   const title = `${labels.name} matches`
   const count = query.hasTotal
@@ -841,37 +878,11 @@ export default function MatchDiagnosticsWorkspace({
       >
         <table
           className="ds-table"
-          data-layout={tracks ? 'fixed' : undefined}
           aria-label={title}
           aria-rowcount={query.hasTotal ? query.total + 1 : undefined}
-          style={
-            tracks
-              ? {
-                  minWidth: shown.reduce(
-                    (sum, column) =>
-                      sum +
-                      (column.browseField
-                        ? widths.widthFor(column.browseField)
-                        : 0),
-                    0,
-                  ),
-                }
-              : undefined
-          }
+          {...layout.table}
         >
-          {tracks && (
-            <colgroup>
-              {shown.map(
-                ({ key, browseField }) =>
-                  browseField && (
-                    <col
-                      key={key}
-                      style={{ width: widths.widthFor(browseField) }}
-                    />
-                  ),
-              )}
-            </colgroup>
-          )}
+          {layout.colgroup}
           <TableHeader>
             <TableRow>
               {shown.map((column) =>
@@ -896,6 +907,7 @@ export default function MatchDiagnosticsWorkspace({
                     onSort={sort}
                     sticky={column.key === 'name' ? 0 : undefined}
                     stickyEdge={column.key === 'name'}
+                    resizer={table.resizer(column.key)}
                   />
                 ) : (
                   <TableHead key={column.key} align="end">

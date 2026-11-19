@@ -559,15 +559,22 @@ export default function AlbumImportWorkflow({
               },
             ]}
             columns={[
-              { key: 'title', label: 'Album', value: (item) => item.title },
+              {
+                key: 'title',
+                label: 'Album',
+                width: 280,
+                value: (item) => item.title,
+              },
               {
                 key: 'artists',
                 label: 'Artists',
+                width: 200,
                 value: (item) => item.artists.join(', '),
               },
               {
                 key: 'added',
                 label: 'Added',
+                width: 110,
                 value: (item) =>
                   item.dateAdded ? Date.parse(item.dateAdded) : null,
                 render: (item) => (
@@ -585,6 +592,7 @@ export default function AlbumImportWorkflow({
               {
                 key: 'identifiers',
                 label: 'Identifiers',
+                width: 160,
                 value: (item) =>
                   item.needsIdentification
                     ? 'Needs ID'
@@ -599,12 +607,14 @@ export default function AlbumImportWorkflow({
               {
                 key: 'changes',
                 label: 'Changes',
+                width: 140,
                 value: (item) =>
                   item.action === 'new' ? 'New album' : 'Unchanged',
               },
               {
                 key: 'row',
                 label: 'Row',
+                width: 70,
                 defaultVisible: false,
                 align: 'end',
                 value: (item) => item.row,

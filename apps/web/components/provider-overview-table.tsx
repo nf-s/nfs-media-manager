@@ -45,11 +45,18 @@ import {
   ProviderDispatchReview,
   useProviderDispatch,
 } from './provider-job-dispatch'
+import { useTableWidths } from './secondary-table'
 
-type Column = { key: string; label: string; width: number; end?: boolean }
+type Column = {
+  key: string
+  label: string
+  width: number
+  end?: boolean
+  fill?: boolean
+}
 
 const columns: readonly Column[] = [
-  { key: 'provider', label: 'Provider', width: 240 },
+  { key: 'provider', label: 'Provider', width: 240, fill: true },
   { key: 'connection', label: 'Connection', width: 128 },
   { key: 'queue', label: 'Queue', width: 196 },
   { key: 'queued', label: 'Queued', width: 72, end: true },
@@ -79,13 +86,15 @@ export function ProviderOverviewTable({
   loading?: boolean
   now?: Date
 }) {
+  const widths = useTableWidths('provider-overview', columns)
+  const layout = widths.layout(
+    columns.map((column) =>
+      column.key === 'actions' ? column.width : column.key,
+    ),
+  )
   return (
-    <Table aria-label="Providers" layout="fixed" rows="two">
-      <colgroup>
-        {columns.map((column) => (
-          <col key={column.key} style={{ width: column.width }} />
-        ))}
-      </colgroup>
+    <Table aria-label="Providers" rows="two" {...layout.table}>
+      {layout.colgroup}
       <TableHeader>
         <TableRow>
           {columns.map((column, index) => (
@@ -94,6 +103,11 @@ export function ProviderOverviewTable({
               align={column.end ? 'end' : undefined}
               sticky={index === 0 ? 0 : undefined}
               stickyEdge={index === 0}
+              resizer={
+                column.key === 'actions'
+                  ? undefined
+                  : widths.resizer(column.key)
+              }
             >
               {column.key === 'actions' ? (
                 <span className="sr-only">{column.label}</span>

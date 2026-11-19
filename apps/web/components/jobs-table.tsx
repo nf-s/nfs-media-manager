@@ -110,6 +110,8 @@ const rowHeight = 32
 const headerHeight = 28
 /** Width of the selection column, which the job column is pinned after. */
 const selectionWidth = 36
+/** Room for one row action: Retry or Cancel. */
+const actionsWidth = 84
 const batchPageSize = 25
 
 const libraryOptions: { value: Library | ''; label: string }[] = [
@@ -136,30 +138,33 @@ type ColumnKey =
 const jobColumns: {
   key: ColumnKey
   label: string
+  width: number
   sort?: JobSortKey
   align?: 'end'
   defaultVisible?: boolean
   required?: boolean
 }[] = [
-  { key: 'title', label: 'Job', sort: 'title', required: true },
-  { key: 'status', label: 'Status', sort: 'status' },
-  { key: 'provider', label: 'Provider', sort: 'provider' },
-  { key: 'progress', label: 'Progress' },
-  { key: 'createdAt', label: 'Created', sort: 'createdAt' },
+  { key: 'title', label: 'Job', width: 280, sort: 'title', required: true },
+  { key: 'status', label: 'Status', width: 120, sort: 'status' },
+  { key: 'provider', label: 'Provider', width: 120, sort: 'provider' },
+  { key: 'progress', label: 'Progress', width: 110 },
+  { key: 'createdAt', label: 'Created', width: 96, sort: 'createdAt' },
   {
     key: 'startedAt',
     label: 'Started',
+    width: 96,
     sort: 'startedAt',
     defaultVisible: false,
   },
   {
     key: 'finishedAt',
     label: 'Finished',
+    width: 96,
     sort: 'finishedAt',
     defaultVisible: false,
   },
-  { key: 'duration', label: 'Duration', align: 'end' },
-  { key: 'result', label: 'Result', sort: 'result' },
+  { key: 'duration', label: 'Duration', width: 84, align: 'end' },
+  { key: 'result', label: 'Result', width: 220, sort: 'result' },
 ]
 
 type RowItem = Job | JobEntry
@@ -234,6 +239,11 @@ export function JobsTable({ provider }: { provider?: string }) {
     columns.visible(column.key),
   )
   const colSpan = shownColumns.length + 2
+  const layout = columns.layout([
+    selectionWidth,
+    ...shownColumns.map((column) => column.key),
+    actionsWidth,
+  ])
   const selectAll = useRef<HTMLInputElement>(null)
   const [retryBatchId, setRetryBatchId] = useState<string | null>(null)
   const [batchRetryConfirmed, setBatchRetryConfirmed] = useState(false)
@@ -921,10 +931,15 @@ export function JobsTable({ provider }: { provider?: string }) {
         aria-label="Jobs"
         aria-busy={jobs.isFetching}
       >
-        <table className="ds-table ops-jobs-table" aria-label="Jobs">
+        <table
+          className="ds-table ops-jobs-table"
+          aria-label="Jobs"
+          {...layout.table}
+        >
+          {layout.colgroup}
           <thead>
             <tr>
-              <TableHead sticky={0} style={{ width: selectionWidth }}>
+              <TableHead sticky={0}>
                 <input
                   ref={selectAll}
                   type="checkbox"
@@ -941,21 +956,22 @@ export function JobsTable({ provider }: { provider?: string }) {
                 />
               </TableHead>
               {shownColumns.map((column) => {
-                const layout = {
+                const cell = {
                   align: column.align,
                   sticky: column.key === 'title' ? selectionWidth : undefined,
                   stickyEdge: column.key === 'title',
+                  resizer: columns.resizer(column.key),
                 }
                 if (!column.sort)
                   return (
-                    <TableHead key={column.key} {...layout}>
+                    <TableHead key={column.key} {...cell}>
                       {column.label}
                     </TableHead>
                   )
                 return (
                   <SecondaryTableHead
                     key={column.key}
-                    {...layout}
+                    {...cell}
                     sortKey={column.sort}
                     label={column.label}
                     filter={

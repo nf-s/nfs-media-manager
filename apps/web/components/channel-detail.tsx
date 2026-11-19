@@ -57,6 +57,8 @@ function libraryItemColumns(
     {
       key: 'title',
       label: 'Title',
+      width: 250,
+      fill: true,
       required: true,
       render: (item) => (
         <CreatorLibraryTitle
@@ -69,6 +71,7 @@ function libraryItemColumns(
     {
       key: 'publishedAt',
       label: subscriptionLibraryLabels[library].published,
+      width: 130,
       className: 'whitespace-nowrap',
       render: (item) => (
         <time dateTime={item.publishedAt}>
@@ -82,6 +85,7 @@ function libraryItemColumns(
     {
       key: 'durationSec',
       label: 'Duration',
+      width: 90,
       align: 'end',
       render: formatSubscriptionDuration,
     },
@@ -94,6 +98,7 @@ const videoColumns: CreatorLibraryColumn<SubscriptionItem>[] = [
   {
     key: 'viewCount',
     label: 'Views',
+    width: 90,
     align: 'end',
     render: (item) =>
       item.type === 'youtube' && item.viewCount !== null

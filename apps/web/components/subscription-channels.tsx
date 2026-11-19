@@ -56,6 +56,31 @@ import {
 } from './secondary-table'
 import { RetryButton } from './browse-items'
 
+const columnWidths: Record<SubscriptionSourceSort, number> = {
+  title: 300,
+  type: 130,
+  storedItems: 120,
+  latestItemAt: 110,
+  size: 180,
+  description: 240,
+  handle: 160,
+  historyComplete: 150,
+}
+function sourceColumns(library: SubscriptionLibrary) {
+  return subscriptionSourceColumnsFor[library].map((column) => ({
+    ...column,
+    width: columnWidths[column.key],
+    fill: column.key === 'title',
+  }))
+}
+const sourceColumnsFor: Record<
+  SubscriptionLibrary,
+  ReturnType<typeof sourceColumns>
+> = {
+  subscriptions: sourceColumns('subscriptions'),
+  mixes: sourceColumns('mixes'),
+}
+
 function useSubscriptionSources(library: SubscriptionLibrary) {
   const { apiBaseUrl } = useConfig()
   const params = new URLSearchParams(subscriptionLibraryParams(library))
@@ -232,7 +257,7 @@ export default function SubscriptionChannels({
   library?: SubscriptionLibrary
 }) {
   const page = subscriptionLibraryPages[library]
-  const sourceColumns = subscriptionSourceColumnsFor[library]
+  const sourceColumns = sourceColumnsFor[library]
   const columns = useTableColumns(
     library === 'mixes' ? 'mix-shows' : 'subscription-channels',
     sourceColumns,
@@ -241,6 +266,7 @@ export default function SubscriptionChannels({
   const shownColumns = columns
     .order(sourceColumns)
     .filter((column) => columns.visible(column.key))
+  const layout = columns.layout(shownColumns.map((column) => column.key))
   const search = useSearchParams()
   const inspector = useDetailInspector()
   const selectedId =
@@ -318,7 +344,8 @@ export default function SubscriptionChannels({
         aria-label={tableLabel}
         aria-busy={sources.isFetching}
       >
-        <table className="ds-table" aria-label={tableLabel}>
+        <table className="ds-table" aria-label={tableLabel} {...layout.table}>
+          {layout.colgroup}
           <TableHeader>
             <TableRow>
               {shownColumns.map((column) => (
@@ -332,6 +359,7 @@ export default function SubscriptionChannels({
                   align={column.numeric ? 'end' : undefined}
                   sticky={column.key === 'title' ? 0 : undefined}
                   stickyEdge={column.key === 'title'}
+                  resizer={columns.resizer(column.key)}
                   filter={
                     column.key === 'type' ? (
                       <SecondaryColumnFilter

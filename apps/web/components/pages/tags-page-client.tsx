@@ -53,18 +53,31 @@ const TAGS = { one: 'tag', other: 'tags' }
 /** Width of the selection column; the tag name is pinned after it. */
 const CHECK_WIDTH = 36
 
+const tagColumns = [
+  { key: 'name', label: 'Tag', width: 280 },
+  { key: 'mediaCount', label: 'Items', width: 90 },
+  { key: 'sourceCount', label: 'Sources', width: 110 },
+  { key: 'parents', label: 'Parents', width: 240 },
+  { key: 'childCount', label: 'Subtags', width: 90, defaultVisible: false },
+  {
+    key: 'mergedNames',
+    label: 'Merged names',
+    width: 240,
+    defaultVisible: false,
+  },
+]
+
 export default function TagsPageClient({
   hidden = false,
 }: {
   hidden?: boolean
 }) {
-  const columns = useTableColumns('tags', [
-    { key: 'name', label: 'Tag' },
-    { key: 'mediaCount', label: 'Items' },
-    { key: 'sourceCount', label: 'Sources' },
-    { key: 'parents', label: 'Parents' },
-    { key: 'childCount', label: 'Subtags', defaultVisible: false },
-    { key: 'mergedNames', label: 'Merged names', defaultVisible: false },
+  const columns = useTableColumns('tags', tagColumns)
+  const layout = columns.layout([
+    CHECK_WIDTH,
+    ...tagColumns
+      .filter((column) => columns.visible(column.key))
+      .map((column) => column.key),
   ])
   const [sortBy, setSortBy] = useState<TagSortKey>('name')
   const [direction, setDirection] = useState<'asc' | 'desc'>('asc')
@@ -209,10 +222,11 @@ export default function TagsPageClient({
           role="region"
           aria-label="Tags table"
         >
-          <table className="ds-table" aria-label="Tags">
+          <table className="ds-table" aria-label="Tags" {...layout.table}>
+            {layout.colgroup}
             <thead>
               <tr>
-                <TableHead className="sec-check-cell" sticky={0}>
+                <TableHead sticky={0}>
                   <input
                     ref={selectAll}
                     type="checkbox"
@@ -237,6 +251,7 @@ export default function TagsPageClient({
                     disabled={pending}
                     sticky={CHECK_WIDTH}
                     stickyEdge
+                    resizer={columns.resizer('name')}
                   />
                 )}
                 {columns.visible('mediaCount') && (
@@ -248,6 +263,7 @@ export default function TagsPageClient({
                     onSort={sort}
                     align="end"
                     disabled={pending}
+                    resizer={columns.resizer('mediaCount')}
                   />
                 )}
                 {columns.visible('sourceCount') && (
@@ -259,11 +275,21 @@ export default function TagsPageClient({
                     onSort={sort}
                     align="end"
                     disabled={pending}
+                    resizer={columns.resizer('sourceCount')}
                   />
                 )}
-                {columns.visible('parents') && <TableHead>Parents</TableHead>}
+                {columns.visible('parents') && (
+                  <TableHead resizer={columns.resizer('parents')}>
+                    Parents
+                  </TableHead>
+                )}
                 {columns.visible('childCount') && (
-                  <TableHead align="end">Subtags</TableHead>
+                  <TableHead
+                    align="end"
+                    resizer={columns.resizer('childCount')}
+                  >
+                    Subtags
+                  </TableHead>
                 )}
                 {columns.visible('mergedNames') && (
                   <SecondaryTableHead
@@ -273,6 +299,7 @@ export default function TagsPageClient({
                     direction={direction}
                     onSort={sort}
                     disabled={pending}
+                    resizer={columns.resizer('mergedNames')}
                   />
                 )}
               </tr>
@@ -302,7 +329,7 @@ export default function TagsPageClient({
                 colSpan={1 + columns.count}
                 renderRow={(tag) => (
                   <TableRow key={tag.id} selected={selected.includes(tag.id)}>
-                    <TableCell className="sec-check-cell" sticky={0}>
+                    <TableCell sticky={0}>
                       <input
                         type="checkbox"
                         className="ds-check"

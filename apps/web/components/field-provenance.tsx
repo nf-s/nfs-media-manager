@@ -34,8 +34,17 @@ import {
 import { providerMarkText } from '@/utils/source-rows'
 import { useSourceCatalog } from './provider-sources'
 import { useConfig } from './providers'
+import { useTableWidths } from './secondary-table'
 
 type Label = (provider: string) => string
+
+/** Fits the 600px detail inspector; the value takes any room left. */
+const fieldColumns = [
+  { key: 'field', label: 'Field', width: 130 },
+  { key: 'value', label: 'Value', width: 160, fill: true },
+  { key: 'source', label: 'Source', width: 170 },
+  { key: 'updated', label: 'Updated', width: 100 },
+]
 
 /** Stored fields of an album or film with the providers that supply them. */
 export function useMediaProvenance(mediaItemId: string, enabled = true) {
@@ -143,6 +152,7 @@ export function FieldProvenance({ mediaItemId }: { mediaItemId: string }) {
   const provenance = useMediaProvenance(mediaItemId)
   const catalog = useSourceCatalog()
   const label: Label = (provider) => providerLabel(provider, catalog.data)
+  const widths = useTableWidths('field-provenance', fieldColumns)
   const data = provenance.data
   if (!data) {
     if (provenance.isError)
@@ -168,16 +178,18 @@ export function FieldProvenance({ mediaItemId }: { mediaItemId: string }) {
     )
   }
   if (!data.fields.length) return <State title="No stored fields" size="sm" />
+  const layout = widths.layout(fieldColumns.map((column) => column.key))
   return (
-    <Table aria-label="All fields" layout="fixed">
+    <Table aria-label="All fields" {...layout.table}>
+      {layout.colgroup}
       <TableHeader>
         <TableRow>
-          <TableHead sticky={0} stickyEdge style={{ width: 130 }}>
+          <TableHead sticky={0} stickyEdge resizer={widths.resizer('field')}>
             Field
           </TableHead>
-          <TableHead>Value</TableHead>
-          <TableHead style={{ width: 170 }}>Source</TableHead>
-          <TableHead style={{ width: 100 }}>Updated</TableHead>
+          <TableHead resizer={widths.resizer('value')}>Value</TableHead>
+          <TableHead resizer={widths.resizer('source')}>Source</TableHead>
+          <TableHead resizer={widths.resizer('updated')}>Updated</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>

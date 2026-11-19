@@ -36,6 +36,7 @@ import { fetchApiData } from '@/utils/api'
 import { scopedHref } from '@/utils/media-scope'
 import { DetailLink } from './detail-link'
 import { useConfig } from './providers'
+import { useTableWidths } from './secondary-table'
 
 /** Refresh every 10 seconds while jobs are queued or running. */
 function whileJobsRun(client: QueryClient) {
@@ -217,6 +218,11 @@ type ActivityEvent = {
   content: ReactNode
 }
 
+const activityColumns = [
+  { key: 'at', label: 'When', width: 150 },
+  { key: 'event', label: 'Event', width: 320 },
+]
+
 /** Benign error reviews and cooldown clears, newest first. */
 export function ProviderRecentActivity({
   provider,
@@ -224,6 +230,8 @@ export function ProviderRecentActivity({
   provider: Pick<ProviderSummary, 'id'>
 }) {
   const activity = useProviderActivity(provider, '24h')
+  const widths = useTableWidths('provider-recent-activity', activityColumns)
+  const layout = widths.layout(activityColumns.map((column) => column.key))
   const data = activity.data
   const events: ActivityEvent[] = data
     ? [
@@ -265,13 +273,14 @@ export function ProviderRecentActivity({
         <State size="sm" title="No error reviews or cooldown clears" />
       )}
       {events.length > 0 && (
-        <Table aria-label="Recent activity">
+        <Table aria-label="Recent activity" {...layout.table}>
+          {layout.colgroup}
           <TableHeader>
             <TableRow>
-              <TableHead sticky={0} stickyEdge>
+              <TableHead sticky={0} stickyEdge resizer={widths.resizer('at')}>
                 When
               </TableHead>
-              <TableHead>Event</TableHead>
+              <TableHead resizer={widths.resizer('event')}>Event</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>

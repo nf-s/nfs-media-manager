@@ -408,10 +408,7 @@ test('the playlist drawer filters its tracks to the rows with gaps and names eac
     /<table class="ds-table" aria-label="Playlist tracks"[\s\S]*?<\/table>/,
   )?.[0]
   assert.ok(table, 'gap table')
-  assert.match(
-    table,
-    /<th[^>]*class="sec-check-cell"[^>]*><span class="sr-only">Select<\/span>/,
-  )
+  assert.match(table, /<th[^>]*><span class="sr-only">Select<\/span>/)
   assert.match(table, /<th[^>]*>Missing<\/th>/)
   assert.match(table, /aria-label="Select Opening track"/)
   assert.match(

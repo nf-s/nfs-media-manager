@@ -75,6 +75,8 @@ const defaultSortBy = 'scrobbles'
 const defaultDirection = 'desc'
 const matchPageSize = 100
 const CHECK_WIDTH = 36
+/** Room for Scrobbled names, Merge names and a Spotify search status with Review. */
+const ACTIONS_WIDTH = 350
 const missingSpotifyHref = `${libraryMatchesHref('track')}?${new URLSearchParams(
   {
     filters: JSON.stringify([source]),
@@ -84,11 +86,11 @@ const missingSpotifyHref = `${libraryMatchesHref('track')}?${new URLSearchParams
   },
 )}`
 const matchColumns: readonly (TableColumn & { key: MatchSort })[] = [
-  { key: 'title', label: 'Track', required: true },
-  { key: 'artist', label: 'Artist' },
-  { key: 'album', label: 'Album' },
-  { key: 'scrobbles', label: 'Scrobbles' },
-  { key: 'spotifyMatch', label: 'Spotify match' },
+  { key: 'title', label: 'Track', width: 250, required: true },
+  { key: 'artist', label: 'Artist', width: 160 },
+  { key: 'album', label: 'Album', width: 160 },
+  { key: 'scrobbles', label: 'Scrobbles', width: 90 },
+  { key: 'spotifyMatch', label: 'Spotify match', width: 140 },
 ]
 const matchStatuses: Array<{ value: MatchStatus; label: string }> = [
   { value: 'needs-match', label: 'Needs match' },
@@ -160,7 +162,15 @@ export function LastfmTrackMatchList() {
   const selectAll = useRef<HTMLInputElement>(null)
   const columns = useTableColumns('lastfm-track-matches', [
     ...matchColumns,
-    { key: 'actions', label: 'Actions', required: true },
+    { key: 'actions', label: 'Actions', width: ACTIONS_WIDTH, required: true },
+  ])
+  const shownColumns = matchColumns.filter((column) =>
+    columns.visible(column.key),
+  )
+  const layout = columns.layout([
+    CHECK_WIDTH,
+    ...shownColumns.map((column) => column.key),
+    'actions',
   ])
   const playability = lastfmTrackMatchPlayability(statuses)
   useEffect(() => {
@@ -303,10 +313,15 @@ export function LastfmTrackMatchList() {
           aria-label="Last.fm tracks to match"
           aria-busy={tracks.isFetching}
         >
-          <table className="ds-table" aria-label="Last.fm tracks to match">
+          <table
+            className="ds-table"
+            aria-label="Last.fm tracks to match"
+            {...layout.table}
+          >
+            {layout.colgroup}
             <TableHeader>
               <TableRow>
-                <TableHead className="sec-check-cell" sticky={0}>
+                <TableHead sticky={0}>
                   <input
                     ref={selectAll}
                     type="checkbox"
@@ -319,37 +334,38 @@ export function LastfmTrackMatchList() {
                     }
                   />
                 </TableHead>
-                {matchColumns
-                  .filter((column) => columns.visible(column.key))
-                  .map((column) => (
-                    <SecondaryTableHead
-                      key={column.key}
-                      sortKey={column.key}
-                      label={column.label}
-                      align={column.key === 'scrobbles' ? 'end' : undefined}
-                      sortBy={sortBy}
-                      direction={direction}
-                      onSort={sort}
-                      disabled={queuePending}
-                      sticky={column.key === 'title' ? CHECK_WIDTH : undefined}
-                      stickyEdge={column.key === 'title'}
-                      filter={
-                        column.key === 'spotifyMatch' ? (
-                          <SecondaryColumnFilter
-                            label="Match status"
-                            options={matchStatuses}
-                            value={statuses}
-                            disabled={queuePending}
-                            onChange={(next) => {
-                              selectTracks([])
-                              setStatuses(next)
-                            }}
-                          />
-                        ) : undefined
-                      }
-                    />
-                  ))}
-                <TableHead>Actions</TableHead>
+                {shownColumns.map((column) => (
+                  <SecondaryTableHead
+                    key={column.key}
+                    sortKey={column.key}
+                    label={column.label}
+                    align={column.key === 'scrobbles' ? 'end' : undefined}
+                    sortBy={sortBy}
+                    direction={direction}
+                    onSort={sort}
+                    disabled={queuePending}
+                    sticky={column.key === 'title' ? CHECK_WIDTH : undefined}
+                    stickyEdge={column.key === 'title'}
+                    filter={
+                      column.key === 'spotifyMatch' ? (
+                        <SecondaryColumnFilter
+                          label="Match status"
+                          options={matchStatuses}
+                          value={statuses}
+                          disabled={queuePending}
+                          onChange={(next) => {
+                            selectTracks([])
+                            setStatuses(next)
+                          }}
+                        />
+                      ) : undefined
+                    }
+                    resizer={columns.resizer(column.key)}
+                  />
+                ))}
+                <TableHead resizer={columns.resizer('actions')}>
+                  Actions
+                </TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -391,7 +407,7 @@ export function LastfmTrackMatchList() {
                           undefined
                         }
                       >
-                        <TableCell className="sec-check-cell" sticky={0}>
+                        <TableCell sticky={0}>
                           <input
                             type="checkbox"
                             className="ds-check"

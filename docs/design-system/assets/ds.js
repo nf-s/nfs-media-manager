@@ -294,7 +294,10 @@
           c.sort !== undefined
             ? `<button type="button" class="ds-th-sort">${label}${c.sort ? icon(c.sort === 'ascending' ? 'up' : 'down') : ''}</button>`
             : label
-        return `<th${attrs({ 'data-align': c.end ? 'end' : undefined, style: c.w ? `width:${c.w}px` : undefined, 'aria-sort': c.sort || undefined, ...stick(c) })}>${inner}</th>`
+        const resizer = c.resize
+          ? `<span class="ds-th-resizer" role="separator" aria-orientation="vertical" aria-label="Resize ${esc(c.h || '')}" tabindex="0"></span>`
+          : ''
+        return `<th${attrs({ 'data-align': c.end ? 'end' : undefined, style: c.w ? `width:${c.w}px` : undefined, 'aria-sort': c.sort || undefined, ...stick(c) })}>${inner}${resizer}</th>`
       })
       .join('')
     const body = rows

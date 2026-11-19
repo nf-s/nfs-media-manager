@@ -297,7 +297,10 @@ test('source metadata reflects an active exclusion filter', () => {
 test('Sources lists the recorded and scrobbled Last.fm names in tables', () => {
   const html = render(scrobbled, '', 'sources')
   assert.match(html, /<h3>Recorded by Last.fm<\/h3>/)
-  assert.match(html, /<table class="ds-table" aria-label="Scrobbled names">/)
+  assert.match(
+    html,
+    /<table class="ds-table" data-layout="fixed" aria-label="Scrobbled names"/,
+  )
   assert.match(html, /Example artist — Synthetic track/)
   assert.match(html, />Add scrobbled name<\/button>/)
   assert.match(html, />Merge Last.fm names<\/button>/)

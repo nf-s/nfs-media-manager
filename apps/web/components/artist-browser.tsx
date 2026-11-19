@@ -95,6 +95,7 @@ import {
   preserveGridScroll,
 } from '@/utils/media-grid'
 import { useGridDensity } from '@/hooks/useGridDensity'
+import { useColumnWidths } from '@/hooks/useColumnWidths'
 import { DetailLink } from './detail-link'
 import {
   ActiveFiltersSection,
@@ -109,7 +110,6 @@ import {
   RowSkeleton,
   VirtualCards,
   VirtualRows,
-  useColumnWidths,
 } from './browse-items'
 
 const collection = 'artists'
@@ -185,7 +185,7 @@ export default function ArtistBrowser() {
   const columns = orderedFields.filter((field) =>
     columnKeys.includes(field.key),
   )
-  const widths = useColumnWidths(collection, (field) =>
+  const widths = useColumnWidths(collection, (field: BrowseField) =>
     field.key === 'name' ? 260 : field.type === 'text' ? 180 : 110,
   )
   const requestedListeningPeriod =

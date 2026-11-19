@@ -47,6 +47,7 @@ import { useBrowseFacets } from '@/hooks/useBrowseFacets'
 import { useRailSlot } from '@/hooks/useRailSlot'
 import { useGridDensity } from '@/hooks/useGridDensity'
 import { useSubscriptionSource } from '@/hooks/useSubscriptionSource'
+import { useColumnWidths } from '@/hooks/useColumnWidths'
 import { matchingTitleFilters } from '@/utils/browse-suggestions'
 import { gridCardMin, preserveGridScroll } from '@/utils/media-grid'
 import {
@@ -117,7 +118,6 @@ import {
   RowSkeleton,
   VirtualCards,
   VirtualRows,
-  useColumnWidths,
 } from './browse-items'
 
 /** --ds-head, --ds-row-media and --ds-row. */
@@ -215,7 +215,7 @@ export default function SubscriptionBrowser({
   const columns = orderedFields.filter((field) =>
     columnKeys.includes(field.key),
   )
-  const widths = useColumnWidths(collection, (field) =>
+  const widths = useColumnWidths(collection, (field: BrowseField) =>
     field.key === 'title'
       ? 340
       : field.key === 'source' || field.key === 'artist'

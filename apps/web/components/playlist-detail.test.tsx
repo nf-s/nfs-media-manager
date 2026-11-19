@@ -260,7 +260,7 @@ test('the drawer lists entries in playlist order in the shared table', async () 
     /href="\/tracks\?filters=[^"]*Synthetic\+mix[^"]*"[^>]*>Filter tracks</,
   )
   const table = html.match(
-    /<table class="ds-table" aria-label="Playlist tracks" aria-rowcount="4">[\s\S]*?<\/table>/,
+    /<table class="ds-table" aria-label="Playlist tracks" aria-rowcount="4" data-layout="fixed"[^>]*>[\s\S]*?<\/table>/,
   )?.[0]
   assert.ok(table, 'compact table of entries')
   const order = ['Opening track', 'Closing track', 'Member album'].map(

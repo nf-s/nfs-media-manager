@@ -36,6 +36,7 @@ import {
   SecondaryCell,
   SecondaryTableScroll,
   SecondaryVirtualRows,
+  useTableWidths,
 } from './secondary-table'
 import ServiceIconLinks from './service-icon-links'
 import {
@@ -44,6 +45,30 @@ import {
   TrackMergePanel,
   type TrackScrobbleCorrection,
 } from './track-merge'
+
+const nameSearchColumns = [
+  { key: 'track', label: 'Track', width: 140 },
+  { key: 'artist', label: 'Artist', width: 120 },
+  { key: 'albums', label: 'Albums', width: 130 },
+  { key: 'scrobbles', label: 'Scrobbles', width: 80 },
+]
+/** Room for Link or Linked here. */
+const nameSearchActionsWidth = 84
+const recordedColumns = [
+  { key: 'track', label: 'Track', width: 120 },
+  { key: 'artist', label: 'Artist', width: 100 },
+  { key: 'albums', label: 'Albums', width: 110 },
+  { key: 'scrobbles', label: 'Scrobbles', width: 80 },
+  // Room for Change match, Remove and Use automatic match.
+  { key: 'actions', label: 'Actions', width: 300 },
+]
+const listeningColumns = [
+  { key: 'name', label: 'Name', width: 180 },
+  { key: 'match', label: 'Match', width: 120 },
+  { key: 'scrobbles', label: 'Scrobbles', width: 80 },
+  // Room for Change match and Keep separate.
+  { key: 'actions', label: 'Actions', width: 210 },
+]
 
 type NameUpdate =
   | { action: 'link'; name: TrackScrobbledName }
@@ -89,6 +114,14 @@ function TrackScrobbledNamePicker({
   const { apiBaseUrl } = useConfig()
   const [draft, setDraft] = useState(track.title.slice(0, 200))
   const query = useDeferredValue(draft.trim())
+  const widths = useTableWidths(
+    'track-scrobbled-name-search',
+    nameSearchColumns,
+  )
+  const layout = widths.layout([
+    ...nameSearchColumns.map((column) => column.key),
+    nameSearchActionsWidth,
+  ])
   const names = useVirtualTable({
     queryKey: ['tracks', 'scrobbled-names', track.id, query],
     enabled: query.length > 0,
@@ -135,13 +168,17 @@ function TrackScrobbledNamePicker({
           <table
             className="ds-table"
             aria-label="Scrobbled name search results"
+            {...layout.table}
           >
+            {layout.colgroup}
             <TableHeader>
               <TableRow>
-                <TableHead>Track</TableHead>
-                <TableHead>Artist</TableHead>
-                <TableHead>Albums</TableHead>
-                <TableHead align="end">Scrobbles</TableHead>
+                <TableHead resizer={widths.resizer('track')}>Track</TableHead>
+                <TableHead resizer={widths.resizer('artist')}>Artist</TableHead>
+                <TableHead resizer={widths.resizer('albums')}>Albums</TableHead>
+                <TableHead align="end" resizer={widths.resizer('scrobbles')}>
+                  Scrobbles
+                </TableHead>
                 <TableHead align="end">
                   <span className="sr-only">Actions</span>
                 </TableHead>
@@ -270,6 +307,17 @@ export function TrackLastfmSources({
       )
     },
   })
+  const recordedWidths = useTableWidths('track-lastfm-sources', recordedColumns)
+  const recordedLayout = recordedWidths.layout(
+    recordedColumns.map((column) => column.key),
+  )
+  const listeningWidths = useTableWidths(
+    'track-scrobbled-names',
+    listeningColumns,
+  )
+  const listeningLayout = listeningWidths.layout(
+    listeningColumns.map((column) => column.key),
+  )
   const strictNames = new Set(item.lastfmSources.map(nameKey))
   const changeMatchButton = (source: TrackScrobbleCorrection) => (
     <Button
@@ -375,14 +423,26 @@ export function TrackLastfmSources({
             </p>
           )}
           {item.lastfmSources.length ? (
-            <Table aria-label="Recorded by Last.fm">
+            <Table aria-label="Recorded by Last.fm" {...recordedLayout.table}>
+              {recordedLayout.colgroup}
               <TableHeader>
                 <TableRow>
-                  <TableHead>Track</TableHead>
-                  <TableHead>Artist</TableHead>
-                  <TableHead>Albums</TableHead>
-                  <TableHead align="end">Scrobbles</TableHead>
-                  <TableHead>
+                  <TableHead resizer={recordedWidths.resizer('track')}>
+                    Track
+                  </TableHead>
+                  <TableHead resizer={recordedWidths.resizer('artist')}>
+                    Artist
+                  </TableHead>
+                  <TableHead resizer={recordedWidths.resizer('albums')}>
+                    Albums
+                  </TableHead>
+                  <TableHead
+                    align="end"
+                    resizer={recordedWidths.resizer('scrobbles')}
+                  >
+                    Scrobbles
+                  </TableHead>
+                  <TableHead resizer={recordedWidths.resizer('actions')}>
                     <span className="sr-only">Actions</span>
                   </TableHead>
                 </TableRow>
@@ -453,13 +513,23 @@ export function TrackLastfmSources({
           title="Scrobbled names"
           note={formatCount(item.listening.sources.length)}
         >
-          <Table aria-label="Scrobbled names">
+          <Table aria-label="Scrobbled names" {...listeningLayout.table}>
+            {listeningLayout.colgroup}
             <TableHeader>
               <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead>Match</TableHead>
-                <TableHead align="end">Scrobbles</TableHead>
-                <TableHead>
+                <TableHead resizer={listeningWidths.resizer('name')}>
+                  Name
+                </TableHead>
+                <TableHead resizer={listeningWidths.resizer('match')}>
+                  Match
+                </TableHead>
+                <TableHead
+                  align="end"
+                  resizer={listeningWidths.resizer('scrobbles')}
+                >
+                  Scrobbles
+                </TableHead>
+                <TableHead resizer={listeningWidths.resizer('actions')}>
                   <span className="sr-only">Actions</span>
                 </TableHead>
               </TableRow>

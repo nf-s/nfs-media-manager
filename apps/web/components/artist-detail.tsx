@@ -77,6 +77,7 @@ import { ScrobbleStats } from './listening-stats'
 import { ListeningTrend } from './listening-trend'
 import { MetadataCoverage } from './metadata-coverage'
 import { useConfig } from './providers'
+import { useTableWidths } from './secondary-table'
 
 type ArtistTab =
   | 'overview'
@@ -135,6 +136,8 @@ const albumColumns: CreatorLibraryColumn<AlbumListItem>[] = [
   {
     key: 'title',
     label: 'Album',
+    width: 300,
+    fill: true,
     required: true,
     render: (album) => (
       <TitleCell
@@ -148,11 +151,13 @@ const albumColumns: CreatorLibraryColumn<AlbumListItem>[] = [
   {
     key: 'releaseDate',
     label: 'Released',
+    width: 110,
     render: (album) => <CreatorLibraryDate value={album.releaseDate} />,
   },
   {
     key: 'dateAdded',
     label: 'Added',
+    width: 110,
     render: (album) => <CreatorLibraryDate value={album.dateAdded} />,
   },
 ]
@@ -161,6 +166,8 @@ const trackColumns: CreatorLibraryColumn<TrackListItem>[] = [
   {
     key: 'title',
     label: 'Track',
+    width: 240,
+    fill: true,
     required: true,
     render: (track) => (
       <TitleCell
@@ -175,6 +182,7 @@ const trackColumns: CreatorLibraryColumn<TrackListItem>[] = [
   {
     key: 'durationSec',
     label: 'Duration',
+    width: 90,
     align: 'end',
     render: (track) =>
       formatTrackLength(
@@ -184,17 +192,20 @@ const trackColumns: CreatorLibraryColumn<TrackListItem>[] = [
   {
     key: 'scrobbles',
     label: 'Scrobbles',
+    width: 100,
     align: 'end',
     render: (track) => formatCount(track.scrobbles),
   },
   {
     key: 'releaseDate',
     label: 'Released',
+    width: 110,
     render: (track) => <CreatorLibraryDate value={track.releaseDate} />,
   },
   {
     key: 'dateAdded',
     label: 'Added',
+    width: 110,
     defaultVisible: false,
     render: (track) => <CreatorLibraryDate value={track.dateAdded} />,
   },
@@ -242,6 +253,12 @@ const mixColumns: CreatorLibraryColumn<SubscriptionItem>[] = [
 ]
 
 /** A short list for the Overview, read from the same endpoint as its tab. */
+const topTrackColumns = [
+  { key: 'title', label: 'Title', width: 260, fill: true },
+  { key: 'album', label: 'Album', width: 200 },
+  { key: 'scrobbles', label: 'Scrobbles', width: 90 },
+]
+
 function useOverviewList<Schema extends z.ZodTypeAny>(
   path: string,
   key: string,
@@ -302,6 +319,10 @@ function ArtistOverview({
     'tracks',
     { size: '5', sortBy: 'scrobbles', direction: 'desc' },
     ArtistTrackPageSchema,
+  )
+  const topTrackWidths = useTableWidths('artist-top-tracks', topTrackColumns)
+  const topTrackLayout = topTrackWidths.layout(
+    topTrackColumns.map((column) => column.key),
   )
   const playlists = useOverviewList(
     path,
@@ -430,12 +451,22 @@ function ArtistOverview({
           }
         >
           {tracks.data ? (
-            <Table aria-label="Top tracks">
+            <Table aria-label="Top tracks" {...topTrackLayout.table}>
+              {topTrackLayout.colgroup}
               <TableHeader>
                 <TableRow>
-                  <TableHead>Title</TableHead>
-                  <TableHead>Album</TableHead>
-                  <TableHead align="end">Scrobbles</TableHead>
+                  <TableHead resizer={topTrackWidths.resizer('title')}>
+                    Title
+                  </TableHead>
+                  <TableHead resizer={topTrackWidths.resizer('album')}>
+                    Album
+                  </TableHead>
+                  <TableHead
+                    align="end"
+                    resizer={topTrackWidths.resizer('scrobbles')}
+                  >
+                    Scrobbles
+                  </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>

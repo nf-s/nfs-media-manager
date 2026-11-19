@@ -73,9 +73,22 @@ type Props = {
 }
 
 /** Width of the selection column, which the title is pinned after. */
-const selectionWidth = 28
+const selectionWidth = 36
+/** Room for a provider's freshness: a status with its age or a Needs ID pill. */
+export const freshnessColumnWidth = 140
 /** A successful scrape older than this reads as stale. */
 const staleAfterDays = 180
+
+/** The default width of a Browse field's column in a metadata selection table. */
+export function selectionFieldWidth(field: BrowseField) {
+  return field.key === 'title'
+    ? 260
+    : field.type === 'text'
+      ? 180
+      : field.type === 'date'
+        ? 110
+        : 90
+}
 
 /**
  * One provider's freshness for one item: what is running or failed, else the
@@ -287,6 +300,8 @@ function SelectionTable({
     ...available.map((field) => ({
       key: field.key,
       label: field.label,
+      width: selectionFieldWidth(field),
+      fill: field.key === 'title',
       defaultVisible: [
         'title',
         'dateAdded',
@@ -294,24 +309,23 @@ function SelectionTable({
       ].includes(field.key),
       required: field.key === 'title',
     })),
-    { key: 'legacyImport', label: 'Legacy import' },
+    { key: 'legacyImport', label: 'Legacy import', width: 120 },
     ...providers.map((item) => ({
       key: `provider-${item.id}`,
       label: `${item.displayName} · Last scraped`,
+      width: freshnessColumnWidth,
     })),
   ])
   const visible = available.filter((field) => columns.visible(field.key))
   const visibleProviders = providers.filter((item) =>
     columns.visible(`provider-${item.id}`),
   )
-  const columnWidths = visible.map((field) =>
-    field.key === 'title' ? 160 : field.type === 'text' ? 120 : 88,
-  )
-  const tableWidth =
-    selectionWidth +
-    columnWidths.reduce((total, width) => total + width, 0) +
-    (columns.visible('legacyImport') ? 110 : 0) +
-    visibleProviders.length * 110
+  const layout = columns.layout([
+    selectionWidth,
+    ...visible.map((field) => field.key),
+    ...(columns.visible('legacyImport') ? ['legacyImport'] : []),
+    ...visibleProviders.map((item) => `provider-${item.id}`),
+  ])
   const ids = [...new Set(films.loadedSlots.map(({ item }) => item.id))]
   const allChecked = ids.length > 0 && ids.every((id) => selected.includes(id))
   const partiallyChecked =
@@ -564,20 +578,10 @@ function SelectionTable({
       >
         <table
           className="ds-table"
-          data-layout="fixed"
-          style={{ minWidth: tableWidth }}
           aria-label={`${noun}s to scrape`}
+          {...layout.table}
         >
-          <colgroup>
-            <col style={{ width: selectionWidth }} />
-            {visible.map((field, index) => (
-              <col key={field.key} style={{ width: columnWidths[index] }} />
-            ))}
-            {columns.visible('legacyImport') && <col style={{ width: 110 }} />}
-            {visibleProviders.map((item) => (
-              <col key={`scraped-${item.id}`} style={{ width: 110 }} />
-            ))}
-          </colgroup>
+          {layout.colgroup}
           <thead>
             <tr>
               <TableHead sticky={0}>
@@ -610,6 +614,7 @@ function SelectionTable({
                   align={field.type === 'number' ? 'end' : undefined}
                   sticky={field.key === 'title' ? selectionWidth : undefined}
                   stickyEdge={field.key === 'title'}
+                  resizer={columns.resizer(field.key)}
                   filter={
                     field.filterable && field.type !== 'text' ? (
                       <SecondaryHeaderFilter
@@ -682,6 +687,7 @@ function SelectionTable({
                   direction={direction}
                   onSort={sort}
                   disabled={queue.isPending}
+                  resizer={columns.resizer('legacyImport')}
                 />
               )}
               {visibleProviders.map((item) => (
@@ -711,6 +717,7 @@ function SelectionTable({
                   direction={direction}
                   onSort={() => sort('lastScrapedAt', item.id)}
                   disabled={queue.isPending}
+                  resizer={columns.resizer(`provider-${item.id}`)}
                 />
               ))}
             </tr>

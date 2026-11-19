@@ -53,6 +53,7 @@ import {
   providerFreshnessLabel,
   providerFreshnessOptions,
   providerFreshnessValue,
+  selectionFieldWidth,
   updateProviderFreshness,
 } from './film-selection-table'
 import { ListeningControls } from './listening-controls'
@@ -79,10 +80,12 @@ import {
   useTrackBrowseFields,
 } from './track-browse-controls'
 
-const selectionWidth = 28
+const selectionWidth = 36
 const pageSize = 50
 const searchColumn = 'spotifyLastSearch'
 const searchColumnLabel = 'Spotify · Last searched'
+/** Room for the search status, its result or Review matches, and its age. */
+const searchColumnWidth = 260
 const defaultColumns = ['title', 'artist', 'album', 'dateAdded']
 const trackNoun = { one: 'track', other: 'tracks' }
 const searchFreshnessOptions = providerFreshnessOptions.map((option) =>
@@ -112,13 +115,25 @@ export default function TrackMetadataTable({
     ...fields.map((field) => ({
       key: field.key,
       label: field.label,
+      width: selectionFieldWidth(field),
+      fill: field.key === 'title',
       defaultVisible: defaultColumns.includes(field.key),
       required: field.key === 'title',
     })),
-    { key: searchColumn, label: searchColumnLabel, required: true },
+    {
+      key: searchColumn,
+      label: searchColumnLabel,
+      width: searchColumnWidth,
+      required: true,
+    },
   ])
   const visible = fields.filter((field) => columns.visible(field.key))
   const colSpan = visible.length + 2
+  const layout = columns.layout([
+    selectionWidth,
+    ...visible.map((field) => field.key),
+    searchColumn,
+  ])
   const creator = parseCreatorBrowseScope(params, 'track')
   const q = params.get('q')?.slice(0, 200) ?? ''
   const filters = parseTrackFilters(params.get('filters'))
@@ -402,10 +417,12 @@ export default function TrackMetadataTable({
           className="ds-table"
           aria-label="Track metadata"
           aria-rowcount={tracks.hasTotal ? tracks.total + 1 : undefined}
+          {...layout.table}
         >
+          {layout.colgroup}
           <thead>
             <TableRow>
-              <TableHead sticky={0} style={{ width: selectionWidth }}>
+              <TableHead sticky={0}>
                 <input
                   ref={selectAll}
                   type="checkbox"
@@ -433,6 +450,7 @@ export default function TrackMetadataTable({
                   align={field.type === 'number' ? 'end' : undefined}
                   sticky={field.key === 'title' ? selectionWidth : undefined}
                   stickyEdge={field.key === 'title'}
+                  resizer={columns.resizer(field.key)}
                 />
               ))}
               <SecondaryTableHead
@@ -442,6 +460,7 @@ export default function TrackMetadataTable({
                 direction={direction}
                 onSort={sort}
                 disabled={pending}
+                resizer={columns.resizer(searchColumn)}
                 filter={
                   <SecondaryColumnFilter
                     label="Spotify search freshness"

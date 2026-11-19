@@ -68,6 +68,7 @@ import type { ReactNode } from 'react'
 import { useDetailView } from './detail-inspector-context'
 import {
   FreshnessState,
+  freshnessColumnWidth,
   updateProviderFreshness,
   providerFreshnessLabel,
   providerFreshnessOptions,
@@ -89,19 +90,33 @@ import {
 type ArtistColumn = {
   key: string
   label: string
+  width: number
   required?: boolean
   defaultVisible?: boolean
   align?: 'end'
+  fill?: boolean
 }
 const artistColumns: ArtistColumn[] = [
-  { key: 'name', label: 'Artist', required: true },
-  { key: 'albumCount', label: 'Albums', defaultVisible: false, align: 'end' },
-  { key: 'trackCount', label: 'Tracks', defaultVisible: false, align: 'end' },
-  { key: 'playlistCount', label: 'Playlists', align: 'end' },
-  { key: 'createdAt', label: 'Added', defaultVisible: false },
+  { key: 'name', label: 'Artist', width: 260, required: true, fill: true },
+  {
+    key: 'albumCount',
+    label: 'Albums',
+    width: 90,
+    defaultVisible: false,
+    align: 'end',
+  },
+  {
+    key: 'trackCount',
+    label: 'Tracks',
+    width: 90,
+    defaultVisible: false,
+    align: 'end',
+  },
+  { key: 'playlistCount', label: 'Playlists', width: 100, align: 'end' },
+  { key: 'createdAt', label: 'Added', width: 110, defaultVisible: false },
 ]
 /** Width of the selection column, which the name is pinned after. */
-const selectionWidth = 28
+const selectionWidth = 36
 const queueKey = ['metadata-selection-queue', 'artist']
 const snapshotKey = ['artist-selection-snapshot']
 type QueueSelection = {
@@ -164,6 +179,7 @@ export default function ArtistMetadataTable({
     {
       key: listeningScrobblesKey,
       label: listeningScrobblesField(query.listeningSort).label,
+      width: 110,
       defaultVisible: false,
       align: 'end',
     },
@@ -173,6 +189,7 @@ export default function ArtistMetadataTable({
     ...providers.map((provider) => ({
       key: `provider-${provider}`,
       label: `${providerLabel(provider)} · Last scraped`,
+      width: freshnessColumnWidth,
     })),
   ])
   // The period is read only for its column or sort.
@@ -258,6 +275,11 @@ export default function ArtistMetadataTable({
   const visibleProviders = providers.filter((provider) =>
     columns.visible(`provider-${provider}`),
   )
+  const layout = columns.layout([
+    selectionWidth,
+    ...visible.map((column) => column.key),
+    ...visibleProviders.map((provider) => `provider-${provider}`),
+  ])
   const ids = [...new Set(artists.loadedSlots.map(({ item }) => item.id))]
   const visibleIds = artists.slots.flatMap(({ item }) =>
     item ? [item.id] : [],
@@ -687,10 +709,12 @@ export default function ArtistMetadataTable({
           className="ds-table"
           aria-label="Artist metadata"
           aria-rowcount={artists.hasTotal ? artists.total + 1 : undefined}
+          {...layout.table}
         >
+          {layout.colgroup}
           <thead>
             <tr>
-              <TableHead sticky={0} style={{ width: selectionWidth }}>
+              <TableHead sticky={0}>
                 <input
                   type="checkbox"
                   className="ds-check"
@@ -729,6 +753,7 @@ export default function ArtistMetadataTable({
                   align={column.align}
                   sticky={column.key === 'name' ? selectionWidth : undefined}
                   stickyEdge={column.key === 'name'}
+                  resizer={columns.resizer(column.key)}
                   filter={
                     column.key === 'playlistCount'
                       ? playlist.control
@@ -745,6 +770,7 @@ export default function ArtistMetadataTable({
                   direction={query.direction}
                   onSort={() => sort('lastScrapedAt', provider)}
                   disabled={pending}
+                  resizer={columns.resizer(`provider-${provider}`)}
                   filter={
                     <SecondaryColumnFilter
                       label={`${providerLabel(provider)} freshness`}

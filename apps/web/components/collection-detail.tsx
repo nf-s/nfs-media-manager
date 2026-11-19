@@ -91,29 +91,34 @@ type CollectionView = {
 type CollectionColumn = {
   key: CollectionSort
   label: string
+  width: number
   defaultVisible?: boolean
   required?: boolean
   align?: 'end'
+  fill?: boolean
 }
 
+/** Room for the artwork thumbnail. */
+const ARTWORK_WIDTH = 48
+
 const sharedColumns: CollectionColumn[] = [
-  { key: 'source', label: 'Source', defaultVisible: false },
-  { key: 'dateAdded', label: 'Added', defaultVisible: false },
+  { key: 'source', label: 'Source', width: 140, defaultVisible: false },
+  { key: 'dateAdded', label: 'Added', width: 100, defaultVisible: false },
 ]
 const filmColumns: CollectionColumn[] = [
-  { key: 'position', label: 'Stored position', align: 'end' },
-  { key: 'title', label: 'Film', required: true },
-  { key: 'releaseDate', label: 'Released' },
-  { key: 'runtimeMinutes', label: 'Runtime', align: 'end' },
-  { key: 'watched', label: 'Watched' },
+  { key: 'position', label: 'Stored position', width: 60, align: 'end' },
+  { key: 'title', label: 'Film', width: 210, required: true, fill: true },
+  { key: 'releaseDate', label: 'Released', width: 100 },
+  { key: 'runtimeMinutes', label: 'Runtime', width: 80, align: 'end' },
+  { key: 'watched', label: 'Watched', width: 100 },
   ...sharedColumns,
 ]
 const albumColumns: CollectionColumn[] = [
-  { key: 'position', label: 'Stored position', align: 'end' },
-  { key: 'title', label: 'Album', required: true },
-  { key: 'artists', label: 'Artists' },
-  { key: 'releaseDate', label: 'Released' },
-  { key: 'durationSec', label: 'Duration', align: 'end' },
+  { key: 'position', label: 'Stored position', width: 60, align: 'end' },
+  { key: 'title', label: 'Album', width: 180, required: true, fill: true },
+  { key: 'artists', label: 'Artists', width: 140 },
+  { key: 'releaseDate', label: 'Released', width: 100 },
+  { key: 'durationSec', label: 'Duration', width: 80, align: 'end' },
   ...sharedColumns,
 ]
 
@@ -198,6 +203,11 @@ export function CollectionEntries({
     detail.replace(params)
   }
   const table = useTableColumns(`${mediaType}-collection-items`, columns)
+  const shownColumns = dataColumns.filter((column) => table.visible(column.key))
+  const layout = table.layout([
+    ...(table.visible('artwork') ? [ARTWORK_WIDTH] : []),
+    ...shownColumns.map((column) => column.key),
+  ])
   const path = `/api/v1/${album ? 'album-collections' : 'collections'}/${encodeURIComponent(id)}`
   const schema = album
     ? AlbumCollectionDetailSchema
@@ -359,7 +369,9 @@ export function CollectionEntries({
             className="ds-table"
             aria-label={`Collection ${members}`}
             aria-rowcount={query.hasTotal ? query.total + 1 : undefined}
+            {...layout.table}
           >
+            {layout.colgroup}
             <TableHeader>
               <TableRow>
                 {table.visible('artwork') && (
@@ -367,24 +379,23 @@ export function CollectionEntries({
                     <span className="sr-only">Artwork</span>
                   </TableHead>
                 )}
-                {dataColumns
-                  .filter((column) => table.visible(column.key))
-                  .map((column) => (
-                    <SecondaryTableHead
-                      key={column.key}
-                      sortKey={column.key}
-                      label={column.label}
-                      sortBy={sortBy}
-                      direction={direction}
-                      onSort={onSort}
-                      filter={
-                        column.key === 'watched' ? (
-                          <SecondaryColumnFilter {...watchedFilter} />
-                        ) : undefined
-                      }
-                      align={column.align}
-                    />
-                  ))}
+                {shownColumns.map((column) => (
+                  <SecondaryTableHead
+                    key={column.key}
+                    sortKey={column.key}
+                    label={column.label}
+                    sortBy={sortBy}
+                    direction={direction}
+                    onSort={onSort}
+                    filter={
+                      column.key === 'watched' ? (
+                        <SecondaryColumnFilter {...watchedFilter} />
+                      ) : undefined
+                    }
+                    align={column.align}
+                    resizer={table.resizer(column.key)}
+                  />
+                ))}
               </TableRow>
             </TableHeader>
             <TableBody>

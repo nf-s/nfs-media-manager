@@ -54,6 +54,87 @@ test('secondary tables share a labelled scroll region, sortable data headers and
   assert.match(html, /Press the up and down arrow keys to move the column\./)
 })
 
+test('secondary tables have set column widths and a width handle on each data column', () => {
+  const html = renderToStaticMarkup(
+    <SecondaryDataTable
+      id="test-widths"
+      label="Example rows"
+      rows={[{ id: 1, title: 'Item 1', count: 12, note: 'Synthetic' }]}
+      rowKey={(row) => row.id}
+      defaultSort={{ key: 'title', direction: 'asc' }}
+      columns={[
+        {
+          key: 'title',
+          label: 'Title',
+          width: 300,
+          value: (row) => row.title,
+        },
+        {
+          key: 'count',
+          label: 'Count',
+          width: 90,
+          align: 'end',
+          value: (row) => row.count,
+        },
+        { key: 'note', label: 'Note', value: (row) => row.note },
+      ]}
+    />,
+  )
+  // Fixed layout: loading rows cannot move the columns.
+  assert.match(html, /<table class="ds-table"[^>]*data-layout="fixed"/)
+  assert.match(html, /<table class="ds-table"[^>]*style="min-width:530px"/)
+  // Every column keeps its width; the last one takes the room that is left.
+  assert.match(
+    html,
+    /<colgroup><col style="width:300px"\/><col style="width:90px"\/><col[^>]*\/><\/colgroup>/,
+  )
+  assert.doesNotMatch(html, /<colgroup>.*width:140px.*<\/colgroup>/)
+  assert.equal((html.match(/class="ds-th-resizer"/g) ?? []).length, 3)
+  for (const label of ['Title', 'Count', 'Note'])
+    assert.match(
+      html,
+      new RegExp(
+        `<span class="ds-th-resizer" role="separator"[^>]*aria-label="Resize ${label}"`,
+      ),
+    )
+  assert.match(
+    html,
+    /aria-valuenow="90" aria-valuemin="40" aria-valuemax="1200"/,
+  )
+})
+
+test('a column of row actions keeps its width and has no handle', () => {
+  const html = renderToStaticMarkup(
+    <SecondaryDataTable
+      id="test-actions-width"
+      label="Example rows"
+      rows={[{ id: 1, title: 'Item 1', note: 'Synthetic' }]}
+      rowKey={(row) => row.id}
+      defaultSort={{ key: 'title', direction: 'asc' }}
+      columns={[
+        { key: 'title', label: 'Title', width: 300, value: (row) => row.title },
+        { key: 'note', label: 'Note', width: 200, value: (row) => row.note },
+        {
+          key: 'actions',
+          label: 'Actions',
+          width: 84,
+          resizable: false,
+          sortable: false,
+          value: () => null,
+        },
+      ]}
+    />,
+  )
+  // The last data column takes the room that is left, not the actions.
+  assert.match(
+    html,
+    /<colgroup><col style="width:300px"\/><col\/><col style="width:84px"\/><\/colgroup>/,
+  )
+  assert.match(html, /style="min-width:584px"/)
+  assert.match(html, /<th[^>]*>Actions<\/th>/)
+  assert.equal((html.match(/class="ds-th-resizer"/g) ?? []).length, 2)
+})
+
 test('empty small tables show all columns and use their full column count', () => {
   const html = renderToStaticMarkup(
     <SecondaryDataTable

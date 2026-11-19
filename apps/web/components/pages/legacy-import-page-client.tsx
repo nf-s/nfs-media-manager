@@ -105,6 +105,8 @@ export default function LegacyImportPageClient() {
           {
             key: 'name',
             label: 'Source',
+            width: 260,
+            fill: true,
             sticky: 0,
             stickyEdge: true,
             value: (source) => source.name,
@@ -112,6 +114,7 @@ export default function LegacyImportPageClient() {
           {
             key: 'updated',
             label: 'Updated',
+            width: 120,
             value: (source) =>
               source.updatedAt ? Date.parse(source.updatedAt) : null,
             render: (source) =>
@@ -126,6 +129,7 @@ export default function LegacyImportPageClient() {
           {
             key: 'bytes',
             label: 'Size',
+            width: 100,
             align: 'end',
             value: (source) => source.bytes,
             render: (source) => (

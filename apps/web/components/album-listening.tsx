@@ -25,6 +25,7 @@ import {
 } from '@repo/ui/components/ui/table'
 import { formatCount, formatDate } from '@repo/ui/lib/format'
 import { useConfig } from './providers'
+import { useTableWidths } from './secondary-table'
 import { DetailLink } from './detail-link'
 import {
   ScrobbledNamePicker,
@@ -44,6 +45,20 @@ import {
 } from '@/utils/listening-series'
 
 const TOP_TRACKS = 6
+const nameColumns = [
+  { key: 'albumName', label: 'Scrobbled as', width: 220, fill: true },
+  { key: 'artistName', label: 'Artist', width: 160 },
+  { key: 'scrobbles', label: 'Scrobbles', width: 88 },
+]
+/** Room for Link or Unlink. */
+const nameActionsWidth = 84
+const trackColumns = [
+  { key: 'position', label: '#', width: 48 },
+  { key: 'title', label: 'Title', width: 200, fill: true },
+  { key: 'scrobbles', label: 'Scrobbles', width: 88 },
+  { key: 'share', label: 'Share', width: 120 },
+  { key: 'lastListenedAt', label: 'Last played', width: 104 },
+]
 
 export function useAlbumListening(
   albumId: string,
@@ -81,6 +96,11 @@ export function ListeningSources({
 }) {
   const update = useLastfmLinkUpdate()
   const [adding, setAdding] = useState(false)
+  const widths = useTableWidths('album-scrobble-names', nameColumns)
+  const layout = widths.layout([
+    ...nameColumns.map((column) => column.key),
+    nameActionsWidth,
+  ])
   const link = (name: { artistName: string; albumName: string }) =>
     update.mutate({
       action: 'link',
@@ -95,17 +115,24 @@ export function ListeningSources({
   return (
     <div className="data-stack">
       {names.length > 0 && (
-        <Table aria-label="Scrobble names" layout="fixed">
+        <Table aria-label="Scrobble names" {...layout.table}>
+          {layout.colgroup}
           <TableHeader>
             <TableRow>
-              <TableHead sticky={0} stickyEdge>
+              <TableHead
+                sticky={0}
+                stickyEdge
+                resizer={widths.resizer('albumName')}
+              >
                 Scrobbled as
               </TableHead>
-              <TableHead>Artist</TableHead>
-              <TableHead align="end" style={{ width: 88 }}>
+              <TableHead resizer={widths.resizer('artistName')}>
+                Artist
+              </TableHead>
+              <TableHead align="end" resizer={widths.resizer('scrobbles')}>
                 Scrobbles
               </TableHead>
-              <TableHead align="end" style={{ width: 84 }}>
+              <TableHead align="end">
                 <span className="sr-only">Actions</span>
               </TableHead>
             </TableRow>
@@ -187,7 +214,9 @@ function TracksByScrobbles({
   tracks: AlbumListeningData['tracks']
 }) {
   const [all, setAll] = useState(false)
+  const widths = useTableWidths('album-track-scrobbles', trackColumns)
   if (!tracks.length) return null
+  const layout = widths.layout(trackColumns.map((column) => column.key))
   const ranked = [...tracks].sort((left, right) => right.count - left.count)
   const shown = all ? ranked : ranked.slice(0, TOP_TRACKS)
   const most = ranked[0]?.count ?? 1
@@ -207,20 +236,23 @@ function TracksByScrobbles({
         )
       }
     >
-      <Table aria-label="Scrobbles by track" layout="fixed">
+      <Table aria-label="Scrobbles by track" {...layout.table}>
+        {layout.colgroup}
         <TableHeader>
           <TableRow>
-            <TableHead align="end" style={{ width: 40 }}>
+            <TableHead align="end" resizer={widths.resizer('position')}>
               #
             </TableHead>
-            <TableHead>Title</TableHead>
-            <TableHead align="end" style={{ width: 88 }}>
+            <TableHead resizer={widths.resizer('title')}>Title</TableHead>
+            <TableHead align="end" resizer={widths.resizer('scrobbles')}>
               Scrobbles
             </TableHead>
-            <TableHead style={{ width: 120 }}>
+            <TableHead resizer={widths.resizer('share')}>
               <span className="sr-only">Share</span>
             </TableHead>
-            <TableHead style={{ width: 104 }}>Last played</TableHead>
+            <TableHead resizer={widths.resizer('lastListenedAt')}>
+              Last played
+            </TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>

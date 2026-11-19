@@ -49,10 +49,40 @@ export function BrowseSortHead({
       align={align}
       sticky={sticky}
       stickyEdge={stickyEdge}
-      className="browse-th"
       aria-sort={
         active ? (direction === 'asc' ? 'ascending' : 'descending') : 'none'
       }
+      resizer={{
+        role: 'separator',
+        'aria-label': `Resize ${label}`,
+        'aria-orientation': 'vertical',
+        'aria-valuenow': width,
+        'aria-valuemin': minColumnWidth,
+        'aria-valuemax': maxColumnWidth,
+        tabIndex: 0,
+        onKeyDown: (event) => {
+          if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+          event.preventDefault()
+          onWidthCommit(
+            clampWidth(width + (event.key === 'ArrowRight' ? 10 : -10)),
+          )
+        },
+        onPointerDown: (event) => {
+          event.currentTarget.setPointerCapture(event.pointerId)
+          drag.current = { x: event.clientX, width, next: width }
+        },
+        onPointerMove: (event) => {
+          if (!drag.current) return
+          drag.current.next = clampWidth(
+            drag.current.width + event.clientX - drag.current.x,
+          )
+          onWidthChange(drag.current.next)
+        },
+        onPointerUp: () => {
+          if (drag.current) onWidthCommit(drag.current.next)
+          drag.current = null
+        },
+      }}
     >
       <TableSortButton
         direction={active ? direction : undefined}
@@ -60,38 +90,6 @@ export function BrowseSortHead({
       >
         {label}
       </TableSortButton>
-      <span
-        className="browse-resizer"
-        role="separator"
-        aria-label={`Resize ${label}`}
-        aria-orientation="vertical"
-        aria-valuenow={width}
-        aria-valuemin={minColumnWidth}
-        aria-valuemax={maxColumnWidth}
-        tabIndex={0}
-        onKeyDown={(event) => {
-          if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
-          event.preventDefault()
-          onWidthCommit(
-            clampWidth(width + (event.key === 'ArrowRight' ? 10 : -10)),
-          )
-        }}
-        onPointerDown={(event) => {
-          event.currentTarget.setPointerCapture(event.pointerId)
-          drag.current = { x: event.clientX, width, next: width }
-        }}
-        onPointerMove={(event) => {
-          if (!drag.current) return
-          drag.current.next = clampWidth(
-            drag.current.width + event.clientX - drag.current.x,
-          )
-          onWidthChange(drag.current.next)
-        }}
-        onPointerUp={() => {
-          if (drag.current) onWidthCommit(drag.current.next)
-          drag.current = null
-        }}
-      />
     </TableHead>
   )
 }

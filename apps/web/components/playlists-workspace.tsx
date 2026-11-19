@@ -103,28 +103,51 @@ type PlaylistColumn = TableColumn &
     | { key: 'actions'; sortable: false }
   )
 
+/** Room for the remove button. */
+const ACTIONS_WIDTH = 44
+
 const playlistColumns: readonly PlaylistColumn[] = [
-  { key: 'name', sortable: true, label: 'Playlist', required: true },
-  { key: 'source', sortable: true, label: 'Source', defaultVisible: false },
-  { key: 'owner', sortable: true, label: 'Owner' },
-  { key: 'tracks', sortable: true, label: 'Tracks' },
-  { key: 'linkedTracks', sortable: true, label: 'In album library' },
-  { key: 'albums', sortable: true, label: 'Albums' },
-  { key: 'duration', sortable: true, label: 'Duration' },
-  { key: 'imported', sortable: true, label: 'Imported' },
-  { key: 'schedule', sortable: true, label: 'Schedule' },
-  { key: 'checked', sortable: true, label: 'Last checked' },
-  { key: 'added', sortable: true, label: 'Added to library' },
+  {
+    key: 'name',
+    sortable: true,
+    label: 'Playlist',
+    width: 250,
+    fill: true,
+    required: true,
+  },
+  {
+    key: 'source',
+    sortable: true,
+    label: 'Source',
+    width: 120,
+    defaultVisible: false,
+  },
+  { key: 'owner', sortable: true, label: 'Owner', width: 140 },
+  { key: 'tracks', sortable: true, label: 'Tracks', width: 80 },
+  {
+    key: 'linkedTracks',
+    sortable: true,
+    label: 'In album library',
+    width: 120,
+  },
+  { key: 'albums', sortable: true, label: 'Albums', width: 80 },
+  { key: 'duration', sortable: true, label: 'Duration', width: 90 },
+  { key: 'imported', sortable: true, label: 'Imported', width: 110 },
+  { key: 'schedule', sortable: true, label: 'Schedule', width: 100 },
+  { key: 'checked', sortable: true, label: 'Last checked', width: 140 },
+  { key: 'added', sortable: true, label: 'Added to library', width: 140 },
   {
     key: 'description',
     sortable: true,
     label: 'Description',
+    width: 240,
     defaultVisible: false,
   },
   {
     key: 'nextSync',
     sortable: true,
     label: 'Next import',
+    width: 150,
     defaultVisible: false,
   },
   { key: 'actions', sortable: false, label: 'Actions' },
@@ -200,6 +223,9 @@ export default function PlaylistsWorkspace() {
   }
   const sorting = { sortBy, direction, onSort: sort }
   const shown = playlistColumns.filter((column) => columns.visible(column.key))
+  const layout = columns.layout(
+    shown.map((column) => (column.sortable ? column.key : ACTIONS_WIDTH)),
+  )
   return (
     <section className="sec-page">
       <PageHead
@@ -263,7 +289,9 @@ export default function PlaylistsWorkspace() {
           className="ds-table"
           aria-label="Playlists"
           aria-rowcount={query.hasTotal ? query.total + 1 : undefined}
+          {...layout.table}
         >
+          {layout.colgroup}
           <TableHeader>
             <TableRow>
               {shown.map((column) =>
@@ -279,6 +307,7 @@ export default function PlaylistsWorkspace() {
                     align={NUMERIC.has(column.key) ? 'end' : undefined}
                     sticky={column.key === 'name' ? 0 : undefined}
                     stickyEdge={column.key === 'name'}
+                    resizer={columns.resizer(column.key)}
                     filter={
                       column.key === 'source' ? (
                         <SecondaryColumnFilter

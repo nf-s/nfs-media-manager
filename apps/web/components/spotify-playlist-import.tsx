@@ -112,55 +112,81 @@ type ImportColumn = TableColumn &
 
 const importColumns: readonly ImportColumn[] = [
   { key: 'selection', sortable: false, label: 'Selection', required: true },
-  { key: 'name', sortable: true, label: 'Playlist', required: true },
-  { key: 'owner', sortable: true, label: 'Owner' },
-  { key: 'tracks', sortable: true, label: 'Tracks' },
-  { key: 'status', sortable: true, label: 'Import' },
-  { key: 'schedule', sortable: true, label: 'Schedule' },
-  { key: 'checked', sortable: true, label: 'Last checked' },
-  { key: 'added', sortable: true, label: 'Added to library' },
+  {
+    key: 'name',
+    sortable: true,
+    label: 'Playlist',
+    width: 300,
+    fill: true,
+    required: true,
+  },
+  { key: 'owner', sortable: true, label: 'Owner', width: 160 },
+  { key: 'tracks', sortable: true, label: 'Tracks', width: 80 },
+  { key: 'status', sortable: true, label: 'Import', width: 150 },
+  { key: 'schedule', sortable: true, label: 'Schedule', width: 120 },
+  { key: 'checked', sortable: true, label: 'Last checked', width: 110 },
+  { key: 'added', sortable: true, label: 'Added to library', width: 130 },
   {
     key: 'imported',
     sortable: true,
     label: 'Last imported',
+    width: 120,
     defaultVisible: false,
   },
   {
     key: 'storedTracks',
     sortable: true,
     label: 'Imported tracks',
+    width: 120,
     defaultVisible: false,
   },
   {
     key: 'linkedTracks',
     sortable: true,
     label: 'In album library',
+    width: 130,
     defaultVisible: false,
   },
-  { key: 'albums', sortable: true, label: 'Albums', defaultVisible: false },
-  { key: 'duration', sortable: true, label: 'Duration', defaultVisible: false },
+  {
+    key: 'albums',
+    sortable: true,
+    label: 'Albums',
+    width: 80,
+    defaultVisible: false,
+  },
+  {
+    key: 'duration',
+    sortable: true,
+    label: 'Duration',
+    width: 90,
+    defaultVisible: false,
+  },
   {
     key: 'current',
     sortable: true,
     label: 'Up to date',
+    width: 100,
     defaultVisible: false,
   },
   {
     key: 'importable',
     sortable: true,
     label: 'Importable',
+    width: 100,
     defaultVisible: false,
   },
   {
     key: 'nextSync',
     sortable: true,
     label: 'Next import',
+    width: 150,
     defaultVisible: false,
   },
   {
     key: 'description',
     sortable: true,
     label: 'Description',
+    width: 240,
     defaultVisible: false,
   },
 ]
@@ -613,6 +639,11 @@ export default function SpotifyPlaylistImport() {
     </Notice>
   )
   const shown = importColumns.filter((column) => columns.visible(column.key))
+  const layout = columns.layout(
+    shown.map((column) =>
+      column.key === 'selection' ? CHECK_WIDTH : column.key,
+    ),
+  )
 
   return (
     <div className="sec-fill">
@@ -861,16 +892,17 @@ export default function SpotifyPlaylistImport() {
               aria-label="Spotify playlists"
               aria-busy={listing.isFetching}
             >
-              <table className="ds-table" aria-label="Spotify playlists">
+              <table
+                className="ds-table"
+                aria-label="Spotify playlists"
+                {...layout.table}
+              >
+                {layout.colgroup}
                 <TableHeader>
                   <TableRow>
                     {shown.map((column) =>
                       !column.sortable ? (
-                        <TableHead
-                          key={column.key}
-                          className="sec-check-cell"
-                          sticky={0}
-                        >
+                        <TableHead key={column.key} sticky={0}>
                           <input
                             ref={selectAll}
                             type="checkbox"
@@ -895,6 +927,7 @@ export default function SpotifyPlaylistImport() {
                             column.key === 'name' ? CHECK_WIDTH : undefined
                           }
                           stickyEdge={column.key === 'name'}
+                          resizer={columns.resizer(column.key)}
                           filter={
                             column.key === 'status' ? (
                               <SecondaryColumnFilter
@@ -957,7 +990,7 @@ export default function SpotifyPlaylistImport() {
                     return (
                       <TableRow key={playlist.spotifyId} selected={checked}>
                         {columns.visible('selection') && (
-                          <TableCell className="sec-check-cell" sticky={0}>
+                          <TableCell sticky={0}>
                             <input
                               type="checkbox"
                               className="ds-check"

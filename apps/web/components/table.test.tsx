@@ -6,6 +6,7 @@ import {
   Table,
   TableBody,
   TableCell,
+  TableColumns,
   TableHead,
   TableHeader,
   TableRow,
@@ -38,6 +39,36 @@ test('shared table uses compact styles and one keyboard-scrollable container', (
   assert.match(html, /<th scope="col" aria-sort="ascending"/)
   assert.match(html, /<tr data-selected="true"><td>Example film/)
   assert.doesNotMatch(html, /p-3|uppercase/)
+})
+
+test('a fixed table states its column widths and a header can carry a width handle', () => {
+  const html = renderToStaticMarkup(
+    <Table aria-label="Films" layout="fixed">
+      <TableColumns widths={[36, 280, undefined]} />
+      <TableHeader>
+        <TableRow>
+          <TableHead />
+          <TableHead
+            resizer={{ role: 'separator', 'aria-label': 'Resize Title' }}
+          >
+            Title
+          </TableHead>
+          <TableHead>Year</TableHead>
+        </TableRow>
+      </TableHeader>
+    </Table>,
+  )
+  assert.match(html, /<table class="ds-table" data-layout="fixed"/)
+  assert.match(
+    html,
+    /<colgroup><col style="width:36px"\/><col style="width:280px"\/><col[^>]*\/><\/colgroup>/,
+  )
+  assert.match(
+    html,
+    /<th scope="col">Title<span class="ds-th-resizer" role="separator" aria-label="Resize Title"><\/span><\/th>/,
+  )
+  // Only the header given a handle has one.
+  assert.equal((html.match(/ds-th-resizer/g) ?? []).length, 1)
 })
 
 test('scroll wrapper supports native tables and accessible region props', () => {

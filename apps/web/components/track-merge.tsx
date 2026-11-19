@@ -33,6 +33,7 @@ import {
   SecondaryCell,
   SecondaryTableScroll,
   SecondaryVirtualRows,
+  useTableWidths,
 } from './secondary-table'
 import { trackServiceLinks } from '@/utils/track-links'
 import { errorMessage, invalidateScrobbleLinks } from './lastfm-sync'
@@ -41,6 +42,13 @@ import ServiceIconLinks from './service-icon-links'
 
 const TrackPageSchema = PaginatedDataSchema(TrackListItemSchema)
 const SEARCH_RESULTS = 20
+const candidateColumns = [
+  { key: 'track', label: 'Track', width: 190 },
+  { key: 'artist', label: 'Artist', width: 140 },
+  { key: 'album', label: 'Album', width: 140 },
+]
+/** Room for Match or Merge. */
+const candidateActionWidth = 84
 
 export type TrackScrobbleCorrection = {
   artistKey: string
@@ -282,6 +290,11 @@ export function TrackMergePanel({
   const [target, setTarget] = useState<TrackListItem | null>(
     initialTarget ?? null,
   )
+  const widths = useTableWidths('track-merge-candidates', candidateColumns)
+  const layout = widths.layout([
+    ...candidateColumns.map((column) => column.key),
+    candidateActionWidth,
+  ])
   const includeLibraryTracks = namesOnly || correction !== undefined
   const searchLabel = includeLibraryTracks
     ? 'Library tracks'
@@ -439,12 +452,23 @@ export function TrackMergePanel({
                     aria-label={searchLabel}
                     aria-busy={candidates.isFetching}
                   >
-                    <table className="ds-table" aria-label={searchLabel}>
+                    <table
+                      className="ds-table"
+                      aria-label={searchLabel}
+                      {...layout.table}
+                    >
+                      {layout.colgroup}
                       <TableHeader>
                         <TableRow>
-                          <TableHead>Track</TableHead>
-                          <TableHead>Artist</TableHead>
-                          <TableHead>Album</TableHead>
+                          <TableHead resizer={widths.resizer('track')}>
+                            Track
+                          </TableHead>
+                          <TableHead resizer={widths.resizer('artist')}>
+                            Artist
+                          </TableHead>
+                          <TableHead resizer={widths.resizer('album')}>
+                            Album
+                          </TableHead>
                           <TableHead>
                             <span className="sr-only">Action</span>
                           </TableHead>

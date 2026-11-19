@@ -53,6 +53,13 @@ const TAGS = { one: 'tag', other: 'tags' }
 /** Rows rendered at once; a search narrows the rest. */
 const ROW_LIMIT = 500
 const NO_KEYS: ReadonlySet<string> = new Set()
+/** The tag column leaves room for a few levels of subtags. */
+const treeColumns = [
+  { key: 'name', label: 'Tag', width: 360, required: true, fill: true },
+  { key: 'mediaCount', label: 'Items', width: 90 },
+  { key: 'totalCount', label: 'With subtags', width: 120 },
+  { key: 'subtags', label: 'Subtags', width: 90 },
+]
 
 function NewTagForm({
   mediaType,
@@ -155,12 +162,12 @@ function NewTagForm({
 }
 
 export default function TagHierarchyPageClient() {
-  const columns = useTableColumns('tag-hierarchy', [
-    { key: 'name', label: 'Tag', required: true },
-    { key: 'mediaCount', label: 'Items' },
-    { key: 'totalCount', label: 'With subtags' },
-    { key: 'subtags', label: 'Subtags' },
-  ])
+  const columns = useTableColumns('tag-hierarchy', treeColumns)
+  const layout = columns.layout(
+    treeColumns
+      .filter((column) => columns.visible(column.key))
+      .map((column) => column.key),
+  )
   const [sortBy, setSortBy] = useState<TagTreeSortKey>('name')
   const [direction, setDirection] = useState<'asc' | 'desc'>('asc')
   function sort(key: TagTreeSortKey) {
@@ -290,7 +297,12 @@ export default function TagHierarchyPageClient() {
         aria-label="Tag hierarchy table"
         aria-busy={hierarchy.isFetching}
       >
-        <table className="ds-table" aria-label="Tag hierarchy">
+        <table
+          className="ds-table"
+          aria-label="Tag hierarchy"
+          {...layout.table}
+        >
+          {layout.colgroup}
           <thead>
             <tr>
               <SecondaryTableHead
@@ -301,6 +313,7 @@ export default function TagHierarchyPageClient() {
                 onSort={sort}
                 sticky={0}
                 stickyEdge
+                resizer={columns.resizer('name')}
               />
               {columns.visible('mediaCount') && (
                 <SecondaryTableHead
@@ -310,6 +323,7 @@ export default function TagHierarchyPageClient() {
                   direction={direction}
                   onSort={sort}
                   align="end"
+                  resizer={columns.resizer('mediaCount')}
                 />
               )}
               {columns.visible('totalCount') && (
@@ -320,10 +334,13 @@ export default function TagHierarchyPageClient() {
                   direction={direction}
                   onSort={sort}
                   align="end"
+                  resizer={columns.resizer('totalCount')}
                 />
               )}
               {columns.visible('subtags') && (
-                <TableHead align="end">Subtags</TableHead>
+                <TableHead align="end" resizer={columns.resizer('subtags')}>
+                  Subtags
+                </TableHead>
               )}
             </tr>
           </thead>

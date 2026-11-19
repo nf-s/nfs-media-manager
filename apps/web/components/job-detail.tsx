@@ -65,11 +65,20 @@ import JobBulkActions from './job-bulk-actions'
 import { StoredJobData } from './job-data-viewer'
 import { JobLogEntry } from './job-log-entry'
 import { useConfig } from './providers'
+import { useTableWidths } from './secondary-table'
 
 const tabs = [
   { value: 'overview', label: 'Overview' },
   { value: 'data', label: 'Request and response' },
   { value: 'logs', label: 'Logs' },
+]
+
+/** Fits the 600px detail inspector; the message takes any room left. */
+const itemColumns = [
+  { key: 'item', label: 'Item', width: 200 },
+  { key: 'status', label: 'Status', width: 120 },
+  { key: 'attempts', label: 'Attempts', width: 100 },
+  { key: 'message', label: 'Message', width: 140 },
 ]
 
 const providerActionLabels: Record<
@@ -124,6 +133,8 @@ export function JobDetail({
   const [actionPending, setActionPending] = useState(false)
   const query = useQuery(jobDetailOptions(apiBaseUrl, id))
   const providers = useQuery(providerListOptions(apiBaseUrl))
+  const itemWidths = useTableWidths('job-items', itemColumns)
+  const itemLayout = itemWidths.layout(itemColumns.map((column) => column.key))
   const retry = useMutation({
     mutationFn: () =>
       fetchApiData(
@@ -345,13 +356,25 @@ export function JobDetail({
           </Section>
           {job.items.length > 0 && (
             <Section title="Items" note={formatCount(job.items.length)}>
-              <Table aria-label="Job items">
+              <Table aria-label="Job items" {...itemLayout.table}>
+                {itemLayout.colgroup}
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Item</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead align="end">Attempts</TableHead>
-                    <TableHead>Message</TableHead>
+                    <TableHead resizer={itemWidths.resizer('item')}>
+                      Item
+                    </TableHead>
+                    <TableHead resizer={itemWidths.resizer('status')}>
+                      Status
+                    </TableHead>
+                    <TableHead
+                      align="end"
+                      resizer={itemWidths.resizer('attempts')}
+                    >
+                      Attempts
+                    </TableHead>
+                    <TableHead resizer={itemWidths.resizer('message')}>
+                      Message
+                    </TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
