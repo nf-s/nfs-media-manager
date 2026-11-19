@@ -317,7 +317,9 @@ describe('artist provider lookups', () => {
           {
             artist: {
               ...artist,
-              url: changedId ? lastFmUrl + '+Alternative' : lastFmUrl,
+              url: changedId
+                ? 'https://www.last.fm/music/+noredirect/Artist+Fixture+Alternative'
+                : lastFmUrl,
             },
           },
         ),
@@ -343,6 +345,37 @@ describe('artist provider lookups', () => {
       expect(context.request).toHaveBeenCalledTimes(3)
     },
   )
+
+  it('retains one canonical URL when Last.fm artist details bypass redirection', async () => {
+    const artist = { name: artistName, mbid: '', url: lastFmUrl }
+    const titles = ['Fixture Recording', 'Another Recording']
+    const nativeUrl = 'https://www.last.fm/music/+noredirect/Artist+Fixture'
+    const context = {
+      ...responses(
+        {
+          results: {
+            'opensearch:totalResults': '30',
+            artistmatches: { artist: [artist] },
+          },
+        },
+        { toptracks: { track: titles.map((name) => ({ name, artist })) } },
+        { artist: { ...artist, url: nativeUrl } },
+      ),
+      loadLastfmRecordings: vi.fn(async () =>
+        titles.map((title) => ({ title, albumName: null })),
+      ),
+    }
+    await expect(
+      lookupArtistProvider('lastfm', artistName, null, context),
+    ).resolves.toMatchObject({
+      profile: { externalId: lastFmUrl, url: lastFmUrl },
+      payload: {
+        artist: { artist: { url: nativeUrl } },
+        recordingVerification: { matchedTitles: titles, artistUrl: lastFmUrl },
+      },
+    })
+    expect(context.request).toHaveBeenCalledTimes(3)
+  })
 
   it.each([true, false])(
     'rechecks a stale Last.fm MBID only when inferred (inferred: %s)',
@@ -529,21 +562,21 @@ describe('artist provider lookups', () => {
     ).rejects.toThrow('Provider returned a different artist than requested.')
   })
 
-  it('rejects Last.fm album and external URLs as explicit artist IDs', () => {
-    expect(
-      normalizeArtistProviderId('lastfm', lastFmUrl + '/Album+Fixture'),
-    ).toBeNull()
-    expect(
-      normalizeArtistProviderId(
-        'lastfm',
-        'https://other.example.test/music/Artist+Fixture',
-      ),
-    ).toBeNull()
-    expect(
-      normalizeArtistProviderId(
-        'lastfm',
-        'https://user:pass@www.last.fm/music/Artist+Fixture',
-      ),
-    ).toBeNull()
+  it.each([
+    lastFmUrl + '/Album+Fixture',
+    lastFmUrl + '/+noredirect',
+    'https://www.last.fm/music/+noredirect/Artist+Fixture/Album+Fixture',
+    'https://www.last.fm/music/+noredirect/Artist+Fixture/_/Track+Fixture',
+    'https://www.last.fm/music/+noredirect/Artist+Fixture/Unknown/..',
+    'https://www.last.fm/music/+andredirect/Artist+Fixture',
+    'https://www.last.fm/music/%2Bnoredirect/Artist+Fixture',
+    'https://www.last.fm/music/+noredirect',
+    'https://www.last.fm/music/+noredirect/+noredirect',
+    'https://other.example.test/music/+noredirect/Artist+Fixture',
+    'https://user:pass@www.last.fm/music/+noredirect/Artist+Fixture',
+    'https://www.last.fm:8443/music/+noredirect/Artist+Fixture',
+    'https://www.last.fm:443/music/+noredirect/Artist+Fixture',
+  ])('rejects a URL outside the native Last.fm artist routes %#', (url) => {
+    expect(normalizeArtistProviderId('lastfm', url)).toBeNull()
   })
 })
